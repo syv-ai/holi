@@ -76,6 +76,14 @@ const onMenuCommand = pushChannel<string>('menu:command')
 /** Updating Holi itself: the updater's whole status, on every change. */
 const onUpdateStatus = pushChannel<unknown>('updates:status')
 
+/** A line of the activity log (the bottom panel's Output), as it is written. */
+const onActivityEntry = pushChannel<unknown>('activity:entry')
+
+/** The bottom panel's shells: their output and their exit. Keystrokes and
+ *  sizes go back over tRPC, each naming the vault and the terminal. */
+const onTerminalData = pushChannel<unknown>('terminal:data')
+const onTerminalExit = pushChannel<unknown>('terminal:exit')
+
 /** The window went in or out of fullscreen. macOS hides the traffic lights
  *  there, so the band the sidebar keeps for them can go. */
 const onFullScreen = pushChannel<boolean>('window:fullscreen')
@@ -112,6 +120,13 @@ contextBridge.exposeInMainWorld('holi', {
   },
   window: {
     onFullScreen,
+  },
+  activity: {
+    onEntry: onActivityEntry,
+  },
+  terminal: {
+    onData: onTerminalData,
+    onExit: onTerminalExit,
   },
   openExternal: (url: string) => ipcRenderer.invoke('holi:openExternal', url),
   openPath: (path: string) => ipcRenderer.invoke('holi:openPath', path),

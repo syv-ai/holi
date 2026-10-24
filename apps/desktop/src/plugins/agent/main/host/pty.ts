@@ -7,31 +7,15 @@
  * real spawn path only; tests inject a fake PTY and never touch it.
  */
 
-/** The slice of node-pty's IPty we depend on (tests implement it directly). */
-export interface PtyProcess {
-  readonly pid: number
-  onData(cb: (data: string) => void): void
-  onExit(cb: (e: { exitCode: number; signal?: number }) => void): void
-  write(data: string): void
-  resize(cols: number, rows: number): void
-  kill(signal?: string): void
-}
-
-export interface SpawnPtyOptions {
-  cwd: string
-  env: Record<string, string>
-  /** Omitted → node-pty's own native default (80×24). */
-  cols?: number
-  rows?: number
-}
-
-export type SpawnPty = (file: string, args: string[], opts: SpawnPtyOptions) => PtyProcess
-
-/** The only place node-pty is loaded — never reached under vitest. */
-export const defaultSpawnPty: SpawnPty = (file, args, opts) => {
-  const pty = require('node-pty') as typeof import('node-pty')
-  return pty.spawn(file, args, { name: 'xterm-256color', ...opts }) as unknown as PtyProcess
-}
+// The PTY itself is core's (`main/terminal/pty.ts`), shared with the bottom
+// panel's shells: one place loads node-pty.
+import {
+  defaultSpawnPty,
+  type PtyProcess,
+  type SpawnPty,
+  type SpawnPtyOptions,
+} from '../../../../main/plugin-api'
+export { defaultSpawnPty, type PtyProcess, type SpawnPty, type SpawnPtyOptions }
 
 // What a pid is right now lives in core, with the community plugins' servers
 // as its other user (`main/process-group.ts`).

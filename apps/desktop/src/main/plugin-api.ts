@@ -222,6 +222,12 @@ export { seedFolder } from './vault/seed/folder'
 export { jsonFileStore, type JsonFileStore } from './json-file-store'
 export { resolveBin, toolPath } from './bin'
 export { defaultProbePid, type PidState } from './process-group'
+export {
+  defaultSpawnPty,
+  type PtyProcess,
+  type SpawnPty,
+  type SpawnPtyOptions,
+} from './terminal/pty'
 export type { ActivityChannel, ActivityLevel } from './activity/log'
 export { remoteUrl, runGit, type RangeFile } from './git'
 export { gitignoreWith } from './vault/seed/core'

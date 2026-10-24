@@ -50,6 +50,8 @@ import {
 import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
 import { registerIpc } from './ipc'
+import { createActivityLog } from './activity/log'
+import { createTerminals } from './terminal/terminals'
 import { createRouter, localToday } from './router'
 import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
@@ -188,6 +190,18 @@ async function main(): Promise<void> {
 
   const send = (channel: string, payload: unknown) => mainWindow?.webContents.send(channel, payload)
 
+  // What Holi does in the background, for the bottom panel's Output
+  // (docs/features/status-bar.md). Kept from launch, so it holds what
+  // happened before the panel was ever opened.
+  const activity = createActivityLog({ onEntry: (entry) => send('activity:entry', entry) })
+  activity.write({ channel: 'app', message: `Holi ${app.getVersion()} started` })
+  // The bottom panel's shells. `binDir` is read lazily: the `holi` command is
+  // installed below, long before anyone opens a terminal.
+  const terminals = createTerminals({
+    send: (event) => send(`terminal:${event.kind}`, event),
+    binDir: () => binDir,
+  })
+
   const bridgeEnv = createBridgeEnv()
   /** remote → the undo of what the open vault's env file carries. */
   const vaultEnv = new Map<string, () => void>()
@@ -248,6 +262,7 @@ async function main(): Promise<void> {
     // would use. `capabilityHost` is built below, before any vault opens.
     call: async (remote, name, params) =>
       (await capabilityHost.dispatch({ door: 'ui', remote, name, params })).value,
+    activity: activity.write,
   })
 
   const host = createVaultHost({
@@ -294,9 +309,14 @@ async function main(): Promise<void> {
     // every commit tick and once at open, so a vault switch resets it.
     onHeldBack: (files) => send('vault:heldback', files),
     onCommitted: (paths) => send('vault:committed', paths),
+    activity: activity.write,
     // What plugins run in the vault stops here, the only place that still
-    // holds the vault they ran in.
-    onLeave: () => plugins.stop(),
+    // holds the vault they ran in. The panel's shells were started in its
+    // clone too, and stop with it.
+    onLeave: async () => {
+      await terminals.closeAll().catch((err) => console.error('[terminal] close failed:', err))
+      await plugins.stop()
+    },
   })
 
   // Serve every scheme. A plugin's answers 404 while the open vault has it off.
@@ -392,8 +412,38 @@ async function main(): Promise<void> {
 
   // Updating Holi itself. Installing is a quit, so it runs the quit's confirm
   // and teardown first and then lets the updater's own quit through.
+  /** The update's state as the log last heard it, so a check that finds
+   *  nothing every few hours is not a line each time. */
+  let loggedUpdate = ''
   const updater: Updater = createUpdater({
-    send: (status) => send('updates:status', status),
+    send: (status) => {
+      send('updates:status', status)
+      const line =
+        status.lastError !== null
+          ? `error:${status.lastError}`
+          : status.state === 'available' || status.state === 'ready'
+            ? `${status.state}:${status.availableVersion ?? ''}`
+            : ''
+      if (line !== '' && line !== loggedUpdate) {
+        activity.write(
+          status.lastError !== null
+            ? {
+                channel: 'app',
+                level: 'warn',
+                message: 'Update check failed',
+                detail: status.lastError,
+              }
+            : {
+                channel: 'app',
+                message:
+                  status.state === 'ready'
+                    ? `Holi ${status.availableVersion ?? ''} is ready to install`
+                    : `Holi ${status.availableVersion ?? ''} is available`,
+              },
+        )
+      }
+      loggedUpdate = line
+    },
     beforeInstall: async () => {
       if (quitting || confirmingQuit) return false
       confirmingQuit = true
@@ -408,6 +458,8 @@ async function main(): Promise<void> {
 
   const router = createRouter({
     updates: updater,
+    activity,
+    terminals,
     loginItem: {
       get: () => app.getLoginItemSettings().openAtLogin,
       set: (open) => app.setLoginItemSettings({ openAtLogin: open }),
@@ -656,6 +708,7 @@ async function main(): Promise<void> {
         // before we flush and commit: nothing a session was mid-writing
         // should race the teardown.
         await plugins.stop().catch((err) => console.error('[quit] plugins stop failed:', err))
+        await terminals.closeAll().catch((err) => console.error('[quit] terminals failed:', err))
         await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
         // A flush point is a flush THEN a commit, and only the renderer can do
         // the first half: the editor's newest words are not on disk until it

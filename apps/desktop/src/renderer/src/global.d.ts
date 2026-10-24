@@ -3,6 +3,8 @@ import type { SyncState } from '../../main/vault/active-vault'
 import type { HeldBackFile } from '../../main/vault/large-files'
 import type { PluginEvent } from '../../main/plugin-host/events'
 import type { UpdateStatus } from '../../main/updates/state'
+import type { ActivityEntry } from '../../main/activity/log'
+import type { TerminalEvent } from '../../main/terminal/terminals'
 import type { TrpcEnvelope, TrpcOpWire } from './lib/ipc-link'
 
 declare global {
@@ -65,6 +67,16 @@ declare global {
        *  traffic lights. Returns its unsubscribe. */
       window: {
         onFullScreen(cb: (fullScreen: boolean) => void): () => void
+      }
+      /** The activity log, a line at a time as main writes it. Returns its
+       *  unsubscribe. */
+      activity: {
+        onEntry(cb: (entry: ActivityEntry) => void): () => void
+      }
+      /** The bottom panel's shells. Each returns its unsubscribe. */
+      terminal: {
+        onData(cb: (event: Extract<TerminalEvent, { kind: 'data' }>) => void): () => void
+        onExit(cb: (event: Extract<TerminalEvent, { kind: 'exit' }>) => void): () => void
       }
       openExternal(url: string): Promise<void>
       /** Reveal a local path — a vault's clone folder — in the system file

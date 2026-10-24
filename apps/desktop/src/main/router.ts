@@ -50,7 +50,9 @@ import { GitHubApiError, type Contributor, type Repo } from './github/api'
 import type { DeviceFlow } from './github/device-flow'
 import { createMembersCache, type MembersCache } from './github/members-cache'
 import type { GitHubSession } from './github/session'
-import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
+import type { ActiveVault, SyncInfo, SyncState, VaultHost } from './vault/active-vault'
+import type { ActivityEntry, ActivityLog } from './activity/log'
+import type { TerminalInfo, TerminalOpened, Terminals } from './terminal/terminals'
 import { ensureClone } from './vault/clone'
 import { pruneEmptiedFolder, removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { renameNote } from './vault/rename'
@@ -179,6 +181,12 @@ export interface RouterDeps {
   /** Whether Holi opens at login, this machine's login item. Optional: absent,
    *  as in tests, it reads as off and cannot be set. */
   loginItem?: { get(): boolean; set(open: boolean): void }
+  /** The activity log the bottom panel's Output shows (`activity/log.ts`).
+   *  Optional: absent, as in tests, it reads as empty. */
+  activity?: Pick<ActivityLog, 'entries' | 'clear'>
+  /** The bottom panel's shells (`terminal/terminals.ts`). Optional: absent,
+   *  a terminal cannot be opened. */
+  terminals?: Terminals
 }
 
 /** `YYYY-MM-DD` in the machine's own timezone. `toISOString().slice(0, 10)`
@@ -645,7 +653,9 @@ export function createRouter(deps: RouterDeps) {
         } catch {
           // Fall through to the local history.
         }
-        const commits = await activeOrThrow().repo.log({ path }).catch(() => [])
+        const commits = await activeOrThrow()
+          .repo.log({ path })
+          .catch(() => [])
         const names = [...new Set(commits.map((commit) => commit.author))]
         return names.map((name) => ({ login: null, name, avatarUrl: null }))
       }),
@@ -1303,6 +1313,43 @@ export function createRouter(deps: RouterDeps) {
     /** The push channel carries changes; this is the initial read. */
     state: t.procedure.query((): SyncState => activeOrThrow().syncState()),
 
+    /**
+     * What the status bar shows beside the state: the branch, whether the
+     * tree has uncommitted changes, ahead and behind, and when the remote
+     * last answered. Read live (one `git status`), on the bar's own schedule.
+     */
+    info: t.procedure.query(
+      async (): Promise<
+        | (SyncInfo & {
+            remote: string
+            branch: string
+            dirty: boolean
+            ahead: number
+            behind: number
+          })
+        | null
+      > => {
+        const active = deps.host.active()
+        if (active === null) return null
+        const status = await active.repo.status().catch(() => null)
+        if (status === null) return null
+        return {
+          remote: active.remote,
+          branch: status.branch,
+          dirty: status.dirty,
+          ahead: status.ahead,
+          behind: status.behind,
+          ...active.syncInfo(),
+        }
+      },
+    ),
+
+    /** The status bar's sync item: commit, pull and push now. */
+    now: t.procedure.mutation(async () => {
+      await activeOrThrow().syncNow()
+      return { ok: true as const }
+    }),
+
     /** ⌘S: a real commit point rather than a placebo. */
     commitNow: t.procedure.mutation(() => activeOrThrow().commitNow()),
 
@@ -1680,6 +1727,80 @@ export function createRouter(deps: RouterDeps) {
       ),
   })
 
+  /** The bottom panel's Output: what Holi did in the background. The push
+   *  channel (`activity:entry`) carries each new line; this is the first read. */
+  const activity = t.router({
+    entries: t.procedure.query((): ActivityEntry[] => deps.activity?.entries() ?? []),
+    /** Clear it in main too, so a reload does not bring the lines back. */
+    clear: t.procedure.mutation(() => {
+      deps.activity?.clear()
+      return { ok: true as const }
+    }),
+  })
+
+  /**
+   * The bottom panel's shells (docs/features/status-bar.md): a login shell in
+   * a PTY in the open vault's clone. Each call names the vault, and one about
+   * any vault but the open one is refused or dropped; output arrives on the
+   * `terminal:data` push.
+   */
+  const terminalInput = (raw: unknown) => fields({ remote: 'string', id: 'string' })(raw)
+  const sizeOf = (raw: unknown): { cols: number; rows: number } => {
+    const { cols, rows } = (raw ?? {}) as Record<string, unknown>
+    const ok = (n: unknown): n is number =>
+      typeof n === 'number' && Number.isInteger(n) && n > 0 && n < 10_000
+    if (!ok(cols) || !ok(rows)) throw new Error('cols and rows must be positive integers')
+    return { cols, rows }
+  }
+  const terminalsOrThrow = (): Terminals => {
+    if (deps.terminals === undefined) throw new TRPCError({ code: 'PRECONDITION_FAILED' })
+    return deps.terminals
+  }
+  const terminal = t.router({
+    list: t.procedure
+      .input(fields({ remote: 'string' }))
+      .query(({ input }): TerminalInfo[] => deps.terminals?.list(input.remote) ?? []),
+    create: t.procedure
+      .input((raw: unknown) => ({ ...fields({ remote: 'string' })(raw), ...sizeOf(raw) }))
+      .mutation(({ input }): TerminalOpened => {
+        const active = deps.host.active()
+        if (active === null || active.remote !== input.remote) {
+          return { ok: false, message: 'That vault is not open.' }
+        }
+        return terminalsOrThrow().create({
+          remote: active.remote,
+          root: active.root,
+          cols: input.cols,
+          rows: input.rows,
+        })
+      }),
+    /** What it printed so far, for an xterm built after the output. */
+    replay: t.procedure
+      .input(terminalInput)
+      .query(({ input }): string => deps.terminals?.replay(input.remote, input.id) ?? ''),
+    write: t.procedure
+      .input((raw: unknown) => {
+        const base = terminalInput(raw)
+        const data = (raw as Record<string, unknown>).data
+        if (typeof data !== 'string' || data.length > 1_000_000) throw new Error('bad data')
+        return { ...base, data }
+      })
+      .mutation(({ input }) => {
+        deps.terminals?.write(input.remote, input.id, input.data)
+        return { ok: true as const }
+      }),
+    resize: t.procedure
+      .input((raw: unknown) => ({ ...terminalInput(raw), ...sizeOf(raw) }))
+      .mutation(({ input }) => {
+        deps.terminals?.resize(input.remote, input.id, input.cols, input.rows)
+        return { ok: true as const }
+      }),
+    kill: t.procedure.input(terminalInput).mutation(async ({ input }) => {
+      await deps.terminals?.kill(input.remote, input.id)
+      return { ok: true as const }
+    }),
+  })
+
   /** This machine's app: whether it opens at login, so the reminders and
    *  sync are there from the start. */
   const app = t.router({
@@ -1709,6 +1830,8 @@ export function createRouter(deps: RouterDeps) {
     cap,
     updates,
     app,
+    activity,
+    terminal,
   })
 }
 
