@@ -108,6 +108,9 @@ export interface Surface {
    *  them, the Home picker offers a folder document's, and its rail item
    *  drills down to them. */
   instances?: Atom<readonly string[]>
+  /** One instance's own words about itself, for its card on a launcher page
+   *  (the Apps page); null when it has none. Read again as its files change. */
+  describe?: (remote: string, id: string) => Promise<string | null>
   /** Controls at the end of the pane's tab strip while its tab is active. */
   headerActions?: ComponentType<{ id?: string }>
   /**

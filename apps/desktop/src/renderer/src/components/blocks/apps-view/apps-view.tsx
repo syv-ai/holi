@@ -1,33 +1,26 @@
 /**
  * Apps: every vault app, most recently opened first, from the sidebar's row
- * under Search. Read off the registry's `app` surface (its `instances`, label
- * and icon), so core never reaches into the apps plugin, and the page says
- * so when that plugin is off.
+ * under Search, each on a card (`app-card.tsx`). Read off the registry's `app`
+ * surface (its `instances`, label, icon and `describe`), so core never reaches
+ * into the apps plugin, and the page says so when that plugin is off.
  */
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { atom, useAtomValue, useSetAtom } from "jotai"
-import { AppWindowIcon, FolderIcon, PlusIcon, SettingsIcon } from "lucide-react"
+import { AppWindowIcon, PlusIcon, SettingsIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { IconStackEmpty } from "@/components/reui/icon-stack-empty"
 import { ViewHeader, ViewHeaderTitle } from "@/composites/ViewHeader"
-import {
-  Item,
-  ItemContent,
-  ItemDescription,
-  ItemMedia,
-  ItemTitle,
-} from "@/components/ui/item"
 import { claimsAtom, surfacesAtom } from "@/state/plugins"
 import { openTabAtom } from "@/state/shell-tabs"
-import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
+import {
+  activeRemoteAtom,
+  snapshotAtom,
+  snapshotLoadedAtom,
+} from "@/state/vaults"
+import { AppCard, AppCardSkeleton } from "./app-card"
 
 const NO_APPS = atom<readonly string[]>([])
-
-function folderOf(path: string): string | null {
-  const slash = path.lastIndexOf("/")
-  return slash === -1 ? null : path.slice(0, slash)
-}
 
 /** The first `Untitled`, `Untitled 2`, … that no vault path takes, as an
  *  app's name at the vault root. */
@@ -43,6 +36,21 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
   const apps = useAtomValue(surface?.instances ?? NO_APPS)
   const remote = useAtomValue(activeRemoteAtom)
   const snapshot = useAtomValue(snapshotAtom)
+  const loaded = useAtomValue(snapshotLoadedAtom)
+  /** Each app's newest file mtime, so its card reads its description again
+   *  when the app changes. */
+  const stamps = useMemo(() => {
+    const out = new Map<string, string>()
+    for (const app of apps) {
+      let newest = ""
+      for (const file of snapshot.files) {
+        if (file.path.startsWith(`${app}/`) && file.updatedAt > newest)
+          newest = file.updatedAt
+      }
+      out.set(app, newest)
+    }
+    return out
+  }, [apps, snapshot.files])
   const openTab = useSetAtom(openTabAtom)
   /** The apps plugin's New app, as the Files menu offers it. */
   const create = useAtomValue(claimsAtom).find(
@@ -101,6 +109,17 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
               onClick: () => openTab({ kind: "settings" }),
             }}
           />
+        ) : !loaded && remote !== null ? (
+          <ul
+            className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
+            aria-label="Loading apps"
+          >
+            {[0, 1, 2].map((n) => (
+              <li key={n}>
+                <AppCardSkeleton />
+              </li>
+            ))}
+          </ul>
         ) : apps.length === 0 ? (
           <IconStackEmpty
             icon={AppWindowIcon}
@@ -118,39 +137,27 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
             }
           />
         ) : (
-          <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {apps.map((path) => {
               const name =
                 typeof surface.label === "function"
                   ? surface.label(path)
                   : surface.label
-              const folder = folderOf(path)
-              const Icon = surface.icon
+              const describe = surface.describe
               return (
                 <li key={path}>
-                  <Item asChild variant="outline">
-                    <button
-                      type="button"
-                      onClick={() => onOpen(path)}
-                      className="hover:bg-muted/50 w-full text-start transition-colors"
-                    >
-                      <ItemMedia variant="icon">
-                        <Icon className="size-4" />
-                      </ItemMedia>
-                      <ItemContent className="min-w-0">
-                        <ItemTitle className="truncate">{name}</ItemTitle>
-                        <ItemDescription className="flex min-w-0 items-center gap-1.5">
-                          <FolderIcon
-                            className="size-3.5 shrink-0"
-                            aria-hidden="true"
-                          />
-                          <span className="truncate">
-                            {folder ?? "Vault root"}
-                          </span>
-                        </ItemDescription>
-                      </ItemContent>
-                    </button>
-                  </Item>
+                  <AppCard
+                    path={path}
+                    name={name}
+                    icon={surface.icon}
+                    stamp={stamps.get(path) ?? ""}
+                    describe={
+                      describe === undefined || remote === null
+                        ? undefined
+                        : () => describe(remote, path)
+                    }
+                    onOpen={() => onOpen(path)}
+                  />
                 </li>
               )
             })}

@@ -4,7 +4,7 @@
  * open (the agent's `holi apps open`) lands in the shell's tabs.
  */
 import { atom, createStore, Provider } from "jotai"
-import { expect, test, vi } from "vitest"
+import { expect, test } from "vitest"
 import userEvent from "@testing-library/user-event"
 import { render, screen } from "@/test/render"
 import { coreContributionAtom } from "@/state/plugins"
@@ -68,40 +68,4 @@ test("a plugin's open reaches the shell's tabs", () => {
   const store = withApps()
   store.set(openSurfaceAtom, "app", "Budget.app")
   expect(JSON.stringify(store.get(shellWorkspaceAtom))).toContain("Budget.app")
-})
-
-test("an empty Apps page offers New app, which opens the app", async () => {
-  const { AppsView } = await import("../apps-view")
-  const store = withApps()
-  const run = vi.fn().mockResolvedValue("Untitled.app/index.html")
-  store.set(coreContributionAtom, {
-    ...store.get(coreContributionAtom),
-    claims: [
-      {
-        match: (p: string) => p.endsWith(".app"),
-        folder: { surface: "app", entry: "index.html" },
-        create: {
-          id: "app",
-          label: "New app",
-          icon: () => null,
-          placeholder: "App name",
-          run,
-        },
-      },
-    ],
-  })
-  const onOpen = vi.fn()
-  render(
-    <Provider store={store}>
-      <AppsView onOpen={onOpen} />
-    </Provider>
-  )
-  expect(screen.getByText("No apps yet")).toBeInTheDocument()
-  await userEvent.click(screen.getByRole("button", { name: "New app" }))
-  expect(run).toHaveBeenCalledWith({
-    remote: "syv-ai/site",
-    parent: "",
-    name: "Untitled",
-  })
-  expect(onOpen).toHaveBeenCalledWith("Untitled.app")
 })

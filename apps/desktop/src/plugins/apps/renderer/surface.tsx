@@ -66,6 +66,8 @@ export const APP_SURFACE: Surface = {
   icon: AppIcon,
   render: AppSurface,
   instances: appInstancesAtom,
+  // The manifest's `description`, which is there for the launchers.
+  describe: (remote, id) => appsCap.describe(remote, { bundle: id }).then((r) => r.description),
   headerActions: AppHeaderActions,
 }
 

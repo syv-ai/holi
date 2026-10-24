@@ -38,6 +38,8 @@ async function rig() {
     'task.review.md': '---\ntitle: Review\nstatus: todo\n---\n',
     'Tracker.app/index.html': '<p>tracker</p>\n',
     'Tracker.app/app.yaml': '',
+    'Budget.app/index.html': '<p>budget</p>\n',
+    'Budget.app/app.yaml': 'description: What the month cost, by category\n',
   })) {
     await mkdir(dirname(join(root, rel)), { recursive: true })
     await writeFile(join(root, rel), text)
@@ -81,7 +83,10 @@ async function rig() {
         params: { bundle, method, params },
       })
     ).value
-  return { call, door }
+  /** One of Holi's own UI calls, as the renderer's `appsCap` makes it. */
+  const ui = async (name: string, params?: unknown) =>
+    (await host.dispatch({ door: 'ui', remote: REMOTE, name, params })).value
+  return { call, door, ui }
 }
 
 describe('apps.call', () => {
@@ -160,9 +165,26 @@ describe('apps.call', () => {
     // names `apps.call` cannot call as another app, and one that names
     // `apps.grant` cannot approve itself.
     const { call, door } = await rig()
-    for (const method of ['apps.call', 'apps.grant', 'apps.grants', 'apps.log']) {
+    for (const method of ['apps.call', 'apps.grant', 'apps.grants', 'apps.describe', 'apps.log']) {
       await expect(door.call(REMOTE, 'Tracker.app', method, {})).rejects.toThrow(/no such method/)
       await expect(call(method, {})).rejects.toThrow(/no such method/)
     }
+  })
+})
+
+describe('apps.describe', () => {
+  it("reads the manifest's description for the Apps page, and null without one", async () => {
+    const { ui } = await rig()
+    expect(await ui('apps.describe', { bundle: 'Budget.app' })).toEqual({
+      description: 'What the month cost, by category',
+    })
+    expect(await ui('apps.describe', { bundle: 'Tracker.app' })).toEqual({ description: null })
+  })
+
+  it('refuses a path that is no app', async () => {
+    const { ui } = await rig()
+    await expect(ui('apps.describe', { bundle: 'inbox.md' })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    })
   })
 })

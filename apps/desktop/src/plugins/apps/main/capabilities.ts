@@ -122,6 +122,16 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
     },
   }),
 
+  /** The app's `description` from its manifest, for its card on the Apps
+   *  page; null when it gives none. */
+  'apps.describe': cap({
+    doors: ['ui'],
+    params: (raw) => ({ bundle: bundleParam(paramsObject(raw)) }),
+    run: async (ctx, { bundle }) => ({
+      description: (await manifestOf(ctx.root, bundle))?.description ?? null,
+    }),
+  }),
+
   /** The person approved the dialog. UI door only, so an app can never
    *  approve itself. False: the app changed since the dialog was shown, so
    *  ask again. */
