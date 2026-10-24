@@ -86,7 +86,12 @@ export const LINK_PATH_CLAIM: PathClaim = {
   frontmatter: { fields: LINK_FIELDS, controls: { url: UrlField }, alwaysOpen: true },
 }
 
-const LINK_MARK: PathMark = { glyph: <Icon icon={Link} size="sm" tone="muted" /> }
+/** A file type's colour, as the tree gives every other file its own. Drawn a
+ *  little under the icon size: the chain runs corner to corner, so at full
+ *  size it reads larger than the file shapes around it. */
+const LINK_MARK: PathMark = {
+  glyph: <Icon icon={Link} size="sm" className="scale-[0.86] text-file-sky" />,
+}
 
 /** Every link file's glyph, in the tree and the tabs. */
 export const linkMarksAtom = atom(
