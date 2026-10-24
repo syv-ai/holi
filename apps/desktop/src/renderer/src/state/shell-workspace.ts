@@ -2,8 +2,8 @@
  * The fresh shell's tabs and split views (docs/features/tabs-panes.md), as
  * pure functions over a `ShellWorkspace`, after Arc's: **one strip** of
  * entries, one of them active. An entry is either a single view (a tab key,
- * `state/tab-descriptor.ts`) or a **split**: one strip entry holding two or
- * three views side by side, one of them focused. Selecting a split shows its
+ * `state/tab-descriptor.ts`) or a **split**: one strip entry holding two to
+ * four views side by side, one of them focused. Selecting a split shows its
  * members side by side; selecting any other entry shows that view alone, the
  * split staying in the strip as its own entry.
  *
@@ -26,7 +26,7 @@ export interface ShellSplit {
   /** `holi:split:<n>`: a `holi:` key no tab kind parses, so it never meets
    *  a tab key (`tabKey` only writes kinds it knows). */
   id: string
-  /** Its members' tab keys, left to right; two or three. */
+  /** Its members' tab keys, left to right; two to four. */
   views: string[]
   /** Each member's share of the width, 0 to 1, summing to 1. */
   shares: number[]
@@ -243,29 +243,55 @@ function addToActive(
 ): ShellWorkspace {
   const entry = activeEntry(ws)
   if (entry === null) return insertEntry(ws, key, ws.entries.length)
-  const at = indexOfEntry(ws, entryId(entry))
-  if (!isSplit(entry)) {
-    const { id, seq } = nextSplitId(ws)
-    const views = side === "left" ? [key, entry] : [entry, key]
-    const split: ShellSplit = { id, views, shares: evenShares(2), focused: key }
-    return { ...ws, seq, entries: replaceEntryAt(ws, at, split), active: id }
-  }
-  if (entry.views.length >= MAX_SPLIT) {
+  if (isSplit(entry) && entry.views.length >= MAX_SPLIT) {
     return replaceIn(ws, entry.id, beside ?? entry.focused, key)
   }
-  const anchor = beside === undefined ? -1 : entry.views.indexOf(beside)
+  const views = entryViews(entry)
+  const anchor = beside === undefined ? -1 : views.indexOf(beside)
   const index =
     anchor === -1
       ? side === "left"
         ? 0
-        : entry.views.length
+        : views.length
       : anchor + (side === "left" ? 0 : 1)
-  const views = [...entry.views]
-  views.splice(index, 0, key)
+  return insertMember(ws, key, index)
+}
+
+/**
+ * `key` (not open anywhere) into the active entry at member `index` (0 to
+ * its count), focused: a single tab and it make a split in the tab's place,
+ * a split with room takes it there. The newcomer takes an even share of the
+ * width, `1 / (count + 1)`, and the others keep their proportions, which is
+ * the gap the drag preview opens (`panes-view.tsx`). The caller checks for
+ * room.
+ */
+function insertMember(
+  ws: ShellWorkspace,
+  key: string,
+  index: number
+): ShellWorkspace {
+  const entry = activeEntry(ws)
+  if (entry === null) return insertEntry(ws, key, ws.entries.length)
+  const at = indexOfEntry(ws, entryId(entry))
+  const before = entryViews(entry)
+  const where = Math.max(0, Math.min(index, before.length))
+  const views = [...before]
+  views.splice(where, 0, key)
   const n = views.length
-  // The newcomer takes an even share; the others keep their proportions.
-  const shares = entry.shares.map((s) => (s * (n - 1)) / n)
-  shares.splice(index, 0, 1 / n)
+  const shares = (isSplit(entry) ? entry.shares : [1]).map(
+    (s) => (s * (n - 1)) / n
+  )
+  shares.splice(where, 0, 1 / n)
+  if (!isSplit(entry)) {
+    const { id, seq } = nextSplitId(ws)
+    const split: ShellSplit = {
+      id,
+      views,
+      shares: normalise(shares),
+      focused: key,
+    }
+    return { ...ws, seq, entries: replaceEntryAt(ws, at, split), active: id }
+  }
   const split: ShellSplit = {
     ...entry,
     views,
@@ -273,6 +299,12 @@ function addToActive(
     focused: key,
   }
   return { ...ws, entries: replaceEntryAt(ws, at, split), active: entry.id }
+}
+
+/** Whether `key` names a view (a tab key), not a split's id or junk: what a
+ *  drop takes, whether it is open already or comes from the sidebar. */
+function isViewKey(key: string): boolean {
+  return parseTabKey(key) !== null
 }
 
 // ------------------------------------------------------------------ opening
@@ -589,7 +621,8 @@ export function moveEntry(
 /**
  * A drop on the strip at `index`: an entry dragged along the strip moves
  * there; a split member's header dragged to the strip leaves its split for a
- * tab of its own there.
+ * tab of its own there; a view not open yet (dragged from the sidebar) opens
+ * as a tab there, selected.
  */
 export function dropOnStrip(
   ws: ShellWorkspace,
@@ -597,6 +630,9 @@ export function dropOnStrip(
   index: number
 ): ShellWorkspace {
   if (indexOfEntry(ws, dragged) !== -1) return moveEntry(ws, dragged, index)
+  if (entryOf(ws, dragged) === null) {
+    return isViewKey(dragged) ? insertEntry(ws, dragged, index) : ws
+  }
   return moveOut(ws, dragged, index)
 }
 
@@ -618,8 +654,9 @@ export type DropZone = "left" | "right" | "center"
  *   New tab when it is the only one: the gesture of dragging a tab beside
  *   what is open.
  *
- * A drop that would change nothing (a view onto itself, a split's id) is
- * the same workspace, which is how a drop target tells whether to take it.
+ * A view not open yet (dragged from the sidebar) lands the same way. A drop
+ * that would change nothing (a view onto itself, a split's id) is the same
+ * workspace, which is how a drop target tells whether to take it.
  */
 export function dropTab(
   ws: ShellWorkspace,
@@ -632,9 +669,7 @@ export function dropTab(
   if (key === target) {
     return !isSplit(entry) && zone !== "center" ? splitOwn(ws, key, zone) : ws
   }
-  if (!entryViews(entry).includes(target) || entryOf(ws, key) === null) {
-    return ws
-  }
+  if (!entryViews(entry).includes(target) || !isViewKey(key)) return ws
   if (!isSplit(entry)) {
     if (zone === "center") return ws
     return addToActive(detach(ws, key), key, zone)
@@ -690,6 +725,55 @@ function splitOwn(
     entries: replaceEntryAt(ws, at, split),
     active: next.id,
   }
+}
+
+/**
+ * A view dropped between two members of the active entry, or on one of its
+ * outer edges (the drag preview's gap, `panes-view.tsx`): `index` is the
+ * member it lands before, 0 to the count. It is taken out of wherever it
+ * was, or opens there when it was not open (dragged from the sidebar), and
+ * takes an even share, the others keeping their proportions; focused.
+ *
+ * - The tab in front dropped on its own edge splits there with its
+ *   neighbour, as `dropTab` does.
+ * - A member of the active split moves to that place, its share with it.
+ * - A full split (`MAX_SPLIT`) takes no insertion: the caller replaces a
+ *   member instead (`dropTab` in its middle).
+ * - With nothing open it opens as a tab.
+ *
+ * A drop that would change nothing is the same workspace.
+ */
+export function insertIntoActive(
+  ws: ShellWorkspace,
+  key: string,
+  index: number
+): ShellWorkspace {
+  if (!isViewKey(key)) return ws
+  const entry = activeEntry(ws)
+  if (entry === null) return openTab(ws, key)
+  if (!isSplit(entry)) {
+    const side = index <= 0 ? "left" : "right"
+    if (entry === key) return splitOwn(ws, key, side)
+    return addToActive(detach(ws, key), key, side)
+  }
+  const from = entry.views.indexOf(key)
+  if (from !== -1) {
+    const to = Math.max(
+      0,
+      Math.min(from < index ? index - 1 : index, entry.views.length - 1)
+    )
+    if (to === from) return ws
+    const views = entry.views.filter((_, i) => i !== from)
+    const shares = entry.shares.filter((_, i) => i !== from)
+    views.splice(to, 0, key)
+    shares.splice(to, 0, entry.shares[from]!)
+    const at = indexOfEntry(ws, entry.id)
+    const split: ShellSplit = { ...entry, views, shares, focused: key }
+    return { ...ws, entries: replaceEntryAt(ws, at, split), active: entry.id }
+  }
+  if (entry.views.length >= MAX_SPLIT) return ws
+  // `key` is not in the active split, so taking it out leaves that alone.
+  return insertMember(detach(ws, key), key, index)
 }
 
 /** A split's shares, in member order, normalised to sum to 1. */

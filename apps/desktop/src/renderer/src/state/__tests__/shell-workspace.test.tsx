@@ -17,6 +17,7 @@ import {
   focusedTab,
   focusMember,
   gotoTab,
+  insertIntoActive,
   isSplit,
   MAX_SPLIT,
   moveEntry,
@@ -188,6 +189,67 @@ describe("making a split", () => {
     expect(strip(dropTab(ws, B, A, "left"))).toEqual([[B, A], C])
     expect(strip(dropTab(ws, A, B, "center"))).toEqual([[B, A], C])
     expect(dropTab(ws, A, B, "left")).toBe(ws)
+  })
+})
+
+describe("inserting at a place (the drag preview)", () => {
+  test("a tab dropped at a single view's edge splits with it there, half and half", () => {
+    const ws = withTabs(A, B)
+    expect(strip(insertIntoActive(ws, A, 1))).toEqual([[B, A]])
+    expect(strip(insertIntoActive(ws, A, 0))).toEqual([[A, B]])
+    expect(split(insertIntoActive(ws, A, 1)).shares).toEqual([0.5, 0.5])
+    expect(focusedTab(insertIntoActive(ws, A, 0))).toBe(A)
+  })
+
+  test("the tab in front dropped on its own edge splits with its neighbour", () => {
+    const ws = selectEntry(withTabs(A, B, C), B)
+    expect(strip(insertIntoActive(ws, B, 1))).toEqual([[A, B], C])
+    expect(strip(insertIntoActive(ws, B, 0))).toEqual([[B, A], C])
+  })
+
+  test("a view lands between two members with an even share, the others keeping their proportions", () => {
+    let ws = pair()
+    ws = setShares(ws, split(ws).id, [0.6, 0.4])
+    ws = insertIntoActive(ws, C, 1)
+    expect(strip(ws)).toEqual([[A, C, B]])
+    const shares = split(ws).shares
+    expect(shares[0]).toBeCloseTo(0.4)
+    expect(shares[1]).toBeCloseTo(1 / 3)
+    expect(shares[2]).toBeCloseTo(0.4 * (2 / 3))
+    expect(focusedTab(ws)).toBe(C)
+    expect(strip(insertIntoActive(pair(), C, 0))).toEqual([[C, A, B]])
+    expect(strip(insertIntoActive(pair(), C, 2))).toEqual([[A, B, C]])
+  })
+
+  test("a view not open yet opens in that place; one open elsewhere moves there", () => {
+    expect(strip(insertIntoActive(pair(), D, 1))).toEqual([[A, D, B], C])
+    expect(strip(insertIntoActive(withTabs(A), S, 0))).toEqual([[S, A]])
+    expect(strip(insertIntoActive(emptyWorkspace(), D, 0))).toEqual([D])
+  })
+
+  test("a member of the split moves to that place, its share with it", () => {
+    let ws = openInSplit(pair(), C)
+    ws = setShares(ws, split(ws).id, [0.5, 0.3, 0.2])
+    ws = insertIntoActive(ws, A, 3)
+    expect(strip(ws)).toEqual([[B, C, A]])
+    expect(split(ws).shares).toEqual([0.3, 0.2, 0.5])
+    expect(insertIntoActive(ws, A, 2)).toBe(ws)
+    expect(insertIntoActive(ws, A, 3)).toBe(ws)
+  })
+
+  test("a full split takes no insertion, and a split's id is no view", () => {
+    let ws = selectEntry(withTabs(A, B, C, D, E), A)
+    ws = openInSplit(openInSplit(openInSplit(ws, B), C), D)
+    expect(insertIntoActive(ws, E, 1)).toBe(ws)
+    const two = pair()
+    expect(insertIntoActive(two, split(two).id, 1)).toBe(two)
+  })
+
+  test("a view not open yet replaces a member, or opens on the strip", () => {
+    expect(strip(dropTab(pair(), D, A, "center"))).toEqual([[D, B], A, C])
+    expect(strip(dropOnStrip(withTabs(A, B), D, 1))).toEqual([A, D, B])
+    expect(withTabs(A, B).active).toBe(B)
+    expect(dropOnStrip(withTabs(A, B), D, 1).active).toBe(D)
   })
 })
 
