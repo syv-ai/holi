@@ -35,10 +35,11 @@ mode, the mode's own list, and who is signed in. Everywhere else is one keystrok
   `{owner, id}`, so a plugin's row opens its own view. Built-in [chat](chat.md) is one, and its
   new-session page is the home, so Agents always opens on the composer. In the shell the sidebar's Agents tab is the mode
   (`sidebarSectionAtom` is `appModeAtom`), and it switches the sidebar only. **Agents opens tabs**
-  ([tabs and panes](tabs-panes.md)): a row picked, an Inbox card or a chat started is a session
-  tab in the focused pane, focused where it already is, never opened twice; the mode's `main`
-  draws one tab's selection (`{selection}`), so two panes can show two sessions. The selection
-  follows the focused tab back, so the list marks the session in front. + on the Agents side
+  ([tabs and split view](tabs-panes.md)): a row picked, an Inbox card or a chat started is a
+  session tab (in the focused member while a split is active), selected where it already is, never
+  opened twice; the mode's `main` draws one tab's selection (`{selection}`), so a split can show
+  two sessions. The selection follows the view in front back, so the list marks the session in
+  front. + on the Agents side
   opens the Agents home (the new-session page) as a tab, and a chat started there takes that
   tab's place once it has an id. A row's menu offers Open to the side (`openTabAtom` with
   `beside`). The mode's `tabLook` names a session tab and gives its dot (working, needs you,

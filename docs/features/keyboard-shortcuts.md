@@ -37,9 +37,12 @@ same table, so the sheet can only show keys that work. The dialog opens from the
 | Tabs       | Next tab / previous tab       | ⌃Tab / ⌃⇧Tab | Ctrl Tab / Ctrl Shift Tab |
 | Tabs       | Go to tab 1 to 8, or the last | ⌘1 to ⌘9     | Ctrl 1 to Ctrl 9          |
 | Tabs       | Close tab                     | ⌘W (menu)    | Ctrl W (menu)             |
+| Tabs       | New tab                       | ⌘T           | Ctrl T                    |
 | Tabs       | Close all tabs                | ⌥⌘W          | Ctrl Alt W                |
 | Tabs       | Reopen closed tab             | ⇧⌘T          | Ctrl Shift T              |
-| Tabs       | Split right                   | ⌘\           | Ctrl \                    |
+| Split view | Split view                    | ⌘\           | Ctrl \                    |
+| Split view | Separate split view           | ⇧⌘\          | Ctrl Shift \              |
+| Split view | Focus next / previous view    | ⌃⌥→ / ⌃⌥←    | Ctrl Alt → / ←            |
 | Files      | New document                  | ⌘N           | Ctrl N                    |
 | Files      | Rename selected file          | F2           | F2                        |
 | Files      | Collapse all folders          | ⌥⌘←          | Ctrl Alt ←                |
@@ -61,9 +64,21 @@ same table, so the sheet can only show keys that work. The dialog opens from the
 - **⌘W is the menu's.** It is the File menu's accelerator (`main/menu.ts`), which fires before the
   page sees the key, so its row is display only (`boundBy: 'menu'`) and main sends `tab.close`.
   Mail, Calendar and Settings are tabs, so ⌘W closes them like any other.
-- **The tab keys act on the focused pane** ([tabs and panes](tabs-panes.md)): next, previous,
-  ⌘1–9, ⌘W and ⌥⌘W (Close all tabs, which closes a split pane with them) stay within it, and
-  ⌘\ opens a pane beside it.
+- **The tab keys act on the one strip** ([tabs and split view](tabs-panes.md)): next, previous
+  and ⌘1–9 go over its entries, a split counting as one; ⌥⌘W closes them all. **⌘W closes the
+  view in front:** the focused member inside a split (a 2-split turns back into a tab), the tab
+  otherwise. ⌘T opens a New tab at the strip's end, or the Agents home while the sidebar is on
+  Agents, as + does.
+- **Split view keys.** ⌘\ makes a split of the active tab and a New tab (or adds a New tab to a
+  split with room). ⇧⌘\ separates the active split and ⌃⌥→ / ⌃⌥← step its focused member; the
+  three are live, and listed, only while a split is active. Shift turns `\` into `|` on most
+  layouts, so the separate row lists both characters, and a key whose spec names the Shift held
+  wins over a symbol key that would ignore it (`resolveShortcut`), so ⇧⌘\ never splits. The
+  members step on ⌃⌥ because ⌥⌘← is Collapse all folders. The dialog's Split view group also lists
+  the drags (to a view's edge, onto a view, a header to the tabs) as gesture rows: a row with no
+  keys and a `gesture`, listed while the row it names in `liveWith` is.
+- **⌘T is free.** The menu binds only ⌘W and ⌘⇧W, and the earlier shell's ⌘T (quick-add task in
+  `state/commands.ts`) is not mounted by the fresh shell.
 - **No clashes** with the menu's accelerators (Edit's ⌘Z ⌘X ⌘C ⌘V ⌘A, View's ⌘R ⌘0 ⌘+ ⌘-
   ⌥⌘I ⌃⌘F, Window's ⌘M, ⌘⇧W, ⌘H, ⌘Q) or macOS's own (⌘Tab, ⌘Space, ⌘\`). A test pins ids and
   keys unique.
