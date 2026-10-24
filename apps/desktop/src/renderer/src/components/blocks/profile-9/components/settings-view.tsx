@@ -39,7 +39,7 @@ export function SettingsView({ navHidden }: { navHidden: boolean }) {
       data-slot="settings-view"
       className="flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
-      <div className="mx-auto flex w-full max-w-3xl min-w-0 flex-col gap-4 p-3 sm:p-4 lg:p-6">
+      <div className="mx-auto flex w-full max-w-3xl min-w-0 flex-col gap-8 p-3 sm:p-4 lg:p-6">
         <div className="flex min-w-0 items-start justify-between gap-3">
           <div className="flex min-w-0 flex-col gap-0.5">
             <h1 className="truncate text-xl font-semibold tracking-tight">
@@ -73,7 +73,7 @@ export function SettingsView({ navHidden }: { navHidden: boolean }) {
         </div>
         {remote === null ? null : (
           // Keyed by page and vault: a page's local state never outlives either.
-          <div key={`${page.id}:${remote}`} className="flex flex-col gap-4">
+          <div key={`${page.id}:${remote}`} className="flex flex-col gap-8">
             <Page remote={remote} />
           </div>
         )}

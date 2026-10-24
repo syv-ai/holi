@@ -29,6 +29,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/reui/badge"
+import { pluginMark } from "@/composites"
 import { Switch } from "@/components/ui/switch"
 import { trpc } from "@/lib/trpc"
 import type { SettingsSection } from "@/plugin-api/types"
@@ -51,7 +52,7 @@ export function PluginsPage({
       <PluginSwitches />
       {nested.map(({ id, label, description, Component }) => (
         <SettingsCard key={id} title={label} description={description}>
-          <div className="px-4 py-3">
+          <div className="py-3">
             <Component remote={remote} />
           </div>
         </SettingsCard>
@@ -132,6 +133,7 @@ function PluginSwitches() {
           <SettingsRow
             key={info.id}
             title={info.label}
+            mark={pluginMark(info.id)}
             htmlFor={id}
             align="start"
             titleAddon={

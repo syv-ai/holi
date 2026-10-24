@@ -25,6 +25,8 @@ import {
 } from "@/components/ui/empty"
 import { Switch } from "@/components/ui/switch"
 import { trpc } from "@/lib/trpc"
+import { useAgentService } from "@/state/agent-service"
+import { claudeFirstRunAtom } from "@/state/claude-first-run"
 import { settingDescriptorsAtom } from "@/state/plugins"
 import {
   activeRemoteAtom,
@@ -32,7 +34,7 @@ import {
   syncStateAtom,
   vaultsAtom,
 } from "@/state/vaults"
-import { ExternalLinkIcon, FolderOpenIcon } from "lucide-react"
+import { ExternalLinkIcon, FolderOpenIcon, ShieldCheckIcon } from "lucide-react"
 
 import {
   OptionSelect,
@@ -62,6 +64,8 @@ export function GeneralPage() {
   const entry = useAtomValue(vaultsAtom).find((v) => v.remote === remote)
   const sync = syncLabel(useAtomValue(syncStateAtom))
   const retrySync = useSetAtom(retrySyncAtom)
+  const agent = useAgentService()
+  const firstRun = useSetAtom(claudeFirstRunAtom)
 
   if (entry === undefined) {
     return (
@@ -121,6 +125,27 @@ export function GeneralPage() {
             </Button>
           ) : null}
         </div>
+      </SettingsRow>
+      {/* Each machine's Claude Code asks once to trust the vault's folder and
+          to sign in, and refuses background work until it has: a colleague
+          who cloned the vault approves it here (state/claude-first-run.ts). */}
+      <SettingsRow
+        title="Claude Code"
+        description={
+          agent === null
+            ? "Turn on the agent plugin to use Claude Code in this vault."
+            : "Trust this vault and sign in, once on each machine. Until then the agent cannot work in the background here."
+        }
+      >
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={agent === null || remote === null}
+          onClick={() => remote !== null && firstRun(remote)}
+        >
+          <ShieldCheckIcon data-icon="inline-start" aria-hidden="true" />
+          Trust and sign in
+        </Button>
       </SettingsRow>
     </SettingsCard>
   )
@@ -187,7 +212,7 @@ export function MembersPage() {
       {state.kind === "loading" ? (
         <SettingsRowsLoading rows={2} label="Reading the members" />
       ) : state.kind === "error" ? (
-        <div className="flex items-center justify-between gap-3 px-4 py-3">
+        <div className="flex items-center justify-between gap-3 py-3">
           <div className="flex min-w-0 flex-col gap-0.5">
             <span className="text-sm font-medium">
               GitHub did not list who has access.

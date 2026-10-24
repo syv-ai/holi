@@ -38,13 +38,15 @@ export function ConsentDialog({
   const remote = useAtomValue(activeRemoteAtom)
   const log = useAtomValue(setupLogsAtom)[row.id] ?? []
   const [step, setStep] = useState<Step>({ kind: 'ask' })
-  const logEnd = useRef<HTMLDivElement>(null)
+  const logBox = useRef<HTMLPreElement>(null)
   const install = row.install
 
-  // Braced: Chromium's scrollIntoView now returns a promise, and an effect
-  // that returns anything but a cleanup function breaks the tree.
+  // The log follows its newest line by scrolling itself, never with
+  // scrollIntoView: that scrolls every ancestor too, the window included,
+  // and slides the whole app up behind the dialog.
   useEffect(() => {
-    void logEnd.current?.scrollIntoView({ block: 'end' })
+    const box = logBox.current
+    if (box !== null) box.scrollTop = box.scrollHeight
   }, [log.length])
 
   const allow = async () => {
@@ -135,9 +137,11 @@ export function ConsentDialog({
               {step.kind === 'failed' && step.message}
             </p>
             {log.length > 0 && (
-              <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-xs leading-relaxed text-muted-foreground">
+              <pre
+                ref={logBox}
+                className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-xs leading-relaxed text-muted-foreground"
+              >
                 {log.join('\n')}
-                <div ref={logEnd} />
               </pre>
             )}
           </div>

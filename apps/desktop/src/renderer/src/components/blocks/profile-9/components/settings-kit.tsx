@@ -1,21 +1,15 @@
 /**
- * The settings pages' vocabulary, as ReUI's profile-9 block draws it: a card
- * with a title and one line under it, rows of label and muted explanation on
- * the left with the control on the right, and a footer only where an edit
- * waits for Save. Every section is built from these and nothing else, so the
+ * The settings pages' vocabulary, after ReUI's profile-9 block but laid into
+ * the view rather than on cards: a section with a title and one line under
+ * it, rows of label and muted explanation on the left with the control on the
+ * right, hairlines between them, and a footer only where an edit waits for
+ * Save. Nothing paints a fill, so the window's surface shows through. Every section is built from these and nothing else, so the
  * pages cannot drift apart.
  */
 import type { ReactNode } from "react"
 
 import { cn } from "@/lib/cn"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { IconTile } from "@/composites"
 import {
   Field,
   FieldContent,
@@ -51,25 +45,23 @@ export function SettingsCard({
   footer?: ReactNode
 }) {
   return (
-    <Card className="gap-0 p-0">
-      <CardHeader className="flex items-start justify-between gap-3 border-b px-4 py-3">
+    <section className="flex flex-col gap-2">
+      <header className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-0.5">
-          <CardTitle>{title}</CardTitle>
+          <h2 className="text-sm font-semibold">{title}</h2>
           {description ? (
-            <CardDescription>{description}</CardDescription>
+            <p className="text-muted-foreground text-sm">{description}</p>
           ) : null}
         </div>
         {action ? <div className="shrink-0">{action}</div> : null}
-      </CardHeader>
-      <CardContent className="p-0">
-        <FieldGroup className="gap-1 py-1">{children}</FieldGroup>
-      </CardContent>
+      </header>
+      <FieldGroup className="divide-border gap-0 divide-y border-y">
+        {children}
+      </FieldGroup>
       {footer ? (
-        <CardFooter className="justify-end gap-2 border-t px-4 py-2.5">
-          {footer}
-        </CardFooter>
+        <footer className="flex justify-end gap-2">{footer}</footer>
       ) : null}
-    </Card>
+    </section>
   )
 }
 
@@ -79,6 +71,7 @@ export function SettingsRow({
   htmlFor,
   children,
   titleAddon,
+  mark,
   align = "center",
 }: {
   title: ReactNode
@@ -87,28 +80,38 @@ export function SettingsRow({
   htmlFor?: string
   children?: ReactNode
   titleAddon?: ReactNode
+  /** What the row is about, on the onboarding's tile (`pluginMark`). */
+  mark?: ReactNode
   align?: "center" | "start"
 }) {
+  const text = (
+    <FieldContent className="gap-0.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        {htmlFor ? (
+          <FieldLabel htmlFor={htmlFor}>{title}</FieldLabel>
+        ) : (
+          <FieldTitle>{title}</FieldTitle>
+        )}
+        {titleAddon}
+      </div>
+      {description ? <FieldDescription>{description}</FieldDescription> : null}
+    </FieldContent>
+  )
   return (
     <Field
       className={cn(
-        "grid gap-y-2.5 px-4 py-2.5 md:grid-cols-[minmax(0,clamp(15.5rem,43%,17.8rem))_minmax(0,1fr)] md:gap-x-7",
+        "grid gap-y-2.5 py-3 md:grid-cols-[minmax(0,clamp(15.5rem,43%,17.8rem))_minmax(0,1fr)] md:gap-x-7",
         align === "start" ? "md:items-start" : "md:items-center"
       )}
     >
-      <FieldContent className="gap-0.5">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          {htmlFor ? (
-            <FieldLabel htmlFor={htmlFor}>{title}</FieldLabel>
-          ) : (
-            <FieldTitle>{title}</FieldTitle>
-          )}
-          {titleAddon}
+      {mark ? (
+        <div className="flex min-w-0 items-start gap-3">
+          <IconTile>{mark}</IconTile>
+          {text}
         </div>
-        {description ? (
-          <FieldDescription>{description}</FieldDescription>
-        ) : null}
-      </FieldContent>
+      ) : (
+        text
+      )}
       <FieldContent className="w-full min-w-0 md:items-end">
         {children}
       </FieldContent>
@@ -129,7 +132,7 @@ export function SettingsRowsLoading({
       {Array.from({ length: rows }, (_, index) => (
         <div
           key={index}
-          className="flex items-center justify-between gap-6 px-4 py-3"
+          className="flex items-center justify-between gap-6 py-3"
         >
           <div className="flex flex-1 flex-col gap-1.5">
             <Skeleton className="h-4 w-32" />
