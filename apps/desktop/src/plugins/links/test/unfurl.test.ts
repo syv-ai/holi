@@ -91,7 +91,19 @@ describe('fetchPreview', () => {
     await fetchPreview('http://169.254.169.254/latest/meta-data/', spy, resolve)
     await fetchPreview('http://[::1]/', spy, resolve)
     await fetchPreview('http://router.example/reboot', spy, resolve)
+    await fetchPreview('http://[64:ff9b::c0a8:101]/', spy, resolve)
+    await fetchPreview('http://224.0.0.1/', spy, resolve)
     expect(asked).toEqual([])
+  })
+
+  it("drops a page's image or icon that points inside this network", async () => {
+    const html =
+      '<meta property="og:image" content="http://192.168.1.1/cgi-bin/reboot">' +
+      '<link rel="icon" href="http://router.example/favicon.ico"><title>T</title>'
+    const { preview } = await fetchPreview('https://example.com/', page(html), resolve)
+    expect(preview.title).toBe('T')
+    expect(preview.image).toBeUndefined()
+    expect(preview.icon).toBeUndefined()
   })
 
   it('follows a redirect by hand, held to the same rules, and only so far', async () => {

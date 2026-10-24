@@ -120,8 +120,9 @@ async function readHead(response: Response): Promise<string> {
 }
 
 /** Whether an address resolves into this machine or its network: loopback,
- *  private, link-local (the cloud metadata address among them), carrier NAT
- *  and their IPv6 twins. Such a page is never fetched. */
+ *  private, link-local (the cloud metadata address among them), carrier NAT,
+ *  benchmark, multicast and reserved, their IPv6 twins, and IPv6 that carries
+ *  IPv4. Such a page is never fetched. */
 const LOCAL = (() => {
   const list = new BlockList()
   for (const [net, bits] of [
@@ -132,6 +133,9 @@ const LOCAL = (() => {
     ['169.254.0.0', 16],
     ['172.16.0.0', 12],
     ['192.168.0.0', 16],
+    ['198.18.0.0', 15],
+    ['224.0.0.0', 4],
+    ['240.0.0.0', 4],
   ] as const) {
     list.addSubnet(net, bits, 'ipv4')
   }
@@ -139,6 +143,10 @@ const LOCAL = (() => {
   list.addAddress('::1', 'ipv6')
   list.addSubnet('fc00::', 7, 'ipv6')
   list.addSubnet('fe80::', 10, 'ipv6')
+  list.addSubnet('ff00::', 8, 'ipv6')
+  // IPv4 carried inside IPv6 (NAT64, 6to4) reaches whatever IPv4 it carries.
+  list.addSubnet('64:ff9b::', 96, 'ipv6')
+  list.addSubnet('2002::', 16, 'ipv6')
   return list
 })()
 
@@ -148,10 +156,21 @@ export type Resolve = (host: string) => Promise<string[]>
 const resolveHost: Resolve = async (host) =>
   (await lookup(host, { all: true, verbatim: true })).map((a) => a.address)
 
+/** `promise`, or a rejection once `signal` aborts: a resolver that hangs
+ *  is held to the fetch's own time limit. */
+function within<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason)
+  return new Promise<T>((resolve, reject) => {
+    const abort = (): void => reject(signal.reason)
+    signal.addEventListener('abort', abort, { once: true })
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
+  })
+}
+
 /** Whether `url`'s host is reachable only from inside this machine's network. */
-async function isLocal(url: string, resolve: Resolve): Promise<boolean> {
+async function isLocal(url: string, resolve: Resolve, signal: AbortSignal): Promise<boolean> {
   const host = new URL(url).hostname.replace(/^\[|\]$/g, '')
-  const addresses = isIP(host) === 0 ? await resolve(host) : [host]
+  const addresses = isIP(host) === 0 ? await within(resolve(host), signal) : [host]
   return addresses.some((a) => {
     // An IPv4 address written as IPv6 (`::ffff:127.0.0.1`) is checked as the
     // IPv4 one it is.
@@ -187,7 +206,9 @@ export async function fetchPreview(
   try {
     let at = url
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-      if (!isWebUrl(at) || (await isLocal(at, resolve))) return { preview: bare, keep: true }
+      if (!isWebUrl(at) || (await isLocal(at, resolve, signal))) {
+        return { preview: bare, keep: true }
+      }
       const response = await fetchImpl(at, {
         redirect: 'manual',
         signal,
@@ -205,7 +226,14 @@ export async function fetchPreview(
         // A login wall (401, 403) is lasting; the site's own trouble is not.
         return { preview: bare, keep: response.status < 500 && response.status !== 429 }
       }
-      return { preview: { ...parseHead(await readHead(response), at), url }, keep: true }
+      const head = parseHead(await readHead(response), at)
+      // The card loads the image and the icon itself, on a hover: neither
+      // may point into this machine's network any more than the page may.
+      for (const key of ['image', 'icon'] as const) {
+        const href = head[key]
+        if (href !== undefined && (await isLocal(href, resolve, signal))) delete head[key]
+      }
+      return { preview: { ...head, url }, keep: true }
     }
     return { preview: bare, keep: true }
   } catch {

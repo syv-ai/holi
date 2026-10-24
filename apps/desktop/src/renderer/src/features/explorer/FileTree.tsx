@@ -526,10 +526,19 @@ export function FileTree({
       const remote = activeRemote
       void (async () => {
         let made: string | null = null
-        for (const url of urls) made = await fromUrl.run({ remote, parent: dest, name: url })
+        const failed: { name: string; reason: string }[] = []
+        // Each address on its own: one that fails is listed, the rest land.
+        for (const url of urls) {
+          try {
+            made = await fromUrl.run({ remote, parent: dest, name: url })
+          } catch (err) {
+            failed.push({ name: url, reason: err instanceof Error ? err.message : String(err) })
+          }
+        }
         await loadSnapshot()
+        if (failed.length > 0) setSkipped(failed)
         // One dropped address opens, as New Link would; several only land.
-        if (urls.length === 1 && made !== null) onOpenPreview(made)
+        else if (urls.length === 1 && made !== null) onOpenPreview(made)
       })()
       return
     }

@@ -16,7 +16,7 @@ A link file saves a web address in the vault without the thing it points at: a 1
 - The editor: a hover over a markdown link (`[text](https://…)`, `<https://…>`), a bare `https://…`, or a wiki-link to a link file. The address is read off the syntax tree, so one in code never has a card. The wiki-link card replaces the ordinary one for a saved link (`LinkChip.url`). This hover is the plugin's, added to every note (`RendererPlugin.editorExtensions`).
 - A link file's tab: between the frontmatter and the body, centred, with the address in full. It follows the `url` as the text says it now, so editing the row redraws it. The `url` row wraps over as many lines as the address takes (a control of the claim's own), where a one-line field would cut it off.
 
-The image and icon load straight from the page's site with no referrer; one that will not load is left out. Text a site escaped twice (GitHub's descriptions) is decoded again. A title is cut at a whole word for a file name.
+The image and icon load straight from the page's site with no referrer; one that points inside this machine's network is dropped by main, as a page there would be, and one that will not load is left out. Text a site escaped twice (GitHub's descriptions) is decoded again. A title is cut at a whole word for a file name.
 
 **Opening.** The card is the link: a click anywhere on it opens the page in the browser, wherever it is shown, and it answers the pointer (its surface lifts, the image eases in, the arrow nudges out). ⌘-click on a wiki-link to a link file opens the page in the browser; a plain click opens the file, as for any wiki-link. A link file's row menu has Open in Browser, which reads the file when chosen. ⌘-click on a row keeps meaning open in a new pane.
 
@@ -24,7 +24,7 @@ The image and icon load straight from the page's site with no referrer; one that
 
 - Nothing the page says is stored in the vault beyond the name it gave the file: no title, image, site name or description key. A copy would go stale against the page, and the card reads it fresh.
 - The name decides what a link file is, never frontmatter a copy and paste could carry.
-- Only http and https are fetched or opened, checked in main whatever the renderer sends, and never an address inside this machine's network, at every redirect. A page whose name resolves differently between the check and the fetch is not caught.
+- Only http and https are fetched, and only they (and `mailto:`, for mail) are opened, checked in main whatever the renderer sends, and never an address inside this machine's network, at every redirect. A page whose name resolves differently between the check and the fetch is not caught.
 - A preview never fails anything: the worst case is the address alone.
 
 ## Rejected
