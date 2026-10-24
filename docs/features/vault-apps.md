@@ -30,8 +30,11 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   it, not among its files. A personal app's row shows like any other, dimmed as a
   local file. See [file tree](file-tree.md).
 - **Launchers.** The tree's app row, and **Apps** under Search in the sidebar (and on the rail):
-  a page of every finished app, most recently opened first, each with its folder, and an empty
-  state when there are none. It reads the registry's `app` surface, not the plugin, so it is
+  a page of every finished app, most recently opened first, each on a card (ReUI's c-card-7):
+  the app's icon on a plate, whether it is shared through the vault or personal (`.local.app`),
+  its folder, its name, its manifest's `description` (read through the surface's `describe`, so
+  again whenever the app's files change, with a Retry when it cannot be read) and Open. Card
+  skeletons show while the vault loads, and an empty state when there are none. It reads the registry's `app` surface, not the plugin, so it is
   there only while the plugin is on (`components/blocks/apps-view/`). The claim's Finish this app
   is on the tree's row menu of a draft, and the Files menu's New app scaffolds a bundle and opens
   it as the app: in the folder the menu was opened on (a file row's folder), at the root from
