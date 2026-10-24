@@ -1,9 +1,10 @@
-# Tabs and panes
+# Tabs and split view
 
-The main area is one to three panes side by side, each with its own tabs and active tab, as an
-editor does it. A tab holds any view: a document, a vault app, the board, a New tab, the Agents
-home, an agent session, Mail or Calendar, or Settings. One pane is focused: it is where "open"
-lands and what the tab keys act on.
+One tab strip, in the title band, holds every tab, after Arc's. A tab holds any view: a document,
+a vault app, the board, a New tab, the Agents home, an agent session, Mail or Calendar, or
+Settings. A **split view** is one entry of that strip holding two or three views side by side:
+selecting it shows them together, selecting any other tab shows that one alone at full width, the
+split staying in the strip as its own entry.
 
 ## How it works
 
@@ -18,108 +19,129 @@ colons). A document whose path would read as one of those (it starts with `holi:
 `.app`) is `holi:doc:<path>`, so every descriptor survives the trip. Settings is one tab, ever: its
 section is the nav's own state (`settingsSectionAtom`).
 
-**The workspace** (`state/shell-workspace.ts`) is pure functions over `{panes, focused, closed,
-seq}`, each pane `{id, tabs, active, share}`. `state/shell-tabs.ts` keeps one per vault, in
-memory: switching vaults shows that vault's tabs and coming back finds them. A plugin opens a tab
-through `openTabAtom` (`@/plugin-api`) with a descriptor, and `{beside: true}` puts it in the
-pane next to the focused one, a new pane while there is room.
+**The workspace** (`state/shell-workspace.ts`) is pure functions over `{entries, active, closed,
+seq}`. An entry is a single view (its tab key) or a split `{id, views, shares, focused}`: two or
+three keys, each member's share of the width, and the focused member. A split's id is
+`holi:split:<n>`, a `holi:` key no tab kind parses, so it never meets a tab key; `active` is a
+tab's key or a split's id. `state/shell-tabs.ts` keeps one workspace per vault, in memory:
+switching vaults shows that vault's tabs and coming back finds them. A plugin opens a tab through
+`openTabAtom` (`@/plugin-api`) with a descriptor, and `{beside: true}` makes a split of the active
+tab and it, or adds it to the active split.
 
-**What each tab shows** is one switch, `TabView`, rendered per pane for its active tab: the New
-tab's empty view (also an empty pane's), the board, Settings (its nav in the sidebar while it is
-the focused tab and the sidebar is open, inline otherwise), a sidebar app's view, the Agents
-mode's `main` for a session or the home, the `app` surface for a vault app, and the document
-editor for a document. Only the active tab of a pane is mounted.
+**The view in front** is the active tab, or the active split's focused member. It is what the
+sidebar marks, what Settings' nav and an app's folded sidebar follow, what `useSessionTabs` writes
+back as the Agents selection, and what ⌘W closes.
 
-**Sessions are tabs** ([sidebar](sidebar.md)): the Agents mode's selection opens or focuses a
-session tab, and the focused tab writes the selection back. A tab's title, mark and state dot come
-from the mode's `tabLook`.
+**What each tab shows** is one switch, `TabView`: the New tab's empty view (also an empty strip's),
+the board, Settings (its nav in the sidebar while it is the view in front and the sidebar is open,
+inline otherwise), a sidebar app's view, the Agents mode's `main` for a session or the home, the
+`app` surface for a vault app, and the document editor for a document. Only the active entry's
+views are mounted.
+
+**Sessions are tabs** ([sidebar](sidebar.md)): the Agents mode's selection opens or selects a
+session tab, and the view in front writes the selection back, so inside a split the selection
+follows the focused member. A tab's title, mark and state dot come from the mode's `tabLook`.
 
 **Apps are tabs.** Mail and Calendar open as tabs and keep their own behaviour: while one is the
-focused tab the files sidebar folds to its rail, and leaving it for any other tab gives the
-sidebar back as it was.
+view in front the files sidebar folds to its rail, and leaving it gives the sidebar back as it was.
 
-**Opening.** An opened tab goes after the focused pane's active tab; one already open anywhere is
-focused where it is (a tab is open once, in one pane). From a New tab, what is opened takes its
-place, as in a browser, and a session started from the Agents home takes the home's place. + opens
-a New tab, or the Agents home while the sidebar is on Agents.
+## The strip
 
-**Closing.** Closing the active tab hands focus to the next tab, else the one before. Close
-others, Close all (the pane's), and Reopen closed tab (⇧⌘T, the last closed first, skipping New
-tabs) work for every kind. A split pane goes with its last tab; the last pane stays, empty, and
-shows the New tab's view. Closing a tab of a running session only detaches: the session runs on.
+The strip (`site-header.tsx`) rides in the title band always, split or not. A tab is a 224px
+pill: its mark, its title, × on hover. A split is one wider pill holding each member's mark and
+title side by side, a hairline between them, truncating evenly; with the split active the focused
+member's title has the full weight and the others are muted. Clicking the pill selects the split;
+clicking a member inside it selects the split focused on that member. + opens a New tab (⌘T), or
+the Agents home while the sidebar is on Agents. A session tab shows its state as a dot on its mark:
+working (pulsing, still under reduced motion), needs you, or done and not opened yet.
 
-**Panes.** Split right (⌘\\, a pane's ⋯ menu, or a tab's right-click menu) opens a pane after the
-focused one with half its width and focuses it. From a tab's menu the tab moves into it, unless it
-is its pane's only tab, when the new pane opens on a New tab. A split never copies a tab: two
-editors on one document would race two autosaves. A tab's menu moves it to the pane on its left or
-right, focusing it there; a pane left empty closes. Focus follows a press or keyboard focus into a
-pane, and every tab key acts on the focused pane. Three panes at most.
+Entries drag along the strip to reorder (a hairline marks where it would land). A tab's
+right-click menu: **Open in split view**, Close, Close others, Close tabs to the right, Reopen
+closed tab. A split's: **Separate**, then the same closes. The strip's ⋯ holds Split view,
+Separate (with a split active), Reopen closed tab and Close all tabs.
 
-**The strips.** With one pane its strip rides in the title band, as it always did. With several,
-each pane's card carries its own header (below), and the band is left to drag the window: a strip
-that jumped into the band whenever its pane took focus would move under the pointer. The focused
-pane's active tab has the strip's full weight; an unfocused pane's is lighter. A session tab shows
-its state as a dot on its mark: working (pulsing, still under reduced motion), needs you, or done
-and not opened yet.
+**Opening.** A view already open is selected where it is: its tab, or its split with it focused.
+Otherwise:
 
-**Split view** (after Arc's). One pane keeps the plain look, its view filling the area. With two or
-three, the area becomes the window's ground and each pane a card on it: `rounded-xl`, a hairline
-border, 8px around and between the cards, and the focused card ringed (`ring-ring/40`). Clicking
-anywhere in a card focuses it. A card that arrives fades in from 0.98 as its panel unfolds
-(`duration-200`, the house curve; a fade only under reduced motion). The separators are the gaps:
-nothing shows until the pointer or keyboard focus finds one, then a short pill, brighter while
-dragging.
+- while a split is active it opens **in the focused member**, as a link followed in an Arc split
+  stays in that side; the view it replaces keeps a tab of its own right after the split, so
+  nothing is lost (a New tab member is simply given up);
+- from a New tab it takes that tab's place, as in a browser, and a session started from the
+  Agents home takes the home's place;
+- else it opens as a tab after the active one.
 
-**A card's header** (`pane-header.tsx`, 40px) holds, left to right: the pane's own tabs as compact
-marks (each named by its title, its tooltip, and its right-click menu; a middle click closes), +
-for a New tab, a breadcrumb of where the active tab is (a document's or vault app's folders muted,
-past two folded to an ellipsis, then its name; any other tab its title: the session's, Board, the
-app's), then ⋯ (Split right, Move tab to the left or right pane, Close other tabs, Reopen closed
-tab) and × (Close pane: its tabs close and go to Reopen closed tab, as any closed tab does). The
-header carries no actions of the view's own yet: there is no seam for a view to offer them.
+**Closing.** Closing the active tab hands over to the entry after it, else the one before. Closing
+a split member takes it out of the split, and a 2-split turns back into a tab of the one left.
+Closing a split's pill closes all its members; Reopen closed tab (⇧⌘T, the last closed first,
+skipping New tabs) brings a closed split back as the split it was, with its widths, less any view
+open elsewhere by then. Closing a tab of a running session only detaches: the session runs on.
 
-**Into split view.** ⌘\ and Split right; a tab's right-click menu's **Open in split view**, which
-moves the tab to the pane on its right, else into a new pane there while there is room, else to the
-pane on its left (a pane's only tab leaves a New tab behind, so the split has two sides); and
-dragging a tab. A tab drags (native drag, its own MIME type `application/x-holi-tab`, so nothing
-else takes it) from either strip onto any pane: while it is dragged every pane lays a target over
-its view (a view may be an iframe or a terminal, which would swallow the drag), and highlights
-where the tab would land. The outer thirds of a pane are its edges, where the tab opens a pane of
-its own on that side, taking half that pane's width; the middle third moves it into that pane. On
-its own pane each half is an edge, and at three panes every drop moves. A drop that would change
-nothing (a pane's only tab beside itself) is refused. The menu items are the keyboard's way to the
-same places. Opening a document to the side from the files tree is `openTabAtom` with
-`{ beside: true }`; the tree's menu does not offer it yet.
+## Split view
+
+**Making one.** ⌘\ on a tab makes a split of that tab and a New tab on its right, focused (on a
+split with room, a New tab joins it). A tab's **Open in split view** makes a split of the active
+tab and that tab, whose own entry goes. Dragging a strip tab onto the content's left or right edge
+(the outer thirds) splits with the view there; dropping it in a member's middle replaces that
+member, which gets a tab of its own. Inside one split, a member's header dropped on another swaps
+the two, or on an edge reorders them. A split holds three views at most: at three, the edges
+replace instead of splitting. A view is open once: putting it into a split takes it out of its tab
+or its other split, as two editors on one document would race two autosaves.
+
+**Leaving one.** A member's ⋯ offers **Replace with…** (a New tab in its place, the old view
+keeping a tab), **Move out of split** (it becomes its own tab, after the split) and Close; its ×
+closes it. Dragging a member's header to the strip moves it out there. **Separate** (⇧⌘\, or the
+pill's menu) turns every member back into its own tab, in place.
+
+**The look.** No cards and no ground change: the members sit edge to edge, square, on `main`'s own
+background and glass tint, exactly as a single tab. Between two members is a 1px `bg-border` line,
+full height, which is the resize handle: it reaches 4px either side for the pointer, shows a
+`col-resize` cursor, and turns `bg-ring` on hover, keyboard focus and while dragging
+(`transition-colors`). Each member has a thin header (`pane-header.tsx`, 40px, `border-b`): its
+mark and a breadcrumb of where it is (a document's or vault app's folders, past two folded to an
+ellipsis, then its name; any other tab its title), then ⋯ and ×. Nothing tab-like is in it: the
+tabs are the strip's. **The focused member** is marked by its header alone: its title at the
+foreground's full weight, the others' muted. A ring around a whole view was too loud without
+cards. Clicking or focusing anywhere in a member focuses it. The header carries no actions of the
+view's own yet: there is no seam for a view to offer them.
+
+**Keys.** ⌘\ split view, ⇧⌘\ separate, ⌃⌥→ / ⌃⌥← focus the next or previous member, ⌘W closes the
+focused member inside a split and the tab otherwise ([keyboard shortcuts](keyboard-shortcuts.md)).
+Next/previous tab and ⌘1–9 go over strip entries, a split counting as one.
 
 **motion-panels** (MIT, Valerii Strilets; `components/ui/motion-panels.tsx` is its shadcn item)
-lays the panes out in `panes-view.tsx`. Its group holds one panel that fills and at most one sized
-panel each side of it, so the layout follows the count: one pane fills; two are filling then sized;
-three are sized, filling, sized. A sized pane is a percentage of the area and follows a window
-resize; drag, the arrow keys (Shift for bigger steps), Home and End resize it, and a double click
-resets it. Its separators are the library's, drawn as the gaps between cards (above),
-`role="separator"` with `aria-orientation` and a "Resize pane" label.
+lays the views out in `panes-view.tsx`. Its group holds one panel that fills and at most one sized
+panel each side of it, so the layout follows the count: one view fills; two are filling then
+sized; three are sized, filling, sized. A sized member is a percentage of the area and follows a
+window resize; drag, the arrow keys (Shift for bigger steps), Home and End resize it, and a double
+click resets it. The separator is the library's, `role="separator"` with `aria-orientation` and a
+"Resize view" label.
 
-**A pane's content never remounts when the layout changes.** Each pane renders through a portal
-into a host element of its own, and whichever slot holds the pane now adopts the host, so a
-composer or a document keeps its state while panes come and go beside it. A move does reset
-scroll positions inside it (the DOM node is re-parented).
+**A view never remounts when the layout changes.** Each view renders through a portal into a host
+element of its own, keyed on its tab key, and whichever slot holds it adopts the host: a tab made
+into a split, or a split closed back into a tab, keeps its composer or its document. A move does
+reset scroll positions inside it (the DOM node is re-parented).
 
-**Opening and closing fold**, by motion-panels' own collapse: a pane arriving in a sized slot
-mounts folded and opens; one leaving a sized slot stays as an empty ghost while it folds. The
-filling slot cannot fold, so a pane arriving or leaving there lands at once. The library folds
-instantly under reduced motion, inside `MotionConfig reducedMotion="user"`.
+**Opening and closing fold**, within one split, by motion-panels' own collapse: a member arriving
+in a sized slot mounts folded and opens; one leaving a sized slot stays as an empty ghost while it
+folds. The filling slot cannot fold, so a member arriving or leaving there lands at once. Selecting
+another entry is not a fold: its views just land. The library folds instantly under reduced motion,
+inside `MotionConfig reducedMotion="user"`.
 
-**Glass.** One pane paints no ground of its own: it is `main`, tinted by the vault's Transparency
-(`--glass-view`). In split view `main` takes the chrome's tint (`--glass-chrome`, the sidebar's
-colour), so the ground reads as one surface with the sidebar and the band, and each card the view's
-(`index.css`, Glass).
+**Drag targets.** A strip tab or a member's header drags (native drag, its own MIME type
+`application/x-holi-tab`, so nothing else takes it). While one is dragged every view in front lays
+a target over its content (a view may be an iframe or a terminal, which would swallow the drag)
+and highlights where it would land: the half it would split into, or the whole view it would
+replace. A drop that would change nothing is refused. The menus are the keyboard's way to the same
+places.
 
-**Persistence.** Tabs and panes live for the app's session, per vault; a restart opens on an empty
-pane, as the shell always has. The pane widths a vault last had for two and for three panes are
-kept on this machine (`localStorage`, `holi.panes.<remote>.<count>`), so splitting again opens at
-them.
+**Persistence.** Tabs and splits live for the app's session, per vault; a restart opens on an
+empty strip, as the shell always has. The widths a vault last had for a two- and a three-member
+split are kept on this machine (`localStorage`, `holi.panes.<remote>.<count>`), and a new split
+opens at them.
 
-**The arcade** (after MonoCode's grid arcade, MIT, see `components/monocode/arcade/LICENSE`). Behind
+## The arcade
+
+After MonoCode's grid arcade (MIT, see `components/monocode/arcade/LICENSE`). Behind
 the fresh shell's empty view (`empty-view.tsx`, a New tab) lies a dot grid where the vault's
 Holis play Paper run by themselves: papers (documents and tasks) land on the board, each Holi
 picks them up into a stack that trails behind it and files them in the outbox, saying so in a
@@ -140,35 +162,37 @@ Appearance; machine-local, on by default) turns it off.
 
 ## Rules
 
-- A tab is open once, in one pane. Every opener focuses it where it is.
-- A split never copies the current tab; a move takes it out of its old pane.
-- The active tab follows the document, not the index, when a tab closes or moves.
+- A view is open once: as a tab, or as one member of one split. Every opener selects it where it
+  is; putting it into a split takes it out of where it was.
+- A split is one strip entry. Selecting any other entry shows that view alone; the split stays.
+- Opening inside an active split lands in the focused member; the view replaced keeps a tab.
 - Every workspace function returns the same workspace for a no-op, so a caller can tell. A drop
-  target asks `dropTab` whether a drop would change anything before it takes one.
-- A pane's content renders through its own host, never as a child of a layout slot, or a layout
+  target asks `dropTab` (or the strip `dropOnStrip`) whether a drop would change anything before
+  it takes one.
+- A view's content renders through its own host, never as a child of a layout slot, or a layout
   change remounts it.
 - `useSessionTabs` remembers the selection it last wrote, so its own writes never open a tab.
 
 ## Rejected
 
+- Each pane owning its own tab list (the earlier shell): splitting made the window panes, and every
+  other tab disappeared into one of them.
 - Duplicating a tab on split (VS Code, Obsidian): breaks one editor per document.
-- Every pane's strip in the title band, laid out to the panes' widths: the band would follow every
-  frame of a drag and a fold.
-- The focused pane's strip in the band and the others in their panes: a strip moving under the
-  pointer whenever focus changes.
-- Nesting motion-panels groups for any number of panes: closing a middle pane would fold every
-  pane after it.
-- A card around a single pane: a frame around the only thing on screen says nothing, and costs the
-  width of its margin.
-- The card's header repeating each tab's title in the strip: the breadcrumb already names the
-  active one, and titled tabs would leave it no room in a third of the window.
+- Opening from the tree as a new entry while a split is active: Arc keeps a link followed in a
+  split member in that member, and a new entry would hide the split the user is working in.
+- Cards on a darker ground for the members: the platform is square and flat, and a hairline parts
+  two views well enough.
+- A ring around the focused member: without cards it reads as a selection box; the header's
+  weight says it quietly.
+- Nesting motion-panels groups for any number of members: closing a middle one would fold every
+  member after it.
 
 ## Code
 
 - `apps/desktop/src/renderer/src/state/tab-descriptor.ts`, `shell-workspace.ts`, `shell-tabs.ts`
 - `apps/desktop/src/renderer/src/components/blocks/app-shell-21/components/app-shell.tsx`,
-  `panes-view.tsx`, `pane-header.tsx`, `use-tab-drag.ts`, `tab-view.tsx`, `tab-look.tsx`,
-  `site-header.tsx`, `use-session-tabs.ts`
+  `site-header.tsx`, `panes-view.tsx`, `pane-header.tsx`, `use-tab-drag.ts`, `tab-view.tsx`,
+  `tab-look.tsx`, `use-session-tabs.ts`, `use-shell-shortcuts.ts`
 - `apps/desktop/src/renderer/src/components/ui/motion-panels.tsx`
 - `apps/desktop/src/main/menu.ts`: ⌘W and ⌘⇧W
 - `state/panes.ts` and `state/surfaces.ts` are the earlier shell's workspace; the fresh shell does

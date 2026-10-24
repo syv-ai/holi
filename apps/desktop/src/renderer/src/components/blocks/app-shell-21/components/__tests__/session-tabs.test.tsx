@@ -5,7 +5,13 @@ import { expect, test } from "vitest"
 
 import { agentsSelectionAtom } from "@/state/agents-slots"
 import { shellWorkspaceAtom } from "@/state/shell-tabs"
-import { allTabs, focusedPane, openTab } from "@/state/shell-workspace"
+import {
+  allTabs,
+  focusedTab,
+  openInSplit,
+  openTab,
+  stepMember,
+} from "@/state/shell-workspace"
 import { AGENTS_HOME_KEY, sessionKey } from "@/state/tab-descriptor"
 
 import { useSessionTabs } from "../use-session-tabs"
@@ -13,7 +19,7 @@ import { useSessionTabs } from "../use-session-tabs"
 /** The hook as the shell mounts it: fed the focused tab. */
 function useShellSide() {
   const ws = useAtomValue(shellWorkspaceAtom)
-  useSessionTabs(focusedPane(ws).active)
+  useSessionTabs(focusedTab(ws))
   return ws
 }
 
@@ -32,7 +38,7 @@ test("picking a session opens it as a tab", () => {
   const { store } = setup()
   act(() => store.set(agentsSelectionAtom, { ...ONE }))
   const ws = store.get(shellWorkspaceAtom)
-  expect(focusedPane(ws).active).toBe(sessionKey(ONE))
+  expect(focusedTab(ws)).toBe(sessionKey(ONE))
 })
 
 test("picking it again after looking elsewhere focuses its tab, not a copy", () => {
@@ -43,7 +49,7 @@ test("picking it again after looking elsewhere focuses its tab, not a copy", () 
   expect(store.get(agentsSelectionAtom)).toBeNull()
   act(() => store.set(agentsSelectionAtom, { ...ONE }))
   const ws = store.get(shellWorkspaceAtom)
-  expect(focusedPane(ws).active).toBe(sessionKey(ONE))
+  expect(focusedTab(ws)).toBe(sessionKey(ONE))
   expect(allTabs(ws).filter((t) => t === sessionKey(ONE))).toHaveLength(1)
 })
 
@@ -56,11 +62,19 @@ test("the focused session tab is the selection the sidebar marks", () => {
 test("a new chat from the Agents home takes the home tab's place", () => {
   const { store } = setup()
   act(() => store.set(agentsSelectionAtom, { owner: "chat", id: "new" }))
-  expect(focusedPane(store.get(shellWorkspaceAtom)).active).toBe(
-    AGENTS_HOME_KEY
-  )
+  expect(focusedTab(store.get(shellWorkspaceAtom))).toBe(AGENTS_HOME_KEY)
   act(() => store.set(agentsSelectionAtom, { ...ONE }))
-  expect(focusedPane(store.get(shellWorkspaceAtom)).tabs).toEqual([
-    sessionKey(ONE),
-  ])
+  expect(allTabs(store.get(shellWorkspaceAtom))).toEqual([sessionKey(ONE)])
+})
+
+test("inside a split the selection follows the focused member", () => {
+  const { store } = setup()
+  act(() =>
+    store.set(shellWorkspaceAtom, (ws) =>
+      openInSplit(openTab(ws, "Notes/A.md"), sessionKey(ONE))
+    )
+  )
+  expect(store.get(agentsSelectionAtom)).toEqual(ONE)
+  act(() => store.set(shellWorkspaceAtom, (ws) => stepMember(ws, 1)))
+  expect(store.get(agentsSelectionAtom)).toBeNull()
 })

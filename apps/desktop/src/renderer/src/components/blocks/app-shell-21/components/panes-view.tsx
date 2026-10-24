@@ -15,49 +15,44 @@ import { Panel, PanelGroup } from "@/components/ui/motion-panels"
 import { cn } from "@/lib/cn"
 import { shellWorkspaceAtom } from "@/state/shell-tabs"
 import {
+  activeSplit,
   dropTab,
-  MAX_PANES,
-  paneOf,
+  MAX_SPLIT,
   type DropZone,
-  type ShellPane,
 } from "@/state/shell-workspace"
 
 import { TAB_MIME, tabDragAtom, zoneAt } from "./use-tab-drag"
 
 /**
- * The main area's panes side by side, on motion-panels (MIT, Valerii
- * Strilets): a horizontal group whose one filling panel takes what the sized
- * panes beside it leave. A group holds one sized panel each side of the
- * filling one, so the layout follows the count:
+ * The active strip entry's views side by side, on motion-panels (MIT,
+ * Valerii Strilets): one view for a tab, two or three for a split
+ * (docs/features/tabs-panes.md, Split view). A horizontal group's one
+ * filling panel takes what the sized panels beside it leave, so the layout
+ * follows the count:
  *
- * - one pane fills;
+ * - one view fills;
  * - two: the first fills, the second is sized at the end;
  * - three: sized, filling, sized.
  *
- * **A pane's content never remounts when the layout changes.** Each pane
- * renders through a portal into a host element of its own, and whichever slot
- * holds the pane now adopts that host, so a session's composer or a document
- * keeps its state as panes come and go around it.
+ * **A view never remounts when the layout changes.** Each view renders
+ * through a portal into a host element of its own, keyed on its tab key, and
+ * whichever slot holds it now adopts that host: a tab made into a split, or
+ * a split closing back into a tab, keeps its composer or its document.
  *
- * **Opening and closing fold.** A pane that arrives in a sized slot mounts
- * folded and opens; one that leaves from a sized slot stays as an empty ghost
- * while it folds away. The filling slot cannot fold, so a pane arriving or
- * leaving there just lands. Under reduced motion the library folds at once.
+ * **Opening and closing fold**, within one split: a member that arrives in a
+ * sized slot mounts folded and opens; one that leaves from a sized slot stays
+ * as an empty ghost while it folds away. Selecting another entry is not a
+ * fold: its views just land. Under reduced motion the library folds at once.
  *
- * **Split view.** With two or more panes the area is the window's ground and
- * each pane a card on it (docs/features/tabs-panes.md, Split view): rounded,
- * a hairline border, the view's tint (index.css, Glass), the focused one
- * ringed, and the separators in the gaps between them. A card that arrives
- * fades in from a hair smaller as its panel unfolds. One pane keeps the
- * plain look, filling the area. The frame around a slot's host is the same
- * elements either way, only its classes change, so nothing remounts.
+ * **The look.** Members sit edge to edge, square, on `main`'s own ground (no
+ * cards, no gutter), parted by a hairline that is the resize handle.
  *
- * **Drops.** While a tab is dragged (`use-tab-drag.ts`) each card lays a
+ * **Drops.** While a tab is dragged (`use-tab-drag.ts`) each view lays a
  * target over its content, which shows where the tab would go: the half it
- * would split into, or the whole card it would move into.
+ * would split into, or the whole view it would replace.
  */
 
-const MIN_PANE = 240
+const MIN_MEMBER = 240
 
 type Role = "start" | "fill" | "end"
 
@@ -67,87 +62,88 @@ function roles(count: number): Role[] {
   return ["start", "fill", "end"]
 }
 
-/** A pane as laid out: the model's, or a ghost folding away. */
-type Slot = { pane: ShellPane; ghost: boolean }
+/** A view as laid out: its tab key and its share of the width. */
+export interface MemberSlot {
+  key: string
+  share: number
+}
+
+/** A member as laid out: the model's, or a ghost folding away. */
+type Slot = { member: MemberSlot; ghost: boolean }
 
 function percent(share: number): `${number}%` {
   return `${Math.round(share * 10000) / 100}%`
 }
 
 export function PanesView({
-  panes,
-  renderPane,
+  entryId,
+  members,
+  renderMember,
   onShareChange,
 }: {
-  panes: readonly ShellPane[]
-  renderPane: (pane: ShellPane) => ReactNode
-  /** A sized pane was resized to `share` of the area. */
-  onShareChange: (paneId: string, share: number) => void
+  /** The active entry's id: folds play only while it stays the same. */
+  entryId: string | null
+  members: readonly MemberSlot[]
+  renderMember: (key: string) => ReactNode
+  /** A sized member was resized to `share` of the area. */
+  onShareChange: (key: string, share: number) => void
 }) {
   const hosts = useRef(new Map<string, HTMLDivElement>())
-  function hostFor(id: string): HTMLDivElement {
-    let host = hosts.current.get(id)
+  function hostFor(key: string): HTMLDivElement {
+    let host = hosts.current.get(key)
     if (host === undefined) {
       host = document.createElement("div")
       host.className = "flex h-full min-h-0 w-full min-w-0 flex-col"
-      host.dataset.paneHost = id
-      hosts.current.set(id, host)
+      host.dataset.paneHost = key
+      hosts.current.set(key, host)
     }
     return host
   }
 
-  // What was laid out last time, to find the panes that arrive and leave.
+  // What was laid out last time, to find the members that arrive and leave.
   // (React's "adjusting state when a prop changes": set during render.)
-  const [before, setBefore] = useState<readonly ShellPane[]>(panes)
+  const [before, setBefore] = useState({ entryId, members })
   const [entering, setEntering] = useState<ReadonlySet<string>>(new Set())
-  const [ghosts, setGhosts] = useState<{ pane: ShellPane; at: number }[]>([])
-  /** Panes just added, whose cards fade in. */
-  const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set())
+  const [ghosts, setGhosts] = useState<{ member: MemberSlot; at: number }[]>([])
 
-  if (before !== panes) {
-    setBefore(panes)
-    const ids = new Set(panes.map((p) => p.id))
-    const old = new Set(before.map((p) => p.id))
-    const layoutBefore = roles(before.length)
-    const leaving = before
-      .map((pane, at) => ({ pane, at }))
-      .filter(
-        ({ pane, at }) => !ids.has(pane.id) && layoutBefore[at] !== "fill"
+  if (before.members !== members || before.entryId !== entryId) {
+    setBefore({ entryId, members })
+    if (before.entryId !== entryId) {
+      // Another entry: its views land as they are.
+      if (ghosts.length > 0) setGhosts([])
+      if (entering.size > 0) setEntering(new Set())
+    } else {
+      const keys = new Set(members.map((m) => m.key))
+      const old = new Set(before.members.map((m) => m.key))
+      const layoutBefore = roles(before.members.length)
+      const leaving = before.members
+        .map((member, at) => ({ member, at }))
+        .filter(
+          ({ member, at }) =>
+            !keys.has(member.key) && layoutBefore[at] !== "fill"
+        )
+      const layoutNow = roles(members.length + leaving.length)
+      const arriving = members.filter(
+        (member, at) => !old.has(member.key) && layoutNow[at] !== "fill"
       )
-    const layoutNow = roles(panes.length + leaving.length)
-    const arriving = panes
-      .map((pane, at) => ({ pane, at }))
-      .filter(({ pane, at }) => !old.has(pane.id) && layoutNow[at] !== "fill")
-    if (leaving.length > 0) setGhosts((g) => [...g, ...leaving])
-    const added = panes.filter((pane) => !old.has(pane.id))
-    if (added.length > 0 && before.length > 0) {
-      setFresh((f) => new Set([...f, ...added.map((pane) => pane.id)]))
-    }
-    if (arriving.length > 0) {
-      setEntering(
-        (e) => new Set([...e, ...arriving.map(({ pane }) => pane.id)])
-      )
+      if (leaving.length > 0) setGhosts((g) => [...g, ...leaving])
+      if (arriving.length > 0) {
+        setEntering((e) => new Set([...e, ...arriving.map((m) => m.key)]))
+      }
     }
   }
 
-  // An arriving pane mounts folded, then opens on the next frame.
+  // An arriving member mounts folded, then opens on the next frame.
   useEffect(() => {
     if (entering.size === 0) return
     const frame = requestAnimationFrame(() => setEntering(new Set()))
     return () => cancelAnimationFrame(frame)
   }, [entering])
 
-  // A card's entrance runs once; after it the class goes.
-  useEffect(() => {
-    if (fresh.size === 0) return
-    const timer = window.setTimeout(() => setFresh(new Set()), 300)
-    return () => window.clearTimeout(timer)
-  }, [fresh])
-
   // A ghost goes when its fold ends; a timer stands in should the fold never
-  // report (a pane already folded).
-  function bury(id: string) {
-    setGhosts((g) => g.filter((ghost) => ghost.pane.id !== id))
+  // report (a member already folded).
+  function bury(key: string) {
+    setGhosts((g) => g.filter((ghost) => ghost.member.key !== key))
   }
   useEffect(() => {
     if (ghosts.length === 0) return
@@ -155,55 +151,52 @@ export function PanesView({
     return () => window.clearTimeout(timer)
   }, [ghosts])
 
-  // Hosts of panes that are gone, ghosts included, are let go.
+  // Hosts of views no longer laid out are let go: only the active entry's
+  // views are mounted.
   useEffect(() => {
-    const live = new Set([
-      ...panes.map((p) => p.id),
-      ...ghosts.map((g) => g.pane.id),
-    ])
-    for (const id of hosts.current.keys()) {
-      if (!live.has(id)) hosts.current.delete(id)
+    const live = new Set(members.map((m) => m.key))
+    for (const key of hosts.current.keys()) {
+      if (!live.has(key)) hosts.current.delete(key)
     }
   })
 
-  const slots: Slot[] = panes.map((pane) => ({ pane, ghost: false }))
-  for (const { pane, at } of [...ghosts].sort((a, b) => a.at - b.at)) {
-    slots.splice(Math.min(at, slots.length), 0, { pane, ghost: true })
+  const slots: Slot[] = members.map((member) => ({ member, ghost: false }))
+  for (const { member, at } of [...ghosts].sort((a, b) => a.at - b.at)) {
+    if (members.some((m) => m.key === member.key)) continue
+    slots.splice(Math.min(at, slots.length), 0, { member, ghost: true })
   }
   const layout = roles(slots.length)
   const count = slots.length
   const maxSize = count === 2 ? "75%" : "45%"
-  const split = count > 1
   const [ws, setWs] = useAtom(shellWorkspaceAtom)
   const dragging = useAtomValue(tabDragAtom)
+  const split = activeSplit(ws)
+  const full = split !== null && split.views.length >= MAX_SPLIT
 
   const children: ReactNode[] = []
-  slots.forEach(({ pane, ghost }, index) => {
+  slots.forEach(({ member, ghost }, index) => {
     const role = layout[index]!
     if (role === "fill" && index > 0) {
-      children.push(<GapSeparator key="sep-start" />)
+      children.push(<LineSeparator key="sep-start" />)
     }
     if (role === "end") {
-      children.push(<GapSeparator key="sep-end" />)
+      children.push(<LineSeparator key="sep-end" />)
     }
     const body = (
-      <PaneCard
-        split={split}
-        focused={split && !ghost && pane.id === ws.focused}
-        enter={fresh.has(pane.id)}
-      >
-        {ghost ? null : <HostSlot host={hostFor(pane.id)} />}
+      <div className="relative flex h-full min-h-0 w-full min-w-0">
+        {ghost ? null : <HostSlot host={hostFor(member.key)} />}
         {ghost || dragging === null ? null : (
           <DropTarget
-            paneId={pane.id}
+            target={member.key}
             dragged={dragging}
-            canSplit={ws.panes.length < MAX_PANES}
-            own={paneOf(ws, dragging)?.id === pane.id}
-            onDrop={(key, zone) => setWs((w) => dropTab(w, key, pane.id, zone))}
-            accepts={(key, zone) => dropTab(ws, key, pane.id, zone) !== ws}
+            full={full}
+            onDrop={(key, zone) =>
+              setWs((w) => dropTab(w, key, member.key, zone))
+            }
+            accepts={(key, zone) => dropTab(ws, key, member.key, zone) !== ws}
           />
         )}
-      </PaneCard>
+      </div>
     )
     if (role === "fill") {
       children.push(
@@ -215,13 +208,15 @@ export function PanesView({
       children.push(
         <Panel
           key={role}
-          size={percent(pane.share)}
-          minSize={MIN_PANE}
+          size={percent(member.share)}
+          minSize={MIN_MEMBER}
           maxSize={maxSize}
-          collapsed={ghost || entering.has(pane.id)}
-          onFoldEnd={ghost ? () => bury(pane.id) : undefined}
+          collapsed={ghost || entering.has(member.key)}
+          onFoldEnd={ghost ? () => bury(member.key) : undefined}
           onSizeChange={(size) => {
-            if (!ghost) onShareChange(pane.id, Number.parseFloat(size) / 100)
+            if (!ghost) {
+              onShareChange(member.key, Number.parseFloat(size) / 100)
+            }
           }}
           className="min-h-0"
         >
@@ -233,28 +228,27 @@ export function PanesView({
 
   return (
     <MotionConfig reducedMotion="user">
-      {/* The ground the cards stand on: padded once there are cards. */}
       <div
-        data-split={split || undefined}
-        className={cn("flex min-h-0 min-w-0 flex-1", split && "p-1.5")}
+        data-split={members.length > 1 || undefined}
+        className="flex min-h-0 min-w-0 flex-1"
       >
         <PanelGroup
           orientation="horizontal"
           reorder={false}
           className="min-h-0 min-w-0 flex-1"
-          data-pane-count={panes.length}
+          data-pane-count={members.length}
         >
           {children}
         </PanelGroup>
       </div>
-      {panes.map((pane) =>
-        createPortal(renderPane(pane), hostFor(pane.id), pane.id)
+      {members.map((member) =>
+        createPortal(renderMember(member.key), hostFor(member.key), member.key)
       )}
     </MotionConfig>
   )
 }
 
-/** Where a pane's host is shown: adopted on mount, given back on unmount. */
+/** Where a view's host is shown: adopted on mount, given back on unmount. */
 function HostSlot({ host }: { host: HTMLDivElement }) {
   const ref = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
@@ -269,85 +263,41 @@ function HostSlot({ host }: { host: HTMLDivElement }) {
 }
 
 /**
- * A slot's frame: with several panes a card, its focus ring drawn in the
- * slot's own 2px margin so the panel's clip leaves it whole; with one pane
- * nothing to see.
+ * The divider between two members: the platform's 1px border line, full
+ * height, which is the resize handle. It reaches 4px either side for the
+ * pointer, brightens on hover and while dragging, and keeps the library's
+ * keyboard (arrows, Shift, Home, End) and its double-click reset.
  */
-function PaneCard({
-  split,
-  focused,
-  enter,
-  children,
-}: {
-  split: boolean
-  focused: boolean
-  enter: boolean
-  children: ReactNode
-}) {
-  return (
-    <div className={cn("flex h-full min-h-0 w-full min-w-0", split && "p-0.5")}>
-      <div
-        data-slot={split ? "pane-card" : undefined}
-        data-focused={focused || undefined}
-        className={cn(
-          "relative flex h-full min-h-0 w-full min-w-0",
-          split && "bg-background overflow-hidden rounded-xl border",
-          focused && "ring-ring/40 ring-1",
-          enter &&
-            "animate-in fade-in-0 zoom-in-98 motion-reduce:zoom-in-100 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
-        )}
-      >
-        {children}
-      </div>
-    </div>
-  )
-}
-
-/**
- * The separator between two cards: the gap itself, showing nothing until
- * the pointer or keyboard focus finds it, then a short pill. It keeps the
- * library's keyboard (arrows, Shift, Home, End) and its double-click reset.
- */
-function GapSeparator() {
+function LineSeparator() {
   return (
     <Separator
       data-slot="panel-separator"
-      aria-label="Resize pane"
+      aria-label="Resize view"
       className={cn(
-        // A 4px gap, with a 12px reach for the pointer.
-        "group/gap relative flex w-1 items-center justify-center rounded-full outline-hidden after:absolute after:inset-y-0 after:-inset-x-1 after:content-['']",
-        "focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+        "bg-border relative z-10 w-px shrink-0 cursor-col-resize outline-hidden transition-colors",
+        "after:absolute after:inset-y-0 after:-inset-x-1 after:content-['']",
+        "hover:bg-ring data-crossing:bg-ring data-resizing:bg-ring focus-visible:bg-ring"
       )}
-    >
-      <span
-        aria-hidden="true"
-        className={cn(
-          "bg-muted-foreground/40 h-8 w-1 rounded-full opacity-0 transition-opacity",
-          "group-hover/gap:opacity-100 group-focus-visible/gap:opacity-100 group-data-crossing/gap:opacity-100 group-data-resizing/gap:bg-ring group-data-resizing/gap:opacity-100"
-        )}
-      />
-    </Separator>
+    />
   )
 }
 
 /**
- * Where a dragged tab would land on this pane, laid over its content while
- * a tab is dragged: the half it would open in, or the whole card it would
- * move into. A drop that would change nothing is refused, so the pointer
- * says so.
+ * Where a dragged tab would land on this view, laid over its content while
+ * a tab is dragged: the half it would split into, or the whole view it would
+ * replace (every drop, on a full split). A drop that would change nothing is
+ * refused, so the pointer says so.
  */
 function DropTarget({
-  paneId,
+  target,
   dragged,
-  own,
-  canSplit,
+  full,
   accepts,
   onDrop,
 }: {
-  paneId: string
+  target: string
   dragged: string
-  own: boolean
-  canSplit: boolean
+  full: boolean
   accepts: (key: string, zone: DropZone) => boolean
   onDrop: (key: string, zone: DropZone) => void
 }) {
@@ -356,18 +306,18 @@ function DropTarget({
 
   function zoneFor(event: DragEvent<HTMLDivElement>): DropZone | null {
     if (!event.dataTransfer.types.includes(TAB_MIME)) return null
-    const raw = zoneAt(
+    const where = zoneAt(
       event.clientX,
       event.currentTarget.getBoundingClientRect(),
-      own
+      false
     )
-    const where = canSplit ? raw : "center"
     return accepts(dragged, where) ? where : null
   }
+  const shown = full && zone !== null ? "center" : zone
 
   return (
     <div
-      data-drop-target={paneId}
+      data-drop-target={target}
       data-drop-zone={zone ?? undefined}
       className={cn(
         "absolute inset-0 z-20",
@@ -396,14 +346,14 @@ function DropTarget({
         onDrop(key, where)
       }}
     >
-      {zone === null ? null : (
+      {shown === null ? null : (
         <div
           aria-hidden="true"
           className={cn(
-            "bg-primary/15 ring-primary/50 pointer-events-none absolute inset-y-1.5 rounded-lg ring-2",
-            zone === "left" && "start-1.5 w-[calc(50%-0.75rem)]",
-            zone === "right" && "end-1.5 w-[calc(50%-0.75rem)]",
-            zone === "center" && "inset-x-1.5"
+            "bg-primary/15 ring-primary/50 pointer-events-none absolute inset-y-1.5 ring-2",
+            shown === "left" && "start-1.5 w-[calc(50%-0.75rem)]",
+            shown === "right" && "end-1.5 w-[calc(50%-0.75rem)]",
+            shown === "center" && "inset-x-1.5"
           )}
         />
       )}

@@ -1,7 +1,7 @@
 /**
- * Panes in the shell: ⌘\\ splits the main area, each pane carries its own
- * strip, a tab moves to the other pane from its menu, and closing a split
- * pane's last tab closes the pane.
+ * Split tabs in the shell (docs/features/tabs-panes.md): one strip in the
+ * title band holds every tab, a split view being one pill of it; ⌘\\, a
+ * tab's menu and a drag make a split; its members carry thin headers.
  */
 import { Provider, createStore } from "jotai"
 import { expect, test, vi } from "vitest"
@@ -11,9 +11,21 @@ import {
   type ResolvedVaultSettings,
 } from "@holi/shared"
 
-import { fireEvent, render, screen, waitFor, within } from "@/test/render"
+import {
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render"
 import { shellWorkspaceAtom } from "@/state/shell-tabs"
-import { openTab } from "@/state/shell-workspace"
+import {
+  activeSplit,
+  focusedTab,
+  isSplit,
+  openTab,
+} from "@/state/shell-workspace"
 import { vaultSettingsAtom } from "@/state/settings"
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from "@/state/vaults"
 
@@ -118,69 +130,108 @@ function mount() {
   return store
 }
 
-function panes(): HTMLElement[] {
+/** The views in front. */
+function views(): HTMLElement[] {
   return Array.from(document.querySelectorAll<HTMLElement>("[data-pane]"))
 }
 
-test("⌘\\ splits right: a second pane, focused, each with its own strip", async () => {
-  const store = mount()
-  expect(panes()).toHaveLength(1)
-  fireEvent.keyDown(window, { key: "\\", ctrlKey: true })
-  await waitFor(() => expect(panes()).toHaveLength(2))
-  const ws = store.get(shellWorkspaceAtom)
-  expect(ws.focused).toBe(ws.panes[1]!.id)
-  expect(within(panes()[0]!).getByRole("tab", { name: /B/ })).toBeTruthy()
-  expect(within(panes()[1]!).getByRole("tab", { name: /New tab/ })).toBeTruthy()
-})
+function stripOf(): HTMLElement {
+  return document.querySelector<HTMLElement>("[data-slot=site-header]")!
+}
 
-test("a tab moves to the other pane, and a pane goes with its last tab", async () => {
+test("⌘\\ makes a split of the tab and a New tab: one pill, two views", async () => {
   const store = mount()
+  expect(views()).toHaveLength(1)
   fireEvent.keyDown(window, { key: "\\", ctrlKey: true })
-  await waitFor(() => expect(panes()).toHaveLength(2))
-  const left = panes()[0]!
-  fireEvent.contextMenu(within(left).getByRole("tab", { name: /A/ }))
-  fireEvent.click(
-    await screen.findByRole("menuitem", { name: /Move to right pane/ })
-  )
-  await waitFor(() =>
-    expect(within(panes()[1]!).getByRole("tab", { name: /A/ })).toBeTruthy()
-  )
-  // The right card's ×: the pane closes, its tabs reopenable, the left one
-  // stays.
-  const right = panes()[1]!
-  fireEvent.click(within(right).getByRole("button", { name: "Close pane" }))
-  await waitFor(() => expect(panes()).toHaveLength(1))
+  await waitFor(() => expect(views()).toHaveLength(2))
   const ws = store.get(shellWorkspaceAtom)
-  expect(ws.panes[0]!.tabs).toEqual(["B.md"])
-  expect(ws.closed).toContain("A.md")
-})
-
-test("each card's header names where its tab is", async () => {
-  mount()
-  fireEvent.keyDown(window, { key: "\\", ctrlKey: true })
-  await waitFor(() => expect(panes()).toHaveLength(2))
-  const [left, right] = panes()
-  expect(within(left!).getByRole("navigation").textContent).toContain("B")
-  expect(within(right!).getByRole("navigation").textContent).toContain(
+  expect(ws.entries).toHaveLength(2)
+  expect(isSplit(ws.entries[1])).toBe(true)
+  // Both tabs stay in the one strip: A as a tab, the split as a pill.
+  const strip = within(stripOf())
+  expect(strip.getByRole("tab", { name: "A" })).toBeTruthy()
+  expect(
+    strip.getByRole("tab", { name: "Split view: B, New tab" })
+  ).toBeTruthy()
+  // Each member has its own header, and none of them holds tabs.
+  const headers = document.querySelectorAll("[data-slot=pane-header]")
+  expect(headers).toHaveLength(2)
+  expect(within(views()[0]!).queryByRole("tab")).toBeNull()
+  expect(within(views()[1]!).getByRole("navigation").textContent).toContain(
     "New tab"
   )
-  expect(document.querySelectorAll("[data-slot=pane-card]")).toHaveLength(2)
+})
+
+test("selecting another tab shows it alone, the split staying in the strip", async () => {
+  const store = mount()
+  fireEvent.keyDown(window, { key: "\\", ctrlKey: true })
+  await waitFor(() => expect(views()).toHaveLength(2))
+  fireEvent.mouseDown(within(stripOf()).getByRole("tab", { name: "A" }))
+  await waitFor(() => expect(views()).toHaveLength(1))
+  expect(store.get(shellWorkspaceAtom).active).toBe("A.md")
   expect(
-    document.querySelector("[data-slot=pane-card][data-focused]")
+    within(stripOf()).getByRole("tab", { name: /Split view/ })
   ).toBeTruthy()
 })
 
-test("a tab's menu opens it in split view", async () => {
+test("a tab's menu opens it in split view with the active tab", async () => {
   const store = mount()
-  fireEvent.contextMenu(screen.getByRole("tab", { name: /A/ }))
+  fireEvent.contextMenu(within(stripOf()).getByRole("tab", { name: "A" }))
   fireEvent.click(
     await screen.findByRole("menuitem", { name: /Open in split view/ })
   )
-  await waitFor(() => expect(panes()).toHaveLength(2))
+  await waitFor(() => expect(views()).toHaveLength(2))
   const ws = store.get(shellWorkspaceAtom)
-  expect(ws.panes.map((p) => p.tabs)).toEqual([["B.md"], ["A.md"]])
-  expect(ws.focused).toBe(ws.panes[1]!.id)
+  expect(ws.entries).toHaveLength(1)
+  expect(activeSplit(ws)?.views).toEqual(["B.md", "A.md"])
+  expect(focusedTab(ws)).toBe("A.md")
 })
+
+test("a member moves out of its split from its header's menu", async () => {
+  const store = mount()
+  fireEvent.contextMenu(within(stripOf()).getByRole("tab", { name: "A" }))
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: /Open in split view/ })
+  )
+  await waitFor(() => expect(views()).toHaveLength(2))
+  const left = views()[0]!
+  fireEvent.keyDown(
+    within(left).getByRole("button", { name: "View options" }),
+    { key: "Enter" }
+  )
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: /Move out of split/ })
+  )
+  await waitFor(() => expect(views()).toHaveLength(1))
+  const ws = store.get(shellWorkspaceAtom)
+  expect(ws.entries).toEqual(["A.md", "B.md"])
+  expect(ws.active).toBe("B.md")
+})
+
+test("⌘T opens a New tab; ⇧⌘\\ separates; ⌃⌥→ focuses the next member", async () => {
+  const store = mount()
+  fireEvent.keyDown(window, { key: "t", ctrlKey: true })
+  await waitFor(() =>
+    expect(store.get(shellWorkspaceAtom).entries).toHaveLength(3)
+  )
+  expect(focusedTab(store.get(shellWorkspaceAtom))).toMatch(/^holi:new:/)
+  fireEvent.keyDown(window, { key: "\\", ctrlKey: true })
+  await waitFor(() => expect(views()).toHaveLength(2))
+  const first = focusedTab(store.get(shellWorkspaceAtom))
+  fireEvent.keyDown(window, { key: "ArrowRight", ctrlKey: true, altKey: true })
+  await waitFor(() =>
+    expect(focusedTab(store.get(shellWorkspaceAtom))).not.toBe(first)
+  )
+  fireEvent.keyDown(window, { key: "|", ctrlKey: true, shiftKey: true })
+  await waitFor(() => expect(views()).toHaveLength(1))
+  expect(store.get(shellWorkspaceAtom).entries).toHaveLength(4)
+})
+
+/** A drag event at `x`: jsdom's drag events carry no pointer position. */
+function at(event: Event, x: number): Event {
+  Object.defineProperty(event, "clientX", { value: x })
+  return event
+}
 
 /** A drag's data, as jsdom has none. */
 function transfer(): DataTransfer {
@@ -196,7 +247,7 @@ function transfer(): DataTransfer {
   } as unknown as DataTransfer
 }
 
-test("dragging a tab onto the right half of the view splits it there", async () => {
+test("dragging a strip tab onto the view's right edge splits with it there", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout"] })
   const store = mount()
   const dataTransfer = transfer()
@@ -209,7 +260,7 @@ test("dragging a tab onto the right half of the view splits it there", async () 
     expect(el).toBeTruthy()
     return el!
   })
-  // jsdom lays nothing out: a 1000px wide pane, the pointer at 900.
+  // jsdom lays nothing out: a 1000px wide view, the pointer at 900.
   target.getBoundingClientRect = () =>
     ({
       left: 0,
@@ -219,12 +270,13 @@ test("dragging a tab onto the right half of the view splits it there", async () 
       right: 1000,
       bottom: 600,
     }) as DOMRect
-  fireEvent.dragOver(target, { dataTransfer, clientX: 900 })
+  fireEvent(target, at(createEvent.dragOver(target, { dataTransfer }), 900))
   await waitFor(() => expect(target.dataset.dropZone).toBe("right"))
-  fireEvent.drop(target, { dataTransfer, clientX: 900 })
-  await waitFor(() => expect(panes()).toHaveLength(2))
+  fireEvent(target, at(createEvent.drop(target, { dataTransfer }), 900))
+  await waitFor(() => expect(views()).toHaveLength(2))
   const ws = store.get(shellWorkspaceAtom)
-  expect(ws.panes.map((p) => p.tabs)).toEqual([["B.md"], ["A.md"]])
+  expect(activeSplit(ws)?.views).toEqual(["B.md", "A.md"])
+  expect(ws.entries).toHaveLength(1)
   // The drag is over: no targets left over the views.
   await waitFor(() =>
     expect(document.querySelector("[data-drop-target]")).toBeNull()

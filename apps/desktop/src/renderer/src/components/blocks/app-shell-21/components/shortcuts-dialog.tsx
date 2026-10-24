@@ -51,7 +51,10 @@ export function shortcutSections(
       if (line.group !== group) return false
       if (term === "") return true
       const keys = line.specs.flatMap((spec) => hotkeyLabels(spec, mac))
-      return [group, line.label, ...keys].join(" ").toLowerCase().includes(term)
+      return [group, line.label, ...keys, line.gesture ?? ""]
+        .join(" ")
+        .toLowerCase()
+        .includes(term)
     })
     return inGroup.length > 0 ? [{ group, lines: inGroup }] : []
   })
@@ -157,7 +160,15 @@ export function ShortcutsDialog() {
                         <span className="min-w-0 truncate text-sm">
                           {line.label}
                         </span>
-                        <Keys specs={line.specs} mac={mac} />
+                        {line.gesture === undefined ? (
+                          <Keys specs={line.specs} mac={mac} />
+                        ) : (
+                          // A gesture (Split view's drags): its words, where
+                          // a key's caps would be.
+                          <span className="text-muted-foreground shrink-0 text-xs">
+                            {line.gesture}
+                          </span>
+                        )}
                       </div>
                     ))}
                   </div>

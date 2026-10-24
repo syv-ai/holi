@@ -9,16 +9,30 @@ import { BOARD_TAB } from "./documents-section"
 
 /** What the shell can do, for its keys (`lib/shortcuts.ts`). */
 export interface ShellActions {
-  /** The focused pane's tabs, and its active one: the keys act on it. */
+  /** The strip's entries (a split is one), and the view in front: the
+   *  active tab, or the active split's focused member. ⌘W closes that. */
   tabIds: readonly string[]
   activeTabId: string | null
+  // Split tabs (docs/features/tabs-panes.md): the fields below are optional
+  // so a shell without split view keeps compiling.
+  /** The active entry's id, which next/previous step from; `activeTabId`
+   *  when absent. */
+  activeEntryId?: string | null
+  /** A New tab, or the Agents home on the Agents side (⌘T). */
+  newTab?: () => void
+  /** Every member of the active split back to a tab of its own (⇧⌘\);
+   *  undefined without an active split. */
+  separate?: () => void
+  /** Focus the active split's member `step` places on; undefined without
+   *  an active split. */
+  stepMember?: (step: number) => void
   apps: readonly SidebarApp[]
   open: (id: string) => void
   selectTab: (id: string) => void
   closeTab: (id: string) => void
   closeAllTabs: () => void
   reopenTab: () => void
-  /** A new pane beside the focused one (⌘\). */
+  /** Split view (⌘\): the active tab and a New tab side by side. */
   splitRight: () => void
   newDocument: () => void
   toggleFiles: () => void
@@ -47,10 +61,12 @@ export function useShellShortcuts(shell: ShellActions): void {
   const listed = useAtomValue(listedAtom)
 
   const { tabIds, activeTabId } = shell
-  /** The tab `step` places from the showing one, wrapping. */
+  /** The entry `step` places from the active one, wrapping. */
   function stepTab(step: number) {
     if (tabIds.length === 0) return
-    const at = activeTabId === null ? -1 : tabIds.indexOf(activeTabId)
+    const current =
+      shell.activeEntryId === undefined ? activeTabId : shell.activeEntryId
+    const at = current === null ? -1 : tabIds.indexOf(current)
     const from = at < 0 ? (step > 0 ? -1 : 0) : at
     const id = tabIds[(from + step + tabIds.length) % tabIds.length]
     if (id !== undefined) shell.selectTab(id)
@@ -86,12 +102,21 @@ export function useShellShortcuts(shell: ShellActions): void {
       if (id !== undefined) shell.selectTab(id)
     },
     // An app (Mail, Calendar) is a tab too: ⌘W puts it away like any other.
+    // Inside a split `activeTabId` is the focused member, so ⌘W closes that
+    // one, and a 2-split it leaves turns back into a tab.
     "tab.close": () => {
       if (activeTabId !== null) shell.closeTab(activeTabId)
     },
     "tab.closeAll": shell.closeAllTabs,
     "tab.reopen": shell.reopenTab,
     "pane.split": shell.splitRight,
+    // Split tabs: ⌘T, separate, and the members' focus.
+    "tab.new": shell.newTab,
+    "split.separate": shell.separate,
+    "split.next":
+      shell.stepMember === undefined ? undefined : () => shell.stepMember?.(1),
+    "split.previous":
+      shell.stepMember === undefined ? undefined : () => shell.stepMember?.(-1),
     "document.new": shell.newDocument,
     "app.mail": app("mail"),
     "app.calendar": app("calendar"),

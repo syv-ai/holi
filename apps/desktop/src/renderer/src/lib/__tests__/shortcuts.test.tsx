@@ -169,6 +169,24 @@ describe('the dispatcher', () => {
   })
 })
 
+describe('split view keys', () => {
+  test('⌘T is a new tab, ⌘\\ splits, ⇧⌘\\ separates on either character', () => {
+    expect(idOf(ev({ metaKey: true, key: 't' }), ctx())).toBe('tab.new')
+    expect(idOf(ev({ metaKey: true, shiftKey: true, key: 't' }), ctx())).toBe('tab.reopen')
+    expect(idOf(ev({ metaKey: true, key: '\\' }), ctx())).toBe('pane.split')
+    expect(idOf(ev({ metaKey: true, shiftKey: true, key: '|' }), ctx())).toBe('split.separate')
+    expect(idOf(ev({ metaKey: true, shiftKey: true, key: '\\' }), ctx())).toBe('split.separate')
+  })
+
+  test('⌃⌥ arrows step the members, leaving ⌥⌘← to the files', () => {
+    expect(idOf(ev({ ctrlKey: true, altKey: true, key: 'ArrowRight' }), ctx())).toBe('split.next')
+    expect(idOf(ev({ ctrlKey: true, altKey: true, key: 'ArrowLeft' }), ctx())).toBe('split.previous')
+    expect(idOf(ev({ metaKey: true, altKey: true, key: 'ArrowLeft' }), ctx())).toBe(
+      'files.collapseAll',
+    )
+  })
+})
+
 describe('the dialog', () => {
   function Live({ ids }: { ids: string[] }) {
     useShortcutHandlers(Object.fromEntries(ids.map((id) => [id, () => {}])))
@@ -204,6 +222,24 @@ describe('the dialog', () => {
     expect(screen.getByText('No shortcuts found')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Clear search' }))
     expect(screen.getByText('Search')).toBeInTheDocument()
+    delete document.documentElement.dataset.platform
+  })
+
+  test('lists ⌘T, the split view keys and its drags', async () => {
+    document.documentElement.dataset.platform = 'mac'
+    const store = createStore()
+    store.set(shortcutsDialogOpenAtom, true)
+    render(
+      <Provider store={store}>
+        <Live ids={['tab.new', 'pane.split', 'split.separate', 'split.next', 'split.previous']} />
+      </Provider>,
+    )
+    expect(await screen.findByRole('heading', { name: 'Split view' })).toBeInTheDocument()
+    expect(screen.getByText('New tab')).toBeInTheDocument()
+    expect(screen.getByText('Separate split view')).toBeInTheDocument()
+    expect(screen.getByText('Focus next view in split')).toBeInTheDocument()
+    expect(screen.getByText('Drag it to the view’s edge')).toBeInTheDocument()
+    expect(screen.getByText('Drag its header to the tabs')).toBeInTheDocument()
     delete document.documentElement.dataset.platform
   })
 })

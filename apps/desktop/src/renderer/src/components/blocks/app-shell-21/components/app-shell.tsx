@@ -25,24 +25,25 @@ import { openDocumentRequestAtom } from "@/state/open-document"
 import { runningPluginsAtom } from "@/state/plugins"
 import { sidebarSectionAtom } from "@/state/sidebar-section"
 import { shellWorkspaceAtom } from "@/state/shell-tabs"
+// Split tabs (docs/features/tabs-panes.md): one strip, a split being one
+// entry of it.
 import {
-  closeOtherTabs,
-  closePane,
-  closePaneTabs,
+  activeSplit,
+  closeAllTabs as closeAllTabsIn,
   closeTab as closeTabIn,
-  focusPane,
-  focusedPane,
-  MAX_PANES,
-  moveTab,
+  entryIds,
+  entryOf,
+  focusedTab,
+  focusMember,
   openNewTab as openNewTabIn,
   openTab as openTabIn,
-  paneBeside,
   reopenClosed,
   retargetTabs as retargetTabsIn,
-  selectTab as selectTabIn,
+  selectEntry,
+  separate,
   setShares,
-  splitRight as splitRightIn,
-  type ShellPane,
+  splitActive,
+  stepMember,
   type ShellWorkspace,
 } from "@/state/shell-workspace"
 import {
@@ -60,7 +61,7 @@ import type { Move } from "@/lib/tree-actions"
 import { useNewDocument } from "./documents-section"
 import { MobileHeader } from "./mobile-header"
 import { PaneHeader } from "./pane-header"
-import { PanesView } from "./panes-view"
+import { PanesView, type MemberSlot } from "./panes-view"
 import { SiteHeader } from "./site-header"
 import { useSidebarApps } from "./sidebar-apps"
 import { ShortcutsDialog } from "./shortcuts-dialog"
@@ -78,7 +79,7 @@ const RAIL_THRESHOLD = 190
 /** Matches the panel transition, so state lands after the motion finishes. */
 const SETTLE_MS = 280
 
-/** Where a vault's last pane widths for a pane count are kept, on this
+/** Where a vault's last split widths for a member count are kept, on this
  *  machine (docs/features/tabs-panes.md, Persistence). */
 function sharesStorageKey(remote: string | null, count: number): string {
   return `holi.panes.${remote ?? ""}.${count}`
@@ -109,6 +110,10 @@ function writeShares(remote: string | null, shares: number[]): void {
   }
 }
 
+/** Split tabs: the view slot of an empty strip, which shows the New tab's
+ *  view. No tab key reads this way (`holi:` keys name a known kind). */
+const NO_TAB = "holi:none"
+
 /** The key a sidebar row, a search hit or a plugin's request opens: a view's
  *  own key (the board), or a vault path's tab. */
 function keyFor(id: string): string {
@@ -120,12 +125,14 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const isMobile = useIsMobile()
   /** The block's demo threads, still behind ⌘K until search covers the vault. */
   const threads = THREADS
-  /** The panes and their tabs, this vault's (`state/shell-tabs.ts`). */
+  /** The tab strip and its splits, this vault's (`state/shell-tabs.ts`). */
   const [ws, setWs] = useAtom(shellWorkspaceAtom)
   const remote = useAtomValue(activeRemoteAtom)
-  const focused = focusedPane(ws)
-  /** The focused pane's tab: what the sidebar marks and the keys act on. */
-  const activeThreadId = focused.active
+  /** Split tabs: the active split, when the active entry is one. */
+  const split = activeSplit(ws)
+  /** The view in front (the active tab, or the split's focused member):
+   *  what the sidebar marks and the keys act on. */
+  const activeThreadId = focusedTab(ws)
   const activeTab = activeThreadId === null ? null : parseTabKey(activeThreadId)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -210,13 +217,19 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [app])
 
-  // A pane count this vault has had before opens at the widths it had.
-  const paneCount = ws.panes.length
+  // Split tabs: a split, or a member count, this vault has not laid out in
+  // this session opens at the widths it last had for that count.
+  const splitId = split?.id ?? null
+  const memberCount = split?.views.length ?? 1
+  const seeded = useRef(new Set<string>())
   useEffect(() => {
-    if (paneCount < 2) return
-    const stored = readShares(remote, paneCount)
-    if (stored !== null) setWs((w) => setShares(w, stored))
-  }, [paneCount, remote, setWs])
+    if (splitId === null) return
+    const seen = `${splitId}:${memberCount}`
+    if (seeded.current.has(seen)) return
+    seeded.current.add(seen)
+    const stored = readShares(remote, memberCount)
+    if (stored !== null) setWs((w) => setShares(w, splitId, stored))
+  }, [splitId, memberCount, remote, setWs])
 
   /** React state catches up only after the motion has finished. */
   function settleOpen(next: boolean) {
@@ -269,24 +282,23 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   function leaveSettings() {
     const back = beforeSettings.current
     update((w) => {
-      const pane = focusedPane(w)
-      if (back !== null && pane.tabs.includes(back)) {
-        return selectTabIn(w, pane.id, back)
+      // Split tabs: back to that tab wherever it is now, else any other.
+      if (back !== null && entryOf(w, back) !== null) {
+        return selectEntry(w, back)
       }
-      const other = pane.tabs.find((tab) => tab !== SETTINGS_KEY)
-      return other === undefined ? w : selectTabIn(w, pane.id, other)
+      const other = entryIds(w).find((id) => id !== SETTINGS_KEY)
+      return other === undefined ? w : selectEntry(w, other)
     })
   }
 
-  /** +: in `paneId` (the focused pane by default), a New tab, or on the
-   *  Agents side the Agents home, the new-session page. */
-  function openNewTab(paneId?: string) {
-    update((w) => {
-      const there = paneId === undefined ? w : focusPane(w, paneId)
-      return section === "agents" && hasAgents
-        ? openTabIn(there, AGENTS_HOME_KEY)
-        : openNewTabIn(there)
-    })
+  /** + and ⌘T: a New tab, or on the Agents side the Agents home, the
+   *  new-session page. */
+  function openNewTab() {
+    update((w) =>
+      section === "agents" && hasAgents
+        ? openTabIn(w, AGENTS_HOME_KEY)
+        : openNewTabIn(w)
+    )
   }
 
   function closeTab(key: string) {
@@ -294,10 +306,11 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   }
 
   function closeAllTabs() {
-    update((w) => closePaneTabs(w, w.focused))
+    update(closeAllTabsIn)
   }
 
-  /** Open a vault path, the board, or any tab key, in the focused pane. */
+  /** Open a vault path, the board, or any tab key: as a tab, or in the
+   *  active split's focused member (`openTab`). */
   function handleSelectThread(id: string) {
     const key = keyFor(id)
     if (parseTabKey(key)?.kind === "doc" || key.endsWith(".app")) {
@@ -307,32 +320,27 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     setMobileNavOpen(false)
   }
 
-  /** A moved file's tab follows it to its new path, in every pane. */
+  /** A moved file's tab follows it to its new path, splits included. */
   function retargetTabs(moves: Move[]) {
     update((w) => retargetTabsIn(w, moves))
   }
 
-  function splitRight(paneId?: string, key?: string) {
-    update((w) => splitRightIn(w, paneId ?? w.focused, key))
-  }
-
-  /** A sized pane was resized: it takes `share`, and the pane that fills
-   *  takes the rest. */
-  function resizePane(paneId: string, share: number) {
+  /** Split tabs: a sized member of the active split was resized; it takes
+   *  `share`, and the member that fills takes the rest. */
+  function resizeMember(key: string, share: number) {
     update((w) => {
-      const fill = w.panes.length === 3 ? 1 : 0
-      const shares = w.panes.map((p) => (p.id === paneId ? share : p.share))
+      const s = activeSplit(w)
+      if (s === null) return w
+      const fill = s.views.length === 3 ? 1 : 0
+      const shares = s.views.map((v, i) => (v === key ? share : s.shares[i]!))
       const others = shares.reduce(
-        (sum, s, i) => (i === fill ? sum : sum + s),
+        (sum, x, i) => (i === fill ? sum : sum + x),
         0
       )
       shares[fill] = Math.max(0.05, 1 - others)
-      const next = setShares(w, shares)
-      if (next !== w)
-        writeShares(
-          remote,
-          next.panes.map((p) => p.share)
-        )
+      const next = setShares(w, s.id, shares)
+      const after = activeSplit(next)
+      if (next !== w && after !== null) writeShares(remote, after.shares)
       return next
     })
   }
@@ -344,15 +352,23 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
 
   useShortcutDispatcher()
   useShellShortcuts({
-    tabIds: focused.tabs,
+    // Split tabs: the keys step over strip entries, and ⌘W closes the view
+    // in front (a split's focused member).
+    tabIds: entryIds(ws),
     activeTabId: activeThreadId,
+    activeEntryId: ws.active,
+    newTab: openNewTab,
+    separate:
+      split === null ? undefined : () => update((w) => separate(w, split.id)),
+    stepMember:
+      split === null ? undefined : (step) => update((w) => stepMember(w, step)),
     apps,
     open: handleSelectThread,
-    selectTab: (key) => update((w) => selectTabIn(w, w.focused, key)),
+    selectTab: (id) => update((w) => selectEntry(w, id)),
     closeTab,
     closeAllTabs,
     reopenTab: () => update(reopenClosed),
-    splitRight: () => splitRight(),
+    splitRight: () => update(splitActive),
     newDocument: handleNewChat,
     toggleFiles,
     showFiles: () => {
@@ -398,64 +414,45 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     />
   )
 
-  const multi = !isMobile && ws.panes.length > 1
+  // Split tabs: the active entry's views side by side, a split's members
+  // each under a header of its own; one strip, always in the title band.
+  const multi = !isMobile && split !== null
+  /** The views in front: the split's members, else the active tab, else
+   *  the New tab's view of an empty strip. */
+  const members: MemberSlot[] =
+    split !== null
+      ? split.views.map((key, i) => ({ key, share: split.shares[i]! }))
+      : [{ key: activeThreadId ?? NO_TAB, share: 1 }]
 
-  /** A pane's strip: in the title band with one pane, its own header with
-   *  several. */
-  function strip(pane: ShellPane, index: number) {
-    return (
-      <SiteHeader
-        tabs={pane.tabs.map(look)}
-        activeTabId={pane.active}
-        focused={!multi || pane.id === ws.focused}
-        onSelectTab={(key) => update((w) => selectTabIn(w, pane.id, key))}
-        onCloseTab={closeTab}
-        onCloseOtherTabs={(key) => update((w) => closeOtherTabs(w, key))}
-        onNewTab={() => openNewTab(pane.id)}
-        onCloseAllTabs={() => update((w) => closePaneTabs(w, pane.id))}
-        onReopenTab={() => update(reopenClosed)}
-        pane={
-          isMobile
-            ? undefined
-            : {
-                count: ws.panes.length,
-                canSplit: ws.panes.length < MAX_PANES,
-                first: index === 0,
-                last: index === ws.panes.length - 1,
-                onSplitRight: (key) => splitRight(pane.id, key),
-                onMoveTab: (key, side) =>
-                  update((w) => {
-                    const to = paneBeside(w, pane.id, side)
-                    return to === null ? w : moveTab(w, key, to.id)
-                  }),
-                onClosePane: () => update((w) => closePane(w, pane.id)),
-              }
-        }
-      />
-    )
-  }
-
-  /** One pane: its header when there are several, then its tab's view.
-   *  Focus follows a press or keyboard focus into it. */
-  function paneBody(pane: ShellPane) {
-    const index = ws.panes.findIndex((p) => p.id === pane.id)
-    const isFocused = pane.id === ws.focused
+  /** One view: its header in a split, then what it shows. Focus follows a
+   *  press or keyboard focus into a split's member. */
+  function memberBody(key: string) {
+    const tab = key === NO_TAB ? null : key
+    const isFocused = tab === activeThreadId
+    const focus = () => {
+      if (split !== null && tab !== null) {
+        update((w) => focusMember(w, split.id, tab))
+      }
+    }
     return (
       <section
-        aria-label={multi ? `Pane ${index + 1}` : undefined}
-        data-pane={pane.id}
-        data-pane-focused={isFocused || undefined}
-        onPointerDownCapture={() => update((w) => focusPane(w, pane.id))}
-        onFocusCapture={() => update((w) => focusPane(w, pane.id))}
+        aria-label={
+          multi
+            ? `View ${members.findIndex((m) => m.key === key) + 1}`
+            : undefined
+        }
+        data-pane={key}
+        data-pane-focused={(multi && isFocused) || undefined}
+        onPointerDownCapture={focus}
+        onFocusCapture={focus}
         className="flex min-h-0 min-w-0 flex-1 flex-col"
       >
-        {/* Split view: each card carries its own header (pane-header.tsx). */}
-        {multi ? (
-          <PaneHeader paneId={pane.id} onNewTab={() => openNewTab(pane.id)} />
+        {multi && tab !== null ? (
+          <PaneHeader member={tab} focused={isFocused} />
         ) : null}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <TabView
-            tab={pane.active}
+            tab={tab}
             settingsNavInSidebar={
               isFocused && settingsActive && !isMobile && sidebarOpen
             }
@@ -468,12 +465,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     )
   }
 
-  const header = multi ? (
-    // Several panes: each carries its strip, and the band is left to drag.
-    <div className="min-w-0 flex-1" />
-  ) : (
-    strip(focused, ws.panes.indexOf(focused))
-  )
+  const header = <SiteHeader onNewTab={openNewTab} draggable={!isMobile} />
 
   const main = (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
@@ -491,12 +483,13 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
       <div className="flex min-h-0 flex-1">
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
           {isMobile ? (
-            paneBody(focused)
+            memberBody(activeThreadId ?? NO_TAB)
           ) : (
             <PanesView
-              panes={ws.panes}
-              renderPane={paneBody}
-              onShareChange={resizePane}
+              entryId={ws.active}
+              members={members}
+              renderMember={memberBody}
+              onShareChange={resizeMember}
             />
           )}
         </main>
