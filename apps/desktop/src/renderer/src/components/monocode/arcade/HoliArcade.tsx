@@ -26,6 +26,8 @@ import {
   type CSSProperties,
 } from "react"
 
+import { toast } from "sonner"
+
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
@@ -46,7 +48,10 @@ import {
   type GridArcade,
 } from "./gridArcade"
 import { createPaperRun, stackScore } from "./paperRun"
+import { ArcadeScoreboard } from "./arcade-scoreboard"
+import { slowerMode } from "./scoreboard"
 import { drawSpeechBubble } from "./speechBubble"
+import { useScoreboard } from "./use-scoreboard"
 
 const CELL = 6
 const GAP = 1
@@ -277,6 +282,12 @@ export function HoliArcade({
   const [mode, setMode] = useState<ArcadeMode>("mid")
   const modeRef = useRef(mode)
   modeRef.current = mode
+  /** The slowest speed this run has been played at: what it counts as on
+   *  the scoreboard (`slowerMode`). */
+  const runModeRef = useRef<ArcadeMode>(mode)
+  const board = useScoreboard()
+  const recordRef = useRef(board.record)
+  recordRef.current = board.record
   const onReleaseRef = useRef(onRelease)
   onReleaseRef.current = onRelease
 
@@ -292,6 +303,19 @@ export function HoliArcade({
     if (playing === playingRef.current) return
     playingRef.current = playing
     refreshRef.current()
+    // A run ends on release: a new best goes on the vault's scoreboard.
+    if (!playing) {
+      const finished = scoreRef.current
+      const runMode = runModeRef.current
+      void recordRef.current(runMode, finished).then(
+        (best) => {
+          if (best !== null)
+            toast.success(`New best at ${MODE_LABEL[runMode]}: ${best}`)
+        },
+        () => toast.error("Couldn’t save your score to the vault.")
+      )
+    }
+    runModeRef.current = modeRef.current
     scoreRef.current = 0
     carryRef.current = 0
     setScore(0)
@@ -627,6 +651,7 @@ export function HoliArcade({
 
   const pickMode = useCallback((next: ArcadeMode) => {
     arcadeRef.current?.setMode(next)
+    runModeRef.current = slowerMode(runModeRef.current, next)
     setMode(next)
     rootRef.current?.focus()
   }, [])
@@ -751,6 +776,17 @@ export function HoliArcade({
             <Kbd>Esc</Kbd>
           </Button>
         </div>
+      ) : null}
+      {playing ? (
+        // The vault's best runs at this speed, the run in play ranked live.
+        <ArcadeScoreboard
+          players={board.players}
+          me={board.me}
+          mode={mode}
+          modeLabel={MODE_LABEL[mode]}
+          score={score}
+          className="animate-in fade-in-0 absolute top-14 right-4 z-10 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
+        />
       ) : null}
     </div>
   )
