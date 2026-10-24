@@ -238,7 +238,7 @@ describe('the dialog', () => {
     expect(screen.getByText('New tab')).toBeInTheDocument()
     expect(screen.getByText('Separate split view')).toBeInTheDocument()
     expect(screen.getByText('Focus next view in split')).toBeInTheDocument()
-    expect(screen.getByText('Drag it to the view’s edge')).toBeInTheDocument()
+    expect(screen.getByText('Drag it to an edge or between two views')).toBeInTheDocument()
     expect(screen.getByText('Drag it from the pill to the tabs')).toBeInTheDocument()
     delete document.documentElement.dataset.platform
   })

@@ -96,7 +96,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { PixelPersona } from "@/composites"
-import { cn, openTabAtom } from "@/plugin-api"
+import { cn, openTabAtom, useTabDrag } from "@/plugin-api"
 import { agentSessionsAtom } from "../state/sessions"
 import {
   duplicateSessionAtom,
@@ -359,6 +359,31 @@ function stateWords(row: SessionRow): string {
   }
 }
 
+/** What a row selects as a tab of its own, if it can be one: its slot's
+ *  selection, or a live session of the agent's. */
+function rowSelection(
+  item: SessionRow["item"],
+  isLive: boolean
+): { owner: string; id: string } | undefined {
+  return (
+    item.selection ??
+    (isLive && item.jobId !== undefined
+      ? { owner: "agent", id: `session:${item.jobId}` }
+      : undefined)
+  )
+}
+
+/** The tab a row drags as, or null for one that opens none. */
+function tabOf(
+  item: SessionRow["item"],
+  live: readonly { id: string }[]
+): { kind: "session"; owner: string; id: string } | null {
+  const isLive =
+    item.jobId !== undefined && live.some((s) => s.id === item.jobId)
+  const selection = rowSelection(item, isLive)
+  return selection === undefined ? null : { kind: "session", ...selection }
+}
+
 /** A session as MonoCode's card draws one: model and age, title, place. */
 function SessionCard({
   row,
@@ -517,11 +542,7 @@ function useRowActions(
 
   // A row that selects something, or a live session, can be a tab of its
   // own beside the one in front.
-  const selection =
-    item.selection ??
-    (isLive && jobId !== undefined
-      ? { owner: "agent", id: `session:${jobId}` }
-      : undefined)
+  const selection = rowSelection(item, isLive)
   const place: MenuAction[] =
     selection === undefined
       ? []
@@ -842,6 +863,8 @@ export function SessionList(): React.JSX.Element {
   const [renaming, setRenaming] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<SessionRow | null>(null)
   const abilities = useAtomValue(rowAbilitiesAtom)
+  const live = useAtomValue(agentSessionsAtom)
+  const tabDrag = useTabDrag()
 
   const visible = useMemo(
     () => rows.filter((r) => rowMatches(r, query, filter)),
@@ -993,6 +1016,9 @@ export function SessionList(): React.JSX.Element {
                     focusable={row.item.key === tabKey}
                     onFocus={() => setFocusKey(row.item.key)}
                     onOpen={() => void open(row.item)}
+                    // A row that can be a tab drags as one, onto the content
+                    // or the strip.
+                    {...tabDrag(tabOf(row.item, live))}
                     onKeyDown={(e) => {
                       // F2 renames, as it does in the documents tree.
                       if (

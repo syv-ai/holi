@@ -3,6 +3,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type DragEvent,
   type ReactNode,
 } from "react"
@@ -17,11 +18,24 @@ import { shellWorkspaceAtom } from "@/state/shell-tabs"
 import {
   activeSplit,
   dropTab,
+  entryOf,
+  insertIntoActive,
+  isSplit,
   MAX_SPLIT,
-  type DropZone,
+  openTab,
+  type ShellWorkspace,
 } from "@/state/shell-workspace"
 
-import { TAB_MIME, tabDragAtom, zoneAt } from "./use-tab-drag"
+import { TabMark } from "./site-header"
+import { useTabLook } from "./tab-look"
+import {
+  insertPreview,
+  notePlaced,
+  slotAt,
+  TAB_MIME,
+  tabDragAtom,
+  type DropSlot,
+} from "./use-tab-drag"
 
 /**
  * The active strip entry's views side by side, on motion-panels (MIT,
@@ -48,9 +62,14 @@ import { TAB_MIME, tabDragAtom, zoneAt } from "./use-tab-drag"
  * **The look.** Members sit edge to edge, square, on `main`'s own ground (no
  * cards, no gutter), parted by a hairline that is the resize handle.
  *
- * **Drops.** While a tab is dragged (`use-tab-drag.ts`) each view lays a
- * target over its content, which shows where the tab would go: the half it
- * would split into, or the whole view it would replace.
+ * **Drops make room.** While a view is dragged (`use-tab-drag.ts`) one
+ * transparent catcher lies over the content, and the views slide apart to
+ * open a gap where the dragged view would land, its mark and title in it
+ * (`slotAt` says where, `insertPreview` how far each slides). Only
+ * transforms move, so a heavy view (an editor, a terminal) is never laid
+ * out again mid-drag. The drop commits that layout and lands it at once,
+ * the gap's share and place being what the drop gives the newcomer. A
+ * member's middle third replaces it, and a full split only replaces.
  */
 
 const MIN_MEMBER = 240
@@ -77,6 +96,38 @@ function percent(share: number): `${number}%` {
   return `${Math.round(share * 10000) / 100}%`
 }
 
+/** The members as the drag found them: their keys and edges, in pixels from
+ *  the content's left edge (`slotAt`'s `edges`). */
+interface Geometry {
+  keys: string[]
+  edges: number[]
+}
+
+/** What a drag over the content shows, for the slot under the pointer. */
+type Preview =
+  /** A gap opens at edge `index`; the members slide by `shifts`. `fills`
+   *  is the view that will fill the rest when that is not what is there
+   *  now (the tab in front dragged to its own edge splits with its
+   *  neighbour). */
+  | {
+      kind: "insert"
+      index: number
+      gapStart: number
+      gapWidth: number
+      shifts: number[]
+      fills: string | null
+    }
+  /** A split's own member moves to edge `index`: a line there, nothing
+   *  slides (the count stays). */
+  | { kind: "move"; index: number; from: number }
+  /** The member at `index` is replaced (or swapped), whole. */
+  | { kind: "replace"; index: number }
+
+/** The house curve for what slides: the reveal's 200ms, no bounce, and
+ *  nothing under reduced motion. */
+const SLIDE =
+  "transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+
 export function PanesView({
   entryId,
   members,
@@ -102,6 +153,18 @@ export function PanesView({
     return host
   }
 
+  const [ws, setWs] = useAtom(shellWorkspaceAtom)
+  const dragging = useAtomValue(tabDragAtom)
+  const setDrag = useSetAtom(tabDragAtom)
+  const look = useTabLook()
+
+  /** A drop just committed: its layout lands at once, no fold, no slide
+   *  back, on a group mounted afresh (`landings` is its key), so the
+   *  library sizes every panel at its share rather than animating from the
+   *  old widths (the views keep their hosts, so nothing remounts). */
+  const [landing, setLanding] = useState(false)
+  const [landings, setLandings] = useState(0)
+
   // What was laid out last time, to find the members that arrive and leave.
   // (React's "adjusting state when a prop changes": set during render.)
   const [before, setBefore] = useState({ entryId, members })
@@ -110,8 +173,8 @@ export function PanesView({
 
   if (before.members !== members || before.entryId !== entryId) {
     setBefore({ entryId, members })
-    if (before.entryId !== entryId) {
-      // Another entry: its views land as they are.
+    if (before.entryId !== entryId || landing) {
+      // Another entry, or a drop's layout: its views land as they are.
       if (ghosts.length > 0) setGhosts([])
       if (entering.size > 0) setEntering(new Set())
     } else {
@@ -142,6 +205,15 @@ export function PanesView({
     return () => cancelAnimationFrame(frame)
   }, [entering])
 
+  // A landing lasts until the new group has sized its panels.
+  useEffect(() => {
+    if (!landing) return
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => setLanding(false))
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [landing])
+
   // A ghost goes when its fold ends; a timer stands in should the fold never
   // report (a member already folded).
   function bury(key: string) {
@@ -162,6 +234,161 @@ export function PanesView({
     }
   })
 
+  // ---------------------------------------------------------------- drops
+
+  const area = useRef<HTMLDivElement>(null)
+  /** Measured as the drag arrives over the content, kept for the drag: the
+   *  zones never move under the pointer while the views slide. */
+  const geometry = useRef<Geometry | null>(null)
+  /** The slot under the pointer, as `kind:index`, and the drop it makes. */
+  const under = useRef<{ id: string | null; next: ShellWorkspace | null }>({
+    id: null,
+    next: null,
+  })
+  const [preview, setPreview] = useState<Preview | null>(null)
+
+  // A drag over: everything back as it was. A drag whose source went away
+  // mid-drag (a row re-rendered) never reports its end, but the first
+  // pointer move after it does.
+  useEffect(() => {
+    if (dragging === null) {
+      geometry.current = null
+      under.current = { id: null, next: null }
+      setPreview(null)
+      return
+    }
+    const over = () => setDrag(null)
+    window.addEventListener("pointermove", over)
+    return () => window.removeEventListener("pointermove", over)
+  }, [dragging, setDrag])
+
+  function measure(): Geometry | null {
+    const root = area.current
+    if (root === null) return null
+    const left = root.getBoundingClientRect().left
+    const bodies = [
+      ...root.querySelectorAll<HTMLElement>("[data-preview-member]"),
+    ]
+    if (bodies.length === 0) return null
+    const rects = bodies.map((body) => body.getBoundingClientRect())
+    return {
+      keys: bodies.map((body) => body.dataset.previewMember!),
+      edges: [
+        ...rects.map((rect) => rect.left - left),
+        rects[rects.length - 1]!.right - left,
+      ],
+    }
+  }
+
+  /** The drop a slot makes, and what it shows; null when it changes
+   *  nothing. */
+  function plan(
+    key: string,
+    slot: DropSlot,
+    at: Geometry
+  ): { next: ShellWorkspace; show: Preview } | null {
+    if (ws.active === null) {
+      // The empty strip's view: whatever is dropped opens there.
+      const next = openTab(ws, key)
+      return next === ws ? null : { next, show: { kind: "replace", index: 0 } }
+    }
+    const split = activeSplit(ws)
+    if (slot.kind === "replace") {
+      const target = at.keys[slot.index]
+      if (target === undefined) return null
+      const next = dropTab(ws, key, target, "center")
+      return next === ws ? null : { next, show: slot }
+    }
+    const next = insertIntoActive(ws, key, slot.index)
+    if (next === ws) return null
+    const from = split === null ? -1 : split.views.indexOf(key)
+    if (from !== -1) {
+      return { next, show: { kind: "move", index: slot.index, from } }
+    }
+    const landed = entryOf(next, key)
+    const fills =
+      split === null && isSplit(landed)
+        ? (landed.views.find((v) => v !== key) ?? null)
+        : null
+    return {
+      next,
+      show: {
+        kind: "insert",
+        index: slot.index,
+        ...insertPreview(at.edges, slot.index),
+        fills: fills !== null && !at.keys.includes(fills) ? fills : null,
+      },
+    }
+  }
+
+  function track(event: DragEvent<HTMLDivElement>): boolean {
+    if (dragging === null || !event.dataTransfer.types.includes(TAB_MIME)) {
+      return false
+    }
+    geometry.current ??= measure()
+    const at = geometry.current
+    if (at === null) return false
+    const left = area.current?.getBoundingClientRect().left ?? 0
+    const full = (activeSplit(ws)?.views.length ?? 0) >= MAX_SPLIT
+    const slot = slotAt(event.clientX - left, at.edges, full)
+    const id = slot === null ? null : `${slot.kind}:${slot.index}`
+    if (id !== under.current.id) {
+      // Only a change of slot costs anything: dragover fires constantly.
+      const planned = slot === null ? null : plan(dragging, slot, at)
+      under.current = { id, next: planned?.next ?? null }
+      setPreview(planned?.show ?? null)
+    }
+    return under.current.next !== null
+  }
+
+  function leave() {
+    under.current = { id: null, next: null }
+    setPreview(null)
+  }
+
+  const catcher =
+    dragging === null ? null : (
+      <div
+        data-drop-target=""
+        data-drop-slot={
+          preview === null ? undefined : `${preview.kind}:${preview.index}`
+        }
+        className="absolute inset-0 z-40"
+        onDragOver={(event) => {
+          if (!track(event)) return
+          event.preventDefault()
+          event.dataTransfer.dropEffect = "move"
+        }}
+        onDragLeave={(event) => {
+          const to = event.relatedTarget
+          if (!(to instanceof Node) || !event.currentTarget.contains(to)) {
+            leave()
+          }
+        }}
+        onDrop={(event) => {
+          const ok = track(event)
+          const next = under.current.next
+          leave()
+          setDrag(null)
+          if (!ok || next === null) return
+          event.preventDefault()
+          setLanding(true)
+          setLandings((n) => n + 1)
+          notePlaced(next)
+          setWs(next)
+        }}
+      />
+    )
+
+  const shifts = new Map<string, number>()
+  if (preview?.kind === "insert" && geometry.current !== null) {
+    geometry.current.keys.forEach((key, i) =>
+      shifts.set(key, preview.shifts[i] ?? 0)
+    )
+  }
+
+  // ---------------------------------------------------------------- layout
+
   const slots: Slot[] = members.map((member) => ({ member, ghost: false }))
   for (const { member, at } of [...ghosts].sort((a, b) => a.at - b.at)) {
     if (members.some((m) => m.key === member.key)) continue
@@ -170,34 +397,54 @@ export function PanesView({
   const layout = roles(slots.length)
   const count = slots.length
   const maxSize = count === 2 ? "75%" : count === 3 ? "45%" : "35%"
-  const [ws, setWs] = useAtom(shellWorkspaceAtom)
-  const dragging = useAtomValue(tabDragAtom)
-  const split = activeSplit(ws)
-  const full = split !== null && split.views.length >= MAX_SPLIT
+
+  /** The divider before slot `at`, sliding with its neighbours: with the
+   *  one where the gap opens. */
+  function separatorShift(at: number): number | "hidden" | undefined {
+    if (preview?.kind !== "insert") return undefined
+    if (at === preview.index) return "hidden"
+    return at < preview.index
+      ? preview.shifts[0]
+      : preview.shifts[preview.shifts.length - 1]
+  }
 
   const children: ReactNode[] = []
   slots.forEach(({ member, ghost }, index) => {
     const role = layout[index]!
     if (role === "fill" && index > 0) {
-      children.push(<LineSeparator key="sep-start" />)
+      children.push(
+        <LineSeparator
+          key="sep-start"
+          shift={separatorShift(index)}
+          landing={landing}
+        />
+      )
     }
     if (role === "end" || role === "end2") {
-      children.push(<LineSeparator key={`sep-${role}`} />)
+      children.push(
+        <LineSeparator
+          key={`sep-${role}`}
+          shift={separatorShift(index)}
+          landing={landing}
+        />
+      )
     }
+    const shift = ghost ? undefined : shifts.get(member.key)
     const body = (
-      <div className="relative flex h-full min-h-0 w-full min-w-0">
-        {ghost ? null : <HostSlot host={hostFor(member.key)} />}
-        {ghost || dragging === null ? null : (
-          <DropTarget
-            target={member.key}
-            dragged={dragging}
-            full={full}
-            onDrop={(key, zone) =>
-              setWs((w) => dropTab(w, key, member.key, zone))
-            }
-            accepts={(key, zone) => dropTab(ws, key, member.key, zone) !== ws}
-          />
+      <div
+        data-preview-member={ghost ? undefined : member.key}
+        style={
+          shift === undefined
+            ? undefined
+            : { transform: `translateX(${shift}px)` }
+        }
+        className={cn(
+          "relative flex h-full min-h-0 w-full min-w-0",
+          dragging !== null && "will-change-transform",
+          landing ? "transition-none" : SLIDE
         )}
+      >
+        {ghost ? null : <HostSlot host={hostFor(member.key)} />}
       </div>
     )
     if (role === "fill") {
@@ -231,10 +478,12 @@ export function PanesView({
   return (
     <MotionConfig reducedMotion="user">
       <div
+        ref={area}
         data-split={members.length > 1 || undefined}
-        className="flex min-h-0 min-w-0 flex-1"
+        className="relative flex min-h-0 min-w-0 flex-1"
       >
         <PanelGroup
+          key={landings}
           orientation="horizontal"
           reorder={false}
           className="min-h-0 min-w-0 flex-1"
@@ -242,11 +491,173 @@ export function PanesView({
         >
           {children}
         </PanelGroup>
+        {dragging === null ? null : (
+          <DropPreview
+            preview={preview}
+            geometry={geometry.current}
+            dragged={look(dragging)}
+            fills={
+              preview?.kind === "insert" && preview.fills !== null
+                ? look(preview.fills)
+                : null
+            }
+          />
+        )}
+        {catcher}
       </div>
       {members.map((member) =>
         createPortal(renderMember(member.key), hostFor(member.key), member.key)
       )}
     </MotionConfig>
+  )
+}
+
+/**
+ * What a drag over the content draws over the views, taking no pointer: the
+ * gap the views slid apart for, holding the dragged view's mark and title on
+ * a muted ground inside a dashed hairline; the member a drop would replace,
+ * lit as a target with the same label; or, for a member moving inside its
+ * split, a line where it would go. The gap stays mounted for the drag, so
+ * moving between edges slides it there rather than drawing it anew; it fades
+ * in where it first opens.
+ */
+function DropPreview({
+  preview,
+  geometry,
+  dragged,
+  fills,
+}: {
+  preview: Preview | null
+  geometry: Geometry | null
+  dragged: ReturnType<ReturnType<typeof useTabLook>>
+  fills: ReturnType<ReturnType<typeof useTabLook>> | null
+}) {
+  const open = preview?.kind === "insert"
+  // The gap's last place, kept while it fades out, and whether it was open
+  // the render before: one that opens jumps to its place, then slides.
+  const [last, setLast] = useState<{ start: number; width: number } | null>(
+    null
+  )
+  const [wasOpen, setWasOpen] = useState(false)
+  if (
+    open &&
+    (last?.start !== preview.gapStart || last.width !== preview.gapWidth)
+  ) {
+    setLast({ start: preview.gapStart, width: preview.gapWidth })
+  }
+  if (open !== wasOpen) setWasOpen(open)
+  const gap = open ? { start: preview.gapStart, width: preview.gapWidth } : last
+  const total =
+    geometry === null ? 0 : geometry.edges[geometry.edges.length - 1]!
+  const span = (index: number) =>
+    geometry === null
+      ? null
+      : {
+          left: geometry.edges[index]!,
+          width: geometry.edges[index + 1]! - geometry.edges[index]!,
+        }
+  const replaced = preview?.kind === "replace" ? span(preview.index) : null
+  const moving = preview?.kind === "move" ? span(preview.from) : null
+  const rest =
+    open && fills !== null
+      ? preview.index === 0
+        ? { left: preview.gapWidth, width: total - preview.gapWidth }
+        : { left: 0, width: total - preview.gapWidth }
+      : null
+
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 z-30"
+    >
+      {gap === null ? null : (
+        <div
+          data-drop-gap=""
+          style={
+            {
+              width: gap.width,
+              transform: `translateX(${gap.start}px)`,
+            } as CSSProperties
+          }
+          className={cn(
+            "absolute inset-y-0 left-0 p-1.5",
+            open ? "opacity-100" : "opacity-0",
+            open && wasOpen
+              ? "transition-[transform,opacity] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
+              : "transition-opacity duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]",
+            "motion-reduce:transition-none"
+          )}
+        >
+          <Label
+            tab={dragged}
+            className="bg-muted/40 border-border border border-dashed"
+          />
+        </div>
+      )}
+      {rest === null ? null : (
+        <Box at={rest}>
+          <Label tab={fills!} className="bg-muted ring-border ring-1" />
+        </Box>
+      )}
+      {replaced === null ? null : (
+        <Box at={replaced} key={`replace-${preview!.index}`}>
+          <Label tab={dragged} className="bg-muted ring-primary/50 ring-2" />
+        </Box>
+      )}
+      {moving === null ||
+      preview?.kind !== "move" ||
+      geometry === null ? null : (
+        <>
+          <Box at={moving}>
+            <div className="bg-background/50 size-full" />
+          </Box>
+          <div
+            data-drop-line=""
+            style={{ left: geometry.edges[preview.index]! - 1 }}
+            className="bg-primary absolute inset-y-1.5 w-0.5 rounded-full"
+          />
+        </>
+      )}
+    </div>
+  )
+}
+
+/** A member's place over the views, fading in. */
+function Box({
+  at,
+  children,
+}: {
+  at: { left: number; width: number }
+  children: ReactNode
+}) {
+  return (
+    <div
+      style={{ left: at.left, width: at.width }}
+      className="animate-in fade-in-0 absolute inset-y-0 p-1.5 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:animate-none"
+    >
+      {children}
+    </div>
+  )
+}
+
+/** A view's mark and title, centred in its place. */
+function Label({
+  tab,
+  className,
+}: {
+  tab: ReturnType<ReturnType<typeof useTabLook>>
+  className?: string
+}) {
+  return (
+    <div
+      className={cn(
+        "text-muted-foreground flex size-full items-center justify-center gap-2 overflow-hidden px-4 text-sm",
+        className
+      )}
+    >
+      <TabMark tab={tab} />
+      <span className="truncate">{tab.title}</span>
+    </div>
   )
 }
 
@@ -270,95 +681,34 @@ function HostSlot({ host }: { host: HTMLDivElement }) {
  * pointer, brightens on hover and while dragging, and keeps the library's
  * keyboard (arrows, Shift, Home, End) and its double-click reset.
  */
-function LineSeparator() {
+function LineSeparator({
+  shift,
+  landing,
+}: {
+  /** While a drag opens a gap: how far it slides with its neighbours, or
+   *  hidden where the gap opens. */
+  shift?: number | "hidden"
+  landing: boolean
+}) {
   return (
     <Separator
       data-slot="panel-separator"
       aria-label="Resize view"
+      style={
+        shift === "hidden"
+          ? { opacity: 0 }
+          : shift === undefined
+            ? undefined
+            : { transform: `translateX(${shift}px)` }
+      }
       className={cn(
-        "bg-border relative z-10 w-px shrink-0 cursor-col-resize outline-hidden transition-colors",
+        "bg-border relative z-10 w-px shrink-0 cursor-col-resize outline-hidden",
+        landing
+          ? "transition-none"
+          : "transition-[color,background-color,transform,opacity] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
         "after:absolute after:inset-y-0 after:-inset-x-1 after:content-['']",
         "hover:bg-ring data-crossing:bg-ring data-resizing:bg-ring focus-visible:bg-ring"
       )}
     />
-  )
-}
-
-/**
- * Where a dragged tab would land on this view, laid over its content while
- * a tab is dragged: the half it would split into, or the whole view it would
- * replace (every drop, on a full split). A drop that would change nothing is
- * refused, so the pointer says so.
- */
-function DropTarget({
-  target,
-  dragged,
-  full,
-  accepts,
-  onDrop,
-}: {
-  target: string
-  dragged: string
-  full: boolean
-  accepts: (key: string, zone: DropZone) => boolean
-  onDrop: (key: string, zone: DropZone) => void
-}) {
-  const [zone, setZone] = useState<DropZone | null>(null)
-  const setDrag = useSetAtom(tabDragAtom)
-
-  function zoneFor(event: DragEvent<HTMLDivElement>): DropZone | null {
-    if (!event.dataTransfer.types.includes(TAB_MIME)) return null
-    const where = zoneAt(
-      event.clientX,
-      event.currentTarget.getBoundingClientRect(),
-      false
-    )
-    return accepts(dragged, where) ? where : null
-  }
-  const shown = full && zone !== null ? "center" : zone
-
-  return (
-    <div
-      data-drop-target={target}
-      data-drop-zone={zone ?? undefined}
-      className={cn(
-        "absolute inset-0 z-20",
-        zone !== null && "bg-background/40"
-      )}
-      onDragOver={(event) => {
-        const where = zoneFor(event)
-        if (where !== zone) setZone(where)
-        if (where === null) return
-        event.preventDefault()
-        event.dataTransfer.dropEffect = "move"
-      }}
-      onDragLeave={(event) => {
-        const to = event.relatedTarget
-        if (!(to instanceof Node) || !event.currentTarget.contains(to)) {
-          setZone(null)
-        }
-      }}
-      onDrop={(event) => {
-        const where = zoneFor(event)
-        const key = event.dataTransfer.getData(TAB_MIME) || dragged
-        setZone(null)
-        setDrag(null)
-        if (where === null) return
-        event.preventDefault()
-        onDrop(key, where)
-      }}
-    >
-      {shown === null ? null : (
-        <div
-          aria-hidden="true"
-          className={cn(
-            "bg-primary/15 ring-primary/50 pointer-events-none absolute inset-y-1.5 ring-2",
-            shown === "left" && "start-1.5 w-[calc(50%-0.75rem)]",
-            shown === "right" && "end-1.5 w-[calc(50%-0.75rem)]",
-            shown === "center" && "inset-x-1.5"
-          )}
-        />
-      )}
-    </div>
   )
 }

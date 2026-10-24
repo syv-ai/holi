@@ -27,6 +27,7 @@ import {
   openTab,
 } from "@/state/shell-workspace"
 import { vaultSettingsAtom } from "@/state/settings"
+import { tabDragAtom } from "@/components/blocks/app-shell-21/components/use-tab-drag"
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from "@/state/vaults"
 
 const write = vi.fn(async (_input: unknown) => ({
@@ -241,38 +242,80 @@ function transfer(): DataTransfer {
   } as unknown as DataTransfer
 }
 
-test("dragging a strip tab onto the view's right edge splits with it there", async () => {
+/** jsdom lays nothing out: every box is 1000px wide from the left edge, so
+ *  one view's edges are 0 and 1000. */
+function layOut() {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+    left: 0,
+    top: 0,
+    width: 1000,
+    height: 600,
+    right: 1000,
+    bottom: 600,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  } as DOMRect)
+}
+
+async function catcher(): Promise<HTMLElement> {
+  return waitFor(() => {
+    const el = document.querySelector<HTMLElement>("[data-drop-target]")
+    expect(el).toBeTruthy()
+    return el!
+  })
+}
+
+test("dragging a strip tab onto the view's right part opens a gap there, and the drop splits", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout"] })
   const store = mount()
+  layOut()
   const dataTransfer = transfer()
   const tab = document.querySelector<HTMLElement>("[data-tab-key='A.md']")!
   fireEvent.dragStart(tab, { dataTransfer })
   await vi.runAllTimersAsync()
   vi.useRealTimers()
-  const target = await waitFor(() => {
-    const el = document.querySelector<HTMLElement>("[data-drop-target]")
-    expect(el).toBeTruthy()
-    return el!
-  })
-  // jsdom lays nothing out: a 1000px wide view, the pointer at 900.
-  target.getBoundingClientRect = () =>
-    ({
-      left: 0,
-      top: 0,
-      width: 1000,
-      height: 600,
-      right: 1000,
-      bottom: 600,
-    }) as DOMRect
+  const target = await catcher()
   fireEvent(target, at(createEvent.dragOver(target, { dataTransfer }), 900))
-  await waitFor(() => expect(target.dataset.dropZone).toBe("right"))
+  await waitFor(() => expect(target.dataset.dropSlot).toBe("insert:1"))
+  // The view in front slides left by half; the gap names the dragged tab.
+  const body = document.querySelector<HTMLElement>("[data-preview-member]")!
+  expect(body.style.transform).toBe("translateX(-500px)")
+  const gap = document.querySelector<HTMLElement>("[data-drop-gap]")!
+  expect(gap.textContent).toContain("A")
+  // Across to the left part: the gap moves there, the view slides right.
+  fireEvent(target, at(createEvent.dragOver(target, { dataTransfer }), 100))
+  await waitFor(() => expect(target.dataset.dropSlot).toBe("insert:0"))
+  expect(body.style.transform).toBe("translateX(500px)")
+  fireEvent(target, at(createEvent.dragOver(target, { dataTransfer }), 900))
   fireEvent(target, at(createEvent.drop(target, { dataTransfer }), 900))
   await waitFor(() => expect(views()).toHaveLength(2))
   const ws = store.get(shellWorkspaceAtom)
   expect(activeSplit(ws)?.views).toEqual(["B.md", "A.md"])
   expect(ws.entries).toHaveLength(1)
-  // The drag is over: no targets left over the views.
+  // The drag is over: no catcher left over the views.
   await waitFor(() =>
     expect(document.querySelector("[data-drop-target]")).toBeNull()
   )
+  vi.restoreAllMocks()
+})
+
+test("a view not open yet, dragged from the sidebar, opens in the gap", async () => {
+  const store = mount()
+  layOut()
+  const dataTransfer = transfer()
+  dataTransfer.setData("application/x-holi-tab", "C.md")
+  store.set(tabDragAtom, "C.md")
+  const target = await catcher()
+  fireEvent(target, at(createEvent.dragOver(target, { dataTransfer }), 50))
+  await waitFor(() => expect(target.dataset.dropSlot).toBe("insert:0"))
+  fireEvent(target, at(createEvent.drop(target, { dataTransfer }), 50))
+  await waitFor(() => expect(views()).toHaveLength(2))
+  const ws = store.get(shellWorkspaceAtom)
+  expect(activeSplit(ws)?.views).toEqual(["C.md", "B.md"])
+  expect(ws.entries.map((e) => (typeof e === "string" ? e : "split"))).toEqual([
+    "A.md",
+    "split",
+  ])
+  vi.restoreAllMocks()
 })

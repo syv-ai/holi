@@ -74,9 +74,11 @@ import { buildTreeData, ROOT_ID, type TreeItemData } from "@/lib/tree-data"
 import { planMoveInto, planRenameFolder, type Move } from "@/lib/tree-actions"
 import { basename, joinPath, parentOf } from "@/lib/tree-paths"
 import { canMoveInto } from "@/lib/tree-view"
+import { useTabDrag } from "./use-tab-drag"
 import { claimsAtom, folderClaimsAtom } from "@/state/plugins"
 import { createTaskAtom, openTaskCountAtom } from "@/state/tasks"
 import { setTreeOrderAtom, treeOrderAtom } from "@/state/tree-order"
+import { tabForPath } from "@/state/tab-descriptor"
 import {
   activeRemoteAtom,
   createFolderAtom,
@@ -217,6 +219,8 @@ export function DocumentsNav({
   onOpen: (id: string) => void
 }) {
   const openTasks = useAtomValue(openTaskCountAtom)
+  // The Board row drags as its tab, onto the content or the strip.
+  const tabDrag = useTabDrag()
 
   return (
     <SidebarMenu className="gap-0.5 px-2">
@@ -239,6 +243,7 @@ export function DocumentsNav({
           isActive={activeId === BOARD_TAB}
           aria-current={activeId === BOARD_TAB ? "page" : undefined}
           onClick={() => onOpen(BOARD_TAB)}
+          {...tabDrag({ kind: "board" })}
           className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12"
         >
           <SquareKanbanIcon aria-hidden="true" />
@@ -564,6 +569,8 @@ export function FilesSection({
     }
   }
 
+  // A file's row drags as its tab too, beside the tree's own move.
+  const tabDrag = useTabDrag()
   const tree = useTree<TreeItemData>({
     rootItemId: ROOT_ID,
     indent: INDENT,
@@ -878,6 +885,10 @@ export function FilesSection({
                         item.getId() === activeId ? "page" : undefined
                       }
                       onContextMenu={() => setMenuTarget(item.getId())}
+                      {...tabDrag(
+                        item.isFolder() ? null : tabForPath(item.getId()),
+                        { alongside: true }
+                      )}
                       onAnimationEnd={() =>
                         setArrived((current) => {
                           const next = new Set(current)

@@ -18,7 +18,7 @@ import {
   IconButton,
   Skeleton,
 } from '@/primitives'
-import { appModeAtom, cn, openPathAtom } from '@/plugin-api'
+import { appModeAtom, cn, openPathAtom, useTabDrag } from '@/plugin-api'
 import { HOLI_COLOURS, HOLI_MASCOTS } from '@holi/shared'
 import { HoliDialogs } from './HoliDialogs'
 import {
@@ -27,6 +27,7 @@ import {
   holiStateAtom,
   holisAtom,
   holisLoadedAtom,
+  HOLIS_OWNER,
   loadHolisAtom,
   openHoliAtom,
   selectedHoliAtom,
@@ -47,6 +48,8 @@ function HoliRow({ holi }: { holi: HoliSummary }): React.JSX.Element {
   const setMode = useSetAtom(appModeAtom)
   const openPath = useSetAtom(openPathAtom)
   const state = useAtomValue(holiStateAtom)[holi.id] ?? 'idle'
+  // The row drags as the Holi's tab, onto the content or the strip.
+  const tabDrag = useTabDrag()
   const current = selected === holi.id
   const broken = holi.status === 'invalid'
   const label = broken
@@ -65,6 +68,7 @@ function HoliRow({ holi }: { holi: HoliSummary }): React.JSX.Element {
         data-holi-row={holi.id}
         aria-label={`${holi.name}${state === 'needs-you' ? ', needs you' : state === 'working' ? ', working' : ''}`}
         onClick={() => open(holi.id)}
+        {...tabDrag({ kind: 'session', owner: HOLIS_OWNER, id: holi.id })}
       >
         <span className="relative flex size-5 shrink-0 items-center justify-center">
           {broken ? (

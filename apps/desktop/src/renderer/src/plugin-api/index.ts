@@ -57,6 +57,8 @@ export {
 } from '@/state/vaults'
 export { openDocumentAtom } from '@/state/open-document'
 export { openTabAtom } from '@/state/shell-tabs'
+// A sidebar row drags as the tab it opens (docs/features/tabs-panes.md, Drag targets).
+export { useTabDrag } from '@/components/blocks/app-shell-21/components/use-tab-drag'
 export { type TabDescriptor } from '@/state/tab-descriptor'
 export { arcadeCastAtom, gridArcadeAtom } from '@/state/grid-arcade'
 export { ArcadeTakeControl, HoliArcade } from '@/components/monocode/arcade/HoliArcade'

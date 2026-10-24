@@ -83,9 +83,9 @@ session in the Agents sidebar, a search result, a link, and it opens beside what
 instead of in its place (`state/alt-open.ts`: a capture listener notes whether ⌥ was held, and
 the open asks within the same moment). ⌘\ on a tab makes a split of that tab and a New tab on its right, focused (on a
 split with room, a New tab joins it). A tab's **Open in split view** makes a split of the active
-tab and that tab, whose own entry goes. Dragging a strip tab onto the content's left or right edge
-(the outer thirds) splits with the view there; dropping it in a member's middle replaces that
-member, which gets a tab of its own. The tab in front dropped on its own left or right half splits
+tab and that tab, whose own entry goes. Dragging a strip tab, or a row of the sidebar, onto the content
+opens a gap where it would land and drops it there (Drag targets, below); dropping it in a member's
+middle replaces that member, which gets a tab of its own. The tab in front dropped on its own left or right half splits
 there with its neighbour in the strip (the one before it, else after it), or with a New tab when it
 is the only tab. Inside one split, a member dragged from the pill onto another swaps the two, or on
 an edge reorders them. A split holds four views at most: at four, the edges replace instead of
@@ -132,12 +132,38 @@ folds. The filling slot cannot fold, so a member arriving or leaving there lands
 another entry is not a fold: its views just land. The library folds instantly under reduced motion,
 inside `MotionConfig reducedMotion="user"`.
 
-**Drag targets.** A strip tab or a member's part of a pill drags (native drag, its own MIME type
-`application/x-holi-tab`, so nothing else takes it). While one is dragged every view in front lays
-a target over its content (a view may be an iframe or a terminal, which would swallow the drag)
-and highlights where it would land: the half it would split into, or the whole view it would
-replace. A drop that would change nothing is refused. The menus are the keyboard's way to the same
-places.
+**Drag targets: the views make room.** A strip tab, a member's part of a pill, or a sidebar row
+drags (native drag, its own MIME type `application/x-holi-tab`, so nothing else takes it). While
+one is dragged, one transparent catcher lies over the whole content (a view may be an iframe or a
+terminal, which would swallow the drag), and the views slide apart to open a gap where the dragged
+view would land, its mark and title in it on `bg-muted/40` inside a dashed hairline. Where the
+pointer is decides (`slotAt` in `use-tab-drag.ts`), against the members' edges as the drag found
+them, so the zones never move under the pointer while the views slide:
+
+- **one view**: its left half opens the gap on the left, its right half on the right; there is no
+  middle, as a single view's middle would take nothing;
+- **two or three**: each member's outer thirds open the gap at that edge (the gap between two
+  members is both neighbours' facing thirds), its middle third **replaces** it: the member is
+  covered by the dragged view's label, lit by a ring, and nothing slides;
+- **four** (full): every member is a replace target, whole; nothing slides.
+
+The gap is the share the newcomer gets, `1 / (count + 1)`, at the place the drop puts it
+(`insertIntoActive`); the members before it slide left and those after it right, together, so the
+gap's edges are exactly where the drop lands them. Only transforms move (the house curve, 200ms),
+never a view's layout, so an editor or a terminal is not laid out again mid-drag; dragover sets
+state only when the slot under the pointer changes. Moving across slides the gap there; leaving the
+content or cancelling slides everything back. The drop lands the layout at once, on a panel group
+mounted afresh (the views keep their hosts), and the widths it placed are not reseeded from the
+remembered ones. Under reduced motion the gap simply appears.
+
+The tab in front dragged onto its own view opens the gap on that side and shows its strip
+neighbour filling the rest, which is where it splits. A member dragged inside its own split moves:
+a line marks where it would go, its own place dimmed, and its middle third swaps it with another.
+A view dragged from the sidebar (a document, a vault app or the Board from the files sidebar, a
+session or a Holi from the Agents sidebar) opens in that place, or moves there when it is open
+already; dropped on the strip it opens as a tab at that place. A file row keeps its own drag into
+folders: the tab's type joins the tree's data in the same dragstart. A drop that would change
+nothing is refused. The menus and ⌥-click are the keyboard's way to the same places.
 
 **Persistence.** Tabs and splits live for the app's session, per vault; a restart opens on an
 empty strip, as the shell always has. The widths a vault last had for a two-, three- and four-member
@@ -191,6 +217,10 @@ Appearance; machine-local, on by default) turns it off.
   its top edge says it quietly.
 - A header bar on each member (breadcrumb, ⋯, ×): it stacked on the view's own header, two rows
   saying the same thing in different type.
+- A placeholder panel in the motion-panels group while dragging, so the views resize for real:
+  the panels are keyed by role, so a count change moves views between panels, re-parenting an
+  editor or a terminal on every change of slot, and the library animates every size change.
+  Transforms on the members open the same gap without laying anything out.
 - Nesting motion-panels groups for any number of members: closing a middle one would fold every
   member after it.
 

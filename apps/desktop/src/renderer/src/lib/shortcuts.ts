@@ -214,7 +214,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     label: 'Split with a tab',
     group: 'Split view',
     keys: [],
-    gesture: 'Drag it to the view’s edge',
+    gesture: 'Drag it to an edge or between two views',
     liveWith: 'pane.split',
   },
   {
@@ -222,7 +222,15 @@ export const SHORTCUTS: readonly Shortcut[] = [
     label: 'Replace a view in a split',
     group: 'Split view',
     keys: [],
-    gesture: 'Drag a tab onto it',
+    gesture: 'Drag a tab onto its middle',
+    liveWith: 'pane.split',
+  },
+  {
+    id: 'split.gesture.sidebar',
+    label: 'Open from the sidebar in a split',
+    group: 'Split view',
+    keys: [],
+    gesture: 'Drag a file or session from the sidebar',
     liveWith: 'pane.split',
   },
   {

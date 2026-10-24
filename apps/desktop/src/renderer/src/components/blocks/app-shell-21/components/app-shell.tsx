@@ -63,6 +63,7 @@ import type { Move } from "@/lib/tree-actions"
 import { useNewDocument } from "./documents-section"
 import { MobileHeader } from "./mobile-header"
 import { PanesView, type MemberSlot } from "./panes-view"
+import { placedByDrop } from "./use-tab-drag"
 import { SiteHeader } from "./site-header"
 import { useSidebarApps } from "./sidebar-apps"
 import { ShortcutsDialog } from "./shortcuts-dialog"
@@ -229,6 +230,8 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     if (seeded.current.has(seen)) return
     seeded.current.add(seen)
     const stored = readShares(remote, memberCount)
+    // A drop placed its widths already, as its preview showed them.
+    if (placedByDrop(splitId, memberCount)) return
     if (stored !== null) setWs((w) => setShares(w, splitId, stored))
   }, [splitId, memberCount, remote, setWs])
 
