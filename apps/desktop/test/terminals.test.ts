@@ -5,7 +5,12 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { PtyProcess, SpawnPtyOptions } from '../src/main/terminal/pty'
-import { createTerminals, shellEnv, type TerminalEvent } from '../src/main/terminal/terminals'
+import {
+  createTerminals,
+  shellEnv,
+  type TerminalEvent,
+  type TerminalsDeps,
+} from '../src/main/terminal/terminals'
 
 class FakePty implements PtyProcess {
   static nextPid = 1000
@@ -44,9 +49,10 @@ class FakePty implements PtyProcess {
   }
 }
 
-function rig() {
+function rig(over: Partial<TerminalsDeps> = {}) {
   const ptys: FakePty[] = []
   const events: TerminalEvent[] = []
+  const summaries: string[] = []
   const terminals = createTerminals({
     send: (e) => events.push(e),
     spawnPty: (file, args, opts) => {
@@ -60,15 +66,32 @@ function rig() {
     baseEnv: () => ({ PATH: '/usr/bin', HOME: '/home/me', ELECTRON_RUN_AS_NODE: '1' }),
     binDir: () => '/app/bin',
     killGraceMs: 20,
+    integrationDir: () => null,
+    gitSummary: async (cwd) => {
+      summaries.push(cwd)
+      return { branch: 'main', files: summaries.length, added: 1, removed: 0 }
+    },
+    processCwd: async () => null,
+    isDirectory: async (path) => !path.includes('missing'),
+    home: '/home/me',
+    contextDelayMs: 1,
+    ...over,
   })
-  return { terminals, ptys, events }
+  return { terminals, ptys, events, summaries }
 }
+
+const settle = () => new Promise((r) => setTimeout(r, 30))
+const contexts = (events: TerminalEvent[]) =>
+  events.flatMap((e) => (e.kind === 'context' ? [e.context] : []))
 
 describe('terminals', () => {
   it("starts the login shell in the vault's clone, at the panel's size", () => {
     const { terminals, ptys } = rig()
     const opened = terminals.create({ remote: 'o/r', root: '/vaults/o/r', cols: 100, rows: 30 })
-    expect(opened).toEqual({ ok: true, terminal: { id: 't1', title: 'zsh', exitCode: null } })
+    expect(opened).toEqual({
+      ok: true,
+      terminal: { id: 't1', title: 'zsh', exitCode: null, context: null },
+    })
     const pty = ptys[0]!
     expect(pty.file).toBe('/bin/zsh')
     expect(pty.args).toEqual(['-l'])
@@ -136,6 +159,68 @@ describe('terminals', () => {
     await terminals.closeAll()
     expect(ptys.map((p) => p.signals)).toEqual([['SIGHUP'], ['SIGHUP']])
     expect(terminals.list('o/r')).toEqual([])
+  })
+
+  it('reads the context at the start, then from each OSC 7 prompt, in that terminal only', async () => {
+    const { terminals, ptys, events, summaries } = rig()
+    terminals.create({ remote: 'o/r', root: '/home/me/vault', cols: 80, rows: 24 })
+    await settle()
+    expect(contexts(events)).toEqual([
+      {
+        cwd: '/home/me/vault',
+        label: '~/vault',
+        git: { branch: 'main', files: 1, added: 1, removed: 0 },
+      },
+    ])
+    // A cd, its prompt split across two chunks.
+    ptys[0]!.print('\x1b]7;file://localhost/home/me/va')
+    ptys[0]!.print('ult/notes\x07% ')
+    await settle()
+    expect(events.at(-1)).toMatchObject({
+      kind: 'context',
+      remote: 'o/r',
+      id: 't1',
+      context: { cwd: '/home/me/vault/notes', label: '~/vault/notes' },
+    })
+    // The same cwd again: the git work is read again all the same.
+    ptys[0]!.print('\x1b]7;file://localhost/home/me/vault/notes\x1b\\% ')
+    await settle()
+    expect(summaries).toEqual(['/home/me/vault', '/home/me/vault/notes', '/home/me/vault/notes'])
+    expect(terminals.list('o/r')[0]!.context?.git?.files).toBe(3)
+  })
+
+  it('ignores an OSC 7 for a folder that is not there, or another machine', async () => {
+    const { terminals, ptys, events } = rig()
+    terminals.create({ remote: 'o/r', root: '/r', cols: 80, rows: 24 })
+    ptys[0]!.print('\x1b]7;file://localhost/r/missing\x07')
+    ptys[0]!.print('\x1b]7;file://some.server.example/etc\x07')
+    await settle()
+    expect(contexts(events).map((c) => c.cwd)).toEqual(['/r'])
+  })
+
+  it('asks the OS for the cwd of a shell without the integration', async () => {
+    const asked: number[] = []
+    const { terminals, ptys, events } = rig({
+      processCwd: async (pid) => {
+        asked.push(pid)
+        return '/r/sub'
+      },
+    })
+    terminals.create({ remote: 'o/r', root: '/r', cols: 80, rows: 24 })
+    ptys[0]!.print('$ ')
+    await settle()
+    expect(asked).toEqual([ptys[0]!.pid])
+    expect(contexts(events).at(-1)?.cwd).toBe('/r/sub')
+  })
+
+  it('starts zsh through the integration when there is one', () => {
+    const { terminals, ptys } = rig({ integrationDir: () => '/tmp/holi-shell' })
+    terminals.create({ remote: 'o/r', root: '/r', cols: 80, rows: 24 })
+    expect(ptys[0]!.args).toEqual(['-l'])
+    expect(ptys[0]!.opts.env).toMatchObject({
+      ZDOTDIR: '/tmp/holi-shell/zsh',
+      HOLI_USER_ZDOTDIR: '/home/me',
+    })
   })
 
   it('a node-pty that will not load is an answer with the rebuild hint, not a throw', () => {

@@ -77,6 +77,7 @@ declare global {
       terminal: {
         onData(cb: (event: Extract<TerminalEvent, { kind: 'data' }>) => void): () => void
         onExit(cb: (event: Extract<TerminalEvent, { kind: 'exit' }>) => void): () => void
+        onContext(cb: (event: Extract<TerminalEvent, { kind: 'context' }>) => void): () => void
       }
       openExternal(url: string): Promise<void>
       /** Reveal a local path — a vault's clone folder — in the system file

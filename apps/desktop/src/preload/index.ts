@@ -83,6 +83,8 @@ const onActivityEntry = pushChannel<unknown>('activity:entry')
  *  sizes go back over tRPC, each naming the vault and the terminal. */
 const onTerminalData = pushChannel<unknown>('terminal:data')
 const onTerminalExit = pushChannel<unknown>('terminal:exit')
+/** Where a shell is and the git work there, for the panel's context chips. */
+const onTerminalContext = pushChannel<unknown>('terminal:context')
 
 /** The window went in or out of fullscreen. macOS hides the traffic lights
  *  there, so the band the sidebar keeps for them can go. */
@@ -127,6 +129,7 @@ contextBridge.exposeInMainWorld('holi', {
   terminal: {
     onData: onTerminalData,
     onExit: onTerminalExit,
+    onContext: onTerminalContext,
   },
   openExternal: (url: string) => ipcRenderer.invoke('holi:openExternal', url),
   openPath: (path: string) => ipcRenderer.invoke('holi:openPath', path),
