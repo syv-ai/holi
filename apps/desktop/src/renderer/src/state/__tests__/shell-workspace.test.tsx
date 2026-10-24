@@ -1,262 +1,328 @@
 import { describe, expect, test } from "vitest"
 
 import {
+  activeSplit,
   allTabs,
+  closeAllTabs,
+  closeEntry,
+  closeFocused,
   closeOtherTabs,
-  closePane,
   closeTab,
+  closeTabsToRight,
+  closeTabsWhere,
+  dropOnStrip,
   dropTab,
   emptyWorkspace,
-  focusedPane,
-  MAX_PANES,
-  moveTab,
-  openBeside,
-  openNewTab,
+  entryIds,
+  focusedTab,
+  focusMember,
+  gotoTab,
+  isSplit,
+  MAX_SPLIT,
+  moveEntry,
+  moveOut,
   openInSplit,
+  openNewTab,
   openTab,
   reopenClosed,
+  replaceWithNew,
   retargetTabs,
-  splitRight,
+  selectEntry,
+  separate,
+  setShares,
+  splitActive,
+  stepMember,
   stepTab,
+  type ShellSplit,
   type ShellWorkspace,
 } from "../shell-workspace"
-import { AGENTS_HOME_KEY, sessionKey } from "../tab-descriptor"
+import { AGENTS_HOME_KEY, parseTabKey, sessionKey } from "../tab-descriptor"
 
 const A = "Notes/A.md"
 const B = "Notes/B.md"
 const C = "Notes/C.md"
+const D = "Notes/D.md"
 const S = sessionKey({ owner: "chat", id: "s1" })
 
 function withTabs(...keys: string[]): ShellWorkspace {
   return keys.reduce((ws, key) => openTab(ws, key), emptyWorkspace())
 }
 
-function shares(ws: ShellWorkspace): number[] {
-  return ws.panes.map((p) => Math.round(p.share * 100) / 100)
+function split(ws: ShellWorkspace): ShellSplit {
+  const s = activeSplit(ws)
+  expect(s).not.toBeNull()
+  return s!
 }
 
-describe("opening", () => {
+const isNew = (key: string) => parseTabKey(key)?.kind === "new"
+
+/** The strip as views: a tab's key, a split's keys. */
+function strip(ws: ShellWorkspace): (string | string[])[] {
+  return ws.entries.map((e) => (isSplit(e) ? e.views : e))
+}
+
+/** A, B and C as tabs, A and B then made one split. */
+function pair(): ShellWorkspace {
+  return openInSplit(selectEntry(withTabs(A, B, C), A), B)
+}
+
+describe("the strip", () => {
   test("a tab opens after the active one and comes forward", () => {
-    const ws = withTabs(A, B)
-    expect(focusedPane(ws).tabs).toEqual([A, B])
-    expect(focusedPane(ws).active).toBe(B)
+    let ws = withTabs(A, B)
+    ws = selectEntry(ws, A)
+    ws = openTab(ws, C)
+    expect(strip(ws)).toEqual([A, C, B])
+    expect(focusedTab(ws)).toBe(C)
   })
 
-  test("an open tab is focused where it is, in any pane, not opened twice", () => {
-    let ws = withTabs(A, S)
-    ws = splitRight(ws, ws.focused, A)
-    const right = ws.focused
-    ws = openTab(ws, S)
-    expect(allTabs(ws).filter((t) => t === S)).toHaveLength(1)
-    expect(ws.focused).not.toBe(right)
-    expect(focusedPane(ws).active).toBe(S)
-    expect(openTab(ws, S)).toBe(ws)
+  test("an open tab is selected where it is, not opened twice", () => {
+    const ws = withTabs(A, B)
+    const next = openTab(ws, A)
+    expect(next.active).toBe(A)
+    expect(allTabs(next)).toEqual([A, B])
+    expect(openTab(next, A)).toBe(next)
   })
 
   test("a New tab gives its place to what is opened from it", () => {
     let ws = openNewTab(withTabs(A))
-    const blank = focusedPane(ws).active!
     ws = openTab(ws, B)
-    expect(focusedPane(ws).tabs).toEqual([A, B])
-    expect(allTabs(ws)).not.toContain(blank)
+    expect(strip(ws)).toEqual([A, B])
   })
 
   test("a session takes the Agents home's place when asked to", () => {
     let ws = withTabs(A, AGENTS_HOME_KEY)
     ws = openTab(ws, S, (key) => key === AGENTS_HOME_KEY)
-    expect(focusedPane(ws).tabs).toEqual([A, S])
+    expect(strip(ws)).toEqual([A, S])
   })
 
-  test("stepping wraps within the focused pane", () => {
-    const ws = withTabs(A, B)
-    expect(focusedPane(stepTab(ws, 1)).active).toBe(A)
-    expect(focusedPane(stepTab(ws, -1)).active).toBe(A)
-  })
-})
-
-describe("closing", () => {
-  test("closing the active tab hands focus to its neighbour", () => {
-    let ws = withTabs(A, B, C)
-    ws = openTab(ws, B)
-    ws = closeTab(ws, B)
-    expect(focusedPane(ws).active).toBe(C)
+  test("⌘T's New tab goes at the strip's end", () => {
+    let ws = selectEntry(withTabs(A, B), A)
+    ws = openNewTab(ws)
+    expect(ws.entries).toHaveLength(3)
+    expect(isNew(entryIds(ws)[2]!)).toBe(true)
+    expect(ws.active).toBe(entryIds(ws)[2])
   })
 
-  test("closing a split pane's last tab closes the pane, and its share goes", () => {
-    let ws = withTabs(A, B)
-    ws = splitRight(ws, ws.focused, B)
-    expect(ws.panes).toHaveLength(2)
-    ws = closeTab(ws, B)
-    expect(ws.panes).toHaveLength(1)
-    expect(shares(ws)).toEqual([1])
-    expect(focusedPane(ws).active).toBe(A)
+  test("stepping and ⌘1–9 go over entries, a split being one", () => {
+    let ws = splitActive(withTabs(A, B))
+    ws = openNewTab(ws)
+    const ids = entryIds(ws)
+    expect(ids).toHaveLength(3)
+    expect(isSplit(ws.entries[1])).toBe(true)
+    expect(stepTab(ws, 1).active).toBe(ids[0])
+    expect(gotoTab(ws, 1).active).toBe(ids[1])
+    expect(gotoTab(ws, 8).active).toBe(ids[2])
   })
 
-  test("the last pane stays, empty", () => {
-    const ws = closeTab(withTabs(A), A)
-    expect(ws.panes).toHaveLength(1)
-    expect(focusedPane(ws).active).toBeNull()
-  })
-
-  test("close others keeps the pointed-at tab, in front", () => {
-    let ws = withTabs(A, B, C)
-    ws = closeOtherTabs(ws, A)
-    expect(focusedPane(ws).tabs).toEqual([A])
-    expect(focusedPane(ws).active).toBe(A)
-  })
-
-  test("a closed tab reopens; a closed pane's tabs too", () => {
-    let ws = withTabs(A, B)
-    ws = closeTab(ws, B)
-    ws = reopenClosed(ws)
-    expect(focusedPane(ws).active).toBe(B)
-    ws = splitRight(ws, ws.focused, B)
-    ws = closePane(ws, ws.focused)
-    expect(ws.panes).toHaveLength(1)
-    ws = reopenClosed(ws)
-    expect(allTabs(ws)).toContain(B)
+  test("an entry drags to another place in the strip", () => {
+    const ws = withTabs(A, B, C)
+    expect(strip(moveEntry(ws, C, 0))).toEqual([C, A, B])
+    expect(strip(moveEntry(ws, A, 3))).toEqual([B, C, A])
+    expect(moveEntry(ws, A, 1)).toBe(ws)
   })
 })
 
-describe("panes", () => {
-  test("split right opens a focused pane after, with half the share", () => {
-    const ws = splitRight(withTabs(A))
-    expect(ws.panes).toHaveLength(2)
-    expect(ws.focused).toBe(ws.panes[1]!.id)
-    expect(focusedPane(ws).tabs).toHaveLength(1)
-    expect(shares(ws)).toEqual([0.5, 0.5])
-    // A split never copies a tab: the new pane gets a New tab.
-    expect(allTabs(ws).filter((t) => t === A)).toHaveLength(1)
+describe("making a split", () => {
+  test("⌘\\ on a tab makes a split of it and a New tab, focused on the right", () => {
+    const ws = splitActive(withTabs(A, B))
+    expect(ws.entries).toHaveLength(2)
+    const s = split(ws)
+    expect(s.views[0]).toBe(B)
+    expect(isNew(s.views[1]!)).toBe(true)
+    expect(s.focused).toBe(s.views[1])
+    expect(s.shares).toEqual([0.5, 0.5])
   })
 
-  test("split right on a tab moves it, unless it is the pane's only one", () => {
-    let ws = withTabs(A, B)
-    ws = splitRight(ws, ws.focused, A)
-    expect(ws.panes.map((p) => p.tabs)).toEqual([[B], [A]])
-    const sole = splitRight(withTabs(A), undefined, A)
-    expect(sole.panes[0]!.tabs).toEqual([A])
-  })
-
-  test("there are at most MAX_PANES panes", () => {
-    let ws = withTabs(A)
-    for (let i = 0; i < MAX_PANES + 2; i++) ws = splitRight(ws)
-    expect(ws.panes).toHaveLength(MAX_PANES)
-  })
-
-  test("moving a tab to the other pane focuses it there", () => {
-    let ws = withTabs(A, B, C)
-    ws = splitRight(ws, ws.focused, C)
-    const [left, right] = ws.panes
-    ws = moveTab(ws, A, right!.id)
-    expect(ws.panes[0]!.tabs).toEqual([B])
-    expect(ws.panes[1]!.tabs).toContain(A)
-    expect(ws.focused).toBe(right!.id)
-    expect(focusedPane(ws).active).toBe(A)
-    // Moving the last tab out of a pane closes it.
-    ws = moveTab(ws, B, right!.id)
-    expect(ws.panes).toHaveLength(1)
-    expect(ws.panes[0]!.id).toBe(right!.id)
-    expect(left).toBeDefined()
-  })
-
-  test("open beside fills the pane to the right, splitting while there is room", () => {
-    let ws = withTabs(A)
-    ws = openBeside(ws, S)
-    expect(ws.panes.map((p) => p.tabs)).toEqual([[A], [S]])
-    ws = openTab(ws, B)
-    ws = openBeside(focusPaneFirst(ws), C)
-    expect(ws.panes[1]!.tabs).toContain(C)
-  })
-})
-
-describe("split view", () => {
-  test("a tab dropped on a pane's edge opens a pane of its own on that side", () => {
-    let ws = withTabs(A, B)
-    const only = ws.panes[0]!.id
-    ws = dropTab(ws, A, only, "right")
-    expect(ws.panes.map((p) => p.tabs)).toEqual([[B], [A]])
-    expect(ws.focused).toBe(ws.panes[1]!.id)
-    expect(shares(ws)).toEqual([0.5, 0.5])
-    // On the left edge of the right pane: a third pane between them.
-    ws = openTab(ws, C)
-    ws = dropTab(ws, C, ws.panes[1]!.id, "left")
-    expect(ws.panes.map((p) => p.tabs)).toEqual([[B], [C], [A]])
-    expect(shares(ws)).toEqual([0.5, 0.25, 0.25])
-  })
-
-  test("a tab dropped in a pane's middle moves into it", () => {
-    let ws = splitRight(withTabs(A, B), undefined, B)
-    const [left, right] = ws.panes
-    ws = dropTab(ws, A, right!.id, "center")
-    // The left pane, emptied, goes; its share with it.
-    expect(ws.panes.map((p) => p.tabs)).toEqual([[B, A]])
-    expect(ws.panes[0]!.id).toBe(right!.id)
-    expect(left).toBeDefined()
-  })
-
-  test("at MAX_PANES an edge drop moves into the pane instead", () => {
-    let ws = withTabs(A, B, C)
-    ws = splitRight(ws, ws.focused, C)
-    ws = splitRight(ws, ws.focused, undefined)
-    expect(ws.panes).toHaveLength(MAX_PANES)
-    ws = dropTab(ws, A, ws.panes[2]!.id, "right")
-    expect(ws.panes).toHaveLength(MAX_PANES)
-    expect(ws.panes[2]!.tabs).toContain(A)
-  })
-
-  test("a drop that changes nothing is the same workspace", () => {
-    const ws = withTabs(A, B)
-    const only = ws.panes[0]!.id
-    expect(dropTab(ws, A, only, "center")).toBe(ws)
-    const sole = withTabs(A)
-    expect(dropTab(sole, A, sole.panes[0]!.id, "right")).toBe(sole)
-    expect(dropTab(ws, "Notes/Nope.md", only, "right")).toBe(ws)
-  })
-
-  test("open in split view moves a tab right, splitting while there is room", () => {
-    let ws = withTabs(A, B)
-    ws = openInSplit(ws, A)
-    expect(ws.panes.map((p) => p.tabs)).toEqual([[B], [A]])
-    // Already split: into the pane on the right.
-    ws = openTab(focusPaneFirst(ws), C)
+  test("open in split view pairs the active tab with that tab, whose own entry goes", () => {
+    let ws = selectEntry(withTabs(A, B, C), A)
     ws = openInSplit(ws, C)
-    expect(ws.panes.map((p) => p.tabs)).toEqual([[B], [A, C]])
-    expect(focusedPane(ws).active).toBe(C)
+    expect(strip(ws)).toEqual([[A, C], B])
+    expect(focusedTab(ws)).toBe(C)
   })
 
-  test("open in split view on a pane's only tab leaves a New tab behind", () => {
-    const ws = openInSplit(withTabs(A), A)
-    expect(ws.panes).toHaveLength(2)
-    expect(ws.panes[1]!.tabs).toEqual([A])
-    expect(ws.panes[0]!.tabs).toHaveLength(1)
-    expect(ws.panes[0]!.tabs[0]).toMatch(/^holi:new:/)
-    expect(ws.focused).toBe(ws.panes[1]!.id)
+  test("open in split view on a split with room adds a member", () => {
+    const ws = openInSplit(pair(), C)
+    expect(strip(ws)).toEqual([[A, B, C]])
   })
 
-  test("open in split view from the last of MAX_PANES goes left", () => {
-    let ws = withTabs(A, B, C)
-    ws = splitRight(ws, ws.focused, C)
-    ws = splitRight(ws, ws.focused)
-    const last = ws.panes[2]!
-    ws = openTab(ws, S)
-    expect(ws.panes[2]!.tabs).toContain(S)
-    ws = openInSplit(ws, S)
-    expect(ws.panes[1]!.tabs).toContain(S)
-    expect(last).toBeDefined()
+  test("a split holds at most MAX_SPLIT views; ⌘\\ then does nothing", () => {
+    const ws = openInSplit(pair(), C)
+    expect(split(ws).views).toHaveLength(MAX_SPLIT)
+    expect(splitActive(ws)).toBe(ws)
+  })
+
+  test("a tab dropped on the content's edge splits with it there", () => {
+    const ws = withTabs(A, B)
+    expect(strip(dropTab(ws, A, B, "right"))).toEqual([[B, A]])
+    expect(strip(dropTab(ws, A, B, "left"))).toEqual([[A, B]])
+    expect(dropTab(ws, A, B, "center")).toBe(ws)
+    expect(dropTab(ws, B, B, "left")).toBe(ws)
+  })
+
+  test("a tab dropped on a member replaces it, the replaced one keeping a tab", () => {
+    const ws = dropTab(pair(), C, A, "center")
+    expect(strip(ws)).toEqual([[C, B], A])
+    expect(focusedTab(ws)).toBe(C)
+  })
+
+  test("at three members an edge drop replaces instead of splitting", () => {
+    let ws = selectEntry(withTabs(A, B, C, D), A)
+    ws = openInSplit(openInSplit(ws, B), C)
+    ws = dropTab(ws, D, B, "right")
+    expect(strip(ws)).toEqual([[A, D, C], B])
+  })
+
+  test("within a split a drop reorders or swaps", () => {
+    const ws = pair()
+    expect(strip(dropTab(ws, B, A, "left"))).toEqual([[B, A], C])
+    expect(strip(dropTab(ws, A, B, "center"))).toEqual([[B, A], C])
+    expect(dropTab(ws, A, B, "left")).toBe(ws)
+  })
+})
+
+describe("inside a split", () => {
+  test("closing a member of a 2-split turns it back into a tab", () => {
+    const ws = closeTab(pair(), B)
+    expect(strip(ws)).toEqual([A, C])
+    expect(ws.active).toBe(A)
+    expect(ws.closed).toEqual([B])
+  })
+
+  test("⌘W closes the focused member inside a split, else the tab", () => {
+    let ws = closeFocused(pair())
+    expect(strip(ws)).toEqual([A, C])
+    ws = closeFocused(ws)
+    expect(strip(ws)).toEqual([C])
+  })
+
+  test("separate puts every member back as a tab, the focused one in front", () => {
+    const ws = pair()
+    const out = separate(ws, split(ws).id)
+    expect(strip(out)).toEqual([A, B, C])
+    expect(out.active).toBe(B)
+  })
+
+  test("move out of split makes a member its own tab, after the split", () => {
+    let ws = openInSplit(pair(), C)
+    ws = moveOut(ws, A)
+    expect(strip(ws)).toEqual([[B, C], A])
+    expect(ws.active).toBe(A)
+  })
+
+  test("a member's header dropped on the strip leaves the split there", () => {
+    const ws = dropOnStrip(pair(), A, 0)
+    expect(strip(ws)).toEqual([A, B, C])
+  })
+
+  test("replace with… puts a New tab in the member, keeping the old view", () => {
+    const ws = replaceWithNew(pair(), A)
+    const s = split(ws)
+    expect(isNew(s.views[0]!)).toBe(true)
+    expect(s.focused).toBe(s.views[0])
+    expect(strip(ws).slice(1)).toEqual([A, C])
+  })
+
+  test("opening in a split lands in the focused member; the old view keeps a tab", () => {
+    const ws = openTab(pair(), D)
+    expect(strip(ws)).toEqual([[A, D], B, C])
+    expect(focusedTab(ws)).toBe(D)
+  })
+
+  test("a New tab member is simply given up to what opens in it", () => {
+    const ws = openTab(splitActive(withTabs(A)), B)
+    expect(strip(ws)).toEqual([[A, B]])
+  })
+
+  test("opening an already-open member selects its split and focuses it", () => {
+    let ws = selectEntry(pair(), C)
+    ws = openTab(ws, A)
+    expect(ws.active).toBe(split(ws).id)
+    expect(focusedTab(ws)).toBe(A)
+  })
+
+  test("stepping members wraps; focusing one selects the split", () => {
+    let ws = pair()
+    expect(focusedTab(stepMember(ws, 1))).toBe(A)
+    const id = split(ws).id
+    ws = selectEntry(ws, C)
+    ws = focusMember(ws, id, A)
+    expect(ws.active).toBe(id)
+    expect(focusedTab(ws)).toBe(A)
+  })
+
+  test("shares belong to the split and sum to one", () => {
+    let ws = pair()
+    ws = setShares(ws, split(ws).id, [3, 1])
+    expect(split(ws).shares).toEqual([0.75, 0.25])
+  })
+})
+
+describe("closing and reopening", () => {
+  test("closing the active tab hands over to the next, else the previous", () => {
+    let ws = selectEntry(withTabs(A, B, C), B)
+    ws = closeTab(ws, B)
+    expect(ws.active).toBe(C)
+    ws = closeTab(ws, C)
+    expect(ws.active).toBe(A)
+  })
+
+  test("close others and close to the right", () => {
+    const ws = selectEntry(withTabs(A, B, C), C)
+    expect(strip(closeOtherTabs(ws, B))).toEqual([B])
+    const right = closeTabsToRight(ws, A)
+    expect(strip(right)).toEqual([A])
+    expect(right.active).toBe(A)
+    expect(closeAllTabs(ws).entries).toEqual([])
+  })
+
+  test("a closed split reopens as the split it was", () => {
+    let ws = pair()
+    ws = setShares(ws, split(ws).id, [2, 1])
+    ws = closeEntry(ws, split(ws).id)
+    expect(strip(ws)).toEqual([C])
+    ws = reopenClosed(ws)
+    expect(strip(ws)).toEqual([C, [A, B]])
+    expect(split(ws).shares.map((s) => Math.round(s * 100))).toEqual([67, 33])
+  })
+
+  test("reopen skips New tabs", () => {
+    let ws = openNewTab(withTabs(A))
+    ws = closeTab(ws, entryIds(ws)[1]!)
+    ws = closeTab(ws, A)
+    const back = reopenClosed(ws)
+    expect(strip(back)).toEqual([A])
+    expect(back.closed).toHaveLength(1)
   })
 })
 
 describe("files", () => {
-  test("a moved file's tab follows it, in every pane", () => {
-    let ws = withTabs(A, B)
-    ws = splitRight(ws, ws.focused, B)
-    ws = retargetTabs(ws, [{ from: B, to: "Archive/B.md" }])
-    expect(ws.panes[1]!.tabs).toEqual(["Archive/B.md"])
-    expect(ws.panes[1]!.active).toBe("Archive/B.md")
-    expect(retargetTabs(ws, [{ from: "x.md", to: "y.md" }])).toBe(ws)
+  test("a moved file's tab follows it, inside a split and in Reopen", () => {
+    let ws = closeTab(pair(), C)
+    ws = retargetTabs(ws, [
+      { from: A, to: "Notes/A2.md" },
+      { from: C, to: "Notes/C2.md" },
+    ])
+    expect(strip(ws)).toEqual([["Notes/A2.md", B]])
+    expect(ws.closed).toEqual(["Notes/C2.md"])
+    ws = focusMember(ws, split(ws).id, "Notes/A2.md")
+    ws = retargetTabs(ws, [{ from: "Notes/A2.md", to: "Notes/A3.md" }])
+    expect(focusedTab(ws)).toBe("Notes/A3.md")
+  })
+
+  test("a single active tab's move keeps it active", () => {
+    const ws = retargetTabs(withTabs(A), [{ from: A, to: B }])
+    expect(ws.active).toBe(B)
+  })
+
+  test("gone views close wherever they are, not offered to Reopen", () => {
+    const ws = closeTabsWhere(pair(), (k) => k === B || k === C)
+    expect(strip(ws)).toEqual([A])
+    expect(ws.closed).toEqual([])
+  })
+
+  test("a no-op returns the same workspace", () => {
+    const ws = withTabs(A)
+    expect(retargetTabs(ws, [{ from: C, to: D }])).toBe(ws)
+    expect(closeTabsWhere(ws, () => false)).toBe(ws)
   })
 })
-
-function focusPaneFirst(ws: ShellWorkspace): ShellWorkspace {
-  return { ...ws, focused: ws.panes[0]!.id }
-}
