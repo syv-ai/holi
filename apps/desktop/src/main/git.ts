@@ -104,8 +104,8 @@ export interface RunOpts extends Pick<GitDeps, 'token' | 'gitPath' | 'env'> {
 
 export interface RepoStatus {
   branch: string
-  /** `origin/HEAD`'s target, or null when the remote has none. Holi syncs this
-   * branch and no other. */
+  /** `origin/HEAD`'s target, or null when the remote has none. Informational:
+   * sync follows the checked-out branch, not this one. */
   defaultBranch: string | null
   ahead: number
   behind: number
@@ -129,7 +129,7 @@ export type PullResult =
   | { kind: 'conflict'; paths: string[] }
 
 export type PushResult =
-  | { kind: 'pushed'; commits: number }
+  | { kind: 'pushed'; commits: number; branch: string }
   | { kind: 'nothing-to-push' }
   | { kind: 'rejected'; reason: 'permission' | 'non-fast-forward' }
 
@@ -153,6 +153,26 @@ export interface RangeFile {
   removed: number
   /** `A` | `M` | `D` | `R<score>`. A rename reports its NEW path. */
   status: string
+}
+
+/** The vault's branches, for the status bar's branch picker. */
+export interface BranchList {
+  /** The checked-out branch, or null on a detached HEAD. */
+  current: string | null
+  /** Local branches, most recently committed first. */
+  local: { name: string; upstream: string | null }[]
+  /** Branches on `origin` that have no local branch of the same name, most
+   *  recently committed first. Named without the `origin/` prefix. */
+  remote: { name: string }[]
+}
+
+/** A branch switch or creation git or Holi would not do, in words for the
+ *  person who asked. */
+export class BranchRefusedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'BranchRefusedError'
+  }
 }
 
 export interface GitRepo {
@@ -181,7 +201,8 @@ export interface GitRepo {
   /** The paths each of the last `limit` commits changed, newest first: the
    *  vault-wide history's file lists in one call rather than one per commit. */
   commitFiles(limit: number): Promise<{ sha: string; files: string[] }[]>
-  /** Fetch and merge the default branch. Never rebases; a conflict aborts. */
+  /** Fetch and merge the checked-out branch's namesake on `origin`. Never
+   *  rebases; a conflict aborts. */
   pull(): Promise<PullResult>
   /** Re-run the merge WITHOUT aborting, leaving the conflict markers + MERGE_HEAD
    * in the tree for the reconcile flow (`features/agent-sessions.md`). Unlike
@@ -189,7 +210,8 @@ export interface GitRepo {
    * the agent has something to resolve. Re-fetches, so it merges the current
    * remote state, not a stale one. */
   remerge(): Promise<PullResult>
-  /** Push local commits to the default branch. The caller recovers from a
+  /** Push local commits to the checked-out branch's namesake on `origin`,
+   * setting the upstream on a branch's first push. The caller recovers from a
    * non-fast-forward rejection by pulling and retrying (`active-vault.ts`
    * `pushNow`). */
   push(): Promise<PushResult>
@@ -202,6 +224,17 @@ export interface GitRepo {
   /** "Commit anyway" for a held-back file: stage this one path and commit it with
    *  `--no-verify` (the deliberate large-file hook bypass). Null if not dirty. */
   commitFileNoVerify(path: string): Promise<string | null>
+  /** Local and remote branches (`for-each-ref`, nothing fetched). */
+  branches(): Promise<BranchList>
+  /** `git fetch origin`: the refs the branch picker lists. */
+  fetch(): Promise<void>
+  /**
+   * Check out `name`: a local branch, or a branch only on `origin`, which gets
+   * a local branch tracking it. `create` makes a new branch at HEAD instead.
+   * Refuses (`BranchRefusedError`) a dirty tree, a merge in progress and an
+   * invalid name; the caller settles the tree first.
+   */
+  switchBranch(name: string, opts?: { create?: boolean }): Promise<void>
   /** "Keep local" for a held-back file: append it to `.git/info/exclude`, git's
    *  machine-local ignore — the file stays on disk but stops being dirty/synced. */
   excludeLocally(path: string): Promise<void>
@@ -400,14 +433,16 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
    * with it.
    */
   async function pull(): Promise<PullResult> {
-    const target = (await defaultBranch()) ?? 'HEAD'
     await runGit(root, ['fetch', 'origin'], opts)
+    const target = await remoteTarget()
+    // A branch never pushed has nothing on `origin` to merge yet.
+    if (target === null) return { kind: 'up-to-date' }
 
     const before = await runGit(root, ['rev-parse', 'HEAD'], opts)
-    const incoming = await runGit(root, ['rev-list', '--count', `HEAD..origin/${target}`], opts)
+    const incoming = await runGit(root, ['rev-list', '--count', `HEAD..${target}`], opts)
     if (incoming === '0') return { kind: 'up-to-date' }
 
-    const merge = await tryGit(root, ['merge', '--no-edit', `origin/${target}`], opts)
+    const merge = await tryGit(root, ['merge', '--no-edit', target], opts)
     if (!merge.ok) {
       // `--diff-filter=U` is the unmerged set — the paths git could not decide.
       const raw = await runGit(root, ['diff', '--name-only', '--diff-filter=U', '-z'], opts).catch(
@@ -431,14 +466,16 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
    * agent (running inside this state) can resolve them and finish the merge.
    */
   async function remerge(): Promise<PullResult> {
-    const target = (await defaultBranch()) ?? 'HEAD'
     await runGit(root, ['fetch', 'origin'], opts)
+    const target = await remoteTarget()
+    // A branch never pushed has nothing on `origin` to merge yet.
+    if (target === null) return { kind: 'up-to-date' }
 
     const before = await runGit(root, ['rev-parse', 'HEAD'], opts)
-    const incoming = await runGit(root, ['rev-list', '--count', `HEAD..origin/${target}`], opts)
+    const incoming = await runGit(root, ['rev-list', '--count', `HEAD..${target}`], opts)
     if (incoming === '0') return { kind: 'up-to-date' }
 
-    const merge = await tryGit(root, ['merge', '--no-edit', `origin/${target}`], opts)
+    const merge = await tryGit(root, ['merge', '--no-edit', target], opts)
     if (!merge.ok) {
       const raw = await runGit(root, ['diff', '--name-only', '--diff-filter=U', '-z'], opts).catch(
         () => '',
@@ -642,29 +679,37 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
    * `classifyPushFailure` for the stderr exception.
    */
   async function push(): Promise<PushResult> {
-    const target = (await defaultBranch()) ?? (await status()).branch
-    // A repo created empty has no `origin/<target>` ref yet, so
-    // `origin/<target>..HEAD` *errors*, meaning every local commit is waiting,
-    // NOT "nothing to push". Check the ref exists before counting against it.
-    const hasUpstream = await runGit(
-      root,
-      ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${target}`],
-      opts,
-    )
-      .then(() => true)
-      .catch(() => false)
-    const range = hasUpstream ? `origin/${target}..HEAD` : 'HEAD'
+    const branch = await currentBranch()
+    if (branch === null) return { kind: 'nothing-to-push' }
+    // A repo created empty has no `origin/<branch>` ref yet, and neither has a
+    // branch made here and never pushed. Counting against a missing ref
+    // *errors*, which is not "nothing to push": count what no `origin` ref has.
+    const hasRemote = (await remoteTarget()) !== null
+    const range = hasRemote ? [`origin/${branch}..HEAD`] : ['HEAD', '--not', '--remotes=origin']
     const waiting = Number(
-      await runGit(root, ['rev-list', '--count', range], opts).catch(() => '0'),
+      await runGit(root, ['rev-list', '--count', ...range], opts).catch(() => '0'),
     )
     if (waiting === 0) return { kind: 'nothing-to-push' }
 
+    // `-u` only on a branch's first push, so its ahead and behind have
+    // something to count against. Every later push leaves `.git/config` alone.
+    const upstream = await runGit(
+      root,
+      ['for-each-ref', '--format=%(upstream)', `refs/heads/${branch}`],
+      opts,
+    ).catch(() => '')
     const res = await tryGit(
       root,
-      ['push', '--porcelain', 'origin', `HEAD:refs/heads/${target}`],
+      [
+        'push',
+        '--porcelain',
+        ...(upstream === '' ? ['-u'] : []),
+        'origin',
+        `HEAD:refs/heads/${branch}`,
+      ],
       opts,
     )
-    if (res.ok) return { kind: 'pushed', commits: waiting }
+    if (res.ok) return { kind: 'pushed', commits: waiting, branch }
 
     const reason = classifyPushFailure(res.stdout, res.stderr)
     if (reason !== null) return { kind: 'rejected', reason }
@@ -743,6 +788,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     let branch = ''
     let ahead = 0
     let behind = 0
+    let hasUpstream = false
     let detached = false
     let unborn = false
     const dirtyPaths: string[] = []
@@ -781,6 +827,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
         // Present only when the branch has an upstream. Absent is not a parse
         // failure — it means "nothing to compare against", i.e. zero both ways.
         const [a, b] = value.split(' ')
+        hasUpstream = true
         ahead = Number(a?.replace('+', '') ?? 0)
         behind = Math.abs(Number(b ?? 0))
       }
@@ -796,6 +843,19 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       }
     }
 
+    // A branch with no upstream (made here, never pushed) has no `branch.ab`,
+    // but its commits are still work GitHub does not have. Count what no
+    // `origin` ref holds, so Leave and the offline count stay honest.
+    if (!hasUpstream && !unborn && !detached) {
+      ahead = Number(
+        await runGit(
+          root,
+          ['rev-list', '--count', 'HEAD', '--not', '--remotes=origin'],
+          opts,
+        ).catch(() => '0'),
+      )
+    }
+
     return {
       branch,
       defaultBranch: await defaultBranch(),
@@ -806,6 +866,111 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       merging: await isMerging(),
       detached,
       unborn,
+    }
+  }
+
+  /** The checked-out branch's name, or null on a detached HEAD. Works on an
+   *  unborn branch too, which has a name but no commit. */
+  async function currentBranch(): Promise<string | null> {
+    const name = await runGit(root, ['symbolic-ref', '--quiet', '--short', 'HEAD'], opts).catch(
+      () => '',
+    )
+    return name === '' ? null : name
+  }
+
+  /**
+   * What sync merges from: `origin/<checked-out branch>`, or null when there
+   * is none (a detached HEAD, or a branch not pushed yet).
+   *
+   * **The namesake on `origin`, not `@{upstream}`.** Push writes to the same
+   * name, so pull and push always agree on one remote branch, whatever a
+   * hand-set upstream says. Holi sets the upstream to exactly this on a
+   * branch's first push, so the two only differ when someone changed it.
+   */
+  async function remoteTarget(): Promise<string | null> {
+    const branch = await currentBranch()
+    if (branch === null) return null
+    const ok = await tryGit(
+      root,
+      ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`],
+      opts,
+    )
+    return ok.ok ? `origin/${branch}` : null
+  }
+
+  async function branches(): Promise<BranchList> {
+    // NUL between fields and a newline per ref: a ref name cannot hold either.
+    const raw = await runGit(
+      root,
+      [
+        'for-each-ref',
+        '--sort=-committerdate',
+        '--format=%(refname)%00%(upstream)',
+        'refs/heads',
+        'refs/remotes/origin',
+      ],
+      opts,
+    ).catch(() => '')
+    const local: BranchList['local'] = []
+    const remoteNames: string[] = []
+    for (const line of raw.split('\n')) {
+      const [ref = '', upstream = ''] = line.split('\0')
+      if (ref.startsWith('refs/heads/')) {
+        local.push({
+          name: ref.slice('refs/heads/'.length),
+          upstream: upstream === '' ? null : upstream.replace(/^refs\/remotes\//, ''),
+        })
+      } else if (ref.startsWith('refs/remotes/origin/')) {
+        const name = ref.slice('refs/remotes/origin/'.length)
+        // `origin/HEAD` is a pointer to the default branch, not a branch.
+        if (name !== 'HEAD') remoteNames.push(name)
+      }
+    }
+    const current = await currentBranch()
+    // An unborn branch has no ref yet, but it is still the one checked out.
+    if (current !== null && !local.some((b) => b.name === current)) {
+      local.unshift({ name: current, upstream: null })
+    }
+    const localNames = new Set(local.map((b) => b.name))
+    return {
+      current,
+      local,
+      remote: remoteNames.filter((n) => !localNames.has(n)).map((name) => ({ name })),
+    }
+  }
+
+  async function fetch(): Promise<void> {
+    await runGit(root, ['fetch', 'origin'], opts)
+  }
+
+  async function switchBranch(name: string, o: { create?: boolean } = {}): Promise<void> {
+    const valid = await validBranchName(root, name, opts)
+    if (!valid) throw new BranchRefusedError(`“${name}” is not a valid branch name`)
+    const s = await status()
+    if (s.merging) throw new BranchRefusedError('A merge is in progress. Finish or abort it first.')
+    if (s.dirty) {
+      throw new BranchRefusedError(
+        `${s.dirtyPaths.length} ${s.dirtyPaths.length === 1 ? 'file is' : 'files are'} not committed. Commit or keep them local first.`,
+      )
+    }
+    const has = async (ref: string) =>
+      (await tryGit(root, ['rev-parse', '--verify', '--quiet', ref], opts)).ok
+    if (o.create) {
+      if (await has(`refs/heads/${name}`)) {
+        throw new BranchRefusedError(`A branch named “${name}” already exists`)
+      }
+      // `--no-track`: the new branch's upstream is set by its first push, to
+      // its own namesake, never to the branch it was made from.
+      await runGit(root, ['switch', '--no-track', '-c', name], opts)
+      return
+    }
+    if (name === (await currentBranch())) return
+    if (await has(`refs/heads/${name}`)) {
+      await runGit(root, ['switch', name], opts)
+    } else if (await has(`refs/remotes/origin/${name}`)) {
+      await runGit(root, ['switch', '--track', `origin/${name}`], opts)
+    } else {
+      throw new BranchRefusedError(`There is no branch named “${name}”`)
     }
   }
 
@@ -846,7 +1011,26 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     remerge,
     push,
     abortMerge,
+    branches,
+    fetch,
+    switchBranch,
   }
+}
+
+/**
+ * Is `name` a branch name git accepts as written? `check-ref-format --branch`
+ * is git's own rule, run as an argument (never through a shell). It also
+ * *expands* `@{-1}` into the previous branch, so only an answer equal to the
+ * question counts; `@` is HEAD's alias and a leading dash reads as an option.
+ */
+export async function validBranchName(
+  cwd: string,
+  name: string,
+  opts: RunOpts = {},
+): Promise<boolean> {
+  if (name === '' || name === '@' || name.startsWith('-') || name.length > 200) return false
+  const res = await tryGit(cwd, ['check-ref-format', '--branch', name], opts)
+  return res.ok && res.stdout.trim() === name
 }
 
 /**

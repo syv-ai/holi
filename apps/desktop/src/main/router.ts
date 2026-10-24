@@ -45,7 +45,14 @@ import { exportFiles } from './vault/export-files'
 import { moveNotes } from './vault/move'
 import { getOrCreateDaily, sweepDaily } from './vault/daily'
 import { completionStatuses, readVaultStatuses } from './vault/statuses'
-import { openRepo, remoteUrl, type Commit } from './git'
+import {
+  BranchRefusedError,
+  openRepo,
+  remoteUrl,
+  validBranchName,
+  type BranchList,
+  type Commit,
+} from './git'
 import { GitHubApiError, type Contributor, type Repo } from './github/api'
 import type { DeviceFlow } from './github/device-flow'
 import { createMembersCache, type MembersCache } from './github/members-cache'
@@ -1349,6 +1356,43 @@ export function createRouter(deps: RouterDeps) {
       await activeOrThrow().syncNow()
       return { ok: true as const }
     }),
+
+    /** The status bar's branch picker: local and remote branches, as the
+     *  clone knows them. `fetchBranches` brings the remote side up to date. */
+    branches: t.procedure.query((): Promise<BranchList> => activeOrThrow().branches()),
+
+    /** Fetch for the picker as it opens; debounced in the vault. */
+    fetchBranches: t.procedure.mutation(async () => {
+      await activeOrThrow().fetchBranches()
+      return { ok: true as const }
+    }),
+
+    /** Is this a name `git check-ref-format --branch` accepts as written?
+     *  Asked as the person types a new branch's name. */
+    branchNameValid: t.procedure
+      .input(fields({ name: 'string' }))
+      .query(async ({ input }): Promise<boolean> =>
+        validBranchName(activeOrThrow().root, input.name),
+      ),
+
+    /**
+     * Switch the vault to a branch, or create one at HEAD (`create`). A
+     * refusal (a conflict, a pause, an uncommittable file, a bad name) comes
+     * back as PRECONDITION_FAILED carrying the words to show.
+     */
+    switchBranch: t.procedure
+      .input(fields({ name: 'string', create: 'boolean?' }))
+      .mutation(async ({ input }) => {
+        try {
+          await activeOrThrow().switchBranch(input.name, { create: input.create === true })
+        } catch (err) {
+          if (err instanceof BranchRefusedError) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: err.message })
+          }
+          throw err
+        }
+        return { ok: true as const }
+      }),
 
     /** ⌘S: a real commit point rather than a placebo. */
     commitNow: t.procedure.mutation(() => activeOrThrow().commitNow()),

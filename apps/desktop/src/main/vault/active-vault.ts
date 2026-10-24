@@ -20,8 +20,8 @@ import { emptyVaultSnapshot, syncLabel } from '@holi/shared'
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { SyncState, VaultSnapshot } from '@holi/shared'
-import type { GitDeps, GitRepo, PullResult, RepoStatus } from '../git'
-import { isIndexLockError, openRepo } from '../git'
+import type { BranchList, GitDeps, GitRepo, PullResult, RepoStatus } from '../git'
+import { BranchRefusedError, isIndexLockError, openRepo } from '../git'
 import { errorText, type ActivityWrite } from '../activity/log'
 import { installGitHook, partitionBySize, type HeldBackFile } from './large-files'
 import { installRecordMergeDriver } from './record-merge'
@@ -124,8 +124,26 @@ export interface ActiveVault {
    * never throws.
    */
   syncNow(): Promise<void>
+  /** The branch picker's list: local and remote branches, nothing fetched. */
+  branches(): Promise<BranchList>
+  /** Fetch `origin` for the picker. Debounced: a fetch in the last
+   *  `FETCH_DEBOUNCE_MS`, or a pull already fetching, is enough. Never throws;
+   *  offline just leaves the refs as they were. */
+  fetchBranches(): Promise<void>
+  /**
+   * Switch the vault to another branch, or create one at HEAD (`create`).
+   * Settles the tree through autosave first and holds the sync loop while git
+   * switches. Refuses (`BranchRefusedError`, in words) during a conflict, a
+   * reconcile, a pause or a merge, or when a file will not commit.
+   */
+  switchBranch(name: string, opts?: { create?: boolean }): Promise<void>
   close(): Promise<void>
 }
+
+/** How recent a fetch the branch picker accepts instead of fetching again. */
+export const FETCH_DEBOUNCE_MS = 15_000
+/** How long a switch waits for a commit, pull or push already running. */
+const SWITCH_WAIT_MS = 5_000
 
 /** What the status bar says about sync beyond its state. */
 export interface SyncInfo {
@@ -158,8 +176,10 @@ function stateLine(state: SyncState): { message: string; level: 'info' | 'warn' 
  * Why sync must not run right now, or null.
  *
  * Holi refuses to sync a repo whose state it does not own, but only *sync*:
- * the vault stays open and editable, because someone on a branch or resolving
- * a merge by hand should not lose access to their notes.
+ * the vault stays open and editable, because someone resolving a merge by
+ * hand should not lose access to their notes. Being on a branch other than
+ * the default is not a reason: sync follows the checked-out branch
+ * (`docs/features/vaults-sync.md`).
  *
  * `unborn` is deliberately NOT a reason: a repo `github.createRepo` just made
  * has no commits, and its first autosave has to land.
@@ -167,9 +187,6 @@ function stateLine(state: SyncState): { message: string; level: 'info' | 'warn' 
 function blockedReason(status: RepoStatus): string | null {
   if (status.detached) return 'detached HEAD — sync paused'
   if (status.merging) return 'a merge is in progress — sync paused'
-  if (status.defaultBranch !== null && status.branch !== status.defaultBranch) {
-    return `on ${status.branch}, not ${status.defaultBranch} — sync paused`
-  }
   return null
 }
 
@@ -299,6 +316,8 @@ export async function openActiveVault(args: {
   /** When the remote last answered, and the last failure's words. */
   let lastSyncAt: string | null = null
   let lastError: string | null = null
+  /** When the branch picker last fetched, for its debounce. */
+  let lastFetchAt = 0
   /** The last state the log was told, as its line: `pulling` comes and goes
    *  every few minutes and says nothing, so the log hears only where the
    *  state settles, and only when that differs. */
@@ -372,8 +391,9 @@ export async function openActiveVault(args: {
    *   - The conflict banner outranks the ordinary states, or the next autosave
    *     commit would silently clear a banner the user has not dealt with
    *     (it is non-blocking, not transient).
-   *   - Being on the wrong branch outranks progress reporting: nothing is
-   *     going to happen, so an `offline` count would be a promise we do not keep.
+   *   - Being blocked (detached, mid-merge) outranks progress reporting:
+   *     nothing is going to happen, so an `offline` count would be a promise
+   *     we do not keep.
    */
   function computeState(status: RepoStatus): SyncState {
     settleReconcile(status)
@@ -663,7 +683,7 @@ export async function openActiveVault(args: {
           log(
             'git',
             'info',
-            `Pushed ${result.commits} commit${result.commits === 1 ? '' : 's'} to origin`,
+            `Pushed ${result.commits} commit${result.commits === 1 ? '' : 's'} to origin/${result.branch}`,
           )
         }
       } else if (result.kind === 'rejected' && result.reason === 'permission') {
@@ -762,6 +782,79 @@ export async function openActiveVault(args: {
       } catch (err) {
         console.error('[vault] sync now failed:', err)
       }
+    },
+    branches: () => args.repo.branches(),
+    async fetchBranches() {
+      // A pull is fetching right now, and that fetch is the fresh refs.
+      if (closed || pullInFlight || Date.now() - lastFetchAt < FETCH_DEBOUNCE_MS) return
+      lastFetchAt = Date.now()
+      await args.repo.fetch().catch((err) => {
+        // Offline is ordinary here; the picker lists what it already knows.
+        console.error('[vault] branch fetch failed:', err)
+        lastFetchAt = 0
+      })
+    },
+    async switchBranch(name, opts = {}) {
+      if (closed) throw new BranchRefusedError('The vault is closing')
+      // In the order the sync item would name them, and refused in words: each
+      // is a state the person has to finish before the tree can change.
+      if (reconciling) {
+        throw new BranchRefusedError('A reconcile is in progress. Finish or abandon it first.')
+      }
+      if (conflictPaths !== null) {
+        throw new BranchRefusedError('A merge conflict is waiting. Resolve it before switching.')
+      }
+      if (manualPause !== null) {
+        throw new BranchRefusedError(`Sync is paused (${manualPause}). Switch when it resumes.`)
+      }
+      const before = await args.repo.status()
+      const blocked = blockedReason(before)
+      if (blocked !== null) {
+        throw new BranchRefusedError(
+          before.detached
+            ? 'HEAD is detached. Check out a branch from the terminal first.'
+            : 'A merge is in progress. Finish or abort it first.',
+        )
+      }
+      // A commit, pull or push already running finishes first rather than
+      // having the tree change under it.
+      const deadline = Date.now() + SWITCH_WAIT_MS
+      while (pullInFlight || pushInFlight || committing) {
+        if (Date.now() > deadline) {
+          throw new BranchRefusedError('Sync is busy. Try again in a moment.')
+        }
+        await new Promise((r) => setTimeout(r, 50))
+      }
+      // The switch holds the loop exactly as a pull does: the commit below
+      // runs inside the hold (`duringPull`), and every other commit, pull,
+      // push and focus pull declines until the new tree is in place.
+      pullInFlight = true
+      try {
+        if (commitTimer !== null) {
+          clearTimeout(commitTimer)
+          commitTimer = null
+        }
+        // Settle the tree the way autosave does, size gate and hooks included.
+        await maybeCommit(true)
+        try {
+          await args.repo.switchBranch(name, opts)
+        } catch (err) {
+          if (!(err instanceof BranchRefusedError)) {
+            log('git', 'error', `Could not switch to ${name}`, errorText(err))
+          }
+          throw err
+        }
+        log('git', 'info', opts.create ? `Created branch ${name}` : `Switched to branch ${name}`)
+      } finally {
+        pullInFlight = false
+      }
+      // Everything after is what a merged pull does: the tree moved under the
+      // vault, so rescan, tell history, and read the state again.
+      await rescan()
+      if (!closed) args.onCommitted?.(null)
+      await refreshState()
+      // A branch that already has commits origin lacks gets them pushed.
+      schedulePush()
     },
     refresh: rescan,
     commitNow() {

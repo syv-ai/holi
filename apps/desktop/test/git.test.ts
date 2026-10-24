@@ -442,7 +442,7 @@ describe('push', () => {
     const dir = await makeClone(remote)
     await commitFile(dir, 'ours.md', 'ours\n')
 
-    expect(await openRepo(dir).push()).toEqual({ kind: 'pushed', commits: 1 })
+    expect(await openRepo(dir).push()).toEqual({ kind: 'pushed', commits: 1, branch: 'main' })
     // The remote really moved: a fresh clone sees the file.
     const check = await makeClone(remote, 'check')
     expect(await readFile(join(check, 'ours.md'), 'utf8')).toBe('ours\n')
@@ -465,7 +465,7 @@ describe('push', () => {
     const dir = await makeClone(bare)
     await commitFile(dir, 'seed.md', 'seed\n')
 
-    expect(await openRepo(dir).push()).toEqual({ kind: 'pushed', commits: 1 })
+    expect(await openRepo(dir).push()).toEqual({ kind: 'pushed', commits: 1, branch: 'main' })
     // The remote really received it — a fresh clone sees the seed.
     const check = await makeClone(bare, 'check')
     expect(await readFile(join(check, 'seed.md'), 'utf8')).toBe('seed\n')

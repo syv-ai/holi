@@ -79,7 +79,7 @@ describe('activity log — sync engine', () => {
       message: `Committed ${sha} Update note.md`,
       remote: 'syv-ai/notes',
     })
-    expect(lines()).toContain('git:info:Pushed 1 commit to origin')
+    expect(lines()).toContain('git:info:Pushed 1 commit to origin/main')
   })
 
   it('logs a merged pull, and a quiet pull not at all', async () => {
