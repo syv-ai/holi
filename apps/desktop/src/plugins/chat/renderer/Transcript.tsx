@@ -30,6 +30,7 @@ import {
   FileTextIcon,
   GlobeIcon,
   type LucideIcon,
+  PlugIcon,
   SearchIcon,
   SparklesIcon,
   SquareTerminalIcon,
@@ -72,6 +73,7 @@ const TOOL_ICON: Record<ToolKind, LucideIcon> = {
   fetch: GlobeIcon,
   agent: BotIcon,
   skill: SparklesIcon,
+  mcp: PlugIcon,
   other: WrenchIcon,
 }
 
