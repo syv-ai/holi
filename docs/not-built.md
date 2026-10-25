@@ -164,9 +164,8 @@ New Link, saving a link dragged in from a browser, and Open in Browser. See
 serves each command's document; the editor's slash menu does not list them, and nothing runs one in
 its hidden frame. See [vault apps](features/vault-apps.md).
 
-**The rest.** The repo's
-size in Settings ([vaults-sync](features/vaults-sync.md)); a tab's caret and scroll kept across tab
-switches; and `holi docs screenshot`'s renderer half, which says where a tab is drawn.
+**The rest.** The repo's size in the vault picker and the sync panel
+([vaults-sync](features/vaults-sync.md)); a tab's caret and scroll kept across tab switches; and `holi docs screenshot`'s renderer half, which says where a tab is drawn.
 
 ## Sync
 

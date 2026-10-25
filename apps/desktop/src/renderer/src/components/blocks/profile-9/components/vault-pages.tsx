@@ -6,6 +6,9 @@ import { useAtomValue, useSetAtom } from "jotai"
 import { useCallback, useEffect, useState } from "react"
 import {
   EDITOR_FONTS,
+  formatRepoSize,
+  REPO_SIZE_LIMIT_KB,
+  repoUsagePercent,
   VAULT_SETTING_DEFAULTS,
   type AgentProviderId,
   syncLabel,
@@ -24,11 +27,13 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from "@/components/ui/empty"
+import { Progress } from "@/components/ui/progress"
 import { Switch } from "@/components/ui/switch"
 import { trpc } from "@/lib/trpc"
 import { useAgentService } from "@/state/agent-service"
 import { AgentMark } from "@/composites"
 import { claudeFirstRunAtom } from "@/state/claude-first-run"
+import { useRepoSize } from "@/state/repo-usage"
 import { settingDescriptorsAtom } from "@/state/plugins"
 import {
   activeRemoteAtom,
@@ -120,6 +125,50 @@ export function AgentsCard() {
   )
 }
 
+/**
+ * What the repo weighs on GitHub against the 10 GB GitHub recommends
+ * (docs/features/vaults-sync.md, Repo size). GitHub recomputes the size on
+ * its own schedule, so it is asked at most every ten minutes, and the row
+ * says it is waiting rather than guess.
+ */
+function RepoSizeRow({ remote }: { remote: string }) {
+  const sizeKb = useRepoSize(remote)
+  const percent = sizeKb === null ? null : repoUsagePercent(sizeKb)
+  return (
+    <SettingsRow
+      title="Size on GitHub"
+      description={`GitHub recommends keeping a repository under ${formatRepoSize(REPO_SIZE_LIMIT_KB)}. It updates the size on its own schedule.`}
+    >
+      {sizeKb === null || percent === null ? (
+        <span className="text-muted-foreground text-sm">Asking GitHub…</span>
+      ) : (
+        <div className="flex w-full max-w-56 flex-col items-end gap-1.5">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium tabular-nums">
+              {formatRepoSize(sizeKb)}
+            </span>
+            {percent >= 60 ? (
+              <Badge
+                variant={percent >= 90 ? "destructive-light" : "warning-light"}
+              >
+                {percent}%
+              </Badge>
+            ) : (
+              <span className="text-muted-foreground text-xs tabular-nums">
+                {percent}%
+              </span>
+            )}
+          </div>
+          <Progress
+            value={Math.min(percent, 100)}
+            aria-label="Share of GitHub's recommended size"
+          />
+        </div>
+      )}
+    </SettingsRow>
+  )
+}
+
 export function GeneralPage() {
   const remote = useAtomValue(activeRemoteAtom)
   const entry = useAtomValue(vaultsAtom).find((v) => v.remote === remote)
@@ -173,6 +222,7 @@ export function GeneralPage() {
             Show folder
           </Button>
         </SettingsRow>
+        <RepoSizeRow remote={entry.remote} />
         <SettingsRow
           title="Sync"
           description="Your edits are committed and pushed as you work, and others' are pulled in."

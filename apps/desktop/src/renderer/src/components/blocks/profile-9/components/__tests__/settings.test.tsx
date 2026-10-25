@@ -40,7 +40,9 @@ vi.mock("@/lib/trpc", () => {
         ? {}
         : name === "github.collaborators"
           ? { visibility: "private", collaborators: [] }
-          : null
+          : name === "github.repoSize"
+            ? { sizeKb: 7 * 1024 * 1024 }
+            : null
   const procedure = (name: string) => ({
     query: async () => answer(name),
     mutate: name === "settings.write" ? write : async () => ({ ok: true }),
@@ -214,4 +216,16 @@ test("every page in the nav opens to its own heading", async () => {
       await screen.findByRole("heading", { level: 1, name: row.textContent! })
     ).toBeTruthy()
   }
+})
+
+test("General says what the repo weighs on GitHub, against what GitHub recommends", async () => {
+  mount()
+  fireEvent.keyDown(window, { key: ",", metaKey: true })
+  expect(await screen.findByText("7.0 GB")).toBeTruthy()
+  expect(screen.getByText("70%")).toBeTruthy()
+  expect(
+    screen.getByRole("progressbar", {
+      name: "Share of GitHub's recommended size",
+    })
+  ).toBeTruthy()
 })
