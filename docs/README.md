@@ -30,7 +30,6 @@ other rather than repeating each other.
 | [planning](features/planning.md)                   | The vault as one project: Overview, Board, List and Table                |
 | [daily-notes](features/daily-notes.md)             | Idempotent daily notes and their archive                                 |
 | [agent-sessions](features/agent-sessions.md)       | Background sessions, the Agents view, turn review, reconcile             |
-| [chat](features/chat.md)                           | The optional plugin that draws Claude Code as a conversation             |
 | [agent-config](features/agent-config.md)           | Config layering, the per-vault silo, seeded files, tools, permissions    |
 | [agent-memory](features/agent-memory.md)           | The vault's `.holi/memory/` directory                                    |
 | [scheduled-agents](features/scheduled-agents.md)   | Prompts Holi runs as agent sessions on a cron schedule, on this machine  |
@@ -39,7 +38,7 @@ other rather than repeating each other.
 | [pdf](features/pdf.md)                             | Typst export, templates, the PDF viewer                                  |
 | [vault-apps](features/vault-apps.md)               | Agent-written apps in their own origin                                   |
 | [community-plugins](features/community-plugins.md) | Plugins from other repositories, run as their own processes              |
-| [command-palette](features/command-palette.md)     | Quick open and the one table of commands                                 |
+| [command-palette](features/command-palette.md)     | ⌘K: documents, views and the shell's actions                             |
 | [shortcuts](features/keyboard-shortcuts.md)        | The shell's keyboard shortcuts, their table and their dialog             |
 | [nav-menu](features/nav-menu.md)                   | The nav's items, their menu, and Home                                    |
 | [sidebar](features/sidebar.md)                     | The sidebar, its two modes, the seam and the profile                     |

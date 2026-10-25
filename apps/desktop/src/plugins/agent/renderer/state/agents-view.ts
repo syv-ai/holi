@@ -1,6 +1,6 @@
 /**
  * What the Agents mode shows (docs/features/sidebar.md): the agent's own
- * views (its home, the Inbox, a live session), or a row another plugin added
+ * views (its home, the Inbox, History, a live session), or a row another plugin added
  * (its slot). The selection is core's `agentsSelectionAtom`, shared with those
  * plugins; this module reads the agent's part of it.
  *
@@ -17,6 +17,8 @@ export type AgentsView =
   | { kind: 'home' }
   /** What needs the person: sessions waiting, and what plugins add. */
   | { kind: 'inbox' }
+  /** Every conversation and run, open or closed, by day. */
+  | { kind: 'history' }
   /** A live background session, in its terminal. */
   | { kind: 'session'; id: string }
   /** A row another plugin added: its own main view draws it. */
@@ -26,7 +28,9 @@ export type AgentsView =
 export function agentsViewOf(sel: { owner: string; id: string } | null): AgentsView {
   if (sel === null) return { kind: 'home' }
   if (sel.owner !== AGENT_OWNER) return { kind: 'slot', owner: sel.owner, id: sel.id }
+  if (sel.id === 'new') return { kind: 'home' }
   if (sel.id === 'inbox') return { kind: 'inbox' }
+  if (sel.id === 'history') return { kind: 'history' }
   const [kind, ...rest] = sel.id.split(':')
   if (kind === 'session') return { kind: 'session', id: rest.join(':') }
   return { kind: 'home' }
@@ -35,8 +39,13 @@ export function agentsViewOf(sel: { owner: string; id: string } | null): AgentsV
 export const agentsViewAtom = atom(
   (get): AgentsView => agentsViewOf(get(agentsSelectionAtom)),
   (_get, set, view: AgentsView) => {
-    if (view.kind === 'home') set(agentsSelectionAtom, null)
+    // A selection of its own, never null: null may already be the
+    // selection (a document in front), and an unchanged selection opens no
+    // tab. Core opens the home for any `new` (`keyForSelection`).
+    if (view.kind === 'home') set(agentsSelectionAtom, { owner: AGENT_OWNER, id: 'new' })
     else if (view.kind === 'inbox') set(agentsSelectionAtom, { owner: AGENT_OWNER, id: 'inbox' })
+    else if (view.kind === 'history')
+      set(agentsSelectionAtom, { owner: AGENT_OWNER, id: 'history' })
     else if (view.kind === 'slot') set(agentsSelectionAtom, { owner: view.owner, id: view.id })
     else set(agentsSelectionAtom, { owner: AGENT_OWNER, id: `session:${view.id}` })
   },

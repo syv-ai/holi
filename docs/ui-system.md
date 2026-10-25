@@ -154,6 +154,13 @@ One place decides how an icon looks, so every icon in the app agrees.
   `nativeTheme.themeSource`), the ground tinting it at `--glass-tint` (80%) so the desk shows
   through the sidebar faintly. The page panel stays opaque: a note is never read over the
   desktop. Elsewhere the ground is opaque.
+- **The app icon follows the theme.** It is the "h" (`assets/holi-logo-new-short.svg`) on a
+  squircle of the chrome's colour (`--sidebar`), frosted from above like the window's glass, with
+  a glow of the theme's `--primary` from the lower corner; the "h" is `--foreground`. The window
+  draws it (`lib/app-icon.ts`) whenever the root's `data-theme` or its theme tokens change, and
+  main sets it on the dock (`holi:dockIcon`), so a light theme gets a light icon and a vault's
+  own theme its own colours. `build/icon.svg` and `icon.png` are the same drawing in the default
+  dark theme: the bundle's icon in Finder, and the dock's until the window has drawn one.
 - **Before a vault**, sign-in and the onboarding ritual stand in the light: shafts of warm light
   falling from the top-left corner and shifting slowly (`composites/AmbientBackdrop.tsx`, drawn by
   the `SideRays` shader), with film grain over them (`AmbientGrain`). It is the one decorative

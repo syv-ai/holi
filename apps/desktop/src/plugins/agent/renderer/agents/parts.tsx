@@ -1,7 +1,7 @@
 /**
  * The small pieces every row and header share: the state ("Need approval",
  * "Working…", "Done"), the lines a turn changed, how long ago, the sidebar's
- * row, and a session's card. After MonoCode's sidebar rows (MIT, Copyright
+ * and a session's card. After MonoCode's sidebar rows (MIT, Copyright
  * (c) 2026 Nick; see NOTICE.md).
  *
  * Colour here is state, each with its `dark:` pair: amber for waiting on you,
@@ -10,8 +10,8 @@
  */
 import { SiClaude } from '@icons-pack/react-simple-icons'
 import { Check, CircleAlert, GitBranch, LoaderCircle } from 'lucide-react'
-import type { ComponentProps, ReactNode } from 'react'
-import { Button, Icon, type IconGlyph } from '@/primitives'
+import type { ComponentProps } from 'react'
+import { Button, Icon } from '@/primitives'
 import { cn } from '@/plugin-api'
 import type { AgentSession } from '../state/sessions'
 
@@ -84,39 +84,6 @@ export function ago(at: number, now: number): string {
   const days = Math.floor(hours / 24)
   if (days < 7) return `${days}d`
   return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date(at))
-}
-
-/** The chrome row (`docs/ui-system.md`, Rules): one fill scale on the
- *  foreground, `text-nav`. The Documents sidebar's own. */
-export const NAV_ROW =
-  'h-7 w-full min-w-0 justify-start gap-2 rounded-lg px-2 text-nav font-medium text-muted-foreground motion-respond hover:bg-foreground/[0.04] hover:text-foreground active:bg-foreground/[0.07] aria-[current=page]:bg-foreground/[0.06] aria-[current=page]:text-foreground'
-
-/** A place in the Agents sidebar's top group: Inbox, Automations. */
-export function NavRow({
-  icon,
-  label,
-  current,
-  end,
-  onClick,
-}: {
-  icon: IconGlyph
-  label: string
-  current: boolean
-  end?: ReactNode
-  onClick: () => void
-}): React.JSX.Element {
-  return (
-    <Button
-      variant="ghost"
-      className={NAV_ROW}
-      aria-current={current ? 'page' : undefined}
-      onClick={onClick}
-    >
-      <Icon icon={icon} size="sm" />
-      <span className="min-w-0 flex-1 truncate text-start">{label}</span>
-      {end}
-    </Button>
-  )
 }
 
 /**

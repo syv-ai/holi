@@ -40,8 +40,8 @@ function HoliLogo({ className }: { className?: string }) {
       aria-hidden="true"
     >
       <ItemMedia variant="icon" className="size-auto">
-        {/* Holi's stacked wordmark, the one on the sign-in. */}
-        <BrandMark className="h-4" />
+        {/* Holi's mark alone: the wordmark has no room in a tile. */}
+        <BrandMark variant="monogram" className="h-4" />
       </ItemMedia>
     </Item>
   )

@@ -137,11 +137,18 @@ Text sent from Holi to a session (a selection, a task, a mail thread). It lands 
 bracketed paste with no Enter, so Holi never submits a draft the user was typing. A reconcile or a
 stuck push is the exception: it submits its instruction as the first turn of its own session.
 
-### Chat session
+### Provider
 
-Claude Code run on its structured channel (`stream-json`) by built-in chat, drawn as a
-conversation in the Agents view, its permission prompts Claude Code's own as cards. Named by a UUID;
-its transcript is kept on this machine, never in the vault. See [chat](features/chat.md).
+A coding agent Holi can run a session in: Claude Code or Codex. Its core is the command a terminal
+runs; what else it can do (sessions its own supervisor runs, hooks that report turns, a context
+reading) are its capabilities, and the UI offers only what a session's provider has. See
+[agent-sessions](features/agent-sessions.md), Providers.
+
+### Session Holi runs
+
+A session of a provider with no supervisor of its own (Codex): its CLI in a PTY Holi owns, named by
+Holi's id (`p` and twelve hex digits), alive as long as that process. Its turns are read from its
+hooks and its terminal's signals, never its text.
 
 ### Agent surface
 

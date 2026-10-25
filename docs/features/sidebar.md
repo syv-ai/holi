@@ -3,7 +3,7 @@
 The sidebar sits on the window's own ground, and the content floats beside it as one rounded panel
 (the content panel). It has two modes, **Documents** and **Agents**, and stays deliberately small: the vault, the
 mode, the mode's own list, and who is signed in. Everywhere else is one keystroke away in the
-[command palette](command-palette.md) (⌘P, ⌘⇧P).
+[command menu](command-palette.md) (⌘K).
 
 ## How it works
 
@@ -29,26 +29,26 @@ mode, the mode's own list, and who is signed in. Everywhere else is one keystrok
   toggle. **Other plugins add to it without the agent knowing them**: `RendererPlugin.agentsSlot`
   gives a row for the top group beside the Inbox (`nav`: [Automations](scheduled-agents.md)), a
   section (`sidebar`: [Holis](holis.md)) placed by its `order` (the sessions are at 100; a slot with
-  none comes after them, as chat does), rows in the Inbox (`inbox`), a main view for its rows, the
+  none comes after them), rows in the Inbox (`inbox`), a main view for its rows, the
   mode's main view while nothing is selected (`home`, the first running slot's wins; the Inbox is
   its own row, never the home) and a status the toggle adds in. What is shown is core's `agentsSelectionAtom`,
-  `{owner, id}`, so a plugin's row opens its own view. Built-in [chat](chat.md) is one, and its
-  new-session page is the home, so Agents always opens on the composer. In the shell the sidebar's Agents tab is the mode
+  `{owner, id}`, so a plugin's row opens its own view. With no slot's `home`, the home is the
+  agent's own, which says no session is open there and offers one. In the shell the sidebar's Agents tab is the mode
   (`sidebarSectionAtom` is `appModeAtom`), and it switches the sidebar only. **Agents opens tabs**
-  ([tabs and split view](tabs-panes.md)): a row picked, an Inbox card or a chat started is a
+  ([tabs and split view](tabs-panes.md)): a row picked, an Inbox card or a session started is a
   session tab (in the focused member while a split is active), selected where it already is, never
   opened twice; the mode's `main` draws one tab's selection (`{selection}`), so a split can show
   two sessions. The selection follows the view in front back, so the list marks the session in
   front. + on the Agents side
-  opens the Agents home (the new-session page) as a tab, and a chat started there takes that
-  tab's place once it has an id. A row's menu offers Open to the side (`openTabAtom` with
+  starts a session in the default agent (the mode's `newSession`), in a tab of its own; one
+  started from an Agents home tab takes that tab's place. A row's menu offers Open to the side (`openTabAtom` with
   `beside`). The mode's `tabLook` names a session tab and gives its dot (working, needs you,
-  done) and its mark (a Holi's face, an automation's bolt, else Claude's). The mode's views paint no ground of
+  done) and its mark (a Holi's face, an automation's bolt, else the agent's). The mode's views paint no ground of
   their own: on macOS the window is glass and `<main>` tints it as the vault's Transparency asks,
   so only controls, cards, menus and overlays inside them carry a background.
 - **Documents** is a search field and two destinations, then what you pinned, then the files:
   - **Search** is a field at the top (a grey fill, as every text field is) that opens the
-    [command palette](command-palette.md) (⌘P): files, notes and commands. It is a press, not a
+    [command menu](command-palette.md) (⌘K): files, notes and actions. It is a press, not a
     field that filters here, so there is one search and not two.
   - **Home** opens the vault's [library](home.md), always. The "Home is" setting decides what a
     vault opens on, not where this row goes: a row named Home that opened the board read as a

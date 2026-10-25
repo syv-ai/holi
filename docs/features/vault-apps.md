@@ -38,8 +38,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   the app's **preview** once it has one (below), and the icon until then.
 - **A card's menu.** Right-click a card, or press the menu key (or Shift+F10) with its Open
   focused: **Open**; **Open beside**, in split view, as ⌥-click does (`openTab` with `beside`);
-  **Ask about this app**, a new chat beside it with the app as its context (shown only while an
-  agent can start a conversation, `AgentsSlot.start`; see [chat](chat.md)); **Reveal in Files**,
+  **Ask about this app**, a new session beside it with the app as its context (shown only while an
+  agent can start one, `AgentsSlot.start`; see [agent sessions](agent-sessions.md)); **Reveal in Files**,
   which brings the Documents sidebar forward and selects the bundle's row
   (`state/reveal-in-files.ts`); **Copy path**, the vault-relative bundle path; **Refresh
   preview**; then **Archive**. The keyboard reaches it through the menu key rather than a ⋯ on
@@ -54,8 +54,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   beats a confirmation for a removal this easy to reverse. The write is an ordinary edit of a
   synced file, so autosave commits it and teammates see the app archived too: it is the vault's
   launcher list being tidied, not one person's view. Holi had no archive for documents to reuse
-  (a task's `archive-done` moves the file, and a chat's Archive is a flag in this machine's
-  index); a move would change the app's path, which is its identity, its tab key and the key
+  (a task's `archive-done` moves the file); a move would change the app's path, which is its identity, its tab key and the key
   its approvals and records are kept under, and a machine-local flag would not sync, so the
   smallest consistent choice is the manifest key the launchers already read.
 - **Previews.** When an app has loaded in a tab and had a moment to draw (1.5 s, then the

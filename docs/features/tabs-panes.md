@@ -52,7 +52,7 @@ pill: its mark, its title, × on hover. A split is one wider pill holding each m
 title side by side, a hairline between them, truncating evenly; with the split active the focused
 member's title has the full weight and the others are muted. Clicking the pill selects the split;
 clicking a member inside it selects the split focused on that member. + opens a New tab (⌘T), or
-the Agents home while the sidebar is on Agents. A session tab shows its state as a dot on its mark:
+while the sidebar is on Agents starts a session in the default agent, in a tab of its own. A session tab shows its state as a dot on its mark:
 working (pulsing, still under reduced motion), needs you, or done and not opened yet.
 
 Entries drag along the strip to reorder (a hairline marks where it would land). A tab's

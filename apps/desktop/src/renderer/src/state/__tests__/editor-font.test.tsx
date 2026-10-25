@@ -24,6 +24,7 @@ const settings = (editorFont: ResolvedVaultSettings['editorFont']): ResolvedVaul
   pluginValues: {},
   dailyNotes: true,
   spaceAsksAgent: true,
+  agentProvider: 'claude',
   gridArcade: true,
   colorScheme: 'system',
   windowGlass: 'frosted',

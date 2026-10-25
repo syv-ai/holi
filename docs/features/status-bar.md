@@ -1,8 +1,8 @@
 # Status bar and bottom panel
 
 VS Code's foot of the window, in the fresh shell: a thin status bar under the main column, and
-above it a resizable bottom panel holding a Terminal and an Output log of what Holi does in the
-background. Both belong to the shell, not to a tab: they stay as they are while tabs and splits
+above it a resizable bottom panel holding a Terminal, an Output log of what Holi does in the
+background, and the raw application Logs. Both belong to the shell, not to a tab: they stay as they are while tabs and splits
 change.
 
 ## How it works
@@ -58,7 +58,7 @@ handle, drawn as the split view's: a 1px hairline with a wider hit area, the rin
 focus and drag. Arrow keys move it 16px (64 with Shift), Home and End go to the largest and the
 smallest, and a double-click returns to 280px. It is held between 120px and 70% of the column, and
 the height is this machine's (`localStorage`, `holi.bottom-panel.height`). Open, tab and maximized
-last the session. The header is compact line tabs, Terminal and Output, and on the right the tab's
+last the session. The header is compact line tabs, Terminal, Output and Logs, and on the right the tab's
 own controls, maximize or restore (the panel fills the column), and close. The panel is mounted
 from the shell's first render so its keys are live, drawn once first opened, and after that hidden
 rather than unmounted, so a closed panel keeps the shells' scrollback.
@@ -118,12 +118,39 @@ context falls back to the DOM renderer; URLs are links that open through `openEx
 **The Output** shows the activity log (`main/activity/log.ts`): a ring of the last 2000 lines of
 `{at, channel, level, message, detail?}` on the channels `git`, `sync`, `agent`, `plugins` and `app`.
 Main keeps it from launch and pushes each line (`activity:entry`); the shell loads it once
-(`activity.entries`) and follows it, so it collects while the panel is closed. Each row is the time
-(`HH:MM:SS`), a channel badge (`info-light` for git and sync, `warning-light` and
-`destructive-light` for warnings and errors), the message, and a detail that expands (a git error's
-text, the paths a commit or a conflict named). It follows the foot as lines arrive until the person
-scrolls up, then offers Jump to latest. The header filters by channel, copies what is shown, and
-clears; Clear clears main's ring too, so a reload does not bring the lines back.
+(`activity.entries`) and follows it, so it collects while the panel is closed. It is drawn as the
+events grid of ReUI's `solution-dev-ops-2` audit log (`log-table.tsx`, shared with Logs): a dense,
+virtualised data grid with no header
+fill, newest first, sortable by time, channel, level and vault. A row is the time, the channel's
+mark and name (the Git logo, GitHub's for sync, Claude's for the agent, a puzzle piece for plugins,
+Holi's for the app), the level as a badge (`info-light`, `warning-light`, `destructive-light`), the
+message and the vault. A row opens under itself, as in ReUI's `c-data-grid-8` expandable rows: its
+fields, the detail (a git error's text, the paths a commit or a conflict named), the line as JSON,
+and Copy line. The opened panel measures itself, and the virtualizer adds that height to the row's
+own, so scrolling past an opened line does not jump. A click anywhere on a row opens it, the
+channel included; the channel's context menu shows only that channel or hides it, either replacing
+any channel rule already set.
+
+The search lives in the panel header, the Agents sidebar's search field with the filters inside it:
+it searches message, detail, channel and vault, and its filter button opens ReUI's Filters builder
+inline (channel, level, vault, message), each rule a row. Once a rule is set, a count and a
+clear-all sit beside the filter button. The header also copies what is shown and clears; Clear
+clears main's ring too, so a reload does not bring the lines back.
+
+The builder sits in a Radix popover inside the search field and stops clicks at its edge. React
+bubbles a click through the portal to the field's addon, which focuses the search input on any
+click; Radix would read that focus as leaving the popover and close the builder as soon as an
+attribute is picked, before its condition is set.
+
+**The Logs** stream everything Holi prints (`main/logs/app-log.ts`): main's `console`, captured from
+the first line main prints, and the window's console messages (`console-message`), each kept with
+its level, its process (Main or Window) and the `[scope]` it opened with, its first line as the
+message and the rest (a stack, git's text) as the detail. It is a ring of 5000 lines in memory,
+never on disk, scrubbed of credentials as the activity log is, pushed a line at a time
+(`logs:entry`) and read once by the panel (`logs.entries`). The console still prints as before: the
+capture listens rather than takes over, and does not log what the log's own push prints. Logs use
+the Output's grid with their own columns (time, level, process, scope, message), the same opened
+row and the same header search, with Filters over level, process, scope and message.
 
 **What is logged.** The sync engine (see [vaults and sync](vaults-sync.md)): every autosave commit
 with its short sha and message, a pull that merged, a merge conflict with its paths, a push and
@@ -172,6 +199,7 @@ keys back rather than typing them. See [keyboard shortcuts](keyboard-shortcuts.m
 ## Code
 
 - `apps/desktop/src/main/activity/log.ts`: the ring, scrubbing
+- `apps/desktop/src/main/logs/app-log.ts`: the application log, the console capture
 - `apps/desktop/src/main/vault/active-vault.ts`: where sync and git write to it, `syncInfo`,
   `syncNow`
 - `apps/desktop/src/main/terminal/`: the PTY and the panel's shells; `shell-integration.ts` (the
@@ -182,7 +210,10 @@ keys back rather than typing them. See [keyboard shortcuts](keyboard-shortcuts.m
 - `apps/desktop/src/plugins/agent/main/host/session-log.ts`: the agent's lines
 - `apps/desktop/src/renderer/src/components/blocks/app-shell-21/components/status-bar.tsx`,
   `branch-picker.tsx`, `bottom-panel.tsx`, `panel-terminal.tsx`, `terminal-context-chips.tsx`,
-  `panel-output.tsx`
+  `log-table.tsx`, `log-detail.tsx`, `log-search.tsx`, `panel-output.tsx`, `output-search.tsx`,
+  `output-columns.tsx`, `output-filters.tsx`, `panel-logs.tsx`, `logs-columns.tsx`,
+  `channel-mark.tsx`
 - `apps/desktop/src/renderer/src/lib/terminal-theme.ts`
-- `apps/desktop/src/renderer/src/state/activity.ts`, `bottom-panel.ts`, `panel-terminals.ts`
+- `apps/desktop/src/renderer/src/state/activity.ts`, `app-logs.ts`, `bottom-panel.ts`,
+  `panel-terminals.ts`
 - `apps/desktop/src/plugins/agent/renderer/sessions/AgentStatusItem.tsx`

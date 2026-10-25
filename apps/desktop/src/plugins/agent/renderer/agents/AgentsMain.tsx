@@ -1,30 +1,35 @@
 /**
  * The Agents mode's main view (docs/features/agent-sessions.md, The Agents
- * view): one of four things, picked in the sidebar.
+ * view): one of five things, picked in the sidebar.
  *
- * - **Home**, what the view opens on whenever nothing is selected: the
- *   new-session page, the built-in chat's `home`. Never the Inbox, which is
- *   its own row.
+ * - **Home**, what a tab with nothing selected shows: that no session is
+ *   open there, and New session. Never the Inbox, which is its own row.
  * - **The Inbox**: the sessions waiting on you, and what other plugins add
  *   there (a Holi's report that asked for you).
- * - **A background session**: what it is and its state. Its terminal is not
- *   drawn here while conversations are the session UI (docs/features/chat.md);
- *   the session runs on, and Holis and automations keep starting them.
+ * - **History**: every conversation and run, open or closed, by day, with
+ *   the search and its filter. Opening one puts it back in Sessions.
+ * - **A live session**, of any agent: its terminal, filling the view.
  * - **A row another plugin added**: that plugin's own view (its slot).
  *
  * After MonoCode's `SessionPane` (MIT, Copyright (c) 2026 Nick; see
  * NOTICE.md), cut to the mock's simplicity.
  */
-import { useAtomValue, useSetAtom } from 'jotai'
-import { Bot, Inbox, SquarePen } from 'lucide-react'
-import { useState } from 'react'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { Inbox, MessageSquareText, SquarePen, TerminalSquare } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
 import { Button } from '@/components/ui/button'
+import { Badge, Icon, Skeleton } from '@/primitives'
 import { activeRemoteAtom, agentsSlotsAtom } from '@/plugin-api'
+import { agentCap } from '../agent-cap'
+import { SessionTerminal } from '../SessionTerminal'
 import { inboxCountAtom } from '../state/agents-status'
-import { agentsViewAtom, agentsViewOf } from '../state/agents-view'
+import { agentsViewAtom, agentsViewOf, viewTerminalsAtom } from '../state/agents-view'
+import { newSessionProviderAtom, providerLabel } from '../state/providers'
+import { newSessionAtom } from '../state/session-list'
+import { SessionHistory, SessionSearch } from '../sessions/SessionList'
 import { stopSessionAtom } from '../state/send'
-import { agentSessionsAtom } from '../state/sessions'
+import { agentGeometryAtom, agentSessionsAtom } from '../state/sessions'
 import { SessionCard, StateLabel } from './parts'
 import { useNow } from './AgentsSidebar'
 
@@ -51,6 +56,7 @@ function InboxView(): React.JSX.Element {
   const slots = useAtomValue(agentsSlotsAtom)
   const count = useAtomValue(inboxCountAtom)
   const setView = useSetAtom(agentsViewAtom)
+  const create = useSetAtom(newSessionAtom)
   const now = useNow()
   const waiting = sessions.filter((s) => s.state === 'needs-you')
   return (
@@ -67,7 +73,7 @@ function InboxView(): React.JSX.Element {
           action={{
             label: 'New session',
             icon: SquarePen,
-            onClick: () => setView({ kind: 'home' }),
+            onClick: () => void create(),
           }}
         />
       ) : (
@@ -100,90 +106,124 @@ function InboxView(): React.JSX.Element {
   )
 }
 
-/**
- * A background run (a Holi's, an automation's, one the agent started): what
- * it is, where it stands, its model and since when, and Stop; under that its
- * conversation, read only, once Claude Code has said which it is: the slot's
- * `conversation` (the built-in chat's transcript, read from Claude Code's own
- * file). Without one it is a summary. Nothing here answers its prompts, and
- * there is no "Continue in chat": a background job is not a chat's process.
- * What it changes reaches the vault and its turn review.
- */
-function SessionView({ id }: { id: string }): React.JSX.Element {
-  const sessions = useAtomValue(agentSessionsAtom)
-  const stop = useSetAtom(stopSessionAtom)
-  const slots = useAtomValue(agentsSlotsAtom)
-  const [error, setError] = useState<string | null>(null)
-  const session = sessions.find((s) => s.id === id)
-  const Conversation = slots.find((s) => s.conversation !== undefined)?.conversation
-  const facts = [
-    session?.model,
-    session?.startedAt === undefined
-      ? undefined
-      : `started ${new Date(session.startedAt).toLocaleTimeString(undefined, {
-          hour: 'numeric',
-          minute: '2-digit',
-        })}`,
-  ].filter((f): f is string => f !== undefined)
-  const description =
-    session?.state === 'needs-you'
-      ? `It waits on ${session.waitingFor ?? 'you'}: a prompt in its own terminal, which this view does not show yet. Stop it, or let it time out.`
-      : session?.state === 'working'
-        ? 'A Holi, an automation or the agent started it. It works on its own; what it changes reaches the vault and its turn review.'
-        : 'It has finished its work for now. What it changed is in the vault and its turn review.'
-  const reading = Conversation !== undefined && session?.conversationId !== undefined
+/** Nothing selected: a tab with no session in it (one restored, or the
+ *  Agents tab with its session closed). New sessions start straight in their
+ *  terminal, so this only offers one. */
+function HomeView(): React.JSX.Element {
+  const create = useSetAtom(newSessionAtom)
+  const provider = useAtomValue(newSessionProviderAtom)
+  const setView = useSetAtom(agentsViewAtom)
+  return (
+    <IconStackEmpty
+      icon={TerminalSquare}
+      title="No session here"
+      description={`Start one and it opens in its terminal, in ${providerLabel(provider)}. Hover the sidebar's + for the other agents.`}
+      action={{ label: 'New session', icon: SquarePen, onClick: () => void create() }}
+      secondary={{ label: 'History', onClick: () => setView({ kind: 'history' }) }}
+    />
+  )
+}
+
+/** Every conversation and run, under the search that narrows them. */
+function HistoryView(): React.JSX.Element {
   return (
     <>
-      <Bar
-        end={
-          reading ? (
-            <Button
-              type="button"
-              size="xs"
-              variant="outline"
-              onClick={() => void stop(id).then((res) => setError(res.ok ? null : res.message))}
-            >
-              Stop session
-            </Button>
-          ) : undefined
-        }
-      >
-        <span className="truncate font-medium">{session?.name ?? 'Session'}</span>
-        {session !== undefined && (
-          <span className="flex shrink-0 items-center gap-2 text-xs">
-            <StateLabel state={session.state} />
-          </span>
-        )}
-        {facts.length > 0 && (
-          <span className="truncate text-xs text-muted-foreground">{facts.join(' · ')}</span>
-        )}
+      <Bar>
+        <span className="font-medium">History</span>
       </Bar>
-      {Conversation !== undefined && session?.conversationId !== undefined ? (
-        <>
-          {error !== null || session.state === 'needs-you' ? (
-            <p role="alert" className="px-6 pt-3 text-xs text-muted-foreground">
-              {error ?? description}
-            </p>
-          ) : null}
-          <Conversation
-            conversationId={session.conversationId}
-            live={session.state !== 'idle'}
-            title={session.name}
-          />
-        </>
-      ) : (
-        <IconStackEmpty
-          icon={Bot}
-          title="A background run"
-          description={error ?? description}
-          role={error === null ? undefined : 'alert'}
-          action={{
-            label: 'Stop session',
-            onClick: () => void stop(id).then((res) => setError(res.ok ? null : res.message)),
-          }}
-        />
-      )}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-6 py-6">
+          <SessionSearch />
+          <SessionHistory />
+        </div>
+      </div>
     </>
+  )
+}
+
+/**
+ * A live session: its terminal, the whole view, and nothing drawn over it.
+ * The agent's own TUI is the interface; what Holi adds is around it (the
+ * sidebar row, its menu, the tab). A window of the view's own: the one its
+ * New session opened, or a new window onto it that closes with the view (a
+ * background session goes on without it; a session Holi runs is its
+ * terminal, which stays).
+ */
+function SessionView({ id }: { id: string }): React.JSX.Element {
+  const remote = useAtomValue(activeRemoteAtom)
+  const geometry = useAtomValue(agentGeometryAtom)
+  const setGeometry = useSetAtom(agentGeometryAtom)
+  const owned = useAtomValue(viewTerminalsAtom)[id]
+  const setOwned = useSetAtom(viewTerminalsAtom)
+  const [terminalId, setTerminalId] = useState<string | null>(owned ?? null)
+  const [error, setError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
+  const opened = useRef<string | null>(owned ?? null)
+
+  useEffect(() => {
+    if (remote === null) return
+    let gone = false
+    if (opened.current === null) {
+      void agentCap.open(remote, { attach: id, ...geometry }).then((res) => {
+        if (gone) {
+          if (res.ok) void agentCap.detach(remote, { id: res.terminalId })
+          return
+        }
+        if (res.ok) {
+          opened.current = res.terminalId
+          setTerminalId(res.terminalId)
+          setError(null)
+        } else setError(res.message)
+      })
+    }
+    return () => {
+      gone = true
+      // The window closes with the view. Main keeps a session's own
+      // terminal open: only a window onto a background session ends.
+      if (opened.current !== null) void agentCap.detach(remote, { id: opened.current })
+      opened.current = null
+      setOwned((t) => {
+        const { [id]: _gone, ...rest } = t
+        return rest
+      })
+    }
+    // Opened once per session shown (and per Retry); the geometry is only
+    // where it starts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remote, id, attempt])
+
+  if (error !== null) {
+    return (
+      <IconStackEmpty
+        icon={TerminalSquare}
+        title="Couldn't open its terminal"
+        description={error}
+        role="alert"
+        action={{
+          label: 'Retry',
+          onClick: () => {
+            setError(null)
+            setAttempt((n) => n + 1)
+          },
+        }}
+      />
+    )
+  }
+  if (terminalId === null) {
+    return (
+      <div className="flex flex-1 flex-col gap-2 p-6" role="status" aria-label="Opening the terminal">
+        <Skeleton className="h-4 w-2/3" />
+        <Skeleton className="h-4 w-1/2" />
+        <Skeleton className="h-4 w-3/5" />
+      </div>
+    )
+  }
+  return (
+    <SessionTerminal
+      terminalId={terminalId}
+      visible
+      onGeometry={(cols, rows) => setGeometry({ cols, rows })}
+    />
   )
 }
 
@@ -199,7 +239,8 @@ export function AgentsMain({
   const sessions = useAtomValue(agentSessionsAtom)
   const slots = useAtomValue(agentsSlotsAtom)
   const slot = view.kind === 'slot' ? slots.find((s) => s.plugin === view.owner) : undefined
-  const Home = slots.find((s) => s.home !== undefined)?.home
+  // A plugin may draw the home; the agent's own says nothing is open.
+  const Home = slots.find((s) => s.home !== undefined)?.home ?? HomeView
 
   // A session that stopped, or a plugin turned off, is no longer something to
   // show: its tab shows the home until it is closed.
@@ -217,9 +258,11 @@ export function AgentsMain({
         <slot.main key={view.id} id={view.id} />
       ) : view.kind === 'inbox' ? (
         <InboxView />
-      ) : Home !== undefined ? (
+      ) : view.kind === 'history' ? (
+        <HistoryView />
+      ) : (
         <Home />
-      ) : null}
+      )}
     </div>
   )
 }

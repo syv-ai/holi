@@ -7,6 +7,7 @@ import type { RendererPlugin } from '@/plugin-api'
 import { AUTOMATIONS_INFO } from '../info'
 import { AutomationsNav } from './AutomationsNav'
 import { AutomationsView } from './AutomationsView'
+import { automationMenuEntriesAtom, runAutomationMenuEntryAtom } from './command-menu'
 import {
   automationEvents,
   automationSessionItemsAtom,
@@ -30,4 +31,5 @@ export const automationsRenderer: RendererPlugin = {
     },
   },
   vault: automationsVault,
+  commandMenu: { entries: automationMenuEntriesAtom, run: runAutomationMenuEntryAtom },
 }

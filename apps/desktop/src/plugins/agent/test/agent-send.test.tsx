@@ -30,6 +30,7 @@ import {
 } from '@/plugin-api'
 
 const session = (over: Partial<AgentSession> & { id: string }): AgentSession => ({
+  provider: 'claude',
   name: 'New session',
   state: 'idle',
   ...over,

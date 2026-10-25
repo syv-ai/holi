@@ -160,6 +160,27 @@ export interface PaletteItem {
 }
 
 /**
+ * A row a plugin adds to the ⌘K command menu (docs/features/command-palette.md):
+ * a place it opens or something it does. Its plugin's `commandMenu.run` gets
+ * the `id`.
+ */
+export interface CommandMenuEntry {
+  /** Unique within its plugin. */
+  id: string
+  label: string
+  /** `go` lists it under Go to and `action` under Actions, untyped and typed
+   *  alike. Any other name is a group of its own ("Holis", "Conversations"),
+   *  listed only once something is typed, so a long list never crowds the
+   *  untyped menu. */
+  group: 'go' | 'action' | (string & {})
+  icon: IconGlyph
+  /** Other words that find it: "agent" for a Holi. */
+  keywords?: readonly string[]
+  /** Muted beside the label: where it is, or its state. */
+  detail?: string
+}
+
+/**
  * A surface's place in the nav menu. `order` sorts the menu, core's own
  * items included (Home 0, Search 10, Apps 20, Board 30, Agents 60, Sync 70,
  * Settings 100). `visible` is an atom so a plugin can show or hide its item
@@ -351,6 +372,11 @@ export interface AgentsMode {
   /** How a session tab looks (`AgentsTabLook`), by the selection it shows;
    *  undefined for one the mode does not know (yet). */
   tabLook?: Atom<(selection: { owner: string; id: string }) => AgentsTabLook | undefined>
+  /** Start a session in the default agent and bring it forward: the tab
+   *  strip's + and ⌘T on the Agents side, and the command menu's New
+   *  session. `beside` opens it in split view. Absent, those open the mode's
+   *  home. */
+  newSession?: WritableAtom<null, [beside?: boolean], unknown>
 }
 
 /** A session tab as the strip draws it: its title, the state its dot shows,
@@ -363,7 +389,7 @@ export interface AgentsTabLook {
 
 /**
  * One row of the Agents sidebar's session list (docs/features/agent-sessions.md,
- * The Agents view), from whichever plugin owns it: a chat, a Holi's run, an
+ * The Agents view), from whichever plugin owns it: a Holi's run, an
  * automation's run. The provider draws them all as one list and derives each
  * row's state from these fields; it never knows whose a row is.
  */
@@ -424,6 +450,10 @@ export interface AgentsSessionsSource {
   /** Delete a row of its own, after the list has asked. Rows without it
    *  offer no Delete. */
   remove?: WritableAtom<null, [key: string], unknown>
+  /** Stop what a row of its own runs, when the person closes it in the
+   *  Sessions list (a turn in flight, a prompt waiting). The row stays, in
+   *  History. Rows without it only leave the list. */
+  close?: WritableAtom<null, [key: string], unknown>
 }
 
 /** Something a conversation is about besides its words: a vault app, by its
@@ -455,7 +485,8 @@ export interface AgentsSlot {
    *  provider's sessions are at 100; a slot without one comes after them. */
   order?: number
   /** Its rows in the sidebar's top group, under the provider's Inbox: a
-   *  place it opens (Automations), not a list. */
+   *  place it opens (Automations), not a list. Drawn inside the sidebar's
+   *  menu, so each row is a `SidebarNavItem` (`@/composites`). */
   nav?: ComponentType
   /** Its section of the Agents sidebar. */
   sidebar?: ComponentType
@@ -465,20 +496,15 @@ export interface AgentsSlot {
   /** The main view while the selection is its own; gets the selected id. */
   main?: ComponentType<{ id: string }>
   /** The mode's main view while nothing is selected, in place of the
-   *  Inbox, which is a row of its own: the first running slot with one wins. The
-   *  built-in chat's new-session page. */
+   *  provider's own new-session page: the first running slot with one wins. */
   home?: ComponentType
   /** Added to what the mode toggle reports. */
   status?: Atom<AgentsStatus>
-  /** Its rows in the provider's one session list (chats, a Holi's runs). */
+  /** Its rows in the provider's one session list (a Holi's runs). */
   sessions?: AgentsSessionsSource
-  /** A background session's conversation, read only, by Claude Code's
-   *  conversation id: the built-in chat's transcript, drawn in the agent's
-   *  session view. The first running slot with one wins. */
-  conversation?: ComponentType<{ conversationId: string; live: boolean; title: string }>
   /** Start a conversation whose first message is `text`, and select it, so
-   *  its tab opens and comes forward: the built-in chat's. The command menu's
-   *  Ask the agent. The first running slot with one wins. */
+   *  its tab opens and comes forward: the agent's own, a new session. The
+   *  command menu's Ask the agent. The first running slot with one wins. */
   start?: WritableAtom<
     null,
     [ConversationStart],
@@ -555,5 +581,10 @@ export interface RendererPlugin {
   palette?: {
     items: Atom<readonly PaletteItem[]>
     open: WritableAtom<null, [key: string], unknown>
+  }
+  /** Its rows in the ⌘K command menu, and how one runs. */
+  commandMenu?: {
+    entries: Atom<readonly CommandMenuEntry[]>
+    run: WritableAtom<null, [id: string], unknown>
   }
 }

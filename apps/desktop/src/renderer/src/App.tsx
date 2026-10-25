@@ -5,6 +5,7 @@ import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { SignIn } from './features/auth/SignIn'
 import { Shell } from './components/Shell'
 import { Splash } from './components/Splash'
+import { useDockIcon } from './lib/app-icon'
 import { useColorScheme } from './state/color-scheme'
 import { useEditorFont } from './state/editor-font'
 import { loadSessionAtom, sessionAtom } from './state/session'
@@ -22,6 +23,7 @@ export function App() {
   useColorScheme()
   useWindowGlass()
   useEditorFont()
+  useDockIcon()
 
   useEffect(() => {
     void loadSession()

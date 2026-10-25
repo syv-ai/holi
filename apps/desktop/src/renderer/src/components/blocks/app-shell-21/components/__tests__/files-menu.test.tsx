@@ -1,6 +1,7 @@
 /**
  * The Files menu's New items make things where the menu was opened: a
  * folder row's menu makes them in that folder, the empty space's at the root.
+ * Its Delete asks first, then deletes a file, or a folder with what is in it.
  */
 import { Provider, createStore } from "jotai"
 import { expect, test, vi } from "vitest"
@@ -11,6 +12,19 @@ import { shellWorkspaceAtom } from "@/state/shell-tabs"
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from "@/state/vaults"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { FilesSection } from "../documents-section"
+
+const deleteMany = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
+vi.mock("@/lib/trpc", () => ({
+  trpc: {
+    sync: { commitNow: { mutate: async () => undefined } },
+    notes: { deleteMany: { mutate: deleteMany } },
+    vaults: {
+      snapshot: {
+        query: async () => (await import("@holi/shared")).emptyVaultSnapshot(),
+      },
+    },
+  },
+}))
 
 function mount() {
   const store = createStore()
@@ -117,4 +131,57 @@ test("a folder's menu has no Open in split view", async () => {
   expect(
     screen.queryByRole("menuitem", { name: "Open in split view" })
   ).toBeNull()
+})
+
+test("Delete on a file's menu asks, then deletes the file and closes its tab", async () => {
+  deleteMany.mockClear()
+  const { store } = mount()
+  fireEvent.click(await screen.findByText("kunder"))
+  fireEvent.contextMenu(await screen.findByText("brief"))
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Open in split view" })
+  )
+  fireEvent.contextMenu(await screen.findByText("brief"))
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }))
+  await screen.findByRole("alertdialog", { name: "Delete “brief.md”?" })
+  expect(deleteMany).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }))
+  await waitFor(() =>
+    expect(deleteMany).toHaveBeenCalledWith({
+      remote: "mara/notes",
+      paths: ["kunder/brief.md"],
+      folders: [],
+    })
+  )
+  await waitFor(() =>
+    expect(JSON.stringify(store.get(shellWorkspaceAtom))).not.toContain(
+      "kunder/brief.md"
+    )
+  )
+})
+
+test("Delete on a folder's menu deletes it with everything in it", async () => {
+  deleteMany.mockClear()
+  mount()
+  fireEvent.contextMenu(await screen.findByText("kunder"))
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }))
+  await screen.findByText(/everything in it/)
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }))
+  await waitFor(() =>
+    expect(deleteMany).toHaveBeenCalledWith({
+      remote: "mara/notes",
+      paths: ["kunder/brief.md"],
+      folders: ["kunder"],
+    })
+  )
+})
+
+test("Cancel deletes nothing", async () => {
+  deleteMany.mockClear()
+  mount()
+  fireEvent.contextMenu(await screen.findByText("kunder"))
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }))
+  fireEvent.click(await screen.findByRole("button", { name: "Cancel" }))
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull())
+  expect(deleteMany).not.toHaveBeenCalled()
 })

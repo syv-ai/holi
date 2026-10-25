@@ -7,6 +7,7 @@
  */
 import { HOLIS_INFO } from '../info'
 import type { RendererPlugin } from '@/plugin-api'
+import { holiMenuEntriesAtom, runHoliMenuEntryAtom } from './command-menu'
 import { DocumentHoliActions } from './DocumentHoliActions'
 import { HoliDialogs } from './HoliDialogs'
 import { HoliPage } from './HoliPage'
@@ -45,4 +46,5 @@ export const holisRenderer: RendererPlugin = {
   vault: holisVault,
   // Its Holis play the empty view's arcade.
   arcadeCast: holisArcadeCastAtom,
+  commandMenu: { entries: holiMenuEntriesAtom, run: runHoliMenuEntryAtom },
 }

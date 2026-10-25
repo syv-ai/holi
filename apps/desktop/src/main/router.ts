@@ -59,6 +59,7 @@ import { createMembersCache, type MembersCache } from './github/members-cache'
 import type { GitHubSession } from './github/session'
 import type { ActiveVault, SyncInfo, SyncState, VaultHost } from './vault/active-vault'
 import type { ActivityEntry, ActivityLog } from './activity/log'
+import type { AppLog, AppLogEntry } from './logs/app-log'
 import type { TerminalInfo, TerminalOpened, Terminals } from './terminal/terminals'
 import { ensureClone } from './vault/clone'
 import { pruneEmptiedFolder, removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
@@ -191,6 +192,9 @@ export interface RouterDeps {
   /** The activity log the bottom panel's Output shows (`activity/log.ts`).
    *  Optional: absent, as in tests, it reads as empty. */
   activity?: Pick<ActivityLog, 'entries' | 'clear'>
+  /** Everything Holi prints, for the bottom panel's Logs (`logs/app-log.ts`).
+   *  Optional: absent, as in tests, it reads as empty. */
+  logs?: Pick<AppLog, 'entries' | 'clear'>
   /** The bottom panel's shells (`terminal/terminals.ts`). Optional: absent,
    *  a terminal cannot be opened. */
   terminals?: Terminals
@@ -1782,6 +1786,16 @@ export function createRouter(deps: RouterDeps) {
     }),
   })
 
+  /** The bottom panel's Logs: main's console and the window's, raw. The push
+   *  channel (`logs:entry`) carries each new line; this is the first read. */
+  const logs = t.router({
+    entries: t.procedure.query((): AppLogEntry[] => deps.logs?.entries() ?? []),
+    clear: t.procedure.mutation(() => {
+      deps.logs?.clear()
+      return { ok: true as const }
+    }),
+  })
+
   /**
    * The bottom panel's shells (docs/features/status-bar.md): a login shell in
    * a PTY in the open vault's clone. Each call names the vault, and one about
@@ -1875,6 +1889,7 @@ export function createRouter(deps: RouterDeps) {
     updates,
     app,
     activity,
+    logs,
     terminal,
   })
 }

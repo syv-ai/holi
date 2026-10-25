@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react"
 import {
   EDITOR_FONTS,
   VAULT_SETTING_DEFAULTS,
+  type AgentProviderId,
   syncLabel,
   type Collaborator,
   type EditorFont,
@@ -59,6 +60,11 @@ const SYNC_BADGE: Record<
 
 // ── General ──
 
+const AGENTS: readonly Choice<AgentProviderId>[] = [
+  { value: "claude", label: "Claude Code" },
+  { value: "codex", label: "Codex" },
+]
+
 export function GeneralPage() {
   const remote = useAtomValue(activeRemoteAtom)
   const entry = useAtomValue(vaultsAtom).find((v) => v.remote === remote)
@@ -66,6 +72,7 @@ export function GeneralPage() {
   const retrySync = useSetAtom(retrySyncAtom)
   const agent = useAgentService()
   const firstRun = useSetAtom(claudeFirstRunAtom)
+  const { resolved, write } = useVaultSettings()
 
   if (entry === undefined) {
     return (
@@ -146,6 +153,17 @@ export function GeneralPage() {
           <ShieldCheckIcon data-icon="inline-start" aria-hidden="true" />
           Trust and sign in
         </Button>
+      </SettingsRow>
+      <SettingsRow
+        title="New sessions run"
+        description="The coding agent a new session starts in, on this machine. Holis and automations always run Claude Code."
+      >
+        <Segmented
+          label="New sessions run"
+          value={resolved?.agentProvider ?? VAULT_SETTING_DEFAULTS.agentProvider}
+          choices={AGENTS}
+          onChange={(id) => void write("agentProvider", id, "local")}
+        />
       </SettingsRow>
     </SettingsCard>
   )

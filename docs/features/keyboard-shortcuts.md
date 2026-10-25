@@ -101,8 +101,8 @@ screen.
 - **The tab keys act on the one strip** ([tabs and split view](tabs-panes.md)): next, previous
   and ⌘1–9 go over its entries, a split counting as one; ⌥⌘W closes them all. **⌘W closes the
   view in front:** the focused member inside a split (a 2-split turns back into a tab), the tab
-  otherwise. ⌘T opens a New tab at the strip's end, or the Agents home while the sidebar is on
-  Agents, as + does.
+  otherwise. ⌘T opens a New tab at the strip's end, or while the sidebar is on Agents starts a
+  session in the default agent, as + does.
 - **⌥-click opens beside.** ⌥-click (or ⌥↩) a document, a session, a search result or a link and
   it opens in split view beside what is in front, up to four views; the dialog lists it as a
   gesture under Split view.

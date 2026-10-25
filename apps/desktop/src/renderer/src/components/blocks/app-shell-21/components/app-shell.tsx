@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { useAtom, useAtomValue } from "jotai"
+import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import { cn } from "@/lib/cn"
 import { type PanelImperativeHandle } from "react-resizable-panels"
 
@@ -23,6 +23,7 @@ import { useSettingsHotkey } from "@/components/blocks/profile-9/components/use-
 import { settingsRequestAtom } from "@/state/settings-section"
 import { openDocumentRequestAtom } from "@/state/open-document"
 import { revealInFilesRequestAtom } from "@/state/reveal-in-files"
+import { newAgentSessionAtom } from "@/state/agents-slots"
 import { runningPluginsAtom } from "@/state/plugins"
 import { sidebarSectionAtom } from "@/state/sidebar-section"
 import { shellWorkspaceAtom } from "@/state/shell-tabs"
@@ -58,8 +59,7 @@ import {
 } from "@/state/tab-descriptor"
 import { activeRemoteAtom } from "@/state/vaults"
 
-import { ChatSearchDialog } from "./chat-search-dialog"
-import { THREADS } from "./data"
+import { CommandMenu } from "./command-menu"
 import type { Move } from "@/lib/tree-actions"
 import { useNewDocument } from "./documents-section"
 import { MobileHeader } from "./mobile-header"
@@ -132,8 +132,6 @@ function keyFor(id: string): string {
 }
 export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const isMobile = useIsMobile()
-  /** The block's demo threads, still behind ⌘K until search covers the vault. */
-  const threads = THREADS
   /** The tab strip and its splits, this vault's (`state/shell-tabs.ts`). */
   const [ws, setWs] = useAtom(shellWorkspaceAtom)
   const remote = useAtomValue(activeRemoteAtom)
@@ -178,6 +176,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const [section, setSection] = useAtom(sidebarSectionAtom)
   const running = useAtomValue(runningPluginsAtom)
   const hasAgents = running.some((plugin) => plugin.agentsMode !== undefined)
+  const newAgentSession = useSetAtom(newAgentSessionAtom)
   const look = useTabLook()
   useSettingsHotkey()
   useSessionTabs(activeThreadId)
@@ -317,14 +316,15 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     })
   }
 
-  /** + and ⌘T: a New tab, or on the Agents side the Agents home, the
-   *  new-session page. */
+  /** + and ⌘T: a New tab, or on the Agents side a new session in the
+   *  default agent (the mode's `newSession`), else the Agents home. */
   function openNewTab() {
-    update((w) =>
-      section === "agents" && hasAgents
-        ? openTabIn(w, AGENTS_HOME_KEY)
-        : openNewTabIn(w)
-    )
+    if (section === "agents" && hasAgents) {
+      if (newAgentSession()) return
+      update((w) => openTabIn(w, AGENTS_HOME_KEY))
+      return
+    }
+    update(openNewTabIn)
   }
 
   function closeTab(key: string) {
@@ -660,6 +660,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
               {/* One hairline divider: drag resizes, a still click toggles. */}
               <ResizableHandle
                 withHandle
+                data-shell-divider=""
                 title="Drag to resize. Click to collapse."
                 onPointerDown={(event) => {
                   pressX.current = event.clientX
@@ -679,11 +680,15 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
           </div>
         )}
 
-        <ChatSearchDialog
+        <CommandMenu
           open={searchOpen}
           onOpenChange={setSearchOpen}
-          threads={threads}
-          onSelect={handleSelectThread}
+          onOpen={(id, beside) =>
+            beside
+              ? update((w) => openInSplit(w, keyFor(id)))
+              : handleSelectThread(id)
+          }
+          onAddVault={onAddVault}
         />
         <ShortcutsDialog />
       </SidebarProvider>

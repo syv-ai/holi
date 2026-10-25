@@ -49,6 +49,7 @@ const settings = (colorScheme: ResolvedVaultSettings['colorScheme']): ResolvedVa
   pluginValues: {},
   dailyNotes: true,
   spaceAsksAgent: true,
+  agentProvider: 'claude',
   gridArcade: true,
   colorScheme,
   windowGlass: 'frosted',

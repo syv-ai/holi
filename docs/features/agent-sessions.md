@@ -1,15 +1,59 @@
 # Agent sessions
 
-The vault assistant is Claude Code, run as Claude Code runs it. Every session is a Claude Code
-**background session**: the per-vault supervisor runs it, its short job id names it, and it
-outlives any window onto it. Holi opens terminals onto those sessions, reads what they are doing,
-keeps its own git out of their way, shows what each turn changed, and hands them merge conflicts.
-Configuration is in [agent-config.md](agent-config.md).
+The vault assistant is a coding agent run as it runs itself, in a terminal: Claude Code or Codex
+so far, one **provider** each. A session is the agent's own TUI, never a re-drawing of it, so any
+agent with a CLI can be one. Holi opens terminals onto sessions, reads what they are doing from
+signals rather than from their text, keeps its own git out of their way, shows what each turn
+changed, and hands them merge conflicts. Configuration is in [agent-config.md](agent-config.md).
+
+## Providers
+
+A provider (`agent/main/provider.ts`) is everything one agent owns: the command a terminal runs,
+its per-vault directory, what it seeds. **Its core is enough to run it in a tab**; the rest are
+**capabilities**, and the UI offers a feature only when the session's provider has it:
+
+| Capability   | What it gives                                                                    | Claude Code                | Codex                    |
+| ------------ | -------------------------------------------------------------------------------- | -------------------------- | ------------------------ |
+| `background` | sessions its own supervisor runs, which outlive a terminal and can run unwatched | `claude --bg`              | no                       |
+| `turns`      | hook routes that report a turn's start and end                                   | `UserPromptSubmit`, `Stop` | turn ends, from `notify` |
+| `status`     | how full the context is, and the model                                           | the status line            | no                       |
+
+**Two kinds of session, one list.** A background provider's sessions are its supervisor's, keyed
+by its job id (the rest of this page). Any other provider's are **sessions Holi runs itself**
+(`host/pty-sessions.ts`): the CLI in a PTY in the clone, named by Holi's id (`p` and twelve hex
+digits), alive exactly as long as that process. Closing its tab leaves it running and its row
+brings it back; Stop ends it. Both kinds are one `sessions` event, each summary carrying its
+`provider`, and every `agent.*` verb goes to the kind the id names; one a kind cannot do (Restart
+and Duplicate on a session Holi runs) is refused in words.
+
+**A session Holi runs is read off its terminal**, unless its hooks say (`host/pty-signals.ts`):
+Enter typed outside a paste begins a turn, five seconds without output ends one (a TUI at work
+redraws its spinner every second), and a bell or an OSC 9 / OSC 777 notification during a turn is
+a question for the person, which the next keystroke answers. Only those signals are read, never
+the text. Coarser than a hook by design: right for a status dot and the sync pause, not for
+chaining work on. Its turns go through the same turn bracket as a background session's, so sync
+pauses and the turn is recorded.
+
+**Codex**, run as `codex -c notify=[…]`: a command-line override that installs Holi's hook for
+that run and writes nothing into `~/.codex`, whose sign-in and config stay the person's. The hook
+is one inline shell command, like Claude Code's status line: Codex runs it at each turn's end with
+the turn's JSON, and it posts that to the bridge's `/codex/turn-end` with the session's id, which
+the PTY's environment carries (`HOLI_AGENT_SESSION`). Holi takes the session's name from its first
+ask and its thread id for Resume. Codex reads the vault's `AGENTS.md` itself. Its own hooks
+(`UserPromptSubmit` and the rest) would give a turn's start too, but each must first be trusted in
+`/hooks`, so Holi does not use them. **Resume a Codex conversation**, in the menu on the
+Sessions +, opens `codex resume`, Codex's own picker.
+
+**Which agent a new session runs** is this machine's `agentProvider` (`app.local.yaml`, Settings →
+General, **New sessions run**): which agent is installed and signed in is the machine's, not the
+vault's. The menu on the Sessions + picks another for one session. **Holis and automations always
+run Claude Code**: their runs start with nobody watching, which needs `background`, and
+`agent.launch` refuses a provider without it.
 
 ## How it works
 
-**Sessions are Claude Code's.** Holi never spawns a conversation in a PTY of its own. It asks Claude
-Code for one (`claude --bg [--name] [prompt]`, `--resume <id> --fork-session` for a copy), or the
+**Claude Code's sessions are its supervisor's.** Holi never runs a Claude Code conversation in a
+PTY of its own. It asks Claude Code for one (`claude --bg [--name] [prompt]`, `--resume <id> --fork-session` for a copy), or the
 person starts one in the agent list. A session is keyed by its **job id** everywhere: capabilities, the turn
 bracket, turn records. The id survives `/clear`, which changes the conversation's `sessionId`.
 
@@ -41,41 +85,51 @@ revert, which deletes a file the turn created rather than leaving it empty). Mai
 (`renderer/lib/session-terminals.ts`), never through an atom. A stale `agent: false` an older Holi
 wrote into `plugins.yaml` is ignored, and dropped at the file's next write.
 
-**Other plugins drive Claude Code through it, never around it.** The agent knows nothing of a
+**Other plugins drive the agent through it, never around it.** The agent knows nothing of a
 plugin that requires it ([architecture](../architecture.md), Plugins); it offers general
 capabilities any such plugin calls, from its renderer or, through `ctx.call`, from its main side:
-`agent.target` (how to run Claude Code in the vault as a session does: the clone, the one
-environment, the binary), `agent.turn` (begin, end or forget a turn by an id the caller owns, on the
-vault's one working set, so sync pauses and the turn is recorded like a session's), and
-`agent.open` with `fork` (a terminal on a copy of a conversation) or `login` (Claude Code's
-`/login` for the vault's config directory). The listing never names a bracketed id, so its
-reconcile forgets only the turns of its own sessions. Chat, built in like the agent, is one such caller
-([chat](chat.md)), and Holis and automations are others.
+`agent.launch` (a background session whose first turn is a prompt, with no terminal),
+`agent.providers` (the agents a session can run, and which are installed), and the session verbs.
+Holis and automations are such callers. The turn bracket's outside driver is the agent's own
+sessions Holi runs: the listing never names their ids, so its reconcile forgets only the turns of
+its own sessions.
 
 **Where you meet it.** ⌘J and the nav menu's agent item focus a terminal showing the list, or
 open one. Which terminal shows it is read from its title, since `←` and Enter move a terminal
 between the list and a session. An agent tab's **Open overview** always opens a new one. The agent
 item is green while any session is live. The sidebar's **Agents** mode ([sidebar](sidebar.md)) is the agent's. At
-the top, **Search conversations…** with a filter menu. Under it, **Inbox**: what needs you, the
+the top, **Inbox**: what needs you, the
 sessions waiting on a permission prompt or a question and what other plugins add there (a Holi's
 report that asked for you); empty, it says what lands there and offers a new session. It is a row
-of its own and never the home: with nothing selected the view is chat's new-session page.
-Beside it the places plugins add (Automations), then their sections ([Holis](holis.md)), then
-**Sessions** with its **+** (⌘N).
+of its own and never the home: a tab with nothing selected says no session is open there, and
+offers one.
+Under it **History**, then the places plugins add (Automations), then their sections
+([Holis](holis.md)), then **Sessions** with its **+** (⌘N).
 
-**Sessions is one list of every conversation and run**, after MonoCode's session list: the
-agent's live sessions and the rows plugins add through their slot's `sessions` (each chat, each
-Holi's and each automation's recent runs). A plugin's row that is an agent session (its job id)
+**Sessions are the open ones, as tabs are open documents; History is every one.** The rows are
+the agent's live sessions, of every provider, and the rows plugins add through their slot's
+`sessions` (each Holi's and each automation's recent runs). A session the person starts is open from the
+moment it starts until they close it, with the × that shows on its card's hover or the menu's
+**Close session**. Closing stops what it runs, deliberately: through its slot's `close` when a
+plugin owns the row, and a live session with Stop. It is not the tab's ×:
+closing a tab leaves the session open, and closing the session leaves a tab showing it. A Holi's
+or an automation's run is in Sessions only while it needs you, or once opened. Opening any row,
+from History, the command menu or the Inbox, puts it back. Which rows are open is this machine's
+(`holi.agents.sessions.open`), counted from when it started keeping track, so conversations from
+before then wait in History. Sessions has no day groups: what needs you, what is pinned, then the
+most recent. **History**, in the main view, has every row by day (Needs you, Pinned, Today,
+Yesterday, Earlier) under **Search conversations…** and its filter menu. A plugin's row that is an agent session (its job id)
 and the live session with that id are one row: the session gives it its state and model, the
-plugin its title and who ran it. A card shows the model (a Holi's face, or an automation's bolt, in
-place of the provider's mark when one ran it) with the age on the right, the title in full on
-hover, and the vault with where it ran (a Holi's document). A card selects what it stands for
-(`agentsSelectionAtom`: a chat's conversation) or opens the session it is, brought back first
-when it has finished. **+**, ⌘N and the empty state start a session in the view a slot offers
-(chat's composer), else in a terminal. A background run opened from its card (a Holi's, an
-automation's) shows in the Agents mode as a summary, not its terminal: its name, state, model and
-start, and Stop; a run waiting on a permission prompt says so, since only its terminal answers it
-([chat](chat.md), why no terminal is drawn). Search reads the title, who ran it, the place and the
+plugin its title and who ran it. A card is two lines: the title, in full on hover, with the age on
+the right; then, quieter, the provider's mark (a Holi's face, or an automation's bolt, when one ran
+it), the model and where it ran (a Holi's document). The vault is left out, since every card is in
+the open one. The title is the card's only line in the foreground, and History's day groups sit
+dimmer than its cards. A card selects what it stands for
+(`agentsSelectionAtom`) or opens the session it is, brought back first when it has finished.
+**+**, ⌘N and the empty state start a session in the default agent at once (New sessions,
+below). Any session opened from its card, a
+Holi's or an automation's run included, shows in its terminal, where its prompts are answered.
+Search reads the title, who ran it, the place and the
 model; the filter keeps states, who started it (you, or Holis and automations), and archived rows
 on request. Arrow keys, Home and End move between cards; Enter opens one.
 
@@ -83,25 +137,28 @@ on request. Arrow keys, Home and End move between cards; Enter opens one.
 hover and focus, and it offers only what something backs. The row's owner backs **Pin to top** /
 **Unpin**, **Rename** (a field in the row: Enter saves, Escape cancels, leaving it saves; F2 opens
 it too), **Archive** / **Unarchive** and **Delete…**, through its slot's `pin`, `rename`, `archive`
-and `remove`; chat backs all four ([chat](chat.md)), and a Holi's or an automation's run none, so
-its card offers none. **Mark as read** / **Mark as unread** is this machine's read state
+and `remove`; a Holi's or an automation's run backs none, and nor does a live session the agent
+lists itself, so their cards offer none. **Mark as read** / **Mark as unread** is this machine's read state
 (`holi.agents.sessions.seen`): an unread mark is done until the row is opened. **Copy session ID**
-copies Claude Code's id for it, a conversation's (what `--resume` takes) or a run's job id. A live
-background session keeps **Restart**, **Duplicate** and **Stop session**. Delete asks first in an
-alert naming the session, and says what stays. Pinned rows sit in a **Pinned** group under Needs
-you and above the days.
+copies Claude Code's id for it, a conversation's (what `--resume` takes) or a run's job id.
+**Open in terminal** opens it in an agent tab of the Documents mode: a live background run with
+`claude attach`, or a conversation by its id as a copy (`claude --resume <id> --fork-session`). Sessions empty says **No active sessions** and offers a new
+session and History. A live
+background session keeps **Restart**, **Duplicate** and **Stop session**. An open card's menu
+offers **Close session**, in History too. Delete asks first in an
+alert naming the session, and says what stays. Pinned rows sit under what needs you, in Sessions
+and in History's **Pinned** group above the days.
 
 **Each card's state is said in words and a glyph, never colour alone**, and it takes the age's
 place as MonoCode's does:
 
-- **Needs you**: a permission prompt or a question waits (Claude Code's own state, or a chat's
-  pending `can_use_tool` or `AskUserQuestion`), or a Holi's report asked for you. A warning badge
+- **Needs you**: a permission prompt or a question waits (Claude Code's own state, or a
+  notification from a session Holi runs), or a Holi's report asked for you. A warning badge
   whose tooltip says what it waits on, a dashed card, and pinned in a **Needs you** group above
   the rest.
 - **Working**: a turn is in flight. The house spinner, still under reduced motion, and "Working".
 - **Done**: a turn ended after the row was last opened. A check before the age, until the row is
-  opened; the open row is never done. A chat's or a run's end is recorded with it; a live
-  session's is noted when this window sees it stop working (MonoCode's unseen-finished rule).
+  opened; the open row is never done. A run's end is recorded with it; a live session's is noted when this window sees it stop working (MonoCode's unseen-finished rule).
   When each row was last opened is this machine's (`holi.agents.sessions.seen`), and a turn that
   ended before it began keeping track is not news.
 
@@ -113,6 +170,29 @@ breathing one, since waiting is a state and not work. A stopped session that no 
 not in the view: it is in the agent list, where opening it picks it up again. The mode toggle
 counts what needs you and what works, sessions and Holis and what other plugins add, from either
 mode.
+
+**The session view.** A session opened in the Agents mode is its terminal, in a window of the
+view's own (`agents/AgentsMain.tsx`): a background session's is a `claude attach` that closes
+with the view, a session Holi runs is shown in its own terminal, which stays. Above it, its name,
+its agent, its state and, where the provider reports them, its model and context. Under it the
+**composer** (`agents/SessionComposer.tsx`), for someone who would rather not type into a
+terminal: it types what the person would have, the message as one bracketed paste and then Enter,
+so every agent takes it the same way and its own prompts stay its own. A chip adds the document
+in front as `@path`, which Claude Code reads as the file and any agent as its path; a tab or a
+file-tree row dropped on the box adds its path too. The composer shows by default, and the bar's
+toggle hides it on this machine. A vault path in the output is a link that opens the file in a
+pane, and only a path the vault has is one (`renderer/lib/terminal-links.ts`).
+
+**New sessions start at once, in their terminal.** The Sessions **+**, ⌘N, the tab strip's + and
+⌘T on the Agents side and the command menu's **New session** start one in this machine's default
+agent, waiting for the first message, and bring its tab forward (the mode's `newSession`). There
+is no page in between: the terminal is where the first message goes. Hovering the Sessions + (or
+↓ on it) opens a menu of the other ways in (`sessions/NewSessionButton.tsx`): a session in each
+agent, one not on this machine listed but off, and **Resume a … conversation** for an agent Holi
+runs itself. A start that fails says why in a toast. The command menu's **Ask the agent** and an
+app card's **Ask about this app** start a session the same way (the agent's slot `start`), the
+ask as its first turn and an app named ahead of it by its folder; with only an app, its line goes
+in unsent for the person to finish.
 
 **Stop, restart, duplicate.** A row's **Stop** runs `claude stop <id>`. An idle session stops at
 once; one mid-turn or waiting on you asks first. Its context menu adds **Restart** (`claude
@@ -178,15 +258,20 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 
 ## Rules
 
-- Never infer session state from PTY output. A terminal's title labels and finds a tab, never
-  keys a session.
+- Never read session state from a terminal's text. A session Holi runs is read from signals only
+  (a keystroke's Enter, quiet, a notification), and a terminal's title labels and finds a tab,
+  never keys a session.
+- Never answer an agent's own prompts or add a prompt system: a session's questions are its
+  terminal's.
 - Key a session by its job id, never by the conversation's `sessionId`, which changes on `/clear`.
 - Run every `claude` for a vault through `claude-cli.ts`, so the supervisor's environment is
   always Holi's.
 - Probe a pid before signalling it: signal the group only if it still leads its group. A reaped pid
   may already be a stranger's. Holi only ever signals its own terminal clients.
-- Only reconcile, a stuck push, a skills update's conflicts, a scheduled run and a Holi's send submit a turn, each
-  as the first turn of a session of its own. Holi cannot see the composer.
+- Only reconcile, a stuck push, a skills update's conflicts, a scheduled run, a Holi's send and
+  Ask the agent submit a turn, each as the first turn of a session of its own.
+  Anything else Holi puts in a session is a paste, unsent; the composer sends only because the
+  person pressed Enter in it.
 - Record a turn after the vault resumes, fire-and-forget: a lost record beats a stuck pause.
 - A turn revert does not flush open buffers first; a dirty buffer 3-way merges.
 - Turn-hook and status-line responses are empty: a turn hook's body would be injected into
@@ -194,13 +279,16 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 
 ## Rejected
 
-- Holi's own PTY sessions joined to the listing by pid: a backgrounded conversation moves to a
-  process Holi never spawned.
+- Holi's own PTY sessions for Claude Code, joined to the listing by pid: a backgrounded
+  conversation moves to a process Holi never spawned. A provider without a supervisor is the case
+  Holi's own PTY sessions are for.
 - A bearer or port in a session's environment: a background session's environment is the
   supervisor's, and the supervisor outlives a Holi restart.
-- A headless chat panel in core: re-implements the TUI. Chat ([chat](chat.md)) is built in as the
-  Agents mode's session UI, on Claude Code's own structured channel and prompts, and written to
-  the plugin contract rather than core.
+- A conversation UI drawn by Holi, a chat on Claude Code's structured channel: it was built and
+  retired. It re-implements each agent's TUI and binds the session UI to one agent's protocol, so
+  every other agent would need its own; the terminal is the one surface every agent already has.
+- Codex's `hooks` for a turn's start: each must be trusted in its `/hooks` first, a step between
+  someone and their first session; `notify` needs none.
 - A server-side agent: there is no server.
 - A Holi list of past sessions: the agent list is that list.
 - A gate before the agent's writes: Claude Code already asks.
@@ -215,15 +303,18 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 ## Code
 
 - `apps/desktop/src/plugins/agent/main/index.ts`: the plugin's main side; `provider.ts`: the line between the host and
-  the agent it runs
+  the agents it runs, the core and the capabilities
+- `apps/desktop/src/plugins/agent/main/codex/`: Codex as a provider: the command, the `notify` hook and its route
+- `apps/desktop/src/plugins/agent/main/host/pty-sessions.ts`, `pty-signals.ts`: the sessions Holi runs itself, and
+  their turns read off the terminal
 - `apps/desktop/src/plugins/agent/main/claude/`: Claude Code as the provider: `cli.ts` (every `claude` command, one
   environment, the binary), `listing.ts` (the listing, state rules, the watch), `routes.ts` (the
   turn and status-line routes)
 - `apps/desktop/src/plugins/agent/main/host/terminals.ts`, `pty.ts`, `terminal-mirror.ts`: terminals, the PTY and
   kill path
 - `apps/desktop/src/plugins/agent/main/host/sessions.ts`: the vault controller
-- `apps/desktop/src/plugins/agent/main/host/capabilities.ts`: the `agent.*` capabilities, the
-  outside drivers' `agent.target` and `agent.turn` among them
+- `apps/desktop/src/plugins/agent/main/host/capabilities.ts`: the `agent.*` capabilities, each verb sent to the
+  kind of session its id names
 - `apps/desktop/src/main/plugin-api.ts` (`ctx.call`): one plugin's main side calling another's
   capabilities
 - `apps/desktop/src/main/bridge/env-file.ts`, `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/hooks/turn-signal.mjs`,
@@ -231,6 +322,9 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - `apps/desktop/src/plugins/agent/main/host/turn-coordinator.ts`, `turn-log.ts`: working set and turn records
 - `apps/desktop/src/plugins/agent/renderer/`: rows, orbs, terminal (`terminal.css`), turn chip and review; `index.tsx`: the
   plugin's renderer side; `service.ts`: the agent service
+- `apps/desktop/src/plugins/agent/renderer/agents/AgentsMain.tsx`, `SessionComposer.tsx`,
+  `sessions/NewSessionButton.tsx`: the session view, its composer and the Sessions + with its menu;
+  `state/providers.ts`: the agents and the default
 - `apps/desktop/src/plugins/agent/renderer/state/sessions.ts`, `send.ts`, `turns.ts`: the lists, what you do, and turn review
 - `apps/desktop/src/plugins/agent/renderer/state/session-list.ts`, `sessions/SessionList.tsx`: the one session list, its
   states, filter and groups

@@ -7,6 +7,7 @@
  */
 import type { AnyRouter } from '@trpc/server'
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, shell } from 'electron'
+import { isDockIconPng } from './dock-icon'
 import { basename, dirname, join } from 'node:path'
 import { vaultRelPath } from '@holi/shared'
 import { callProcedure, toEnvelope, type TrpcEnvelope, type TrpcOp } from './trpc-call'
@@ -64,6 +65,15 @@ export function registerIpc(deps: {
     if (scheme === 'light' || scheme === 'dark' || scheme === 'system') {
       nativeTheme.themeSource = scheme
     }
+  })
+
+  // The dock's icon follows the theme: the window draws it in the theme's
+  // colours (`renderer/src/lib/app-icon.ts`) and sends it as a PNG. Only a PNG
+  // data URL of a sane size is taken; anything else leaves the icon as it is.
+  ipcMain.on('holi:dockIcon', (_event, pngDataUrl: unknown) => {
+    if (!app.dock || !isDockIconPng(pngDataUrl)) return
+    const image = nativeImage.createFromDataURL(pngDataUrl)
+    if (!image.isEmpty()) app.dock.setIcon(image)
   })
 
   ipcMain.on('holi:startDrag', (event, paths: string[]) => {

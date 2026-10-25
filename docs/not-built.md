@@ -39,15 +39,15 @@ would start the same session under the same per-machine approval:
 Holi in it (`from: owner/repo#id`), read from that vault each time, its approval still this
 vault's.
 
-**Context use on a chat's row.** Read from each turn's `result` and kept on the record, not yet
-drawn ([chat](features/chat.md)).
+**Holis and automations on another agent.** Their runs need a provider with `background`, which
+only Claude Code has. `codex exec` runs a prompt unwatched and fires `notify`, so Codex could carry
+a run once a run in a Holi-owned process, which ends when Holi quits, is acceptable
+([agent-sessions](features/agent-sessions.md), Providers).
 
-**Steering a working chat.** A message written while a turn runs waits for it to finish; Claude Code
-can take one mid-turn.
+**More providers.** opencode and pi, each as its core and whatever its hooks allow.
 
-**A session's terminal in the Agents mode.** While a conversation is the session UI, the mode draws
-no terminal: a background session shows its name and state, not its screen, and a chat's "open a
-copy in a terminal" is not offered there ([chat](features/chat.md)).
+**An image in the composer.** Pasting or dropping a screenshot; today the composer takes text and
+vault paths.
 
 **Memory tooling.** Lint findings as proposals, a graph view, and per-directory indexes. See
 [agent-memory](features/agent-memory.md).

@@ -2,7 +2,8 @@
  * The agent's renderer side (docs/features/agent-sessions.md): the sidebar's
  * Agents mode (its sidebar with the Inbox and the sessions, its main view and
  * the status the mode toggle reports), with a slot other plugins fill without
- * the agent knowing them (Automations, Holis, chat);
+ * the agent knowing them (Automations, Holis); its home, the new-session
+ * page, and the session view, each session in its terminal;
  * its terminal tab, the surface `agent`, kept mounted, one per
  * terminal; its nav item; its turn review drawer; leaving a vault asks while a
  * session is busy; it provides the agent service; and the palette lists its
@@ -30,6 +31,9 @@ import {
   terminalLabel,
 } from './state/sessions'
 import { openSessionAtom, showAgentsAtom } from './state/send'
+import { agentMenuEntriesAtom, runAgentMenuEntryAtom } from './state/command-menu'
+import { loadProvidersAtom, pickedProviderAtom, providersAtom } from './state/providers'
+import { startConversationViewAtom } from './state/session-view'
 import { TurnReview } from './TurnReview'
 import { AgentStatusItem } from './sessions/AgentStatusItem'
 
@@ -108,6 +112,7 @@ export const agentRenderer: RendererPlugin = {
     main: AgentsMain,
     status: agentsStatusAtom,
     tabLook: sessionTabLookAtom,
+    newSession: newSessionAtom,
   },
   drawers: [TurnReview],
   statusItems: [{ id: 'sessions', side: 'right', order: 10, Component: AgentStatusItem }],
@@ -117,11 +122,17 @@ export const agentRenderer: RendererPlugin = {
   vault: (remote, store) => {
     const offAgent = agentVault(remote, store)
     const offList = sessionListVault(store)
+    void store.set(loadProvidersAtom)
     return () => {
       offList()
       offAgent()
+      store.set(providersAtom, { kind: 'loading' })
+      store.set(pickedProviderAtom, null)
     }
   },
+  // The command menu's Ask the agent and an app card's Ask about this app: a
+  // session whose first turn is the ask, in the machine's default agent.
+  agentsSlot: { start: startConversationViewAtom },
   agent: AGENT_SERVICE,
   commands: COMMANDS,
   palette: {
@@ -130,4 +141,5 @@ export const agentRenderer: RendererPlugin = {
     ),
     open: atom(null, (_get, set, id: string) => void set(openSessionAtom, id)),
   },
+  commandMenu: { entries: agentMenuEntriesAtom, run: runAgentMenuEntryAtom },
 }

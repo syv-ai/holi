@@ -1,22 +1,32 @@
 /**
  * The status bar, the bottom panel and its Output
  * (docs/features/status-bar.md): what the bar's items say and do, the keys
- * that toggle the panel, and the Output's filter and follow.
+ * that toggle the panel, and the Output's grid, its search and filters, and
+ * the lines that open under their rows.
  */
 import { Provider, createStore } from "jotai"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 
-import { act, fireEvent, render, screen, waitFor } from "@/test/render"
+import { act, fireEvent, render, screen, waitFor, within } from "@/test/render"
 import {
   activityEntriesAtom,
   activityLoadAtom,
-  activityFilterAtom,
+  activityQueryAtom,
+  activitySearchAtom,
   activitySeenAtom,
   activityUnseenErrorAtom,
-  filterEntries,
+  channelQuery,
   mergeEntries,
+  withChannelRule,
+  shownEntries,
   type ActivityEntry,
 } from "@/state/activity"
+import {
+  appLogEntriesAtom,
+  appLogLoadAtom,
+  mergeAppLog,
+  type AppLogEntry,
+} from "@/state/app-logs"
 import {
   bottomPanelAtom,
   clampPanelHeight,
@@ -27,7 +37,14 @@ import { installedPluginsAtom, runningPluginsAtom } from "@/state/plugins"
 import { useShortcutDispatcher } from "@/state/shortcuts"
 import { activeRemoteAtom, syncStateAtom } from "@/state/vaults"
 
+import {
+  createFilterQuery,
+  createFilterRule,
+} from "@/components/reui/filters/filters-query"
+
 import { BottomPanel } from "../bottom-panel"
+import { OutputSearch } from "../output-search"
+import { LogsSearch, PanelLogs } from "../panel-logs"
 import { PanelOutput } from "../panel-output"
 import { StatusBar, syncedAgo, syncItemView } from "../status-bar"
 
@@ -41,6 +58,7 @@ vi.mock("@/lib/trpc", () => {
     if (name === "terminal.create")
       return { ok: false, message: "node-pty did not load" }
     if (name === "activity.entries") return []
+    if (name === "logs.entries") return []
     return { ok: true }
   }
   const procedure = (name: string) => ({
@@ -86,7 +104,37 @@ const entry = (
   ...over,
 })
 
+// jsdom lays nothing out, so a real virtualizer measures a zero-height
+// viewport and the Output's grid draws no rows. This one draws every row.
+vi.mock("@tanstack/react-virtual", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-virtual")>()),
+  useVirtualizer: (opts: {
+    count: number
+    getItemKey?: (index: number) => string | number
+  }) => {
+    const ROW = 33
+    const items = Array.from({ length: opts.count }, (_, index) => ({
+      index,
+      key: opts.getItemKey?.(index) ?? index,
+      start: index * ROW,
+      end: (index + 1) * ROW,
+      size: ROW,
+      lane: 0,
+    }))
+    return {
+      getVirtualItems: () => items,
+      getTotalSize: () => opts.count * ROW,
+      measureElement: () => {},
+      measure: () => {},
+      scrollToIndex: () => {},
+      scrollToOffset: () => {},
+    }
+  },
+}))
+
 beforeEach(() => {
+  // The grid's scroll area reads running animations, which jsdom lacks.
+  Element.prototype.getAnimations ??= () => []
   calls.length = 0
   syncInfo = null
   document.documentElement.dataset.platform = "mac"
@@ -145,11 +193,27 @@ describe("pure rules", () => {
       3
     )
     expect(merged.map((e) => e.id)).toEqual([2, 3, 4])
-    expect(
-      filterEntries([entry(1), entry(2, { channel: "sync" })], "sync").map(
-        (e) => e.id
-      )
-    ).toEqual([2])
+  })
+
+  test("the query and the search narrow what the Output shows", () => {
+    const lines = [
+      entry(1, { message: "Committed abc" }),
+      entry(2, { channel: "sync", message: "Pushed 1 commit" }),
+      entry(3, { channel: "sync", message: "Pulled", remote: "o/notes" }),
+    ]
+    const ids = (shown: readonly ActivityEntry[]) => shown.map((e) => e.id)
+    expect(ids(shownEntries(lines, channelQuery("sync"), ""))).toEqual([2, 3])
+    expect(ids(shownEntries(lines, channelQuery("sync"), "push"))).toEqual([2])
+    // The search reads the vault and the channel's name too.
+    expect(ids(shownEntries(lines, createFilterQuery(), "o/notes"))).toEqual([
+      3,
+    ])
+    expect(ids(shownEntries(lines, createFilterQuery(), "git"))).toEqual([1])
+    // A rule with no value yet constrains nothing.
+    const unfinished = createFilterQuery([
+      createFilterRule({ id: "r", path: ["level"], operator: "is" }),
+    ])
+    expect(ids(shownEntries(lines, unfinished, ""))).toEqual([1, 2, 3])
   })
 
   test("synced-ago reads as a person says it", () => {
@@ -378,6 +442,7 @@ describe("output", () => {
   function output(store: ReturnType<typeof createStore>) {
     render(
       <Provider store={store}>
+        <OutputSearch />
         <PanelOutput visible onRetry={() => {}} />
       </Provider>
     )
@@ -397,7 +462,13 @@ describe("output", () => {
     ).toBeInTheDocument()
   })
 
-  test("the channel filter shows one channel's lines", () => {
+  /** The rows' messages, top to bottom. */
+  const messages = () =>
+    screen
+      .queryAllByRole("button", { name: /^(Show|Hide) details: / })
+      .map((b) => b.getAttribute("aria-label")?.replace(/^\w+ details: /, ""))
+
+  test("newest first, narrowed by the channel query and the search", () => {
     const store = createStore()
     store.set(activityLoadAtom, "ready")
     store.set(activityEntriesAtom, [
@@ -405,54 +476,231 @@ describe("output", () => {
       entry(2, { channel: "agent", message: "Session started: x" }),
     ])
     output(store)
-    expect(screen.getByText("Committed abc")).toBeInTheDocument()
-    act(() => store.set(activityFilterAtom, "agent"))
-    expect(screen.queryByText("Committed abc")).toBeNull()
-    expect(screen.getByText("Session started: x")).toBeInTheDocument()
+    expect(messages()).toEqual(["Session started: x", "Committed abc"])
+
+    act(() => store.set(activityQueryAtom, channelQuery("agent")))
+    expect(messages()).toEqual(["Session started: x"])
+
+    act(() => store.set(activityQueryAtom, createFilterQuery()))
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Search the output" }),
+      {
+        target: { value: "commit" },
+      }
+    )
+    expect(store.get(activitySearchAtom)).toBe("commit")
+    expect(messages()).toEqual(["Committed abc"])
   })
 
-  test("a line with detail expands", () => {
+  test("the search counts the filters and clears them all at once", () => {
+    const store = createStore()
+    store.set(activityLoadAtom, "ready")
+    store.set(activityEntriesAtom, [entry(1)])
+    output(store)
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull()
+    act(() => store.set(activityQueryAtom, channelQuery("git")))
+    expect(screen.getByLabelText("1 filter applied")).toHaveTextContent("1")
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }))
+    expect(store.get(activityQueryAtom).rules).toEqual([])
+  })
+
+  test("picking an attribute in the filter builder keeps it open", async () => {
+    const store = createStore()
+    store.set(activityLoadAtom, "ready")
+    store.set(activityEntriesAtom, [entry(1)])
+    output(store)
+    fireEvent.click(screen.getByRole("button", { name: "Filter" }))
+    // jsdom computes no layout, so the popover counts as hidden to queries.
+    const open = { hidden: true } as const
+    const builder = await screen.findByRole("dialog", {
+      name: "Filters",
+      ...open,
+    })
+    fireEvent.click(
+      within(builder).getAllByRole("button", {
+        name: /Add filter/,
+        ...open,
+      })[0]!
+    )
+    const channel = await screen.findByRole("option", {
+      name: /Channel/,
+      ...open,
+    })
+    // The picker is a Base UI portal outside the Radix popover: the press
+    // that picks must not read as a click outside the builder.
+    fireEvent.pointerDown(channel)
+    fireEvent.click(channel)
+    await waitFor(() =>
+      expect(store.get(activityQueryAtom).rules).toHaveLength(1)
+    )
+    expect(
+      screen.getByRole("dialog", { name: "Filters", ...open })
+    ).toBeInTheDocument()
+  })
+
+  test("a search that matches nothing offers Clear filters", () => {
+    const store = createStore()
+    store.set(activityLoadAtom, "ready")
+    store.set(activityEntriesAtom, [entry(1, { message: "Committed abc" })])
+    store.set(activitySearchAtom, "nothing like it")
+    output(store)
+    expect(screen.getByText("No matching lines")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }))
+    expect(store.get(activitySearchAtom)).toBe("")
+    expect(messages()).toEqual(["Committed abc"])
+  })
+
+  test("a line opens under its row, with its detail and the raw line", () => {
     const store = createStore()
     store.set(activityLoadAtom, "ready")
     store.set(activityEntriesAtom, [
       entry(1, {
         message: "Push failed",
+        level: "error",
         detail: "fatal: could not resolve host",
       }),
     ])
     output(store)
     expect(screen.queryByText("fatal: could not resolve host")).toBeNull()
-    fireEvent.click(screen.getByRole("button", { name: /Push failed/ }))
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show details: Push failed" })
+    )
+    expect(
+      screen.getByRole("button", { name: "Hide details: Push failed" })
+    ).toHaveAttribute("aria-expanded", "true")
     expect(
       screen.getByText("fatal: could not resolve host")
     ).toBeInTheDocument()
+    expect(screen.getByText("Raw")).toBeInTheDocument()
+    // Clicking the row itself closes it again.
+    fireEvent.click(screen.getByText("Push failed"))
+    expect(screen.queryByText("fatal: could not resolve host")).toBeNull()
   })
 
-  test("follows the foot, stops when scrolled up, and Jump to latest returns", () => {
+  test("a channel's context menu filters by it; a click opens the row", async () => {
     const store = createStore()
     store.set(activityLoadAtom, "ready")
-    store.set(activityEntriesAtom, [entry(1)])
+    store.set(activityEntriesAtom, [
+      entry(1, { message: "Committed abc" }),
+      entry(2, { channel: "agent", message: "Session started: x" }),
+    ])
     output(store)
-    const log = screen.getByRole("log")
-    Object.defineProperty(log, "scrollHeight", {
-      configurable: true,
-      value: 1000,
-    })
-    Object.defineProperty(log, "clientHeight", {
-      configurable: true,
-      value: 200,
-    })
-    act(() => store.set(activityEntriesAtom, [entry(1), entry(2)]))
-    expect(log.scrollTop).toBe(1000)
+    // A plain click on the channel is the row's: it opens the line.
+    fireEvent.click(screen.getByText("Agent"))
+    expect(store.get(activityQueryAtom).rules).toEqual([])
+    expect(
+      screen.getByRole("button", { name: "Hide details: Session started: x" })
+    ).toBeInTheDocument()
 
-    // Scrolled up to read: new lines leave it where it is.
-    log.scrollTop = 100
-    fireEvent.scroll(log)
-    act(() => store.set(activityEntriesAtom, [entry(1), entry(2), entry(3)]))
-    expect(log.scrollTop).toBe(100)
-    const jump = screen.getByRole("button", { name: "Jump to latest" })
-    fireEvent.click(jump)
-    expect(log.scrollTop).toBe(1000)
-    expect(screen.queryByRole("button", { name: "Jump to latest" })).toBeNull()
+    // The row's cell, not the opened panel's Channel field below it.
+    fireEvent.contextMenu(screen.getAllByText("Agent")[0]!)
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Only Agent" }))
+    expect(store.get(activityQueryAtom)).toEqual(channelQuery("agent"))
+    expect(messages()).toEqual(["Session started: x"])
+
+    // A second channel replaces the rule rather than ANDing the two.
+    act(() =>
+      store.set(activityQueryAtom, (q) => withChannelRule(q, "git", "hide"))
+    )
+    const rules = store.get(activityQueryAtom).rules
+    expect(rules).toHaveLength(1)
+    expect(rules[0]).toMatchObject({ operator: "is_not", value: "git" })
+  })
+})
+
+describe("logs", () => {
+  const line = (id: number, over: Partial<AppLogEntry> = {}): AppLogEntry => ({
+    id,
+    at: "2026-10-24T10:00:00.000Z",
+    level: "info",
+    source: "main",
+    message: `printed ${id}`,
+    ...over,
+  })
+
+  function logs(store: ReturnType<typeof createStore>) {
+    render(
+      <Provider store={store}>
+        <LogsSearch />
+        <PanelLogs onRetry={() => {}} />
+      </Provider>
+    )
+  }
+
+  const messages = () =>
+    screen
+      .queryAllByRole("button", { name: /^(Show|Hide) details: / })
+      .map((b) => b.getAttribute("aria-label")?.replace(/^\w+ details: /, ""))
+
+  test("streams main's and the window's lines, newest first", () => {
+    const store = createStore()
+    store.set(appLogLoadAtom, "ready")
+    store.set(appLogEntriesAtom, [
+      line(1, { scope: "router", message: "rescan failed", level: "error" }),
+      line(2, { source: "renderer", message: "[activity] load failed" }),
+    ])
+    logs(store)
+    expect(messages()).toEqual(["[activity] load failed", "rescan failed"])
+    expect(screen.getByText("Window")).toBeInTheDocument()
+    expect(screen.getByText("router")).toBeInTheDocument()
+    // A new line streams in at the top.
+    act(() =>
+      store.set(appLogEntriesAtom, (held) =>
+        mergeAppLog(held, [line(3, { message: "hello" })])
+      )
+    )
+    expect(messages()[0]).toBe("hello")
+  })
+
+  test("the search narrows by message, detail and scope", () => {
+    const store = createStore()
+    store.set(appLogLoadAtom, "ready")
+    store.set(appLogEntriesAtom, [
+      line(1, { scope: "vaults", message: "could not push" }),
+      line(2, { message: "Error: boom", detail: "    at sync (git.ts:9)" }),
+    ])
+    logs(store)
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Search the logs" }),
+      {
+        target: { value: "git.ts" },
+      }
+    )
+    expect(messages()).toEqual(["Error: boom"])
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Search the logs" }),
+      {
+        target: { value: "vaults" },
+      }
+    )
+    expect(messages()).toEqual(["could not push"])
+  })
+
+  test("a line opens under its row with its stack", () => {
+    const store = createStore()
+    store.set(appLogLoadAtom, "ready")
+    store.set(appLogEntriesAtom, [
+      line(1, { message: "Error: boom", detail: "    at sync (git.ts:9)" }),
+    ])
+    logs(store)
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show details: Error: boom" })
+    )
+    // In the Detail block, and again inside the raw JSON.
+    expect(
+      screen.getAllByText("at sync (git.ts:9)", { exact: false }).length
+    ).toBeGreaterThan(0)
+  })
+
+  test("empty, loading and error states", () => {
+    const store = createStore()
+    logs(store)
+    expect(
+      screen.getByRole("status", { name: "Loading the logs" })
+    ).toBeInTheDocument()
+    act(() => store.set(appLogLoadAtom, "error"))
+    expect(screen.getByText("Could not load the logs")).toBeInTheDocument()
+    act(() => store.set(appLogLoadAtom, "ready"))
+    expect(screen.getByText("Nothing printed yet")).toBeInTheDocument()
   })
 })

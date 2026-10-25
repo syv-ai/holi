@@ -6,7 +6,6 @@ import type { RendererPlugin } from '@/plugin-api'
 import { agentRenderer } from './agent/renderer'
 import { automationsRenderer } from './automations/renderer'
 import { holisRenderer } from './holis/renderer'
-import { chatRenderer } from './chat/renderer'
 import { appsRenderer } from './apps/renderer'
 import { communityRenderer } from './community/renderer'
 import { googleRenderer } from './google/renderer'
@@ -16,7 +15,6 @@ export const RENDERER_PLUGINS: readonly RendererPlugin[] = [
   agentRenderer,
   automationsRenderer,
   holisRenderer,
-  chatRenderer,
   pdfRenderer,
   googleRenderer,
   appsRenderer,

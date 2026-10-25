@@ -47,3 +47,13 @@ export const startConversationAtom = atom(
       : set(slot, typeof start === 'string' ? { text: start } : start)
   },
 )
+
+/** Start a session through the Agents mode's `newSession`. False when the
+ *  mode has none, for the caller to open the mode's home instead. */
+export const newAgentSessionAtom = atom(null, (get, set, beside?: boolean): boolean => {
+  const start = get(runningPluginsAtom).find((p) => p.agentsMode !== undefined)?.agentsMode
+    ?.newSession
+  if (start === undefined) return false
+  void set(start, beside)
+  return true
+})

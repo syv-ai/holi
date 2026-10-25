@@ -21,6 +21,7 @@ import {
 import { folderClaims, surfaceLabel, type FolderDocumentClaim } from '@/lib/folder-documents'
 import type {
   AgentServiceSource,
+  CommandMenuEntry,
   PaletteItem,
   PathClaim,
   RailItem,
@@ -125,6 +126,26 @@ export const paletteItemsAtom = atom((get): readonly (PaletteItem & { plugin: st
       ? []
       : get(p.palette.items).map((item) => ({ ...item, plugin: p.info.id })),
   ),
+)
+
+/** What running plugins add to the ⌘K command menu, each with its plugin's
+ *  id (`RendererPlugin.commandMenu`). */
+export const commandMenuEntriesAtom = atom(
+  (get): readonly (CommandMenuEntry & { plugin: string })[] =>
+    get(runningPluginsAtom).flatMap((p) =>
+      p.commandMenu === undefined
+        ? []
+        : get(p.commandMenu.entries).map((entry) => ({ ...entry, plugin: p.info.id })),
+    ),
+)
+
+/** Run a command menu row through the plugin that added it. */
+export const runCommandMenuEntryAtom = atom(
+  null,
+  (get, set, { plugin, id }: { plugin: string; id: string }): void => {
+    const run = get(runningPluginsAtom).find((p) => p.info.id === plugin)?.commandMenu?.run
+    if (run !== undefined) set(run, id)
+  },
 )
 
 /** Open a palette item through the plugin that listed it. */

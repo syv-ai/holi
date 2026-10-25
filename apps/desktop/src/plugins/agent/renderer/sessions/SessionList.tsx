@@ -1,8 +1,8 @@
 /**
- * The Agents sidebar's session list (docs/features/agent-sessions.md, The
- * Agents view): every conversation and background run in one place, as
- * MonoCode's session cards draw them, under a "Search conversations…" field
- * with a filter menu.
+ * The Agents mode's session cards (docs/features/agent-sessions.md, The
+ * Agents view), drawn twice: the sidebar's **Sessions**, the conversations
+ * and runs that are open, each with its ×; and **History**, every one of
+ * them by day under a "Search conversations…" field with a filter menu.
  *
  * After MonoCode's `Sidebar.tsx` session list and card (MIT, Copyright (c)
  * 2026 Nick; see NOTICE.md): the provider's mark and the model with the age
@@ -22,7 +22,7 @@ import {
   CopyIcon,
   CopyPlusIcon,
   EllipsisIcon,
-  GitBranchIcon,
+  HistoryIcon,
   ListFilterIcon,
   MailCheckIcon,
   MessageSquarePlusIcon,
@@ -33,7 +33,9 @@ import {
   RotateCwIcon,
   SearchIcon,
   SquareIcon,
+  SquareTerminalIcon,
   Trash2Icon,
+  XIcon,
   ZapIcon,
 } from "lucide-react"
 import {
@@ -96,16 +98,22 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { PixelPersona } from "@/composites"
+import { IconButton } from "@/primitives"
+import { NewSessionButton } from "./NewSessionButton"
 import { cn, openTabAtom, useTabDrag } from "@/plugin-api"
 import { agentSessionsAtom } from "../state/sessions"
+import { agentsViewAtom } from "../state/agents-view"
 import {
   duplicateSessionAtom,
+  openConversationTerminalAtom,
+  openSessionAtom,
   respawnSessionAtom,
   stopSessionAtom,
 } from "../state/send"
 import {
   age,
   archiveSessionRowAtom,
+  closeSessionRowAtom,
   deleteSessionRowAtom,
   filterActive,
   keyOwner,
@@ -116,6 +124,7 @@ import {
   newSessionAtom,
   NO_FILTER,
   openSessionRowAtom,
+  openSessionRowsAtom,
   pinSessionRowAtom,
   reloadSessionsAtom,
   renameSessionRowAtom,
@@ -125,8 +134,8 @@ import {
   sessionQueryAtom,
   sessionRowsAtom,
   sessionsStatusAtom,
-  sessionVaultNameAtom,
   type SessionFilter,
+  type SessionGroup,
   type SessionRow,
   type SessionSource,
 } from "../state/session-list"
@@ -384,10 +393,13 @@ function tabOf(
   return selection === undefined ? null : { kind: "session", ...selection }
 }
 
-/** A session as MonoCode's card draws one: model and age, title, place. */
+/**
+ * A session in two lines: the title with the state or age on the right, then
+ * who ran it (the mark and the model) and where. The title is the only line
+ * in the foreground; the vault is left out, since every card is in this one.
+ */
 function SessionCard({
   row,
-  vault,
   now,
   focusable,
   onOpen,
@@ -396,7 +408,6 @@ function SessionCard({
   ...props
 }: Omit<ComponentProps<"button">, "onFocus"> & {
   row: SessionRow
-  vault: string
   now: number
   focusable: boolean
   onOpen: () => void
@@ -408,7 +419,13 @@ function SessionCard({
       ? ""
       : `${item.by.kind === "holi" ? "Holi" : "Automation"} ${item.by.name}`
   const label = [item.title, stateWords(row), by].filter(Boolean).join(", ")
-  const place = [vault, item.location].filter(Boolean).join(" · ")
+  const meta = [
+    item.by === undefined ? undefined : item.by.name,
+    modelLabel(item.model),
+    item.location,
+  ]
+    .filter(Boolean)
+    .join(" · ")
   return (
     <button
       {...props}
@@ -421,41 +438,31 @@ function SessionCard({
       onClick={onOpen}
       onFocus={onFocus}
       className={cn(
-        "flex w-full min-w-0 flex-col gap-1 rounded-lg border border-transparent px-2.5 py-2 text-start transition-colors outline-none",
-        "hover:bg-sidebar-accent/60 focus-visible:ring-2 focus-visible:ring-ring/50",
+        "flex w-full min-w-0 flex-col gap-0.5 rounded-lg border border-transparent px-2 py-1.5 text-start transition-colors outline-none",
+        // The sidebar's one fill scale, as the rows above and in Documents.
+        "hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring/50",
         state === "needs-you" && "border-dashed border-border",
-        current &&
-          "bg-sidebar-accent text-sidebar-accent-foreground hover:bg-sidebar-accent",
+        current && "bg-foreground/10 hover:bg-foreground/12",
         className
       )}
     >
       <span className="flex min-w-0 items-center gap-2">
-        <span className="flex min-w-0 flex-1 items-center gap-1.5">
-          <CardMark row={row} />
-          <span className="min-w-0 truncate text-xs text-muted-foreground">
-            {item.by === undefined
-              ? modelLabel(item.model)
-              : `${item.by.name} · ${modelLabel(item.model)}`}
-          </span>
-        </span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+              {item.title}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="right">{item.title}</TooltipContent>
+        </Tooltip>
         <span className="flex shrink-0 items-center">
           <CardStatus row={row} now={now} />
         </span>
       </span>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="min-w-0 truncate text-sm font-semibold text-foreground">
-            {item.title}
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="right">{item.title}</TooltipContent>
-      </Tooltip>
-      {place !== "" && (
-        <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-          <GitBranchIcon aria-hidden="true" className="size-3 shrink-0" />
-          <span className="min-w-0 truncate">{place}</span>
-        </span>
-      )}
+      <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <CardMark row={row} />
+        <span className="min-w-0 truncate">{meta}</span>
+      </span>
     </button>
   )
 }
@@ -521,13 +528,19 @@ function joinGroups(groups: MenuAction[][]): MenuAction[] {
 /** What a row's menu offers, as data both menus draw. */
 function useRowActions(
   row: SessionRow,
-  { onRename, onDelete }: { onRename: () => void; onDelete: () => void }
+  {
+    onRename,
+    onDelete,
+    onClose,
+  }: { onRename: () => void; onDelete: () => void; onClose?: () => void }
 ): MenuAction[] {
   const live = useAtomValue(agentSessionsAtom)
   const abilities = useAtomValue(rowAbilitiesAtom)
   const stop = useSetAtom(stopSessionAtom)
   const respawn = useSetAtom(respawnSessionAtom)
   const duplicate = useSetAtom(duplicateSessionAtom)
+  const openFork = useSetAtom(openConversationTerminalAtom)
+  const attach = useSetAtom(openSessionAtom)
   const archive = useSetAtom(archiveSessionRowAtom)
   const pin = useSetAtom(pinSessionRowAtom)
   const markRead = useSetAtom(markSessionSeenAtom)
@@ -557,6 +570,24 @@ function useRowActions(
             },
           },
         ]
+  // Claude Code's own TUI on it: a copy of the conversation by its id, or a
+  // live background run itself.
+  const conversationId = item.sessionId
+  if (conversationId !== undefined) {
+    place.push({
+      kind: "item",
+      label: "Open in terminal",
+      icon: icon(SquareTerminalIcon),
+      run: () => void openFork(conversationId),
+    })
+  } else if (isLive) {
+    place.push({
+      kind: "item",
+      label: "Open in terminal",
+      icon: icon(SquareTerminalIcon),
+      run: () => void attach(jobId),
+    })
+  }
 
   const own: MenuAction[] = []
   if (can?.pin) {
@@ -601,29 +632,38 @@ function useRowActions(
     })
   }
 
-  const running: MenuAction[] = isLive
-    ? [
-        {
-          kind: "item",
-          label: "Restart",
-          icon: icon(RotateCwIcon),
-          run: () => void respawn(jobId),
-        },
-        {
-          kind: "item",
-          label: "Duplicate",
-          icon: icon(CopyPlusIcon),
-          run: () => void duplicate(jobId),
-        },
-        {
-          kind: "item",
-          label: "Stop session",
-          icon: icon(SquareIcon),
-          destructive: true,
-          run: () => void stop(jobId),
-        },
-      ]
-    : []
+  const running: MenuAction[] = []
+  if (onClose !== undefined) {
+    running.push({
+      kind: "item",
+      label: "Close session",
+      icon: icon(XIcon),
+      run: onClose,
+    })
+  }
+  if (isLive) {
+    running.push(
+      {
+        kind: "item",
+        label: "Restart",
+        icon: icon(RotateCwIcon),
+        run: () => void respawn(jobId),
+      },
+      {
+        kind: "item",
+        label: "Duplicate",
+        icon: icon(CopyPlusIcon),
+        run: () => void duplicate(jobId),
+      },
+      {
+        kind: "item",
+        label: "Stop session",
+        icon: icon(SquareIcon),
+        destructive: true,
+        run: () => void stop(jobId),
+      }
+    )
+  }
 
   const keep: MenuAction[] = []
   if (can?.archive) {
@@ -647,13 +687,20 @@ function useRowActions(
   return joinGroups([place, own, running, keep])
 }
 
-/** A card with its menus: right-click, and ⋯ on hover or focus. */
+/** A card's buttons, shown on hover or focus, and while a menu is open. */
+const REVEAL =
+  "opacity-0 transition-opacity duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] group-focus-within/card:opacity-100 group-hover/card:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 motion-reduce:transition-none"
+
+/** A card with its menus: right-click, and ⋯ on hover or focus; and, for an
+ *  open one, its × beside the ⋯. */
 function CardWithMenu({
   row,
   renaming,
   onRename,
   onRenamed,
   onDelete,
+  onClose,
+  closable,
   children,
 }: {
   row: SessionRow
@@ -661,6 +708,10 @@ function CardWithMenu({
   onRename: () => void
   onRenamed: () => void
   onDelete: () => void
+  /** Close it in the Sessions list: only an open card has one. */
+  onClose?: () => void
+  /** Show the × beside the ⋯, not only Close in the menu. */
+  closable: boolean
   children: React.ReactNode
 }): React.JSX.Element {
   // A Rename picked in a menu opens the field once the menu has closed, so
@@ -671,6 +722,7 @@ function CardWithMenu({
       renameNext.current = true
     },
     onDelete,
+    onClose,
   })
   const closeAutoFocus = (event: Event) => {
     if (!renameNext.current) return
@@ -694,25 +746,38 @@ function CardWithMenu({
           <ContextMenuActions actions={actions} />
         </ContextMenuContent>
       </ContextMenu>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
+      <div className="absolute end-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={`More actions for ${row.item.title}`}
+              className={REVEAL}
+            >
+              <EllipsisIcon aria-hidden="true" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            className="w-52"
+            onCloseAutoFocus={closeAutoFocus}
+          >
+            <DropdownMenuActions actions={actions} />
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {closable && onClose !== undefined && (
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label={`More actions for ${row.item.title}`}
-            className="absolute end-1.5 top-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] group-focus-within/card:opacity-100 group-hover/card:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 motion-reduce:transition-none"
+            aria-label={`Close ${row.item.title}`}
+            className={REVEAL}
+            onClick={onClose}
           >
-            <EllipsisIcon aria-hidden="true" />
+            <XIcon aria-hidden="true" />
           </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="end"
-          className="w-52"
-          onCloseAutoFocus={closeAutoFocus}
-        >
-          <DropdownMenuActions actions={actions} />
-        </DropdownMenuContent>
-      </DropdownMenu>
+        )}
+      </div>
     </div>
   )
 }
@@ -835,29 +900,37 @@ function LoadingCards(): React.JSX.Element {
       className="flex flex-col gap-1"
     >
       {[0, 1, 2].map((i) => (
-        <div key={i} className="flex flex-col gap-1.5 px-2.5 py-2">
-          <Skeleton className="h-3 w-24" />
+        <div key={i} className="flex flex-col gap-1.5 px-2 py-1.5">
           <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-3 w-20" />
+          <Skeleton className="h-3 w-24" />
         </div>
       ))}
     </div>
   )
 }
 
-/** The cards, grouped, with arrow keys between them. */
-export function SessionList(): React.JSX.Element {
-  const rows = useAtomValue(sessionRowsAtom)
-  const status = useAtomValue(sessionsStatusAtom)
-  const query = useAtomValue(sessionQueryAtom)
-  const filter = useAtomValue(sessionFilterAtom)
-  const vault = useAtomValue(sessionVaultNameAtom)
+/** A run of cards under a heading, or none: the sidebar's open ones are one
+ *  run without. */
+type CardGroup = Pick<SessionGroup, "rows"> & { id: string; label?: string }
+
+/**
+ * Cards in groups, with arrow keys between them, their menus, Rename in place
+ * and Delete asked first. An open card's menu offers Close, and with `closable`
+ * it shows its × too.
+ */
+function SessionCards({
+  groups,
+  now,
+  openKeys,
+  closable,
+}: {
+  groups: readonly CardGroup[]
+  now: number
+  openKeys: ReadonlySet<string>
+  closable: boolean
+}): React.JSX.Element {
   const open = useSetAtom(openSessionRowAtom)
-  const create = useSetAtom(newSessionAtom)
-  const reload = useSetAtom(reloadSessionsAtom)
-  const setQuery = useSetAtom(sessionQueryAtom)
-  const setFilter = useSetAtom(sessionFilterAtom)
-  const now = useNow()
+  const close = useSetAtom(closeSessionRowAtom)
   const listRef = useRef<HTMLDivElement>(null)
   const [focusKey, setFocusKey] = useState<string | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
@@ -866,18 +939,13 @@ export function SessionList(): React.JSX.Element {
   const live = useAtomValue(agentSessionsAtom)
   const tabDrag = useTabDrag()
 
-  const visible = useMemo(
-    () => rows.filter((r) => rowMatches(r, query, filter)),
-    [rows, query, filter]
-  )
-  const groups = useMemo(() => groupRows(visible, now), [visible, now])
-  const order = groups.flatMap((g) => g.rows.map((r) => r.item.key))
+  const rows = groups.flatMap((g) => g.rows)
+  const order = rows.map((r) => r.item.key)
   // One card in the tab order: the focused one, else the open one, else the first.
   const tabKey =
     (focusKey !== null && order.includes(focusKey) && focusKey) ||
-    visible.find((r) => r.current)?.item.key ||
+    rows.find((r) => r.current)?.item.key ||
     order[0]
-  const listed = rows.some((r) => r.item.archived !== true || filter.archived)
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const keys = ["ArrowDown", "ArrowUp", "Home", "End"]
@@ -902,33 +970,200 @@ export function SessionList(): React.JSX.Element {
   }
 
   return (
+    <>
+      <div
+        ref={listRef}
+        onKeyDown={onKeyDown}
+        className="flex flex-col gap-3"
+        data-session-list=""
+      >
+        {groups.map((group) => (
+          <div
+            key={group.id}
+            role={group.label === undefined ? undefined : "group"}
+            aria-label={group.label}
+            className="flex flex-col gap-0.5"
+          >
+            {group.label !== undefined && (
+              <div
+                aria-hidden="true"
+                className={cn(
+                  "px-2 pt-1 pb-0.5 text-xs text-muted-foreground/70",
+                  group.id === "needs-you" && "font-medium text-foreground"
+                )}
+              >
+                {group.label}
+              </div>
+            )}
+            {group.rows.map((row) => {
+              const isOpen = openKeys.has(row.item.key)
+              const withClose = closable && isOpen
+              return (
+                <CardWithMenu
+                  key={row.item.key}
+                  row={row}
+                  renaming={renaming === row.item.key}
+                  onRename={() => setRenaming(row.item.key)}
+                  onRenamed={() => {
+                    setRenaming(null)
+                    // Back to the card, as the field found it.
+                    requestAnimationFrame(() =>
+                      listRef.current
+                        ?.querySelector<HTMLButtonElement>(
+                          `[data-session-card="${CSS.escape(row.item.key)}"]`
+                        )
+                        ?.focus()
+                    )
+                  }}
+                  onDelete={() => setDeleting(row)}
+                  onClose={isOpen ? () => void close(row.item) : undefined}
+                  closable={withClose}
+                >
+                  <SessionCard
+                    row={row}
+                    now={now}
+                    focusable={row.item.key === tabKey}
+                    onFocus={() => setFocusKey(row.item.key)}
+                    onOpen={() => void open(row.item)}
+                    // A row that can be a tab drags as one, onto the content
+                    // or the strip.
+                    {...tabDrag(tabOf(row.item, live))}
+                    onKeyDown={(e) => {
+                      // F2 renames, as it does in the documents tree.
+                      if (
+                        e.key === "F2" &&
+                        abilities.get(keyOwner(row.item.key))?.rename
+                      ) {
+                        e.preventDefault()
+                        setRenaming(row.item.key)
+                      }
+                    }}
+                    // Room for the buttons the hover shows: ⋯, and × on an
+                    // open card.
+                    className={
+                      withClose
+                        ? "group-hover/card:pe-16 group-focus-within/card:pe-16"
+                        : "group-hover/card:pe-9 group-focus-within/card:pe-9"
+                    }
+                  />
+                </CardWithMenu>
+              )
+            })}
+          </div>
+        ))}
+      </div>
+      <DeleteDialog row={deleting} onClose={() => setDeleting(null)} />
+    </>
+  )
+}
+
+/** The keys of the rows open in the Sessions list. */
+function useOpenKeys(): ReadonlySet<string> {
+  const rows = useAtomValue(openSessionRowsAtom)
+  return useMemo(() => new Set(rows.map((r) => r.item.key)), [rows])
+}
+
+/** The sidebar's Sessions: the open ones, what needs you first, each with
+ *  its ×. Closed ones are in History. */
+export function SessionList(): React.JSX.Element {
+  const rows = useAtomValue(openSessionRowsAtom)
+  const all = useAtomValue(sessionRowsAtom)
+  const status = useAtomValue(sessionsStatusAtom)
+  const create = useSetAtom(newSessionAtom)
+  const reload = useSetAtom(reloadSessionsAtom)
+  const setView = useSetAtom(agentsViewAtom)
+  const openKeys = useOpenKeys()
+  const now = useNow()
+
+  return (
     <section aria-label="Sessions" className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-2 ps-2">
-        <h3 className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+      {/* The Holis section's header: the label over the rows' icons, its +
+          in line with Holis' own. */}
+      <div className="flex items-center justify-between gap-2 pe-1">
+        <h3 className="flex items-center gap-1.5 px-2 text-xs font-medium text-muted-foreground select-none">
           Sessions
           {rows.length > 0 && (
-            <span className="tabular-nums">{visible.length}</span>
+            <span className="tabular-nums">{rows.length}</span>
           )}
         </h3>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label="New session"
-              onClick={() => void create()}
-            >
-              <PlusIcon aria-hidden="true" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="right">New session ⌘N</TooltipContent>
-        </Tooltip>
+        <NewSessionButton />
       </div>
 
       {status === "error" ? (
         <div
           role="alert"
           className="flex items-center justify-between gap-2 px-2 text-xs text-muted-foreground"
+        >
+          Could not load the conversations.
+          <Button size="xs" variant="outline" onClick={() => reload()}>
+            Retry
+          </Button>
+        </div>
+      ) : status === "loading" && all.length === 0 ? (
+        <LoadingCards />
+      ) : rows.length === 0 ? (
+        <Empty className="gap-3 p-4">
+          <EmptyHeader>
+            <EmptyTitle className="text-sm">No active sessions</EmptyTitle>
+            <EmptyDescription className="text-xs">
+              Start one and it works in this vault while you write. Closed ones
+              are in History.
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent className="flex-row justify-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => void create()}>
+              <MessageSquarePlusIcon aria-hidden="true" />
+              New session
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setView({ kind: "history" })}
+            >
+              <HistoryIcon aria-hidden="true" />
+              History
+            </Button>
+          </EmptyContent>
+        </Empty>
+      ) : (
+        <SessionCards
+          groups={[{ id: "open", rows }]}
+          now={now}
+          openKeys={openKeys}
+          closable
+        />
+      )}
+    </section>
+  )
+}
+
+/** History: every conversation and run, open or closed, by day, narrowed by
+ *  the search and the filter (`SessionSearch`). */
+export function SessionHistory(): React.JSX.Element {
+  const rows = useAtomValue(sessionRowsAtom)
+  const status = useAtomValue(sessionsStatusAtom)
+  const query = useAtomValue(sessionQueryAtom)
+  const filter = useAtomValue(sessionFilterAtom)
+  const create = useSetAtom(newSessionAtom)
+  const reload = useSetAtom(reloadSessionsAtom)
+  const setQuery = useSetAtom(sessionQueryAtom)
+  const setFilter = useSetAtom(sessionFilterAtom)
+  const openKeys = useOpenKeys()
+  const now = useNow()
+
+  const visible = useMemo(
+    () => rows.filter((r) => rowMatches(r, query, filter)),
+    [rows, query, filter]
+  )
+  const groups = useMemo(() => groupRows(visible, now), [visible, now])
+  const listed = rows.some((r) => r.item.archived !== true || filter.archived)
+
+  return (
+    <section aria-label="History" className="flex flex-col gap-4">
+      {status === "error" ? (
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-2 px-2 text-sm text-muted-foreground"
         >
           Could not load the conversations.
           <Button size="xs" variant="outline" onClick={() => reload()}>
@@ -947,14 +1182,14 @@ export function SessionList(): React.JSX.Element {
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <Button size="sm" onClick={() => void create()}>
+            <Button variant="outline" size="sm" onClick={() => void create()}>
               <MessageSquarePlusIcon aria-hidden="true" />
               New session
             </Button>
           </EmptyContent>
         </Empty>
       ) : visible.length === 0 ? (
-        <div className="flex items-center justify-between gap-2 px-2 text-xs text-muted-foreground">
+        <div className="flex items-center justify-between gap-2 px-2 text-sm text-muted-foreground">
           No conversations match.
           <Button
             size="xs"
@@ -968,76 +1203,13 @@ export function SessionList(): React.JSX.Element {
           </Button>
         </div>
       ) : (
-        <div
-          ref={listRef}
-          onKeyDown={onKeyDown}
-          className="flex flex-col gap-3"
-          data-session-list=""
-        >
-          {groups.map((group) => (
-            <div
-              key={group.id}
-              role="group"
-              aria-label={group.label}
-              className="flex flex-col gap-0.5"
-            >
-              <div
-                aria-hidden="true"
-                className={cn(
-                  "px-2 pb-0.5 text-xs text-muted-foreground",
-                  group.id === "needs-you" && "font-medium text-foreground"
-                )}
-              >
-                {group.label}
-              </div>
-              {group.rows.map((row) => (
-                <CardWithMenu
-                  key={row.item.key}
-                  row={row}
-                  renaming={renaming === row.item.key}
-                  onRename={() => setRenaming(row.item.key)}
-                  onRenamed={() => {
-                    setRenaming(null)
-                    // Back to the card, as the field found it.
-                    requestAnimationFrame(() =>
-                      listRef.current
-                        ?.querySelector<HTMLButtonElement>(
-                          `[data-session-card="${CSS.escape(row.item.key)}"]`
-                        )
-                        ?.focus()
-                    )
-                  }}
-                  onDelete={() => setDeleting(row)}
-                >
-                  <SessionCard
-                    row={row}
-                    vault={vault}
-                    now={now}
-                    focusable={row.item.key === tabKey}
-                    onFocus={() => setFocusKey(row.item.key)}
-                    onOpen={() => void open(row.item)}
-                    // A row that can be a tab drags as one, onto the content
-                    // or the strip.
-                    {...tabDrag(tabOf(row.item, live))}
-                    onKeyDown={(e) => {
-                      // F2 renames, as it does in the documents tree.
-                      if (
-                        e.key === "F2" &&
-                        abilities.get(keyOwner(row.item.key))?.rename
-                      ) {
-                        e.preventDefault()
-                        setRenaming(row.item.key)
-                      }
-                    }}
-                    className="group-hover/card:pe-9 group-focus-within/card:pe-9"
-                  />
-                </CardWithMenu>
-              ))}
-            </div>
-          ))}
-        </div>
+        <SessionCards
+          groups={groups}
+          now={now}
+          openKeys={openKeys}
+          closable={false}
+        />
       )}
-      <DeleteDialog row={deleting} onClose={() => setDeleting(null)} />
     </section>
   )
 }

@@ -41,13 +41,12 @@ import {
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/cn"
 import {
-  ACTIVITY_FILTERS,
   activityEntriesAtom,
-  activityFilterAtom,
+  activityQueryAtom,
+  activitySearchAtom,
   clearActivityAtom,
   entryText,
-  filterEntries,
-  type ActivityFilter,
+  shownEntries,
 } from "@/state/activity"
 import {
   bottomPanelAtom,
@@ -67,10 +66,21 @@ import {
   panelTerminalsAtom,
   terminalLabel,
 } from "@/state/panel-terminals"
+import {
+  appLogEntriesAtom,
+  appLogQueryAtom,
+  appLogSearchAtom,
+  appLogText,
+  clearAppLogAtom,
+  shownAppLog,
+  useAppLog,
+} from "@/state/app-logs"
 import { useShortcutHandlers } from "@/state/shortcuts"
 import { activeRemoteAtom } from "@/state/vaults"
 
+import { PanelLogs, LogsSearch } from "./panel-logs"
 import { PanelOutput } from "./panel-output"
+import { OutputSearch } from "./output-search"
 import { PanelTerminal } from "./panel-terminal"
 
 /**
@@ -92,6 +102,8 @@ const KEY_STEP_LARGE = 64
 
 export function BottomPanel({ onRetryOutput }: { onRetryOutput: () => void }) {
   const [panel, setPanel] = useAtom(bottomPanelAtom)
+  // Main keeps its log from launch, so the panel's copy can start here.
+  const retryLogs = useAppLog()
   const toggle = useSetAtom(togglePanelAtom)
   const [height, setHeight] = useState(readPanelHeight)
   const [resizing, setResizing] = useState(false)
@@ -229,6 +241,14 @@ export function BottomPanel({ onRetryOutput }: { onRetryOutput: () => void }) {
             onRetry={onRetryOutput}
           />
         </div>
+        <div
+          className={cn(
+            "flex min-h-0 flex-1 flex-col",
+            panel.tab !== "logs" && "hidden"
+          )}
+        >
+          <PanelLogs onRetry={retryLogs} />
+        </div>
       </div>
     </div>
   )
@@ -289,11 +309,20 @@ function PanelHeader({
           <TabsTrigger value="output" className="text-xs">
             Output
           </TabsTrigger>
+          <TabsTrigger value="logs" className="text-xs">
+            Logs
+          </TabsTrigger>
         </TabsList>
       </Tabs>
       <div className="flex-1" />
       <div className="flex items-center gap-1">
-        {tab === "terminal" ? <TerminalControls /> : <OutputControls />}
+        {tab === "terminal" ? (
+          <TerminalControls />
+        ) : tab === "output" ? (
+          <OutputControls />
+        ) : (
+          <LogsControls />
+        )}
         <div className="bg-border mx-1 h-4 w-px" aria-hidden />
         <HeaderButton
           label={maximized ? "Restore panel size" : "Maximize panel"}
@@ -356,27 +385,14 @@ function TerminalControls() {
 }
 
 function OutputControls() {
-  const [filter, setFilter] = useAtom(activityFilterAtom)
   const entries = useAtomValue(activityEntriesAtom)
+  const query = useAtomValue(activityQueryAtom)
+  const search = useAtomValue(activitySearchAtom)
   const clear = useSetAtom(clearActivityAtom)
-  const shown = filterEntries(entries, filter)
+  const shown = shownEntries(entries, query, search)
   return (
     <>
-      <Select
-        value={filter}
-        onValueChange={(v) => setFilter(v as ActivityFilter)}
-      >
-        <SelectTrigger size="sm" aria-label="Channel" className="text-xs">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {ACTIVITY_FILTERS.map((f) => (
-            <SelectItem key={f.value} value={f.value} className="text-xs">
-              {f.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <OutputSearch />
       <HeaderButton
         label="Copy output"
         disabled={shown.length === 0}
@@ -391,6 +407,38 @@ function OutputControls() {
       </HeaderButton>
       <HeaderButton
         label="Clear output"
+        disabled={entries.length === 0}
+        onClick={() => void clear()}
+      >
+        <EraserIcon aria-hidden className="size-3.5" />
+      </HeaderButton>
+    </>
+  )
+}
+
+function LogsControls() {
+  const entries = useAtomValue(appLogEntriesAtom)
+  const query = useAtomValue(appLogQueryAtom)
+  const search = useAtomValue(appLogSearchAtom)
+  const clear = useSetAtom(clearAppLogAtom)
+  const shown = shownAppLog(entries, query, search)
+  return (
+    <>
+      <LogsSearch />
+      <HeaderButton
+        label="Copy logs"
+        disabled={shown.length === 0}
+        onClick={() => {
+          void navigator.clipboard
+            .writeText(shown.map(appLogText).join("\n"))
+            .then(() => toast.success("Logs copied"))
+            .catch(() => toast.error("Could not copy the logs"))
+        }}
+      >
+        <CopyIcon aria-hidden className="size-3.5" />
+      </HeaderButton>
+      <HeaderButton
+        label="Clear logs"
         disabled={entries.length === 0}
         onClick={() => void clear()}
       >

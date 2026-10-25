@@ -29,6 +29,8 @@ it('answers every bridge method that is not the renderer’s at the app door', (
     AGENT_NAMESPACES,
     agentCapabilities({
       sessions: {} as never,
+      own: {} as never,
+      providers: [],
       terminals: {} as never,
       liveRemote: () => null,
       commitNow: async () => null,

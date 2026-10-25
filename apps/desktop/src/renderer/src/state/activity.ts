@@ -11,23 +11,33 @@ import { atom, useSetAtom, useStore } from 'jotai'
 import { useCallback, useEffect } from 'react'
 import type { ActivityChannel, ActivityEntry } from '../../../main/activity/log'
 import { trpc } from '@/lib/trpc'
+import { createFilterQuery, createFilterRule } from '@/components/reui/filters/filters-query'
+import type { FilterNode, FilterQuery } from '@/components/reui/filters/filters-types'
 
 export type { ActivityChannel, ActivityEntry }
 
 /** As many as main keeps. */
 export const ACTIVITY_CAP = 2000
 
-/** The Output's filter: everything, or one channel. */
-export type ActivityFilter = 'all' | ActivityChannel
+/** The channels as the Output names them, beside their marks. */
+export const ACTIVITY_CHANNEL_LABELS: Record<ActivityChannel, string> = {
+  git: 'Git',
+  sync: 'Sync',
+  agent: 'Agent',
+  plugins: 'Plugins',
+  app: 'Holi',
+}
 
-export const ACTIVITY_FILTERS: readonly { value: ActivityFilter; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: 'git', label: 'Git' },
-  { value: 'sync', label: 'Sync' },
-  { value: 'agent', label: 'Agent' },
-  { value: 'plugins', label: 'Plugins' },
-  { value: 'app', label: 'App' },
-]
+export const ACTIVITY_LEVEL_LABELS: Record<ActivityEntry['level'], string> = {
+  info: 'Info',
+  warn: 'Warning',
+  error: 'Error',
+}
+
+/** A channel's name as the Output shows it, beside its mark. */
+export function channelLabel(channel: ActivityChannel): string {
+  return ACTIVITY_CHANNEL_LABELS[channel]
+}
 
 export const activityEntriesAtom = atom<readonly ActivityEntry[]>([])
 
@@ -35,7 +45,42 @@ export const activityEntriesAtom = atom<readonly ActivityEntry[]>([])
  *  fails, the error with Retry. */
 export const activityLoadAtom = atom<'loading' | 'ready' | 'error'>('loading')
 
-export const activityFilterAtom = atom<ActivityFilter>('all')
+/** The Output's Filters: one query tree over channel, level, vault and
+ *  message, as ReUI's Filters edits it. */
+export const activityQueryAtom = atom<FilterQuery>(createFilterQuery())
+
+/** The Output's search, over message, detail, channel and vault. */
+export const activitySearchAtom = atom('')
+
+/** The query that shows one channel and nothing else. */
+export function channelQuery(channel: ActivityChannel): FilterQuery {
+  return withChannelRule(createFilterQuery(), channel, 'only')
+}
+
+/**
+ * A channel's quick filter, from a click on a row's channel: `only` shows that
+ * channel, `hide` everything but it. It replaces any top-level channel rule
+ * already there, so a second click narrows again rather than ANDing two
+ * channels into nothing; every other rule stays.
+ */
+export function withChannelRule(
+  query: FilterQuery,
+  channel: ActivityChannel,
+  mode: 'only' | 'hide',
+): FilterQuery {
+  return {
+    ...query,
+    rules: [
+      ...query.rules.filter((node) => node.type !== 'rule' || node.path[0] !== 'channel'),
+      createFilterRule({
+        id: `${mode}-${channel}`,
+        path: ['channel'],
+        operator: mode === 'only' ? 'is' : 'is_not',
+        value: channel,
+      }),
+    ],
+  }
+}
 
 /** The newest id the person has seen in the Output: an error after it lights
  *  the status bar's Output item. */
@@ -69,11 +114,82 @@ export function mergeEntries(
   return all.length > cap ? all.slice(all.length - cap) : all
 }
 
-export function filterEntries(
+function readPath(e: ActivityEntry, path: readonly string[]): unknown {
+  switch (path[0]) {
+    case 'channel':
+      return e.channel
+    case 'level':
+      return e.level
+    case 'vault':
+      return e.remote
+    case 'message':
+      return e.message
+    default:
+      return undefined
+  }
+}
+
+const list = (value: unknown) => (Array.isArray(value) ? value : [value])
+const text = (value: unknown) => String(value ?? '').toLowerCase()
+const isBlank = (value: unknown) => value === undefined || value === null || value === ''
+
+const TESTS: Record<string, (actual: unknown, value: unknown) => boolean> = {
+  is: (actual, value) => actual === value,
+  is_not: (actual, value) => actual !== value,
+  is_any_of: (actual, value) => list(value).includes(actual),
+  is_none_of: (actual, value) => !list(value).includes(actual),
+  contains: (actual, value) => text(actual).includes(text(value)),
+  not_contains: (actual, value) => !text(actual).includes(text(value)),
+  starts_with: (actual, value) => text(actual).startsWith(text(value)),
+  empty: (actual) => isBlank(actual),
+  not_empty: (actual) => !isBlank(actual),
+}
+
+/** A rule still being built (no value yet) constrains nothing. */
+function isIncomplete(operator: string, value: unknown): boolean {
+  if (operator === 'empty' || operator === 'not_empty') return false
+  if (isBlank(value)) return true
+  return Array.isArray(value) && (value.length === 0 || value.some(isBlank))
+}
+
+/**
+ * A Filters query against one line, its fields read through `read`. Shared
+ * by the Output and the Logs tab. null abstains: an unfinished rule must not
+ * satisfy an OR on its own.
+ */
+export function evaluateFilter(
+  node: FilterNode,
+  read: (path: readonly string[]) => unknown,
+): boolean | null {
+  if (node.type === 'group') {
+    const votes = node.rules
+      .map((child) => evaluateFilter(child, read))
+      .filter((vote): vote is boolean => vote !== null)
+    if (votes.length === 0) return null
+    return node.combinator === 'and' ? votes.every(Boolean) : votes.some(Boolean)
+  }
+  const test = TESTS[node.operator]
+  if (!test || isIncomplete(node.operator, node.value)) return null
+  const result = test(read(node.path), node.value)
+  return node.negated ? !result : result
+}
+
+/** The lines the Output shows: those the query passes and the search finds. */
+export function shownEntries(
   entries: readonly ActivityEntry[],
-  filter: ActivityFilter,
+  query: FilterQuery,
+  search: string,
 ): readonly ActivityEntry[] {
-  return filter === 'all' ? entries : entries.filter((e) => e.channel === filter)
+  const needle = search.trim().toLowerCase()
+  const noRules = query.rules.length === 0
+  if (noRules && needle === '') return entries
+  return entries.filter((e) => {
+    if (!noRules && evaluateFilter(query, (path) => readPath(e, path)) === false) return false
+    if (needle === '') return true
+    return [e.message, e.detail, e.channel, channelLabel(e.channel), e.remote].some(
+      (field) => field !== undefined && field.toLowerCase().includes(needle),
+    )
+  })
 }
 
 /** `HH:MM:SS`, local, for a line's time. */
@@ -82,6 +198,13 @@ export function clockTime(iso: string): string {
   if (Number.isNaN(d.getTime())) return '--:--:--'
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+/** Date and time to the second, local, for an opened line. */
+export function fullTime(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' })
 }
 
 /** A line as text, for the clipboard. */

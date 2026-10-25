@@ -4,6 +4,10 @@
  * runs, an automation's runs) and the agent's own live sessions, merged by job
  * id, with the state each row shows, the filter, and the groups.
  *
+ * The sidebar's Sessions are the open rows, as tabs are open documents: one
+ * the person started stays open until they close it, which stops what it runs.
+ * Every row, open or closed, is in History.
+ *
  * The states are after MonoCode's session cards (MIT, Copyright (c) 2026
  * Nick; see NOTICE.md): working while a turn is in flight, needs you while a
  * permission prompt or a question waits, and done from the moment a turn ends
@@ -13,7 +17,6 @@
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
 import {
-  activeRemoteAtom,
   agentsSelectionAtom,
   appModeAtom,
   agentsSlotsAtom,
@@ -23,7 +26,8 @@ import {
   type PluginStore,
 } from '@/plugin-api'
 import { agentsViewAtom, agentsViewOf } from './agents-view'
-import { newViewSessionAtom, showSessionAtom } from './session-view'
+import { stopSessionAtom } from './send'
+import { showSessionAtom, startViewSessionAtom } from './session-view'
 import { NEW_SESSION, agentSessionsAtom, type AgentSession } from './sessions'
 
 export type { AgentsSessionItem }
@@ -157,6 +161,37 @@ export function nextEndedAt(
   return next ?? (endedAt as Record<string, number>)
 }
 
+/** Which rows are open in the Sessions list, kept on this machine. */
+export interface OpenRecord {
+  /** Since when this machine has kept track: rows the person started after
+   *  it open on their own; older ones wait in History. */
+  since: number
+  /** Opened from History, the command menu or an Inbox. */
+  opened: Record<string, true>
+  /** Closed in the list, by when. */
+  closed: Record<string, number>
+}
+
+/**
+ * Whether a row is in the Sessions list: one that needs you always is (a
+ * Holi's run that asks for you); one the person started is from the moment
+ * it starts until they close it; any other once they open it.
+ */
+export function isOpenRow(row: SessionRow, rec: OpenRecord): boolean {
+  const { item } = row
+  if (row.state === 'needs-you') return true
+  if (item.archived === true) return false
+  if (rec.opened[item.key] === true) return true
+  return item.by === undefined && rec.closed[item.key] === undefined && item.updatedAt >= rec.since
+}
+
+/** The open rows as the list orders them: what needs you, what is pinned,
+ *  then the most recent. */
+export function openOrder(rows: readonly SessionRow[]): SessionRow[] {
+  const rank = (r: SessionRow) => (r.state === 'needs-you' ? 0 : r.item.pinned === true ? 1 : 2)
+  return [...rows].sort((a, b) => rank(a) - rank(b) || b.item.updatedAt - a.item.updatedAt)
+}
+
 /** Who started the rows a filter keeps. */
 export type SessionSource = 'all' | 'mine' | 'agents'
 
@@ -263,16 +298,19 @@ export function age(at: number, now: number): string {
   return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date(at))
 }
 
-/** The vault as a person names it: `notes` for `owner/notes`. */
-export const vaultName = (remote: string | null): string =>
-  remote === null ? '' : (remote.split('/').pop() ?? remote)
-
 // ----------------------------------------------------------------- atoms
 
 /** When each row was last opened, kept on this machine. */
 export const sessionsSeenAtom = atomWithStorage<SeenRecord>('holi.agents.sessions.seen', {
   since: Date.now(),
   seen: {},
+})
+
+/** Which rows are open in the Sessions list, kept on this machine. */
+export const sessionsOpenAtom = atomWithStorage<OpenRecord>('holi.agents.sessions.open', {
+  since: Date.now(),
+  opened: {},
+  closed: {},
 })
 
 /** When each live session's last turn ended, as this window saw it. */
@@ -350,6 +388,7 @@ export const sessionTabLookAtom = atom((get) => {
   return (selection: { owner: string; id: string }): AgentsTabLook | undefined => {
     const view = agentsViewOf(selection)
     if (view.kind === 'inbox') return { title: 'Inbox', state: 'idle' }
+    if (view.kind === 'history') return { title: 'History', state: 'idle' }
     const jobId = view.kind === 'session' ? view.id : null
     const row = rows.find((r) => isCurrent(r.item, selection, jobId))
     if (row === undefined) return undefined
@@ -383,6 +422,7 @@ export const markSessionUnreadAtom = atom(null, (_get, set, key: string) =>
 export function sessionListVault(store: PluginStore): () => void {
   // Persist the first `since`, so a later launch does not move it.
   store.set(sessionsSeenAtom, (r) => r)
+  store.set(sessionsOpenAtom, (r) => r)
   let previous = new Map(store.get(sessionItemsAtom).map((i) => [i.key, i.state]))
   const offItems = store.sub(sessionItemsAtom, () => {
     const items = store.get(sessionItemsAtom)
@@ -411,15 +451,47 @@ export function sessionListVault(store: PluginStore): () => void {
   }
 }
 
-/** The vault's name, for each row's third line. */
-export const sessionVaultNameAtom = atom((get) => vaultName(get(activeRemoteAtom)))
+/** The rows open in the Sessions list, in its order. */
+export const openSessionRowsAtom = atom((get): SessionRow[] => {
+  const rec = get(sessionsOpenAtom)
+  return openOrder(get(sessionRowsAtom).filter((r) => isOpenRow(r, rec)))
+})
+
+/** Put a row in the Sessions list: opening it from anywhere. */
+export const keepSessionOpenAtom = atom(null, (_get, set, key: string) =>
+  set(sessionsOpenAtom, (r) => {
+    if (r.opened[key] === true && r.closed[key] === undefined) return r
+    const { [key]: _was, ...closed } = r.closed
+    return { ...r, opened: { ...r.opened, [key]: true }, closed }
+  }),
+)
+
+/**
+ * Close a row in the Sessions list: it leaves the list for History, and what
+ * it runs stops, through its owner (a chat's turn) or as the agent's live
+ * session (`claude stop`). A tab showing it is not closed: that is the tab's.
+ */
+export const closeSessionRowAtom = atom(null, async (get, set, item: AgentsSessionItem) => {
+  set(sessionsOpenAtom, (r) => {
+    const { [item.key]: _was, ...opened } = r.opened
+    return { ...r, opened, closed: { ...r.closed, [item.key]: Date.now() } }
+  })
+  const close = ownerSessions(get(agentsSlotsAtom), item.key)?.close
+  if (close !== undefined) await set(close, item.key)
+  const jobId = item.jobId
+  if (jobId !== undefined && get(agentSessionsAtom).some((s) => s.id === jobId)) {
+    await set(stopSessionAtom, jobId)
+  }
+})
 
 /**
  * Open a row: what it selects, or the agent session it is (brought back
- * first when it has finished, its conversation intact). Marks it read.
+ * first when it has finished, its conversation intact). Marks it read, and
+ * puts it in the Sessions list.
  */
 export const openSessionRowAtom = atom(null, async (get, set, item: AgentsSessionItem) => {
   set(markSessionSeenAtom, item.key)
+  set(keepSessionOpenAtom, item.key)
   set(appModeAtom, 'agents')
   if (item.selection !== undefined) {
     set(agentsSelectionAtom, item.selection)
@@ -430,20 +502,11 @@ export const openSessionRowAtom = atom(null, async (get, set, item: AgentsSessio
   return set(showSessionAtom, { session: item.jobId, live })
 })
 
-/**
- * A new session, in whichever view a slot offers for it (chat's composer),
- * else the agent's own: the list's +, its empty state, and ⌘N.
- */
-export const newSessionAtom = atom(null, async (get, set) => {
-  const create = get(agentsSlotsAtom).find((s) => s.sessions?.create !== undefined)?.sessions
-    ?.create
-  if (create !== undefined) {
-    await set(create)
-    set(appModeAtom, 'agents')
-    return
-  }
-  await set(newViewSessionAtom)
-})
+/** A new session in the default agent: the list's +, its empty state, ⌘N,
+ *  the tab strip's + on the Agents side (the mode's `newSession`). */
+export const newSessionAtom = atom(null, (_get, set, beside?: boolean) =>
+  set(startViewSessionAtom, beside ? { beside: true } : {}),
+)
 
 /** What each owner lets its rows' menu do, by plugin id: only what its slot
  *  backs. */

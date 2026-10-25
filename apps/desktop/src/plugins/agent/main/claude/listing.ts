@@ -17,6 +17,7 @@
  */
 import { watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
+import type { ProviderId } from '../provider'
 
 /** Claude Code's live statuses. `waiting` is the one Holi shows as needs-you;
  *  `shell` is a shell command running, which is working. */
@@ -48,6 +49,8 @@ export type SessionState = 'needs-you' | 'working' | 'idle'
 
 export interface SessionSummary {
   id: string
+  /** Which agent runs it (`provider.ts`). */
+  provider: ProviderId
   /** Claude Code's name, else 'New session'. */
   name: string
   state: SessionState
@@ -139,7 +142,7 @@ export function summarise(
   row: ClaudeRow,
   working: ReadonlySet<string>,
   reading: StatusReading = {},
-): SessionSummary {
+): Omit<SessionSummary, 'provider'> {
   let state: SessionState = 'idle'
   if (row.status === 'waiting') state = 'needs-you'
   else if (row.status === 'busy' || row.status === 'shell' || working.has(row.id)) state = 'working'

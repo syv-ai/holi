@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react"
 
-import { BRAND_MARK_PATHS } from "@/composites/BrandMark"
+import { BRAND_WORDMARK } from "@/composites/BrandMark"
 
 /* The "ASCII wake" component from Bencho (bencho.dev/licence, MIT), with one
    shape added: Holi's wordmark beside the original cube. */
@@ -104,15 +104,15 @@ function cube(x: number, y: number, dark: boolean) {
 }
 
 /* ── the other shape: Holi's wordmark ───────────────────────
-   The stacked HOLI, filled rather than faced: there are no faces to
+   The lowercase holi, filled rather than faced: there are no faces to
    light, so the light falls from above across the whole mark, the
    same `lit` read the same way round for the page. Each cell is
    sampled at nine points, so a cell the outline cuts through gets
    a smaller dot and the letters keep their curves at this
    resolution. The mark sits flush left in its block, so it lines up
    with the column of text under it. */
-const MARK_W = 263
-const MARK_H = 193
+const MARK_W = BRAND_WORDMARK.width
+const MARK_H = BRAND_WORDMARK.height
 const MARK_PAD = 4
 let markPath: Path2D | null = null
 let markProbe: CanvasRenderingContext2D | null = null
@@ -128,7 +128,7 @@ function mark(
   if (typeof Path2D === "undefined") return 0
   if (!markPath || !markProbe) {
     markPath = new Path2D()
-    for (const d of BRAND_MARK_PATHS) markPath.addPath(new Path2D(d))
+    for (const d of BRAND_WORDMARK.paths) markPath.addPath(new Path2D(d))
     markProbe = document.createElement("canvas").getContext("2d")
   }
   if (!markProbe) return 0
@@ -139,7 +139,9 @@ function mark(
     for (let b = 0; b < 3; b++) {
       const px = (x + ((a - 1) * cw) / 3 - MARK_PAD) / k
       const py = (y + ((b - 1) * ch) / 3 - oy) / k
-      if (markProbe.isPointInPath(markPath, px, py)) hits++
+      // Even-odd, as the wordmark fills: the counters in o and h are holes.
+      if (markProbe.isPointInPath(markPath, px, py, BRAND_WORDMARK.fillRule))
+        hits++
     }
   }
   if (!hits) return 0
@@ -147,12 +149,16 @@ function mark(
   return lit(0.95 - 0.5 * down, dark) * Math.sqrt(hits / 9)
 }
 
+/* The wordmark is wide and low: its block keeps the width the stacked mark's
+   had, so the home's columns stay where they were. */
+const HOLI_W = 320
+
 /* each shape's block, px */
 const BLOCKS = {
   cube: { w: 360, h: 240 },
   holi: {
-    h: 224,
-    w: Math.ceil((MARK_W * (224 - MARK_PAD * 2)) / MARK_H) + MARK_PAD * 2,
+    w: HOLI_W,
+    h: Math.ceil(((HOLI_W - MARK_PAD * 2) * MARK_H) / MARK_W) + MARK_PAD * 2,
   },
 }
 

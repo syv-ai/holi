@@ -144,9 +144,14 @@ export function optionalPlugins(known: readonly PluginInfo[]): PluginInfo[] {
   return known.filter((p) => p.builtIn !== true)
 }
 
-/** Is `id` a built-in part's, whose pins the plugins files ignore? */
+/** Parts Holi had and no longer has: `chat`, whose conversations became
+ *  the agent's terminal sessions. An older Holi may have pinned them. */
+export const RETIRED_PLUGINS: readonly string[] = ['chat']
+
+/** Is `id` a built-in part's, or a retired one's, whose pins the plugins
+ *  files ignore and drop at their next write? */
 export function isBuiltInPlugin(id: string, known: readonly PluginInfo[]): boolean {
-  return known.some((p) => p.id === id && p.builtIn === true)
+  return RETIRED_PLUGINS.includes(id) || known.some((p) => p.id === id && p.builtIn === true)
 }
 
 /** Plugin ids as the settings tab names them, joined: "Vault apps and Agent". */

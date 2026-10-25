@@ -36,6 +36,7 @@ export type {
   SettingsSectionHeading,
   SidebarApp,
   StatusItem,
+  CommandMenuEntry,
   PaletteItem,
   Surface,
   SurfaceTabLook,
@@ -67,7 +68,7 @@ export { type TabDescriptor } from '@/state/tab-descriptor'
 export { arcadeCastAtom, gridArcadeAtom } from '@/state/grid-arcade'
 export { ArcadeTakeControl, HoliArcade } from '@/components/monocode/arcade/HoliArcade'
 export { sessionAtom } from '@/state/session'
-export { usePluginSetting } from '@/state/settings'
+export { agentProviderSettingAtom, usePluginSetting } from '@/state/settings'
 export { activeModeAtom } from '@/state/color-scheme'
 export { appModeAtom, type AppMode } from '@/state/app-mode'
 export { agentsSelectionAtom, agentsSlotsAtom, type AgentsSelection } from '@/state/agents-slots'

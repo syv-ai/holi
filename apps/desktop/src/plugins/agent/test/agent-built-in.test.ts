@@ -1,7 +1,7 @@
 /**
- * The agent and chat are built in: a vault whose `plugins.yaml` an older Holi
- * wrote with `agent: false` and `chat: false` still seeds `.claude/` and
- * serves `agent.*`, and the next write drops the stale pins.
+ * The agent is built in, and chat is retired: a vault whose `plugins.yaml` an
+ * older Holi wrote with `agent: false` and `chat: false` still seeds
+ * `.claude/` and serves `agent.*`, and the next write drops the stale pins.
  */
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -36,6 +36,8 @@ it('runs whatever a stale plugins.yaml pins for it', async () => {
     AGENT_NAMESPACES,
     agentCapabilities({
       sessions: {} as never,
+      own: {} as never,
+      providers: [],
       terminals: { list: () => [] } as never,
       liveRemote: () => 'o/r',
       commitNow: async () => null,
@@ -74,7 +76,7 @@ it('runs whatever a stale plugins.yaml pins for it', async () => {
     join(root, '.holi/settings/plugins.yaml'),
     'plugins:\n  agent: false\n  chat: false\n  google: true\n',
   )
-  expect([...(await host.enabled(root))]).toEqual(expect.arrayContaining(['agent', 'chat']))
+  expect([...(await host.enabled(root))]).toEqual(expect.arrayContaining(['agent']))
   await host.seed(root)
   expect(await exists(join(root, 'AGENTS.md'))).toBe(true)
   const settings = JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8'))

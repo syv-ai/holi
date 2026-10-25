@@ -4,6 +4,7 @@ import type { HeldBackFile } from '../../main/vault/large-files'
 import type { PluginEvent } from '../../main/plugin-host/events'
 import type { UpdateStatus } from '../../main/updates/state'
 import type { ActivityEntry } from '../../main/activity/log'
+import type { AppLogEntry } from '../../main/logs/app-log'
 import type { TerminalEvent } from '../../main/terminal/terminals'
 import type { TrpcEnvelope, TrpcOpWire } from './lib/ipc-link'
 
@@ -73,6 +74,11 @@ declare global {
       activity: {
         onEntry(cb: (entry: ActivityEntry) => void): () => void
       }
+      /** The application log, a line at a time as main keeps it. Returns
+       *  its unsubscribe. */
+      logs: {
+        onEntry(cb: (entry: AppLogEntry) => void): () => void
+      }
       /** The bottom panel's shells. Each returns its unsubscribe. */
       terminal: {
         onData(cb: (event: Extract<TerminalEvent, { kind: 'data' }>) => void): () => void
@@ -90,6 +96,8 @@ declare global {
       /** The app's colour scheme, so the native window (its glass, menus and
        *  scrollbars) is drawn to match. */
       setAppearance(scheme: 'light' | 'dark' | 'system'): void
+      /** Show this PNG data URL as the dock's icon (macOS). */
+      setDockIcon(pngDataUrl: string): void
       /** Native "save as" for something made from the vault file `path`.
        *  Presents a save sheet beside it, named after it with `extension`
        *  (Downloads when `path` is not in the vault); resolves to the chosen

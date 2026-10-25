@@ -21,6 +21,7 @@ import {
   PLUGINS_LOCAL_FILE,
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
+  VAULT_SETTING_DEFAULTS,
   pluginSettingValue,
   type PluginInfo,
   type ResolvedVaultSettings,
@@ -97,3 +98,12 @@ export function usePluginSetting(info: PluginInfo, key: string): unknown {
   const values = cached !== null && cached.remote === remote ? cached.settings.pluginValues : {}
   return pluginSettingValue(values, info, key)
 }
+
+/** The agent a new session runs on this machine (`agentProvider`): its
+ *  default until the vault's settings are read. */
+export const agentProviderSettingAtom = atom((get) => {
+  const cached = get(vaultSettingsAtom)
+  return cached !== null && cached.remote === get(activeRemoteAtom)
+    ? cached.settings.agentProvider
+    : VAULT_SETTING_DEFAULTS.agentProvider
+})

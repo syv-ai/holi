@@ -143,6 +143,12 @@ export type EditorFont = 'mono' | 'sans' | 'serif'
 
 export const EDITOR_FONTS: readonly EditorFont[] = ['mono', 'sans', 'serif']
 
+/** Which coding agent a new session runs (docs/features/agent-sessions.md,
+ *  Providers). */
+export type AgentProviderId = 'claude' | 'codex'
+
+export const AGENT_PROVIDER_IDS: readonly AgentProviderId[] = ['claude', 'codex']
+
 /**
  * What each name means, and the only place it means anything.
  *
@@ -216,6 +222,8 @@ export interface ResolvedAppSettings {
   editorFont: EditorFont
   /** Space on an empty line opens an ask for a new agent session. */
   spaceAsksAgent: boolean
+  /** The agent a new session runs unless the person picks another. */
+  agentProvider: AgentProviderId
   /** The Holis' game plays behind the empty view (a New tab). */
   gridArcade: boolean
   hooks: VaultHooks
@@ -386,6 +394,7 @@ export type VaultSettingKey =
   | 'windowGlass'
   | 'editorFont'
   | 'spaceAsksAgent'
+  | 'agentProvider'
   | 'gridArcade'
   | 'maxCommittedFileBytes'
 
@@ -683,6 +692,26 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     askedAtBirth: false,
     whereToChange: LOCAL_FILE_HINT,
     section: 'editor',
+  },
+  {
+    key: 'agentProvider',
+    label: 'New sessions run',
+    explanation:
+      'The coding agent a new session starts in. Holis and automations always run Claude Code.',
+    type: {
+      kind: 'enum',
+      options: [
+        { value: 'claude', label: 'Claude Code' },
+        { value: 'codex', label: 'Codex' },
+      ],
+    },
+    default: 'claude' as AgentProviderId,
+    // Machine-local: which agent is installed and signed in is this
+    // machine's, not the vault's.
+    target: 'local',
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'general',
   },
 ]
 

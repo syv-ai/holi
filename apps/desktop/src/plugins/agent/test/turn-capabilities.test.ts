@@ -25,6 +25,8 @@ async function rig() {
   const root = await makeClone(await makeRemote())
   const table = agentCapabilities({
     sessions: {} as never,
+    own: {} as never,
+    providers: [],
     terminals: {} as never,
     liveRemote: () => REMOTE,
     commitNow: () => plainGit(root, ['commit', '-am', 'revert']),

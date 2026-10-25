@@ -13,12 +13,13 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import './terminal.css'
-import { useAtomValue } from 'jotai'
-import { useCallback, useEffect, useRef } from 'react'
+import { useAtomValue, useSetAtom } from 'jotai'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { agentCap } from './agent-cap'
 import { terminalKeyAction } from './lib/terminal-keys'
+import { vaultLinks } from './lib/terminal-links'
 import { registerSessionTerminal, resizeTerminal, typeIntoTerminal } from './lib/session-terminals'
-import { activeRemoteAtom, cn } from '@/plugin-api'
+import { activeRemoteAtom, cn, openDocumentAtom, snapshotAtom, vaultsAtom } from '@/plugin-api'
 
 /** Claude Code is an Ink TUI: it draws its own cursor, so xterm's would blink a
  * second one at the buffer end. Ink's init re-enables it (`\x1b[?25h`), hence
@@ -65,6 +66,20 @@ export function SessionTerminal({
   const remote = useAtomValue(activeRemoteAtom)
   const remoteRef = useRef(remote)
   remoteRef.current = remote
+  // What a path in the output may link to: the vault's files, and its clone's
+  // root for an absolute path. Read through refs, so the provider registered
+  // once sees the vault as it is now.
+  const snapshot = useAtomValue(snapshotAtom)
+  const root = useAtomValue(vaultsAtom).find((v) => v.remote === remote)?.path ?? null
+  const paths = useMemo(
+    () => new Set([...snapshot.docs.map((d) => d.path), ...snapshot.files.map((f) => f.path)]),
+    [snapshot],
+  )
+  const linkRef = useRef({ paths, root })
+  linkRef.current = { paths, root }
+  const openDocument = useSetAtom(openDocumentAtom)
+  const openRef = useRef(openDocument)
+  openRef.current = openDocument
   const type = useCallback(
     (data: string) => {
       if (remoteRef.current !== null) typeIntoTerminal(remoteRef.current, terminalId, data)
@@ -182,6 +197,24 @@ export function SessionTerminal({
 
     const typed = term.onData(type)
 
+    // A vault path in the output opens the file in a pane.
+    const links = term.registerLinkProvider({
+      provideLinks(y, callback) {
+        const text = term.buffer.active.getLine(y - 1)?.translateToString(true) ?? ''
+        const { paths: known, root: clone } = linkRef.current
+        const found = vaultLinks(text, (path) => known.has(path), clone)
+        callback(
+          found.length === 0
+            ? undefined
+            : found.map((link) => ({
+                range: { start: { x: link.start + 1, y }, end: { x: link.end, y } },
+                text: link.path,
+                activate: () => openRef.current(link.path),
+              })),
+        )
+      },
+    })
+
     // Replay what main's mirror recorded (output from before this terminal
     // existed), THEN start taking live data.
     void (async () => {
@@ -206,6 +239,7 @@ export function SessionTerminal({
       clearTimeout(reHide)
       unregister()
       typed.dispose()
+      links.dispose()
       selection.dispose()
       observer.disconnect()
       term.dispose()
@@ -227,7 +261,24 @@ export function SessionTerminal({
     term?.write(DISABLE_FOCUS_REPORTING)
     term?.focus()
     const id = requestAnimationFrame(() => requestAnimationFrame(() => syncSize()))
-    return () => cancelAnimationFrame(id)
+    // A fit before xterm has measured its cells (a just-built terminal, a font
+    // still loading) does nothing, and a pane that keeps its size never fires
+    // the observer again: the program would stay at the 80×24 it opened at.
+    // So fit again once the fonts are in and after the first output. A fit
+    // that changes nothing sends nothing.
+    let live = true
+    void document.fonts?.ready.then(() => live && syncSize())
+    const firstOutput = term?.onWriteParsed(() => {
+      firstOutput?.dispose()
+      if (live) syncSize()
+    })
+    const late = window.setTimeout(() => syncSize(), 500)
+    return () => {
+      live = false
+      cancelAnimationFrame(id)
+      window.clearTimeout(late)
+      firstOutput?.dispose()
+    }
   }, [visible, build, syncSize])
 
   return (

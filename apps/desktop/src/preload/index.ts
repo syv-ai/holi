@@ -78,6 +78,8 @@ const onUpdateStatus = pushChannel<unknown>('updates:status')
 
 /** A line of the activity log (the bottom panel's Output), as it is written. */
 const onActivityEntry = pushChannel<unknown>('activity:entry')
+/** A line of the application log (the bottom panel's Logs), as it is kept. */
+const onLogEntry = pushChannel<unknown>('logs:entry')
 
 /** The bottom panel's shells: their output and their exit. Keystrokes and
  *  sizes go back over tRPC, each naming the vault and the terminal. */
@@ -126,6 +128,9 @@ contextBridge.exposeInMainWorld('holi', {
   activity: {
     onEntry: onActivityEntry,
   },
+  logs: {
+    onEntry: onLogEntry,
+  },
   terminal: {
     onData: onTerminalData,
     onExit: onTerminalExit,
@@ -146,6 +151,9 @@ contextBridge.exposeInMainWorld('holi', {
   startDrag: (paths: string[]) => ipcRenderer.send('holi:startDrag', paths),
   setAppearance: (scheme: 'light' | 'dark' | 'system') =>
     ipcRenderer.send('holi:appearance', scheme),
+  /** The dock's icon, drawn by the window in the theme's colours: a PNG data
+   *  URL (`lib/app-icon.ts`). */
+  setDockIcon: (pngDataUrl: string) => ipcRenderer.send('holi:dockIcon', pngDataUrl),
   showSaveDialog: (input: {
     remote: string
     path: string

@@ -1,22 +1,35 @@
 /**
- * The Agents mode's sidebar: the conversation search on top, the Inbox with
- * what needs you, the places other plugins add beside it, their sections by
- * order, then one session list of every conversation and run (the slots' rows
- * and the live sessions) as cards, what needs you pinned first; and the
- * status the mode toggle reports.
+ * The Agents mode's sidebar: the Inbox with what needs you and History, the
+ * places other plugins add beside them, their sections by order, then the
+ * open sessions (the slots' rows and the live sessions) as cards, what needs
+ * you first; History with every one, by day, under the search; and the status
+ * the mode toggle reports.
  */
 import { render, screen, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore, type PrimitiveAtom } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { activeRemoteAtom, agentsSelectionAtom, type AgentsSessionItem } from '@/plugin-api'
+import { SidebarProvider } from '@/components/ui/sidebar'
 import { AgentsSidebar } from '../renderer/agents/AgentsSidebar'
 import { agentsStatusAtom, inboxCountAtom } from '../renderer/state/agents-status'
 import { agentsViewAtom } from '../renderer/state/agents-view'
-import { NO_FILTER, sessionFilterAtom, sessionsSeenAtom } from '../renderer/state/session-list'
+import { SessionHistory, SessionSearch } from '../renderer/sessions/SessionList'
+import {
+  NO_FILTER,
+  sessionFilterAtom,
+  sessionsOpenAtom,
+  sessionsSeenAtom,
+  type OpenRecord,
+} from '../renderer/state/session-list'
 import { agentSessionsAtom } from '../renderer/state/sessions'
 
-vi.mock('../renderer/agent-cap', () => ({ agentCap: {} }))
+const agentCap = vi.hoisted(() => ({
+  stop: vi.fn(async () => ({ ok: true })),
+  open: vi.fn(async () => ({ ok: true, terminalId: 't1' })),
+  start: vi.fn(async () => ({ ok: true, sessionId: 'p0123456789ab', terminalId: 't2' })),
+}))
+vi.mock('../renderer/agent-cap', () => ({ agentCap }))
 vi.mock('@/state/agents-slots', async (orig) => {
   const real = await orig<typeof import('@/state/agents-slots')>()
   const { atom } = await import('jotai')
@@ -28,6 +41,7 @@ vi.mock('@/state/agents-slots', async (orig) => {
     set(real.agentsSelectionAtom, { owner: 'chat', id: 'new' }),
   )
   const archive = atom(null, () => {})
+  const close = atom(null, (_get, set, key: string) => set(calls, (c) => [...c, `close ${key}`]))
   // What the menus asked the chat slot to do, in order.
   const calls = atom<string[]>([])
   const rename = atom(null, (_get, set, key: string, title: string) =>
@@ -68,6 +82,7 @@ vi.mock('@/state/agents-slots', async (orig) => {
           rename,
           pin,
           remove,
+          close,
         },
       },
     ]),
@@ -88,7 +103,11 @@ const fixtures = (
   }
 ).__test
 
-beforeEach(() => localStorage.clear())
+beforeEach(() => {
+  localStorage.clear()
+  agentCap.stop.mockClear()
+  agentCap.open.mockClear()
+})
 
 const NOW = Date.now()
 
@@ -109,50 +128,133 @@ function setup({
     chat('c3', { title: 'Old notes', archived: true }),
   ],
   status = 'ready' as 'loading' | 'ready' | 'error',
+  // Since 0: every row the person started is open.
+  open = { since: 0, opened: {}, closed: {} } as OpenRecord,
+  history = false,
 } = {}) {
   const store = createStore()
   store.set(activeRemoteAtom, 'o/notes')
   store.set(sessionsSeenAtom, { since: 0, seen: {} })
   store.set(sessionFilterAtom, NO_FILTER)
+  store.set(sessionsOpenAtom, open)
   store.set(fixtures.chatItems, chats)
   store.set(fixtures.chatStatus, status)
   if (sessions) {
     store.set(agentSessionsAtom, [
-      { id: 'abcd1234', name: 'Inbox cleanup', state: 'needs-you', waitingFor: 'Run holi?' },
-      { id: 'efgh5678', name: 'Notes pass', state: 'idle', startedAt: NOW - 120_000 },
+      {
+        id: 'abcd1234',
+        provider: 'claude',
+        name: 'Inbox cleanup',
+        state: 'needs-you',
+        waitingFor: 'Run holi?',
+      },
+      {
+        id: 'efgh5678',
+        provider: 'claude',
+        name: 'Notes pass',
+        state: 'idle',
+        startedAt: NOW - 120_000,
+      },
     ])
   }
   render(
     <Provider store={store}>
-      <AgentsSidebar />
+      <SidebarProvider>
+        <AgentsSidebar />
+        {history && (
+          <>
+            <SessionSearch />
+            <SessionHistory />
+          </>
+        )}
+      </SidebarProvider>
     </Provider>,
   )
   return store
 }
 
-const cards = () =>
-  within(screen.getByRole('region', { name: 'Sessions' }))
-    .getAllByRole('button')
+const cards = (region: 'Sessions' | 'History' = 'Sessions') =>
+  within(screen.getByRole('region', { name: region }))
+    .queryAllByRole('button')
     .filter((b) => b.hasAttribute('data-session-card'))
 
-const cardKeys = () => cards().map((c) => c.getAttribute('data-session-card'))
+const cardKeys = (region: 'Sessions' | 'History' = 'Sessions') =>
+  cards(region).map((c) => c.getAttribute('data-session-card'))
 
-test('search first, then the Inbox, the slots in order, then the sessions', () => {
+const groupsOf = (region: 'Sessions' | 'History') =>
+  within(screen.getByRole('region', { name: region }))
+    .queryAllByRole('group')
+    .map((g) => g.getAttribute('aria-label'))
+
+test('the Inbox and History, the slots in order, then the sessions', () => {
   setup()
-  expect(screen.getByLabelText('Search conversations')).toBeTruthy()
-  expect(screen.getByRole('button', { name: /^Inbox( \d+)?$/ })).toBeTruthy()
+  expect(screen.queryByLabelText('Search conversations')).toBeNull()
+  expect(screen.getByRole('button', { name: /^Inbox(, \d+ need you)?$/ })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'History' })).toBeTruthy()
   expect(screen.getByText('Automations row')).toBeTruthy()
   const sections = screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))
   expect(sections).toEqual(['Holis', 'Sessions'])
 })
 
-test('one list of chats and live sessions, what needs you pinned first, archived left out', () => {
+test('Sessions lists the open chats and live sessions, what needs you first, without day groups', () => {
   setup()
   expect(cardKeys()).toEqual(['agent:abcd1234', 'chat:c2', 'chat:c1', 'agent:efgh5678'])
-  const groups = within(screen.getByRole('region', { name: 'Sessions' }))
-    .getAllByRole('group')
-    .map((g) => g.getAttribute('aria-label'))
-  expect(groups).toEqual(['Needs you', 'Today'])
+  expect(groupsOf('Sessions')).toEqual([])
+})
+
+test('History has every row by day, archived left out', () => {
+  setup({ history: true })
+  expect(cardKeys('History')).toEqual(['agent:abcd1234', 'chat:c2', 'chat:c1', 'agent:efgh5678'])
+  expect(groupsOf('History')).toEqual(['Needs you', 'Today'])
+})
+
+test('a row started before this machine kept track waits in History until opened', async () => {
+  const store = setup({
+    sessions: false,
+    chats: [chat('c1', { title: 'Old plan' }), chat('c2', { title: 'New plan', updatedAt: NOW })],
+    open: { since: NOW - 1000, opened: {}, closed: {} },
+    history: true,
+  })
+  expect(cardKeys()).toEqual(['chat:c2'])
+  await userEvent.click(
+    within(screen.getByRole('region', { name: 'History' })).getByRole('button', {
+      name: 'Old plan',
+    }),
+  )
+  expect(store.get(sessionsOpenAtom).opened['chat:c1']).toBe(true)
+  expect(cardKeys()).toEqual(['chat:c2', 'chat:c1'])
+})
+
+test("a Holi's run is in Sessions only while it needs you", () => {
+  const by = { kind: 'holi' as const, name: 'Mina' }
+  setup({
+    sessions: false,
+    chats: [
+      chat('h1', { title: 'Asks', by, state: 'needs-you', waitingFor: 'Edit a.md?' }),
+      chat('h2', { title: 'Ran', by }),
+    ],
+  })
+  expect(cardKeys()).toEqual(['chat:h1'])
+})
+
+test("a card's × closes it: it leaves Sessions for History and what it runs stops", async () => {
+  const store = setup({ history: true })
+  store.set(fixtures.calls, [])
+  const sessions = within(screen.getByRole('region', { name: 'Sessions' }))
+  await userEvent.click(sessions.getByRole('button', { name: 'Close Weekly review' }))
+  expect(cardKeys()).not.toContain('chat:c2')
+  expect(cardKeys('History')).toContain('chat:c2')
+  expect(store.get(fixtures.calls)).toEqual(['close chat:c2'])
+  expect(store.get(sessionsOpenAtom).closed['chat:c2']).toBeGreaterThan(0)
+
+  await userEvent.click(sessions.getByRole('button', { name: 'Close Notes pass' }))
+  expect(agentCap.stop).toHaveBeenCalledWith('o/notes', { id: 'efgh5678' })
+  // History draws no ×: closing is the open list's.
+  expect(
+    within(screen.getByRole('region', { name: 'History' })).queryByRole('button', {
+      name: /^Close /,
+    }),
+  ).toBeNull()
 })
 
 test('each state reads in words, never colour alone', () => {
@@ -164,8 +266,8 @@ test('each state reads in words, never colour alone', () => {
   expect(within(working!).getByText('Opus')).toBeTruthy()
   expect(done!.getAttribute('aria-label')).toBe('Weekly review, done, not opened yet')
   expect(read!.getAttribute('aria-label')).toBe('Notes pass')
-  // Where it runs: the vault.
-  expect(within(read!).getByText('notes')).toBeTruthy()
+  // Every card is in the open vault, so none repeats its name.
+  expect(within(read!).queryByText(/notes$/)).toBeNull()
 })
 
 test('opening a done row marks it read, and selects what it stands for', async () => {
@@ -178,27 +280,27 @@ test('opening a done row marks it read, and selects what it stands for', async (
   expect(screen.getByRole('button', { name: 'Weekly review' })).toBeTruthy()
 })
 
-test('search narrows the list by title', async () => {
-  setup()
+test('search narrows History by title', async () => {
+  setup({ history: true })
   await userEvent.type(screen.getByLabelText('Search conversations'), 'weekly')
-  expect(cardKeys()).toEqual(['chat:c2'])
+  expect(cardKeys('History')).toEqual(['chat:c2'])
   await userEvent.clear(screen.getByLabelText('Search conversations'))
   await userEvent.type(screen.getByLabelText('Search conversations'), 'zzz')
   expect(screen.getByText('No conversations match.')).toBeTruthy()
 })
 
 test('the filter menu keeps a state, and shows archived on request', async () => {
-  const store = setup()
+  const store = setup({ history: true })
   await userEvent.click(screen.getByRole('button', { name: 'Filter' }))
   await userEvent.click(await screen.findByRole('menuitemcheckbox', { name: 'Working' }))
   expect(store.get(sessionFilterAtom).states).toEqual(['working'])
   await userEvent.keyboard('{Escape}')
-  expect(cardKeys()).toEqual(['chat:c1'])
+  expect(cardKeys('History')).toEqual(['chat:c1'])
   await userEvent.click(screen.getByRole('button', { name: 'Filter, on' }))
   await userEvent.click(await screen.findByRole('menuitemcheckbox', { name: 'Working' }))
   await userEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Show archived' }))
   await userEvent.keyboard('{Escape}')
-  expect(cardKeys()).toContain('chat:c3')
+  expect(cardKeys('History')).toContain('chat:c3')
   expect(screen.getByRole('button', { name: 'Filter, on' })).toBeTruthy()
 })
 
@@ -219,14 +321,31 @@ test('the toggle and the Inbox count sessions and slots alike', () => {
   expect(store.get(inboxCountAtom)).toBe(2)
 })
 
-test('with nothing yet, an empty state starts one in the slot that offers it', async () => {
+test('with nothing yet, an empty state starts one in the default agent', async () => {
   const store = setup({ sessions: false, chats: [] })
-  expect(screen.getByText('No conversations yet')).toBeTruthy()
+  expect(screen.getByText('No active sessions')).toBeTruthy()
   const start = within(screen.getByRole('region', { name: 'Sessions' })).getAllByRole('button', {
     name: 'New session',
   })
   await userEvent.click(start.at(-1)!)
-  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'chat', id: 'new' })
+  expect(agentCap.start).toHaveBeenCalledWith('o/notes', expect.objectContaining({ provider: 'claude' }))
+  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'session:p0123456789ab' })
+  await userEvent.click(
+    within(screen.getByRole('region', { name: 'Sessions' })).getByRole('button', {
+      name: 'History',
+    }),
+  )
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'history' })
+})
+
+test('Open in terminal resumes a copy of the conversation by its id', async () => {
+  setup({
+    sessions: false,
+    chats: [chat('c2', { title: 'Weekly review', sessionId: 'conv-2' })],
+  })
+  await menuOf(/^Weekly review/)
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Open in terminal' }))
+  expect(agentCap.open).toHaveBeenCalledWith('o/notes', expect.objectContaining({ fork: 'conv-2' }))
 })
 
 test('loading draws skeletons', () => {
@@ -241,9 +360,11 @@ test('an error offers Retry, which asks the slots again', async () => {
   expect(store.get(fixtures.reloads)).toBe(1)
 })
 
-/** Open a card's ⋯ menu and list what it offers. */
+/** Open a card's ⋯ menu in Sessions and list what it offers. */
 async function menuOf(title: RegExp): Promise<string[]> {
-  const card = screen.getByRole('button', { name: title })
+  const card = within(screen.getByRole('region', { name: 'Sessions' })).getByRole('button', {
+    name: title,
+  })
   const row = card.closest('[data-session-row]') as HTMLElement
   await userEvent.click(within(row).getByRole('button', { name: /^More actions for/ }))
   const menu = await screen.findByRole('menu')
@@ -259,18 +380,22 @@ test("a chat's menu offers what its owner backs, and a live run its own verbs", 
   store.set(fixtures.calls, [])
   expect(await menuOf(/^Weekly review/)).toEqual([
     'Open to the side',
+    'Open in terminal',
     'Pin to top',
     'Rename',
     'Mark as unread',
     'Copy session ID',
+    'Close session',
     'Archive',
     'Delete…',
   ])
   await userEvent.keyboard('{Escape}')
   expect(await menuOf(/^Notes pass/)).toEqual([
     'Open to the side',
+    'Open in terminal',
     'Mark as unread',
     'Copy session ID',
+    'Close session',
     'Restart',
     'Duplicate',
     'Stop session',
@@ -279,16 +404,16 @@ test("a chat's menu offers what its owner backs, and a live run its own verbs", 
 
 test('Pin to top asks the owner, and a pinned row sits in Pinned above the days', async () => {
   const store = setup({
+    history: true,
     chats: [
       chat('c1', { title: 'Weekly review' }),
       chat('c2', { title: 'Plan the week', pinned: true, updatedAt: NOW - 3 * 86_400_000 }),
     ],
   })
   store.set(fixtures.calls, [])
-  const groups = within(screen.getByRole('region', { name: 'Sessions' }))
-    .getAllByRole('group')
-    .map((g) => g.getAttribute('aria-label'))
-  expect(groups).toEqual(['Needs you', 'Pinned', 'Today'])
+  expect(groupsOf('History')).toEqual(['Needs you', 'Pinned', 'Today'])
+  // Open, it sits above the others in Sessions too.
+  expect(cardKeys().slice(1)).toEqual(['chat:c2', 'chat:c1', 'agent:efgh5678'])
   await menuOf(/^Weekly review/)
   await userEvent.click(screen.getByRole('menuitem', { name: 'Pin to top' }))
   expect(store.get(fixtures.calls)).toEqual(['pin chat:c1 true'])

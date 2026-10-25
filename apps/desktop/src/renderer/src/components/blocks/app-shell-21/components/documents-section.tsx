@@ -21,7 +21,18 @@ import { useTree } from "@headless-tree/react"
 import { toast } from "sonner"
 import { GITKEEP, isHiddenPath, TASKS_CLAIM } from "@holi/shared"
 import { cn } from "@/lib/cn"
+import { SIDEBAR_ROW_FILL } from "@/composites/SidebarNavItem"
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import {
   ContextMenu,
   ContextMenuCheckboxItem,
@@ -83,8 +94,9 @@ import { basename, joinPath, parentOf } from "@/lib/tree-paths"
 import { canMoveInto } from "@/lib/tree-view"
 import { useTabDrag } from "./use-tab-drag"
 import { openDialogAtom } from "@/state/dialogs"
-import { openTabAtom } from "@/state/shell-tabs"
-import { tabForPath } from "@/state/tab-descriptor"
+import { openTabAtom, shellWorkspaceAtom } from "@/state/shell-tabs"
+import { closeTabsWhere } from "@/state/shell-workspace"
+import { tabForPath, tabPath } from "@/state/tab-descriptor"
 import { claimsAtom, folderClaimsAtom, surfacesAtom } from "@/state/plugins"
 import { createTaskAtom, openTaskCountAtom } from "@/state/tasks"
 import { setTreeOrderAtom, treeOrderAtom } from "@/state/tree-order"
@@ -92,6 +104,7 @@ import {
   activeRemoteAtom,
   createFolderAtom,
   createNoteAtom,
+  deleteManyAtom,
   importFilesAtom,
   moveNotesAtom,
   showHiddenByVaultAtom,
@@ -115,6 +128,7 @@ import {
   PlusIcon,
   SquareKanbanIcon,
   SquareSplitHorizontalIcon,
+  Trash2Icon,
 } from "lucide-react"
 
 /** The header tab id of the task board, beside the document paths. */
@@ -250,10 +264,7 @@ export function DocumentsNav({
   return (
     <SidebarMenu className="gap-0.5 px-2">
       <SidebarMenuItem>
-        <SidebarMenuButton
-          onClick={onOpenSearch}
-          className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12"
-        >
+        <SidebarMenuButton onClick={onOpenSearch} className={SIDEBAR_ROW_FILL}>
           <SearchIcon aria-hidden="true" />
           <span>Search</span>
           <KbdGroup className="ms-auto">
@@ -269,7 +280,7 @@ export function DocumentsNav({
           aria-current={activeId === BOARD_TAB ? "page" : undefined}
           onClick={() => onOpen(BOARD_TAB)}
           {...tabDrag({ kind: "board" })}
-          className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12"
+          className={SIDEBAR_ROW_FILL}
         >
           <SquareKanbanIcon aria-hidden="true" />
           <span>Board</span>
@@ -295,7 +306,7 @@ export function DocumentsNav({
             isActive={activeId === APPS_TAB}
             aria-current={activeId === APPS_TAB ? "page" : undefined}
             onClick={() => onOpen(APPS_TAB)}
-            className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12"
+            className={SIDEBAR_ROW_FILL}
           >
             <AppWindowIcon aria-hidden="true" />
             <span>Apps</span>
@@ -329,6 +340,7 @@ type MenuAction =
       icon?: ReactNode
       shortcut?: string
       disabled?: boolean
+      destructive?: boolean
       run: () => void
     }
   | { kind: "check"; label: string; checked: boolean; toggle: () => void }
@@ -366,6 +378,7 @@ function ContextMenuActions({ actions }: { actions: MenuAction[] }) {
         return (
           <ContextMenuItem
             key={index}
+            variant={action.destructive ? "destructive" : "default"}
             disabled={action.disabled}
             onSelect={action.run}
           >
@@ -411,6 +424,7 @@ function DropdownMenuActions({ actions }: { actions: MenuAction[] }) {
         return (
           <DropdownMenuItem
             key={index}
+            variant={action.destructive ? "destructive" : "default"}
             disabled={action.disabled}
             onSelect={action.run}
           >
@@ -465,7 +479,11 @@ export function FilesSection({
   const createFolder = useSetAtom(createFolderAtom)
   const createTask = useSetAtom(createTaskAtom)
   const moveNotes = useSetAtom(moveNotesAtom)
+  const deleteMany = useSetAtom(deleteManyAtom)
+  const setWorkspace = useSetAtom(shellWorkspaceAtom)
   const importFiles = useSetAtom(importFilesAtom)
+  /** The row a menu's Delete is asking about, until it is confirmed. */
+  const [deleting, setDeleting] = useState<string | null>(null)
   const [dropping, setDropping] = useState(false)
   /** The row the context menu was opened on, or null for the empty space. */
   const [menuTarget, setMenuTarget] = useState<string | null>(null)
@@ -784,7 +802,35 @@ export function FilesSection({
       },
       ...pluginRowActions(id),
       { kind: "separator" },
+      {
+        kind: "item",
+        label: "Delete",
+        icon: <Trash2Icon aria-hidden="true" />,
+        destructive: true,
+        run: () => setDeleting(id),
+      },
+      { kind: "separator" },
     ]
+  }
+
+  /** Delete a file, or a folder (an app's bundle too) with everything in it,
+   *  and close the tabs that showed any of it. Git keeps what it was. */
+  function remove(id: string) {
+    const folder = snapshot.dirs.includes(id)
+    const inside = (path: string) => path === id || path.startsWith(`${id}/`)
+    void attempt(`delete “${basename(id)}”`, async () => {
+      await deleteMany(
+        folder
+          ? { paths: files.allPaths.filter(inside), folders: [id] }
+          : { paths: [id] }
+      )
+      setWorkspace((ws) =>
+        closeTabsWhere(ws, (key) => {
+          const path = tabPath(key)
+          return path !== null && inside(path)
+        })
+      )
+    })
   }
 
   /** What a plugin's claim adds to this row's menu (an app's "Finish this
@@ -1083,6 +1129,36 @@ export function FilesSection({
           </ContextMenuContent>
         </ContextMenu>
       </div>
+
+      <AlertDialog
+        open={deleting !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleting(null)
+        }}
+      >
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete “{deleting === null ? "" : basename(deleting)}”?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleting !== null && snapshot.dirs.includes(deleting)
+                ? "It and everything in it leave the vault for everyone it syncs with."
+                : "It leaves the vault for everyone it syncs with."}{" "}
+              Its history keeps the last version.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => deleting !== null && remove(deleting)}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </SidebarGroup>
   )
 }

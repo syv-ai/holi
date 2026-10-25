@@ -7,7 +7,7 @@
  */
 import { atom } from 'jotai'
 
-export type PanelTab = 'terminal' | 'output'
+export type PanelTab = 'terminal' | 'output' | 'logs'
 
 export interface BottomPanelState {
   open: boolean

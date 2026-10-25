@@ -39,6 +39,7 @@ const OTHER: Turn = { base: 'ccc', end: 'ddd', at: '2026-09-09T11:00:00Z', sessi
 const file = (path: string) => ({ path, status: 'M', added: 1, removed: 0 })
 
 const session = (id: string, state: 'working' | 'idle' = 'idle'): AgentSession => ({
+  provider: 'claude',
   id,
   name: 'New session',
   state,

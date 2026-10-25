@@ -32,6 +32,16 @@ class FakePty implements PtyProcess {
 
 const TARGET = { root: '/Users/ada/Holi/syv/vault', configDir: '/cfg/vault', binDir: '/holi/bin' }
 
+/** What a background session's terminal is opened with: Claude Code's list,
+ *  or one session. */
+const on = (attach?: string, bin: string | null = '/usr/local/bin/claude') => ({
+  remote: 'syv/vault',
+  cwd: TARGET.root,
+  command: terminalCommand(TARGET, attach, () => bin),
+  notInstalled: 'Claude CLI not found',
+  ...(attach === undefined ? {} : { attach }),
+})
+
 function setup() {
   const spawns: Array<{ pty: FakePty; file: string; args: string[]; opts: any }> = []
   const sent: Array<[string, unknown]> = []
@@ -42,7 +52,6 @@ function setup() {
       spawns.push({ pty, file, args, opts })
       return pty
     },
-    command: (target, attach) => terminalCommand(target, attach, () => '/usr/local/bin/claude'),
     // Never probe the real OS for a fake pid: it may be someone else's.
     probePid: () => 'alive',
     killGraceMs: 5,
@@ -61,8 +70,8 @@ afterEach(() => {
 describe('agent terminals', () => {
   it('opens the list, or one session, in the vault on its config dir', () => {
     const { terminals, spawns } = setup()
-    terminals.open({ remote: 'syv/vault', target: TARGET })
-    terminals.open({ remote: 'syv/vault', target: TARGET, attach: '1234abcd' })
+    terminals.open(on())
+    terminals.open(on('1234abcd'))
 
     expect(spawns.map((s) => s.args)).toEqual([['agents'], ['attach', '1234abcd']])
     for (const { opts } of spawns) {
@@ -75,8 +84,8 @@ describe('agent terminals', () => {
 
   it('finds the window it opened for a session, and the one on the list', () => {
     const { terminals } = setup()
-    const list = terminals.open({ remote: 'syv/vault', target: TARGET })
-    const one = terminals.open({ remote: 'syv/vault', target: TARGET, attach: '1234abcd' })
+    const list = terminals.open(on())
+    const one = terminals.open(on('1234abcd'))
     expect(terminals.listTerminal()).toBe(list.ok ? list.id : null)
     expect(terminals.launchedFor('1234abcd')).toBe(one.ok ? one.id : null)
     expect(terminals.launchedFor('ffffffff')).toBeNull()
@@ -84,7 +93,7 @@ describe('agent terminals', () => {
 
   it('labels a terminal with the title its program sets', async () => {
     const { terminals, spawns, sent } = setup()
-    terminals.open({ remote: 'syv/vault', target: TARGET })
+    terminals.open(on())
     spawns[0]!.pty.emit('\x1b]0;claude agents\x07')
     await vi.waitFor(() => expect(terminals.list()[0]?.title).toBe('claude agents'))
     expect(sent.filter(([c]) => c === 'terminals').length).toBeGreaterThan(0)
@@ -92,7 +101,7 @@ describe('agent terminals', () => {
 
   it('holds a paste until the TUI has printed and settled, then sends it unsent', async () => {
     const { terminals, spawns } = setup()
-    const res = terminals.open({ remote: 'syv/vault', target: TARGET, attach: '1234abcd' })
+    const res = terminals.open(on('1234abcd'))
     const id = res.ok ? res.id : ''
     expect(terminals.paste(id, 'look at this')).toBe(true)
     expect(spawns[0]!.pty.writes).toEqual([])
@@ -108,14 +117,14 @@ describe('agent terminals', () => {
 
   it('gives up waiting on a terminal that never prints', async () => {
     const { terminals, spawns } = setup()
-    const res = terminals.open({ remote: 'syv/vault', target: TARGET })
+    const res = terminals.open(on())
     terminals.paste(res.ok ? res.id : '', 'x')
     await vi.waitFor(() => expect(spawns[0]!.pty.writes).toHaveLength(1), { timeout: 1_000 })
   })
 
   it('streams output only once attached, after replaying the record', async () => {
     const { terminals, spawns, sent } = setup()
-    const res = terminals.open({ remote: 'syv/vault', target: TARGET, notice: 'sign in\r\n' })
+    const res = terminals.open({ ...on(), notice: 'sign in\r\n' })
     const id = res.ok ? res.id : ''
     spawns[0]!.pty.emit('before')
     expect(sent.some(([c]) => c === 'pty-data')).toBe(false)
@@ -129,7 +138,7 @@ describe('agent terminals', () => {
 
   it('drops a terminal whose client exits, and says so', () => {
     const { terminals, spawns, sent } = setup()
-    const res = terminals.open({ remote: 'syv/vault', target: TARGET, attach: '1234abcd' })
+    const res = terminals.open(on('1234abcd'))
     const id = res.ok ? res.id : ''
     spawns[0]!.pty.exit(0)
     expect(terminals.list()).toEqual([])
@@ -139,7 +148,7 @@ describe('agent terminals', () => {
 
   it('closes a terminal even when its client never reports the exit', async () => {
     const { terminals, sent } = setup()
-    const res = terminals.open({ remote: 'syv/vault', target: TARGET })
+    const res = terminals.open(on())
     const id = res.ok ? res.id : ''
     await terminals.close(id)
     expect(terminals.list()).toEqual([])
@@ -149,9 +158,8 @@ describe('agent terminals', () => {
   it('refuses without a binary', () => {
     const terminals = createAgentTerminals({
       emit: () => {},
-      command: () => null,
       log: () => {},
     })
-    expect(terminals.open({ remote: 'syv/vault', target: TARGET }).ok).toBe(false)
+    expect(terminals.open(on(undefined, null)).ok).toBe(false)
   })
 })

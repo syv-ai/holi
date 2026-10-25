@@ -10,11 +10,11 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarSeparator,
   useSidebar,
 } from "@/components/ui/sidebar"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/cn"
+import { SIDEBAR_ROW_FILL } from "@/composites/SidebarNavItem"
 import { runningPluginsAtom } from "@/state/plugins"
 import {
   sidebarSectionAtom,
@@ -41,8 +41,7 @@ import {
   SquareKanbanIcon,
 } from "lucide-react"
 
-const RAIL_BUTTON =
-  "hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12 size-8 p-2 [&>span:last-child]:sr-only"
+const RAIL_BUTTON = `${SIDEBAR_ROW_FILL} size-8 p-2 [&>span:last-child]:sr-only`
 
 export function ThreadSidebar({
   activeId,
@@ -221,19 +220,20 @@ export function ThreadSidebar({
           )}
         >
           {section === "documents" ? (
-            <>
+            // Space between the groups, not a rule, as in the Agents tab; the
+            // Files group's own inset makes up the rest.
+            <div className="flex min-h-0 flex-1 flex-col gap-2">
               <DocumentsNav
                 activeId={activeId}
                 onOpenSearch={onOpenSearch}
                 onOpen={onOpen}
               />
-              <SidebarSeparator className="mx-0 my-3" />
               <FilesSection
                 activeId={activeId}
                 onOpen={onOpen}
                 onMoved={onMoved}
               />
-            </>
+            </div>
           ) : null}
 
           {section === "agents" ? (
@@ -257,7 +257,7 @@ export function ThreadSidebar({
               collapsed={false}
               active={app.id === activeApp}
               onSelect={onOpenApp}
-              className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12"
+              className={SIDEBAR_ROW_FILL}
             />
           ))}
         </SidebarMenu>

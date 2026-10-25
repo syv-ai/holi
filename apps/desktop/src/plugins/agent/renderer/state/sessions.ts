@@ -1,4 +1,5 @@
 import { atom } from 'jotai'
+import type { AgentProviderId } from '@holi/shared'
 import { agentCap } from '../agent-cap'
 import { sessionsWorthAsking } from '../lib/notices'
 import { receivePtyData } from '../lib/session-terminals'
@@ -27,13 +28,16 @@ export const AGENT_SURFACE = 'agent'
 export type SessionState = 'needs-you' | 'working' | 'idle'
 
 /**
- * One of the vault's live Claude Code background sessions, by its job id.
- * Mirrors `SessionSummary` in main/claude/listing.ts, pushed as a list
- * in the agent's `sessions` event. Only live ones: a stopped or finished session lives in
- * Claude Code's own agent list.
+ * One of the vault's live sessions: a Claude Code background session by its
+ * job id, or one Holi runs itself (Codex) by Holi's id. Mirrors
+ * `SessionSummary` in main/claude/listing.ts, pushed as a list in the agent's
+ * `sessions` event. Only live ones: a stopped or finished session lives in
+ * its agent's own history.
  */
 export interface AgentSession {
   id: string
+  /** Which agent runs it. */
+  provider: AgentProviderId
   /** Claude Code's name for it (`--name`, `/rename`, Ctrl+R, or the one it
    *  writes itself), else 'New session'. */
   name: string

@@ -33,20 +33,12 @@ import {
   snapshotLoadedAtom,
 } from "@/state/vaults"
 import { AppCard, AppCardSkeleton, type AppCardActions } from "./app-card"
+import { useNewApp } from "./use-new-app"
 
 const NO_APPS = atom<readonly string[]>([])
 const NO_VERSIONS = atom<Readonly<Record<string, number>>>({})
 const NO_ARCHIVE = atom(null, async () => {})
 const NO_REFRESH = atom(null, async (_get, _set, _id: string) => {})
-
-/** The first `Untitled`, `Untitled 2`, … that no vault path takes, as an
- *  app's name at the vault root. */
-function freeAppName(taken: ReadonlySet<string>): string {
-  for (let n = 1; ; n++) {
-    const name = n === 1 ? "Untitled" : `Untitled ${n}`
-    if (!taken.has(`${name}.app`)) return name
-  }
-}
 
 export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
   const surface = useAtomValue(surfacesAtom).get("app")
@@ -83,34 +75,7 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
   }, [all, snapshot.files])
   const openTab = useSetAtom(openTabAtom)
   /** The apps plugin's New app, as the Files menu offers it. */
-  const create = useAtomValue(claimsAtom).find(
-    (claim) => claim.create?.id === "app"
-  )
-  const [creating, setCreating] = useState(false)
-
-  async function newApp() {
-    if (remote === null || create?.create === undefined) return
-    const taken = new Set([
-      ...snapshot.dirs,
-      ...snapshot.files.map((file) => file.path),
-    ])
-    setCreating(true)
-    try {
-      const entry = await create.create.run({
-        remote,
-        parent: "",
-        name: freeAppName(taken),
-      })
-      if (entry === null) {
-        toast.error("Couldn't create the app. Try again.")
-        return
-      }
-      const suffix = `/${create.folder?.entry ?? "index.html"}`
-      onOpen(entry.endsWith(suffix) ? entry.slice(0, -suffix.length) : entry)
-    } finally {
-      setCreating(false)
-    }
-  }
+  const { create: newApp, creating } = useNewApp(onOpen)
 
   const labelOf = (path: string) =>
     surface === undefined
@@ -257,13 +222,13 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
             title="No apps yet"
             description="An app is a small web page in the vault, like a dashboard or a CSV explorer. Start one here, or ask the agent to build it."
             action={
-              create?.create === undefined
+              newApp === undefined
                 ? undefined
                 : {
                     label: creating ? "Creating…" : "New app",
                     icon: PlusIcon,
-                    disabled: creating || remote === null,
-                    onClick: () => void newApp(),
+                    disabled: creating || newApp === undefined,
+                    onClick: () => void newApp?.(),
                   }
             }
           />

@@ -35,13 +35,16 @@ Electron. `@holi/shared/path-safety-node` is the one Node-only entrypoint.
 
 ## 2. Build only what Claude Code does not do
 
-The agent is Claude Code, unmodified. Holi adds no adapter layer and no prompt-building, and fixes
-forward when a Claude Code release changes something. Users are developers: the raw terminal is the
-interface, git is a tool they already know, and Claude Code is already installed and signed in. With
-the vault being plain files in a git repo, the agent needs no Holi-specific operations at all.
-Drawing Claude Code as a conversation instead of a terminal is an adapter, so it is written to the
-plugin contract like the agent itself: the built-in chat part, the Agents mode's session UI
-([chat](features/chat.md)), which no vault can turn off.
+The agent is a coding agent's own CLI, unmodified: Claude Code or Codex, one **provider** each
+([agent-sessions](features/agent-sessions.md), Providers). Holi adds no adapter layer and no
+prompt-building, and fixes forward when a release changes something. The terminal is the
+interface, whichever agent runs in it: Holi draws around it (the session list, the composer that
+types into it, links to vault files) and never re-draws it, which is what lets any agent with a
+CLI be a session. A provider's core is the command it runs; what else it offers (a supervisor
+that runs sessions unwatched, hooks that report turns, a context reading) are capabilities the UI
+reads rather than assumes. With the vault being plain files in a git repo, the agent needs no
+Holi-specific operations at all. Holi once drew Claude Code as a conversation on its structured
+channel; it was retired because it bound the session UI to one agent's protocol.
 
 ## 3. Processes and the IPC seam
 
@@ -87,10 +90,11 @@ on this machine, or needing one that is off), and every reader in both processes
 processes check their list with `checkPluginCatalogue` at boot, which refuses a missing or circular
 requirement.
 A part of Holi may be written to the plugin contract without being optional: `PluginInfo.builtIn`.
-The agent and chat are built in. The resolver runs a built-in part in every vault whatever the
+The agent is built in. The resolver runs a built-in part in every vault whatever the
 plugins files say, the settings tab and the onboarding act do not list it, a write refuses to pin
 it, and the writer leaves its id out of the `plugins` block, so a pin an older Holi wrote
-(`chat: false`) is ignored at once and gone at the file's next write. They stay under
+(`agent: false`) is ignored at once and gone at the file's next write, as is a retired part's
+(`chat`, `RETIRED_PLUGINS`). They stay under
 `src/plugins/` rather than moving into core: the contract is what keeps core free of Claude Code,
 and what lets Holis, automations and the rest build on the agent (`requires`, `ctx.hear`, its
 `.claude/` seed) without core knowing them. A built-in part may require only other built-in parts,
@@ -120,8 +124,8 @@ core's `holi-vault:`, and a plugin's handler answers 404 while the open vault ha
 marked `frame` serves framed pages: the window guard lets such a frame move within its scheme and
 sends a link out of it to the browser.
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
-renderer imports its main side as types only, for `capClient`. The built-in parts are the agent
-([agent-sessions](features/agent-sessions.md)) and chat, which requires it ([chat](features/chat.md)).
+renderer imports its main side as types only, for `capClient`. The built-in part is the agent
+([agent-sessions](features/agent-sessions.md)).
 The optional plugins are automations and Holis, built on the agent, PDF ([pdf](features/pdf.md)), Google
 ([google](features/google.md)), vault apps ([vault apps](features/vault-apps.md)) and community
 plugins ([community plugins](features/community-plugins.md)), which hosts plugins from other
@@ -207,12 +211,6 @@ and turn ends through `ctx.hear` (what a plugin's main side `publish`es, heard o
 that require it), and fill the Agents view and the Agent menu from slots core knows nothing of
 ([holis](features/holis.md)).
 
-**Chat** is the built-in part that draws Claude Code as a conversation, and the Agents mode's
-home (its new-session page) whenever nothing is selected: Claude Code on its
-structured channel (`stream-json`, with `--permission-prompt-tool stdio`), its prompts Claude Code's
-own, answered from a card. The agent knows nothing of it; chat reaches the agent's turn bracket,
-command target and terminals through general capabilities ([chat](features/chat.md)).
-
 See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-config.md),
 [agent-memory](features/agent-memory.md), [scheduled-agents](features/scheduled-agents.md) and
 [holis](features/holis.md).
@@ -238,8 +236,7 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 
 - `userData` holds the GitHub and Google tokens (encrypted with Electron `safeStorage`), the vault
   registry (which repos are added and where), each vault's agent config directory, the Google cache,
-  which schedules this machine runs (and their run log), the chat plugin's records and transcripts
-  (`agent-chats/`) and the `holi` CLIs. It is a machine fact: a
+  which schedules this machine runs (and their run log) and the `holi` CLIs. It is a machine fact: a
   second laptop starts empty.
 - Per vault, `.holi/settings/app.local.yaml` and `plugins.local.yaml` hold machine-local settings
   (the first also the reminder watermark); `app.yaml` and `plugins.yaml` hold the shared ones.

@@ -1,10 +1,12 @@
 /**
  * The agent's capabilities (docs/features/agent-sessions.md).
  *
- * **Sessions** are Claude Code's background sessions, named by their job id:
- * listed, started, stopped, respawned, duplicated, sent an ask. **Terminals**
- * are Holi's windows onto them, named by a terminal id: listed, attached,
- * detached. Every verb acts in the open vault, and one asked about any other
+ * **Sessions** are of two kinds, one list (docs/features/agent-sessions.md,
+ * Providers): Claude Code's background sessions, named by their job id, and
+ * the sessions Holi runs itself for a provider with no supervisor
+ * (`pty-sessions.ts`), named by Holi's id. Each verb goes to the kind the id
+ * names; one a kind cannot do is refused in words. **Terminals** are Holi's
+ * PTYs, named by a terminal id: listed, attached, detached. Every verb acts in the open vault, and one asked about any other
  * vault is refused. What changes is pushed as the agent's events
  * (`sessions`, `terminals`, `pty-data`, `pty-exit`), and keystrokes and
  * resizes come back as events too, because they must keep their order.
@@ -32,15 +34,18 @@ import {
 import type { ActionResult, AgentSessions, Geometry, OpenResult, StartResult } from './sessions'
 import type { AgentTerminals, TerminalSummary } from './terminals'
 import type { SessionSummary } from '../claude/listing'
+import { hasBackground, isProviderId, type AgentProvider, type ProviderId } from '../provider'
 import { openTurnLog, type TurnRecord } from './turn-log'
-import { cliEnv, resolveClaudeBin } from '../claude/cli'
+import type { PtySessions } from './pty-sessions'
 
-/** Where and how a process runs Claude Code in the open vault. */
-export interface CommandTarget {
-  root: string
-  env: Record<string, string>
-  /** The `claude` binary, or null when it is not on this machine. */
-  claude: string | null
+/** One of the agents a session can run, as the new-session menu lists it. */
+export interface ProviderSummary {
+  id: ProviderId
+  label: string
+  /** Its CLI is on this machine. */
+  installed: boolean
+  /** Its sessions can run with nobody watching (Holis, automations). */
+  background: boolean
 }
 
 export const AGENT_NAMESPACES = ['agent'] as const
@@ -59,9 +64,14 @@ export interface AgentCapabilitiesDeps {
     | 'stop'
     | 'respawn'
     | 'duplicate'
-    | 'bracket'
-    | 'target'
   >
+  /** The sessions Holi runs itself. */
+  own: Pick<
+    PtySessions,
+    'sessions' | 'has' | 'ownsTerminal' | 'terminalOf' | 'start' | 'send' | 'stop'
+  >
+  /** Every provider, the background one first. */
+  providers: readonly AgentProvider[]
   terminals: Pick<AgentTerminals, 'list' | 'attach' | 'close'>
   /** The open vault's remote, or null with none open. */
   liveRemote(): string | null
@@ -91,6 +101,14 @@ function geometry(raw: Record<string, unknown>): Geometry {
   }
 }
 
+/** An optional provider id. */
+function providerParam(raw: Record<string, unknown>): ProviderId | undefined {
+  const value = raw['provider']
+  if (value === undefined || value === null) return undefined
+  if (!isProviderId(value)) throw new CapabilityError('BAD_REQUEST', 'provider is not an agent Holi knows')
+  return value
+}
+
 const idParams = (raw: unknown): { id: string } => ({ id: stringParam(paramsObject(raw), 'id') })
 
 const rangeParams = (raw: unknown): { base: string; end: string } => {
@@ -110,6 +128,16 @@ function relPath(path: string): VaultRelPath {
 
 export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
   const live = (ctx: CapabilityContext): boolean => deps.liveRemote() === ctx.remote
+  /** Whether a provider's sessions are the background kind. Unknown is the
+   *  background provider, which every caller before providers meant. */
+  const isBackground = (id: ProviderId | undefined): boolean => {
+    const p = id === undefined ? undefined : deps.providers.find((x) => x.id === id)
+    return p === undefined || hasBackground(p)
+  }
+  const ownOnly = (verb: string) => ({
+    ok: false as const,
+    message: `Only a Claude Code session can be ${verb} from Holi.`,
+  })
 
   return {
     'agent.sessions': cap({
@@ -121,9 +149,22 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         // Asked as the renderer mounts, and the vault may only just have
         // opened: finish attaching to it first.
         await deps.sessions.ensure()
-        return deps.sessions.sessions()
+        return [...deps.sessions.sessions(), ...deps.own.sessions()]
       },
       text: (sessions) => sessions.map((s) => `${s.state}\t${s.name}`).join('\n'),
+    }),
+
+    /** The agents a session can run, and which are on this machine. */
+    'agent.providers': cap({
+      doors: ['ui'],
+      params: noParams,
+      run: async (): Promise<ProviderSummary[]> =>
+        deps.providers.map((p) => ({
+          id: p.id,
+          label: p.label,
+          installed: p.installed(),
+          background: hasBackground(p),
+        })),
     }),
 
     'agent.terminals': cap({
@@ -148,26 +189,46 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
           ...(p['login'] === true ? { login: true } : {}),
         }
       },
-      run: async (ctx, args): Promise<OpenResult> =>
-        live(ctx) ? deps.sessions.open(args) : notOpen,
+      run: async (ctx, args): Promise<OpenResult> => {
+        if (!live(ctx)) return notOpen
+        // A session Holi runs is its own terminal: that one, never a second.
+        if (args.attach !== undefined && deps.own.has(args.attach)) {
+          const terminalId = deps.own.terminalOf(args.attach)
+          return terminalId === null
+            ? { ok: false, message: 'That session has ended.' }
+            : { ok: true, terminalId }
+        }
+        return deps.sessions.open(args)
+      },
     }),
 
-    /** A new background session and a terminal on it. A `prompt` is its
-     *  first turn; without one it waits for yours. */
+    /** A new session of `provider` (the background one when omitted) and
+     *  its terminal. A `prompt` is its first turn; without one it waits for
+     *  yours. `resume` picks up one of the provider's conversations, by its
+     *  id or `pick` for the provider's own picker. */
     'agent.start': cap({
       doors: ['ui'],
       params: (raw) => {
         const p = paramsObject(raw)
         const name = optionalStringParam(p, 'name')
         const prompt = optionalStringParam(p, 'prompt')
+        const resume = optionalStringParam(p, 'resume')
+        const provider = providerParam(p)
         return {
           ...geometry(p),
           ...(name === undefined ? {} : { name }),
           ...(prompt === undefined ? {} : { prompt }),
+          ...(resume === undefined ? {} : { resume }),
+          ...(provider === undefined ? {} : { provider }),
         }
       },
-      run: async (ctx, args): Promise<StartResult> =>
-        live(ctx) ? deps.sessions.start(args) : notOpen,
+      run: async (ctx, { provider, resume, ...args }): Promise<StartResult> => {
+        if (!live(ctx)) return notOpen
+        if (provider !== undefined && !isBackground(provider)) {
+          return deps.own.start(provider, { ...args, ...(resume === undefined ? {} : { resume }) })
+        }
+        return deps.sessions.start(args)
+      },
     }),
 
     /**
@@ -208,35 +269,58 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
     'agent.watched': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (ctx, { id }): Promise<boolean> => live(ctx) && deps.sessions.watched(id),
+      run: async (ctx, { id }): Promise<boolean> =>
+        live(ctx) && (deps.own.has(id) || deps.sessions.watched(id)),
     }),
 
-    /** Put text in a session's input, unsent: a live one by id, or `'new'`.
-     *  Refused, back to the sender with the text still in the box, when that
-     *  session ended between being picked and being sent to. */
+    /** Put text in a session's input, unsent: a live one by id, or `'new'`,
+     *  a new session of `provider`. Refused, back to the sender with the text
+     *  still in the box, when that session ended between being picked and
+     *  being sent to. */
     'agent.send': cap({
       doors: ['ui'],
       params: (raw) => {
         const p = paramsObject(raw)
-        return { ...geometry(p), text: stringParam(p, 'text'), target: stringParam(p, 'target') }
+        const provider = providerParam(p)
+        return {
+          ...geometry(p),
+          text: stringParam(p, 'text'),
+          target: stringParam(p, 'target'),
+          ...(provider === undefined ? {} : { provider }),
+        }
       },
-      run: async (ctx, args): Promise<OpenResult> =>
-        live(ctx) ? deps.sessions.send(args) : notOpen,
+      run: async (ctx, { provider, ...args }): Promise<OpenResult> => {
+        if (!live(ctx)) return notOpen
+        if (deps.own.has(args.target)) return deps.own.send(args.target, args.text)
+        if (args.target === 'new' && provider !== undefined && !isBackground(provider)) {
+          const started = await deps.own.start(provider, {
+            name: args.text,
+            ...(args.cols === undefined ? {} : { cols: args.cols }),
+            ...(args.rows === undefined ? {} : { rows: args.rows }),
+          })
+          return started.ok ? deps.own.send(started.sessionId, args.text) : started
+        }
+        return deps.sessions.send(args)
+      },
     }),
 
     'agent.stop': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (ctx, { id }): Promise<ActionResult> =>
-        live(ctx) ? deps.sessions.stop(id) : notOpen,
+      run: async (ctx, { id }): Promise<ActionResult> => {
+        if (!live(ctx)) return notOpen
+        return deps.own.has(id) ? deps.own.stop(id) : deps.sessions.stop(id)
+      },
     }),
 
     /** A fresh process for the same conversation (`claude respawn`). */
     'agent.respawn': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (ctx, { id }): Promise<ActionResult> =>
-        live(ctx) ? deps.sessions.respawn(id) : notOpen,
+      run: async (ctx, { id }): Promise<ActionResult> => {
+        if (!live(ctx)) return notOpen
+        return deps.own.has(id) ? ownOnly('restarted') : deps.sessions.respawn(id)
+      },
     }),
 
     /** A background copy of the conversation, and a terminal on it. */
@@ -246,8 +330,10 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         const p = paramsObject(raw)
         return { ...geometry(p), id: stringParam(p, 'id') }
       },
-      run: async (ctx, { id, ...size }): Promise<StartResult> =>
-        live(ctx) ? deps.sessions.duplicate(id, size) : notOpen,
+      run: async (ctx, { id, ...size }): Promise<StartResult> => {
+        if (!live(ctx)) return notOpen
+        return deps.own.has(id) ? ownOnly('copied') : deps.sessions.duplicate(id, size)
+      },
     }),
 
     /** A renderer is taking over a terminal: its replayable state, and its
@@ -258,49 +344,14 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       run: async (ctx, { id }): Promise<string> => (live(ctx) ? deps.terminals.attach(id) : ''),
     }),
 
-    /** Detach: ends the window, never the session. */
+    /** Detach: ends the window, never the session. A session Holi runs is
+     *  its terminal, so its stays open until the session is stopped. */
     'agent.detach': cap({
       doors: ['ui'],
       params: idParams,
       run: async (ctx, { id }): Promise<null> => {
-        if (live(ctx)) await deps.terminals.close(id)
+        if (live(ctx) && !deps.own.ownsTerminal(id)) await deps.terminals.close(id)
         return null
-      },
-    }),
-
-    /**
-     * A turn edge from a driver that runs its own process in the vault and
-     * knows its turns without a hook: sync pauses for it and the turn is
-     * recorded like a session's. The id is the driver's own, never a job id.
-     */
-    'agent.turn': cap({
-      doors: ['ui'],
-      params: (raw) => {
-        const p = paramsObject(raw)
-        const edge = p['edge']
-        if (edge !== 'begin' && edge !== 'end' && edge !== 'forget') {
-          throw new CapabilityError('BAD_REQUEST', 'edge is begin, end or forget')
-        }
-        return { id: stringParam(p, 'id'), edge: edge as 'begin' | 'end' | 'forget' }
-      },
-      run: async (ctx, { id, edge }): Promise<null> => {
-        if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', 'That vault is not open.')
-        deps.sessions.bracket(id, edge)
-        return null
-      },
-    }),
-
-    /** How to run Claude Code in the open vault as a session runs: in its
-     *  clone, with the environment every session gets (its config directory,
-     *  Holi's commands first on `PATH`), and the binary, null when it is not
-     *  installed. Null with no vault attached. */
-    'agent.target': cap({
-      doors: ['ui'],
-      params: noParams,
-      run: async (ctx): Promise<CommandTarget | null> => {
-        const target = live(ctx) ? await deps.sessions.target() : null
-        if (target === null) return null
-        return { root: target.root, env: cliEnv(process.env, target), claude: resolveClaudeBin() }
       },
     }),
 

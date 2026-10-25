@@ -51,6 +51,7 @@ import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
 import { registerIpc } from './ipc'
 import { createActivityLog } from './activity/log'
+import { captureConsole, createAppLog, rendererLevel, type AppLogEntry } from './logs/app-log'
 import { createTerminals } from './terminal/terminals'
 import { createRouter, localToday } from './router'
 import { createCoreServices, createUiReports } from './capabilities/services'
@@ -97,6 +98,13 @@ const FRAME_SCHEMES = frameSchemes(SCHEMES)
 // A second launch must not happen at all: one Holi process owns every vault,
 // so excluding a second app excludes a second writer on every clone, without a
 // per-clone lockfile's stale-lock handling. Must be claimed BEFORE `whenReady`.
+// Everything Holi prints, for the bottom panel's Logs
+// (docs/features/status-bar.md). Listening from the first line main prints,
+// so a launch's own lines are kept before there is a window to send them to.
+let pushLog: (entry: AppLogEntry) => void = () => {}
+const appLog = createAppLog({ onEntry: (entry) => pushLog(entry) })
+captureConsole(appLog)
+
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
@@ -140,6 +148,14 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
   })
+  // The window's console joins main's in the Logs tab.
+  win.webContents.on('console-message', (details) =>
+    appLog.write({
+      source: 'renderer',
+      level: rendererLevel(details.level),
+      text: details.message,
+    }),
+  )
   // Fullscreen hides the traffic lights, so the sidebar's band for them goes.
   const sendFullScreen = () => win.webContents.send('window:fullscreen', win.isFullScreen())
   win.on('enter-full-screen', sendFullScreen)
@@ -194,6 +210,7 @@ async function main(): Promise<void> {
   // (docs/features/status-bar.md). Kept from launch, so it holds what
   // happened before the panel was ever opened.
   const activity = createActivityLog({ onEntry: (entry) => send('activity:entry', entry) })
+  pushLog = (entry) => send('logs:entry', entry)
   activity.write({ channel: 'app', message: `Holi ${app.getVersion()} started` })
   // The bottom panel's shells. `binDir` is read lazily: the `holi` command is
   // installed below, long before anyone opens a terminal.
@@ -459,6 +476,7 @@ async function main(): Promise<void> {
   const router = createRouter({
     updates: updater,
     activity,
+    logs: appLog,
     terminals,
     loginItem: {
       get: () => app.getLoginItemSettings().openAtLogin,

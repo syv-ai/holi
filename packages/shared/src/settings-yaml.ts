@@ -16,7 +16,7 @@
  * YAML is a superset of JSON, so a `.json` settings file also parses here.
  */
 import { parseDocument, stringify as stringifyYaml } from 'yaml'
-import type { PluginInfo } from './plugins'
+import { isBuiltInPlugin, type PluginInfo } from './plugins'
 import { PLUGINS_FILE, PLUGINS_LOCAL_FILE, type PluginSettingType } from './plugin-settings'
 import {
   SETTINGS_FILE,
@@ -318,12 +318,13 @@ function pluginLines(
 ): string[] {
   const has = Object.prototype.hasOwnProperty.call(values, 'plugins')
   const value = values.plugins
-  // An older Holi's pin of a built-in part is dropped, as if never written.
+  // An older Holi's pin of a built-in or retired part is dropped, as if
+  // never written.
   const answered =
     has && typeof value === 'object' && value !== null && !Array.isArray(value)
       ? Object.fromEntries(
           Object.entries(value as Record<string, unknown>).filter(
-            ([id]) => !known.some((p) => p.id === id && p.builtIn === true),
+            ([id]) => !isBuiltInPlugin(id, known),
           ),
         )
       : null

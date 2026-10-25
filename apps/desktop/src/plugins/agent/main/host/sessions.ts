@@ -25,7 +25,7 @@
 import type { PluginCtx } from '../../../../main/plugin-api'
 import type { VaultCliTarget } from '../claude/cli'
 import type { ClaudeRow, SessionSummary } from '../claude/listing'
-import type { AgentProvider, VaultRef } from '../provider'
+import type { BackgroundProvider, VaultRef } from '../provider'
 import type { AgentTerminals } from './terminals'
 import { ContextSnapshot, type FocusInput } from './context-snapshot'
 import { createTurnCoordinator, type TurnCoordinator, type TurnVault } from './turn-coordinator'
@@ -59,18 +59,10 @@ export interface AgentSessionsDeps {
   /** Tell the plugins built on the agent, in main: the session list as it is
    *  pushed (`sessions`) and each turn's end (`turn-end`). */
   publish?(name: string, payload: unknown): void
+  /** The provider whose supervisor runs these sessions. */
   provider: Pick<
-    AgentProvider,
-    | 'cli'
-    | 'parseListing'
-    | 'isLive'
-    | 'summarise'
-    | 'readContextPercent'
-    | 'readModelName'
-    | 'watch'
-    | 'configure'
-    | 'takeFirstSpawn'
-    | 'signInNotice'
+    BackgroundProvider,
+    'id' | 'notInstalled' | 'configure' | 'terminal' | 'firstSpawn' | 'capabilities'
   >
   terminals: AgentTerminals
   /** Holi's generated commands, first on every session's `PATH`. */
@@ -138,13 +130,9 @@ export interface AgentSessions {
   noteStatus(remote: string, jobId: string, status: unknown): void
   /** The focus file is the vault's, so this names no session. */
   setFocus(focus: FocusInput): void
-  /** Where the open vault's commands run: its clone, config directory and
-   *  `PATH`. Null with no vault attached. For a process another driver runs
-   *  in the vault, so it reads what a session reads. */
-  target(): Promise<VaultCliTarget | null>
   /**
-   * A turn edge from a driver outside the listing, which knows its turns
-   * without a hook: the same working set, sync pause and turn record as a
+   * A turn edge from a driver outside the listing (the sessions Holi runs
+   * itself, `pty-sessions.ts`), which knows its turns without the listing: the same working set, sync pause and turn record as a
    * session's. `forget` is its process gone mid-turn: nothing recorded. The
    * listing never names such an id, so its reconcile leaves these alone.
    */
@@ -170,6 +158,8 @@ interface Current {
 export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const log = deps.log ?? ((msg: string) => console.log(`[agent] ${msg}`))
   const provider = deps.provider
+  const bg = provider.capabilities.background
+  const statusReader = provider.capabilities.status
   let current: Current | null = null
   /** The vault `ensure` attached to, until `leave`. */
   let attached: AgentVault | null = null
@@ -225,15 +215,18 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     log,
   })
 
-  const live = (): ClaudeRow[] => rows.filter((row) => provider.isLive(row))
+  const live = (): ClaudeRow[] => rows.filter((row) => bg.isLive(row))
   const summaries = (): SessionSummary[] =>
     live().map((row) => {
       const percent = contextPercent.get(row.id)
       const model = modelName.get(row.id)
-      return provider.summarise(row, coordinator.working, {
-        ...(percent === undefined ? {} : { contextPercent: percent }),
-        ...(model === undefined ? {} : { model }),
-      })
+      return {
+        provider: provider.id,
+        ...bg.summarise(row, coordinator.working, {
+          ...(percent === undefined ? {} : { contextPercent: percent }),
+          ...(model === undefined ? {} : { model }),
+        }),
+      }
     })
 
   /** Tell the renderer the list, when it changed: the vault's, or `remote`'s
@@ -271,7 +264,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       unwatch: () => {},
       seeded: false,
     }
-    next.unwatch = provider.watch(config.dir, () => void refresh(), log)
+    next.unwatch = bg.watch(config.dir, () => void refresh(), log)
     return next
   }
 
@@ -306,9 +299,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   async function readOnce(): Promise<void> {
     const c = current
     if (c === null) return
-    const stdout = await provider.cli.list(targetOf(c))
+    const stdout = await bg.cli.list(targetOf(c))
     if (current !== c) return // the vault moved while we read
-    rows = provider.parseListing(stdout, c.root)
+    rows = bg.parseListing(stdout, c.root)
     const liveRows = live()
     const liveIds = new Set(liveRows.map((r) => r.id))
 
@@ -384,15 +377,20 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     let firstSpawn = false
     if (!c.spawnChecked) {
       c.spawnChecked = true
-      firstSpawn = await provider.takeFirstSpawn(c.configDir).catch(() => false)
+      firstSpawn = (await provider.firstSpawn?.take(c.configDir).catch(() => false)) ?? false
     }
-    const notice = firstSpawn ? provider.signInNotice : undefined
+    const notice = firstSpawn ? provider.firstSpawn?.notice : undefined
+    const target = targetOf(c)
     const res = deps.terminals.open({
       remote: c.remote,
-      target: targetOf(c),
+      cwd: target.root,
+      command: provider.terminal(target, {
+        ...(args.attach === undefined ? {} : { attach: args.attach }),
+        ...(args.fork === undefined ? {} : { fork: args.fork }),
+        ...(args.login === true ? { login: true } : {}),
+      }),
+      notInstalled: provider.notInstalled,
       ...(args.attach === undefined ? {} : { attach: args.attach }),
-      ...(args.fork === undefined ? {} : { fork: args.fork }),
-      ...(args.login === true ? { login: true } : {}),
       ...(args.cols === undefined ? {} : { cols: args.cols }),
       ...(args.rows === undefined ? {} : { rows: args.rows }),
       ...(notice === undefined ? {} : { notice }),
@@ -420,7 +418,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     async start({ name, prompt, model, allow, appendSystemPrompt, cols, rows: r }) {
       const c = await ensureCurrent()
       if (c === null) return noVault
-      const res = await provider.cli.startBg(targetOf(c), {
+      const res = await bg.cli.startBg(targetOf(c), {
         ...(name === undefined ? {} : { name }),
         ...(prompt === undefined ? {} : { prompt }),
         ...(model === undefined ? {} : { model }),
@@ -437,7 +435,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     async launch({ name, prompt, model, allow, appendSystemPrompt }) {
       const c = await ensureCurrent()
       if (c === null) return noVault
-      const res = await provider.cli.startBg(targetOf(c), {
+      const res = await bg.cli.startBg(targetOf(c), {
         name,
         prompt,
         ...(model === undefined ? {} : { model }),
@@ -484,7 +482,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     async stop(id) {
       const c = await ensureCurrent()
       if (c === null) return noVault
-      const res = await provider.cli.stop(targetOf(c), id)
+      const res = await bg.cli.stop(targetOf(c), id)
       await refresh()
       return res
     },
@@ -492,7 +490,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     async respawn(id) {
       const c = await ensureCurrent()
       if (c === null) return noVault
-      const res = await provider.cli.respawn(targetOf(c), id)
+      const res = await bg.cli.respawn(targetOf(c), id)
       await refresh()
       return res
     },
@@ -504,9 +502,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       if (row?.sessionId === undefined) {
         return { ok: false, message: 'Claude Code has not said which conversation this is yet.' }
       }
-      const label = provider.summarise(row, coordinator.working).name
+      const label = bg.summarise(row, coordinator.working).name
       const name = label === 'New session' ? undefined : `${label} (copy)`
-      const res = await provider.cli.forkBg(targetOf(c), row.sessionId, name)
+      const res = await bg.cli.forkBg(targetOf(c), row.sessionId, name)
       if (!res.ok) return res
       await refresh()
       const opened = await openOn(c, { attach: res.id, ...geometry })
@@ -526,13 +524,13 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       void refresh()
     },
 
-    noteStatus(remote, jobId, status) {
+    noteStatus(remote, jobId, report) {
       // Only the vault Holi is showing has rows to put a number on.
       if (current?.remote !== remote) return
-      const percent = provider.readContextPercent(status)
+      const percent = statusReader?.contextPercent(report) ?? null
       if (percent === null) contextPercent.delete(jobId)
       else contextPercent.set(jobId, percent)
-      const model = provider.readModelName(status)
+      const model = statusReader?.model(report) ?? null
       if (model !== null) modelName.set(jobId, model)
       push()
     },
@@ -545,11 +543,6 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         focusWriter = { root: vault.root, snapshot: new ContextSnapshot({ workRoot: vault.root }) }
       }
       focusWriter.snapshot.setFocus(focus)
-    },
-
-    async target() {
-      const c = await ensureCurrent()
-      return c === null ? null : targetOf(c)
     },
 
     bracket(id, edge) {
@@ -584,8 +577,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       // Stop, then remove the ones that never had a turn (`unprompted`).
       const stops = Promise.all(
         live().map(async (row) => {
-          const stopped = await provider.cli.stop(targetOf(c), row.id)
-          if (stopped.ok && unprompted.has(row.id)) await provider.cli.rm(targetOf(c), row.id)
+          const stopped = await bg.cli.stop(targetOf(c), row.id)
+          if (stopped.ok && unprompted.has(row.id)) await bg.cli.rm(targetOf(c), row.id)
         }),
       )
       await Promise.race([

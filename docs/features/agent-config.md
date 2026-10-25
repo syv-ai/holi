@@ -136,9 +136,8 @@ the vault's machine (a vault's schedules are Holi's, [scheduled-agents](schedule
 outranks an allow in every scope, so getting a tool back means removing it from the vault's
 `settings.json`; a skill comes back by setting it to `"on"`, which the merge leaves alone.
 
-**Permissions.** Claude Code's native prompts are the permission UX. In a chat (the optional chat
-plugin) they arrive through `--permission-prompt-tool stdio` after Claude Code's own rules and
-hooks, and are answered from a card ([chat](chat.md)). The seeded rules ask for `curl`, `wget`, `holi schedules run` and
+**Permissions.** Each agent's native prompts are the permission UX, answered in its terminal.
+The seeded rules ask for `curl`, `wget`, `holi schedules run` and
 `holi google archive|trash|unschedule|send|reply` (one rule per verb), and allow
 `holi pdf comments` and `holi schedules list`. Turning a schedule on is no command at all
 ([scheduled-agents](scheduled-agents.md)), nor is approving a Holi ([holis](holis.md)). Sending mail is

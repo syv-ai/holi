@@ -261,6 +261,20 @@
 [data-platform='mac'] [data-slot='app-chrome'] {
   background: color-mix(in oklab, var(--sidebar) var(--glass-chrome), transparent);
 }
+/* The sidebar's divider sits between the chrome and the view, on neither's
+   ground: with only the translucent --border it is a window onto the desktop,
+   and whatever is behind Holi tints the line. It lays the chrome's ground
+   under its line, so it is exactly as clear as the sidebar beside it.
+   Hovered or dragged, its primary fill is opaque already. */
+[data-platform='mac']
+  [data-shell-divider]:not(:hover, [data-separator='hover'], [data-separator='active']),
+[data-platform='mac']
+  [data-shell-divider]:not(:hover, [data-separator='hover'], [data-separator='active'])
+  > div {
+  background:
+    linear-gradient(var(--border), var(--border)),
+    color-mix(in oklab, var(--sidebar) var(--glass-chrome), transparent);
+}
 /* A screen that is its own glass ground (sign-in, adding a vault) carries
    the tint once; a <main> inside it must not stack a second. */
 [data-platform='mac'] main:not([data-glass-ground] *),

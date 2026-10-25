@@ -11,6 +11,7 @@ import {
 } from '../renderer/state/sessions'
 
 const session = (over: Partial<AgentSession> & { id: string }): AgentSession => ({
+  provider: 'claude',
   name: 'New session',
   state: 'working',
   ...over,

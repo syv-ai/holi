@@ -15,20 +15,7 @@
  *
  * NOTE: no runtime `electron` import: this loads under vitest.
  */
-import type { RouteServer } from '../provider'
-
-export interface AgentRoutesDeps {
-  /** A turn began or ended in one of this vault's background sessions, named
-   *  by its short job id. At an end, `pending` is how many background tasks
-   *  and session crons Claude Code's Stop input listed, 0 meaning the session
-   *  is done rather than paused; null from a script that does not say. */
-  onJobTurn(remote: string, jobId: string, active: boolean, pending: number | null): void
-  /** A session's status line fired, with Claude Code's status JSON. Holi's
-   *  side of a shipped hook must stay backward-compatible, so this route
-   *  answers every older script too. */
-  onStatus?(remote: string, jobId: string, status: unknown): void
-  log?: (msg: string) => void
-}
+import type { RouteServer, TurnRouteDeps } from '../provider'
 
 /** A Claude Code job id: eight hex characters, the name of its `jobs/` dir. */
 const JOB_ID = /^[0-9a-f]{8}$/
@@ -36,7 +23,7 @@ const JOB_ID = /^[0-9a-f]{8}$/
 const EMPTY = { status: 204 } as const
 
 /** Registers the routes; returns the undo. */
-export function registerAgentRoutes(server: RouteServer, deps: AgentRoutesDeps): () => void {
+export function registerAgentRoutes(server: RouteServer, deps: TurnRouteDeps): () => void {
   const log = deps.log ?? ((msg: string) => console.log(`[agent] ${msg}`))
 
   // A signal that names no job cannot say which session's turn it is, and with
@@ -49,7 +36,7 @@ export function registerAgentRoutes(server: RouteServer, deps: AgentRoutesDeps):
         const job = query.get('job') ?? ''
         const raw = query.get('pending')
         const pending = raw !== null && /^\d+$/.test(raw) ? Number(raw) : null
-        if (JOB_ID.test(job)) deps.onJobTurn(remote, job, active, active ? null : pending)
+        if (JOB_ID.test(job)) deps.onTurn(remote, job, active, active ? null : pending)
         return EMPTY
       },
     })

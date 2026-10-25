@@ -57,13 +57,14 @@ test("a live session that is a plugin's run takes the run's row, with the sessio
   const live: AgentSession[] = [
     {
       id: 'j1',
+      provider: 'claude',
       name: 'Scout · Week kickoff',
       state: 'needs-you',
       waitingFor: 'Run holi?',
       model: 'Opus 5.5',
       startedAt: 2_000,
     },
-    { id: 'j2', name: 'Free session', state: 'working' },
+    { id: 'j2', provider: 'claude', name: 'Free session', state: 'working' },
   ]
   const holiRun = item({
     key: 'holis:j1',

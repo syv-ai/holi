@@ -1,11 +1,11 @@
 /**
  * Holi's terminals onto the agent.
  *
- * A session is the provider's background session, run by its supervisor.
- * What Holi owns is a **window onto it**: a PTY running the provider's list
- * (where sessions are started and picked) or one session, as
- * `AgentProvider.terminal` says. Closing one only detaches: the session keeps
- * running.
+ * Each is a PTY running what its caller asked (`AgentProvider.terminal`).
+ * For a background session that is a **window onto it**: the provider's list
+ * (where sessions are started and picked) or one session, and closing it only
+ * detaches. For a session Holi runs itself (`pty-sessions.ts`) the terminal
+ * is the session, and that module decides when it closes.
  *
  * **A terminal's launch says nothing about what it shows now.** `←` inside an
  * attached session turns the same process into the list, and Enter there
@@ -20,8 +20,7 @@
  * NOTE: no `electron` import, so this loads under vitest.
  */
 import { randomUUID } from 'node:crypto'
-import { NOT_INSTALLED, type VaultCliTarget } from '../claude/cli'
-import type { AgentProvider } from '../provider'
+import type { TerminalCommand } from '../provider'
 import { AgentRuntime, type PidState, type SpawnPty } from './pty'
 import { TerminalMirror } from './terminal-mirror'
 
@@ -47,15 +46,20 @@ export interface TerminalSummary {
 export interface OpenArgs {
   /** The vault it is opened in, which its events are about. */
   remote: string
-  target: VaultCliTarget
-  /** A session to attach to; omitted opens the list. */
+  /** The vault clone it runs in. */
+  cwd: string
+  /** What it runs; null when the agent is not on this machine. */
+  command: TerminalCommand | null
+  /** What to answer when `command` is null. */
+  notInstalled: string
+  /** The session it is opened for; omitted for a background provider's list. */
   attach?: string
-  /** A chat session's conversation to open a copy of (`--resume <id>
-   *  --fork-session`): its raw view, which never fights the chat's own
-   *  process for the conversation. */
-  fork?: string
-  /** Claude Code's `/login`, for a vault whose config directory has none. */
-  login?: boolean
+  /** What the person typed into it, as it goes to the PTY. */
+  onInput?(data: string): void
+  /** What the program printed. */
+  onOutput?(data: string): void
+  /** Its process ended, by itself or closed. */
+  onExit?(): void
   cols?: number
   rows?: number
   /** Written into the record before the program's first byte (the sign-in
@@ -66,8 +70,6 @@ export interface OpenArgs {
 export interface AgentTerminalsDeps {
   /** Tell the renderer `name` about the vault `remote`. */
   emit(remote: string, name: string, payload: unknown): void
-  /** What a terminal runs. */
-  command: AgentProvider['terminal']
   spawnPty?: SpawnPty
   /** Liveness probe before every signal. Tests must inject one: a fake PTY's
    *  pid may belong to a real process on the machine running them. */
@@ -104,6 +106,8 @@ interface Terminal {
   title: string
   runtime: AgentRuntime
   mirror: TerminalMirror
+  onInput: ((data: string) => void) | undefined
+  onExit: (() => void) | undefined
   /** False until a renderer has taken its state: output goes to the record only. */
   attached: boolean
   /** True once its TUI has printed and settled; pastes wait until then. */
@@ -148,9 +152,8 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
   }
 
   const api: AgentTerminals = {
-    open({ remote, target, attach, fork, login, cols, rows, notice }) {
-      const command = deps.command(target, attach, fork, login)
-      if (command === null) return { ok: false, message: NOT_INSTALLED }
+    open({ remote, cwd, command, notInstalled, attach, onInput, onOutput, onExit, cols, rows, notice }) {
+      if (command === null) return { ok: false, message: notInstalled }
       const id = randomUUID()
       const mirror = new TerminalMirror(cols ?? 80, rows ?? 24)
       if (notice !== undefined) mirror.write(notice)
@@ -167,6 +170,8 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
         title: '',
         runtime,
         mirror,
+        onInput,
+        onExit,
         attached: false,
         ready: false,
         settling: false,
@@ -179,6 +184,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
       })
       runtime.onData((data) => {
         mirror.write(data)
+        onOutput?.(data)
         if (t.attached) deps.emit(remote, 'pty-data', { id, data })
         // The first output means the TUI is up; a moment later it is reading
         // raw input. Only the fact of output is used, never what it says.
@@ -193,12 +199,13 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
         mirror.dispose()
         deps.emit(remote, 'pty-exit', { id, code: e.exitCode })
         pushList(remote)
+        onExit?.()
       })
       try {
         runtime.start({
           bin: command.bin,
           args: command.args,
-          cwd: target.root,
+          cwd,
           env: command.env,
           ...(cols === undefined ? {} : { cols }),
           ...(rows === undefined ? {} : { rows }),
@@ -225,7 +232,12 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
       return state
     },
 
-    write: (id, data) => terminals.get(id)?.runtime.write(data),
+    write(id, data) {
+      const t = terminals.get(id)
+      if (t === undefined) return
+      t.onInput?.(data)
+      t.runtime.write(data)
+    },
 
     resize(id, cols, rows) {
       const t = terminals.get(id)
@@ -253,6 +265,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
         t.mirror.dispose()
         deps.emit(t.remote, 'pty-exit', { id, code: -1 })
         pushList(t.remote)
+        t.onExit?.()
       }
     },
 

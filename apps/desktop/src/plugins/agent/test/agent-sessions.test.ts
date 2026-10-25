@@ -87,16 +87,15 @@ function setup(initial: Row[] = []) {
   const sessions = createAgentSessions({
     emit: (_remote: string, name: string, payload: unknown) => sent.push([name, payload]),
     provider: {
-      cli,
-      parseListing,
-      isLive,
-      summarise,
-      readContextPercent,
-      readModelName,
-      watch: () => () => {},
+      id: 'claude',
+      notInstalled: 'not installed',
       configure: async () => ({ dir: '/cfg/vault' }),
-      takeFirstSpawn: async () => true,
-      signInNotice: SIGN_IN_NOTICE,
+      terminal: () => ({ bin: '/usr/local/bin/claude', args: [], env: {} }),
+      firstSpawn: { take: async () => true, notice: SIGN_IN_NOTICE },
+      capabilities: {
+        background: { cli, parseListing, isLive, summarise, watch: () => () => {} },
+        status: { contextPercent: readContextPercent, model: readModelName },
+      },
     },
     terminals,
     binDir: () => '/holi/bin',
@@ -131,6 +130,7 @@ describe('agent sessions', () => {
       'sessions',
       [
         {
+          provider: 'claude',
           id: 'aaaaaaaa',
           name: 'Session aaaaaaaa',
           state: 'idle',
@@ -164,16 +164,16 @@ describe('agent sessions', () => {
   it('holds sync for a turn an outside driver brackets, which the listing never forgets', async () => {
     const t = setup([row('aaaaaaaa')])
     await t.attach()
-    t.sessions.bracket('chat-1', 'begin')
+    t.sessions.bracket('p00000000000a', 'begin')
     expect(t.pauses).toEqual(['the assistant is working'])
     // The listing never names a bracketed id: a reread must not drop its
     // turn, or the next turn would take the pause a second time.
     await t.sessions.refresh()
-    t.sessions.bracket('chat-2', 'begin')
+    t.sessions.bracket('p00000000000b', 'begin')
     expect(t.pauses).toHaveLength(1)
-    t.sessions.bracket('chat-1', 'end')
-    t.sessions.bracket('chat-2', 'forget')
-    t.sessions.bracket('chat-3', 'begin')
+    t.sessions.bracket('p00000000000a', 'end')
+    t.sessions.bracket('p00000000000b', 'forget')
+    t.sessions.bracket('p00000000000c', 'begin')
     expect(t.pauses).toHaveLength(2)
   })
 
