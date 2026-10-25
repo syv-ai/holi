@@ -156,9 +156,6 @@ nothing shows them: there is no "Links to" and "Linked from" beside a note. See
 
 **The graph tab.** `notes.graph` answers; nothing draws it. See [graph](features/graph.md).
 
-**Comment threads in the window.** The passages' fill, Comment on a selection, and the panel with
-Reply, Resolve, Reopen and `@login` completion. See [note-comments](features/note-comments.md).
-
 **The inbox's entries.** `holi agent notify`, needs-you and mentions fill `inbox.local.json` and
 raise banners, but the Inbox in the Agents sidebar does not list those entries. See
 [agent-inbox](features/agent-inbox.md).

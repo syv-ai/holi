@@ -5,11 +5,13 @@
  */
 import { type Ref } from "react"
 import type { Editor } from "@tiptap/react"
+import { MessagesSquareIcon } from "lucide-react"
 
 import { RichTextHistory } from "@/components/blocks/rich-text-editor-2/components/rich-text-controls"
 import { useRichTextState } from "@/components/blocks/rich-text-editor-2/components/rich-text-state"
 import { RichTextToolbarSeparator } from "@/components/blocks/rich-text-editor-2/components/rich-text-toolbar"
 import { Badge } from "@/components/reui/badge"
+import { Toggle } from "@/components/ui/toggle"
 import { ViewHeader, ViewHeaderTitle } from "@/composites/ViewHeader"
 import {
   Avatar,
@@ -88,6 +90,13 @@ interface DocumentHeaderProps extends Omit<DocumentActionsProps, "editor"> {
   saveState: SaveState
   /** An agent run is editing the document. */
   locked: boolean
+  /** The comments panel's toggle, with the open threads' count; null for a
+   *  file that takes no comments. */
+  comments?: {
+    count: number
+    open: boolean
+    onOpenChange: (open: boolean) => void
+  } | null
 }
 
 export function DocumentHeader({
@@ -97,6 +106,7 @@ export function DocumentHeader({
   title,
   saveState,
   locked,
+  comments = null,
   ...actions
 }: DocumentHeaderProps) {
   const state = useRichTextState(editor)
@@ -137,6 +147,24 @@ export function DocumentHeader({
 
       <Contributors path={path} />
       <FileHistoryButton path={path} />
+      {comments ? (
+        <Toggle
+          size="sm"
+          pressed={comments.open}
+          onPressedChange={comments.onOpenChange}
+          aria-label={
+            comments.count > 0
+              ? `Comments, ${comments.count} open`
+              : "Comments"
+          }
+          className="shrink-0"
+        >
+          <MessagesSquareIcon aria-hidden="true" />
+          {comments.count > 0 ? (
+            <span className="tabular-nums">{comments.count}</span>
+          ) : null}
+        </Toggle>
+      ) : null}
 
       <div className="flex shrink-0 items-center gap-1">
         <div className="hidden items-center gap-1 @md/view-header:flex">

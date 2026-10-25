@@ -11,13 +11,19 @@
  * Turn into an Artifact makes a vault app of the document. While a run edits
  * the document the page is locked (nothing in it can be pressed) and the
  * status pill at its foot says what it is doing and offers Stop.
+ *
+ * A note's comment threads sit in a panel beside the text, their passages
+ * tinted in it (`document-comments.ts`): the format bubble's Comment, or
+ * ⌘⌥M, starts one on the selection.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
-import { useAtomValue } from "jotai"
+import { isResolved, type CommentAnchor } from "@holi/shared"
+import { useAtomValue, useSetAtom } from "jotai"
 import { findNext, findPrev } from "prosemirror-search"
 import { EditorContent, useEditor } from "@tiptap/react"
 import { FileWarningIcon, SparklesIcon } from "lucide-react"
+import { toast } from "sonner"
 
 import { DeleteTableDialog } from "@/components/blocks/rich-text-editor-2/components/delete-table-dialog"
 import { RichTextBlockActions } from "@/components/blocks/rich-text-editor-2/components/rich-text-block-actions"
@@ -52,6 +58,13 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { cn } from "@/lib/cn"
 import { TaskProperties } from "@/components/blocks/planning/task-properties"
 import { trpc } from "@/lib/trpc"
+import {
+  addThreadAtom,
+  refreshThreadsAtom,
+  replyThreadAtom,
+  resolveThreadAtom,
+  threadsLoadAtom,
+} from "@/state/comments"
 import { sawText } from "@/state/doc-changes"
 import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
 
@@ -64,6 +77,14 @@ import {
   locksDocument,
   useDocumentAgent,
 } from "./document-agent"
+import { CommentsPanel } from "./comments-panel"
+import {
+  DocumentComments,
+  placeThreads,
+  selectionAnchor,
+  setCommentRanges,
+  type PlacedRange,
+} from "./document-comments"
 import { createDocumentExtensions } from "./document-extensions"
 import { DocumentFindBar, type FindRequest } from "./document-find-bar"
 import { DocumentFormatBubble } from "./document-format-bubble"
@@ -233,6 +254,7 @@ function DocumentEditor({
   const handlers = useRef({
     openLink: (_target: string) => undefined as void,
     trigger: (_pos: number) => undefined as void,
+    pressThread: (_id: string) => undefined as void,
   })
   handlers.current.openLink = (target) => {
     const found = resolveLink(target, path, docs)
@@ -249,6 +271,9 @@ function DocumentEditor({
         promptContainer: promptBox,
       }),
       RichTextTable,
+      DocumentComments.configure({
+        onPress: (id) => handlers.current.pressThread(id),
+      }),
       RichTextBlockActions,
       RichTextSlashCommand.configure({
         items: [
@@ -289,6 +314,94 @@ function DocumentEditor({
     (current) => current?.isEditable ?? true
   )
 
+  // The note's comment threads: the panel, and their passages in the text.
+  const threadsLoad = useAtomValue(threadsLoadAtom)(path)
+  const refreshThreads = useSetAtom(refreshThreadsAtom)
+  const addThread = useSetAtom(addThreadAtom)
+  const replyThread = useSetAtom(replyThreadAtom)
+  const resolveThread = useSetAtom(resolveThreadAtom)
+  const [commentsOpen, setCommentsOpen] = useState(false)
+  /** The passage a new thread is being written on. */
+  const [draft, setDraft] = useState<CommentAnchor | null>(null)
+  const [activeThread, setActiveThread] = useState<string | null>(null)
+  /** Every thread whose passage was found in the text at the last placing. */
+  const [placed, setPlaced] = useState<ReadonlySet<string>>(new Set())
+  const threads = threadsLoad.state === "ready" ? threadsLoad.threads : null
+  const commentable = threadsLoad.state !== "unavailable"
+  const hasSelection = useRichTextSelector(editor, (current) =>
+    current ? !current.state.selection.empty : false
+  )
+
+  // Read again whenever the vault is: a pull or the agent may have written
+  // the sidecar.
+  useEffect(() => {
+    void refreshThreads(path)
+  }, [refreshThreads, path, docs])
+
+  /** Place every thread in the text again and tint the open ones; between
+   *  placings the tints follow the edits on their own. */
+  const placeRef = useRef(() => undefined as void)
+  placeRef.current = () => {
+    if (!editor || editor.isDestroyed || threads === null) return
+    const ranges: PlacedRange[] = placeThreads(editor, head.current, threads)
+    setPlaced(new Set(ranges.map((range) => range.id)))
+    const open = new Set(
+      threads.filter((t) => !isResolved(t)).map((t) => t.id)
+    )
+    setCommentRanges(editor, {
+      ranges: ranges.filter((range) => open.has(range.id)),
+    })
+  }
+  useEffect(() => placeRef.current(), [editor, threads])
+  useEffect(() => {
+    if (editor) setCommentRanges(editor, { active: activeThread })
+  }, [editor, activeThread])
+
+  handlers.current.pressThread = (id) => {
+    setCommentsOpen(true)
+    setActiveThread(id)
+  }
+
+  /** The panel's thread, its passage scrolled into view. */
+  function showThread(id: string) {
+    setActiveThread(id)
+    const thread = threads?.find((t) => t.id === id)
+    if (!editor || !thread) return
+    const [range] = placeThreads(editor, head.current, [thread])
+    if (!range) return
+    const { node } = editor.view.domAtPos(range.from)
+    const element = node instanceof Element ? node : node.parentElement
+    element?.scrollIntoView({ block: "center" })
+  }
+
+  async function commentOnSelection() {
+    if (!editor || !commentable) return
+    // The anchor quotes the file, so the file has to be what is shown.
+    await save()
+    const anchor = selectionAnchor(editor, head.current)
+    if (anchor === null) {
+      toast.error("That passage can’t take a comment", {
+        description: "Select text in the note, outside images and raw HTML.",
+      })
+      return
+    }
+    setDraft(anchor)
+    setActiveThread(null)
+    setCommentsOpen(true)
+  }
+
+  /** A comment write: said when it fails, and rejected so its text stays. */
+  async function commentWrite(what: string, run: () => Promise<unknown>) {
+    try {
+      await run()
+    } catch (err) {
+      toast.error(what, {
+        description: err instanceof Error ? err.message : String(err),
+      })
+      throw err
+    }
+  }
+
   const markdown = () =>
     editor ? joinDocument(head.current, editor.getMarkdown()) : lastText.current
 
@@ -305,6 +418,7 @@ function DocumentEditor({
       await trpc.notes.write.mutate({ remote, path, text })
       lastText.current = text
       setSaveState("saved")
+      placeRef.current()
     } catch {
       setSaveState("error")
     }
@@ -339,6 +453,7 @@ function DocumentEditor({
           contentType: "markdown",
           emitUpdate: false,
         })
+        placeRef.current()
       })
       .catch(() => undefined)
     return () => {
@@ -507,7 +622,11 @@ function DocumentEditor({
     if (!editor || event.defaultPrevented) return
     const mod = apple ? event.metaKey : event.ctrlKey
     const key = event.key.toLowerCase()
-    if (isFindKey(event)) {
+    if (mod && event.altKey && !event.shiftKey && event.code === "KeyM") {
+      // ⌘⌥M, as in other editors: comment on the selection.
+      event.preventDefault()
+      void commentOnSelection()
+    } else if (isFindKey(event)) {
       event.preventDefault()
       openFind()
     } else if (find && mod && !event.altKey && key === "g") {
@@ -547,9 +666,19 @@ function DocumentEditor({
             onFullWidthChange={setFullWidth}
             onSmallTextChange={setSmallText}
             onTurnIntoArtifact={canAsk ? () => void turnIntoArtifact() : null}
+            comments={
+              commentable
+                ? {
+                    count: threads?.filter((t) => !isResolved(t)).length ?? 0,
+                    open: commentsOpen,
+                    onOpenChange: setCommentsOpen,
+                  }
+                : null
+            }
           />
+          <div className="flex min-h-0 flex-1">
           <div
-            className="relative min-h-0 flex-1 overflow-y-auto"
+            className="relative min-h-0 min-w-0 flex-1 overflow-y-auto"
             onMouseDown={pressPage}
           >
             {/* The find bar floats at the page's top right, over the text,
@@ -607,6 +736,9 @@ function DocumentEditor({
                         ? (verb, passage) => void quickCommand(verb, passage)
                         : null
                     }
+                    onComment={
+                      commentable ? () => void commentOnSelection() : null
+                    }
                   />
                   <RichTextLinkBubble editor={editor} onEdit={openLinkEditor} />
                   <RichTextTableBubble
@@ -631,6 +763,47 @@ function DocumentEditor({
                   )
                 : null}
             </div>
+          </div>
+          {commentable && commentsOpen ? (
+            <CommentsPanel
+              load={threadsLoad}
+              placed={placed}
+              active={activeThread}
+              draft={draft}
+              onSelect={showThread}
+              onDraftSubmit={(body) =>
+                commentWrite("The comment could not be saved", async () => {
+                  if (draft === null) return
+                  const id = await addThread({ path, anchor: draft, body })
+                  setDraft(null)
+                  if (id) setActiveThread(id)
+                })
+              }
+              onDraftCancel={() => setDraft(null)}
+              onReply={(thread, body) =>
+                commentWrite("The reply could not be saved", () =>
+                  replyThread({ path, thread, body })
+                )
+              }
+              onResolve={(thread, resolved) =>
+                commentWrite(
+                  resolved
+                    ? "The thread could not be resolved"
+                    : "The thread could not be reopened",
+                  () => resolveThread({ path, thread, resolved })
+                ).catch(() => undefined)
+              }
+              onRetry={() => void refreshThreads(path)}
+              onClose={() => {
+                setCommentsOpen(false)
+                setDraft(null)
+                setActiveThread(null)
+              }}
+              onCommentSelection={
+                hasSelection ? () => void commentOnSelection() : null
+              }
+            />
+          ) : null}
           </div>
         </div>
 

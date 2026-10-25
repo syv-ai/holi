@@ -10,6 +10,7 @@ import { isTextSelection, type Editor } from "@tiptap/react"
 import { BubbleMenu } from "@tiptap/react/menus"
 import {
   ChevronDownIcon,
+  MessageSquarePlusIcon,
   MinimizeIcon,
   SparklesIcon,
   SpellCheckIcon,
@@ -70,6 +71,8 @@ interface DocumentFormatBubbleProps {
   onLinkOpenChange: (open: boolean) => void
   /** Null when there is no agent to ask. */
   onQuickCommand: ((verb: string, passage: string) => void) | null
+  /** Start a comment thread on the selection; null when the note takes none. */
+  onComment?: (() => void) | null
 }
 
 export function DocumentFormatBubble({
@@ -77,6 +80,7 @@ export function DocumentFormatBubble({
   linkOpen,
   onLinkOpenChange,
   onQuickCommand,
+  onComment = null,
 }: DocumentFormatBubbleProps) {
   const state = useRichTextState(editor)
   const linkOpenRef = useRef(linkOpen)
@@ -173,6 +177,18 @@ export function DocumentFormatBubble({
             open={linkOpen}
             onOpenChange={onLinkOpenChange}
           />
+          {onComment ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="shrink-0"
+              data-toolbar-item=""
+              onClick={onComment}
+            >
+              <MessageSquarePlusIcon aria-hidden="true" />
+              Comment
+            </Button>
+          ) : null}
         </RichTextToolbarGroup>
       </RichTextBubbleBar>
     </BubbleMenu>

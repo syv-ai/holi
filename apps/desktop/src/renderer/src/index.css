@@ -152,6 +152,22 @@
 .tiptap .ProseMirror-active-search-match {
   background-color: var(--find-match-current);
 }
+/* Comment threads' passages (`document-view/document-comments.ts`): an open
+   thread's passage is a quiet primary tint over a line, the thread the panel
+   is on a stronger one. Primary, so a passage never reads as a find match. */
+:root {
+  --comment-mark: color-mix(in oklab, var(--primary) 10%, transparent);
+  --comment-mark-line: color-mix(in oklab, var(--primary) 45%, transparent);
+  --comment-mark-active: color-mix(in oklab, var(--primary) 24%, transparent);
+}
+.tiptap .holi-comment {
+  background-color: var(--comment-mark);
+  border-bottom: 2px solid var(--comment-mark-line);
+  cursor: pointer;
+}
+.tiptap .holi-comment-active {
+  background-color: var(--comment-mark-active);
+}
 .tiptap .rich-text-extra-selection {
   background-color: var(--extra-selection);
 }
