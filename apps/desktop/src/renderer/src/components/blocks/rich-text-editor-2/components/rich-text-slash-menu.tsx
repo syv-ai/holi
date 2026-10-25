@@ -238,6 +238,9 @@ export const RICH_TEXT_SLASH_KEY = new PluginKey("richTextSlash")
 
 interface RichTextSlashOptions {
   items: readonly RichTextSlashItem[]
+  /** Items that come and go while the editor is open (a plugin's
+   *  commands), asked on every query and listed after `items`. */
+  more?: () => readonly RichTextSlashItem[]
 }
 
 /** "/" opens a block picker at the caret; items come from configure({ items }). */
@@ -251,7 +254,7 @@ export const RichTextSlashCommand = Extension.create<RichTextSlashOptions>({
   },
 
   addProseMirrorPlugins() {
-    const { items } = this.options
+    const { items, more } = this.options
 
     return [
       Suggestion<RichTextSlashItem, RichTextSlashItem>({
@@ -264,7 +267,7 @@ export const RichTextSlashCommand = Extension.create<RichTextSlashOptions>({
           !state.doc.resolve(range.from).parent.type.spec.code,
         items: ({ query, editor }) => {
           const needle = query.trim().toLowerCase()
-          return items.filter(
+          return [...items, ...(more?.() ?? [])].filter(
             (item) => matches(item, needle) && item.can(editor)
           )
         },

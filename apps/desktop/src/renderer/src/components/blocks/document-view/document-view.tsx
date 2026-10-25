@@ -73,7 +73,7 @@ import {
 import { sawText } from "@/state/doc-changes"
 import { pendingHeadingAtom } from "@/state/open-document"
 import { useViewMemory } from "@/state/view-memory"
-import { claimsAtom } from "@/state/plugins"
+import { claimsAtom, pluginSlashCommandsAtom } from "@/state/plugins"
 import { editorSelectionAtom } from "@/state/ui-report"
 import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
 
@@ -98,6 +98,7 @@ import {
 import { createDocumentExtensions } from "./document-extensions"
 import { headingAtCaret, landOnHeading } from "./document-headings"
 import { DocumentFindBar, type FindRequest } from "./document-find-bar"
+import { pluginSlashItem } from "./plugin-slash"
 import { DocumentFormatBubble } from "./document-format-bubble"
 import { DocumentHeader, type SaveState } from "./document-header"
 import {
@@ -250,6 +251,8 @@ function DocumentEditor({
   /** Whether the agent prompt is open; its line is the editor's to track
    *  (`agentPromptKey`), and it renders into `promptBox` on that line. */
   const [promptOpen, setPromptOpen] = useState(false)
+  /** What the ask prompt opens with: an app command's instruction. */
+  const [promptInitial, setPromptInitial] = useState("")
   const [promptBox] = useState(() => {
     const box = document.createElement("div")
     box.contentEditable = "false"
@@ -269,8 +272,9 @@ function DocumentEditor({
   // made once per document.
   const handlers = useRef({
     openLink: (_target: string) => undefined as void,
-    trigger: (_pos: number) => undefined as void,
+    trigger: (_pos: number, _instruction?: string) => undefined as void,
     pressThread: (_id: string) => undefined as void,
+    pluginItems: (): readonly RichTextSlashItem[] => [],
   })
   handlers.current.openLink = (target) => {
     const found = resolveLink(target, path, docs)
@@ -297,6 +301,7 @@ function DocumentEditor({
           RICH_TEXT_TABLE_SLASH_ITEM,
           ASK_AI_SLASH_ITEM((pos) => handlers.current.trigger(pos)),
         ],
+        more: () => handlers.current.pluginItems(),
       }),
     ],
     [path, promptBox]
@@ -591,11 +596,24 @@ function DocumentEditor({
     return () => window.clearTimeout(timer)
   }, [agent.run, agent.dismiss])
 
-  handlers.current.trigger = (pos) => {
+  handlers.current.trigger = (pos, instruction) => {
     if (!editor || !agent.available || isRunLive(agent.run)) return
+    setPromptInitial(instruction ?? "")
     setAgentPrompt(editor, pos)
     setPromptOpen(true)
   }
+
+  // The running plugins' slash commands (a vault app's), offered where
+  // their plugin says they may run on this note.
+  const pluginCommands = useAtomValue(pluginSlashCommandsAtom)
+  handlers.current.pluginItems = () =>
+    pluginCommands
+      .filter((command) => command.offeredIn?.(path) ?? true)
+      .map((command) =>
+        pluginSlashItem(command, path, (pos, instruction) =>
+          handlers.current.trigger(pos, instruction)
+        )
+      )
 
   function closePrompt() {
     if (!editor) return
@@ -882,6 +900,7 @@ function DocumentEditor({
               {promptOpen
                 ? createPortal(
                     <AgentPrompt
+                      initial={promptInitial}
                       onSubmit={(request) => void sendPrompt(request)}
                       onCancel={closePrompt}
                     />,

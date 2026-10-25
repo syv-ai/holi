@@ -157,10 +157,6 @@ nothing shows them: there is no "Links to" and "Linked from" beside a note. See
 **The rest of saved links.** The card over a web address written in a note, and a link file's chip
 in the editor. See [links](features/links.md).
 
-**Vault-app slash commands in the document editor.** The apps plugin answers `apps.commands` and
-serves each command's document; the editor's slash menu does not list them, and nothing runs one in
-its hidden frame. See [vault apps](features/vault-apps.md).
-
 **The rest.** The repo's size in the vault picker and the sync panel
 ([vaults-sync](features/vaults-sync.md)).
 

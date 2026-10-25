@@ -25,13 +25,17 @@ import type { AgentRun } from "./document-agent"
 /** Where the person types what the agent should write, on the line they
  *  opened it from. Enter sends, Shift+Enter breaks the line, Escape closes. */
 export function AgentPrompt({
+  initial = "",
   onSubmit,
   onCancel,
 }: {
+  /** Written in already, for the person to send or change: an app
+   *  command's instruction. */
+  initial?: string
   onSubmit: (request: string) => void
   onCancel: () => void
 }) {
-  const [text, setText] = useState("")
+  const [text, setText] = useState(initial)
   const send = () => {
     const request = text.trim()
     if (request !== "") onSubmit(request)

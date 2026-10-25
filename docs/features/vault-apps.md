@@ -169,9 +169,14 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   classic, not a module: the frame's origin is opaque, so a module's fetch is cross-origin and
   would need a CORS header, and a header one opaque origin passes, every app passes, letting each
   read every other's code.
-  Main's half is built (the manifest's `commands:`, `apps.commands`, the command document and its
-  runner); the document editor's slash menu does not list them yet, and nothing in the renderer
-  runs one in its hidden frame ([not-built](../not-built.md)).
+  The document editor lists them after its own blocks, grouped under each app's name
+  (`RendererPlugin.slashCommands`, asked on every query, `document-view/plugin-slash.tsx`). The
+  typed `/query` goes first; `text` is empty there, since typing `/` over a selection replaces it,
+  and `line` is the caret's paragraph without the query. A text answer is written at the caret as
+  markdown, kept on the line when it is one paragraph; `{ agent }` opens the ask prompt with the
+  instruction written in, for the person to send or change. A failure also raises a toast that
+  names the command and points at its app's log. The tab's frame and a command's frame answer the
+  bridge through one module (`renderer/bridge-host.ts`).
 - **One person's data is opt-in, twice.** `google.agenda` and `google.search` read the Google
   account of whoever has the app open, not the vault's; an app can keep what it reads in records
   that sync to every member, or send it over the network. So the app declares

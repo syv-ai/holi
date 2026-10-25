@@ -10,6 +10,39 @@ import type { IconGlyph } from '@/primitives'
 import type { Command } from '@/state/commands'
 import type { PluginDialog } from '@/state/dialogs'
 
+/** What a slash command is given: the text it was typed over, the
+ *  caret's line, and the note's vault path; nothing more of the buffer. */
+export interface SlashInput {
+  /** What was selected when `/` was typed, else empty. */
+  text: string
+  /** The caret's line (its paragraph) as it was before the command. */
+  line: string
+  path: string
+}
+
+/**
+ * What a command does to the note. `replace`: its text takes the place of
+ * what the command was typed over. `insert`: that stays, and the text
+ * follows it. `agent`: the ask-the-agent prompt opens with this instruction.
+ * Null leaves the note as it was.
+ */
+export type SlashResult = { replace: string } | { insert: string } | { agent: string } | null
+
+/** A command a plugin adds to the slash menu. */
+export interface SlashCommand {
+  /** What follows the `/`. A built-in's name stays the built-in's. */
+  name: string
+  /** Under the name, in the menu. */
+  detail?: string
+  /** Where the command comes from: an app's name. */
+  meta?: string
+  /** Whether the menu offers it in the note at `path`; absent, everywhere.
+   *  The command's plugin decides. */
+  offeredIn?(path: string): boolean
+  /** Rejects when it failed; the plugin says where (an app's log). */
+  run(input: SlashInput): Promise<SlashResult>
+}
+
 /** One item a claim adds to a file's row menu. */
 export interface ClaimMenuItem {
   label: string
@@ -586,6 +619,9 @@ export interface RendererPlugin {
   /** Runs while `remote` is the open vault and the plugin runs in it; the
    *  returned undo runs when either stops. */
   vault?(remote: string, store: PluginStore): () => void
+  /** What it adds to the document editor's slash menu while it runs, after
+   *  the built-in commands (docs/features/editor.md). */
+  slashCommands?: Atom<readonly SlashCommand[]>
   agent?: AgentServiceSource
   /** Commands, run by id like core's (`state/commands.ts`), while it runs. */
   commands?: readonly Command[]

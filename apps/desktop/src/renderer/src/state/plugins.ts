@@ -27,6 +27,7 @@ import type {
   RailItem,
   RendererPlugin,
   SettingsSection,
+  SlashCommand,
   Surface,
   SurfaceTabLook,
 } from '@/plugin-api/types'
@@ -113,6 +114,14 @@ export const runningPluginsAtom = atom((get): readonly RendererPlugin[] => {
   const enabled = get(enabledPluginsAtom)
   return get(installedPluginsAtom).filter((p) => enabled.has(p.info.id))
 })
+
+/** What the running plugins add to the document editor's slash menu, in
+ *  list order (`RendererPlugin.slashCommands`). */
+export const pluginSlashCommandsAtom = atom((get): readonly SlashCommand[] =>
+  get(runningPluginsAtom).flatMap((p) =>
+    p.slashCommands === undefined ? [] : get(p.slashCommands),
+  ),
+)
 
 /** Every running plugin's commands, in list order. */
 export const pluginCommandsAtom = atom((get): readonly Command[] =>
