@@ -56,6 +56,7 @@ import {
   SETTINGS_KEY,
   tabForPath,
   tabKey,
+  tabPath,
 } from "@/state/tab-descriptor"
 import { activeRemoteAtom } from "@/state/vaults"
 
@@ -497,6 +498,12 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
               isFocused && settingsActive && !isMobile && sidebarOpen
             }
             onOpen={handleSelectThread}
+            onOpenBeside={(id) => update((w) => openInSplit(w, keyFor(id)))}
+            reading={
+              members
+                .map((member) => tabPath(member.key))
+                .find((path) => path !== null && path !== tab) ?? null
+            }
             onMoved={(from, to) => retargetTabs([{ from, to }])}
             onNewDocument={handleNewChat}
             onOpenSearch={() => setSearchOpen(true)}

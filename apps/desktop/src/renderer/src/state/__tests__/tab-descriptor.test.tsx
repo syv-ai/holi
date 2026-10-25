@@ -20,6 +20,7 @@ const EVERY: TabDescriptor[] = [
   { kind: "doc", path: "README" },
   { kind: "vault-app", path: "Apps/Budget.app" },
   { kind: "board" },
+  { kind: "graph" },
   { kind: "new", n: 3 },
   { kind: "agents-home" },
   { kind: "session", owner: "chat", id: "abc-123" },

@@ -6,6 +6,7 @@ import {
   LayoutGridIcon,
   SettingsIcon,
   SquareKanbanIcon,
+  WaypointsIcon,
   SquarePenIcon,
   ZapIcon,
 } from "lucide-react"
@@ -84,6 +85,8 @@ export function useTabLook(): (key: string) => HeaderTab {
           return { id: key, title: fileTitle(tab.path), icon: AppWindowIcon }
         case "board":
           return { id: key, title: "Board", icon: SquareKanbanIcon }
+        case "graph":
+          return { id: key, title: "Graph", icon: WaypointsIcon }
         case "apps":
           return { id: key, title: "Apps", icon: LayoutGridIcon }
         case "surface": {

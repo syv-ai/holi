@@ -154,8 +154,6 @@ drawn on the previous shell and are not rebuilt yet.
 nothing shows them: there is no "Links to" and "Linked from" beside a note. See
 [wiki-links](features/wiki-links.md).
 
-**The graph tab.** `notes.graph` answers; nothing draws it. See [graph](features/graph.md).
-
 **Saved links' screens.** The preview card (on a tree row, a link in a note, a link file's tab),
 New Link, saving a link dragged in from a browser, and Open in Browser. See
 [links](features/links.md).

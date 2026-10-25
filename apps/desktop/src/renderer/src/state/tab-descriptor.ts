@@ -1,6 +1,6 @@
 /**
  * What a tab of the shell holds (docs/features/tabs-panes.md): a document, a
- * vault app, the board, a New tab, the Agents home, an agent session, a
+ * vault app, the board, the vault's graph, a New tab, the Agents home, an agent session, a
  * sidebar app (Mail, Calendar) or Settings. A tab is this descriptor; the
  * shell keeps it as its key, one stable string, so tab lists stay plain
  * arrays of strings and a key can sit in a DOM attribute or a set.
@@ -12,7 +12,7 @@
  * - a vault app is its bundle's path (`Apps/Budget.app`): the `.app` suffix
  *   says which;
  * - every other view is `holi:<kind>`, with its parts after it:
- *   `holi:board`, `holi:apps`, `holi:new:3`, `holi:agents`, `holi:settings`,
+ *   `holi:board`, `holi:graph`, `holi:apps`, `holi:new:3`, `holi:agents`, `holi:settings`,
  *   `holi:app:mail`, `holi:session:<owner>:<id>` (the id may hold colons),
  *   `holi:surface:<surface>[:<id>]`;
  * - a document whose path would read as one of those (it starts with
@@ -27,6 +27,8 @@ export type TabDescriptor =
   | { kind: "doc"; path: string }
   | { kind: "vault-app"; path: string }
   | { kind: "board" }
+  /** The vault's notes and their links, drawn (docs/features/graph.md). */
+  | { kind: "graph" }
   /** The vault's apps, beside the board. */
   | { kind: "apps" }
   /** A tab onto a registered surface (`surfacesAtom`), by its name and the
@@ -70,6 +72,8 @@ export function tabKey(tab: TabDescriptor): string {
       return tab.path
     case "board":
       return view("board")
+    case "graph":
+      return view("graph")
     case "apps":
       return view("apps")
     case "surface":
@@ -105,6 +109,8 @@ export function parseTabKey(key: string): TabDescriptor | null {
   switch (kind) {
     case "board":
       return tail === null ? { kind: "board" } : null
+    case "graph":
+      return tail === null ? { kind: "graph" } : null
     case "apps":
       return tail === null ? { kind: "apps" } : null
     case "surface": {
@@ -163,6 +169,7 @@ export function tabPath(key: string | null): string | null {
 }
 
 export const BOARD_KEY = tabKey({ kind: "board" })
+export const GRAPH_KEY = tabKey({ kind: "graph" })
 export const SETTINGS_KEY = tabKey({ kind: "settings" })
 export const AGENTS_HOME_KEY = tabKey({ kind: "agents-home" })
 

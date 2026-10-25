@@ -11,6 +11,7 @@ import { AppsView } from "../../apps-view/apps-view"
 import { VaultAppTab } from "../../apps-view/vault-app-tab"
 import { DocumentView } from "../../document-view/document-view"
 import { FileView } from "../../file-view/file-view"
+import { GraphView } from "../../graph-view/graph-view"
 import { PlanningView } from "../../planning/planning-view"
 import { EmptyView } from "./empty-view"
 import { useSidebarApps } from "./sidebar-apps"
@@ -24,6 +25,8 @@ export function TabView({
   tab,
   settingsNavInSidebar,
   onOpen,
+  onOpenBeside,
+  reading = null,
   onMoved,
   onNewDocument,
   onOpenSearch,
@@ -34,6 +37,10 @@ export function TabView({
   settingsNavInSidebar: boolean
   /** Open a vault path or the board, the way the shell opens one. */
   onOpen: (key: string) => void
+  /** Open it beside this tab, in a split: where the graph opens a note. */
+  onOpenBeside: (key: string) => void
+  /** The document open beside this tab in its split, if any. */
+  reading?: string | null
   /** A document moved (a task given another project): its tabs follow. */
   onMoved: (from: string, to: string) => void
   onNewDocument: () => void
@@ -61,6 +68,8 @@ export function TabView({
       )
     case "board":
       return <PlanningView onOpenTask={onOpen} />
+    case "graph":
+      return <GraphView onOpen={onOpenBeside} reading={reading} />
     case "apps":
       return <AppsView onOpen={onOpen} />
     case "surface": {

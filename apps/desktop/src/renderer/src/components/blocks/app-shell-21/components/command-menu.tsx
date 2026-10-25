@@ -33,6 +33,7 @@ import {
   SettingsIcon,
   SparklesIcon,
   SquareKanbanIcon,
+  WaypointsIcon,
   SquareSplitHorizontalIcon,
   TerminalIcon,
   FolderTreeIcon,
@@ -99,7 +100,7 @@ import {
 import { openSettingsAtom } from "@/state/settings-section"
 import { isMac, liveShortcutIdsAtom, runShortcutAtom } from "@/state/shortcuts"
 import { createTaskAtom } from "@/state/tasks"
-import { AGENTS_HOME_KEY } from "@/state/tab-descriptor"
+import { AGENTS_HOME_KEY, GRAPH_KEY } from "@/state/tab-descriptor"
 import { switchVaultAtom } from "@/state/vault-switch"
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from "@/state/vaults"
 
@@ -304,6 +305,13 @@ export function CommandMenu({
       icon: SquareKanbanIcon,
       keys: "⇧⌘B",
       run: () => onOpen(BOARD_TAB, beside.current),
+    },
+    {
+      id: "go.graph",
+      label: "Graph",
+      keywords: ["links", "map", "network"],
+      icon: WaypointsIcon,
+      run: () => onOpen(GRAPH_KEY, beside.current),
     },
     ...(surfaces.has("app")
       ? [

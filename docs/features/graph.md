@@ -1,12 +1,12 @@
 # Graph
 
-The vault as a picture: every note a dot, every [wiki-link](wiki-links.md) between two notes a line. Main builds it; the tab that drew it is not rebuilt on the current shell ([not-built](../not-built.md)), and the design below is what the rebuild follows.
+The vault as a picture: every note a dot, every [wiki-link](wiki-links.md) between two notes a line. Main builds it, and the Graph tab (`holi:graph`, from the command menu) draws it.
 
 ## How it works
 
 **Built per ask, in main.** `notes.graph` walks the vault's markdown once (the same walk as the backref scans) and answers with the notes, sorted, and each linked pair once, whichever way it links (`buildLinkGraph`). A link to a note that does not exist, to an asset or to itself draws nothing. Hidden files are in it only while the tree shows them; [memory](agent-memory.md) is always in it, without `.holi/memory/index.md`, which links every memory and would only draw a hub.
 
-**The tab, as designed.** Laid out once with d3-force run to rest in a worker, each note's last position seeding the next layout, so a new link moves the picture a little rather than reshuffling it. It asks again a beat after the vault's notes last changed, and an answer that changed no link changes no layout. A note is a dot sized by its links, coloured by kind (a note, a memory, a task) in token classes. A dot opens its note beside the graph, and each dot is a link in the tab order.
+**The tab.** Laid out once with d3-force run to rest in a worker, each note's last position seeding the next layout, so a new link moves the picture a little rather than reshuffling it. It asks again a beat after the vault's notes last changed, and an answer that changed no link changes no layout. A note is a dot sized by its links, coloured by kind (a note, a task, a memory) in token classes, with a legend. A dot opens its note beside the graph, in a split; the note open there is drawn in the theme colour, and hovering or focusing a dot lights it and its neighbours. Each dot is a link in the tab order. A scroll pans, a pinch or ⌘-scroll zooms, and a drag on the background pans. While it reads it shows a skeleton, a vault with no notes says how to link two, and a failed read or layout says so with Retry.
 
 ## Rules
 
@@ -25,3 +25,5 @@ The vault as a picture: every note a dot, every [wiki-link](wiki-links.md) betwe
 
 - `apps/desktop/src/main/vault/backrefs.ts`: `buildLinkGraph`, `GRAPH_NODE_CAP`
 - `apps/desktop/src/main/router.ts`: `notes.graph`
+- `apps/desktop/src/renderer/src/components/blocks/graph-view/graph-view.tsx`: the tab
+- `apps/desktop/src/renderer/src/lib/graph-layout.ts`, `graph-layout.worker.ts`: the layout
