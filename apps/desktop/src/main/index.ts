@@ -350,6 +350,7 @@ async function main(): Promise<void> {
     // A plugin's notification is the reminders' kind, kept off a Holi that
     // has focus. A click brings the window forward before the plugin acts.
     focused: () => BrowserWindow.getFocusedWindow() !== null,
+    window: () => (mainWindow === null || mainWindow.isDestroyed() ? null : mainWindow),
     notify: ({ title, body, onClick }) => {
       if (BrowserWindow.getFocusedWindow() !== null) return false
       showNotification({

@@ -41,6 +41,7 @@ other rather than repeating each other.
 | [google](features/google.md)                       | Gmail and Calendar per vault                                             |
 | [pdf](features/pdf.md)                             | Typst export, templates, the PDF viewer                                  |
 | [links](features/links.md)                         | Web addresses saved as link files, and the page previews                 |
+| [browser](features/browser.md)                     | Web pages in a tab, which the agent drives with `holi browser`           |
 | [vault-apps](features/vault-apps.md)               | Agent-written apps in their own origin, their records, slash commands    |
 | [community-plugins](features/community-plugins.md) | Plugins from other repositories, run as their own processes              |
 | [command-palette](features/command-palette.md)     | ⌘K: documents, views and the shell's actions                             |

@@ -21,6 +21,7 @@ import {
   type VaultEvent,
   type VaultSnapshot,
 } from '@holi/shared'
+import type { BrowserWindow } from 'electron'
 import type { AppDoor, AppDoorOpener } from '../capabilities/dispatch'
 import type { CapabilityRegistry } from '../capabilities/registry'
 import type {
@@ -80,6 +81,9 @@ export interface PluginHostDeps {
   notify(notice: Notice): boolean
   /** Whether a Holi window has focus. */
   focused(): boolean
+  /** Holi's window, or null with none open. Absent, as in most tests, it is
+   *  null. */
+  window?: () => BrowserWindow | null
   readSettings?: (root: string) => Promise<ResolvedVaultSettings>
   /** One capability call at the UI door in the vault `remote`, for
    *  `ctx.call`. Absent, a call is refused. */
@@ -448,6 +452,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       },
       notify: deps.notify,
       focused: deps.focused,
+      window: () => deps.window?.() ?? null,
       onSnapshot: (cb) => {
         const entry = { remote, cb }
         snapshotListeners.add(entry)

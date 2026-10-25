@@ -157,6 +157,9 @@ nothing shows them: there is no "Links to" and "Linked from" beside a note. See
 **The rest of saved links.** The card over a web address written in a note, and a link file's chip
 in the editor. See [links](features/links.md).
 
+**The rest of the browser.** Open in Holi for a saved link, toasts drawn over a page, and find in
+page. See [browser](features/browser.md).
+
 **The rest.** The repo's size in the vault picker and the sync panel
 ([vaults-sync](features/vaults-sync.md)).
 

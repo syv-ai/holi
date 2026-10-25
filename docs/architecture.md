@@ -168,7 +168,8 @@ A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under it
 renderer imports its main side as types only, for `capClient`. The built-in part is the agent
 ([agent-sessions](features/agent-sessions.md)). The optional plugins are tasks
 ([tasks](features/tasks.md)), automations and Holis, built on the agent, PDF
-([pdf](features/pdf.md)), links ([links](features/links.md)), Google
+([pdf](features/pdf.md)), links ([links](features/links.md)), the browser
+([browser](features/browser.md)), Google
 ([google](features/google.md)), vault apps ([vault apps](features/vault-apps.md)) and community
 plugins ([community plugins](features/community-plugins.md)), which hosts plugins from other
 repositories as processes it runs, never as code it loads. A renderer plugin may give its claims as
@@ -287,6 +288,7 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 | [google](features/google.md)                   | Gmail and Calendar, per vault                                        |
 | [pdf](features/pdf.md)                         | Typst export and the PDF viewer                                      |
 | [links](features/links.md)                     | `link.*.md` files and page previews                                  |
+| [browser](features/browser.md)                 | Web pages in a tab, and `holi browser` for the agent                 |
 | [vault-apps](features/vault-apps.md)           | Agent-authored apps in their own origin                              |
 | [command-palette](features/command-palette.md) | Quick open and the one table of commands                             |
 | [onboarding](features/onboarding.md)           | First run and adding a vault                                         |

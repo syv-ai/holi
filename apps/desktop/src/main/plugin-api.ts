@@ -11,7 +11,7 @@
  * No `electron` value import (types only): plugins load under plain Node in
  * the tests.
  */
-import type { Privileges } from 'electron'
+import type { BrowserWindow, Privileges } from 'electron'
 import type {
   CommentMention,
   PluginInfo,
@@ -171,6 +171,9 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   notify(notice: Notice): boolean
   /** Whether a Holi window has focus now. */
   focused(): boolean
+  /** Holi's window, or null while none is open: for a plugin that draws
+   *  into it from main (the browser's pages). */
+  window(): BrowserWindow | null
   /** Hear each scan of this vault, the latest one first, at once. Returns
    *  the undo. */
   onSnapshot(cb: (snapshot: VaultSnapshot) => void): () => void
@@ -314,6 +317,7 @@ export { seedFolder } from './vault/seed/folder'
 export { jsonFileStore, type JsonFileStore } from './json-file-store'
 export { nodeFallbackDir, resolveBin, toolPath } from './bin'
 export { defaultProbePid, type PidState } from './process-group'
+export { writeScreenshot } from './screenshot-files'
 export {
   defaultSpawnPty,
   type PtyProcess,
