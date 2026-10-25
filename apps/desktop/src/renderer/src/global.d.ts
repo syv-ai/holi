@@ -7,6 +7,7 @@ import type { ActivityEntry } from '../../main/activity/log'
 import type { AppLogEntry } from '../../main/logs/app-log'
 import type { TerminalEvent } from '../../main/terminal/terminals'
 import type { TrpcEnvelope, TrpcOpWire } from './lib/ipc-link'
+import type { SkillsUpdated } from '../../main/capabilities/vault-caps'
 
 declare global {
   interface Window {
@@ -33,7 +34,7 @@ declare global {
         onFlushRequest(cb: () => void): () => void
         flushDone(): void
         /** What the skills update the vault ran on open changed. */
-        onSkillsUpdated(cb: (notice: unknown) => void): () => void
+        onSkillsUpdated(cb: (notice: SkillsUpdated & { remote: string }) => void): () => void
         /** Main asks for a vault path in a tab: a clicked reminder's task,
          *  `holi docs open`, a Holi link (with a heading to scroll to). Fans to
          *  a vault switch (if the path lives elsewhere) + `openDocumentAtom`.

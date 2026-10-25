@@ -5,6 +5,17 @@ import type { ColorScheme, WindowGlass } from "@holi/shared"
 import { colorSchemeAtom, writeColorSchemeAtom } from "@/state/color-scheme"
 import { windowGlassAtom, writeWindowGlassAtom } from "@/state/window-glass"
 import { sessionAtom, signOutAtom } from "@/state/session"
+import {
+  dismissSkillsOfferAtom,
+  skillsNoticeAtom,
+  skillsOfferAtom,
+  updateSkillsAtom,
+} from "@/state/skills"
+import {
+  installUpdateAtom,
+  retryUpdateDownloadAtom,
+  updateStatusAtom,
+} from "@/state/updates"
 import { shortcutsDialogOpenAtom } from "@/state/shortcuts"
 import {
   openSettingsAtom,
@@ -46,6 +57,8 @@ import {
   BugIcon,
   HelpCircleIcon,
   MoreHorizontalIcon,
+  RefreshCwIcon,
+  SparklesIcon,
 } from "lucide-react"
 
 // ── Theme Toggle ──
@@ -141,6 +154,102 @@ function isMac() {
 
 // ── Account Menu ──
 
+/**
+ * What the menu has to offer about updates (docs/features/updates.md): Holi
+ * ready to restart into, a download to try again, a release's skills for the
+ * open vault, or what the update on open did. Empty when there is nothing to
+ * do, and then the menu shows no such group and the avatar no dot.
+ */
+function useUpdateOffers() {
+  const status = useAtomValue(updateStatusAtom)
+  const skills = useAtomValue(skillsOfferAtom)
+  const notice = useAtomValue(skillsNoticeAtom)
+  const app =
+    status?.supported !== true
+      ? null
+      : status.state === "ready"
+        ? ("ready" as const)
+        : status.state === "available" && status.lastError !== null
+          ? ("failed" as const)
+          : null
+  return {
+    app,
+    version: status?.availableVersion ?? null,
+    skills,
+    notice,
+    any: app !== null || skills !== null || notice !== null,
+  }
+}
+
+function UpdateItems() {
+  const offers = useUpdateOffers()
+  const install = useSetAtom(installUpdateAtom)
+  const retry = useSetAtom(retryUpdateDownloadAtom)
+  const updateSkills = useSetAtom(updateSkillsAtom)
+  const notNow = useSetAtom(dismissSkillsOfferAtom)
+  const openSection = useSetAtom(openSettingsSectionAtom)
+  if (!offers.any) return null
+  const holi = offers.version === null ? "An update" : `Holi ${offers.version}`
+  return (
+    <>
+      <DropdownMenuGroup>
+        <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
+          Updates
+        </DropdownMenuLabel>
+        {offers.app === "ready" ? (
+          <DropdownMenuItem onSelect={() => void install()}>
+            <RefreshCwIcon aria-hidden="true" />
+            Restart to update
+            <DropdownMenuShortcut>{holi}</DropdownMenuShortcut>
+          </DropdownMenuItem>
+        ) : offers.app === "failed" ? (
+          <DropdownMenuItem onSelect={() => void retry()}>
+            <RefreshCwIcon aria-hidden="true" />
+            {holi} could not download: try again
+          </DropdownMenuItem>
+        ) : null}
+        {offers.skills !== null ? (
+          <>
+            <DropdownMenuItem onSelect={() => void updateSkills()}>
+              <SparklesIcon aria-hidden="true" />
+              Update skills
+              <DropdownMenuShortcut>
+                {offers.skills.length}{" "}
+                {offers.skills.length === 1 ? "file" : "files"}
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => notNow()}>
+              Not now
+            </DropdownMenuItem>
+          </>
+        ) : null}
+        {offers.notice !== null ? (
+          <DropdownMenuItem onSelect={() => openSection("updates")}>
+            <SparklesIcon aria-hidden="true" />
+            {offers.notice.conflicts !== null
+              ? "Skills updated, with files to merge"
+              : "Skills updated"}
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuGroup>
+      <DropdownMenuSeparator />
+    </>
+  )
+}
+
+/** A dot on the avatar while the menu has an update to offer. */
+function UpdateDot() {
+  const { any } = useUpdateOffers()
+  if (!any) return null
+  return (
+    <span
+      data-update-dot
+      aria-hidden="true"
+      className="bg-primary ring-sidebar absolute end-0 top-0 size-2 rounded-full ring-2"
+    />
+  )
+}
+
 function AccountMenuContent({ isMobile }: { isMobile: boolean }) {
   const signOut = useSetAtom(signOutAtom)
   const openShortcuts = useSetAtom(shortcutsDialogOpenAtom)
@@ -154,6 +263,7 @@ function AccountMenuContent({ isMobile }: { isMobile: boolean }) {
       sideOffset={8}
       className="w-60"
     >
+      <UpdateItems />
       <DropdownMenuGroup>
         <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
           Account
@@ -249,6 +359,8 @@ export function NavUser({ collapsed = false }: { collapsed?: boolean }) {
   const viewer = useAtomValue(sessionAtom)
   const name = viewer?.name ?? viewer?.login ?? ""
   const initials = name.slice(0, 2).toUpperCase()
+  // The dot says it to the eye; the label says it to a screen reader.
+  const offering = useUpdateOffers().any ? ", an update to look at" : ""
 
   // Rail mode: the avatar is the whole control, and the menu is unchanged.
   if (collapsed) {
@@ -258,13 +370,14 @@ export function NavUser({ collapsed = false }: { collapsed?: boolean }) {
           <Button
             variant="ghost"
             size="icon"
-            aria-label="Account menu"
-            className="size-8 shrink-0 rounded-full"
+            aria-label={`Account menu${offering}`}
+            className="relative size-8 shrink-0 rounded-full"
           >
             <Avatar className="size-7">
               <AvatarImage src={viewer?.avatarUrl} alt="" />
               <AvatarFallback className="text-xs">{initials}</AvatarFallback>
             </Avatar>
+            <UpdateDot />
           </Button>
         </DropdownMenuTrigger>
         <AccountMenuContent isMobile={isMobile} />
@@ -281,14 +394,17 @@ export function NavUser({ collapsed = false }: { collapsed?: boolean }) {
             className="hover:bg-foreground/5 h-auto rounded-lg bg-transparent py-1.5 ps-1.5 pe-1.5"
             asChild
           >
-            <SidebarMenuButton aria-label="Open account menu">
+            <SidebarMenuButton aria-label={`Open account menu${offering}`}>
               <div className="flex min-w-0 flex-1 items-center gap-2">
-                <Avatar className="size-8 shrink-0">
-                  <AvatarImage src={viewer?.avatarUrl} alt="" />
-                  <AvatarFallback className="text-xs font-semibold">
-                    {initials}
-                  </AvatarFallback>
-                </Avatar>
+                <span className="relative shrink-0">
+                  <Avatar className="size-8">
+                    <AvatarImage src={viewer?.avatarUrl} alt="" />
+                    <AvatarFallback className="text-xs font-semibold">
+                      {initials}
+                    </AvatarFallback>
+                  </Avatar>
+                  <UpdateDot />
+                </span>
                 <div className="flex min-w-0 flex-col">
                   <span className="truncate text-sm font-medium">{name}</span>
                   <span className="text-muted-foreground truncate text-xs">

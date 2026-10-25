@@ -1,6 +1,7 @@
 /**
  * This machine's pages: how the window looks (Appearance), the app's own
- * updates and start (Updates), and who is signed in (Account).
+ * updates, each release's notes and start, with where the open vault's skills
+ * stand against this release (Updates), and who is signed in (Account).
  */
 import { useAtomValue, useSetAtom } from "jotai"
 import { useEffect, useId, useState } from "react"
@@ -19,16 +20,33 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Switch } from "@/components/ui/switch"
+import { MarkdownText, openableUrl } from "@/composites"
 import { trpc } from "@/lib/trpc"
 import { colorSchemeAtom, writeColorSchemeAtom } from "@/state/color-scheme"
 import { sessionAtom, signOutAtom } from "@/state/session"
+import {
+  dismissSkillsNoticeAtom,
+  mergeSkillsConflictsAtom,
+  openSkillsStatusAtom,
+  skillsNoticeAtom,
+  updateSkillsAtom,
+} from "@/state/skills"
 import {
   checkForUpdateAtom,
   installUpdateAtom,
   retryUpdateDownloadAtom,
   setAutoUpdateAtom,
+  setUpdateChannelAtom,
   updateHeadline,
   updateStatusAtom,
 } from "@/state/updates"
@@ -153,12 +171,24 @@ export function AppearancePage() {
 
 // ── Updates ──
 
+/** "just now", "12m ago", "3h ago", "yesterday", "4d ago". */
+export function checkedAgo(at: number, now: number = Date.now()): string {
+  const minutes = Math.floor((now - at) / 60_000)
+  if (minutes < 1) return "just now"
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return days === 1 ? "yesterday" : `${days}d ago`
+}
+
 export function UpdatesPage() {
   const status = useAtomValue(updateStatusAtom)
   const check = useSetAtom(checkForUpdateAtom)
   const retry = useSetAtom(retryUpdateDownloadAtom)
   const install = useSetAtom(installUpdateAtom)
   const setEnabled = useSetAtom(setAutoUpdateAtom)
+  const setChannel = useSetAtom(setUpdateChannelAtom)
   const supported = status?.supported === true
 
   const action = !supported ? null : status.state === "ready" ? (
@@ -180,17 +210,51 @@ export function UpdatesPage() {
     </Button>
   )
 
+  const described =
+    status === null
+      ? undefined
+      : [
+          status.version === "" ? null : `You have Holi ${status.version}.`,
+          status.lastCheckAt === null
+            ? null
+            : `Last checked ${checkedAgo(status.lastCheckAt)}.`,
+          status.lastError,
+        ]
+          .filter((part) => part !== null && part !== "")
+          .join(" ") || undefined
+
   return (
+    <div className="flex flex-col gap-8">
     <SettingsCard title="Updates" description="Holi itself, on this machine.">
-      <SettingsRow
-        title={updateHeadline(status)}
-        description={
-          status === null || status.version === ""
-            ? undefined
-            : `You have Holi ${status.version}.${status.lastError ? ` ${status.lastError}` : ""}`
-        }
-      >
+      <SettingsRow title={updateHeadline(status)} description={described}>
         {action}
+      </SettingsRow>
+      {status?.availableVersion != null &&
+      status.availableVersion !== status.version ? (
+        <ReleaseNotesRow
+          key={status.availableVersion}
+          version={status.availableVersion}
+          title={`What’s new in Holi ${status.availableVersion}`}
+        />
+      ) : null}
+      {status !== null && status.version !== "" ? (
+        <ReleaseNotesRow
+          key={status.version}
+          version={status.version}
+          title={`Holi ${status.version}, the version you have`}
+        />
+      ) : null}
+      <SettingsRow
+        title="Dev prereleases"
+        description="Development releases instead of stable ones. Turning this off downloads the latest stable release, even when it is older than yours; restart to install it."
+        htmlFor="settings-dev-channel"
+      >
+        <Switch
+          id="settings-dev-channel"
+          disabled={!supported}
+          checked={status?.channel === "dev"}
+          onCheckedChange={(on) => void setChannel(on ? "dev" : "stable")}
+        />
       </SettingsRow>
       <SettingsRow
         title="Update automatically"
@@ -205,6 +269,181 @@ export function UpdatesPage() {
         />
       </SettingsRow>
       <OpenAtLoginRow />
+    </SettingsCard>
+    <VaultSkillsCard />
+    </div>
+  )
+}
+
+type NotesAnswer = Awaited<ReturnType<typeof trpc.updates.notes.query>>
+
+/**
+ * One release's notes, from its GitHub release, asked for when first shown
+ * and shown formatted but never as HTML (`MarkdownText`). GitHub not
+ * answering is asked again on the next opening.
+ */
+function ReleaseNotesRow({ version, title }: { version: string; title: string }) {
+  const [open, setOpen] = useState(false)
+  const [answer, setAnswer] = useState<NotesAnswer | undefined>(undefined)
+  useEffect(() => {
+    if (!open || answer !== undefined) return
+    let live = true
+    trpc.updates.notes
+      .query({ version })
+      .then((found) => live && setAnswer(found))
+      .catch(() => live && setAnswer({ kind: "unreachable" }))
+    return () => {
+      live = false
+    }
+  }, [open, answer, version])
+
+  const url =
+    answer?.kind === "found" ? openableUrl(answer.notes.url) : null
+  return (
+    <SettingsRow title={title}>
+      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+        Release notes
+      </Button>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next)
+          // Unanswered is asked again when shown again.
+          if (!next && answer?.kind === "unreachable") setAnswer(undefined)
+        }}
+      >
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Holi {version}</DialogTitle>
+            <DialogDescription>
+              {answer?.kind === "found" ? answer.notes.name : "Release notes"}
+            </DialogDescription>
+          </DialogHeader>
+          {answer === undefined ? (
+            <div className="flex flex-col gap-2" role="status" aria-label="Loading notes">
+              <Skeleton className="h-4 w-2/3" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-5/6" />
+            </div>
+          ) : answer.kind === "unreachable" ? (
+            <p className="text-muted-foreground text-sm">
+              GitHub did not answer. Close this and try again.
+            </p>
+          ) : answer.kind === "none" ? (
+            <p className="text-muted-foreground text-sm">
+              GitHub has no notes for this version.
+            </p>
+          ) : answer.notes.body.trim() === "" ? (
+            <p className="text-muted-foreground text-sm">No notes for this version.</p>
+          ) : (
+            <MarkdownText
+              body={answer.notes.body}
+              className="text-muted-foreground flex max-h-96 flex-col gap-2 overflow-auto text-sm"
+            />
+          )}
+          {url !== null ? (
+            <Button
+              variant="link"
+              size="sm"
+              className="self-start"
+              onClick={() => void window.holi.openExternal(url)}
+            >
+              <ExternalLinkIcon data-icon="inline-start" aria-hidden="true" />
+              {answer?.kind === "found" ? answer.notes.name : "The release"} on GitHub
+            </Button>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+    </SettingsRow>
+  )
+}
+
+/**
+ * Where the open vault's skills and hooks stand against this release, what
+ * the update on open did, and whether the vault takes them on open
+ * (`autoUpdateSkills`, committed, so a team answers it once).
+ */
+function VaultSkillsCard() {
+  const status = useAtomValue(openSkillsStatusAtom)
+  const notice = useAtomValue(skillsNoticeAtom)
+  const update = useSetAtom(updateSkillsAtom)
+  const merge = useSetAtom(mergeSkillsConflictsAtom)
+  const dismiss = useSetAtom(dismissSkillsNoticeAtom)
+  const { resolved, write } = useVaultSettings()
+  const [busy, setBusy] = useState(false)
+  const pending = status?.pending.length ?? 0
+
+  const run = async (what: () => Promise<void>) => {
+    setBusy(true)
+    try {
+      await what()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <SettingsCard
+      title="This vault’s skills"
+      description="The skills and hooks Holi gave the vault's agent, against this release."
+    >
+      {status === null ? (
+        <SettingsRow title={<Skeleton className="h-4 w-48" />} />
+      ) : (
+        <SettingsRow
+          title={
+            pending === 0
+              ? "Skills and hooks are up to date"
+              : `This version of Holi has ${pending} newer ${pending === 1 ? "file" : "files"} for this vault`
+          }
+          description={
+            status.release === null
+              ? "Holi has not written this vault’s skills on this machine."
+              : `Last brought in by Holi ${status.release}.`
+          }
+        >
+          {pending > 0 ? (
+            <Button size="sm" disabled={busy} onClick={() => void run(update)}>
+              Update skills
+            </Button>
+          ) : null}
+        </SettingsRow>
+      )}
+      {notice !== null ? (
+        <SettingsRow
+          title="Updated when the vault opened"
+          description={
+            notice.changed.length > 0
+              ? `${notice.summary} ${notice.changed.join(", ")}`
+              : notice.summary
+          }
+        >
+          <div className="flex gap-2">
+            {notice.conflicts !== null ? (
+              <Button size="sm" disabled={busy} onClick={() => void run(merge)}>
+                Merge with the agent
+              </Button>
+            ) : null}
+            <Button variant="outline" size="sm" onClick={() => dismiss()}>
+              Done
+            </Button>
+          </div>
+        </SettingsRow>
+      ) : null}
+      <SettingsRow
+        title="Update skills automatically"
+        description="Bring a new release's skills in when the vault opens, after it has synced. Saved in the vault, so it is the whole team's answer."
+        htmlFor="settings-auto-skills"
+      >
+        <Switch
+          id="settings-auto-skills"
+          disabled={resolved === null}
+          checked={resolved?.autoUpdateSkills === true}
+          onCheckedChange={(on) =>
+            void write("autoUpdateSkills", on, "committed")
+          }
+        />
+      </SettingsRow>
     </SettingsCard>
   )
 }

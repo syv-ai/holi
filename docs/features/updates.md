@@ -32,9 +32,10 @@ same path as ⌘Q first: the plugins' quit questions (a busy agent session asks)
 that flushes, commits and pushes the vault, and only then `quitAndInstall`. Declining the question
 keeps Holi open and the update ready.
 
-**Where you meet it.** The nav menu gains an update item only when there is something to do: in the
-brand colour when an update is ready, with its panel's **Restart to update**, and in amber when a
-download failed, with **Try again**. It stays until acted on; a toast would be missed. Settings →
+**Where you meet it.** The account menu (the avatar at the sidebar's foot) gains an **Updates**
+group only when there is something to do, and the avatar a dot in the brand colour while it does:
+**Restart to update** when an update is ready, try again when a download failed, the skills offer,
+and what the update on open did (`nav-user.tsx`). It stays until acted on; a toast would be missed. Settings →
 **Updates** shows the running version, where the updater has got to, **Check now**, and **Update
 automatically**, which turns the background checks off (stored in `userData/updates.json`). A
 person's own check ignores the cooldown and the preference. **Dev prereleases** opts this app into
@@ -42,10 +43,10 @@ the development release channel. Switching channels immediately checks and downl
 selected feed. Turning dev off selects stable and downloads its latest release, even when that
 version is older than the installed one; **Restart to update** installs the downloaded stable
 version. **Release notes** are each release's GitHub notes, for the version found and the one
-running, fetched from GitHub's releases API by tag (`v<version>`) when first shown
+running, shown in a dialog from their row and fetched from GitHub's releases API by tag (`v<version>`) when first shown
 (`src/main/updates/release-notes.ts`, `trpc.updates.notes`). They are Markdown, rendered as formatted
 text (headings, lists, emphasis, code, links) from `marked`'s tokens straight into React elements
-(`ReleaseNotesText`, over the `MarkdownText` composite), so nothing in them ever becomes HTML: raw HTML shows as its text. A link opens
+(the `MarkdownText` composite), so nothing in them ever becomes HTML: raw HTML shows as its text. A link opens
 in the browser and only when it is `http:` or `https:`; any other is shown as its words. Below them
 is a link to the release built from the tag; a version with no release, such as a local build, has
 none. GitHub not answering (offline, rate
@@ -56,7 +57,7 @@ of sight, so the vault opens, syncs and fires its reminders from the start.
 **A release's skills reach a vault by asking.** Skills and hooks are the vault's once written, so an
 app update leaves every vault's copies where they were ([agent config](agent-config.md)). Whenever a
 vault opens, Holi asks, writing nothing, whether this release would bring it any (`skills.status`).
-While it would, the nav's update item offers them, uncoloured, naming the files: **Update skills**
+While it would, the account menu offers them, with how many files: **Update skills**
 runs the ordinary update, conflicts and all, and **Not now** puts the offer off on this machine
 until a later release changes what is pending (`localStorage`, never the vault). An app update
 then reaches a vault's skills on the next open, with one click.
@@ -71,7 +72,7 @@ release in, and an update ahead of the pull would write it twice. It writes only
 from every shipped version with no base on this machine is left alone rather than staged as a
 conflict nobody asked about. A
 vault left before then is not touched, and one skills update runs at a time, asked for or not.
-Main pushes what changed (`vault:skills`), and the nav's update item says it, naming the files,
+Main pushes what changed (`vault:skills`), and the account menu and Settings → Updates say it, naming the files,
 until **Done** or the vault is left; the vault is not offered the update meanwhile. Unasked, it
 starts no session: a conflict stays staged beside its file and the item offers **Merge with the
 agent**, which starts the session Update skills would have. A failure is quiet.
