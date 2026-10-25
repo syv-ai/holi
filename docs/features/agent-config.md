@@ -52,7 +52,10 @@ editor finds the file's lines by marking the selection's ends and writing the do
 (`selectionLines`, the way a comment's quote is found, [note-comments](note-comments.md)); a code
 file's are CodeMirror's own line numbers. The editor that
 last changed its selection owns it, and it outlives that editor's unmount, so a selection still
-counts while the person types to the agent in the same pane; a vault switch clears it. Tasks, backlinks and sync state the
+counts while the person types to the agent in the same pane; a vault switch clears it. Typing to the
+agent focuses its own view (a session, the Agents home, a terminal), which keeps a note: in a split,
+the note beside it, the one last focused there when there are more; alone, the note focused before
+it. Any other view in front (the board, a browser tab) reports none. Tasks, backlinks and sync state the
 agent finds itself with `Glob`, `grep` and `git`. The line carries no time or count, so the same
 focus and selection print the same bytes and do not break the prompt cache.
 
