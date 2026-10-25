@@ -42,9 +42,9 @@ export function BrandMark({
   className,
 }: {
   variant?: 'wordmark' | 'monogram'
-  /** `md` heads a screen; `lg` stands alone, as on the loading screen and an
-   *  empty pane. */
-  size?: 'md' | 'lg'
+  /** `md` heads a screen; `lg` stands alone, as on the loading screen; `xl`
+   *  is the New tab's. */
+  size?: 'md' | 'lg' | 'xl'
   className?: string
 }): React.JSX.Element {
   const shape = variant === 'monogram' ? BRAND_MONOGRAM : BRAND_WORDMARK
@@ -54,7 +54,7 @@ export function BrandMark({
       role="img"
       aria-label="Holi"
       fill="currentColor"
-      className={cn('w-auto shrink-0', size === 'lg' ? 'h-16' : 'h-10', className)}
+      className={cn('w-auto shrink-0', size === 'xl' ? 'h-24' : size === 'lg' ? 'h-16' : 'h-10', className)}
     >
       {shape.paths.map((d) => (
         <path key={d} d={d} fillRule={shape.fillRule} clipRule={shape.fillRule} />

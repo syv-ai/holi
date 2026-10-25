@@ -31,9 +31,12 @@ name as the page's title, a row of tabs with search and New note at its end, and
   table stays and the error with Retry sits above it. Activity never clamps a commit's subject.
 - With Home set to the recents, an empty list says "Nothing opened yet" and offers New note.
 
-**The New tab** shows the vault's `README.md` read-only, above Recently edited, with Open, when the
-vault has one (`empty-view.tsx`, `MarkdownText`, so it never becomes HTML); it is read again
-whenever the file changes.
+**The New tab** (`empty-view.tsx`, also an empty pane's) is kept to where you are and what to
+start: the vault, the day and its open tasks (the word _tasks_ opens the board), the wordmark, and
+three cards, New document (⌘N), Today's note (⇧⌘D) and New agent session (⇧⌘N; only while the
+agent runs, and it starts one in the default agent as ⌘N does on the Agents side), each showing its
+key. The Holis' arcade plays behind the top of it ([tabs and panes](tabs-panes.md), The arcade). It has no recent
+documents, README or search: the sidebar and ⌘K have those.
 
 There is no folder view: a folder is expanded in the tree, and a folder that is a document (an
 app) opens as itself.

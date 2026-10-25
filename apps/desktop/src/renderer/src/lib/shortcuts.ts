@@ -291,6 +291,21 @@ export const SHORTCUTS: readonly Shortcut[] = [
     keys: ['⌘N'],
     whileTyping: true,
   },
+  // The New tab's Start cards each have a key: ⌘N above, and these two.
+  {
+    id: 'daily.open',
+    label: 'Open today’s note',
+    group: 'Files',
+    keys: ['⇧⌘D'],
+    whileTyping: true,
+  },
+  {
+    id: 'session.new',
+    label: 'New agent session',
+    group: 'Files',
+    keys: ['⇧⌘N'],
+    whileTyping: true,
+  },
   // The tree renames its focused row itself; this is the same key with focus
   // anywhere else outside text, on the row selected in the tree.
   {

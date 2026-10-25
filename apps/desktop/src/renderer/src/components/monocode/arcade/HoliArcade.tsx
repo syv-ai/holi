@@ -67,13 +67,14 @@ const BUBBLE_OPACITY = 0.95
 const IDLE_BUBBLE_OPACITY = 0.7
 
 /**
- * Idle, the board melts into the pane rather than reading as a layer: full
- * under the top of the content, gone by the foot (MonoCode's fade), and
- * softened at the sides.
+ * Idle, the board melts into the pane rather than reading as a layer: it
+ * holds the top two-fifths, fading out at their foot the way the files
+ * sidebar's rows do, so the rest of the pane is the content's alone; and it
+ * is softened at the sides.
  */
 const IDLE_MASK: CSSProperties = {
   maskImage:
-    "linear-gradient(to bottom, #000 45%, transparent 100%), linear-gradient(to right, transparent, #000 10%, #000 90%, transparent)",
+    "linear-gradient(to bottom, #000 calc(40% - 6rem), transparent 40%), linear-gradient(to right, transparent, #000 10%, #000 90%, transparent)",
   maskComposite: "intersect",
 }
 /** Under the logo (the keep-out): a whisper of the board. */

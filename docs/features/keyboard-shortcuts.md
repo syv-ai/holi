@@ -64,6 +64,8 @@ command list: `?`, ↓ to a row, ↩ runs it, so a person who forgot a key can s
 | Panel      | Toggle terminal               | ⌃\`          | Ctrl \`                   |
 | Panel      | Show output                   | ⇧⌘U          | Ctrl Shift U              |
 | Files      | New document                  | ⌘N           | Ctrl N                    |
+| Files      | Open today’s note             | ⇧⌘D          | Ctrl Shift D              |
+| Files      | New agent session             | ⇧⌘N          | Ctrl Shift N              |
 | Files      | Rename selected file          | F2           | F2                        |
 | Files      | Collapse all folders          | ⌥⌘←          | Ctrl Alt ←                |
 | Apps       | Open Mail / Open Calendar     | ⇧⌘M / ⇧⌘C    | Ctrl Shift M / C          |

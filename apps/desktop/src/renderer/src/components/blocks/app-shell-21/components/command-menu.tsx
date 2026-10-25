@@ -329,6 +329,7 @@ export function CommandMenu({
       label: "Today’s note",
       keywords: ["daily", "journal"],
       icon: CalendarIcon,
+      keys: shortcut("daily.open")?.keys[0],
       run: openToday,
     },
     ...pluginRows("go"),
@@ -380,8 +381,9 @@ export function CommandMenu({
           {
             id: "session.new",
             label: "New session",
-            keywords: ["agent", "chat", "claude"],
+            keywords: ["agent", "chat", "claude", "codex"],
             icon: MessageSquarePlusIcon,
+            keys: shortcut("session.new")?.keys[0],
             run: () => {
               if (!newAgentSession(beside.current)) {
                 onOpen(AGENTS_HOME_KEY, beside.current)

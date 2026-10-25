@@ -190,7 +190,9 @@ picks them up into a stack that trails behind it and files them in the outbox, s
 speech bubble in its own voice, and merge conflicts wander about and scatter a stack they touch.
 The cast is the vault's Holis by persona and colour, which the holis plugin contributes through
 the `arcadeCast` plugin slot; with none (or the plugin off) a default cast plays. Content wins: idle, the
-board melts into the pane (dimmed, slightly blurred, masked away toward the foot and the sides),
+board melts into the pane (dimmed, slightly blurred, holding only the pane's top two-fifths and
+fading out at their foot as the files sidebar's rows do, so the content below is never on the game,
+and masked away at the sides),
 takes no pointer, dims to a whisper under the logo (anything marked `data-arcade-keepout`) and puts
 nothing there, and is gone below a 48rem pane, before the logo goes. MonoCode's take-control pill
 (`Take control · Paper run`) sits in the band under the content, never over a row, and shows

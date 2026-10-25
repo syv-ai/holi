@@ -63,7 +63,6 @@ export function TabView({
           key={tab ?? "none"}
           onOpen={onOpen}
           onNewDocument={onNewDocument}
-          onOpenSearch={onOpenSearch}
         />
       )
     case "board":

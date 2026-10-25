@@ -1,42 +1,20 @@
 /**
- * The empty view: where you are, what to do next, and what was written last,
- * all read from the vault's own state.
+ * The empty view: where you are, the mark, and the three things to start,
+ * over the Holis' arcade.
  */
 import { Provider, createStore } from "jotai"
 import { expect, test, vi } from "vitest"
-import {
-  emptyVaultSnapshot,
-  VAULT_SETTING_DEFAULTS,
-  type VaultSnapshot,
-} from "@holi/shared"
+import { VAULT_SETTING_DEFAULTS } from "@holi/shared"
+import type { RendererPlugin } from "@/plugin-api"
 import { fireEvent, render, screen } from "@/test/render"
 import { nowAtom } from "@/state/clock"
+import { installedPluginsAtom } from "@/state/plugins"
 import { vaultSettingsAtom } from "@/state/settings"
-import { activeRemoteAtom, snapshotAtom, vaultsAtom } from "@/state/vaults"
+import { activeRemoteAtom, vaultsAtom } from "@/state/vaults"
 import { BOARD_TAB } from "../documents-section"
 import { EmptyView, isNewTab, NEW_TAB_PREFIX } from "../empty-view"
 
-const read = vi.hoisted(() => vi.fn())
-vi.mock("@/lib/trpc", async (orig) => {
-  const real = await orig<typeof import("@/lib/trpc")>()
-  return {
-    trpc: new Proxy(real.trpc, {
-      get: (target, key) =>
-        key === "notes"
-          ? { read: { query: (input: unknown) => read(input) } }
-          : Reflect.get(target, key),
-    }),
-  }
-})
-
-function snapshotWith(docs: VaultSnapshot["docs"]): VaultSnapshot {
-  return { ...emptyVaultSnapshot(), docs }
-}
-
-function mount(
-  snapshot: VaultSnapshot | null,
-  prepare?: (store: ReturnType<typeof createStore>) => void
-) {
+function mount(prepare?: (store: ReturnType<typeof createStore>) => void) {
   const store = createStore()
   store.set(nowAtom, "2026-10-23T12:00")
   store.set(activeRemoteAtom, "mara/notes")
@@ -48,70 +26,43 @@ function mount(
       lastOpenedAt: "2026-10-23T10:00:00.000Z",
     },
   ] as never)
-  if (snapshot) store.set(snapshotAtom, snapshot)
   prepare?.(store)
   const onOpen = vi.fn()
   const onNewDocument = vi.fn()
   render(
     <Provider store={store}>
-      <EmptyView
-        onOpen={onOpen}
-        onNewDocument={onNewDocument}
-        onOpenSearch={() => {}}
-      />
+      <EmptyView onOpen={onOpen} onNewDocument={onNewDocument} />
     </Provider>
   )
   return { onOpen, onNewDocument }
 }
 
-test("names the vault and the day", () => {
-  mount(snapshotWith([]))
+test("names the vault and the day, and its tasks open the board", () => {
+  const { onOpen } = mount()
   expect(screen.getByText("notes")).toBeTruthy()
   expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(/23/)
-})
-
-test("lists the newest documents first, leaving hidden ones out", () => {
-  const { onOpen } = mount(
-    snapshotWith([
-      { path: "Old.md", kind: "note", updatedAt: "2026-09-01T10:00:00Z" },
-      {
-        path: "Meetings/Kickoff.md",
-        kind: "note",
-        updatedAt: "2026-10-23T09:00:00Z",
-      },
-      { path: ".holi/x.md", kind: "note", updatedAt: "2026-10-23T11:00:00Z" },
-    ])
-  )
-  const rows = screen
-    .getAllByRole("button")
-    .map((row) => row.textContent ?? "")
-    .filter((text) => /Kickoff|Old|x/.test(text))
-  expect(rows[0]).toMatch(/^Kickoff/)
-  expect(rows[1]).toMatch(/^Old/)
-  expect(rows.some((text) => text.startsWith("x"))).toBe(false)
-  // One line: the name, where it lives, and when.
-  expect(rows[0]).toMatch(/^KickoffMeetingsToday$/)
-  fireEvent.click(screen.getByText("Kickoff"))
-  expect(onOpen).toHaveBeenCalledWith("Meetings/Kickoff.md")
-})
-
-test("opens the board", () => {
-  const { onOpen } = mount(snapshotWith([]))
-  fireEvent.click(screen.getByText("Board"))
+  fireEvent.click(screen.getByRole("button", { name: "tasks" }))
   expect(onOpen).toHaveBeenCalledWith(BOARD_TAB)
 })
 
-test("an unscanned vault shows a loading state, an empty one an action", () => {
-  mount(null)
-  expect(
-    screen.getByRole("status", { name: "Loading recent documents" })
-  ).toBeTruthy()
-  document.body.innerHTML = ""
-  const { onNewDocument } = mount(snapshotWith([]))
-  expect(screen.getByText("Nothing written in this vault yet.")).toBeTruthy()
-  const buttons = screen.getAllByText("New document")
-  fireEvent.click(buttons[buttons.length - 1]!)
+test("starts a document; an agent session only where the agent runs", () => {
+  const { onNewDocument } = mount()
+  fireEvent.click(screen.getByRole("button", { name: "New document" }))
   expect(onNewDocument).toHaveBeenCalled()
+  expect(screen.getByRole("button", { name: "Today’s note" })).toBeTruthy()
+  expect(screen.queryByRole("button", { name: "New agent session" })).toBeNull()
+  document.body.innerHTML = ""
+
+  const newSession = vi.fn()
+  mount((store) =>
+    store.set(installedPluginsAtom, [
+      {
+        info: { id: "agent", label: "Agent", builtIn: true },
+        agentsMode: { newSession: { write: newSession } },
+      } as unknown as RendererPlugin,
+    ])
+  )
+  expect(screen.getByRole("button", { name: "New agent session" })).toBeTruthy()
 })
 
 test("a New tab is told apart by its id", () => {
@@ -126,18 +77,18 @@ function content() {
 }
 
 test("the take-control pill shows over the board's free ground, or on focus", () => {
-  mount(snapshotWith([]))
+  mount()
   const pill = screen.getByRole("button", { name: /take control/i })
   expect(pill.dataset.show).toBe("false")
   fireEvent.pointerMove(pill.parentElement!)
   expect(pill.dataset.show).toBe("true")
-  // Over a row is not the board.
-  fireEvent.pointerMove(screen.getByText("Board"))
+  // Over a card is not the board.
+  fireEvent.pointerMove(screen.getByText("New document"))
   expect(pill.dataset.show).toBe("false")
 })
 
 test("taking control covers the pane; Escape gives it back to the pill", () => {
-  mount(snapshotWith([]))
+  mount()
   const pill = screen.getByRole("button", { name: /take control/i })
   fireEvent.click(pill)
 
@@ -157,7 +108,7 @@ test("taking control covers the pane; Escape gives it back to the pill", () => {
 })
 
 test("Release ends the game too", () => {
-  mount(snapshotWith([]))
+  mount()
   fireEvent.click(screen.getByRole("button", { name: /take control/i }))
   fireEvent.click(screen.getByRole("button", { name: /release/i }))
   expect(screen.queryByRole("application")).toBeNull()
@@ -167,7 +118,7 @@ test("Release ends the game too", () => {
 })
 
 test("with the arcade off on this machine, there is no board and no pill", () => {
-  mount(snapshotWith([]), (store) =>
+  mount((store) =>
     store.set(vaultSettingsAtom, {
       remote: "mara/notes",
       settings: { ...VAULT_SETTING_DEFAULTS, gridArcade: false, warnings: [] },
@@ -175,18 +126,4 @@ test("with the arcade off on this machine, there is no board and no pill", () =>
   )
   expect(screen.queryByRole("button", { name: /take control/i })).toBeNull()
   expect(document.querySelector("[data-slot=arcade]")).toBeNull()
-})
-
-test("the vault's README shows read-only above the recent documents, and opens", async () => {
-  read.mockResolvedValue("# Team notes\n\nWhere the team writes things down.\n")
-  const { onOpen } = mount(
-    snapshotWith([
-      { path: "README.md", kind: "note", updatedAt: "2026-10-20T10:00:00Z" },
-    ])
-  )
-  const readme = await screen.findByRole("region", { name: "README" })
-  expect(readme).toHaveTextContent("Where the team writes things down.")
-  expect(read).toHaveBeenCalledWith({ remote: "mara/notes", path: "README.md" })
-  fireEvent.click(screen.getByRole("button", { name: "Open" }))
-  expect(onOpen).toHaveBeenCalledWith("README.md")
 })

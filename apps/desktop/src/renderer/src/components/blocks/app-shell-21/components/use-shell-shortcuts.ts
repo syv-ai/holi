@@ -1,8 +1,10 @@
 import { atom, useAtom, useAtomValue, useSetAtom } from "jotai"
 import { useMemo } from "react"
+import { toast } from "sonner"
 
 import type { SidebarApp } from "@/plugin-api"
 import { newAgentSessionAtom } from "@/state/agents-slots"
+import { ensureTodaysDailyAtom } from "@/state/daily"
 import { runningPluginsAtom } from "@/state/plugins"
 import { shortcutsDialogOpenAtom, useShortcutHandlers } from "@/state/shortcuts"
 import { sidebarSectionAtom } from "@/state/sidebar-section"
@@ -50,6 +52,7 @@ export function useShellShortcuts(shell: ShellActions): void {
   const setDialogOpen = useSetAtom(shortcutsDialogOpenAtom)
   const [section, setSection] = useAtom(sidebarSectionAtom)
   const newAgentSession = useSetAtom(newAgentSessionAtom)
+  const ensureDaily = useSetAtom(ensureTodaysDailyAtom)
   const hasAgents = useAtomValue(runningPluginsAtom).some(
     (plugin) => plugin.agentsMode !== undefined
   )
@@ -133,6 +136,18 @@ export function useShellShortcuts(shell: ShellActions): void {
       if (section === "agents" && hasAgents && newAgentSession()) return
       shell.newDocument()
     },
+    "daily.open": () => {
+      ensureDaily().then(
+        (path) => {
+          if (path !== null) shell.open(path)
+        },
+        () =>
+          toast.error(
+            "Couldn’t open today’s note. Check that the vault is reachable, then try again."
+          )
+      )
+    },
+    "session.new": hasAgents ? () => void newAgentSession() : undefined,
     "app.mail": app("mail"),
     "app.calendar": app("calendar"),
   })

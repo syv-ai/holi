@@ -1,45 +1,33 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useAtomValue, useSetAtom } from "jotai"
 import { toast } from "sonner"
-import { isHiddenPath, type DocMeta } from "@holi/shared"
-import {
-  CalendarDaysIcon,
-  FilePlusIcon,
-  FileTextIcon,
-  SearchIcon,
-  SquareKanbanIcon,
-} from "lucide-react"
+import { AstroidIcon, CalendarDaysIcon, FilePlusIcon } from "lucide-react"
 
-import { AsciiWake } from "@/components/bencho/ASCIIWake"
 import {
   ArcadeTakeControl,
   HoliArcade,
 } from "@/components/monocode/arcade/HoliArcade"
-import { Button } from "@/components/ui/button"
 import {
   Item,
   ItemActions,
   ItemContent,
-  ItemDescription,
   ItemGroup,
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item"
-import { Skeleton } from "@/components/ui/skeleton"
-import { MarkdownText } from "@/composites"
-import { trpc } from "@/lib/trpc"
+import { Kbd } from "@/components/ui/kbd"
+import { BrandMark } from "@/composites"
 import { cn } from "@/lib/cn"
-import { relativeTime } from "@/lib/relative-time"
-import { nowAtom, todayAtom } from "@/state/clock"
+import { hotkeyLabels } from "@/lib/hotkey"
+import { SHORTCUTS } from "@/lib/shortcuts"
+import { isMac } from "@/state/shortcuts"
+import { newAgentSessionAtom } from "@/state/agents-slots"
+import { todayAtom } from "@/state/clock"
 import { ensureTodaysDailyAtom } from "@/state/daily"
 import { arcadeCastAtom, gridArcadeAtom } from "@/state/grid-arcade"
-import { openTaskCountAtom, overdueTaskCountAtom } from "@/state/tasks"
-import {
-  activeRemoteAtom,
-  snapshotAtom,
-  snapshotLoadedAtom,
-  vaultsAtom,
-} from "@/state/vaults"
+import { runningPluginsAtom } from "@/state/plugins"
+import { openTaskCountAtom } from "@/state/tasks"
+import { activeRemoteAtom, vaultsAtom } from "@/state/vaults"
 
 import { BOARD_TAB } from "./documents-section"
 
@@ -51,9 +39,14 @@ export function isNewTab(id: string | null): boolean {
   return id !== null && id.startsWith(NEW_TAB_PREFIX)
 }
 
-/** How many recently edited documents the view lists when it is wide; a
- *  narrow one shows the first five. */
-const RECENT_COUNT = 6
+/** A shortcut's first key as it reads on this platform: `⇧⌘D`, or
+ *  `Ctrl Shift D`. */
+function keysOf(id: string): string | undefined {
+  const spec = SHORTCUTS.find((row) => row.id === id)?.keys[0]
+  if (spec === undefined) return undefined
+  const mac = isMac()
+  return hotkeyLabels(spec, mac).join(mac ? "" : " ")
+}
 
 /** "Friday 23 October", from the clock's `YYYY-MM-DD`. */
 const DAY = new Intl.DateTimeFormat(undefined, {
@@ -68,29 +61,31 @@ function dayLabel(today: string): string {
 }
 
 /**
- * What the view shows when nothing is open, or in a New tab: where you are
- * (the vault and the day), the board in one line, the few things you would do
- * next, and what was written most recently.
- *
- * Anchored to the top, not centred: a centred column would jump each time
- * the recent list changes length, the first load included.
+ * What the view shows when nothing is open, or in a New tab
+ * (docs/features/tabs-panes.md): where you are (the vault, the day and the
+ * open tasks, which open the board), the mark, and the three things you
+ * would start: a document, today's note, an agent session. Behind it, the
+ * Holis' arcade (docs/features/tabs-panes.md, The arcade).
  */
 export function EmptyView({
   onOpen,
   onNewDocument,
-  onOpenSearch,
 }: {
   /** Open a vault path or the board, in place of a New tab. */
   onOpen: (id: string) => void
   onNewDocument: () => void
-  onOpenSearch: () => void
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const vaults = useAtomValue(vaultsAtom)
   const today = useAtomValue(todayAtom)
   const openTasks = useAtomValue(openTaskCountAtom)
-  const overdue = useAtomValue(overdueTaskCountAtom)
   const ensureDaily = useSetAtom(ensureTodaysDailyAtom)
+  const newAgentSession = useSetAtom(newAgentSessionAtom)
+  /** A new agent session only where the agent can start one. */
+  const hasAgents = useAtomValue(runningPluginsAtom).some(
+    (plugin) => plugin.agentsMode?.newSession !== undefined
+  )
+
   const arcadeOn = useAtomValue(gridArcadeAtom)
   const cast = useAtomValue(arcadeCastAtom)
   /** While someone plays, the board covers the pane and the content steps
@@ -98,7 +93,7 @@ export function EmptyView({
   const [playing, setPlaying] = useState(false)
   /** The pointer is over the board's free ground, not over the content. */
   const [overBoard, setOverBoard] = useState(false)
-  const gridRef = useRef<HTMLDivElement>(null)
+  const columnRef = useRef<HTMLDivElement>(null)
   const takeControlRef = useRef<HTMLButtonElement>(null)
   const wasPlaying = useRef(false)
 
@@ -107,13 +102,13 @@ export function EmptyView({
     wasPlaying.current = playing
   }, [playing])
 
-  /** Over the board when the pointer is on the scroller or the grid itself
+  /** Over the board when the pointer is on the scroller or the column itself
    *  (the gaps between things), or on the take-control pill's own row. */
   function trackBoard(event: React.PointerEvent<HTMLDivElement>) {
     const target = event.target as Element
     const free =
       target === event.currentTarget ||
-      target === gridRef.current ||
+      target === columnRef.current ||
       target.closest("[data-arcade-free]") !== null
     if (free !== overBoard) setOverBoard(free)
   }
@@ -139,9 +134,8 @@ export function EmptyView({
     >
       {/* The Holis' arcade, under everything and melting into the pane:
           content wins, so it takes no pointer until someone takes control,
-          and then it covers the pane. The first of the fun to go as the
-          pane narrows (below 48rem), before the logo; machine-local, on by
-          default (`gridArcade`). */}
+          and then it covers the pane. Gone below a 48rem pane;
+          machine-local, on by default (`gridArcade`). */}
       {arcadeOn ? (
         <HoliArcade
           cast={cast}
@@ -159,23 +153,17 @@ export function EmptyView({
         onPointerMove={arcadeOn ? trackBoard : undefined}
         onPointerLeave={() => setOverBoard(false)}
         className={cn(
-          "relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto transition-opacity duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]",
+          "relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto motion-respond",
           playing && "opacity-0"
         )}
       >
-        {/* Centred in the pane and sized to fit it, so it does not scroll; a
-          very short window still can. No entrance: a New tab opens many
-          times a day, and opening a tab lands at once everywhere else. */}
-        {/* Sized by the pane, not the window, since the sidebar takes its share:
-          one column when narrow, and from 56rem the day across the top, the
-          mark beside what you would do, and what was written across the foot. */}
+        {/* Centred in the pane; no entrance, since a New tab opens many times
+          a day and lands at once everywhere else. */}
         <div
-          ref={gridRef}
-          className="mx-auto my-auto grid w-full max-w-lg gap-8 px-6 py-8 @4xl:max-w-5xl @4xl:grid-cols-[auto_minmax(0,1fr)] @4xl:items-start @4xl:gap-x-16"
+          ref={columnRef}
+          className="mx-auto my-auto flex w-full max-w-2xl flex-col gap-8 px-6 py-8"
         >
-          {/* The day heads the page, across both columns: where you are
-            and what is open, before anything to do about it. */}
-          <header className="flex flex-col gap-1 @4xl:col-span-2">
+          <header className="flex flex-col gap-1">
             {vaultName ? (
               <p className="text-muted-foreground text-xs font-medium">
                 {vaultName}
@@ -185,90 +173,60 @@ export function EmptyView({
               {dayLabel(today)}
             </h1>
             <p className="text-muted-foreground text-sm">
-              {openTasks === 0 ? (
-                "Nothing open on the board."
-              ) : (
-                <>
-                  <span className="text-foreground font-medium tabular-nums">
-                    {openTasks}
-                  </span>{" "}
-                  open {openTasks === 1 ? "task" : "tasks"}
-                  {overdue > 0 ? (
-                    <>
-                      ,{" "}
-                      <span className="text-foreground font-medium tabular-nums">
-                        {overdue}
-                      </span>{" "}
-                      overdue
-                    </>
-                  ) : null}
-                  .
-                </>
-              )}
+              <span className="text-foreground font-medium tabular-nums">
+                {openTasks === 0 ? "No" : openTasks}
+              </span>{" "}
+              open{" "}
+              <button
+                type="button"
+                onClick={() => onOpen(BOARD_TAB)}
+                className="text-foreground decoration-foreground/30 hover:decoration-foreground focus-visible:ring-ring/50 rounded-sm underline underline-offset-4 outline-none motion-respond focus-visible:ring-3"
+              >
+                {openTasks === 1 ? "task" : "tasks"}
+              </button>
             </p>
           </header>
 
-          {/* The mark, in dots the pointer drags a wake through: it moves only
-            under the hand, so it costs nothing while the view is read. The
-            first thing to go when the pane narrows. */}
-          {/* The arcade keeps clear of it (`data-arcade-keepout`): the
-            board dims to a whisper here and puts nothing on it, so the
-            two sets of dots never fight. */}
-          <div data-arcade-keepout="" className="hidden w-fit @xl:block">
-            <AsciiWake shape="holi" size={8} label="Holi" />
+          {/* The arcade keeps clear of the mark (`data-arcade-keepout`). */}
+          <div data-arcade-keepout="" className="w-fit">
+            <BrandMark size="xl" className="text-foreground" />
           </div>
 
-          {/* Commands as plain rows under a heading, the way an editor's
-              welcome page lists them: the heading, not a fill, sets them
-              apart from the documents. Kept to a short column, so Board's
-              count stays beside it. */}
-          <section
-            aria-labelledby="start"
-            className="flex flex-col gap-2 @4xl:max-w-sm @4xl:self-stretch"
-          >
+          <section aria-labelledby="start" className="flex flex-col gap-2">
             <h2
               id="start"
               className="text-muted-foreground text-xs font-medium"
             >
               Start
             </h2>
-            {/* Beside the logo, the rows spread over its height, so the
-                two stand as one band. */}
-            <ItemGroup className="gap-0.5 has-data-[size=xs]:gap-0.5 @4xl:flex-1 @4xl:justify-between">
-              <StartRow
+            <ItemGroup className="grid gap-2 @lg:grid-cols-3">
+              <StartCard
                 icon={<FilePlusIcon />}
                 label="New document"
                 onClick={onNewDocument}
               />
-              <StartRow
+              <StartCard
                 icon={<CalendarDaysIcon />}
                 label="Today’s note"
                 onClick={() => void openToday()}
               />
-              <StartRow
-                icon={<SquareKanbanIcon />}
-                label="Board"
-                count={openTasks}
-                onClick={() => onOpen(BOARD_TAB)}
-              />
-              <StartRow
-                icon={<SearchIcon />}
-                label="Search"
-                onClick={onOpenSearch}
-              />
+              {hasAgents ? (
+                <StartCard
+                  icon={<AstroidIcon />}
+                  label="New agent session"
+                  onClick={() => void newAgentSession()}
+                />
+              ) : null}
             </ItemGroup>
           </section>
 
-          <VaultReadme onOpen={onOpen} />
-          <RecentlyEdited onOpen={onOpen} onNewDocument={onNewDocument} />
-
           {/* MonoCode's take-control pill, in the band under the content
-              rather than over it, so it never covers a row: shown while the
-              pointer is on the board's free ground, or on keyboard focus. */}
+            rather than over it: shown while the pointer is on the board's
+            free ground, or on keyboard focus. */}
           {arcadeOn ? (
             <div
               data-arcade-free=""
-              className="hidden justify-center py-2 @3xl:flex @4xl:col-span-2"
+              className="hidden justify-center py-2 @3xl:flex"
             >
               <ArcadeTakeControl
                 ref={takeControlRef}
@@ -283,24 +241,25 @@ export function EmptyView({
   )
 }
 
-function StartRow({
+function StartCard({
   icon,
   label,
-  count,
+  keys,
   onClick,
 }: {
   icon: React.ReactNode
   label: string
-  /** A count at the row's end, left off when zero. */
-  count?: number
+  /** Its shortcut, shown at the card's end. */
+  keys?: string
   onClick: () => void
 }) {
   return (
-    // The group is a list; the row's button keeps its own role inside it.
+    // The group is a list; the card's button keeps its own role inside it.
     <div role="listitem">
       <Item
         asChild
-        size="xs"
+        variant="outline"
+        size="sm"
         className="hover:bg-foreground/5 focus-visible:bg-foreground/5 text-start"
       >
         <button type="button" onClick={onClick}>
@@ -316,197 +275,11 @@ function StartRow({
               {label}
             </ItemTitle>
           </ItemContent>
-          {count ? (
-            <ItemActions className="text-muted-foreground text-xs tabular-nums">
-              {count}
-              <span className="sr-only"> open tasks</span>
+          {keys ? (
+            <ItemActions>
+              <Kbd>{keys}</Kbd>
             </ItemActions>
           ) : null}
-        </button>
-      </Item>
-    </div>
-  )
-}
-
-const README = "README.md"
-
-/**
- * The vault's `README.md`, read-only, when it has one: what the vault is
- * for, above what changed, so a new member sees it first
- * (docs/features/nav-menu.md). Read again whenever the file changes, and
- * shown by `MarkdownText`, so it never becomes HTML. Nothing while it loads
- * or when it cannot be read: the rows below are the page.
- */
-function VaultReadme({ onOpen }: { onOpen: (id: string) => void }) {
-  const remote = useAtomValue(activeRemoteAtom)
-  const doc = useAtomValue(snapshotAtom).docs.find((d) => d.path === README)
-  const updatedAt = doc?.updatedAt
-  const [text, setText] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (remote === null || updatedAt === undefined) {
-      setText(null)
-      return
-    }
-    let live = true
-    // Not the last vault's README while this one's is read.
-    setText(null)
-    trpc.notes.read.query({ remote, path: README }).then(
-      (read) => live && setText(read),
-      () => live && setText(null)
-    )
-    return () => {
-      live = false
-    }
-  }, [remote, updatedAt])
-
-  if (doc === undefined || text === null || text.trim() === "") return null
-  return (
-    <section
-      aria-labelledby="vault-readme"
-      className="flex flex-col gap-2 @4xl:col-span-2"
-      data-vault-readme
-    >
-      <div className="flex items-center justify-between gap-2">
-        <h2
-          id="vault-readme"
-          className="text-muted-foreground text-xs font-medium"
-        >
-          README
-        </h2>
-        <Button variant="ghost" size="xs" onClick={() => onOpen(README)}>
-          Open
-        </Button>
-      </div>
-      <MarkdownText
-        body={text}
-        className="text-muted-foreground flex max-h-72 flex-col gap-2 overflow-auto text-sm break-words"
-      />
-    </section>
-  )
-}
-
-/** The vault's newest documents by when the file last changed: the snapshot's
- *  own mtimes, so it is right on any machine, the first launch included. */
-function RecentlyEdited({
-  onOpen,
-  onNewDocument,
-}: {
-  onOpen: (id: string) => void
-  onNewDocument: () => void
-}) {
-  const snapshot = useAtomValue(snapshotAtom)
-  const loaded = useAtomValue(snapshotLoadedAtom)
-  const now = Date.parse(useAtomValue(nowAtom))
-  /** Whether the rows replace a loading state: only then do they fade in,
-   *  so the list does not swap in abruptly, and a vault already scanned
-   *  shows it at once. */
-  const arrived = useRef(!loaded).current
-
-  const recent = useMemo(
-    () =>
-      snapshot.docs
-        .filter((doc) => !isHiddenPath(doc.path))
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-        .slice(0, RECENT_COUNT),
-    [snapshot.docs]
-  )
-
-  return (
-    <section
-      aria-labelledby="recently-edited"
-      className="flex flex-col gap-2 @4xl:col-span-2"
-    >
-      <h2
-        id="recently-edited"
-        className="text-muted-foreground text-xs font-medium"
-      >
-        Recently edited
-      </h2>
-      {!loaded ? (
-        <div
-          role="status"
-          aria-label="Loading recent documents"
-          className="flex flex-col gap-0.5"
-        >
-          {/* The height of a real row, so nothing moves when the rows land. */}
-          {Array.from({ length: 3 }, (_, row) => (
-            <Skeleton key={row} className="h-9 motion-reduce:animate-none" />
-          ))}
-        </div>
-      ) : recent.length === 0 ? (
-        <div className="flex flex-col items-start gap-3">
-          <p className="text-muted-foreground text-sm">
-            Nothing written in this vault yet.
-          </p>
-          <Button variant="outline" size="sm" onClick={onNewDocument}>
-            <FilePlusIcon aria-hidden="true" />
-            New document
-          </Button>
-        </div>
-      ) : (
-        <ItemGroup
-          className={cn(
-            "gap-0.5 has-data-[size=xs]:gap-0.5",
-            "[&>*:nth-child(n+6)]:hidden @4xl:[&>*:nth-child(n+6)]:block",
-            arrived &&
-              "animate-in fade-in-0 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
-          )}
-        >
-          {recent.map((doc) => (
-            <RecentRow key={doc.path} doc={doc} now={now} onOpen={onOpen} />
-          ))}
-        </ItemGroup>
-      )}
-    </section>
-  )
-}
-
-function RecentRow({
-  doc,
-  now,
-  onOpen,
-}: {
-  doc: DocMeta
-  now: number
-  onOpen: (id: string) => void
-}) {
-  const slash = doc.path.lastIndexOf("/")
-  const name = doc.path.slice(slash + 1).replace(/\.md$/, "")
-  const folder = slash === -1 ? null : doc.path.slice(0, slash)
-  const when = relativeTime(doc.updatedAt, Number.isNaN(now) ? undefined : now)
-
-  return (
-    // The group is a list; the row's button keeps its own role inside it.
-    <div role="listitem">
-      <Item
-        asChild
-        size="xs"
-        className="hover:bg-foreground/5 focus-visible:bg-foreground/5 text-start"
-      >
-        <button type="button" onClick={() => onOpen(doc.path)}>
-          <ItemMedia
-            variant="icon"
-            aria-hidden="true"
-            className="text-muted-foreground"
-          >
-            {doc.kind === "daily" ? <CalendarDaysIcon /> : <FileTextIcon />}
-          </ItemMedia>
-          {/* One line: the name leads, where it lives follows and gives way
-              first, and when trails in its own column. */}
-          <ItemContent className="min-w-0 flex-row items-baseline gap-2 group-data-[size=xs]/item:gap-2">
-            <ItemTitle className="block min-w-0 shrink truncate font-normal">
-              {name}
-            </ItemTitle>
-            {folder ? (
-              <ItemDescription className="min-w-0 shrink-[4] truncate">
-                {folder}
-              </ItemDescription>
-            ) : null}
-          </ItemContent>
-          <ItemActions className="text-muted-foreground text-xs tabular-nums">
-            {when}
-          </ItemActions>
         </button>
       </Item>
     </div>
