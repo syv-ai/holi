@@ -16,6 +16,19 @@ import { activeRemoteAtom, snapshotAtom, vaultsAtom } from "@/state/vaults"
 import { BOARD_TAB } from "../documents-section"
 import { EmptyView, isNewTab, NEW_TAB_PREFIX } from "../empty-view"
 
+const read = vi.hoisted(() => vi.fn())
+vi.mock("@/lib/trpc", async (orig) => {
+  const real = await orig<typeof import("@/lib/trpc")>()
+  return {
+    trpc: new Proxy(real.trpc, {
+      get: (target, key) =>
+        key === "notes"
+          ? { read: { query: (input: unknown) => read(input) } }
+          : Reflect.get(target, key),
+    }),
+  }
+})
+
 function snapshotWith(docs: VaultSnapshot["docs"]): VaultSnapshot {
   return { ...emptyVaultSnapshot(), docs }
 }
@@ -162,4 +175,18 @@ test("with the arcade off on this machine, there is no board and no pill", () =>
   )
   expect(screen.queryByRole("button", { name: /take control/i })).toBeNull()
   expect(document.querySelector("[data-slot=arcade]")).toBeNull()
+})
+
+test("the vault's README shows read-only above the recent documents, and opens", async () => {
+  read.mockResolvedValue("# Team notes\n\nWhere the team writes things down.\n")
+  const { onOpen } = mount(
+    snapshotWith([
+      { path: "README.md", kind: "note", updatedAt: "2026-10-20T10:00:00Z" },
+    ])
+  )
+  const readme = await screen.findByRole("region", { name: "README" })
+  expect(readme).toHaveTextContent("Where the team writes things down.")
+  expect(read).toHaveBeenCalledWith({ remote: "mara/notes", path: "README.md" })
+  fireEvent.click(screen.getByRole("button", { name: "Open" }))
+  expect(onOpen).toHaveBeenCalledWith("README.md")
 })

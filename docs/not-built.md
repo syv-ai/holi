@@ -165,7 +165,7 @@ serves each command's document; the editor's slash menu does not list them, and 
 its hidden frame. See [vault apps](features/vault-apps.md).
 
 **The rest.** Google's bring-your-own OAuth client form
-([google](features/google.md)); the vault's README on Home ([home](features/home.md)); the repo's
+([google](features/google.md)); the repo's
 size in Settings ([vaults-sync](features/vaults-sync.md)); a tab's caret and scroll kept across tab
 switches; and `holi docs screenshot`'s renderer half, which says where a tab is drawn.
 

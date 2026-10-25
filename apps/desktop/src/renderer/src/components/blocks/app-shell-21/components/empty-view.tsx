@@ -26,6 +26,8 @@ import {
   ItemTitle,
 } from "@/components/ui/item"
 import { Skeleton } from "@/components/ui/skeleton"
+import { MarkdownText } from "@/composites"
+import { trpc } from "@/lib/trpc"
 import { cn } from "@/lib/cn"
 import { relativeTime } from "@/lib/relative-time"
 import { nowAtom, todayAtom } from "@/state/clock"
@@ -257,6 +259,7 @@ export function EmptyView({
             </ItemGroup>
           </section>
 
+          <VaultReadme onOpen={onOpen} />
           <RecentlyEdited onOpen={onOpen} onNewDocument={onNewDocument} />
 
           {/* MonoCode's take-control pill, in the band under the content
@@ -322,6 +325,64 @@ function StartRow({
         </button>
       </Item>
     </div>
+  )
+}
+
+const README = "README.md"
+
+/**
+ * The vault's `README.md`, read-only, when it has one: what the vault is
+ * for, above what changed, so a new member sees it first
+ * (docs/features/nav-menu.md). Read again whenever the file changes, and
+ * shown by `MarkdownText`, so it never becomes HTML. Nothing while it loads
+ * or when it cannot be read: the rows below are the page.
+ */
+function VaultReadme({ onOpen }: { onOpen: (id: string) => void }) {
+  const remote = useAtomValue(activeRemoteAtom)
+  const doc = useAtomValue(snapshotAtom).docs.find((d) => d.path === README)
+  const updatedAt = doc?.updatedAt
+  const [text, setText] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (remote === null || updatedAt === undefined) {
+      setText(null)
+      return
+    }
+    let live = true
+    // Not the last vault's README while this one's is read.
+    setText(null)
+    trpc.notes.read.query({ remote, path: README }).then(
+      (read) => live && setText(read),
+      () => live && setText(null)
+    )
+    return () => {
+      live = false
+    }
+  }, [remote, updatedAt])
+
+  if (doc === undefined || text === null || text.trim() === "") return null
+  return (
+    <section
+      aria-labelledby="vault-readme"
+      className="flex flex-col gap-2 @4xl:col-span-2"
+      data-vault-readme
+    >
+      <div className="flex items-center justify-between gap-2">
+        <h2
+          id="vault-readme"
+          className="text-muted-foreground text-xs font-medium"
+        >
+          README
+        </h2>
+        <Button variant="ghost" size="xs" onClick={() => onOpen(README)}>
+          Open
+        </Button>
+      </div>
+      <MarkdownText
+        body={text}
+        className="text-muted-foreground flex max-h-72 flex-col gap-2 overflow-auto text-sm break-words"
+      />
+    </section>
   )
 }
 

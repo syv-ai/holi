@@ -31,5 +31,9 @@ name as the page's title, a row of tabs with search and New note at its end, and
   table stays and the error with Retry sits above it. Activity never clamps a commit's subject.
 - With Home set to the recents, an empty list says "Nothing opened yet" and offers New note.
 
+**The New tab** shows the vault's `README.md` read-only, above Recently edited, with Open, when the
+vault has one (`empty-view.tsx`, `MarkdownText`, so it never becomes HTML); it is read again
+whenever the file changes.
+
 There is no folder view: a folder is expanded in the tree, and a folder that is a document (an
 app) opens as itself.
