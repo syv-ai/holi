@@ -63,7 +63,7 @@ function setup(path: string, claims = false) {
       ],
     })
   }
-  render(
+  return render(
     <Provider store={store}>
       <FileView path={path} />
     </Provider>
@@ -257,4 +257,29 @@ test("a code file reports the lines selected in it, and a caret clears them", as
   })
   view.dispatch({ selection: { anchor: 2 } })
   expect(lastStore.get(editorSelectionAtom)).toBeNull()
+})
+
+test("a code file switched away from and back to keeps its caret", async () => {
+  historyList.mockResolvedValue([])
+  read.mockResolvedValue("one\ntwo\nthree\nfour\n")
+  const first = setup("src/list.txt")
+  const { EditorView } = await import("@codemirror/view")
+  const find = () =>
+    waitFor(() => {
+      const node = document.querySelector<HTMLElement>(".cm-content")
+      if (node === null) throw new Error("no editor yet")
+      return EditorView.findFromDOM(node)!
+    })
+  ;(await find()).dispatch({ selection: { anchor: 9, head: 12 } })
+
+  // The tab goes, and comes back: a new FileView on the same store.
+  first.unmount()
+  render(
+    <Provider store={lastStore}>
+      <FileView path="src/list.txt" />
+    </Provider>
+  )
+  const back = await find()
+  expect(back.state.selection.main.anchor).toBe(9)
+  expect(back.state.selection.main.head).toBe(12)
 })

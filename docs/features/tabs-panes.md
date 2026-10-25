@@ -223,6 +223,10 @@ play ranked live. Sign-in and adding a vault run the same board as background on
 - A view's content renders through its own host, never as a child of a layout slot, or a layout
   change remounts it.
 - `useSessionTabs` remembers the selection it last wrote, so its own writes never open a tab.
+- Only the active entry's views are mounted, so a document or code file switched back to opens
+  where it was left: its caret and scroll are kept per vault and path as they move
+  (`state/view-memory.ts`), for the app's lifetime and never on disk. A Holi link to a heading
+  lands on the heading instead.
 
 ## Rejected
 

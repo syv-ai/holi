@@ -225,3 +225,26 @@ test("a Holi link's heading puts the caret on it when the document opens", async
   const selection = window.getSelection()!
   expect(heading.contains(selection.anchorNode)).toBe(true)
 })
+
+test("a document switched away from and back to keeps its caret", async () => {
+  const text = "# Plan\n\nIntro\n\n## Next steps\n\nShip it.\n"
+  const first = open(text)
+  const box = await editorBox()
+  type WithEditor = HTMLElement & {
+    editor: import("@tiptap/react").Editor
+  }
+  const editor = (box as WithEditor).editor
+  let at = -1
+  editor.state.doc.descendants((node, pos) => {
+    if (at === -1 && node.isText && node.text!.includes("Ship")) at = pos + 2
+  })
+  act(() => {
+    editor.commands.setTextSelection(at)
+  })
+
+  // The tab goes, and comes back on the same store.
+  first.unmount()
+  open(text)
+  const back = ((await editorBox()) as WithEditor).editor
+  await waitFor(() => expect(back.state.selection.from).toBe(at))
+})

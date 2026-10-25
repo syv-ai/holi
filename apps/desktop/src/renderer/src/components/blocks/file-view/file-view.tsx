@@ -38,6 +38,7 @@ import { trpc } from "@/lib/trpc"
 import { vaultAssetUrl } from "@/lib/vault-asset"
 import { sawText } from "@/state/doc-changes"
 import { editorSelectionAtom } from "@/state/ui-report"
+import { useViewMemory } from "@/state/view-memory"
 import { claimsAtom } from "@/state/plugins"
 import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
 
@@ -184,10 +185,16 @@ function TextEditor({
   const setEditorSelection = useSetAtom(editorSelectionAtom)
   const reportSelection = useRef(setEditorSelection)
   reportSelection.current = setEditorSelection
+  const memory = useViewMemory()
 
   useEffect(() => {
     const host = hostRef.current
     if (host === null || remote === null) return
+    // Where this file was left, when it was open before: the caret clamped
+    // to the text as it is now.
+    const spot = memory.get(remote, path)
+    const length = lastText.current.length
+    const clamp = (at: number) => Math.min(Math.max(at, 0), length)
 
     async function save(view: EditorView) {
       window.clearTimeout(saveTimer.current)
@@ -210,6 +217,10 @@ function TextEditor({
       parent: host,
       state: EditorState.create({
         doc: lastText.current,
+        selection:
+          spot === undefined
+            ? undefined
+            : { anchor: clamp(spot.anchor), head: clamp(spot.head) },
         extensions: [
           // The code block's look: no soft wrap, as in the block.
           ...plainTextExtensions(path).filter(
@@ -227,6 +238,8 @@ function TextEditor({
                 : next
             )
             if (update.selectionSet) {
+              const { anchor, head } = update.state.selection.main
+              memory.note(remote, path, { anchor, head })
               // The lines selected, for the agent's per-turn context; a
               // caret clears what this file reported, never another's.
               const { from, to } = update.state.selection.main
@@ -260,7 +273,19 @@ function TextEditor({
     })
     viewRef.current = view
     setView(view)
+    const scroller = view.scrollDOM
+    if (spot !== undefined) {
+      scroller.scrollTop = spot.scrollTop
+      // Again once the editor has measured, should it not have yet.
+      requestAnimationFrame(() => {
+        scroller.scrollTop = spot.scrollTop
+      })
+    }
+    const noteScroll = () =>
+      memory.note(remote, path, { scrollTop: scroller.scrollTop })
+    scroller.addEventListener("scroll", noteScroll, { passive: true })
     return () => {
+      scroller.removeEventListener("scroll", noteScroll)
       // Leaving the editor writes what is pending, and leaves what it showed
       // for its tab to be compared to (`doc-changes.ts`).
       sawText(remote, path, view.state.doc.toString())
@@ -270,7 +295,7 @@ function TextEditor({
       setView(null)
       setFind(null)
     }
-  }, [remote, path])
+  }, [remote, path, memory])
 
   // A change on disk comes back in, unless local edits are still pending.
   useEffect(() => {
