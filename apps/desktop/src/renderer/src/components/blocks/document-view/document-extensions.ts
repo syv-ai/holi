@@ -33,6 +33,14 @@ function displaySrc(src: string, folder: string): string {
   return vaultAssetUrl(resolved.join("/"))
 }
 
+/** An image at its natural size up to the column's width, never scaled up.
+ *  Its height is capped at 70% of the window but never below the column's
+ *  widest (48rem, `max-w-3xl`), so a square figure always fills the column
+ *  and only a tall portrait one is held to the screen; in a table cell it
+ *  stays thumbnail-sized. */
+const IMAGE_CLASS =
+  "h-auto w-auto max-w-full max-h-[max(70vh,48rem)] rounded-md in-[td]:max-h-80 in-[th]:max-h-80"
+
 const DocumentImage = Image.extend<{ folder: string }>({
   addOptions() {
     return { ...this.parent!(), folder: "" }
@@ -42,7 +50,7 @@ const DocumentImage = Image.extend<{ folder: string }>({
       "img",
       mergeAttributes(HTMLAttributes, {
         src: displaySrc(String(HTMLAttributes.src ?? ""), this.options.folder),
-        class: "max-w-full rounded-md",
+        class: IMAGE_CLASS,
       }),
     ]
   },
