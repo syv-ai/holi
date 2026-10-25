@@ -221,6 +221,7 @@ function DocumentEditor({
     return box
   })
   const pageRef = useRef<HTMLDivElement>(null)
+  const viewRef = useRef<HTMLDivElement>(null)
   const head = useRef(initial.head)
   /** The file as last read or written: what a change on disk is compared to. */
   const lastText = useRef(initial.text)
@@ -448,18 +449,62 @@ function DocumentEditor({
    * when it is one line. With the bar open, ⌘G and ⇧⌘G step from the text
    * too, and Escape in the text closes it.
    */
+  function isFindKey(event: KeyboardEvent | React.KeyboardEvent) {
+    const mod = apple ? event.metaKey : event.ctrlKey
+    return (
+      mod &&
+      !event.altKey &&
+      !event.shiftKey &&
+      event.key.toLowerCase() === "f"
+    )
+  }
+
+  function openFind() {
+    if (!editor) return
+    const { from, to, $from, $to } = editor.state.selection
+    const text =
+      from < to && $from.sameParent($to)
+        ? editor.state.doc.textBetween(from, to)
+        : null
+    setFind((current) => ({ token: (current?.token ?? 0) + 1, text }))
+  }
+
+  /**
+   * ⌘F with focus outside every view (the sidebar after opening a document
+   * from it, or nothing at all) finds in the document in front: the only
+   * view, or a split's focused member. A view that took the key itself has
+   * already claimed it, and a dialog keeps its keys.
+   */
+  const openFindRef = useRef(openFind)
+  openFindRef.current = openFind
+  useEffect(() => {
+    if (!editor) return
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || !isFindKey(event)) return
+      const root = viewRef.current
+      const target = event.target instanceof Element ? event.target : null
+      if (!root || target?.closest("[data-pane], [role='dialog']")) return
+      const pane = root.closest("[data-pane]")
+      const inFront =
+        !pane ||
+        pane.hasAttribute("data-pane-focused") ||
+        document.querySelectorAll("[data-pane]").length === 1
+      if (!inFront) return
+      event.preventDefault()
+      openFindRef.current()
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, apple])
+
   function handleViewKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
     if (!editor || event.defaultPrevented) return
     const mod = apple ? event.metaKey : event.ctrlKey
     const key = event.key.toLowerCase()
-    if (mod && !event.altKey && !event.shiftKey && key === "f") {
+    if (isFindKey(event)) {
       event.preventDefault()
-      const { from, to, $from, $to } = editor.state.selection
-      const text =
-        from < to && $from.sameParent($to)
-          ? editor.state.doc.textBetween(from, to)
-          : null
-      setFind((current) => ({ token: (current?.token ?? 0) + 1, text }))
+      openFind()
     } else if (find && mod && !event.altKey && key === "g") {
       event.preventDefault()
       ;(event.shiftKey ? findPrev : findNext)(
@@ -477,6 +522,7 @@ function DocumentEditor({
   return (
     <TooltipProvider delayDuration={300}>
       <div
+        ref={viewRef}
         className="text-foreground relative flex h-full min-h-0 w-full flex-col"
         onKeyDown={handleViewKeyDown}
       >

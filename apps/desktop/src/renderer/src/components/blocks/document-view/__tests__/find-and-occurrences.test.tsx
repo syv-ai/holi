@@ -114,6 +114,43 @@ test("Ctrl+F opens the bar seeded from the selection, with the count", async () 
   )
 })
 
+/** The document as the shell shows it: in a view of its own, beside a
+ *  second view when `split` says so, with focus out in the sidebar. */
+async function openFromSidebar(split?: { focused: boolean }) {
+  files.set(PATH, "alpha beta alpha\n")
+  render(
+    <Provider store={store}>
+      <button type="button">Plan</button>
+      <section data-pane="doc" data-pane-focused={split?.focused || undefined}>
+        <DocumentView path={PATH} onOpen={() => undefined} />
+      </section>
+      {split ? (
+        <section
+          data-pane="other"
+          data-pane-focused={!split.focused || undefined}
+        />
+      ) : null}
+    </Provider>
+  )
+  await screen.findByRole("textbox", { name: "Plan document" })
+  const row = screen.getByRole("button", { name: "Plan" })
+  row.focus()
+  return row
+}
+
+test("Ctrl+F finds in the document in front while focus is in the sidebar", async () => {
+  const row = await openFromSidebar()
+  expect(press(row, "f", { ctrlKey: true })).toBe(false)
+  const field = await screen.findByRole("textbox", { name: "Find" })
+  await waitFor(() => expect(field).toHaveFocus())
+})
+
+test("in a split, Ctrl+F from the sidebar finds only in the focused view", async () => {
+  const row = await openFromSidebar({ focused: false })
+  expect(press(row, "f", { ctrlKey: true })).toBe(true)
+  expect(screen.queryByRole("textbox", { name: "Find" })).toBeNull()
+})
+
 test("a selection over two blocks does not seed, and No results says so", async () => {
   const user = userEvent.setup()
   const { box, editor } = await open("one\n\ntwo\n")
