@@ -126,7 +126,7 @@ describe('agent sessions', () => {
     await t.attach()
 
     expect(t.sessions.sessions().map((s) => s.id)).toEqual(['aaaaaaaa'])
-    expect(t.sent.at(-1)).toEqual([
+    expect(t.sent.filter(([name]) => name === 'sessions').at(-1)).toEqual([
       'sessions',
       [
         {
@@ -137,6 +137,16 @@ describe('agent sessions', () => {
           conversationId: 'aaaaaaaa-uuid',
         },
       ],
+    ])
+  })
+
+  it('tells the stopped sessions apart, for History', async () => {
+    const t = setup([row('aaaaaaaa'), row('bbbbbbbb', { pid: undefined, status: undefined })])
+    await t.attach()
+
+    expect(t.sessions.past().map((s) => [s.id, s.state])).toEqual([['bbbbbbbb', 'idle']])
+    expect(t.sent.find(([name]) => name === 'history')?.[1]).toEqual([
+      expect.objectContaining({ id: 'bbbbbbbb', provider: 'claude', name: 'Session bbbbbbbb' }),
     ])
   })
 

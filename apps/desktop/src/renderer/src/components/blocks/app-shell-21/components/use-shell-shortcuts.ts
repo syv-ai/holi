@@ -1,8 +1,9 @@
-import { atom, useAtomValue, useSetAtom } from "jotai"
+import { atom, useAtom, useAtomValue, useSetAtom } from "jotai"
 import { useEffect, useMemo, useRef } from "react"
 import { toast } from "sonner"
 
 import type { SidebarApp } from "@/plugin-api"
+import { newAgentSessionAtom } from "@/state/agents-slots"
 import { runningPluginsAtom } from "@/state/plugins"
 import { shortcutsDialogOpenAtom, useShortcutHandlers } from "@/state/shortcuts"
 import { sidebarSectionAtom } from "@/state/sidebar-section"
@@ -52,7 +53,8 @@ const LEAVE_CONFIRM_MS = 4000
 /** The app shell's handlers for the shortcut table. */
 export function useShellShortcuts(shell: ShellActions): void {
   const setDialogOpen = useSetAtom(shortcutsDialogOpenAtom)
-  const setSection = useSetAtom(sidebarSectionAtom)
+  const [section, setSection] = useAtom(sidebarSectionAtom)
+  const newAgentSession = useSetAtom(newAgentSessionAtom)
   const hasAgents = useAtomValue(runningPluginsAtom).some(
     (plugin) => plugin.agentsMode !== undefined
   )
@@ -149,7 +151,12 @@ export function useShellShortcuts(shell: ShellActions): void {
       shell.stepMember === undefined ? undefined : () => shell.stepMember?.(1),
     "split.previous":
       shell.stepMember === undefined ? undefined : () => shell.stepMember?.(-1),
-    "document.new": shell.newDocument,
+    // ⌘N is the side's own new: a session on the Agents side (the mode's
+    // `newSession`), a document on the Documents side.
+    "document.new": () => {
+      if (section === "agents" && hasAgents && newAgentSession()) return
+      shell.newDocument()
+    },
     "app.mail": app("mail"),
     "app.calendar": app("calendar"),
   })

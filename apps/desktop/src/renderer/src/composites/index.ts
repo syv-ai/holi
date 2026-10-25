@@ -20,7 +20,7 @@ export {
   SettingsRow,
   headingId,
 } from './settings-ui'
-export { pluginMark } from './marks'
+export { AgentMark, OpenAIMark, pluginMark } from './marks'
 export { SettingCard } from './SettingCard'
 export { SectionLabel } from './SectionLabel'
 export { PixelPersona, type MascotStatus } from './pixel-persona/PixelPersona'

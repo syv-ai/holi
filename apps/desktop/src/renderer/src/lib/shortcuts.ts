@@ -283,6 +283,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   },
 
   // Files
+  // On the Agents side the same key starts a session (`use-shell-shortcuts`).
   {
     id: 'document.new',
     label: 'New document',

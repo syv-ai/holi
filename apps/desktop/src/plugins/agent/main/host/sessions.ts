@@ -83,6 +83,9 @@ export interface AgentSessions {
   ensure(vault?: AgentVault): Promise<void>
   /** The vault's live sessions, in listing order. */
   sessions(): SessionSummary[]
+  /** The ones the listing still has but whose process is gone: stopped, or
+   *  retired by the supervisor. Opening one brings it back (`respawn`). */
+  past(): SessionSummary[]
   /** Re-read the listing now. Never rejects. */
   refresh(): Promise<void>
   /** A terminal on the list (no `attach`), on one session, on a copy of a
@@ -170,6 +173,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   /** The latest listing for the current vault, live or not. */
   let rows: ClaudeRow[] = []
   let lastPushed = ''
+  let lastPast = ''
   let idleRecheck: ReturnType<typeof setTimeout> | null = null
   let focusWriter: { root: string; snapshot: ContextSnapshot } | null = null
   /**
@@ -216,6 +220,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   })
 
   const live = (): ClaudeRow[] => rows.filter((row) => bg.isLive(row))
+  const past = (): SessionSummary[] =>
+    rows
+      .filter((row) => !bg.isLive(row))
+      .map((row) => ({ provider: provider.id, ...bg.summarise(row, new Set()) }))
   const summaries = (): SessionSummary[] =>
     live().map((row) => {
       const percent = contextPercent.get(row.id)
@@ -239,6 +247,16 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     lastPushed = encoded
     deps.emit(remote, 'sessions', next)
     if (remote === current?.remote) deps.publish?.('sessions', next)
+  }
+
+  /** Tell the renderer the stopped sessions, when they changed. */
+  function pushPast(remote = current?.remote): void {
+    if (remote === undefined) return
+    const next = past()
+    const encoded = JSON.stringify(next)
+    if (encoded === lastPast) return
+    lastPast = encoded
+    deps.emit(remote, 'history', next)
   }
 
   const targetOf = (c: Current): VaultCliTarget => ({
@@ -344,6 +362,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       }, deps.idleRecheckMs ?? IDLE_RECHECK_MS)
     }
     push()
+    pushPast()
   }
 
   async function refresh(): Promise<void> {
@@ -407,6 +426,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
 
     sessions: summaries,
+    past,
     refresh,
 
     async open(args) {
@@ -602,6 +622,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     rows = []
     await release(c)
     push(c.remote)
+    pushPast(c.remote)
   }
   return api
 }

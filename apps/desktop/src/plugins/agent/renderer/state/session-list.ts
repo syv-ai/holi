@@ -28,7 +28,7 @@ import {
 import { agentsViewAtom, agentsViewOf } from './agents-view'
 import { stopSessionAtom } from './send'
 import { showSessionAtom, startViewSessionAtom } from './session-view'
-import { NEW_SESSION, agentSessionsAtom, type AgentSession } from './sessions'
+import { NEW_SESSION, agentHistoryAtom, agentSessionsAtom, type AgentSession } from './sessions'
 
 export type { AgentsSessionItem }
 
@@ -63,6 +63,7 @@ export function liveItem(s: AgentSession): AgentsSessionItem {
     jobId: s.id,
     title: s.name,
     state: s.state,
+    agent: s.provider,
     updatedAt: s.startedAt ?? 0,
     ...(s.model === undefined ? {} : { model: s.model }),
     ...(s.waitingFor === undefined ? {} : { waitingFor: s.waitingFor }),
@@ -74,11 +75,14 @@ export function liveItem(s: AgentSession): AgentsSessionItem {
  * is a plugin's run (same job id) is that run's row, with the session's
  * state, model and name; the rest are rows of their own. A slot's row comes
  * first among those that share a job id, so a Holi's run wins over an
- * automation's for the same session.
+ * automation's for the same session. Then the stopped background sessions
+ * (`past`) no plugin ran, idle: your own earlier conversations, which
+ * opening brings back.
  */
 export function mergeSessionItems(
   slotItems: readonly AgentsSessionItem[],
   live: readonly AgentSession[],
+  past: readonly AgentSession[] = [],
 ): AgentsSessionItem[] {
   const byJob = new Map(live.map((s) => [s.id, s]))
   const out: AgentsSessionItem[] = []
@@ -95,6 +99,7 @@ export function mergeSessionItems(
           // A Holi or an automation names its run better than its session does.
           title: item.by !== undefined || s.name === NEW_SESSION ? item.title : s.name,
           state: s.state,
+          agent: s.provider,
           updatedAt: Math.max(item.updatedAt, s.startedAt ?? 0),
           ...((s.model ?? item.model) === undefined ? {} : { model: s.model ?? item.model }),
           ...(s.waitingFor === undefined ? {} : { waitingFor: s.waitingFor }),
@@ -108,6 +113,12 @@ export function mergeSessionItems(
     out.push(item)
   }
   for (const s of live) if (!taken.has(s.id)) out.push(liveItem(s))
+  // A stopped session no plugin ran: a row of its own, idle, which opening
+  // brings back.
+  const liveIds = new Set(live.map((s) => s.id))
+  for (const s of past) {
+    if (!taken.has(s.id) && !liveIds.has(s.id)) out.push({ ...liveItem(s), state: 'idle' })
+  }
   return out
 }
 
@@ -330,7 +341,7 @@ export const sessionItemsAtom = atom((get): AgentsSessionItem[] => {
   const slotItems = get(agentsSlotsAtom).flatMap((slot) =>
     slot.sessions === undefined ? [] : get(slot.sessions.items),
   )
-  return mergeSessionItems(slotItems, get(agentSessionsAtom))
+  return mergeSessionItems(slotItems, get(agentSessionsAtom), get(agentHistoryAtom))
 })
 
 /** Whether the slots' rows are in: loading while any is, error while any
@@ -396,6 +407,7 @@ export const sessionTabLookAtom = atom((get) => {
       title: row.item.title,
       state: row.state,
       ...(row.item.by === undefined ? {} : { by: row.item.by }),
+      ...(row.item.agent === undefined ? {} : { agent: row.item.agent }),
     }
   }
 })

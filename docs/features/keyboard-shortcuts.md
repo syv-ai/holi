@@ -93,6 +93,8 @@ screen.
 - **⌘B asks before leaving an app.** With Mail or Calendar holding the window, ⌘B would take it
   back to the files, so the first press only shows a toast saying so (bottom right, a bar running
   down its four seconds) and a second press before it goes leaves. The band's toggle and the divider leave at once: a click is not an accident.
+- **⌘N is the side's own new.** On the Documents side a document; on the Agents side a session in
+  the default agent (the mode's `newSession`). One binding, so the two never fire together.
 - **Behind a dialog** only the dialog toggles fire (⌘K, ⌘/, `?`): ⌘N must not make a document
   behind a modal.
 - **⌘W is the menu's.** It is the File menu's accelerator (`main/menu.ts`), which fires before the

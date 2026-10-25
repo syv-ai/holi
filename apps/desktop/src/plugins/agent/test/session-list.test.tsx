@@ -53,6 +53,30 @@ test('working and needs you are the session own; a finished turn is done until o
   expect(rowState(item(), seen(), false)).toBe('idle')
 })
 
+test("a stopped session is History's row, idle, unless a plugin's run or a live one has its id", () => {
+  const past: AgentSession[] = [
+    { id: 'p1', provider: 'claude', name: 'Last week', state: 'idle', startedAt: 500 },
+    { id: 'j1', provider: 'claude', name: 'A Holi run', state: 'idle' },
+    { id: 'j2', provider: 'claude', name: 'Back again', state: 'idle' },
+  ]
+  const live: AgentSession[] = [
+    { id: 'j2', provider: 'claude', name: 'Back again', state: 'working' },
+  ]
+  const holiRun = item({ key: 'holis:j1', selection: undefined, jobId: 'j1', title: 'Run' })
+  const merged = mergeSessionItems([holiRun], live, past)
+  expect(merged.map((i) => [i.key, i.state])).toEqual([
+    ['holis:j1', 'idle'],
+    ['agent:j2', 'working'],
+    ['agent:p1', 'idle'],
+  ])
+  expect(merged[2]).toMatchObject({
+    jobId: 'p1',
+    title: 'Last week',
+    agent: 'claude',
+    updatedAt: 500,
+  })
+})
+
 test("a live session that is a plugin's run takes the run's row, with the session's state", () => {
   const live: AgentSession[] = [
     {

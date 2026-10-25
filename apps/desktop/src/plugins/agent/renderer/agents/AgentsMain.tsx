@@ -14,12 +14,11 @@
  * After MonoCode's `SessionPane` (MIT, Copyright (c) 2026 Nick; see
  * NOTICE.md), cut to the mock's simplicity.
  */
-import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { Inbox, MessageSquareText, SquarePen, TerminalSquare } from 'lucide-react'
+import { useAtomValue, useSetAtom } from 'jotai'
+import { Inbox, SquarePen, TerminalSquare } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
-import { Button } from '@/components/ui/button'
-import { Badge, Icon, Skeleton } from '@/primitives'
+import { Skeleton } from '@/primitives'
 import { activeRemoteAtom, agentsSlotsAtom } from '@/plugin-api'
 import { agentCap } from '../agent-cap'
 import { SessionTerminal } from '../SessionTerminal'
@@ -28,9 +27,8 @@ import { agentsViewAtom, agentsViewOf, viewTerminalsAtom } from '../state/agents
 import { newSessionProviderAtom, providerLabel } from '../state/providers'
 import { newSessionAtom } from '../state/session-list'
 import { SessionHistory, SessionSearch } from '../sessions/SessionList'
-import { stopSessionAtom } from '../state/send'
 import { agentGeometryAtom, agentSessionsAtom } from '../state/sessions'
-import { SessionCard, StateLabel } from './parts'
+import { SessionCard } from './parts'
 import { useNow } from './AgentsSidebar'
 
 function Bar({
@@ -219,7 +217,11 @@ function SessionView({ id }: { id: string }): React.JSX.Element {
     )
   }
   return (
+    // Keyed by the terminal: an xterm is bound to the terminal it was built
+    // for, so a window opened again (a Retry, or React's dev remount, which
+    // closes the first) gets an xterm of its own rather than a blank one.
     <SessionTerminal
+      key={terminalId}
       terminalId={terminalId}
       visible
       onGeometry={(cols, rows) => setGeometry({ cols, rows })}

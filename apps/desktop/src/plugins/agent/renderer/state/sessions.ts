@@ -71,6 +71,10 @@ export interface AgentTerminal {
 /** The vault's live sessions, in Claude Code's order. */
 export const agentSessionsAtom = atom<AgentSession[]>([])
 
+/** The vault's stopped background sessions, which History lists. Opening
+ *  one brings it back (`claude respawn`). */
+export const agentHistoryAtom = atom<AgentSession[]>([])
+
 /** Holi's open terminals, in the order they were opened. */
 export const agentTerminalsAtom = atom<AgentTerminal[]>([])
 
@@ -222,6 +226,10 @@ export const agentEvents: Readonly<Record<string, PluginEventHandler>> = {
     if (remote === store.get(activeRemoteAtom))
       store.set(agentSessionsAtom, payload as AgentSession[])
   },
+  history: ({ remote, payload }, store) => {
+    if (remote === store.get(activeRemoteAtom))
+      store.set(agentHistoryAtom, payload as AgentSession[])
+  },
   terminals: ({ remote, payload }, store) => {
     if (remote === store.get(activeRemoteAtom)) {
       store.set(agentTerminalsAtom, payload as AgentTerminal[])
@@ -243,6 +251,10 @@ export function agentVault(remote: string, store: PluginStore): () => void {
   // announced. Every event is a new list, so an unchanged one means none came.
   const sessionsAsked = store.get(agentSessionsAtom)
   const terminalsAsked = store.get(agentTerminalsAtom)
+  const historyAsked = store.get(agentHistoryAtom)
+  void agentCap.history(remote).then((list) => {
+    if (store.get(agentHistoryAtom) === historyAsked) store.set(agentHistoryAtom, list)
+  })
   void agentCap.sessions(remote).then((list) => {
     if (store.get(agentSessionsAtom) === sessionsAsked) store.set(agentSessionsAtom, list)
   })
@@ -279,6 +291,7 @@ export function agentVault(remote: string, store: PluginStore): () => void {
     // next vault would show this one's sessions until its own answer came,
     // and the review would ask its git for a range it has never heard of.
     store.set(agentSessionsAtom, [])
+    store.set(agentHistoryAtom, [])
     store.set(agentTerminalsAtom, [])
     store.set(resetTurnReviewAtom)
     store.set(turnReviewOpenAtom, false)

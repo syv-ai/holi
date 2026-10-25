@@ -385,6 +385,8 @@ export interface AgentsTabLook {
   title: string
   state: 'needs-you' | 'working' | 'done' | 'idle'
   by?: AgentsSessionItem['by']
+  /** The coding agent that runs it, for its mark. */
+  agent?: string
 }
 
 /**
@@ -405,6 +407,9 @@ export interface AgentsSessionItem {
   title: string
   /** The model in Claude Code's words or alias (`Opus 5.5`, `opus`). */
   model?: string
+  /** The coding agent that runs it (`claude`, `codex`), for its mark.
+   *  Absent is Claude Code. */
+  agent?: string
   /** What it is doing now: mid-turn, waiting on a permission or a question,
    *  or neither. */
   state: 'needs-you' | 'working' | 'idle'

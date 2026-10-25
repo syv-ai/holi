@@ -1,4 +1,3 @@
-import { SiClaude } from "@icons-pack/react-simple-icons"
 import { atom, useAtomValue } from "jotai"
 import { useCallback } from "react"
 import {
@@ -11,7 +10,7 @@ import {
   ZapIcon,
 } from "lucide-react"
 
-import { PixelPersona } from "@/composites"
+import { AgentMark, PixelPersona } from "@/composites"
 import type { AgentsTabLook } from "@/plugin-api"
 import { runningPluginsAtom, surfacesAtom } from "@/state/plugins"
 import { parseTabKey } from "@/state/tab-descriptor"
@@ -33,7 +32,8 @@ function fileTitle(path: string): string {
 }
 
 /** A session's mark: the Holi's face when one ran it, the automation's
- *  bolt, else Claude's, as the session list draws them. */
+ *  bolt, else its agent's (Claude's, OpenAI's for Codex), as the session
+ *  list draws them. */
 function SessionMark({ look }: { look: AgentsTabLook | undefined }) {
   const by = look?.by
   if (by?.kind === "holi" && by.mascot !== undefined) {
@@ -55,12 +55,7 @@ function SessionMark({ look }: { look: AgentsTabLook | undefined }) {
       />
     )
   }
-  return (
-    <SiClaude
-      aria-hidden="true"
-      className="size-4 shrink-0 text-orange-500 dark:text-orange-400"
-    />
-  )
+  return <AgentMark agent={look?.agent} className="size-4" />
 }
 
 /** How each tab looks in a strip: its title, its mark, and for a session

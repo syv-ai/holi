@@ -8,10 +8,11 @@
  * green for done, and the diff's own added and removed tokens
  * (`docs/ui-system.md`, Monotone).
  */
-import { SiClaude } from '@icons-pack/react-simple-icons'
 import { Check, CircleAlert, GitBranch, LoaderCircle } from 'lucide-react'
 import type { ComponentProps } from 'react'
+import { AgentMark } from '@/composites'
 import { Button, Icon } from '@/primitives'
+import { providerLabel } from '../state/providers'
 import { cn } from '@/plugin-api'
 import type { AgentSession } from '../state/sessions'
 
@@ -122,14 +123,9 @@ export function SessionCard({
     >
       <span className="flex min-w-0 items-center gap-2">
         <span className="flex min-w-0 flex-1 items-center gap-1.5">
-          <Icon
-            icon={SiClaude}
-            size="sm"
-            className="text-orange-500 dark:text-orange-400"
-            aria-hidden="true"
-          />
+          <AgentMark agent={session.provider} />
           <span className="min-w-0 truncate text-xs text-muted-foreground">
-            {session.model ?? 'Claude'}
+            {session.model ?? providerLabel(session.provider)}
           </span>
         </span>
         <span className="flex shrink-0 items-center text-xs text-muted-foreground tabular-nums">

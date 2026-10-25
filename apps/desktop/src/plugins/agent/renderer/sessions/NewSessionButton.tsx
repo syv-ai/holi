@@ -6,7 +6,7 @@
  * conversations). An agent not on this machine is listed, but off.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
-import { History, PlusIcon } from 'lucide-react'
+import { PlusIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import {
   DropdownMenu,
@@ -16,9 +16,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuShortcut,
   DropdownMenuTrigger,
-  Icon,
   IconButton,
 } from '@/primitives'
+import { AgentMark } from '@/composites'
 import {
   loadProvidersAtom,
   newSessionProviderAtom,
@@ -109,6 +109,7 @@ export function NewSessionButton(): React.JSX.Element {
               disabled={!p.installed}
               onSelect={() => void start({ provider: p.id })}
             >
+              <AgentMark agent={p.id} />
               {p.label}
               <DropdownMenuShortcut>
                 {!p.installed ? 'Not installed' : p.id === byDefault?.id ? '⌘N' : ''}
@@ -124,7 +125,7 @@ export function NewSessionButton(): React.JSX.Element {
               key={`resume-${p.id}`}
               onSelect={() => void start({ provider: p.id, resume: 'pick' })}
             >
-              <Icon icon={History} size="sm" tone="muted" />
+              <AgentMark agent={p.id} />
               Resume a {p.label} conversation
             </DropdownMenuItem>
           ))}

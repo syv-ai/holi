@@ -86,6 +86,21 @@ export const loadLatestTurnsAtom = atom(null, async (get, set) => {
 })
 
 /**
+ * Open the review on a session's last turn: a row's Review last turn, which
+ * the Agents view needs because its session view is the terminal alone. Read
+ * fresh, since the record lands as the turn ends. False when the session has
+ * no turn on record.
+ */
+export const reviewSessionTurnAtom = atom(null, async (get, set, sessionId: string) => {
+  await set(loadLatestTurnsAtom)
+  const turn = get(latestTurnsAtom)[sessionId]
+  if (turn === undefined) return false
+  set(reviewTurnAtom, turn)
+  set(turnReviewOpenAtom, true)
+  return true
+})
+
+/**
  * How many files one turn's range touched.
  *
  * Cached by range rather than by session, so the same range asked twice is one

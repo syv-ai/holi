@@ -27,6 +27,7 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { trpc } from "@/lib/trpc"
 import { useAgentService } from "@/state/agent-service"
+import { AgentMark } from "@/composites"
 import { claudeFirstRunAtom } from "@/state/claude-first-run"
 import { settingDescriptorsAtom } from "@/state/plugins"
 import {
@@ -60,10 +61,64 @@ const SYNC_BADGE: Record<
 
 // ── General ──
 
-const AGENTS: readonly Choice<AgentProviderId>[] = [
-  { value: "claude", label: "Claude Code" },
-  { value: "codex", label: "Codex" },
+/** The coding agents a session can run, as the Agents card lists them. */
+const AGENTS: readonly {
+  id: AgentProviderId
+  label: string
+  description: string
+}[] = [
+  {
+    id: "claude",
+    label: "Claude Code",
+    description:
+      "Anthropic's agent. Its sessions keep running in the background, and Holis and automations run on it.",
+  },
+  {
+    id: "codex",
+    label: "Codex",
+    description:
+      "OpenAI's agent, signed in as on the command line. Its sessions run while Holi is open.",
+  },
 ]
+
+/** Which agent a new session starts in, on this machine: a row per agent,
+ *  the default marked and the others a click from being it. */
+export function AgentsCard() {
+  const { resolved, write } = useVaultSettings()
+  const current =
+    resolved?.agentProvider ?? VAULT_SETTING_DEFAULTS.agentProvider
+  return (
+    <SettingsCard
+      title="Agents"
+      description="A new session starts in the default one, on this machine. Hover the Sessions + to start another."
+    >
+      {resolved === null ? (
+        <SettingsRowsLoading rows={2} label="Reading the settings" />
+      ) : (
+        AGENTS.map((agent) => (
+          <SettingsRow
+            key={agent.id}
+            title={agent.label}
+            description={agent.description}
+            mark={<AgentMark agent={agent.id} size="lg" />}
+          >
+            {agent.id === current ? (
+              <Badge variant="success-light">Default</Badge>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void write("agentProvider", agent.id, "local")}
+              >
+                Make default
+              </Button>
+            )}
+          </SettingsRow>
+        ))
+      )}
+    </SettingsCard>
+  )
+}
 
 export function GeneralPage() {
   const remote = useAtomValue(activeRemoteAtom)
@@ -72,7 +127,6 @@ export function GeneralPage() {
   const retrySync = useSetAtom(retrySyncAtom)
   const agent = useAgentService()
   const firstRun = useSetAtom(claudeFirstRunAtom)
-  const { resolved, write } = useVaultSettings()
 
   if (entry === undefined) {
     return (
@@ -83,89 +137,83 @@ export function GeneralPage() {
   }
 
   return (
-    <SettingsCard
-      title="Vault"
-      description="A vault is a GitHub repository, kept in step with a copy on this machine."
-    >
-      <SettingsRow title="Name" description="The repository's name.">
-        <span className="text-sm font-medium">{entry.name}</span>
-      </SettingsRow>
-      <SettingsRow
-        title="Repository"
-        description="Where the vault lives, and who it is shared with."
+    <>
+      <SettingsCard
+        title="Vault"
+        description="A vault is a GitHub repository, kept in step with a copy on this machine."
       >
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void window.holi.openExternal(githubUrl(entry.remote))}
+        <SettingsRow title="Name" description="The repository's name.">
+          <span className="text-sm font-medium">{entry.name}</span>
+        </SettingsRow>
+        <SettingsRow
+          title="Repository"
+          description="Where the vault lives, and who it is shared with."
         >
-          {entry.remote}
-          <ExternalLinkIcon data-icon="inline-end" aria-hidden="true" />
-        </Button>
-      </SettingsRow>
-      <SettingsRow
-        title="On this machine"
-        description={<span className="break-all">{entry.path}</span>}
-      >
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void window.holi.openPath(entry.path)}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              void window.holi.openExternal(githubUrl(entry.remote))
+            }
+          >
+            {entry.remote}
+            <ExternalLinkIcon data-icon="inline-end" aria-hidden="true" />
+          </Button>
+        </SettingsRow>
+        <SettingsRow
+          title="On this machine"
+          description={<span className="break-all">{entry.path}</span>}
         >
-          <FolderOpenIcon data-icon="inline-start" aria-hidden="true" />
-          Show folder
-        </Button>
-      </SettingsRow>
-      <SettingsRow
-        title="Sync"
-        description="Your edits are committed and pushed as you work, and others' are pulled in."
-      >
-        <div className="flex items-center gap-2">
-          <Badge variant={SYNC_BADGE[sync.tone]}>{sync.text}</Badge>
-          {sync.tone === "warn" ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void retrySync()}
-            >
-              Retry
-            </Button>
-          ) : null}
-        </div>
-      </SettingsRow>
-      {/* Each machine's Claude Code asks once to trust the vault's folder and
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void window.holi.openPath(entry.path)}
+          >
+            <FolderOpenIcon data-icon="inline-start" aria-hidden="true" />
+            Show folder
+          </Button>
+        </SettingsRow>
+        <SettingsRow
+          title="Sync"
+          description="Your edits are committed and pushed as you work, and others' are pulled in."
+        >
+          <div className="flex items-center gap-2">
+            <Badge variant={SYNC_BADGE[sync.tone]}>{sync.text}</Badge>
+            {sync.tone === "warn" ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void retrySync()}
+              >
+                Retry
+              </Button>
+            ) : null}
+          </div>
+        </SettingsRow>
+        {/* Each machine's Claude Code asks once to trust the vault's folder and
           to sign in, and refuses background work until it has: a colleague
           who cloned the vault approves it here (state/claude-first-run.ts). */}
-      <SettingsRow
-        title="Claude Code"
-        description={
-          agent === null
-            ? "Turn on the agent plugin to use Claude Code in this vault."
-            : "Trust this vault and sign in, once on each machine. Until then the agent cannot work in the background here."
-        }
-      >
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={agent === null || remote === null}
-          onClick={() => remote !== null && firstRun(remote)}
+        <SettingsRow
+          title="Claude Code"
+          description={
+            agent === null
+              ? "Turn on the agent plugin to use Claude Code in this vault."
+              : "Trust this vault and sign in, once on each machine. Until then the agent cannot work in the background here."
+          }
         >
-          <ShieldCheckIcon data-icon="inline-start" aria-hidden="true" />
-          Trust and sign in
-        </Button>
-      </SettingsRow>
-      <SettingsRow
-        title="New sessions run"
-        description="The coding agent a new session starts in, on this machine. Holis and automations always run Claude Code."
-      >
-        <Segmented
-          label="New sessions run"
-          value={resolved?.agentProvider ?? VAULT_SETTING_DEFAULTS.agentProvider}
-          choices={AGENTS}
-          onChange={(id) => void write("agentProvider", id, "local")}
-        />
-      </SettingsRow>
-    </SettingsCard>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={agent === null || remote === null}
+            onClick={() => remote !== null && firstRun(remote)}
+          >
+            <ShieldCheckIcon data-icon="inline-start" aria-hidden="true" />
+            Trust and sign in
+          </Button>
+        </SettingsRow>
+      </SettingsCard>
+      <AgentsCard />
+    </>
   )
 }
 

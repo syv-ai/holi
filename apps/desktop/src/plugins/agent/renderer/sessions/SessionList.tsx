@@ -10,7 +10,6 @@
  * the time's place": working spins, needs you is a badge and pins the row to
  * the top, done shows a check until the row is opened.
  */
-import { SiClaude } from "@icons-pack/react-simple-icons"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import {
   ArchiveIcon,
@@ -22,6 +21,7 @@ import {
   CopyIcon,
   CopyPlusIcon,
   EllipsisIcon,
+  FileDiffIcon,
   HistoryIcon,
   ListFilterIcon,
   MailCheckIcon,
@@ -97,8 +97,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { PixelPersona } from "@/composites"
-import { IconButton } from "@/primitives"
+import { AgentMark, PixelPersona } from "@/composites"
+import { IconButton, toast } from "@/primitives"
+import { providersAtom } from "../state/providers"
+import { reviewSessionTurnAtom } from "../state/turns"
 import { NewSessionButton } from "./NewSessionButton"
 import { cn, openTabAtom, useTabDrag } from "@/plugin-api"
 import { agentSessionsAtom } from "../state/sessions"
@@ -345,12 +347,7 @@ function CardMark({ row }: { row: SessionRow }): React.JSX.Element {
       />
     )
   }
-  return (
-    <SiClaude
-      aria-hidden="true"
-      className="size-3.5 shrink-0 text-orange-500 dark:text-orange-400"
-    />
-  )
+  return <AgentMark agent={row.item.agent} className="size-3.5" />
 }
 
 function stateWords(row: SessionRow): string {
@@ -546,10 +543,18 @@ function useRowActions(
   const markRead = useSetAtom(markSessionSeenAtom)
   const markUnread = useSetAtom(markSessionUnreadAtom)
   const openTab = useSetAtom(openTabAtom)
+  const reviewTurn = useSetAtom(reviewSessionTurnAtom)
+  const providers = useAtomValue(providersAtom)
   const { item, state } = row
   const can = abilities.get(keyOwner(item.key))
   const jobId = item.jobId
   const isLive = jobId !== undefined && live.some((s) => s.id === jobId)
+  // Restart and Duplicate are a background session's: an agent Holi runs
+  // itself has neither.
+  const background =
+    providers.kind !== "ready" ||
+    providers.providers.find((p) => p.id === (item.agent ?? "claude"))
+      ?.background !== false
   const sessionId = item.sessionId ?? jobId
   const icon = (Glyph: typeof PinIcon) => <Glyph aria-hidden="true" />
 
@@ -641,20 +646,37 @@ function useRowActions(
       run: onClose,
     })
   }
+  if (jobId !== undefined) {
+    // The turn review, which the session's own view (its terminal) has no
+    // room for.
+    running.push({
+      kind: "item",
+      label: "Review last turn",
+      icon: icon(FileDiffIcon),
+      run: () =>
+        void reviewTurn(jobId).then((found) => {
+          if (!found) toast("No turn of this session is on record yet.")
+        }),
+    })
+  }
   if (isLive) {
+    if (background) {
+      running.push(
+        {
+          kind: "item",
+          label: "Restart",
+          icon: icon(RotateCwIcon),
+          run: () => void respawn(jobId),
+        },
+        {
+          kind: "item",
+          label: "Duplicate",
+          icon: icon(CopyPlusIcon),
+          run: () => void duplicate(jobId),
+        }
+      )
+    }
     running.push(
-      {
-        kind: "item",
-        label: "Restart",
-        icon: icon(RotateCwIcon),
-        run: () => void respawn(jobId),
-      },
-      {
-        kind: "item",
-        label: "Duplicate",
-        icon: icon(CopyPlusIcon),
-        run: () => void duplicate(jobId),
-      },
       {
         kind: "item",
         label: "Stop session",

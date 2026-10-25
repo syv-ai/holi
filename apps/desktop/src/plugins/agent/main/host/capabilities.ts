@@ -56,6 +56,7 @@ export interface AgentCapabilitiesDeps {
     AgentSessions,
     | 'ensure'
     | 'sessions'
+    | 'past'
     | 'open'
     | 'start'
     | 'launch'
@@ -152,6 +153,18 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         return [...deps.sessions.sessions(), ...deps.own.sessions()]
       },
       text: (sessions) => sessions.map((s) => `${s.state}\t${s.name}`).join('\n'),
+    }),
+
+    /** The vault's stopped background sessions, which History lists and
+     *  opening brings back. */
+    'agent.history': cap({
+      doors: ['ui'],
+      params: noParams,
+      run: async (ctx): Promise<SessionSummary[]> => {
+        if (!live(ctx)) return []
+        await deps.sessions.ensure()
+        return deps.sessions.past()
+      },
     }),
 
     /** The agents a session can run, and which are on this machine. */

@@ -46,9 +46,6 @@ a run once a run in a Holi-owned process, which ends when Holi quits, is accepta
 
 **More providers.** opencode and pi, each as its core and whatever its hooks allow.
 
-**An image in the composer.** Pasting or dropping a screenshot; today the composer takes text and
-vault paths.
-
 **Memory tooling.** Lint findings as proposals, a graph view, and per-directory indexes. See
 [agent-memory](features/agent-memory.md).
 

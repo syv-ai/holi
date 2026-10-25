@@ -38,8 +38,8 @@ Electron. `@holi/shared/path-safety-node` is the one Node-only entrypoint.
 The agent is a coding agent's own CLI, unmodified: Claude Code or Codex, one **provider** each
 ([agent-sessions](features/agent-sessions.md), Providers). Holi adds no adapter layer and no
 prompt-building, and fixes forward when a release changes something. The terminal is the
-interface, whichever agent runs in it: Holi draws around it (the session list, the composer that
-types into it, links to vault files) and never re-draws it, which is what lets any agent with a
+interface, whichever agent runs in it: Holi draws around it (the session list, the tab, links to
+vault files) and never re-draws it, which is what lets any agent with a
 CLI be a session. A provider's core is the command it runs; what else it offers (a supervisor
 that runs sessions unwatched, hooks that report turns, a context reading) are capabilities the UI
 reads rather than assumes. With the vault being plain files in a git repo, the agent needs no

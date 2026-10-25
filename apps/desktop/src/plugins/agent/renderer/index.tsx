@@ -65,12 +65,10 @@ const COMMANDS: readonly Command[] = [
     firstKey: 3,
     run: (_get, set) => set(appModeAtom, 'agents'),
   },
-  // ⌘N is a new session only in Agents mode; in Documents it stays free.
+  // ⌘N is core's: the shell sends it here on the Agents side (`newSession`).
   {
     id: 'agent.new',
     label: 'New session',
-    hotkey: '⌘N',
-    when: (get) => get(appModeAtom) === 'agents',
     run: (_get, set) => void set(newSessionAtom),
   },
   {
