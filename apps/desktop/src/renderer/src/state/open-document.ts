@@ -4,13 +4,21 @@
  * reply). The shell owns its tabs, so it answers the request the way it
  * answers `settingsRequestAtom`: it watches this and opens the path as a tab,
  * bringing the Documents side of the sidebar forward.
+ *
+ * A Holi link may name a heading in the document; the document's view lands
+ * the caret on it when it opens the path (`pendingHeadingAtom`).
  */
 import { atom } from 'jotai'
 
 /** The last request: its path, numbered so the same path can be asked twice. */
 export const openDocumentRequestAtom = atom<{ path: string; seq: number } | null>(null)
 
-/** Open `path` (vault-relative) in the shell. */
-export const openDocumentAtom = atom(null, (get, set, path: string) => {
+/** The heading a document should open at: a link's anchor or words, until
+ *  the document's view has landed on it. */
+export const pendingHeadingAtom = atom<{ path: string; heading: string } | null>(null)
+
+/** Open `path` (vault-relative) in the shell, at `heading` when given. */
+export const openDocumentAtom = atom(null, (get, set, path: string, heading?: string) => {
+  set(pendingHeadingAtom, heading === undefined || heading === '' ? null : { path, heading })
   set(openDocumentRequestAtom, { path, seq: (get(openDocumentRequestAtom)?.seq ?? 0) + 1 })
 })

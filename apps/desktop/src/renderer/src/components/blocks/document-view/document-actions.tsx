@@ -1,7 +1,9 @@
 /**
  * The document's menu, after the rich-text block's page actions: page layout
- * (full width, small text), export (Markdown, HTML) and Turn into an
- * artifact. A copy confirms in place on its item; only a failure toasts.
+ * (full width, small text), a Holi link to the document or to the heading the
+ * caret is under (docs/features/holi-links.md), export (Markdown, HTML) and
+ * Turn into an artifact. A copy confirms in place on its item; only a failure
+ * toasts.
  */
 import { useEffect, useRef, useState } from "react"
 import type { Editor } from "@tiptap/react"
@@ -10,6 +12,8 @@ import {
   CheckIcon,
   CodeIcon,
   FileTextIcon,
+  HashIcon,
+  LinkIcon,
   MoreHorizontalIcon,
   SparklesIcon,
   TypeIcon,
@@ -28,7 +32,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
-type CopyFormat = "markdown" | "html"
+type CopyFormat = "markdown" | "html" | "link" | "heading-link"
 
 // Long enough to read the swap, short enough to copy again.
 const COPIED_MS = 1600
@@ -43,6 +47,9 @@ export interface DocumentActionsProps {
   onSmallTextChange: (smallText: boolean) => void
   /** Null while an agent run is already going, or there is no agent. */
   onTurnIntoArtifact: (() => void) | null
+  /** The document's Holi links; null for a file a teammate could not open
+   *  (a local file). `heading` is null above the first heading. */
+  holiLinks?: { file: () => string; heading: () => string | null } | null
 }
 
 export function DocumentActions({
@@ -53,6 +60,7 @@ export function DocumentActions({
   onFullWidthChange,
   onSmallTextChange,
   onTurnIntoArtifact,
+  holiLinks = null,
 }: DocumentActionsProps) {
   const [copied, setCopied] = useState<CopyFormat | null>(null)
   const copiedTimer = useRef<number | undefined>(undefined)
@@ -61,7 +69,15 @@ export function DocumentActions({
 
   async function copyAs(format: CopyFormat) {
     if (!editor) return
-    const value = format === "html" ? editor.getHTML() : markdown()
+    const value =
+      format === "html"
+        ? editor.getHTML()
+        : format === "link"
+          ? holiLinks?.file()
+          : format === "heading-link"
+            ? holiLinks?.heading()
+            : markdown()
+    if (value === undefined || value === null) return
     try {
       await navigator.clipboard.writeText(value)
     } catch {
@@ -103,6 +119,37 @@ export function DocumentActions({
           </DropdownMenuCheckboxItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
+        {holiLinks ? (
+          <>
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Share</DropdownMenuLabel>
+              <DropdownMenuItem
+                onSelect={(event) => event.preventDefault()}
+                onClick={() => void copyAs("link")}
+              >
+                {copied === "link" ? (
+                  <CheckIcon aria-hidden="true" />
+                ) : (
+                  <LinkIcon aria-hidden="true" />
+                )}
+                {copied === "link" ? "Copied" : "Copy Holi Link"}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={(event) => event.preventDefault()}
+                disabled={!editor || holiLinks.heading() === null}
+                onClick={() => void copyAs("heading-link")}
+              >
+                {copied === "heading-link" ? (
+                  <CheckIcon aria-hidden="true" />
+                ) : (
+                  <HashIcon aria-hidden="true" />
+                )}
+                {copied === "heading-link" ? "Copied" : "Copy Link to Heading"}
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
         <DropdownMenuGroup>
           <DropdownMenuLabel>Export</DropdownMenuLabel>
           {/* Stays open, so the swap to Copied is seen where it was clicked. */}

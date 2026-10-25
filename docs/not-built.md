@@ -160,9 +160,6 @@ nothing shows them: there is no "Links to" and "Linked from" beside a note. See
 New Link, saving a link dragged in from a browser, and Open in Browser. See
 [links](features/links.md).
 
-**Holi links in the window.** Copying a link to a file or a heading, and landing on its heading:
-an arriving link opens its file (in its vault) at the top. See [holi-links](features/holi-links.md).
-
 **Vault-app slash commands in the document editor.** The apps plugin answers `apps.commands` and
 serves each command's document; the editor's slash menu does not list them, and nothing runs one in
 its hidden frame. See [vault apps](features/vault-apps.md).

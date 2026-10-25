@@ -200,12 +200,12 @@ export function subscribeToVault(
   // a Holi link. Cross-vault, the switch runs here, not in main, so
   // `activeRemoteAtom` stays truthful; the path opens once the new vault's
   // snapshot is in (`openVaultAtom` sets it before this resolves). A link's
-  // heading is not scrolled to yet (docs/not-built.md).
-  const offReminder = window.holi.vault.onOpen(({ remote, path }) => {
+  // heading is where the document's view puts the caret.
+  const offReminder = window.holi.vault.onOpen(({ remote, path, heading }) => {
     if (remote && remote !== store.get(activeRemoteAtom)) {
-      void store.set(openVaultAtom, remote).then(() => store.set(openDocumentAtom, path))
+      void store.set(openVaultAtom, remote).then(() => store.set(openDocumentAtom, path, heading))
     } else {
-      store.set(openDocumentAtom, path)
+      store.set(openDocumentAtom, path, heading)
     }
   })
   // `holi docs screenshot` asks where a tab is drawn; the tab strip cannot

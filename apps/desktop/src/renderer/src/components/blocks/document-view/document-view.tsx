@@ -18,8 +18,13 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
-import { isResolved, type CommentAnchor } from "@holi/shared"
-import { useAtomValue, useSetAtom } from "jotai"
+import {
+  holiLink,
+  isHoliLinkable,
+  isResolved,
+  type CommentAnchor,
+} from "@holi/shared"
+import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import { findNext, findPrev } from "prosemirror-search"
 import { EditorContent, useEditor } from "@tiptap/react"
 import { FileWarningIcon, SparklesIcon } from "lucide-react"
@@ -66,6 +71,7 @@ import {
   threadsLoadAtom,
 } from "@/state/comments"
 import { sawText } from "@/state/doc-changes"
+import { pendingHeadingAtom } from "@/state/open-document"
 import { editorSelectionAtom } from "@/state/ui-report"
 import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
 
@@ -88,6 +94,7 @@ import {
   type PlacedRange,
 } from "./document-comments"
 import { createDocumentExtensions } from "./document-extensions"
+import { headingAtCaret, landOnHeading } from "./document-headings"
 import { DocumentFindBar, type FindRequest } from "./document-find-bar"
 import { DocumentFormatBubble } from "./document-format-bubble"
 import { DocumentHeader, type SaveState } from "./document-header"
@@ -390,6 +397,27 @@ function DocumentEditor({
       window.clearTimeout(timer)
     }
   }, [editor, path, setEditorSelection])
+
+  // A Holi link that named a heading lands the caret on it once the
+  // document is in the editor.
+  const [pendingHeading, setPendingHeading] = useAtom(pendingHeadingAtom)
+  useEffect(() => {
+    if (!editor || editor.isDestroyed || pendingHeading?.path !== path) return
+    landOnHeading(editor, markdown(), pendingHeading.heading)
+    setPendingHeading(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, pendingHeading, path])
+
+  const holiLinks = isHoliLinkable(path)
+    ? {
+        file: () => holiLink({ remote, path }),
+        heading: () => {
+          if (!editor) return null
+          const heading = headingAtCaret(editor, markdown())
+          return heading === null ? null : holiLink({ remote, path, heading })
+        },
+      }
+    : null
 
   handlers.current.pressThread = (id) => {
     setCommentsOpen(true)
@@ -700,6 +728,7 @@ function DocumentEditor({
             onFullWidthChange={setFullWidth}
             onSmallTextChange={setSmallText}
             onTurnIntoArtifact={canAsk ? () => void turnIntoArtifact() : null}
+            holiLinks={holiLinks}
             comments={
               commentable
                 ? {

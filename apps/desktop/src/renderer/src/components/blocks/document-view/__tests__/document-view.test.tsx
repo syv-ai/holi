@@ -11,6 +11,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest"
 
 import { act, fireEvent, render, screen, waitFor } from "@/test/render"
 import * as agentService from "@/state/agent-service"
+import { pendingHeadingAtom } from "@/state/open-document"
 import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
 
 import { DocumentView } from "../document-view"
@@ -196,4 +197,31 @@ test("Stop ends the run", async () => {
     )
   )
   expect(await screen.findByText("Stopped")).toBeInTheDocument()
+})
+
+test("the menu copies the document's Holi link", async () => {
+  const user = userEvent.setup()
+  const writeText = vi.fn(() => Promise.resolve())
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText },
+    configurable: true,
+  })
+  open("# Plan\n\nBody\n")
+  await editorBox()
+  await user.click(screen.getByRole("button", { name: "Document actions" }))
+  await user.click(await screen.findByRole("menuitem", { name: "Copy Holi Link" }))
+  expect(writeText).toHaveBeenCalledWith(
+    "holi://open?vault=syv/vault&path=notes/Plan.md"
+  )
+  expect(screen.getByRole("menuitem", { name: "Copied" })).toBeInTheDocument()
+})
+
+test("a Holi link's heading puts the caret on it when the document opens", async () => {
+  store.set(pendingHeadingAtom, { path: PATH, heading: "next-steps" })
+  open("# Plan\n\nIntro\n\n## Next steps\n\nShip it.\n")
+  const box = await editorBox()
+  await waitFor(() => expect(store.get(pendingHeadingAtom)).toBeNull())
+  const heading = box.querySelector("h2")!
+  const selection = window.getSelection()!
+  expect(heading.contains(selection.anchorNode)).toBe(true)
 })

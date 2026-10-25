@@ -19,7 +19,13 @@ import {
 } from "@headless-tree/core"
 import { useTree } from "@headless-tree/react"
 import { toast } from "sonner"
-import { GITKEEP, isHiddenPath, TASKS_CLAIM } from "@holi/shared"
+import {
+  GITKEEP,
+  holiLink,
+  isHiddenPath,
+  isHoliLinkable,
+  TASKS_CLAIM,
+} from "@holi/shared"
 import { cn } from "@/lib/cn"
 import { SIDEBAR_ROW_FILL } from "@/composites/SidebarNavItem"
 
@@ -122,6 +128,7 @@ import {
   FolderIcon,
   FolderOpenIcon,
   FolderPlusIcon,
+  LinkIcon,
   ListChecksIcon,
   SearchIcon,
   PencilIcon,
@@ -754,6 +761,9 @@ export function FilesSection({
     // A file or an app opens beside what is in front, as ⌥-click does; a
     // folder has nothing to open.
     const openable = !item.isFolder()
+    // A Holi link opens a file on a teammate's machine, so a local file has
+    // none (docs/features/holi-links.md).
+    const linkable = openable && files.remote !== null && isHoliLinkable(id)
     return [
       ...(openable
         ? ([
@@ -763,6 +773,16 @@ export function FilesSection({
               icon: <SquareSplitHorizontalIcon aria-hidden="true" />,
               run: () => openTab(tabForPath(id), { beside: true }),
             },
+            ...(linkable
+              ? ([
+                  {
+                    kind: "item",
+                    label: "Copy Holi link",
+                    icon: <LinkIcon aria-hidden="true" />,
+                    run: () => void copyLink(id),
+                  },
+                ] satisfies MenuAction[])
+              : []),
             { kind: "separator" },
           ] satisfies MenuAction[])
         : []),
@@ -811,6 +831,20 @@ export function FilesSection({
       },
       { kind: "separator" },
     ]
+  }
+
+  /** Put `path`'s Holi link on the clipboard, for a teammate to click. */
+  async function copyLink(path: string) {
+    const remote = files.remote
+    if (remote === null) return
+    try {
+      await navigator.clipboard.writeText(holiLink({ remote, path }))
+      toast.success("Holi link copied", { description: basename(path) })
+    } catch {
+      toast.error("Copy failed", {
+        description: "The clipboard could not be written.",
+      })
+    }
   }
 
   /** Delete a file, or a folder (an app's bundle too) with everything in it,
