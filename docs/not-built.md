@@ -168,8 +168,7 @@ its hidden frame. See [vault apps](features/vault-apps.md).
 release notes ([updates](features/updates.md)); Google's bring-your-own OAuth client form
 ([google](features/google.md)); the vault's README on Home ([home](features/home.md)); the repo's
 size in Settings ([vaults-sync](features/vaults-sync.md)); a tab's caret and scroll kept across tab
-switches; `holi docs screenshot`'s renderer half, which says where a tab is drawn; PDF render
-warnings in Convert to PDF ([pdf](features/pdf.md)).
+switches; and `holi docs screenshot`'s renderer half, which says where a tab is drawn.
 
 ## Sync
 

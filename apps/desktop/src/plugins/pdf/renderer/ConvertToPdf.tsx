@@ -33,7 +33,9 @@ interface TemplateOption {
  * Convert-to-PDF: pick a template, fill its typed metadata fields (each the
  * widget its declared type maps to), choose a destination via the native save
  * dialog (which opens beside the note), Convert. A PDF in the vault opens in a
- * tab; one saved elsewhere is revealed in Finder. Fills a Dialog's slots and knows nothing about overlays or sizing.
+ * tab; one saved elsewhere is revealed in Finder. When the render could not
+ * bring everything out (an image, a diagram), the dialog stays to say what,
+ * with Done. Fills a Dialog's slots and knows nothing about overlays or sizing.
  */
 export function ConvertToPdf({
   remote,
@@ -54,6 +56,8 @@ export function ConvertToPdf({
   const [error, setError] = useState<string | null>(null)
   /** Required fields left empty at the last Convert, marked at the field. */
   const [missing, setMissing] = useState<ReadonlySet<string>>(new Set())
+  /** What the finished render reported it could not bring out as written. */
+  const [renderWarnings, setRenderWarnings] = useState<string[] | null>(null)
   const name = path.split('/').at(-1) ?? path
   const selected = templates?.find((t) => t.slug === slug) ?? null
 
@@ -126,7 +130,7 @@ export function ConvertToPdf({
         return // user cancelled the save dialog
       }
       const meta = metaFromValues(selected.fields, values)
-      const { pdfPath, vaultPath } = await pdf.render(remote, {
+      const { pdfPath, vaultPath, warnings } = await pdf.render(remote, {
         path,
         template: slug,
         out: outPath,
@@ -136,11 +140,48 @@ export function ConvertToPdf({
       // on; anywhere else, Finder shows where it went.
       if (vaultPath !== null) openTab(vaultPath)
       else await window.holi.openPath(pdfPath)
+      if (warnings.length > 0) {
+        setRenderWarnings(warnings)
+        setBusy(false)
+        return
+      }
       onClose()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
       setBusy(false)
     }
+  }
+
+  if (renderWarnings !== null) {
+    return (
+      <>
+        <Dialog.Header>
+          Converted <span className="font-mono text-foreground">{name}</span>
+        </Dialog.Header>
+        <Dialog.Body>
+          <div
+            role="status"
+            data-convert-warnings
+            className="flex gap-2 rounded-md bg-muted px-2.5 py-2 text-xs text-foreground"
+          >
+            <Icon icon={TriangleAlert} size="sm" tone="muted" className="mt-px shrink-0" />
+            <div className="flex min-w-0 flex-col gap-1">
+              <p className="font-medium">The PDF is made, but not everything came out as written:</p>
+              <ul className="flex list-disc flex-col gap-0.5 pl-4 break-words">
+                {renderWarnings.map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </Dialog.Body>
+        <Dialog.Footer>
+          <Button size="sm" data-convert-done onClick={onClose}>
+            Done
+          </Button>
+        </Dialog.Footer>
+      </>
+    )
   }
 
   return (
