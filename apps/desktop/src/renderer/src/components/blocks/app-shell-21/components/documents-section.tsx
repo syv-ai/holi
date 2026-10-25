@@ -3,7 +3,9 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentType,
   type DragEvent,
+  type ReactElement,
   type ReactNode,
 } from "react"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
@@ -66,6 +68,20 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { FileType, getFileType } from "@/components/reui/file-type"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Field, FieldError, FieldLabel } from "@/components/ui/field"
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card"
 import { Input } from "@/components/ui/input"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import {
@@ -103,6 +119,7 @@ import { openDialogAtom } from "@/state/dialogs"
 import { openTabAtom, shellWorkspaceAtom } from "@/state/shell-tabs"
 import { closeTabsWhere } from "@/state/shell-workspace"
 import { tabForPath, tabPath } from "@/state/tab-descriptor"
+import type { ClaimCreate } from "@/plugin-api/types"
 import { claimsAtom, folderClaimsAtom, surfacesAtom } from "@/state/plugins"
 import { createTaskAtom, openTaskCountAtom } from "@/state/tasks"
 import { setTreeOrderAtom, treeOrderAtom } from "@/state/tree-order"
@@ -481,6 +498,18 @@ export function FilesSection({
       ? []
       : [{ ...claim.create, entry: claim.folder?.entry }]
   )
+  /** What a web address dropped from a browser is saved as: a link. */
+  const urlCreate = creates.find((create) => create.fromUrl === true)
+  /** A row's hover card, from the first claim on its path that draws one. */
+  const hoverOf = (path: string) =>
+    claims.find((claim) => claim.hover !== undefined && claim.match(path))
+      ?.hover
+  /** A New menu item asking for its name first (a link's address), and
+   *  the folder it goes in, while its dialog is open. */
+  const [asking, setAsking] = useState<{
+    create: ClaimCreate & { entry?: string }
+    parent: string
+  } | null>(null)
   const vaults = useAtomValue(vaultsAtom)
   const createNote = useSetAtom(createNoteAtom)
   const createFolder = useSetAtom(createFolderAtom)
@@ -652,14 +681,18 @@ export function FilesSection({
     onDrop: (items, target) =>
       void attempt("move the files", () => onDrop(items, target)),
     canDropForeignDragObject: (dataTransfer) =>
-      dataTransfer.types.includes("Files"),
-    onDropForeignDragObject: (dataTransfer, target) =>
+      dataTransfer.types.includes("Files") ||
+      (urlCreate !== undefined && dataTransfer.types.includes("text/uri-list")),
+    onDropForeignDragObject: (dataTransfer, target) => {
+      const url = droppedUrl(dataTransfer)
+      if (url !== null) return dropUrl(url, folderOf(target.item))
       void attempt("add the files", () =>
         dropPaths(
           [...dataTransfer.files].map((file) => window.holi.pathForFile(file)),
           folderOf(target.item)
         )
-      ),
+      )
+    },
     features: [
       syncDataLoaderFeature,
       selectionFeature,
@@ -714,10 +747,56 @@ export function FilesSection({
       : undefined,
   })
 
-  /** Finder drops on the empty space below the rows land at the root. */
+  /** Make what a New menu item makes, named `name` in `parent`, and open
+   *  it: a folder document as itself, not its entry file. Throws the
+   *  plugin's refusal. */
+  async function made(
+    create: ClaimCreate & { entry?: string },
+    parent: string,
+    name: string
+  ) {
+    if (files.remote === null) return
+    const path = await create.run({ remote: files.remote, parent, name })
+    if (!path) return
+    const suffix = create.entry === undefined ? null : `/${create.entry}`
+    const opened =
+      suffix !== null && path.endsWith(suffix)
+        ? path.slice(0, -suffix.length)
+        : path
+    reveal(parent)
+    markArrived([opened])
+    onOpen(opened)
+  }
+
+  /** The web address a browser's drag carries, if that is all it carries. */
+  function droppedUrl(data: DataTransfer): string | null {
+    if (urlCreate === undefined || data.files.length > 0) return null
+    const listed = data
+      .getData("text/uri-list")
+      .split(/\r?\n/)
+      .find((line) => line !== "" && !line.startsWith("#"))
+    const url = (listed ?? data.getData("text/plain")).trim()
+    return /^https?:\/\//i.test(url) ? url : null
+  }
+
+  /** A web address dropped from a browser, saved as a link in `parent`. */
+  function dropUrl(url: string, parent: string) {
+    if (urlCreate === undefined) return
+    void attempt("save the link", () => made(urlCreate, parent, url))
+  }
+
+  /** Finder drops on the empty space below the rows land at the root, and a
+   *  browser's address is saved there as a link. */
   function onAreaDrop(event: DragEvent) {
     setDropping(false)
-    if (event.defaultPrevented || event.dataTransfer.files.length === 0) return
+    if (event.defaultPrevented) return
+    const url = droppedUrl(event.dataTransfer)
+    if (url !== null) {
+      event.preventDefault()
+      dropUrl(url, "")
+      return
+    }
+    if (event.dataTransfer.files.length === 0) return
     event.preventDefault()
     const sources = [...event.dataTransfer.files].map((file) =>
       window.holi.pathForFile(file)
@@ -935,31 +1014,21 @@ export function FilesSection({
       ...creates.map((create): MenuAction => ({
         kind: "item",
         label: create.label,
-        icon: <AppWindowIcon aria-hidden="true" />,
+        icon: <create.icon aria-hidden={true} />,
         disabled: files.remote === null,
         run: () =>
-          void attempt("create the app", async () => {
-            if (files.remote === null) return
-            const path = await create.run({
-              remote: files.remote,
-              parent,
-              name: freeName(files.taken, parent, "Untitled", ".app").replace(
-                /\.app$/,
-                ""
+          create.asksName === true
+            ? setAsking({ create, parent })
+            : void attempt(`make the ${create.label.toLowerCase()}`, () =>
+                made(
+                  create,
+                  parent,
+                  freeName(files.taken, parent, "Untitled", ".app").replace(
+                    /\.app$/,
+                    ""
+                  )
+                )
               ),
-            })
-            if (path) {
-              const suffix =
-                create.entry === undefined ? null : `/${create.entry}`
-              const opened =
-                suffix !== null && path.endsWith(suffix)
-                  ? path.slice(0, -suffix.length)
-                  : path
-              reveal(parent)
-              markArrived([opened])
-              onOpen(opened)
-            }
-          }),
       })),
       { kind: "separator" },
       {
@@ -1037,7 +1106,12 @@ export function FilesSection({
             <div
               data-dropping={dropping || undefined}
               onDragOver={(event) => {
-                if (!event.dataTransfer.types.includes("Files")) return
+                const types = event.dataTransfer.types
+                if (
+                  !types.includes("Files") &&
+                  !(urlCreate !== undefined && types.includes("text/uri-list"))
+                )
+                  return
                 event.preventDefault()
                 setDropping(true)
               }}
@@ -1116,33 +1190,38 @@ export function FilesSection({
                           item.getId() === activeId && "bg-foreground/10"
                         )}
                       >
-                        <span className="flex min-w-0 items-center gap-2">
-                          <FileGlyph item={item} />
-                          {item.isRenaming() ? (
-                            <Input
-                              {...item.getRenameInputProps()}
-                              autoFocus
-                              aria-label={`Rename ${item.getItemName()}`}
-                              // The name without its extension, ready to type over.
-                              onFocus={(event) => {
-                                const value = event.currentTarget.value
-                                const dot = value.lastIndexOf(".")
-                                event.currentTarget.setSelectionRange(
-                                  0,
-                                  item.isFolder() || dot <= 0
-                                    ? value.length
-                                    : dot
-                                )
-                              }}
-                              onClick={(event) => event.stopPropagation()}
-                              className="h-6 px-1.5"
-                            />
-                          ) : (
-                            <span className="truncate">
-                              {displayName(item)}
-                            </span>
-                          )}
-                        </span>
+                        <RowHover
+                          card={hoverOf(item.getId())}
+                          path={item.getId()}
+                        >
+                          <span className="flex min-w-0 items-center gap-2">
+                            <FileGlyph item={item} />
+                            {item.isRenaming() ? (
+                              <Input
+                                {...item.getRenameInputProps()}
+                                autoFocus
+                                aria-label={`Rename ${item.getItemName()}`}
+                                // The name without its extension, ready to type over.
+                                onFocus={(event) => {
+                                  const value = event.currentTarget.value
+                                  const dot = value.lastIndexOf(".")
+                                  event.currentTarget.setSelectionRange(
+                                    0,
+                                    item.isFolder() || dot <= 0
+                                      ? value.length
+                                      : dot
+                                  )
+                                }}
+                                onClick={(event) => event.stopPropagation()}
+                                className="h-6 px-1.5"
+                              />
+                            ) : (
+                              <span className="truncate">
+                                {displayName(item)}
+                              </span>
+                            )}
+                          </span>
+                        </RowHover>
                       </TreeItemLabel>
                     </TreeItem>
                   ))}
@@ -1193,7 +1272,113 @@ export function FilesSection({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AskNameDialog
+        asking={asking}
+        onClose={() => setAsking(null)}
+        onMake={(name) =>
+          asking === null
+            ? Promise.resolve()
+            : made(asking.create, asking.parent, name)
+        }
+      />
     </SidebarGroup>
+  )
+}
+
+/** A row in a hover card when its claim draws one; the row alone otherwise. */
+function RowHover({
+  card: Card,
+  path,
+  children,
+}: {
+  card: ComponentType<{ path: string }> | undefined
+  path: string
+  children: ReactElement
+}) {
+  if (Card === undefined) return children
+  return (
+    <HoverCard openDelay={500} closeDelay={100}>
+      <HoverCardTrigger asChild>{children}</HoverCardTrigger>
+      <HoverCardContent side="right" align="start" className="w-80 p-0">
+        <Card path={path} />
+      </HoverCardContent>
+    </HoverCard>
+  )
+}
+
+/**
+ * The name a New menu item asks for before it makes anything (a link's
+ * address), in a field that says the item's placeholder. A refusal stays in
+ * the dialog, under the field, with what was typed.
+ */
+function AskNameDialog({
+  asking,
+  onClose,
+  onMake,
+}: {
+  asking: { create: ClaimCreate; parent: string } | null
+  onClose: () => void
+  onMake: (name: string) => Promise<void>
+}) {
+  const [name, setName] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const close = () => {
+    setName("")
+    setError(null)
+    onClose()
+  }
+  const label = asking?.create.label ?? ""
+  return (
+    <Dialog open={asking !== null} onOpenChange={(open) => !open && close()}>
+      <DialogContent className="sm:max-w-md">
+        <form
+          className="flex flex-col gap-6"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (name.trim() === "" || busy) return
+            setBusy(true)
+            setError(null)
+            onMake(name.trim())
+              .then(close, (err: unknown) =>
+                setError(err instanceof Error ? err.message : String(err))
+              )
+              .finally(() => setBusy(false))
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>{label}</DialogTitle>
+            <DialogDescription>
+              {asking?.parent ? `In ${asking.parent}.` : "At the vault’s top."}
+            </DialogDescription>
+          </DialogHeader>
+          <Field data-invalid={error !== null || undefined}>
+            <FieldLabel htmlFor="ask-name" className="sr-only">
+              {label}
+            </FieldLabel>
+            <Input
+              id="ask-name"
+              autoFocus
+              value={name}
+              placeholder={asking?.create.placeholder}
+              spellCheck={false}
+              aria-invalid={error !== null || undefined}
+              onChange={(event) => setName(event.target.value)}
+            />
+            {error !== null ? <FieldError>{error}</FieldError> : null}
+          </Field>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={close}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={busy || name.trim() === ""}>
+              {busy ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
 

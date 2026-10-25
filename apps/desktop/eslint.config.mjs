@@ -419,6 +419,7 @@ export default [
       'src/plugins/agent/renderer/sessions/**/*.{ts,tsx}',
       'src/plugins/google/renderer/ConnectionsSection.tsx',
       'src/plugins/google/renderer/OAuthClient.tsx',
+      'src/plugins/links/renderer/**/*.{ts,tsx}',
     ],
     rules: {
       'no-restricted-syntax': 'off',

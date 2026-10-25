@@ -154,9 +154,8 @@ drawn on the previous shell and are not rebuilt yet.
 nothing shows them: there is no "Links to" and "Linked from" beside a note. See
 [wiki-links](features/wiki-links.md).
 
-**Saved links' screens.** The preview card (on a tree row, a link in a note, a link file's tab),
-New Link, saving a link dragged in from a browser, and Open in Browser. See
-[links](features/links.md).
+**The rest of saved links.** The card over a web address written in a note, and a link file's chip
+in the editor. See [links](features/links.md).
 
 **Vault-app slash commands in the document editor.** The apps plugin answers `apps.commands` and
 serves each command's document; the editor's slash menu does not list them, and nothing runs one in

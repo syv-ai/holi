@@ -52,6 +52,12 @@ export interface ClaimCreate {
   icon: IconGlyph
   /** What its name field says while empty. */
   placeholder: string
+  /** The New menu asks for the name first, in a field that says
+   *  `placeholder`, rather than making it as Untitled: a link's address. */
+  asksName?: true
+  /** A web address dropped on the tree from a browser is made with this,
+   *  the address as its name, in the folder it lands in. */
+  fromUrl?: true
   /** Make it, named `name`, in the folder `parent` ('' for the root). Resolves
    *  to a vault path to open, or null. */
   run(ctx: { remote: string; parent: string; name: string }): Promise<string | null>
@@ -70,6 +76,10 @@ export interface PathClaim {
   decorate?: ClaimDecoration
   rowMenu?: readonly ClaimMenuItem[]
   create?: ClaimCreate
+  /** What a pointer resting on its row in the tree shows, in a hover card. */
+  hover?: ComponentType<{ path: string }>
+  /** Drawn at the top of its tab, above the document: a link file's card. */
+  banner?: ComponentType<{ path: string }>
   /**
    * The file's canonical form: the same function as the main side's claim,
    * which the `normalize-md` commit transform applies. The editor treats a

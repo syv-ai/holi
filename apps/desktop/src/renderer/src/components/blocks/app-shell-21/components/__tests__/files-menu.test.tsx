@@ -52,6 +52,11 @@ function mount() {
     async ({ parent, name }: { parent: string; name: string }) =>
       `${parent === "" ? "" : `${parent}/`}${name}.app/index.html`
   )
+  const makeLink = vi.fn(async ({ name }: { name: string }) =>
+    name.startsWith("https://")
+      ? "link.example.md"
+      : Promise.reject(new Error("That isn’t a web address"))
+  )
   store.set(coreContributionAtom, {
     surfaces: [],
     rail: [],
@@ -65,6 +70,18 @@ function mount() {
           icon: () => null,
           placeholder: "App name",
           run,
+        },
+      },
+      {
+        match: (p: string) => p.startsWith("link."),
+        create: {
+          id: "link",
+          label: "New Link",
+          icon: () => null,
+          placeholder: "Paste a web address",
+          asksName: true as const,
+          fromUrl: true as const,
+          run: makeLink,
         },
       },
     ],
@@ -81,7 +98,7 @@ function mount() {
       </SidebarProvider>
     </Provider>
   )
-  return { run, onOpen, store }
+  return { run, makeLink, onOpen, store }
 }
 
 test("New app on a folder's menu makes the app in that folder", async () => {
@@ -184,4 +201,44 @@ test("Cancel deletes nothing", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Cancel" }))
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull())
   expect(deleteMany).not.toHaveBeenCalled()
+})
+
+test("New Link asks for the address first, and a refusal stays in the dialog", async () => {
+  const { makeLink, onOpen } = mount()
+  fireEvent.contextMenu(await screen.findByText("kunder"))
+  fireEvent.click(await screen.findByRole("menuitem", { name: "New Link" }))
+  const field = await screen.findByPlaceholderText("Paste a web address")
+  expect(makeLink).not.toHaveBeenCalled()
+  fireEvent.change(field, { target: { value: "not a link" } })
+  fireEvent.click(screen.getByRole("button", { name: "Save" }))
+  expect(await screen.findByText("That isn’t a web address")).toBeTruthy()
+  fireEvent.change(field, { target: { value: "https://example.com" } })
+  fireEvent.click(screen.getByRole("button", { name: "Save" }))
+  await waitFor(() => expect(onOpen).toHaveBeenCalledWith("link.example.md"))
+  expect(makeLink).toHaveBeenLastCalledWith({
+    remote: "mara/notes",
+    parent: "kunder",
+    name: "https://example.com",
+  })
+})
+
+test("a web address dropped from a browser is saved as a link", async () => {
+  const { makeLink } = mount()
+  await screen.findByText("kunder")
+  const area = document.querySelector("[data-dropping], [data-slot=tree]")
+    ?.parentElement as HTMLElement
+  const data = {
+    files: [] as File[],
+    types: ["text/uri-list", "text/plain"],
+    getData: (type: string) =>
+      type === "text/uri-list" ? "https://example.com/page" : "",
+  }
+  fireEvent.drop(area, { dataTransfer: data })
+  await waitFor(() =>
+    expect(makeLink).toHaveBeenCalledWith({
+      remote: "mara/notes",
+      parent: "",
+      name: "https://example.com/page",
+    })
+  )
 })

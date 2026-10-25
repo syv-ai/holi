@@ -73,6 +73,7 @@ import {
 import { sawText } from "@/state/doc-changes"
 import { pendingHeadingAtom } from "@/state/open-document"
 import { useViewMemory } from "@/state/view-memory"
+import { claimsAtom } from "@/state/plugins"
 import { editorSelectionAtom } from "@/state/ui-report"
 import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
 
@@ -405,6 +406,10 @@ function DocumentEditor({
   // scroll, kept as they move (`view-memory.ts`). A link to a heading
   // lands on the heading instead.
   const memory = useViewMemory()
+  /** What the first claim on this path draws above it: a link's card. */
+  const Banner = useAtomValue(claimsAtom).find(
+    (claim) => claim.banner !== undefined && claim.match(path)
+  )?.banner
   const [pendingHeading, setPendingHeading] = useAtom(pendingHeadingAtom)
   const headingWaiting = pendingHeading?.path === path
   useEffect(() => {
@@ -800,6 +805,17 @@ function DocumentEditor({
                   request={find}
                   onClose={() => setFind(null)}
                 />
+              </div>
+            ) : null}
+            {/* A plugin's card for the file it claims, a link's page. */}
+            {Banner !== undefined ? (
+              <div
+                className={cn(
+                  "mx-auto w-full px-4 pt-8 sm:px-16 sm:pt-12",
+                  fullWidth ? "max-w-none" : "max-w-3xl"
+                )}
+              >
+                <Banner path={path} />
               </div>
             ) : null}
             {/* A task's fields, on the body's column; nothing for a note. */}
