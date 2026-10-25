@@ -167,10 +167,6 @@ an arriving link opens its file (in its vault) at the top. See [holi-links](feat
 serves each command's document; the editor's slash menu does not list them, and nothing runs one in
 its hidden frame. See [vault apps](features/vault-apps.md).
 
-**Selected lines to the agent.** The per-turn context can name the focused note's selected lines,
-but the document editor does not report a selection (`state/ui-report.ts`). See
-[agent-config](features/agent-config.md).
-
 **The rest.** Updating skills from Settings (`autoUpdateSkills`, `holi skills status`) and the
 release notes ([updates](features/updates.md)); Google's bring-your-own OAuth client form
 ([google](features/google.md)); the vault's README on Home ([home](features/home.md)); the repo's

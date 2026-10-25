@@ -66,6 +66,7 @@ import {
   threadsLoadAtom,
 } from "@/state/comments"
 import { sawText } from "@/state/doc-changes"
+import { editorSelectionAtom } from "@/state/ui-report"
 import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
 
 import { AgentPrompt, AgentStatus } from "./agent-prompt"
@@ -82,6 +83,7 @@ import {
   DocumentComments,
   placeThreads,
   selectionAnchor,
+  selectionLines,
   setCommentRanges,
   type PlacedRange,
 } from "./document-comments"
@@ -98,6 +100,9 @@ import {
 
 // How long typing has to pause before the file is written.
 const SAVE_DELAY_MS = 600
+
+// How long a selection holds still before its lines are worked out.
+const SELECTION_DELAY_MS = 250
 
 // The block drop line, as the rich-text block draws it.
 const DROP_LINE =
@@ -356,6 +361,35 @@ function DocumentEditor({
   useEffect(() => {
     if (editor) setCommentRanges(editor, { active: activeThread })
   }, [editor, activeThread])
+
+  // The lines selected, for the agent's per-turn context: worked out once
+  // the selection holds still, since it serialises the document. A caret
+  // clears what this document reported, never another's.
+  const setEditorSelection = useSetAtom(editorSelectionAtom)
+  useEffect(() => {
+    if (!editor) return
+    let timer: number | undefined
+    const report = () => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        if (editor.isDestroyed) return
+        const lines = selectionLines(editor, head.current)
+        setEditorSelection((was) => {
+          if (lines === null) return was?.path === path ? null : was
+          const same =
+            was?.path === path &&
+            was.lines.startLine === lines.startLine &&
+            was.lines.endLine === lines.endLine
+          return same ? was : { path, lines }
+        })
+      }, SELECTION_DELAY_MS)
+    }
+    editor.on("selectionUpdate", report)
+    return () => {
+      editor.off("selectionUpdate", report)
+      window.clearTimeout(timer)
+    }
+  }, [editor, path, setEditorSelection])
 
   handlers.current.pressThread = (id) => {
     setCommentsOpen(true)

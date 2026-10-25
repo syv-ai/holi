@@ -23,6 +23,7 @@ import {
   locateAnchor,
   type CommentAnchor,
   type CommentThread,
+  type LineRange,
 } from "@holi/shared"
 
 /** The first private-use code point; a range `i` is marked by `BASE + 2i`
@@ -46,15 +47,16 @@ function markdownOf(editor: Editor, doc: PMNode): string | null {
 }
 
 /**
- * The anchor for the editor's selection, quoted from the file it saves:
- * `head` (the frontmatter, kept aside) and the editor's markdown. Null when
- * the selection is empty or its ends cannot be told apart in the markdown
- * (inside something the codec writes as one, an image or a raw HTML block).
+ * Where the editor's selection is in the file it saves: `head` (the
+ * frontmatter, kept aside) and the editor's markdown, as `text` and the
+ * selection's offsets in it. Null when the selection is empty or its ends
+ * cannot be told apart in the markdown (inside something the codec writes as
+ * one, an image or a raw HTML block).
  */
-export function selectionAnchor(
+export function selectionInFile(
   editor: Editor,
   head: string
-): CommentAnchor | null {
+): { text: string; from: number; to: number } | null {
   const { from, to } = editor.state.selection
   if (from >= to) return null
   const tr = editor.state.tr
@@ -68,10 +70,39 @@ export function selectionAnchor(
   if (start === -1 || end === -1 || end < start) return null
   const body = marked.replace(MARKS, "")
   // Between the marks, less the start's own.
-  const quoteFrom = start
-  const quoteTo = end - 1
-  if (quoteTo <= quoteFrom) return null
-  return anchorAt(head + body, head.length + quoteFrom, head.length + quoteTo)
+  if (end - 1 <= start) return null
+  return {
+    text: head + body,
+    from: head.length + start,
+    to: head.length + end - 1,
+  }
+}
+
+/** The anchor for the editor's selection, quoted from the file it saves. */
+export function selectionAnchor(
+  editor: Editor,
+  head: string
+): CommentAnchor | null {
+  const at = selectionInFile(editor, head)
+  return at === null ? null : anchorAt(at.text, at.from, at.to)
+}
+
+/**
+ * The file's lines the selection covers, 1-based and inclusive as `Read`
+ * numbers them (docs/features/agent-config.md): a selection that ends at the
+ * start of a line does not count that line. Null for a caret.
+ */
+export function selectionLines(editor: Editor, head: string): LineRange | null {
+  const at = selectionInFile(editor, head)
+  if (at === null) return null
+  const lineOf = (offset: number) => at.text.slice(0, offset).split("\n").length
+  const endsAtLineStart = at.to > at.from && at.text[at.to - 1] === "\n"
+  const startLine = lineOf(at.from)
+  const endLine = Math.max(
+    startLine,
+    lineOf(endsAtLineStart ? at.to - 1 : at.to)
+  )
+  return { startLine, endLine }
 }
 
 /** Block syntax at a line's start: a mark before it would end the block. */

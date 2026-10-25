@@ -47,7 +47,10 @@ which main keeps current from the renderer's one report of what the person is lo
 and inclusive as `Read` numbers them, never its text: the agent reads the lines from the file, and
 nothing a person selected is written to disk. A caret is no selection, and a selection that ends at
 the start of a line (a triple-click, `Mod-L`) does not count that line. The renderer reports a selection once it has
-held still for a moment, and only when its lines change, so typing reports nothing. The editor that
+held still for a moment, and only when its lines change, so typing reports nothing. The document
+editor finds the file's lines by marking the selection's ends and writing the document out
+(`selectionLines`, the way a comment's quote is found, [note-comments](note-comments.md)); a code
+file's are CodeMirror's own line numbers. The editor that
 last changed its selection owns it, and it outlives that editor's unmount, so a selection still
 counts while the person types to the agent in the same pane; a vault switch clears it. Tasks, backlinks and sync state the
 agent finds itself with `Glob`, `grep` and `git`. The line carries no time or count, so the same

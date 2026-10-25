@@ -18,7 +18,7 @@ import { fileKind } from "@holi/shared"
 import { EditorState } from "@codemirror/state"
 import { findNext, findPrevious } from "@codemirror/search"
 import { EditorView, highlightActiveLineGutter, lineNumbers } from "@codemirror/view"
-import { useAtomValue } from "jotai"
+import { useAtomValue, useSetAtom } from "jotai"
 import { FileTextIcon, FileWarningIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -37,6 +37,7 @@ import { syntaxValid } from "@/editor/languages"
 import { trpc } from "@/lib/trpc"
 import { vaultAssetUrl } from "@/lib/vault-asset"
 import { sawText } from "@/state/doc-changes"
+import { editorSelectionAtom } from "@/state/ui-report"
 import { claimsAtom } from "@/state/plugins"
 import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
 
@@ -180,6 +181,9 @@ function TextEditor({
   /** The find bar, open while set; a new request refocuses it. */
   const [find, setFind] = useState<FindRequest | null>(null)
   const [count, setCount] = useState<FindCount>({ total: 0, current: null })
+  const setEditorSelection = useSetAtom(editorSelectionAtom)
+  const reportSelection = useRef(setEditorSelection)
+  reportSelection.current = setEditorSelection
 
   useEffect(() => {
     const host = hostRef.current
@@ -222,6 +226,28 @@ function TextEditor({
                 ? was
                 : next
             )
+            if (update.selectionSet) {
+              // The lines selected, for the agent's per-turn context; a
+              // caret clears what this file reported, never another's.
+              const { from, to } = update.state.selection.main
+              const doc = update.state.doc
+              const start = doc.lineAt(from)
+              const end = doc.lineAt(to)
+              const endLine =
+                to > from && to === end.from && end.number > start.number
+                  ? end.number - 1
+                  : end.number
+              reportSelection.current((was) => {
+                if (from === to) return was?.path === path ? null : was
+                const same =
+                  was?.path === path &&
+                  was.lines.startLine === start.number &&
+                  was.lines.endLine === endLine
+                return same
+                  ? was
+                  : { path, lines: { startLine: start.number, endLine } }
+              })
+            }
             if (!update.docChanged) return
             window.clearTimeout(saveTimer.current)
             saveTimer.current = window.setTimeout(

@@ -14,6 +14,7 @@ import {
   DocumentComments,
   placeThreads,
   selectionAnchor,
+  selectionLines,
   setCommentRanges,
   threadsAt,
 } from "../document-comments"
@@ -164,5 +165,23 @@ describe("placeThreads", () => {
     // An edit before the passage moves the tint with it.
     ed.commands.insertContentAt(1, "zero ")
     expect(threadsAt(ed.state, from + 5)).toEqual(["a"])
+  })
+})
+
+describe("selectionLines", () => {
+  it("numbers the file's lines, frontmatter included, as Read does", () => {
+    const head = "---\ntitle: Plan\n---\n\n"
+    const ed = open("# Plan\n\nShip the beta.\n\nThen the launch.\n")
+    const { from } = rangeOf(ed, "the beta")
+    const { to } = rangeOf(ed, "the launch")
+    ed.commands.setTextSelection({ from, to })
+    // The head is lines 1 to 4; "# Plan" is line 5.
+    expect(selectionLines(ed, head)).toEqual({ startLine: 7, endLine: 9 })
+  })
+
+  it("is null for a caret", () => {
+    const ed = open("Ship it.\n")
+    ed.commands.setTextSelection(2)
+    expect(selectionLines(ed, "")).toBeNull()
   })
 })

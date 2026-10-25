@@ -10,9 +10,11 @@ import { afterEach, expect, test, vi } from "vitest"
 import userEvent from "@testing-library/user-event"
 import { render, screen, waitFor } from "@/test/render"
 import { coreContributionAtom } from "@/state/plugins"
+import { editorSelectionAtom } from "@/state/ui-report"
 import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
 import { FileView } from "../file-view"
 
+let lastStore: ReturnType<typeof createStore>
 const read = vi.fn()
 const write = vi.fn()
 const historyList = vi.fn()
@@ -43,6 +45,7 @@ afterEach(() => {
 
 function setup(path: string, claims = false) {
   const store = createStore()
+  lastStore = store
   store.set(activeRemoteAtom, "syv-ai/site")
   store.set(snapshotAtom, {
     ...emptyVaultSnapshot(),
@@ -233,4 +236,25 @@ test("⌘F finds in a code file, steps through the matches and replaces them", a
   await user.click(screen.getByRole("button", { name: "Close" }))
   expect(screen.queryByRole("search", { name: "Find in file" })).toBeNull()
   expect(document.querySelectorAll(".cm-searchMatch").length).toBe(0)
+})
+
+test("a code file reports the lines selected in it, and a caret clears them", async () => {
+  historyList.mockResolvedValue([])
+  read.mockResolvedValue("one\ntwo\nthree\nfour\n")
+  setup("src/list.txt")
+  const content = await waitFor(() => {
+    const node = document.querySelector<HTMLElement>(".cm-content")
+    if (node === null) throw new Error("no editor yet")
+    return node
+  })
+  const { EditorView } = await import("@codemirror/view")
+  const view = EditorView.findFromDOM(content)!
+  // From inside "two" to the start of "four": that line does not count.
+  view.dispatch({ selection: { anchor: 5, head: 14 } })
+  expect(lastStore.get(editorSelectionAtom)).toEqual({
+    path: "src/list.txt",
+    lines: { startLine: 2, endLine: 3 },
+  })
+  view.dispatch({ selection: { anchor: 2 } })
+  expect(lastStore.get(editorSelectionAtom)).toBeNull()
 })
