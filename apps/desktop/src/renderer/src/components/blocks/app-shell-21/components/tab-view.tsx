@@ -1,5 +1,5 @@
 import { useAtomValue } from "jotai"
-import { AppWindowIcon, BotIcon, FileTextIcon, SearchIcon } from "lucide-react"
+import { AppWindowIcon, AstroidIcon, FileTextIcon, SearchIcon } from "lucide-react"
 
 import { IconStackEmpty } from "@/components/reui/icon-stack-empty"
 import { SettingsView } from "@/components/blocks/profile-9/components/settings-view"
@@ -113,7 +113,7 @@ export function TabView({
       if (AgentsMain === undefined) {
         return (
           <IconStackEmpty
-            icon={BotIcon}
+            icon={AstroidIcon}
             title="Agents are not running"
             description="The agent plugin is off in this vault."
             action={{

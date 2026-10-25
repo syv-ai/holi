@@ -10,7 +10,7 @@
  * live sessions.
  */
 import { atom } from 'jotai'
-import { Bot } from 'lucide-react'
+import { Astroid } from 'lucide-react'
 import { appModeAtom, type Command, type RendererPlugin, type SurfaceTabLook } from '@/plugin-api'
 import { AGENT_INFO } from '../info'
 import { AgentSurface } from './AgentSurface'
@@ -88,7 +88,7 @@ export const agentRenderer: RendererPlugin = {
     {
       kind: AGENT_SURFACE,
       label: 'Agents',
-      icon: Bot,
+      icon: Astroid,
       render: AgentSurface,
       keepMounted: true,
       unlisted: true,

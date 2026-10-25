@@ -90,9 +90,8 @@ screen.
 - **The focused widget wins.** A key it handled (`defaultPrevented`) is not a shortcut, which is how
   the editor's ⌘B stays bold. shadcn's sidebar had its own ⌘B listener; it is removed, or the
   sidebar would toggle twice.
-- **⌘B asks before leaving an app.** With Mail or Calendar holding the window, ⌘B would take it
-  back to the files, so the first press only shows a toast saying so (bottom right, a bar running
-  down its four seconds) and a second press before it goes leaves. The band's toggle and the divider leave at once: a click is not an accident.
+- **⌘B in an app only opens the sidebar.** With Mail or Calendar in front, ⌘B shows or hides the
+  files sidebar as it does anywhere, and the app stays in front, so there is nothing to confirm.
 - **⌘N is the side's own new.** On the Documents side a document; on the Agents side a session in
   the default agent (the mode's `newSession`). One binding, so the two never fire together.
 - **Behind a dialog** only the dialog toggles fire (⌘K, ⌘/, `?`): ⌘N must not make a document

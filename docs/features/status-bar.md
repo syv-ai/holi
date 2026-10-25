@@ -50,8 +50,9 @@ open editors reload from the new tree as after a pull.
 **The plugin slot.** `RendererPlugin.statusItems` lists `{id, side, order, Component}`; a plugin
 draws its item with `StatusBarItem` from `@/plugin-api` and renders nothing when it has nothing to
 say. Left items follow the sync items, right items come before Terminal and Output. The agent's
-item is its own: `2 working`, `1 needs you` or `3 sessions` from the counts the Agents toggle
-reports (`agentsStatusAtom`), hidden with no live session; a click opens Agents.
+item is its own: `2 working` or `1 needs you` from the counts the Agents toggle reports
+(`agentsStatusAtom`), else `3 sessions`, the rows the sidebar's Sessions holds (a live session
+closed out of it is History's, not counted), hidden while Sessions is empty; a click opens Agents.
 
 **The bottom panel** opens between the views and the status bar. Its top edge is the resize
 handle, drawn as the split view's: a 1px hairline with a wider hit area, the ring colour on hover,

@@ -226,6 +226,8 @@ export interface ResolvedAppSettings {
   agentProvider: AgentProviderId
   /** The Holis' game plays behind the empty view (a New tab). */
   gridArcade: boolean
+  /** Mail or Calendar in front folds the files sidebar to its rail. */
+  foldSidebarForApps: boolean
   hooks: VaultHooks
   maxCommittedFileBytes: number
   /** Human-readable notes about dropped keys/values, surfaced so a typo is
@@ -396,6 +398,7 @@ export type VaultSettingKey =
   | 'spaceAsksAgent'
   | 'agentProvider'
   | 'gridArcade'
+  | 'foldSidebarForApps'
   | 'maxCommittedFileBytes'
 
 export interface VaultSettingDescriptor {
@@ -653,6 +656,20 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     default: true,
     // Machine-local, like Appearance: a game in the background is one
     // person's taste, not the vault's.
+    target: 'local',
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'appearance',
+  },
+  {
+    key: 'foldSidebarForApps',
+    label: 'Fold the sidebar in Mail and Calendar',
+    explanation:
+      'Mail or Calendar in front folds the files sidebar to its rail, and leaving gives it back. ⌘B opens it either way.',
+    type: { kind: 'boolean' },
+    default: true,
+    // Machine-local, like Appearance: how much room one person's mail gets
+    // is their own layout, not the vault's.
     target: 'local',
     askedAtBirth: false,
     whereToChange: LOCAL_FILE_HINT,

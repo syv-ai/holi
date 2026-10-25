@@ -79,7 +79,9 @@ import { ThreadSidebar } from "./thread-sidebar"
 import { BottomPanel } from "./bottom-panel"
 import { StatusBar } from "./status-bar"
 import { useActivityLog } from "@/state/activity"
+import { useDocChangeMarks } from "@/state/doc-changes"
 import { usePanelTerminals } from "@/state/panel-terminals"
+import { foldSidebarForAppsAtom } from "@/state/fold-sidebar"
 import { leadWidth, TitleBar } from "./title-bar"
 
 /** Expanded width in pixels, and the drag point below which the rail takes over. */
@@ -166,6 +168,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   /** Whether the files sidebar was open when an app came forward, so leaving
    *  the app gives it back as it was. */
   const openBeforeApp = useRef(false)
+  const foldForApps = useAtomValue(foldSidebarForAppsAtom)
   /** The tab in front when Settings came forward, for its Back. */
   const beforeSettings = useRef<string | null>(null)
   const settingsRequest = useAtomValue(settingsRequestAtom)
@@ -223,15 +226,16 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revealRequest])
 
-  // An app coming forward folds the files to the rail; leaving it for any
-  // other tab gives them back as they were.
+  // An app coming forward folds the files to the rail, unless this machine's
+  // `foldSidebarForApps` is off; leaving it for any other tab gives them back
+  // as they were.
   const appBefore = useRef<string | null>(null)
   useEffect(() => {
     const was = appBefore.current
     appBefore.current = app
     const panel = sidebarPanel.current
     if (was === null && app !== null) {
-      openBeforeApp.current = !!panel && !panel.isCollapsed()
+      openBeforeApp.current = foldForApps && !!panel && !panel.isCollapsed()
       if (openBeforeApp.current) toggleSidebar()
     } else if (was !== null && app === null) {
       if (openBeforeApp.current && panel?.isCollapsed()) toggleSidebar()
@@ -383,6 +387,8 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   // window's life, so the Output collects while the panel is closed.
   const retryActivity = useActivityLog()
   usePanelTerminals()
+  // Which hidden document tabs changed, for the strip's Updated.
+  useDocChangeMarks()
   useClaudeFirstRun(handleSelectThread)
   useShellShortcuts({
     // Split tabs: the keys step over strip entries, and ⌘W closes the view

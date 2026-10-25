@@ -3,9 +3,12 @@
 import { Fragment, useState, type DragEvent, type ReactNode } from "react"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import {
+  CheckIcon,
+  CircleAlertIcon,
   Columns2Icon,
   EllipsisVerticalIcon,
   FileTextIcon,
+  PencilIcon,
   PanelRightCloseIcon,
   PlusIcon,
   RotateCcwIcon,
@@ -14,7 +17,9 @@ import {
   XIcon,
 } from "lucide-react"
 
+import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/ui/spinner"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -74,14 +79,16 @@ export type HeaderTab = {
   icon?: IconGlyph
   /** Drawn in place of the glyph: a session's Claude mark or Holi face. */
   mark?: ReactNode
-  /** A session's state, as a dot on the tab. */
-  status?: "working" | "needs-you" | "done"
+  /** A session's state, or a document's Updated: a badge on a tab, a dot
+   *  on a split member's mark. */
+  status?: "working" | "needs-you" | "done" | "updated"
 }
 
 const STATUS_WORDS: Record<NonNullable<HeaderTab["status"]>, string> = {
   working: "working",
   "needs-you": "needs you",
   done: "done, not opened yet",
+  updated: "changed since you last looked",
 }
 
 function spoken(tab: HeaderTab): string {
@@ -241,7 +248,10 @@ export function SiteHeader({
                           if (member) act((w) => focusMember(w, id, member))
                         }}
                         className={cn(
-                          "hover:bg-foreground/5 flex-none justify-start gap-2 rounded-md px-3 pe-8 after:hidden",
+                          "hover:bg-foreground/5 flex-none justify-start gap-2 rounded-md px-3 after:hidden",
+                          // The badge holds the × place, and gives it up on
+                          // hover.
+                          tab?.status !== undefined ? "pe-1.5" : "pe-8",
                           "group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 dark:group-data-[variant=line]/tabs-list:data-active:bg-foreground/8",
                           tab !== null
                             ? "w-56"
@@ -252,8 +262,11 @@ export function SiteHeader({
                       >
                         {tab !== null ? (
                           <>
-                            <TabMark tab={tab} />
+                            <TabMark tab={tab} dot={false} />
                             <span className="truncate">{tab.title}</span>
+                            {tab.status !== undefined ? (
+                              <TabStatus status={tab.status} />
+                            ) : null}
                           </>
                         ) : (
                           <SplitMembers
@@ -276,7 +289,11 @@ export function SiteHeader({
                             : "Close split view"
                         }
                         onClick={() => act((w) => closeEntry(w, id))}
-                        className="absolute end-1.5 top-1/2 -translate-y-1/2 opacity-0 group-hover/tab:opacity-100 group-has-data-active/tab:opacity-100 focus-visible:opacity-100"
+                        className={cn(
+                          "absolute end-1.5 top-1/2 -translate-y-1/2 opacity-0 group-hover/tab:opacity-100 focus-visible:opacity-100",
+                          tab?.status === undefined &&
+                            "group-has-data-active/tab:opacity-100"
+                        )}
                       >
                         <XIcon aria-hidden="true" />
                       </Button>
@@ -494,13 +511,53 @@ function EntryMenu({
   )
 }
 
-/** A tab's mark, with a session's state as a dot on its corner. */
-export function TabMark({ tab }: { tab: HeaderTab }) {
+/** A tab's state, at its end: what a session is doing, or that a document
+ *  changed while another tab was in front. Said in the tab's own label, so
+ *  hidden from the reader here. */
+const TAB_STATUS = {
+  working: { variant: "info-light", label: "Working" },
+  "needs-you": { variant: "warning-light", label: "Needs you" },
+  done: { variant: "success-light", label: "Done" },
+  updated: { variant: "primary-light", label: "Updated" },
+} as const
+
+function TabStatus({ status }: { status: NonNullable<HeaderTab["status"]> }) {
+  const { variant, label } = TAB_STATUS[status]
+  return (
+    <Badge
+      aria-hidden="true"
+      variant={variant}
+      data-tab-status={status}
+      className="ms-auto group-hover/tab:opacity-0 group-has-[button:focus-visible]/tab:opacity-0"
+    >
+      {status === "working" ? (
+        <Spinner className="size-3 motion-reduce:animate-none" />
+      ) : status === "needs-you" ? (
+        <CircleAlertIcon />
+      ) : status === "done" ? (
+        <CheckIcon />
+      ) : (
+        <PencilIcon />
+      )}
+      {label}
+    </Badge>
+  )
+}
+
+/** A tab's mark, with its state as a dot on its corner where there is no
+ *  room for its badge (`dot`: a split's members, a dragged view's label). */
+export function TabMark({
+  tab,
+  dot = true,
+}: {
+  tab: HeaderTab
+  dot?: boolean
+}) {
   const Glyph = tab.icon ?? FileTextIcon
   return (
     <span className="relative flex shrink-0 items-center">
       {tab.mark ?? <Glyph aria-hidden={true} />}
-      {tab.status !== undefined ? (
+      {dot && tab.status !== undefined ? (
         <span
           aria-hidden="true"
           data-tab-status={tab.status}
@@ -509,7 +566,8 @@ export function TabMark({ tab }: { tab: HeaderTab }) {
             tab.status === "working" &&
               "bg-info animate-pulse motion-reduce:animate-none",
             tab.status === "needs-you" && "bg-warning",
-            tab.status === "done" && "bg-success"
+            tab.status === "done" && "bg-success",
+            tab.status === "updated" && "bg-primary"
           )}
         />
       ) : null}

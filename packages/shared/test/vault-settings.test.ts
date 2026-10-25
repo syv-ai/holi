@@ -281,6 +281,7 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
       'colorScheme',
       'windowGlass',
       'gridArcade',
+      'foldSidebarForApps',
       'spaceAsksAgent',
       'agentProvider',
     ])

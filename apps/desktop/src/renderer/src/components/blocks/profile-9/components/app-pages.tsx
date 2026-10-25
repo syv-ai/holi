@@ -133,6 +133,20 @@ export function AppearancePage() {
           onCheckedChange={(on) => void write("gridArcade", on, "local")}
         />
       </SettingsRow>
+      <SettingsRow
+        title="Fold the sidebar in Mail and Calendar"
+        description="Mail or Calendar in front folds the files sidebar to its rail, and leaving gives it back. ⌘B opens it either way."
+        htmlFor="settings-fold-sidebar"
+      >
+        <Switch
+          id="settings-fold-sidebar"
+          disabled={resolved === null}
+          checked={resolved?.foldSidebarForApps ?? true}
+          onCheckedChange={(on) =>
+            void write("foldSidebarForApps", on, "local")
+          }
+        />
+      </SettingsRow>
     </SettingsCard>
   )
 }

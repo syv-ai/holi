@@ -35,6 +35,7 @@ import { plainTextExtensions } from "@/editor/extensions"
 import { syntaxValid } from "@/editor/languages"
 import { trpc } from "@/lib/trpc"
 import { vaultAssetUrl } from "@/lib/vault-asset"
+import { sawText } from "@/state/doc-changes"
 import { claimsAtom } from "@/state/plugins"
 import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
 
@@ -216,7 +217,9 @@ function TextEditor({
     })
     viewRef.current = view
     return () => {
-      // Leaving the editor writes what is pending.
+      // Leaving the editor writes what is pending, and leaves what it showed
+      // for its tab to be compared to (`doc-changes.ts`).
+      sawText(remote, path, view.state.doc.toString())
       if (saveTimer.current !== undefined) void save(view)
       view.destroy()
       viewRef.current = null

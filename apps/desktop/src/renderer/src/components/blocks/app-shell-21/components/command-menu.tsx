@@ -15,7 +15,7 @@
 import { atom, useAtomValue, useSetAtom } from "jotai"
 import {
   AppWindowIcon,
-  BotIcon,
+  AstroidIcon,
   CalendarIcon,
   ChevronsDownUpIcon,
   ColumnsIcon,
@@ -171,7 +171,7 @@ const SHORTCUT_PLACES: readonly {
   icon: MenuIcon
 }[] = [
   { id: "sidebar.documents", label: "Documents sidebar", icon: FolderTreeIcon },
-  { id: "sidebar.agents", label: "Agents sidebar", icon: BotIcon },
+  { id: "sidebar.agents", label: "Agents sidebar", icon: AstroidIcon },
   { id: "app.mail", label: "Mail", icon: MailIcon },
   { id: "app.calendar", label: "Calendar", icon: CalendarIcon },
 ]

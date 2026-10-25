@@ -51,6 +51,7 @@ const settings = (colorScheme: ResolvedVaultSettings['colorScheme']): ResolvedVa
   spaceAsksAgent: true,
   agentProvider: 'claude',
   gridArcade: true,
+  foldSidebarForApps: true,
   colorScheme,
   windowGlass: 'frosted',
   editorFont: 'mono',

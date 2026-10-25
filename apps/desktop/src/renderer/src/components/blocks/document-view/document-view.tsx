@@ -52,6 +52,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { cn } from "@/lib/cn"
 import { TaskProperties } from "@/components/blocks/planning/task-properties"
 import { trpc } from "@/lib/trpc"
+import { sawText } from "@/state/doc-changes"
 import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
 
 import { AgentPrompt, AgentStatus } from "./agent-prompt"
@@ -309,10 +310,14 @@ function DocumentEditor({
     }
   }
 
-  // Leaving the document writes what is pending.
+  // Leaving the document writes what is pending, and leaves what it showed
+  // for its tab to be compared to (`doc-changes.ts`).
   useEffect(
     () => () => {
-      if (saveTimer.current !== undefined) void save()
+      const pending = saveTimer.current !== undefined
+      const live = editor !== null && !editor.isDestroyed
+      sawText(remote, path, pending && live ? markdown() : lastText.current)
+      if (pending) void save()
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [editor]

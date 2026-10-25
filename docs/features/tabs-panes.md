@@ -44,6 +44,7 @@ follows the focused member. A tab's title, mark and state dot come from the mode
 
 **Apps are tabs.** Mail and Calendar open as tabs and keep their own behaviour: while one is the
 view in front the files sidebar folds to its rail, and leaving it gives the sidebar back as it was.
+`foldSidebarForApps` (Settings, Appearance; on, machine-local) turns the fold off.
 
 ## The strip
 
@@ -52,8 +53,16 @@ pill: its mark, its title, × on hover. A split is one wider pill holding each m
 title side by side, a hairline between them, truncating evenly; with the split active the focused
 member's title has the full weight and the others are muted. Clicking the pill selects the split;
 clicking a member inside it selects the split focused on that member. + opens a New tab (⌘T), or
-while the sidebar is on Agents starts a session in the default agent, in a tab of its own. A session tab shows its state as a dot on its mark:
-working (pulsing, still under reduced motion), needs you, or done and not opened yet.
+while the sidebar is on Agents starts a session in the default agent, in a tab of its own.
+
+**A tab says its state** in a badge at its end, which gives way to × on hover: a session's
+Working (a spinner, still under reduced motion), Needs you, or Done (not opened yet), and a
+document's **Updated** when its text changed while another tab was in front, until it is looked
+at (`state/doc-changes.ts`). The file's time is only the cue to read it: leaving a document
+writes its pending edits and the commit's tidy rewrites it seconds later, so the text is compared,
+both sides tidied, against what the view last showed. A tab not shown since it opened compares
+against the file as first read. A split's members have no room for a badge, so each shows its
+state as a dot on its mark.
 
 Entries drag along the strip to reorder (a hairline marks where it would land). A tab's
 right-click menu: **Open in split view**, Close, Close others, Close tabs to the right, Reopen

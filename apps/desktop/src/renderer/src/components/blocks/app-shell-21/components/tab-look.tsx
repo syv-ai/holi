@@ -12,6 +12,7 @@ import {
 
 import { AgentMark, PixelPersona } from "@/composites"
 import type { AgentsTabLook } from "@/plugin-api"
+import { changedDocsAtom } from "@/state/doc-changes"
 import { runningPluginsAtom, surfacesAtom } from "@/state/plugins"
 import { parseTabKey } from "@/state/tab-descriptor"
 
@@ -58,8 +59,8 @@ function SessionMark({ look }: { look: AgentsTabLook | undefined }) {
   return <AgentMark agent={look?.agent} className="size-4" />
 }
 
-/** How each tab looks in a strip: its title, its mark, and for a session
- *  the state its dot shows. */
+/** How each tab looks in a strip: its title, its mark, and its state: a
+ *  session's, or Updated for a document that changed while hidden. */
 export function useTabLook(): (key: string) => HeaderTab {
   const apps = useSidebarApps()
   const surfaces = useAtomValue(surfacesAtom)
@@ -67,12 +68,18 @@ export function useTabLook(): (key: string) => HeaderTab {
     useAtomValue(runningPluginsAtom).find((plugin) => plugin.agentsMode)
       ?.agentsMode?.tabLook ?? NO_LOOKS
   const lookUp = useAtomValue(looksAtom)
+  const changedDocs = useAtomValue(changedDocsAtom)
   return useCallback(
     (key: string): HeaderTab => {
       const tab = parseTabKey(key)
       switch (tab?.kind) {
         case "doc":
-          return { id: key, title: fileTitle(tab.path), icon: FileTextIcon }
+          return {
+            id: key,
+            title: fileTitle(tab.path),
+            icon: FileTextIcon,
+            ...(changedDocs.has(tab.path) ? { status: "updated" as const } : {}),
+          }
         case "vault-app":
           return { id: key, title: fileTitle(tab.path), icon: AppWindowIcon }
         case "board":
@@ -115,6 +122,6 @@ export function useTabLook(): (key: string) => HeaderTab {
           return { id: key, title: key }
       }
     },
-    [apps, surfaces, lookUp]
+    [apps, surfaces, lookUp, changedDocs]
   )
 }

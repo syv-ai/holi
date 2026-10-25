@@ -4,7 +4,7 @@
  * by name once something is typed, which opens its page as its row does.
  */
 import { atom } from 'jotai'
-import { Bot, CircleHelp, Plus } from 'lucide-react'
+import { Astroid, CircleHelp, Plus } from 'lucide-react'
 import type { CommandMenuEntry } from '@/plugin-api'
 import { holisAtom, holiStateAtom, holiWizardAtom, openHoliAtom } from './state'
 
@@ -35,7 +35,7 @@ export const holiMenuEntriesAtom = atom((get): readonly CommandMenuEntry[] => {
         id: `${ONE}${holi.id}`,
         label: holi.name,
         group: 'Holis',
-        icon: Bot,
+        icon: Astroid,
         keywords: ['holi', 'agent'],
         ...(state === undefined ? {} : { detail: state }),
       }

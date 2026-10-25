@@ -1,14 +1,16 @@
 import { useAtomValue, useSetAtom } from "jotai"
-import { BotIcon } from "lucide-react"
+import { AstroidIcon } from "lucide-react"
 
 import { appModeAtom, StatusBarItem } from "@/plugin-api"
 import { agentsStatusAtom } from "../state/agents-status"
-import { agentSessionsAtom } from "../state/sessions"
+import { openSessionRowsAtom } from "../state/session-list"
 
 /**
  * The agent's item in the status bar (docs/features/status-bar.md): how many
  * sessions are working or waiting on you, from the same counts the mode
- * toggle reports. Nothing while no session is live. A click opens Agents.
+ * toggle reports, else how many the sidebar's Sessions holds. A live session
+ * closed out of Sessions, or never opened there, is not counted: the number
+ * is the list's. Nothing while Sessions is empty. A click opens Agents.
  */
 export function agentStatusText(
   sessions: number,
@@ -22,17 +24,17 @@ export function agentStatusText(
 }
 
 export function AgentStatusItem() {
-  const sessions = useAtomValue(agentSessionsAtom)
+  const open = useAtomValue(openSessionRowsAtom)
   const status = useAtomValue(agentsStatusAtom)
   const setMode = useSetAtom(appModeAtom)
-  const text = agentStatusText(sessions.length, status)
+  const text = agentStatusText(open.length, status)
   if (text === null) return null
   return (
     <StatusBarItem
-      tooltip={`Claude Code: ${text}. Click to open Agents`}
+      tooltip={`Agents: ${text}. Click to open Agents`}
       onClick={() => setMode("agents")}
     >
-      <BotIcon aria-hidden />
+      <AstroidIcon aria-hidden />
       {text}
     </StatusBarItem>
   )
