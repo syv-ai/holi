@@ -1,12 +1,14 @@
 /**
  * A task's fields as a row of chips: status, assignees, priority, due, start,
- * labels, project and estimate. Each chip says its value, or what it is while
+ * labels, project, estimate and sharing. Each chip says its value, or what it is while
  * unset, and opens the one picker that sets it. The same row sits in New task
  * (setting a draft) and on an open task (writing the file): it only reports
  * changes, the caller decides what a change does.
  *
  * Project is the task's folder: the vault root is no project, and a project
  * can be named here before the folder exists (the move or create makes it).
+ * Sharing is whether the file is committed: a private task is
+ * `task.<name>.local.md`, on this machine only (docs/features/tasks.md).
  */
 import { useState, type ReactNode } from "react"
 import { isEstimate, type Priority, type StatusDef } from "@holi/shared"
@@ -17,10 +19,12 @@ import {
   CheckIcon,
   FlagIcon,
   FolderIcon,
+  LockIcon,
   PlusIcon,
   TagIcon,
   TimerIcon,
   UserIcon,
+  UsersIcon,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -66,6 +70,8 @@ export interface TaskFieldValues {
   tags: string[]
   folder: string
   estimate?: string
+  /** Committed and synced with the vault; false is private, this machine's. */
+  shared: boolean
 }
 
 /** One field's new value: `undefined` clears it. */
@@ -599,6 +605,67 @@ function EstimateField({
   )
 }
 
+const SHARINGS = [
+  {
+    value: "private",
+    name: "Private",
+    detail: "Only on this machine",
+    icon: <LockIcon aria-hidden="true" />,
+  },
+  {
+    value: "shared",
+    name: "Shared with vault",
+    detail: "Synced to everyone",
+    icon: <UsersIcon aria-hidden="true" />,
+  },
+] as const
+
+function SharingField({
+  value,
+  onChange,
+}: {
+  value: boolean
+  onChange: (shared: boolean) => void
+}) {
+  const current = SHARINGS[value ? 1 : 0]
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Chip
+          icon={value ? (
+            <UsersIcon data-icon="inline-start" aria-hidden="true" />
+          ) : (
+            <LockIcon data-icon="inline-start" aria-hidden="true" />
+          )}
+          set
+          label="Sharing"
+          aria-label={`Sharing: ${current.name}`}
+        >
+          {value ? "Shared" : "Private"}
+        </Chip>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-52">
+        <DropdownMenuRadioGroup
+          value={current.value}
+          onValueChange={(next) => onChange(next === "shared")}
+        >
+          {SHARINGS.map((sharing) => (
+            <DropdownMenuRadioItem key={sharing.value} value={sharing.value}>
+              {sharing.icon}
+              <span className="flex flex-col">
+                <span>{sharing.name}</span>
+                <span className="text-muted-foreground text-xs">
+                  {sharing.detail}
+                </span>
+              </span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 export function TaskFields({
   values,
   statuses,
@@ -656,6 +723,10 @@ export function TaskFields({
       <EstimateField
         value={values.estimate}
         onChange={(value) => onChange({ field: "estimate", value })}
+      />
+      <SharingField
+        value={values.shared}
+        onChange={(value) => onChange({ field: "shared", value })}
       />
     </div>
   )

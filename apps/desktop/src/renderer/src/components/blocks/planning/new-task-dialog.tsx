@@ -1,7 +1,8 @@
 /**
  * New task, from the toolbar or a column's +: a title, a description, and the
  * task's fields as a row of chips (`TaskFields`). Written in one create, one
- * file, in the chosen project's folder (the vault root without one).
+ * file, in the chosen project's folder (the vault root without one). Private
+ * unless Sharing says otherwise, as every new task is (docs/features/tasks.md).
  */
 import { useState } from "react"
 import type { StatusDef, Task } from "@holi/shared"
@@ -30,13 +31,14 @@ export type NewTaskInput = {
   status: string
   folder: string
   description?: string
+  shared: boolean
   extra: Partial<
     Pick<Task, "priority" | "start" | "due" | "estimate" | "tags" | "assignees">
   >
 }
 
 function emptyDraft(status: string, folder: string): TaskFieldValues {
-  return { status, assignees: [], tags: [], folder }
+  return { status, assignees: [], tags: [], folder, shared: false }
 }
 
 export function NewTaskDialog({
@@ -75,13 +77,23 @@ export function NewTaskDialog({
     if (title.trim() === "") return
     setBusy(true)
     setError(null)
-    const { status, folder, assignees, tags, priority, due, start, estimate } =
-      fields
+    const {
+      status,
+      folder,
+      assignees,
+      tags,
+      priority,
+      due,
+      start,
+      estimate,
+      shared,
+    } = fields
     try {
       await onCreate({
         title: title.trim(),
         status,
         folder,
+        shared,
         ...(description.trim() !== ""
           ? { description: description.trim() }
           : {}),

@@ -23,6 +23,7 @@ import {
   EstimateBadge,
   PeopleStack,
   PriorityBadge,
+  PrivateMark,
   StatusBadge,
   StatusIcon,
   TagBadges,
@@ -136,6 +137,7 @@ function TaskTitleCell({
         >
           {task.title}
         </span>
+        <PrivateMark path={task.path} />
         <ArrowRightIcon
           className="size-3 shrink-0 opacity-0 transition-opacity group-hover/task-title:opacity-100 rtl:-scale-x-100"
           aria-hidden="true"

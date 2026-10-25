@@ -36,20 +36,23 @@ the [planning](planning.md) view shows every task in the vault by them.
   recurring and triggering schedules. On no one else's board, since the file never reaches them.
   A shared task is `task.<name>.md`, committed and synced. **A new task is private by default**,
   from `tasks.create`, `holi tasks create`, a vault app's `holi.tasks.create` and the using-tasks
-  skill alike, and each takes an explicit shared option (`shared: true`, `--shared`). The planning
-  view asks for shared, since it cannot show a private task yet. Google's
-  Link to task creates private tasks too. Only the file's own name makes a task private: a task
-  file inside a `.local.` folder is no task, but a plain local file. `isPrivateTask`,
-  `isBoardTaskPath`, `sharedTaskPath` and `privateTaskPath` in `packages/shared/src/task-file.ts`
-  are the rule. A new task's name is free only when neither its shared nor its private file
-  exists, so either can later be renamed into the other.
+  skill alike, and each takes an explicit shared option (`shared: true`, `--shared`). In the
+  planning view, New task's **Sharing** chip starts at Private, and a task added from a column's
+  - is private too. Google's Link to task creates private tasks too. Only the file's own name makes a task private: a task
+    file inside a `.local.` folder is no task, but a plain local file. `isPrivateTask`,
+    `isBoardTaskPath`, `sharedTaskPath` and `privateTaskPath` in `packages/shared/src/task-file.ts`
+    are the rule. A new task's name is free only when neither its shared nor its private file
+    exists, so either can later be renamed into the other.
 - **Sharing is a rename**, through the rename every file takes (`notes.rename`), so open tabs
   follow and a commit lands on either side: dropping `.local.` shares a task, adding it makes the
   task private, which takes it off every teammate's board on their next sync while git history
   keeps the shared version. Sharing rewrites inbound links; making private rewrites only the links
   in this machine's local files (`localLinksOnly`), since a teammate's notes rewritten to point at
-  a file they will never have would be a commit of dangling links for everyone. The planning view
-  does not offer either yet, nor a sharing choice when creating ([not-built](../not-built.md)).
+  a file they will never have would be a commit of dangling links for everyone. In the planning
+  view a private task's card and row carry a muted lock (`PrivateMark`), and an open task's
+  Sharing chip does both: Shared with vault renames at once, Private asks first, in a dialog that
+  says it leaves every teammate's board, that git history keeps the shared version and that
+  links from shared notes stop resolving (`planning/task-properties.tsx`).
 - **A plugin.** Tasks' main side is the plugin `src/plugins/tasks/`, on by default. In a vault
   with it off (`tasks: false` under `plugins` in `.holi/settings/plugins.yaml`, or this machine's
   `.local` twin), the task capabilities and reminders are gone and `holi tasks` answers "no such

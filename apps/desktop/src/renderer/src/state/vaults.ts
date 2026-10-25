@@ -310,12 +310,31 @@ export const switchBranchAtom = atom(
  */
 export const renameNoteAtom = atom(
   null,
-  async (get, set, { from, to }: { from: string; to: string }) => {
+  async (
+    get,
+    set,
+    {
+      from,
+      to,
+      localLinksOnly,
+    }: {
+      from: string
+      to: string
+      /** Rewrite only the links in this machine's local files: a task made
+       *  private, whose shared notes must not be committed pointing at it. */
+      localLinksOnly?: boolean
+    },
+  ) => {
     const remote = get(activeRemoteAtom)
     if (!remote) return
     await flushAllBuffers()
     await trpc.sync.commitNow.mutate()
-    await trpc.notes.rename.mutate({ remote, from, to })
+    await trpc.notes.rename.mutate({
+      remote,
+      from,
+      to,
+      ...(localLinksOnly === true ? { localLinksOnly } : {}),
+    })
     set(workspaceAtom, retargetTab(get(workspaceAtom), from, to))
     const wasActive = get(activeDocAtom)?.path === from
     await set(loadSnapshotAtom)

@@ -6,16 +6,35 @@
  * Every write first saves what the editor has pending (`beforeWrite`): the
  * editor writes the file whole, frontmatter included, so a save still queued
  * from before the change would put the old fields back. A new project moves
- * the file, and `onMoved` lets whatever shows it follow the new path.
+ * the file, and so does Sharing (a private task is its `.local.` file), and
+ * `onMoved` lets whatever shows it follow the new path. Making a task private
+ * asks first: it leaves every teammate's board (docs/features/tasks.md).
  */
-import type { Task } from "@holi/shared"
+import { useState } from "react"
+import { isPrivateTask, type Task } from "@holi/shared"
 import { useAtomValue, useSetAtom } from "jotai"
 import { toast } from "sonner"
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { cn } from "@/lib/cn"
 import { todayAtom } from "@/state/clock"
 import { statusesAtom } from "@/state/planning"
-import { moveTaskAtom, patchTaskAtom, tasksAtom } from "@/state/tasks"
+import {
+  makeTaskPrivateAtom,
+  moveTaskAtom,
+  patchTaskAtom,
+  shareTaskAtom,
+  tasksAtom,
+} from "@/state/tasks"
 import {
   folderOf,
   TaskFields,
@@ -33,6 +52,7 @@ function valuesOf(task: Task): TaskFieldValues {
     tags: task.tags,
     folder: folderOf(task.path),
     estimate: task.estimate,
+    shared: !isPrivateTask(task.path),
   }
 }
 
@@ -58,10 +78,32 @@ export function TaskProperties({
   const today = useAtomValue(todayAtom)
   const patch = useSetAtom(patchTaskAtom)
   const move = useSetAtom(moveTaskAtom)
+  const share = useSetAtom(shareTaskAtom)
+  const makePrivate = useSetAtom(makeTaskPrivateAtom)
+  /** Make private, waiting for its answer. */
+  const [asking, setAsking] = useState(false)
   if (task === undefined) return null
+
+  const fail = (err: unknown) =>
+    toast.error("The task could not be saved", {
+      description: err instanceof Error ? err.message : String(err),
+    })
+
+  /** A rename that gives the task a new path, followed by whatever shows it. */
+  const renamed = async (rename: () => Promise<string | null>) => {
+    await beforeWrite()
+    const to = await rename()
+    if (to !== null && to !== path) onMoved?.(path, to)
+  }
 
   const write = async (change: TaskFieldChange) => {
     try {
+      if (change.field === "shared") {
+        if (change.value === !isPrivateTask(path)) return
+        if (change.value) await renamed(() => share(path))
+        else setAsking(true)
+        return
+      }
       await beforeWrite()
       if (change.field === "folder") {
         if (change.value === folderOf(path)) return
@@ -71,19 +113,40 @@ export function TaskProperties({
         await patch(path, patchOf(change))
       }
     } catch (err) {
-      toast.error("The task could not be saved", {
-        description: err instanceof Error ? err.message : String(err),
-      })
+      fail(err)
     }
   }
 
   return (
-    <TaskFields
-      values={valuesOf(task)}
-      statuses={statuses}
-      today={today}
-      onChange={(change) => void write(change)}
-      className={cn(className)}
-    />
+    <>
+      <TaskFields
+        values={valuesOf(task)}
+        statuses={statuses}
+        today={today}
+        onChange={(change) => void write(change)}
+        className={cn(className)}
+      />
+      <AlertDialog open={asking} onOpenChange={setAsking}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Make this task private?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {task.title} will stay on this machine only. It leaves every
+              teammate’s board the next time they sync. Git history keeps the
+              shared version, so anyone with the vault can still find it there.
+              Links to it from shared notes stop resolving.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it shared</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void renamed(() => makePrivate(path)).catch(fail)}
+            >
+              Make private
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }

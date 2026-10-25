@@ -14,6 +14,8 @@ import {
   dailyNoteFilename,
   isAssignedTo,
   parseWikiLinks,
+  privateTaskPath,
+  sharedTaskPath,
   snapshotTasks,
   taskArea,
   toggleLogin,
@@ -24,7 +26,7 @@ import { capClient, type UiCapability } from '../lib/cap-client'
 import { nowAtom, todayAtom } from './clock'
 import { isClosedAtom } from './planning'
 import { closeTabsForPaths, workspaceAtom } from './panes'
-import { activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
+import { activeRemoteAtom, loadSnapshotAtom, renameNoteAtom, snapshotAtom } from './vaults'
 
 /** The vault root's lane. The lane IS the containing folder, and the root
  * folder's path is the empty string. */
@@ -275,6 +277,9 @@ export const createTaskAtom = atom(
       status: TaskStatus
       folder: string
       description?: string
+      /** Committed and synced; private by default, a `.local.` file on this
+       *  machine only (docs/features/tasks.md). */
+      shared?: boolean
       /** Set before the task exists (quick add, full create): written with
        *  the create, one file, one write. */
       extra?: Partial<
@@ -294,10 +299,7 @@ export const createTaskAtom = atom(
   ) => {
     const remote = get(activeRemoteAtom)
     if (!remote) return null
-    // Shared: Planning has no way yet to show or change a private task
-    // (docs/not-built.md), so it makes none. The plugin's own default, for the
-    // agent and apps, is private.
-    const { path } = await tasksCap.create(remote, { ...input, shared: true })
+    const { path } = await tasksCap.create(remote, input)
     await set(loadSnapshotAtom)
     return path
   },
@@ -384,4 +386,30 @@ export const deleteTaskAtom = atom(null, async (get, set, path: string) => {
   // that are gone, and a live buffer that would write the file back.
   set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), [path]))
   await set(loadSnapshotAtom)
+})
+
+/**
+ * Sharing is a rename (docs/features/tasks.md): a private task is
+ * `task.<name>.local.md`, on this machine only, and sharing drops the marker,
+ * so the file is committed and synced. Inbound links follow. Resolves to the
+ * task's new path, or null when nothing moved.
+ */
+export const shareTaskAtom = atom(null, async (_get, set, path: string) => {
+  const to = sharedTaskPath(path)
+  if (to === null) return null
+  await set(renameNoteAtom, { from: path, to })
+  return to
+})
+
+/**
+ * The other way: the marker added, so the task leaves every teammate's board
+ * on their next sync. Only this machine's local files have their links
+ * rewritten: a shared note must not be committed pointing at a file the
+ * others will never have. Git history keeps the shared version.
+ */
+export const makeTaskPrivateAtom = atom(null, async (_get, set, path: string) => {
+  const to = privateTaskPath(path)
+  if (to === null) return null
+  await set(renameNoteAtom, { from: path, to, localLinksOnly: true })
+  return to
 })

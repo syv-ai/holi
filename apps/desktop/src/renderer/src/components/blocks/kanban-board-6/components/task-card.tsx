@@ -11,6 +11,7 @@ import { ClockIcon } from "lucide-react"
 import { Badge } from "@/components/reui/badge"
 import { KanbanItem, KanbanItemHandle } from "@/components/reui/kanban"
 import { cn } from "@/lib/cn"
+import { PrivateMark } from "../../planning/task-bits"
 import { avatarUrl, daysUntil, initials, shortDate } from "@/lib/planning"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -220,6 +221,7 @@ function TaskItem({
             >
               {task.title}
             </button>
+            <PrivateMark path={task.path} />
           </ItemTitle>
           {plan !== null ? (
             <ItemDescription className="line-clamp-1 text-xs">

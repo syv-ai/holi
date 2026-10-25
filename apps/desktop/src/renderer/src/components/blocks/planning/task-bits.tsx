@@ -4,7 +4,12 @@
  * table say a task's facts the same way.
  */
 import type { ComponentProps } from "react"
-import type { Priority, StatusCategory, StatusDef } from "@holi/shared"
+import {
+  isPrivateTask,
+  type Priority,
+  type StatusCategory,
+  type StatusDef,
+} from "@holi/shared"
 import {
   CalendarDaysIcon,
   CircleCheckIcon,
@@ -13,6 +18,7 @@ import {
   CircleEllipsisIcon,
   CircleIcon,
   FlagIcon,
+  LockIcon,
   TimerIcon,
   type LucideIcon,
 } from "lucide-react"
@@ -176,5 +182,17 @@ export function TagBadges({ tags }: { tags: readonly string[] }) {
         </Badge>
       ))}
     </>
+  )
+}
+
+/** A private task's mark beside its title: the file is `.local.`, on this
+ *  machine only (docs/features/tasks.md). Nothing for a shared one. */
+export function PrivateMark({ path }: { path: string }) {
+  if (!isPrivateTask(path)) return null
+  return (
+    <span data-private-task className="text-muted-foreground inline-flex shrink-0">
+      <LockIcon className="size-3.5" aria-hidden="true" />
+      <span className="sr-only">, private</span>
+    </span>
   )
 }
