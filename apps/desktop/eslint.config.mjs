@@ -418,6 +418,7 @@ export default [
       'src/plugins/chat/renderer/**/*.{ts,tsx}',
       'src/plugins/agent/renderer/sessions/**/*.{ts,tsx}',
       'src/plugins/google/renderer/ConnectionsSection.tsx',
+      'src/plugins/google/renderer/OAuthClient.tsx',
     ],
     rules: {
       'no-restricted-syntax': 'off',

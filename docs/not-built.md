@@ -164,8 +164,7 @@ New Link, saving a link dragged in from a browser, and Open in Browser. See
 serves each command's document; the editor's slash menu does not list them, and nothing runs one in
 its hidden frame. See [vault apps](features/vault-apps.md).
 
-**The rest.** Google's bring-your-own OAuth client form
-([google](features/google.md)); the repo's
+**The rest.** The repo's
 size in Settings ([vaults-sync](features/vaults-sync.md)); a tab's caret and scroll kept across tab
 switches; and `holi docs screenshot`'s renderer half, which says where a tab is drawn.
 

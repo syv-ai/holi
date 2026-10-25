@@ -29,6 +29,8 @@ const accounts = vi.fn()
 const linkAccount = vi.fn()
 const removeAccount = vi.fn()
 const disconnectVault = vi.fn()
+const client = vi.fn()
+const setClient = vi.fn()
 
 /** Google's capabilities, by name, through the UI door. */
 const google: Record<string, (params: unknown) => unknown> = {
@@ -38,6 +40,8 @@ const google: Record<string, (params: unknown) => unknown> = {
   'google.removeAccount': (p) => removeAccount(p),
   'google.disconnectVault': () => disconnectVault(),
   'google.imageSenders': async () => [],
+  'google.client': () => client(),
+  'google.setClient': (p) => setClient(p),
 }
 
 vi.mock('@/lib/trpc', () => ({
@@ -67,6 +71,8 @@ beforeEach(() => {
   linkAccount.mockResolvedValue({ ok: true })
   removeAccount.mockResolvedValue({ ok: true })
   disconnectVault.mockResolvedValue({ ok: true })
+  client.mockResolvedValue({ id: 'holi.apps.googleusercontent.com', source: 'shipped' })
+  setClient.mockResolvedValue({ ok: true })
 })
 
 describe('ConnectionsSection', () => {
@@ -149,5 +155,42 @@ describe('ConnectionsSection', () => {
 
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove account' })).toBeNull())
     expect(removeAccount).not.toHaveBeenCalled()
+  })
+})
+
+describe('the OAuth client', () => {
+  it('names the client in use, and a new one asks before it disconnects the accounts', async () => {
+    const user = userEvent.setup()
+    render()
+    expect(
+      await screen.findByText(/Holi’s client, which accepts syv.ai accounts only/),
+    ).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Use your own client…' }))
+    await user.type(screen.getByLabelText('Client ID'), 'mine.apps.googleusercontent.com')
+    await user.type(screen.getByLabelText('Client secret'), 's3cret')
+    await user.click(screen.getByRole('button', { name: 'Save and disconnect 2 accounts' }))
+    // Asked once more: nothing saved yet.
+    expect(await screen.findByText('This disconnects 2 accounts')).toBeTruthy()
+    expect(setClient).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Disconnect and switch' }))
+    await waitFor(() =>
+      expect(setClient).toHaveBeenCalledWith({
+        id: 'mine.apps.googleusercontent.com',
+        secret: 's3cret',
+      }),
+    )
+  })
+
+  it('says a refusal in the form, and keeps what was typed', async () => {
+    const user = userEvent.setup()
+    accounts.mockResolvedValue({ accounts: [], current: null })
+    setClient.mockRejectedValue(new Error('a client id ends in .apps.googleusercontent.com'))
+    render()
+    await user.click(await screen.findByRole('button', { name: 'Use your own client…' }))
+    await user.type(screen.getByLabelText('Client ID'), 'nope')
+    await user.type(screen.getByLabelText('Client secret'), 'x')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText(/a client id ends in/)).toBeTruthy()
+    expect((screen.getByLabelText('Client ID') as HTMLInputElement).value).toBe('nope')
   })
 })

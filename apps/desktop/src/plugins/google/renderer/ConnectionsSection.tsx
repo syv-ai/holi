@@ -20,7 +20,8 @@
  * Drawn as ReUI's settings-6: the service as a framed row with its mark on
  * the same tile the onboarding's plugin cards use (`IconTile`, `pluginMark`),
  * its state and one action, and what follows from connecting as muted rows
- * inside the same frame.
+ * inside the same frame. Last, the OAuth client this machine connects with
+ * (`OAuthClient`), Holi's or the person's own.
  */
 import { useAtomValue } from 'jotai'
 import { ImageIcon, ShieldCheckIcon } from 'lucide-react'
@@ -51,6 +52,7 @@ import { IconTile, pluginMark } from '@/composites'
 import { activeRemoteAtom } from '@/plugin-api'
 import { googleCap, useGoogleAccount } from './account'
 import { initialsOf } from './mail/data'
+import { OAuthClient } from './OAuthClient'
 import { useAlwaysAllowedSenders, useForgetImageSenders } from './mail-images'
 
 /** The flow's transient state. "Connected" is deliberately absent: that is the
@@ -277,6 +279,9 @@ export function ConnectionsSection(): React.JSX.Element {
             </ItemActions>
           </Item>
         ))}
+
+        {/* Machine-wide: the client every account here was granted to. */}
+        <OAuthClient accountCount={accounts.length} onChanged={refreshGoogle} />
       </FramePanel>
 
       <AlertDialog
