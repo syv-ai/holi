@@ -134,7 +134,7 @@
 }
 
 /* The document editor's find and ⌘D marks (`document-view/document-find.ts`,
-   `multi-cursor.ts`). Every match is a quiet tint, the one the selection is
+   `multi-cursor.ts`), and a code file's find (`file-view/code-find.ts`). Every match is a quiet tint, the one the selection is
    on a stronger one, so the current match reads with the editor blurred and
    focus in the find bar. An extra ⌘D selection wears the blurred selection's
    tint (primary at 15%), and an extra caret is the text colour. */
@@ -145,6 +145,12 @@
 }
 [data-theme='dark'] {
   --find-match-current: color-mix(in oklab, var(--warning) 45%, transparent);
+}
+.cm-editor .cm-searchMatch {
+  background-color: var(--find-match);
+}
+.cm-editor .cm-searchMatch-selected {
+  background-color: var(--find-match-current);
 }
 .tiptap .ProseMirror-search-match {
   background-color: var(--find-match);

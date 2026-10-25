@@ -16,6 +16,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { fileKind } from "@holi/shared"
 import { EditorState } from "@codemirror/state"
+import { findNext, findPrevious } from "@codemirror/search"
 import { EditorView, highlightActiveLineGutter, lineNumbers } from "@codemirror/view"
 import { useAtomValue } from "jotai"
 import { FileTextIcon, FileWarningIcon } from "lucide-react"
@@ -40,6 +41,9 @@ import { claimsAtom } from "@/state/plugins"
 import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
 
 import { FileHistoryButton } from "../file-history/file-history-button"
+import type { FindCount, FindRequest } from "../find-bar/find-bar"
+import { codeFind, codeFindCount } from "./code-find"
+import { CodeFindBar } from "./code-find-bar"
 import { codeLook } from "./code-look"
 
 function nameOf(path: string): string {
@@ -150,7 +154,9 @@ function FileError({
 /**
  * The file in CodeMirror, saving as it is typed. `text` is the file as the
  * view last knew it; a change on disk arrives through it and replaces the
- * document unless local edits are still pending, which win.
+ * document unless local edits are still pending, which win. ⌘F opens the
+ * find bar over the text (`code-find-bar.tsx`), seeded with the selection
+ * when it is one line; ⌘G and ⇧⌘G step from the text too while it is open.
  */
 function TextEditor({
   path,
@@ -170,6 +176,10 @@ function TextEditor({
   const saveTimer = useRef<number | undefined>(undefined)
   const callbacks = useRef({ onSaved, onSaveState })
   callbacks.current = { onSaved, onSaveState }
+  const [view, setView] = useState<EditorView | null>(null)
+  /** The find bar, open while set; a new request refocuses it. */
+  const [find, setFind] = useState<FindRequest | null>(null)
+  const [count, setCount] = useState<FindCount>({ total: 0, current: null })
 
   useEffect(() => {
     const host = hostRef.current
@@ -204,7 +214,14 @@ function TextEditor({
           lineNumbers(),
           highlightActiveLineGutter(),
           ...codeLook(path),
+          codeFind(),
           EditorView.updateListener.of((update) => {
+            const next = codeFindCount(update.state)
+            setCount((was) =>
+              was.total === next.total && was.current === next.current
+                ? was
+                : next
+            )
             if (!update.docChanged) return
             window.clearTimeout(saveTimer.current)
             saveTimer.current = window.setTimeout(
@@ -216,6 +233,7 @@ function TextEditor({
       }),
     })
     viewRef.current = view
+    setView(view)
     return () => {
       // Leaving the editor writes what is pending, and leaves what it showed
       // for its tab to be compared to (`doc-changes.ts`).
@@ -223,6 +241,8 @@ function TextEditor({
       if (saveTimer.current !== undefined) void save(view)
       view.destroy()
       viewRef.current = null
+      setView(null)
+      setFind(null)
     }
   }, [remote, path])
 
@@ -237,12 +257,51 @@ function TextEditor({
     })
   }, [text])
 
+  function openFind() {
+    const current = viewRef.current
+    if (current === null) return
+    const { from, to } = current.state.selection.main
+    const selected = current.state.sliceDoc(from, to)
+    const text = from < to && !selected.includes("\n") ? selected : null
+    setFind((was) => ({ token: (was?.token ?? 0) + 1, text }))
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    const current = viewRef.current
+    if (current === null || event.defaultPrevented) return
+    const mod = event.metaKey || event.ctrlKey
+    const key = event.key.toLowerCase()
+    if (mod && !event.altKey && !event.shiftKey && key === "f") {
+      event.preventDefault()
+      openFind()
+    } else if (find && mod && !event.altKey && key === "g") {
+      event.preventDefault()
+      if (event.shiftKey) findPrevious(current)
+      else findNext(current)
+    } else if (find && event.key === "Escape" && current.hasFocus) {
+      event.preventDefault()
+      setFind(null)
+    }
+  }
+
   return (
-    <div
-      ref={hostRef}
-      data-file-editor={path}
-      className="min-h-0 flex-1 overflow-auto px-2 py-2 sm:px-4 [&_.cm-editor]:h-full [&_.cm-editor]:outline-none"
-    />
+    <div className="relative flex min-h-0 flex-1 flex-col" onKeyDown={handleKeyDown}>
+      {view && find ? (
+        <div className="absolute top-2 right-4 z-40">
+          <CodeFindBar
+            view={view}
+            request={find}
+            count={count}
+            onClose={() => setFind(null)}
+          />
+        </div>
+      ) : null}
+      <div
+        ref={hostRef}
+        data-file-editor={path}
+        className="min-h-0 flex-1 overflow-auto px-2 py-2 sm:px-4 [&_.cm-editor]:h-full [&_.cm-editor]:outline-none"
+      />
+    </div>
   )
 }
 

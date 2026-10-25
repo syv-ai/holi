@@ -197,3 +197,40 @@ test("a json file saves once it parses, and not before", async () => {
     })
   )
 })
+
+test("⌘F finds in a code file, steps through the matches and replaces them", async () => {
+  const user = userEvent.setup()
+  historyList.mockResolvedValue([])
+  write.mockResolvedValue({ ok: true })
+  read.mockResolvedValue("const a = 1\nconst ab = a + a\n")
+  setup("src/main.ts")
+  const content = await waitFor(() => {
+    const node = document.querySelector<HTMLElement>(".cm-content")
+    if (node === null) throw new Error("no editor yet")
+    return node
+  })
+  content.focus()
+  // jsdom is not a Mac: Ctrl stands for ⌘.
+  await user.keyboard("{Control>}f{/Control}")
+  const field = await screen.findByRole("textbox", { name: "Find" })
+  await user.type(field, "a")
+  const status = screen.getByRole("status")
+  await waitFor(() => expect(status).toHaveTextContent(/of 4$/))
+  await user.click(screen.getByRole("button", { name: "Match whole word" }))
+  await waitFor(() => expect(status).toHaveTextContent("1 of 3"))
+  await user.click(field)
+  await user.keyboard("{Enter}")
+  await waitFor(() => expect(status).toHaveTextContent("2 of 3"))
+  expect(document.querySelectorAll(".cm-searchMatch").length).toBe(3)
+
+  await user.click(screen.getByRole("button", { name: "Show replace" }))
+  await user.type(screen.getByRole("textbox", { name: "Replace" }), "x")
+  await user.click(screen.getByRole("button", { name: "Replace all" }))
+  const { EditorView } = await import("@codemirror/view")
+  expect(EditorView.findFromDOM(content)!.state.doc.toString()).toBe(
+    "const x = 1\nconst ab = x + x\n"
+  )
+  await user.click(screen.getByRole("button", { name: "Close" }))
+  expect(screen.queryByRole("search", { name: "Find in file" })).toBeNull()
+  expect(document.querySelectorAll(".cm-searchMatch").length).toBe(0)
+})

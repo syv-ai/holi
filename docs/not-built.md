@@ -180,8 +180,7 @@ release notes ([updates](features/updates.md)); Google's bring-your-own OAuth cl
 ([google](features/google.md)); the vault's README on Home ([home](features/home.md)); the repo's
 size in Settings ([vaults-sync](features/vaults-sync.md)); a tab's caret and scroll kept across tab
 switches; `holi docs screenshot`'s renderer half, which says where a tab is drawn; PDF render
-warnings in Convert to PDF ([pdf](features/pdf.md)); and find and replace in the file view's code
-editor.
+warnings in Convert to PDF ([pdf](features/pdf.md)).
 
 ## Sync
 

@@ -14,13 +14,9 @@ import {
   SearchQuery,
 } from "prosemirror-search"
 
-export interface FindOptions {
-  search: string
-  caseSensitive: boolean
-  wholeWord: boolean
-  regexp: boolean
-  replace: string
-}
+import type { FindOptions } from "../find-bar/find-bar"
+
+export type { FindOptions }
 
 export function findQuery(options: FindOptions): SearchQuery {
   return new SearchQuery({
