@@ -18,8 +18,6 @@ import { openSessionAtom } from './send'
 export type InboxView = Awaited<ReturnType<typeof agentCap.inbox>>
 export type InboxEntry = InboxView['entries'][number]
 
-export const INBOX_SURFACE = 'inbox'
-
 const EMPTY: InboxView = { entries: [], unread: 0 }
 
 export const inboxAtom = atom<InboxView>(EMPTY)

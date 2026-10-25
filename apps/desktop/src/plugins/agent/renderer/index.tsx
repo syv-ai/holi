@@ -20,6 +20,7 @@ import { SessionActions } from './SessionActions'
 import { AgentsMain } from './agents/AgentsMain'
 import { AgentsSidebar } from './agents/AgentsSidebar'
 import { agentsStatusAtom } from './state/agents-status'
+import { inboxEvents, inboxVault } from './state/inbox'
 import { newSessionAtom, sessionListVault, sessionTabLookAtom } from './state/session-list'
 import {
   AGENT_SURFACE,
@@ -83,7 +84,7 @@ const COMMANDS: readonly Command[] = [
 
 export const agentRenderer: RendererPlugin = {
   info: AGENT_INFO,
-  events: agentEvents,
+  events: { ...agentEvents, ...inboxEvents },
   surfaces: [
     {
       kind: AGENT_SURFACE,
@@ -120,8 +121,11 @@ export const agentRenderer: RendererPlugin = {
   vault: (remote, store) => {
     const offAgent = agentVault(remote, store)
     const offList = sessionListVault(store)
+    // The inbox's entries: `holi agent notify`, needs-you, mentions.
+    const offInbox = inboxVault(remote, store)
     void store.set(loadProvidersAtom)
     return () => {
+      offInbox()
       offList()
       offAgent()
       store.set(providersAtom, { kind: 'loading' })

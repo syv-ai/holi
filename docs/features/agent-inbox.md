@@ -49,7 +49,11 @@ renderer as the agent's `inbox` event on every change (`state/inbox.ts`), which 
 note or session: a note as any arrival main asks for does, beside the agent when it has the focus,
 and only when it passes the same `shownPathOrNull` check. A banner's click brings Holi forward and
 opens the entry the same way. The Inbox at the top of the sidebar's Agents mode
-([agent-sessions](agent-sessions.md)) does not list these entries yet ([not-built](../not-built.md)).
+([agent-sessions](agent-sessions.md)) lists them under **From your agents**, below the sessions
+waiting on the person (`agents/InboxEntries.tsx`): newest first, each opening its note or session,
+with an X that dismisses it. Being shown reads them all; the ones that were unread keep their mark
+while the Inbox stays open. The Inbox's count adds the unread entries to the waiting sessions,
+leaving out a waiting session's own "needs you" so it counts once.
 
 **The work log.** `.holi/state/log/<YYYY-MM-DD>.local.md`, one per local day, one line per thing
 done (`- 14:05 Offer drafted: Check the prices. [[tilbud/a.md]]`), so "what did you do this week?"

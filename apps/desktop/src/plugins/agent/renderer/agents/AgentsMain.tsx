@@ -4,8 +4,9 @@
  *
  * - **Home**, what a tab with nothing selected shows: that no session is
  *   open there, and New session. Never the Inbox, which is its own row.
- * - **The Inbox**: the sessions waiting on you, and what other plugins add
- *   there (a Holi's report that asked for you).
+ * - **The Inbox**: the sessions waiting on you, what the agent told you
+ *   (`holi agent notify`, needs-you, mentions; docs/features/agent-inbox.md),
+ *   and what other plugins add there (a Holi's report that asked for you).
  * - **History**: every conversation and run, open or closed, by day, with
  *   the search and its filter. Opening one puts it back in Sessions.
  * - **A live session**, of any agent: its terminal, filling the view.
@@ -23,11 +24,13 @@ import { activeRemoteAtom, agentsSlotsAtom } from '@/plugin-api'
 import { agentCap } from '../agent-cap'
 import { SessionTerminal } from '../SessionTerminal'
 import { inboxCountAtom } from '../state/agents-status'
+import { inboxAtom } from '../state/inbox'
 import { agentsViewAtom, agentsViewOf, viewTerminalsAtom } from '../state/agents-view'
 import { newSessionProviderAtom, providerLabel } from '../state/providers'
 import { newSessionAtom } from '../state/session-list'
 import { SessionHistory, SessionSearch } from '../sessions/SessionList'
 import { agentGeometryAtom, agentSessionsAtom } from '../state/sessions'
+import { InboxEntries } from './InboxEntries'
 import { SessionCard } from './parts'
 import { useNow } from './AgentsSidebar'
 
@@ -53,6 +56,7 @@ function InboxView(): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const slots = useAtomValue(agentsSlotsAtom)
   const count = useAtomValue(inboxCountAtom)
+  const entries = useAtomValue(inboxAtom).entries.length
   const setView = useSetAtom(agentsViewAtom)
   const create = useSetAtom(newSessionAtom)
   const now = useNow()
@@ -63,11 +67,11 @@ function InboxView(): React.JSX.Element {
         <span className="font-medium">Inbox</span>
         {count > 0 && <span className="text-muted-foreground tabular-nums">{count}</span>}
       </Bar>
-      {count === 0 ? (
+      {count === 0 && entries === 0 ? (
         <IconStackEmpty
           icon={Inbox}
           title="Nothing needs you"
-          description="A session waiting on a permission prompt or a question lands here, and so does a Holi that asks for you."
+          description="A session waiting on a permission prompt or a question lands here, and so does what an agent asks you to look at, a teammate's mention, and a Holi that asks for you."
           action={{
             label: 'New session',
             icon: SquarePen,
@@ -94,6 +98,7 @@ function InboxView(): React.JSX.Element {
                 </div>
               </section>
             )}
+            <InboxEntries />
             {slots.map((slot) =>
               slot.inbox === undefined ? null : <slot.inbox key={slot.plugin} />,
             )}

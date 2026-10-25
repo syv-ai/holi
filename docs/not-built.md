@@ -156,10 +156,6 @@ nothing shows them: there is no "Links to" and "Linked from" beside a note. See
 
 **The graph tab.** `notes.graph` answers; nothing draws it. See [graph](features/graph.md).
 
-**The inbox's entries.** `holi agent notify`, needs-you and mentions fill `inbox.local.json` and
-raise banners, but the Inbox in the Agents sidebar does not list those entries. See
-[agent-inbox](features/agent-inbox.md).
-
 **Saved links' screens.** The preview card (on a tree row, a link in a note, a link file's tab),
 New Link, saving a link dragged in from a browser, and Open in Browser. See
 [links](features/links.md).
