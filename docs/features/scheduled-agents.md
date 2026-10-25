@@ -100,8 +100,12 @@ without asking under it; **Advanced**, the catch-up window; and **Run history**.
 written or shown, so it approves exactly that. A Holi's page lists the automations it carries out
 as its **Habits**. Nobody approves text behind a link: the editor shows the prompt the switch
 approves, and a file that changed since it was shown is refused as "changed since you looked".
-The editor's Triggers are times only: a file's `on:` list is kept as written when the editor saves
-it, but the editor neither shows nor adds one yet ([not-built](../not-built.md)).
+The editor's Triggers hold the file's `on:` events beside its times, each a sentence too ("When a
+file is [added] in [inbox/**]", "[30 min before] each calendar event", "When a task is [due]",
+"When new mail matches [from:@acme.com]"), and **Add trigger** offers them under On an event. They
+go to `schedules.save` with the times and are read there the way the file is (`triggerYaml`, then
+`parseTriggers`), so the editor refuses what main would, such as a glob outside the vault, before
+it saves. A run events started reads **Event** in Run history, with what started it.
 
 **One check every half minute**, while the vault is open, plus one five seconds after it opens. A
 check runs a schedule when its first moment after the last run (or after it was turned on) has

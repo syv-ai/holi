@@ -503,4 +503,24 @@ describe('automations a Holi carries out', () => {
     expect(caps['schedules.save'].doors).toEqual(['ui'])
     expect(caps['schedules.remove'].doors).toEqual(['ui'])
   })
+  it("writes the editor's events, and refuses one that does not read", async () => {
+    const caps = scheduleCapabilities({ scheduler })
+    const draft = caps['schedules.save'].params({
+      draft: {
+        name: 'Inbox',
+        crons: [],
+        prompt: 'Sort the inbox.',
+        allow: [],
+        on: [{ source: 'file', glob: 'inbox/**', changed: false }],
+      },
+    }).draft
+    const made = await scheduler.save(vault(), draft)
+    expect(made).toMatchObject({ on: [{ source: 'file', glob: 'inbox/**', changed: false }] })
+    expect(made.crons).toBeUndefined()
+    expect(() =>
+      caps['schedules.save'].params({
+        draft: { name: 'x', crons: [], prompt: 'y', on: [{ source: 'file', glob: '../out' }] },
+      }),
+    ).toThrow(/a glob inside the vault/)
+  })
 })

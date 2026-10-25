@@ -6,6 +6,8 @@
  *   Active switch (runs on this machine) and who carries it out (`HoliPicker`).
  * - **Triggers**: each a sentence ("Every weekday at [11:00]"), the time zone
  *   and the next run; Add trigger. A cron no sentence says stays as written.
+ *   The events that start it (`on:`) are sentences too ("When a file is
+ *   [added] in [inbox/**]"), read and written the way main runs them.
  * - **Instructions**: the prompt, with its model and what it may do without
  *   asking under it.
  * - **Advanced**: the catch-up window for missed runs.
@@ -17,7 +19,20 @@
  * too; a change to either reads Changed and waits to be turned on again.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
-import { ChevronDown, Clock, Ellipsis, Play, Plus, ShieldCheck, X } from 'lucide-react'
+import {
+  CalendarClock,
+  ChevronDown,
+  Clock,
+  Ellipsis,
+  FileText,
+  ListTodo,
+  Mail,
+  Play,
+  Plus,
+  ShieldCheck,
+  X,
+  type LucideIcon,
+} from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { EmptyState } from '@/composites'
 import {
@@ -26,6 +41,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
   Frame,
   FramePanel,
@@ -53,8 +70,11 @@ import {
   cronOfTrigger,
   nextCronTime,
   parseCron,
+  parseTriggers,
   triggerOfCron,
+  triggerYaml,
   type ScheduleTrigger,
+  type Trigger,
 } from '@holi/shared'
 import { HoliPicker } from './HoliPicker'
 import { schedulesCap, selectAutomationAtom, type ScheduleSummary } from './state'
@@ -65,6 +85,8 @@ export interface Draft {
   name: string
   active: boolean
   triggers: ScheduleTrigger[]
+  /** The events that start it, the file's `on:`. */
+  on: Trigger[]
   holi?: string
   model?: string
   allow: string[]
@@ -78,6 +100,7 @@ export function blankDraft(holi?: string): Draft {
     name: '',
     active: true,
     triggers: [{ kind: 'weekdays', time: '09:00' }],
+    on: [],
     ...(holi === undefined ? {} : { holi }),
     allow: [],
     prompt: '',
@@ -89,6 +112,7 @@ export function draftOf(s: ScheduleSummary): Draft {
     name: s.name,
     active: s.status === 'on',
     triggers: (s.crons ?? []).map(triggerOfCron),
+    on: s.on ?? [],
     ...(s.holi === undefined ? {} : { holi: s.holi }),
     ...(s.model === undefined ? {} : { model: s.model }),
     allow: s.allow ?? [],
@@ -285,6 +309,144 @@ function TriggerRow({
   )
 }
 
+/** The events an automation can start on, for Add trigger, with a first
+ *  value each that reads. */
+const EVENTS: { label: string; trigger: Trigger }[] = [
+  { label: 'When a file arrives', trigger: { source: 'file', glob: 'inbox/**', changed: false } },
+  { label: 'When a task is due', trigger: { source: 'task', when: 'due', before: 0 } },
+  { label: 'Before a calendar event', trigger: { source: 'calendar', before: 30 } },
+  { label: 'When mail arrives', trigger: { source: 'mail', query: 'from:' } },
+]
+
+const EVENT_ICON: Record<Trigger['source'], LucideIcon> = {
+  file: FileText,
+  task: ListTodo,
+  calendar: CalendarClock,
+  mail: Mail,
+}
+
+/** How long before, as the sources offer it; a lead the file names that is
+ *  not here is offered as written. */
+const LEADS = [0, 5, 15, 30, 60, 120, 1440]
+
+function leadLabel(minutes: number, zero: string): string {
+  if (minutes === 0) return zero
+  if (minutes % 1440 === 0) return `${minutes / 1440} day${minutes === 1440 ? '' : 's'} before`
+  if (minutes % 60 === 0) return `${minutes / 60} h before`
+  return `${minutes} min before`
+}
+
+function leadOptions(current: number, zero: string): { value: string; label: string }[] {
+  const all = LEADS.includes(current) ? LEADS : [...LEADS, current].sort((a, b) => a - b)
+  return all.map((m) => ({ value: String(m), label: leadLabel(m, zero) }))
+}
+
+/** Why a trigger does not read, the way main would refuse it. */
+function eventError(t: Trigger): string | undefined {
+  const parsed = parseTriggers([triggerYaml(t)])
+  return parsed.ok ? undefined : parsed.error.replace(/^on: /, '')
+}
+
+/** One `on:` trigger as a sentence: "When a file is [added] in [inbox/**]". */
+function EventRow({
+  trigger,
+  onChange,
+  onRemove,
+}: {
+  trigger: Trigger
+  onChange: (t: Trigger) => void
+  onRemove: () => void
+}): React.JSX.Element {
+  const error = eventError(trigger)
+  const muted = (text: string) => <span className="text-muted-foreground">{text}</span>
+  return (
+    <li
+      className="group/trigger flex min-h-10 flex-wrap items-center gap-2 py-1 text-sm"
+      data-event-trigger={trigger.source}
+    >
+      <Icon icon={EVENT_ICON[trigger.source]} size="sm" tone="muted" />
+      {trigger.source === 'file' && (
+        <>
+          {muted('When a file is')}
+          <Pill
+            label="Which files"
+            value={trigger.changed ? 'changed' : 'added'}
+            options={[
+              { value: 'added', label: 'added' },
+              { value: 'changed', label: 'added or changed' },
+            ]}
+            onChange={(v) => onChange({ ...trigger, changed: v === 'changed' })}
+          />
+          {muted('in')}
+          <Input
+            aria-label="Folder or files"
+            aria-invalid={error !== undefined}
+            className="w-48 font-mono text-xs"
+            value={trigger.glob}
+            onChange={(e) => onChange({ ...trigger, glob: e.target.value })}
+          />
+        </>
+      )}
+      {trigger.source === 'task' && (
+        <>
+          {muted('When a task is')}
+          <Pill
+            label="Task moment"
+            value={trigger.when === 'overdue' ? 'overdue' : String(trigger.before)}
+            options={[
+              ...leadOptions(trigger.when === 'due' ? trigger.before : 0, 'due').map((o) => ({
+                ...o,
+                label: o.value === '0' ? 'due' : o.label.replace(' before', ' before it is due'),
+              })),
+              { value: 'overdue', label: 'overdue' },
+            ]}
+            onChange={(v) =>
+              onChange(
+                v === 'overdue'
+                  ? { source: 'task', when: 'overdue', before: 0 }
+                  : { source: 'task', when: 'due', before: Number(v) },
+              )
+            }
+          />
+        </>
+      )}
+      {trigger.source === 'calendar' && (
+        <>
+          <Pill
+            label="How long before"
+            value={String(trigger.before)}
+            options={leadOptions(trigger.before, 'When').map((o) =>
+              o.value === '0' ? { ...o, label: 'As' } : o,
+            )}
+            onChange={(v) => onChange({ source: 'calendar', before: Number(v) })}
+          />
+          {muted(trigger.before === 0 ? 'a calendar event starts' : 'each calendar event')}
+        </>
+      )}
+      {trigger.source === 'mail' && (
+        <>
+          {muted('When new mail matches')}
+          <Input
+            aria-label="Gmail search"
+            aria-invalid={error !== undefined}
+            className="w-56 font-mono text-xs"
+            value={trigger.query}
+            onChange={(e) => onChange({ source: 'mail', query: e.target.value })}
+          />
+        </>
+      )}
+      {error !== undefined && <span className="text-xs text-destructive">{error}</span>}
+      <IconButton
+        icon={X}
+        label="Remove trigger"
+        size="sm"
+        className="ms-auto opacity-0 group-hover/trigger:opacity-100 focus-visible:opacity-100"
+        onClick={onRemove}
+      />
+    </li>
+  )
+}
+
 /** What it may do without asking, one rule a line, in a pill's popover. */
 function AllowPill({
   allow,
@@ -353,7 +515,10 @@ function RunHistory({ runs }: { runs: readonly RunRecord[] }): React.JSX.Element
       {runs.map((r, i) => (
         <li key={`${r.at}-${i}`} className="flex min-h-11 items-center gap-3 text-sm">
           <span className="min-w-0 flex-1 truncate">
-            {r.trigger === 'manual' ? 'Run now' : 'Scheduled'}
+            {r.trigger === 'manual' ? 'Run now' : r.trigger === 'event' ? 'Event' : 'Scheduled'}
+            {r.trigger === 'event' && r.cause !== undefined && (
+              <span className="text-muted-foreground"> · {r.cause}</span>
+            )}
             {r.message !== undefined && (
               <span className="text-muted-foreground"> · {r.message}</span>
             )}
@@ -414,11 +579,15 @@ export function AutomationEditor({
   const [removing, setRemoving] = useState(false)
   const dirty = !same(draft, initial)
   const isNew = summary === undefined
-  const triggerErrors = draft.triggers.map((t) => cronFor(t).error).filter(Boolean)
+  const triggerErrors = [
+    ...draft.triggers.map((t) => cronFor(t).error),
+    ...draft.on.map(eventError),
+  ].filter(Boolean)
+  const triggerCount = draft.triggers.length + draft.on.length
   const canSave =
     draft.name.trim() !== '' &&
     draft.prompt.trim() !== '' &&
-    draft.triggers.length > 0 &&
+    triggerCount > 0 &&
     triggerErrors.length === 0 &&
     (isNew || dirty)
 
@@ -447,6 +616,7 @@ export function AutomationEditor({
         draft: {
           name: draft.name.trim(),
           crons: draft.triggers.map((t) => cronOfTrigger(t)),
+          on: draft.on,
           prompt: draft.prompt,
           allow: draft.allow,
           ...(draft.holi === undefined ? {} : { holi: draft.holi }),
@@ -599,7 +769,7 @@ export function AutomationEditor({
       <section aria-label="Triggers" className="flex flex-col gap-3">
         <h2 className="px-1 text-xs font-medium text-muted-foreground">Triggers</h2>
         <Frame stacked spacing="sm">
-          {draft.triggers.length > 0 && (
+          {triggerCount > 0 && (
             <FramePanel>
               <ul className="flex flex-col">
                 {draft.triggers.map((t, i) => (
@@ -612,6 +782,14 @@ export function AutomationEditor({
                     onRemove={() => set({ triggers: draft.triggers.filter((_, j) => j !== i) })}
                   />
                 ))}
+                {draft.on.map((t, i) => (
+                  <EventRow
+                    key={`on-${i}`}
+                    trigger={t}
+                    onChange={(next) => set({ on: draft.on.map((x, j) => (j === i ? next : x)) })}
+                    onRemove={() => set({ on: draft.on.filter((_, j) => j !== i) })}
+                  />
+                ))}
               </ul>
             </FramePanel>
           )}
@@ -621,13 +799,14 @@ export function AutomationEditor({
                 <Button
                   variant="ghost"
                   className="h-12 w-full justify-start gap-2 rounded-none px-(--frame-panel-px) font-normal text-muted-foreground hover:text-foreground"
-                  disabled={draft.triggers.length >= 20}
+                  disabled={triggerCount >= 20}
                 >
                   <Icon icon={Plus} size="sm" />
                   Add trigger
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-56">
+                <DropdownMenuLabel>On a schedule</DropdownMenuLabel>
                 {KINDS.map((k) => (
                   <DropdownMenuItem
                     key={k.value}
@@ -643,13 +822,23 @@ export function AutomationEditor({
                     {k.label}
                   </DropdownMenuItem>
                 ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>On an event</DropdownMenuLabel>
+                {EVENTS.map((e) => (
+                  <DropdownMenuItem
+                    key={e.label}
+                    onSelect={() => set({ on: [...draft.on, e.trigger] })}
+                  >
+                    {e.label}
+                  </DropdownMenuItem>
+                ))}
               </DropdownMenuContent>
             </DropdownMenu>
           </FramePanel>
         </Frame>
-        {draft.triggers.length === 0 && (
+        {triggerCount === 0 && (
           <p className="px-1 text-xs text-muted-foreground">
-            Add a trigger: an automation runs only when one comes due.
+            Add a trigger: an automation runs only when one comes due or happens.
           </p>
         )}
         {summary?.at !== undefined && (

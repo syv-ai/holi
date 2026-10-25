@@ -42,7 +42,7 @@ import { parseDateTime } from './dates'
 import { splitFrontmatter } from './frontmatter'
 import { normalizeText } from './normalize-md'
 import { SCHEDULES_SURFACE_DIR } from './path-safety'
-import { describeTriggers, parseTriggers, type Trigger } from './triggers'
+import { describeTriggers, parseTriggers, triggerYaml, type Trigger } from './triggers'
 
 /** Where schedule files live. Root-anchored, one level: a schedule is a file
  *  directly inside. */
@@ -384,6 +384,9 @@ export interface ScheduleDraft {
   allow?: string[]
   catchUpMinutes?: number
   prompt: string
+  /** The `on:` list, which the editor shows and edits. Absent keeps the
+   *  file's as written; empty removes it. */
+  on?: Trigger[]
 }
 
 /**
@@ -420,5 +423,7 @@ export function scheduleFileText(draft: ScheduleDraft, text?: string): string {
     'catch-up',
     draft.catchUpMinutes === undefined ? undefined : catchUpText(draft.catchUpMinutes),
   )
+  if (draft.on !== undefined)
+    set('on', draft.on.length === 0 ? undefined : draft.on.map(triggerYaml))
   return `---\n${doc.toString({ lineWidth: 0 })}---\n\n${draft.prompt.trim()}\n`
 }

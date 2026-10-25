@@ -17,7 +17,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import type { ScheduleDraft } from '@holi/shared'
+import { parseTriggers, triggerYaml, type ScheduleDraft, type Trigger } from '@holi/shared'
 import {
   cap,
   CapabilityError,
@@ -53,7 +53,26 @@ function draftParam(raw: unknown): ScheduleDraft {
   if (catchUp !== undefined && catchUp !== null && (typeof catchUp !== 'number' || catchUp < 0)) {
     throw new CapabilityError('BAD_REQUEST', 'catchUpMinutes must be a number of minutes')
   }
+  // `on` comes as the editor holds it, and is read the way the file is:
+  // written out, then parsed, so a malformed item is refused like a hand
+  // edit's.
+  let on: Trigger[] | undefined
+  if (Array.isArray(p['on'])) {
+    if (p['on'].length === 0) on = []
+    else {
+      const parsed = parseTriggers(
+        p['on'].map((item: unknown) =>
+          item !== null && typeof item === 'object' ? triggerYaml(item as Trigger) : item,
+        ),
+      )
+      if (!parsed.ok) throw new CapabilityError('BAD_REQUEST', parsed.error)
+      on = parsed.triggers
+    }
+  } else if (p['on'] !== undefined) {
+    throw new CapabilityError('BAD_REQUEST', 'on must be a list of triggers')
+  }
   return {
+    ...(on === undefined ? {} : { on }),
     name: stringParam(p, 'name'),
     crons: texts(p['crons'], 'crons'),
     prompt: stringParam(p, 'prompt'),

@@ -75,6 +75,7 @@ import {
   type ScheduleDef,
   type ScheduleDraft,
   type ScheduleWhen,
+  type Trigger,
   type VaultEvent,
   type VaultSnapshot,
 } from '@holi/shared'
@@ -180,6 +181,8 @@ export interface ScheduleSummary {
   when?: string
   /** Each trigger's cron as written, for the editor; absent for an `at`. */
   crons?: string[]
+  /** The `on:` events that start it, for the editor. */
+  on?: Trigger[]
   /** A one-off's local time, as written. */
   at?: string
   /** The Holi that carries it out: its id, and its name when it reads. */
@@ -524,6 +527,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         : def.when.kind === 'cron'
           ? { crons: def.when.crons.map((c) => c.source) }
           : { at: def.when.stamp }),
+      ...(def.on.length === 0 ? {} : { on: def.on }),
       ...(def.holi === undefined ? {} : { holi: def.holi }),
       ...(entry.holi !== undefined && 'name' in entry.holi ? { holiName: entry.holi.name } : {}),
       ...(def.model === undefined ? {} : { model: def.model }),

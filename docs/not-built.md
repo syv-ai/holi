@@ -167,10 +167,6 @@ an arriving link opens its file (in its vault) at the top. See [holi-links](feat
 serves each command's document; the editor's slash menu does not list them, and nothing runs one in
 its hidden frame. See [vault apps](features/vault-apps.md).
 
-**Event triggers in the Automations editor.** A schedule's `on:` list runs and is kept when the
-editor saves, but the editor neither shows nor adds one. See
-[scheduled agents](features/scheduled-agents.md).
-
 **Selected lines to the agent.** The per-turn context can name the focused note's selected lines,
 but the document editor does not report a selection (`state/ui-report.ts`). See
 [agent-config](features/agent-config.md).
