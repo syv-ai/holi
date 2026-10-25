@@ -17,6 +17,7 @@ import { closeTabsForPaths, retargetTab, retargetTabs, workspaceAtom } from './p
 // reads the other's atoms until a store does.
 import { folderSurfacesAtom } from './plugins'
 import { openDocumentAtom } from './open-document'
+import { settledRect } from '../lib/settled-rect'
 
 type JotaiStore = ReturnType<typeof createStore>
 
@@ -208,11 +209,15 @@ export function subscribeToVault(
       store.set(openDocumentAtom, path, heading)
     }
   })
-  // `holi docs screenshot` asks where a tab is drawn; the tab strip cannot
-  // say yet (docs/not-built.md), so it is told at once rather than left waiting.
-  const offLocate = window.holi.vault.onLocate(({ id }) =>
-    window.holi.vault.located({ id, error: 'Holi cannot locate a tab on screen yet.' }),
-  )
+  // Main asks where a path's tab is drawn, for `holi docs screenshot`. It
+  // opened the tab first, over `onOpen`, which arrives before this; a file's
+  // tab is keyed by its path.
+  const offLocate = window.holi.vault.onLocate(({ id, path }) => {
+    settledRect(path).then(
+      (rect) => window.holi.vault.located({ id, rect }),
+      (err: unknown) => window.holi.vault.located({ id, error: (err as Error).message }),
+    )
+  })
   const tables = plugins.flatMap((p) =>
     p.events === undefined ? [] : [[p.info.id, p.events] as const],
   )

@@ -445,6 +445,8 @@ export function PanesView({
     const body = (
       <div
         data-preview-member={ghost ? undefined : member.key}
+        // Where `holi docs screenshot` finds the tab (`lib/settled-rect.ts`).
+        data-tab={ghost ? undefined : member.key}
         style={
           span === undefined
             ? undefined

@@ -92,9 +92,9 @@ reminder uses; the renderer switches vault when the path lives elsewhere and ope
 **Seeing a tab.** `holi docs screenshot <path>` is how the agent looks at what it made: a note's
 diagram, a vault app. It opens the path as `holi docs open` does (same refusals), but shows the
 window without focusing it and the tab without moving the caret into it (`focus: false` on
-`vault:open`, `quietOpenAtom`), since the person may be typing to the agent that asked; a
+`vault:open`; opening a tab never focuses its editor, which only a click does), since the person may be typing to the agent that asked; a
 minimised window is still restored. Screenshots run one at a time. It then asks the renderer where that tab is drawn over `vault:locate`, answered by id on
-`vault:located`. A pane's body carries its tab's `data-tab` (`tabKey`), and the renderer
+`vault:located`. A pane's body carries its tab's `data-tab` (a file's path, `panes-view.tsx`), and the renderer
 answers once that body is on screen, nothing inside it is `aria-busy` (an app frame is, until
 its document loads), the fonts and its arrival motion are done, and a short settle has passed
 (`lib/settled-rect.ts`), waiting on timers since a hidden page runs no animation frames. Main cuts
