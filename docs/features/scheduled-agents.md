@@ -8,8 +8,10 @@ is an ordinary [agent session](agent-sessions.md).
 
 ## How it works
 
-**A schedule is one file**, `.holi/schedules/<name>.md`, or `<name>.local.md` to keep it on this
-machine. Its frontmatter says when and with what, and its body is the prompt:
+**A schedule is one local file**, `.holi/schedules/<name>.local.md`. It is one person's: it reads
+their mail with their Google account and writes in their name, so it never syncs, nobody else sees
+it in Settings, and nobody else can edit or break it. A committed `.holi/schedules/<name>.md` is not
+a schedule and never runs: Settings lists it as invalid with the rename that makes it one. Its frontmatter says when and with what, and its body is the prompt:
 
 ```markdown
 ---
@@ -36,12 +38,12 @@ mail, `curl`) still asks whatever `allow` says. Nothing runs more often than eve
 instead of or as well as a time (see Triggers). The grammar and its parser are in `packages/shared`
 (`cron.ts`, `schedule.ts`, `triggers.ts`), so the settings tab reads a file the way main runs it.
 
-**Running is approved per machine, and the approval is of the content.** A schedule file syncs, so a
-teammate's pull brings it, but it runs only where someone turned it on. Turning it on records a
+**Running is approved per machine, and the approval is of the content.** The agent can write
+the file, so a schedule runs only once the person turned it on. Turning it on records a
 fingerprint of what it approves: the prompt (in its commit-tidied form), the model, the `allow`
 list and the `on` triggers. A file whose fingerprint no longer matches reads **changed** and does
-not run until it is turned on again, so neither a pull nor a run of the schedule itself, which may
-edit files, can change the schedule's prompt, model, `allow` or triggers without the person's yes.
+not run until it is turned on again, so neither another session nor a run of the schedule itself,
+which may edit files, can change the schedule's prompt, model, `allow` or triggers without the person's yes.
 A trigger is in it because it decides who can start a run: anyone who can send the person a mail,
 or drop a file in the vault. The time is not in the fingerprint, so moving a run grants nothing;
 nor is the `name`, which labels the run's session and the settings row and is never in what the
@@ -66,9 +68,9 @@ to AGENTS.md". So `allow` names the folders a run writes, `Edit(tilbud/**)` or `
 never a bare `Write` or `Edit`. Claude Code checks every file write, a new file included, against
 `Edit` path rules; a path rule on `Write` is accepted and never consulted.
 
-**Turn a schedule on in one place.** Every machine that turns a shared schedule on runs it: on at a
-laptop and a desktop, it runs twice, two drafts and two tasks for each mail. A schedule only one
-person wants belongs in a `.local.md` file, which only their machine has.
+**Sharing a schedule is copying it.** A teammate who wants the same triage copies the file into
+their own `.local.md` and makes it theirs (their name, their tone): a prompt that speaks for one
+person cannot be run by another.
 
 **The agent writes schedules; the person turns them on.** The shipped `scheduled-agents` skill
 teaches the file, the prompt (self-contained, results left in the vault as tasks, drafts or notes, a
@@ -250,8 +252,9 @@ repeats inside one session.
 - **A system scheduler** (`launchd`, `cron`): runs without Holi, so without the bridge, the sync
   pause or the Google tokens, and outlives the vault being removed.
 - **Cloud routines**: cannot reach the clone's machine-local files, Holi or the user's mail.
-- **Running a committed schedule wherever the vault is open**: a pull would start unattended agent
-  runs on a teammate's laptop with their credentials.
+- **Committed, shared schedules**, approved per machine: a schedule speaks for one person, so a
+  shared one showed every member someone else's prompt as theirs to turn on, let anyone with push
+  access edit it (silently turning it off for its owner), and left nowhere obvious for one's own.
 - **`--dangerously-skip-permissions` or a permission mode for unattended runs**: `allow` names the
   tools one schedule needs; everything else keeps Claude Code's prompt. Auto mode
   (`--permission-mode auto`) was reconsidered for runs and is still out, for two reasons. It answers

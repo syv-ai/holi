@@ -1,5 +1,5 @@
 /**
- * A scheduled agent's definition: one markdown file in `.holi/schedules/`
+ * A scheduled agent's definition: one `.local.md` file in `.holi/schedules/`
  * whose frontmatter says when and with what, and whose body is the prompt
  * (docs/features/scheduled-agents.md).
  *
@@ -67,12 +67,13 @@ export interface ScheduleDef {
 
 export type ScheduleParse = { ok: true; def: ScheduleDef } | { ok: false; error: string }
 
-/** Whether a vault path is a schedule file: a markdown file directly inside
- *  `SCHEDULES_DIR`, `.local.md` included. */
+/** Whether a vault path is a schedule file: a `.local.md` file directly
+ *  inside `SCHEDULES_DIR`. A schedule is one person's (it reads their mail,
+ *  speaks for them), so it never syncs; a committed `.md` there is not one. */
 export function isScheduleFilePath(path: string): boolean {
   if (!path.startsWith(`${SCHEDULES_DIR}/`)) return false
   const rest = path.slice(SCHEDULES_DIR.length + 1)
-  return !rest.includes('/') && rest.endsWith('.md') && rest !== '.md'
+  return !rest.includes('/') && rest.endsWith('.local.md') && rest !== '.local.md'
 }
 
 /** The file's own name for itself, `inbox-triage` for

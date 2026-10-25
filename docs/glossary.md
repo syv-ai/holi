@@ -120,7 +120,7 @@ socket, never through a terminal. See [agent-sessions](features/agent-sessions.m
 
 ### Schedule
 
-A file in `.holi/schedules/` whose frontmatter says when (`cron` or `at`, local time, or `on`, its
+One person's `.local.md` file in `.holi/schedules/` whose frontmatter says when (`cron` or `at`, local time, or `on`, its
 **triggers**) and what the run may do without asking, and whose body is a prompt. Holi starts it as
 a session at those times, or when one of its triggers hears an event, while the vault is open, on a machine that turned it on: **on** approves its current prompt, model
 and `allow` list, and any change to those reads **changed** until approved again. See

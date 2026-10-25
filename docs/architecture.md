@@ -242,9 +242,9 @@ stay on. There is no MCP server: the agent uses its native tools plus one small 
 that talks to main. Holi pauses sync while a turn runs and reviews a turn as the commit
 range it produced.
 
-**Scheduled agents** are files in `.holi/schedules/` that the open vault's agent plugin starts as
+**Scheduled agents** are one person's `.local.md` files in `.holi/schedules/` that the open vault's agent plugin starts as
 background sessions at their times, or when one of their triggers hears an event (a file added, a
-task due, a meeting about to start, a mail), on machines that approved their content. The events
+task due, a meeting about to start, a mail), once that person approved their content. The events
 come from the plugins that own them over `ctx.events`, and the agent's trigger router dedupes and
 batches them into runs ([scheduled-agents](features/scheduled-agents.md)).
 
