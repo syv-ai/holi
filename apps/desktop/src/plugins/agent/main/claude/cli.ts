@@ -17,7 +17,9 @@
  */
 import { execFile } from 'node:child_process'
 import { accessSync, constants } from 'node:fs'
-import { resolveBin } from '../../../../main/plugin-api'
+import { join } from 'node:path'
+import { PLUGIN_COMMANDS_DIR } from '@holi/shared'
+import { nodeFallbackDir, resolveBin, toolPath } from '../../../../main/plugin-api'
 import type { TerminalCommand } from '../provider'
 
 /**
@@ -35,6 +37,13 @@ export interface AgentEnvOpts {
    * *text*: with `holi` on `PATH` the agent types the bare name.
    */
   binDir?: string | null
+  /**
+   * The vault's community plugin commands (`PLUGIN_COMMANDS_DIR`), **appended
+   * to `PATH`**: last, so a plugin adds a command but never stands in for one
+   * the machine has. Linking refuses a name already on `PATH`, so nothing
+   * there goes unreached.
+   */
+  commandsDir?: string | null
   /**
    * Holi's own Claude Code config directory, as `$CLAUDE_CONFIG_DIR`.
    *
@@ -94,11 +103,21 @@ export function buildAgentEnv(
   // back on the machine's `~/.claude`.
   delete env.CLAUDE_CONFIG_DIR
   if (opts.configDir) env.CLAUDE_CONFIG_DIR = opts.configDir
-  // Prepended, never appended: an earlier `holi` on the
-  // inherited PATH would otherwise win under a name the gate trusts.
-  if (opts.binDir) {
-    env.PATH = env.PATH ? `${opts.binDir}:${env.PATH}` : opts.binDir
-  }
+  // `holi` is prepended, never appended: an earlier `holi` on the inherited
+  // PATH would otherwise win under a name the gate trusts. What follows the
+  // inherited PATH is what a Dock-launched Holi lacks and every hook needs:
+  // the usual tool directories, then Holi's own `node` as the last resort, so
+  // a `node` the machine has always wins (`main/bridge/node-fallback.ts`).
+  // The plugin commands come last of all, so a plugin adds a command but
+  // never stands in for one the machine or Holi has.
+  env.PATH = [
+    opts.binDir,
+    toolPath(env),
+    opts.binDir ? nodeFallbackDir(opts.binDir) : undefined,
+    opts.commandsDir,
+  ]
+    .filter((dir): dir is string => !!dir)
+    .join(':')
   return env
 }
 
@@ -201,9 +220,22 @@ export function parseBackgrounded(stdout: string): string | null {
   return match?.[1] ?? null
 }
 
-/** The environment every `claude` Holi runs for a vault gets. */
+/**
+ * A prompt as the last arguments: after `--`, so one that starts with a dash
+ * (`- tidy the list`) is the prompt and not an unknown option.
+ */
+export function promptArgs(prompt: string | undefined): string[] {
+  return prompt ? ['--', prompt] : []
+}
+
+/** The environment every `claude` Holi runs for a vault gets. It is also the
+ *  vault's supervisor's, which its background sessions inherit. */
 export function cliEnv(base: NodeJS.ProcessEnv, target: VaultCliTarget): Record<string, string> {
-  return buildAgentEnv(base, { configDir: target.configDir, binDir: target.binDir })
+  return buildAgentEnv(base, {
+    configDir: target.configDir,
+    binDir: target.binDir,
+    commandsDir: join(target.root, PLUGIN_COMMANDS_DIR),
+  })
 }
 
 /** The binary when it is not on the machine. */
@@ -322,7 +354,7 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
             ? ['--name', 'Scheduled run']
             : []
           : ['--name', label]),
-        ...(prompt ? [prompt] : []),
+        ...promptArgs(prompt),
       ])
     },
     forkBg(target, sessionId, name) {

@@ -35,6 +35,10 @@ const onHeldBack = pushChannel<unknown>('vault:heldback')
  * file may have). The disk does not change on a commit, so no snapshot says so. */
 const onCommitted = pushChannel<unknown>('vault:committed')
 
+/** What the skills update a vault runs on open changed (`{remote, summary,
+ * changed, conflicts}`), pushed once it is through. */
+const onSkillsUpdated = pushChannel<unknown>('vault:skills')
+
 /**
  * The one thing main ASKS the renderer, rather than telling it.
  *
@@ -47,10 +51,20 @@ const onCommitted = pushChannel<unknown>('vault:committed')
  */
 const onFlushRequest = pushChannel<void>('vault:flush')
 
-/** A reminder fired and its notification was clicked: open this task, switching
- * vaults first if it lives in another one. Carries `remote` so the renderer's
- * switch keeps `activeRemoteAtom` truthful (a main-side switch could not). */
-const onReminderOpen = pushChannel<{ remote: string; path: string }>('reminders:open')
+/** Main asks for a vault path in a tab: a clicked reminder's task,
+ * `holi docs open`, or a Holi link, which may name a heading to scroll to.
+ * Carries `remote` so the renderer switches vaults first when the path lives
+ * in another one, keeping `activeRemoteAtom` truthful (a main-side switch could
+ * not). Main holds them until `openReady`. `focus: false` (`holi docs
+ * screenshot`) opens it without moving the caret into it. */
+const onOpen = pushChannel<{ remote: string; path: string; heading?: string; focus?: boolean }>(
+  'vault:open',
+)
+
+/** Main's other question, for `holi docs screenshot`: where on the page a
+ * path's tab is, once it has finished drawing. Answered with `located`, by
+ * the request's id; main gives up after a few seconds. */
+const onLocate = pushChannel<{ id: string; path: string }>('vault:locate')
 
 /** Each plugin's events (`plugin:<id>`), one fan-out per plugin, made the
  *  first time that plugin is subscribed. */
@@ -100,11 +114,13 @@ contextBridge.exposeInMainWorld('holi', {
     onSyncState,
     onHeldBack,
     onCommitted,
+    onSkillsUpdated,
     onFlushRequest,
     flushDone: () => ipcRenderer.send('vault:flush-done'),
-  },
-  reminders: {
-    onOpen: onReminderOpen,
+    onOpen,
+    openReady: () => ipcRenderer.send('vault:open-ready'),
+    onLocate,
+    located: (answer: unknown) => ipcRenderer.send('vault:located', answer),
   },
   /** Plugin events: main pushes `{remote, name, payload}` on `plugin:<id>`,
    *  and the renderer sends the same shape back, in order and unanswered. */

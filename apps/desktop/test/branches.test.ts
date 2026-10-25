@@ -197,7 +197,7 @@ describe('sync follows the checked-out branch', () => {
     await plainGit(teammate, ['checkout', 'topic'])
     await commitFile(teammate, 'more.md', 'more\n')
     await plainGit(teammate, ['push', 'origin', 'topic'])
-    expect(await repo.pull()).toEqual({ kind: 'merged', commits: 1 })
+    expect(await repo.pull()).toMatchObject({ kind: 'merged', commits: 1 })
     expect(await readFile(join(dir, 'more.md'), 'utf8')).toBe('more\n')
 
     await repo.switchBranch('solo', { create: true })

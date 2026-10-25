@@ -1,23 +1,30 @@
 /**
- * PDF's capabilities. The agent reads a marked-up PDF's comments and finds
- * Typst at the CLI door; the plugin's own renderer lists templates, renders a
- * note and keeps the viewer's signatures at the UI door.
+ * PDF's capabilities. The agent reads a marked-up PDF's comments, renders a
+ * note and finds Typst at the CLI door; the plugin's own renderer lists
+ * templates, renders a note and keeps the viewer's signatures at the UI door.
+ * Both doors render through one entry, so the agent's PDFs and Convert to
+ * PDF's come out the same, diagrams included.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { dirname, join, relative, sep } from 'node:path'
-import { vaultRelPath } from '@holi/shared'
+import { lstat, readFile, realpath, stat } from 'node:fs/promises'
+import { isAbsolute, join, relative, sep } from 'node:path'
+import { isMachineStatePath, isSecretPath, localDate, vaultRelPath } from '@holi/shared'
+import { resolveRelative } from '@holi/shared/path-safety-node'
 import {
   cap,
   CapabilityError,
   noParams,
+  optionalStringParam,
   paramsObject,
   pathParams,
   stringParam,
   type CapabilityTable,
 } from '../../../main/plugin-api'
 import { commentThreadsJson, formatCommentThreads } from '../shared/pdf-comments'
+import { missingRequired, parseFrontmatter, prefillValues } from '../shared/pdf-fields'
 import { pdfCommentsInVault } from './comments'
+import type { DrawDiagrams } from './mermaid'
 import { renderPdf } from './render'
 import type { SignatureStore } from './signatures'
 import { listTemplates } from './templates'
@@ -36,27 +43,35 @@ export interface PdfCapabilityDeps {
   /** The Typst binary, downloaded on first use (`sharedTypst`); null when it
    *  cannot be had. */
   typst(): Promise<string | null>
+  /** Draws a note's mermaid diagrams for its PDF (`mermaid-window.ts`). */
+  diagrams: DrawDiagrams
 }
 
-/** The render params. `outPath` is an absolute destination the native save
- *  dialog chose; absent, the PDF goes beside the note. `meta` maps the
- *  template's declared fields to the values typed for them. */
+/** A size the way a person reads it. */
+function sizeText(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/** The render params. `out` is where the PDF goes: absolute, or relative to
+ *  the vault; absent, it goes beside the note. Only an absolute `out` may
+ *  leave the vault. The template defaults to
+ *  `plain`. Field values come as `meta` from the dialog and as the remaining
+ *  params from the CLI (`--recipient Acme`). */
 function renderParams(raw: unknown): {
   path: string
   template: string
-  outPath?: string
+  out?: string
   meta: Record<string, string>
 } {
-  const p = paramsObject(raw)
-  const outPath = p.outPath
-  if (outPath !== undefined && typeof outPath !== 'string') {
-    throw new CapabilityError('BAD_REQUEST', 'outPath must be a string')
-  }
+  const { path, template, out, meta, ...fields } = paramsObject(raw)
+  const p = { path, template, out }
+  const outPath = optionalStringParam(p, 'out')
   return {
     path: stringParam(p, 'path'),
-    template: stringParam(p, 'template'),
-    ...(outPath === undefined ? {} : { outPath }),
-    meta: metaOf(p.meta),
+    template: optionalStringParam(p, 'template') ?? 'plain',
+    ...(outPath === undefined ? {} : { out: outPath }),
+    meta: { ...metaOf(meta), ...metaOf(fields) },
   }
 }
 
@@ -86,6 +101,35 @@ function vaultPathOf(root: string, abs: string): string | null {
   } catch {
     return null
   }
+}
+
+/** `rel` inside the vault at `root`, symlinks resolved, or BAD_REQUEST. */
+async function inVault(root: string, rel: string): Promise<string> {
+  try {
+    return await resolveRelative(root, rel)
+  } catch (err) {
+    throw new CapabilityError('BAD_REQUEST', `${rel}: ${(err as Error).message}`)
+  }
+}
+
+/** Refuse a secret or machine-state vault path: a PDF must neither carry a
+ *  secret out into a file that gets committed, nor land among this machine's
+ *  state. Checked on the path as given and as resolved, so a symlink cannot
+ *  dress one up as the other. */
+function refusePrivate(rels: (string | null)[]): void {
+  for (const rel of rels) {
+    if (rel !== null && (isSecretPath(rel) || isMachineStatePath(rel))) {
+      throw new CapabilityError('BAD_REQUEST', `${rel} is a secret or machine-state path`)
+    }
+  }
+}
+
+/** Whether `abs` itself is a symlink (absent is not). */
+async function isSymlink(abs: string): Promise<boolean> {
+  return lstat(abs).then(
+    (s) => s.isSymbolicLink(),
+    () => false,
+  )
 }
 
 export function pdfCapabilities(deps: PdfCapabilityDeps) {
@@ -141,37 +185,90 @@ export function pdfCapabilities(deps: PdfCapabilityDeps) {
         })),
     }),
 
-    // Render `path` through `template` to a PDF and return where it went.
-    // `vaultPath` is set when the PDF is inside the vault, so the caller can
-    // open it in a tab; the watcher picks the new file up.
+    // Render `path` through `template` to a PDF and say where it went, how
+    // big it is, and what did not come out as written. `vaultPath` is set when
+    // the PDF is inside the vault, so the caller can open it in a tab; the
+    // watcher picks the new file up. Fields fill as the dialog fills them: a
+    // value given, else the note's frontmatter, else the field's default.
     'pdf.render': cap({
-      doors: ['ui'],
+      doors: ['ui', 'cli'],
+      cli: {
+        args: ['path', 'template?'],
+        summary:
+          'render a note to a PDF through a template (default plain): [--out <path>], [--<field> <value>]',
+      },
       params: renderParams,
-      run: async (ctx, { path, template, outPath, meta }) => {
-        let noteAbs: string
-        try {
-          noteAbs = join(ctx.root, vaultRelPath(path))
-        } catch (err) {
-          throw new CapabilityError('BAD_REQUEST', (err as Error).message)
+      run: async (ctx, { path, template, out, meta }) => {
+        // Canonicalised, so a symlink inside the vault cannot lead the read
+        // out of it.
+        const noteAbs = await inVault(ctx.root, path)
+        const realRoot = await realpath(ctx.root)
+        refusePrivate([vaultRelPath(path), vaultPathOf(realRoot, noteAbs)])
+        const templates = await listTemplates(ctx.root)
+        const tpl = templates.find((t) => t.slug === template)
+        if (tpl === undefined) {
+          const known = templates.map((t) => t.slug).join(', ')
+          throw new CapabilityError('NOT_FOUND', `template ${template} (the vault has: ${known})`)
         }
-        const tpl = (await listTemplates(ctx.root)).find((t) => t.slug === template)
-        if (tpl === undefined) throw new CapabilityError('NOT_FOUND', `template ${template}`)
+        const unknown = Object.keys(meta).filter((k) => !tpl.fields.some((f) => f.key === k))
+        if (unknown.length > 0) {
+          const known = tpl.fields.map((f) => f.key).join(', ') || 'none'
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            `not a field of ${template}: ${unknown.join(', ')} (its fields: ${known})`,
+          )
+        }
+        if (out !== undefined && !/\.pdf$/i.test(out)) {
+          throw new CapabilityError('BAD_REQUEST', 'out must end in .pdf')
+        }
+        // Beside the note, or a vault path, resolved like the note so a
+        // symlink cannot carry the write out of the vault. An absolute `out`
+        // is the one way out, because it says so. A symlink already at the
+        // destination is refused either way: the write would land wherever
+        // it points.
+        const outside = out !== undefined && isAbsolute(out)
+        const pdfRel = out ?? path.replace(/\.(md|markdown)$/i, '') + '.pdf'
+        const pdfPath = outside ? pdfRel : await inVault(ctx.root, pdfRel)
+        refusePrivate([
+          outside ? vaultPathOf(ctx.root, pdfPath) : vaultRelPath(pdfRel),
+          vaultPathOf(realRoot, pdfPath),
+        ])
+        if (await isSymlink(outside ? pdfRel : join(ctx.root, vaultRelPath(pdfRel)))) {
+          throw new CapabilityError('BAD_REQUEST', `${pdfRel} is a symlink`)
+        }
+        const note = await readFile(noteAbs, 'utf8').catch(() => null)
+        if (note === null) throw new CapabilityError('NOT_FOUND', path)
+        const values = {
+          ...prefillValues(tpl.fields, parseFrontmatter(note), localDate(new Date())),
+          ...meta,
+        }
+        const missing = missingRequired(tpl.fields, values)
+        if (missing.length > 0) {
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            `${template} needs ${missing.map((f) => f.key).join(', ')}`,
+          )
+        }
         const typstBin = await typst()
-        const base = path
-          .split('/')
-          .at(-1)!
-          .replace(/\.(md|markdown)$/i, '')
-        const pdfPath = outPath ?? join(dirname(noteAbs), `${base}.pdf`)
-        await renderPdf({
+        const { warnings } = await renderPdf({
           typstBin,
+          vaultRoot: ctx.root,
           templateDir: tpl.dir,
+          ...(tpl.language === undefined ? {} : { language: tpl.language }),
           notePath: noteAbs,
           outPath: pdfPath,
           fields: tpl.fields,
-          meta,
+          meta: values,
+          diagrams: deps.diagrams,
         })
-        return { pdfPath, vaultPath: vaultPathOf(ctx.root, pdfPath) }
+        const { size } = await stat(pdfPath)
+        // The vault's path as given or as resolved: an absolute `out` may name
+        // either.
+        const vaultPath = vaultPathOf(ctx.root, pdfPath) ?? vaultPathOf(realRoot, pdfPath)
+        return { pdfPath, vaultPath, bytes: size, warnings }
       },
+      text: ({ pdfPath, vaultPath, bytes, warnings }) =>
+        [`${vaultPath ?? pdfPath} (${sizeText(bytes)})`, ...warnings].join('\n'),
     }),
 
     // The signatures made in the viewer, as the library's serialized list.

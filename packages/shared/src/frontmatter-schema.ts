@@ -4,7 +4,8 @@
  * Shared rather than in the widget because the renderer, main and the tests must
  * agree about it. See docs/features/frontmatter.md.
  *
- * **A schema is per file kind, not global**: tasks and notes carry different keys.
+ * **A schema is per file kind, not global**: a note has its own, and a file a
+ * plugin claims (a task) has the claim's (`frontmatterSchema`).
  *
  * **It never decides what a file may contain.** A key the schema does not name
  * is never dropped: it renders as text and is written back verbatim, as
@@ -36,10 +37,9 @@ export interface FieldSpec {
   readonly key: string
   readonly kind: FieldKind
   /**
-   * Known, editable elsewhere, and not shown as a row.
-   *
-   * `order` is the only one: a sort rank the board writes by dragging, which
-   * means nothing to a human and must not be hand-edited.
+   * Known, editable elsewhere, and not shown as a row: a task's `order`, a
+   * sort rank the board writes by dragging, which means nothing to a human
+   * and must not be hand-edited.
    */
   readonly hidden?: boolean
   /** Never empty: no way to clear it. A task's `status`, which reads as `todo`
@@ -76,17 +76,21 @@ const NOTE_FIELDS: readonly FieldSpec[] = [{ key: 'tags', kind: { kind: 'list' }
 
 /**
  * The schema for a file, or `null` when its frontmatter is not ours to draw as
- * fields.
+ * fields: `claimed` when a plugin's claim on the file gives its own fields (a
+ * task's), otherwise a note's.
  *
  * Null is not "no keys": it means **show the YAML**. Agent-surface files have
  * their own contract (a skill's `name` and `description` are what the agent
  * matches on), and hidden paths are Holi's config and vault apps, not prose.
  */
-export function frontmatterSchema(path: string): readonly FieldSpec[] | null {
+export function frontmatterSchema(
+  path: string,
+  claimed?: readonly FieldSpec[],
+): readonly FieldSpec[] | null {
   if (!path.endsWith('.md')) return null
   if (isAgentSurfacePath(path)) return null
   if (isHiddenPath(path)) return null
-  return isTaskFilePath(path) ? TASK_FIELDS : NOTE_FIELDS
+  return claimed ?? (isTaskFilePath(path) ? TASK_FIELDS : NOTE_FIELDS)
 }
 
 /**
@@ -127,19 +131,11 @@ export function fieldList(value: unknown): string[] {
   return typeof value === 'string' && value.trim() !== '' ? [value] : []
 }
 
-/** A recurrence rule, or undefined when the value is not a map with a
- *  `frequency`. A missing `interval` is 1. */
-export function fieldRecurrence(value: unknown): Recurrence | undefined {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
-  const raw = value as Partial<Recurrence>
-  if (typeof raw.frequency !== 'string') return undefined
-  return { ...raw, frequency: raw.frequency, interval: raw.interval ?? 1 }
-}
-
 /**
  * A key the frontmatter block may add: one plain YAML word (no colon, no leading `#`,
  * `-`, `?` or quote, no newline), not already present. Schema keys are refused
- * too, including hidden ones (`order`), which would otherwise be a back door.
+ * too, including hidden ones (a task's `order`), which would otherwise be a
+ * back door.
  */
 export function addableKey(
   raw: string,

@@ -45,12 +45,14 @@ let server: BridgeServer
 let turns: Array<[string, string, boolean]>
 let pendings: Array<number | null>
 let statuses: Array<[string, string, unknown]>
+let channels: Array<[string, string, unknown]>
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'holi-endpoint-'))
   turns = []
   pendings = []
   statuses = []
+  channels = []
   server = createBridgeServer({ log: () => {} })
   registerAgentRoutes(server, {
     onTurn: (remote, job, active, pending) => {
@@ -58,6 +60,7 @@ beforeEach(async () => {
       if (!active) pendings.push(pending)
     },
     onStatus: (remote, job, status) => statuses.push([remote, job, status]),
+    onChannel: (remote, job, channel) => channels.push([remote, job, channel]),
     log: () => {},
   })
   await server.start()
@@ -168,6 +171,34 @@ describe('turn-signal.mjs', () => {
     // An input that says neither: unsaid, not done.
     await stop({ stop_hook_active: false })
     expect(pendings).toEqual([0, 2, null])
+  })
+
+  it('hands Holi the session inbox at its start and at each turn, never at a Stop', async () => {
+    await writeFor()
+    const env = {
+      ...sessionEnv('abcd1234'),
+      CLAUDE_CODE_MESSAGING_SOCKET: '/tmp/cc-socks/42.sock',
+      CLAUDE_CODE_MESSAGING_TOKEN: '0123abcd',
+    }
+    const inbox = { socket: '/tmp/cc-socks/42.sock', token: '0123abcd' }
+    for (const edge of ['session', 'start', 'end']) {
+      expect(await run(process.execPath, [HOOK, edge], env)).toMatchObject({ code: 0, stdout: '' })
+    }
+    expect(channels).toEqual([
+      ['syv/vault', 'abcd1234', inbox],
+      ['syv/vault', 'abcd1234', inbox],
+    ])
+    // A session start is not a turn.
+    expect(turns).toEqual([
+      ['syv/vault', 'abcd1234', true],
+      ['syv/vault', 'abcd1234', false],
+    ])
+    // A session with no inbox (`--bare`) still brackets its turns.
+    channels = []
+    await run(process.execPath, [HOOK, 'session'], sessionEnv('abcd1234'))
+    await run(process.execPath, [HOOK, 'start'], sessionEnv('abcd1234'))
+    expect(channels).toEqual([])
+    expect(turns).toHaveLength(3)
   })
 
   it('does nothing, silently, when Holi is not there or this is not a background session', async () => {

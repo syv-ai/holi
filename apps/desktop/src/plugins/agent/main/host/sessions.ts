@@ -22,9 +22,10 @@
  *
  * NOTE: no `electron` import, so this loads under vitest.
  */
-import type { PluginCtx } from '../../../../main/plugin-api'
+import { CapabilityError, type PluginCtx } from '../../../../main/plugin-api'
 import type { VaultCliTarget } from '../claude/cli'
 import type { ClaudeRow, SessionSummary } from '../claude/listing'
+import type { SessionChannel } from '../claude/messaging'
 import type { BackgroundProvider, VaultRef } from '../provider'
 import type { AgentTerminals } from './terminals'
 import { ContextSnapshot, type FocusInput } from './context-snapshot'
@@ -42,6 +43,7 @@ export type ActionResult = { ok: true } | { ok: false; message: string }
 export type OpenResult = { ok: true; terminalId: string } | { ok: false; message: string }
 export type StartResult =
   { ok: true; sessionId: string; terminalId: string } | { ok: false; message: string }
+export type LaunchResult = { ok: true; sessionId: string } | { ok: false; message: string }
 
 export interface Geometry {
   cols?: number
@@ -68,6 +70,8 @@ export interface AgentSessionsDeps {
   /** Holi's generated commands, first on every session's `PATH`. */
   binDir(): string | null
   turnLogFor?: (vaultRoot: string) => TurnLog
+  /** See `TurnCoordinatorDeps.snapshot`. */
+  snapshot?: (vaultRoot: string) => Promise<string | null>
   turnSafetyMs?: number
   idleRecheckMs?: number
   /** Forwarded to the turn coordinator. */
@@ -113,13 +117,16 @@ export interface AgentSessions {
     allow?: readonly string[]
     /** A Holi's soul and memory, when one carries the run out. */
     appendSystemPrompt?: string
-  }): Promise<{ ok: true; sessionId: string } | { ok: false; message: string }>
+  }): Promise<LaunchResult>
   /** Whether Holi has a terminal open on the session. */
   watched(id: string): boolean
   /** Hear each session's turn end, by job id, with how much its Stop said
    *  was still pending (null when no Stop said: a confirmed idle, the safety
    *  cap, an older hook script). Returns the undo. */
   onTurnEnd(listener: (id: string, pending: number | null) => void): () => void
+  /** Hear the live sessions each time the list told to the renderer
+   *  changes. Returns the undo. */
+  onSessions(listener: (sessions: SessionSummary[]) => void): () => void
   /** Put text in a session's input, unsent: a live one by id, or a new one
    *  named from the text. Opens a terminal on it when Holi has none. */
   send(args: Geometry & { text: string; target: string | 'new' }): Promise<OpenResult>
@@ -131,6 +138,12 @@ export interface AgentSessions {
   /** A session's status line fired: Claude Code's status JSON, by vault and
    *  job id. */
   noteStatus(remote: string, jobId: string, status: unknown): void
+  /** A session's hook said where it takes messages, by vault and job id. */
+  noteChannel(remote: string, jobId: string, channel: SessionChannel): void
+  /** Add `text` to a running session's conversation: a turn when it is idle,
+   *  read after the tool call in flight when it is working. Never typed into
+   *  a terminal. Throws a `CapabilityError` when it cannot be delivered. */
+  message(id: string, text: string): Promise<void>
   /** The focus file is the vault's, so this names no session. */
   setFocus(focus: FocusInput): void
   /**
@@ -198,8 +211,19 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const contextPercent = new Map<string, number>()
   /** Each live session's model, in Claude Code's words, from its status line. */
   const modelName = new Map<string, string>()
+  /**
+   * Where each session takes messages, by job id, as its hooks reported it.
+   * In memory only: the token is the session's, and a file would outlive it.
+   * Dropped when the session leaves the live listing, when a write to it
+   * fails, and when Holi lets go of the vault. A session is told apart
+   * from one not yet listed by `listedLive`: a `SessionStart` report can
+   * arrive before the listing shows the session at all.
+   */
+  const channels = new Map<string, SessionChannel>()
+  let listedLive = new Set<string>()
 
   const turnEnds = new Set<(id: string, pending: number | null) => void>()
+  const sessionListeners = new Set<(sessions: SessionSummary[]) => void>()
   /** What the Stop that is ending a turn said was pending, until the end is
    *  told. */
   const stopPending = new Map<string, number>()
@@ -207,6 +231,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const coordinator: TurnCoordinator = createTurnCoordinator({
     vault: () => current?.vault ?? null,
     ...(deps.turnLogFor === undefined ? {} : { turnLogFor: deps.turnLogFor }),
+    ...(deps.snapshot === undefined ? {} : { snapshot: deps.snapshot }),
     ...(deps.turnSafetyMs === undefined ? {} : { turnSafetyMs: deps.turnSafetyMs }),
     ...(deps.idleConfirmMs === undefined ? {} : { idleConfirmMs: deps.idleConfirmMs }),
     onChange: () => push(),
@@ -247,6 +272,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     lastPushed = encoded
     deps.emit(remote, 'sessions', next)
     if (remote === current?.remote) deps.publish?.('sessions', next)
+    for (const listener of sessionListeners) listener(next)
   }
 
   /** Tell the renderer the stopped sessions, when they changed. */
@@ -340,6 +366,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     // Nor use any more context; resumed, it says so again at its first event.
     for (const id of contextPercent.keys()) if (!liveIds.has(id)) contextPercent.delete(id)
     for (const id of modelName.keys()) if (!liveIds.has(id)) modelName.delete(id)
+    // Nor take messages: a resumed process binds a new inbox and says so.
+    for (const id of channels.keys())
+      if (listedLive.has(id) && !liveIds.has(id)) channels.delete(id)
+    listedLive = liveIds
 
     let wantsRecheck = false
     for (const row of liveRows) {
@@ -463,6 +493,13 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt }),
       })
       if (!res.ok) return res
+      if (current !== c) {
+        // The leave read the sessions to stop before this one was listed, so
+        // it would go on running in the vault left while its caller is told
+        // it failed: stop it here.
+        await bg.cli.stop(targetOf(c), res.id)
+        return { ok: false, message: 'The vault closed as the session started.' }
+      }
       await refresh()
       return { ok: true, sessionId: res.id }
     },
@@ -472,6 +509,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     onTurnEnd(listener) {
       turnEnds.add(listener)
       return () => turnEnds.delete(listener)
+    },
+    onSessions(listener) {
+      sessionListeners.add(listener)
+      return () => void sessionListeners.delete(listener)
     },
 
     async send({ text, target, cols, rows: r }) {
@@ -555,6 +596,36 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       push()
     },
 
+    noteChannel(remote, jobId, channel) {
+      if (current?.remote !== remote) return
+      channels.set(jobId, channel)
+    },
+
+    async message(id, text) {
+      const c = await ensureCurrent()
+      if (c === null) throw new CapabilityError('UNAVAILABLE', noVault.message)
+      if (!live().some((row) => row.id === id)) {
+        throw new CapabilityError('NOT_FOUND', `no running session ${id}`)
+      }
+      const channel = channels.get(id)
+      if (channel === undefined) {
+        throw new CapabilityError(
+          'UNAVAILABLE',
+          `session ${id} has not said where it takes messages`,
+          "it says so as it starts and at each turn through the vault's turn-signal hook; " +
+            'run `holi skills update` if the vault predates it',
+        )
+      }
+      try {
+        await bg.message(channel, text)
+      } catch (error) {
+        // Not tried again until the session reports it anew, at its next turn
+        // or its next process: a gone socket stays gone.
+        if (channels.get(id) === channel) channels.delete(id)
+        throw error
+      }
+    },
+
     setFocus(focus) {
       const vault = attached
       if (vault === null) return
@@ -612,6 +683,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     unprompted.clear()
     contextPercent.clear()
     modelName.clear()
+    channels.clear()
+    listedLive = new Set()
     if (idleRecheck !== null) {
       clearTimeout(idleRecheck)
       idleRecheck = null

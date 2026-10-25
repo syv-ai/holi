@@ -29,7 +29,7 @@
  */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { isSurfaceName } from '@holi/shared'
+import { isSurfaceName, shownPathOrNull } from '@holi/shared'
 import { APP_METHODS, type AppMethod, type AppPush, type AppResponse } from '../shared/bridge'
 import { appHost, appName } from '../shared/bundle'
 import { type AppAffordance } from '../shared/manifest'
@@ -164,8 +164,12 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
         const snapshot = store.get(snapshotAtom)
         const isFile = [...snapshot.docs, ...snapshot.files].some((f) => f.path === target)
         if (isSurfaceName(target) && !isFile) throw new Error(`no such view: ${target}`)
+        // Never a secret file or this machine's state, whatever exists: what an
+        // app opens, the person sees in a tab.
+        const shown = shownPathOrNull(target)
+        if (shown === null) throw new Error(`may not open ${target}`)
         // An app's bundle is a folder: it opens as the app, not as a file.
-        openPath(target, 'preview')
+        openPath(shown, 'preview')
         return { ok: true }
       }
       return await appsCap.call(remote, { bundle: path, method, params })

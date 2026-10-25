@@ -23,15 +23,15 @@ The sidebar explorer shows the vault as the folders and files on disk. It reads 
 **Toolbar.** The tree's top-right holds the [nav menu](nav-menu.md)'s morphing menu, anchored at
 that corner and opening downward: icons on the sidebar's own background, so rows scrolled under
 them do not show through, while the tree is hovered or the menu has focus, kept
-while it is open. **+** unfolds into New Task, New File, New Folder and what enabled claims make (`create`: New App); Collapse All, Show
-task files and Show hidden files are shortcuts, the two filters pressed while on. Every item has a
+while it is open. **+** unfolds into New File, New Folder and what enabled claims make (`create`: New Task, New Link, New App); Collapse All, Show hidden files
+and each hideable claim's filter (Show task files) are shortcuts, the filters pressed while on. Every item has a
 shortcut, so there is no More. In a sidebar too narrow for the open menu, it grows rightward over
 the editor rather than past the window's edge.
 
 - **Where a new item goes** is next to the focused row (`newItemPlace`): inside a focused folder as
   its first row, right after a focused file or app in its folder, and at the root when nothing is
   focused. The name field appears there as a row at that level.
-- **A task** is named by its title; main names the file and it opens pinned, as ⌘⇧T's does, whether
+- **A task** is named by its title; the tasks plugin names the file, and it opens pinned, as ⌘⇧T's does, whether
   or not the tree shows task files. **An app** is `holi apps init`'s scaffold (`index.html` and an
   `app.yaml`, never overwriting), and its `index.html` opens, which expands the bundle. A typed
   `.app` is not doubled.
@@ -51,7 +51,7 @@ the editor rather than past the window's edge.
   folder with no documents left goes without a preview.
 - The name field opens in place: a rename in the row, a new file or folder from the row menu as the first row of the folder it lands in. Enter commits; Escape or leaving the field cancels. A note is renamed without its `.md`, which is added back, and New File appends `.md` when no extension is typed.
 
-**Drag and drop.** One mechanism. A row's drag is a native OS drag of the target files, so they can be dropped into other apps. Everything dropped on the tree arrives as files, and the path decides: a source inside this vault is a move through the move path, anything else is copied in. The destination is the folder under the pointer, a file's folder, or the root for empty space. The target folder is tinted while a drag is over it, and a closed folder opens after a short hover. A name clash is refused per file with an exclusive copy, and the skipped names stay listed until dismissed. A cloud placeholder that is not downloaded (`ETIMEDOUT`) is refused by name, and a folder from Finder is refused with a sentence. Dropping a row into Finder does not work, which is why Copy to Folder and Move to Folder exist; both auto-rename at the destination, and a move warns about dangling links and removes only the files whose copy landed.
+**Drag and drop.** One mechanism. A row's drag is a native OS drag of the target files, so they can be dropped into other apps. Everything dropped on the tree arrives as files, except a web address dragged from a browser, which a claim that takes one saves (New Link: [links](links.md)); for files the path decides: a source inside this vault is a move through the move path, anything else is copied in. The destination is the folder under the pointer, a file's folder, or the root for empty space. The target folder is tinted while a drag is over it, and a closed folder opens after a short hover. A name clash is refused per file with an exclusive copy, and the skipped names stay listed until dismissed. A cloud placeholder that is not downloaded (`ETIMEDOUT`) is refused by name, and a folder from Finder is refused with a sentence. Dropping a row into Finder does not work, which is why Copy to Folder and Move to Folder exist; both auto-rename at the destination, and a move warns about dangling links and removes only the files whose copy landed.
 
 **Your own order.** The tree sorts folders first, then by name, until you arrange it. A drag onto a
 row's top or bottom edge (the tree's drag line, a rule with a ring at its start, shows where) drops beside that row: into its folder if it came from
@@ -69,9 +69,9 @@ than removed, so an undone rename finds its place again.
 
 **Hidden files.** A per-vault toggle in the header shows or hides entries with any dot-prefixed segment (`.holi/…`, `.claude/…`). Machine-local files are not hidden: `.local.` means the file does not sync, not that it is out of sight, so a personal `Home.local.app` shows like any app. Hidden by default and remembered per vault. It only filters the view; a revealed path shows even while hidden. `AGENTS.md`, `CLAUDE.md` and `MEMORY.md` are never hidden.
 
-**Local and ignored files.** Machine-local files reach the snapshot and show in the tree, dimmed because git ignores them, but never sync. Local markdown is listed as a file, outside the note link graph. The watcher ignores them, so they refresh on the 30 s heal, except the personal theme, the personal settings and a personal app, which reload live. Anything git ignores is dimmed, from `git check-ignore` carried on the snapshot. The dim is on the row's contents, not the row, so a selection behind it stays solid. `.git`, `node_modules`, temp write files and OS junk are never content.
+**Local and ignored files.** Machine-local files reach the snapshot and show in the tree, dimmed because git ignores them, but never sync. Local markdown is listed as a file, outside the note link graph. The watcher ignores them, so they refresh on the 30 s heal, except the personal theme, the personal settings and a personal app, which reload live. Anything git ignores is dimmed, from `git check-ignore` carried on the snapshot. The dim is on the row's contents, not the row, so a selection behind it stays solid. `.git`, `node_modules`, temp write files and OS junk (`.DS_Store`, `Thumbs.db`) are never content, and the seeded `.gitignore` keeps the junk out of a commit.
 
-**Task files.** Hidden by default behind a second per-vault toggle, because the board owns them. The tree lists them from `snapshot.claimed.tasks`, a file that would not parse included; another plugin's claimed files always show. When shown, a task leaf carries its status glyph and a done task is struck through. Today's daily note is marked `today`, with its link count, in brand text at the row's right end.
+**Claimed files.** A claim may hide its files until shown (`hideable`): task files are hidden by default behind Show task files, a per-vault toggle on this machine, because the board owns them. The tree lists claimed files from `snapshot.claimed`, a file that would not parse included; a claim that does not hide its files shows them always. A plugin marks paths (`pathMarks`): a task leaf carries its status glyph and a done task is struck through. Today's daily note is marked `today`, with the tasks plugin's count of open tasks linking to it, in brand text at the row's right end.
 
 **Icons.** A file's type glyph is coloured by extension; git's own files show the Git mark. Any row (note, folder, binary) can instead carry one emoji from the vault's icon map: `.holi/settings/icons.yaml`, committed, under a per-key `.holi/settings/icons.local.yaml`. Set it with Edit Icon; an empty field removes the entry. Keys are normalized vault paths, written back sorted; a key outside the vault is dropped. The value must be exactly one emoji (either variation-selector spelling, or a lone pictograph) and anything else is ignored. The note's tab shows the same icon. The Icons settings section lists every entry and marks those whose path is gone.
 

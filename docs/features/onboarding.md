@@ -23,7 +23,9 @@ them push access to. The same ritual, minus the greeting, is how any later vault
      path. Left empty, the name is `holi-vault` (the field's placeholder, and the path says so),
      so the act never opens on a blank; a typed name that slugifies to nothing blocks instead.
      While a control or its menu has focus, Enter and Escape are that control's, never the
-     act's. Continue goes on to the questions; nothing exists on GitHub yet.
+     act's. Under them, an optional "What is this vault for?" field: its answer becomes the
+     README's paragraph and the repo's description on GitHub, on one line and cut at 300
+     characters. Continue goes on to the questions; nothing exists on GitHub yet.
   3. Plugins: "What this vault runs", a card per plugin in the build, two to a row (`OptionCard`,
      after ReUI's `settings-1`): its mark (Claude, Google, a PDF page, Holi's own glyph for vault
      apps and community plugins), its description, an "Optional" badge on one that is off by
@@ -69,6 +71,13 @@ them push access to. The same ritual, minus the greeting, is how any later vault
 
 - The vault name is the repo name. The slug is what is submitted and what the app shows
   everywhere; there is no separate display name, which would diverge from the switcher.
+- A new vault gets a `README.md` in its first commit, from a plain template with no AI: the vault
+  name as its heading, the answer to "What is this vault for?" as a paragraph (left out when
+  blank), and a `## Folders` section to fill in. It is written beside the seed rather than in the
+  once folder, because the seed takes no per-vault input, and never over a README already there.
+  After that it is the vault's. The agent reads its top at every session start
+  ([agent-memory](agent-memory.md)) and Home shows it ([home](home.md)). Joining a vault
+  writes no README.
 - A team vault is an org-owned repo. There is no team concept beyond the owner picker.
 - Nothing is created until the last question is answered. Backing out of any act before
   "Create vault" leaves nothing on GitHub, and the answers land straight after the seed rather
@@ -125,3 +134,5 @@ them push access to. The same ritual, minus the greeting, is how any later vault
 - `apps/desktop/src/renderer/src/state/onboarding-flow.ts`: the reducer, slugify, act gating.
 - `apps/desktop/src/renderer/src/state/vaults.ts`: `createVaultAtom`, `addVaultAtom`.
 - `apps/desktop/src/main/github/api.ts`: repos, orgs, the `holi-vault` topic.
+- `apps/desktop/src/main/vault/readme.ts`: the new vault's README template, written by
+  `vaults.create` in `router.ts`.

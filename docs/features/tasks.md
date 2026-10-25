@@ -26,13 +26,41 @@ the [planning](planning.md) view shows every task in the vault by them.
   hours and a week five days when estimates are added up (`estimate.ts`). **`start`** is when work
   begins, a stamp like `due`. The body is the
   description, and its first heading is the title, falling back to the filename
-  (`task.fix-login.md` reads "Fix login"). There is no `title:` key.
-- **Claimed in the snapshot.** Tasks claim `task.*.md` (`taskClaim` in shared): main's scanner
-  parses each into `snapshot.claimed.tasks`, as `items` and the `broken` ones that did not parse,
-  and keeps them out of the notes. The `normalize-md` commit transform writes a task's frontmatter
-  in canonical key order through the claim's `normalize`, which the editor also recognises as
-  Holi's own tidy. Tasks is still a core part, so
-  the claim runs in every vault; with a claim absent its files are plain notes.
+  (`task.fix-login.md` reads "Fix login"). There is no `title:` key. A name Holi makes is
+  the title by the shared file-name rule (`fileSlug`, as a saved link's is): lower case,
+  dashes, æ ø å written as ae oe aa, other accents dropped (`Møde med Bo` is
+  `task.moede-med-bo.md`).
+- **Private or shared.** A private task is `task.<name>.local.md`: the `.local.` marker makes it
+  a [local file](../glossary.md#local-file), so git ignores it and it never leaves this machine.
+  For the person whose machine holds it, it is a task like any other: on the board, reminding,
+  recurring and triggering schedules. On no one else's board, since the file never reaches them.
+  A shared task is `task.<name>.md`, committed and synced. **A new task is private by default**,
+  from `tasks.create`, `holi tasks create`, a vault app's `holi.tasks.create` and the using-tasks
+  skill alike, and each takes an explicit shared option (`shared: true`, `--shared`). The planning
+  view asks for shared, since it cannot show a private task yet. Google's
+  Link to task creates private tasks too. Only the file's own name makes a task private: a task
+  file inside a `.local.` folder is no task, but a plain local file. `isPrivateTask`,
+  `isBoardTaskPath`, `sharedTaskPath` and `privateTaskPath` in `packages/shared/src/task-file.ts`
+  are the rule. A new task's name is free only when neither its shared nor its private file
+  exists, so either can later be renamed into the other.
+- **Sharing is a rename**, through the rename every file takes (`notes.rename`), so open tabs
+  follow and a commit lands on either side: dropping `.local.` shares a task, adding it makes the
+  task private, which takes it off every teammate's board on their next sync while git history
+  keeps the shared version. Sharing rewrites inbound links; making private rewrites only the links
+  in this machine's local files (`localLinksOnly`), since a teammate's notes rewritten to point at
+  a file they will never have would be a commit of dangling links for everyone. The planning view
+  does not offer either yet, nor a sharing choice when creating ([not-built](../not-built.md)).
+- **A plugin.** Tasks' main side is the plugin `src/plugins/tasks/`, on by default. In a vault
+  with it off (`tasks: false` under `plugins` in `.holi/settings/plugins.yaml`, or this machine's
+  `.local` twin), the task capabilities and reminders are gone and `holi tasks` answers "no such
+  method". The files stay as they are.
+- **Claimed in the snapshot.** Tasks claim `task.*.md` (`taskClaim`): main's scanner parses each
+  into `snapshot.claimed.tasks`, as `items` and the `broken` ones that did not parse, and keeps
+  them out of the notes. The claim is asked before the local-file rule, so a private task is
+  claimed while an unclaimed local markdown file (`USER.local.md`) stays a plain file, and the
+  watcher watches a local file a claim takes, so a private task reloads live. The `normalize-md`
+  commit transform writes a task's frontmatter in canonical key order through the claim's
+  `normalize`.
 - **Dates are stamps**: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`, local, no timezone. The time is
   optional on `due` and `reminder`, and its absence means "that day", not midnight.
 - **Editing a task is editing its file.** A card's title opens it as a tab, its fields drawn as a
@@ -94,12 +122,16 @@ the [planning](planning.md) view shows every task in the vault by them.
 - **Date picker.** `DateTimePicker` edits `due`, `reminder` and a recurrence's `endDate`. Presets
   resolve to a stamp on choosing: reminders are relative to `due` when set ("1 day before"), to now
   otherwise ("tomorrow 09:00"). The month grid is one tab stop with arrow and PageUp/Down keys.
-- **Reminders.** Closing the window leaves Holi in the tray, and first launch asks once about
-  starting at login. Every 60s, and once at launch as catch-up, main sweeps every registered vault
-  and fires each reminder that is due and newer than its watermark. More than 3 in one sweep
-  become one summary. A timeless reminder fires at 09:00. Clicking a notification opens the task,
-  switching vault if needed. The per-path watermark lives under `reminders` in the vault's
-  machine-local `.holi/settings/app.local.yaml`.
+- **Reminders.** While some registered vault runs tasks, closing the window leaves Holi in the
+  tray, and Settings > Updates > Open at login starts it at login. Every 60s, and once at launch
+  as catch-up, main sweeps every registered vault that runs tasks, open or not, and fires each
+  reminder that is due and newer than its watermark. Every notification names the vault its task
+  is in. More than 3 in one sweep become a summary per vault ("3 reminders in notes"), never one
+  across vaults, and a vault with a single fire keeps its own. A timeless reminder fires at 09:00.
+  Clicking a notification opens the task through the same arrival as a Holi link, switching vault
+  if needed; that is the only way the sweep reaches the open window. Each vault's tasks are read
+  from its own clone at every sweep and kept nowhere, and the per-path watermark lives under
+  `reminders` in that vault's machine-local `.holi/settings/app.local.yaml`.
 - **Assignees** are GitHub logins (`assignees: [ada]`), the identity a vault already has:
   its members are its repo's collaborators. Like `tags`, a task's assignees are always a list,
   empty when the task is no one's, and an empty list is no key at all. A hand-written `@login` or
@@ -120,15 +152,32 @@ the [planning](planning.md) view shows every task in the vault by them.
   this machine is signed in as one of them (`remindsViewer`, case-insensitive), and does not mark
   it delivered, so handing the task to this person later still fires its reminder. A task with
   no assignees reminds every member running Holi.
-- **Between machines** tasks sync like any file ([vaults and sync](vaults-sync.md)).
+- **Between machines** shared tasks sync like any file ([vaults and sync](vaults-sync.md)); a
+  private one never leaves its machine. The archive-done transform dates a task by its last
+  commit, so it never archives a private one.
+- **`holi tasks`**: `list` prints each task's status, title and path, ending a private task's
+  line with `private`; `create "<title>" [folder]` writes a private task and prints its path,
+  `--shared` a shared one; `complete <path>` completes either.
 
 ## Rules
 
 - The marker is in the filename, never frontmatter. A pasted `type: task` must not make tasks.
-- Done is completion wherever the app writes it: `tasks.update` and `tasks.move` apply
-  `completeTask` to any status the vault files under `completed`, and the frontmatter widget writes
-  its result into the buffer, as does the agent's `holi tasks complete <path>`. Only a hand edit
-  of the file can write a bare completed status, and that ends a recurring series.
+- Privacy is in the filename too, the `.local.` marker, and nowhere else: a `private:` key would
+  be a file that syncs while claiming not to.
+- A new task is private unless its creator says shared. A task shared by mistake has been pushed
+  to everyone; one kept private by mistake costs a rename.
+- An app may write a private task where it may write the shared one, through the tasks
+  capabilities only (`appTaskPath`). It may write no other local file.
+- Done is completion wherever the app writes it: `tasks.update` (the planning view's and a vault
+  app's `holi.tasks.update`) and `tasks.move` apply `completeTask` to any status the vault files
+  under `completed`, and the frontmatter widget writes its result into the buffer, as does the
+  agent's `holi tasks complete <path>`. Only a hand edit of the file can write a bare completed
+  status, and that ends a recurring series. A vault app's note write (`docs.write`) to a task
+  file changes its body only: the frontmatter must parse to the same fields as the file's, or it
+  is refused and names `tasks.update`.
+- Task writes (`tasks.create`, `tasks.update`, `tasks.complete`) each check and write a file
+  under that file's lock in main (`withFileLock`), so two at once cannot both
+  read the same text, and two creates with one title take two names.
 - A status is never rewritten for not being listed: showing a task somewhere is display, and only
   a person moving it writes a new status.
 - The reminder sweep, `archive-done` and the editor's status row still know only Holi's default
@@ -169,17 +218,23 @@ the [planning](planning.md) view shows every task in the vault by them.
 ## Code
 
 - `packages/shared/src/task-file.ts`, `statuses.ts`, `estimate.ts`, `completion.ts`, `dates.ts`,
-  `calendar.ts`, `labels.ts`, `recurrence.ts`, `reminder.ts`, `rank.ts`: the format and all the
-  pure rules.
-- `apps/desktop/src/main/router.ts`: `tasks.*` and `patched`, which applies completion.
-- `apps/desktop/src/main/vault/task-capabilities.ts`: `tasks.list`, `tasks.complete`, and
-  `tasks.create` (the UI door), which the board and the Google views create tasks through.
-- `apps/desktop/src/main/reminders/`, `main/tray.ts`: the sweep, tick, watermark, notifications.
+  `calendar.ts`, `labels.ts`, `recurrence.ts`, `reminder.ts`, `rank.ts`, `logins.ts`: the format
+  and all the pure rules.
+- `apps/desktop/src/plugins/tasks/`, the plugin: `info.ts`, what it is, with the `archive-done`
+  transform's toggle; `main/capabilities.ts`, `tasks.list`, `tasks.complete`, `tasks.create` (the
+  UI, app and CLI doors, which the planning view, the Google views, vault apps and the agent create
+  tasks through), `tasks.update`, `tasks.move` and `tasks.delete`, which apply completion;
+  `main/reminders/`, the sweep, tick, watermark and notifications, started as the plugin's work
+  across vaults (`start.ts`); `main/archive-done.ts`, `main/task-done.ts`, `main/seed.ts` and
+  `main/vault/shipped/`, the commit transform, completing one file, and the seeded `using-tasks`
+  skill with its deny rules; `main/triggers.ts`, the task trigger source
+  ([scheduled-agents](scheduled-agents.md)); `renderer/index.ts`, which adds nothing to the window
+  yet.
+- `apps/desktop/src/main/tray.ts`: the tray, core's.
 - `apps/desktop/src/renderer/src/state/tasks.ts`: task set, filter, drops, writes.
 - `apps/desktop/src/renderer/src/state/clock.ts`: `nowAtom` and `todayAtom`, the minute the overdue labels and the daily note read.
-- `apps/desktop/src/renderer/src/features/tasks/`: the board (`BoardView`, `BoardCard`,
-  `BoardToolbar`, `ConfirmDelete`), quick add (`QuickAdd`, `QuickAddHost`); `lib/board-order.ts`,
-  `lib/date-presets.ts`, `composites/DateTimePicker.tsx`, `composites/RecurrenceField.tsx`.
+- `apps/desktop/src/renderer/src/components/blocks/planning/`: the board, the task dialogs and
+  fields ([planning](planning.md)); `lib/board-order.ts`, `lib/date-presets.ts`,
+  `composites/DateTimePicker.tsx`, `composites/RecurrenceField.tsx`.
 - `apps/desktop/src/renderer/src/primitives/Kanban.tsx` (ReUI's kanban, on dnd-kit) and
   `TaskCheck.tsx`.
-- `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/skills/using-tasks/SKILL.md`: the seeded agent skill.

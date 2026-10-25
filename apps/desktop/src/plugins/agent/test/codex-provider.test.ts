@@ -11,6 +11,7 @@ import {
 import type { BridgeRoute } from '../../../main/plugin-api'
 
 const TARGET = { root: '/Users/ada/Holi/syv/vault', configDir: '/home/.codex', binDir: '/holi/bin' }
+const SIGNAL = new AbortController().signal
 
 describe('the Codex provider', () => {
   const codex = codexProvider({ resolveBin: () => '/usr/local/bin/codex' })
@@ -81,8 +82,8 @@ describe('the Codex turn report', () => {
     )
     const route = routes.get('/codex/turn-end')!
     const body = JSON.stringify({ 'input-messages': ['Plan'] })
-    await route.handle('syv/vault', new URLSearchParams({ session: 'p0123456789ab' }), body)
-    await route.handle('syv/vault', new URLSearchParams({ session: 'deadbeef' }), body)
+    await route.handle('syv/vault', new URLSearchParams({ session: 'p0123456789ab' }), body, SIGNAL)
+    await route.handle('syv/vault', new URLSearchParams({ session: 'deadbeef' }), body, SIGNAL)
     expect(turns).toEqual(['syv/vault:p0123456789ab:false'])
     expect(named).toEqual([{ name: 'Plan' }])
   })

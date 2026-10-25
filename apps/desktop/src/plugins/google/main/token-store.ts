@@ -54,10 +54,11 @@ interface Envelope {
 }
 
 export class EncryptionUnavailableError extends Error {
-  constructor() {
+  /** `what` names what could not be stored, for the message. */
+  constructor(what = 'the Google tokens') {
     super(
-      'the OS keychain is unavailable, so the Google tokens cannot be stored securely — ' +
-        'Holi will not write them to disk unencrypted',
+      `the OS keychain is unavailable, so ${what} cannot be stored securely: ` +
+        'Holi does not write a secret to disk unencrypted',
     )
     this.name = 'EncryptionUnavailableError'
   }

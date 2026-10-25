@@ -64,6 +64,9 @@ export const appsMain: MainPlugin = {
     )
     ctx.register(['store'], storeCapabilities())
     ctx.register(ENV_NAMESPACES, envCapabilities())
+    // The renderer may have asked for the slash commands before they were
+    // registered: tell it they answer now.
+    ctx.emit(ctx.remote, 'commands-changed', null)
     return () => {}
   },
 }

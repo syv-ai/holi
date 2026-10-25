@@ -15,7 +15,7 @@ import { shrinkImages } from './shrink-images'
 import type { HookSettings, Transform } from './runner'
 
 /** The transforms for a vault whose plugins claim `claims` and add
- *  `plugins` (`MainPlugin.transforms`, core parts' first): `normalize-md`
+ *  `plugins` (`MainPlugin.transforms`, in list order): `normalize-md`
  *  puts claimed files in their claim's canonical form.
  *
  *  Order matters: `relink` runs before the plugins' (`archive-done`) because

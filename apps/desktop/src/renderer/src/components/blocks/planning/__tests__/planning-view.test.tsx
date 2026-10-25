@@ -32,7 +32,15 @@ const update = vi.fn()
 vi.mock("@/lib/trpc", () => ({
   trpc: {
     history: { activity: { query: () => activity() } },
-    tasks: { update: { mutate: (input: unknown) => update(input) } },
+    // The tasks plugin's verbs, as `capClient` sends them.
+    cap: {
+      run: {
+        mutate: ({ remote, name, paramsJson }: { remote: string; name: string; paramsJson?: string }) => {
+          const params = paramsJson === undefined ? {} : JSON.parse(paramsJson)
+          return name === "tasks.update" ? update({ remote, ...params }) : Promise.resolve(null)
+        },
+      },
+    },
     vaults: { snapshot: { query: () => Promise.resolve(snapshotOf(TASKS)) } },
     github: {
       collaborators: { query: () => Promise.resolve({ collaborators: [] }) },

@@ -9,7 +9,14 @@ import { useEffect, useRef, useState } from 'react'
 import { releaseTag } from '@holi/shared'
 import { activeRemoteAtom, cn, type PluginStore } from '@/plugin-api'
 import { Button, Dialog } from '@/primitives'
-import { communityCap, refreshRows, refreshUpdates, setupLogsAtom, type PluginRow } from './state'
+import {
+  communityCap,
+  refreshRows,
+  refreshUpdates,
+  rowsAtom,
+  setupLogsAtom,
+  type PluginRow,
+} from './state'
 
 /** The command as a person would type it. */
 const shown = (argv: readonly string[]) =>
@@ -37,6 +44,11 @@ export function ConsentDialog({
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const log = useAtomValue(setupLogsAtom)[row.id] ?? []
+  // Which of its commands the agent did not get, and what its readiness check
+  // said, once the rows are read again.
+  const current = useAtomValue(rowsAtom)?.rows.find((r) => r.id === row.id)
+  const commandsNote = current?.commandsNote ?? null
+  const failedCheck = current?.check?.ok === false ? current.check.hint : null
   const [step, setStep] = useState<Step>({ kind: 'ask' })
   const logBox = useRef<HTMLPreElement>(null)
   const install = row.install
@@ -56,8 +68,22 @@ export function ConsentDialog({
         await communityCap.consent(remote, { id: row.id, commit: install.commit })
       setStep({ kind: 'setup' })
       const ok = await communityCap.setup(remote, { id: row.id })
-      if (ok) await onReady?.()
-      setStep(ok ? { kind: 'done' } : { kind: 'failed', message: 'Setup did not finish.' })
+      if (!ok) {
+        setStep({ kind: 'failed', message: 'Setup did not finish.' })
+        return
+      }
+      try {
+        await onReady?.()
+      } catch (err) {
+        // Setup did finish: only the step after it, in this vault, did not.
+        const why = err instanceof Error ? err.message : String(err)
+        setStep({
+          kind: 'failed',
+          message: `${row.name} is set up, but could not be turned on in this vault: ${why}`,
+        })
+        return
+      }
+      setStep({ kind: 'done' })
     } catch (err) {
       setStep({ kind: 'failed', message: err instanceof Error ? err.message : String(err) })
     } finally {
@@ -121,6 +147,14 @@ export function ConsentDialog({
                 sensitive.
               </p>
             )}
+            {row.bin.length > 0 && (
+              <p>
+                It gives the vault&rsquo;s agent{' '}
+                {row.bin.length === 1 ? 'the command' : 'the commands'}{' '}
+                <span className="font-mono text-foreground">{row.bin.join(', ')}</span>, which run
+                as programs on this machine like the commands above.
+              </p>
+            )}
             <p>Holi asks again when the vault moves to another version.</p>
           </div>
         ) : (
@@ -133,7 +167,11 @@ export function ConsentDialog({
               )}
             >
               {step.kind === 'setup' && 'Running setup…'}
-              {step.kind === 'done' && `${row.name} is ready.`}
+              {step.kind === 'done' &&
+                (failedCheck === null
+                  ? `${row.name} is ready.`
+                  : `${row.name} is set up, but cannot work yet. ${failedCheck}`)}
+              {step.kind === 'done' && commandsNote !== null && ` ${commandsNote}`}
               {step.kind === 'failed' && step.message}
             </p>
             {log.length > 0 && (
@@ -175,12 +213,12 @@ export interface InstallFlow {
 }
 
 /** Fetch the plugin at `path` in `repo` at `version` (the newest when
- *  absent), then ask. Resolves to an error message, or null when the dialog is
- *  up. */
+ *  absent), then ask, running `onReady` with the fetched row once it is set
+ *  up. Resolves to an error message, or null when the dialog is up. */
 export async function installAndAsk(
   flow: InstallFlow,
   args: { repo: string; path: string; version?: string; id?: string },
-  onReady?: () => Promise<unknown>,
+  onReady?: (row: PluginRow) => Promise<unknown>,
 ): Promise<string | null> {
   try {
     const version =
@@ -195,7 +233,7 @@ export async function installAndAsk(
       ...(args.id === undefined ? {} : { expectId: args.id }),
     })
     await refreshRows(flow.remote, flow.store)
-    askToRun(flow, row, onReady)
+    askToRun(flow, row, onReady === undefined ? undefined : () => onReady(row))
     return null
   } catch (err) {
     return err instanceof Error ? err.message : String(err)

@@ -14,6 +14,7 @@
  * text that is not a mapping at all (a list, a number, a bare scalar) is refused.
  */
 import { isMap as isYamlMap, parse as parseYaml, parseDocument } from 'yaml'
+import { isAppPrivatePath, vaultRelPath } from '@holi/shared'
 import { isRecordId, type CollectionSchema } from './store'
 
 /** The registration marker, at the app's own root. */
@@ -48,6 +49,58 @@ export interface AppManifest {
   /** Set aside: the launchers leave it out and list it under Archived. It
    *  is still a finished app that opens by its path; only `true` counts. */
   archived?: boolean
+  /**
+   * The slash commands it adds to the notes editor, by name (what follows the
+   * `/`): each a script in the bundle, run in a hidden frame of the app's own
+   * origin when picked (docs/features/vault-apps.md).
+   */
+  commands?: Record<string, AppCommandSpec>
+}
+
+/** One slash command an app declares. */
+export interface AppCommandSpec {
+  /** The script, a `.js` file in the bundle, by its path there. */
+  script: string
+  /** Beside the name, in the slash menu. */
+  description?: string
+}
+
+/** What a command's name may be: lower case, digits, `-` and `_`, as typed
+ *  after the `/`. */
+export const COMMAND_NAME = /^[a-z0-9][a-z0-9_-]{0,39}$/
+
+/** A script path inside the bundle, or null: relative, a `.js` file, and not
+ *  one the protocol refuses to serve (the records, the log). */
+function commandScript(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const path = raw.trim().replace(/^\.\//, '')
+  try {
+    vaultRelPath(path)
+  } catch {
+    return null
+  }
+  if (!/\.js$/i.test(path) || isAppPrivatePath(path)) return null
+  return path
+}
+
+/**
+ * `commands:` as a map from each name to `{ script, description }`. An entry
+ * whose name or script is wrong is dropped on its own.
+ */
+function parseCommands(raw: unknown): AppManifest['commands'] | undefined {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const out: Record<string, AppCommandSpec> = {}
+  for (const [name, spec] of Object.entries(raw)) {
+    if (!COMMAND_NAME.test(name) || spec === null || typeof spec !== 'object') continue
+    const { script, description } = spec as Record<string, unknown>
+    const path = commandScript(script)
+    if (path === null) continue
+    out[name] =
+      typeof description === 'string' && description.trim() !== ''
+        ? { script: path, description: description.trim() }
+        : { script: path }
+  }
+  return Object.keys(out).length > 0 ? out : undefined
 }
 
 /** What a secret's name may be: an environment variable's, upper case. */
@@ -155,6 +208,8 @@ export function parseAppManifest(yaml: string): AppManifest | null {
   const env = parseEnv((raw as Record<string, unknown>).env)
   if (env !== undefined) manifest.env = env
   if ((raw as Record<string, unknown>).archived === true) manifest.archived = true
+  const commands = parseCommands((raw as Record<string, unknown>).commands)
+  if (commands !== undefined) manifest.commands = commands
   return manifest
 }
 
@@ -184,6 +239,10 @@ export function appManifestText(description?: string): string {
     '# The secrets holi.env(name) may read, by name, from the vault\u2019s .env:',
     '#   [OPENAI_API_KEY]',
     'env:',
+    '',
+    '# The slash commands it adds to notes, each a script that calls holi.command(fn):',
+    '#   uppercase: { script: commands/uppercase.js, description: Uppercase the selection }',
+    'commands:',
     '',
   ].join('\n')
 }

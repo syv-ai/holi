@@ -17,6 +17,7 @@ import {
   summarise,
   watchConfigDir,
 } from './listing'
+import { postToSession } from './messaging'
 import { registerAgentRoutes } from './routes'
 import { claudeSeed } from './seed'
 
@@ -58,6 +59,7 @@ export function claudeProvider(deps: ClaudeProviderDeps): BackgroundProvider {
         isLive,
         summarise,
         watch: watchConfigDir,
+        message: postToSession,
       },
       turns: { routes: registerAgentRoutes },
       status: { contextPercent: readContextPercent, model: readModelName },

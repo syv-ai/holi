@@ -24,6 +24,13 @@ import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
 import { openTurnLog } from './host/turn-log'
 import { createSessionLog } from './host/session-log'
+import { worktreeEnd } from './host/worktree-end'
+import { inboxCapabilities } from './inbox/capabilities'
+import { createInbox } from './inbox/inbox'
+import { mentionNotice } from './inbox/mentions'
+import { watchNeedsYou } from './inbox/needs-you'
+import { INBOX_FILE, parseInbox } from './inbox/rules'
+import { sweepAgentMemory, SWEEP_EVERY_MS } from './memory/sweep'
 import type { SessionSummary } from './claude/listing'
 import { hasBackground } from './provider'
 
@@ -40,6 +47,7 @@ export const agentMain: MainPlugin = {
     const providers = [claude, codexProvider()]
     const terminals = createAgentTerminals({ emit: ctx.emit })
     const sessionLog = createSessionLog(ctx.log)
+    const liveRemote = (): string | null => ctx.active()?.remote ?? null
 
     // One list for the renderer and the plugins built on the agent: the
     // background sessions Claude Code's supervisor runs, then the ones Holi
@@ -71,6 +79,7 @@ export const agentMain: MainPlugin = {
       binDir: ctx.binDir,
       // What each turn changed, as a commit range, in the vault it ran in.
       turnLogFor: openTurnLog,
+      snapshot: worktreeEnd,
     })
     const ptySessions = createPtySessions({
       vault: { remote: ctx.remote, root: ctx.root },
@@ -84,17 +93,38 @@ export const agentMain: MainPlugin = {
         pushSessions()
       },
     })
-    ctx.register(
-      AGENT_NAMESPACES,
-      agentCapabilities({
+    // What the agent and Holi want the person to see: an entry in the
+    // vault's inbox, and a banner while Holi is out of sight.
+    const inbox = createInbox({
+      store: jsonFileStore(join(ctx.root, INBOX_FILE), parseInbox),
+      notify: (notice) => ctx.notify(notice),
+      changed: (view) => ctx.emit(ctx.remote, 'inbox', view),
+      open: (entry) => ctx.emit(ctx.remote, 'inbox-open', entry),
+    })
+    ctx.register(AGENT_NAMESPACES, {
+      ...agentCapabilities({
         sessions: started,
         own: ptySessions,
         providers,
         terminals,
-        liveRemote: () => ctx.active()?.remote ?? null,
+        liveRemote,
         commitNow: () => ctx.commitNow(),
       }),
-    )
+      ...inboxCapabilities({ inbox, liveRemote }),
+    })
+    const unwatchNeedsYou = watchNeedsYou({
+      sessions: started,
+      focused: () => ctx.focused(),
+      told: async () => (await inbox.view()).entries.flatMap((e) => e.session ?? []),
+      raise: (notice) => inbox.raise(notice),
+      log: (msg) => console.error(`[agent] ${msg}`),
+    })
+    // A teammate's comment that mentions the person, found after a pull.
+    const unmention = ctx.onMention((mention) => {
+      void inbox
+        .raise(mentionNotice(mention))
+        .catch((err: unknown) => console.error('[agent] mention:', err))
+    })
     // Keystrokes and resizes, in the order they were typed. The host drops
     // any about a vault that is not the open one.
     ctx.on('pty-write', (_remote, payload) => {
@@ -120,6 +150,9 @@ export const agentMain: MainPlugin = {
         onConversation: (remote, id, about) => {
           if (remote === ctx.remote) ptySessions.noteConversation(id, about)
         },
+        // Where a background session takes messages: its inbox socket, kept
+        // in memory.
+        onChannel: (remote, id, channel) => started.noteChannel(remote, id, channel),
       })
     }
     // Quitting stops the vault's sessions, so it asks first when one of them
@@ -137,15 +170,37 @@ export const agentMain: MainPlugin = {
       }
     })
     void started.ensure(ctx)
-    // The per-turn hook reads the focused note from a file in this clone.
+    // Expired personal memories and old work-log days go, now and hourly. The
+    // running sweep is kept so leaving the vault waits for it to finish.
+    let sweeping: Promise<unknown> = Promise.resolve()
+    const sweep = (): void => {
+      sweeping = sweeping.then(() =>
+        sweepAgentMemory(ctx.root, new Date()).catch((err: unknown) =>
+          console.error('[agent] memory sweep:', err),
+        ),
+      )
+    }
+    sweep()
+    const sweepTimer = setInterval(sweep, SWEEP_EVERY_MS)
+    sweepTimer.unref?.()
+    // The per-turn hook reads the focused note, and its selected lines, from a
+    // file in this clone.
     const unreport = ctx.onReport((report) =>
-      started.setFocus({ focusedPath: report.focusedPath, openPaths: report.openPaths }),
+      started.setFocus({
+        focusedPath: report.focusedPath,
+        selection: report.selection,
+        openPaths: report.openPaths,
+      }),
     )
     // Stopping stops the vault's sessions (the renderer asked first if one
     // was busy). Background ones stay in the agents list and resume when
     // opened; the ones Holi runs end with it.
     return async () => {
+      clearInterval(sweepTimer)
+      await sweeping
       unreport()
+      unmention()
+      unwatchNeedsYou()
       await ptySessions.leave().catch((err) => console.error('[agent] pty sessions:', err))
       await started.leave().catch((err) => console.error('[agent] leave failed:', err))
       await terminals.closeAll().catch((err) => console.error('[agent] terminals:', err))

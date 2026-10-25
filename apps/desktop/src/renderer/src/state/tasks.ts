@@ -20,9 +20,7 @@ import {
   virtualLabels,
 } from '@holi/shared'
 import { atom } from 'jotai'
-import type { taskCapabilities } from '../../../main/vault/task-capabilities'
-import { capClient } from '../lib/cap-client'
-import { trpc } from '../lib/trpc'
+import { capClient, type UiCapability } from '../lib/cap-client'
 import { nowAtom, todayAtom } from './clock'
 import { isClosedAtom } from './planning'
 import { closeTabsForPaths, workspaceAtom } from './panes'
@@ -240,7 +238,32 @@ export function dropIntent(task: Task, targetLane: string, targetStatus: TaskSta
 // mutation-result-as-truth: the file on disk is the only truth.
 
 /** The tasks capabilities the renderer calls (`tasks.create`). */
-export const tasksCap = capClient<ReturnType<typeof taskCapabilities>>('tasks')
+/**
+ * The tasks plugin's verbs Planning uses (`plugins/tasks/main/capabilities.ts`),
+ * typed by hand because core never imports a plugin. Dispatch checks the
+ * params at runtime.
+ */
+type TaskVerbs = {
+  'tasks.create': UiCapability<
+    {
+      title: string
+      folder?: string
+      shared?: boolean
+      status?: string
+      description?: string
+      extra?: Record<string, unknown>
+    },
+    { path: string }
+  >
+  'tasks.update': UiCapability<{ path: string; patch: Record<string, unknown> }, Task>
+  'tasks.move': UiCapability<
+    { path: string; folder: string; status?: string; order?: number },
+    Task
+  >
+  'tasks.delete': UiCapability<{ path: string }, unknown>
+}
+
+export const tasksCap = capClient<TaskVerbs>('tasks')
 
 export const createTaskAtom = atom(
   null,
@@ -271,7 +294,10 @@ export const createTaskAtom = atom(
   ) => {
     const remote = get(activeRemoteAtom)
     if (!remote) return null
-    const { path } = await tasksCap.create(remote, input)
+    // Shared: Planning has no way yet to show or change a private task
+    // (docs/not-built.md), so it makes none. The plugin's own default, for the
+    // agent and apps, is private.
+    const { path } = await tasksCap.create(remote, { ...input, shared: true })
     await set(loadSnapshotAtom)
     return path
   },
@@ -285,7 +311,7 @@ export const patchTaskAtom = atom(
   async (get, set, path: string, patch: Record<string, unknown>) => {
     const remote = get(activeRemoteAtom)
     if (!remote) return
-    await trpc.tasks.update.mutate({ remote, path, patch })
+    await tasksCap.update(remote, { path, patch })
     await set(loadSnapshotAtom)
   },
 )
@@ -298,7 +324,7 @@ export const rankTasksAtom = atom(
     const remote = get(activeRemoteAtom)
     if (!remote || ranks.length === 0) return
     await Promise.all(
-      ranks.map(({ path, order }) => trpc.tasks.update.mutate({ remote, path, patch: { order } })),
+      ranks.map(({ path, order }) => tasksCap.update(remote, { path, patch: { order } })),
     )
     await set(loadSnapshotAtom)
   },
@@ -329,7 +355,12 @@ export const moveTaskAtom = atom(
     const remote = get(activeRemoteAtom)
     if (!remote) return null
     // The rank rides along too, so a drop lands where it was aimed in one write.
-    const moved = await trpc.tasks.move.mutate({ remote, path, folder, status, order })
+    const moved = await tasksCap.move(remote, {
+      path,
+      folder,
+      ...(status === undefined ? {} : { status }),
+      ...(order === undefined ? {} : { order }),
+    })
     await set(loadSnapshotAtom)
     return moved.path
   },
@@ -340,7 +371,7 @@ export const moveTaskAtom = atom(
 export const deleteTasksAtom = atom(null, async (get, set, paths: string[]) => {
   const remote = get(activeRemoteAtom)
   if (!remote || paths.length === 0) return
-  await Promise.all(paths.map((path) => trpc.tasks.delete.mutate({ remote, path })))
+  await Promise.all(paths.map((path) => tasksCap.delete(remote, { path })))
   set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), paths))
   await set(loadSnapshotAtom)
 })
@@ -348,7 +379,7 @@ export const deleteTasksAtom = atom(null, async (get, set, paths: string[]) => {
 export const deleteTaskAtom = atom(null, async (get, set, path: string) => {
   const remote = get(activeRemoteAtom)
   if (!remote) return
-  await trpc.tasks.delete.mutate({ remote, path })
+  await tasksCap.delete(remote, { path })
   // The file goes, then its tab: an open one would leave a tab pointing at bytes
   // that are gone, and a live buffer that would write the file back.
   set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), [path]))

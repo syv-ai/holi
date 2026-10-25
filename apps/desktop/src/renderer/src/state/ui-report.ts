@@ -40,6 +40,8 @@ export function reportUiToMain(store: ReturnType<typeof createStore>): () => voi
       .mutate({
         remote,
         focusedPath: focusedNote,
+        // The selected lines are not reported yet (docs/not-built.md).
+        selection: null,
         openPaths,
         // Only what `holi.open` can open: an unlisted surface's tabs (a
         // terminal) are opened by their plugin's own controls.

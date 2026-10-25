@@ -36,6 +36,7 @@ function googleEvent(overrides: Partial<GoogleEvent>): GoogleEvent {
     description: null,
     attendeeCount: 0,
     organizer: null,
+    organizerEmail: null,
     conferenceUrl: null,
     recurring: false,
     ...overrides,

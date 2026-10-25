@@ -32,12 +32,32 @@ declare global {
          */
         onFlushRequest(cb: () => void): () => void
         flushDone(): void
-      }
-      /** A fired reminder's notification was clicked. Fans to a vault switch
-       *  (if the task lives elsewhere) + `openTaskAtom`. Returns its
-       *  unsubscribe. */
-      reminders: {
-        onOpen(cb: (payload: { remote: string; path: string }) => void): () => void
+        /** What the skills update the vault ran on open changed. */
+        onSkillsUpdated(cb: (notice: unknown) => void): () => void
+        /** Main asks for a vault path in a tab: a clicked reminder's task,
+         *  `holi docs open`, a Holi link (with a heading to scroll to). Fans to
+         *  a vault switch (if the path lives elsewhere) + `openDocumentAtom`.
+         *  `focus: false` (`holi docs screenshot`) leaves the caret where it
+         *  is. Returns its unsubscribe. */
+        onOpen(
+          cb: (payload: {
+            remote: string
+            path: string
+            heading?: string
+            focus?: boolean
+          }) => void,
+        ): () => void
+        /** This window has landed its vault: main may send the opens it held. */
+        openReady(): void
+        /** Main asks where a path's tab is drawn, for `holi docs screenshot`.
+         *  Answer with `located`, by the same id: the tab's rect in CSS
+         *  pixels, or why there is none. */
+        onLocate(cb: (request: { id: string; path: string }) => void): () => void
+        located(
+          answer:
+            | { id: string; rect: { x: number; y: number; width: number; height: number } }
+            | { id: string; error: string },
+        ): void
       }
       /** Plugin events (docs/architecture.md, Plugins). Main sends on
        *  `plugin:<id>` only for a vault that runs the plugin; the renderer's

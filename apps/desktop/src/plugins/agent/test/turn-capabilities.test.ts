@@ -35,7 +35,7 @@ async function rig() {
     remote: REMOTE,
     root,
     bundle: null,
-    core: { repo: () => openRepo(root) },
+    core: { repo: () => openRepo(root), syncState: () => ({}) },
   } as unknown as CapabilityContext
   /** Run an entry as dispatch does: params read first, then the entry. */
   const run = async <K extends keyof typeof table>(name: K, params: unknown = {}) => {
@@ -146,7 +146,11 @@ describe('agent.revert', () => {
     const repo = openRepo(root)
     await commitFile(root, 'note.md', 'agent wrote this\n')
     const before = (await repo.head())!
-    await run('agent.revert', { path: 'note.md', text: 'I wrote this\n' })
+    await run('agent.revert', {
+      path: 'note.md',
+      text: 'I wrote this\n',
+      base: 'agent wrote this\n',
+    })
     expect(await readFile(join(root, 'note.md'), 'utf8')).toBe('I wrote this\n')
     expect(await repo.head()).not.toBe(before)
   })
@@ -162,17 +166,47 @@ describe('agent.revert', () => {
     expect(await plainGit(root, ['ls-files', 'new-note.md'])).toBe('')
   })
 
+  it('keeps what changed on disk since the turn, merged with what was kept', async () => {
+    const { run, root } = await rig()
+    const turnEnd = 'title\n\nagent line\n\nend\n'
+    await commitFile(root, 'note.md', turnEnd)
+    // The person typed at the top after the turn.
+    await writeFile(join(root, 'note.md'), 'title, edited\n\nagent line\n\nend\n', 'utf8')
+    await run('agent.revert', {
+      path: 'note.md',
+      text: 'title\n\nmy line\n\nend\n',
+      base: turnEnd,
+    })
+    expect(await readFile(join(root, 'note.md'), 'utf8')).toBe('title, edited\n\nmy line\n\nend\n')
+  })
+
+  it('writes nothing over a later change to the same lines', async () => {
+    const { run, root } = await rig()
+    await commitFile(root, 'note.md', 'agent line\n')
+    await writeFile(join(root, 'note.md'), 'typed after the turn\n', 'utf8')
+    const refused = await run('agent.revert', {
+      path: 'note.md',
+      text: 'my line\n',
+      base: 'agent line\n',
+    }).catch((err: { code?: string }) => err.code)
+    expect(refused).toBe('CONFLICT')
+    expect(await readFile(join(root, 'note.md'), 'utf8')).toBe('typed after the turn\n')
+  })
+
   it('refuses a path outside the vault', async () => {
     const { run } = await rig()
     await expect(run('agent.revert', { path: '../escape.md', delete: true })).rejects.toThrow()
     await expect(run('agent.revert', { path: '../escape.md', text: 'nope' })).rejects.toThrow()
+    await expect(
+      run('agent.revert', { path: '../escape.md', text: 'nope', base: '' }),
+    ).rejects.toThrow()
   })
 
   it('does not write the file it refused', async () => {
     const { run, root } = await rig()
     await writeFile(join(root, 'keep.md'), 'original\n', 'utf8')
     await expect(
-      run('agent.revert', { path: 'keep.md/../../outside.md', text: 'nope' }),
+      run('agent.revert', { path: 'keep.md/../../outside.md', text: 'nope', base: '' }),
     ).rejects.toThrow()
     expect(await readFile(join(root, 'keep.md'), 'utf8')).toBe('original\n')
   })

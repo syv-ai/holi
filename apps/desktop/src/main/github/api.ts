@@ -8,8 +8,7 @@
  * different: re-authenticate, authorize the token for the org, wait for the
  * rate limit, or accept that this repo is not yours.
  */
-import { sameLogin, type Collaborator } from '@holi/shared'
-import { isRemote } from '../vault/registry'
+import { isRemote, sameLogin, type Collaborator } from '@holi/shared'
 
 /**
  * The GitHub repo topic that marks a repo as a Holi vault.
@@ -50,6 +49,8 @@ export interface Repo {
   /** ISO. The picker's sort key. */
   pushedAt: string
   defaultBranch: string
+  /** GitHub's `size`, in KiB: what the repo weighs on GitHub (`repoUsagePercent`). */
+  sizeKb: number
   /**
    * `permissions.push`. A repo you cannot push to would become a vault that
    * cannot publish, so the picker offers it visibly disabled rather than
@@ -192,16 +193,35 @@ export class GitHubApi {
    * unsayable rather than a default someone can pass around. Seeding is not
    * this module's job.
    */
-  async createRepo(args: { name: string; owner?: string }): Promise<Repo> {
+  async createRepo(args: { name: string; owner?: string; description?: string }): Promise<Repo> {
     const url = args.owner
       ? `${this.#base}/orgs/${encodeURIComponent(args.owner)}/repos`
       : `${this.#base}/user/repos`
+    // GitHub's description is one line of about 350 characters at most; a long
+    // answer is cut rather than refused, by code point so no emoji is split,
+    // and control characters go, so an optional field cannot fail the create.
+    const description =
+      args.description === undefined
+        ? undefined
+        : [
+            ...args.description
+              .replace(/\s+/g, ' ')
+              .replace(/\p{Cc}/gu, '')
+              .trim(),
+          ]
+            .slice(0, 300)
+            .join('')
 
     try {
       return toRepo(
         await this.#request(url, {
           method: 'POST',
-          body: JSON.stringify({ name: args.name, private: true, auto_init: false }),
+          body: JSON.stringify({
+            name: args.name,
+            private: true,
+            auto_init: false,
+            ...(description ? { description } : {}),
+          }),
         }),
       )
     } catch (err) {
@@ -395,6 +415,7 @@ function toRepo(raw: Record<string, unknown>): Repo {
           : 'public',
     pushedAt: String(raw.pushed_at),
     defaultBranch: String(raw.default_branch),
+    sizeKb: typeof raw.size === 'number' ? raw.size : 0,
     canPush: permissions.push === true,
     canAdmin: permissions.admin === true,
     owner: {

@@ -5,7 +5,7 @@ import { TriangleAlert } from 'lucide-react'
 import { capClient, openNoteTabAtom, trpc } from '@/plugin-api'
 import type { PdfCapabilities } from '../main/capabilities'
 import { FieldWidget } from './FieldWidget'
-import { metaFromValues, missingRequired, parseFrontmatter, prefillValues } from './pdf-fields'
+import { metaFromValues, missingRequired, parseFrontmatter, prefillValues } from '../shared/pdf-fields'
 import {
   Button,
   Dialog,
@@ -129,7 +129,7 @@ export function ConvertToPdf({
       const { pdfPath, vaultPath } = await pdf.render(remote, {
         path,
         template: slug,
-        outPath,
+        out: outPath,
         meta,
       })
       // In the vault it opens in a tab, where it can be read and commented

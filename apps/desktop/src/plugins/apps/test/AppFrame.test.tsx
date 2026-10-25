@@ -149,7 +149,7 @@ test('a refusal comes back as a value, not as a thrown error', async () => {
 test('an unknown method is refused rather than ignored', async () => {
   await renderApp()
   const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
-  fromFrame({ id: 'x', method: 'docs.write', params: { path: 'a.md', text: 'no' } })
+  fromFrame({ id: 'x', method: 'docs.delete', params: { path: 'a.md' } })
   await waitFor(() => expect(post).toHaveBeenCalled())
   expect(post.mock.calls[0]![0]).toMatchObject({ id: 'x', ok: false })
   // Refused here, before main: a name that is not a bridge method never crosses.
@@ -179,4 +179,19 @@ test('a deleted app leaves a tombstone, not a frame', async () => {
   // closing it is the user's move, not ours.
   await userEvent.click(screen.getByRole('button', { name: /close/i }))
   expect(closed).toEqual([['app', 'Team/Retro.app']])
+})
+
+test("holi.open refuses a secret file and this machine's state, even when they exist", async () => {
+  const files = ['.env', '.holi/state/bridge.json']
+  store.set(snapshotAtom, (snapshot) => ({
+    ...snapshot,
+    files: [...snapshot.files, ...files.map((path) => ({ path, updatedAt: '' }))],
+  }))
+  await renderApp()
+  const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
+  for (const [at, target] of files.entries()) {
+    fromFrame({ id: `o${at}`, method: 'open', params: { target } })
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(at + 1))
+    expect(post.mock.calls[at]![0]).toMatchObject({ id: `o${at}`, ok: false })
+  }
 })

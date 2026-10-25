@@ -18,16 +18,33 @@
   s
 }
 
+// The template's language, from `language` in its template.json (Holi passes
+// it as `--input lang=…`); English when it says none.
+#let lang = sys.inputs.at("lang", default: "en")
+
+// A date in that language: "21. oktober 2026" in Danish, Typst's own
+// "21 October 2026" otherwise. Typst's `display` names months in English
+// whatever the language, so the Danish months are spelled out.
+#let long-date(d) = {
+  if lang == "da" {
+    let months = ("januar", "februar", "marts", "april", "maj", "juni", "juli", "august", "september", "oktober", "november", "december")
+    str(d.day()) + ". " + months.at(d.month() - 1) + " " + str(d.year())
+  } else {
+    d.display("[day padding:none] [month repr:long] [year]")
+  }
+}
+
 #let doc(notePath, meta: (:), assets: "") = {
   set page(paper: "a4", margin: 2.5cm)
-  set text(size: 11pt)
+  set text(size: 11pt, lang: lang)
 
   // Metadata header: state each provided value cleanly, no key labels. `date`
-  // arrives as a native datetime, formatted here; `recipient` is shown as-is.
+  // arrives as a native datetime, formatted in the template's
+  // language; `recipient` is shown as-is.
   // Fields the user left blank are absent from `meta`, so nothing prints.
   let lines = ()
   let d = meta.at("date", default: none)
-  if d != none { lines.push(d.display("[day] [month repr:long] [year]")) }
+  if d != none { lines.push(long-date(d)) }
   let r = meta.at("recipient", default: none)
   if r != none and r != "" { lines.push(r) }
   if lines.len() > 0 {

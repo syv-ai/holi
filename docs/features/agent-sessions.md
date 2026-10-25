@@ -62,6 +62,16 @@ clone, on its config directory, with one environment. The supervisor takes its e
 whichever `claude` process started it and hands it to every session, so every call carrying Holi's
 bin directory first on `PATH` is what keeps `holi` resolvable in all of them.
 
+**Hooks need a `node`, and a Dock-launched Holi has none on its `PATH`.** Every seeded hook is
+`node "<script>"`, and an app opened from the Dock or Finder has launchd's `PATH`
+(`/usr/bin:/bin:/usr/sbin:/sbin`). Left like that every hook exits 127, which Claude Code counts as
+non-blocking, so the turn signals, the focus context and the Google send gate quietly stop. The
+agent's `PATH` is therefore Holi's bin directory, the inherited `PATH`, the usual tool directories
+(`toolPath`: Homebrew's, `~/.local/bin` and so on), and last Holi's own `node` (`bin/fallback/node`,
+written at every launch: the app's executable run with `ELECTRON_RUN_AS_NODE`). A `node` the machine
+has is always found first. The supervisor keeps the environment of the process that started it, so an
+already running one picks this up only after it has exited (it does when idle).
+
 **Terminals are windows.** A Holi terminal is a PTY running `claude agents` (the list) or
 `claude attach <id>` (one session), with a headless-xterm `TerminalMirror` as its record. Closing
 one detaches: the session keeps running. Its tab is labelled in Holi's names, so tab and row
@@ -78,7 +88,7 @@ the palette and the recents read each terminal's label and status dot), its nav 
 palette's session rows, the leave question, and the agent service every "Ask" goes through
 (`useAgentService`). Its main side starts with the vault and attaches to it (`activate`), and its disposer stops the vault's sessions and terminals. The
 renderer reaches it through the `agent.*` capabilities (sessions, terminals, open, start, send,
-stop, respawn, duplicate, attach, detach, and the turn review's turns, turnFiles, turnDiff and
+message, stop, respawn, duplicate, attach, detach, and the turn review's turns, turnFiles, turnDiff and
 revert, which deletes a file the turn created rather than leaving it empty). Main tells it the session and terminal lists and each terminal's bytes as the events
 `sessions`, `terminals`, `pty-data` and `pty-exit`; keystrokes and resizes go back as the events
 `pty-write` and `pty-resize`, which keep their order. A terminal's bytes go straight to its xterm
@@ -210,6 +220,10 @@ and is idle. The read is triggered by a watch of `<configDir>/sessions/` and `jo
 never parsed), by each turn hook, and by a vault opening. The one timer is a second read about a second
 after an `idle` one, because a quiet session makes no watcher edge: a turn ends only when two
 consecutive reads say idle. A failed read answers nothing, and the bracket still reports `working`.
+A session going into `needs-you` puts one entry in the [agent inbox](agent-inbox.md), and a banner
+while Holi is out of sight, which opens it: on the edge into the state, read off this listing.
+Banners are at least 30 seconds apart, so several sessions waiting at once show one banner and the
+rest only in the inbox.
 
 **Context is the status line's.** `claude agents --json` carries no context figure and `/context`
 is interactive, so the reading comes from the documented `statusLine` command: one inline shell
@@ -227,8 +241,32 @@ to a live session the user picks (needs-you sessions are not offered), or to a n
 its first line, as a bracketed paste with no Enter into that session's window. A window just opened
 holds the paste until its TUI has printed and settled, with a 5 s backstop. **Reconcile, a stuck
 push, a scheduled run and a Holi's send are the exception**: their first turn is the command's
-prompt. A scheduled run opens no window at all ([scheduled-agents](scheduled-agents.md)); a Holi's
-send opens its agent tab ([holis](holis.md)).
+prompt. A first turn goes after `--`, so one that starts with a dash is a prompt and not an option.
+A scheduled run opens no window at all ([scheduled-agents](scheduled-agents.md)); a Holi's send
+opens its agent tab ([holis](holis.md)).
+
+**Messages go through the session's inbox.** Every Claude Code session that is not `--bare` binds
+an inbox socket for cross-session messaging and exports its path and a per-session token to its
+hooks as `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN`, set before
+`SessionStart`. `turn-signal.mjs` posts both to the bridge at `SessionStart` (`/session`) and at
+each turn's start (`/turn/start`, in the body), and main keeps them per job id, in memory only:
+dropped when the session leaves the live listing, when a write to it fails, and when Holi leaves the
+vault. Holi never reads Claude Code's own session files for them. `agent.message` (`holi agent
+message <session> <text>`) opens the socket, writes the auth line `{"type":"auth","token":…}` and
+one user line `{"type":"user","message":{"role":"user","content":…}}`, and closes. An idle session
+starts a turn with it; a working one reads it after the tool call in flight, queued behind the turn.
+The composer is never touched, so a person typing in a window onto the session keeps their text.
+The token makes the message count as the session's own child, so a session that skips permission
+prompts delivers it rather than holding it behind a dialog. Claude Code tells the model it came
+from another session, not from the person: it approves nothing and changes no configuration. The
+write is sent once and never retried. A session with no inbox known, or whose socket is gone, is
+refused with the reason. The pre-commit transforms use it: a commit the session made itself tells
+it what they rewrote ([vaults-sync](vaults-sync.md)). **The risk**: Claude Code's documentation page describes the socket and
+the auth line but not the message line, whose shape comes from Claude Code's own debug log and
+was checked live, so a release can change it. The socket answers nothing, so a session whose
+`crossSessionInbound` is `refuse` (or `hold`) drops (or sets aside) the message without Holi
+knowing. Claude Code rate-limits each sender and queues at most 50 messages. A vault opened
+without Holi has no bridge, and the hook does nothing.
 
 **Git coexistence.** The seeded `UserPromptSubmit` and `Stop` hooks run `turn-signal.mjs`, which
 reads the vault's `bridge.local.env` ([agent-config](agent-config.md)) for the port and the vault's token, and posts
@@ -240,11 +278,14 @@ its process goes, on two consecutive `idle` readings (escaping a permission prom
 or on a 10 minute cap. Sessions keep running while Holi is closed, so the first read after a vault
 opens puts any session already busy into the set.
 
-**Turn review.** A turn is a commit range, `base` at start to the settle commit. Records go to
-`.holi/state/turns.local.json` (50, newest first), keyed by job id; files and diffs come from git
-when shown. A chip under a session's window says `Claude changed N files` and opens a review with
-per-hunk accept and reject, saved as one new commit per file. An overlapped turn says so; an
-unreachable range says its history is gone.
+**Turn review.** A turn is a commit range, `base` at start to the settle commit, or, for a turn
+that ended while another session's was still running, to a tree object of the working tree as it
+ended. Records go to `.holi/state/turns.local.json` (50, newest first), keyed by job id; files and
+diffs come from git when shown. A turn that changed nothing is recorded too, since the prompt hook
+counts "changed since your last turn" from it ([agent-config.md](agent-config.md)), but only the
+session's latest such one is kept, and the chip skips it. A chip under a session's window says
+`Claude changed N files` and opens a review with per-hunk accept and reject, saved as one new
+commit per file. An overlapped turn says so; an unreachable range says its history is gone.
 
 **Merge resolver.** "Ask Claude to reconcile" re-runs the merge without aborting and starts a
 session whose first turn names the conflicted paths. The agent resolves and commits the merge in
@@ -272,11 +313,15 @@ showing it busy, crosses it off), so a session resumed from the list is never re
   may already be a stranger's. Holi only ever signals its own terminal clients.
 - Only reconcile, a stuck push, a skills update's conflicts, a scheduled run, a Holi's send and
   Ask the agent submit a turn, each as the first turn of a session of its own.
-  Anything else Holi puts in a session is a paste, unsent.
+  Anything else Holi puts in a session is a paste, unsent. Holi cannot see the composer, so
+  nothing is ever submitted through a terminal: a message into a running session goes through its
+  inbox socket.
 - Draw nothing over a session's terminal and add no input of Holi's own: the agent's TUI is the
   session UI.
 - Record a turn after the vault resumes, fire-and-forget: a lost record beats a stuck pause.
-- A turn revert does not flush open buffers first; a dirty buffer 3-way merges.
+- A turn revert does not flush open buffers first; a dirty buffer 3-way merges. It is written over
+  the text the review showed: a file changed since is merged with what the reviewer kept, and one
+  whose change overlaps it is refused with a message in the panel, nothing written.
 - Turn-hook and status-line responses are empty: a turn hook's body would be injected into
   Claude's context, and the status line prints its own footer.
 
@@ -301,10 +346,16 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - Recording touched paths from `PostToolUse`: misses edits made through `Bash`.
 - A worktree per session: edits invisible until merged, `.local.` files absent. Hence the seeded
   `worktree.bgIsolation: "none"`.
-- A `Notification` or `PermissionRequest` hook for needs-you: late or partial.
+- A `Notification` or `PermissionRequest` hook for needs-you: late or partial. The listing's
+  `waiting` is what the inbox's needs-you notice reads.
 - Reading context use from transcripts or the PTY: Claude Code's files and screen are not an
   interface; its status-line JSON is.
 - A three-pane merge editor: resolves positionally, wrong for prose.
+- Typing a message into a session's terminal: it lands in the person's input box.
+- `claude --bg --resume <id> "prompt"` to add a turn: on a session whose process is alive it forks
+  a copy, and only a stopped one continues under its job id.
+- Claude Code's channels (an MCP server) for messages: a research preview needing a claude.ai or
+  Console login, and not documented for background sessions.
 
 ## Code
 
@@ -315,7 +366,7 @@ showing it busy, crosses it off), so a session resumed from the list is never re
   their turns read off the terminal
 - `apps/desktop/src/plugins/agent/main/claude/`: Claude Code as the provider: `cli.ts` (every `claude` command, one
   environment, the binary), `listing.ts` (the listing, state rules, the watch), `routes.ts` (the
-  turn and status-line routes)
+  turn, session and status-line routes), `messaging.ts` (the inbox socket writer)
 - `apps/desktop/src/plugins/agent/main/host/terminals.ts`, `pty.ts`, `terminal-mirror.ts`: terminals, the PTY and
   kill path
 - `apps/desktop/src/plugins/agent/main/host/sessions.ts`: the vault controller

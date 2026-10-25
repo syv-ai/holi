@@ -39,9 +39,14 @@ function snapshotOf(tasks: Task[]): VaultSnapshot {
 
 vi.mock("@/lib/trpc", () => ({
   trpc: {
-    tasks: {
-      update: { mutate: (input: unknown) => update(input) },
-      move: { mutate: (input: unknown) => move(input) },
+    // The tasks plugin's verbs, as `capClient` sends them.
+    cap: {
+      run: {
+        mutate: ({ remote, name, paramsJson }: { remote: string; name: string; paramsJson?: string }) => {
+          const params = paramsJson === undefined ? {} : JSON.parse(paramsJson)
+          return (name === "tasks.move" ? move : update)({ remote, ...params })
+        },
+      },
     },
     vaults: { snapshot: { query: () => Promise.resolve(snapshotOf([TASK])) } },
     github: {

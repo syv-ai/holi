@@ -24,6 +24,7 @@ import { AGENT_PROVIDER_IDS, type AgentProviderId } from '@holi/shared'
 import type { BridgeRoute, SeedContribution } from '../../../main/plugin-api'
 import type { ClaudeCli, VaultCliTarget } from './claude/cli'
 import type { ClaudeRow, SessionSummary, StatusReading } from './claude/listing'
+import type { SessionChannel } from './claude/messaging'
 
 /** Which agent a session runs: the vault setting's own list. */
 export type ProviderId = AgentProviderId
@@ -77,6 +78,9 @@ export interface TurnRouteDeps {
   /** What the session said about itself at a turn's end: its first ask,
    *  which names it, and the provider's id for the conversation. */
   onConversation?(remote: string, id: string, about: { name?: string; conversationId?: string }): void
+  /** The session said where it takes messages: its inbox socket and token
+   *  (`background`'s `message`). */
+  onChannel?(remote: string, id: string, channel: SessionChannel): void
   log?: (msg: string) => void
 }
 
@@ -97,6 +101,9 @@ export interface BackgroundCapability {
   /** Call `onChange` when the config directory's session state moves.
    *  Returns the stop. */
   watch(configDir: string, onChange: () => void, log: (msg: string) => void): () => void
+  /** Add a message to a running session's conversation through the channel
+   *  its hooks reported. Throws a `CapabilityError` when it is not taken. */
+  message(channel: SessionChannel, text: string): Promise<void>
 }
 
 export interface ProviderCapabilities {

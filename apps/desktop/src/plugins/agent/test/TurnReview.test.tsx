@@ -81,8 +81,8 @@ test('renders nothing when there is no turn to review', () => {
 
 test('says a turn’s history is gone rather than that it changed nothing', async () => {
   // A record outlives the commits it names: a reset, a re-clone. An empty file
-  // list against a real turn means the range is unreachable, because a turn that
-  // changed nothing is never recorded in the first place.
+  // list against a real turn means the range is unreachable, because the chip
+  // never opens a turn that changed nothing.
   //
   // The mock has to agree with the seed: the panel re-asks on mount, so seeding
   // an empty list alone would be overwritten by the reload.

@@ -11,7 +11,16 @@
  *
  * Browser-safe: the renderer, main and the tests all read these.
  */
-import { isAgentSurfacePath, vaultRelPath } from './path-safety'
+import { isAppPrivatePath } from './app-store'
+import {
+  AGENT_SURFACE_FILES,
+  isAgentSurfacePath,
+  isHiddenPath,
+  isLocalOnlyPath,
+  isMachineStatePath,
+  isSecretPath,
+  vaultRelPath,
+} from './path-safety'
 
 export const APP_SUFFIX = '.app'
 
@@ -58,4 +67,52 @@ export function appBundleOf(filePath: string): string | null {
     if (isBundleName(segments[i - 1]!)) return isAppBundlePath(prefix) ? prefix : null
   }
   return null
+}
+
+/** The names Claude Code reads instructions from, in any folder it works in. */
+const AGENT_INSTRUCTION_NAMES = new Set(['agents.md', 'claude.md'])
+const AGENT_SURFACE_NAMES = new Set(AGENT_SURFACE_FILES.map((f) => f.toLowerCase()))
+
+/**
+ * May a vault app write `path`? The one write rule for app code, whichever
+ * door it comes through; `path` is already normalised (`vaultRelPath`), and
+ * whether the app may read it is the caller's own fence.
+ *
+ * Never anything hidden (`.holi/`, `.claude/`, `.github/`: configuration and
+ * machinery, each with its own writer, and with it machine state, the agent
+ * surface and secret files), anything local (`.local.`: one person's, which an
+ * app's code must not change for them, and which never syncs to show anyone it
+ * did), anything inside an app's bundle (another app's code, or records, which
+ * have the store), or an `AGENTS.md` or `CLAUDE.md` at any depth and in any
+ * case (Claude Code loads the one in a subfolder it works in, so an app that
+ * planted one would be instructing the agent; `claude.md` opens `CLAUDE.md` on
+ * macOS). What is left is the vault's shared content, which an app writes as
+ * any member's editor would.
+ */
+export function isAppWritablePath(path: string): boolean {
+  return !(
+    isHiddenPath(path) ||
+    isLocalOnlyPath(path) ||
+    isSecretPath(path) ||
+    isMachineStatePath(path) ||
+    isAgentSurfacePath(path) ||
+    AGENT_SURFACE_NAMES.has(path.toLowerCase()) ||
+    path.split('/').some((seg) => AGENT_INSTRUCTION_NAMES.has(seg.toLowerCase())) ||
+    appBundleOf(path) !== null
+  )
+}
+
+/**
+ * Is a normalised vault path one no app may reach: the agent surface, this
+ * machine's state under `.holi/state/` (it holds the bridge's tokens), a
+ * secret file (an app gets only the keys it declares, through `holi.env`), or
+ * any app's records and log. The bridge's reads refuse these, and an app's
+ * slash command is not offered in a note that is one, since it would be given
+ * the note's text (nor where `isAppWritablePath` refuses, since its answer is
+ * written into the note).
+ */
+export function isAppFencedPath(path: string): boolean {
+  if (isAgentSurfacePath(path) || isMachineStatePath(path) || isSecretPath(path)) return true
+  const bundle = appBundleOf(path)
+  return bundle !== null && isAppPrivatePath(path.slice(bundle.length + 1))
 }

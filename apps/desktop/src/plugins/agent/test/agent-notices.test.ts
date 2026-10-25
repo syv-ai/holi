@@ -74,12 +74,10 @@ describe('contextColour', () => {
   })
 
   it('ramps from amber at 60% to full red at 99%, and stays red past it', () => {
-    expect(contextColour(60)).toBe(
-      'color-mix(in oklab, var(--context-full) 0%, var(--context-warm))',
-    )
-    expect(contextColour(80)).toContain('var(--context-full) 51%')
-    expect(contextColour(99)).toContain('var(--context-full) 100%')
-    expect(contextColour(100)).toContain('var(--context-full) 100%')
+    expect(contextColour(60)).toBe('color-mix(in oklab, var(--fill-full) 0%, var(--fill-warm))')
+    expect(contextColour(80)).toContain('var(--fill-full) 51%')
+    expect(contextColour(99)).toContain('var(--fill-full) 100%')
+    expect(contextColour(100)).toContain('var(--fill-full) 100%')
   })
 })
 

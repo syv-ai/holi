@@ -7,6 +7,9 @@ export interface Template {
   name: string
   description: string
   fields: TemplateField[]
+  /** The manifest's `language`, a language code such as `da` or `en`, passed
+   *  to Typst as `--input lang=…`; absent, the template picks its own. */
+  language?: string
   /** What `parseFields` had to degrade in the manifest (empty = clean). Surfaced
    *  in the Convert dialog as authoring feedback. */
   warnings: string[]
@@ -14,6 +17,15 @@ export interface Template {
   dir: string
   /** The directory name — the stable id passed to `pdf.render`. */
   slug: string
+}
+
+/** A manifest's `language`: a two- or three-letter code, lowercased. Anything
+ *  else is left out, with a warning for the Convert dialog. */
+function parseLanguage(raw: unknown, warnings: string[]): string | undefined {
+  if (raw === undefined) return undefined
+  if (typeof raw === 'string' && /^[a-z]{2,3}$/i.test(raw)) return raw.toLowerCase()
+  warnings.push('"language" must be a language code such as "da" or "en", and was ignored')
+  return undefined
 }
 
 const TEMPLATES_REL = '.holi/document-templates'
@@ -47,10 +59,12 @@ export async function listTemplates(vaultRoot: string): Promise<Template[]> {
     const m = parsed as Record<string, unknown>
     if (typeof m.name !== 'string') continue
     const { fields, warnings } = parseFields(m.fields)
+    const language = parseLanguage(m.language, warnings)
     templates.push({
       name: m.name,
       description: typeof m.description === 'string' ? m.description : '',
       fields,
+      ...(language === undefined ? {} : { language }),
       warnings,
       dir,
       slug: e.name,

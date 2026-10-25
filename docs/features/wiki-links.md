@@ -14,9 +14,11 @@ Notes link to each other with path-based `[[folder/note.md]]` links. They render
 
 **Backrefs and delete.** `scanBackrefs` greps the vault's markdown for links to a path, excluding the file itself. The delete confirm names each linking file and its count; a folder or multi-select delete ignores links internal to the set. There is no cascade: dangling links stay and render as missing chips.
 
+**Both directions.** One main call, `notes.links` (`scanLinks`), answers both directions in the same walk the backref scans make: "links to", each note the file links to once, with a link to a note that does not exist marked missing, and "linked from", each file that links here with every linking line as a snippet (links read as their text). Links to images, PDFs and office documents are not listed: they are not links between notes. Any other target is, `[[note]]` without an extension included. Nothing in the shell shows it yet ([not-built](../not-built.md)).
+
 ## Rules
 
-- One parser for editor, rename, backrefs and export. Two parsers drift on greedy vs lazy matching.
+- One parser for editor, rename, backrefs, `notes.links` and export. Two parsers drift on greedy vs lazy matching.
 - Rewrite by exact parsed ranges, never by substring replace.
 - Check the destination before moving anything. Renaming onto an existing folder merges silently, and a mid-move collision leaves a half-moved folder.
 - Rewrite links before moving the file, so a crash leaves links pointing at a file that still exists.

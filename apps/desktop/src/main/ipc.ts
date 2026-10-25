@@ -33,7 +33,10 @@ export function registerIpc(deps: {
   // The SYSTEM browser, not a window: the sign-in page has to reuse the user's
   // existing GitHub session, and no credential should ever enter the app's web
   // context.
-  ipcMain.handle('holi:openExternal', async (_event, url: string) => {
+  ipcMain.handle('holi:openExternal', async (_event, url: unknown) => {
+    // A web page or a mail draft only, whatever the renderer sends: a `file:`
+    // or another app's scheme would run something rather than show it.
+    if (typeof url !== 'string' || !/^(https?:\/\/|mailto:)/i.test(url)) return
     await shell.openExternal(url)
   })
 

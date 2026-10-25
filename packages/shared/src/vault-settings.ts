@@ -51,8 +51,7 @@ export interface TransformToggle {
 }
 
 /** Core's transforms, in the order a commit runs them, `relink` first because
- *  plugins' transforms run right after it (`knownTransforms`). `archive-done`
- *  is the tasks core part's, listed here until tasks is a plugin. */
+ *  plugins' transforms run right after it (`knownTransforms`). */
 export const CORE_TRANSFORMS: readonly TransformToggle[] = [
   {
     name: 'relink',
@@ -60,14 +59,6 @@ export const CORE_TRANSFORMS: readonly TransformToggle[] = [
     explanation:
       'When git or the agent moves a file, rewrites the links pointing at it. Moves made in Holi fix their links already.',
     default: true,
-  },
-  {
-    // Off: a transform that rearranges someone's work is opt-in.
-    name: 'archive-done',
-    label: 'File finished tasks away',
-    explanation:
-      'Moves tasks finished more than two weeks ago into archive/, links and all. Off by default, because it changes what your board shows.',
-    default: false,
   },
   {
     name: 'normalize-md',
@@ -230,6 +221,9 @@ export interface ResolvedAppSettings {
   foldSidebarForApps: boolean
   hooks: VaultHooks
   maxCommittedFileBytes: number
+  /** Whether Holi brings a release's newer skills and hooks in when the vault
+   *  opens, rather than offering them (docs/features/updates.md). */
+  autoUpdateSkills: boolean
   /** Human-readable notes about dropped keys/values, surfaced so a typo is
    *  diagnosable rather than silent. Mirrors `ResolvedTheme.warnings`. */
   warnings: string[]
@@ -400,6 +394,7 @@ export type VaultSettingKey =
   | 'gridArcade'
   | 'foldSidebarForApps'
   | 'maxCommittedFileBytes'
+  | 'autoUpdateSkills'
 
 export interface VaultSettingDescriptor {
   /** A key of `app.yaml`, or `plugins` for the plugins row, whose answer is
@@ -730,6 +725,20 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     whereToChange: LOCAL_FILE_HINT,
     section: 'general',
   },
+  {
+    key: 'autoUpdateSkills',
+    label: 'Update skills automatically',
+    // Committed, so the whole team gets the same answer: a vault whose skills
+    // move with Holi, or one whose skills move only when someone asks.
+    explanation:
+      'When this vault opens, bring in the newer skills and hooks a Holi release ships, merged with this vault’s own changes, and say what changed. Off, Holi offers them and waits for you.',
+    type: { kind: 'boolean' },
+    default: false,
+    target: 'committed',
+    askedAtBirth: false,
+    whereToChange: SETTINGS_FILE_HINT,
+    section: 'updates',
+  },
 ]
 
 /**
@@ -739,8 +748,6 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
  * Typed by `ResolvedVaultSettings` rather than by inference, so consumers get
  * `ColorScheme` and not `unknown`.
  *
- * `archive-done` is off: it moves task files, which changes what the board
- * shows, and a transform that rearranges someone's work is opt-in.
  * `memory-index` is on: it only ever rewrites `.holi/memory/index.md`, a file it
  * generated. The 10 MB cap is read by `main/vault/large-files.ts`; notes-vault
  * assets sit well under it, and GitHub warns at 50.

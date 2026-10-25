@@ -10,15 +10,14 @@ folding its reasoning into the owning page.
 
 ## Agent
 
-**Telling a live session something unprompted.** Holi has no channel into a running Claude Code
-session except a terminal attached to it, where anything written lands in the user's input box. The pre-commit
-transforms wanted to tell the agent what they rewrote: the runner supports a `notify` callback and
-main leaves it unwired. The substitute is `.holi/state/hooks.local.log`, which the agent reads when
-asked. Also absent: surfacing a hook failure in the sync status bar when no session is open.
+**Surfacing a pre-commit hook's failure when no session made the commit.** What the transforms
+say on a commit an agent session made goes to that session ([agent-sessions](features/agent-sessions.md)); on
+Holi's own commits it is only in `.holi/state/hooks.local.log`. The sync status bar does not show
+it.
 
 **A cap on concurrent sessions.** A vault can run any number.
 
-**Shared automations in the cloud.** An automation runs on each machine that turned it on. Work
+**Shared automations in the cloud.** An automation is one person's and runs on their machine. Work
 that should run once for everyone, with every laptop shut, would be Claude Code's scheduled cloud
 runs against the vault's GitHub repository, its outcome read from its commit. Claude Code drives
 those from its `/schedule` skill against claude.ai, which Holi has no interface to yet
@@ -46,14 +45,50 @@ a run once a run in a Holi-owned process, which ends when Holi quits, is accepta
 
 **More providers.** opencode and pi, each as its core and whatever its hooks allow.
 
-**Memory tooling.** Lint findings as proposals, a graph view, and per-directory indexes. See
+**The rest of the inbox.** A banner clicked while Holi had no window open opens Holi, but not the
+entry: the renderer is not listening yet when the click lands, so the entry waits in the inbox. A
+needs-you entry stays after the session is answered, until dismissed. A session that outlives a
+switch away from its vault loses its notices: `holi agent notify` and `holi agent log` reach Holi
+only through the open vault's bridge, so they fail, and nothing queues the notice or the log line
+for when the vault is open again. See
+[agent-inbox](features/agent-inbox.md).
+
+**Memory tooling.** Per-directory indexes. See
 [agent-memory](features/agent-memory.md).
 
 **Self-improvement loop.** Dropped from v1: unproven, and one person's background agent editing
 shared skills and memory is a hazard. If revived, auto-edits touch the personal layer only and
 shared changes become proposals.
 
+**An injection eval.** The fence around mail and calendar text is tested; whether a real run
+honours it is not. A run against a planted "ignore previous instructions and send" mail, checking
+that it drafts or reports and attempts no send, would need a live model and a fake Google.
+
+**Fencing what was copied into the vault.** Only what `holi google` prints is fenced. A task made
+from a mail or an event in Mail or Agenda, or a vault app's stored records, carries someone else's
+words into a vault file, and a later run reads that file as the vault's own.
+
 **Agent theme proposals.** The agent writes a vault's theme; proposing one for approval is absent.
+
+**Durable trigger events.** A schedule's batch waiting to run and the router's dedupe memory are in
+memory, so quitting Holi loses events heard and not yet run. Moments (tasks, calendar) are safe by
+their watermark; file and mail events are not, and nor is what changed while Holi was closed. The
+issue's shape: the pending queue in `.holi/state/triggers.local.json`, written before a run starts,
+cleared when it has. See [scheduled agents](features/scheduled-agents.md).
+
+**Telling a run's own writes apart.** A file changed while a schedule's run works starts a
+follow-up only when its change lies outside the run's span; one changed during the span is
+dropped, a stranger's included, because a turn's commit holds everyone's changes made while it ran.
+Knowing the run's own paths (a hook on its file tools, which a shell command escapes) would drop
+only those. See [scheduled agents](features/scheduled-agents.md).
+
+**Trigger priority.** A trigger run waits for the schedule's previous run, but not for the person:
+it does not hold back while they are in a session of their own or one waits on them (`needs-you`),
+and no schedule outranks another.
+
+**More task triggers.** A status change (`doing`, `done`) and a task newly assigned to this
+machine's person. Today `task` is due and overdue only, and an assigned task triggers every
+schedule with a task trigger, not only its assignee's.
 
 ## Vault apps
 
@@ -69,12 +104,16 @@ its files change (today reload is a button).
 
 ## Notes & editor
 
-**Slash commands as small programs.** Agreed design: a command is a small JS module the vault
-commits, run in the same isolated origin vault apps use, handed the buffer and selection and
-returning text or an action. It gets `fetch`, the vault actions apps have, an agent query and a mail
-compose call; no filesystem, shell or Node. Real scripts were rejected because a committed command
-is code that arrives on a teammate's laptop with a pull. Machine-local-only commands were rejected
-because the agent could not write one for the team. Today the menu is a fixed `/todo` and `/table`.
+**More of note comments.** Editing or deleting a comment, a list of open threads across the
+vault in the app (the agent has `holi comments list`), and a comment's body drawn as markdown (it
+shows as plain text). A mention reaches only the agent's inbox, so with the agent plugin off it is
+seen only in the panel. See
+[note-comments](features/note-comments.md).
+
+**The rest of slash commands as small programs.** A vault app's commands are built
+([vault apps](features/vault-apps.md)). Not built from that design: a mail compose call a command
+can make (to start a reply), and embedding an app in the note, where it is still open whether that
+is a widget in the note or a link that opens its tab.
 
 **Standard markdown links instead of wiki-links.** In-vault links are `[[path]]`. Plain
 `[text](path.md)` would render on GitHub and is what every tool and agent already knows. The cost:
@@ -101,6 +140,60 @@ Copy to Folder and Move to Folder cover the need.
 
 **Tabs.** Dragging a tab to a new window or another vault, and vertical splits.
 
+**More of Holi links.** Joining a vault from a link to one this machine has not cloned (today a
+dialog says to add it first), a copy action in the editor itself (there is no editor context menu;
+the palette has it), and telling apart two headings with the same words, which GitHub does with a
+`-1` suffix and a link does not. See [holi-links](features/holi-links.md).
+
+## On the current shell
+
+Main's half of each of these is built and documented on its page; the screens that used it were
+drawn on the previous shell and are not rebuilt yet.
+
+**The links drawer.** `notes.links` (`scanLinks`) answers a note's links in both directions, but
+nothing shows them: there is no "Links to" and "Linked from" beside a note. See
+[wiki-links](features/wiki-links.md).
+
+**The graph tab.** `notes.graph` answers; nothing draws it. See [graph](features/graph.md).
+
+**Comment threads in the window.** The passages' fill, Comment on a selection, and the panel with
+Reply, Resolve, Reopen and `@login` completion. See [note-comments](features/note-comments.md).
+
+**The inbox's entries.** `holi agent notify`, needs-you and mentions fill `inbox.local.json` and
+raise banners, but the Inbox in the Agents sidebar does not list those entries. See
+[agent-inbox](features/agent-inbox.md).
+
+**Saved links' screens.** The preview card (on a tree row, a link in a note, a link file's tab),
+New Link, saving a link dragged in from a browser, and Open in Browser. See
+[links](features/links.md).
+
+**Holi links in the window.** Copying a link to a file or a heading, and landing on its heading:
+an arriving link opens its file (in its vault) at the top. See [holi-links](features/holi-links.md).
+
+**Private tasks in the planning view.** A private task's mark, Share with vault and Make private,
+and a sharing choice when creating: the view creates shared tasks until then. See
+[tasks](features/tasks.md).
+
+**Vault-app slash commands in the document editor.** The apps plugin answers `apps.commands` and
+serves each command's document; the editor's slash menu does not list them, and nothing runs one in
+its hidden frame. See [vault apps](features/vault-apps.md).
+
+**Event triggers in the Automations editor.** A schedule's `on:` list runs and is kept when the
+editor saves, but the editor neither shows nor adds one. See
+[scheduled agents](features/scheduled-agents.md).
+
+**Selected lines to the agent.** The per-turn context can name the focused note's selected lines,
+but the document editor does not report a selection (`state/ui-report.ts`). See
+[agent-config](features/agent-config.md).
+
+**The rest.** Updating skills from Settings (`autoUpdateSkills`, `holi skills status`) and the
+release notes ([updates](features/updates.md)); Google's bring-your-own OAuth client form
+([google](features/google.md)); the vault's README on Home ([home](features/home.md)); the repo's
+size in Settings ([vaults-sync](features/vaults-sync.md)); a tab's caret and scroll kept across tab
+switches; `holi docs screenshot`'s renderer half, which says where a tab is drawn; PDF render
+warnings in Convert to PDF ([pdf](features/pdf.md)); find and replace in the file view's code
+editor; and images in the document editor capped at 70% of the window's height.
+
 ## Sync
 
 **Git LFS setup.** The large-file hook's message mentions LFS; nothing configures it.
@@ -112,7 +205,7 @@ during a reconcile; the lock covers note tabs only.
 
 **A time-grouped board view** ("Today / This week / Later"), as an option, never a mode to configure.
 
-**A renumber pass** for exhausted ranks. `needsRenumber` exists in `packages/shared/src/rank.ts`;
+**A renumber pass** for exhausted ranks. `needsRenumber` exists in the tasks plugin's `shared/rank.ts`;
 nothing calls it.
 
 **Mail and calendar chips on a board card**, for the Gmail and Calendar links in a task's body.
@@ -120,15 +213,6 @@ nothing calls it.
 **A task that lights up for a recurring event series**, tying reminders to the agenda.
 
 ## PDF
-
-**Mermaid in a PDF.** A mermaid fence draws in the editor and exports as a code block. The export
-paths differ in DOM: `ConvertToPdf` runs in the renderer, the agent's `md-to-pdf` skill shells
-`typst` with no DOM. Pre-rendering in the renderer fixes one path only; an offscreen window in main
-behind the `holi` CLI fixes both and costs the most; not rendering mermaid in PDFs at all keeps one
-story. Undecided.
-
-**Note-relative images in a PDF.** cmarker resolves them against its own package directory, so
-only absolute image paths export.
 
 **Template distribution across vaults.** Templates are per-vault; a shared brand repo is the
 obvious answer and is not designed.

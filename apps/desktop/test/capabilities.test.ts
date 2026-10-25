@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdir, mkdtemp, readFile as readText, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile as readText,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { emptyVaultSnapshot } from '@holi/shared'
 import type { CapabilityError } from '../src/main/capabilities/error'
 import {
@@ -13,20 +21,26 @@ import { admitApps, type AppGrants } from '../src/plugins/apps/main/grants'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { noCoreServices, type CoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
+import { SCREENSHOT_DIR } from '../src/main/screenshot-files'
 import type { GoogleAccountsManager } from '../src/plugins/google/main/accounts'
 import { googleCapabilities, GOOGLE_NAMESPACES } from '../src/plugins/google/main/capabilities'
-import { taskCapabilities, TASK_NAMESPACES } from '../src/main/vault/task-capabilities'
+import { taskCapabilities, TASKS_NAMESPACES } from '../src/plugins/tasks/main/capabilities'
+import { parseTaskFile, taskClaim } from '@holi/shared'
 import { MEMBERS_TTL_MS, createMembersCache } from '../src/main/github/members-cache'
 
 const registry = createCapabilityRegistry()
+/** What `docs.open` asked to show, by vault path. */
+const opened: string[] = []
 registry.register(
   VAULT_NAMESPACES,
   vaultCapabilities({
     updateSkills: async () => ({ summary: '', conflicts: null }),
     pendingSkills: async () => [],
+    open: (_remote, path) => void opened.push(path),
+    screenshot: async () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
   }),
 )
-registry.register(TASK_NAMESPACES, taskCapabilities({ today: () => '2026-09-30' }))
+registry.register(TASKS_NAMESPACES, taskCapabilities({ today: () => '2026-09-30' }))
 /** What the Google entries see of this person's approvals; each test sets it. */
 let grantStatus: AppGrants['status'] = async () => ({ codeHash: '', affordances: [] })
 registry.register(
@@ -163,8 +177,12 @@ function ctx(core: Partial<CoreServices>, bundle: string | null = 'A.app'): Capa
     snapshot: async () => ({
       ...emptyVaultSnapshot(),
       files: written.map((path) => ({ path, updatedAt: '' })),
+      dirs: written.filter((p) => p.includes('/')).map((p) => p.slice(0, p.lastIndexOf('/'))),
     }),
-    core: { ...noCoreServices(), ...core },
+    // The tasks plugin runs: a note write to a task file asks its claim.
+    claims: async () => [taskClaim],
+    // Holi has this vault open unless a test says otherwise (`requireOpen`).
+    core: { ...noCoreServices(), syncState: () => ({ kind: 'up-to-date' }), ...core },
   }
 }
 
@@ -202,7 +220,12 @@ describe('vault.recents', () => {
 
 describe('sync.status', () => {
   it('says "not open" for a vault main does not track', async () => {
-    const { value, text } = await runCapability('sync.status', 'cli', ctx({}, null), {})
+    const { value, text } = await runCapability(
+      'sync.status',
+      'cli',
+      ctx({ syncState: () => null }, null),
+      {},
+    )
     expect(value).toBeNull()
     expect(text).toBe('not open')
   })
@@ -337,6 +360,93 @@ describe('docs.render', () => {
   })
 })
 
+describe('docs.open', () => {
+  it('shows a file the vault holds, by its normalised path', async () => {
+    await put('notes/a.md', '# A\n')
+    opened.length = 0
+    const { text } = await runCapability('docs.open', 'cli', ctx({}, null), {
+      path: './notes/a.md',
+    })
+    expect(opened).toEqual(['notes/a.md'])
+    expect(text).toBe('opened notes/a.md')
+  })
+
+  it('refuses while Holi does not have the vault open', async () => {
+    await put('notes/a.md', '# A\n')
+    opened.length = 0
+    expect(
+      await refusal(
+        runCapability('docs.open', 'cli', ctx({ syncState: () => null }, null), {
+          path: 'notes/a.md',
+        }),
+      ),
+    ).toMatchObject({ code: 'UNAVAILABLE', message: 'vault-not-open' })
+    expect(opened).toEqual([])
+  })
+
+  it('refuses a path outside the vault, or one it does not hold', async () => {
+    opened.length = 0
+    expect(
+      await refusal(runCapability('docs.open', 'cli', ctx({}, null), { path: '../x.md' })),
+    ).toMatchObject({ code: 'BAD_REQUEST' })
+    expect(
+      await refusal(runCapability('docs.open', 'cli', ctx({}, null), { path: 'missing.md' })),
+    ).toMatchObject({ code: 'NOT_FOUND' })
+    expect(opened).toEqual([])
+  })
+
+  it('refuses a secret file and this machine state, even when the vault holds them', async () => {
+    await put('.env', 'TOKEN=x\n')
+    await put('.holi/state/bridge.json', '{}\n')
+    opened.length = 0
+    for (const path of ['.env', '.holi/state/bridge.json']) {
+      expect(
+        await refusal(runCapability('docs.open', 'cli', ctx({}, null), { path })),
+      ).toMatchObject({ code: 'FORBIDDEN' })
+    }
+    expect(opened).toEqual([])
+  })
+
+  it('shows a vault app, which is a directory', async () => {
+    opened.length = 0
+    const withApp: CapabilityContext = {
+      ...ctx({}, null),
+      snapshot: async () => ({ ...emptyVaultSnapshot(), dirs: ['Finance', 'Finance/Budget.app'] }),
+    }
+    await runCapability('docs.open', 'cli', withApp, { path: 'Finance/Budget.app' })
+    expect(opened).toEqual(['Finance/Budget.app'])
+    expect(
+      await refusal(runCapability('docs.open', 'cli', withApp, { path: 'Finance' })),
+    ).toMatchObject({ code: 'NOT_FOUND' })
+  })
+
+  it('takes a bundle with a trailing slash, as a shell completes it', async () => {
+    await put('Clock.app/index.html', '<p></p>')
+    opened.length = 0
+    await runCapability('docs.open', 'cli', ctx({}, null), { path: 'Clock.app/' })
+    expect(opened).toEqual(['Clock.app'])
+    expect(
+      await refusal(runCapability('docs.open', 'cli', ctx({}, null), { path: 'Gone.app' })),
+    ).toMatchObject({ code: 'NOT_FOUND' })
+  })
+})
+
+describe('docs.screenshot', () => {
+  it("writes the tab's PNG outside the vault, owner-only, and prints its absolute path", async () => {
+    await put('notes/a.md', '# A\n')
+    const { text } = await runCapability('docs.screenshot', 'cli', ctx({}, null), {
+      path: 'notes/a.md',
+    })
+    try {
+      expect(dirname(text)).toBe(SCREENSHOT_DIR)
+      expect([...(await readText(text))]).toEqual([0x89, 0x50, 0x4e, 0x47])
+      if (process.platform !== 'win32') expect((await stat(text)).mode & 0o777).toBe(0o600)
+    } finally {
+      await rm(text, { force: true })
+    }
+  })
+})
+
 describe('tasks.complete', () => {
   it('rolls a recurring task forward, as the board does', async () => {
     await put(
@@ -360,12 +470,248 @@ describe('tasks.complete', () => {
     ).toMatchObject({ code: 'NOT_FOUND' })
   })
 
+  it('never completes a task through a symlink at the app door', async () => {
+    await put('elsewhere/task.x.md', '---\nstatus: todo\n---\n\n# X\n')
+    await symlink(join(root, 'elsewhere'), join(root, 'link'))
+    written.push('link/task.x.md')
+    expect(
+      await refusal(runCapability('tasks.complete', 'app', ctx({}), { path: 'link/task.x.md' })),
+    ).toMatchObject({ code: 'FORBIDDEN' })
+    expect(await readText(join(root, 'elsewhere/task.x.md'), 'utf8')).toContain('status: todo')
+  })
+
   it('refuses a task on the agent surface', async () => {
     expect(
       await refusal(
         runCapability('tasks.complete', 'app', ctx({}), { path: '.holi/memory/task.x.md' }),
       ),
     ).toMatchObject({ code: 'FORBIDDEN' })
+  })
+})
+
+describe('docs.write', () => {
+  const write = (path: string, text: string, base: string | null) =>
+    runCapability('docs.write', 'app', ctx({}), { path, text, base })
+
+  it('writes a note over the text the app read, and creates one that is not there', async () => {
+    await put('a.md', 'one\n')
+    expect((await write('a.md', 'two\n', 'one\n')).writes).toBe(true)
+    expect(await readText(join(root, 'a.md'), 'utf8')).toBe('two\n')
+    await write('notes/b.md', 'new\n', null)
+    expect(await readText(join(root, 'notes/b.md'), 'utf8')).toBe('new\n')
+  })
+
+  it('refuses a note that changed since it was read, and writes nothing', async () => {
+    await put('a.md', 'theirs\n')
+    expect(await refusal(write('a.md', 'mine\n', 'old\n'))).toMatchObject({ code: 'CONFLICT' })
+    expect(await refusal(write('a.md', 'mine\n', null))).toMatchObject({ code: 'CONFLICT' })
+    expect(await refusal(write('gone.md', 'mine\n', 'old\n'))).toMatchObject({
+      code: 'CONFLICT',
+    })
+    expect(await readText(join(root, 'a.md'), 'utf8')).toBe('theirs\n')
+  })
+
+  it('writes only shared notes: nothing hidden, local, in a bundle or on the agent surface', async () => {
+    for (const path of [
+      '.holi/settings/app.md',
+      '.claude/skills/x.md',
+      'AGENTS.md',
+      'me.local.md',
+      'notes/mine.local.d/x.md',
+      'Budget.app/README.md',
+      'Budget.app/data/items/x.md',
+      'notes/AGENTS.md',
+      'notes/claude.md',
+      'notes/Claude.MD/x.md',
+      'claude.md',
+      'Memory.md',
+    ]) {
+      expect(await refusal(write(path, 'x', null))).toMatchObject({ code: 'FORBIDDEN' })
+    }
+    expect(await refusal(write('a.txt', 'x', null))).toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
+  it('never writes through a symlink', async () => {
+    await mkdir(join(root, 'elsewhere'))
+    await symlink(join(root, 'elsewhere'), join(root, 'link'))
+    expect(await refusal(write('link/x.md', 'x', null))).toMatchObject({ code: 'FORBIDDEN' })
+  })
+
+  it('lets one of two writes over the same base land, and refuses the other', async () => {
+    await put('a.md', 'one\n')
+    const results = await Promise.all([
+      refusal(write('a.md', 'mine\n', 'one\n')),
+      refusal(write('a.md', 'theirs\n', 'one\n')),
+    ])
+    expect(results.filter((r) => r === null)).toHaveLength(1)
+    expect(results.filter((r) => r?.code === 'CONFLICT')).toHaveLength(1)
+  })
+
+  it("changes a task file's body only: its fields are tasks.update's", async () => {
+    const task = '---\nstatus: todo\ndue: 2026-09-30\n---\n\n# Rent\n'
+    await put('task.rent.md', task)
+    const body = '---\nstatus: todo\ndue: 2026-09-30\n---\n\n# Rent\n\nPaid by transfer.\n'
+    expect((await write('task.rent.md', body, task)).writes).toBe(true)
+    for (const text of [
+      '---\nstatus: done\ndue: 2026-09-30\n---\n\n# Rent\n\nPaid by transfer.\n',
+      '---\nstatus: todo\n---\n\n# Rent\n\nPaid by transfer.\n',
+      '# Rent\n',
+    ]) {
+      expect(await refusal(write('task.rent.md', text, body))).toMatchObject({
+        code: 'BAD_REQUEST',
+      })
+    }
+    expect(await refusal(write('task.new.md', task, null))).toMatchObject({ code: 'BAD_REQUEST' })
+    expect(await readText(join(root, 'task.rent.md'), 'utf8')).toBe(body)
+  })
+
+  it('needs the base, so no write is blind', async () => {
+    expect(
+      await refusal(runCapability('docs.write', 'app', ctx({}), { path: 'a.md', text: 'x' })),
+    ).toMatchObject({ code: 'BAD_REQUEST' })
+  })
+})
+
+describe('tasks.update', () => {
+  const task =
+    '---\nstatus: todo\ndue: 2026-09-30\npriority: high\nrecurrence:\n  frequency: monthly\n  interval: 1\n---\n\n# Rent\n'
+
+  it('sets and clears fields as the board does', async () => {
+    await put('task.rent.md', task)
+    const { value } = await runCapability('tasks.update', 'app', ctx({}), {
+      path: 'task.rent.md',
+      patch: { due: '2026-10-02', priority: null, tags: ['home'] },
+    })
+    expect(value).toMatchObject({ due: '2026-10-02', tags: ['home'] })
+    expect(value).not.toHaveProperty('priority', 'high')
+    const text = await readText(join(root, 'task.rent.md'), 'utf8')
+    expect(text).toContain('2026-10-02')
+    expect(text).not.toContain('priority')
+  })
+
+  it('makes done completion, so a recurring task rolls forward', async () => {
+    await put('task.rent.md', task)
+    const { value } = await runCapability('tasks.update', 'app', ctx({}), {
+      path: 'task.rent.md',
+      patch: { status: 'done' },
+    })
+    expect(value).toMatchObject({ status: 'todo', due: '2026-10-30' })
+  })
+
+  it("refuses what the board's field edit refuses, and the task's text", async () => {
+    await put('task.rent.md', task)
+    // Not a status: any word is one, kept as written (docs/features/tasks.md).
+    for (const patch of [{ colour: 'red' }, { description: '# Rent' }]) {
+      expect(
+        await refusal(
+          runCapability('tasks.update', 'app', ctx({}), { path: 'task.rent.md', patch }),
+        ),
+      ).toMatchObject({ code: 'BAD_REQUEST' })
+    }
+    expect(await readText(join(root, 'task.rent.md'), 'utf8')).toBe(task)
+  })
+
+  it('writes only where an app may write', async () => {
+    await put('.holi/x/task.a.md', task)
+    expect(
+      await refusal(
+        runCapability('tasks.update', 'app', ctx({}), {
+          path: '.holi/x/task.a.md',
+          patch: { status: 'doing' },
+        }),
+      ),
+    ).toMatchObject({ code: 'FORBIDDEN' })
+  })
+})
+
+describe('tasks.list', () => {
+  it('tells an app only the tasks it may read, and the agent every one', async () => {
+    const task = (path: string) => ({ path, title: path, status: 'todo', tags: [], assignees: [] })
+    const items = ['ops/task.a.md', '.holi/memory/task.b.md', 'Budget.app/data/task.c.md'].map(task)
+    const withTasks = (bundle: string | null): CapabilityContext => ({
+      ...ctx({}, bundle),
+      snapshot: async () => ({
+        ...emptyVaultSnapshot(),
+        claimed: { tasks: { items, broken: [] } },
+      }),
+    })
+    const paths = async (door: 'app' | 'cli', bundle: string | null) =>
+      (
+        (await runCapability('tasks.list', door, withTasks(bundle), {})).value as { path: string }[]
+      ).map((t) => t.path)
+    expect(await paths('app', 'A.app')).toEqual(['ops/task.a.md'])
+    expect(await paths('cli', null)).toHaveLength(3)
+  })
+})
+
+describe('tasks.create at the app door', () => {
+  it('creates a task where an app may write, and nowhere else', async () => {
+    const { value } = await runCapability('tasks.create', 'app', ctx({}), {
+      title: 'Call the vendor',
+      folder: 'ops',
+      extra: { due: '2026-10-01' },
+    })
+    // Private unless asked otherwise, though an app may write no other local file.
+    expect(value).toEqual({ path: 'ops/task.call-the-vendor.local.md' })
+    expect(await readText(join(root, 'ops/task.call-the-vendor.local.md'), 'utf8')).toContain(
+      '2026-10-01',
+    )
+    const shared = await runCapability('tasks.create', 'app', ctx({}), {
+      title: 'Call the vendor',
+      folder: 'ops',
+      shared: true,
+    })
+    // The private one holds the name, so the shared one takes the next.
+    expect(shared.value).toEqual({ path: 'ops/task.call-the-vendor-2.md' })
+    await mkdir(join(root, 'elsewhere'))
+    await symlink(join(root, 'elsewhere'), join(root, 'link'))
+    for (const folder of ['.claude', 'Budget.app', 'mine.local.d', 'link', 'CLAUDE.md']) {
+      for (const shared of [false, true]) {
+        expect(
+          await refusal(
+            runCapability('tasks.create', 'app', ctx({}), { title: 'X', folder, shared }),
+          ),
+        ).toMatchObject({ code: 'FORBIDDEN' })
+      }
+    }
+  })
+
+  it('completes a private task, but reaches no other local file', async () => {
+    await put('ops/task.a.local.md', '---\nstatus: todo\n---\n')
+    await put('USER.local.md', 'me')
+    const withTask = (): CapabilityContext => ({
+      ...ctx({}),
+      snapshot: async () => ({
+        ...emptyVaultSnapshot(),
+        files: [{ path: 'USER.local.md', updatedAt: '' }],
+        claimed: {
+          tasks: {
+            items: [parseTaskFile('---\nstatus: todo\n---\n', 'ops/task.a.local.md')],
+            broken: [],
+          },
+        },
+      }),
+    })
+    await runCapability('tasks.complete', 'app', withTask(), { path: 'ops/task.a.local.md' })
+    expect(await readText(join(root, 'ops/task.a.local.md'), 'utf8')).toContain('status: done')
+    expect(
+      await refusal(
+        runCapability('tasks.update', 'app', withTask(), {
+          path: 'USER.local.md',
+          patch: { status: 'done' },
+        }),
+      ),
+    ).toMatchObject({ code: 'FORBIDDEN' })
+  })
+})
+
+describe('tasks.create, twice at once', () => {
+  it('gives two creates with one title two files', async () => {
+    const create = () => runCapability('tasks.create', 'app', ctx({}), { title: 'Call' })
+    const [a, b] = await Promise.all([create(), create()])
+    expect(new Set([a.value, b.value].map((v) => (v as { path: string }).path))).toEqual(
+      new Set(['task.call.local.md', 'task.call-2.local.md']),
+    )
   })
 })
 

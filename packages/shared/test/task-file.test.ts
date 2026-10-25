@@ -2,21 +2,22 @@ import { describe, expect, it } from 'vitest'
 import {
   TaskFileError,
   assigneesInTitle,
-  cleanLogins,
-  hasLogin,
   isAssignedTo,
+  isPrivateTask,
   isTaskFilePath,
+  privateTaskPath,
   remindsViewer,
-  sameLogin,
-  toggleLogin,
   parseTaskFile,
   parseTaskPatch,
   serializeTaskFile,
+  sharedTaskPath,
+  taskClaim,
   taskFileName,
   taskFilePath,
   taskSlug,
   titleFromTaskPath,
 } from '../src/task-file'
+import { taskArea } from '../src/types'
 
 const parse = (text: string, path = 'task.a.md') => parseTaskFile(text, path)
 
@@ -40,11 +41,46 @@ describe('taskSlug', () => {
 
 describe('taskFilePath', () => {
   it('is `task.<slug>.md` inside the folder the task belongs to', () => {
-    expect(taskFilePath('projects/q2', 'Fix login')).toBe('projects/q2/task.fix-login.md')
+    expect(taskFilePath('projects/q2', 'Fix login', true)).toBe('projects/q2/task.fix-login.md')
   })
 
   it('drops the folder segment at the vault root', () => {
-    expect(taskFilePath('', 'Fix login')).toBe('task.fix-login.md')
+    expect(taskFilePath('', 'Fix login', true)).toBe('task.fix-login.md')
+  })
+
+  it('names a private task `task.<slug>.local.md`, which git keeps on this machine', () => {
+    const path = taskFilePath('projects/q2', 'Fix login', false)
+    expect(path).toBe('projects/q2/task.fix-login.local.md')
+    expect(isTaskFilePath(path)).toBe(true)
+    expect(isPrivateTask(path)).toBe(true)
+  })
+})
+
+describe('sharing a task is a rename', () => {
+  it('drops the marker to share and adds it to make private', () => {
+    expect(sharedTaskPath('ops/task.fix-login.local.md')).toBe('ops/task.fix-login.md')
+    expect(privateTaskPath('ops/task.fix-login.md')).toBe('ops/task.fix-login.local.md')
+  })
+
+  it('offers neither where a rename of the file cannot do it', () => {
+    expect(sharedTaskPath('ops/task.fix-login.md')).toBeNull()
+    expect(privateTaskPath('ops/task.fix-login.local.md')).toBeNull()
+    expect(sharedTaskPath('mine.local.d/task.a.local.md')).toBeNull()
+    expect(privateTaskPath('mine.local.d/task.a.md')).toBeNull()
+  })
+
+  it('takes a private task onto the board, but no task file in a local folder', () => {
+    expect(taskClaim.match('ops/task.a.local.md')).toBe(true)
+    expect(taskClaim.match('ops/task.a.md')).toBe(true)
+    // Only the file's own name makes a task private; a local folder is a
+    // personal space of plain files.
+    expect(isPrivateTask('mine.local.d/task.a.local.md')).toBe(false)
+    expect(taskClaim.match('mine.local.d/task.a.md')).toBe(false)
+    expect(taskClaim.match('mine.local.d/task.a.local.md')).toBe(false)
+  })
+
+  it('keeps the marker out of the fallback title', () => {
+    expect(titleFromTaskPath('task.fix-login.local.md')).toBe('Fix login')
   })
 })
 
@@ -346,7 +382,7 @@ describe('parseTaskPatch', () => {
 
 describe('taskFileName', () => {
   it('is the filename half of taskFilePath', () => {
-    expect(taskFileName('Fix login')).toBe('task.fix-login.md')
+    expect(taskFileName('Fix login', true)).toBe('task.fix-login.md')
   })
 })
 
@@ -472,23 +508,6 @@ describe('assignees', () => {
   })
 })
 
-describe('one rule for a login', () => {
-  it('is the same person whatever the case', () => {
-    expect(sameLogin('Ada', 'ada')).toBe(true)
-    expect(sameLogin('ada', 'adam')).toBe(false)
-    expect(hasLogin(['Ada'], 'ADA')).toBe(true)
-  })
-
-  it('makes a clean list: no @, no blanks, each person once in the spelling given first', () => {
-    expect(cleanLogins(['Ada', ' @ada ', '', '@', 'bo', 'BO'])).toEqual(['Ada', 'bo'])
-  })
-
-  it('toggles a person by any spelling of their name', () => {
-    expect(toggleLogin(['Ada', 'bo'], 'ada')).toEqual(['bo'])
-    expect(toggleLogin(['bo'], 'Ada')).toEqual(['bo', 'Ada'])
-  })
-})
-
 describe('assigneesInTitle', () => {
   const members = ['ada', 'bo']
 
@@ -506,5 +525,15 @@ describe('assigneesInTitle', () => {
   it('leaves an @ that is no member, and an address, as written', () => {
     expect(assigneesInTitle('Work @home', members)).toEqual({ title: 'Work @home', assignees: [] })
     expect(assigneesInTitle('Mail ada@syv.ai', members).assignees).toEqual([])
+  })
+})
+
+describe('taskArea', () => {
+  it('is the containing folder — the lane', () => {
+    expect(taskArea({ path: 'projects/q2/task.a.md' })).toBe('projects/q2')
+  })
+
+  it('is the empty root lane for a task at the vault root', () => {
+    expect(taskArea({ path: 'task.a.md' })).toBe('')
   })
 })

@@ -41,11 +41,11 @@ The fresh shell opens a `.md` file in ReUI's rich-text editor (`rich-text-editor
 
 **Quotes** are a flat translucent surface, holding what the quote holds (lists hang inside it as outside). The `> ` shows only on the caret's line. A quote and a fenced block are the note's two filled blocks and share one geometry: the fill starts just outside the text's edge (`--block-inset`, 8px short of the column's inset) on both sides, so their own text sits a step in, and only their first and last lines round their corners.
 
-**Comments.** An HTML comment on lines of its own draws as a small floating banner, centred, in the `--comment` and `--comment-background` tokens, and shows its source when touched. One inside a paragraph stays text in the comment colour. The banner is exactly as tall as its source, whose first and last lines take the banner's padding while they show, so opening a comment does not move the note.
+**Comments.** Comment threads with authors, replies and resolve are not in the note at all: they live in a sidecar ([note-comments](note-comments.md)), which no editor draws yet ([not-built](../not-built.md)). An HTML comment on lines of its own draws as a small floating banner, centred, in the `--comment` and `--comment-background` tokens, and shows its source when touched. One inside a paragraph stays text in the comment colour. The banner is exactly as tall as its source, whose first and last lines take the banner's padding while they show, so opening a comment does not move the note.
 
 **Fenced code** hides its backticks while the caret is outside the block, leaving the language as a small label. The fence lines stay, so the block keeps its height when the caret enters and the fences show. Its fill is the foreground at 4% (the house `[0.04]` step), so it shows in light as well as dark.
 
-**Mermaid.** A mermaid fence draws as a diagram and shows source when touched. Mermaid loads on first use, a broken diagram shows its source, and the palette follows light/dark at render time.
+**Mermaid.** A mermaid fence draws as a diagram and shows source when touched. Mermaid loads on first use, a broken diagram shows its source, and the palette follows light/dark at render time. A PDF draws it too, always light ([pdf.md](pdf.md)).
 
 **The page editor** follows ReUI's `rich-text-editor-2` block (its Tiptap page editor with slash commands, mentions, tables and an outline rail), rebuilt on CodeMirror over markdown. Every one of its features either writes the markdown you could have typed, or is a view setting that never reaches the file. Where markdown has no syntax, Holi writes the form GitHub and other renderers already read, so the file stays portable and the agent reads what you see.
 
@@ -126,9 +126,8 @@ text, so the page controls carry the outline as a button instead.
 
 ## Code
 
-- `apps/desktop/src/renderer/src/editor/`: `extensions.ts` (stacks), `livePreview.ts` (`revealedSpans`), `mark-slide.ts`, `mermaid.ts`, `comments.ts`, `arrows.ts`, `bare-links.ts`, `completion.ts`, `slash.ts`, `mentions.ts`, `askAgent.ts`, `askSpace.ts`, `formatBar.ts`, `linkBubble.ts`, `marks.ts`, `blocks.ts`, `blockActions.ts`, `contents.ts`, `placeholder.ts`, `export.ts`, `theme.ts`
-- `apps/desktop/src/renderer/src/features/editor/`: `BlockGutter.tsx`, `PageActions.tsx`, `OutlineRail.tsx`; `state/note-page.ts`
-- `apps/desktop/src/renderer/src/features/editor/EditorPane.tsx`: load, save, flush, reload, page toggles
+- `apps/desktop/src/renderer/src/components/blocks/document-view/`: the documents tab: `document-view.tsx`, `markdown.ts`, `document-extensions.ts`, `document-find.ts`, `document-find-bar.tsx`, `multi-cursor.ts`, `document-agent.ts`, `document-header.tsx`
+- `apps/desktop/src/renderer/src/editor/`: `extensions.ts` (stacks), `livePreview.ts` (`revealedSpans`), `mark-slide.ts`, `mermaid.ts`, `comments.ts`, `arrows.ts`, `bare-links.ts`, `completion.ts`, `slash.ts`, `mentions.ts`, `askAgent.ts`, `askSpace.ts`, `formatBar.ts`, `linkBubble.ts`, `marks.ts`, `blocks.ts`, `blockActions.ts`, `contents.ts`, `placeholder.ts`, `theme.ts`
 - `apps/desktop/src/renderer/src/lib/editor-reload.ts`, `apply-reload.ts`
 - `packages/shared/src/merge3.ts`, `normalize-md.ts`, `file-kind.ts`, `image-ref.ts`
 - `apps/desktop/src/renderer/src/components/blocks/file-view/file-view.tsx`: every file that is not a note or an app

@@ -2,12 +2,19 @@ import { describe, expect, test } from 'vitest'
 import {
   addableKey,
   fieldList,
-  fieldRecurrence,
   frontmatterRows,
   frontmatterSchema,
   isFieldSet,
+  type FieldSpec,
 } from '../src/frontmatter-schema'
 import { editYamlMapping } from '../src/yaml-document'
+
+/** A stand-in claim's fields: one required, one plain, one hidden. */
+const CLAIMED: readonly FieldSpec[] = [
+  { key: 'state', kind: { kind: 'enum', options: ['open', 'shut'] }, required: true },
+  { key: 'when', kind: { kind: 'stamp' } },
+  { key: 'rank', kind: { kind: 'text' }, hidden: true },
+]
 
 describe('frontmatterSchema', () => {
   test('a task file gets the task vocabulary', () => {
@@ -28,6 +35,10 @@ describe('frontmatterSchema', () => {
       kind: 'enum',
       options: ['backlog', 'todo', 'doing', 'review', 'done'],
     })
+  })
+
+  test("a claimed file gets its claim's fields", () => {
+    expect(frontmatterSchema('projects/thing.md', CLAIMED)).toBe(CLAIMED)
   })
 
   test('a note has tags, and no title or created date', () => {
@@ -52,29 +63,19 @@ describe('frontmatterSchema', () => {
 })
 
 describe('frontmatterRows', () => {
-  const schema = frontmatterSchema('task.a.md')!
+  const schema = CLAIMED
 
   test('shows every schema row whether the file has it or not', () => {
     // A field you can fill in without knowing its name.
-    expect(frontmatterRows(schema, ['status']).map((f) => f.key)).toEqual([
-      'status',
-      'priority',
-      'start',
-      'due',
-      'estimate',
-      'reminder',
-      'recurrence',
-      'tags',
-      'assignees',
-    ])
+    expect(frontmatterRows(schema, ['state']).map((f) => f.key)).toEqual(['state', 'when'])
   })
 
-  test('hides `order`, which means nothing to a human', () => {
-    expect(frontmatterRows(schema, ['order']).map((f) => f.key)).not.toContain('order')
+  test('hides a hidden field', () => {
+    expect(frontmatterRows(schema, ['rank']).map((f) => f.key)).not.toContain('rank')
   })
 
   test('unknown keys follow, as text, in the order the file has them', () => {
-    const rows = frontmatterRows(schema, ['zzz', 'title', 'status'])
+    const rows = frontmatterRows(schema, ['zzz', 'title', 'state'])
     expect(rows.slice(-2).map((f) => f.key)).toEqual(['zzz', 'title'])
     expect(rows.at(-1)!.kind).toEqual({ kind: 'text' })
   })
@@ -141,25 +142,14 @@ describe('reading a value for its control', () => {
     expect(fieldList(['a', 3, 'b', null])).toEqual(['a', 'b'])
     expect(fieldList({ a: 1 })).toEqual([])
   })
-
-  test('a recurrence needs a frequency, and its interval defaults to 1', () => {
-    expect(fieldRecurrence({ frequency: 'weekly' })).toEqual({ frequency: 'weekly', interval: 1 })
-    expect(fieldRecurrence({ frequency: 'daily', interval: 3 })).toEqual({
-      frequency: 'daily',
-      interval: 3,
-    })
-    expect(fieldRecurrence({ interval: 2 })).toBeUndefined()
-    expect(fieldRecurrence(['weekly'])).toBeUndefined()
-    expect(fieldRecurrence('weekly')).toBeUndefined()
-  })
 })
 
 test('a key the block already has, a schema key, or YAML syntax is not addable', () => {
-  const schema = frontmatterSchema('projects/task.fix.md')!
+  const schema = CLAIMED
   expect(addableKey(' source ', [], schema)).toBe('source')
   expect(addableKey('title', ['title'], schema)).toBeNull()
-  // Schema keys have their own rows; `order` is hidden, not a back door.
-  expect(addableKey('due', [], schema)).toBeNull()
-  expect(addableKey('order', [], schema)).toBeNull()
+  // Schema keys have their own rows; a hidden one is not a back door.
+  expect(addableKey('when', [], schema)).toBeNull()
+  expect(addableKey('rank', [], schema)).toBeNull()
   for (const bad of ['', 'a: b', '#x', '- x', '"x"']) expect(addableKey(bad, [], schema)).toBeNull()
 })

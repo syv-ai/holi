@@ -32,10 +32,9 @@ describe('VAULT_SETTING_DEFAULTS', () => {
     expect(VAULT_SETTING_DEFAULTS.colorScheme).toBe('system')
   })
 
-  it('keeps archive-done opt-in, because it rearranges someone’s work', () => {
+  it("turns core's transforms on", () => {
     expect(VAULT_SETTING_DEFAULTS.hooks).toEqual({
       relink: true,
-      'archive-done': false,
       'normalize-md': true,
       'shrink-images': true,
       // On for relink's reason: it only ever rewrites a file it generated
@@ -53,7 +52,6 @@ describe('VAULT_SETTING_DEFAULTS', () => {
 
   it('names every transform the hooks block can carry', () => {
     expect(CORE_TRANSFORMS.map((t) => t.name).sort()).toEqual([
-      'archive-done',
       'memory-index',
       'normalize-md',
       'relink',
@@ -353,13 +351,12 @@ describe('seedSettings', () => {
     expect(Object.keys(seeded).sort()).toEqual(['dailyNotes', 'home', 'hooks'])
   })
 
-  it('still declares every transform the hooks expect, with archive-done off', () => {
+  it('still declares every transform the hooks expect', () => {
     // The seed used to be a hand-written literal. If a descriptor drops a
     // transform, the seed silently stops declaring it and the vault inherits a
     // default it never stated.
     expect(seedSettings('committed').hooks).toEqual({
       relink: true,
-      'archive-done': false,
       'normalize-md': true,
       'shrink-images': true,
       'memory-index': true,

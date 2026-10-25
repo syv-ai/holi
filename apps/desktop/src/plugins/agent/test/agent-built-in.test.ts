@@ -59,6 +59,8 @@ it('runs whatever a stale plugins.yaml pins for it', async () => {
     binDir: () => '/holi/bin',
     githubToken: () => null,
     frameOrigin: () => () => {},
+    notify: () => false,
+    focused: () => false,
   })
   const capabilities = createCapabilityHost({
     registry,

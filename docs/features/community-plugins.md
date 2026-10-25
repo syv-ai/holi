@@ -34,7 +34,7 @@ server writes beside a file and must not sync. The grammar is `packages/shared/s
 
 **Several plugins in one repository.** A repository without a root manifest can hold several, each in
 a top-level folder named after its id (`notes/holi-plugin.json` says `"id": "notes"`; a folder whose
-manifest names another id is refused), so a contributor keeps their plugins together. The folder is the plugin: its `apps`, `skills`, `setup` and `serve` are
+manifest names another id is refused), so a contributor keeps their plugins together. The folder is the plugin: its `apps`, `skills`, `bin`, `setup` and `serve` are
 relative to it, it is the commands' working directory and what `holi community path` prints, and a
 link out of it, to a sibling plugin too, is refused.
 
@@ -60,6 +60,11 @@ plugin or its folder, and `commit`), and turns it on with
 `plugins: { community: true, <id>: true }` in `.holi/settings/plugins.yaml`, beside the first-party plugins. A folder
 install is never pinned.
 
+**Adding a plugin from settings uses it in the open vault.** Settings is always inside a vault, so
+a release added there under "Add a plugin" is pinned and turned on in that vault once it is allowed
+and set up, as its switch would. One the vault already has on stays as the vault has it. A folder
+added with "Use a folder" is only installed; its switch turns it on.
+
 **Vault apps.** A manifest's `apps` names folders in the plugin, each a vault app (`Notes.app`
 with its `index.html` and `app.yaml`). Each is copied to the vault's root once: when the vault
 turns the plugin on, when setup finishes in a vault that runs it, and when a vault that runs it
@@ -76,11 +81,51 @@ newer pin writes them again. Links inside a skill folder are followed when they 
 plugin's folder, so it can share references with its own skills, and refused when they leave it. `holi community path <id>` prints a running plugin's folder on this machine, so a skill can
 run the plugin's own tools; it only reads, so it is allowed without asking.
 
+**Commands for the vault's agent.** A manifest's `bin` maps command names to executable files in
+the plugin (`{"dashctl": "bin/dashctl"}`), so a skill can say "run `dashctl`" rather than spell out
+where the plugin lives. While the plugin runs in a vault, each is linked into
+`.holi/state/commands.local.d/`, and the agent's `PATH` ends with that folder: last, after the
+machine's own, so a plugin adds a command but never stands in for one the machine has, and never
+for `holi`, which no plugin may name. A name already on the agent's `PATH`, or already taken by
+another running plugin (the first by id keeps it), is refused rather than linked unreached; the
+plugin's row in the settings tab says so, as the last rebuild left it, and so does the consent
+dialog when its setup finishes.
+The agent's `PATH` is judged as Holi's own with the usual install folders after it (`toolPath`), since
+a Dock-launched Holi's own lacks them; a folder only the person's shell profile adds can still hold
+a name that then leaves the plugin's command unreached. A plugin whose folder can't be read has its
+commands refused, never the others'. The folder is rebuilt whole, one rebuild at a time, when the
+vault opens, when setup finishes, on install, pin, unpin and remove, and whenever a pin or the
+plugins settings change on disk (the settings tab's own write, a pull, a hand edit), which main
+hears through the vault's snapshots (`onSnapshot` on a plugin's context), window or not; turning the
+community plugin itself off empties it. A rebuild that fails is logged and never fails the step that
+asked for it, and the row says so. So nothing stale stays callable while the vault is open; while it
+is closed, the folder stays as Holi left it. Its path never changes, so a running session sees the
+change at once. It reaches a
+session through its supervisor's environment, as `holi` does, so a supervisor started before this
+Holi learns it at its next start. The consent dialog lists the commands; a call to one still asks
+for permission like any other command, until the person allows it.
+
 **Nothing runs before consent.** A fetched release waits until the person allows that commit, in a
-dialog naming the repository, version, commit and both commands, in body text, as the vault-app consent is. Consent is per `(id, commit)` in
+dialog naming the repository, version, commit, both commands and the commands it gives the agent, in body text, as the vault-app consent is. Consent is per `(id, commit)` in
 `userData/plugin-consent.json`, with no expiry; a different commit asks again. Then setup runs once,
 its output streamed into the dialog and kept in `setup.log`. A folder install asks nothing: it is
 the person's own checkout.
+
+**A readiness check.** A plugin that needs something outside Holi before it can work, such as a
+setting switched on in a companion app, says how to tell in its manifest:
+
+```json
+"check": { "run": ["dashctl", "version"], "hint": "Switch on Let other agents control Dash in Dash" }
+```
+
+`run` is an argv like `setup`, with `{vault}` its only placeholder, run in the plugin's folder with no shell
+and on the same `PATH`; it passes when it exits 0 within 10 seconds, and is killed with what it
+started when it does not. `hint` is one short line for the person. Main asks it for each plugin that
+runs in the vault: when the vault opens, when a plugin is turned on there, right after its setup
+succeeds, and when the person clicks **Check again**, never on a timer. The last answer is kept in
+memory per vault and plugin, and leaving the vault drops it. A failing check does not stop the
+plugin: its skills and commands stay and it still counts as running. Its settings row and the
+vault notice show the hint in place of "Ready", with **Check again** beside it.
 
 **A row's status**, as settings and the vault notice show it: `not-installed` (pinned, absent here),
 `pin-differs` (this machine has another release), `needs-consent`, `needs-setup`, `setup-failed`,
@@ -107,7 +152,12 @@ release, asks in the consent dialog, sets it up and, where the vault pins the pl
 release, so its members are offered it in turn.
 
 **The vault notice.** A vault that turns on a plugin this machine cannot run says so under the file
-tree, with the one next step (install the pinned version, or allow and set up).
+tree, with the one next step (install the pinned version, or allow and set up). A running plugin
+whose readiness check fails is there too, with its hint and **Check again**.
+
+**The agent knows the plugins.** The session overview the agent gets at each start names every
+plugin the vault pins, whether the vault turns it on, and the commands it gives the agent
+([agent-memory.md](agent-memory.md)), so it finds the plugin before it goes looking elsewhere.
 
 ## Rules
 
@@ -132,6 +182,11 @@ tree, with the one next step (install the pinned version, or allow and set up).
 
 ## Rejected
 
+- **A plugin's commands first on `PATH`, as Holi's own `holi` is.** A plugin could then answer to
+  `git` or `node` for the agent; last on `PATH`, with taken names refused, it can only add.
+- **Allow rules in the manifest.** Calls to a plugin's command ask, as any command does; a plugin
+  that could pre-allow itself would be consented to once and never asked about again.
+
 - **Loading plugin JavaScript into main or the renderer.** A deck needs a Node server anyway, and a
   process boundary keeps plugin code out of the processes that hold the token and the vault.
 - **Renderer-only third-party plugins in a vault-app sandbox.** Cannot run Slidev, or anything else
@@ -148,9 +203,9 @@ tree, with the one next step (install the pinned version, or allow and set up).
 ## Code
 
 - `packages/shared/src/community-plugin.ts`: the manifest and pin grammar, `opensPath`,
-  `pluginServerOrigin`.
+  `pluginServerOrigin`, `PLUGIN_COMMANDS_DIR`.
 - `apps/desktop/src/plugins/community/main/`: the install store, fetch, the topic search, setup,
-  consent, the supervisor and the `community.*` capabilities.
+  consent, the readiness checks (`checks.ts`), the supervisor, the agent's commands (`commands.ts`) and the `community.*` capabilities.
 - `apps/desktop/src/plugins/community/renderer/`: the tab (`PluginFrame`), the settings section, the
   consent dialog and the vault notice.
 - `apps/desktop/src/main/window-guard.ts`: `originFrameExit`.

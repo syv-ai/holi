@@ -27,6 +27,7 @@ const settings = (editorFont: ResolvedVaultSettings['editorFont']): ResolvedVaul
   agentProvider: 'claude',
   gridArcade: true,
   foldSidebarForApps: true,
+      autoUpdateSkills: false,
   colorScheme: 'system',
   windowGlass: 'frosted',
   editorFont,

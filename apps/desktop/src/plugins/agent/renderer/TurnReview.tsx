@@ -90,8 +90,8 @@ export function TurnReview(): React.JSX.Element | null {
   }
 
   const onKeep = guard(async () => {
-    if (selected === null || resolved === null) return
-    await revert({ path: selected, text: resolved })
+    if (selected === null || resolved === null || diff === null) return
+    await revert({ path: selected, text: resolved, base: diff.after })
     setResolved(null)
   })
 
@@ -142,8 +142,8 @@ export function TurnReview(): React.JSX.Element | null {
         <>
           <div className="max-h-56 shrink-0 overflow-y-auto border-b border-divider p-2">
             {files.length === 0 ? (
-              // Not "it changed nothing": a turn that changed nothing is never
-              // recorded, so an empty list against a real turn means the commits it
+              // Not "it changed nothing": the chip never opens a turn that changed
+              // nothing, so an empty list against a real turn means the commits it
               // names are no longer reachable (a reset, a re-clone).
               <EmptyState
                 title="This turn’s history is gone"

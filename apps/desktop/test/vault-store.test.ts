@@ -1,13 +1,24 @@
-import { emptyVaultSnapshot, snapshotTasks, taskClaim } from '@holi/shared'
+import { emptyVaultSnapshot, snapshotTasks, TASKS_CLAIM, taskClaim } from '@holi/shared'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { scanVault as scan } from '../src/main/vault/vault-store'
+import { scanVault as scan, type ScanClaim } from '../src/main/vault/vault-store'
 
-/** Tasks, still a core claim, as the scanner gets it in every vault. */
-const TASKS = [{ ...taskClaim, plugin: 'tasks' }]
-const scanVault = (root: string) => scan(root, TASKS)
+/** A stand-in plugin's claim: `card.<name>.md` in any folder, with a
+ *  required `kind`. The scanner knows no plugin; any claim will do. */
+const CARDS: ScanClaim = {
+  plugin: 'cards',
+  match: (path) => /(^|\/)card\.[^/]+\.md$/.test(path),
+  parse: (text, path) => {
+    const kind = /^kind: (\w+)$/m.exec(text)?.[1]
+    if (kind === undefined) throw new Error('kind is required')
+    return { path, kind }
+  },
+}
+const scanVault = (root: string) => scan(root, [CARDS])
+const cards = (snap: Awaited<ReturnType<typeof scan>>) =>
+  snap.claimed['cards'] ?? { items: [], broken: [] }
 
 const dirs: string[] = []
 afterAll(async () => {
@@ -26,35 +37,23 @@ async function vault(files: Record<string, string>): Promise<string> {
 }
 
 describe('scanVault', () => {
-  it('separates notes from tasks by the filename marker', async () => {
+  it("separates notes from a claim's files by its match, parsed by the claim", async () => {
     const root = await vault({
       'roadmap.md': '# Roadmap\n',
-      'projects/q2/task.fix-login.md': '---\ntitle: Fix login\nstatus: doing\n---\n',
-      'projects/tasks.md': 'a note that merely mentions tasks\n',
+      'projects/q2/card.fix-login.md': '---\nkind: bug\n---\n',
+      'projects/cards.md': 'a note that merely mentions cards\n',
     })
     const snap = await scanVault(root)
 
-    expect(snap.docs.map((d) => d.path).sort()).toEqual(['projects/tasks.md', 'roadmap.md'])
-    expect(snapshotTasks(snap).items.map((t) => t.path)).toEqual(['projects/q2/task.fix-login.md'])
-    expect(snapshotTasks(snap).items[0]!.status).toBe('doing')
+    expect(snap.docs.map((d) => d.path).sort()).toEqual(['projects/cards.md', 'roadmap.md'])
+    expect(cards(snap).items).toEqual([{ path: 'projects/q2/card.fix-login.md', kind: 'bug' }])
   })
 
   it('lists a claimed file as a plain note when nothing claims it', async () => {
-    const root = await vault({ 'task.a.md': '---\nstatus: todo\n---\n' })
+    const root = await vault({ 'card.a.md': '---\nkind: bug\n---\n' })
     const snap = await scan(root, [])
-    expect(snap.docs.map((d) => d.path)).toEqual(['task.a.md'])
+    expect(snap.docs.map((d) => d.path)).toEqual(['card.a.md'])
     expect(snap.claimed).toEqual({})
-  })
-
-  it('takes a task lane from its folder, not from a field', async () => {
-    const root = await vault({
-      'projects/q2/task.a.md': '---\ntitle: A\n---\n',
-      'task.b.md': '---\ntitle: B\n---\n',
-    })
-    const snap = await scanVault(root)
-    const lanes = Object.fromEntries(snapshotTasks(snap).items.map((t) => [t.title, t.path]))
-    expect(lanes.A).toBe('projects/q2/task.a.md')
-    expect(lanes.B).toBe('task.b.md')
   })
 
   it('marks a daily note from its frontmatter, never its filename', async () => {
@@ -83,12 +82,21 @@ describe('scanVault', () => {
 
   it('surfaces an unparseable task instead of dropping it', async () => {
     const root = await vault({ 'task.broken.md': '---\npriority: critical\n---\n' })
-    const snap = await scanVault(root)
+    // Task files are the tasks plugin's claim.
+    const snap = await scan(root, [{ ...taskClaim, plugin: TASKS_CLAIM }])
 
     expect(snapshotTasks(snap).items).toEqual([])
     expect(snapshotTasks(snap).broken).toHaveLength(1)
     expect(snapshotTasks(snap).broken[0]!.path).toBe('task.broken.md')
     expect(snapshotTasks(snap).broken[0]!.error).toMatch(/priority must be one of/)
+  })
+
+  it('surfaces a claimed file that will not parse instead of dropping it', async () => {
+    const root = await vault({ 'card.broken.md': '---\ntitle: no kind\n---\n' })
+    const snap = await scanVault(root)
+
+    expect(cards(snap).items).toEqual([])
+    expect(cards(snap).broken).toEqual([{ path: 'card.broken.md', error: 'kind is required' }])
   })
 
   it('never walks into .git', async () => {
@@ -121,6 +129,18 @@ describe('scanVault', () => {
     ])
   })
 
+  it('gives a local file a claim takes to its claim, and leaves the rest plain files', async () => {
+    // A private task (`task.<name>.local.md`) is a task on this machine's board.
+    const root = await vault({
+      'card.mine.local.md': '---\nkind: bug\n---\n',
+      'USER.local.md': '# private\n',
+    })
+    const snap = await scanVault(root)
+    expect(cards(snap).items).toEqual([{ path: 'card.mine.local.md', kind: 'bug' }])
+    expect(snap.files.map((f) => f.path)).toEqual(['USER.local.md'])
+    expect(snap.docs).toEqual([])
+  })
+
   it('ignores non-markdown files', async () => {
     const root = await vault({ 'note.md': '# real\n', 'logo.png': 'binary', 'data.json': '{}' })
     const snap = await scanVault(root)
@@ -135,11 +155,11 @@ describe('scanVault', () => {
   it('surfaces every ancestor directory of every file as a dir', async () => {
     const root = await vault({
       'roadmap.md': '# Roadmap\n',
-      'projects/q2/task.fix-login.md': '---\ntitle: Fix login\n---\n',
+      'projects/q2/card.fix-login.md': '---\nkind: bug\n---\n',
     })
     const snap = await scanVault(root)
-    // Both the leaf dir and its parent, so the tree can render the chain — even
-    // though `projects/q2` holds only a (hidden-by-default) task.
+    // Both the leaf dir and its parent, so the tree can render the chain, even
+    // though `projects/q2` holds only a claimed file.
     expect(snap.dirs.sort()).toEqual(['projects', 'projects/q2'])
   })
 
@@ -147,11 +167,11 @@ describe('scanVault', () => {
     const root = await vault({ 'bolig/.gitkeep': '' })
     const snap = await scanVault(root)
     // The folder exists (in dirs) but the keep-file is never content: not a file,
-    // not a doc, not a task.
+    // not a doc, not a claimed file.
     expect(snap.dirs).toEqual(['bolig'])
     expect(snap.files).toEqual([])
     expect(snap.docs).toEqual([])
-    expect(snapshotTasks(snap).items).toEqual([])
+    expect(cards(snap).items).toEqual([])
   })
 
   it('lists non-markdown files separately from notes, ignoring junk', async () => {

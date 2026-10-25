@@ -16,7 +16,8 @@
 // CodeMirror's own input handling rather than reaching past it.
 import { writeFileSync } from 'node:fs'
 const list = await (await fetch('http://127.0.0.1:9333/json/list')).json()
-const page = list.find((t) => t.type === 'page')
+// Not `about:blank`: that is the hidden window the PDF plugin draws mermaid in.
+const page = list.find((t) => t.type === 'page' && t.url !== 'about:blank')
 if (!page) { console.error('no page'); process.exit(1) }
 const ws = new WebSocket(page.webSocketDebuggerUrl)
 const [arg, arg2] = process.argv.slice(2)

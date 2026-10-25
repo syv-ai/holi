@@ -23,20 +23,25 @@ other rather than repeating each other.
 | [file-tree](features/file-tree.md)                 | The tree, folders, hidden and local files, icons                         |
 | [auth](features/auth.md)                           | GitHub sign-in, the token, collaborators, access                         |
 | [editor](features/editor.md)                       | CodeMirror live preview, tables, images, external writes, completion     |
+| [note-comments](features/note-comments.md)         | Comment threads on a note's passages, the panel, mentions, the agent     |
 | [tabs-panes](features/tabs-panes.md)               | Panes, preview and pinned tabs, moving tabs                              |
 | [frontmatter](features/frontmatter.md)             | The frontmatter block, typed rows, schemas                               |
-| [wiki-links](features/wiki-links.md)               | Link grammar, rename, backrefs                                           |
+| [wiki-links](features/wiki-links.md)               | Link grammar, rename, backrefs, the links drawer                         |
+| [holi-links](features/holi-links.md)               | `holi://` links that open a note or heading from chat or email           |
+| [graph](features/graph.md)                         | The vault's notes and links as a graph                                   |
 | [tasks](features/tasks.md)                         | Task files, the board, dates, recurrence, reminders                      |
 | [planning](features/planning.md)                   | The vault as one project: Overview, Board, List and Table                |
 | [daily-notes](features/daily-notes.md)             | Idempotent daily notes and their archive                                 |
 | [agent-sessions](features/agent-sessions.md)       | Background sessions, the Agents view, turn review, reconcile             |
 | [agent-config](features/agent-config.md)           | Config layering, the per-vault silo, seeded files, tools, permissions    |
-| [agent-memory](features/agent-memory.md)           | The vault's `.holi/memory/` directory                                    |
-| [scheduled-agents](features/scheduled-agents.md)   | Prompts Holi runs as agent sessions on a cron schedule, on this machine  |
+| [agent-memory](features/agent-memory.md)           | `.holi/memory/`, expiring memory, the session overview, the memory lint  |
+| [scheduled-agents](features/scheduled-agents.md)   | Prompts Holi runs as agent sessions on a schedule or on a trigger        |
 | [holis](features/holis.md)                         | Agents that belong to the vault, sent a document from its Agent menu     |
+| [agent-inbox](features/agent-inbox.md)             | `holi agent notify`, the inbox, needs-you notifications, the work log    |
 | [google](features/google.md)                       | Gmail and Calendar per vault                                             |
 | [pdf](features/pdf.md)                             | Typst export, templates, the PDF viewer                                  |
-| [vault-apps](features/vault-apps.md)               | Agent-written apps in their own origin                                   |
+| [links](features/links.md)                         | Web addresses saved as link files, and the page previews                 |
+| [vault-apps](features/vault-apps.md)               | Agent-written apps in their own origin, their records, slash commands    |
 | [community-plugins](features/community-plugins.md) | Plugins from other repositories, run as their own processes              |
 | [command-palette](features/command-palette.md)     | ⌘K: documents, views and the shell's actions                             |
 | [shortcuts](features/keyboard-shortcuts.md)        | The shell's keyboard shortcuts, their table and their dialog             |
@@ -45,7 +50,7 @@ other rather than repeating each other.
 | [status-bar](features/status-bar.md)               | The status bar, the bottom panel, its Terminal and Output                |
 | [home](features/home.md)                           | Home: the vault's library (recent, notes, tasks, activity)               |
 | [onboarding](features/onboarding.md)               | First run, creating or joining a vault                                   |
-| [updates](features/updates.md)                     | Releases from CI, and the app updating itself                            |
+| [updates](features/updates.md)                     | Releases from CI, stable and dev channels, updating skills in a vault    |
 
 ## Rules for these docs
 

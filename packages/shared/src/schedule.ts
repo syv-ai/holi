@@ -1,5 +1,5 @@
 /**
- * An automation's definition (a scheduled agent): one markdown file in
+ * An automation's definition (a scheduled agent): one `.local.md` file in
  * `.holi/schedules/` whose frontmatter says when and with what, and whose body
  * is the prompt (docs/features/scheduled-agents.md).
  *
@@ -18,8 +18,9 @@
  * ```
  *
  * `cron` (repeating; one expression, or a list of them, each a trigger) or
- * `at` (once, a local `YYYY-MM-DDTHH:MM`), never both. `holi` names the Holi
- * that carries it out, whose soul, memory, model and rules a run gets.
+ * `at` (once, a local `YYYY-MM-DDTHH:MM`), never both; and/or `on`, the
+ * events that start a run (`triggers.ts`). `holi` names the Holi that carries
+ * it out, whose soul, memory, model and rules a run gets.
  * `allow` is Claude Code permission rules the run may use without asking;
  * every other permission prompt still asks. `catch-up` is how late a missed
  * moment may still run (`none`, `30m`, `2h`…); absent, it always does. Times
@@ -41,6 +42,7 @@ import { parseDateTime } from './dates'
 import { splitFrontmatter } from './frontmatter'
 import { normalizeText } from './normalize-md'
 import { SCHEDULES_SURFACE_DIR } from './path-safety'
+import { describeTriggers, parseTriggers, type Trigger } from './triggers'
 
 /** Where schedule files live. Root-anchored, one level: a schedule is a file
  *  directly inside. */
@@ -58,7 +60,10 @@ export type ScheduleWhen =
 
 export interface ScheduleDef {
   name: string
-  when: ScheduleWhen
+  /** Absent for a schedule only events start. */
+  when?: ScheduleWhen
+  /** The events that start a run, besides `when`. */
+  on: Trigger[]
   /** The id of the Holi that carries it out. */
   holi?: string
   /** A Claude Code model alias or id, for `--model`. */
@@ -73,12 +78,13 @@ export interface ScheduleDef {
 
 export type ScheduleParse = { ok: true; def: ScheduleDef } | { ok: false; error: string }
 
-/** Whether a vault path is a schedule file: a markdown file directly inside
- *  `SCHEDULES_DIR`, `.local.md` included. */
+/** Whether a vault path is a schedule file: a `.local.md` file directly
+ *  inside `SCHEDULES_DIR`. A schedule is one person's (it reads their mail,
+ *  speaks for them), so it never syncs; a committed `.md` there is not one. */
 export function isScheduleFilePath(path: string): boolean {
   if (!path.startsWith(`${SCHEDULES_DIR}/`)) return false
   const rest = path.slice(SCHEDULES_DIR.length + 1)
-  return !rest.includes('/') && rest.endsWith('.md') && rest !== '.md'
+  return !rest.includes('/') && rest.endsWith('.local.md') && rest !== '.local.md'
 }
 
 /** The file's own name for itself, `inbox-triage` for
@@ -137,7 +143,8 @@ export function parseScheduleFile(text: string, path: string): ScheduleParse {
   } catch (err) {
     return { ok: false, error: (err as Error).message }
   }
-  if (yaml === null) return { ok: false, error: 'no frontmatter: it needs a `cron` or an `at`' }
+  if (yaml === null)
+    return { ok: false, error: 'no frontmatter: it needs a `cron`, an `at` or an `on`' }
   let fm: unknown
   try {
     fm = parseYaml(yaml)
@@ -160,7 +167,7 @@ export function parseScheduleFile(text: string, path: string): ScheduleParse {
   if (cronText !== undefined && atText !== undefined) {
     return { ok: false, error: 'give a `cron` or an `at`, not both' }
   }
-  let when: ScheduleWhen
+  let when: ScheduleWhen | undefined
   if (cronText !== undefined) {
     const texts = Array.isArray(cronText) ? cronText : [cronText]
     if (texts.length === 0) return { ok: false, error: '`cron` names no time' }
@@ -192,8 +199,12 @@ export function parseScheduleFile(text: string, path: string): ScheduleParse {
       return { ok: false, error: '`at` must be a quoted local time, "YYYY-MM-DDTHH:MM"' }
     }
     when = { kind: 'at', stamp, local }
-  } else {
-    return { ok: false, error: 'it needs a `cron` or an `at`' }
+  }
+
+  const on = parseTriggers(f['on'])
+  if (!on.ok) return on
+  if (when === undefined && on.triggers.length === 0) {
+    return { ok: false, error: 'it needs a `cron`, an `at` or an `on`' }
   }
 
   const rawHoli = f['holi']
@@ -232,7 +243,8 @@ export function parseScheduleFile(text: string, path: string): ScheduleParse {
     ok: true,
     def: {
       name,
-      when,
+      ...(when === undefined ? {} : { when }),
+      on: on.triggers,
       ...(typeof rawHoli === 'string' ? { holi: rawHoli } : {}),
       ...(typeof rawModel === 'string' ? { model: rawModel } : {}),
       ...(catchUpMinutes === undefined ? {} : { catchUpMinutes }),
@@ -243,9 +255,11 @@ export function parseScheduleFile(text: string, path: string): ScheduleParse {
 }
 
 /**
- * What turning a schedule on approves: the prompt, the model and the rules it
- * may run without asking. A change to any of them is a schedule nobody has
- * approved yet. When it runs is not here: moving a time grants nothing. Nor is
+ * What turning a schedule on approves: the prompt, the model, the rules it
+ * may run without asking and the events that start it. A change to any of
+ * them is a schedule nobody has approved yet: a trigger decides who can make
+ * it run (whoever can send a mail, drop a file), which is more than a time
+ * does. When it runs is not here: moving a time grants nothing. Nor is
  * the `name`, which labels the run's session and the settings row and is
  * never part of what the run reads, so renaming grants nothing either.
  *
@@ -255,12 +269,15 @@ export function parseScheduleFile(text: string, path: string): ScheduleParse {
 export function scheduleApprovalText(def: ScheduleDef): string {
   const prompt = normalizeText(def.prompt, '', []).trim()
   // Which Holi carries it out is approved too; what that Holi is (its soul,
-  // model and rules) the caller adds, read from the Holi's own files.
+  // model and rules) the caller adds, read from the Holi's own files. Each
+  // key that came later is written only when it is set, so a schedule without
+  // it keeps the fingerprint it was approved with.
   return JSON.stringify({
     prompt,
     model: def.model ?? null,
     allow: def.allow,
     ...(def.holi === undefined ? {} : { holi: def.holi }),
+    ...(def.on.length === 0 ? {} : { on: def.on }),
   })
 }
 
@@ -279,6 +296,16 @@ function nextOfCrons(crons: readonly Cron[], after: Date): Date | null {
     if (next !== null && (best === null || next.getTime() < best.getTime())) best = next
   }
   return best
+}
+
+/** When it runs and what starts it, in words. */
+export function describeSchedule(def: Pick<ScheduleDef, 'when' | 'on'>): string {
+  const parts = def.when === undefined ? [] : [describeScheduleWhen(def.when)]
+  if (def.on.length > 0) {
+    const on = describeTriggers(def.on)
+    parts.push(parts.length === 0 ? on : on.charAt(0).toLowerCase() + on.slice(1))
+  }
+  return parts.join('; ')
 }
 
 /**
@@ -380,7 +407,11 @@ export function scheduleFileText(draft: ScheduleDraft, text?: string): string {
     else doc.set(key, value)
   }
   set('name', draft.name.trim())
-  set('cron', draft.crons.length === 1 ? draft.crons[0] : draft.crons)
+  // No cron is a schedule only its `on:` events start, which the editor keeps.
+  set(
+    'cron',
+    draft.crons.length === 0 ? undefined : draft.crons.length === 1 ? draft.crons[0] : draft.crons,
+  )
   doc.delete('at')
   set('holi', draft.holi?.trim() || undefined)
   set('model', draft.model?.trim() || undefined)

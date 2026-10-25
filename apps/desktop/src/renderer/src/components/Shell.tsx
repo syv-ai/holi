@@ -50,7 +50,9 @@ export function Shell() {
   useEffect(() => {
     if (!activeRemote || openedRemote.current === activeRemote) return
     openedRemote.current = activeRemote
-    void openVault(activeRemote)
+    // Landed: main may send the opens it held for a window that had not
+    // (a clicked reminder, `holi docs open`, a Holi link).
+    void openVault(activeRemote).then(() => window.holi.vault.openReady())
   }, [activeRemote, openVault])
 
   /** Adding a vault opens it, leaving this one as a switch does. Asked at the

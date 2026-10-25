@@ -8,6 +8,7 @@ import {
   readModelName,
   summarise,
 } from '../main/claude/listing'
+import type { SessionChannel } from '../main/claude/messaging'
 import { createAgentSessions, type AgentVault } from '../main/host/sessions'
 import type { AgentTerminals, OpenArgs } from '../main/host/terminals'
 
@@ -40,9 +41,16 @@ function setup(initial: Row[] = []) {
       listing = listing.filter((r) => r.id !== id)
       return { ok: true as const }
     }),
-    startBg: vi.fn(async () => {
-      listing = [...listing, row('newnew00', { status: 'idle', state: 'blocked' })]
-      return { ok: true as const, id: 'newnew00' }
+    startBg: vi.fn(async (_t, opts: { prompt?: string }) => {
+      // With a first turn it is working at once; without, it waits for one.
+      const id = opts.prompt === undefined ? 'newnew00' : 'launch00'
+      listing = [
+        ...listing,
+        opts.prompt === undefined
+          ? row(id, { status: 'idle', state: 'blocked' })
+          : row(id, { status: 'busy', state: 'working' }),
+      ]
+      return { ok: true as const, id }
     }),
     forkBg: vi.fn(async () => {
       listing = [...listing, row('copy0000')]
@@ -73,6 +81,7 @@ function setup(initial: Row[] = []) {
     listTerminal: () => null,
   }
   const sent: Array<[string, unknown]> = []
+  const message = vi.fn(async (_channel: SessionChannel, _text: string) => {})
   const pauses: string[] = []
   const vault: AgentVault = {
     remote: REMOTE,
@@ -93,7 +102,7 @@ function setup(initial: Row[] = []) {
       terminal: () => ({ bin: '/usr/local/bin/claude', args: [], env: {} }),
       firstSpawn: { take: async () => true, notice: SIGN_IN_NOTICE },
       capabilities: {
-        background: { cli, parseListing, isLive, summarise, watch: () => () => {} },
+        background: { cli, parseListing, isLive, summarise, watch: () => () => {}, message },
         status: { contextPercent: readContextPercent, model: readModelName },
       },
     },
@@ -110,6 +119,7 @@ function setup(initial: Row[] = []) {
     opened,
     pastes,
     sent,
+    message,
     terminals,
     setListing: (rows: Row[]) => {
       listing = rows
@@ -210,6 +220,35 @@ describe('agent sessions', () => {
     t.setListing([row('aaaaaaaa'), row('bbbbbbbb')])
     await t.sessions.refresh()
     expect(t.sessions.sessions()[1]?.contextPercent).toBeUndefined()
+  })
+
+  it('messages a session through the inbox its hook reported, until it stops', async () => {
+    const inbox = { socket: '/tmp/cc-socks/1.sock', token: 'abc123' }
+    // Reported at SessionStart, before the listing shows the session.
+    const t = setup([row('aaaaaaaa')])
+    await t.attach()
+    t.sessions.noteChannel(REMOTE, 'cccccccc', inbox)
+    t.sessions.noteChannel('someone/else', 'aaaaaaaa', inbox)
+    await expect(t.sessions.message('aaaaaaaa', 'hi')).rejects.toThrow(/not said where/)
+
+    t.setListing([row('aaaaaaaa'), row('cccccccc')])
+    await t.sessions.refresh()
+    await t.sessions.message('cccccccc', 'change the date')
+    expect(t.message).toHaveBeenCalledWith(inbox, 'change the date')
+
+    // Stopped: no longer running, and its inbox is forgotten with it.
+    await t.sessions.stop('cccccccc')
+    await expect(t.sessions.message('cccccccc', 'hi')).rejects.toThrow(/no running session/)
+    t.setListing([row('aaaaaaaa'), row('cccccccc')])
+    await t.sessions.refresh()
+    await expect(t.sessions.message('cccccccc', 'hi')).rejects.toThrow(/not said where/)
+
+    // A write that fails is not tried again until the session reports anew.
+    t.sessions.noteChannel(REMOTE, 'aaaaaaaa', inbox)
+    t.message.mockRejectedValueOnce(new Error('gone'))
+    await expect(t.sessions.message('aaaaaaaa', 'hi')).rejects.toThrow('gone')
+    await expect(t.sessions.message('aaaaaaaa', 'hi')).rejects.toThrow(/not said where/)
+    expect(t.message).toHaveBeenCalledTimes(2)
   })
 
   it('stops a session: it leaves the list', async () => {
@@ -320,5 +359,37 @@ describe('agent sessions', () => {
   it('does nothing without a vault', async () => {
     const t = setup()
     expect(await t.sessions.open({})).toEqual({ ok: false, message: 'No vault is open.' })
+  })
+})
+
+describe('launched sessions', () => {
+  it('start with their options and no terminal', async () => {
+    const { sessions, cli, opened, attach } = setup()
+    await attach()
+    const args = { name: 'Tidy', prompt: 'tidy the inbox', model: 'opus' }
+    expect(await sessions.launch(args)).toEqual({ ok: true, sessionId: 'launch00' })
+    expect(cli.startBg).toHaveBeenCalledWith(expect.anything(), args)
+    expect(opened).toEqual([])
+    expect(sessions.sessions()).toEqual([expect.objectContaining({ id: 'launch00' })])
+  })
+
+  it('are stopped when the vault closes as they start', async () => {
+    const { sessions, cli, attach } = setup()
+    await attach()
+    const started = cli.startBg.getMockImplementation()!
+    let release = () => {}
+    cli.startBg.mockImplementationOnce(async (t, opts) => {
+      await new Promise<void>((r) => (release = r))
+      return started(t, opts)
+    })
+    const launching = sessions.launch({ name: 'Go', prompt: 'go' })
+    await vi.waitFor(() => expect(cli.startBg).toHaveBeenCalled())
+    await sessions.leave()
+    release()
+    expect(await launching).toEqual({
+      ok: false,
+      message: 'The vault closed as the session started.',
+    })
+    expect(cli.stop).toHaveBeenCalledWith(expect.anything(), 'launch00')
   })
 })

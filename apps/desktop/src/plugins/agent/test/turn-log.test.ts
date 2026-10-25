@@ -100,10 +100,26 @@ describe('appending', () => {
     expect(list[0]!.base).toBe('b50')
   })
 
-  it('drops a turn that changed nothing, so no caller has to ask', async () => {
+  it('keeps a turn that changed nothing, since it still ends the session turn', async () => {
     const log = openTurnLog(root)
-    await log.append({ base: 'same', end: 'same', at: '2026-09-09T00:00:00Z' })
-    expect(await log.list()).toEqual([])
+    const same = { base: 'same', end: 'same', at: '2026-09-09T00:00:00Z' }
+    await log.append(same)
+    expect(await log.list()).toEqual([same])
+  })
+
+  it('keeps one changed-nothing turn per session, so they cannot push real turns out', async () => {
+    const log = openTurnLog(root)
+    const idle = (sessionId: string, n: number) => ({
+      base: 'same',
+      end: 'same',
+      at: `2026-09-09T0${n}:00:00Z`,
+      sessionId,
+    })
+    await log.append({ ...record(1), sessionId: 'a' })
+    await log.append(idle('a', 2))
+    await log.append(idle('b', 3))
+    await log.append(idle('a', 4))
+    expect(await log.list()).toEqual([idle('a', 4), idle('b', 3), { ...record(1), sessionId: 'a' }])
   })
 
   it('never syncs, because the name says so', () => {

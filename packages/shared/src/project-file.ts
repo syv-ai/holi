@@ -31,7 +31,7 @@
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { parseStamp } from './dates'
 import { FrontmatterError, splitFrontmatter } from './frontmatter'
-import { cleanLogins } from './task-file'
+import { cleanLogins } from './logins'
 
 export const PROJECT_FILE = '.holi/project.md'
 

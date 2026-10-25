@@ -24,7 +24,7 @@ import type { BranchList, GitDeps, GitRepo, PullResult, RepoStatus } from '../gi
 import { BranchRefusedError, isIndexLockError, openRepo } from '../git'
 import { errorText, type ActivityWrite } from '../activity/log'
 import { installGitHook, partitionBySize, type HeldBackFile } from './large-files'
-import { installRecordMergeDriver } from './record-merge'
+import { installMergeDrivers } from './merge-drivers'
 import { readMaxCommittedFileBytes } from './vault-settings'
 import type { VaultRegistry } from './registry'
 import { scanVault, type ScanClaim } from './vault-store'
@@ -91,6 +91,13 @@ export interface ActiveVault {
   pushNow(): Promise<void>
   /** Window focus. Throttled internally. */
   onFocus(): void
+  /**
+   * Resolves true once a pull has merged or found nothing new, the first time,
+   * and false if the vault closes first; never rejects. Asking starts a pull
+   * when none has caught up yet. What has to see the remote's state before it
+   * writes waits on this, such as the skills update on open.
+   */
+  caughtUp(): Promise<boolean>
   /** Stops both loops while an agent turn holds the vault. */
   pause(reason: string): void
   /** Lift the pause, then `retry`. */
@@ -213,6 +220,10 @@ export async function openActiveVault(args: {
    * is committed, so the snapshot says nothing.
    */
   onCommitted?: (paths: string[] | null) => void
+  /** A pull or a reconcile merged teammates' commits in: HEAD before and
+   *  after it. What came in is the difference (a new comment that mentions
+   *  you, say). A merge someone runs in a terminal is not seen. */
+  onPulled?: (range: { from: string; to: string }) => void
   /** Where this vault finds the running Holi: its `bridge.local.env`. */
   bridgeEnv?: VaultBridgeEnv
   /** The activity log (`activity/log.ts`): each commit, merge, push and
@@ -250,8 +261,8 @@ export async function openActiveVault(args: {
   // App records merge field by field, through a driver that asks us, so two
   // people editing one record do not pause sync. Machine-local and
   // best-effort, like the hook: without it git merges the text.
-  await installRecordMergeDriver(root).catch((err) =>
-    console.error('[vault] record merge driver install failed:', err),
+  await installMergeDrivers(root).catch((err) =>
+    console.error('[vault] merge driver install failed:', err),
   )
   // Tell that hook, the merge driver and every command in the vault how to
   // reach us. Rewritten every open because the port is ephemeral and moves on
@@ -274,7 +285,10 @@ export async function openActiveVault(args: {
   }
 
   let closed = false
-  let cached: VaultSnapshot = await scanVault(root, await args.claims())
+  /** The claims the last scan ran with: the watcher watches a local file one
+   *  of them takes (a private task), as it watches any note. */
+  let claimed: readonly ScanClaim[] = await args.claims()
+  let cached: VaultSnapshot = await scanVault(root, claimed)
   let state: SyncState = { kind: 'up-to-date' }
   let scanning = false
   let committing = false
@@ -327,6 +341,19 @@ export async function openActiveVault(args: {
     lastSyncAt = new Date().toISOString()
     lastError = null
   }
+  /** Settles `caughtUp()`: true on the first pull that is not a conflict,
+   *  false on close. */
+  let settleCaughtUp: (ok: boolean) => void = () => {}
+  let isCaughtUp = false
+  const caughtUp = new Promise<boolean>((resolve) => {
+    settleCaughtUp = (ok) => {
+      isCaughtUp = true
+      resolve(ok)
+    }
+  })
+  /** HEAD when that reconcile began: what its merge brought in is the
+   *  difference once it lands (`onPulled`). */
+  let reconcileFrom: string | null = null
 
   function setState(next: SyncState): void {
     if (next.kind !== 'pulling') {
@@ -354,7 +381,10 @@ export async function openActiveVault(args: {
       // empty vault is the honest reading of an absent one.
       cached = await args
         .claims()
-        .then((claims) => scanVault(root, claims))
+        .then((claims) => {
+          claimed = claims
+          return scanVault(root, claims)
+        })
         .catch(() => emptyVaultSnapshot())
       if (!closed) args.onSnapshot(cached)
     } finally {
@@ -378,6 +408,18 @@ export async function openActiveVault(args: {
     if (!reconciling || status.merging) return
     reconciling = false
     conflictPaths = null
+    // The merge landed (or was given up, and HEAD did not move): either way
+    // what came in is the difference, as after a clean pull.
+    const from = reconcileFrom
+    reconcileFrom = null
+    if (from !== null) {
+      void args.repo
+        .head()
+        .then((to) => {
+          if (to !== null && to !== from && !closed) args.onPulled?.({ from, to })
+        })
+        .catch((err) => console.error('[vault] head after reconcile:', err))
+    }
     // The merge commit is work the remote does not have. Coalesced, not
     // immediate: the reconcile's last write may still be settling.
     schedulePush()
@@ -556,6 +598,7 @@ export async function openActiveVault(args: {
       const result = await args.repo.pull()
       offline = false
       noteSynced()
+      if (result.kind !== 'conflict') settleCaughtUp(true)
       if (result.kind === 'conflict') {
         /**
          * **A conflict naming no paths is not a conflict.**
@@ -589,7 +632,10 @@ export async function openActiveVault(args: {
           `Pulled and merged ${result.commits} commit${result.commits === 1 ? '' : 's'} from origin`,
         )
         await rescan()
-        if (!closed) args.onCommitted?.(null)
+        if (!closed) {
+          args.onCommitted?.(null)
+          args.onPulled?.({ from: result.from, to: result.to })
+        }
         // A merge writes a merge commit, which the remote does not have. Push
         // it, coalesced rather than immediate because we are inside the pull's
         // `pullInFlight` guard here; `pushNow` would decline until it clears.
@@ -712,6 +758,7 @@ export async function openActiveVault(args: {
   const watcher: VaultWatcher = await watchVault({
     root,
     debounceMs: timings.rescanDebounceMs,
+    watches: (rel) => rel.endsWith('.md') && claimed.some((c) => c.match(rel)),
     onChange: () => {
       // The tree updates promptly; the commit waits for the edits to stop. Two
       // debounces off one signal, because they answer different questions.
@@ -881,6 +928,11 @@ export async function openActiveVault(args: {
       // while the pull is in flight, hence the chain.
       void maybePull().then(() => pushNow())
     },
+    caughtUp() {
+      // A declined pull leaves it waiting: the next tick or focus tries again.
+      if (!isCaughtUp && !closed) void maybePull().then(() => pushNow())
+      return caughtUp
+    },
     pause(reason) {
       manualPause = reason
       setState({ kind: 'paused', reason, manual: true })
@@ -909,6 +961,7 @@ export async function openActiveVault(args: {
     },
     async reconcile() {
       if (closed) return { paths: [] }
+      const from = await args.repo.head().catch(() => null)
       const result = await args.repo.remerge()
       if (result.kind === 'conflict') {
         log(
@@ -920,6 +973,7 @@ export async function openActiveVault(args: {
         // Markers + MERGE_HEAD are now in the tree; refresh the (fresh) paths.
         conflictPaths = result.paths
         reconciling = true
+        reconcileFrom = from
         await refreshState()
         return { paths: result.paths }
       }
@@ -927,6 +981,9 @@ export async function openActiveVault(args: {
       // return to normal. A merge commit, if any, still needs pushing.
       conflictPaths = null
       await rescan()
+      if (result.kind === 'merged' && !closed) {
+        args.onPulled?.({ from: result.from, to: result.to })
+      }
       schedulePush()
       await refreshState()
       return { paths: [] }
@@ -944,11 +1001,13 @@ export async function openActiveVault(args: {
       await args.repo.abortMerge()
       log('git', 'info', 'Merge abandoned: the conflict is waiting again')
       reconciling = false
+      reconcileFrom = null
       await refreshState()
     },
 
     async close() {
       closed = true
+      settleCaughtUp(false)
       clearInterval(heal)
       clearInterval(pullTimer)
       if (commitTimer !== null) clearTimeout(commitTimer)
@@ -984,6 +1043,8 @@ export function createVaultHost(args: {
   onSyncState: (state: SyncState) => void
   onHeldBack?: (files: HeldBackFile[]) => void
   onCommitted?: (paths: string[] | null) => void
+  /** A pull merged commits into the open vault `remote`, at `root`. */
+  onPulled?: (vault: { remote: string; root: string }, range: { from: string; to: string }) => void
   /** Writes each opened vault's `bridge.local.env`, and deletes it when the
    *  vault closes (`bridge/env-file.ts`). */
   bridgeEnv?: VaultBridgeEnv
@@ -1070,6 +1131,7 @@ export function createVaultHost(args: {
           onSyncState: args.onSyncState,
           onHeldBack: args.onHeldBack,
           onCommitted: args.onCommitted,
+          onPulled: (range) => args.onPulled?.({ remote, root: entry.path }, range),
           bridgeEnv: args.bridgeEnv,
           ...(args.activity === undefined ? {} : { activity: args.activity }),
           timings: args.timings,

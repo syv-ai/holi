@@ -16,7 +16,7 @@ import { closeTabsForPaths, retargetTab, retargetTabs, workspaceAtom } from './p
 // A cycle (`plugins` reads `activeRemoteAtom`), safe because neither module
 // reads the other's atoms until a store does.
 import { folderSurfacesAtom } from './plugins'
-import { openTaskAtom } from './view'
+import { openDocumentAtom } from './open-document'
 
 type JotaiStore = ReturnType<typeof createStore>
 
@@ -196,16 +196,23 @@ export function subscribeToVault(
   const offCommitted = window.holi.vault.onCommitted((paths) =>
     store.set(historyEpochsAtom, (e) => bumpHistoryEpochs(e, paths)),
   )
-  // A clicked reminder opens its task. Cross-vault, the switch runs here, not in
-  // main, so `activeRemoteAtom` stays truthful; the task opens once the new
-  // vault's snapshot is in (`openVaultAtom` sets it before this resolves).
-  const offReminder = window.holi.reminders.onOpen(({ remote, path }) => {
+  // Main asks for a path in a tab: a clicked reminder's task, `holi docs open`,
+  // a Holi link. Cross-vault, the switch runs here, not in main, so
+  // `activeRemoteAtom` stays truthful; the path opens once the new vault's
+  // snapshot is in (`openVaultAtom` sets it before this resolves). A link's
+  // heading is not scrolled to yet (docs/not-built.md).
+  const offReminder = window.holi.vault.onOpen(({ remote, path }) => {
     if (remote && remote !== store.get(activeRemoteAtom)) {
-      void store.set(openVaultAtom, remote).then(() => store.set(openTaskAtom, path))
+      void store.set(openVaultAtom, remote).then(() => store.set(openDocumentAtom, path))
     } else {
-      store.set(openTaskAtom, path)
+      store.set(openDocumentAtom, path)
     }
   })
+  // `holi docs screenshot` asks where a tab is drawn; the tab strip cannot
+  // say yet (docs/not-built.md), so it is told at once rather than left waiting.
+  const offLocate = window.holi.vault.onLocate(({ id }) =>
+    window.holi.vault.located({ id, error: 'Holi cannot locate a tab on screen yet.' }),
+  )
   const tables = plugins.flatMap((p) =>
     p.events === undefined ? [] : [[p.info.id, p.events] as const],
   )
@@ -220,6 +227,7 @@ export function subscribeToVault(
     offHeldBack()
     offCommitted()
     offReminder()
+    offLocate()
     offEvents.forEach((off) => off())
   }
 }
@@ -321,15 +329,24 @@ export const renameNoteAtom = atom(
  * `renameNoteAtom`, one commit-pair for the whole batch: flush the live buffer
  * and commit a clean restore point, run the single-pass `notes.move`, retarget
  * every open tab, reload the snapshot, follow the active doc, commit again.
+ * `folders` are the folders the move was aimed at, whose leftovers (`.gitkeep`,
+ * ignored files) main carries after the documents.
  */
 export const moveNotesAtom = atom(
   null,
-  async (get, set, { moves }: { moves: { from: string; to: string }[] }) => {
+  async (
+    get,
+    set,
+    {
+      moves,
+      folders = [],
+    }: { moves: { from: string; to: string }[]; folders?: { from: string; to: string }[] },
+  ) => {
     const remote = get(activeRemoteAtom)
-    if (!remote || moves.length === 0) return
+    if (!remote || (moves.length === 0 && folders.length === 0)) return
     await flushAllBuffers()
     await trpc.sync.commitNow.mutate()
-    await trpc.notes.move.mutate({ remote, moves })
+    await trpc.notes.move.mutate({ remote, moves, folders })
     set(workspaceAtom, retargetTabs(get(workspaceAtom), moves, get(folderSurfacesAtom)))
     const active = get(activeDocAtom)
     const moved = active ? moves.find((m) => m.from === active.path) : undefined

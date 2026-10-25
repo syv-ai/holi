@@ -240,7 +240,7 @@ describe('routes and the capability door', () => {
 
   it("runs a command for the token's vault, its argv in order", async () => {
     const dispatch = vi.fn<Dispatch>(async () => ({ value: ['x'], text: 'x', writes: false }))
-    const r = await rig({ dispatch, commands: () => [LIST] })
+    const r = await rig({ dispatch, commands: () => [LIST], rootFor: async () => null })
     const res = await post(r.port(), `/cli?t=${r.token()}`, argv('store', 'list', 'A.app', 'items'))
     expect(res).toEqual({ status: 200, body: 'x' })
     expect(dispatch).toHaveBeenCalledWith({
@@ -255,6 +255,7 @@ describe('routes and the capability door', () => {
     const r = await rig({
       dispatch: async () => ({ value: { a: 1 }, text: 'a', writes: false }),
       commands: () => [LIST],
+      rootFor: async () => null,
     })
     const res = await post(
       r.port(),
@@ -271,6 +272,7 @@ describe('routes and the capability door', () => {
         throw new Error('no such record')
       },
       commands: () => [LIST],
+      rootFor: async () => null,
     })
     const usage = await post(r.port(), `/cli?t=${r.token()}`, argv('store', 'nope'))
     expect(usage.status).toBe(400)
