@@ -7,7 +7,12 @@
  * ⇧⌘G back; Escape closes it. The arrow opens a replace row, where Enter
  * replaces and ⌘Enter replaces all.
  */
-import { type ComponentProps, type KeyboardEvent, type ReactNode, type Ref } from 'react'
+import {
+  type ComponentProps,
+  type KeyboardEvent,
+  type ReactNode,
+  type Ref,
+} from "react"
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -19,19 +24,23 @@ import {
   ReplaceIcon,
   WholeWordIcon,
   XIcon,
-} from 'lucide-react'
+} from "lucide-react"
 
-import { ShortcutKeys } from '@/components/blocks/rich-text-editor-2/components/rich-text-toolbar'
-import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
+import { ShortcutKeys } from "@/components/blocks/rich-text-editor-2/components/rich-text-toolbar"
+import { Button } from "@/components/ui/button"
+import { Card } from "@/components/ui/card"
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
   InputGroupText,
-} from '@/components/ui/input-group'
-import { Toggle } from '@/components/ui/toggle'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+} from "@/components/ui/input-group"
+import { Toggle } from "@/components/ui/toggle"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 export interface FindOptions {
   search: string
@@ -42,11 +51,11 @@ export interface FindOptions {
 }
 
 export const EMPTY_FIND_OPTIONS: FindOptions = {
-  search: '',
+  search: "",
   caseSensitive: false,
   wholeWord: false,
   regexp: false,
-  replace: '',
+  replace: "",
 }
 
 /** What a ⌘F hands a bar: a new `token` refocuses its field, and `text`,
@@ -99,17 +108,19 @@ export function FindBar({
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const mod = event.metaKey || event.ctrlKey
     const key = event.key.toLowerCase()
-    if (event.key === 'Escape') {
+    if (event.key === "Escape") {
       event.preventDefault()
       event.stopPropagation()
       onClose()
-    } else if (mod && !event.altKey && key === 'f') {
+    } else if (mod && !event.altKey && key === "f") {
       event.preventDefault()
       event.stopPropagation()
-      const input = event.currentTarget.querySelector<HTMLInputElement>("input[aria-label='Find']")
+      const input = event.currentTarget.querySelector<HTMLInputElement>(
+        "input[aria-label='Find']"
+      )
       input?.focus()
       input?.select()
-    } else if (mod && !event.altKey && key === 'g') {
+    } else if (mod && !event.altKey && key === "g") {
       event.preventDefault()
       event.stopPropagation()
       if (event.shiftKey) onPrev()
@@ -118,26 +129,26 @@ export function FindBar({
   }
 
   function handleFieldKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+    if (event.key !== "Enter" || event.nativeEvent.isComposing) return
     event.preventDefault()
     if (event.shiftKey) onPrev()
     else onNext()
   }
 
   function handleReplaceKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+    if (event.key !== "Enter" || event.nativeEvent.isComposing) return
     event.preventDefault()
     if (event.metaKey || event.ctrlKey) onReplaceAll()
     else onReplace()
   }
 
   const status =
-    options.search === ''
-      ? ''
+    options.search === ""
+      ? ""
       : count.total === 0
-        ? 'No results'
+        ? "No results"
         : count.current === null
-          ? `${count.total} ${count.total === 1 ? 'result' : 'results'}`
+          ? `${count.total} ${count.total === 1 ? "result" : "results"}`
           : `${count.current} of ${count.total}`
   const none = count.total === 0
 
@@ -145,7 +156,7 @@ export function FindBar({
     <Card size="sm" className="p-1" onKeyDown={handleKeyDown}>
       <div role="search" aria-label={label} className="flex gap-1">
         <BarButton
-          label={replacing ? 'Hide replace' : 'Show replace'}
+          label={replacing ? "Hide replace" : "Show replace"}
           onClick={() => onReplacingChange(!replacing)}
           aria-expanded={replacing}
           disabled={!editable}
@@ -161,24 +172,34 @@ export function FindBar({
                 placeholder="Find"
                 value={options.search}
                 aria-invalid={invalid || undefined}
-                onChange={(event) => onOptionsChange({ search: event.target.value })}
+                onChange={(event) =>
+                  onOptionsChange({ search: event.target.value })
+                }
                 onKeyDown={handleFieldKeyDown}
               />
               <InputGroupAddon align="inline-end">
-                <InputGroupText role="status" aria-live="polite" className="text-xs tabular-nums">
+                <InputGroupText
+                  role="status"
+                  aria-live="polite"
+                  className="text-xs tabular-nums"
+                >
                   {status}
                 </InputGroupText>
                 <OptionToggle
                   label="Match case"
                   pressed={options.caseSensitive}
-                  onPressedChange={(caseSensitive) => onOptionsChange({ caseSensitive })}
+                  onPressedChange={(caseSensitive) =>
+                    onOptionsChange({ caseSensitive })
+                  }
                 >
                   <CaseSensitiveIcon />
                 </OptionToggle>
                 <OptionToggle
                   label="Match whole word"
                   pressed={options.wholeWord}
-                  onPressedChange={(wholeWord) => onOptionsChange({ wholeWord })}
+                  onPressedChange={(wholeWord) =>
+                    onOptionsChange({ wholeWord })
+                  }
                 >
                   <WholeWordIcon />
                 </OptionToggle>
@@ -193,16 +214,21 @@ export function FindBar({
             </InputGroup>
             <BarButton
               label="Previous match"
-              shortcut={['shift', 'mod', 'G']}
+              shortcut={["shift", "mod", "G"]}
               disabled={none}
               onClick={onPrev}
             >
               <ArrowUpIcon />
             </BarButton>
-            <BarButton label="Next match" shortcut={['mod', 'G']} disabled={none} onClick={onNext}>
+            <BarButton
+              label="Next match"
+              shortcut={["mod", "G"]}
+              disabled={none}
+              onClick={onNext}
+            >
               <ArrowDownIcon />
             </BarButton>
-            <BarButton label="Close" shortcut={['Esc']} onClick={onClose}>
+            <BarButton label="Close" shortcut={["Esc"]} onClick={onClose}>
               <XIcon />
             </BarButton>
           </div>
@@ -213,16 +239,23 @@ export function FindBar({
                   aria-label="Replace"
                   placeholder="Replace"
                   value={options.replace}
-                  onChange={(event) => onOptionsChange({ replace: event.target.value })}
+                  onChange={(event) =>
+                    onOptionsChange({ replace: event.target.value })
+                  }
                   onKeyDown={handleReplaceKeyDown}
                 />
               </InputGroup>
-              <BarButton label="Replace" shortcut={['⏎']} disabled={none} onClick={onReplace}>
+              <BarButton
+                label="Replace"
+                shortcut={["⏎"]}
+                disabled={none}
+                onClick={onReplace}
+              >
                 <ReplaceIcon />
               </BarButton>
               <BarButton
                 label="Replace all"
-                shortcut={['mod', '⏎']}
+                shortcut={["mod", "⏎"]}
                 disabled={none}
                 onClick={onReplaceAll}
               >
@@ -241,14 +274,20 @@ function BarButton({
   shortcut,
   children,
   ...props
-}: Omit<ComponentProps<typeof Button>, 'size' | 'variant'> & {
+}: Omit<ComponentProps<typeof Button>, "size" | "variant"> & {
   label: string
   shortcut?: readonly string[]
 }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button type="button" variant="ghost" size="icon-sm" aria-label={label} {...props}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={label}
+          {...props}
+        >
           {children}
         </Button>
       </TooltipTrigger>
@@ -274,7 +313,12 @@ function OptionToggle({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Toggle size="sm" aria-label={label} pressed={pressed} onPressedChange={onPressedChange}>
+        <Toggle
+          size="sm"
+          aria-label={label}
+          pressed={pressed}
+          onPressedChange={onPressedChange}
+        >
           {children}
         </Toggle>
       </TooltipTrigger>

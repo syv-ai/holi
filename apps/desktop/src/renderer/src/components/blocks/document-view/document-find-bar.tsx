@@ -4,20 +4,26 @@
  * where the caret was; Escape closes it and gives the editor back with the
  * match selected.
  */
-import { useEffect, useRef, useState } from 'react'
-import type { Editor } from '@tiptap/react'
-import { TextSelection } from '@tiptap/pm/state'
-import { findNext, findPrev, replaceAll, replaceNext, setSearchState } from 'prosemirror-search'
+import { useEffect, useRef, useState } from "react"
+import type { Editor } from "@tiptap/react"
+import { TextSelection } from "@tiptap/pm/state"
+import {
+  findNext,
+  findPrev,
+  replaceAll,
+  replaceNext,
+  setSearchState,
+} from "prosemirror-search"
 
-import { useRichTextSelector } from '@/components/blocks/rich-text-editor-2/components/rich-text-state'
+import { useRichTextSelector } from "@/components/blocks/rich-text-editor-2/components/rich-text-state"
 
 import {
   EMPTY_FIND_OPTIONS,
   FindBar,
   type FindOptions,
   type FindRequest,
-} from '../find-bar/find-bar'
-import { findCount, findQuery } from './document-find'
+} from "../find-bar/find-bar"
+import { findCount, findQuery } from "./document-find"
 
 export type { FindRequest }
 
@@ -32,7 +38,7 @@ export function DocumentFindBar({
 }) {
   const [options, setOptions] = useState<FindOptions>({
     ...EMPTY_FIND_OPTIONS,
-    search: request.text ?? '',
+    search: request.text ?? "",
   })
   const [replacing, setReplacing] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -40,10 +46,13 @@ export function DocumentFindBar({
   const anchor = useRef(editor.state.selection.from)
 
   const count = useRichTextSelector(editor, (current) =>
-    current ? findCount(current.state) : { total: 0, current: null },
+    current ? findCount(current.state) : { total: 0, current: null }
   )
   const query = findQuery(options)
-  const editable = useRichTextSelector(editor, (current) => current?.isEditable ?? false)
+  const editable = useRichTextSelector(
+    editor,
+    (current) => current?.isEditable ?? false
+  )
 
   // Each ⌘F: the selection's line, if any, and the field to type in.
   useEffect(() => {
@@ -64,9 +73,12 @@ export function DocumentFindBar({
     const next = findQuery(options)
     const tr = setSearchState(state.tr, next)
     if (next.valid) {
-      const hit = next.findNext(state, anchor.current) ?? next.findNext(state, 0)
+      const hit =
+        next.findNext(state, anchor.current) ?? next.findNext(state, 0)
       if (hit) {
-        tr.setSelection(TextSelection.create(state.doc, hit.from, hit.to)).scrollIntoView()
+        tr.setSelection(
+          TextSelection.create(state.doc, hit.from, hit.to)
+        ).scrollIntoView()
       }
     }
     editor.view.dispatch(tr)
@@ -76,21 +88,26 @@ export function DocumentFindBar({
   useEffect(
     () => () => {
       if (editor.isDestroyed) return
-      editor.view.dispatch(setSearchState(editor.state.tr, findQuery({ ...EMPTY_FIND_OPTIONS })))
+      editor.view.dispatch(
+        setSearchState(editor.state.tr, findQuery({ ...EMPTY_FIND_OPTIONS }))
+      )
     },
-    [editor],
+    [editor]
   )
 
-  const run = (command: typeof findNext) => command(editor.state, editor.view.dispatch)
+  const run = (command: typeof findNext) =>
+    command(editor.state, editor.view.dispatch)
 
   return (
     <FindBar
       label="Find in document"
       inputRef={inputRef}
       options={options}
-      onOptionsChange={(patch) => setOptions((current) => ({ ...current, ...patch }))}
+      onOptionsChange={(patch) =>
+        setOptions((current) => ({ ...current, ...patch }))
+      }
       count={count}
-      invalid={options.regexp && options.search !== '' && !query.valid}
+      invalid={options.regexp && options.search !== "" && !query.valid}
       editable={editable}
       replacing={replacing}
       onReplacingChange={setReplacing}

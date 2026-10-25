@@ -31,8 +31,13 @@ function setup() {
 
 test("a new task is private until it is shared", async () => {
   const { onCreate } = setup()
-  await userEvent.type(screen.getByPlaceholderText("Task title"), "Write the brief")
-  expect(screen.getByRole("button", { name: "Sharing: Private" })).toBeInTheDocument()
+  await userEvent.type(
+    screen.getByPlaceholderText("Task title"),
+    "Write the brief"
+  )
+  expect(
+    screen.getByRole("button", { name: "Sharing: Private" })
+  ).toBeInTheDocument()
   await userEvent.click(screen.getByRole("button", { name: "Create task" }))
   await waitFor(() =>
     expect(onCreate).toHaveBeenCalledWith(
@@ -43,13 +48,20 @@ test("a new task is private until it is shared", async () => {
 
 test("Shared with vault makes a committed task", async () => {
   const { onCreate } = setup()
-  await userEvent.type(screen.getByPlaceholderText("Task title"), "Write the brief")
-  await userEvent.click(screen.getByRole("button", { name: "Sharing: Private" }))
+  await userEvent.type(
+    screen.getByPlaceholderText("Task title"),
+    "Write the brief"
+  )
+  await userEvent.click(
+    screen.getByRole("button", { name: "Sharing: Private" })
+  )
   await userEvent.click(
     await screen.findByRole("menuitemradio", { name: /Shared with vault/ })
   )
   await userEvent.click(screen.getByRole("button", { name: "Create task" }))
   await waitFor(() =>
-    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ shared: true }))
+    expect(onCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ shared: true })
+    )
   )
 })

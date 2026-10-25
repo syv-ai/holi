@@ -632,11 +632,13 @@ function SharingField({
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <Chip
-          icon={value ? (
-            <UsersIcon data-icon="inline-start" aria-hidden="true" />
-          ) : (
-            <LockIcon data-icon="inline-start" aria-hidden="true" />
-          )}
+          icon={
+            value ? (
+              <UsersIcon data-icon="inline-start" aria-hidden="true" />
+            ) : (
+              <LockIcon data-icon="inline-start" aria-hidden="true" />
+            )
+          }
           set
           label="Sharing"
           aria-label={`Sharing: ${current.name}`}

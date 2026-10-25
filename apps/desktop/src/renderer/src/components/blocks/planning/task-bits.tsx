@@ -190,7 +190,10 @@ export function TagBadges({ tags }: { tags: readonly string[] }) {
 export function PrivateMark({ path }: { path: string }) {
   if (!isPrivateTask(path)) return null
   return (
-    <span data-private-task className="text-muted-foreground inline-flex shrink-0">
+    <span
+      data-private-task
+      className="text-muted-foreground inline-flex shrink-0"
+    >
       <LockIcon className="size-3.5" aria-hidden="true" />
       <span className="sr-only">, private</span>
     </span>
