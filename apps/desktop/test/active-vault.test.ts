@@ -480,11 +480,11 @@ describe('ActiveVault — commit', () => {
       pullIntervalMs: 60_000,
     })
     await plainGit(dir, ['config', 'filter.strip.clean', "sed '/REJECTED/d'"])
-    await writeFile(join(dir, '.git', 'info', 'attributes'), 'note.md filter=strip\\n')
-    const rejected = 'wanted\\nREJECTED\\n'
+    await writeFile(join(dir, '.git', 'info', 'attributes'), 'note.md filter=strip\n')
+    const rejected = 'wanted\nREJECTED\n'
     await writeFile(join(dir, 'note.md'), rejected)
-    const rejectedDelivery = await active.deliverNow(async () =>
-      (await plainGit(dir, ['show', 'HEAD:note.md'])) === rejected,
+    const rejectedDelivery = await active.deliverNow(
+      async () => (await plainGit(dir, ['show', 'HEAD:note.md'])) === rejected.trimEnd(),
     )
     expect(rejectedDelivery).toBe(false)
     await sleep(250)
@@ -493,15 +493,17 @@ describe('ActiveVault — commit', () => {
     )
     expect(await plainGit(origin, ['cat-file', '-e', 'main:note.md']).catch(() => '')).toBe('')
 
-    const corrected = 'wanted\\ncorrected\\n'
+    const corrected = 'wanted\ncorrected\n'
     await writeFile(join(dir, 'note.md'), corrected)
     expect(
-      await active.deliverNow(async () =>
-        (await plainGit(dir, ['show', 'HEAD:note.md'])) === corrected,
+      await active.deliverNow(
+        async () => (await plainGit(dir, ['show', 'HEAD:note.md'])) === corrected.trimEnd(),
       ),
     ).toBe(true)
-    await waitFor('the corrected note to reach origin', async () =>
-      (await plainGit(origin, ['show', 'main:note.md']).catch(() => '')) === corrected,
+    await waitFor(
+      'the corrected note to reach origin',
+      async () =>
+        (await plainGit(origin, ['show', 'main:note.md']).catch(() => '')) === corrected.trimEnd(),
     )
   })
 
