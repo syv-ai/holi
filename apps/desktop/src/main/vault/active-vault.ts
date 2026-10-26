@@ -766,15 +766,15 @@ export async function openActiveVault(args: {
       // point in delivery, openActiveVault restores this path's push block.
       rejectedDeliveries.add(path)
       try {
-        await persistReservations()
-      } catch (error) {
-        reservationWriteFailed = true
-        console.error('[vault] delivery reservation write failed:', error)
-        return false
-      }
-      if (pushTimer !== null) clearTimeout(pushTimer)
-      pushTimer = null
-      try {
+        try {
+          await persistReservations()
+        } catch (error) {
+          reservationWriteFailed = true
+          console.error('[vault] delivery reservation write failed:', error)
+          return false
+        }
+        if (pushTimer !== null) clearTimeout(pushTimer)
+        pushTimer = null
         await waitForSync()
         if (closed) return false
         const status = await args.repo.status().catch(() => null)
@@ -810,6 +810,16 @@ export async function openActiveVault(args: {
         const latest = await args.repo.status().catch(() => null)
         if (latest === null || blockedReason(latest) !== null || manualPause !== null) return false
         if (latest.dirty) {
+          // Quarantine before the follow-up commit: if its verification rejects,
+          // no timer or reopened vault may publish that commit.
+          rejectedDeliveries.add(path)
+          try {
+            await persistReservations()
+          } catch (error) {
+            reservationWriteFailed = true
+            console.error('[vault] delivery reservation write failed:', error)
+            return false
+          }
           if ((await maybeCommit(false, true)) !== null) {
             await waitForSync()
             if (closed || !(await verify())) return false

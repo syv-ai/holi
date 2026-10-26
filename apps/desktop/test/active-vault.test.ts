@@ -542,6 +542,52 @@ describe('ActiveVault — commit', () => {
     )
   })
 
+  it('keeps a rejected follow-up commit quarantined after the first push', async () => {
+    const { active, dir, origin } = await vault({
+      commitQuietMs: 60_000,
+      pushQuietMs: 60_000,
+      healIntervalMs: 60_000,
+      pullIntervalMs: 60_000,
+    })
+    const repo = active.repo
+    const push = repo.push.bind(repo)
+    let injected = false
+    repo.push = async () => {
+      const result = await push()
+      if (!injected) {
+        injected = true
+        await writeFile(join(dir, 'delivery.md'), 'rejected follow-up\n')
+      }
+      return result
+    }
+    await writeFile(join(dir, 'delivery.md'), 'verified first commit\n')
+    let verifications = 0
+    expect(
+      await active.deliverNow('delivery.md', async () => ++verifications === 1),
+    ).toBe(false)
+    expect(verifications).toBe(2)
+    await sleep(250)
+    expect(await plainGit(origin, ['show', 'main:delivery.md'])).toBe('verified first commit')
+
+    await active.close()
+    const reopened = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: {
+        commitQuietMs: 60_000,
+        pushQuietMs: 60_000,
+        healIntervalMs: 60_000,
+        pullIntervalMs: 60_000,
+      },
+    })
+    open.push(reopened)
+    await sleep(150)
+    expect(await plainGit(origin, ['show', 'main:delivery.md'])).toBe('verified first commit')
+  })
+
   it('deliverNow joins an in-flight push before finishing', async () => {
     const { active, dir, origin } = await vault({
       commitQuietMs: 60_000,
