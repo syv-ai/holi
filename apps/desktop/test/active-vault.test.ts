@@ -498,10 +498,11 @@ describe('ActiveVault — commit', () => {
     // commits remain local until the rejected path itself is corrected.
     await writeFile(join(dir, 'other.md'), 'unrelated\n')
     expect(
-      await active.deliverNow('other.md', async () =>
-        (await plainGit(dir, ['show', 'HEAD:other.md'])) === 'unrelated',
+      await active.deliverNow(
+        'other.md',
+        async () => (await plainGit(dir, ['show', 'HEAD:other.md'])) === 'unrelated',
       ),
-    ).toBe(true)
+    ).toBe(false)
     await sleep(250)
     expect(await plainGit(origin, ['cat-file', '-e', 'main:other.md']).catch(() => '')).toBe('')
     expect(await plainGit(origin, ['cat-file', '-e', 'main:note.md']).catch(() => '')).toBe('')
