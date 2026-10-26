@@ -762,7 +762,7 @@ test('remembers its width per account, not per vault', async () => {
   reads.mockRestore()
 
   // Mail shows one Google account whichever vault is open, and opens with no
-  // vault at all (`usePanelLayout` cannot key a write on a null remote).
+  // vault at all, so its split is never keyed on a vault.
   expect(keys).toContain('holi:panelLayouts:global')
   expect(keys).not.toContain('holi:panelLayouts')
 })

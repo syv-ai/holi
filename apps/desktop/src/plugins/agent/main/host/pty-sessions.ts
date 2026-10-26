@@ -88,7 +88,10 @@ interface Session {
   signals: TurnSignals
 }
 
-/** A name from the first line of an ask. */
+/**
+ * A name from the first line of an ask.
+ * @public exported for its test
+ */
 export function nameOf(text: string): string | null {
   const line = text.trim().split('\n', 1)[0]?.trim() ?? ''
   if (line === '') return null

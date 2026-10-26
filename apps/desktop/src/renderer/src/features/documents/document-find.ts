@@ -9,7 +9,6 @@ import { Extension } from "@tiptap/react"
 import type { EditorState } from "@tiptap/pm/state"
 import {
   getMatchHighlights,
-  getSearchState,
   search,
   SearchQuery,
 } from "prosemirror-search"
@@ -43,12 +42,6 @@ export function findCount(state: EditorState): {
     (match) => match.from === from && match.to === to
   )
   return { total: matches.length, current: index < 0 ? null : index + 1 }
-}
-
-/** The query in force, or null when there is none to search for. */
-export function activeQuery(state: EditorState): SearchQuery | null {
-  const query = getSearchState(state)?.query
-  return query?.valid ? query : null
 }
 
 export const DocumentFind = Extension.create({

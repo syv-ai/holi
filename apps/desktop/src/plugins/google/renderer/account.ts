@@ -49,7 +49,10 @@ interface Connection {
 
 const refreshNonceAtom = atom(0)
 
-/** Ask main again: after a connect, a disconnect or a change of account. */
+/**
+ * Ask main again: after a connect, a disconnect or a change of account.
+ * @public exported for its test
+ */
 export const refreshGoogleAtom = atom(null, (_get, set) => set(refreshNonceAtom, (n) => n + 1))
 
 const connectionAtom = atom(async (get): Promise<Connection> => {

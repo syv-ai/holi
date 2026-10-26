@@ -54,14 +54,19 @@ import {
   type VaultSnapshot,
 } from '@holi/shared'
 
-/** How long a batch gathers before it runs. */
+/**
+ * How long a batch gathers before it runs.
+ * @public exported for its test
+ */
 export const BATCH_MS = 60_000
 /** How long an occurrence's id and version are remembered. */
 const DEDUPE_MS = 60 * 60_000
 /** How far back a moment told late may still fire. */
 const LATE_MS = 24 * 60 * 60_000
 /** A timed source's list not told again for this long is ignored: two of the
- *  slowest source's (Google's) five-minute looks, and some. */
+ *  slowest source's (Google's) five-minute looks, and some.
+ * @public exported for its test
+ */
 export const STALE_MS = 12 * 60_000
 /** At most this many causes are named in a run's line; the rest are counted. */
 const NAMED = 5
@@ -94,6 +99,7 @@ export interface Batch {
 
 export type MomentSource = 'task' | 'calendar'
 
+/** @public exported for its test */
 export interface MomentFloor {
   /** The persisted watermark per source. */
   since(source: MomentSource): number

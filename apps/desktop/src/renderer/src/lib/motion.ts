@@ -5,38 +5,6 @@
  */
 
 /**
- * How many items a staggered list ramps over before everything else arrives
- * together.
- *
- * Uncapped, two hundred children would take nine seconds to open. Past the cap
- * every item shares the last delay.
- */
-export const MOTION_STAGGER_CAP = 8
-
-/**
- * The `animation-delay` for the nth item of a staggered list.
- *
- * A CSS `calc()` string, not milliseconds, so the step stays in
- * `--motion-stagger` and re-pacing is an `index.css` edit. It is also a call
- * rather than a literal, which the renderer's motion lint rule permits.
- *
- * `--motion-stagger` lives in a plain `:root` rule, not `@theme`, since
- * Tailwind cannot see this runtime string (see `index.css`).
- */
-export function staggerDelay(
-  index: number,
-  opts: { reduced?: boolean; cap?: number } = {},
-): string {
-  const { reduced = false, cap = MOTION_STAGGER_CAP } = opts
-  // Reduced motion flattens the ramp: a staggered arrival is travel.
-  if (reduced) return '0ms'
-  // A negative delay would read as an animation already part-played.
-  const step = Number.isFinite(index) ? Math.min(Math.floor(index), cap) : 0
-  if (step <= 0) return '0ms'
-  return `calc(var(--motion-stagger) * ${step})`
-}
-
-/**
  * A one-shot reduced-motion read for non-component code; components use
  * `useReducedMotion`. Guarded: `matchMedia` is absent in jsdom and plain Node.
  */
@@ -45,27 +13,4 @@ export function prefersReducedMotion(): boolean {
     typeof window !== 'undefined' &&
     window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
   )
-}
-
-/**
- * Which ids in a keyed list have just appeared, and in what order.
- *
- * The gate for an arrival: an `animation` on a list's children would replay on
- * every re-render, so a row animates because it is new, a fact about two
- * renders.
- *
- * The first render returns nothing: a mount is the shell's arrival to make.
- * Only ids absent before and present now count. Pair with `staggerDelay`.
- */
-export function arrivalIndex(
-  prev: readonly string[] | null,
-  next: readonly string[],
-): Map<string, number> {
-  const arrived = new Map<string, number>()
-  if (prev === null) return arrived
-  const before = new Set(prev)
-  for (const id of next) {
-    if (!before.has(id)) arrived.set(id, arrived.size)
-  }
-  return arrived
 }

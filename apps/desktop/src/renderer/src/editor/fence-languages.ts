@@ -48,6 +48,7 @@ import { toml } from '@codemirror/legacy-modes/mode/toml'
  * The fence's language token: the first word of the info string, lowercased.
  * Handles ` ```js title="a.js" `, ` ```python {1,3} `, ` ```{r setup} ` and
  * ` ```.ts `.
+ * @public exported for its test
  */
 export function fenceLanguageId(info: string): string {
   return (info.trim().split(/[\s,{}]+/).find((w) => w !== '') ?? '')

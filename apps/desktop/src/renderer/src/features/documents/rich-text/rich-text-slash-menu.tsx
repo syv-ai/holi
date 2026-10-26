@@ -234,7 +234,7 @@ function SlashMenu({ ref, editor, items, loading, command }: SlashMenuProps) {
   )
 }
 
-export const RICH_TEXT_SLASH_KEY = new PluginKey("richTextSlash")
+const RICH_TEXT_SLASH_KEY = new PluginKey("richTextSlash")
 
 interface RichTextSlashOptions {
   items: readonly RichTextSlashItem[]

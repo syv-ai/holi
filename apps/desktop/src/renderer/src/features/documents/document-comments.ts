@@ -53,7 +53,7 @@ function markdownOf(editor: Editor, doc: PMNode): string | null {
  * cannot be told apart in the markdown (inside something the codec writes as
  * one, an image or a raw HTML block).
  */
-export function selectionInFile(
+function selectionInFile(
   editor: Editor,
   head: string
 ): { text: string; from: number; to: number } | null {
@@ -209,7 +209,7 @@ interface CommentsState {
 
 type CommentsMeta = { ranges?: readonly PlacedRange[]; active?: string | null }
 
-export const documentCommentsKey = new PluginKey<CommentsState>(
+const documentCommentsKey = new PluginKey<CommentsState>(
   "documentComments"
 )
 
@@ -243,7 +243,10 @@ export function setCommentRanges(editor: Editor, meta: CommentsMeta): void {
   editor.view.dispatch(editor.state.tr.setMeta(documentCommentsKey, meta))
 }
 
-/** The threads whose passage covers `pos`, innermost last. */
+/**
+ * The threads whose passage covers `pos`, innermost last.
+ * @public exported for its test
+ */
 export function threadsAt(state: EditorState, pos: number): string[] {
   const set = documentCommentsKey.getState(state)?.decorations
   if (!set) return []

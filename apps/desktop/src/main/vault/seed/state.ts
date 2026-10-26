@@ -25,6 +25,7 @@ import { join } from 'node:path'
 import { compareVersions, vaultRelPath } from '@holi/shared'
 import { writeAtomic } from '../vault-files'
 
+/** @public exported for its test */
 export const SEED_STATE_FILE = '.holi/state/seed-state.local.json'
 
 /** What Holi wrote at one path: its text, and its hash. */

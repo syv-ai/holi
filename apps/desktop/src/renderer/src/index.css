@@ -316,7 +316,7 @@
   background: color-mix(in oklab, var(--background) var(--glass-view), transparent);
 }
 /* Split view keeps this ground: its views sit edge to edge on `main`, a
- * hairline between them (panes-view.tsx), as one tab does. */
+ * hairline between them (split-view.tsx), as one tab does. */
 
 /* ── Window ───────────────────────────────────────────────────────────────
  * macOS draws its traffic lights over the page (`hiddenInset`, ending near

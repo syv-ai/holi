@@ -27,7 +27,17 @@
         "src/**/*.worker.ts!",
         "scripts/*.{mjs,cjs}",
       ],
-      "project": ["src/**/*.{ts,tsx,css}!", "test/**/*.ts", "scripts/**"],
+      "project": [
+        "src/**/*.{ts,tsx,css}!",
+        "test/**/*.ts",
+        "scripts/**",
+        // Left out of the project, so production mode does not report them as
+        // unreached: test helpers, which only tests import, and the seeded theme,
+        // which is read through `import.meta.glob` with `?raw` and imported by
+        // `index.css`, neither an import knip follows in production mode.
+        "!src/renderer/src/test/**",
+        "!src/main/vault/seed/vault/once/.holi/settings/theme.css",
+      ],
       // The gate self-test lints these on purpose; they are inputs, not code.
       "ignore": ["test/fixtures/**"],
       // plugin-api.ts is the facade plugins import core through. It re-exports
@@ -51,11 +61,11 @@
       "project": ["src/**/*.ts!", "test/**/*.ts"],
     },
   },
-  // Files and dependencies are errors. The export sweep warns until phase 1 has
-  // deleted the code that only its own tests reach; then these become "error".
+  // Every finding is an error: a dead file, dependency, export, type or
+  // duplicate export fails the gate.
   "rules": {
-    "exports": "warn",
-    "types": "warn",
-    "duplicates": "warn",
+    "exports": "error",
+    "types": "error",
+    "duplicates": "error",
   },
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { APP_METHODS, isAppTopic, storeTopic } from '../shared/bridge'
+import { APP_METHODS } from '../shared/bridge'
 
 describe('APP_METHODS', () => {
   it('is exactly the shipped set and no more', () => {
@@ -37,15 +37,5 @@ describe('APP_METHODS', () => {
     // injected as CSS custom properties on serve, so a getter would be a second
     // source for something an app already reads with `var(--primary)`.
     for (const method of APP_METHODS) expect(method.startsWith('theme')).toBe(false)
-  })
-})
-
-describe('topics', () => {
-  it('accepts the fixed topics and a store topic per collection', () => {
-    expect(isAppTopic('docs')).toBe(true)
-    expect(isAppTopic(storeTopic('items'))).toBe(true)
-    expect(isAppTopic('store:')).toBe(false)
-    expect(isAppTopic('store:../x')).toBe(false)
-    expect(isAppTopic('mail')).toBe(false)
   })
 })

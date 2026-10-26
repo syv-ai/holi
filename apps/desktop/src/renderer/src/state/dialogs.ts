@@ -45,13 +45,9 @@ export type PluginDialog = Extract<ActiveDialog, { id: 'plugin' }>
 /** Leave a vault, delete it, or let go of one GitHub no longer shows. */
 type RemoveVaultIntent = 'leave' | 'delete' | 'forget'
 
-/** Null when nothing is open. The host is mounted once by the app shell. */
-export const activeDialogAtom = atom<ActiveDialog | null>(null)
+/** Null when nothing is open. */
+const activeDialogAtom = atom<ActiveDialog | null>(null)
 
 export const openDialogAtom = atom(null, (_get, set, dialog: ActiveDialog) => {
   set(activeDialogAtom, dialog)
-})
-
-export const closeDialogAtom = atom(null, (_get, set) => {
-  set(activeDialogAtom, null)
 })

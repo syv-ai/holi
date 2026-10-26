@@ -26,7 +26,7 @@ import { toml } from '@codemirror/legacy-modes/mode/toml'
 import { parse as parseYaml, YAMLParseError } from 'yaml'
 
 /** `ini` covers the whole properties/env family (`.env`, `.ini`, `.conf`). */
-export type LangId = 'json' | 'yaml' | 'toml' | 'ini' | 'shell' | 'javascript' | 'html' | 'css'
+type LangId = 'json' | 'yaml' | 'toml' | 'ini' | 'shell' | 'javascript' | 'html' | 'css'
 
 /**
  * What each extension is, once, for both questions asked of a path: `cm`, the
@@ -133,7 +133,10 @@ function langOf(path: string): Lang {
   return dot > 0 ? (BY_EXT[base.slice(dot + 1)] ?? {}) : {}
 }
 
-/** Which CodeMirror language a vault path is, or `null` for plain text. */
+/**
+ * Which CodeMirror language a vault path is, or `null` for plain text.
+ * @public exported for its test
+ */
 export function languageIdForPath(path: string): LangId | null {
   return langOf(path).cm ?? null
 }

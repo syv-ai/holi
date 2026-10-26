@@ -78,6 +78,7 @@ function liveItem(s: AgentSession): AgentsSessionItem {
  * automation's for the same session. Then the stopped background sessions
  * (`past`) no plugin ran, idle: your own earlier conversations, which
  * opening brings back.
+ * @public exported for its test
  */
 export function mergeSessionItems(
   slotItems: readonly AgentsSessionItem[],
@@ -135,6 +136,7 @@ export interface SeenRecord {
  * The state a row shows. Working and needs-you are the session's own; a
  * finished turn is **done** until the row is opened after it ended, and the
  * row that is open never is (you are looking at it).
+ * @public exported for its test
  */
 export function rowState(
   item: AgentsSessionItem,
@@ -154,6 +156,7 @@ export function rowState(
  * MonoCode's `nextUnseenFinishedSessions`, as times: a row that was in flight
  * and is not any more ended its turn now. Kept for the agent's live sessions,
  * whose listing says what they do but not when a turn ended.
+ * @public exported for its test
  */
 export function nextEndedAt(
   previous: ReadonlyMap<string, AgentsSessionItem['state']>,
@@ -172,7 +175,10 @@ export function nextEndedAt(
   return next ?? (endedAt as Record<string, number>)
 }
 
-/** Which rows are open in the Sessions list, kept on this machine. */
+/**
+ * Which rows are open in the Sessions list, kept on this machine.
+ * @public exported for its test
+ */
 export interface OpenRecord {
   /** Since when this machine has kept track: rows the person started after
    *  it open on their own; older ones wait in History. */
@@ -311,13 +317,19 @@ export function age(at: number, now: number): string {
 
 // ----------------------------------------------------------------- atoms
 
-/** When each row was last opened, kept on this machine. */
+/**
+ * When each row was last opened, kept on this machine.
+ * @public exported for its test
+ */
 export const sessionsSeenAtom = atomWithStorage<SeenRecord>('holi.agents.sessions.seen', {
   since: Date.now(),
   seen: {},
 })
 
-/** Which rows are open in the Sessions list, kept on this machine. */
+/**
+ * Which rows are open in the Sessions list, kept on this machine.
+ * @public exported for its test
+ */
 export const sessionsOpenAtom = atomWithStorage<OpenRecord>('holi.agents.sessions.open', {
   since: Date.now(),
   opened: {},

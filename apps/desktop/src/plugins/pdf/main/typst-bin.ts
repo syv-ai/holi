@@ -7,10 +7,12 @@ import { promisify } from 'node:util'
 const exec = promisify(execFile)
 
 /** The typst version Holi targets. Templates are authored against it, and the
- * download-on-first-use path (see ensureTypst) pins to it. */
+ * download-on-first-use path (see ensureTypst) pins to it.
+ * @public exported for its test
+ */
 export const TYPST_VERSION = '0.14.1'
 
-export interface ResolveTypstOpts {
+interface ResolveTypstOpts {
   /** Where a downloaded binary is cached (userData/typst). Omitted in tests that
    *  only exercise the PATH branch. */
   cacheDir?: string
@@ -22,6 +24,7 @@ export interface ResolveTypstOpts {
  *   2. a cached download under `cacheDir`.
  *   3. `PATH` (dev — `which typst`).
  * This finds an EXISTING binary only; `ensureTypst` adds the download.
+ * @public exported for its test
  */
 export async function resolveTypstBin(opts: ResolveTypstOpts = {}): Promise<string | null> {
   const override = process.env.TYPST_BIN
@@ -45,7 +48,7 @@ async function onPath(): Promise<string | null> {
   }
 }
 
-export interface TypstAsset {
+interface TypstAsset {
   /** GitHub release asset filename. */
   archive: string
   /** Path of the binary inside the extracted archive. */
@@ -62,7 +65,10 @@ const TARGETS: Record<string, { triple: string; format: 'tar.xz' | 'zip' }> = {
   'win32/x64': { triple: 'x86_64-pc-windows-msvc', format: 'zip' },
 }
 
-/** The release asset for a platform/arch, or throw if typst ships none. */
+/**
+ * The release asset for a platform/arch, or throw if typst ships none.
+ * @public exported for its test
+ */
 export function typstReleaseAsset(platform: string, arch: string): TypstAsset {
   const target = TARGETS[`${platform}/${arch}`]
   if (target === undefined) throw new Error(`no typst release for ${platform}/${arch}`)
@@ -75,13 +81,18 @@ export function typstReleaseAsset(platform: string, arch: string): TypstAsset {
   }
 }
 
-/** The pinned GitHub release download URL for an asset. */
+/**
+ * The pinned GitHub release download URL for an asset.
+ * @public exported for its test
+ */
 export function typstDownloadUrl(asset: TypstAsset, version = TYPST_VERSION): string {
   return `https://github.com/typst/typst/releases/download/v${version}/${asset.archive}`
 }
 
 /** Where the downloaded binary is cached. Versioned, so bumping the pin lands in
- *  a fresh dir and never runs a stale binary. */
+ *  a fresh dir and never runs a stale binary.
+ * @public exported for its test
+ */
 export function cachedBinPath(cacheDir: string): string {
   const bin = process.platform === 'win32' ? 'typst.exe' : 'typst'
   return join(cacheDir, `typst-${TYPST_VERSION}`, bin)

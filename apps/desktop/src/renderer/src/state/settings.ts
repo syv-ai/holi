@@ -75,7 +75,7 @@ const settingsFilesAtom = atom((get): string =>
     .join('|'),
 )
 
-/** Re-read the settings when any of the files changes on disk. Mounted once, in Shell. */
+/** Re-read the settings when any of the files changes on disk. Mounted once, in the app shell. */
 export function useSettingsFollowDisk(): void {
   const files = useAtomValue(settingsFilesAtom)
   const load = useSetAtom(loadVaultSettingsAtom)

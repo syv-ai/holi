@@ -30,7 +30,7 @@ import { LinkIcon, CheckIcon, Link2OffIcon, ExternalLinkIcon, PencilIcon } from 
 const BARE_DOMAIN = /^[\w-]+(\.[\w-]+)+(:\d+)?([/?#]\S*)?$/
 
 /** A typed address as an href, or null when it is not a web, mail or phone link. */
-export function normalizeHref(value: string) {
+function normalizeHref(value: string) {
   const href = value.trim()
 
   if (/^(https?:\/\/|mailto:|tel:)\S+$/i.test(href)) return href

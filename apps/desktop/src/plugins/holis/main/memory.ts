@@ -46,6 +46,7 @@ export const MEMORY_RULES = (id: string, dir: string): string =>
     'Never save a secret, a password or a token. Write your memory only through these commands.',
   ].join('\n')
 
+/** @public exported for its test */
 export const hashOf = (text: string): string => createHash('sha256').update(text).digest('hex')
 
 /** A file's text, '' when it is missing. Only a regular file under the cap. */

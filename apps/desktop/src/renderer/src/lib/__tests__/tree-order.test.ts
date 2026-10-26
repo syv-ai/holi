@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { orderChildren, placeAmong } from '@/lib/tree-order'
+import { orderChildren } from '@/lib/tree-order'
 
 const byName = (a: string, b: string) => a.localeCompare(b)
 
@@ -12,20 +12,5 @@ describe('orderChildren', () => {
   })
   it('ignores placed paths that are gone', () => {
     expect(orderChildren(['a', 'b'], ['gone', 'b'], byName)).toEqual(['b', 'a'])
-  })
-})
-
-describe('placeAmong', () => {
-  it('moves a sibling before another', () => {
-    expect(placeAmong(['a', 'b', 'c'], ['c'], 'a', 'before')).toEqual(['c', 'a', 'b'])
-  })
-  it('moves a sibling after another', () => {
-    expect(placeAmong(['a', 'b', 'c'], ['a'], 'b', 'after')).toEqual(['b', 'a', 'c'])
-  })
-  it('places arrivals from elsewhere, several at once, keeping their order', () => {
-    expect(placeAmong(['a', 'b'], ['x', 'y'], 'b', 'before')).toEqual(['a', 'x', 'y', 'b'])
-  })
-  it('appends when the target is not among the siblings', () => {
-    expect(placeAmong(['a', 'b'], ['x'], 'zz', 'after')).toEqual(['a', 'b', 'x'])
   })
 })

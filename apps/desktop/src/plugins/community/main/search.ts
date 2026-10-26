@@ -119,6 +119,7 @@ async function foldersOf(repo: string, get: Get): Promise<string[]> {
  * Read `repo` for plugins: the one at its root, or else one in each top-level
  * folder named after its id, each with its own newest release. One candidate
  * per plugin; a repository with none is one candidate saying so.
+ * @public exported for its test
  */
 export async function describeRepo(
   repo: string,

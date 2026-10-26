@@ -33,6 +33,7 @@ const SETTINGS = '.claude/settings.json'
  * (parsed, never sourced) and keyed by the job id, the way `turn-signal.mjs`
  * does it. The post is detached with its output discarded, so a slow or absent
  * Holi never holds up the footer, and outside Holi the command only prints.
+ * @public exported for its test
  */
 export const STATUS_LINE = [
   'input=$(cat)',
@@ -181,7 +182,9 @@ const AGENT_SETTINGS: SettingsFragment = {
 }
 
 /** The agent's `settings.json` for what is on disk, given every
- *  contribution's fragments and which hook scripts the vault has. */
+ *  contribution's fragments and which hook scripts the vault has.
+ * @public exported for its test
+ */
 export const agentSettings = (
   existing: string | null,
   fragments: readonly SettingsFragment[],

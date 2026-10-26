@@ -27,6 +27,7 @@
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+/** @public exported for its test */
 export const BRIDGE_ENV_FILE = '.holi/state/bridge.local.env'
 
 const KEY = /^HOLI_[A-Z_]+$/

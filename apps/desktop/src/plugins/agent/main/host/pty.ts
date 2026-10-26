@@ -15,6 +15,7 @@ export type { PtyProcess, SpawnPty }
 // What a pid is right now lives in core, with the community plugins' servers
 // as its other user (`main/process-group.ts`).
 import { defaultProbePid, type PidState } from '../../../../main/plugin-api'
+/** @public exported for its test */
 export { defaultProbePid, type PidState }
 
 /**

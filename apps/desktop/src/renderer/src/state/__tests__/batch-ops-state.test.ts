@@ -8,7 +8,7 @@ import { createStore } from 'jotai'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { VaultSnapshot } from '@holi/shared'
 import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
-import { activeRemoteAtom, copyNotesAtom, deleteManyAtom, moveNotesAtom } from '@/state/vaults'
+import { activeRemoteAtom, deleteManyAtom, moveNotesAtom } from '@/state/vaults'
 import { emptyWorkspace, openTab, workspaceAtom } from '@/state/panes'
 
 let holi: FakeHoli | null = null
@@ -74,26 +74,5 @@ describe('deleteManyAtom', () => {
       'sync.commitNow',
     ])
     expect(store.get(workspaceAtom).panes[0]!.tabs).toEqual([])
-  })
-})
-
-describe('copyNotesAtom', () => {
-  it('flushes, commits, copies, commits', async () => {
-    holi = installFakeHoli((op) => {
-      if (op.path === 'notes.copy') return { copied: ['a copy.md'] }
-      if (op.path === 'vaults.snapshot') return emptySnapshot()
-      return undefined
-    })
-    const store = createStore()
-    store.set(activeRemoteAtom, 'syv-ai/notes')
-
-    await store.set(copyNotesAtom, { copies: [{ from: 'a.md', to: 'a copy.md' }] })
-
-    expect(holi.calls.map((c) => c.path)).toEqual([
-      'sync.commitNow',
-      'notes.copy',
-      'vaults.snapshot',
-      'sync.commitNow',
-    ])
   })
 })

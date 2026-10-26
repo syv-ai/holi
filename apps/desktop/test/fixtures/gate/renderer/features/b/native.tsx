@@ -1,4 +1,4 @@
-// FIXTURE — must fail: native <select> outside primitives/ (rule: no-restricted-syntax).
+// FIXTURE — must fail: native <select> outside components/ui/ (rule: no-restricted-syntax).
 export const NativePicker = (): React.JSX.Element => (
   <select>
     <option>x</option>

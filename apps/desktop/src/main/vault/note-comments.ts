@@ -89,6 +89,7 @@ async function readStored(
  * write: one that changed since the first read gets the change merged into
  * it (`mergeCommentsText`, the merge driver's own rule) rather than written
  * over, so a teammate's comment that landed meanwhile stays.
+ * @public exported for its test
  */
 export function changeNoteComments(
   root: string,

@@ -26,23 +26,3 @@ export function orderChildren(
     return fallback(a, b)
   })
 }
-
-/**
- * The folder's order once `moving` lands before or after `target`. `siblings`
- * is the folder's children as shown now; `moving` may come from elsewhere (a
- * move into the folder with a place), already renamed to its path here. The
- * result places every child, so the shown order is exactly what is kept.
- */
-export function placeAmong(
-  siblings: readonly string[],
-  moving: readonly string[],
-  target: string,
-  side: 'before' | 'after',
-): string[] {
-  const moved = new Set(moving)
-  const rest = siblings.filter((id) => !moved.has(id))
-  const i = rest.indexOf(target)
-  if (i === -1) return [...rest, ...moving]
-  const at = side === 'before' ? i : i + 1
-  return [...rest.slice(0, at), ...moving, ...rest.slice(at)]
-}

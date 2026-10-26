@@ -12,7 +12,7 @@ import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
 
 /** The first `Untitled`, `Untitled 2`, … that no vault path takes, as an
  *  app's name at the vault root. */
-export function freeAppName(taken: ReadonlySet<string>): string {
+function freeAppName(taken: ReadonlySet<string>): string {
   for (let n = 1; ; n++) {
     const name = n === 1 ? "Untitled" : `Untitled ${n}`
     if (!taken.has(`${name}.app`)) return name

@@ -6,7 +6,7 @@ import { atom, createStore } from 'jotai'
 import { describe, expect, it } from 'vitest'
 
 import { installedPluginsAtom } from '@/state/plugins'
-import { closeActiveTabAtom, closePaneAtom, closeTabAtom } from '@/state/pane-exit'
+import { closeActiveTabAtom, closeTabAtom } from '@/state/pane-exit'
 import {
   emptyWorkspace,
   openPreview,
@@ -36,18 +36,6 @@ describe('closing the last tab of a split', () => {
     store.set(closeTabAtom, 1, 0)
 
     expect(store.get(workspaceAtom).panes).toHaveLength(1)
-  })
-})
-
-describe('closing a pane', () => {
-  it('applies at once', () => {
-    const store = createStore()
-    store.set(workspaceAtom, split())
-
-    store.set(closePaneAtom, 0)
-
-    expect(store.get(workspaceAtom).panes).toHaveLength(1)
-    expect(store.get(workspaceAtom).panes[0]!.tabs[0]).toEqual({ kind: 'note', path: 'c.md' })
   })
 })
 

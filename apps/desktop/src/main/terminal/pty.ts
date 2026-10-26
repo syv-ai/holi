@@ -18,6 +18,7 @@ export interface PtyProcess {
   kill(signal?: string): void
 }
 
+/** @public exported for its test */
 export interface SpawnPtyOptions {
   cwd: string
   env: Record<string, string>

@@ -153,6 +153,7 @@ export interface VaultCliTarget {
   binDir: string | null
 }
 
+/** @public exported for its test */
 export interface RunOptions {
   cwd: string
   env: Record<string, string>
@@ -202,6 +203,7 @@ const MAX_NAME = 60
 /**
  * A name fit for argv, or null. First line only, whitespace collapsed, capped:
  * a newline would split the argument in two.
+ * @public exported for its test
  */
 export function sessionName(raw: string | undefined): string | null {
   if (raw === undefined) return null
@@ -212,7 +214,10 @@ export function sessionName(raw: string | undefined): string | null {
 
 const ANSI = /\x1b\[[0-9;]*m/g
 
-/** The id out of `backgrounded · <id> · <name>`, or null. */
+/**
+ * The id out of `backgrounded · <id> · <name>`, or null.
+ * @public exported for its test
+ */
 export function parseBackgrounded(stdout: string): string | null {
   const plain = stdout.replace(ANSI, '')
   const match = /^backgrounded\s+·\s+([0-9a-f]{8})\b/m.exec(plain)

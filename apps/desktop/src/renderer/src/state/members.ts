@@ -46,7 +46,7 @@ export const memberLoginsAtom = atom((get): string[] => {
 })
 
 /** Ask main for the open vault's collaborators whenever the vault changes.
- *  Mounted once, in Shell. A refusal (offline, not listable) leaves the
+ *  Mounted once, in the app shell. A refusal (offline, not listable) leaves the
  *  extras, which is the most that can be known. */
 export function useVaultMembers(): void {
   const remote = useAtomValue(activeRemoteAtom)

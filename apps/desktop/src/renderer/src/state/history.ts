@@ -36,6 +36,7 @@ export interface Version {
  * Keyed off the workspace's active tab, NOT `activeDocAtom`: that atom follows a
  * note being *opened*, not a tab being *focused*, so switching between open tabs
  * would leave the panel stale.
+ * @public exported for its test
  */
 export const historyTargetPathAtom = atom<string | null>((get) => {
   const w = get(workspaceAtom)

@@ -25,7 +25,10 @@ import { buildAgentEnv } from '../claude/cli'
 import { PTY_SESSION_ID } from '../host/pty-sessions'
 import type { AgentProvider, RouteServer, TurnRouteDeps } from '../provider'
 
-/** The variable that names the session to its hook. */
+/**
+ * The variable that names the session to its hook.
+ * @public exported for its test
+ */
 export const SESSION_ENV = 'HOLI_AGENT_SESSION'
 
 const NOT_INSTALLED =
@@ -46,7 +49,9 @@ function resolveCodexBin(env: NodeJS.ProcessEnv = process.env): string | null {
 }
 
 /** The hook: `sh -c <this> holi-notify <json>`, so the JSON is `$1`. Quiet,
- *  bounded, and a no-op outside a Holi session or with Holi closed. */
+ *  bounded, and a no-op outside a Holi session or with Holi closed.
+ * @public exported for its test
+ */
 export const NOTIFY_SCRIPT = [
   `case "\${${SESSION_ENV}:-}" in p*) ;; *) exit 0 ;; esac`,
   `case "$${SESSION_ENV}" in *[!0-9a-fp]*) exit 0 ;; esac`,
@@ -56,12 +61,16 @@ export const NOTIFY_SCRIPT = [
 ].join('; ')
 
 /** The `-c` override that installs the hook: a TOML array, whose strings
- *  JSON's quoting writes correctly. */
+ *  JSON's quoting writes correctly.
+ * @public exported for its test
+ */
 export const notifyOverride = (): string =>
   `notify=${JSON.stringify(['sh', '-c', NOTIFY_SCRIPT, 'holi-notify'])}`
 
 /** What Codex's turn JSON says about the session: its first ask and its
- *  thread. Another program's output, so anything unrecognised is nothing. */
+ *  thread. Another program's output, so anything unrecognised is nothing.
+ * @public exported for its test
+ */
 export function readTurn(body: string): { name?: string; conversationId?: string } {
   let parsed: unknown
   try {
@@ -82,7 +91,10 @@ export function readTurn(body: string): { name?: string; conversationId?: string
   }
 }
 
-/** Serve `/codex/turn-end`. Every answer is empty. Returns the undo. */
+/**
+ * Serve `/codex/turn-end`. Every answer is empty. Returns the undo.
+ * @public exported for its test
+ */
 export function registerCodexRoutes(server: RouteServer, deps: TurnRouteDeps): () => void {
   return server.route('/codex/turn-end', {
     body: 'text',

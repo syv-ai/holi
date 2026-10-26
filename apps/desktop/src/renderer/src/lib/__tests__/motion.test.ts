@@ -1,84 +1,6 @@
-import { THEME_TOKENS } from '@holi/shared'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { arrivalIndex, MOTION_STAGGER_CAP, staggerDelay } from '@/lib/motion'
-
-describe('staggerDelay', () => {
-  test('the first item has no delay', () => {
-    expect(staggerDelay(0)).toBe('0ms')
-  })
-
-  test('each later item is one step further out', () => {
-    expect(staggerDelay(1)).toBe('calc(var(--motion-stagger) * 1)')
-    expect(staggerDelay(3)).toBe('calc(var(--motion-stagger) * 3)')
-  })
-
-  // The whole point of the cap: a folder with two hundred children must not
-  // take nine seconds to open. Past the cap every remaining item arrives with
-  // the capped one rather than queueing behind it.
-  test('the ramp is capped, so a long list does not queue', () => {
-    expect(staggerDelay(MOTION_STAGGER_CAP)).toBe(
-      `calc(var(--motion-stagger) * ${MOTION_STAGGER_CAP})`,
-    )
-    expect(staggerDelay(40)).toBe(`calc(var(--motion-stagger) * ${MOTION_STAGGER_CAP})`)
-    expect(staggerDelay(4000)).toBe(staggerDelay(MOTION_STAGGER_CAP))
-  })
-
-  test('an explicit cap overrides the default', () => {
-    expect(staggerDelay(9, { cap: 2 })).toBe('calc(var(--motion-stagger) * 2)')
-  })
-
-  test('reduced motion flattens the ramp entirely', () => {
-    expect(staggerDelay(5, { reduced: true })).toBe('0ms')
-    expect(staggerDelay(0, { reduced: true })).toBe('0ms')
-  })
-
-  // A caller mapping over a list can hand us anything; none of it should
-  // produce a negative delay, which browsers read as "already part-played".
-  test('nonsense indexes are floored rather than trusted', () => {
-    expect(staggerDelay(-3)).toBe('0ms')
-    expect(staggerDelay(2.7)).toBe('calc(var(--motion-stagger) * 2)')
-    expect(staggerDelay(Number.NaN)).toBe('0ms')
-  })
-})
-
-/**
- * Which rows are actually NEW, which is the gate an arrival needs.
- *
- * An `animation` declared on a list's children replays on every re-render —
- * that is the heading-slide file-open bug in a new costume, and it is why this is computed
- * from what changed rather than declared on the element.
- */
-describe('arrivalIndex', () => {
-  test('the first render animates nothing', () => {
-    // The tree appearing because the app started, or because the vault
-    // switched, is the shell's business. Two hundred rows arriving one after
-    // another on every mount is noise, not life.
-    expect(arrivalIndex(null, ['a', 'b', 'c']).size).toBe(0)
-  })
-
-  test('only the added ids arrive, numbered in the order they appear', () => {
-    const got = arrivalIndex(['a', 'd'], ['a', 'b', 'c', 'd', 'e'])
-    expect([...got]).toEqual([
-      ['b', 0],
-      ['c', 1],
-      ['e', 2],
-    ])
-  })
-
-  test('an unchanged list arrives nothing, however often it re-renders', () => {
-    expect(arrivalIndex(['a', 'b'], ['a', 'b']).size).toBe(0)
-  })
-
-  test('reordering is not arriving', () => {
-    expect(arrivalIndex(['a', 'b'], ['b', 'a']).size).toBe(0)
-  })
-
-  test('removals do not shift the numbering of what stayed', () => {
-    expect([...arrivalIndex(['a', 'b', 'c'], ['a', 'z'])]).toEqual([['z', 0]])
-  })
-})
 
 // ── Guards over the vocabulary itself ─────────────────────────────────
 // index.css is the single source for every number in the app's motion. These
@@ -106,7 +28,7 @@ describe('index.css is the one motion vocabulary', () => {
 
   // Regression guard for a measured trap: Tailwind v4 emits the `@theme`
   // variables the CSS references and drops the rest. `--motion-stagger`'s only
-  // consumer is staggerDelay() above, which builds its calc() at runtime, so in
+  // consumer builds its calc() at runtime, so in
   // `@theme` it was tree-shaken out of the built stylesheet entirely and the
   // stagger silently resolved to nothing.
   test.each(['--motion-stagger', '--motion-slide', '--ease-slide'])(

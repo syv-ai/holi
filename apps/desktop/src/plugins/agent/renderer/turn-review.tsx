@@ -4,7 +4,7 @@
  * The review happens AFTER the turn, never as a gate before the write:
  * `features/vaults-sync.md` rules out an outbound gate, and Claude Code's
  * own permission prompts already ask. So this is a reading of a commit range,
- * shaped like `HistoryPanel` because it answers the same questions about one.
+ * shaped like the history dialog (`features/history/history-dialog.tsx`) because it answers the same questions about one.
  *
  * The unit is a range rather than a tool-level record because git catches the
  * files the agent changed through `Bash` (a `sed`, an `mv`, a script) that a

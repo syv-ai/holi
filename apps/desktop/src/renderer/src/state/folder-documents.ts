@@ -7,11 +7,6 @@
 import type { FolderClaim, PathClaim, Surface } from '@/state/plugin-types'
 import type { Tab } from '@/lib/tab'
 
-/** What a surface is called, for its tab `id` or for the surface itself. */
-export function surfaceLabel(surface: Surface, id?: string): string {
-  return typeof surface.label === 'function' ? surface.label(id) : surface.label
-}
-
 /** The claims that make directories documents, with their claim. */
 export interface FolderDocumentClaim {
   claim: PathClaim

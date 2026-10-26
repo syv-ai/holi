@@ -108,7 +108,10 @@ PROMPT_COMMAND="\${__holi_pc:+\$__holi_pc; }__holi_osc7"
 unset __holi_pc
 `
 
-/** Write the shim files under `dir`. */
+/**
+ * Write the shim files under `dir`.
+ * @public exported for its test
+ */
 export function writeShellIntegration(dir: string): void {
   const zsh = join(dir, 'zsh')
   mkdirSync(zsh, { recursive: true, mode: 0o700 })

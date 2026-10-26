@@ -15,12 +15,16 @@ import {
   activitySearchAtom,
   activitySeenAtom,
   activityUnseenErrorAtom,
-  channelQuery,
   mergeEntries,
   withChannelRule,
   shownEntries,
+  type ActivityChannel,
   type ActivityEntry,
 } from "@/state/activity"
+import { emptyFilterQuery } from "@/lib/filter-query"
+
+const channelQuery = (channel: ActivityChannel) =>
+  withChannelRule(emptyFilterQuery(), channel, "only")
 import {
   appLogEntriesAtom,
   appLogLoadAtom,

@@ -49,6 +49,7 @@ export const HOLI_THEME_TEXT = folder.once[THEME_FILE] as string
  *  what can be overridden and overrides nothing. */
 const THEME_LOCAL_SEED = applyThemePatch(null, {})
 
+/** @public exported for its test */
 export const GITIGNORE = '.gitignore'
 
 const LOCAL_ONLY_HEADER = '# Machine-local, never committed. Managed by Holi.'

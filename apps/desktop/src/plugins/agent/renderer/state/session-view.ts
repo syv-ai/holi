@@ -21,12 +21,17 @@ import { respawnSessionAtom, type AgentResult } from './send'
 import { toast } from 'sonner'
 
 /** The line an ask opens with for each app it is about: the agent reads the
- *  app's folder itself, in the clone, with its own permissions. */
+ *  app's folder itself, in the clone, with its own permissions.
+ * @public exported for its test
+ */
 export function contextLine(item: ConversationContext): string {
   return `This is about the vault app "${item.name}", the folder ${item.path} (its page is index.html, its manifest app.yaml).`
 }
 
-/** The first message: a line per context item, then the ask. */
+/**
+ * The first message: a line per context item, then the ask.
+ * @public exported for its test
+ */
 export function withContext(
   text: string,
   context: readonly ConversationContext[] | undefined,

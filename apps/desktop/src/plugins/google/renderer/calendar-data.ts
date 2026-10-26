@@ -102,7 +102,9 @@ export function toCalendarItem(
 }
 
 /** The instants to ask Google for, for a visible range: never more than one
- *  call allows, so a long agenda shows its first 92 days. */
+ *  call allows, so a long agenda shows its first 92 days.
+ * @public exported for its test
+ */
 export function rangeWindow(range: { start: Date; end: Date }): { from: string; to: string } {
   const from = range.start.getTime()
   const to = Math.min(range.end.getTime(), from + MAX_WINDOW_DAYS * DAY_MS)

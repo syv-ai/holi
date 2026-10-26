@@ -3,9 +3,9 @@ import { useEditorState, type Editor } from "@tiptap/react"
 export type RichTextBlockType =
   "paragraph" | "heading-1" | "heading-2" | "heading-3"
 
-export type RichTextAlign = "left" | "center" | "right" | "justify"
+type RichTextAlign = "left" | "center" | "right" | "justify"
 
-export const RICH_TEXT_ALIGNS = [
+const RICH_TEXT_ALIGNS = [
   "left",
   "center",
   "right",
@@ -38,12 +38,6 @@ export interface RichTextSnapshot {
   canHeading: boolean
 }
 
-export interface RichTextCount {
-  words: number
-  characters: number
-  minutes: number
-}
-
 const IDLE_SNAPSHOT: RichTextSnapshot = {
   editable: false,
   blockType: "paragraph",
@@ -66,10 +60,6 @@ const IDLE_SNAPSHOT: RichTextSnapshot = {
   canCode: false,
   canHeading: false,
 }
-
-const IDLE_COUNT: RichTextCount = { words: 0, characters: 0, minutes: 0 }
-
-const WORDS_PER_MINUTE = 230
 
 function readBlockType(editor: Editor): RichTextBlockType {
   if (editor.isActive("heading", { level: 1 })) return "heading-1"
@@ -130,21 +120,4 @@ export function useRichTextSelector<T>(
 /** One formatting snapshot per transaction, compared deeply, for the toolbar. */
 export function useRichTextState(editor: Editor | null) {
   return useRichTextSelector(editor, readSnapshot)
-}
-
-function readCount(editor: Editor | null): RichTextCount {
-  if (!editor) return IDLE_COUNT
-
-  const words = editor.storage.characterCount.words()
-
-  return {
-    words,
-    characters: editor.storage.characterCount.characters(),
-    minutes: words === 0 ? 0 : Math.ceil(words / WORDS_PER_MINUTE),
-  }
-}
-
-/** Counts live apart from formatting, so a keystroke re-renders only them. */
-export function useRichTextCount(editor: Editor | null) {
-  return useRichTextSelector(editor, readCount)
 }

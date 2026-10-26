@@ -43,6 +43,7 @@ export interface TerminalSummary {
   title: string
 }
 
+/** @public exported for its test */
 export interface OpenArgs {
   /** The vault it is opened in, which its events are about. */
   remote: string

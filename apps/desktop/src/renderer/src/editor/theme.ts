@@ -26,6 +26,7 @@ const POPUP = `.cm-tooltip.cm-tooltip-autocomplete.${COMPLETION_CLASS}`
  *
  * The radius tokens carry fallbacks because Tailwind's `@theme` tree-shakes
  * what it cannot see referenced, and Tailwind never scans this file.
+ * @public exported for its test
  */
 export const completionChrome = {
   [POPUP]: {
@@ -222,6 +223,7 @@ export const completionChrome = {
  * chrome follows: no hex or `rgba(` literal, since a literal is one mode's
  * colour (a `#e5e5e5` caret vanished on the light page) and no vault can
  * re-theme it.
+ * @public exported for its test
  */
 export const editorThemeSpec = {
   ...completionChrome,

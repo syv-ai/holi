@@ -63,6 +63,7 @@ export interface Shortcut {
 /**
  * Whether the dialog's list runs the row on Enter: anything a key runs, the
  * menu's ⌘W included, but not a gesture or a `listOnly` row.
+ * @public exported for its test
  */
 export function runsFromList(shortcut: Shortcut): boolean {
   return (

@@ -75,7 +75,7 @@ export function AppSidebar({
 
   if (collapsed) {
     // Same SidebarMenuButton as the expanded nav, so hover, active and the
-    // label transition are the primitive's, not a second implementation.
+    // label transition are the component's, not a second implementation.
     return (
       <Sidebar collapsible="none" className="h-full w-full overflow-hidden">
         <SidebarContent className="overflow-hidden">

@@ -100,6 +100,7 @@ export interface Capability<P = unknown, R = unknown> {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+/** @public exported for its test */
 export type AnyCapability = Capability<any, any>
 
 /** One owner's entries, by full name. */

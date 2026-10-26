@@ -199,7 +199,8 @@ export interface SurfaceTabLook {
 }
 
 /** Something the palette lists that is not a tab yet, such as a live agent
- *  session (`RendererPlugin.palette`). */
+ *  session (`RendererPlugin.palette`).
+ *  @public a plugin names it through `@/plugin-api`. */
 export interface PaletteItem {
   key: string
   name: string

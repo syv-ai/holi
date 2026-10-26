@@ -25,6 +25,7 @@ export const bottomPanelAtom = atom<BottomPanelState>({
 /**
  * ⌃`, ⇧⌘U and the status bar's two items: open the panel on `tab`, or close
  * it when it is already showing that tab. Another tab showing switches.
+ * @public exported for its test
  */
 export function togglePanel(state: BottomPanelState, tab: PanelTab): BottomPanelState {
   if (state.open && state.tab === tab) return { ...state, open: false, maximized: false }

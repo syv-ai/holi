@@ -34,7 +34,10 @@ export function registerTerminalSink(id: string, write: (data: string) => void):
   }
 }
 
-/** The last folder of a path: `holi` for `~/dev/holi`, `~` for home. */
+/**
+ * The last folder of a path: `holi` for `~/dev/holi`, `~` for home.
+ * @public exported for its test
+ */
 export function folderName(label: string): string {
   if (label === '/' || label === '~') return label
   const parts = label.split('/').filter(Boolean)
@@ -53,7 +56,10 @@ export function terminalLabel(t: TerminalInfo, list: readonly TerminalInfo[]): s
   return t.exitCode === null ? label : `${label} (exited)`
 }
 
-/** The list after `id` went: the one beside it comes forward. */
+/**
+ * The list after `id` went: the one beside it comes forward.
+ * @public exported for its test
+ */
 export function afterRemoval<T extends { id: string }>(
   list: readonly T[],
   active: string | null,
@@ -112,7 +118,10 @@ export function usePanelTerminals(): void {
   }, [store])
 }
 
-/** The list with `id`'s context replaced. */
+/**
+ * The list with `id`'s context replaced.
+ * @public exported for its test
+ */
 export function withContext(
   list: readonly TerminalInfo[],
   id: string,

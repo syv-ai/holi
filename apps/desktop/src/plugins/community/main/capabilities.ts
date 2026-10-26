@@ -58,7 +58,7 @@ export const COMMUNITY_NAMESPACES = ['community'] as const
 
 /** Where a plugin stands, for this vault on this machine, in the order the
  *  settings tab walks someone through. */
-export type PluginStatus =
+type PluginStatus =
   /** The vault pins it and this machine has nothing of it. */
   | 'not-installed'
   /** This machine has another release than the one the vault pins. */
@@ -216,7 +216,9 @@ function commandsNote(id: string, linked: LinkedCommands | null): string | null 
 }
 
 /** Every plugin this vault pins or this machine has, as the settings tab
- *  lists them. */
+ *  lists them.
+ * @public exported for its test
+ */
 export async function listPlugins(
   root: string,
   deps: Pick<CommunityDeps, 'store' | 'consent'> & { checks?: Checks },

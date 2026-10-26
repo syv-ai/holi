@@ -8,15 +8,13 @@
  * (docs/ui-system.md, Motion).
  */
 import { atom } from 'jotai'
-import { closePane, closeTab, focusPane, workspaceAtom } from './panes'
-
-export const closePaneAtom = atom(null, (_get, set, index: number): void => {
-  set(workspaceAtom, (w) => closePane(w, index))
-})
+import { closeTab, focusPane, workspaceAtom } from './panes'
 
 /** Close one tab; closing a split pane's last tab takes the pane too
  *  (`closeTab`). A plugin that must hear its tab closed watches
- *  `surfaceTabIdsAtom`. */
+ *  `surfaceTabIdsAtom`.
+ * @public exported for its test
+ */
 export const closeTabAtom = atom(null, (_get, set, paneIndex: number, tabIndex: number): void => {
   set(workspaceAtom, (w) => closeTab(focusPane(w, paneIndex), tabIndex))
 })

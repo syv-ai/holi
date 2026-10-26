@@ -125,6 +125,7 @@ export function useRemoteContent(identity: RemoteContentIdentity): RemoteContent
  * These atoms are module state on jotai's default store, shared across every
  * test in a file. `alwaysAllowedSenders` goes back to `undefined`, not an empty
  * set, so a test sees the same first render the app does.
+ * @public exported for its test
  */
 export function resetMailImagesForTests(): void {
   const store = getDefaultStore()

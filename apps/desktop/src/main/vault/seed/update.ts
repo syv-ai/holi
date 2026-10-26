@@ -48,6 +48,7 @@ export interface UpdateReport {
  * Where a conflict's other versions wait for the agent: beside the file, with
  * `.shipped.local` or `.base.local` before its extension. `.local.` keeps them
  * on this machine and out of every commit.
+ * @public exported for its test
  */
 export function stagedPath(rel: string, which: 'shipped' | 'base'): string {
   const slash = rel.lastIndexOf('/')

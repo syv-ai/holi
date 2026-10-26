@@ -4,7 +4,10 @@
  * tested without Electron; `ipc.ts` sets the icon.
  */
 
-/** A 1024 PNG is a few hundred kB as base64; much more is not an icon. */
+/**
+ * A 1024 PNG is a few hundred kB as base64; much more is not an icon.
+ * @public exported for its test
+ */
 export const MAX_DOCK_ICON = 4_000_000
 
 export function isDockIconPng(value: unknown): value is string {

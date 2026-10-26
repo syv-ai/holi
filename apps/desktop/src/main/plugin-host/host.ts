@@ -45,7 +45,10 @@ import type { SeedContribution, SeedResult } from '../vault/seed/types'
 import { readVaultSettings } from '../vault/settings'
 import type { ActivityWrite } from '../activity/log'
 
-/** The open vault, as far as a plugin's `PluginCtx` drives it. */
+/**
+ * The open vault, as far as a plugin's `PluginCtx` drives it.
+ * @public exported for its test
+ */
 export type OpenVault = LiveVault &
   Pick<ActiveVault, 'pause' | 'resume' | 'commitNow'> & {
     repo: Pick<ActiveVault['repo'], 'head'>

@@ -20,6 +20,7 @@ const ENV_FILES = ['.env', '.env.local'] as const
  * skipped, an optional `export `, a value in single or double quotes kept as
  * is (a double-quoted `\n` is a newline), an unquoted one trimmed and cut at
  * ` #`.
+ * @public exported for its test
  */
 export function parseDotenv(text: string): Record<string, string> {
   const out: Record<string, string> = {}

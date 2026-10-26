@@ -1,7 +1,7 @@
 /**
  * Find in a code file: CodeMirror's own search (`@codemirror/search`) holds
  * the query and steps and replaces through it, while the bar is ours
- * (`find-bar/find-bar.tsx`), so its panel never opens. Its highlighter draws
+ * (`composites/find-bar.tsx`), so its panel never opens. Its highlighter draws
  * only with that panel open, so the matches are drawn here instead, every
  * match a quiet tint and the one the selection is on a stronger one, in the
  * find tokens the document's find uses.
@@ -46,7 +46,7 @@ export function codeQuery(options: FindOptions): SearchQuery {
 }
 
 /** The bar is open: only then are matches drawn. */
-export const setCodeFindOpen = StateEffect.define<boolean>()
+const setCodeFindOpen = StateEffect.define<boolean>()
 
 const findOpen = StateField.define<boolean>({
   create: () => false,

@@ -36,7 +36,7 @@ design system on top of the stock one.
     categorical allow-list;
   - motion numbers at a call site: `duration-[…]`, `ease-[…]`, `delay-[…]`, `animate-[…]`, any
     `transition-*` except `transition-none`, and literal transitions in a `style` object. A
-    computed value (`animationDelay: staggerDelay(i)`) passes;
+    computed value (an `animationDelay` built in code) passes;
   - a restyled stock component (`shadcn/no-restyle`): `Button` and `Badge` take layout classes
     only, overlay content (`DialogContent`, `AlertDialogContent`, `SheetContent`,
     `PopoverContent`) takes none, `CardTitle` and `FrameTitle` are never resized.
@@ -133,8 +133,8 @@ would only fight them.
   150ms, `-arrive` 300ms, `-pop` 180ms (a menu or tooltip growing from its trigger; it answers a
   click, so it is quicker than an arrival), `-leave` 190ms, `-ack` 800ms, `-inflight` 2400ms, and
   `--motion-stagger`, `--motion-slide`, `--ease-slide` in plain `:root`, because Tailwind
-  tree-shakes `@theme` variables that only JavaScript reads. `lib/motion.ts` holds the computed
-  values (`staggerDelay(i)`). Names are by purpose, not size, so re-pacing is one edit.
+  tree-shakes `@theme` variables that only JavaScript reads. `lib/motion.ts` holds the JavaScript
+  reads of the vocabulary (`prefersReducedMotion`). Names are by purpose, not size, so re-pacing is one edit.
 - **Installed parts already animate; never retime them.** Yours goes through these utilities only:
   transform and opacity, never `transition-all`, never bounce, never a stagger on table rows or
   lists of 20+, at most one entrance per view, and `motion-reduce:` plus

@@ -17,6 +17,7 @@ import { isRemote, sameLogin, type Collaborator } from '@holi/shared'
  * topic rides back in the repos listing for free, so the "join a vault" picker
  * can show only real vaults without a per-repo probe, and `vaults.add` can
  * refuse to seed a code repo. The on-disk twin of this flag is `.holi/vault`.
+ * @public exported for its test
  */
 export const HOLI_VAULT_TOPIC = 'holi-vault'
 

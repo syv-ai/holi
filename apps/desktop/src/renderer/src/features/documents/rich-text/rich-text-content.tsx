@@ -1,9 +1,5 @@
 // ReUI block: @reui/rich-text-editor-2 (`npx shadcn@latest view @reui/rich-text-editor-2` shows the published source)
-import type { KeyboardEvent, MouseEvent } from "react"
-import { EditorContent, type Editor } from "@tiptap/react"
 import { cn } from "@/lib/cn"
-
-import { Skeleton } from "@/components/ui/skeleton"
 
 import { HIGHLIGHT_COLORS } from "./rich-text-highlight"
 
@@ -32,70 +28,3 @@ export const RICH_TEXT_PROSE = cn(
   "[&_.ProseMirror-gapcursor]:after:border-t-foreground!",
   "[&_.tiptap_.is-empty]:before:text-muted-foreground [&_.tiptap_.is-empty]:before:pointer-events-none [&_.tiptap_.is-empty]:before:float-start [&_.tiptap_.is-empty]:before:h-0"
 )
-
-interface RichTextContentProps {
-  editor: Editor | null
-  /** The page inset; the skeleton shares it, so nothing shifts on mount. */
-  className?: string
-  /** Mod-K: Link ships no shortcut of its own. */
-  onLinkShortcut?: () => void
-}
-
-export function RichTextContent({
-  editor,
-  className,
-  onLinkShortcut,
-}: RichTextContentProps) {
-  if (!editor) {
-    return <RichTextSkeleton className={className} />
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    const mod = event.metaKey || event.ctrlKey
-
-    if (mod && !event.altKey && event.key.toLowerCase() === "k") {
-      event.preventDefault()
-      onLinkShortcut?.()
-    }
-  }
-
-  // A press on the inset around the text lands in it, as on a page.
-  function handleMouseDown(event: MouseEvent<HTMLDivElement>) {
-    if (event.target === event.currentTarget) {
-      event.preventDefault()
-      editor?.commands.focus("end")
-    }
-  }
-
-  return (
-    <EditorContent
-      editor={editor}
-      onKeyDown={handleKeyDown}
-      onMouseDown={handleMouseDown}
-      className={cn(RICH_TEXT_PROSE, className)}
-    />
-  )
-}
-
-/** Holds the page's shape for the frame before the editor mounts. */
-function RichTextSkeleton({ className }: { className?: string }) {
-  return (
-    <div aria-hidden="true" className={cn("flex flex-col gap-8", className)}>
-      <div className="flex flex-col gap-4">
-        <Skeleton className="h-8 w-2/3" />
-        <div className="flex flex-col gap-2.5">
-          <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-11/12" />
-          <Skeleton className="h-4 w-3/5" />
-        </div>
-      </div>
-      <div className="flex flex-col gap-4">
-        <Skeleton className="h-6 w-1/4" />
-        <div className="flex flex-col gap-2.5">
-          <Skeleton className="h-4 w-5/6" />
-          <Skeleton className="h-4 w-3/4" />
-        </div>
-      </div>
-    </div>
-  )
-}

@@ -16,7 +16,7 @@ import {
   type VaultSnapshot,
 } from '@holi/shared'
 import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
-import { homeTargetAtom, openHomeAtom, openLandingAtom } from '@/state/home'
+import { openHomeAtom } from '@/state/home'
 import { workspaceAtom } from '@/state/panes'
 import { coreContributionAtom } from '@/state/plugins'
 import { activeDocAtom, activeRemoteAtom, snapshotAtom } from '@/state/vaults'
@@ -143,39 +143,6 @@ describe('openHomeAtom', () => {
   })
 })
 
-describe('homeTargetAtom', () => {
-  it('reads the cached settings once they are loaded', async () => {
-    const store = rig({ home: 'board' })
-    await store.set(openHomeAtom)
-    expect(store.get(homeTargetAtom)).toEqual({ kind: 'surface', surface: 'board' })
-  })
-})
-
-describe('openLandingAtom', () => {
-  it('still mints today’s daily when Home is somewhere else', async () => {
-    // `home` picks what you LOOK at; `dailyNotes` decides whether the vault
-    // keeps a journal. A vault whose Home is its board must not quietly stop
-    // journalling.
-    const store = rig({ home: 'board' })
-    await store.set(openLandingAtom)
-    expect(mints()).toBe(1)
-    expect(tabs(store)).toEqual([{ kind: 'surface', surface: 'board' }])
-  })
-
-  it('mints nothing when the vault keeps no daily notes', async () => {
-    const store = rig({ home: 'board', dailyNotes: false })
-    await store.set(openLandingAtom)
-    expect(mints()).toBe(0)
-    expect(tabs(store)).toEqual([{ kind: 'surface', surface: 'board' }])
-  })
-
-  it('opens a file naming today’s daily by path on the morning it is minted', async () => {
-    const store = rig({ home: '22-08-2026.md' })
-    await store.set(openLandingAtom)
-    expect(tabs(store)).toEqual([{ kind: 'note', path: '22-08-2026.md' }])
-  })
-})
-
 describe('going Home into a workspace that is not empty', () => {
   it('pins a note that is already open as a preview', async () => {
     const store = rig({ home: 'Notes/Standup.md' })
@@ -211,48 +178,5 @@ describe('going Home into a workspace that is not empty', () => {
       { kind: 'surface', surface: 'board' },
     ])
     expect(store.get(workspaceAtom).panes[0]!.active).toBe(1)
-  })
-})
-
-describe('switching vaults', () => {
-  // The settings cache is keyed by remote: a cache that only remembered "the
-  // settings" would hand the second vault the first one's Home.
-  it('reads the new vault’s settings, not the previous vault’s', async () => {
-    holi = installFakeHoli((op) => {
-      const remote = (op.input as { remote?: string } | undefined)?.remote
-      if (op.path === 'settings.read') {
-        return remote === 'me/second' ? settings({ home: 'mail' }) : settings({ home: 'board' })
-      }
-      if (op.path === 'notes.getOrCreateDaily') return { path: '22-08-2026.md', created: false }
-      if (op.path === 'vaults.snapshot') return snapshot
-      return undefined
-    })
-    const store = createStore()
-    registerViews(store)
-    store.set(snapshotAtom, snapshot)
-
-    store.set(activeRemoteAtom, 'me/first')
-    await store.set(openLandingAtom)
-    expect(tabs(store)).toEqual([{ kind: 'surface', surface: 'board' }])
-
-    store.set(activeRemoteAtom, 'me/second')
-    await store.set(openLandingAtom)
-
-    expect(tabs(store)).toContainEqual({ kind: 'surface', surface: 'mail' })
-    expect(holi.calls.filter((c) => c.path === 'settings.read')).toHaveLength(2)
-  })
-})
-
-describe('the cold-start read', () => {
-  it('never asks GitHub who the collaborators are', async () => {
-    const store = rig()
-    await store.set(openLandingAtom)
-    expect(holi!.calls.map((c) => c.path)).not.toContain('github.collaborators')
-  })
-
-  it('reads the settings once, however many openers run', async () => {
-    const store = rig()
-    await store.set(openLandingAtom)
-    expect(holi!.calls.filter((c) => c.path === 'settings.read')).toHaveLength(1)
   })
 })

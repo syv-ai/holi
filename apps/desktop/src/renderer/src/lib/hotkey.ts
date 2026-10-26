@@ -6,13 +6,14 @@
  * `⌥` alt; the trailing character is the key. Modifiers match exactly: `⌘J`
  * does not fire on ⌘⇧J.
  */
-export interface ParsedHotkey {
+interface ParsedHotkey {
   mod: boolean
   shift: boolean
   alt: boolean
   key: string
 }
 
+/** @public exported for its test */
 export function parseHotkey(spec: string): ParsedHotkey {
   let mod = false
   let shift = false

@@ -9,7 +9,7 @@
  *
  * While one is dragged, `tabDragAtom` holds its id (a tab key, or a split's
  * id), and the content lays one transparent catcher over every view in front
- * (`panes-view.tsx`): a view may be an iframe or a terminal, which would
+ * (`split-view.tsx`): a view may be an iframe or a terminal, which would
  * swallow the drag events. The catcher asks `slotAt` where the pointer is
  * and opens the gap `insertPreview` describes.
  *

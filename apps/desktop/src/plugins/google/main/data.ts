@@ -351,4 +351,5 @@ function agendaKey(window: AgendaWindow, overrides: CalendarOverrides): string {
   return `${window.timeMin}|${window.timeMax}|${choices}`
 }
 
+/** @public exported for its test */
 export { cacheKey as threadsCacheKey }

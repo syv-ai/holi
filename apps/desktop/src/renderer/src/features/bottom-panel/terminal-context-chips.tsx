@@ -18,11 +18,16 @@ import type { TerminalContext } from "@/state/panel-terminals"
  * (`main/terminal/terminal-context.ts`) and pushes each change.
  */
 
-/** A path longer than this loses its middle. */
+/**
+ * A path longer than this loses its middle.
+ * @public exported for its test
+ */
 export const PATH_CHARS = 48
 
 /** `~/Development/…/repos/holi`: the start and the end of a long path, which
- *  say where it is, with the middle given up. */
+ *  say where it is, with the middle given up.
+ * @public exported for its test
+ */
 export function middleTruncate(text: string, max: number = PATH_CHARS): string {
   if (text.length <= max) return text
   const keep = max - 1

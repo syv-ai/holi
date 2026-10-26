@@ -1,5 +1,5 @@
 /**
- * A code file's find bar (`find-bar/find-bar.tsx`), driving `code-find.ts`.
+ * A code file's find bar (`composites/find-bar.tsx`), driving `code-find.ts`.
  * Typing moves the selection to the first match from where the caret was;
  * Escape closes it and gives the editor back with the match selected.
  */

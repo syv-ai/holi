@@ -37,6 +37,7 @@ import {
 } from '../shared/manifest'
 import { CapabilityError, jsonFileStore, runGit, type Admit } from '../../../main/plugin-api'
 
+/** @public exported for its test */
 export const GRANT_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
 interface AffordanceStatus {
@@ -83,6 +84,7 @@ type GrantFile = Record<string, GrantRecord>
  * order. Each entry is framed by JSON, so no file's bytes can pass for the
  * boundary between two entries. `data/` and the log are left out because they
  * change every time the app is used, and the approval is of the code.
+ * @public exported for its test
  */
 export async function bundleCodeHash(root: string, bundle: string): Promise<string> {
   const hash = createHash('sha256')

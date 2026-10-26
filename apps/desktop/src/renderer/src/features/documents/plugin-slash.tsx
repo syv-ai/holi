@@ -59,7 +59,7 @@ export function pluginSlashItem(
 }
 
 /** The caret's block's text with the typed "/query" taken out. */
-export function lineWithout(editor: Editor, range: Range): string {
+function lineWithout(editor: Editor, range: Range): string {
   const $from = editor.state.doc.resolve(range.from)
   const text = $from.parent.textContent
   const start = $from.start()

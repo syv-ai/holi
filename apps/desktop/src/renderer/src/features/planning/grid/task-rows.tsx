@@ -16,7 +16,7 @@ export interface TaskItemRow {
 }
 
 /** The List's "Add task" line at the foot of a group. */
-export interface TaskAddRow {
+interface TaskAddRow {
   kind: "add"
   id: string
   status: StatusDef

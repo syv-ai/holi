@@ -4,7 +4,7 @@ The sidebar explorer shows the vault as the folders and files on disk. It reads 
 
 ## How it works
 
-**A projection of the snapshot.** The tree is built from the vault snapshot (a directory walk plus a watcher) and holds no data of its own. A note created by the agent, by a pull or in another window appears without a refetch. Expansion, selection and focus are the component's own state. The rules that do not need the DOM live in `lib/tree-view.ts`: which rows are showing, what a range spans, where typeahead lands, and whether a move may happen.
+**A projection of the snapshot.** The tree is built from the vault snapshot (a directory walk plus a watcher) and holds no data of its own. A note created by the agent, by a pull or in another window appears without a refetch. Expansion, selection and focus are the component's own state. The rules that do not need the DOM live in `lib/tree-view.ts`: whether a move may happen.
 
 **Folders are real.** A folder row comes from `snapshot.dirs`, which lists every directory holding a file, so a folder whose contents are all filtered out still shows. New Folder writes a `.gitkeep` so the empty folder persists and syncs; a keep-file is a folder signal and never shown as a leaf. A folder still being named exists only in client state.
 
@@ -105,7 +105,7 @@ than removed, so an undone rename finds its place again.
 
 - `apps/desktop/src/renderer/src/features/sidebar/documents-section.tsx`: the tree, its state, keys, row menu and drops
 - `apps/desktop/src/renderer/src/components/reui/tree.tsx`: the tree's look (ReUI `tree`), shared with the settings rail and History
-- `apps/desktop/src/renderer/src/lib/tree-view.ts`: visible rows, ranges, typeahead, move validity, where a new item goes
+- `apps/desktop/src/renderer/src/lib/tree-view.ts`: move validity
 - `apps/desktop/src/renderer/src/lib/tree-data.ts`, `tree-actions.ts`, `tree-order.ts`, `tree-paths.ts` and `state/tree-order.ts`: snapshot to tree data, clipboard, delete preview, planned moves, your own order
 - `apps/desktop/src/renderer/src/state/reveal-in-files.ts`: asking the tree to show a path
 - `packages/shared/src/path-safety.ts`: `isHiddenPath`, `isLocalOnlyPath`, `isKeepFile`

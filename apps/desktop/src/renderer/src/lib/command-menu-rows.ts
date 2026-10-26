@@ -42,7 +42,10 @@ export interface ActionRow {
 
 const ROW_CAP = 50
 
-/** How many paths the untyped list shows under Recent. */
+/**
+ * How many paths the untyped list shows under Recent.
+ * @public exported for its test
+ */
 export const RECENT_CAP = 6
 
 function splitPath(path: string): { name: string; detail?: string } {

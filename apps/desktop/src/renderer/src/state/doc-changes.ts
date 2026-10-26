@@ -24,7 +24,9 @@ import { parseTabKey } from "./tab-descriptor"
 import { activeRemoteAtom, snapshotAtom } from "./vaults"
 
 /** The documents open in a tab, and those of them in front (the active
- *  tab, or every member of the active split). */
+ *  tab, or every member of the active split).
+ * @public exported for its test
+ */
 export function docTabs(ws: ShellWorkspace): {
   open: Set<string>
   showing: Set<string>

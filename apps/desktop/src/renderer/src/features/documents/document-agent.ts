@@ -24,12 +24,12 @@ import { activeRemoteAtom } from "@/state/vaults"
 
 import { AGENT_MARKER } from "./markdown"
 
-export const AGENT_MODEL = "claude-sonnet-5-5"
+const AGENT_MODEL = "claude-sonnet-5-5"
 
 
 export type AgentRunKind = "write" | "rewrite" | "artifact"
 
-export type AgentRunStatus =
+type AgentRunStatus =
   | "starting"
   | "working"
   | "needs-you"

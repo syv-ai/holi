@@ -101,7 +101,10 @@ interface SyncInfoView {
   lastError: string | null
 }
 
-/** "Synced just now", "Synced 4m ago", for the last time the remote answered. */
+/**
+ * "Synced just now", "Synced 4m ago", for the last time the remote answered.
+ * @public exported for its test
+ */
 export function syncedAgo(iso: string, now: number): string {
   const seconds = Math.max(0, Math.round((now - Date.parse(iso)) / 1000))
   if (Number.isNaN(seconds)) return ""
@@ -114,7 +117,9 @@ export function syncedAgo(iso: string, now: number): string {
 }
 
 /** The sync item's look for a state: whether it turns, whether it warns,
- *  and what clicking it does. */
+ *  and what clicking it does.
+ * @public exported for its test
+ */
 export function syncItemView(state: SyncState): {
   busy: boolean
   problem: "offline" | "warn" | null

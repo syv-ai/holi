@@ -5,7 +5,7 @@ import { Frame, FramePanel } from "@/components/reui/frame"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/cn"
 
-export type StatsBucket = {
+type StatsBucket = {
   id: string
   label: string
   value: number

@@ -11,7 +11,8 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
-import { ChipInput, type ChipAddress } from '../renderer/chip-input'
+import { ChipInput } from '../renderer/chip-input'
+import type { MailAddress as ChipAddress } from '../renderer/mail-types'
 
 /** Controlled, the way the composer uses it. */
 function Harness({

@@ -109,7 +109,10 @@ const REPLAY_BYTES = 256 * 1024
  *  switches, which would make a `node` there behave as Electron. */
 const DROP_ENV = /^(ELECTRON_RUN_AS_NODE|ELECTRON_NO_ATTACH_CONSOLE|ELECTRON_ENABLE_LOGGING)$/
 
-/** The environment a panel shell starts with. Exported for the test. */
+/**
+ * The environment a panel shell starts with. Exported for the test.
+ * @public exported for its test
+ */
 export function shellEnv(base: NodeJS.ProcessEnv, binDir: string | null): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(base)) {

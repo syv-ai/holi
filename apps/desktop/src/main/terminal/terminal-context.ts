@@ -126,7 +126,10 @@ export async function isDirectory(path: string): Promise<boolean> {
 
 // ── lsof (the fallback) ──────────────────────────────────────────────────
 
-/** The cwd in `lsof -a -p PID -d cwd -Fn` output: its `n` field. */
+/**
+ * The cwd in `lsof -a -p PID -d cwd -Fn` output: its `n` field.
+ * @public exported for its test
+ */
 export function parseLsofCwd(out: string): string | null {
   for (const line of out.split('\n')) {
     if (line.startsWith('n') && line.length > 1) {
@@ -171,7 +174,9 @@ export async function processCwd(pid: number, run: RunFile = defaultRun): Promis
 /** Changed paths in `git status --porcelain=v2 -z` output: ordinary (`1`),
  *  renamed or copied (`2`, whose original path is the next NUL field),
  *  unmerged (`u`) and untracked (`?`) entries. Ignored (`!`) and headers
- *  (`#`) are not changes. */
+ *  (`#`) are not changes.
+ * @public exported for its test
+ */
 export function countStatusV2(out: string): number {
   const fields = out.split('\0')
   let files = 0
@@ -187,7 +192,9 @@ export function countStatusV2(out: string): number {
 }
 
 /** Lines added and removed in `git diff --numstat -z` output. A binary
- *  file's `-` counts nothing. */
+ *  file's `-` counts nothing.
+ * @public exported for its test
+ */
 export function sumNumstat(out: string): { added: number; removed: number } {
   let added = 0
   let removed = 0

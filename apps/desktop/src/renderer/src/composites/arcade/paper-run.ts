@@ -38,7 +38,10 @@ import type {
 
 const BOOT_FADE_MS = 420
 
-/** Cells to a tile: a Holi gets a 4×4 square of the grid. */
+/**
+ * Cells to a tile: a Holi gets a 4×4 square of the grid.
+ * @public exported for its test
+ */
 export const TILE = 4
 
 /** Smallest board worth running; below this the surface stays a plain grid. */
@@ -68,7 +71,10 @@ const IDLE_CAPACITY = [3, 4, 3, 5, 4] as const
 /** The player's stack can grow until the trail would wrap the board. */
 const PLAYER_CAPACITY = 12
 
-/** The cast on the board at once; a vault with more brings its first few. */
+/**
+ * The cast on the board at once; a vault with more brings its first few.
+ * @public exported for its test
+ */
 export const MAX_CAST = 5
 
 /** The outbox is two tiles to a side. */
@@ -155,7 +161,10 @@ const CONFLICT_LINES = [
   "SHOULD HAVE PULLED",
 ]
 
-/** Who plays when the vault has no Holis, or the holis plugin is off. */
+/**
+ * Who plays when the vault has no Holis, or the holis plugin is off.
+ * @public exported for its test
+ */
 export const DEFAULT_CAST: readonly ArcadeCastMember[] = [
   { id: "captain", name: "Captain", mascot: "captain", color: HOLI_COLOURS[0] },
   {

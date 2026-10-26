@@ -6,9 +6,9 @@
  * plugin. Which ones run follows the vault's `plugins` setting, through the
  * same resolver main uses (`resolvePlugins`), so the two cannot disagree.
  *
- * Core's own surfaces, rail items and claims are installed the same way,
- * beside the plugins' (`components/core-surfaces.tsx`): they render features,
- * which state does not import.
+ * Core's own surfaces, rail items and claims are installed the same way
+ * (`coreContributionAtom`), beside the plugins': they render features, which
+ * state does not import.
  */
 import { atom, type Atom, type createStore } from 'jotai'
 import {
@@ -18,18 +18,14 @@ import {
   vaultSettingDescriptors,
   VAULT_SETTING_DEFAULTS,
 } from '@holi/shared'
-import { folderClaims, surfaceLabel, type FolderDocumentClaim } from '@/state/folder-documents'
+import { folderClaims, type FolderDocumentClaim } from '@/state/folder-documents'
 import type {
   AgentServiceSource,
   CommandMenuEntry,
-  PaletteItem,
   PathClaim,
-  RailItem,
   RendererPlugin,
-  SettingsSection,
   SlashCommand,
   Surface,
-  SurfaceTabLook,
 } from '@/state/plugin-types'
 import type { Command } from './commands'
 import type { FolderSurface } from './panes'
@@ -47,14 +43,17 @@ export const settingDescriptorsAtom = atom((get) =>
 
 /** What core contributes the way a plugin does: its own surfaces, rail items
  *  and claims. Always on. */
-export type CoreContribution = Pick<Required<RendererPlugin>, 'surfaces' | 'rail'> & {
+type CoreContribution = Pick<Required<RendererPlugin>, 'surfaces' | 'rail'> & {
   claims: readonly PathClaim[]
 }
 
+/** @public exported for its test */
 export const coreContributionAtom = atom<CoreContribution>({ surfaces: [], rail: [], claims: [] })
 
 /** Which plugins the open vault runs and why each other one does not. Each
- *  plugin's default until its settings are read. */
+ *  plugin's default until its settings are read.
+ * @public exported for its test
+ */
 export const pluginResolutionAtom = atom((get): PluginResolution => {
   const cached = get(vaultSettingsAtom)
   const settings =
@@ -82,11 +81,6 @@ export const claimsAtom = atom((get): readonly PathClaim[] => {
   ]
 })
 
-/** The claims whose files have a canonical form, for the editor's reload. */
-export const normalizersAtom = atom((get): readonly PathClaim[] =>
-  get(claimsAtom).filter((c) => c.normalize !== undefined),
-)
-
 /** The claims that make directories documents (`PathClaim.folder`). */
 export const folderClaimsAtom = atom((get): readonly FolderDocumentClaim[] =>
   folderClaims(get(claimsAtom)),
@@ -100,14 +94,6 @@ export const folderSurfacesAtom = atom((get): readonly FolderSurface[] =>
     match: (path: string) => claim.match(path),
   })),
 )
-
-/** Every enabled plugin's settings sections, in list order. */
-export const pluginSettingsSectionsAtom = atom((get): readonly SettingsSection[] => {
-  const enabled = get(enabledPluginsAtom)
-  return get(installedPluginsAtom).flatMap((p) =>
-    enabled.has(p.info.id) ? (p.settingsSections ?? []) : [],
-  )
-})
 
 /** Every enabled plugin, in list order. */
 export const runningPluginsAtom = atom((get): readonly RendererPlugin[] => {
@@ -128,15 +114,6 @@ export const pluginCommandsAtom = atom((get): readonly Command[] =>
   get(runningPluginsAtom).flatMap((p) => p.commands ?? []),
 )
 
-/** What running plugins list in the palette, each with its plugin's id. */
-export const paletteItemsAtom = atom((get): readonly (PaletteItem & { plugin: string })[] =>
-  get(runningPluginsAtom).flatMap((p) =>
-    p.palette === undefined
-      ? []
-      : get(p.palette.items).map((item) => ({ ...item, plugin: p.info.id })),
-  ),
-)
-
 /** What running plugins add to the ⌘K command menu, each with its plugin's
  *  id (`RendererPlugin.commandMenu`). */
 export const commandMenuEntriesAtom = atom(
@@ -154,15 +131,6 @@ export const runCommandMenuEntryAtom = atom(
   (get, set, { plugin, id }: { plugin: string; id: string }): void => {
     const run = get(runningPluginsAtom).find((p) => p.info.id === plugin)?.commandMenu?.run
     if (run !== undefined) set(run, id)
-  },
-)
-
-/** Open a palette item through the plugin that listed it. */
-export const openPaletteItemAtom = atom(
-  null,
-  (get, set, { plugin, key }: { plugin: string; key: string }): void => {
-    const open = get(runningPluginsAtom).find((p) => p.info.id === plugin)?.palette?.open
-    if (open !== undefined) set(open, key)
   },
 )
 
@@ -198,11 +166,6 @@ const agentProviderAtom = atom(
 /** The first running plugin's agent, or null with none. */
 export const agentSourceAtom = atom(
   (get): AgentServiceSource | null => get(agentProviderAtom)?.agent ?? null,
-)
-
-/** Which plugin provides the agent, by id, or null with none. */
-export const agentPluginIdAtom = atom(
-  (get): string | null => get(agentProviderAtom)?.info.id ?? null,
 )
 
 /**
@@ -252,52 +215,3 @@ export const surfacesAtom = atom((get): ReadonlyMap<string, Surface> => {
   }
   return byKind
 })
-
-/** How each tab of a surface with `tabs` looks now, by surface and id. */
-export const surfaceTabLooksAtom = atom(
-  (get): ReadonlyMap<string, ReadonlyMap<string, SurfaceTabLook>> =>
-    new Map(
-      [...get(surfacesAtom).values()].flatMap((s) =>
-        s.tabs === undefined
-          ? []
-          : [[s.kind, new Map(get(s.tabs).map((look) => [look.id, look]))] as const],
-      ),
-    ),
-)
-
-/** Every registered surface's instances, with their labels, in registry
- *  order: what the palette lists for a surface of instances (each app). */
-export const instancesAtom = atom(
-  (get): readonly { surface: string; id: string; label: string }[] =>
-    [...get(surfacesAtom).values()].flatMap((s) =>
-      s.instances === undefined
-        ? []
-        : get(s.instances).map((id) => ({ surface: s.kind, id, label: surfaceLabel(s, id) })),
-    ),
-)
-
-/**
- * The nav menu's surface items, in order, with their surfaces: only those
- * whose surface exists and whose `visible` atom says so. A surface with
- * instances is a group of them, shown while there are any. One derived atom
- * reads every `visible` and every `instances`, so the menu calls no hook per
- * item.
- */
-export const railAtom = atom(
-  (
-    get,
-  ): readonly (RailItem & { of: Surface; instances?: readonly string[]; running: boolean })[] => {
-    const surfaces = get(surfacesAtom)
-    return get(contributionsAtom)
-      .flatMap((c) => c.rail ?? [])
-      .flatMap((item) => {
-        const of = surfaces.get(item.surface)
-        if (of === undefined || (item.visible !== undefined && !get(item.visible))) return []
-        const running = item.live !== undefined && get(item.live)
-        if (of.instances === undefined) return [{ ...item, of, running }]
-        const instances = get(of.instances)
-        return instances.length === 0 ? [] : [{ ...item, of, instances, running }]
-      })
-      .sort((a, b) => a.order - b.order)
-  },
-)

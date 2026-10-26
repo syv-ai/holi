@@ -22,7 +22,7 @@ import {
 import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
 import { workspaceAtom } from '@/state/panes'
 import { activeRemoteAtom } from '@/state/vaults'
-import { openTodaysDailyAtom, sweepDailyAtom } from '@/state/daily'
+import { openTodaysDailyAtom } from '@/state/daily'
 
 let holi: FakeHoli | null = null
 afterEach(() => {
@@ -105,49 +105,5 @@ describe('openTodaysDailyAtom', () => {
     const store = createStore()
     expect(await store.set(openTodaysDailyAtom)).toBeNull()
     expect(holi.calls.map((c) => c.path)).not.toContain('notes.getOrCreateDaily')
-  })
-})
-
-describe('sweepDailyAtom', () => {
-  /** A rig whose sweep reports `result`, in a vault with `dailyNotes` as given. */
-  function rig(result: { archived: number; deleted: number }, dailyNotes = true) {
-    holi = installFakeHoli((op) => {
-      if (op.path === 'settings.read') return settings({ dailyNotes })
-      if (op.path === 'notes.sweepDaily') return result
-      if (op.path === 'vaults.snapshot') return snap('x.md')
-      return undefined
-    })
-    const store = createStore()
-    store.set(activeRemoteAtom, 'me/notes')
-    return store
-  }
-
-  it('commits once when the sweep changed something', async () => {
-    const store = rig({ archived: 1, deleted: 0 })
-    await store.set(sweepDailyAtom)
-    expect(holi!.calls.map((c) => c.path)).toContain('sync.commitNow')
-  })
-
-  it('does not commit when the sweep was a no-op', async () => {
-    const store = rig({ archived: 0, deleted: 0 })
-    await store.set(sweepDailyAtom)
-    // It really did sweep — this is not the early return in disguise.
-    expect(holi!.calls.map((c) => c.path)).toContain('notes.sweepDaily')
-    expect(holi!.calls.map((c) => c.path)).not.toContain('sync.commitNow')
-  })
-
-  it('does not sweep at all when the vault keeps no daily notes', async () => {
-    // Off stops the archiving with the minting: the one place a background
-    // process rewrites the vault's shape does not run behind your back either.
-    const store = rig({ archived: 1, deleted: 0 }, false)
-    await store.set(sweepDailyAtom)
-    expect(holi!.calls.map((c) => c.path)).not.toContain('notes.sweepDaily')
-    expect(holi!.calls.map((c) => c.path)).not.toContain('sync.commitNow')
-  })
-
-  it('never asks GitHub who the collaborators are', async () => {
-    const store = rig({ archived: 0, deleted: 0 })
-    await store.set(sweepDailyAtom)
-    expect(holi!.calls.map((c) => c.path)).not.toContain('github.collaborators')
   })
 })

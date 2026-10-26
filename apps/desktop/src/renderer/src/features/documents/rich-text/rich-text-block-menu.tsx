@@ -24,7 +24,6 @@ import {
   moveBlockUp,
   type BlockTarget,
 } from "./rich-text-block-actions"
-import { RICH_TEXT_OUTLINE_SLASH_ITEM } from "./rich-text-outline-node"
 import { RICH_TEXT_BASIC_SLASH_ITEMS } from "./rich-text-slash-menu"
 import { RICH_TEXT_TABLE_SLASH_ITEM } from "./rich-text-table"
 import { useShortcutLabel } from "@/composites/shortcut-keys"
@@ -50,7 +49,6 @@ const BLOCK_TITLES = new Map(
   [
     ...RICH_TEXT_BASIC_SLASH_ITEMS,
     RICH_TEXT_TABLE_SLASH_ITEM,
-    RICH_TEXT_OUTLINE_SLASH_ITEM,
   ].map((item) => [item.id, item.title])
 )
 
@@ -78,8 +76,6 @@ function blockKind({ node, parent }: BlockTarget) {
       return "divider"
     case "table":
       return "table"
-    case "richTextOutline":
-      return "outline"
     default:
       return LIST_KINDS[parent.type.name] ?? node.type.name
   }

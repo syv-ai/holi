@@ -102,6 +102,7 @@ function blankDraft(holi?: string): Draft {
   }
 }
 
+/** @public exported for its test */
 export function draftOf(s: ScheduleSummary): Draft {
   return {
     name: s.name,

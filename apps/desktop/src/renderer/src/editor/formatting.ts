@@ -6,6 +6,7 @@
 import type { EditorState, TransactionSpec } from '@codemirror/state'
 import { keymap } from '@codemirror/view'
 
+/** @public exported for its test */
 export function toggleInline(state: EditorState, marker: string): TransactionSpec | null {
   const sel = state.selection.main
   let { from, to } = sel
@@ -46,6 +47,7 @@ export function toggleInline(state: EditorState, marker: string): TransactionSpe
   }
 }
 
+/** @public exported for its test */
 export function toggleLink(state: EditorState): TransactionSpec | null {
   const sel = state.selection.main
   if (sel.empty) return null

@@ -113,7 +113,10 @@ function parseEnv(raw: unknown): string[] | undefined {
   return names.length > 0 ? [...new Set(names)] : undefined
 }
 
-/** The longest reason the approval dialog shows: a sentence, not a pitch. */
+/**
+ * The longest reason the approval dialog shows: a sentence, not a pitch.
+ * @public exported for its test
+ */
 export const MAX_ALLOW_REASON = 200
 
 /** The reads an app must opt into, because what they return is one person's,

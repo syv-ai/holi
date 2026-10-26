@@ -25,6 +25,7 @@ export type CloneOutcome = { kind: 'cloned' } | { kind: 'adopted' }
  * The clone path is taken by something this cannot claim. Carries what it found
  * so the message can name it — "that folder is a clone of someone/else" is
  * actionable, "that folder is in use" is not.
+ * @public exported for its test
  */
 export class ClonePathInUse extends Error {
   constructor(

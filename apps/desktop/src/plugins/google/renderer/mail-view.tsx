@@ -1448,6 +1448,7 @@ interface Mention {
  * `from:`/`to:`. Otherwise an accepted address (`from:jane@syv.ai`) would
  * reopen the list on its own separator. And nothing since the `@` may be
  * whitespace.
+ * @public exported for its test
  */
 export function mentionAt(query: string): Mention | null {
   const at = query.lastIndexOf('@')
@@ -1460,7 +1461,9 @@ export function mentionAt(query: string): Mention | null {
 }
 
 /** The completed query, in Gmail's own `from:` grammar so the user can still
- *  edit it. */
+ *  edit it.
+ * @public exported for its test
+ */
 export function replaceMention(query: string, mention: Mention, email: string): string {
   const before = query.slice(0, mention.start)
   // `@` is dropped: `from:@jane@x.ai` is not valid Gmail grammar.
@@ -1476,6 +1479,7 @@ export function replaceMention(query: string, mention: Mention, email: string): 
  *
  * The local corpus is deliberately **not** replaced by contacts: it keeps
  * completion working when the contacts request is cold, refused, or unscoped.
+ * @public exported for its test
  */
 export function matchPeople(
   threads: { from: MailAddress }[],

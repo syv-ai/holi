@@ -12,6 +12,7 @@ import { DATA_DIR, formatRecord } from '@holi/shared'
 
 /** How long a log entry is kept, and the most the file holds. */
 const APP_LOG_TTL_MS = 24 * 60 * 60 * 1000
+/** @public exported for its test */
 export const APP_LOG_MAX_ENTRIES = 500
 /** The most of those that may be `info` (the console's log and info): a
  *  chatty app's own output never pushes its errors out. */

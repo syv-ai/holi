@@ -1,7 +1,7 @@
 /**
  * The find bar, after VS Code's, for whichever editor drives it: the
- * document's (`document-view/document-find-bar.tsx`, ProseMirror) and a code
- * file's (`file-view/code-find-bar.tsx`, CodeMirror). It floats at the top
+ * document's (`features/documents/document-find-bar.tsx`, ProseMirror) and a code
+ * file's (`features/files/code-find-bar.tsx`, CodeMirror). It floats at the top
  * right of the text and holds only what is typed and toggled; the editor's
  * own bar finds, counts and replaces. Enter and ⌘G step forward, ⇧Enter and
  * ⇧⌘G back; Escape closes it. The arrow opens a replace row, where Enter

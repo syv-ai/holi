@@ -10,11 +10,8 @@
  * vault that keeps no daily notes automatically.
  */
 import { atom } from 'jotai'
-import { dailyNoteFilename } from '@holi/shared'
 import { trpc } from '../lib/trpc'
 import { openPinned, workspaceAtom } from './panes'
-import { todayAtom } from './clock'
-import { loadVaultSettingsAtom } from './settings'
 import { activeDocAtom, activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 
 /**
@@ -47,26 +44,4 @@ export const openTodaysDailyAtom = atom(null, async (get, set): Promise<string |
   set(workspaceAtom, openPinned(get(workspaceAtom), path))
   set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === path) ?? null)
   return path
-})
-
-/**
- * Archive prior-day notes + GC stubs, then commit once. The sweep is the one
- * place a background process rewrites the vault's shape, so it lands as a
- * single deliberate commit rather than scattered autosaves.
- *
- * No-op when the vault keeps no daily notes, and when nothing changed: the
- * archiving stops with the minting, and resumes if the setting is turned back on.
- */
-export const sweepDailyAtom = atom(null, async (get, set) => {
-  const remote = get(activeRemoteAtom)
-  if (!remote) return
-  // Cached by the vault's opening, which ran immediately before this,
-  // so the pair costs one read rather than two.
-  const settings = await set(loadVaultSettingsAtom)
-  if (settings?.dailyNotes !== true) return
-  const { archived, deleted } = await trpc.notes.sweepDaily.mutate({ remote })
-  if (archived > 0 || deleted > 0) {
-    await set(loadSnapshotAtom)
-    await trpc.sync.commitNow.mutate()
-  }
 })

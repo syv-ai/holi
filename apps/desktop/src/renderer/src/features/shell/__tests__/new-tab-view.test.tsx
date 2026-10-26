@@ -12,7 +12,7 @@ import { installedPluginsAtom } from "@/state/plugins"
 import { vaultSettingsAtom } from "@/state/settings"
 import { activeRemoteAtom, vaultsAtom } from "@/state/vaults"
 import { BOARD_TAB } from "../../sidebar/documents-nav"
-import { NewTabView, isNewTab, NEW_TAB_PREFIX } from "../new-tab-view"
+import { NewTabView } from "../new-tab-view"
 
 function mount(prepare?: (store: ReturnType<typeof createStore>) => void) {
   const store = createStore()
@@ -63,12 +63,6 @@ test("starts a document; an agent session only where the agent runs", () => {
     ])
   )
   expect(screen.getByRole("button", { name: "New agent session" })).toBeTruthy()
-})
-
-test("a New tab is told apart by its id", () => {
-  expect(isNewTab(`${NEW_TAB_PREFIX}1`)).toBe(true)
-  expect(isNewTab("Meetings/Kickoff.md")).toBe(false)
-  expect(isNewTab(null)).toBe(false)
 })
 
 /** The scrolling content, which steps out while a game is on. */

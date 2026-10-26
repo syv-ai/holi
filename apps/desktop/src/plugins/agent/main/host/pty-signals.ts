@@ -52,13 +52,18 @@ export interface TurnSignals {
 
 const PASTE = /\x1b\[200~[\s\S]*?\x1b\[201~/g
 
-/** Whether typed `data` submits: an Enter outside any bracketed paste. */
+/**
+ * Whether typed `data` submits: an Enter outside any bracketed paste.
+ * @public exported for its test
+ */
 export function submits(data: string): boolean {
   return data.replace(PASTE, '').includes('\r')
 }
 
 /** An OSC body that is a desktop notification: OSC 9 (but not OSC 9;4, the
- *  progress report) or OSC 777's `notify`. */
+ *  progress report) or OSC 777's `notify`.
+ * @public exported for its test
+ */
 export function isNotification(body: string): boolean {
   if (body.startsWith('9;')) return !body.startsWith('9;4;')
   return body.startsWith('777;notify')
@@ -69,6 +74,7 @@ type ScanState = 'text' | 'esc' | 'osc' | 'osc-esc'
 /**
  * A scanner for notifications across output chunks: a sequence split between
  * two chunks is still one sequence.
+ * @public exported for its test
  */
 export function createNotificationScanner(onNotify: () => void): (data: string) => void {
   let state: ScanState = 'text'

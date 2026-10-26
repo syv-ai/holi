@@ -10,18 +10,6 @@ import type { Tab } from '@/lib/tab'
 
 export type { RecentEntry } from '@holi/shared'
 
-/** The recent a tab counts as. Every tab kind is remembered. */
-export function entryOfTab(tab: Tab): RecentEntry {
-  switch (tab.kind) {
-    case 'note':
-      return { kind: 'path', key: tab.path }
-    case 'surface':
-      return tab.id === undefined
-        ? { kind: 'surface', key: tab.surface }
-        : { kind: 'surface', key: tab.surface, id: tab.id }
-  }
-}
-
 function sameEntry(a: RecentEntry, b: RecentEntry): boolean {
   return a.kind === b.kind && a.key === b.key && a.id === b.id
 }

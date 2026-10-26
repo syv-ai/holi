@@ -51,7 +51,10 @@ export interface Geometry {
 }
 
 
-/** The vault the sessions run in, as its activation hands it over. */
+/**
+ * The vault the sessions run in, as its activation hands it over.
+ * @public exported for its test
+ */
 export type AgentVault = Pick<PluginCtx, 'remote' | 'root'> & TurnVault
 
 export interface AgentSessionsDeps {

@@ -103,7 +103,7 @@ function spoken(tab: HeaderTab): string {
  * members' marks and titles side by side. Clicking the pill selects the
  * split; clicking a member in it selects the split focused on that member.
  * Entries drag along the strip to reorder and onto the content to split
- * (`panes-view.tsx`), and a split member's header drags here to leave its
+ * (`split-view.tsx`), and a split member's header drags here to leave its
  * split. On the phone's one column nothing drags.
  */
 export function TabStrip({

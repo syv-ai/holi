@@ -14,13 +14,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
-import {
-  RICH_TEXT_ALIGNS,
-  type RichTextAlign,
   type RichTextBlockType,
   type RichTextSnapshot,
 } from "./rich-text-state"
@@ -29,7 +22,7 @@ import {
   RichTextToggle,
   RichTextToolbarGroup,
 } from "./rich-text-toolbar"
-import { Undo2Icon, Redo2Icon, TypeIcon, Heading1Icon, Heading2Icon, Heading3Icon, ChevronDownIcon, ListIcon, ListOrderedIcon, ListTodoIcon, TextQuoteIcon, SquareCodeIcon, MinusIcon, BoldIcon, ItalicIcon, UnderlineIcon, StrikethroughIcon, CodeIcon, AlignLeftIcon, AlignCenterIcon, AlignRightIcon, AlignJustifyIcon } from "lucide-react"
+import { Undo2Icon, Redo2Icon, TypeIcon, Heading1Icon, Heading2Icon, Heading3Icon, ChevronDownIcon, BoldIcon, ItalicIcon, UnderlineIcon, StrikethroughIcon, CodeIcon } from "lucide-react"
 
 interface ControlProps {
   editor: Editor | null
@@ -180,72 +173,6 @@ export function RichTextBlockTypeMenu({ editor, state }: ControlProps) {
   )
 }
 
-export function RichTextListToggles({ editor, state }: ControlProps) {
-  return (
-    <RichTextToolbarGroup label="Lists">
-      <RichTextToggle
-        label="Bullet list"
-        shortcut={["mod", "shift", "8"]}
-        pressed={state.bulletList}
-        disabled={!state.editable}
-        onToggle={() => editor?.chain().focus().toggleBulletList().run()}
-      >
-        <ListIcon aria-hidden="true" />
-      </RichTextToggle>
-      <RichTextToggle
-        label="Numbered list"
-        shortcut={["mod", "shift", "7"]}
-        pressed={state.orderedList}
-        disabled={!state.editable}
-        onToggle={() => editor?.chain().focus().toggleOrderedList().run()}
-      >
-        <ListOrderedIcon aria-hidden="true" />
-      </RichTextToggle>
-      <RichTextToggle
-        label="Task list"
-        shortcut={["mod", "shift", "9"]}
-        pressed={state.taskList}
-        disabled={!state.editable}
-        onToggle={() => editor?.chain().focus().toggleTaskList().run()}
-      >
-        <ListTodoIcon aria-hidden="true" />
-      </RichTextToggle>
-    </RichTextToolbarGroup>
-  )
-}
-
-export function RichTextBlockToggles({ editor, state }: ControlProps) {
-  return (
-    <RichTextToolbarGroup label="Blocks">
-      <RichTextToggle
-        label="Quote"
-        shortcut={["mod", "shift", "B"]}
-        pressed={state.blockquote}
-        disabled={!state.editable}
-        onToggle={() => editor?.chain().focus().toggleBlockquote().run()}
-      >
-        <TextQuoteIcon aria-hidden="true" />
-      </RichTextToggle>
-      <RichTextToggle
-        label="Code block"
-        shortcut={["mod", "alt", "C"]}
-        pressed={state.codeBlock}
-        disabled={!state.editable}
-        onToggle={() => editor?.chain().focus().toggleCodeBlock().run()}
-      >
-        <SquareCodeIcon aria-hidden="true" />
-      </RichTextToggle>
-      <RichTextButton
-        label="Divider"
-        disabled={!state.editable}
-        onClick={() => editor?.chain().focus().setHorizontalRule().run()}
-      >
-        <MinusIcon aria-hidden="true" />
-      </RichTextButton>
-    </RichTextToolbarGroup>
-  )
-}
-
 export function RichTextMarkToggles({ editor, state }: ControlProps) {
   const disabled = !state.canFormat
 
@@ -297,91 +224,5 @@ export function RichTextMarkToggles({ editor, state }: ControlProps) {
         <CodeIcon aria-hidden="true" />
       </RichTextToggle>
     </RichTextToolbarGroup>
-  )
-}
-
-const ALIGN_LABELS: Record<RichTextAlign, string> = {
-  left: "Align left",
-  center: "Align center",
-  right: "Align right",
-  justify: "Justify",
-}
-
-const ALIGN_KEYS: Record<RichTextAlign, string> = {
-  left: "L",
-  center: "E",
-  right: "R",
-  justify: "J",
-}
-
-// Whole static nodes per key, so the trigger can mirror the current value.
-const ALIGN_ICONS: Record<RichTextAlign, ReactNode> = {
-  left: (
-    <AlignLeftIcon aria-hidden="true" />
-  ),
-  center: (
-    <AlignCenterIcon aria-hidden="true" />
-  ),
-  right: (
-    <AlignRightIcon aria-hidden="true" />
-  ),
-  justify: (
-    <AlignJustifyIcon aria-hidden="true" />
-  ),
-}
-
-const isAlign = (value: unknown): value is RichTextAlign =>
-  typeof value === "string" && value in ALIGN_LABELS
-
-export function RichTextAlignMenu({ editor, state }: ControlProps) {
-  // Two glyphs and no label read as an icon button, so the text inset is trimmed.
-  return (
-    <DropdownMenu>
-      <Tooltip>
-        {/* The span carries the tooltip, so the trigger keeps its own props. */}
-        <TooltipTrigger asChild>
-          <span className="flex shrink-0">
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label={`Alignment, ${ALIGN_LABELS[state.align]}`}
-                disabled={!state.editable}
-                data-toolbar-item=""
-              >
-                {ALIGN_ICONS[state.align]}
-                <ChevronDownIcon aria-hidden="true" className="opacity-60" />
-              </Button>
-            </DropdownMenuTrigger>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent>Alignment</TooltipContent>
-      </Tooltip>
-      <DropdownMenuContent
-        align="start"
-        className="w-auto"
-        onCloseAutoFocus={focusEditor(editor)}
-      >
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>Alignment</DropdownMenuLabel>
-          <DropdownMenuRadioGroup
-            value={state.align}
-            onValueChange={(value) => {
-              if (isAlign(value)) {
-                editor?.chain().focus().setTextAlign(value).run()
-              }
-            }}
-          >
-            {RICH_TEXT_ALIGNS.map((align) => (
-              <DropdownMenuRadioItem key={align} value={align}>
-                {ALIGN_ICONS[align]}
-                {ALIGN_LABELS[align]}
-                <MenuShortcut keys={["mod", "shift", ALIGN_KEYS[align]]} />
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
-        </DropdownMenuGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
   )
 }

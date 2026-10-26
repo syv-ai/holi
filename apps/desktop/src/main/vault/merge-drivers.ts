@@ -25,7 +25,7 @@ import { join } from 'node:path'
 import { runGit } from '../git'
 import { shellReadBridgeEnv } from '../bridge/env-file'
 
-export interface MergeDriver {
+interface MergeDriver {
   /** Git's name for it, `merge=<name>` in the attributes. */
   name: string
   /** What `git config` says it is. */
@@ -36,6 +36,7 @@ export interface MergeDriver {
   route: string
 }
 
+/** @public exported for its test */
 export const MERGE_DRIVERS: readonly MergeDriver[] = [
   {
     name: 'holi-record',
@@ -53,7 +54,10 @@ export const MERGE_DRIVERS: readonly MergeDriver[] = [
   },
 ]
 
-/** The attribute line naming the paths `driver` merges. */
+/**
+ * The attribute line naming the paths `driver` merges.
+ * @public exported for its test
+ */
 export const attributesLine = (driver: MergeDriver): string =>
   `${driver.pattern} merge=${driver.name}`
 

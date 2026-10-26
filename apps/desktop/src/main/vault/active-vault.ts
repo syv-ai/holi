@@ -202,6 +202,7 @@ function commitMessage(paths: string[]): string {
   return paths.length === 1 ? `Update ${paths[0]}` : `Update ${paths.length} files`
 }
 
+/** @public exported for its test */
 export async function openActiveVault(args: {
   remote: string
   repo: GitRepo

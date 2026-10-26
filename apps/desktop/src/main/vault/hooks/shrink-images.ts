@@ -58,6 +58,7 @@ const rgba = (input: Buffer) =>
  * The smaller version of an image's bytes, or null when it should stay as it
  * is. `name` decides the format by its extension. The one rule for how an
  * image is shrunk: the commit transform and any one-off rewrite call this.
+ * @public exported for its test
  */
 export async function shrinkImage(bytes: Buffer, name: string): Promise<Buffer | null> {
   if (bytes.length < MIN_BYTES || !IMAGE.test(name)) return null

@@ -262,7 +262,7 @@ function addToActive(
  * its count), focused: a single tab and it make a split in the tab's place,
  * a split with room takes it there. The newcomer takes an even share of the
  * width, `1 / (count + 1)`, and the others keep their proportions, which is
- * the gap the drag preview opens (`panes-view.tsx`). The caller checks for
+ * the gap the drag preview opens (`split-view.tsx`). The caller checks for
  * room.
  */
 function insertMember(
@@ -386,23 +386,6 @@ export function stepMember(ws: ShellWorkspace, step: number): ShellWorkspace {
   return focusMember(ws, split.id, split.views[(((at + step) % n) + n) % n]!)
 }
 
-/** The entry `step` places from the active one, wrapping (⌃Tab). */
-export function stepTab(ws: ShellWorkspace, step: number): ShellWorkspace {
-  const ids = entryIds(ws)
-  if (ids.length === 0) return ws
-  const at = ws.active === null ? -1 : ids.indexOf(ws.active)
-  const from = at < 0 ? (step > 0 ? -1 : 0) : at
-  const n = ids.length
-  return selectEntry(ws, ids[(((from + step) % n) + n) % n]!)
-}
-
-/** The entry at `index`; 8 is the last, as ⌘9 in a browser. */
-export function gotoTab(ws: ShellWorkspace, index: number): ShellWorkspace {
-  const ids = entryIds(ws)
-  const id = index === 8 ? ids[ids.length - 1] : ids[index]
-  return id === undefined ? ws : selectEntry(ws, id)
-}
-
 // ------------------------------------------------------------------ closing
 
 /**
@@ -436,12 +419,6 @@ export function closeEntry(ws: ShellWorkspace, id: string): ShellWorkspace {
     active,
     closed: [...ws.closed, closedOf(ws.entries[at]!)],
   }
-}
-
-/** ⌘W: the focused member inside a split, else the active tab. */
-export function closeFocused(ws: ShellWorkspace): ShellWorkspace {
-  const key = focusedTab(ws)
-  return key === null ? ws : closeTab(ws, key)
 }
 
 function closeWhere(
@@ -598,7 +575,9 @@ export function replaceWithNew(
 }
 
 /** Move an entry to strip position `index` (0 to the count: before the
- *  entry there now). */
+ *  entry there now).
+ * @public exported for its test
+ */
 export function moveEntry(
   ws: ShellWorkspace,
   id: string,
@@ -727,7 +706,7 @@ function splitOwn(
 
 /**
  * A view dropped between two members of the active entry, or on one of its
- * outer edges (the drag preview's gap, `panes-view.tsx`): `index` is the
+ * outer edges (the drag preview's gap, `split-view.tsx`): `index` is the
  * member it lands before, 0 to the count. It is taken out of wherever it
  * was, or opens there when it was not open (dragged from the sidebar), and
  * takes an even share, the others keeping their proportions; focused.

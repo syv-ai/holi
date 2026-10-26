@@ -77,7 +77,7 @@ function message(err: unknown): string {
 }
 
 /** Read both files whenever the vault, or either file, changes. Mounted once,
- *  in Shell. */
+ *  in the app shell. */
 export function usePlanningFiles(): void {
   const remote = useAtomValue(activeRemoteAtom)
   const stamps = useAtomValue(fileStampsAtom)

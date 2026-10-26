@@ -50,7 +50,7 @@ const FORMAT_BUBBLE_OPTIONS = { placement: "top", offset: 8 } as const
 
 /** The quick commands: what the menu says, and the verb the agent is given
  *  ("In `x.md`, <verb> this passage"). */
-export const QUICK_COMMANDS = [
+const QUICK_COMMANDS = [
   { id: "improve", label: "Improve writing", verb: "improve the writing of", icon: WandSparklesIcon },
   { id: "grammar", label: "Fix spelling and grammar", verb: "fix the spelling and grammar of", icon: SpellCheckIcon },
   { id: "simplify", label: "Simplify", verb: "simplify the language of", icon: MinimizeIcon },

@@ -2,7 +2,7 @@
  * The app's clock: the current local minute, and the day it falls on.
  *
  * Read by the task board (overdue labels, date presets), the frontmatter
- * widget and the daily note. Ticked once, from the Shell.
+ * widget and the daily note. Ticked once, from the app shell.
  */
 import { stampDate } from '@holi/shared'
 import { atom } from 'jotai'
@@ -34,7 +34,7 @@ export const nowAtom = atom<string>(localNow())
  *  disagree about what day it is. */
 export const todayAtom = atom((get) => stampDate(get(nowAtom)) ?? get(nowAtom).slice(0, 10))
 
-/** Advance `nowAtom` to the current minute. Mounted once, from the Shell. */
+/** Advance `nowAtom` to the current minute. Mounted once, from the app shell. */
 export const tickNowAtom = atom(null, (get, set) => {
   const next = localNow()
   if (next !== get(nowAtom)) set(nowAtom, next)

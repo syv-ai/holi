@@ -28,7 +28,7 @@ type Hero = {
   emblem: string
 }
 
-export type Persona = {
+type Persona = {
   hair: Hair
   hairColor: string
   skin: string
@@ -43,14 +43,21 @@ export type Persona = {
   hero: Hero
 }
 
-/** The grid a persona is drawn on. */
+/**
+ * The grid a persona is drawn on.
+ * @public exported for its test
+ */
 export const PERSONA_GRID = 32
 
-/** How many pixels higher a tall persona stands. Its head draws above the frame. */
+/**
+ * How many pixels higher a tall persona stands. Its head draws above the frame.
+ * @public exported for its test
+ */
 export const TALL_LIFT = 5
 
 const GOLD = '#f2c230'
 
+/** @public exported for its test */
 export const PERSONAS: Record<HoliMascot, Persona> = {
   captain: {
     hair: 'shaved',
@@ -148,7 +155,9 @@ export const PERSONAS: Record<HoliMascot, Persona> = {
 }
 
 /** The character a `mascot` names: a persona's own name, an older arcade
- *  name mapped onto its stand-in, or the strategist for anything else. */
+ *  name mapped onto its stand-in, or the strategist for anything else.
+ * @public exported for its test
+ */
 export function personaId(name: string): HoliMascot {
   return holiMascotOf(name) ?? 'strategist'
 }
@@ -276,7 +285,10 @@ function edges(hex: string): { hi: string; lo: string } {
 /** A horizontal run of same-coloured pixels. */
 export type Run = { x: number; y: number; w: number; fill: string }
 
-/** Compose one frame into horizontal runs of same-coloured pixels, top to bottom. */
+/**
+ * Compose one frame into horizontal runs of same-coloured pixels, top to bottom.
+ * @public exported for its test
+ */
 export function drawPersona(p: Persona, f: Frame, heroMode = false): Run[] {
   const px = new Map<number, string>()
   // A pixel's key: rows run from -TALL_LIFT, so offset them to stay positive.
@@ -590,6 +602,7 @@ export function drawPersona(p: Persona, f: Frame, heroMode = false): Run[] {
  * The head-and-shoulders window the small slots show: 20 pixels square, from
  * the top of the hair to the line of the shoulders, the head centred. A tall
  * character is drawn at everyone's height here, so heads line up in a list.
+ * @public exported for its test
  */
 export const HEAD_CROP = { x: 6, y: 2, size: 20 } as const
 

@@ -58,7 +58,7 @@ const DocumentImage = Image.extend<{ folder: string }>({
 
 /** A block of raw HTML from the file, shown as its source and written back
  *  unchanged. */
-export const HtmlBlock = Node.create({
+const HtmlBlock = Node.create({
   name: "htmlBlock",
   group: "block",
   atom: true,

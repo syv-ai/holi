@@ -57,7 +57,10 @@ const BREAKER_LIMIT = 3
  */
 const failures = new Map<TransformName, number>()
 
-/** Test seam — the breaker is process-global by design, so tests reset it. */
+/**
+ * Test seam — the breaker is process-global by design, so tests reset it.
+ * @public exported for its test
+ */
 export function resetBreaker(): void {
   failures.clear()
 }

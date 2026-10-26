@@ -5,7 +5,6 @@ import {
   allTabs,
   closeAllTabs,
   closeEntry,
-  closeFocused,
   closeOtherTabs,
   closeTab,
   closeTabsToRight,
@@ -16,7 +15,6 @@ import {
   entryIds,
   focusedTab,
   focusMember,
-  gotoTab,
   insertIntoActive,
   isSplit,
   MAX_SPLIT,
@@ -33,7 +31,6 @@ import {
   setShares,
   splitActive,
   stepMember,
-  stepTab,
   type ShellSplit,
   type ShellWorkspace,
 } from "../shell-workspace"
@@ -103,17 +100,6 @@ describe("the strip", () => {
     expect(ws.entries).toHaveLength(3)
     expect(isNew(entryIds(ws)[2]!)).toBe(true)
     expect(ws.active).toBe(entryIds(ws)[2])
-  })
-
-  test("stepping and ⌘1–9 go over entries, a split being one", () => {
-    let ws = splitActive(withTabs(A, B))
-    ws = openNewTab(ws)
-    const ids = entryIds(ws)
-    expect(ids).toHaveLength(3)
-    expect(isSplit(ws.entries[1])).toBe(true)
-    expect(stepTab(ws, 1).active).toBe(ids[0])
-    expect(gotoTab(ws, 1).active).toBe(ids[1])
-    expect(gotoTab(ws, 8).active).toBe(ids[2])
   })
 
   test("an entry drags to another place in the strip", () => {
@@ -259,13 +245,6 @@ describe("inside a split", () => {
     expect(strip(ws)).toEqual([A, C])
     expect(ws.active).toBe(A)
     expect(ws.closed).toEqual([B])
-  })
-
-  test("⌘W closes the focused member inside a split, else the tab", () => {
-    let ws = closeFocused(pair())
-    expect(strip(ws)).toEqual([A, C])
-    ws = closeFocused(ws)
-    expect(strip(ws)).toEqual([C])
   })
 
   test("separate puts every member back as a tab, the focused one in front", () => {

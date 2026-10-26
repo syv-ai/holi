@@ -45,7 +45,10 @@ export interface TerminalCommand {
   env: Record<string, string>
 }
 
-/** What a terminal is opened on. Each provider reads the fields it has. */
+/**
+ * What a terminal is opened on. Each provider reads the fields it has.
+ * @public exported for its test
+ */
 export interface TerminalOpts {
   /** A background session to attach to (`background` only). */
   attach?: string

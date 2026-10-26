@@ -40,7 +40,10 @@ export const appLogQueryAtom = atom<FilterQuery>(emptyFilterQuery())
 /** The Logs tab's search, over message, detail and scope. */
 export const appLogSearchAtom = atom('')
 
-/** Two runs of lines as one, by id, oldest first and capped. */
+/**
+ * Two runs of lines as one, by id, oldest first and capped.
+ * @public exported for its test
+ */
 export function mergeAppLog(
   held: readonly AppLogEntry[],
   more: readonly AppLogEntry[],

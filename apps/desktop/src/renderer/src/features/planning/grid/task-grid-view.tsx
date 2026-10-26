@@ -36,7 +36,7 @@ import { Settings2Icon } from "lucide-react"
 /** List: headerless rows under collapsible status groups, with an Add task
  *  line in each. Table: the same groups under a header, every field a
  *  column, columns switched on and off from Display. */
-export type TaskGridVariant = "list" | "table"
+type TaskGridVariant = "list" | "table"
 
 const VARIANT_COLUMNS: Record<TaskGridVariant, TaskColumnKey[]> = {
   list: ["status", "assignee", "priority", "due", "tags"],

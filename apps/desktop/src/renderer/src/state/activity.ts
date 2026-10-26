@@ -51,11 +51,6 @@ export const activityQueryAtom = atom<FilterQuery>(emptyFilterQuery())
 /** The Output's search, over message, detail, channel and vault. */
 export const activitySearchAtom = atom('')
 
-/** The query that shows one channel and nothing else. */
-export function channelQuery(channel: ActivityChannel): FilterQuery {
-  return withChannelRule(emptyFilterQuery(), channel, 'only')
-}
-
 /**
  * A channel's quick filter, from a click on a row's channel: `only` shows that
  * channel, `hide` everything but it. It replaces any top-level channel rule
@@ -82,7 +77,9 @@ export function withChannelRule(
 }
 
 /** The newest id the person has seen in the Output: an error after it lights
- *  the status bar's Output item. */
+ *  the status bar's Output item.
+ * @public exported for its test
+ */
 export const activitySeenAtom = atom(0)
 
 /** An error was logged since the Output was last looked at. */
@@ -100,6 +97,7 @@ export const markActivitySeenAtom = atom(null, (get, set) => {
 /**
  * Two runs of lines as one, by id, oldest first and capped: the first read
  * and the pushes that raced it overlap, and neither alone is the whole.
+ * @public exported for its test
  */
 export function mergeEntries(
   held: readonly ActivityEntry[],

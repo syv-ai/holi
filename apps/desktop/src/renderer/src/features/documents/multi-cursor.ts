@@ -37,7 +37,7 @@ interface MultiCursorState {
 
 const EMPTY: MultiCursorState = { extras: [], wholeWord: false }
 
-export const multiCursorKey = new PluginKey<MultiCursorState>("multiCursor")
+const multiCursorKey = new PluginKey<MultiCursorState>("multiCursor")
 
 /** The selections besides the main one, for tests and the format bubble. */
 export function extraSelections(state: EditorState): readonly Range[] {
@@ -98,7 +98,7 @@ function nextOccurrence(
 }
 
 /** ⌘D: select the caret's word, or add the next occurrence of the selection. */
-export const selectNextOccurrence: Command = (state, dispatch) => {
+const selectNextOccurrence: Command = (state, dispatch) => {
   const { selection } = state
   if (!(selection instanceof TextSelection)) return false
   const current = multiCursorKey.getState(state) ?? EMPTY

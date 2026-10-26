@@ -25,12 +25,10 @@ import { activeRemoteAtom, vaultsAtom } from "@/state/vaults"
 import { BOARD_TAB } from "../sidebar/documents-nav"
 
 /** A tab opened with +: it shows this view until something is picked in it,
- *  and then becomes that thing. Nothing is written to the vault until then. */
+ *  and then becomes that thing. Nothing is written to the vault until then.
+ * @public exported for its test
+ */
 export const NEW_TAB_PREFIX = "holi:new:"
-
-export function isNewTab(id: string | null): boolean {
-  return id !== null && id.startsWith(NEW_TAB_PREFIX)
-}
 
 /** A shortcut's first key as it reads on this platform: `⇧⌘D`, or
  *  `Ctrl Shift D`. */

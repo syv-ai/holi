@@ -33,7 +33,9 @@ interface PreviewMeta {
 }
 
 /** The file stem for one app's preview: neither the remote nor the path
- *  reaches the filesystem as a name. */
+ *  reaches the filesystem as a name.
+ * @public exported for its test
+ */
 export function previewKey(remote: string, bundle: string): string {
   return createHash('sha256').update(`${remote}\0${bundle}`).digest('hex').slice(0, 32)
 }
@@ -42,6 +44,7 @@ export function previewKey(remote: string, bundle: string): string {
  * The newest mtime (ms) among the bundle's files, its records, its log and
  * its manifest aside: what changes when the app's look does. Links are not followed, as
  * nothing the protocol serves goes through one. 0 for a bundle with no files.
+ * @public exported for its test
  */
 export async function bundleStamp(root: string, bundle: string): Promise<number> {
   const base = join(root, vaultRelPath(bundle))

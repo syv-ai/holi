@@ -91,7 +91,10 @@ export interface HistoryEpochs {
 
 export const historyEpochsAtom = atom<HistoryEpochs>({ all: 0, byPath: {} })
 
-/** Bumps the epochs for one `onCommitted` push. */
+/**
+ * Bumps the epochs for one `onCommitted` push.
+ * @public exported for its test
+ */
 export function bumpHistoryEpochs(epochs: HistoryEpochs, paths: string[] | null): HistoryEpochs {
   if (paths === null) return { ...epochs, all: epochs.all + 1 }
   const byPath = { ...epochs.byPath }
@@ -258,17 +261,6 @@ export const createFolderAtom = atom(null, async (get, set, path: string) => {
   await set(loadSnapshotAtom)
 })
 
-/** What links to `path`: the delete-preview fetch. Empty, and no call, when
- * nothing is open. */
-export const backrefsFor = atom(
-  null,
-  async (get, _set, path: string): Promise<{ path: string; count: number }[]> => {
-    const remote = get(activeRemoteAtom)
-    if (!remote) return []
-    return trpc.notes.backrefs.query({ remote, path })
-  },
-)
-
 /**
  * "Try again" on a sticky conflict: main clears it, commits and pulls. A
  * conflict that is still real latches again, so the banner comes back.
@@ -367,24 +359,6 @@ export const moveNotesAtom = atom(
     const moved = active ? moves.find((m) => m.from === active.path) : undefined
     await set(loadSnapshotAtom)
     if (moved) set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === moved.to) ?? null)
-    await trpc.sync.commitNow.mutate()
-  },
-)
-
-/**
- * Batch copy (Duplicate, Copy+Paste). No link rewrite and no tab retarget, but
- * the same commit-pair ordering, and the flush ensures a copy of a note being
- * edited includes the latest keystrokes.
- */
-export const copyNotesAtom = atom(
-  null,
-  async (get, set, { copies }: { copies: { from: string; to: string }[] }) => {
-    const remote = get(activeRemoteAtom)
-    if (!remote || copies.length === 0) return
-    await flushAllBuffers()
-    await trpc.sync.commitNow.mutate()
-    await trpc.notes.copy.mutate({ remote, copies })
-    await set(loadSnapshotAtom)
     await trpc.sync.commitNow.mutate()
   },
 )

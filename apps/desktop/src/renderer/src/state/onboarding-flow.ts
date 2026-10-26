@@ -83,7 +83,10 @@ export const canAdvance = (s: OnboardingState): boolean => {
   return s.act !== 'threshold'
 }
 
-/** True on the form at the starting act: the point where `back` dismisses. */
+/**
+ * True on the form at the starting act: the point where `back` dismisses.
+ * @public exported for its test
+ */
 export const atFloor = (s: OnboardingState, mode: Mode): boolean =>
   s.view === 'form' && s.act === startingAct(mode)
 

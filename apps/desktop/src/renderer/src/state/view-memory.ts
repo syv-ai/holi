@@ -1,7 +1,7 @@
 /**
  * Where each open file was left: its caret and how far it was scrolled, so a
  * tab switched away from and back to opens where it was rather than at the
- * top. Only the active entry's views are mounted (`panes-view.tsx`), so a
+ * top. Only the active entry's views are mounted (`split-view.tsx`), so a
  * view writes here as the caret and scroll move and reads it back when it
  * mounts again.
  *

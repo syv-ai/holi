@@ -13,6 +13,7 @@
 import { vaultRelPath, type LineRange } from '@holi/shared'
 import { writeAtomic } from '../../../../main/plugin-api'
 
+/** @public exported for its test */
 export const CONTEXT_FILE = '.holi/state/context.local.json'
 
 export interface FocusInput {

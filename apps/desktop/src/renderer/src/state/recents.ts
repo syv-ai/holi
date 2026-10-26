@@ -11,11 +11,11 @@
  */
 import { atom, type Getter } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import { entryOfTab, prune, touch, type RecentEntry } from '../lib/recents'
-import type { Tab } from './panes'
+import { prune, touch, type RecentEntry } from '../lib/recents'
 import { surfacesAtom } from './plugins'
 import { activeRemoteAtom, snapshotAtom } from './vaults'
 
+/** @public exported for its test */
 export const recentsByVaultAtom = atomWithStorage<Record<string, RecentEntry[]>>('holi:recents', {})
 
 const NONE: RecentEntry[] = []
@@ -76,11 +76,6 @@ export const touchRecentAtom = atom(null, (get, set, entry: RecentEntry): void =
     [remote]: touch(prune(all[remote] ?? NONE, live), entry),
   }))
 })
-
-/** Kept for its callers; the rule is `entryOfTab` in `lib/recents.ts`. */
-export function recentOfTab(tab: Tab): RecentEntry {
-  return entryOfTab(tab)
-}
 
 /**
  * A surface's ids most recently opened first, then the rest in the order

@@ -25,7 +25,9 @@ export const OPTION_CLASS = 'cm-holi-option'
 const HOLI_TYPE_PREFIX = 'holi-'
 
 /** A `Completion` with the two extra fields our renderers read. CodeMirror
- *  ignores both and carries them through untouched. */
+ *  ignores both and carries them through untouched.
+ * @public exported for its test
+ */
 export interface HoliCompletion extends Completion {
   /** Trailing text: a task's due date. */
   meta?: string
@@ -38,6 +40,7 @@ export const BLOCK_OPTION_CLASS = 'cm-holi-block'
 /** The slash menu's "No matching blocks" row. */
 export const EMPTY_OPTION_CLASS = 'cm-holi-empty'
 
+/** @public exported for its test */
 export function holiOptionClass(completion: Completion): string {
   const type = completion.type ?? ''
   if (!type.startsWith(HOLI_TYPE_PREFIX)) return ''
@@ -50,6 +53,7 @@ export function holiOptionClass(completion: Completion): string {
  * The row's left glyph: the note's emoji, else the glyph its `type` names.
  * `null` for rows we do not author, leaving CodeMirror's icon (the table menu
  * needs it).
+ * @public exported for its test
  */
 export function holiIcon(completion: Completion): Node | null {
   const { emoji } = completion as HoliCompletion
@@ -68,7 +72,10 @@ export function holiIcon(completion: Completion): Node | null {
   })
 }
 
-/** The trailing meta text, when there is one. */
+/**
+ * The trailing meta text, when there is one.
+ * @public exported for its test
+ */
 export function holiMeta(completion: Completion): Node | null {
   const { meta } = completion as HoliCompletion
   if (meta === undefined || meta === '') return null
@@ -82,6 +89,7 @@ export function holiMeta(completion: Completion): Node | null {
  * The `↵` on the selected row. Rendered on every row and revealed by CSS:
  * CodeMirror moves the selection by toggling `aria-selected` without
  * re-rendering rows.
+ * @public exported for its test
  */
 export function holiEnterHint(completion: Completion): Node | null {
   if (holiOptionClass(completion) === '') return null

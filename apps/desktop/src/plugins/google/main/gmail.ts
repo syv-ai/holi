@@ -178,6 +178,7 @@ interface RawThread {
  * RFC-822 message id resolves against whichever account actually holds the
  * message, which is what makes the link survive in a file that outlives the
  * session that wrote it.
+ * @public exported for its test
  */
 export function messageUrl(rfc822MessageId: string | null, threadId: string): string {
   if (rfc822MessageId === null || rfc822MessageId === '') {
@@ -245,6 +246,7 @@ function decodeBody(data: string | undefined): string {
  *
  * Prefers `text/plain`; falls back to converting `text/html`. Attachments are
  * skipped: a part with a filename is a file, not the message.
+ * @public exported for its test
  */
 export function bodyTextOf(payload: RawPart | undefined, { trim = true } = {}): string {
   const plain = findPart(payload, 'text/plain')
@@ -267,6 +269,7 @@ export function bodyTextOf(payload: RawPart | undefined, { trim = true } = {}): 
  * Verbatim on purpose. Trimming or pre-stripping here would give the renderer's
  * sanitizer a subtly different input from the one it is tested against, and
  * would invite the belief that main already made this safe. It did not.
+ * @public exported for its test
  */
 export function bodyHtmlOf(payload: RawPart | undefined): string | null {
   // `findPart` matches the payload itself, so a single-part HTML message needs
@@ -318,6 +321,7 @@ function findPart(part: RawPart | undefined, mimeType: string): RawPart | null {
  * **This is a formatter, not a sanitizer**, and the distinction matters: safety
  * comes from the result being rendered into a text node, never as markup. If
  * this function let something through, nothing would execute it.
+ * @public exported for its test
  */
 export function htmlToText(html: string): string {
   return (
@@ -464,7 +468,7 @@ export async function fetchMailCounts(api: GoogleApi): Promise<MailCounts | null
  * Past the page, the answer becomes "500+" rather than a number that quietly
  * means "at least".
  */
-export interface CategoryCount {
+interface CategoryCount {
   count: number
   /** There is at least one more page — render `500+`, not `500`. */
   more: boolean
@@ -473,6 +477,7 @@ export interface CategoryCount {
 /** Gmail's maximum for `threads.list`. */
 const COUNT_PAGE_SIZE = '500'
 
+/** @public exported for its test */
 export async function fetchCategoryUnread(
   api: GoogleApi,
   category: MailCategory,
@@ -1257,6 +1262,7 @@ export async function listSendAs(api: GoogleApi): Promise<string[]> {
  * MIME needs standard base64. The mistake produces a file that opens as
  * garbage, visible only to the recipient. The filename and type come from the
  * caller because the wire answer carries neither.
+ * @public exported for its test
  */
 export async function fetchAttachment(
   api: GoogleApi,

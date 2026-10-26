@@ -16,7 +16,10 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { notePathOfComments } from '@holi/shared'
 
-/** A git command that ran and failed. */
+/**
+ * A git command that ran and failed.
+ * @public exported for its test
+ */
 export class GitError extends Error {
   constructor(
     message: string,
@@ -29,7 +32,9 @@ export class GitError extends Error {
 }
 
 /** There is no `git` on this machine. Its own type because the response is
- * advice (install git), not a stack trace. */
+ * advice (install git), not a stack trace.
+ * @public exported for its test
+ */
 export class GitMissingError extends Error {
   constructor(readonly gitPath: string) {
     super(`\`${gitPath}\` was not found. Holi needs the git command-line tool installed.`)
@@ -81,6 +86,7 @@ const WINDOWS = process.platform === 'win32'
  */
 let askpassPromise: Promise<string> | null = null
 
+/** @public exported for its test */
 export function ensureAskpass(): Promise<string> {
   askpassPromise ??= (async () => {
     const dir = await mkdtemp(join(tmpdir(), 'holi-git-'))
@@ -254,6 +260,7 @@ export interface GitRepo {
  * The permission case is matched on stderr because a transport-level auth
  * failure kills the push before any ref is negotiated, so there is no porcelain
  * line to read: the one exception to the "plumbing and porcelain only" rule.
+ * @public exported for its test
  */
 export function classifyPushFailure(
   stdout: string,

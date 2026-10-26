@@ -4,7 +4,7 @@
 import { atom, createStore } from 'jotai'
 import { describe, expect, it } from 'vitest'
 import { prune, touch, type RecentEntry } from '@/lib/recents'
-import { recentOfTab, recentsAtom, recentsByVaultAtom, touchRecentAtom } from '@/state/recents'
+import { recentsAtom, recentsByVaultAtom, touchRecentAtom } from '@/state/recents'
 import { coreContributionAtom } from '@/state/plugins'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { emptyVaultSnapshot } from '@holi/shared'
@@ -113,20 +113,5 @@ describe('pruning on write', () => {
     store.set(touchRecentAtom, path('b.md'))
 
     expect(store.get(recentsAtom)).toEqual([path('b.md'), path('a.md')])
-  })
-})
-
-describe('recentOfTab', () => {
-  it('maps every tab kind', () => {
-    expect(recentOfTab({ kind: 'note', path: 'a.md' })).toEqual(path('a.md'))
-    expect(recentOfTab({ kind: 'surface', surface: 'app', id: 'plan.app' })).toEqual({
-      kind: 'surface',
-      key: 'app',
-      id: 'plan.app',
-    })
-    expect(recentOfTab({ kind: 'surface', surface: 'board' })).toEqual({
-      kind: 'surface',
-      key: 'board',
-    })
   })
 })

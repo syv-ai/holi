@@ -57,7 +57,10 @@ export interface Command {
   run: (get: Getter, set: Setter) => void | Promise<void>
 }
 
-/** `Untitled.md`, then `Untitled 2.md` and so on, at the vault root. */
+/**
+ * `Untitled.md`, then `Untitled 2.md` and so on, at the vault root.
+ * @public exported for its test
+ */
 export function untitledPath(taken: ReadonlySet<string>): string {
   if (!taken.has('Untitled.md')) return 'Untitled.md'
   for (let n = 2; ; n++) {
@@ -176,7 +179,10 @@ export const STATIC_COMMANDS: readonly Command[] = [
   },
 ]
 
-/** The table: the static rows, then one "switch to" per other vault. */
+/**
+ * The table: the static rows, then one "switch to" per other vault.
+ * @public exported for its test
+ */
 export const commandsAtom = atom<Command[]>((get) => {
   const opens = [...get(surfacesAtom).values()]
     .filter((s) => s.kind !== 'home' && s.unlisted !== true)
@@ -200,6 +206,7 @@ export const commandsAtom = atom<Command[]>((get) => {
  * The only way a command runs, from the key dispatcher, the palette and the
  * menu alike. Unknown ids and rows whose `when` is false are refused quietly:
  * a menu built for a vault that has since closed may still send one.
+ * @public exported for its test
  */
 export const runCommandAtom = atom(null, async (get, set, id: string): Promise<void> => {
   const command = get(commandsAtom).find((c) => c.id === id)

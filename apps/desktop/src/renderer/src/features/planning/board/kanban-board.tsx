@@ -28,7 +28,6 @@ import {
   type CardContext,
 } from "./task-card"
 
-export type { CardContext }
 
 interface StatusColumnProps extends Omit<
   ComponentProps<typeof KanbanColumn>,

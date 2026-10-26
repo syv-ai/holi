@@ -34,7 +34,9 @@ import { prefersReducedMotion } from '@/lib/motion'
 import { PanelHeader, type HeaderAction } from './panel-header'
 
 /** Each drawer's dragged width, by id. Account-wide rather than per vault: a
- *  sidebar's width is about the screen, not the notes. */
+ *  sidebar's width is about the screen, not the notes.
+ * @public exported for its test
+ */
 export const drawerWidthsAtom = atomWithStorage<Record<string, number>>('holi:drawerWidths', {})
 
 const KEY_STEP = 16
