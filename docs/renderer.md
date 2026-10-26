@@ -135,7 +135,7 @@ the summary:
 - **Data regions** have an empty state with an action, a `Skeleton` loading state and an inline
   error with Retry.
 - **Toasts**: `toast()` from `sonner`; `<Toaster />` from `@/components/ui/sonner`, mounted once.
-- A ReUI Pro block's markup and classes are kept as published; the contracts deny only what the
+- A ReUI block's markup and classes are kept as published; the contracts deny only what the
   ReUI rule forbids on installed components. `components/ui` and `components/reui` are exempt from
   the class-shape rules (`no-restyle`, `no-arbitrary-values`, `no-inline-styles`,
   `require-static-classes`); everything else is not.
@@ -203,9 +203,9 @@ Each pair below was checked against its uses; neither half can go without a beha
 ### Add a ReUI block
 
 1. From `apps/desktop` (where `components.json` is): `pnpm exec shadcn add @reui/<name>`. The CLI is
-   pinned in `package.json`; `npx shadcn@latest add @reui/<name>` is the same command. Pro blocks
-   need `REUI_LICENSE_KEY` in `apps/desktop/.env.local` (gitignored, so a fresh worktree lacks it
-   and gets a 401).
+   pinned in `package.json`; `npx shadcn@latest add @reui/<name>` is the same command. The `@reui`
+   registry reads `REUI_LICENSE_KEY` from `apps/desktop/.env.local` (gitignored, so a fresh
+   worktree lacks it and some installs get a 401).
 2. Answer no to every overwrite prompt. The CLI may install `cn` from npm; remove it and use
    `@/lib/cn`. Check `git status` for a rewritten `index.css`.
 3. ReUI files land in `apps/desktop/src/components/reui`. Move them to

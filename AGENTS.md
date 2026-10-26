@@ -261,8 +261,9 @@ Gotchas of a fresh checkout or worktree that no file states.
   check fails to start it), run `node apps/desktop/node_modules/electron/install.js`.
   Every fresh install then needs `pnpm --filter @holi/desktop run rebuild:natives`
   before `pnpm dev`, because `node-pty` is built for Node's ABI, not Electron's.
-- `REUI_LICENSE_KEY` lives in `apps/desktop/.env.local` (gitignored, never copied into
-  worktrees). Without it `shadcn add @reui/<pro block>` fails with a 401.
+- `REUI_LICENSE_KEY`, the key the `@reui` registry in `components.json` reads, lives in
+  `apps/desktop/.env.local` (gitignored, never copied into worktrees). Without it some
+  `shadcn add @reui/<name>` installs fail with a 401.
 - The shadcn CLI: run it from `apps/desktop` (where `components.json` is) with
   `pnpm exec shadcn` (4.21.3 is pinned). It installs `cn` from npm; remove that and use
   `@/lib/cn`. ReUI files land in `apps/desktop/src/components/reui`; move them to

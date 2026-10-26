@@ -12,8 +12,8 @@ design system on top of the stock one.
 ## The design system is the stock one
 
 - **`components/ui`** is stock shadcn (style `radix-nova`, base colour `neutral`), installed with
-  the CLI and edited in place. **`components/reui`** is stock ReUI (`@reui` in `components.json`;
-  Pro blocks need `REUI_LICENSE_KEY` in `apps/desktop/.env.local`). Neither is ever re-added over
+  the CLI and edited in place. **`components/reui`** is stock ReUI (`@reui` in `components.json`,
+  which reads `REUI_LICENSE_KEY` from `apps/desktop/.env.local`). Neither is ever re-added over
   the edits, and neither is wrapped to give it a second look.
 - **A caller places a component and picks its `variant` and `size`.** It never sets height,
   radius, padding, shadow or motion on one. A look the component lacks is a variant or size added
