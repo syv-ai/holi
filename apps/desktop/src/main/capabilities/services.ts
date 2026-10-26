@@ -46,7 +46,7 @@ export interface CoreServicesDeps {
     root: string
     syncState(): SyncState
     /** Settle current changes, calling verify after commits and before any push. */
-    deliverNow(verify: () => Promise<boolean>): Promise<boolean>
+    deliverNow(path: string, verify: () => Promise<boolean>): Promise<boolean>
     heldBack(): { path: string }[]
   } | null
   members: MembersCache
@@ -116,7 +116,7 @@ export function createCoreServices(
       let postHookMismatch = false
       let waitFailure: 'vault-not-open' | 'sync-blocked' | 'oversized' | null = null
       try {
-        const delivered = await active.deliverNow(async () => {
+        const delivered = await active.deliverNow(path, async () => {
           const stillActive = deps.active()
           if (stillActive?.remote !== remote || stillActive.root !== root) {
             waitFailure = 'vault-not-open'

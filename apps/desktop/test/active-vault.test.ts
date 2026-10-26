@@ -459,7 +459,7 @@ describe('ActiveVault — commit', () => {
     const committing = active.commitNow()
     await entered
     let verified = false
-    const delivery = active.deliverNow(async () => {
+    const delivery = active.deliverNow('settled.md', async () => {
       verified = true
       return (await plainGit(dir, ['show', 'HEAD:settled.md'])) === 'current'
     })
@@ -484,6 +484,7 @@ describe('ActiveVault — commit', () => {
     const rejected = 'wanted\nREJECTED\n'
     await writeFile(join(dir, 'note.md'), rejected)
     const rejectedDelivery = await active.deliverNow(
+      'note.md',
       async () => (await plainGit(dir, ['show', 'HEAD:note.md'])) === rejected.trimEnd(),
     )
     expect(rejectedDelivery).toBe(false)
@@ -493,10 +494,23 @@ describe('ActiveVault — commit', () => {
     )
     expect(await plainGit(origin, ['cat-file', '-e', 'main:note.md']).catch(() => '')).toBe('')
 
+    // Verifying another note must not release note.md's quarantine. Both
+    // commits remain local until the rejected path itself is corrected.
+    await writeFile(join(dir, 'other.md'), 'unrelated\n')
+    expect(
+      await active.deliverNow('other.md', async () =>
+        (await plainGit(dir, ['show', 'HEAD:other.md'])) === 'unrelated',
+      ),
+    ).toBe(true)
+    await sleep(250)
+    expect(await plainGit(origin, ['cat-file', '-e', 'main:other.md']).catch(() => '')).toBe('')
+    expect(await plainGit(origin, ['cat-file', '-e', 'main:note.md']).catch(() => '')).toBe('')
+
     const corrected = 'wanted\ncorrected\n'
     await writeFile(join(dir, 'note.md'), corrected)
     expect(
       await active.deliverNow(
+        'note.md',
         async () => (await plainGit(dir, ['show', 'HEAD:note.md'])) === corrected.trimEnd(),
       ),
     ).toBe(true)
@@ -530,7 +544,7 @@ describe('ActiveVault — commit', () => {
     const pushing = active.pushNow()
     await entered
     let verified = false
-    const delivery = active.deliverNow(async () => {
+    const delivery = active.deliverNow('pushed.md', async () => {
       verified = true
       return true
     })
