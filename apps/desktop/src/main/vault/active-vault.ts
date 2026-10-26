@@ -16,8 +16,8 @@
  *   - The snapshot push carries **no path**. Everything downstream re-derives
  *     from it, so an over-eager push is free and a missed one self-heals.
  */
-import { emptyVaultSnapshot } from '@holi/shared'
-import { stat } from 'node:fs/promises'
+import { emptyVaultSnapshot, vaultRelPath } from '@holi/shared'
+import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { SyncState, VaultSnapshot } from '@holi/shared'
 import type { GitDeps, GitRepo, PullResult, RepoStatus } from '../git'
@@ -28,6 +28,30 @@ import { readMaxCommittedFileBytes } from './vault-settings'
 import type { VaultRegistry } from './registry'
 import { scanVault, type ScanClaim } from './vault-store'
 import { watchVault, type VaultWatcher } from './watcher'
+import { writeAtomic } from './vault-files'
+
+const DELIVERY_RESERVATIONS_FILE = '.holi/state/delivery-reservations.local.json'
+
+async function readDeliveryReservations(root: string): Promise<Set<string>> {
+  let text: string
+  try {
+    text = await readFile(join(root, DELIVERY_RESERVATIONS_FILE), 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Set()
+    throw error
+  }
+  const parsed: unknown = JSON.parse(text)
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    !('paths' in parsed) ||
+    !Array.isArray(parsed.paths) ||
+    !parsed.paths.every((path) => typeof path === 'string' && path.length > 0)
+  ) {
+    throw new Error('Malformed CLI delivery reservations')
+  }
+  return new Set(parsed.paths)
+}
 
 // The sync indicator's vocabulary lives in shared, beside the words for it
 // (`sync-state.ts`), so the nav and the agent's `holi sync status` agree.
@@ -178,6 +202,17 @@ export async function openActiveVault(args: {
 }): Promise<ActiveVault> {
   const timings: SyncTimings = { ...DEFAULT_TIMINGS, ...args.timings }
   const root = args.repo.root
+  // Read quarantine before any open-time push can be armed. Invalid state is a
+  // hard open failure: treating it as empty could publish an unverified note.
+  const rejectedDeliveries = await readDeliveryReservations(root)
+  let reservationWriteFailed = false
+  async function persistReservations(): Promise<void> {
+    await writeAtomic(
+      root,
+      vaultRelPath(DELIVERY_RESERVATIONS_FILE),
+      JSON.stringify({ paths: [...rejectedDeliveries].sort() }),
+    )
+  }
   // The size cap is a synced setting the settings pane edits while the vault is
   // open, so every commit re-reads it (`currentCap`).
   let maxCommittedFileBytes = await readMaxCommittedFileBytes(root)
@@ -239,7 +274,6 @@ export async function openActiveVault(args: {
   // that commit is eligible to leave. A failed check quarantines pushes until
   // that path passes a later verification.
   let deliveryVerifying = false
-  const rejectedDeliveries = new Set<string>()
   let lastFocusPull = 0
   /** The last network attempt failed. A flag rather than a state, so the
    *  `finally` that clears `syncing` cannot overwrite it. */
@@ -568,7 +602,7 @@ export async function openActiveVault(args: {
    *  landed commit, so continuous typing pushes a handful of times rather than
    *  once per idle debounce. */
   function schedulePush(): void {
-    if (closed || deliveryVerifying || rejectedDeliveries.size > 0) return
+    if (closed || deliveryVerifying || reservationWriteFailed || rejectedDeliveries.size > 0) return
     if (pushTimer !== null) clearTimeout(pushTimer)
     pushTimer = setTimeout(() => {
       pushTimer = null
@@ -597,6 +631,7 @@ export async function openActiveVault(args: {
       manualPause !== null ||
       conflictPaths !== null ||
       (deliveryVerifying && !duringDelivery) ||
+      reservationWriteFailed ||
       rejectedDeliveries.size > 0
     )
       return false
@@ -727,6 +762,16 @@ export async function openActiveVault(args: {
       }
       if (closed) return false
       deliveryVerifying = true
+      // Reserve before committing or verifying. If the process dies at any
+      // point in delivery, openActiveVault restores this path's push block.
+      rejectedDeliveries.add(path)
+      try {
+        await persistReservations()
+      } catch (error) {
+        reservationWriteFailed = true
+        console.error('[vault] delivery reservation write failed:', error)
+        return false
+      }
       if (pushTimer !== null) clearTimeout(pushTimer)
       pushTimer = null
       try {
@@ -741,11 +786,18 @@ export async function openActiveVault(args: {
         if (afterCommit === null || blockedReason(afterCommit) !== null || manualPause !== null)
           return false
         if (!(await verify())) {
-          rejectedDeliveries.add(path)
           scheduleCommit()
           return false
         }
         rejectedDeliveries.delete(path)
+        try {
+          await persistReservations()
+        } catch (error) {
+          rejectedDeliveries.add(path)
+          reservationWriteFailed = true
+          console.error('[vault] delivery reservation clear failed:', error)
+          return false
+        }
         // A watcher tick that fired during verification may have declined to
         // commit. Resume unrelated edits; no automatic push may run while any
         // previously rejected path remains quarantined.
@@ -760,11 +812,16 @@ export async function openActiveVault(args: {
         if (latest.dirty) {
           if ((await maybeCommit(false, true)) !== null) {
             await waitForSync()
-            if (closed || !(await verify())) {
+            if (closed || !(await verify())) return false
+            rejectedDeliveries.delete(path)
+            try {
+              await persistReservations()
+            } catch (error) {
               rejectedDeliveries.add(path)
+              reservationWriteFailed = true
+              console.error('[vault] delivery reservation clear failed:', error)
               return false
             }
-            rejectedDeliveries.delete(path)
             schedulePush()
           }
         }
