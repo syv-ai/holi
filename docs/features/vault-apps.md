@@ -434,7 +434,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - `apps/desktop/test/app-methods.test.ts`: every bridge method is answered by an app-door
   capability in this build.
 - `apps/desktop/src/renderer/src/state/ui-report.ts`: the one report of focus and recents to main.
-- `apps/desktop/src/renderer/src/features/sidebar/documents-section.tsx`: the folder
+- `apps/desktop/src/renderer/src/features/sidebar/files-section.tsx`: the folder
   document row an app is.
 - `packages/shared/src/app-bundle.ts` (`isAppBundlePath`, `appBundleOf`, `appSuffix`) and
   `packages/shared/src/app-store.ts` (where records and the log live, the record format and the

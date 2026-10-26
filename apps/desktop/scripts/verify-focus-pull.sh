@@ -13,7 +13,7 @@
 # teammate, and `vaults.add` on a pre-cloned path adopts it with its file:///
 # origin intact. No OAuth app, no token, no network.
 #
-#   cd apps/desktop && ./verify-focus-pull.sh
+#   cd apps/desktop && ./scripts/verify-focus-pull.sh
 #
 set -euo pipefail
 
@@ -24,7 +24,7 @@ run_node() { pnpm exec node "$@"; }
 ROOT=/tmp/holi-focus-check
 PORT=9333
 here=$(cd "$(dirname "$0")" && pwd)
-cd "$here"
+cd "$here/.."
 
 cleanup() {
   if [[ -n "${APP_PID:-}" ]]; then kill "$APP_PID" 2>/dev/null || true; fi

@@ -99,6 +99,6 @@ over the content panel. The sidebar's edge still resizes it by dragging, and the
 
 ## Code
 
-- `apps/desktop/src/renderer/src/features/sidebar/`: `app-sidebar.tsx` (the sidebar and its modes), `vault-switcher.tsx`, `documents-section.tsx` (Files, the tree), `sidebar-apps.tsx` (a plugin's sidebar apps), `account-menu.tsx` (the profile).
+- `apps/desktop/src/renderer/src/features/sidebar/`: `app-sidebar.tsx` (the sidebar and its modes), `vault-switcher.tsx`, `files-section.tsx` (Files, the tree) and `documents-nav.tsx`, `sidebar-apps.tsx` (a plugin's sidebar apps), `account-menu.tsx` (the profile).
 - `apps/desktop/src/renderer/src/features/shell/title-bar.tsx`, `app-shell.tsx`: the window's band, the toggle and the content panel.
 - `apps/desktop/src/renderer/src/composites/sidebar-nav-item.tsx`, `section-label.tsx`: the shared row and label.

@@ -70,7 +70,7 @@ goes to the views, and runs the shell's actions with the same handlers their key
 - `apps/desktop/src/renderer/src/features/command-menu/command-menu.tsx`: the
   menu; `shortcuts-dialog.tsx`: the shortcuts dialog.
 - `apps/desktop/src/renderer/src/lib/command-menu-rows.ts`: rows and ranking
-  (`apps/desktop/test/command-menu-rows.test.ts`).
+  (`apps/desktop/src/renderer/src/lib/__tests__/command-menu-rows.test.ts`).
 - `apps/desktop/src/renderer/src/state/shortcuts.ts`: `runShortcutAtom`.
 - `apps/desktop/src/renderer/src/state/agents-slots.ts`: `startConversationAtom`.
 - `apps/desktop/src/renderer/src/state/plugins.ts`: `commandMenuEntriesAtom`; each plugin's

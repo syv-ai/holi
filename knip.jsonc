@@ -25,7 +25,7 @@
         "src/plugins/renderer.ts!",
         // Loaded with `new Worker(new URL(...))`, which the import graph cannot see.
         "src/**/*.worker.ts!",
-        "scripts/*.{mjs,cjs}",
+        "scripts/*.{mjs,cjs,mts}",
       ],
       "project": [
         "src/**/*.{ts,tsx,css}!",

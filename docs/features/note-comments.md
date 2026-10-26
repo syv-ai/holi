@@ -44,7 +44,7 @@ A comment the agent wrote is shown as "_login_ via agent" in the inbox and `holi
 ## Code
 
 - `packages/shared/src/note-comments.ts`: sidecar paths, the file format, `locateAnchor`, `mergeCommentsText`, `newMentions`, the CLI's text.
-- `apps/desktop/src/main/vault/note-comments.ts`: reading and changing a sidecar, `moveNoteComments` (run by `rename.ts` and `move.ts`), `followNoteComments` (run by `hooks/relink.ts`), `pulledMentions`.
+- `apps/desktop/src/main/vault/note-comments.ts`: reading and changing a sidecar, `moveNoteComments` (run by `rename.ts` and `move.ts`), `followNoteComments` (run by `main/vault/hooks/relink.ts`), `pulledMentions`.
 - `apps/desktop/src/main/vault/comment-capabilities.ts`: `holi comments`; `main/router.ts` `comments.*` for the window.
 - `apps/desktop/src/renderer/src/features/documents/`: `document-comments.ts` (quote to rich text, the tints), `comments-panel.tsx`, `comment-field.tsx` (`@login` completion); `state/comments.ts`.
 - `apps/desktop/src/main/vault/merge-drivers.ts`, `git-routes.ts` (`/merge/comments`): the merge driver.

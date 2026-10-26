@@ -2,6 +2,8 @@ import { resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
 
+// `@` is declared in tsconfig.json (`paths`, the source of truth) and repeated in
+// electron.vite.config.ts; the three have to agree.
 const alias = { '@': resolve(__dirname, 'src/renderer/src') }
 
 export default defineConfig({

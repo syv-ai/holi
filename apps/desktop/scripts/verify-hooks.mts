@@ -6,7 +6,7 @@
  * happens to the files. A scratch vault, never a real one: these transforms
  * rewrite files, and the point of the exercise is to see them do it.
  *
- *   pnpm exec vite-node verify-hooks.mts /tmp/hookvault
+ *   pnpm exec vite-node scripts/verify-hooks.mts /tmp/hookvault
  *
  * The e2e test covers the same chain; this exists so a person can look at the
  * log and the diff and judge whether they read sensibly, which no assertion
@@ -16,10 +16,10 @@ import { execFile } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { createBridgeServer } from './src/main/bridge/server'
-import { registerGitRoutes } from './src/main/vault/git-routes'
-import { createBridgeEnv } from './src/main/bridge/env-file'
-import { installGitHook } from './src/main/vault/large-files'
+import { createBridgeServer } from '../src/main/bridge/server'
+import { registerGitRoutes } from '../src/main/vault/git-routes'
+import { createBridgeEnv } from '../src/main/bridge/env-file'
+import { installGitHook } from '../src/main/vault/large-files'
 
 const exec = promisify(execFile)
 const dir = process.argv[2]

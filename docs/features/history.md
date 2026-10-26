@@ -2,7 +2,7 @@
 
 A vault's history is its git history, and the autosave commits give it fine resolution. Holi shows it in two places: a drawer for the open file and a tab for the whole vault. Both present commits as commits, because the users are developers. Restore brings an old version back as a new commit.
 
-**What the fresh renderer has.** The file's history is a dialog (`features/history/history-dialog.tsx`), opened from the history button in a document's or code file's header (`file-history-button.tsx`), with commits grouped by day and each commit's changes (`commit-view.tsx`). **Not built:** the right-hand file drawer and the vault history tab described below, and Restore from either ([not-built](../not-built.md)). `state/history.ts` and `state/file-history.ts` still hold the loading, selection and restore actions they would use.
+**What the fresh renderer has.** The file's history is a dialog (`features/history/history-dialog.tsx`), opened from the history button in a document's or code file's header (`file-history-button.tsx`), with commits grouped by day and each commit's changes (`commit-view.tsx`). **Not built:** the right-hand file drawer and the vault history tab described below, and Restore from either ([not-built](../not-built.md)). `state/history.ts` still holds the loading, selection and restore actions they would use.
 
 ## How it works
 
@@ -30,7 +30,7 @@ A vault's history is its git history, and the autosave commits give it fine reso
 
 - `apps/desktop/src/renderer/src/features/history/`: `history-dialog.tsx`, `commit-view.tsx`, `commit-groups.ts`, `line-diff.ts`, `code-language.ts`, `file-history-button.tsx`, `use-file-history.ts`
 - `apps/desktop/src/renderer/src/state/history.ts`: loading, selection, restore
-- `apps/desktop/src/renderer/src/state/file-history.ts`: `fileHistoryAtom(path)`, the one per-file lookup the document header and the history button share
+- `apps/desktop/src/renderer/src/features/history/use-file-history.ts`: `useFileHistory(path)`, the per-file lookup the history button and dialog share
 - `apps/desktop/src/main/router.ts` (`history.*`, `notes.fileHistory`): log, changed files, per-file diff, restore
 - `apps/desktop/src/main/vault/file-facts.ts`: revision count, first and last commit
 - `apps/desktop/src/main/git.ts` (`log`, `show`, `changedFiles`): the git side

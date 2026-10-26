@@ -161,6 +161,23 @@ look it up in the [rules registry](../.agents/skills/holi-rules/SKILL.md): it sa
 forbids, the fix, and where its exemptions live. Do not add a suppression; if the finding is wrong,
 change the rule as that page describes (fixture first, then config, then registry row).
 
+### Dependencies that look doubled
+
+Each pair below was checked against its uses; neither half can go without a behaviour change.
+
+- `cmdk` drives the command dialog (`components/ui/command.tsx`). `command-score` is the scorer
+  `cmdk` bundles, imported directly by `lib/command-menu-rows.ts` to rank rows outside a `cmdk`
+  list, because `cmdk` does not export it.
+- `motion` animates (`AnimatePresence`, `MotionConfig`, springs). `motion-panels` is the resizable
+  split-pane layout behind `components/ui/motion-panels.tsx`; it does something `motion` does not.
+- `typescript` is 5.9 in `apps/desktop` and `packages/shared`, which is what `pnpm typecheck`
+  runs and what `typescript-eslint`, `@trpc/server` and `vue` resolve in the lockfile. The
+  repository root pins 7, which tools run from the root resolve. Both stay until every tool
+  accepts one; `pnpm typecheck` is the authority, an editor may pick either.
+- The lint file list lives in `LINTED` in `eslint.config.mjs`. The `lint` script and lint-staged
+  glob repeat it because `eslint .` would also parse main and test files, which have no rules
+  and intentional gate fixtures; change all three together.
+
 ## Recipes
 
 ### Add a component
@@ -171,7 +188,7 @@ change the rule as that page describes (fixture first, then config, then registr
 3. If it is new, reusable and domain-free, add `composites/<name>.tsx` built from `components/*`,
    with a test in `composites/__tests__/`. If one feature uses it, put it in that feature. A
    reusable control with its own behaviour is a composite over the existing one, named for what
-   it does: a copy button is `composites/copy-button.tsx` exporting `CopyButton`, built on
+   it does: a copy button is a file in `composites/` exporting `CopyButton`, built on
    `IconButton`; it is not a second button.
 
 ### Add a feature

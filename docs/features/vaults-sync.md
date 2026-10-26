@@ -67,4 +67,4 @@ A vault is a GitHub repository cloned into a directory Holi owns. Sync runs both
 - `apps/desktop/src/main/vault/hooks/`, `main/vault/git-routes.ts`: staged set, runner, transforms, run log, the hook's and the merge drivers' routes
 - `apps/desktop/src/main/vault/merge-drivers.ts`: the merge drivers' install
 - `apps/desktop/src/main/router.ts` (`vaults.membership`, `settle`, `leave`, `forgetDeleted`), `renderer/src/features/shell/leave-vault-dialog.tsx`: leaving and deleting
-- `apps/desktop/src/renderer/src/lib/sync-label.ts`, `lib/reconcile-lock.ts`, `features/shell/vault-host.tsx`, `features/status-bar/status-bar.tsx`: sync item, callouts, read-only lock
+- `apps/desktop/src/renderer/src/state/vaults.ts` (`syncStateAtom`), `features/shell/vault-host.tsx`, `features/status-bar/status-bar.tsx`: sync item and callouts

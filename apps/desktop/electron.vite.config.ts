@@ -8,6 +8,7 @@ export default defineConfig({
   main: { plugins: [externalizeDepsPlugin({ exclude: ['@holi/shared'] })] },
   preload: {},
   renderer: {
+    // `@` mirrors tsconfig.json `paths` (the source of truth) and vitest.config.ts.
     resolve: { alias: { '@': resolve(__dirname, 'src/renderer/src') } },
     plugins: [react(), tailwindcss()],
   },
