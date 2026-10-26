@@ -57,7 +57,7 @@ export function modelLabel(model: string | undefined): string {
 }
 
 /** The agent's own live session as a row. */
-export function liveItem(s: AgentSession): AgentsSessionItem {
+function liveItem(s: AgentSession): AgentsSessionItem {
   return {
     key: `agent:${s.id}`,
     jobId: s.id,
@@ -188,7 +188,7 @@ export interface OpenRecord {
  * Holi's run that asks for you); one the person started is from the moment
  * it starts until they close it; any other once they open it.
  */
-export function isOpenRow(row: SessionRow, rec: OpenRecord): boolean {
+function isOpenRow(row: SessionRow, rec: OpenRecord): boolean {
   const { item } = row
   if (row.state === 'needs-you') return true
   if (item.archived === true) return false
@@ -198,7 +198,7 @@ export function isOpenRow(row: SessionRow, rec: OpenRecord): boolean {
 
 /** The open rows as the list orders them: what needs you, what is pinned,
  *  then the most recent. */
-export function openOrder(rows: readonly SessionRow[]): SessionRow[] {
+function openOrder(rows: readonly SessionRow[]): SessionRow[] {
   const rank = (r: SessionRow) => (r.state === 'needs-you' ? 0 : r.item.pinned === true ? 1 : 2)
   return [...rows].sort((a, b) => rank(a) - rank(b) || b.item.updatedAt - a.item.updatedAt)
 }
@@ -237,7 +237,7 @@ export function rowMatches(row: SessionRow, query: string, filter: SessionFilter
   )
 }
 
-export type SessionGroupId = 'needs-you' | 'pinned' | 'today' | 'yesterday' | 'earlier'
+type SessionGroupId = 'needs-you' | 'pinned' | 'today' | 'yesterday' | 'earlier'
 
 export interface SessionGroup {
   id: SessionGroupId
@@ -325,7 +325,7 @@ export const sessionsOpenAtom = atomWithStorage<OpenRecord>('holi.agents.session
 })
 
 /** When each live session's last turn ended, as this window saw it. */
-export const sessionEndedAtAtom = atom<Record<string, number>>({})
+const sessionEndedAtAtom = atom<Record<string, number>>({})
 
 /** The search box's text. */
 export const sessionQueryAtom = atom('')
@@ -337,7 +337,7 @@ export const sessionFilterAtom = atomWithStorage<SessionFilter>(
 )
 
 /** Every slot's rows and the live sessions, merged. */
-export const sessionItemsAtom = atom((get): AgentsSessionItem[] => {
+const sessionItemsAtom = atom((get): AgentsSessionItem[] => {
   const slotItems = get(agentsSlotsAtom).flatMap((slot) =>
     slot.sessions === undefined ? [] : get(slot.sessions.items),
   )
@@ -364,7 +364,7 @@ export const reloadSessionsAtom = atom(null, (get, set) => {
 })
 
 /** Whether a row is what the Agents view shows. */
-export function isCurrent(
+function isCurrent(
   item: AgentsSessionItem,
   selection: { owner: string; id: string } | null,
   sessionView: string | null,
@@ -470,7 +470,7 @@ export const openSessionRowsAtom = atom((get): SessionRow[] => {
 })
 
 /** Put a row in the Sessions list: opening it from anywhere. */
-export const keepSessionOpenAtom = atom(null, (_get, set, key: string) =>
+const keepSessionOpenAtom = atom(null, (_get, set, key: string) =>
   set(sessionsOpenAtom, (r) => {
     if (r.opened[key] === true && r.closed[key] === undefined) return r
     const { [key]: _was, ...closed } = r.closed

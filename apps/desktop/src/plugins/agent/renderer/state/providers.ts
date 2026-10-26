@@ -9,7 +9,7 @@ import { activeRemoteAtom, agentProviderSettingAtom } from '@/plugin-api'
 import { agentCap } from '../agent-cap'
 
 /** Mirrors `ProviderSummary` in main/host/capabilities.ts. */
-export interface AgentProviderInfo {
+interface AgentProviderInfo {
   id: AgentProviderId
   label: string
   /** Its CLI is on this machine. */

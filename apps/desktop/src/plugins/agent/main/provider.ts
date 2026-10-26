@@ -85,7 +85,7 @@ export interface TurnRouteDeps {
 }
 
 /** Sessions the provider's own supervisor runs (Claude Code's `--bg`). */
-export interface BackgroundCapability {
+interface BackgroundCapability {
   /** The provider's CLI verbs, each run for one vault. */
   cli: ClaudeCli
   /** The vault's sessions out of the CLI's listing. */
@@ -106,7 +106,7 @@ export interface BackgroundCapability {
   message(channel: SessionChannel, text: string): Promise<void>
 }
 
-export interface ProviderCapabilities {
+interface ProviderCapabilities {
   background?: BackgroundCapability
   /** Serve the hook routes that report turns. Returns the undo. */
   turns?: { routes(server: RouteServer, deps: TurnRouteDeps): () => void }

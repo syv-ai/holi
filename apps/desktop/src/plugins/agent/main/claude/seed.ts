@@ -21,7 +21,7 @@ const folder = seedFolder(
   }),
 )
 
-export const SETTINGS = '.claude/settings.json'
+const SETTINGS = '.claude/settings.json'
 
 /**
  * The status line: one inline command, as Claude Code's own docs show, so a

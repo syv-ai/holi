@@ -30,7 +30,7 @@ function local(naive: number): Date {
  * fires, and overdue the next morning at the same hour: a day-only task is
  * not late until its day is over, and a run at midnight helps nobody.
  */
-export function taskMoments(tasks: readonly Task[]): Moment[] {
+function taskMoments(tasks: readonly Task[]): Moment[] {
   const out: Moment[] = []
   for (const t of tasks) {
     if (t.status === 'done' || t.due === undefined) continue

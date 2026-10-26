@@ -15,7 +15,7 @@ import { agentCap } from '../agent-cap'
 import { reviewTurnAtom, turnReviewOpenAtom, type Turn, type TurnFile } from './turns'
 
 /** Each run's range, by its job id. */
-export const runRangesAtom = atom<Record<string, Turn>>({})
+const runRangesAtom = atom<Record<string, Turn>>({})
 
 /** What each run's range changed, by job id. */
 export const runFilesAtom = atom<Record<string, TurnFile[]>>({})
@@ -29,7 +29,7 @@ export const runsReviewedAtom = atomWithStorage<Record<string, 'kept' | 'reverte
 
 /** Fold the turn log into one range per job id: the log is newest first, so
  *  a session's first record is its last turn, its last record its first. */
-export function rangesOf(turns: readonly Turn[]): Record<string, Turn> {
+function rangesOf(turns: readonly Turn[]): Record<string, Turn> {
   const out: Record<string, Turn> = {}
   for (const turn of turns) {
     if (turn.sessionId === undefined) continue

@@ -45,7 +45,7 @@ export const holisEpochAtom = atom(0)
  *  report that asked for them before then has been seen. This machine's. */
 export const holiSeenAtom = atomWithStorage<Record<string, string>>('holi.agents.seen', {})
 
-export type HoliState = 'needs-you' | 'working' | 'idle'
+type HoliState = 'needs-you' | 'working' | 'idle'
 
 /** A run's own state: its session's while it is live, else done. */
 export type RunState = 'needs-you' | 'working' | 'done'
@@ -58,7 +58,7 @@ export function runState(run: HoliRun, sessions: readonly AgentSessionRow[]): Ru
 }
 
 /** Whether a run's report asked for the person and they have not seen it. */
-export function reportNeedsYou(run: HoliRun, seen: string | undefined): boolean {
+function reportNeedsYou(run: HoliRun, seen: string | undefined): boolean {
   const report = run.report
   return report?.needsYou === true && (seen === undefined || report.at > seen)
 }

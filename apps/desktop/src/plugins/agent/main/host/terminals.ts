@@ -26,7 +26,7 @@ import { TerminalMirror } from './terminal-mirror'
 
 /** Text pasted into a terminal, unsent: the framing is the terminal's own, and
  *  there is no `\r`, so nothing Holi writes can submit a draft. */
-export const bracketedPaste = (text: string): string => `\x1b[200~${text}\x1b[201~`
+const bracketedPaste = (text: string): string => `\x1b[200~${text}\x1b[201~`
 
 /** After a terminal's first output, how long to let the TUI settle into raw
  *  mode before a held paste goes in. */

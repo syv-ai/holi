@@ -36,9 +36,6 @@ function land(set: Setter, terminalId: string): void {
   focusSessionTerminal(terminalId)
 }
 
-/** Show a terminal another flow opened (a Holi's send) in its agent tab. */
-export const landTerminalAtom = atom(null, (_get, set, terminalId: string) => land(set, terminalId))
-
 const geometry = (get: Getter) => get(agentGeometryAtom)
 
 const NO_VAULT = { ok: false as const, message: 'No vault is open.' }

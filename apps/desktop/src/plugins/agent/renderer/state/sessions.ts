@@ -25,7 +25,7 @@ import { resetTurnReviewAtom, turnReviewOpenAtom } from './turns'
 export const AGENT_SURFACE = 'agent'
 
 /** What a session is doing. Claude Code's own answer, read by main. */
-export type SessionState = 'needs-you' | 'working' | 'idle'
+type SessionState = 'needs-you' | 'working' | 'idle'
 
 /**
  * One of the vault's live sessions: a Claude Code background session by its
@@ -78,10 +78,6 @@ export const agentHistoryAtom = atom<AgentSession[]>([])
 /** Holi's open terminals, in the order they were opened. */
 export const agentTerminalsAtom = atom<AgentTerminal[]>([])
 
-/** The terminal behind an agent tab, if it is still open. */
-export const agentTerminalAtom = (id: string) =>
-  atom((get) => get(agentTerminalsAtom).find((t) => t.id === id) ?? null)
-
 /**
  * The session the app is on: the one the active tab was opened for, while it
  * is live. Otherwise the one behind the most recently opened terminal that was
@@ -91,7 +87,7 @@ export const agentTerminalAtom = (id: string) =>
  * nothing Claude Code publishes says which. So this is only ever a
  * default for an ask, never an identity.
  */
-export const activeSessionAtom = atom<AgentSession | null>((get) => {
+const activeSessionAtom = atom<AgentSession | null>((get) => {
   const sessions = get(agentSessionsAtom)
   const terminals = get(agentTerminalsAtom)
   const byId = (id: string | null) =>
@@ -112,7 +108,7 @@ export const activeSessionAtom = atom<AgentSession | null>((get) => {
 export const NEW_SESSION = 'New session'
 
 /** A terminal's title less the state glyph Claude Code puts in front of it. */
-export const titleText = (terminal: AgentTerminal): string =>
+const titleText = (terminal: AgentTerminal): string =>
   terminal.title.replace(/^[^\p{L}\p{N}]+\s+/u, '').trim()
 
 /** Claude Code titles its list `… claude agents`. */

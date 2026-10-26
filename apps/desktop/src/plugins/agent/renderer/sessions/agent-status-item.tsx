@@ -12,7 +12,7 @@ import { openSessionRowsAtom } from "../state/session-list"
  * closed out of Sessions, or never opened there, is not counted: the number
  * is the list's. Nothing while Sessions is empty. A click opens Agents.
  */
-export function agentStatusText(
+function agentStatusText(
   sessions: number,
   status: { needsYou: number; working: number }
 ): string | null {

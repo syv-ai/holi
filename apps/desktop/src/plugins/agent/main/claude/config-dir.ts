@@ -51,7 +51,7 @@ export function agentConfigSlug(remote: string): string {
 }
 
 /** What Holi resolved the app's colour mode to (the renderer's `activeModeAtom`). */
-export type AgentTheme = 'dark' | 'light'
+type AgentTheme = 'dark' | 'light'
 
 /** What a spawn stamps into the config directory's `settings.json`. */
 export interface ConfigDirStamp {

@@ -23,7 +23,7 @@ export type { ScheduleSummary }
 export { schedulesCap }
 
 /** The plugin's id: the owner of its rows in the Agents view. */
-export const AUTOMATIONS_OWNER = 'automations'
+const AUTOMATIONS_OWNER = 'automations'
 
 export const automationsAtom = atom<ScheduleSummary[]>([])
 export const automationsLoadedAtom = atom<'loading' | 'ready' | 'error'>('loading')

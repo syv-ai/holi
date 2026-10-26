@@ -9,13 +9,8 @@
 
 // The PTY itself is core's (`main/terminal/pty.ts`), shared with the bottom
 // panel's shells: one place loads node-pty.
-import {
-  defaultSpawnPty,
-  type PtyProcess,
-  type SpawnPty,
-  type SpawnPtyOptions,
-} from '../../../../main/plugin-api'
-export { defaultSpawnPty, type PtyProcess, type SpawnPty, type SpawnPtyOptions }
+import { defaultSpawnPty, type PtyProcess, type SpawnPty } from '../../../../main/plugin-api'
+export type { PtyProcess, SpawnPty }
 
 // What a pid is right now lives in core, with the community plugins' servers
 // as its other user (`main/process-group.ts`).

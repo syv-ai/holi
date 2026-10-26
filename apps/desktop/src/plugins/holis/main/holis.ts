@@ -69,7 +69,7 @@ const REPORT_MAX = 2_000
 const REPORT_RULE = 'Bash(holi holis report:*)'
 
 /** What the Holi said came of a run (`holi holis report`). */
-export interface RunReport {
+interface RunReport {
   text: string
   at: string
   /** The Holi asked the person to act. */
@@ -86,7 +86,7 @@ export interface HoliRun {
   report?: RunReport
 }
 
-export interface HoliState {
+interface HoliState {
   /** sha256 of `holiApprovalText` when this machine approved it. */
   approved?: string
   /** Newest first. */
@@ -98,7 +98,7 @@ export type HolisFile = Record<string, Record<string, HoliState>>
 
 /** `approved`: sends run at once. `new`: never approved here. `changed`:
  *  approved, but the files say something else now. `invalid`: does not parse. */
-export type HoliStatus = 'approved' | 'new' | 'changed' | 'invalid'
+type HoliStatus = 'approved' | 'new' | 'changed' | 'invalid'
 
 export interface HoliSummary {
   /** Its `holi.yaml`, or an older Holi's one file. */
@@ -175,7 +175,7 @@ export function parseHolisFile(raw: unknown): HolisFile {
   return out
 }
 
-export interface HolisVault {
+interface HolisVault {
   remote: string
   root: string
 }
@@ -312,7 +312,7 @@ function valid(entry: Entry): ValidEntry {
  * id, its folder and its soul), never its name or description, which anyone
  * may change without asking. The memory is marked as notes it wrote.
  */
-export function holiSystemPrompt(args: {
+function holiSystemPrompt(args: {
   def: HoliDef
   dir: string
   soul: string
@@ -364,11 +364,11 @@ export function holiSystemPrompt(args: {
 }
 
 /** What every run of a Holi may do without asking: keep its memory. */
-export const memoryRules = (): string[] =>
+const memoryRules = (): string[] =>
   ['remember', 'revise', 'forget', 'recall', 'search'].map((v) => `Bash(holi holis ${v}:*)`)
 
 /** The send's first turn: the one line naming the document. */
-export function sendPrompt(path: string): string {
+function sendPrompt(path: string): string {
   return `Work on ${path}.`
 }
 

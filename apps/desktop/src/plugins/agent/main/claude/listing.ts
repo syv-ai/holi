@@ -26,7 +26,7 @@ export const JOB_ID = /^[0-9a-f]{8}$/
 /** Claude Code's live statuses. `waiting` is the one Holi shows as needs-you;
  *  `shell` is a shell command running, which is working. */
 const STATUSES = ['busy', 'waiting', 'idle', 'shell'] as const
-export type ClaudeStatus = (typeof STATUSES)[number]
+type ClaudeStatus = (typeof STATUSES)[number]
 
 export interface ClaudeRow {
   /** The short job id: the key. */
@@ -192,7 +192,7 @@ export function readModelName(status: unknown): string | null {
 }
 
 /** The directories Claude Code keeps session state in, under the config dir. */
-export const WATCHED_DIRS = ['sessions', 'jobs'] as const
+const WATCHED_DIRS = ['sessions', 'jobs'] as const
 
 /** Bursts are normal: rows carry heartbeat fields that move on their own. */
 const WATCH_DEBOUNCE_MS = 150

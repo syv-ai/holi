@@ -25,7 +25,7 @@ export interface VaultTasks {
 export type Delivered = Record<string, string>
 
 /** Above this many fires in one sweep, `notificationsFor` shows a summary instead. */
-export const COALESCE_THRESHOLD = 3
+const COALESCE_THRESHOLD = 3
 
 export interface SweepMark {
   remote: string

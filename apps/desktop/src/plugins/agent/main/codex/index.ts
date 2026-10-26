@@ -28,11 +28,11 @@ import type { AgentProvider, RouteServer, TurnRouteDeps } from '../provider'
 /** The variable that names the session to its hook. */
 export const SESSION_ENV = 'HOLI_AGENT_SESSION'
 
-export const NOT_INSTALLED =
+const NOT_INSTALLED =
   'Codex CLI not found on PATH. Install it (https://developers.openai.com/codex/cli) and restart Holi.'
 
 /** `HOLI_CODEX_BIN` when set, else `codex` on `PATH`. */
-export function resolveCodexBin(env: NodeJS.ProcessEnv = process.env): string | null {
+function resolveCodexBin(env: NodeJS.ProcessEnv = process.env): string | null {
   const override = env.HOLI_CODEX_BIN
   if (override) {
     try {

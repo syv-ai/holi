@@ -126,7 +126,7 @@ const SETTLE_CHECKS = 4
 /** Turn ends remembered, newest kept. */
 const TURN_ENDS_KEPT = 200
 
-export type RunTrigger = 'schedule' | 'manual' | 'event'
+type RunTrigger = 'schedule' | 'manual' | 'event'
 
 export interface RunRecord {
   /** ISO time it was due to start, or asked to. */
@@ -146,7 +146,7 @@ export interface RunRecord {
   kept?: true
 }
 
-export interface ScheduleState {
+interface ScheduleState {
   /** sha256 of `scheduleApprovalText` when it was turned on. */
   approved?: string
   /** ISO time it was turned on: the first run looks for moments after it. */
@@ -165,7 +165,7 @@ export type SchedulesFile = Record<string, Record<string, ScheduleState>>
 
 /** `on`: runs here. `off`: never turned on, or turned off. `changed`: turned
  *  on, but the file approves something else now. `invalid`: does not parse. */
-export type ScheduleStatus = 'on' | 'off' | 'changed' | 'invalid'
+type ScheduleStatus = 'on' | 'off' | 'changed' | 'invalid'
 
 export interface ScheduleSummary {
   path: string
@@ -247,7 +247,7 @@ function momentsSinceOf(raw: unknown): Pick<ScheduleState, 'momentsSince'> {
   return { momentsSince: out }
 }
 
-export interface SchedulerVault {
+interface SchedulerVault {
   remote: string
   root: string
 }
@@ -418,7 +418,7 @@ const localTime = (d: Date): string =>
  * key) and the prompt, never the `name`, which is a label anyone can change
  * without asking (`scheduleApprovalText`).
  */
-export function runPrompt(
+function runPrompt(
   def: ScheduleDef,
   path: string,
   now: Date,

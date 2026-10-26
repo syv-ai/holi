@@ -21,7 +21,7 @@
  */
 
 /** How long a turn may print nothing before it is taken to be over. */
-export const IDLE_MS = 5_000
+const IDLE_MS = 5_000
 
 /** The longest OSC body kept while scanning: a notification is short, and a
  *  runaway sequence must not grow without bound. */

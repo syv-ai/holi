@@ -11,7 +11,7 @@ import { atom } from 'jotai'
 import { agentsSelectionAtom } from '@/plugin-api'
 
 /** The agent's plugin id: the owner of its own rows. */
-export const AGENT_OWNER = 'agent'
+const AGENT_OWNER = 'agent'
 
 export type AgentsView =
   | { kind: 'home' }

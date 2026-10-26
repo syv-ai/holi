@@ -57,9 +57,9 @@ import {
 /** How long a batch gathers before it runs. */
 export const BATCH_MS = 60_000
 /** How long an occurrence's id and version are remembered. */
-export const DEDUPE_MS = 60 * 60_000
+const DEDUPE_MS = 60 * 60_000
 /** How far back a moment told late may still fire. */
-export const LATE_MS = 24 * 60 * 60_000
+const LATE_MS = 24 * 60 * 60_000
 /** A timed source's list not told again for this long is ignored: two of the
  *  slowest source's (Google's) five-minute looks, and some. */
 export const STALE_MS = 12 * 60_000
@@ -79,7 +79,7 @@ export interface RoutedSchedule {
 }
 
 /** One thing that started a run, as structured fields. */
-export type Cause =
+type Cause =
   | { source: 'file'; kind: 'added' | 'changed'; id: string }
   | { source: 'mail'; id: string; from?: string }
   | { source: 'task'; kind: 'due' | 'overdue'; id: string }

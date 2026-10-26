@@ -28,7 +28,7 @@ const EMPTY = { status: 204 } as const
 
 /** The inbox a hook's body names, or null when it names none or one that is
  *  not plausibly a socket path and a token. */
-export function channelOf(body: string): SessionChannel | null {
+function channelOf(body: string): SessionChannel | null {
   if (body.trim() === '') return null
   let parsed: unknown
   try {

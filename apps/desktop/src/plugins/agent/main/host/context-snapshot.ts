@@ -23,7 +23,7 @@ export interface FocusInput {
   openPaths: string[]
 }
 
-export interface ContextFile {
+interface ContextFile {
   focusedPath: string | null
   selection: LineRange | null
   openPaths: string[]

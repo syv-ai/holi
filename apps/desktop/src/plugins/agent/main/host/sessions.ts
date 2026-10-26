@@ -43,14 +43,13 @@ export type ActionResult = { ok: true } | { ok: false; message: string }
 export type OpenResult = { ok: true; terminalId: string } | { ok: false; message: string }
 export type StartResult =
   { ok: true; sessionId: string; terminalId: string } | { ok: false; message: string }
-export type LaunchResult = { ok: true; sessionId: string } | { ok: false; message: string }
+type LaunchResult = { ok: true; sessionId: string } | { ok: false; message: string }
 
 export interface Geometry {
   cols?: number
   rows?: number
 }
 
-export type { VaultRef }
 
 /** The vault the sessions run in, as its activation hands it over. */
 export type AgentVault = Pick<PluginCtx, 'remote' | 'root'> & TurnVault
