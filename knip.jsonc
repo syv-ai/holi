@@ -1,0 +1,61 @@
+// Dead files, unused exports and unused/unlisted dependencies. Run: `pnpm knip`
+// (everything, tests count as users) and `pnpm knip:production` (only what the app
+// itself reaches from its entries; this is the one that finds code kept alive by
+// its own tests). Registered in .agents/skills/holi-rules/SKILL.md.
+//
+// An entry ending in `!` is also an entry in production mode. Exempt one export
+// with a `/** @public */` tag, or add a path to a workspace's `ignore` with a
+// comment saying why. A package installed ahead of the code that imports it goes
+// in `ignoreDependencies`, one line saying which change deletes it again.
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/*.mjs"],
+      "project": ["scripts/**/*.mjs"],
+    },
+    "apps/desktop": {
+      "entry": [
+        // electron-vite's three targets: main, preload, renderer.
+        "src/main/index.ts!",
+        "src/preload/index.ts!",
+        "src/renderer/index.html!",
+        "src/renderer/src/main.tsx!",
+        // Plugin lists, imported by the composition roots above; named here so a
+        // plugin that is dropped from the list shows as dead.
+        "src/plugins/main.ts!",
+        "src/plugins/renderer.ts!",
+        // Loaded with `new Worker(new URL(...))`, which the import graph cannot see.
+        "src/**/*.worker.ts!",
+        "electron.vite.config.ts",
+        "scripts/*.{mjs,cjs}",
+        // vitest's setupFiles, read from vitest.config.ts by path.
+        "test/setup.dom.ts",
+      ],
+      "project": ["src/**/*.{ts,tsx}!", "test/**/*.ts", "scripts/**"],
+      // The gate self-test lints these on purpose; they are inputs, not code.
+      "ignore": ["test/fixtures/**"],
+      // A system binary one community-plugin test shells out to.
+      "ignoreBinaries": ["pgrep"],
+      "ignoreDependencies": [
+        // Run as binaries by electron-vite, electron-builder and the rebuild script.
+        "electron",
+        "electron-builder",
+        "@electron/rebuild",
+        // Imported from index.css (@import), not from TS.
+        "tw-animate-css",
+      ],
+    },
+    "packages/shared": {
+      "entry": ["src/index.ts!", "src/path-safety-node.ts!"],
+      "project": ["src/**/*.ts!", "test/**/*.ts"],
+    },
+  },
+  // Files and dependencies are errors. The export sweep warns until phase 1 has
+  // deleted the code that only its own tests reach; then these become "error".
+  "rules": {
+    "exports": "warn",
+    "types": "warn",
+    "duplicates": "warn",
+  },
+}
