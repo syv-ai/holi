@@ -16,7 +16,6 @@ import type { Collaborator, LineRange, RecentEntry } from '@holi/shared'
 import { openRepo, tryGit, type GitRepo } from '../git'
 import type { MembersCache } from '../github/members-cache'
 import type { SyncState } from '../vault/active-vault'
-import type { ScanClaim } from '../vault/vault-store'
 import { CapabilityError } from './error'
 
 export interface CoreServices {
@@ -46,16 +45,12 @@ export interface CoreServicesDeps {
     remote: string
     root: string
     syncState(): SyncState
-    commitNow(): Promise<string | null>
-    pushNow(): Promise<void>
-    deliverNow?(): Promise<void>
+    /** Settle current changes, calling verify after commits and before any push. */
+    deliverNow(verify: () => Promise<boolean>): Promise<boolean>
     heldBack(): { path: string }[]
   } | null
   members: MembersCache
   reports: UiReports
-  /** Retained for compatibility with existing dependency fixtures; note claims
-   *  are enforced by the shared scanner predicate in vault capabilities. */
-  claims?: (root: string) => Promise<readonly ScanClaim[]>
 }
 
 /**
@@ -117,57 +112,98 @@ export function createCoreServices(
         return { commitSha: null, pushed: false, phase: 'commit', reason: 'oversized' }
       }
       let commitSha: string | null = null
+      let committedRevision: string | null = null
+      let postHookMismatch = false
+      let waitFailure: 'vault-not-open' | 'sync-blocked' | 'oversized' | null = null
       try {
-        if (active.deliverNow !== undefined) {
-          await active.deliverNow()
-        } else {
-          // Compatibility for isolated service fakes; the real active vault
-          // uses deliverNow to wait for its single-flight sync operations.
-          await active.commitNow()
-          await active.pushNow()
-        }
-        const initialHead = await tryGit(root, ['rev-parse', 'HEAD'])
-        commitSha = initialHead.ok ? initialHead.stdout.trim() : ''
-        if (!commitSha) {
-          return { commitSha: null, pushed: false, phase: 'commit', reason: 'no-commit' }
-        }
-        // A hook may rewrite the document while committing. The caller includes
-        // the revision it observed after the write; do not claim a different result.
-        const current =
-          expectedRevision === null
-            ? await tryGit(root, ['cat-file', '-e', `HEAD:${path}`])
-            : await tryGit(root, ['show', `HEAD:${path}`])
-        const committedRevision = current.ok
-          ? createHash('sha256').update(current.stdout).digest('hex')
-          : null
-        const worktree =
-          expectedRevision === null ? null : await readFile(join(root, path)).catch(() => null)
-        const worktreeRevision =
-          worktree === null ? null : createHash('sha256').update(worktree).digest('hex')
-        // Git may clean-filter written bytes, but a hook must not change them.
-        const cleanWorktree =
-          worktreeRevision === expectedRevision && expectedRevision !== null
-            ? await tryGit(root, ['hash-object', '--path', path, path])
+        const delivered = await active.deliverNow(async () => {
+          const stillActive = deps.active()
+          if (stillActive?.remote !== remote || stillActive.root !== root) {
+            waitFailure = 'vault-not-open'
+            return false
+          }
+          const afterWaitState = stillActive.syncState()
+          if (
+            afterWaitState.kind === 'conflict' ||
+            afterWaitState.kind === 'reconciling' ||
+            afterWaitState.kind === 'paused' ||
+            afterWaitState.kind === 'pulling'
+          ) {
+            waitFailure = 'sync-blocked'
+            return false
+          }
+          if (stillActive.heldBack().some((file) => file.path === path)) {
+            waitFailure = 'oversized'
+            return false
+          }
+          const head = await tryGit(root, ['rev-parse', 'HEAD'])
+          commitSha = head.ok ? head.stdout.trim() : ''
+          if (!commitSha) return false
+          // A hook may rewrite the document while committing. Verify the
+          // committed content before allowing deliverNow to push it.
+          const current =
+            expectedRevision === null
+              ? await tryGit(root, ['cat-file', '-e', `HEAD:${path}`])
+              : await tryGit(root, ['show', `HEAD:${path}`])
+          committedRevision = current.ok
+            ? createHash('sha256').update(current.stdout).digest('hex')
             : null
-        const committedObject = cleanWorktree?.ok
-          ? await tryGit(root, ['rev-parse', `HEAD:${path}`])
-          : null
-        const normalizationOnly =
-          cleanWorktree?.ok &&
-          committedObject?.ok &&
-          cleanWorktree.stdout.trim() === committedObject.stdout.trim()
-        if (
-          expectedRevision === null
-            ? current.ok
-            : (committedRevision !== expectedRevision || worktreeRevision !== expectedRevision) &&
-              !normalizationOnly
-        ) {
+          const worktree =
+            expectedRevision === null ? null : await readFile(join(root, path)).catch(() => null)
+          const worktreeRevision =
+            worktree === null ? null : createHash('sha256').update(worktree).digest('hex')
+          const cleanWorktree =
+            worktreeRevision === expectedRevision && expectedRevision !== null
+              ? await tryGit(root, ['hash-object', '--path', path, path])
+              : null
+          const committedObject = cleanWorktree?.ok
+            ? await tryGit(root, ['rev-parse', `HEAD:${path}`])
+            : null
+          const normalizationOnly =
+            cleanWorktree?.ok &&
+            committedObject?.ok &&
+            cleanWorktree.stdout.trim() === committedObject.stdout.trim()
+          postHookMismatch =
+            expectedRevision === null
+              ? current.ok
+              : (committedRevision !== expectedRevision || worktreeRevision !== expectedRevision) &&
+                !normalizationOnly
+          return !postHookMismatch
+        })
+        if (postHookMismatch) {
           return {
-            commitSha,
+            commitSha: commitSha || null,
             pushed: false,
             phase: 'commit',
             reason: 'post-hook-mismatch',
             revision: committedRevision,
+          }
+        }
+        if (!delivered || !commitSha) {
+          const afterWait = deps.active()
+          const reason =
+            waitFailure ??
+            (afterWait?.remote !== remote || afterWait.root !== root
+              ? 'vault-not-open'
+              : (() => {
+                  const afterWaitState = afterWait.syncState()
+                  if (
+                    afterWaitState.kind === 'conflict' ||
+                    afterWaitState.kind === 'reconciling' ||
+                    afterWaitState.kind === 'paused' ||
+                    afterWaitState.kind === 'pulling'
+                  ) {
+                    return 'sync-blocked'
+                  }
+                  return afterWait.heldBack().some((file) => file.path === path)
+                    ? 'oversized'
+                    : null
+                })())
+          return {
+            commitSha: null,
+            pushed: false,
+            phase: 'commit',
+            reason: reason ?? 'no-commit',
           }
         }
         const stillActive = deps.active()
@@ -251,7 +287,6 @@ export function noCoreServices(): CoreServices {
     recents: () => [],
     members: async () => none(),
     repo: none,
-    claimed: async () => false,
     settle: async () => ({
       commitSha: null,
       pushed: false,

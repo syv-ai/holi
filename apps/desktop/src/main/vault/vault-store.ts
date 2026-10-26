@@ -44,9 +44,16 @@ export interface ScanClaim extends SnapshotClaim {
 /** Whether a path belongs to the ordinary-note surface rather than a special,
  *  personal, hidden, bundled, or plugin-owned file. Shared by scanning and the
  *  CLI note writer so both surfaces agree about eligible notes. */
-export function isOrdinaryNotePath(path: string, claims: readonly ScanClaim[]): boolean {
+export function isMarkdownNotePath(path: string): boolean {
+  return path.endsWith('.md')
+}
+
+export function isOrdinaryNotePath(
+  path: string,
+  claims: readonly Pick<SnapshotClaim, 'match'>[],
+): boolean {
   return (
-    path.endsWith('.md') &&
+    isMarkdownNotePath(path) &&
     !isLocalOnlyPath(path) &&
     !path.split('/').some((part) => part.startsWith('.')) &&
     appBundleOf(path) === null &&

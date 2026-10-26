@@ -490,8 +490,8 @@ describe('docs CLI writes', () => {
       runCapability(
         'docs.create',
         'cli',
-        ctx({ syncState: () => ({ kind: 'up-to-date' }), claimed: async () => true }, null),
-        { path: 'claimed.md', body: 'x' },
+        ctx({ syncState: () => ({ kind: 'up-to-date' }) }, null),
+        { path: 'task.claimed.md', body: 'x' },
       ),
     ).rejects.toThrow()
   })

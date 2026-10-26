@@ -80,8 +80,8 @@ export interface ActiveVault {
   refresh(): Promise<void>
   /** Commit whatever is dirty, now — ⌘S, vault switch, quit. */
   commitNow(): Promise<string | null>
-  /** Wait for active autosave/push work, then deliver the current tree. */
-  deliverNow(): Promise<void>
+  /** Drain commits, verify their content, then push and wait for in-flight work. */
+  deliverNow(verify: () => Promise<boolean>): Promise<boolean>
   /**
    * Push local commits now, best-effort. Recovers from a non-fast-forward
    * rejection by pulling inline and retrying (a conflicting pull routes to the
@@ -678,29 +678,52 @@ export async function openActiveVault(args: {
       }
       return maybeCommit()
     },
-    async deliverNow() {
-      // Unlike best-effort commitNow/pushNow, settlement must not interpret a
-      // declined single-flight call as an empty commit or successful push.
+    async deliverNow(verify) {
       const waitForSync = async () => {
         while (!closed && (committing || pullInFlight || pushInFlight)) {
           await new Promise((resolve) => setTimeout(resolve, 10))
         }
       }
-      await waitForSync()
-      if (closed) return
       if (commitTimer !== null) {
         clearTimeout(commitTimer)
         commitTimer = null
       }
+      // An autosave may already own the commit or push. Join it rather than
+      // treating its single-flight decline as an empty successful delivery.
+      await waitForSync()
+      if (closed) return false
+      const status = await args.repo.status().catch(() => null)
+      if (status === null || blockedReason(status) !== null || manualPause !== null) return false
       await maybeCommit()
       await waitForSync()
-      if (closed) return
+      if (closed) return false
+      const afterCommit = await args.repo.status().catch(() => null)
+      if (afterCommit === null || blockedReason(afterCommit) !== null || manualPause !== null) {
+        return false
+      }
+      if (!(await verify())) return false
+      // A push already in progress may have started after our wait. Join it,
+      // then drain any autosave that began during that push before returning.
       await pushNow()
       await waitForSync()
-      // A commit can begin while the push is in flight; it deliberately rides
-      // the next push. Drain that newly-landed commit before returning too.
-      if (!closed) await pushNow()
-      await waitForSync()
+      if (closed) return false
+      const latest = await args.repo.status().catch(() => null)
+      if (latest === null || blockedReason(latest) !== null || manualPause !== null) return false
+      if (latest.dirty) {
+        if ((await maybeCommit()) !== null) {
+          await waitForSync()
+          if (closed || !(await verify())) return false
+        }
+      }
+      const finalStatus = await args.repo.status().catch(() => null)
+      if (finalStatus === null || blockedReason(finalStatus) !== null || manualPause !== null) {
+        return false
+      }
+      if (finalStatus.ahead > 0) {
+        await pushNow()
+        await waitForSync()
+      }
+      return !closed
     },
     pushNow,
     onFocus() {
