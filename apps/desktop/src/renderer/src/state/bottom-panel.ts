@@ -44,7 +44,7 @@ export const showPanelAtom = atom(null, (get, set, tab: PanelTab) =>
 export const PANEL_DEFAULT_HEIGHT = 280
 export const PANEL_MIN_HEIGHT = 120
 /** Of the column, so the views keep some room. */
-export const PANEL_MAX_SHARE = 0.7
+const PANEL_MAX_SHARE = 0.7
 
 const HEIGHT_KEY = 'holi.bottom-panel.height'
 

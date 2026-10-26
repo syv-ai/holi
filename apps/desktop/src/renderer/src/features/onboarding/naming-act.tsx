@@ -72,9 +72,8 @@ export function NamingAct({ name, owner, slug, error, active, onName, onOwner, o
         <div className="obrit-eyebrow">Name your vault</div>
         <Input
           ref={nameRef}
-          // The vault name, set as large as the heading it stands in for: no box,
-          // display tracking, tight leading for one short line.
-          className="obrit-vault-input h-auto border-0 bg-transparent p-0 text-center text-7xl leading-[1.1] font-semibold tracking-[-0.03em] shadow-none placeholder:text-muted-foreground/50 focus-visible:ring-0 md:text-7xl dark:bg-transparent"
+          // The vault name, set as large as the heading it stands in for: its
+          // look is the stage's Input rule in onboarding-ritual.css.
           // The size follows the length, so a long name shrinks to fit the
           // column instead of scrolling inside the field (index.css cannot
           // count characters; `--name-len` hands it the count).
@@ -135,7 +134,11 @@ function OwnerSwitcher({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="obrit-owner min-w-0 shrink">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="max-w-64 min-w-0 shrink font-mono text-foreground"
+        >
           <span className="sr-only">Owner: </span>
           <OwnerAvatar owner={current ?? { login: owner, kind: 'personal' }} />
           <span className="truncate">{owner || 'owner'}</span>

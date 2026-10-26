@@ -23,7 +23,7 @@ A `.md` file opens in ReUI's rich-text editor (`rich-text-editor-2`, Tiptap) rat
 
 **History.** A document's header and a code file's carry the same history (`features/history/`): the latest commit, `4a14110 · 2 hours ago`, and History, a dialog after GitHub's commits page. Its commits are grouped by day on a timeline and filtered by author and by time; each row copies its SHA, opens what it changed in the file, or shows the file as it left it, all in ReUI's code block (`lineDiff` against the commit's parent; Shiki with the grammar `code-language.ts` picks, plain past 300 KB). The code block's grammars are written out one per line in `code-block-highlight.tsx`, each its own lazy chunk; a new language is a new line there. Binaries stay out of the link graph.
 
-**Ask the agent.** The message is your instruction, then `[From <path>, lines 12-18]` and the passage quoted with `> ` (`askPrompt` in `editor/ask-agent.ts`, which the plugin api re-exports).
+**Ask the agent.** The message is your instruction, then `[From <path>, lines 12-18]` and the passage quoted with `> ` (`askPrompt` in `lib/ask-agent.ts`, which the plugin api re-exports).
 
 **Saving.** Written after 600 ms of quiet and on blur, flushed on tab close, vault switch and quit. ⌘S saves every buffer, commits and pushes. Invalid frontmatter YAML holds the save; a flush writes anyway.
 
@@ -42,7 +42,7 @@ A `.md` file opens in ReUI's rich-text editor (`rich-text-editor-2`, Tiptap) rat
 ## Code
 
 - `apps/desktop/src/renderer/src/features/documents/`: the documents tab: `document-view.tsx`, `markdown.ts`, `document-extensions.ts`, `document-find.ts`, `document-find-bar.tsx`, `multi-cursor.ts`, `document-agent.ts`, `document-header.tsx`; `rich-text/`: the Tiptap editor, its bubble bar, slash menu and block gutter
-- `apps/desktop/src/renderer/src/editor/`: `extensions.ts` (the two stacks), `completion.ts`, `settings-completion.ts`, `languages.ts`, `fence-languages.ts`, `formatting.ts`, `ask-agent.ts`, `theme.ts`
+- `apps/desktop/src/renderer/src/editor/`: `extensions.ts` (the two stacks), `completion.ts`, `settings-completion.ts`, `languages.ts`, `fence-languages.ts`, `formatting.ts`, `theme.ts`
 - `apps/desktop/src/renderer/src/state/doc-changes.ts`: what changed on disk while a tab was not shown
 - `packages/shared/src/merge3.ts`, `normalize-md.ts`, `file-kind.ts`, `image-ref.ts`
 - `apps/desktop/src/renderer/src/features/files/file-view.tsx`: every file that is not a note or an app

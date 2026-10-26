@@ -38,7 +38,7 @@ export interface ShellSplit {
 export type ShellEntry = string | ShellSplit
 
 /** What Reopen closed tab brings back: a tab, or a split as a split. */
-export type ClosedEntry = string | { views: string[]; shares: number[] }
+type ClosedEntry = string | { views: string[]; shares: number[] }
 
 export interface ShellWorkspace {
   /** The strip, in order. */

@@ -11,13 +11,12 @@ import { atom, useSetAtom, useStore } from 'jotai'
 import { useCallback, useEffect } from 'react'
 import type { ActivityChannel, ActivityEntry } from '../../../main/activity/log'
 import { trpc } from '@/lib/trpc'
-import { createFilterQuery, createFilterRule } from '@/components/reui/filters/filters-query'
-import type { FilterNode, FilterQuery } from '@/components/reui/filters/filters-types'
+import { emptyFilterQuery, filterRule, type FilterNode, type FilterQuery } from '@/lib/filter-query'
 
 export type { ActivityChannel, ActivityEntry }
 
 /** As many as main keeps. */
-export const ACTIVITY_CAP = 2000
+const ACTIVITY_CAP = 2000
 
 /** The channels as the Output names them, beside their marks. */
 export const ACTIVITY_CHANNEL_LABELS: Record<ActivityChannel, string> = {
@@ -47,14 +46,14 @@ export const activityLoadAtom = atom<'loading' | 'ready' | 'error'>('loading')
 
 /** The Output's Filters: one query tree over channel, level, vault and
  *  message, as ReUI's Filters edits it. */
-export const activityQueryAtom = atom<FilterQuery>(createFilterQuery())
+export const activityQueryAtom = atom<FilterQuery>(emptyFilterQuery())
 
 /** The Output's search, over message, detail, channel and vault. */
 export const activitySearchAtom = atom('')
 
 /** The query that shows one channel and nothing else. */
 export function channelQuery(channel: ActivityChannel): FilterQuery {
-  return withChannelRule(createFilterQuery(), channel, 'only')
+  return withChannelRule(emptyFilterQuery(), channel, 'only')
 }
 
 /**
@@ -72,7 +71,7 @@ export function withChannelRule(
     ...query,
     rules: [
       ...query.rules.filter((node) => node.type !== 'rule' || node.path[0] !== 'channel'),
-      createFilterRule({
+      filterRule({
         id: `${mode}-${channel}`,
         path: ['channel'],
         operator: mode === 'only' ? 'is' : 'is_not',

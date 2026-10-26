@@ -13,14 +13,14 @@ import { unwrap } from 'jotai/utils'
 import { trpc } from '../lib/trpc'
 import { activeRemoteAtom, historyEpoch, historyEpochsAtom } from './vaults'
 
-export interface CommitFact {
+interface CommitFact {
   /** ISO 8601 (git author date). */
   date: string
   /** Author name (git `%an`). */
   author: string
 }
 
-export interface FileHistory {
+interface FileHistory {
   last: CommitFact
   first: CommitFact
   /** Commits touching the file, the first included. */

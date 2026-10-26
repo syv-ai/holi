@@ -195,11 +195,11 @@ export function DrawerShell({
           // A 7px strip to catch the pointer, drawing a 1px line in its middle:
           // the theme's edge at rest, the divider while found or held. Keyboard
           // focus is the house ring (docs/ui-system.md, Focus).
-          'absolute inset-y-0 z-10 w-[7px] cursor-col-resize touch-none outline-none',
-          'after:absolute after:inset-y-0 after:left-[3px] after:w-px after:bg-drawer-edge',
+          'absolute inset-y-0 z-10 w-1.75 cursor-col-resize touch-none outline-none',
+          'after:absolute after:inset-y-0 after:left-0.75 after:w-px after:bg-drawer-edge',
           'after:motion-respond hover:after:bg-divider focus-visible:ring-1 focus-visible:ring-ring',
           resizing && 'after:bg-divider',
-          side === 'left' ? '-right-[3px]' : '-left-[3px]',
+          side === 'left' ? '-right-0.75' : '-left-0.75',
         )}
         onPointerDown={onPointerDown}
         onKeyDown={onKeyDown}

@@ -10,14 +10,14 @@
  * to the threshold, which shows the vault being built (repo, then answers)
  * and turns into "ready" when it is. So backing out of any act before that
  * leaves nothing behind on GitHub, and the answers land in the first commit
- * after the seed rather than over a vault someone could already have cloned. `OnboardingRitual.tsx` is a thin view over this reducer, and keeping
+ * after the seed rather than over a vault someone could already have cloned. `onboarding-ritual.tsx` is a thin view over this reducer, and keeping
  * the flow pure lets it be unit-tested without a DOM.
  */
 import { VAULT_SETTING_DESCRIPTORS, normaliseAnswers, type PluginSettings } from '@holi/shared'
 
-export const ACTS = ['greeting', 'naming', 'plugins', 'settings', 'threshold'] as const
+const ACTS = ['greeting', 'naming', 'plugins', 'settings', 'threshold'] as const
 export type Act = (typeof ACTS)[number]
-export type View = 'form' | 'join'
+type View = 'form' | 'join'
 export type Mode = 'first-run' | 'add-vault'
 
 export interface OnboardingState {
@@ -49,7 +49,7 @@ export const slugify = (s: string): string =>
 export const startingAct = (mode: Mode): Act => (mode === 'first-run' ? 'greeting' : 'naming')
 
 /** Where `act` stands in the ritual, for walking it and for the step dots. */
-export const actIndex = (act: Act): number => ACTS.indexOf(act)
+const actIndex = (act: Act): number => ACTS.indexOf(act)
 
 /** The acts a mode shows, in order: add-vault has no greeting. */
 export const actsFor = (mode: Mode): readonly Act[] => ACTS.slice(actIndex(startingAct(mode)))

@@ -30,7 +30,7 @@ export interface RitualActions {
  * away from their default. The act keeps the resolved shape (`vault` and
  * `localOff`), which is what a read returns and a write refuses.
  */
-export function answersPatch(answers: Record<string, unknown>) {
+function answersPatch(answers: Record<string, unknown>) {
   const plugins = answers.plugins as PluginSettings | undefined
   return splitAnswersByTarget(
     plugins === undefined ? answers : { ...answers, plugins: plugins.vault },
@@ -75,7 +75,7 @@ export function useRitualActions(dryRun: boolean, onDone?: () => void): RitualAc
       }
     },
     open: async (remote) => {
-      // **Activate here, not at creation.** Activating makes the Shell land the
+      // **Activate here, not at creation.** Activating makes the app shell land the
       // vault and read its settings; at the naming act it would read the
       // seeded defaults before the answers were written.
       if (remote !== null) setActiveRemote(remote)

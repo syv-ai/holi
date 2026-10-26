@@ -1118,7 +1118,6 @@ function DataGridProvider<TData extends object>({
     previousPageKeyRef.current = pageKey
     if (!cellSelectionOn || table.atoms.cellSelection == null) return
     tableRef.current.resetCellSelection(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageKey, cellSelectionOn])
 
   // One autoSize coordinator per table instance so split header/body viewports

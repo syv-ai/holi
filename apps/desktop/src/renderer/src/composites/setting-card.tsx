@@ -67,25 +67,26 @@ export function SettingCard({
       </div>
     </>
   )
+  const body = cn('flex w-full items-start gap-4', disabled && 'opacity-60')
   return (
     <FramePanel
       role="group"
       aria-label={title}
       data-disabled={disabled || undefined}
-      className={cn('text-start data-disabled:opacity-60', className)}
+      className={cn('text-start', className)}
       {...rest}
     >
       {pressable ? (
         <Label
           className={cn(
-            'flex cursor-pointer items-start gap-4 leading-normal font-normal',
+            'cursor-pointer leading-normal font-normal',
             disabled && 'cursor-not-allowed',
           )}
         >
-          {row}
+          <div className={body}>{row}</div>
         </Label>
       ) : (
-        <div className="flex items-start gap-4">{row}</div>
+        <div className={body}>{row}</div>
       )}
     </FramePanel>
   )

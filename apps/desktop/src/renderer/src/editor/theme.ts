@@ -37,7 +37,7 @@ export const completionChrome = {
     transformOrigin: 'top left',
     background: 'var(--popover)',
     color: 'var(--popover-foreground)',
-    // Borderless on the popover shadow, like every overlay; see `primitives/Popover.tsx`.
+    // Borderless on the popover shadow, like every overlay; see `components/ui/popover.tsx`.
     border: 'none',
     // The menus' surface (`MENU_SURFACE`): `rounded-lg p-1`.
     borderRadius: 'var(--radius-lg, 8px)',

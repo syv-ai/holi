@@ -7,7 +7,7 @@
  */
 import { atom } from 'jotai'
 import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
-import type { ArcadeCastMember } from '@/plugin-api/types'
+import type { ArcadeCastMember } from '@/state/plugin-types'
 import { runningPluginsAtom } from './plugins'
 import { vaultSettingsAtom } from './settings'
 import { activeRemoteAtom } from './vaults'

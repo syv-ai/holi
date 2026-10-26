@@ -12,7 +12,7 @@
 import { atom, useAtomValue } from 'jotai'
 import { useMemo } from 'react'
 
-export interface ViewSpot {
+interface ViewSpot {
   /** The selection, as the view counts positions. */
   anchor: number
   head: number

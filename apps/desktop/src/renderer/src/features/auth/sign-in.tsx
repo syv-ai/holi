@@ -34,6 +34,11 @@ const settle = { type: 'spring', duration: 0.4, bounce: 0.15 } as const
 /** What reduced motion swaps in: the change, without the travel. */
 const instant = { duration: 0 } as const
 
+/** The pane's two columns once the pitch is showing: the pitch, then the sign-in card. */
+const SIGN_IN_COLUMNS = {
+  '--sign-in-columns': 'minmax(0,1fr) minmax(0,420px)',
+} as React.CSSProperties
+
 type Phase =
   | { kind: 'idle' }
   | { kind: 'starting' }
@@ -141,8 +146,9 @@ export function SignIn() {
             <div
               className={cn(
                 'relative grid w-full grid-cols-1 items-center justify-items-center gap-14 sm:gap-16 lg:gap-24',
-                !focused && 'lg:grid-cols-[minmax(0,1fr)_minmax(0,420px)] lg:justify-items-stretch',
+                !focused && 'lg:grid-cols-(--sign-in-columns) lg:justify-items-stretch',
               )}
+              style={SIGN_IN_COLUMNS}
             >
               {/* popLayout takes the leaving pitch out of the grid at once, so
                 the pane starts for the middle while the pitch fades. */}
@@ -162,7 +168,7 @@ export function SignIn() {
               <motion.div
                 layout="position"
                 transition={reduced ? instant : settle}
-                className="w-full max-w-[420px]"
+                className="w-full max-w-105"
               >
                 <div className="flex w-full flex-col items-center gap-7 text-center sm:gap-8">
                   <div className="flex flex-col gap-2">
@@ -211,7 +217,8 @@ export function SignIn() {
                     Holi requests broad repo access.{' '}
                     <Button
                       variant="link"
-                      className="h-auto p-0 text-xs"
+                      size="xs"
+                      className="-mx-2 h-auto"
                       onClick={() => void window.holi.openExternal(FINE_GRAINED_TOKEN_DOCS)}
                     >
                       Prefer a fine-grained token?
@@ -241,7 +248,7 @@ function Pitch() {
         <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
         <span>Local-first notes on GitHub</span>
       </div>
-      <h1 className="text-4xl leading-[1.02] font-semibold tracking-[-0.02em] text-balance sm:text-5xl lg:text-[56px]">
+      <h1 className="text-4xl leading-none font-semibold tracking-tight text-balance sm:text-5xl lg:text-6xl">
         Your notes, in a repo you{' '}
         <span className="bg-linear-to-r from-orange-500 via-pink-500 to-violet-500 bg-clip-text text-transparent">
           own
@@ -304,7 +311,8 @@ function Waiting({
       </div>
       <Button
         variant="link"
-        className="h-auto p-0 text-xs"
+        size="xs"
+        className="-mx-2 h-auto"
         onClick={() => void window.holi.openExternal(verificationUri)}
       >
         Open {verificationUri.replace(/^https?:\/\//, '')}

@@ -101,7 +101,7 @@ import {
   TreeItem,
   TreeItemLabel,
 } from "@/components/reui/tree"
-import { folderDocumentAt } from "@/lib/folder-documents"
+import { folderDocumentAt } from "@/state/folder-documents"
 import { revealInFilesRequestAtom } from "@/state/reveal-in-files"
 import { buildTreeData, ROOT_ID, type TreeItemData } from "@/lib/tree-data"
 import { planMoveInto, planRenameFolder, type Move } from "@/lib/tree-actions"

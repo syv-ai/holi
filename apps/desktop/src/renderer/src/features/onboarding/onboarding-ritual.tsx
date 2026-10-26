@@ -354,22 +354,19 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
               </Button>
             )}
           </div>
-          <div className="obrit-foot-side is-right">
+          <div className="obrit-foot-side obrit-foot-right">
             {s.act === 'naming' && naming && !s.submitting && (
               <span className="obrit-keyhint">
                 Press <Kbd>Enter</Kbd>
               </span>
             )}
             {footPrimary !== undefined && (
-              <Button
-                size="lg"
-                className={cn(s.act === 'naming' && waking && 'obrit-wake')}
-                onClick={footPrimary.run}
-                disabled={footPrimary.disabled}
-              >
-                {footPrimary.label}
-                <ArrowRight aria-hidden className="size-3.5" />
-              </Button>
+              <span className={cn('rounded-lg', s.act === 'naming' && waking && 'obrit-wake')}>
+                <Button size="lg" onClick={footPrimary.run} disabled={footPrimary.disabled}>
+                  {footPrimary.label}
+                  <ArrowRight aria-hidden className="size-3.5" />
+                </Button>
+              </span>
             )}
           </div>
         </footer>
@@ -393,7 +390,7 @@ const STEP_TITLES: Partial<Record<Act, string>> = {
 /**
  * Where the ritual is, above the act: the step count, then a numbered step
  * per act with its name, the rule between two filling as the first is done
- * (`primitives/Stepper.tsx`). It counts only the acts that ask something
+ * (`components/reui/stepper.tsx`). It counts only the acts that ask something
  * (`STEPPED`): the greeting is the door in and the threshold is the result,
  * so on those the stepper fades out, keeping its height so the act does not
  * jump. Progress only: the acts are gated by what each one needs, so there
@@ -427,7 +424,7 @@ function RitualSteps({
         aria-valuetext={`Step ${Math.min(Math.max(at, 1), steps.length)} of ${steps.length}: ${STEP_TITLES[current] ?? ''}`}
         className="w-full max-w-md"
       >
-        {/* The nav is what lays the steps in a row (`primitives/Stepper.tsx`):
+        {/* The nav is what lays the steps in a row (`components/reui/stepper.tsx`):
             without it they stack. */}
         <StepperNav>
           {steps.map((act, i) => {
@@ -436,14 +433,14 @@ function RitualSteps({
               <StepperItem key={act} step={step} className="relative flex-1 flex-col!">
                 <div className="flex flex-col items-center gap-2">
                   <StepperIndicator />
-                  <StepperTitle className="obrit-step-title text-xs group-data-[state=inactive]/step:text-muted-foreground">
+                  <StepperTitle className="text-xs group-data-[state=inactive]/step:text-muted-foreground">
                     {STEP_TITLES[act]}
                   </StepperTitle>
                 </div>
                 {step < steps.length && (
                   // From this step's dot to the next one's, filled once this
                   // step is done.
-                  <StepperSeparator className="absolute start-[calc(50%+0.875rem)] top-3 m-0 w-[calc(100%-1.75rem)] -translate-y-1/2 group-data-[orientation=horizontal]/stepper-nav:flex-none data-[state=completed]:bg-foreground" />
+                  <StepperSeparator className="absolute start-(--step-line-start) top-3 m-0 w-(--step-line-width) -translate-y-1/2 group-data-[orientation=horizontal]/stepper-nav:flex-none data-[state=completed]:bg-foreground" />
                 )}
               </StepperItem>
             )

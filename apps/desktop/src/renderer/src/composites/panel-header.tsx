@@ -14,9 +14,9 @@ import { matchHotkey } from '@/lib/hotkey'
  * label, optional keyboard shortcut, and handler. That is what keeps every panel
  * speaking one vocabulary. A `hotkey` is both SHOWN in the tooltip and BOUND
  * while the header is mounted, so a panel owns its controls and their shortcuts
- * in one place rather than in a detached Shell listener. The exception proves
+ * in one place rather than in a detached app-shell listener. The exception proves
  * the rule: ⌘J opens a session tab, and a tab cannot bind the shortcut that
- * opens it, so that one is a Shell listener.
+ * opens it, so that one is an app-shell listener.
  *
  * Domain-agnostic → composites/. Width/height-of-row is fixed for alignment with
  * the nav/editor/panel bars it shares the Resizable row with; override via

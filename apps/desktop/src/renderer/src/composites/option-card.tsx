@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/cn'
@@ -44,32 +45,40 @@ export function OptionCard({
 } & Omit<React.ComponentProps<'label'>, 'children' | 'title' | 'onChange'>): React.JSX.Element {
   return (
     <Label
-      data-checked={checked || undefined}
       data-disabled={disabled || undefined}
       className={cn(
-        'relative flex cursor-pointer flex-col items-stretch gap-3 rounded-xl border border-border/70 bg-card/40 p-4 leading-normal font-normal motion-respond hover:bg-card/70 data-checked:bg-card/90 data-disabled:cursor-not-allowed data-disabled:opacity-60',
+        'cursor-pointer leading-normal font-normal data-disabled:cursor-not-allowed',
         className,
       )}
       {...rest}
     >
-      <Checkbox
-        className="absolute end-3 top-3"
-        checked={checked}
-        disabled={disabled}
-        onCheckedChange={(next) => onCheckedChange(next === true)}
-        aria-label={title}
-      />
-      <IconTile>{mark}</IconTile>
-      <div className="flex flex-col gap-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-semibold">{title}</span>
-          {badge}
-        </div>
-        {description !== undefined && (
-          <p className="text-sm text-pretty text-muted-foreground">{description}</p>
-        )}
-        {note !== undefined && <p className="text-xs text-muted-foreground">{note}</p>}
-      </div>
+      <Card
+        data-checked={checked || undefined}
+        className="relative w-full bg-card/40 hover:bg-card/70 data-checked:bg-card/90"
+      >
+        <CardContent>
+          <div className={cn('flex flex-col gap-3', disabled && 'opacity-60')}>
+            <Checkbox
+              className="absolute end-3 top-3"
+              checked={checked}
+              disabled={disabled}
+              onCheckedChange={(next) => onCheckedChange(next === true)}
+              aria-label={title}
+            />
+            <IconTile>{mark}</IconTile>
+            <div className="flex flex-col gap-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-semibold">{title}</span>
+                {badge}
+              </div>
+              {description !== undefined && (
+                <p className="text-sm text-pretty text-muted-foreground">{description}</p>
+              )}
+              {note !== undefined && <p className="text-xs text-muted-foreground">{note}</p>}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </Label>
   )
 }

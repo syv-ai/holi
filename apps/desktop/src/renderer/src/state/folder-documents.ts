@@ -4,8 +4,8 @@
  * (docs/features/tabs-panes.md). Pure, over the claims and what the vault
  * holds, so the tree, the panes, Home and the tests share one answer.
  */
-import type { FolderClaim, PathClaim, Surface } from '@/plugin-api/types'
-import type { Tab } from '@/state/panes'
+import type { FolderClaim, PathClaim, Surface } from '@/state/plugin-types'
+import type { Tab } from '@/lib/tab'
 
 /** What a surface is called, for its tab `id` or for the surface itself. */
 export function surfaceLabel(surface: Surface, id?: string): string {
@@ -48,12 +48,4 @@ export function tabForPath(
   return doc === null
     ? { kind: 'note', path }
     : { kind: 'surface', surface: doc.folder.surface, id: path }
-}
-
-/** The vault path a tab shows: a note's, or a folder document's id. */
-export function pathOfTab(claims: readonly FolderDocumentClaim[], tab: Tab | null): string | null {
-  if (tab === null) return null
-  if (tab.kind === 'note') return tab.path
-  if (tab.kind !== 'surface' || tab.id === undefined) return null
-  return claims.some((c) => c.folder.surface === tab.surface) ? tab.id : null
 }

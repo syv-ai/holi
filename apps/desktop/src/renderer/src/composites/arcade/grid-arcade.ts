@@ -7,10 +7,10 @@
  * MonoCode's; the provider-logo pickup is gone, and the sprites are Holi's
  * own cast, papers and conflicts.
  *
- * A game speaks `GridArcade` so the canvas renderer (`HoliArcade.tsx`) can
+ * A game speaks `GridArcade` so the canvas renderer (`holi-arcade.tsx`) can
  * host it without knowing its rules.
  */
-import type { ArcadeCastMember } from "@/plugin-api/types"
+import type { ArcadeCastMember } from "@/state/plugin-types"
 
 export type { ArcadeCastMember }
 

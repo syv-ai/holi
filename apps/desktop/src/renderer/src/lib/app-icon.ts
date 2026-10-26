@@ -8,16 +8,16 @@
  * packaged bundle and the dock before the window has drawn one.
  */
 import { useEffect } from 'react'
-import { BRAND_MONOGRAM } from '@/composites/brand-mark'
+import { BRAND_MONOGRAM } from '@/lib/brand-shapes'
 
 /** The macOS icon grid: a 1024 canvas, the squircle 824 inset by 100. */
-export const ICON_SIZE = 1024
+const ICON_SIZE = 1024
 const INSET = 100
 const SIDE = ICON_SIZE - INSET * 2
 const RADIUS = 185
 
 /** The colours the icon is drawn in, as CSS colours. */
-export interface AppIconColors {
+interface AppIconColors {
   /** The squircle: the window's chrome (`--sidebar`). */
   ground: string
   /** The "h" (`--foreground`). */
@@ -29,7 +29,7 @@ export interface AppIconColors {
 }
 
 /** The theme's tokens, read off the document as they resolve now. */
-export function themeIconColors(root: HTMLElement = document.documentElement): AppIconColors {
+function themeIconColors(root: HTMLElement = document.documentElement): AppIconColors {
   const style = getComputedStyle(root)
   const token = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback
   return {
@@ -46,7 +46,7 @@ function squircle(ctx: CanvasRenderingContext2D): void {
 }
 
 /** Draw the icon into a 1024 context. */
-export function drawAppIcon(ctx: CanvasRenderingContext2D, colors: AppIconColors): void {
+function drawAppIcon(ctx: CanvasRenderingContext2D, colors: AppIconColors): void {
   ctx.clearRect(0, 0, ICON_SIZE, ICON_SIZE)
 
   // The ground, with the soft drop shadow every macOS icon sits on.
@@ -156,7 +156,7 @@ export function useDockIcon(): void {
 }
 
 /** The icon as a PNG data URL, or null where there is no canvas to draw on. */
-export function renderAppIcon(colors: AppIconColors): string | null {
+function renderAppIcon(colors: AppIconColors): string | null {
   const canvas = document.createElement('canvas')
   canvas.width = ICON_SIZE
   canvas.height = ICON_SIZE

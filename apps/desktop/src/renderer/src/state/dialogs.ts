@@ -2,11 +2,11 @@ import { atom } from 'jotai'
 import type { ReactNode } from 'react'
 
 /** How wide a plugin's dialog asks to be; the host maps it to the stock dialog's width. */
-export type DialogSize = 'sm' | 'md' | 'lg' | 'full' | 'bare'
+type DialogSize = 'sm' | 'md' | 'lg' | 'full' | 'bare'
 
 /**
  * The dialog registry, as a discriminated union (`docs/ui-system.md`). A dialog
- * is a content block plus one entry here: `id` selects the block in DialogHost
+ * is a content block plus one entry here: `id` selects the block in the dialog host
  * and `size` is the guarded prop the shell reads.
  *
  * `closable` rides alongside the union: it means the same thing for every
@@ -43,7 +43,7 @@ export type ActiveDialog = { closable?: boolean } & (
 export type PluginDialog = Extract<ActiveDialog, { id: 'plugin' }>
 
 /** Leave a vault, delete it, or let go of one GitHub no longer shows. */
-export type RemoveVaultIntent = 'leave' | 'delete' | 'forget'
+type RemoveVaultIntent = 'leave' | 'delete' | 'forget'
 
 /** Null when nothing is open. The host is mounted once by the app shell. */
 export const activeDialogAtom = atom<ActiveDialog | null>(null)

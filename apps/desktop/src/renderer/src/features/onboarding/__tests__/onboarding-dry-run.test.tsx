@@ -141,7 +141,7 @@ test('a real run creates nothing until the last question is answered', async () 
 })
 
 test('creating does not activate the vault before its answers are written', async () => {
-  // Activation makes the Shell open and LAND a vault, so it waits for "Open
+  // Activation makes the app shell open and LAND a vault, so it waits for "Open
   // vault"; otherwise the vault reads the seeded defaults before the answers.
   const store = createStore()
   render(

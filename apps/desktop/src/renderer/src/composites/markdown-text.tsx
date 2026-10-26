@@ -13,6 +13,7 @@ import { Lexer, type Token, type Tokens } from 'marked'
 import { useMemo, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/cn'
 
 /** A link target the browser may be handed: http(s) and nothing else. */
 export function openableUrl(href: string): string | null {
@@ -68,7 +69,7 @@ function InlineToken({ token }: { token: Token }): ReactNode {
             <Button
               variant="link"
               onClick={() => void window.holi.openExternal(url)}
-              className="inline h-auto p-0 align-baseline text-[length:inherit] font-normal whitespace-normal break-words text-foreground"
+              className="-mx-2.5 inline h-auto align-baseline font-normal whitespace-normal break-words text-foreground"
             >
               <Inline tokens={link.tokens} />
             </Button>
@@ -180,7 +181,7 @@ export function MarkdownText({
 }): React.JSX.Element {
   const tokens = useMemo(() => lex(body), [body])
   return (
-    <div className={className}>
+    <div className={cn('flex flex-col gap-2', className)}>
       <Blocks tokens={tokens} />
     </div>
   )

@@ -18,14 +18,6 @@ import { loadVaultSettingsAtom } from './settings'
 import { activeDocAtom, activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 
 /**
- * The path today's daily note *would* have, whether or not it exists.
- *
- * A path rather than a lookup: the file tree marks the row that matches, so an
- * absent daily simply marks nothing. `todayAtom` is the client's own local date.
- */
-export const todayDailyPathAtom = atom((get) => dailyNoteFilename(get(todayAtom)))
-
-/**
  * Mint today's daily if it is not there yet, and say where it is. Lands on
  * nothing: that is the caller's business.
  *

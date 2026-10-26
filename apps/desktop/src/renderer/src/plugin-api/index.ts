@@ -7,58 +7,58 @@
  * importing a plugin (only `main.tsx` installs the list).
  */
 export type {
-  AgentRunFile,
+  /** @public */ AgentRunFile,
   ArcadeCastMember,
-  AgentRunsSource,
-  AgentService,
+  /** @public */ AgentRunsSource,
+  /** @public */ AgentService,
   AgentServiceSource,
-  AgentsMode,
+  /** @public */ AgentsMode,
   AgentsSessionItem,
   AgentsSessionsSource,
-  AgentsSlot,
+  /** @public */ AgentsSlot,
   AgentsStatus,
   AgentsTabLook,
   AgentSessionRow,
-  AskResult,
+  /** @public */ AskResult,
   AskTargets,
-  ClaimCreate,
-  ClaimDecoration,
-  ClaimMenuItem,
+  /** @public */ ClaimCreate,
+  /** @public */ ClaimDecoration,
+  /** @public */ ClaimMenuItem,
   ConversationContext,
   ConversationStart,
-  FolderClaim,
+  /** @public */ FolderClaim,
   PathClaim,
   PluginEventHandler,
   PluginStore,
   RailItem,
   RendererPlugin,
-  SettingsSection,
-  SettingsSectionHeading,
+  /** @public */ SettingsSection,
+  /** @public */ SettingsSectionHeading,
   SidebarApp,
   SlashCommand,
-  SlashInput,
+  /** @public */ SlashInput,
   SlashResult,
-  StatusItem,
+  /** @public */ StatusItem,
   CommandMenuEntry,
-  PaletteItem,
+  /** @public */ PaletteItem,
   Surface,
   SurfaceTabLook,
 } from './types'
 export type { Command } from '@/state/commands'
-export type { PluginInfo } from '@holi/shared'
+export type { /** @public */ PluginInfo } from '@holi/shared'
 
 export { trpc } from '@/lib/trpc'
-export { capClient, type CapClient, type UiCapability } from '@/lib/cap-client'
+export { capClient, /** @public */ type CapClient, type UiCapability } from '@/lib/cap-client'
 export { useHasCapability } from '@/state/capabilities'
 export { cn } from '@/lib/cn'
-export { vaultAssetUrl } from '@/lib/vault-asset'
+export { /** @public */ vaultAssetUrl } from '@/lib/vault-asset'
 export { useAck } from '@/hooks/use-ack'
 export { DRAWER_WIDTH } from '@/lib/drawer'
 export {
   activeRemoteAtom,
   historyEpochsAtom,
   snapshotAtom,
-  snapshotLoadedAtom,
+  /** @public */ snapshotLoadedAtom,
   syncStateAtom,
   vaultsAtom,
 } from '@/state/vaults'
@@ -67,14 +67,21 @@ export { openTabAtom } from '@/state/shell-tabs'
 // A sidebar row drags as the tab it opens (docs/features/tabs-panes.md, Drag targets).
 export { useTabDrag } from '@/features/shell/use-tab-drag'
 export { StatusBarItem } from '@/features/status-bar/status-bar'
-export { type TabDescriptor } from '@/state/tab-descriptor'
-export { arcadeCastAtom, gridArcadeAtom } from '@/state/grid-arcade'
-export { ArcadeTakeControl, HoliArcade } from '@/composites/arcade/holi-arcade'
+export { /** @public */ type TabDescriptor } from '@/state/tab-descriptor'
+export { /** @public */ arcadeCastAtom, /** @public */ gridArcadeAtom } from '@/state/grid-arcade'
+export {
+  /** @public */ ArcadeTakeControl,
+  /** @public */ HoliArcade,
+} from '@/composites/arcade/holi-arcade'
 export { sessionAtom } from '@/state/session'
 export { agentProviderSettingAtom, usePluginSetting } from '@/state/settings'
 export { activeModeAtom } from '@/state/color-scheme'
-export { appModeAtom, type AppMode } from '@/state/app-mode'
-export { agentsSelectionAtom, agentsSlotsAtom, type AgentsSelection } from '@/state/agents-slots'
+export { appModeAtom, /** @public */ type AppMode } from '@/state/app-mode'
+export {
+  agentsSelectionAtom,
+  agentsSlotsAtom,
+  /** @public */ type AgentsSelection,
+} from '@/state/agents-slots'
 export { openNextBeside } from '@/state/alt-open'
 export { openNoteTabAtom } from '@/state/panes'
 export { openSettingsSectionAtom } from '@/state/settings-section'
@@ -85,7 +92,7 @@ export {
   openPathAtom,
   openSurfaceAtom,
   surfaceTabIdsAtom,
-  tabForPathAtom,
+  /** @public */ tabForPathAtom,
 } from '@/state/surfaces'
 export {
   agentRunFilesAtom,
@@ -101,8 +108,13 @@ export {
 export { surfacesAtom } from '@/state/plugins'
 export { byRecency, recentsAtom } from '@/state/recents'
 export { openCommitInHistoryAtom } from '@/state/history'
-export { openDialogAtom, type ActiveDialog, type PluginDialog } from '@/state/dialogs'
-export { askPrompt } from '@/editor/ask-agent'
+export {
+  openDialogAtom,
+  /** @public */ type ActiveDialog,
+  /** @public */ type PluginDialog,
+} from '@/state/dialogs'
+export { askPrompt } from '@/lib/ask-agent'
 export { useGlobalPanelLayout } from '@/state/preferences'
 export { matchHotkey } from '@/lib/hotkey'
+export { DiffView } from '@/editor/diff-view'
 export { plainMarkdownExtensions } from '@/editor/extensions'

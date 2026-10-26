@@ -4,7 +4,7 @@
  * so the provider and the plugins adding to it never import each other.
  */
 import { atom } from 'jotai'
-import type { AgentsSlot, ConversationStart } from '@/plugin-api/types'
+import type { AgentsSlot, ConversationStart } from '@/state/plugin-types'
 import { runningPluginsAtom } from './plugins'
 
 /** What the Agents mode shows: a row of `owner`'s (a plugin id), by its own

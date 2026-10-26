@@ -31,7 +31,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 /** A title to its anchor id. Lowercase, non-alphanumerics collapsed to `-`. */
-export function headingId(title: string): string {
+function headingId(title: string): string {
   return title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -141,85 +141,4 @@ export function SettingsNote({
   className?: string
 }): React.JSX.Element {
   return <p className={cn('text-xs text-muted-foreground', className)}>{children}</p>
-}
-
-/**
- * A link inside a sentence. A `Button` rather than an `<a>` because each one
- * acts (opens a tab, reveals a folder, opens the browser) and has no href. The
- * size override lets it sit on the text baseline instead of as a chip.
- */
-export function SettingsLink({
-  onClick,
-  className,
-  children,
-}: {
-  onClick: () => void
-  className?: string
-  children: ReactNode
-}): React.JSX.Element {
-  return (
-    <Button
-      variant="link"
-      onClick={onClick}
-      className={cn(
-        'h-auto max-w-full justify-start truncate p-0 align-baseline text-xs font-normal',
-        className,
-      )}
-    >
-      {children}
-    </Button>
-  )
-}
-
-/**
- * A link that leaves the app: a GitHub page, a folder in Finder. Unlike
- * `SettingsLink` it carries a tooltip with the full URL or path.
- */
-export function ExternalLink({
-  url,
-  onOpen,
-  block,
-  children,
-}: {
-  url: string
-  onOpen: () => void
-  block?: boolean
-  children: ReactNode
-}): React.JSX.Element {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant="link"
-          onClick={onOpen}
-          className={cn(
-            'h-auto max-w-full justify-start truncate p-0 text-xs font-normal text-muted-foreground hover:text-brand',
-            block && 'block',
-          )}
-        >
-          {children}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{url}</TooltipContent>
-    </Tooltip>
-  )
-}
-
-/**
- * A key/value pair shown as a stacked micro-label over its value, so a long
- * value (a clone path) gets the full width before it truncates.
- */
-export function SettingsField({
-  label,
-  children,
-}: {
-  label: string
-  children: ReactNode
-}): React.JSX.Element {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      {children}
-    </div>
-  )
 }

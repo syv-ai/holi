@@ -37,7 +37,7 @@ export function planMoveInto(
 /** The folders among `sources` (anything that is not a doc) and where moving
  *  them into `destFolder` takes them, so main can carry what their documents
  *  leave behind. */
-export function foldersMovedInto(
+function foldersMovedInto(
   docPaths: string[],
   sources: string[],
   destFolder: string,

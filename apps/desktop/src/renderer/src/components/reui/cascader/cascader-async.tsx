@@ -825,7 +825,6 @@ export function useCascaderLoader<T = unknown>({
     if (!enabled || !hasLoader) return
     for (const key of levels) ensureLevel(key, "level")
     // `levels` enters through `levelsKey`; `store` re-runs after a load lands.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, hasLoader, levelsKey, store, ensureLevel])
 
   React.useEffect(() => {
@@ -863,7 +862,6 @@ export function useCascaderLoader<T = unknown>({
       runResolve(value)
     }
     // `values` is depended on through `valuesKey`.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, hasResolve, valuesKey, base, runResolve, loadKey])
 
   /* -------------------------------- the value ------------------------------ */

@@ -8,8 +8,8 @@
  */
 import { atom, type Getter } from 'jotai'
 import { homeTargetOf, VAULT_SETTING_DEFAULTS, type HomeTarget } from '@holi/shared'
-import type { Surface } from '@/plugin-api/types'
-import { folderDocumentAt, surfaceLabel } from '@/lib/folder-documents'
+import type { Surface } from '@/state/plugin-types'
+import { folderDocumentAt, surfaceLabel } from '@/state/folder-documents'
 import { resolveHome } from '../lib/home-target'
 import { ensureTodaysDailyAtom } from './daily'
 import { openPinned, openSurface, workspaceAtom } from './panes'
@@ -39,36 +39,6 @@ function documentSurfaceOf(get: Getter): (path: string) => string | null {
     return doc !== null && doc.ready ? doc.folder.surface : null
   }
 }
-
-/** The folder document Home shows in its tab, when Home names one the vault
- *  has finished: the Home tab renders that surface with it. */
-export const homeDocumentAtom = atom((get): { surface: string; id: string } | null => {
-  const target = get(homeTargetAtom)
-  if (target.kind !== 'file') return null
-  const surface = documentSurfaceOf(get)(target.path)
-  return surface === null ? null : { surface, id: target.path }
-})
-
-/** The folder documents Home may name, by name: every finished one (each
- *  vault app), from its surface's instances. `group` is the nav menu's word
- *  for that surface's instances ("Apps"), so the picker can section them. */
-export const homeDocumentsAtom = atom((get): { path: string; label: string; group: string }[] => {
-  const surfaces = get(surfacesAtom)
-  const rail = get(railAtom)
-  const kinds = new Set(get(folderClaimsAtom).map((c) => c.folder.surface))
-  return [...kinds]
-    .flatMap((kind) => {
-      const surface = surfaces.get(kind)
-      if (surface?.instances === undefined) return []
-      const group = rail.find((r) => r.surface === kind)?.label ?? surfaceLabel(surface)
-      return get(surface.instances).map((path) => ({
-        path,
-        label: surfaceLabel(surface, path),
-        group,
-      }))
-    })
-    .sort((a, b) => a.label.localeCompare(b.label) || a.path.localeCompare(b.path))
-})
 
 /** The surfaces that may be Home, by kind. */
 function homeableKinds(surfaces: ReadonlyMap<string, Surface>): ReadonlySet<string> {

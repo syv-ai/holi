@@ -208,29 +208,3 @@ export const runCommandAtom = atom(null, async (get, set, id: string): Promise<v
   if (command.hidden === undefined) set(touchRecentAtom, { kind: 'command', key: id })
   await command.run(get, set)
 })
-
-/**
- * One `keydown` listener over the table, installed once by Shell. It reads the
- * table through the store rather than closing over it, so a vault switch
- * changing the rows never re-subscribes it.
- */
-export function useCommandHotkeys(): void {
-  const store = useStore()
-  const run = useSetAtom(runCommandAtom)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      // A focused widget that took the key wins: CodeMirror's keymap marks a
-      // key it ran as handled, so ⌘B in the editor is bold, not the sidebar.
-      if (e.isComposing || e.defaultPrevented) return
-      const match = store
-        .get(commandsAtom)
-        .find((c) => c.boundBy === undefined && c.hotkey !== undefined && matchHotkey(e, c.hotkey))
-      if (match === undefined) return
-      if (match.when !== undefined && !match.when(store.get)) return
-      e.preventDefault()
-      void run(match.id)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [run, store])
-}

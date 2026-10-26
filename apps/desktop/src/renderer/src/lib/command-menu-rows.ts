@@ -40,7 +40,7 @@ export interface ActionRow {
   keywords?: readonly string[]
 }
 
-export const ROW_CAP = 50
+const ROW_CAP = 50
 
 /** How many paths the untyped list shows under Recent. */
 export const RECENT_CAP = 6

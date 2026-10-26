@@ -163,7 +163,7 @@ export function AppearancePage() {
 // ── Updates ──
 
 /** "just now", "12m ago", "3h ago", "yesterday", "4d ago". */
-export function checkedAgo(at: number, now: number = Date.now()): string {
+function checkedAgo(at: number, now: number = Date.now()): string {
   const minutes = Math.floor((now - at) / 60_000)
   if (minutes < 1) return "just now"
   if (minutes < 60) return `${minutes}m ago`
@@ -329,7 +329,7 @@ function ReleaseNotesRow({ version, title }: { version: string; title: string })
           ) : (
             <MarkdownText
               body={answer.notes.body}
-              className="text-muted-foreground flex max-h-96 flex-col gap-2 overflow-auto text-sm"
+              className="text-muted-foreground max-h-96 overflow-auto text-sm"
             />
           )}
           {url !== null ? (
@@ -486,7 +486,7 @@ export function AccountPage() {
       <SettingsFieldRow
         title={
           <span className="flex items-center gap-2">
-            <Avatar className="size-8">
+            <Avatar>
               <AvatarImage src={viewer?.avatarUrl} alt="" />
               <AvatarFallback className="text-xs">
                 {name.slice(0, 2).toUpperCase()}

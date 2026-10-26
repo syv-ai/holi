@@ -137,32 +137,31 @@ function Row({
           control.toggles.map((toggle) => {
             const owner = owners.get(toggle.key)
             return (
-              <Label
-                key={toggle.key}
-                className="flex cursor-pointer items-start gap-3 px-3 py-2.5 leading-normal font-normal"
-              >
-                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
-                    {toggle.label}
-                    {owner !== undefined && (
-                      <Badge variant="outline" radius="full">
-                        {owner}
-                      </Badge>
-                    )}
+              <Label key={toggle.key} className="cursor-pointer leading-normal font-normal">
+                <span className="flex w-full items-start gap-3 px-3 py-2.5">
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                      {toggle.label}
+                      {owner !== undefined && (
+                        <Badge variant="outline" radius="full">
+                          {owner}
+                        </Badge>
+                      )}
+                    </span>
+                    <span className="text-xs text-muted-foreground">{toggle.explanation}</span>
                   </span>
-                  <span className="text-xs text-muted-foreground">{toggle.explanation}</span>
+                  <Switch
+                    className="mt-0.5"
+                    checked={block[toggle.key] === true}
+                    // The whole block, not just the switch that moved: a patch
+                    // naming one transform must not read as an answer about the
+                    // others.
+                    onCheckedChange={(next) =>
+                      onChange(key, { ...block, [toggle.key]: next === true })
+                    }
+                    aria-label={`${toggle.label}. ${toggle.explanation}`}
+                  />
                 </span>
-                <Switch
-                  className="mt-0.5"
-                  checked={block[toggle.key] === true}
-                  // The whole block, not just the switch that moved: a patch
-                  // naming one transform must not read as an answer about the
-                  // others.
-                  onCheckedChange={(next) =>
-                    onChange(key, { ...block, [toggle.key]: next === true })
-                  }
-                  aria-label={`${toggle.label}. ${toggle.explanation}`}
-                />
               </Label>
             )
           })}

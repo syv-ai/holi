@@ -954,9 +954,7 @@ function ansi256(index: number): string {
   return `#${to(Math.floor(n / 36))}${to(Math.floor(n / 6) % 6)}${to(n % 6)}`
 }
 
-// eslint-disable-next-line no-control-regex
 const SGR_RE = /\x1b\[([0-9;]*)m/g
-// eslint-disable-next-line no-control-regex
 /* Everything except SGR (the trailing `m`), which the tokenizer consumes -
    this regex once matched SGR too and silently stripped every colour. */
 const OTHER_ESCAPES_RE =

@@ -112,9 +112,9 @@ export function ThresholdAct({
       {remote !== null && (
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="outline" className="obrit-repo-url" onClick={copy}>
+            <Button variant="outline" className="mt-6 font-normal" onClick={copy}>
               <span className="obrit-repo-url-text">github.com/{remote}</span>
-              <span className="obrit-repo-url-copy">{copied ? 'Copied' : 'Copy'}</span>
+              <span className="obrit-repo-url-copy ms-2.5">{copied ? 'Copied' : 'Copy'}</span>
             </Button>
           </TooltipTrigger>
           <TooltipContent>Copy the repo URL</TooltipContent>
@@ -132,7 +132,7 @@ export function ThresholdAct({
         <div className="obrit-hotkeys">
           {keys.map((k) => (
             <div key={k.id} className="obrit-hotkey">
-              <Kbd className="obrit-kbd">{k.hotkey}</Kbd>
+              <Kbd>{k.hotkey}</Kbd>
               <span className="obrit-hotkey-label">{k.label}</span>
             </div>
           ))}

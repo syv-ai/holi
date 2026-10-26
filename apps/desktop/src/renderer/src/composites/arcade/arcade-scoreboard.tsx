@@ -108,7 +108,7 @@ function Row({
       )}
     >
       <span className="text-muted-foreground w-4 text-end">{place}</span>
-      <Avatar className="size-5">
+      <Avatar size="sm">
         {row.avatarUrl ? <AvatarImage src={row.avatarUrl} alt="" /> : null}
         <AvatarFallback className="text-xs">
           {who.slice(0, 1).toUpperCase()}

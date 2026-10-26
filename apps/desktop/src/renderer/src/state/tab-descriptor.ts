@@ -48,7 +48,7 @@ export type TabDescriptor =
    *  (`settingsSectionAtom`), not the tab's. */
   | { kind: "settings" }
 
-export type TabKind = TabDescriptor["kind"]
+type TabKind = TabDescriptor["kind"]
 
 const SCHEME = "holi:"
 const APP_SUFFIX = ".app"
@@ -154,11 +154,6 @@ export function tabForPath(path: string): TabDescriptor {
   return path.endsWith(APP_SUFFIX)
     ? { kind: "vault-app", path }
     : { kind: "doc", path }
-}
-
-/** The key's kind, or null for one that does not parse. */
-export function tabKindOf(key: string | null): TabKind | null {
-  return key === null ? null : (parseTabKey(key)?.kind ?? null)
 }
 
 /** The vault path a tab shows, for a document or a vault app. */

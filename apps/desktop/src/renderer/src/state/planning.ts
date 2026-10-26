@@ -114,12 +114,6 @@ export function usePlanningFiles(): void {
   }, [remote, stamps.project, retry, setProject])
 }
 
-/** The project as last read, or the empty one. */
-export const projectAtom = atom<Project>((get) => {
-  const file = get(projectFileAtom)
-  return file.state === 'ready' ? file.value : EMPTY_PROJECT
-})
-
 /** Write the project file whole, then re-read the vault: the file on disk is
  *  the truth, as for a task. Autosave commits it like any other edit. */
 export const saveProjectAtom = atom(null, async (get, set, project: Project) => {

@@ -76,7 +76,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pixel-persona * {
+  .pixel-persona-root * {
     animation: none !important;
   }
 }

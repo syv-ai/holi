@@ -94,7 +94,7 @@ export function PixelPersona({
       height={box.h * k}
       overflow="visible"
       shapeRendering="crispEdges"
-      className={cn('pixel-persona shrink-0', muted && 'grayscale opacity-60', className)}
+      className={cn('pixel-persona-root shrink-0', muted && 'grayscale opacity-60', className)}
       data-persona-status={still ? 'still' : status}
     >
       <circle {...plate} fill={color} className="pixel-persona-plate" shapeRendering="auto" />

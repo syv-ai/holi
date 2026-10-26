@@ -59,6 +59,9 @@
 /* ── Progress ──────────────────────────────────────────────────────
  * Above the act it counts: the step count, then the stepper. */
 .onboarding-ritual .obrit-progress {
+  /* The step line runs from this step's dot to the next one's. */
+  --step-line-start: calc(50% + 0.875rem);
+  --step-line-width: calc(100% - 1.75rem);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -81,7 +84,7 @@
 /* A short window keeps its height for the act: the numbers stay, the names
  * under them go. */
 @media (max-height: 600px) {
-  .onboarding-ritual .obrit-step-title {
+  .onboarding-ritual .obrit-progress [data-slot='stepper-title'] {
     display: none;
   }
   .onboarding-ritual .obrit-progress {
@@ -211,8 +214,31 @@
  * long name never scrolls inside the field. `--name-len` is the character
  * count (at least 10), set by NamingAct; 0.62em is Geist's semibold average
  * advance with room to spare. */
-.onboarding-ritual .obrit-vault-input {
+.onboarding-ritual .obrit-name-stage > [data-slot='input'] {
   font-size: min(4.5rem, calc(100cqi / (var(--name-len) * 0.62)));
+}
+
+/* The vault name is the stage's one Input, set as large as the heading it
+ * stands in for, so it drops its box here: no border, fill, padding, ring or
+ * fixed height, display tracking and tight leading for one short line,
+ * centred. Plain CSS outranks the Input's utilities (they sit in a cascade
+ * layer), so a look only this screen has needs no variant of the Input. */
+.onboarding-ritual .obrit-name-stage > [data-slot='input'] {
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: center;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+.onboarding-ritual .obrit-name-stage > [data-slot='input']::placeholder {
+  color: color-mix(in srgb, var(--muted-foreground) 50%, transparent);
+}
+.onboarding-ritual .obrit-name-stage > [data-slot='input']:focus-visible {
+  box-shadow: none;
 }
 
 .onboarding-ritual .obrit-input-underline {
@@ -244,11 +270,6 @@
 }
 .onboarding-ritual .obrit-path-sep {
   color: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
-}
-.onboarding-ritual .obrit-owner {
-  font-family: var(--font-mono);
-  color: var(--foreground);
-  max-width: 16rem;
 }
 .onboarding-ritual .obrit-slug-out {
   overflow-wrap: anywhere;
@@ -320,11 +341,6 @@
   max-width: 26rem;
   margin: 0 auto;
 }
-.onboarding-ritual .obrit-repo-url {
-  margin-top: 1.5rem;
-  gap: 1rem;
-  font-weight: 400;
-}
 .onboarding-ritual .obrit-repo-url-text {
   font-family: var(--font-mono);
 }
@@ -352,25 +368,6 @@
   align-items: center;
   gap: 0.625rem;
 }
-.onboarding-ritual .obrit-kbd {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 2.25rem;
-  height: 1.75rem;
-  padding: 0 0.5rem;
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  font-weight: 500;
-  line-height: 1;
-  background: var(--card);
-  color: var(--foreground);
-  border: 1px solid var(--border);
-  border-radius: 0.375rem;
-  box-shadow:
-    0 1px 0 var(--border),
-    inset 0 1px 0 var(--background);
-}
 .onboarding-ritual .obrit-hotkey-label {
   font-size: 0.8125rem;
   color: var(--muted-foreground);
@@ -388,7 +385,7 @@
   gap: 0.75rem;
   min-width: 9rem;
 }
-.onboarding-ritual .obrit-foot-side.is-right {
+.onboarding-ritual .obrit-foot-side.obrit-foot-right {
   justify-content: flex-end;
 }
 

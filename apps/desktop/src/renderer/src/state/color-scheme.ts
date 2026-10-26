@@ -24,7 +24,7 @@ export const colorSchemeAtom = atom<ColorScheme>(VAULT_SETTING_DEFAULTS.colorSch
 
 /** What the OS currently reports. Kept in a store rather than read at use, so a
  *  change re-renders everything that depends on the resolved mode. */
-export const systemPrefersDarkAtom = atom(true)
+const systemPrefersDarkAtom = atom(true)
 
 /** The mode actually in force. */
 export const activeModeAtom = atom((get) =>

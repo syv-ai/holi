@@ -9,14 +9,13 @@ import { atom, useSetAtom, useStore } from 'jotai'
 import { useCallback, useEffect } from 'react'
 import type { AppLogEntry, AppLogLevel, AppLogSource } from '../../../main/logs/app-log'
 import { trpc } from '@/lib/trpc'
-import { createFilterQuery } from '@/components/reui/filters/filters-query'
-import type { FilterQuery } from '@/components/reui/filters/filters-types'
+import { emptyFilterQuery, type FilterQuery } from '@/lib/filter-query'
 import { clockTime, evaluateFilter } from './activity'
 
 export type { AppLogEntry, AppLogLevel, AppLogSource }
 
 /** As many as main keeps. */
-export const APP_LOG_CAP = 5000
+const APP_LOG_CAP = 5000
 
 export const APP_LOG_LEVEL_LABELS: Record<AppLogLevel, string> = {
   debug: 'Debug',
@@ -36,7 +35,7 @@ export const appLogEntriesAtom = atom<readonly AppLogEntry[]>([])
 export const appLogLoadAtom = atom<'loading' | 'ready' | 'error'>('loading')
 
 /** The Logs tab's Filters, over level, process, scope and message. */
-export const appLogQueryAtom = atom<FilterQuery>(createFilterQuery())
+export const appLogQueryAtom = atom<FilterQuery>(emptyFilterQuery())
 
 /** The Logs tab's search, over message, detail and scope. */
 export const appLogSearchAtom = atom('')

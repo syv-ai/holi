@@ -6,9 +6,9 @@
  * module knows only keys.
  */
 import { RECENTS_CAP, type RecentEntry } from '@holi/shared'
-import type { Tab } from '../state/panes'
+import type { Tab } from '@/lib/tab'
 
-export { RECENTS_CAP, type RecentEntry, type RecentKind } from '@holi/shared'
+export type { RecentEntry } from '@holi/shared'
 
 /** The recent a tab counts as. Every tab kind is remembered. */
 export function entryOfTab(tab: Tab): RecentEntry {
@@ -22,7 +22,7 @@ export function entryOfTab(tab: Tab): RecentEntry {
   }
 }
 
-export function sameEntry(a: RecentEntry, b: RecentEntry): boolean {
+function sameEntry(a: RecentEntry, b: RecentEntry): boolean {
   return a.kind === b.kind && a.key === b.key && a.id === b.id
 }
 

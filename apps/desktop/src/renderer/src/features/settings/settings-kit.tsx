@@ -6,18 +6,17 @@
  * Save. Nothing paints a fill, so the window's surface shows through. Every section is built from these and nothing else, so the
  * pages cannot drift apart.
  */
-import type { ReactNode } from "react"
+import type { CSSProperties, ReactNode } from 'react'
 
-import { cn } from "@/lib/cn"
-import { IconTile } from "@/components/reui/icon-tile"
+import { cn } from '@/lib/cn'
+import { IconTile } from '@/components/reui/icon-tile'
 import {
   Field,
   FieldContent,
   FieldDescription,
-  FieldGroup,
   FieldLabel,
   FieldTitle,
-} from "@/components/ui/field"
+} from '@/components/ui/field'
 import {
   Select,
   SelectContent,
@@ -25,9 +24,14 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { Skeleton } from "@/components/ui/skeleton"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+} from '@/components/ui/select'
+import { Skeleton } from '@/components/ui/skeleton'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+
+/** A row's two columns: what it is about, then its control. */
+const ROW_COLUMNS = {
+  '--settings-row-columns': 'minmax(0,clamp(15.5rem,43%,17.8rem)) minmax(0,1fr)',
+} as CSSProperties
 
 export function SettingsGroup({
   title,
@@ -49,18 +53,12 @@ export function SettingsGroup({
       <header className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-0.5">
           <h2 className="text-sm font-semibold">{title}</h2>
-          {description ? (
-            <p className="text-muted-foreground text-sm">{description}</p>
-          ) : null}
+          {description ? <p className="text-muted-foreground text-sm">{description}</p> : null}
         </div>
         {action ? <div className="shrink-0">{action}</div> : null}
       </header>
-      <FieldGroup className="divide-border gap-0 divide-y border-y">
-        {children}
-      </FieldGroup>
-      {footer ? (
-        <footer className="flex justify-end gap-2">{footer}</footer>
-      ) : null}
+      <div className="divide-border flex flex-col divide-y border-y">{children}</div>
+      {footer ? <footer className="flex justify-end gap-2">{footer}</footer> : null}
     </section>
   )
 }
@@ -72,7 +70,7 @@ export function SettingsFieldRow({
   children,
   titleAddon,
   mark,
-  align = "center",
+  align = 'center',
 }: {
   title: ReactNode
   description?: ReactNode
@@ -82,10 +80,10 @@ export function SettingsFieldRow({
   titleAddon?: ReactNode
   /** What the row is about, on the onboarding's tile (`pluginMark`). */
   mark?: ReactNode
-  align?: "center" | "start"
+  align?: 'center' | 'start'
 }) {
   const text = (
-    <FieldContent className="gap-0.5">
+    <FieldContent>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         {htmlFor ? (
           <FieldLabel htmlFor={htmlFor}>{title}</FieldLabel>
@@ -98,42 +96,34 @@ export function SettingsFieldRow({
     </FieldContent>
   )
   return (
-    <Field
-      className={cn(
-        "grid gap-y-2.5 py-3 md:grid-cols-[minmax(0,clamp(15.5rem,43%,17.8rem))_minmax(0,1fr)] md:gap-x-7",
-        align === "start" ? "md:items-start" : "md:items-center"
-      )}
-    >
-      {mark ? (
-        <div className="flex min-w-0 items-start gap-3">
-          <IconTile>{mark}</IconTile>
-          {text}
-        </div>
-      ) : (
-        text
-      )}
-      <FieldContent className="w-full min-w-0 md:items-end">
-        {children}
-      </FieldContent>
+    <Field>
+      <div
+        className={cn(
+          'grid gap-y-2.5 py-3 md:grid-cols-(--settings-row-columns) md:gap-x-7',
+          align === 'start' ? 'md:items-start' : 'md:items-center',
+        )}
+        style={ROW_COLUMNS}
+      >
+        {mark ? (
+          <div className="flex min-w-0 items-start gap-3">
+            <IconTile>{mark}</IconTile>
+            {text}
+          </div>
+        ) : (
+          text
+        )}
+        <FieldContent className="w-full min-w-0 md:items-end">{children}</FieldContent>
+      </div>
     </Field>
   )
 }
 
 /** A card's body while what it shows is still being read. */
-export function SettingsRowsLoading({
-  rows = 2,
-  label,
-}: {
-  rows?: number
-  label: string
-}) {
+export function SettingsRowsLoading({ rows = 2, label }: { rows?: number; label: string }) {
   return (
     <div role="status" aria-label={label} className="flex flex-col">
       {Array.from({ length: rows }, (_, index) => (
-        <div
-          key={index}
-          className="flex items-center justify-between gap-6 py-3"
-        >
+        <div key={index} className="flex items-center justify-between gap-6 py-3">
           <div className="flex flex-1 flex-col gap-1.5">
             <Skeleton className="h-4 w-32" />
             <Skeleton className="h-3 w-56" />
@@ -175,11 +165,7 @@ export function Segmented<TValue extends string>({
       aria-label={label}
     >
       {choices.map((choice) => (
-        <ToggleGroupItem
-          key={choice.value}
-          value={choice.value}
-          aria-label={choice.label}
-        >
+        <ToggleGroupItem key={choice.value} value={choice.value} aria-label={choice.label}>
           {choice.icon}
           {choice.label}
         </ToggleGroupItem>
@@ -203,10 +189,7 @@ export function OptionSelect<TValue extends string>({
   onChange: (value: TValue) => void
 }) {
   return (
-    <Select
-      value={value}
-      onValueChange={(next) => next && onChange(next as TValue)}
-    >
+    <Select value={value} onValueChange={(next) => next && onChange(next as TValue)}>
       <SelectTrigger id={id} aria-label={label} className="w-full md:w-48">
         <SelectValue />
       </SelectTrigger>

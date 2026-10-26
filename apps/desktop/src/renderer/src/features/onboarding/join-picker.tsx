@@ -124,122 +124,128 @@ export function JoinPicker({ submitting, error, onPick, onBack }: Props) {
         description="The vaults in your accounts and organisations that are not in Holi yet."
       />
       <Frame spacing="sm" className="w-full">
-        <FramePanel className="flex flex-col gap-2">
-          <InputGroup>
-            <InputGroupAddon align="inline-start">
-              <Search aria-hidden className="size-3.5 text-muted-foreground" />
-            </InputGroupAddon>
-            <InputGroupInput
-              autoFocus
-              aria-label="Search vaults"
-              placeholder="Search vaults…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <InputGroupAddon align="inline-end" className="gap-1">
-              {search.length > 0 && (
-                <IconButton label="Clear search" onClick={() => setSearch('')}>
-                  <X className="size-4" />
-                </IconButton>
-              )}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <InputGroupButton aria-label="Account" className="text-foreground">
-                    {account === ALL ? (
-                      'All accounts'
-                    ) : (
-                      <>
-                        <OwnerAvatar owner={ownerInfo(account)} size="sm" />
-                        <span className="max-w-32 truncate">{account}</span>
-                      </>
-                    )}
-                    <ChevronDown aria-hidden className="size-3.5 text-muted-foreground" />
-                  </InputGroupButton>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuLabel>Show vaults from</DropdownMenuLabel>
-                  <DropdownMenuRadioGroup value={account} onValueChange={setAccount}>
-                    <DropdownMenuRadioItem value={ALL}>All accounts</DropdownMenuRadioItem>
-                    {accounts.length > 0 && <DropdownMenuSeparator />}
-                    {accounts.map((login) => (
-                      <DropdownMenuRadioItem key={login} value={login}>
-                        <OwnerAvatar owner={ownerInfo(login)} />
-                        <span className="truncate">{login}</span>
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </InputGroupAddon>
-          </InputGroup>
+        <FramePanel>
+          <div className="flex flex-col gap-2">
+            <InputGroup>
+              <InputGroupAddon align="inline-start">
+                <Search aria-hidden className="size-3.5 text-muted-foreground" />
+              </InputGroupAddon>
+              <InputGroupInput
+                autoFocus
+                aria-label="Search vaults"
+                placeholder="Search vaults…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <InputGroupAddon align="inline-end">
+                <div className="flex items-center gap-1">
+                  {search.length > 0 && (
+                    <IconButton label="Clear search" onClick={() => setSearch('')}>
+                      <X className="size-4" />
+                    </IconButton>
+                  )}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <InputGroupButton aria-label="Account" className="text-foreground">
+                        {account === ALL ? (
+                          'All accounts'
+                        ) : (
+                          <>
+                            <OwnerAvatar owner={ownerInfo(account)} size="sm" />
+                            <span className="max-w-32 truncate">{account}</span>
+                          </>
+                        )}
+                        <ChevronDown aria-hidden className="size-3.5 text-muted-foreground" />
+                      </InputGroupButton>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-56">
+                      <DropdownMenuLabel>Show vaults from</DropdownMenuLabel>
+                      <DropdownMenuRadioGroup value={account} onValueChange={setAccount}>
+                        <DropdownMenuRadioItem value={ALL}>All accounts</DropdownMenuRadioItem>
+                        {accounts.length > 0 && <DropdownMenuSeparator />}
+                        {accounts.map((login) => (
+                          <DropdownMenuRadioItem key={login} value={login}>
+                            <OwnerAvatar owner={ownerInfo(login)} />
+                            <span className="truncate">{login}</span>
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </InputGroupAddon>
+            </InputGroup>
 
-          <div className="flex max-h-[46vh] flex-col overflow-y-auto text-start">
-            {repos === null && reposError === null && (
-              <div role="status" aria-label="Loading vaults" className="flex flex-col gap-1 pt-1">
-                {[0, 1, 2].map((i) => (
-                  <Skeleton key={i} className="h-9" />
-                ))}
-              </div>
-            )}
-            {reposError !== null && (
-              <div className="flex flex-col items-center gap-3 py-6">
-                <p role="alert" className="text-sm text-destructive">
-                  Couldn’t load your vaults.
-                </p>
-                <Button variant="outline" size="sm" onClick={load}>
-                  Retry
-                </Button>
-              </div>
-            )}
-            {repos !== null &&
-              groups.map(({ owner, repos: rows }) => (
-                <div
-                  key={owner.login}
-                  role="group"
-                  aria-label={owner.login}
-                  className="flex flex-col gap-px py-1.5"
-                >
-                  <div className="flex items-center gap-2 px-2.5 py-1.5 text-xs font-medium text-muted-foreground">
-                    <OwnerAvatar owner={owner} size="sm" />
-                    {owner.login}
-                  </div>
-                  {rows.map((repo) => (
-                    <Button
-                      key={repo.remote}
-                      variant="ghost"
-                      disabled={submitting || !repo.canPush}
-                      aria-label={repo.remote}
-                      className="w-full justify-start gap-2 font-normal text-foreground"
-                      onClick={() => onPick(repo.remote)}
-                    >
-                      {/* Set in by the avatar's width, so names align under the account. */}
-                      <span className="min-w-0 flex-1 truncate ps-6 text-start">
-                        {repo.remote.split('/')[1]}
-                      </span>
-                      {repo.visibility !== 'private' && (
-                        <Badge variant="outline" radius="full">
-                          {repo.visibility === 'public' ? 'Public' : 'Internal'}
-                        </Badge>
-                      )}
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {!repo.canPush ? 'Read only' : repo.pushedAt && relativeTime(repo.pushedAt)}
-                      </span>
-                    </Button>
+            <div className="flex max-h-96 flex-col overflow-y-auto text-start">
+              {repos === null && reposError === null && (
+                <div role="status" aria-label="Loading vaults" className="flex flex-col gap-1 pt-1">
+                  {[0, 1, 2].map((i) => (
+                    <Skeleton key={i} className="h-9" />
                   ))}
                 </div>
-              ))}
-            {repos !== null && groups.length === 0 && (
-              <JoinEmpty
-                filtered={query !== '' || account !== ALL}
-                anyVault={vaults.length > 0}
-                onClear={() => {
-                  setSearch('')
-                  setAccount(ALL)
-                }}
-              />
-            )}
+              )}
+              {reposError !== null && (
+                <div className="flex flex-col items-center gap-3 py-6">
+                  <p role="alert" className="text-sm text-destructive">
+                    Couldn’t load your vaults.
+                  </p>
+                  <Button variant="outline" size="sm" onClick={load}>
+                    Retry
+                  </Button>
+                </div>
+              )}
+              {repos !== null &&
+                groups.map(({ owner, repos: rows }) => (
+                  <div
+                    key={owner.login}
+                    role="group"
+                    aria-label={owner.login}
+                    className="flex flex-col gap-px py-1.5"
+                  >
+                    <div className="flex items-center gap-2 px-2.5 py-1.5 text-xs font-medium text-muted-foreground">
+                      <OwnerAvatar owner={owner} size="sm" />
+                      {owner.login}
+                    </div>
+                    {rows.map((repo) => (
+                      <Button
+                        key={repo.remote}
+                        variant="ghost"
+                        disabled={submitting || !repo.canPush}
+                        aria-label={repo.remote}
+                        className="w-full justify-start font-normal text-foreground"
+                        onClick={() => onPick(repo.remote)}
+                      >
+                        {/* Set in by the avatar's width, so names align under the account. */}
+                        <span className="min-w-0 flex-1 truncate ps-6 text-start">
+                          {repo.remote.split('/')[1]}
+                        </span>
+                        {repo.visibility !== 'private' && (
+                          <Badge variant="outline" radius="full">
+                            {repo.visibility === 'public' ? 'Public' : 'Internal'}
+                          </Badge>
+                        )}
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {!repo.canPush
+                            ? 'Read only'
+                            : repo.pushedAt && relativeTime(repo.pushedAt)}
+                        </span>
+                      </Button>
+                    ))}
+                  </div>
+                ))}
+              {repos !== null && groups.length === 0 && (
+                <JoinEmpty
+                  filtered={query !== '' || account !== ALL}
+                  anyVault={vaults.length > 0}
+                  onClear={() => {
+                    setSearch('')
+                    setAccount(ALL)
+                  }}
+                />
+              )}
+            </div>
           </div>
         </FramePanel>
       </Frame>

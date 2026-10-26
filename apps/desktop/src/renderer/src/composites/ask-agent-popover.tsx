@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AskResult, AskTargets } from '@/editor/ask-agent'
+import type { AskResult, AskTargets } from '@/lib/ask-agent'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
-import { Textarea } from '@/components/ui/textarea'
+import { InputGroup, InputGroupTextarea } from '@/components/ui/input-group'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 
 /** What a new session is called in the picker, as in the note popover. */
@@ -12,7 +12,7 @@ const NEW_SESSION = 'New session'
  * trigger it owns: the PDF viewer's top-bar button lives in the viewer's shadow
  * root, where Radix cannot reach, so the caller hands over that button's box.
  *
- * The same shape as the note popover (`editor/askAgent.ts`): the sessions to
+ * The same shape as the note popover: the sessions to
  * send to (live ones in tab order, then New session), one field, ⌘↵ to send,
  * and a refusal kept under the field with the text still in it. The caller
  * builds the message; `instruction` is what was typed, possibly empty.
@@ -80,7 +80,7 @@ export function AskAgentPopover({
       <PopoverContent
         align="end"
         aria-label={label}
-        className="w-[26rem] max-w-[60vw] p-0"
+        className="w-104"
         onOpenAutoFocus={(e) => {
           e.preventDefault()
           ;(e.currentTarget as HTMLElement).querySelector('textarea')?.focus()
@@ -93,7 +93,7 @@ export function AskAgentPopover({
           aria-label="Which session to ask"
           value={target}
           onValueChange={(next) => next !== '' && setTarget(next)}
-          className="w-full overflow-x-auto px-2 pt-1.5 [scrollbar-width:none]"
+          className="w-full overflow-x-auto"
         >
           {choices.map((choice) => (
             <ToggleGroupItem
@@ -107,23 +107,25 @@ export function AskAgentPopover({
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
-        <Textarea
-          rows={1}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Ask the agent, ⌘↵ to send"
-          aria-label="Instructions for the agent, Command Enter to send"
-          className="max-h-[40vh] min-h-0 resize-none rounded-none border-none bg-transparent px-3 py-2 shadow-none dark:bg-transparent"
-          onKeyDown={(e) => {
-            // ⌘/Ctrl + Enter, so a plain Enter is still a newline.
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault()
-              void send()
-            }
-          }}
-        />
+        <InputGroup>
+          <InputGroupTextarea
+            rows={1}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Ask the agent, ⌘↵ to send"
+            aria-label="Instructions for the agent, Command Enter to send"
+            className="max-h-40 min-h-0"
+            onKeyDown={(e) => {
+              // ⌘/Ctrl + Enter, so a plain Enter is still a newline.
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault()
+                void send()
+              }
+            }}
+          />
+        </InputGroup>
         {notice !== '' && (
-          <p role="alert" className="px-3 pb-2 text-xs text-destructive">
+          <p role="alert" className="text-xs text-destructive">
             {notice}
           </p>
         )}

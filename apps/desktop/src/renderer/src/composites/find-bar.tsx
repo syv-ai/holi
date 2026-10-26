@@ -151,7 +151,7 @@ export function FindBar({
   const none = count.total === 0
 
   return (
-    <Card size="sm" className="p-1" onKeyDown={handleKeyDown}>
+    <Card size="sm" onKeyDown={handleKeyDown}>
       <div role="search" aria-label={label} className="flex gap-1">
         <IconButton
           label={replacing ? "Hide replace" : "Show replace"}

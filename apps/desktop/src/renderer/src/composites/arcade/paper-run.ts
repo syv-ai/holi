@@ -66,7 +66,7 @@ const TASK_SHARE = 0.35
 /** What an idle Holi carries before it heads for the outbox. */
 const IDLE_CAPACITY = [3, 4, 3, 5, 4] as const
 /** The player's stack can grow until the trail would wrap the board. */
-export const PLAYER_CAPACITY = 12
+const PLAYER_CAPACITY = 12
 
 /** The cast on the board at once; a vault with more brings its first few. */
 export const MAX_CAST = 5

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { isAppBundlePath } from '@holi/shared'
-import { folderClaims, folderDocumentAt } from '@/lib/folder-documents'
+import { folderClaims, folderDocumentAt } from '@/state/folder-documents'
 import { buildTreeData } from '@/lib/tree-data'
 
 import {

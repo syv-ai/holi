@@ -776,7 +776,6 @@ function Cascader<T>({
     () => buildCascaderIndex(items, getParent),
     // `getParent` is stable by design: an inline accessor must not rebuild a
     // 50k-node index.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [items]
   )
 
@@ -2224,7 +2223,6 @@ function Cascader<T>({
   // effect. See `virtualSyncs`.
   const comboboxItems = React.useMemo(
     () => (virtualized ? renderedItems.slice() : renderedItems),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [renderedItems, virtualized, virtualSyncs]
   )
 

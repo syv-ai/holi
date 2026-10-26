@@ -109,7 +109,7 @@ function byKey<K>(
 
 const text = (a: string, b: string) => a.localeCompare(b)
 
-export function sortTasks(tasks: Task[], sort: PlanningSort): Task[] {
+function sortTasks(tasks: Task[], sort: PlanningSort): Task[] {
   switch (sort) {
     case 'manual':
       return sortCell(tasks)

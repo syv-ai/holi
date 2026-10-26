@@ -22,7 +22,7 @@ export const OPTION_CLASS = 'cm-holi-option'
 
 /** Our sources name their glyph in `type`, which CodeMirror accepts as any
  *  string. The prefix is what tells our rows from a library's. */
-export const HOLI_TYPE_PREFIX = 'holi-'
+const HOLI_TYPE_PREFIX = 'holi-'
 
 /** A `Completion` with the two extra fields our renderers read. CodeMirror
  *  ignores both and carries them through untouched. */

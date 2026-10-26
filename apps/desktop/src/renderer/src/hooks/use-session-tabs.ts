@@ -13,14 +13,14 @@ import {
 
 /** What a selection opens: its session's tab, or for none (or a slot's
  *  `new`, chat's composer) the Agents home. */
-export function keyForSelection(selection: AgentsSelection | null): string {
+function keyForSelection(selection: AgentsSelection | null): string {
   return selection === null || selection.id === "new"
     ? AGENTS_HOME_KEY
     : sessionKey(selection)
 }
 
 /** What the focused tab selects: its session, or nothing. */
-export function selectionForKey(key: string | null): AgentsSelection | null {
+function selectionForKey(key: string | null): AgentsSelection | null {
   const tab = key === null ? null : parseTabKey(key)
   return tab?.kind === "session" ? { owner: tab.owner, id: tab.id } : null
 }

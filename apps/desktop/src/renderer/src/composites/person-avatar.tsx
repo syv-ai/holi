@@ -5,6 +5,7 @@ import {
   AvatarGroupCount,
   AvatarImage,
 } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { avatarUrl, initials } from '@/lib/planning'
 
@@ -57,11 +58,15 @@ export function PeopleStack({
       {hidden.length > 0 ? (
         <AvatarGroupCount>
           <Popover>
-            <PopoverTrigger
-              aria-label={`${hidden.length} more: ${hidden.join(', ')}`}
-              className="flex size-full items-center justify-center rounded-full tabular-nums outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
-            >
-              +{hidden.length}
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={`${hidden.length} more: ${hidden.join(', ')}`}
+                className="h-full w-full tabular-nums"
+              >
+                +{hidden.length}
+              </Button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-auto">
               <div className="flex flex-col gap-2">

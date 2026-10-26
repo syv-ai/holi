@@ -12,7 +12,7 @@
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
-import { cn, useAck } from '@/plugin-api'
+import { cn, DiffView, useAck } from '@/plugin-api'
 import {
   reviewTurnAtom,
   loadTurnDiffAtom,
@@ -24,7 +24,6 @@ import {
   turnReviewOpenAtom,
   type TurnFile,
 } from './state/turns'
-import { DiffView } from '@/composites/diff-view'
 import { DrawerShell, DrawerTitle } from '@/composites/drawer-shell'
 import { EmptyState, LoadingRows } from '@/composites/empty-state'
 import { Button } from '@/components/ui/button'

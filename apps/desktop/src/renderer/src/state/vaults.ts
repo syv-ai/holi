@@ -9,7 +9,7 @@ import {
 } from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
 import type { HeldBackFile } from '../../../main/vault/large-files'
-import type { RendererPlugin } from '@/plugin-api/types'
+import type { RendererPlugin } from '@/state/plugin-types'
 import { flushAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
 import { closeTabsForPaths, retargetTab, retargetTabs, workspaceAtom } from './panes'
@@ -77,7 +77,7 @@ export const syncStateAtom = atom<SyncState>({ kind: 'up-to-date' })
 
 /** Files the large-file gate held out of the last commit: the callout's source.
  *  Pushed from main every commit tick (empty clears it, incl. on a vault switch). */
-export const heldBackAtom = atom<HeldBackFile[]>([])
+const heldBackAtom = atom<HeldBackFile[]>([])
 
 /**
  * How often each file's history has moved since launch: `all` counts merged
@@ -278,15 +278,6 @@ export const retrySyncAtom = atom(null, async () => {
 })
 
 /**
- * "Abandon": takes the merge back out of the tree. The conflict is still a
- * conflict, so the banner comes back. The agent's session stays where it is, and
- * whatever it wrote into the working tree goes with the merge.
- */
-export const abandonReconcileAtom = atom(null, async () => {
-  await trpc.sync.abandon.mutate()
-})
-
-/**
  * Switch the vault to a branch, or create one at HEAD (the status bar's branch
  * picker, `docs/features/status-bar.md`).
  *
@@ -422,30 +413,6 @@ export const importFilesAtom = atom(
 )
 
 /**
- * Vault content out to a folder on disk.
- *
- * Returns what LANDED as well as what failed: a move deletes only the targets
- * whose copy actually succeeded. No snapshot reload, since nothing in the vault
- * changed; a move reloads when its delete runs.
- */
-export const exportFilesAtom = atom(
-  null,
-  async (
-    get,
-    _set,
-    paths: string[],
-    dest: string,
-  ): Promise<{
-    landed: { from: string; to: string }[]
-    failed: { name: string; reason: string }[]
-  }> => {
-    const remote = get(activeRemoteAtom)
-    if (!remote || paths.length === 0) return { landed: [], failed: [] }
-    return trpc.notes.exportFiles.mutate({ remote, paths, dest })
-  },
-)
-
-/**
  * Batch delete (file, folder, multi-selection). Clears the editor if the open
  * note is among them and closes every deleted tab. One commit-pair, like the
  * others. `folders` are what a folder delete was aimed at, pruned once their
@@ -464,16 +431,5 @@ export const deleteManyAtom = atom(
     set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), paths, get(folderSurfacesAtom)))
     await set(loadSnapshotAtom)
     await trpc.sync.commitNow.mutate()
-  },
-)
-
-/** What links into a set: the folder / multi-selection delete preview. Empty,
- *  and no call, for an empty set. */
-export const backrefsForMany = atom(
-  null,
-  async (get, _set, paths: string[]): Promise<{ path: string; count: number }[]> => {
-    const remote = get(activeRemoteAtom)
-    if (!remote || paths.length === 0) return []
-    return trpc.notes.backrefsMany.query({ remote, paths })
   },
 )

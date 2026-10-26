@@ -82,7 +82,7 @@ const AGENTS: readonly {
 
 /** Which agent a new session starts in, on this machine: a row per agent,
  *  the default marked and the others a click from being it. */
-export function AgentsCard() {
+function AgentsCard() {
   const { resolved, write } = useVaultSettings()
   const current =
     resolved?.agentProvider ?? VAULT_SETTING_DEFAULTS.agentProvider
@@ -353,7 +353,7 @@ export function MembersPage() {
             <EmptyState
               title="Only you, so far"
               description="Invite people on GitHub and they can clone this vault in Holi."
-              className="h-auto py-6"
+              className="h-auto"
             >
               {manage}
             </EmptyState>
@@ -363,7 +363,7 @@ export function MembersPage() {
                 key={person.accountId}
                 title={
                   <span className="flex items-center gap-2">
-                    <Avatar className="size-6">
+                    <Avatar size="sm">
                       <AvatarImage src={person.avatarUrl} alt="" />
                       <AvatarFallback className="text-xs">
                         {person.login.slice(0, 2).toUpperCase()}

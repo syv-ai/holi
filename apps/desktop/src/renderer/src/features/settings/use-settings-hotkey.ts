@@ -12,7 +12,7 @@ import { useEffect } from "react"
 import { matchHotkey } from "@/lib/hotkey"
 import { openSettingsAtom } from "@/state/settings-section"
 
-export const SETTINGS_HOTKEY = "⌘,"
+const SETTINGS_HOTKEY = "⌘,"
 
 export function useSettingsHotkey(): void {
   const open = useSetAtom(openSettingsAtom)

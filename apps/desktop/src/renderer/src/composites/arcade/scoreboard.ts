@@ -10,9 +10,9 @@
  */
 import { ARCADE_MODES, type ArcadeMode } from "./grid-arcade"
 
-export const SCORES_DIR = ".holi/arcade/scores/"
+const SCORES_DIR = ".holi/arcade/scores/"
 
-export interface BestRun {
+interface BestRun {
   score: number
   /** When it was set, as an ISO timestamp. */
   at: string

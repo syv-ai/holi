@@ -18,7 +18,7 @@ import {
   vaultSettingDescriptors,
   VAULT_SETTING_DEFAULTS,
 } from '@holi/shared'
-import { folderClaims, surfaceLabel, type FolderDocumentClaim } from '@/lib/folder-documents'
+import { folderClaims, surfaceLabel, type FolderDocumentClaim } from '@/state/folder-documents'
 import type {
   AgentServiceSource,
   CommandMenuEntry,
@@ -30,7 +30,7 @@ import type {
   SlashCommand,
   Surface,
   SurfaceTabLook,
-} from '@/plugin-api/types'
+} from '@/state/plugin-types'
 import type { Command } from './commands'
 import type { FolderSurface } from './panes'
 import { vaultSettingsAtom } from './settings'

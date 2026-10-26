@@ -206,4 +206,4 @@ change the rule as that page describes (fixture first, then config, then registr
 3. Register the view on the plugin's `RendererPlugin` in `index.ts(x)`; the list is
    `src/plugins/renderer.ts`.
 4. A view in the sidebar, a tab, a settings section or a slash command is a slot of
-   `RendererPlugin` (see `plugin-api/types.ts`), not a core import.
+   `RendererPlugin` (see `plugin-api/types.ts`, defined in `state/plugin-types.ts` so core state can read it), not a core import.

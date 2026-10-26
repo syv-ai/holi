@@ -36,7 +36,7 @@ let probe: CanvasRenderingContext2D | null | undefined
  * oklch the tokens are written in, so the browser paints one pixel of it and
  * reads it back. Null when there is no canvas (tests) or no colour.
  */
-export function toHex(color: string): string | null {
+function toHex(color: string): string | null {
   if (color.trim() === '') return null
   if (probe === undefined) {
     const canvas = document.createElement('canvas')

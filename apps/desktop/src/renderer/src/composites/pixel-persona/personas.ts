@@ -15,12 +15,12 @@
  */
 import { holiMascotOf, type HoliMascot } from '@holi/shared'
 
-export type Hair = 'short' | 'quiff' | 'curly' | 'shaved' | 'fringe' | 'sidepart' | 'swept'
-export type Top = 'tee' | 'shirt' | 'blazer' | 'jacket' | 'sweater'
-export type Face = 'stubble' | 'beard' | 'goatee'
+type Hair = 'short' | 'quiff' | 'curly' | 'shaved' | 'fringe' | 'sidepart' | 'swept'
+type Top = 'tee' | 'shirt' | 'blazer' | 'jacket' | 'sweater'
+type Face = 'stubble' | 'beard' | 'goatee'
 
 /** The superhero a character becomes in the dark. */
-export type Hero = {
+type Hero = {
   suit: string
   cape: string
   mask: string
@@ -153,8 +153,8 @@ export function personaId(name: string): HoliMascot {
   return holiMascotOf(name) ?? 'strategist'
 }
 
-export type Pose = 'rest' | 'waveA' | 'waveB'
-export type Mouth = 'smile' | 'closed' | 'open'
+type Pose = 'rest' | 'waveA' | 'waveB'
+type Mouth = 'smile' | 'closed' | 'open'
 export type Frame = { pose: Pose; mouth: Mouth; blink: boolean }
 
 /*

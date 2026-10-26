@@ -5,8 +5,8 @@
  */
 import { atom, useAtomValue, useStore } from 'jotai'
 import { useMemo } from 'react'
-import type { AskAgentSeam } from '@/editor/ask-agent'
-import type { AgentRunFile, AgentService, AgentSessionRow, AskResult } from '@/plugin-api/types'
+import type { AskAgentSeam } from '@/lib/ask-agent'
+import type { AgentRunFile, AgentService, AgentSessionRow, AskResult } from '@/state/plugin-types'
 import { agentSourceAtom } from './plugins'
 
 export function useAgentService(): AgentService | null {
@@ -78,29 +78,6 @@ export const agentSessionRowsAtom = atom((get): readonly AgentSessionRow[] => {
   return source === null ? [] : get(source.sessions)
 })
 
-/**
- * The editors' "Ask agent" seam over the service, or null with no agent, in
- * which case an editor leaves the button out. The targets are read when the
- * popover opens, since sessions come and go.
- */
-export function useAskAgentSeam(): AskAgentSeam | null {
-  const service = useAgentService()
-  const store = useStore()
-  return useMemo(
-    () =>
-      service === null
-        ? null
-        : {
-            targets: () => {
-              const targets = store.get(service.targets)
-              return { sessions: [...targets.sessions], initial: targets.default }
-            },
-            onAsk: (prompt, target) => service.ask({ text: prompt, target }),
-          },
-    [service, store],
-  )
-}
-
 /** For an editor built once: the seam it was built with may outlive the
  *  agent, and then an ask says so. */
-export const NO_AGENT = { ok: false, message: 'No agent is running in this vault.' } as const
+const NO_AGENT = { ok: false, message: 'No agent is running in this vault.' } as const

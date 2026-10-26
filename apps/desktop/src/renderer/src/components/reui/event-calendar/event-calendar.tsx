@@ -944,7 +944,6 @@ function useEventCalendarState<TData = unknown>(
   useEffect(() => {
     store.emitRangeIfChanged()
     // mount-only: onRangeChange fires once for the initial range
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   return store.instance
 }

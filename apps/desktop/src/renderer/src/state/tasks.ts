@@ -80,37 +80,19 @@ export function countOpenTasksLinking(tasks: Iterable<Task>, notePath: string): 
   return n
 }
 
-/** The badge on the sidebar "Today" entry: how many open tasks link to today's note
- * (`docs/features/daily-notes.md`). Zero → the Shell renders no badge. */
-export const todayLinkCountAtom = atom((get) =>
-  countOpenTasksLinking(get(snapshotTasksAtom).items, dailyNoteFilename(get(todayAtom))),
-)
-
 /** Quick add (⌘T) is open: one dialog near the top, wherever it was asked
  *  for (`QuickAddHost`). */
-export const quickAddAtom = atom(false)
+const quickAddAtom = atom(false)
 
 export const openQuickAddAtom = atom(null, (_get, set) => set(quickAddAtom, true))
 
 /** The folder quick add opens in, asked for by a board lane's +. Taken once:
  *  quick add fills its Lane from it and clears it. */
-export const quickAddFolderAtom = atom<string | null>(null)
-
-/** Quick add, opened in `folder`. */
-export const openQuickAddInAtom = atom(null, (_get, set, folder: string) => {
-  set(quickAddFolderAtom, folder)
-  set(openQuickAddAtom)
-})
+const quickAddFolderAtom = atom<string | null>(null)
 
 /** The column quick add creates in, asked for by a board column's +. Taken
  *  once, like the folder; Todo otherwise. */
-export const quickAddStatusAtom = atom<TaskStatus>('todo')
-
-/** Quick add, creating in the `status` column. */
-export const openQuickAddInColumnAtom = atom(null, (_get, set, status: TaskStatus) => {
-  set(quickAddStatusAtom, status)
-  set(openQuickAddAtom)
-})
+const quickAddStatusAtom = atom<TaskStatus>('todo')
 
 // ------------------------------------------------------------------ reducers
 // Pure, exported, and tested directly.
@@ -143,15 +125,13 @@ export type Filter = {
   hideDone: boolean
 }
 
-export const EMPTY_FILTER: Filter = {
+const EMPTY_FILTER: Filter = {
   search: '',
   tags: [],
   folders: [],
   people: [],
   hideDone: false,
 }
-export const filterAtom = atom<Filter>(EMPTY_FILTER)
-
 /** The filter with a person chosen, or unchosen when they already are: a
  *  card's `@Ada` and the panel's `ada` are one switch, as they are one person. */
 export function togglePerson(filter: Filter, login: string): Filter {
@@ -197,7 +177,7 @@ export function availableLabels(tasks: Iterable<Task>, now: string): string[] {
 }
 
 /** The lane a task sits in, in the board's vocabulary. */
-export function laneOf(task: Task): string {
+function laneOf(task: Task): string {
   return taskArea(task)
 }
 
@@ -265,7 +245,7 @@ type TaskVerbs = {
   'tasks.delete': UiCapability<{ path: string }, unknown>
 }
 
-export const tasksCap = capClient<TaskVerbs>('tasks')
+const tasksCap = capClient<TaskVerbs>('tasks')
 
 export const createTaskAtom = atom(
   null,
@@ -367,26 +347,6 @@ export const moveTaskAtom = atom(
     return moved.path
   },
 )
-
-/** Deletes several tasks in one pass and one re-read: emptying Done. Git still
- *  has them. */
-export const deleteTasksAtom = atom(null, async (get, set, paths: string[]) => {
-  const remote = get(activeRemoteAtom)
-  if (!remote || paths.length === 0) return
-  await Promise.all(paths.map((path) => tasksCap.delete(remote, { path })))
-  set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), paths))
-  await set(loadSnapshotAtom)
-})
-
-export const deleteTaskAtom = atom(null, async (get, set, path: string) => {
-  const remote = get(activeRemoteAtom)
-  if (!remote) return
-  await tasksCap.delete(remote, { path })
-  // The file goes, then its tab: an open one would leave a tab pointing at bytes
-  // that are gone, and a live buffer that would write the file back.
-  set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), [path]))
-  await set(loadSnapshotAtom)
-})
 
 /**
  * Sharing is a rename (docs/features/tasks.md): a private task is

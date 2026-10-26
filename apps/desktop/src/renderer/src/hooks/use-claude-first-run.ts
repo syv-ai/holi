@@ -9,9 +9,9 @@ import { activeRemoteAtom, snapshotLoadedAtom } from "@/state/vaults"
 /** A shell tab onto a registered surface: `holi:surface:<kind>` or
  *  `holi:surface:<kind>:<id>`, under the tab keys' own scheme
  *  (`state/tab-descriptor.ts`), so it never reads as a vault path. */
-export const SURFACE_TAB_PREFIX = "holi:surface:"
+const SURFACE_TAB_PREFIX = "holi:surface:"
 
-export function surfaceTabId(kind: string, id?: string): string {
+function surfaceTabId(kind: string, id?: string): string {
   return `${SURFACE_TAB_PREFIX}${kind}${id === undefined ? "" : `:${id}`}`
 }
 

@@ -1,6 +1,6 @@
 /**
  * The empty view's arcade: a dot grid that melts into the pane behind its
- * content, where the vault's Holis play Paper run (`paperRun.ts`) by
+ * content, where the vault's Holis play Paper run (`paper-run.ts`) by
  * themselves; and, once someone takes control (`ArcadeTakeControl`), the
  * same board over the whole pane at full brightness, with a thin HUD along
  * its top.
@@ -72,11 +72,11 @@ const IDLE_BUBBLE_OPACITY = 0.7
  * sidebar's rows do, so the rest of the pane is the content's alone; and it
  * is softened at the sides.
  */
-const IDLE_MASK: CSSProperties = {
-  maskImage:
+const IDLE_STYLE = {
+  "--idle-mask":
     "linear-gradient(to bottom, #000 calc(40% - 6rem), transparent 40%), linear-gradient(to right, transparent, #000 10%, #000 90%, transparent)",
-  maskComposite: "intersect",
-}
+  "--idle-blur": "0.6px",
+} as CSSProperties
 /** Under the logo (the keep-out): a whisper of the board. */
 const KEEP_DIM = 0.12
 /** Cells over which the keep-out's dimming eases back to the open board. */
@@ -723,24 +723,30 @@ export function HoliArcade({
       <div
         aria-hidden="true"
         className={cn(
-          "bg-background absolute inset-0 transition-opacity duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]",
+          "bg-background absolute inset-0 motion-respond",
           playing ? "opacity-100" : "opacity-0"
         )}
       />
-      <div className="absolute inset-0" style={playing ? undefined : IDLE_MASK}>
+      <div
+        className={cn(
+          "absolute inset-0",
+          !playing && "mask-(--idle-mask) mask-intersect"
+        )}
+        style={IDLE_STYLE}
+      >
         <canvas
           ref={canvasRef}
           aria-hidden="true"
           className={cn(
             "absolute inset-0 size-full",
-            !playing && "blur-[0.6px]"
+            !playing && "blur-(--idle-blur)"
           )}
         />
       </div>
 
       {playing ? (
         // MonoCode's thin row: the score, the speed, the way out.
-        <div className="animate-in fade-in-0 absolute inset-x-0 top-0 z-10 grid grid-cols-3 items-center gap-4 px-4 py-3 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]">
+        <div className="motion-in-fade absolute inset-x-0 top-0 z-10 grid grid-cols-3 items-center gap-4 px-4 py-3">
           <p className="text-muted-foreground flex gap-3 text-xs tabular-nums">
             <span>
               Score <span className="text-foreground font-medium">{score}</span>
@@ -786,7 +792,7 @@ export function HoliArcade({
           mode={mode}
           modeLabel={MODE_LABEL[mode]}
           score={score}
-          className="animate-in fade-in-0 absolute top-14 right-4 z-10 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
+          className="motion-in-fade absolute top-14 right-4 z-10"
         />
       ) : null}
     </div>
@@ -803,25 +809,29 @@ export const ArcadeTakeControl = forwardRef<
   { show: boolean; onClick: () => void; className?: string }
 >(function ArcadeTakeControl({ show, onClick, className }, ref) {
   return (
-    <Button
-      ref={ref}
-      variant="outline"
-      size="sm"
+    <div
       data-show={show}
-      onClick={onClick}
       className={cn(
-        "group/take font-mono transition-opacity duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]",
-        "pointer-events-none opacity-0 focus-visible:pointer-events-auto focus-visible:opacity-100 data-[show=true]:pointer-events-auto data-[show=true]:opacity-100",
+        "motion-respond pointer-events-none w-fit opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 data-[show=true]:pointer-events-auto data-[show=true]:opacity-100",
         className
       )}
     >
-      Take control · Paper run
-      {/* The cursor block blinks only where motion is welcome. */}
-      <span
-        aria-hidden="true"
-        className="inline-block h-3 w-1.5 bg-current motion-safe:animate-pulse"
-      />
-      <Kbd>↵</Kbd>
-    </Button>
+      <Button
+        ref={ref}
+        variant="outline"
+        size="sm"
+        data-show={show}
+        onClick={onClick}
+        className="font-mono"
+      >
+        Take control · Paper run
+        {/* The cursor block blinks only where motion is welcome. */}
+        <span
+          aria-hidden="true"
+          className="inline-block h-3 w-1.5 bg-current motion-safe:animate-pulse"
+        />
+        <Kbd>↵</Kbd>
+      </Button>
+    </div>
   )
 })

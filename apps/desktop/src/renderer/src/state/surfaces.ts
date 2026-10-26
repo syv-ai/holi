@@ -4,7 +4,7 @@
  */
 import { atom, useAtomValue, useSetAtom, type Atom } from 'jotai'
 import { useEffect } from 'react'
-import { tabForPath } from '@/lib/folder-documents'
+import { tabForPath } from '@/state/folder-documents'
 import { openHomeAtom } from './home'
 import { openTabAtom } from './shell-tabs'
 import { tabForPath as shellTabForPath, type TabDescriptor } from './tab-descriptor'
@@ -102,19 +102,11 @@ export function activeSurfaceIdAtom(surface: string): Atom<string | null> {
   return made
 }
 
-/** A surface's tabs close when it leaves the registry, as when its plugin is
- *  turned off. Mounted once, in the shell. */
-export function useSurfaceTabs(): void {
-  const surfaces = useAtomValue(surfacesAtom)
-  const setWorkspace = useSetAtom(workspaceAtom)
-  useEffect(() => {
-    const live = new Set(surfaces.keys())
-    setWorkspace((w) => closeSurfaceTabs(w, live))
-  }, [surfaces, setWorkspace])
-}
-
 /** The tab a vault path opens as: a folder document's surface tab (a vault
- *  app), or a note tab. */
+ *  app), or a note tab.
+ *
+ * @public
+ */
 export const tabForPathAtom = atom((get): ((path: string) => Tab) => {
   const claims = get(folderClaimsAtom)
   const snapshot = get(snapshotAtom)

@@ -6,15 +6,7 @@
  */
 
 import { isSurfaceName } from '@holi/shared'
-import type { Tab } from '@/state/panes'
-
-/**
- * The custom MIME type a tab drag carries.
- *
- * Custom because it is also the "is a tab being dragged" predicate: during
- * `dragover` only `types` is exposed, never the data.
- */
-export const TAB_MIME = 'application/x-holi-tab'
+import type { Tab } from '@/lib/tab'
 
 /** Fraction of a pane's width that reads as an edge, and the ceiling on it. */
 const EDGE_FRACTION = 0.25
@@ -22,11 +14,6 @@ const EDGE_MAX_PX = 120
 
 /** The band at each end of a strip that arms auto-slide. */
 const SLIDE_BAND_PX = 28
-
-/** Auto-scroll step and interval: ~750px/s, fast enough to cross a strip,
- *  slow enough to stop where you want. */
-export const AUTOSCROLL_PX = 12
-export const AUTOSCROLL_MS = 16
 
 /** A rendered pill: where it is, and which tab it actually is. */
 export interface PillBox {

@@ -42,6 +42,7 @@ import {
   useSpring,
   useTransform,
   type HTMLMotionProps,
+  type MotionStyle,
 } from 'motion/react'
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/cn'
@@ -105,16 +106,19 @@ export function RevealButton({
   /* how far through the transformation, 0 shut and 1 open; the label comes
      in the last part of it, once there is somewhere for it to be */
   const say = useTransform(width, [SHUT + (span - SHUT) * 0.55, span], [0, 1], { clamp: true })
-  const slide = useTransform(say, [0, 1], [-6, 0])
+  const slide = useTransform(say, [0, 1], ['-6px', '0px'])
+  // Motion values reach the classes as custom properties (`w-(--pill-w)`), in px;
+  // `h-10`, `start-3` and `start-9` are SHUT, INSET and INSET + ICON + GAP on the scale.
+  const pillWidth = useTransform(width, (w) => `${w}px`)
 
   return (
     <motion.button
       type="button"
       disabled={disabled}
-      style={{ width, height: SHUT }}
+      style={{ '--pill-w': pillWidth } as MotionStyle}
       whileTap={reduced || disabled ? undefined : { scale: 0.94 }}
       className={cn(
-        'relative inline-flex shrink-0 items-center overflow-hidden rounded-full bg-secondary text-secondary-foreground outline-none motion-respond hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-70',
+        'relative inline-flex h-10 w-(--pill-w) shrink-0 items-center overflow-hidden rounded-full bg-secondary text-secondary-foreground outline-none motion-respond hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-70',
         className,
       )}
       onPointerEnter={(e) => {
@@ -137,17 +141,13 @@ export function RevealButton({
       }}
       {...props}
     >
-      <span
-        aria-hidden="true"
-        className="absolute top-1/2 flex -translate-y-1/2"
-        style={{ insetInlineStart: INSET }}
-      >
+      <span aria-hidden="true" className="absolute start-3 top-1/2 flex -translate-y-1/2">
         <Glyph aria-hidden className="size-4 shrink-0" />
       </span>
       <motion.span
         ref={text}
-        className="absolute top-1/2 -translate-y-1/2 text-sm font-medium whitespace-nowrap"
-        style={{ insetInlineStart: INSET + ICON + GAP, opacity: say, x: slide }}
+        className="absolute start-9 top-1/2 translate-x-(--slide) -translate-y-1/2 text-sm font-medium whitespace-nowrap opacity-(--say)"
+        style={{ '--say': say, '--slide': slide } as MotionStyle}
       >
         {label}
       </motion.span>

@@ -7,7 +7,7 @@ export function askPrompt(instruction: string, quote: string): string {
   return said === '' ? quote : `${said}\n\n${quote}`
 }
 
-export interface AskTarget {
+interface AskTarget {
   id: string
   name: string
 }
