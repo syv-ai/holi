@@ -2,14 +2,15 @@ import { checkPluginCatalogue } from '@holi/shared'
 import { Provider, createStore } from 'jotai'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import { App } from './App'
+import { App } from '@/App'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { flushAllBuffers } from './lib/buffer-registry'
-import { hostPluginVaults, installedPluginsAtom } from './state/plugins'
-import { reportUiToMain } from './state/ui-report'
-import { watchPendingSkills } from './state/skills'
-import { subscribeToUpdates } from './state/updates'
-import { subscribeToVault } from './state/vaults'
+import { flushAllBuffers } from '@/lib/buffer-registry'
+import { stampPlatform } from '@/lib/platform'
+import { hostPluginVaults, installedPluginsAtom } from '@/state/plugins'
+import { reportUiToMain } from '@/state/ui-report'
+import { watchPendingSkills } from '@/state/skills'
+import { subscribeToUpdates } from '@/state/updates'
+import { subscribeToVault } from '@/state/vaults'
 import { RENDERER_PLUGINS } from '../../plugins/renderer'
 import '@fontsource-variable/geist'
 import '@fontsource-variable/geist-mono'
@@ -19,9 +20,7 @@ import './index.css'
  *  a component would stop when it unmounts and the vault would go quietly
  *  stale. */
 const store = createStore()
-// macOS draws the window's traffic lights over the page (`hiddenInset`), so
-// the chrome makes room for them where this is set (index.css, Window).
-if (navigator.userAgent.includes('Mac')) document.documentElement.dataset.platform = 'mac'
+stampPlatform()
 // Fullscreen hides the lights, and the room kept for them with them.
 window.holi.window.onFullScreen((on) => {
   if (on) document.documentElement.dataset.fullscreen = ''

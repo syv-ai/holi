@@ -9,7 +9,7 @@
 import { atom, type Getter } from 'jotai'
 import type { Surface } from '@/state/plugin-types'
 import { folderDocumentAt } from '@/state/folder-documents'
-import { resolveHome } from '../lib/home-target'
+import { resolveHome } from '@/lib/home-target'
 import { ensureTodaysDailyAtom } from './daily'
 import { openPinned, openSurface, workspaceAtom } from './panes'
 import { folderClaimsAtom, surfacesAtom } from './plugins'

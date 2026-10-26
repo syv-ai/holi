@@ -25,7 +25,7 @@ import type {
   SkillsUpdated,
   vaultCapabilities,
 } from '../../../main/capabilities/vault-caps'
-import { capClient } from '../lib/cap-client'
+import { capClient } from '@/lib/cap-client'
 import { agentSourceAtom } from './plugins'
 import { activeRemoteAtom } from './vaults'
 

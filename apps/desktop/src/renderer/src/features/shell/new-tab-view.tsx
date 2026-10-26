@@ -16,13 +16,7 @@ import { runningPluginsAtom } from '@/state/plugins'
 import { openTaskCountAtom } from '@/state/tasks'
 import { activeRemoteAtom, vaultsAtom } from '@/state/vaults'
 
-import { BOARD_TAB } from '../sidebar/documents-nav'
-
-/** A tab opened with +: it shows this view until something is picked in it,
- *  and then becomes that thing. Nothing is written to the vault until then.
- * @public exported for its test
- */
-export const NEW_TAB_PREFIX = 'holi:new:'
+import { BOARD_KEY } from '@/state/tab-descriptor'
 
 /** "Friday 23 October", from the clock's `YYYY-MM-DD`. */
 const DAY = new Intl.DateTimeFormat(undefined, {
@@ -151,7 +145,7 @@ export function NewTabView({
               <Button
                 type="button"
                 variant="link"
-                onClick={() => onOpen(BOARD_TAB)}
+                onClick={() => onOpen(BOARD_KEY)}
                 className="text-foreground"
               >
                 {openTasks === 1 ? 'task' : 'tasks'}

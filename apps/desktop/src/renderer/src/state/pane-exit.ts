@@ -2,10 +2,9 @@
  * Closing panes and tabs, as atoms, so a key, the menu and the palette all
  * close the same way.
  *
- * **A close lands at once.** Closing a split's pane used to wait for an exit
- * animation; ⌘W is a keyboard action, nothing animates a pane opening, and an
- * exit only the closing side has reads as lag rather than as a place
- * (docs/ui-system.md, Motion).
+ * **A close lands at once.** ⌘W is a keyboard action, nothing animates a pane
+ * opening, and an exit only the closing side has reads as lag rather than as a
+ * place (docs/ui-system.md, Motion).
  */
 import { atom } from 'jotai'
 import { closeTab, focusPane, workspaceAtom } from './panes'

@@ -12,10 +12,11 @@ import { terminalFont, terminalTheme } from '@/lib/terminal-theme'
 import { trpc } from '@/lib/trpc'
 import { activeModeAtom } from '@/state/color-scheme'
 import { registerTerminalSink, type TerminalContext } from '@/state/panel-terminals'
-import { isMac } from '@/state/shortcuts'
+import { isMac } from '@/lib/platform'
 import { activeRemoteAtom } from '@/state/vaults'
 
 import { TerminalContextChips } from './terminal-context-chips'
+import { openExternal } from '@/lib/open-external'
 
 /**
  * One of the bottom panel's shells in an xterm (docs/features/status-bar.md).
@@ -102,7 +103,7 @@ export function PanelTerminal({
     term.loadAddon(
       new WebLinksAddon((event, uri) => {
         event.preventDefault()
-        void window.holi?.openExternal(uri)
+        openExternal(uri)
       }),
     )
     term.open(mount)

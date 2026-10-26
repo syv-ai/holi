@@ -13,11 +13,19 @@
  * OS rather than being stuck dark.
  */
 import { atom, useAtomValue, useSetAtom } from 'jotai'
+import { MonitorIcon, MoonIcon, SunIcon, type LucideIcon } from 'lucide-react'
 import { useEffect } from 'react'
 import { VAULT_SETTING_DEFAULTS, resolveColorMode, type ColorScheme } from '@holi/shared'
-import { trpc } from '../lib/trpc'
+import { trpc } from '@/lib/trpc'
 import { loadVaultSettingsAtom, vaultSettingsAtom } from './settings'
 import { activeRemoteAtom } from './vaults'
+
+/** The schemes a person can pick, in the order every picker lists them. */
+export const COLOR_SCHEMES: readonly { value: ColorScheme; label: string; icon: LucideIcon }[] = [
+  { value: 'light', label: 'Light', icon: SunIcon },
+  { value: 'dark', label: 'Dark', icon: MoonIcon },
+  { value: 'system', label: 'System', icon: MonitorIcon },
+]
 
 /** What the active vault asked for. */
 export const colorSchemeAtom = atom<ColorScheme>(VAULT_SETTING_DEFAULTS.colorScheme)

@@ -7,7 +7,7 @@
 import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect } from 'react'
 import { VAULT_SETTING_DEFAULTS, type WindowGlass } from '@holi/shared'
-import { trpc } from '../lib/trpc'
+import { trpc } from '@/lib/trpc'
 import { loadVaultSettingsAtom, vaultSettingsAtom } from './settings'
 import { activeRemoteAtom } from './vaults'
 

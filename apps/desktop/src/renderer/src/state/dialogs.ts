@@ -5,9 +5,9 @@ import type { ReactNode } from 'react'
 type DialogSize = 'sm' | 'md' | 'lg' | 'full' | 'bare'
 
 /**
- * The dialog registry, as a discriminated union (`docs/ui-system.md`). A dialog
- * is a content block plus one entry here: `id` selects the block in the dialog host
- * and `size` is the guarded prop the shell reads.
+ * The dialogs that can be asked for, as a discriminated union: `id` names the
+ * dialog and `size` the width it asks for. `openDialogAtom` records the ask in
+ * `activeDialogAtom`; nothing reads that atom yet, so no host draws these.
  *
  * `closable` rides alongside the union: it means the same thing for every
  * dialog, and an entry sets it only to opt OUT, when its own footer already

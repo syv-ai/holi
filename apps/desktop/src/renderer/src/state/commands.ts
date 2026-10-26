@@ -19,8 +19,8 @@
  * that is how the editor's ⌘B bold beats the sidebar's ⌘B.
  */
 import { atom, type Getter, type Setter } from 'jotai'
-import { saveAllBuffers } from '../lib/buffer-registry'
-import { trpc } from '../lib/trpc'
+import { saveAllBuffers } from '@/lib/buffer-registry'
+import { trpc } from '@/lib/trpc'
 import { openHomeAtom } from './home'
 import { openTodaysDailyAtom } from './daily'
 import { openDialogAtom } from './dialogs'

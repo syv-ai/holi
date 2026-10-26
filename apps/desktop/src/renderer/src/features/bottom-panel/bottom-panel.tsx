@@ -65,7 +65,7 @@ import {
   shownAppLog,
   useAppLog,
 } from '@/state/app-logs'
-import { useShortcutHandlers } from '@/state/shortcuts'
+import { useShortcutHandlers } from '@/hooks/use-shortcuts'
 import { activeRemoteAtom } from '@/state/vaults'
 
 import { PanelLogs, LogsSearch } from './panel-logs'

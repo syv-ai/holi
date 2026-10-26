@@ -6,13 +6,11 @@
  * with a sequence number, so asking twice for one path reveals it twice.
  */
 import { atom } from 'jotai'
+import { raise, requestAtom } from './request'
 
-export const revealInFilesRequestAtom = atom<{ path: string; seq: number } | null>(null)
+export const revealInFilesRequestAtom = requestAtom<{ path: string }>()
 
 /** Reveal `path` (vault-relative) in the files tree. */
 export const revealInFilesAtom = atom(null, (get, set, path: string) => {
-  set(revealInFilesRequestAtom, {
-    path,
-    seq: (get(revealInFilesRequestAtom)?.seq ?? 0) + 1,
-  })
+  raise(get, set, revealInFilesRequestAtom, { path })
 })

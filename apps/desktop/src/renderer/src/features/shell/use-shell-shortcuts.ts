@@ -6,9 +6,10 @@ import type { SidebarApp } from '@/plugin-api'
 import { newAgentSessionAtom } from '@/state/agents-slots'
 import { ensureTodaysDailyAtom } from '@/state/daily'
 import { runningPluginsAtom } from '@/state/plugins'
-import { shortcutsDialogOpenAtom, useShortcutHandlers } from '@/state/shortcuts'
-import { sidebarSectionAtom } from '@/state/sidebar-section'
-import { BOARD_TAB } from '../sidebar/documents-nav'
+import { useShortcutHandlers } from '@/hooks/use-shortcuts'
+import { shortcutsDialogOpenAtom } from '@/state/shortcuts'
+import { appModeAtom } from '@/state/app-mode'
+import { BOARD_KEY } from '@/state/tab-descriptor'
 
 /** What the shell can do, for its keys (`lib/shortcuts.ts`). */
 export interface ShellActions {
@@ -50,7 +51,7 @@ export interface ShellActions {
 /** The app shell's handlers for the shortcut table. */
 export function useShellShortcuts(shell: ShellActions): void {
   const setDialogOpen = useSetAtom(shortcutsDialogOpenAtom)
-  const [section, setSection] = useAtom(sidebarSectionAtom)
+  const [section, setSection] = useAtom(appModeAtom)
   const newAgentSession = useSetAtom(newAgentSessionAtom)
   const ensureDaily = useSetAtom(ensureTodaysDailyAtom)
   const hasAgents = useAtomValue(runningPluginsAtom).some(
@@ -105,7 +106,7 @@ export function useShellShortcuts(shell: ShellActions): void {
     'sidebar.toggle': toggleSidebar,
     'sidebar.documents': () => showSection('documents'),
     'sidebar.agents': hasAgents ? () => showSection('agents') : undefined,
-    'board.open': () => shell.open(BOARD_TAB),
+    'board.open': () => shell.open(BOARD_KEY),
     'tab.next': () => stepTab(1),
     'tab.previous': () => stepTab(-1),
     // ⌘9 is the last tab, as in a browser.

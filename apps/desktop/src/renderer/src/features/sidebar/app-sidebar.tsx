@@ -15,10 +15,11 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/cn'
 import { runningPluginsAtom } from '@/state/plugins'
-import { sidebarSectionAtom, type SidebarSection } from '@/state/sidebar-section'
+import { appModeAtom, type AppMode } from '@/state/app-mode'
 import { activeRemoteAtom } from '@/state/vaults'
 import type { Move } from '@/lib/tree-actions'
-import { APPS_TAB, BOARD_TAB, DocumentsNav, useAppsOn } from './documents-nav'
+import { APPS_KEY, BOARD_KEY } from '@/state/tab-descriptor'
+import { DocumentsNav, useAppsOn } from './documents-nav'
 import { FilesSection } from './files-section'
 import { AccountMenu } from './account-menu'
 import { BrandMark } from '@/composites/brand-mark'
@@ -53,7 +54,7 @@ export function AppSidebar({
   onOpenApp: (id: string) => void
 }) {
   const apps = useSidebarApps()
-  const [section, setSection] = useAtom(sidebarSectionAtom)
+  const [section, setSection] = useAtom(appModeAtom)
   const remote = useAtomValue(activeRemoteAtom)
   const appsOn = useAppsOn()
   /** Off until the first switch, so the sidebar's first paint is never held
@@ -87,8 +88,8 @@ export function AppSidebar({
               <SidebarMenuItem>
                 <SidebarMenuButton
                   tooltip="Board"
-                  isActive={activeId === BOARD_TAB}
-                  onClick={() => onOpen(BOARD_TAB)}
+                  isActive={activeId === BOARD_KEY}
+                  onClick={() => onOpen(BOARD_KEY)}
                   aria-label="Board"
                   variant="fill"
                   size="rail"
@@ -102,8 +103,8 @@ export function AppSidebar({
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     tooltip="Apps"
-                    isActive={activeId === APPS_TAB}
-                    onClick={() => onOpen(APPS_TAB)}
+                    isActive={activeId === APPS_KEY}
+                    onClick={() => onOpen(APPS_KEY)}
                     aria-label="Apps"
                     variant="fill"
                     size="rail"
@@ -176,7 +177,7 @@ export function AppSidebar({
             value={section}
             onValueChange={(value) => {
               if (!value) return
-              setSection(value as SidebarSection)
+              setSection(value as AppMode)
               setSwitched(true)
             }}
           >

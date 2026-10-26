@@ -11,7 +11,7 @@
  */
 import { atom, type Getter } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import { prune, touch, type RecentEntry } from '../lib/recents'
+import { prune, touch, type RecentEntry } from '@/lib/recents'
 import { surfacesAtom } from './plugins'
 import { activeRemoteAtom, snapshotAtom } from './vaults'
 

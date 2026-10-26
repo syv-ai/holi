@@ -7,18 +7,13 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
+import { APPS_KEY, BOARD_KEY } from '@/state/tab-descriptor'
 import { hotkeyLabels } from '@/lib/hotkey'
-import { isMac } from '@/state/shortcuts'
-import { useTabDrag } from '../shell/use-tab-drag'
+import { isMac } from '@/lib/platform'
+import { useTabDrag } from '@/features/shell/use-tab-drag'
 import { surfacesAtom } from '@/state/plugins'
 import { openTaskCountAtom } from '@/state/tasks'
 import { AppWindowIcon, SearchIcon, SquareKanbanIcon } from 'lucide-react'
-
-/** The header tab id of the task board, beside the document paths. */
-export const BOARD_TAB = 'holi:board'
-
-/** The header tab id of the vault's apps, beside the board. */
-export const APPS_TAB = 'holi:apps'
 
 /** Whether vault apps are on: the Apps row is there only while they are. */
 export function useAppsOn(): boolean {
@@ -56,9 +51,9 @@ export function DocumentsNav({
         </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton
-            isActive={activeId === BOARD_TAB}
-            aria-current={activeId === BOARD_TAB ? 'page' : undefined}
-            onClick={() => onOpen(BOARD_TAB)}
+            isActive={activeId === BOARD_KEY}
+            aria-current={activeId === BOARD_KEY ? 'page' : undefined}
+            onClick={() => onOpen(BOARD_KEY)}
             {...tabDrag({ kind: 'board' })}
             variant="fill"
           >
@@ -76,9 +71,9 @@ export function DocumentsNav({
         {appsOn ? (
           <SidebarMenuItem>
             <SidebarMenuButton
-              isActive={activeId === APPS_TAB}
-              aria-current={activeId === APPS_TAB ? 'page' : undefined}
-              onClick={() => onOpen(APPS_TAB)}
+              isActive={activeId === APPS_KEY}
+              aria-current={activeId === APPS_KEY ? 'page' : undefined}
+              onClick={() => onOpen(APPS_KEY)}
               variant="fill"
             >
               <AppWindowIcon aria-hidden="true" />

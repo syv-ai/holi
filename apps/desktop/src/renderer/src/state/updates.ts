@@ -1,6 +1,6 @@
 import { atom, type createStore } from 'jotai'
 import type { UpdateStatus } from '../../../main/updates/state'
-import { trpc } from '../lib/trpc'
+import { trpc } from '@/lib/trpc'
 
 /**
  * Updating Holi itself (docs/features/updates.md). `null` until main first

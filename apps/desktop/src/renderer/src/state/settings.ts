@@ -26,7 +26,7 @@ import {
   type PluginInfo,
   type ResolvedVaultSettings,
 } from '@holi/shared'
-import { trpc } from '../lib/trpc'
+import { trpc } from '@/lib/trpc'
 import { activeRemoteAtom, snapshotAtom } from './vaults'
 
 /** The cache. Holds the remote it was read for, so a stale vault's answer can

@@ -12,12 +12,8 @@ import {
   SHORTCUTS,
   type KeyContext,
 } from '@/lib/shortcuts'
-import {
-  shortcutsDialogOpenAtom,
-  useShortcutDispatcher,
-  useShortcutHandlers,
-  type ShortcutHandler,
-} from '@/state/shortcuts'
+import { useShortcutDispatcher, useShortcutHandlers } from '@/hooks/use-shortcuts'
+import { shortcutsDialogOpenAtom, type ShortcutHandler } from '@/state/shortcuts'
 
 const ev = (init: Partial<KeyboardEvent>): KeyboardEvent =>
   ({

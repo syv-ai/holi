@@ -8,7 +8,7 @@ import { openInSplit, openTab } from '@/state/shell-workspace'
 import { AGENTS_HOME_KEY, parseTabKey, sessionKey } from '@/state/tab-descriptor'
 
 /** What a selection opens: its session's tab, or for none (or a slot's
- *  `new`, chat's composer) the Agents home. */
+ *  `new`, the new-session composer) the Agents home. */
 function keyForSelection(selection: AgentsSelection | null): string {
   return selection === null || selection.id === 'new' ? AGENTS_HOME_KEY : sessionKey(selection)
 }

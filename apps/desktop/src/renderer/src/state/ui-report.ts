@@ -9,7 +9,7 @@
  */
 import type { LineRange } from '@holi/shared'
 import { atom, type createStore } from 'jotai'
-import { trpc } from '../lib/trpc'
+import { trpc } from '@/lib/trpc'
 import { surfacesAtom } from './plugins'
 import { recentsAtom } from './recents'
 import { shellWorkspaceAtom } from './shell-tabs'

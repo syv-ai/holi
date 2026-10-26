@@ -157,8 +157,8 @@ export function tabPath(key: string | null): string | null {
   return tab?.kind === 'doc' || tab?.kind === 'vault-app' ? tab.path : null
 }
 
-/** @public exported for its test */
 export const BOARD_KEY = tabKey({ kind: 'board' })
+export const APPS_KEY = tabKey({ kind: 'apps' })
 export const GRAPH_KEY = tabKey({ kind: 'graph' })
 export const SETTINGS_KEY = tabKey({ kind: 'settings' })
 export const AGENTS_HOME_KEY = tabKey({ kind: 'agents-home' })

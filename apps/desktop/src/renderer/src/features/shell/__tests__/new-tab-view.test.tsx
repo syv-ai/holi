@@ -11,7 +11,7 @@ import { nowAtom } from '@/state/clock'
 import { installedPluginsAtom } from '@/state/plugins'
 import { vaultSettingsAtom } from '@/state/settings'
 import { activeRemoteAtom, vaultsAtom } from '@/state/vaults'
-import { BOARD_TAB } from '../../sidebar/documents-nav'
+import { BOARD_KEY } from '@/state/tab-descriptor'
 import { NewTabView } from '../new-tab-view'
 
 function mount(prepare?: (store: ReturnType<typeof createStore>) => void) {
@@ -42,7 +42,7 @@ test('names the vault and the day, and its tasks open the board', () => {
   expect(screen.getByText('notes')).toBeTruthy()
   expect(screen.getByRole('heading', { level: 1 }).textContent).toMatch(/23/)
   fireEvent.click(screen.getByRole('button', { name: 'tasks' }))
-  expect(onOpen).toHaveBeenCalledWith(BOARD_TAB)
+  expect(onOpen).toHaveBeenCalledWith(BOARD_KEY)
 })
 
 test('starts a document; an agent session only where the agent runs', () => {

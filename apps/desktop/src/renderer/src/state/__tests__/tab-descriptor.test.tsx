@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 
 import {
   AGENTS_HOME_KEY,
+  APPS_KEY,
   BOARD_KEY,
   parseTabKey,
   sessionKey,
@@ -10,8 +11,6 @@ import {
   tabPath,
   type TabDescriptor,
 } from '../tab-descriptor'
-import { BOARD_TAB } from '@/features/sidebar/documents-nav'
-import { NEW_TAB_PREFIX } from '@/features/shell/new-tab-view'
 
 const EVERY: TabDescriptor[] = [
   { kind: 'doc', path: 'Notes/Plan.md' },
@@ -60,8 +59,9 @@ describe('tab keys', () => {
   })
 
   test("the views' keys are the shell's constants", () => {
-    expect(BOARD_KEY).toBe(BOARD_TAB)
-    expect(tabKey({ kind: 'new', n: 1 })).toBe(`${NEW_TAB_PREFIX}1`)
+    expect(BOARD_KEY).toBe('holi:board')
+    expect(APPS_KEY).toBe('holi:apps')
+    expect(tabKey({ kind: 'new', n: 1 })).toBe('holi:new:1')
     expect(AGENTS_HOME_KEY).toBe('holi:agents')
     expect(sessionKey({ owner: 'chat', id: 'x' })).toBe('holi:session:chat:x')
   })

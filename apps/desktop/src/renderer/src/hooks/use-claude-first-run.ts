@@ -4,16 +4,8 @@ import { useEffect } from 'react'
 import { trpc } from '@/lib/trpc'
 import { useAgentService } from '@/state/agent-service'
 import { claudeFirstRunAtom } from '@/state/claude-first-run'
+import { tabKey } from '@/state/tab-descriptor'
 import { activeRemoteAtom, snapshotLoadedAtom } from '@/state/vaults'
-
-/** A shell tab onto a registered surface: `holi:surface:<kind>` or
- *  `holi:surface:<kind>:<id>`, under the tab keys' own scheme
- *  (`state/tab-descriptor.ts`), so it never reads as a vault path. */
-const SURFACE_TAB_PREFIX = 'holi:surface:'
-
-function surfaceTabId(kind: string, id?: string): string {
-  return `${SURFACE_TAB_PREFIX}${kind}${id === undefined ? '' : `:${id}`}`
-}
 
 /**
  * Answer the onboarding's request for Claude Code's first run
@@ -41,7 +33,7 @@ export function useClaudeFirstRun(openTab: (id: string) => void): void {
         const opened = result as { ok: true; terminalId: string } | { ok: false; message: string }
         if (!live || !opened.ok) return
         setPending(null)
-        openTab(surfaceTabId('agent', opened.terminalId))
+        openTab(tabKey({ kind: 'surface', surface: 'agent', id: opened.terminalId }))
       })
       .catch(() => undefined)
     return () => {

@@ -11,20 +11,21 @@
  * profile menu, ⌘,) asks, and the shell adds or focuses the tab.
  */
 import { atom } from 'jotai'
+import { raise, requestAtom } from './request'
 
 export const settingsSectionAtom = atom<string | null>(null)
 
-/** Bumped on every request to show Settings; the shell watches it. */
-export const settingsRequestAtom = atom(0)
+/** Every request to show Settings; the shell answers it. */
+export const settingsRequestAtom = requestAtom<object>()
 
 /** Bring Settings forward on the section it was last on. */
-export const openSettingsAtom = atom(null, (_get, set) => {
-  set(settingsRequestAtom, (n) => n + 1)
+export const openSettingsAtom = atom(null, (get, set) => {
+  raise(get, set, settingsRequestAtom, {})
 })
 
 /** Open Settings at one section (Mail's and Calendar's "Open Connections",
  *  the profile menu's Preferences). */
-export const openSettingsSectionAtom = atom(null, (_get, set, section: string) => {
+export const openSettingsSectionAtom = atom(null, (get, set, section: string) => {
   set(settingsSectionAtom, section)
-  set(settingsRequestAtom, (n) => n + 1)
+  raise(get, set, settingsRequestAtom, {})
 })

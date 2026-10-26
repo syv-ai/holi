@@ -43,7 +43,7 @@ import {
   RichTextTable,
   RichTextTableBubble,
 } from '@/features/documents/rich-text/rich-text-table'
-import { useIsApplePlatform } from '@/composites/shortcut-keys'
+import { isMac } from '@/lib/platform'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { cn } from '@/lib/cn'
@@ -205,7 +205,7 @@ function DocumentEditor({
   const [smallText, setSmallText] = useState(false)
   /** The find bar, open while set; a new request refocuses it. */
   const [find, setFind] = useState<FindRequest | null>(null)
-  const apple = useIsApplePlatform()
+  const apple = isMac()
   /** Whether the agent prompt is open; its line is the editor's to track
    *  (`agentPromptKey`), and it renders into `promptBox` on that line. */
   const [promptOpen, setPromptOpen] = useState(false)

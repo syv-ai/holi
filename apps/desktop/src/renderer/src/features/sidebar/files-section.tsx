@@ -1,14 +1,5 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ComponentType,
-  type DragEvent,
-  type ReactElement,
-  type ReactNode,
-} from 'react'
-import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import { useAtomValue, useSetAtom } from 'jotai'
 import {
   dragAndDropFeature,
   expandAllFeature,
@@ -21,56 +12,19 @@ import {
 } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
 import { toast } from 'sonner'
-import { GITKEEP, holiLink, isHiddenPath, isHoliLinkable, TASKS_CLAIM } from '@holi/shared'
+import { GITKEEP, holiLink } from '@holi/shared'
 import { cn } from '@/lib/cn'
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import {
-  ContextMenu,
-  ContextMenuCheckboxItem,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuShortcut,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-  ContextMenuTrigger,
-} from '@/components/ui/context-menu'
+import { ConfirmDialog } from '@/composites/confirm-dialog'
+import { ContextMenuActions, DropdownMenuActions, type MenuAction } from '@/composites/menu-actions'
+import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@/components/ui/context-menu'
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuShortcut,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { FileType, getFileType } from '@/components/reui/file-type'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Field, FieldError, FieldLabel } from '@/components/ui/field'
-import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
@@ -80,7 +34,8 @@ import {
   SidebarMenuSkeleton,
   useSidebar,
 } from '@/components/ui/sidebar'
-import { useShortcutHandlers } from '@/state/shortcuts'
+import { useRequest } from '@/hooks/use-request'
+import { useShortcutHandlers } from '@/hooks/use-shortcuts'
 import { Tree, TreeDragLine, TreeItem, TreeItemLabel } from '@/components/reui/tree'
 import { folderDocumentAt } from '@/state/folder-documents'
 import { revealInFilesRequestAtom } from '@/state/reveal-in-files'
@@ -88,247 +43,31 @@ import { buildTreeData, ROOT_ID, type TreeItemData } from '@/lib/tree-data'
 import { planMoveInto, planRenameFolder, type Move } from '@/lib/tree-actions'
 import { basename, joinPath, parentOf } from '@/lib/tree-paths'
 import { canMoveInto } from '@/lib/tree-view'
-import { useTabDrag } from '../shell/use-tab-drag'
+import { useTabDrag } from '@/features/shell/use-tab-drag'
 import { openDialogAtom } from '@/state/dialogs'
 import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
 import { closeTabsWhere } from '@/state/shell-workspace'
 import { tabForPath, tabPath } from '@/state/tab-descriptor'
-import type { ClaimCreate } from '@/plugin-api/types'
 import { claimsAtom, folderClaimsAtom } from '@/state/plugins'
 import { createTaskAtom } from '@/state/tasks'
 import { setTreeOrderAtom, treeOrderAtom } from '@/state/tree-order'
 import {
-  activeRemoteAtom,
   createFolderAtom,
   createNoteAtom,
   deleteManyAtom,
   importFilesAtom,
   moveNotesAtom,
-  showHiddenByVaultAtom,
-  showTasksByVaultAtom,
   snapshotAtom,
   snapshotLoadedAtom,
   vaultsAtom,
 } from '@/state/vaults'
-import {
-  ArrowDownIcon,
-  ArrowUpIcon,
-  EllipsisIcon,
-  FolderInputIcon,
-  FolderIcon,
-  FolderOpenIcon,
-  FolderPlusIcon,
-  LinkIcon,
-  ListChecksIcon,
-  PencilIcon,
-  PlusIcon,
-  SquareSplitHorizontalIcon,
-  Trash2Icon,
-} from 'lucide-react'
+import { EllipsisIcon, PlusIcon } from 'lucide-react'
+import { AskNameDialog } from './ask-name-dialog'
+import { newActions, pluginRowActions, rowActions, type FileCreate } from './file-menu-actions'
+import { displayName, FileGlyph, RowHover } from './file-row'
+import { attempt, freeName, useFiles } from './use-files'
 
 const INDENT = 16
-
-/** `base`, then `base 2`, `base 3`… : the first name the folder does not hold. */
-function freeName(taken: ReadonlySet<string>, parent: string, base: string, ext = ''): string {
-  for (let n = 1; ; n++) {
-    const name = n === 1 ? `${base}${ext}` : `${base} ${n}${ext}`
-    if (!taken.has(joinPath(parent, name))) return name
-  }
-}
-
-/**
- * The paths the tree shows, and every path it can act on: documents, other
- * files and claimed files (tasks only while "show task files" is on), minus
- * dot paths unless "show hidden files" is on.
- */
-function useFiles() {
-  const snapshot = useAtomValue(snapshotAtom)
-  const remote = useAtomValue(activeRemoteAtom)
-  const [hiddenByVault, setHiddenByVault] = useAtom(showHiddenByVaultAtom)
-  const [tasksByVault, setTasksByVault] = useAtom(showTasksByVaultAtom)
-  const showHidden = remote !== null && hiddenByVault[remote] === true
-  const showTasks = remote !== null && tasksByVault[remote] === true
-
-  const docPaths = useMemo(
-    () => [
-      ...snapshot.docs.map((doc) => doc.path),
-      ...snapshot.files.map((file) => file.path),
-      ...Object.entries(snapshot.claimed).flatMap(([id, set]) =>
-        id === TASKS_CLAIM && !showTasks
-          ? []
-          : [...set.items.map((item) => item.path), ...set.broken.map((item) => item.path)],
-      ),
-    ],
-    [snapshot, showTasks],
-  )
-  // Everything a rename or a new name must not collide with, or must carry
-  // along: task files too, shown or not.
-  const allPaths = useMemo(
-    () => [
-      ...snapshot.docs.map((doc) => doc.path),
-      ...snapshot.files.map((file) => file.path),
-      ...Object.values(snapshot.claimed).flatMap((set) => [
-        ...set.items.map((item) => item.path),
-        ...set.broken.map((item) => item.path),
-      ]),
-    ],
-    [snapshot],
-  )
-  // Memoised: the tree rebuilds whenever these change identity, and a
-  // rebuild re-renders this component.
-  const paths = useMemo(
-    () => (showHidden ? docPaths : docPaths.filter((path) => !isHiddenPath(path))),
-    [docPaths, showHidden],
-  )
-  const dirs = useMemo(
-    () => (showHidden ? snapshot.dirs : snapshot.dirs.filter((dir) => !isHiddenPath(dir))),
-    [snapshot.dirs, showHidden],
-  )
-
-  return {
-    remote,
-    docPaths,
-    allPaths,
-    paths,
-    dirs,
-    taken: new Set([...allPaths, ...snapshot.dirs]),
-    showHidden,
-    showTasks,
-    toggleHidden: () =>
-      remote !== null && setHiddenByVault({ ...hiddenByVault, [remote]: !showHidden }),
-    toggleTasks: () =>
-      remote !== null && setTasksByVault({ ...tasksByVault, [remote]: !showTasks }),
-  }
-}
-
-/** The one way a failed vault action is reported: what failed, and what to do. */
-async function attempt(what: string, action: () => Promise<void>) {
-  try {
-    await action()
-  } catch {
-    toast.error(`Couldn't ${what}. Check that the vault is reachable, then try again.`)
-  }
-}
-
-/** A new, uniquely named note at the vault's root, for New document and +. */
-export function useNewDocument(onCreated: (path: string) => void) {
-  const { taken } = useFiles()
-  const createNote = useSetAtom(createNoteAtom)
-  return () =>
-    attempt('create a document', async () => {
-      const path = freeName(taken, '', 'Untitled', '.md')
-      await createNote(path)
-      onCreated(path)
-    })
-}
-
-/**
- * A menu written once and drawn twice: as the tree's right-click menu and as
- * the ⋯ button's dropdown, which is the keyboard's way to the same actions.
- */
-type MenuAction =
-  | {
-      kind: 'item'
-      label: string
-      icon?: ReactNode
-      shortcut?: string
-      disabled?: boolean
-      destructive?: boolean
-      run: () => void
-    }
-  | { kind: 'check'; label: string; checked: boolean; toggle: () => void }
-  | { kind: 'sub'; label: string; icon?: ReactNode; items: MenuAction[] }
-  | { kind: 'separator' }
-
-function ContextMenuActions({ actions }: { actions: MenuAction[] }) {
-  return actions.map((action, index) => {
-    switch (action.kind) {
-      case 'separator':
-        return <ContextMenuSeparator key={index} />
-      case 'check':
-        return (
-          <ContextMenuCheckboxItem
-            key={index}
-            checked={action.checked}
-            onCheckedChange={action.toggle}
-          >
-            {action.label}
-          </ContextMenuCheckboxItem>
-        )
-      case 'sub':
-        return (
-          <ContextMenuSub key={index}>
-            <ContextMenuSubTrigger>
-              {action.icon}
-              {action.label}
-            </ContextMenuSubTrigger>
-            <ContextMenuSubContent className="max-h-72 w-52 overflow-y-auto">
-              <ContextMenuActions actions={action.items} />
-            </ContextMenuSubContent>
-          </ContextMenuSub>
-        )
-      case 'item':
-        return (
-          <ContextMenuItem
-            key={index}
-            variant={action.destructive ? 'destructive' : 'default'}
-            disabled={action.disabled}
-            onSelect={action.run}
-          >
-            {action.icon}
-            {action.label}
-            {action.shortcut ? <ContextMenuShortcut>{action.shortcut}</ContextMenuShortcut> : null}
-          </ContextMenuItem>
-        )
-    }
-  })
-}
-
-function DropdownMenuActions({ actions }: { actions: MenuAction[] }) {
-  return actions.map((action, index) => {
-    switch (action.kind) {
-      case 'separator':
-        return <DropdownMenuSeparator key={index} />
-      case 'check':
-        return (
-          <DropdownMenuCheckboxItem
-            key={index}
-            checked={action.checked}
-            onCheckedChange={action.toggle}
-          >
-            {action.label}
-          </DropdownMenuCheckboxItem>
-        )
-      case 'sub':
-        return (
-          <DropdownMenuSub key={index}>
-            <DropdownMenuSubTrigger>
-              {action.icon}
-              {action.label}
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="max-h-72 w-52 overflow-y-auto">
-              <DropdownMenuActions actions={action.items} />
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-        )
-      case 'item':
-        return (
-          <DropdownMenuItem
-            key={index}
-            variant={action.destructive ? 'destructive' : 'default'}
-            disabled={action.disabled}
-            onSelect={action.run}
-          >
-            {action.icon}
-            {action.label}
-            {action.shortcut ? (
-              <DropdownMenuShortcut>{action.shortcut}</DropdownMenuShortcut>
-            ) : null}
-          </DropdownMenuItem>
-        )
-    }
-  })
-}
 
 /**
  * The vault's files as a ReUI tree. Drag a row to reorder it among its
@@ -336,9 +75,6 @@ function DropdownMenuActions({ actions }: { actions: MenuAction[] }) {
  * (a move that rewrites links); drop files from Finder anywhere on it to copy
  * them in. Right-click, or the ⋯ beside +, for the menu.
  */
-/** The last Reveal in Files the tree answered (`revealInFilesRequestAtom`). */
-let revealedSeq = 0
-
 export function FilesSection({
   activeId,
   onOpen,
@@ -371,7 +107,7 @@ export function FilesSection({
   /** A New menu item asking for its name first (a link's address), and
    *  the folder it goes in, while its dialog is open. */
   const [asking, setAsking] = useState<{
-    create: ClaimCreate & { entry?: string }
+    create: FileCreate
     parent: string
   } | null>(null)
   const vaults = useAtomValue(vaultsAtom)
@@ -562,28 +298,29 @@ export function FilesSection({
   }, [data, tree])
 
   // Reveal in Files (an app's card): open the row's folders, then select it,
-  // focus it and scroll it into view once the tree has drawn them.
-  // The tree may mount with the request already made (the sidebar was on
-  // Agents), so what was handled is kept outside it.
-  const revealRequest = useAtomValue(revealInFilesRequestAtom)
-  useEffect(() => {
-    if (revealRequest === null || revealRequest.seq <= revealedSeq) return
-    if (data[revealRequest.path] === undefined) return
-    revealedSeq = revealRequest.seq
-    const path = revealRequest.path
-    const parts = path.split('/')
-    for (let i = 1; i < parts.length; i++) {
-      tree.getItemInstance(parts.slice(0, i).join('/')).expand()
-    }
-    const frame = requestAnimationFrame(() => {
-      const item = tree.getItemInstance(path)
-      item.setFocused()
-      tree.setSelectedItems([path])
-      void item.scrollTo({ block: 'nearest' })
-      markArrived([path])
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [revealRequest, data, tree])
+  // focus it and scroll it into view once the tree has drawn them. The tree
+  // may mount with the request already made (the sidebar was on Agents), so
+  // it catches up; a row the tree does not have yet keeps the request waiting.
+  const revealFrame = useRef(0)
+  useEffect(() => () => cancelAnimationFrame(revealFrame.current), [])
+  useRequest(
+    revealInFilesRequestAtom,
+    ({ path }) => {
+      if (data[path] === undefined) return false
+      const parts = path.split('/')
+      for (let i = 1; i < parts.length; i++) {
+        tree.getItemInstance(parts.slice(0, i).join('/')).expand()
+      }
+      revealFrame.current = requestAnimationFrame(() => {
+        const item = tree.getItemInstance(path)
+        item.setFocused()
+        tree.setSelectedItems([path])
+        void item.scrollTo({ block: 'nearest' })
+        markArrived([path])
+      })
+    },
+    { catchUp: true },
+  )
 
   // The tree's own F2 renames its focused row; this one renames the selected
   // row from anywhere else, while the sidebar is open to show the field.
@@ -602,7 +339,7 @@ export function FilesSection({
   /** Make what a New menu item makes, named `name` in `parent`, and open
    *  it: a folder document as itself, not its entry file. Throws the
    *  plugin's refusal. */
-  async function made(create: ClaimCreate & { entry?: string }, parent: string, name: string) {
+  async function made(create: FileCreate, parent: string, name: string) {
     if (files.remote === null) return
     const path = await create.run({ remote: files.remote, parent, name })
     if (!path) return
@@ -671,87 +408,30 @@ export function FilesSection({
   }
 
   /** The actions on one row: what right-click on it, or ⋯ with it focused, offers. */
-  function rowActions(id: string): MenuAction[] {
-    const item = tree.getItemInstance(id)
-    const parent = item.getParent()
-    const siblings = parent?.getChildren().map((child) => child.getId()) ?? []
-    const index = siblings.indexOf(id)
-    const here = parentOf(id)
-    const destinations = ['', ...files.dirs].filter(
-      (dir) => dir !== here && dir !== id && !dir.startsWith(`${id}/`),
-    )
-    // A file or an app opens beside what is in front, as ⌥-click does; a
-    // folder has nothing to open.
-    const openable = !item.isFolder()
-    // A Holi link opens a file on a teammate's machine, so a local file has
-    // none (docs/features/holi-links.md).
-    const linkable = openable && files.remote !== null && isHoliLinkable(id)
-    return [
-      ...(openable
-        ? ([
-            {
-              kind: 'item',
-              label: 'Open in split view',
-              icon: <SquareSplitHorizontalIcon aria-hidden="true" />,
-              run: () => openTab(tabForPath(id), { beside: true }),
-            },
-            ...(linkable
-              ? ([
-                  {
-                    kind: 'item',
-                    label: 'Copy Holi link',
-                    icon: <LinkIcon aria-hidden="true" />,
-                    run: () => void copyLink(id),
-                  },
-                ] satisfies MenuAction[])
-              : []),
-            { kind: 'separator' },
-          ] satisfies MenuAction[])
-        : []),
-      {
-        kind: 'item',
-        label: 'Rename',
-        icon: <PencilIcon aria-hidden="true" />,
-        shortcut: 'F2',
-        run: () => {
-          renameNext.current = id
+  function rowActionsOf(id: string): MenuAction[] {
+    return rowActions({
+      item: tree.getItemInstance(id),
+      dirs: files.dirs,
+      remote: files.remote,
+      pluginActions: pluginRowActions({
+        id,
+        remote: files.remote,
+        claims,
+        snapshot,
+        openDialog,
+      }),
+      on: {
+        openBeside: (path) => openTab(tabForPath(path), { beside: true }),
+        copyLink: (path) => void copyLink(path),
+        rename: (path) => {
+          renameNext.current = path
         },
+        shift,
+        moveTo: (path, dest) =>
+          void attempt(`move “${basename(path)}”`, () => moveInto([path], dest)),
+        remove: setDeleting,
       },
-      {
-        kind: 'item',
-        label: 'Move up',
-        icon: <ArrowUpIcon aria-hidden="true" />,
-        disabled: index <= 0,
-        run: () => shift(id, -1),
-      },
-      {
-        kind: 'item',
-        label: 'Move down',
-        icon: <ArrowDownIcon aria-hidden="true" />,
-        disabled: index < 0 || index >= siblings.length - 1,
-        run: () => shift(id, 1),
-      },
-      {
-        kind: 'sub',
-        label: 'Move to',
-        icon: <FolderInputIcon aria-hidden="true" />,
-        items: destinations.map((dest) => ({
-          kind: 'item',
-          label: dest === '' ? 'Vault root' : dest,
-          run: () => void attempt(`move “${basename(id)}”`, () => moveInto([id], dest)),
-        })),
-      },
-      ...pluginRowActions(id),
-      { kind: 'separator' },
-      {
-        kind: 'item',
-        label: 'Delete',
-        icon: <Trash2Icon aria-hidden="true" />,
-        destructive: true,
-        run: () => setDeleting(id),
-      },
-      { kind: 'separator' },
-    ]
+    })
   }
 
   /** Put `path`'s Holi link on the clipboard, for a teammate to click. */
@@ -786,26 +466,6 @@ export function FilesSection({
     })
   }
 
-  /** What a plugin's claim adds to this row's menu (an app's "Finish this
-   *  app"), asked of each item's `when` as the menu opens. */
-  function pluginRowActions(id: string): MenuAction[] {
-    const remote = files.remote
-    if (remote === null) return []
-    const items = claims
-      .filter((claim) => claim.match(id))
-      .flatMap((claim) => claim.rowMenu ?? [])
-      .filter((item) => item.when?.(id, snapshot) ?? true)
-    if (items.length === 0) return []
-    return [
-      { kind: 'separator' },
-      ...items.map((item): MenuAction => ({
-        kind: 'item',
-        label: item.label,
-        run: () => item.run({ remote, path: id, openDialog }),
-      })),
-    ]
-  }
-
   /** The folder a menu's New items make things in: the folder row it was
    *  opened on, the folder of the file row it was opened on, or the root. */
   function newParent(target: string | null): string {
@@ -819,26 +479,22 @@ export function FilesSection({
     if (parent !== '') tree.getItemInstance(parent).expand()
   }
 
-  const newActions = (target: string | null): MenuAction[] => {
+  const newActionsOf = (target: string | null): MenuAction[] => {
     const parent = newParent(target)
-    return [
-      {
-        kind: 'item',
-        label: 'New folder',
-        icon: <FolderPlusIcon aria-hidden="true" />,
-        run: () =>
+    return newActions({
+      creates,
+      remote: files.remote,
+      showTasks: files.showTasks,
+      showHidden: files.showHidden,
+      on: {
+        newFolder: () =>
           void attempt('create the folder', async () => {
             const name = joinPath(parent, freeName(files.taken, parent, 'New folder'))
             await createFolder(name)
             reveal(parent)
             markArrived([name])
           }),
-      },
-      {
-        kind: 'item',
-        label: 'New task',
-        icon: <ListChecksIcon aria-hidden="true" />,
-        run: () =>
+        newTask: () =>
           void attempt('create the task', async () => {
             const path = await createTask({
               title: 'Untitled task',
@@ -847,13 +503,7 @@ export function FilesSection({
             })
             if (path) onOpen(path)
           }),
-      },
-      ...creates.map((create): MenuAction => ({
-        kind: 'item',
-        label: create.label,
-        icon: <create.icon aria-hidden={true} />,
-        disabled: files.remote === null,
-        run: () =>
+        make: (create) =>
           create.asksName === true
             ? setAsking({ create, parent })
             : void attempt(`make the ${create.label.toLowerCase()}`, () =>
@@ -863,23 +513,11 @@ export function FilesSection({
                   freeName(files.taken, parent, 'Untitled', '.app').replace(/\.app$/, ''),
                 ),
               ),
-      })),
-      { kind: 'separator' },
-      {
-        kind: 'check',
-        label: 'Show task files',
-        checked: files.showTasks,
-        toggle: files.toggleTasks,
+        toggleTasks: files.toggleTasks,
+        toggleHidden: files.toggleHidden,
+        collapseAll: () => tree.collapseAll(),
       },
-      {
-        kind: 'check',
-        label: 'Show hidden files',
-        checked: files.showHidden,
-        toggle: files.toggleHidden,
-      },
-      { kind: 'separator' },
-      { kind: 'item', label: 'Collapse all', run: () => tree.collapseAll() },
-    ]
+    })
   }
 
   /** A menu closing on Rename opens the field instead of taking focus back. */
@@ -922,10 +560,10 @@ export function FilesSection({
               <DropdownMenuLabel className="text-muted-foreground truncate text-xs font-normal">
                 {focused.getItemName()}
               </DropdownMenuLabel>
-              <DropdownMenuActions actions={rowActions(focused.getId())} />
+              <DropdownMenuActions actions={rowActionsOf(focused.getId())} />
             </>
           ) : null}
-          <DropdownMenuActions actions={newActions(focused?.getId() ?? null)} />
+          <DropdownMenuActions actions={newActionsOf(focused?.getId() ?? null)} />
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -1037,41 +675,30 @@ export function FilesSection({
           </ContextMenuTrigger>
 
           <ContextMenuContent className="w-52" onCloseAutoFocus={openRenameOnClose}>
-            {menuTarget !== null ? <ContextMenuActions actions={rowActions(menuTarget)} /> : null}
-            <ContextMenuActions actions={newActions(menuTarget)} />
+            {menuTarget !== null ? <ContextMenuActions actions={rowActionsOf(menuTarget)} /> : null}
+            <ContextMenuActions actions={newActionsOf(menuTarget)} />
           </ContextMenuContent>
         </ContextMenu>
       </div>
 
-      <AlertDialog
+      <ConfirmDialog
         open={deleting !== null}
         onOpenChange={(open) => {
           if (!open) setDeleting(null)
         }}
-      >
-        <AlertDialogContent size="sm">
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              Delete “{deleting === null ? '' : basename(deleting)}”?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {deleting !== null && snapshot.dirs.includes(deleting)
-                ? 'It and everything in it leave the vault for everyone it syncs with.'
-                : 'It leaves the vault for everyone it syncs with.'}{' '}
-              Its history keeps the last version.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => deleting !== null && remove(deleting)}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        size="sm"
+        destructive
+        title={`Delete “${deleting === null ? '' : basename(deleting)}”?`}
+        description={`${
+          deleting !== null && snapshot.dirs.includes(deleting)
+            ? 'It and everything in it leave the vault for everyone it syncs with.'
+            : 'It leaves the vault for everyone it syncs with.'
+        } Its history keeps the last version.`}
+        confirmLabel="Delete"
+        onConfirm={() => {
+          if (deleting !== null) remove(deleting)
+        }}
+      />
 
       <AskNameDialog
         asking={asking}
@@ -1081,131 +708,5 @@ export function FilesSection({
         }
       />
     </SidebarGroup>
-  )
-}
-
-/** A row in a hover card when its claim draws one; the row alone otherwise. */
-function RowHover({
-  card: Card,
-  path,
-  children,
-}: {
-  card: ComponentType<{ path: string }> | undefined
-  path: string
-  children: ReactElement
-}) {
-  if (Card === undefined) return children
-  return (
-    <HoverCard openDelay={500} closeDelay={100}>
-      <HoverCardTrigger asChild>{children}</HoverCardTrigger>
-      <HoverCardContent side="right" align="start" variant="flush" className="w-80">
-        <Card path={path} />
-      </HoverCardContent>
-    </HoverCard>
-  )
-}
-
-/**
- * The name a New menu item asks for before it makes anything (a link's
- * address), in a field that says the item's placeholder. A refusal stays in
- * the dialog, under the field, with what was typed.
- */
-function AskNameDialog({
-  asking,
-  onClose,
-  onMake,
-}: {
-  asking: { create: ClaimCreate; parent: string } | null
-  onClose: () => void
-  onMake: (name: string) => Promise<void>
-}) {
-  const [name, setName] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const close = () => {
-    setName('')
-    setError(null)
-    onClose()
-  }
-  const label = asking?.create.label ?? ''
-  const submit = () => {
-    if (name.trim() === '' || busy) return
-    setBusy(true)
-    setError(null)
-    onMake(name.trim())
-      .then(close, (err: unknown) => setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setBusy(false))
-  }
-  return (
-    <Dialog open={asking !== null} onOpenChange={(open) => !open && close()}>
-      <DialogContent className="sm:max-w-md">
-        <div className="flex flex-col gap-6">
-          <DialogHeader>
-            <DialogTitle>{label}</DialogTitle>
-            <DialogDescription>
-              {asking?.parent ? `In ${asking.parent}.` : 'At the vault’s top.'}
-            </DialogDescription>
-          </DialogHeader>
-          <Field data-invalid={error !== null || undefined}>
-            <FieldLabel htmlFor="ask-name" className="sr-only">
-              {label}
-            </FieldLabel>
-            <Input
-              id="ask-name"
-              autoFocus
-              value={name}
-              placeholder={asking?.create.placeholder}
-              spellCheck={false}
-              aria-invalid={error !== null || undefined}
-              onChange={(event) => setName(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
-                event.preventDefault()
-                submit()
-              }}
-            />
-            {error !== null ? <FieldError>{error}</FieldError> : null}
-          </Field>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={close}>
-              Cancel
-            </Button>
-            <Button type="button" disabled={busy || name.trim() === ''} onClick={submit}>
-              {busy ? 'Saving…' : 'Save'}
-            </Button>
-          </DialogFooter>
-        </div>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-/** A row's name: the file's name without its extension, which the icon
- *  already says. Folders keep theirs whole. */
-function displayName(item: ItemInstance<TreeItemData>): string {
-  const name = item.getItemName()
-  if (item.isFolder() && !item.getItemData()?.isDocument) return name
-  const dot = name.lastIndexOf('.')
-  return dot > 0 ? name.slice(0, dot) : name
-}
-
-/** Folders keep their folder glyph; every file, an app bundle included,
- *  shows ReUI's file-type icon for its kind. */
-function FileGlyph({ item }: { item: ItemInstance<TreeItemData> }) {
-  const data = item.getItemData()
-  if (item.isFolder() && !data?.isDocument) {
-    return item.isExpanded() ? (
-      <FolderOpenIcon className="text-muted-foreground size-4" aria-hidden="true" />
-    ) : (
-      <FolderIcon className="text-muted-foreground size-4" aria-hidden="true" />
-    )
-  }
-  return (
-    <FileType
-      type={getFileType(item.getItemName())}
-      size="mini"
-      aria-hidden="true"
-      className="shrink-0"
-    />
   )
 }

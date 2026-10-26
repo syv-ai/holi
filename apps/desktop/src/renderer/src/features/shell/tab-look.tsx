@@ -19,7 +19,7 @@ import { runningPluginsAtom, surfacesAtom } from '@/state/plugins'
 import { parseTabKey } from '@/state/tab-descriptor'
 
 import type { HeaderTab } from './tab-strip'
-import { useSidebarApps } from '../sidebar/sidebar-apps'
+import { useSidebarApps } from '@/features/sidebar/sidebar-apps'
 
 type LookUp = (selection: { owner: string; id: string }) => AgentsTabLook | undefined
 

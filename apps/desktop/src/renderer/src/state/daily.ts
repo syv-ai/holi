@@ -10,7 +10,7 @@
  * vault that keeps no daily notes automatically.
  */
 import { atom } from 'jotai'
-import { trpc } from '../lib/trpc'
+import { trpc } from '@/lib/trpc'
 import { openPinned, workspaceAtom } from './panes'
 import { activeDocAtom, activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 

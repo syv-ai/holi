@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
-import { prefersReducedMotion } from '../lib/motion'
+import { prefersReducedMotion } from '@/lib/motion'
 
 /**
  * The four acknowledgement shapes, defined in `index.css` (K). `bloom` and

@@ -17,7 +17,7 @@ import { trpc } from '@/lib/trpc'
 import { activityEntriesAtom, activityUnseenErrorAtom, type ActivityEntry } from '@/state/activity'
 import { bottomPanelAtom, showPanelAtom, togglePanelAtom } from '@/state/bottom-panel'
 import { runningPluginsAtom } from '@/state/plugins'
-import { isMac } from '@/state/shortcuts'
+import { isMac } from '@/lib/platform'
 import { BranchPicker } from './branch-picker'
 import { activeRemoteAtom, historyEpochsAtom, syncStateAtom } from '@/state/vaults'
 

@@ -29,7 +29,7 @@ import { appLogEntriesAtom, appLogLoadAtom, mergeAppLog, type AppLogEntry } from
 import { bottomPanelAtom, clampPanelHeight, togglePanel } from '@/state/bottom-panel'
 import { afterRemoval } from '@/state/panel-terminals'
 import { installedPluginsAtom, runningPluginsAtom } from '@/state/plugins'
-import { useShortcutDispatcher } from '@/state/shortcuts'
+import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
 import { activeRemoteAtom, syncStateAtom } from '@/state/vaults'
 
 import { createFilterQuery, createFilterRule } from '@/components/reui/filters/filters-query'

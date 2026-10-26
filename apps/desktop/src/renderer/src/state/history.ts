@@ -7,7 +7,7 @@
  */
 import { fileKind } from '@holi/shared'
 import { atom } from 'jotai'
-import { trpc } from '../lib/trpc'
+import { trpc } from '@/lib/trpc'
 import { openSurface, workspaceAtom } from './panes'
 
 /** One commit that touched the open file: the git `Commit` shape. */

@@ -14,6 +14,7 @@ import { useMemo, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/cn'
+import { openExternal } from '@/lib/open-external'
 
 /** A link target the browser may be handed: http(s) and nothing else. */
 export function openableUrl(href: string): string | null {
@@ -69,7 +70,7 @@ function InlineToken({ token }: { token: Token }): ReactNode {
             <Button
               variant="link"
               size="inline"
-              onClick={() => void window.holi.openExternal(url)}
+              onClick={() => openExternal(url)}
               className="inline align-baseline break-words text-foreground"
             >
               <Inline tokens={link.tokens} />

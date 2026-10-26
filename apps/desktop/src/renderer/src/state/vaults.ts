@@ -10,14 +10,14 @@ import {
 import type { SyncState } from '../../../main/vault/active-vault'
 import type { HeldBackFile } from '../../../main/vault/large-files'
 import type { RendererPlugin } from '@/state/plugin-types'
-import { flushAllBuffers } from '../lib/buffer-registry'
-import { trpc } from '../lib/trpc'
+import { flushAllBuffers } from '@/lib/buffer-registry'
+import { trpc } from '@/lib/trpc'
 import { closeTabsForPaths, retargetTab, retargetTabs, workspaceAtom } from './panes'
 // A cycle (`plugins` reads `activeRemoteAtom`), safe because neither module
 // reads the other's atoms until a store does.
 import { folderSurfacesAtom } from './plugins'
 import { openDocumentAtom } from './open-document'
-import { settledRect } from '../lib/settled-rect'
+import { settledRect } from '@/lib/settled-rect'
 
 type JotaiStore = ReturnType<typeof createStore>
 

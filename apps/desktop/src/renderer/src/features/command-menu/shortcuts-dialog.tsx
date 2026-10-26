@@ -18,12 +18,8 @@ import {
   type ShortcutGroup,
   type ShortcutLine,
 } from '@/lib/shortcuts'
-import {
-  isMac,
-  liveShortcutIdsAtom,
-  runShortcutAtom,
-  shortcutsDialogOpenAtom,
-} from '@/state/shortcuts'
+import { liveShortcutIdsAtom, runShortcutAtom, shortcutsDialogOpenAtom } from '@/state/shortcuts'
+import { isMac } from '@/lib/platform'
 import { EmptyState } from '@/composites/empty-state'
 
 /** The live table, grouped, filtered by label, group or key name. */

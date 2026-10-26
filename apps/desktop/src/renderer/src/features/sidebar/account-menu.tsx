@@ -1,8 +1,7 @@
 import type { ReactNode } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import type { ColorScheme, WindowGlass } from '@holi/shared'
+import type { WindowGlass } from '@holi/shared'
 
-import { colorSchemeAtom, writeColorSchemeAtom } from '@/state/color-scheme'
 import { windowGlassAtom, writeWindowGlassAtom } from '@/state/window-glass'
 import { sessionAtom, signOutAtom } from '@/state/session'
 import {
@@ -34,10 +33,9 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { ColorSchemeToggle } from '@/composites/color-scheme-toggle'
+import { isMac } from '@/lib/platform'
 import {
-  SunIcon,
-  MoonIcon,
-  MonitorIcon,
   UserIcon,
   SlidersHorizontalIcon,
   SettingsIcon,
@@ -53,52 +51,7 @@ import {
   RefreshCwIcon,
   SparklesIcon,
 } from 'lucide-react'
-
-// ── Theme Toggle ──
-
-const THEMES: { value: ColorScheme; label: string; icon: ReactNode }[] = [
-  {
-    value: 'light',
-    label: 'Light',
-    icon: <SunIcon aria-hidden="true" />,
-  },
-  {
-    value: 'dark',
-    label: 'Dark',
-    icon: <MoonIcon aria-hidden="true" />,
-  },
-  {
-    value: 'system',
-    label: 'System',
-    icon: <MonitorIcon aria-hidden="true" />,
-  },
-]
-
-function ThemeSegmentedToggle() {
-  // The vault's machine-local `colorScheme`, which `useColorScheme` stamps on
-  // <html> as `data-theme`.
-  const currentTheme = useAtomValue(colorSchemeAtom)
-  const setTheme = useSetAtom(writeColorSchemeAtom)
-
-  return (
-    <ToggleGroup
-      type="single"
-      value={currentTheme}
-      // A theme is always set, so pressing the active one again changes nothing.
-      onValueChange={(value) => value && void setTheme(value as ColorScheme)}
-      variant="outline"
-      spacing={0}
-      size="sm"
-      aria-label="Theme"
-    >
-      {THEMES.map(({ value, label, icon }) => (
-        <ToggleGroupItem key={value} value={value} aria-label={label}>
-          {icon}
-        </ToggleGroupItem>
-      ))}
-    </ToggleGroup>
-  )
-}
+import { openExternal } from '@/lib/open-external'
 
 // ── Transparency Toggle ──
 
@@ -137,12 +90,6 @@ function GlassSegmentedToggle() {
       ))}
     </ToggleGroup>
   )
-}
-
-/** The window is glass only on a Mac, so only there is there anything to set.
- *  Read at render: `main.tsx` stamps the platform after the modules load. */
-function isMac() {
-  return document.documentElement.dataset.platform === 'mac'
 }
 
 // ── Account Menu ──
@@ -290,7 +237,7 @@ function AccountMenuContent({ isMobile }: { isMobile: boolean }) {
           <PaletteIcon aria-hidden="true" />
           Theme
           <div className="ml-auto">
-            <ThemeSegmentedToggle />
+            <ColorSchemeToggle />
           </div>
         </DropdownMenuItem>
         {isMac() ? (
@@ -311,17 +258,13 @@ function AccountMenuContent({ isMobile }: { isMobile: boolean }) {
 
       <DropdownMenuGroup>
         <DropdownMenuItem
-          onSelect={() =>
-            void window.holi.openExternal('https://github.com/syv-ai/holi/issues/new')
-          }
+          onSelect={() => openExternal('https://github.com/syv-ai/holi/issues/new')}
         >
           <BugIcon aria-hidden="true" />
           File issue
         </DropdownMenuItem>
         <DropdownMenuItem
-          onSelect={() =>
-            void window.holi.openExternal('https://github.com/syv-ai/holi/tree/main/docs')
-          }
+          onSelect={() => openExternal('https://github.com/syv-ai/holi/tree/main/docs')}
         >
           <HelpCircleIcon aria-hidden="true" />
           Help

@@ -31,9 +31,9 @@ import { snapshotAtom } from './vaults'
 export const openSurfaceAtom = atom(null, (_get, set, surface: string, id?: string): void => {
   if (surface === 'home') return void set(openHomeAtom)
   set(workspaceAtom, (w) => openSurface(w, surface, id))
-  // The shell's tabs are `shell-tabs.ts`'s: a vault app by its bundle, any
-  // other surface by name. Without this a plugin's open (the agent's
-  // `holi apps open`) reached only the old workspace, which nothing draws.
+  // The tabs the shell draws are `shell-tabs.ts`'s: a vault app by its bundle,
+  // any other surface by name. `workspaceAtom` above is the pane workspace
+  // `surfaceTabIdsAtom` reads; this is what a person sees open.
   set(openTabAtom, shellSurfaceTab(surface, id))
 })
 

@@ -7,14 +7,14 @@ import { runningPluginsAtom, surfacesAtom } from '@/state/plugins'
 import { parseTabKey } from '@/state/tab-descriptor'
 import { snapshotAtom } from '@/state/vaults'
 
-import { AppsView } from '../apps/apps-view'
-import { VaultAppTab } from '../apps/vault-app-tab'
-import { DocumentView } from '../documents/document-view'
-import { FileView } from '../files/file-view'
-import { GraphView } from '../graph/graph-view'
-import { PlanningView } from '../planning/planning-view'
+import { AppsView } from '@/features/apps/apps-view'
+import { VaultAppTab } from '@/features/apps/vault-app-tab'
+import { DocumentView } from '@/features/documents/document-view'
+import { FileView } from '@/features/files/file-view'
+import { GraphView } from '@/features/graph/graph-view'
+import { PlanningView } from '@/features/planning/planning-view'
 import { NewTabView } from './new-tab-view'
-import { useSidebarApps } from '../sidebar/sidebar-apps'
+import { useSidebarApps } from '@/features/sidebar/sidebar-apps'
 
 /**
  * What one tab shows (docs/features/tabs-panes.md): the view switch the shell

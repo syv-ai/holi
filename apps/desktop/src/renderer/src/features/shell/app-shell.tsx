@@ -1,9 +1,10 @@
 // Adapted from ReUI's app-shell-21 block (`npx shadcn@latest view @reui/app-shell-21` shows the published source).
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { type PanelImperativeHandle } from 'react-resizable-panels'
 
 import { useIsMobile } from '@/hooks/use-mobile'
+import { useClaudeFirstRun } from '@/hooks/use-claude-first-run'
+import { useSessionTabs } from '@/hooks/use-session-tabs'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import {
   Sheet,
@@ -13,15 +14,11 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { SidebarProvider } from '@/components/ui/sidebar'
-import { TooltipProvider } from '@/components/ui/tooltip'
 import { SettingsNav } from '@/features/settings/settings-nav'
 import { useSettingsHotkey } from '@/features/settings/use-settings-hotkey'
-import { settingsRequestAtom } from '@/state/settings-section'
-import { openDocumentRequestAtom } from '@/state/open-document'
-import { revealInFilesRequestAtom } from '@/state/reveal-in-files'
 import { newAgentSessionAtom } from '@/state/agents-slots'
+import { appModeAtom } from '@/state/app-mode'
 import { runningPluginsAtom } from '@/state/plugins'
-import { sidebarSectionAtom } from '@/state/sidebar-section'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 // Split tabs (docs/features/tabs-panes.md): one strip, a split being one
 // entry of it.
@@ -30,7 +27,6 @@ import {
   closeAllTabs as closeAllTabsIn,
   closeTab as closeTabIn,
   entryIds,
-  entryOf,
   focusedTab,
   focusMember,
   openInSplit,
@@ -43,76 +39,35 @@ import {
   setShares,
   splitActive,
   stepMember,
-  type ShellWorkspace,
 } from '@/state/shell-workspace'
 import { openingBeside } from '@/state/alt-open'
-import {
-  AGENTS_HOME_KEY,
-  parseTabKey,
-  SETTINGS_KEY,
-  tabForPath,
-  tabKey,
-  tabPath,
-} from '@/state/tab-descriptor'
+import { AGENTS_HOME_KEY, parseTabKey, tabForPath, tabKey, tabPath } from '@/state/tab-descriptor'
 import { activeRemoteAtom } from '@/state/vaults'
-
-import { CommandMenu } from '../command-menu/command-menu'
 import type { Move } from '@/lib/tree-actions'
-import { useNewDocument } from '../sidebar/files-section'
-import { MobileHeader } from './mobile-header'
-import { SplitView, type MemberSlot } from './split-view'
-import { placedByDrop } from './use-tab-drag'
-import { TabStrip } from './tab-strip'
-import { useSidebarApps } from '../sidebar/sidebar-apps'
-import { ShortcutsDialog } from '../command-menu/shortcuts-dialog'
-import { TabView } from './tab-view'
-import { useSessionTabs } from '../../hooks/use-session-tabs'
-import { useShellShortcuts } from './use-shell-shortcuts'
-import { useClaudeFirstRun } from '../../hooks/use-claude-first-run'
-import { useShortcutDispatcher } from '@/state/shortcuts'
-import { AppSidebar } from '../sidebar/app-sidebar'
-// The status bar and the bottom panel (docs/features/status-bar.md).
-import { BottomPanel } from '../bottom-panel/bottom-panel'
-import { StatusBar } from '../status-bar/status-bar'
+import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
 import { useActivityLog } from '@/state/activity'
 import { useDocChangeMarks } from '@/state/doc-changes'
 import { usePanelTerminals } from '@/state/panel-terminals'
-import { foldSidebarForAppsAtom } from '@/state/fold-sidebar'
-import { leadWidth, TitleBar } from './title-bar'
 
-/** Expanded width in pixels, and the drag point below which the rail takes over. */
-const SIDEBAR_WIDTH = 248
-const RAIL_THRESHOLD = 190
-/** Matches the panel transition, so state lands after the motion finishes. */
-const SETTLE_MS = 280
-
-/** Where a vault's last split widths for a member count are kept, on this
- *  machine (docs/features/tabs-panes.md, Persistence). */
-function sharesStorageKey(remote: string | null, count: number): string {
-  return `holi.panes.${remote ?? ''}.${count}`
-}
-
-function readShares(remote: string | null, count: number): number[] | null {
-  try {
-    const raw = localStorage.getItem(sharesStorageKey(remote, count))
-    const parsed: unknown = raw === null ? null : JSON.parse(raw)
-    return Array.isArray(parsed) &&
-      parsed.length === count &&
-      parsed.every((n) => typeof n === 'number' && n > 0)
-      ? (parsed as number[])
-      : null
-  } catch {
-    return null
-  }
-}
-
-function writeShares(remote: string | null, shares: number[]): void {
-  try {
-    localStorage.setItem(sharesStorageKey(remote, shares.length), JSON.stringify(shares))
-  } catch {
-    // Storage off (a private window): the widths last the session only.
-  }
-}
+import { CommandMenu } from '@/features/command-menu/command-menu'
+import { ShortcutsDialog } from '@/features/command-menu/shortcuts-dialog'
+// The status bar and the bottom panel (docs/features/status-bar.md).
+import { BottomPanel } from '@/features/bottom-panel/bottom-panel'
+import { StatusBar } from '@/features/status-bar/status-bar'
+import { AppSidebar } from '@/features/sidebar/app-sidebar'
+import { useSidebarApps } from '@/features/sidebar/sidebar-apps'
+import { useNewDocument } from '@/features/sidebar/use-files'
+import { MobileHeader } from './mobile-header'
+import { readShares, writeShares } from './split-shares'
+import { SplitView, type MemberSlot } from './split-view'
+import { TabStrip } from './tab-strip'
+import { TabView } from './tab-view'
+import { TitleBar } from './title-bar'
+import { placedByDrop } from './use-tab-drag'
+import { SIDEBAR_WIDTH, useSidebarFold } from './use-sidebar-fold'
+import { useSettingsTab } from './use-settings-tab'
+import { useShellRequests } from './use-shell-requests'
+import { useShellShortcuts } from './use-shell-shortcuts'
 
 /** Split tabs: the view slot of an empty strip, which shows the New tab's
  *  view. No tab key reads this way (`holi:` keys name a known kind). */
@@ -135,104 +90,33 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const focusedKey = focusedTab(ws)
   const activeTab = focusedKey === null ? null : parseTabKey(focusedKey)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
   const [searchOpen, setSearchOpen] = useState(false)
   /** Pointer x at press, so a drag does not also register as a click. */
   const pressX = useRef<number | null>(null)
-  const sidebarPanel = useRef<PanelImperativeHandle>(null)
-  /** Driven imperatively during the gesture: a React render here re-renders the
-      whole shell, and a flex transition cannot draw behind that. */
-  const fadeRef = useRef<HTMLDivElement>(null)
-  const pinRef = useRef<HTMLDivElement>(null)
-  /** The title band's sidebar half, kept to the sidebar's width the same way. */
-  const leadRef = useRef<HTMLDivElement>(null)
-  const widthRef = useRef(SIDEBAR_WIDTH)
-  const settling = useRef(false)
-  const settleTimer = useRef<number | null>(null)
-  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_WIDTH)
-  /** Armed on the first resize: any earlier and the first layout animates in. */
-  const [animate, setAnimate] = useState(false)
   const apps = useSidebarApps()
   /** The app in front (Mail, Calendar): the focused pane's tab, when it is
    *  one. An app folds the files sidebar to its rail while it is in front. */
   const app = activeTab?.kind === 'app' ? activeTab.id : null
-  /** Whether the files sidebar was open when an app came forward, so leaving
-   *  the app gives it back as it was. */
-  const openBeforeApp = useRef(false)
-  const foldForApps = useAtomValue(foldSidebarForAppsAtom)
-  /** The tab in front when Settings came forward, for its Back. */
-  const beforeSettings = useRef<string | null>(null)
-  const settingsRequest = useAtomValue(settingsRequestAtom)
-  const openRequest = useAtomValue(openDocumentRequestAtom)
-  const revealRequest = useAtomValue(revealInFilesRequestAtom)
+  const {
+    sidebarOpen,
+    sidebarWidth,
+    animate,
+    sidebarPanel,
+    fadeRef,
+    pinRef,
+    leadRef,
+    toggleSidebar,
+    showSidebar,
+    onPanelResize,
+  } = useSidebarFold(app)
   /** The sidebar's tab. It no longer swaps the main area: a session opens
    *  as a tab, and + on the Agents side opens the Agents home. */
-  const [section, setSection] = useAtom(sidebarSectionAtom)
+  const [section, setSection] = useAtom(appModeAtom)
   const running = useAtomValue(runningPluginsAtom)
   const hasAgents = running.some((plugin) => plugin.agentsMode !== undefined)
   const newAgentSession = useSetAtom(newAgentSessionAtom)
   useSettingsHotkey()
   useSessionTabs(focusedKey)
-
-  useEffect(() => {
-    return () => {
-      if (settleTimer.current) window.clearTimeout(settleTimer.current)
-    }
-  }, [])
-
-  // ⌘, the profile menu, or a plugin's "Open Connections" asked for
-  // Settings: bring its tab forward, with the sidebar open to carry its nav.
-  const seenRequest = useRef(settingsRequest)
-  useEffect(() => {
-    if (settingsRequest === seenRequest.current) return
-    seenRequest.current = settingsRequest
-    openSettings()
-    // Only a new request opens it; the handler reads the latest state.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settingsRequest])
-
-  // A plugin asked to open a document (a chat's changed file, a saved
-  // reply): it opens as a tab, on the Documents side.
-  const seenOpen = useRef(openRequest)
-  useEffect(() => {
-    if (openRequest === seenOpen.current) return
-    seenOpen.current = openRequest
-    if (openRequest !== null) openTabKey(openRequest.path)
-    // Only a new request opens; the handler reads the latest state.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openRequest])
-
-  // Reveal in Files: the Documents sidebar comes forward, open, and the tree
-  // finds the row itself.
-  const seenReveal = useRef(revealRequest)
-  useEffect(() => {
-    if (revealRequest === seenReveal.current) return
-    seenReveal.current = revealRequest
-    if (revealRequest === null) return
-    setSection('documents')
-    if (isMobile) setMobileNavOpen(true)
-    else if (sidebarPanel.current?.isCollapsed()) toggleSidebar()
-    // Only a new request reveals; the toggle reads the latest state.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revealRequest])
-
-  // An app coming forward folds the files to the rail, unless this machine's
-  // `foldSidebarForApps` is off; leaving it for any other tab gives them back
-  // as they were.
-  const appBefore = useRef<string | null>(null)
-  useEffect(() => {
-    const was = appBefore.current
-    appBefore.current = app
-    const panel = sidebarPanel.current
-    if (was === null && app !== null) {
-      openBeforeApp.current = foldForApps && !!panel && !panel.isCollapsed()
-      if (openBeforeApp.current) toggleSidebar()
-    } else if (was !== null && app === null) {
-      if (openBeforeApp.current && panel?.isCollapsed()) toggleSidebar()
-    }
-    // Only the app changing folds; the toggle reads the latest state.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [app])
 
   // Split tabs: a split, or a member count, this vault has not laid out in
   // this session opens at the widths it last had for that count.
@@ -250,64 +134,22 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     if (stored !== null) setWs((w) => setShares(w, splitId, stored))
   }, [splitId, memberCount, remote, setWs])
 
-  /** React state catches up only after the motion has finished. */
-  function settleOpen(next: boolean) {
-    if (settleTimer.current) window.clearTimeout(settleTimer.current)
-    settling.current = true
-    settleTimer.current = window.setTimeout(() => {
-      settling.current = false
-      setSidebarWidth(widthRef.current)
-      setSidebarOpen(next)
-    }, SETTLE_MS)
-  }
-
-  function toggleSidebar() {
-    const panel = sidebarPanel.current
-    if (!panel) return
-    const next = panel.isCollapsed()
-    fadeRef.current?.setAttribute('data-state', next ? 'open' : 'collapsed')
-    // Guard first: collapse()/expand() fire onResize synchronously, and that
-    // callback must not re-render the shell while the motion runs.
-    settleOpen(next)
-    if (next) panel.expand()
-    else panel.collapse()
-  }
-
-  function update(change: (w: ShellWorkspace) => ShellWorkspace) {
-    setWs(change)
-  }
-
   /** An app opens as a tab, or comes forward where it is. */
   function openApp(id: string) {
     setMobileNavOpen(false)
-    update((w) => openTabIn(w, tabKey({ kind: 'app', id })))
+    setWs((w) => openTabIn(w, tabKey({ kind: 'app', id })))
   }
 
-  /** The band's toggle and the divider. */
-  function toggleFiles() {
-    toggleSidebar()
-  }
-
-  /** Settings comes forward as a tab, its nav in place of the files. A
-   *  folded sidebar opens for it, since the nav is how its pages are reached. */
+  const { openSettings: showSettings, leaveSettings } = useSettingsTab({
+    focusedKey,
+    update: setWs,
+    showSidebar: () => {
+      if (!isMobile) showSidebar()
+    },
+  })
   function openSettings() {
     setMobileNavOpen(false)
-    if (focusedKey !== SETTINGS_KEY) beforeSettings.current = focusedKey
-    update((w) => openTabIn(w, SETTINGS_KEY))
-    if (!isMobile && sidebarPanel.current?.isCollapsed()) toggleSidebar()
-  }
-
-  /** Settings' Back: to the tab it came from, Settings staying open. */
-  function leaveSettings() {
-    const back = beforeSettings.current
-    update((w) => {
-      // Split tabs: back to that tab wherever it is now, else any other.
-      if (back !== null && entryOf(w, back) !== null) {
-        return selectEntry(w, back)
-      }
-      const other = entryIds(w).find((id) => id !== SETTINGS_KEY)
-      return other === undefined ? w : selectEntry(w, other)
-    })
+    showSettings()
   }
 
   /** + and ⌘T: a New tab, or on the Agents side a new session in the
@@ -315,18 +157,18 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   function openNewTab() {
     if (section === 'agents' && hasAgents) {
       if (newAgentSession()) return
-      update((w) => openTabIn(w, AGENTS_HOME_KEY))
+      setWs((w) => openTabIn(w, AGENTS_HOME_KEY))
       return
     }
-    update(openNewTabIn)
+    setWs(openNewTabIn)
   }
 
   function closeTab(key: string) {
-    update((w) => closeTabIn(w, key))
+    setWs((w) => closeTabIn(w, key))
   }
 
   function closeAllTabs() {
-    update(closeAllTabsIn)
+    setWs(closeAllTabsIn)
   }
 
   /** Open a vault path, the board, or any tab key: as a tab, or in the
@@ -338,19 +180,19 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     }
     // ⌥-click (or ⌥↩) opens it beside what is in front.
     const beside = openingBeside()
-    update((w) => (beside ? openInSplit(w, key) : openTabIn(w, key)))
+    setWs((w) => (beside ? openInSplit(w, key) : openTabIn(w, key)))
     setMobileNavOpen(false)
   }
 
   /** A moved file's tab follows it to its new path, splits included. */
   function retargetTabs(moves: Move[]) {
-    update((w) => retargetTabsIn(w, moves))
+    setWs((w) => retargetTabsIn(w, moves))
   }
 
   /** Split tabs: a sized member of the active split was resized; it takes
    *  `share`, and the member that fills takes the rest. */
   function resizeMember(key: string, share: number) {
-    update((w) => {
+    setWs((w) => {
       const s = activeSplit(w)
       if (s === null) return w
       const fill = s.views.length >= 3 ? 1 : 0
@@ -369,6 +211,20 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     void createDocument()
   }
 
+  /** The Documents side forward and open: the sheet on mobile, else the panel. */
+  function showFiles() {
+    if (isMobile) return setMobileNavOpen(true)
+    showSidebar()
+  }
+  useShellRequests({
+    openSettings,
+    openTabKey,
+    revealFiles: () => {
+      setSection('documents')
+      showFiles()
+    },
+  })
+
   useShortcutDispatcher()
   // The activity log and the panel's shells are followed from here, for the
   // window's life, so the Output collects while the panel is closed.
@@ -384,22 +240,19 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     activeTabId: focusedKey,
     activeEntryId: ws.active,
     newTab: openNewTab,
-    separate: split === null ? undefined : () => update((w) => separate(w, split.id)),
-    stepMember: split === null ? undefined : (step) => update((w) => stepMember(w, step)),
+    separate: split === null ? undefined : () => setWs((w) => separate(w, split.id)),
+    stepMember: split === null ? undefined : (step) => setWs((w) => stepMember(w, step)),
     app,
     apps,
     open: openTabKey,
-    selectTab: (id) => update((w) => selectEntry(w, id)),
+    selectTab: (id) => setWs((w) => selectEntry(w, id)),
     closeTab,
     closeAllTabs,
-    reopenTab: () => update(reopenClosed),
-    splitRight: () => update(splitActive),
+    reopenTab: () => setWs(reopenClosed),
+    splitRight: () => setWs(splitActive),
     newDocument,
-    toggleFiles,
-    showFiles: () => {
-      if (isMobile) return setMobileNavOpen(true)
-      if (sidebarPanel.current?.isCollapsed()) toggleSidebar()
-    },
+    toggleFiles: toggleSidebar,
+    showFiles,
     openApp,
     setSearchOpen,
   })
@@ -412,7 +265,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   ) : (
     <AppSidebar
       collapsed={false}
-      onToggle={isMobile ? () => setMobileNavOpen(false) : toggleFiles}
+      onToggle={isMobile ? () => setMobileNavOpen(false) : toggleSidebar}
       onOpenSearch={() => setSearchOpen(true)}
       activeId={focusedKey}
       onOpen={openTabKey}
@@ -427,7 +280,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const rail = (
     <AppSidebar
       collapsed
-      onToggle={toggleFiles}
+      onToggle={toggleSidebar}
       onOpenSearch={() => setSearchOpen(true)}
       activeId={focusedKey}
       onOpen={openTabKey}
@@ -456,7 +309,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     const isFocused = tab === focusedKey
     const focus = () => {
       if (split !== null && tab !== null) {
-        update((w) => focusMember(w, split.id, tab))
+        setWs((w) => focusMember(w, split.id, tab))
       }
     }
     return (
@@ -476,7 +329,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
             tab={tab}
             settingsNavInSidebar={isFocused && settingsActive && !isMobile && sidebarOpen}
             onOpen={openTabKey}
-            onOpenBeside={(id) => update((w) => openInSplit(w, keyFor(id)))}
+            onOpenBeside={(id) => setWs((w) => openInSplit(w, keyFor(id)))}
             reading={
               members
                 .map((member) => tabPath(member.key))
@@ -531,138 +384,111 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   )
 
   return (
-    // Every tooltip in the shell needs this ancestor to open.
-    <TooltipProvider>
-      <SidebarProvider
-        open={sidebarOpen}
-        onOpenChange={toggleFiles}
-        className="bg-background text-foreground h-svh min-h-0 w-full"
-      >
-        {isMobile ? (
-          <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-            {/* The brand bar is global chrome and the header below is this
+    <SidebarProvider
+      open={sidebarOpen}
+      onOpenChange={toggleSidebar}
+      className="bg-background text-foreground h-svh min-h-0 w-full"
+    >
+      {isMobile ? (
+        <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+          {/* The brand bar is global chrome and the header below is this
                 chat's toolbar, so both stay pinned while the column scrolls. */}
-            <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
-              <MobileHeader onOpenSearch={() => setSearchOpen(true)} onNewChat={newDocument} />
-              {main}
-            </div>
-            {/* No stock close button: it would sit on the sidebar's Search
+          <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
+            <MobileHeader onOpenSearch={() => setSearchOpen(true)} onNewDocument={newDocument} />
+            {main}
+          </div>
+          {/* No stock close button: it would sit on the sidebar's Search
                   button, and the sidebar header carries Close chats instead. */}
-            <SheetContent side="left" showCloseButton={false} className="w-72">
-              <SheetHeader className="sr-only">
-                <SheetTitle>Chats</SheetTitle>
-                <SheetDescription>Switch between your conversations.</SheetDescription>
-              </SheetHeader>
-              {sidebar}
-            </SheetContent>
-          </Sheet>
-        ) : (
-          <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-            <TitleBar
-              sidebarOpen={sidebarOpen}
-              sidebarWidth={sidebarWidth}
-              leadRef={leadRef}
-              onToggleSidebar={toggleFiles}
-            >
-              {header}
-            </TitleBar>
-            <ResizablePanelGroup
-              orientation="horizontal"
-              animateFirst={animate}
-              className="group/panels min-h-0 flex-1"
-            >
-              {/* One mounted panel that animates between rail and full width, the
+          <SheetContent side="left" showCloseButton={false} className="w-72">
+            <SheetHeader className="sr-only">
+              <SheetTitle>Chats</SheetTitle>
+              <SheetDescription>Switch between your conversations.</SheetDescription>
+            </SheetHeader>
+            {sidebar}
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+          <TitleBar
+            sidebarOpen={sidebarOpen}
+            sidebarWidth={sidebarWidth}
+            leadRef={leadRef}
+            onToggleSidebar={toggleSidebar}
+          >
+            {header}
+          </TitleBar>
+          <ResizablePanelGroup
+            orientation="horizontal"
+            animateFirst={animate}
+            className="group/panels min-h-0 flex-1"
+          >
+            {/* One mounted panel that animates between rail and full width, the
                 way the shadcn sidebar transitions. */}
-              <ResizablePanel
-                panelRef={sidebarPanel}
-                defaultSize={SIDEBAR_WIDTH}
-                minSize={208}
-                maxSize={360}
-                collapsible
-                collapsedSize={48}
-                groupResizeBehavior="preserve-pixel-size"
-                onResize={(size) => {
-                  // The band's divider follows the panel every frame, the
-                  // animated toggle included, so the two never part.
-                  const lead = leadRef.current
-                  if (lead) {
-                    const wide = size.inPixels > RAIL_THRESHOLD
-                    lead.style.setProperty(
-                      '--lead-width',
-                      wide ? `${leadWidth(size.inPixels)}px` : '',
-                    )
-                    lead.toggleAttribute('data-open', wide)
-                  }
-                  // Drags update everything else live too; the animated
-                  // toggle updates nothing else until it settles.
-                  if (!settling.current) {
-                    const open = size.inPixels > RAIL_THRESHOLD
-                    fadeRef.current?.setAttribute('data-state', open ? 'open' : 'collapsed')
-                    if (open && pinRef.current) {
-                      widthRef.current = size.inPixels
-                      pinRef.current.style.setProperty('--sidebar-pin', `${size.inPixels}px`)
-                    }
-                    setSidebarOpen(open)
-                  }
-                  setAnimate(true)
-                }}
-                className="min-h-0"
+            <ResizablePanel
+              panelRef={sidebarPanel}
+              defaultSize={SIDEBAR_WIDTH}
+              minSize={208}
+              maxSize={360}
+              collapsible
+              collapsedSize={48}
+              groupResizeBehavior="preserve-pixel-size"
+              onResize={onPanelResize}
+              className="min-h-0"
+            >
+              <div
+                ref={fadeRef}
+                data-state={sidebarOpen ? 'open' : 'collapsed'}
+                className="group/fade relative h-full overflow-hidden"
               >
                 <div
-                  ref={fadeRef}
-                  data-state={sidebarOpen ? 'open' : 'collapsed'}
-                  className="group/fade relative h-full overflow-hidden"
+                  ref={pinRef}
+                  inert={!sidebarOpen}
+                  style={{ '--sidebar-pin': `${sidebarWidth}px` } as CSSProperties}
+                  className="motion-respond h-full w-(--sidebar-pin) group-data-[state=collapsed]/fade:pointer-events-none group-data-[state=collapsed]/fade:opacity-0"
                 >
-                  <div
-                    ref={pinRef}
-                    inert={!sidebarOpen}
-                    style={{ '--sidebar-pin': `${sidebarWidth}px` } as CSSProperties}
-                    className="motion-respond h-full w-(--sidebar-pin) group-data-[state=collapsed]/fade:pointer-events-none group-data-[state=collapsed]/fade:opacity-0"
-                  >
-                    {sidebar}
-                  </div>
-                  <div
-                    inert={sidebarOpen}
-                    className="pointer-events-none absolute inset-y-0 start-0 w-12 opacity-0 motion-respond group-data-[state=collapsed]/fade:pointer-events-auto group-data-[state=collapsed]/fade:opacity-100"
-                  >
-                    {rail}
-                  </div>
+                  {sidebar}
                 </div>
-              </ResizablePanel>
+                <div
+                  inert={sidebarOpen}
+                  className="pointer-events-none absolute inset-y-0 start-0 w-12 opacity-0 motion-respond group-data-[state=collapsed]/fade:pointer-events-auto group-data-[state=collapsed]/fade:opacity-100"
+                >
+                  {rail}
+                </div>
+              </div>
+            </ResizablePanel>
 
-              {/* One hairline divider: drag resizes, a still click toggles. */}
-              <ResizableHandle
-                withHandle
-                data-shell-divider=""
-                title="Drag to resize. Click to collapse."
-                onPointerDown={(event) => {
-                  pressX.current = event.clientX
-                }}
-                onClick={(event) => {
-                  const moved = Math.abs(event.clientX - (pressX.current ?? 0))
-                  if (moved > 4) return
-                  toggleFiles()
-                }}
-                variant="primary"
-              />
+            {/* One hairline divider: drag resizes, a still click toggles. */}
+            <ResizableHandle
+              withHandle
+              data-shell-divider=""
+              title="Drag to resize. Click to collapse."
+              onPointerDown={(event) => {
+                pressX.current = event.clientX
+              }}
+              onClick={(event) => {
+                const moved = Math.abs(event.clientX - (pressX.current ?? 0))
+                if (moved > 4) return
+                toggleSidebar()
+              }}
+              variant="primary"
+            />
 
-              <ResizablePanel minSize={360} className="min-h-0">
-                {main}
-              </ResizablePanel>
-            </ResizablePanelGroup>
-          </div>
-        )}
+            <ResizablePanel minSize={360} className="min-h-0">
+              {main}
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </div>
+      )}
 
-        <CommandMenu
-          open={searchOpen}
-          onOpenChange={setSearchOpen}
-          onOpen={(id, beside) =>
-            beside ? update((w) => openInSplit(w, keyFor(id))) : openTabKey(id)
-          }
-          onAddVault={onAddVault}
-        />
-        <ShortcutsDialog />
-      </SidebarProvider>
-    </TooltipProvider>
+      <CommandMenu
+        open={searchOpen}
+        onOpenChange={setSearchOpen}
+        onOpen={(id, beside) =>
+          beside ? setWs((w) => openInSplit(w, keyFor(id))) : openTabKey(id)
+        }
+        onAddVault={onAddVault}
+      />
+      <ShortcutsDialog />
+    </SidebarProvider>
   )
 }

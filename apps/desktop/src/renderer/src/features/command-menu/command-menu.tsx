@@ -46,9 +46,6 @@ import {
   FolderPlusIcon,
   HelpCircleIcon,
   LogOutIcon,
-  MonitorIcon,
-  MoonIcon,
-  SunIcon,
   UserIcon,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react'
@@ -92,26 +89,26 @@ import {
   surfacesAtom,
 } from '@/state/plugins'
 import { openSettingsAtom } from '@/state/settings-section'
-import { isMac, liveShortcutIdsAtom, runShortcutAtom } from '@/state/shortcuts'
+import { isMac } from '@/lib/platform'
+import { liveShortcutIdsAtom, runShortcutAtom } from '@/state/shortcuts'
 import { createTaskAtom } from '@/state/tasks'
-import { AGENTS_HOME_KEY, GRAPH_KEY } from '@/state/tab-descriptor'
+import { AGENTS_HOME_KEY, APPS_KEY, BOARD_KEY, GRAPH_KEY } from '@/state/tab-descriptor'
 import { switchVaultAtom } from '@/state/vault-switch'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 
 import { settingsGroupsAtom } from '@/features/settings/settings-pages'
 import { useNewApp } from '@/features/apps/use-new-app'
-import { writeColorSchemeAtom } from '@/state/color-scheme'
+import { COLOR_SCHEMES, writeColorSchemeAtom } from '@/state/color-scheme'
 import { signOutAtom } from '@/state/session'
 import { openSettingsSectionAtom } from '@/state/settings-section'
-
-import { APPS_TAB, BOARD_TAB } from '../sidebar/documents-nav'
+import { openExternal } from '@/lib/open-external'
 
 /** How long typing must pause before the note bodies are searched. */
 const TEXT_SEARCH_MS = 150
 
 type MenuIcon = ComponentType<{ className?: string; 'aria-hidden'?: boolean }>
 
-interface MenuAction extends ActionRow {
+interface CommandAction extends ActionRow {
   icon: MenuIcon
   /** The key that runs it outside the menu, as a glyph spec (`⇧⌘B`). */
   keys?: string
@@ -121,15 +118,9 @@ interface MenuAction extends ActionRow {
 }
 
 /** A row of a group listed only once something is typed. */
-interface GroupedAction extends MenuAction {
+interface GroupedAction extends CommandAction {
   group: string
 }
-
-const THEMES = [
-  { value: 'light', label: 'Light theme', icon: SunIcon },
-  { value: 'dark', label: 'Dark theme', icon: MoonIcon },
-  { value: 'system', label: 'System theme', icon: MonitorIcon },
-] as const
 
 const DOCS_URL = 'https://github.com/syv-ai/holi/tree/main/docs'
 const ISSUE_URL = 'https://github.com/syv-ai/holi/issues/new'
@@ -286,17 +277,17 @@ export function CommandMenu({
     ...(entry.detail === undefined ? {} : { detail: entry.detail }),
     run: () => runPluginEntry({ plugin: entry.plugin, id: entry.id }),
   }))
-  const pluginRows = (group: string): MenuAction[] =>
+  const pluginRows = (group: string): CommandAction[] =>
     fromPlugins.filter((row) => row.group === group)
 
-  const goTo: MenuAction[] = [
+  const goTo: CommandAction[] = [
     {
       id: 'go.board',
       label: 'Board',
       keywords: ['tasks', 'planning', 'kanban'],
       icon: SquareKanbanIcon,
       keys: '⇧⌘B',
-      run: () => onOpen(BOARD_TAB, beside.current),
+      run: () => onOpen(BOARD_KEY, beside.current),
     },
     {
       id: 'go.graph',
@@ -312,7 +303,7 @@ export function CommandMenu({
             label: 'Apps',
             keywords: ['vault apps'],
             icon: AppWindowIcon,
-            run: () => onOpen(APPS_TAB, beside.current),
+            run: () => onOpen(APPS_KEY, beside.current),
           },
         ]
       : []),
@@ -325,7 +316,7 @@ export function CommandMenu({
       run: openToday,
     },
     ...pluginRows('go'),
-    ...SHORTCUT_PLACES.filter((place) => live.has(place.id)).map((place): MenuAction => ({
+    ...SHORTCUT_PLACES.filter((place) => live.has(place.id)).map((place): CommandAction => ({
       id: place.id,
       label: place.label,
       icon: place.icon,
@@ -342,9 +333,9 @@ export function CommandMenu({
     },
   ]
 
-  const actions: MenuAction[] = [
+  const actions: CommandAction[] = [
     ...SHORTCUT_ACTIONS.filter((row) => live.has(row.id)).flatMap(
-      ({ id, icon, keywords }): MenuAction[] => {
+      ({ id, icon, keywords }): CommandAction[] => {
         const row = shortcut(id)
         if (row === undefined) return []
         return [
@@ -411,7 +402,7 @@ export function CommandMenu({
     },
     ...vaults
       .filter((vault) => vault.remote !== remote)
-      .map((vault): MenuAction => ({
+      .map((vault): CommandAction => ({
         id: `vault.switch:${vault.remote}`,
         label: `Switch to ${vault.name}`,
         keywords: ['vault', vault.remote],
@@ -433,9 +424,9 @@ export function CommandMenu({
         run: () => openSection(page.id),
       })),
     ),
-    ...THEMES.map((theme): GroupedAction => ({
+    ...COLOR_SCHEMES.map((theme): GroupedAction => ({
       id: `theme:${theme.value}`,
-      label: theme.label,
+      label: `${theme.label} theme`,
       group: 'Theme',
       keywords: ['theme', 'appearance', 'mode', 'color'],
       icon: theme.icon,
@@ -447,7 +438,7 @@ export function CommandMenu({
       group: 'Help',
       keywords: ['docs', 'documentation', 'how'],
       icon: HelpCircleIcon,
-      run: () => void window.holi.openExternal(DOCS_URL),
+      run: () => openExternal(DOCS_URL),
     },
     {
       id: 'help.issue',
@@ -455,7 +446,7 @@ export function CommandMenu({
       group: 'Help',
       keywords: ['bug', 'feedback', 'report'],
       icon: BugIcon,
-      run: () => void window.holi.openExternal(ISSUE_URL),
+      run: () => openExternal(ISSUE_URL),
     },
     ...fromPlugins.filter((row) => row.group !== 'go' && row.group !== 'action'),
     {
@@ -695,7 +686,7 @@ function ActionGroup({
   onSelect,
 }: {
   heading: string
-  actions: MenuAction[]
+  actions: CommandAction[]
   onSelect: (run: () => void | Promise<void>) => void
 }) {
   if (actions.length === 0) return null

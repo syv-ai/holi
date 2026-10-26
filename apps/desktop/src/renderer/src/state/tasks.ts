@@ -11,7 +11,7 @@
 import type { Task, TaskStatus } from '@holi/shared'
 import { privateTaskPath, sharedTaskPath, snapshotTasks } from '@holi/shared'
 import { atom } from 'jotai'
-import { capClient, type UiCapability } from '../lib/cap-client'
+import { capClient, type UiCapability } from '@/lib/cap-client'
 import { isClosedAtom } from './planning'
 import { activeRemoteAtom, loadSnapshotAtom, renameNoteAtom, snapshotAtom } from './vaults'
 

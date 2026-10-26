@@ -10,7 +10,7 @@
  */
 import type { CommentAnchor, CommentThread } from '@holi/shared'
 import { atom } from 'jotai'
-import { trpc } from '../lib/trpc'
+import { trpc } from '@/lib/trpc'
 import { activeRemoteAtom } from './vaults'
 
 export type ThreadsLoad =

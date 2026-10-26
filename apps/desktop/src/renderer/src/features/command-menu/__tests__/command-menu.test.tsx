@@ -10,7 +10,7 @@ import { expect, test, vi } from 'vitest'
 
 import { render, screen, waitFor } from '@/test/render'
 import { installedPluginsAtom } from '@/state/plugins'
-import { useShortcutHandlers } from '@/state/shortcuts'
+import { useShortcutHandlers } from '@/hooks/use-shortcuts'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { CommandMenu } from '../command-menu'
 

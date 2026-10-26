@@ -9,6 +9,7 @@
  */
 import { useEffect } from 'react'
 import { BRAND_MONOGRAM } from '@/lib/brand-shapes'
+import { isMac } from '@/lib/platform'
 
 /** The macOS icon grid: a 1024 canvas, the squircle 824 inset by 100. */
 const ICON_SIZE = 1024
@@ -133,7 +134,7 @@ export function useDockIcon(): void {
     // Absent where there is no preload bridge (the tests' jsdom), and the
     // dock is macOS's.
     const send = window.holi?.setDockIcon
-    if (!send || root.dataset.platform !== 'mac') return
+    if (!send || !isMac()) return
     let last = ''
     let timer = 0
     const redraw = () => {
