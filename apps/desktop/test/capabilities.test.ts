@@ -414,6 +414,51 @@ describe('docs CLI writes', () => {
     ).rejects.toThrow(/Stale revision/)
   })
 
+  it('inspects, updates, and deletes ordinary notes before the watcher lists them', async () => {
+    await writeFile(join(root, 'unscanned.md'), 'first')
+    const inspected = await runCapability('docs.inspect', 'cli', cliCtx(), {
+      path: 'unscanned.md',
+    })
+    const revision = (inspected.value as { revision: string }).revision
+    await runCapability('docs.update', 'cli', cliCtx(), {
+      path: 'unscanned.md',
+      revision,
+      body: 'second',
+    })
+    expect(await readText(join(root, 'unscanned.md'), 'utf8')).toBe('second')
+    await runCapability('docs.delete', 'cli', cliCtx(), {
+      path: 'unscanned.md',
+      revision: createHash('sha256').update('second').digest('hex'),
+    })
+    await expect(readText(join(root, 'unscanned.md'), 'utf8')).rejects.toThrow()
+  })
+
+  it('refuses ignored and plugin-claimed notes even before the watcher lists them', async () => {
+    await writeFile(join(root, '.gitignore'), 'ignored.md\n')
+    await writeFile(join(root, 'ignored.md'), 'ignored')
+    await writeFile(join(root, 'task.rent.md'), 'claimed')
+    for (const path of ['ignored.md', 'task.rent.md']) {
+      await expect(runCapability('docs.inspect', 'cli', cliCtx(), { path })).rejects.toThrow()
+      await expect(
+        runCapability('docs.update', 'cli', cliCtx(), {
+          path,
+          revision: createHash('sha256')
+            .update(path === 'ignored.md' ? 'ignored' : 'claimed')
+            .digest('hex'),
+          body: 'bad',
+        }),
+      ).rejects.toThrow()
+      await expect(
+        runCapability('docs.delete', 'cli', cliCtx(), {
+          path,
+          revision: createHash('sha256')
+            .update(path === 'ignored.md' ? 'ignored' : 'claimed')
+            .digest('hex'),
+        }),
+      ).rejects.toThrow()
+    }
+  })
+
   it('creates nested notes, and refuses a symlink target and case aliases', async () => {
     const nested = await runCapability('docs.create', 'cli', cliCtx(), {
       path: 'nested/deep/note.md',

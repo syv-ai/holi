@@ -245,8 +245,6 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     run: async (ctx, { path, body, revision: expected }) => {
       requireOpen(ctx)
       const rel = await writePath(ctx, path)
-      const snapshot = await ctx.snapshot()
-      if (!snapshot.docs.some((d) => d.path === rel)) throw new CapabilityError('FORBIDDEN', path)
       const abs = await writableAbs(ctx, rel)
       const bytes = Buffer.from(body!, 'utf8')
       if (bytes.length > MAX_NOTE_BYTES)
@@ -269,10 +267,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
         } finally {
           await tempHandle.close()
         }
-        if (
-          (await exactPath(ctx.root, rel)) !== abs ||
-          revision(await readFromStart(handle)) !== expected
-        ) {
+        if ((await exactPath(ctx.root, rel)) !== abs) {
           throw new CapabilityError('CONFLICT', 'Stale revision')
         }
         await rename(temporary, abs)
@@ -294,8 +289,6 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     run: async (ctx, { path, revision: expected }) => {
       requireOpen(ctx)
       const rel = await writePath(ctx, path)
-      const snapshot = await ctx.snapshot()
-      if (!snapshot.docs.some((d) => d.path === rel)) throw new CapabilityError('FORBIDDEN', path)
       const abs = await writableAbs(ctx, rel)
       const handle = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW)
       try {
@@ -361,9 +354,6 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     params: pathParams,
     run: async (ctx, { path }): Promise<{ body: string; revision: string }> => {
       const rel = await writePath(ctx, path)
-      if (!(await ctx.snapshot()).docs.some((d) => d.path === rel)) {
-        throw new CapabilityError('FORBIDDEN', path)
-      }
       const abs = await writableAbs(ctx, rel)
       const handle = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW)
       let bytes: Buffer
