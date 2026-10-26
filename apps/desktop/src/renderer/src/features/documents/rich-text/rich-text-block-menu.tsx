@@ -27,7 +27,7 @@ import {
 import { RICH_TEXT_OUTLINE_SLASH_ITEM } from "./rich-text-outline-node"
 import { RICH_TEXT_BASIC_SLASH_ITEMS } from "./rich-text-slash-menu"
 import { RICH_TEXT_TABLE_SLASH_ITEM } from "./rich-text-table"
-import { useShortcutLabel } from "./rich-text-toolbar"
+import { useShortcutLabel } from "@/composites/shortcut-keys"
 import { RefreshCwIcon, CopyIcon, ArrowUpIcon, ArrowDownIcon, Trash2Icon } from "lucide-react"
 
 const TURN_INTO_IDS = new Set([

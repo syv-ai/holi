@@ -39,8 +39,8 @@ import { ExternalLinkIcon, FolderOpenIcon, ShieldCheckIcon } from "lucide-react"
 import {
   OptionSelect,
   Segmented,
-  SettingsCard,
-  SettingsRow,
+  SettingsGroup,
+  SettingsFieldRow,
   SettingsRowsLoading,
   type Choice,
 } from "../settings-kit"
@@ -87,7 +87,7 @@ export function AgentsCard() {
   const current =
     resolved?.agentProvider ?? VAULT_SETTING_DEFAULTS.agentProvider
   return (
-    <SettingsCard
+    <SettingsGroup
       title="Agents"
       description="A new session starts in the default one, on this machine. Hover the Sessions + to start another."
     >
@@ -95,7 +95,7 @@ export function AgentsCard() {
         <SettingsRowsLoading rows={2} label="Reading the settings" />
       ) : (
         AGENTS.map((agent) => (
-          <SettingsRow
+          <SettingsFieldRow
             key={agent.id}
             title={agent.label}
             description={agent.description}
@@ -112,10 +112,10 @@ export function AgentsCard() {
                 Make default
               </Button>
             )}
-          </SettingsRow>
+          </SettingsFieldRow>
         ))
       )}
-    </SettingsCard>
+    </SettingsGroup>
   )
 }
 
@@ -129,7 +129,7 @@ function RepoSizeRow({ remote }: { remote: string }) {
   const sizeKb = useRepoSize(remote)
   const percent = sizeKb === null ? null : repoUsagePercent(sizeKb)
   return (
-    <SettingsRow
+    <SettingsFieldRow
       title="Size on GitHub"
       description={`GitHub recommends keeping a repository under ${formatRepoSize(REPO_SIZE_LIMIT_KB)}. It updates the size on its own schedule.`}
     >
@@ -159,7 +159,7 @@ function RepoSizeRow({ remote }: { remote: string }) {
           />
         </div>
       )}
-    </SettingsRow>
+    </SettingsFieldRow>
   )
 }
 
@@ -173,22 +173,22 @@ export function GeneralPage() {
 
   if (entry === undefined) {
     return (
-      <SettingsCard title="Vault" description="The vault open in this window.">
+      <SettingsGroup title="Vault" description="The vault open in this window.">
         <SettingsRowsLoading rows={3} label="Reading the vault" />
-      </SettingsCard>
+      </SettingsGroup>
     )
   }
 
   return (
     <>
-      <SettingsCard
+      <SettingsGroup
         title="Vault"
         description="A vault is a GitHub repository, kept in step with a copy on this machine."
       >
-        <SettingsRow title="Name" description="The repository's name.">
+        <SettingsFieldRow title="Name" description="The repository's name.">
           <span className="text-sm font-medium">{entry.name}</span>
-        </SettingsRow>
-        <SettingsRow
+        </SettingsFieldRow>
+        <SettingsFieldRow
           title="Repository"
           description="Where the vault lives, and who it is shared with."
         >
@@ -202,8 +202,8 @@ export function GeneralPage() {
             {entry.remote}
             <ExternalLinkIcon data-icon="inline-end" aria-hidden="true" />
           </Button>
-        </SettingsRow>
-        <SettingsRow
+        </SettingsFieldRow>
+        <SettingsFieldRow
           title="On this machine"
           description={<span className="break-all">{entry.path}</span>}
         >
@@ -215,9 +215,9 @@ export function GeneralPage() {
             <FolderOpenIcon data-icon="inline-start" aria-hidden="true" />
             Show folder
           </Button>
-        </SettingsRow>
+        </SettingsFieldRow>
         <RepoSizeRow remote={entry.remote} />
-        <SettingsRow
+        <SettingsFieldRow
           title="Sync"
           description="Your edits are committed and pushed as you work, and others' are pulled in."
         >
@@ -233,11 +233,11 @@ export function GeneralPage() {
               </Button>
             ) : null}
           </div>
-        </SettingsRow>
+        </SettingsFieldRow>
         {/* Each machine's Claude Code asks once to trust the vault's folder and
           to sign in, and refuses background work until it has: a colleague
           who cloned the vault approves it here (state/claude-first-run.ts). */}
-        <SettingsRow
+        <SettingsFieldRow
           title="Claude Code"
           description={
             agent === null
@@ -254,8 +254,8 @@ export function GeneralPage() {
             <ShieldCheckIcon data-icon="inline-start" aria-hidden="true" />
             Trust and sign in
           </Button>
-        </SettingsRow>
-      </SettingsCard>
+        </SettingsFieldRow>
+      </SettingsGroup>
       <AgentsCard />
     </>
   )
@@ -314,7 +314,7 @@ export function MembersPage() {
     )
 
   return (
-    <SettingsCard
+    <SettingsGroup
       title="Members"
       description="Who can open this vault. GitHub decides; Holi shows what it says."
       action={manage}
@@ -337,7 +337,7 @@ export function MembersPage() {
         </div>
       ) : (
         <>
-          <SettingsRow
+          <SettingsFieldRow
             title="Visibility"
             description="A public vault can be read by anyone on GitHub."
           >
@@ -348,7 +348,7 @@ export function MembersPage() {
             >
               {state.visibility}
             </Badge>
-          </SettingsRow>
+          </SettingsFieldRow>
           {state.collaborators.length === 0 ? (
             <EmptyState
               title="Only you, so far"
@@ -359,7 +359,7 @@ export function MembersPage() {
             </EmptyState>
           ) : (
             state.collaborators.map((person) => (
-              <SettingsRow
+              <SettingsFieldRow
                 key={person.accountId}
                 title={
                   <span className="flex items-center gap-2">
@@ -374,12 +374,12 @@ export function MembersPage() {
                 }
               >
                 <Badge variant="outline">{person.permission}</Badge>
-              </SettingsRow>
+              </SettingsFieldRow>
             ))
           )}
         </>
       )}
-    </SettingsCard>
+    </SettingsGroup>
   )
 }
 
@@ -400,7 +400,7 @@ export function EditorPage() {
   const { resolved, write } = useVaultSettings()
 
   return (
-    <SettingsCard
+    <SettingsGroup
       title="Writing"
       description="How notes read and what the editor does as you type."
     >
@@ -408,7 +408,7 @@ export function EditorPage() {
         <SettingsRowsLoading rows={3} label="Reading the settings" />
       ) : (
         <>
-          <SettingsRow
+          <SettingsFieldRow
             title="Notes are set in"
             description="Prose only. Code and frontmatter stay monospaced. Shared with the vault."
           >
@@ -418,8 +418,8 @@ export function EditorPage() {
               choices={FONTS}
               onChange={(font) => void write("editorFont", font, "committed")}
             />
-          </SettingsRow>
-          <SettingsRow
+          </SettingsFieldRow>
+          <SettingsFieldRow
             title="Keep a daily note"
             description="A fresh note each morning, with yesterday's filed away. In a shared vault everyone writes the same one."
             htmlFor="settings-daily-notes"
@@ -431,8 +431,8 @@ export function EditorPage() {
                 void write("dailyNotes", on, "committed")
               }
             />
-          </SettingsRow>
-          <SettingsRow
+          </SettingsFieldRow>
+          <SettingsFieldRow
             title="Space asks the agent"
             description="Space on an empty line starts an ask for the agent, with the note as context. On this machine only."
             htmlFor="settings-space-asks"
@@ -444,10 +444,10 @@ export function EditorPage() {
                 void write("spaceAsksAgent", on, "local")
               }
             />
-          </SettingsRow>
+          </SettingsFieldRow>
         </>
       )}
-    </SettingsCard>
+    </SettingsGroup>
   )
 }
 
@@ -471,9 +471,9 @@ export function CommitsPage() {
 
   if (resolved === null) {
     return (
-      <SettingsCard title="Saving" description="What happens to each commit.">
+      <SettingsGroup title="Saving" description="What happens to each commit.">
         <SettingsRowsLoading rows={3} label="Reading the settings" />
-      </SettingsCard>
+      </SettingsGroup>
     )
   }
 
@@ -491,11 +491,11 @@ export function CommitsPage() {
 
   return (
     <>
-      <SettingsCard
+      <SettingsGroup
         title="Saving"
         description="Your work is committed and pushed as you go. These apply to everyone in the vault."
       >
-        <SettingsRow
+        <SettingsFieldRow
           title="Largest file to commit"
           description="Anything bigger is left out and reported, rather than pushed to everyone. GitHub refuses files over 100 MB."
           htmlFor="settings-max-file"
@@ -509,9 +509,9 @@ export function CommitsPage() {
               void write("maxCommittedFileBytes", Number(bytes), "committed")
             }
           />
-        </SettingsRow>
-      </SettingsCard>
-      <SettingsCard
+        </SettingsFieldRow>
+      </SettingsGroup>
+      <SettingsGroup
         title="Tidy on every commit"
         description="Each runs as your work is saved. None can stop a save."
       >
@@ -519,7 +519,7 @@ export function CommitsPage() {
           const block = resolved.hooks ?? VAULT_SETTING_DEFAULTS.hooks
           const id = `settings-hook-${toggle.key}`
           return (
-            <SettingsRow
+            <SettingsFieldRow
               key={toggle.key}
               title={toggle.label}
               description={toggle.explanation}
@@ -538,10 +538,10 @@ export function CommitsPage() {
                   )
                 }
               />
-            </SettingsRow>
+            </SettingsFieldRow>
           )
         })}
-      </SettingsCard>
+      </SettingsGroup>
     </>
   )
 }

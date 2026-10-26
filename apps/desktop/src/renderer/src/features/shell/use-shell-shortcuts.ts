@@ -8,7 +8,7 @@ import { ensureTodaysDailyAtom } from "@/state/daily"
 import { runningPluginsAtom } from "@/state/plugins"
 import { shortcutsDialogOpenAtom, useShortcutHandlers } from "@/state/shortcuts"
 import { sidebarSectionAtom } from "@/state/sidebar-section"
-import { BOARD_TAB } from "../sidebar/documents-section"
+import { BOARD_TAB } from "../sidebar/documents-nav"
 
 /** What the shell can do, for its keys (`lib/shortcuts.ts`). */
 export interface ShellActions {

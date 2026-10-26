@@ -25,7 +25,7 @@ import {
 
 import { highlightCode } from "@/components/reui/code-block/code-block-highlight"
 
-import { codeLanguage } from "../history/code-language"
+import { codeLanguage } from "@/editor/languages"
 
 /** Past this, the editor stays plain rather than tokenizing a lockfile. */
 const HIGHLIGHT_LIMIT = 300_000

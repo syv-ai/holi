@@ -1,7 +1,6 @@
 import {
   useLayoutEffect,
   useRef,
-  useSyncExternalStore,
   type ComponentProps,
   type FocusEvent,
   type KeyboardEvent,
@@ -9,8 +8,8 @@ import {
 } from "react"
 import { cn } from "@/lib/cn"
 
-import { Button } from "@/components/ui/button"
-import { Kbd, KbdGroup } from "@/components/ui/kbd"
+import { IconButton } from "@/composites/icon-button"
+import { ShortcutKeys } from "@/composites/shortcut-keys"
 import { Separator } from "@/components/ui/separator"
 import { Toggle } from "@/components/ui/toggle"
 import {
@@ -21,49 +20,6 @@ import {
 
 // Every control carries this, so arrow keys can walk the bar in DOM order.
 const TOOLBAR_ITEM = "[data-toolbar-item]"
-
-const subscribeToPlatform = () => () => {}
-
-/** The server has no navigator, so it renders Mac keys and the client corrects. */
-export function useIsApplePlatform() {
-  return useSyncExternalStore(
-    subscribeToPlatform,
-    () => /Mac|iPhone|iPad/.test(navigator.userAgent),
-    () => true
-  )
-}
-
-const APPLE_KEYS: Record<string, string> = {
-  mod: "⌘",
-  alt: "⌥",
-  shift: "⇧",
-}
-
-const OTHER_KEYS: Record<string, string> = {
-  mod: "Ctrl",
-  alt: "Alt",
-  shift: "Shift",
-}
-
-/** Menu shortcuts read as one compact string: ⌘⇧L on Apple, Ctrl+Shift+L elsewhere. */
-export function useShortcutLabel(keys: readonly string[]) {
-  const apple = useIsApplePlatform()
-  const names = apple ? APPLE_KEYS : OTHER_KEYS
-
-  return keys.map((key) => names[key] ?? key).join(apple ? "" : "+")
-}
-
-export function ShortcutKeys({ keys }: { keys: readonly string[] }) {
-  const names = useIsApplePlatform() ? APPLE_KEYS : OTHER_KEYS
-
-  return (
-    <KbdGroup>
-      {keys.map((key) => (
-        <Kbd key={key}>{names[key] ?? key}</Kbd>
-      ))}
-    </KbdGroup>
-  )
-}
 
 function isEnabled(item: HTMLElement) {
   return !item.hasAttribute("disabled") && !item.hasAttribute("data-disabled")
@@ -248,24 +204,15 @@ export function RichTextButton({
   children,
 }: RichTextButtonProps) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={label}
-          disabled={disabled}
-          onClick={onClick}
-          onMouseDown={keepEditorFocus}
-          data-toolbar-item=""
-        >
-          {children}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>
-        {label}
-        {shortcut ? <ShortcutKeys keys={shortcut} /> : null}
-      </TooltipContent>
-    </Tooltip>
+    <IconButton
+      label={label}
+      shortcut={shortcut}
+      disabled={disabled}
+      onClick={onClick}
+      onMouseDown={keepEditorFocus}
+      data-toolbar-item=""
+    >
+      {children}
+    </IconButton>
   )
 }

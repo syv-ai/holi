@@ -110,7 +110,7 @@ import { writeColorSchemeAtom } from "@/state/color-scheme"
 import { signOutAtom } from "@/state/session"
 import { openSettingsSectionAtom } from "@/state/settings-section"
 
-import { APPS_TAB, BOARD_TAB } from "../sidebar/documents-section"
+import { APPS_TAB, BOARD_TAB } from "../sidebar/documents-nav"
 
 /** How long typing must pause before the note bodies are searched. */
 const TEXT_SEARCH_MS = 150

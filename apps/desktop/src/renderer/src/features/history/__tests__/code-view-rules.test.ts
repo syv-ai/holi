@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { codeLanguage } from "../code-language"
+import { codeLanguage } from "@/editor/languages"
 import { lineDiff } from "../line-diff"
 
 describe("a file's highlight language", () => {

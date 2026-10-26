@@ -17,6 +17,7 @@
 import { atom, useAtomValue, useSetAtom } from "jotai"
 import { useCallback, useEffect } from "react"
 
+import { parentOf } from "@/lib/tree-paths"
 import { trpc } from "@/lib/trpc"
 import { useAgentService } from "@/state/agent-service"
 import { activeRemoteAtom } from "@/state/vaults"
@@ -70,15 +71,9 @@ const SYSTEM = [
   "Touch only the files named in the request.",
 ].join(" ")
 
-/** The folder a vault path sits in, `""` at the root. */
-export function folderOf(path: string): string {
-  const slash = path.lastIndexOf("/")
-  return slash === -1 ? "" : path.slice(0, slash)
-}
-
 /** `notes/Plan.md` → `notes/Plan Artifact.app`. */
 export function artifactPathFor(path: string): string {
-  const folder = folderOf(path)
+  const folder = parentOf(path)
   const name = path.slice(folder === "" ? 0 : folder.length + 1)
   const dot = name.lastIndexOf(".")
   const title = dot > 0 ? name.slice(0, dot) : name

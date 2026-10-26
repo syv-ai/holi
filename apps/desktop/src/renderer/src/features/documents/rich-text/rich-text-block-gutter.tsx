@@ -40,7 +40,8 @@ import {
   RichTextBlockMenuItems,
   type BlockMenuState,
 } from "./rich-text-block-menu"
-import { keepEditorFocus, ShortcutKeys } from "./rich-text-toolbar"
+import { ShortcutKeys } from "@/composites/shortcut-keys"
+import { keepEditorFocus } from "./rich-text-toolbar"
 import { PlusIcon, GripVerticalIcon } from "lucide-react"
 
 // Room between the gutter and the text, and how far below the last row a

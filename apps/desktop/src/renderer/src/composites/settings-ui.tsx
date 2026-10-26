@@ -189,18 +189,18 @@ export function ExternalLink({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-      <Button
-        variant="link"
-        onClick={onOpen}
-        className={cn(
-          'h-auto max-w-full justify-start truncate p-0 text-xs font-normal text-muted-foreground hover:text-brand',
-          block && 'block',
-        )}
-      >
-        {children}
-      </Button>
-    </TooltipTrigger>
-    <TooltipContent>{url}</TooltipContent>
+        <Button
+          variant="link"
+          onClick={onOpen}
+          className={cn(
+            'h-auto max-w-full justify-start truncate p-0 text-xs font-normal text-muted-foreground hover:text-brand',
+            block && 'block',
+          )}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{url}</TooltipContent>
     </Tooltip>
   )
 }

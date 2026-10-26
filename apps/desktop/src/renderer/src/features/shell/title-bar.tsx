@@ -1,11 +1,6 @@
 import { type ReactNode, type Ref } from "react"
 
-import { Button } from "@/components/ui/button"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
+import { IconButton } from "@/composites/icon-button"
 import { PanelLeftIcon } from "lucide-react"
 
 /**
@@ -54,40 +49,14 @@ export function TitleBar({
             collapsed, it sits by the traffic lights. Off the attribute the
             shell flips mid-toggle, so it moves with the motion. */}
         <div className="hidden flex-1 group-data-open/lead:block" />
-        <BandButton
+        <IconButton
           label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
           onClick={onToggleSidebar}
         >
           <PanelLeftIcon aria-hidden="true" />
-        </BandButton>
+        </IconButton>
       </div>
       {children}
     </header>
-  )
-}
-
-function BandButton({
-  label,
-  onClick,
-  children,
-}: {
-  label: string
-  onClick: () => void
-  children: ReactNode
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={label}
-          onClick={onClick}
-        >
-          {children}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
   )
 }

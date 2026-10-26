@@ -27,7 +27,7 @@ import {
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import { findNext, findPrev } from "prosemirror-search"
 import { EditorContent, useEditor } from "@tiptap/react"
-import { FileWarningIcon, SparklesIcon } from "lucide-react"
+import { SparklesIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { DeleteTableDialog } from "@/features/documents/rich-text/delete-table-dialog"
@@ -48,7 +48,7 @@ import {
   RichTextTable,
   RichTextTableBubble,
 } from "@/features/documents/rich-text/rich-text-table"
-import { useIsApplePlatform } from "@/features/documents/rich-text/rich-text-toolbar"
+import { useIsApplePlatform } from "@/composites/shortcut-keys"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { cn } from "@/lib/cn"
@@ -72,11 +72,11 @@ import { AgentPrompt, AgentStatus } from "./agent-prompt"
 import { agentPromptKey, agentPromptPos, onEmptyLine, setAgentPrompt } from "./agent-trigger"
 import {
   artifactPathFor,
-  folderOf,
   isRunLive,
   locksDocument,
   useDocumentAgent,
 } from "./document-agent"
+import { parentOf } from "@/lib/tree-paths"
 import { CommentsPanel } from "./comments-panel"
 import {
   DocumentComments,
@@ -130,9 +130,9 @@ function resolveLink(
   const named = docs.filter(
     (doc) => documentTitle(doc.path).toLowerCase() === wanted
   )
-  const folder = folderOf(from)
+  const folder = parentOf(from)
   return (
-    named.find((doc) => folderOf(doc.path) === folder)?.path ??
+    named.find((doc) => parentOf(doc.path) === folder)?.path ??
     named[0]?.path ??
     null
   )
@@ -265,7 +265,7 @@ function DocumentEditor({
   const extensions = useMemo(
     () => [
       ...createDocumentExtensions({
-        folder: folderOf(path),
+        folder: parentOf(path),
         placeholder: "Type / for commands, or Space to ask AI",
         onOpenLink: (target) => handlers.current.openLink(target),
         onAgentTrigger: (pos) => handlers.current.trigger(pos),

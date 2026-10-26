@@ -54,6 +54,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { cn } from "@/lib/cn"
+import { parentOf } from "@/lib/tree-paths"
 import { PRIORITIES, shortDate } from "@/lib/planning"
 import { memberLoginsAtom } from "@/state/members"
 import { taskTagsAtom, tasksAtom } from "@/state/tasks"
@@ -80,12 +81,6 @@ export type TaskFieldChange = {
   [K in keyof TaskFieldValues]-?: { field: K; value: TaskFieldValues[K] }
 }[keyof TaskFieldValues]
 
-/** The folder a vault path sits in: `""` for the vault root. */
-export function folderOf(path: string): string {
-  const slash = path.lastIndexOf("/")
-  return slash === -1 ? "" : path.slice(0, slash)
-}
-
 /** The folders a task can go in: every real folder outside the dot-folders
  *  Holi and git keep, and every folder some task is already in. */
 function useProjects(): string[] {
@@ -98,7 +93,7 @@ function useProjects(): string[] {
     }
   }
   for (const path of tasks.keys()) {
-    const folder = folderOf(path)
+    const folder = parentOf(path)
     if (folder !== "") all.add(folder)
   }
   return [...all].sort((a, b) => a.localeCompare(b))

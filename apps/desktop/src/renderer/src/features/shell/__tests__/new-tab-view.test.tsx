@@ -11,7 +11,7 @@ import { nowAtom } from "@/state/clock"
 import { installedPluginsAtom } from "@/state/plugins"
 import { vaultSettingsAtom } from "@/state/settings"
 import { activeRemoteAtom, vaultsAtom } from "@/state/vaults"
-import { BOARD_TAB } from "../../sidebar/documents-section"
+import { BOARD_TAB } from "../../sidebar/documents-nav"
 import { NewTabView, isNewTab, NEW_TAB_PREFIX } from "../new-tab-view"
 
 function mount(prepare?: (store: ReturnType<typeof createStore>) => void) {

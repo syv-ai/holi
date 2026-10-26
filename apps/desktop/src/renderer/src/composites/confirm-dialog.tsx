@@ -24,6 +24,8 @@ export function ConfirmDialog({
   confirmLabel,
   cancelLabel = 'Cancel',
   destructive = false,
+  size,
+  children,
   onConfirm,
 }: {
   open: boolean
@@ -34,17 +36,21 @@ export function ConfirmDialog({
   confirmLabel: string
   cancelLabel?: string
   destructive?: boolean
+  size?: 'default' | 'sm'
+  /** Under the sentence: a choice that goes with the answer, a warning. */
+  children?: ReactNode
   onConfirm: () => void
 }): React.JSX.Element {
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
+      <AlertDialogContent size={size}>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           {description !== undefined && (
             <AlertDialogDescription>{description}</AlertDialogDescription>
           )}
         </AlertDialogHeader>
+        {children}
         <AlertDialogFooter>
           <AlertDialogCancel>{cancelLabel}</AlertDialogCancel>
           <AlertDialogAction

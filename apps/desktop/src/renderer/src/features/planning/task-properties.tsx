@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { cn } from "@/lib/cn"
 import { todayAtom } from "@/state/clock"
+import { parentOf } from "@/lib/tree-paths"
 import { statusesAtom } from "@/state/planning"
 import {
   makeTaskPrivateAtom,
@@ -36,7 +37,6 @@ import {
   tasksAtom,
 } from "@/state/tasks"
 import {
-  folderOf,
   TaskFields,
   type TaskFieldChange,
   type TaskFieldValues,
@@ -50,7 +50,7 @@ function valuesOf(task: Task): TaskFieldValues {
     due: task.due,
     start: task.start,
     tags: task.tags,
-    folder: folderOf(task.path),
+    folder: parentOf(task.path),
     estimate: task.estimate,
     shared: !isPrivateTask(task.path),
   }
@@ -106,7 +106,7 @@ export function TaskProperties({
       }
       await beforeWrite()
       if (change.field === "folder") {
-        if (change.value === folderOf(path)) return
+        if (change.value === parentOf(path)) return
         const to = await move(path, change.value)
         if (to !== null && to !== path) onMoved?.(path, to)
       } else {

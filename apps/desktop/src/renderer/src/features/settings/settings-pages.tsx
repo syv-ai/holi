@@ -23,7 +23,7 @@ import {
 
 import { AccountPage, AppearancePage, UpdatesPage } from "./pages/app-pages"
 import { PluginsPage } from "./pages/plugins-page"
-import { SettingsCard } from "./settings-kit"
+import { SettingsGroup } from "./settings-kit"
 import {
   CommitsPage,
   EditorPage,
@@ -150,11 +150,11 @@ export const settingsGroupsAtom = atom((get): readonly SettingsGroup[] => {
           icon: section.icon ?? CableIcon,
           description: section.description ?? "",
           Component: ({ remote }: { remote: string }) => (
-            <SettingsCard title={info.label} description={info.description}>
+            <SettingsGroup title={info.label} description={info.description}>
               <div className="px-4 py-3">
                 <section.Component remote={remote} />
               </div>
-            </SettingsCard>
+            </SettingsGroup>
           ),
         })),
     ],

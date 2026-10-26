@@ -11,7 +11,7 @@ import { coreContributionAtom } from "@/state/plugins"
 import { shellWorkspaceAtom } from "@/state/shell-tabs"
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from "@/state/vaults"
 import { SidebarProvider } from "@/components/ui/sidebar"
-import { FilesSection } from "../documents-section"
+import { FilesSection } from "../files-section"
 
 const deleteMany = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
 vi.mock("@/lib/trpc", () => ({

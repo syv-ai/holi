@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { ShortcutKeys } from './shortcut-keys'
 
 /**
  * A stock `Button` that shows only a glyph, named by `label`: the label is its
@@ -12,6 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 export function IconButton({
   label,
   tooltip,
+  shortcut,
   tooltipSide,
   children,
   variant = 'ghost',
@@ -22,6 +24,8 @@ export function IconButton({
   label: string
   /** Tooltip content when it says more than the label (a label and its shortcut). */
   tooltip?: ReactNode
+  /** Keys shown beside the label in the tooltip: `['mod', 'F']`. */
+  shortcut?: readonly string[]
   tooltipSide?: ComponentProps<typeof TooltipContent>['side']
   /** The lucide glyph. */
   children: ReactNode
@@ -33,7 +37,14 @@ export function IconButton({
           {children}
         </Button>
       </TooltipTrigger>
-      <TooltipContent side={tooltipSide}>{tooltip ?? label}</TooltipContent>
+      <TooltipContent side={tooltipSide}>
+        {tooltip ?? (
+          <>
+            {label}
+            {shortcut ? <ShortcutKeys keys={shortcut} /> : null}
+          </>
+        )}
+      </TooltipContent>
     </Tooltip>
   )
 }

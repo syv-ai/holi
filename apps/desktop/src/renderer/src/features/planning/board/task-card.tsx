@@ -6,7 +6,7 @@
  * watch), and its assignee line the first person the task is for.
  */
 import type { ComponentProps } from "react"
-import type { Priority, Task } from "@holi/shared"
+import type { Task } from "@holi/shared"
 import { ClockIcon } from "lucide-react"
 
 import { KanbanItem, KanbanItemHandle } from "@/components/reui/kanban"

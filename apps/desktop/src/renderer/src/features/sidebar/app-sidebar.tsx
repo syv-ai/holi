@@ -22,13 +22,8 @@ import {
 } from "@/state/sidebar-section"
 import { activeRemoteAtom } from "@/state/vaults"
 import type { Move } from "@/lib/tree-actions"
-import {
-  APPS_TAB,
-  BOARD_TAB,
-  DocumentsNav,
-  useAppsOn,
-  FilesSection,
-} from "./documents-section"
+import { APPS_TAB, BOARD_TAB, DocumentsNav, useAppsOn } from "./documents-nav"
+import { FilesSection } from "./files-section"
 import { AccountMenu } from "./account-menu"
 import { BrandMark } from "@/composites/brand-mark"
 import { VaultSwitcher } from "./vault-switcher"

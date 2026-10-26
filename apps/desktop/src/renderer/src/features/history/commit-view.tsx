@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react"
-import { FileWarningIcon } from "lucide-react"
 
 import {
   CodeBlock,
@@ -9,7 +8,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { trpc } from "@/lib/trpc"
 
-import { codeLanguage } from "./code-language"
+import { codeLanguage } from "@/editor/languages"
+import { basename } from "@/lib/tree-paths"
 import { lineDiff, type LineDiff } from "./line-diff"
 import { ErrorState } from "@/composites/empty-state"
 
@@ -21,10 +21,6 @@ type Load =
   | { kind: "loading" }
   | { kind: "error"; message: string }
   | { kind: "ready"; before: string; after: string }
-
-function nameOf(path: string): string {
-  return path.slice(path.lastIndexOf("/") + 1)
-}
 
 /**
  * One commit of a file, from git (`history.fileDiff`): what it removed and
@@ -88,7 +84,7 @@ export function CommitView({
         language={codeLanguage(path)}
         highlight={load.after.length <= HIGHLIGHT_LIMIT}
         showLineNumbers
-        label={`${nameOf(path)} at ${sha.slice(0, 7)}`}
+        label={`${basename(path)} at ${sha.slice(0, 7)}`}
       >
         <CodeBlockContent />
         <CodeBlockCopyButton />
@@ -102,7 +98,7 @@ export function CommitView({
       <p className="text-muted-foreground text-xs tabular-nums">
         <span className="text-success-foreground">+{diff.added.length}</span>{" "}
         <span className="text-destructive">−{diff.removed.length}</span>{" "}
-        lines in {nameOf(path)}
+        lines in {basename(path)}
       </p>
       <CodeBlock
         code={diff.code}
@@ -110,7 +106,7 @@ export function CommitView({
         highlight={diff.code.length <= HIGHLIGHT_LIMIT}
         diff={{ added: diff.added, removed: diff.removed }}
         showLineNumbers
-        label={`Changes to ${nameOf(path)}`}
+        label={`Changes to ${basename(path)}`}
       >
         <CodeBlockContent />
       </CodeBlock>

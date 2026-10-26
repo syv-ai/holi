@@ -8,16 +8,7 @@ import { useEffect, useId, useState } from "react"
 import type { ColorScheme, WindowGlass } from "@holi/shared"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { ConfirmDialog } from "@/composites/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -63,8 +54,8 @@ import {
 
 import {
   Segmented,
-  SettingsCard,
-  SettingsRow,
+  SettingsGroup,
+  SettingsFieldRow,
   type Choice,
 } from "../settings-kit"
 import { useVaultSettings } from "../use-vault-settings"
@@ -111,11 +102,11 @@ export function AppearancePage() {
   const { resolved, write } = useVaultSettings()
 
   return (
-    <SettingsCard
+    <SettingsGroup
       title="Window"
       description="How Holi looks on this machine. Your teammates keep their own."
     >
-      <SettingsRow
+      <SettingsFieldRow
         title="Theme"
         description="Light, dark, or whatever your system is set to."
       >
@@ -125,9 +116,9 @@ export function AppearancePage() {
           choices={THEMES}
           onChange={(next) => void setScheme(next)}
         />
-      </SettingsRow>
+      </SettingsFieldRow>
       {isMac() ? (
-        <SettingsRow
+        <SettingsFieldRow
           title="Transparency"
           description="How much of the desktop shows through the window."
         >
@@ -137,9 +128,9 @@ export function AppearancePage() {
             choices={GLASSES}
             onChange={(next) => void setGlass(next)}
           />
-        </SettingsRow>
+        </SettingsFieldRow>
       ) : null}
-      <SettingsRow
+      <SettingsFieldRow
         title="Arcade on the New tab"
         description="Your Holis play a small game behind an empty tab: they file papers in the outbox, and you can take over with the arrow keys."
         htmlFor="settings-grid-arcade"
@@ -150,8 +141,8 @@ export function AppearancePage() {
           checked={resolved?.gridArcade ?? true}
           onCheckedChange={(on) => void write("gridArcade", on, "local")}
         />
-      </SettingsRow>
-      <SettingsRow
+      </SettingsFieldRow>
+      <SettingsFieldRow
         title="Fold the sidebar in Mail and Calendar"
         description="Mail or Calendar in front folds the files sidebar to its rail, and leaving gives it back. ⌘B opens it either way."
         htmlFor="settings-fold-sidebar"
@@ -164,8 +155,8 @@ export function AppearancePage() {
             void write("foldSidebarForApps", on, "local")
           }
         />
-      </SettingsRow>
-    </SettingsCard>
+      </SettingsFieldRow>
+    </SettingsGroup>
   )
 }
 
@@ -225,10 +216,10 @@ export function UpdatesPage() {
 
   return (
     <div className="flex flex-col gap-8">
-    <SettingsCard title="Updates" description="Holi itself, on this machine.">
-      <SettingsRow title={updateHeadline(status)} description={described}>
+    <SettingsGroup title="Updates" description="Holi itself, on this machine.">
+      <SettingsFieldRow title={updateHeadline(status)} description={described}>
         {action}
-      </SettingsRow>
+      </SettingsFieldRow>
       {status?.availableVersion != null &&
       status.availableVersion !== status.version ? (
         <ReleaseNotesRow
@@ -244,7 +235,7 @@ export function UpdatesPage() {
           title={`Holi ${status.version}, the version you have`}
         />
       ) : null}
-      <SettingsRow
+      <SettingsFieldRow
         title="Dev prereleases"
         description="Development releases instead of stable ones. Turning this off downloads the latest stable release, even when it is older than yours; restart to install it."
         htmlFor="settings-dev-channel"
@@ -255,8 +246,8 @@ export function UpdatesPage() {
           checked={status?.channel === "dev"}
           onCheckedChange={(on) => void setChannel(on ? "dev" : "stable")}
         />
-      </SettingsRow>
-      <SettingsRow
+      </SettingsFieldRow>
+      <SettingsFieldRow
         title="Update automatically"
         description="Download new versions in the background. One installs when you quit Holi."
         htmlFor="settings-auto-update"
@@ -267,9 +258,9 @@ export function UpdatesPage() {
           checked={status?.enabled === true}
           onCheckedChange={(on) => void setEnabled(on)}
         />
-      </SettingsRow>
+      </SettingsFieldRow>
       <OpenAtLoginRow />
-    </SettingsCard>
+    </SettingsGroup>
     <VaultSkillsCard />
     </div>
   )
@@ -300,7 +291,7 @@ function ReleaseNotesRow({ version, title }: { version: string; title: string })
   const url =
     answer?.kind === "found" ? openableUrl(answer.notes.url) : null
   return (
-    <SettingsRow title={title}>
+    <SettingsFieldRow title={title}>
       <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
         Release notes
       </Button>
@@ -354,7 +345,7 @@ function ReleaseNotesRow({ version, title }: { version: string; title: string })
           ) : null}
         </DialogContent>
       </Dialog>
-    </SettingsRow>
+    </SettingsFieldRow>
   )
 }
 
@@ -383,14 +374,14 @@ function VaultSkillsCard() {
   }
 
   return (
-    <SettingsCard
+    <SettingsGroup
       title="This vault’s skills"
       description="The skills and hooks Holi gave the vault's agent, against this release."
     >
       {status === null ? (
-        <SettingsRow title={<Skeleton className="h-4 w-48" />} />
+        <SettingsFieldRow title={<Skeleton className="h-4 w-48" />} />
       ) : (
-        <SettingsRow
+        <SettingsFieldRow
           title={
             pending === 0
               ? "Skills and hooks are up to date"
@@ -407,10 +398,10 @@ function VaultSkillsCard() {
               Update skills
             </Button>
           ) : null}
-        </SettingsRow>
+        </SettingsFieldRow>
       )}
       {notice !== null ? (
-        <SettingsRow
+        <SettingsFieldRow
           title="Updated when the vault opened"
           description={
             notice.changed.length > 0
@@ -428,9 +419,9 @@ function VaultSkillsCard() {
               Done
             </Button>
           </div>
-        </SettingsRow>
+        </SettingsFieldRow>
       ) : null}
-      <SettingsRow
+      <SettingsFieldRow
         title="Update skills automatically"
         description="Bring a new release's skills in when the vault opens, after it has synced. Saved in the vault, so it is the whole team's answer."
         htmlFor="settings-auto-skills"
@@ -443,8 +434,8 @@ function VaultSkillsCard() {
             void write("autoUpdateSkills", on, "committed")
           }
         />
-      </SettingsRow>
-    </SettingsCard>
+      </SettingsFieldRow>
+    </SettingsGroup>
   )
 }
 
@@ -461,7 +452,7 @@ function OpenAtLoginRow() {
     }
   }, [])
   return (
-    <SettingsRow
+    <SettingsFieldRow
       title="Open at login"
       description="Start Holi out of sight when you log in, so reminders and sync work from the start."
       htmlFor="settings-open-at-login"
@@ -476,7 +467,7 @@ function OpenAtLoginRow() {
             .then((answer) => setOpen(answer.openAtLogin))
         }
       />
-    </SettingsRow>
+    </SettingsFieldRow>
   )
 }
 
@@ -488,11 +479,11 @@ export function AccountPage() {
   const name = viewer?.name ?? viewer?.login ?? ""
 
   return (
-    <SettingsCard
+    <SettingsGroup
       title="GitHub account"
       description="Holi reads and writes your vaults as this account."
     >
-      <SettingsRow
+      <SettingsFieldRow
         title={
           <span className="flex items-center gap-2">
             <Avatar className="size-8">
@@ -533,9 +524,9 @@ export function AccountPage() {
             Sign out
           </Button>
         </div>
-      </SettingsRow>
+      </SettingsFieldRow>
       <SignOutConfirm open={confirming} onOpenChange={setConfirming} />
-    </SettingsCard>
+    </SettingsGroup>
   )
 }
 
@@ -569,15 +560,15 @@ function SignOutConfirm({
   }, [open])
 
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Sign out?</AlertDialogTitle>
-          <AlertDialogDescription>
-            Holi forgets your GitHub credential and stops syncing. Your vaults
-            stay on this machine unless you choose otherwise.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
+    <ConfirmDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Sign out?"
+      description="Holi forgets your GitHub credential and stops syncing. Your vaults stay on this machine unless you choose otherwise."
+      confirmLabel="Sign out"
+      destructive
+      onConfirm={() => void signOut({ deleteClones })}
+    >
         <Field orientation="horizontal">
           <Checkbox
             id={id}
@@ -599,16 +590,6 @@ function SignOutConfirm({
             .
           </p>
         ) : null}
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            onClick={() => void signOut({ deleteClones })}
-          >
-            Sign out
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    </ConfirmDialog>
   )
 }

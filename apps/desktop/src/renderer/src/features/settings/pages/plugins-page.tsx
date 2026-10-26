@@ -36,7 +36,7 @@ import type { SettingsSection } from "@/plugin-api/types"
 import { installedPluginsAtom, leaveReasonByPluginAtom } from "@/state/plugins"
 import { activeRemoteAtom } from "@/state/vaults"
 
-import { SettingsCard, SettingsRow, SettingsRowsLoading } from "../settings-kit"
+import { SettingsGroup, SettingsFieldRow, SettingsRowsLoading } from "../settings-kit"
 import { useVaultSettings } from "../use-vault-settings"
 
 export function PluginsPage({
@@ -51,11 +51,11 @@ export function PluginsPage({
     <>
       <PluginSwitches />
       {nested.map(({ id, label, description, Component }) => (
-        <SettingsCard key={id} title={label} description={description}>
+        <SettingsGroup key={id} title={label} description={description}>
           <div className="py-3">
             <Component remote={remote} />
           </div>
-        </SettingsCard>
+        </SettingsGroup>
       ))}
     </>
   )
@@ -93,9 +93,9 @@ function PluginSwitches() {
 
   if (plugins === undefined) {
     return (
-      <SettingsCard title="Plugins" description="What this vault runs.">
+      <SettingsGroup title="Plugins" description="What this vault runs.">
         <SettingsRowsLoading rows={4} label="Reading the plugins" />
-      </SettingsCard>
+      </SettingsGroup>
     )
   }
 
@@ -113,7 +113,7 @@ function PluginSwitches() {
   }
 
   return (
-    <SettingsCard
+    <SettingsGroup
       title="Built in"
       description="Everyone who clones the vault gets the same ones. Turning one off stops it at once."
     >
@@ -130,7 +130,7 @@ function PluginSwitches() {
             : null,
         ].filter((note) => note !== null)
         return (
-          <SettingsRow
+          <SettingsFieldRow
             key={info.id}
             title={info.label}
             mark={pluginMark(info.id)}
@@ -165,7 +165,7 @@ function PluginSwitches() {
               checked={plugins.vault[info.id] ?? info.default}
               onCheckedChange={(on) => flip(info, on)}
             />
-          </SettingsRow>
+          </SettingsFieldRow>
         )
       })}
 
@@ -198,6 +198,6 @@ function PluginSwitches() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </SettingsCard>
+    </SettingsGroup>
   )
 }

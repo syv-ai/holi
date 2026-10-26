@@ -19,7 +19,7 @@ import { EditorState } from "@codemirror/state"
 import { findNext, findPrevious } from "@codemirror/search"
 import { EditorView, highlightActiveLineGutter, lineNumbers } from "@codemirror/view"
 import { useAtomValue, useSetAtom } from "jotai"
-import { FileTextIcon, FileWarningIcon } from "lucide-react"
+import { FileTextIcon } from "lucide-react"
 
 import { ViewHeader, ViewHeaderTitle } from "@/composites/view-header"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -39,10 +39,7 @@ import { codeFind, codeFindCount } from "./code-find"
 import { CodeFindBar } from "./code-find-bar"
 import { codeLook } from "./code-look"
 import { EmptyState, ErrorState } from "@/composites/empty-state"
-
-function nameOf(path: string): string {
-  return path.slice(path.lastIndexOf("/") + 1)
-}
+import { basename } from "@/lib/tree-paths"
 
 function FileHeader({
   path,
@@ -59,7 +56,7 @@ function FileHeader({
   return (
     <ViewHeader>
       <ViewHeaderTitle
-        title={nameOf(path)}
+        title={basename(path)}
         meta={
           folder === null && status === undefined ? undefined : (
             <>
@@ -423,7 +420,7 @@ function ImageFileView({ path }: { path: string }) {
       <div className="flex min-h-0 flex-1 items-center justify-center p-6">
         <img
           src={vaultAssetUrl(path)}
-          alt={nameOf(path)}
+          alt={basename(path)}
           className="max-h-full max-w-full rounded-md object-contain outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
         />
       </div>
@@ -441,7 +438,7 @@ function UnviewableFile({ path }: { path: string }) {
       <FileHeader path={path} />
       <EmptyState
         icon={FileTextIcon}
-        title={nameOf(path)}
+        title={basename(path)}
         description={
           kind === "pdf"
             ? "Turn on the PDF plugin in Settings to read PDFs here."

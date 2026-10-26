@@ -11,7 +11,7 @@ import {
   tabPath,
   type TabDescriptor,
 } from "../tab-descriptor"
-import { BOARD_TAB } from "@/features/sidebar/documents-section"
+import { BOARD_TAB } from "@/features/sidebar/documents-nav"
 import { NEW_TAB_PREFIX } from "@/features/shell/new-tab-view"
 
 const EVERY: TabDescriptor[] = [

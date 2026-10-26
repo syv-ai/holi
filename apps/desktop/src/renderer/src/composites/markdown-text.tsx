@@ -65,15 +65,15 @@ function InlineToken({ token }: { token: Token }): ReactNode {
       return (
         <Tooltip>
           <TooltipTrigger asChild>
-          <Button
-            variant="link"
-            onClick={() => void window.holi.openExternal(url)}
-            className="inline h-auto p-0 align-baseline text-[length:inherit] font-normal whitespace-normal break-words text-foreground"
-          >
-            <Inline tokens={link.tokens} />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{url}</TooltipContent>
+            <Button
+              variant="link"
+              onClick={() => void window.holi.openExternal(url)}
+              className="inline h-auto p-0 align-baseline text-[length:inherit] font-normal whitespace-normal break-words text-foreground"
+            >
+              <Inline tokens={link.tokens} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{url}</TooltipContent>
         </Tooltip>
       )
     }

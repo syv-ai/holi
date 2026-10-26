@@ -63,7 +63,7 @@ import { activeRemoteAtom } from "@/state/vaults"
 
 import { CommandMenu } from "../command-menu/command-menu"
 import type { Move } from "@/lib/tree-actions"
-import { useNewDocument } from "../sidebar/documents-section"
+import { useNewDocument } from "../sidebar/files-section"
 import { MobileHeader } from "./mobile-header"
 import { SplitView, type MemberSlot } from "./split-view"
 import { placedByDrop } from "./use-tab-drag"

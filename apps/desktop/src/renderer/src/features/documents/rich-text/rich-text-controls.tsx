@@ -1,4 +1,5 @@
 import type { ReactNode } from "react"
+import { useShortcutLabel } from "@/composites/shortcut-keys"
 import type { Editor } from "@tiptap/react"
 
 import { Button } from "@/components/ui/button"
@@ -27,7 +28,6 @@ import {
   RichTextButton,
   RichTextToggle,
   RichTextToolbarGroup,
-  useShortcutLabel,
 } from "./rich-text-toolbar"
 import { Undo2Icon, Redo2Icon, TypeIcon, Heading1Icon, Heading2Icon, Heading3Icon, ChevronDownIcon, ListIcon, ListOrderedIcon, ListTodoIcon, TextQuoteIcon, SquareCodeIcon, MinusIcon, BoldIcon, ItalicIcon, UnderlineIcon, StrikethroughIcon, CodeIcon, AlignLeftIcon, AlignCenterIcon, AlignRightIcon, AlignJustifyIcon } from "lucide-react"
 

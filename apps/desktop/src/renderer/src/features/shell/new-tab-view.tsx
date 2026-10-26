@@ -29,7 +29,7 @@ import { runningPluginsAtom } from "@/state/plugins"
 import { openTaskCountAtom } from "@/state/tasks"
 import { activeRemoteAtom, vaultsAtom } from "@/state/vaults"
 
-import { BOARD_TAB } from "../sidebar/documents-section"
+import { BOARD_TAB } from "../sidebar/documents-nav"
 
 /** A tab opened with +: it shows this view until something is picked in it,
  *  and then becomes that thing. Nothing is written to the vault until then. */

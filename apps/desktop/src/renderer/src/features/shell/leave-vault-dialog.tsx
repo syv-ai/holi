@@ -4,16 +4,7 @@
 import { useState } from "react"
 import { useAtomValue } from "jotai"
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { ConfirmDialog } from "@/composites/confirm-dialog"
 import { leaveReasonsAtom } from "@/state/plugins"
 
 const WORDING = {
@@ -41,21 +32,15 @@ export function LeaveVaultDialog({
   const [said] = useState(all)
 
   return (
-    <AlertDialog open onOpenChange={(open) => !open && onCancel()}>
-      <AlertDialogContent size="sm">
-        <AlertDialogHeader>
-          <AlertDialogTitle>{wording.title}</AlertDialogTitle>
-          <AlertDialogDescription>
-            {[wording.lead, ...said].filter((s) => s !== "").join(" ")}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" onClick={onConfirm}>
-            {wording.go}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ConfirmDialog
+      open
+      onOpenChange={(open) => !open && onCancel()}
+      size="sm"
+      title={wording.title}
+      description={[wording.lead, ...said].filter((s) => s !== "").join(" ")}
+      confirmLabel={wording.go}
+      destructive
+      onConfirm={onConfirm}
+    />
   )
 }

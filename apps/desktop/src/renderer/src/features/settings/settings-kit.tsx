@@ -29,7 +29,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
-export function SettingsCard({
+export function SettingsGroup({
   title,
   description,
   action,
@@ -65,7 +65,7 @@ export function SettingsCard({
   )
 }
 
-export function SettingsRow({
+export function SettingsFieldRow({
   title,
   description,
   htmlFor,

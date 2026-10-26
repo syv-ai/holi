@@ -22,12 +22,7 @@ import { useEffect, useRef, useState } from 'react'
 import { BrandMark } from '@/composites/brand-mark'
 import { ScreenArcade } from '@/composites/arcade/screen-arcade'
 import { Button } from '@/components/ui/button'
-import {
-  InputOTP,
-  InputOTPGroup,
-  InputOTPSeparator,
-  InputOTPSlot,
-} from '@/components/ui/input-otp'
+import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from '@/components/ui/input-otp'
 import { IconButton } from '@/composites/icon-button'
 import { RevealButton } from './reveal-button'
 import { cn } from '@/lib/cn'

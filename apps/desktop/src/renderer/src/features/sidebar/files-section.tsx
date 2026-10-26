@@ -29,7 +29,7 @@ import {
   TASKS_CLAIM,
 } from "@holi/shared"
 import { cn } from "@/lib/cn"
-import { SIDEBAR_ROW_FILL } from "@/composites/sidebar-nav-item"
+import { ARRIVE } from "./documents-nav"
 
 import {
   AlertDialog,
@@ -83,7 +83,6 @@ import {
   HoverCardTrigger,
 } from "@/components/ui/hover-card"
 import { Input } from "@/components/ui/input"
-import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import {
   Tooltip,
   TooltipContent,
@@ -93,15 +92,10 @@ import {
   SidebarGroup,
   SidebarGroupAction,
   SidebarGroupLabel,
-  SidebarMenu,
-  SidebarMenuBadge,
-  SidebarMenuButton,
-  SidebarMenuItem,
   SidebarMenuSkeleton,
   useSidebar,
 } from "@/components/ui/sidebar"
-import { hotkeyLabels } from "@/lib/hotkey"
-import { isMac, useShortcutHandlers } from "@/state/shortcuts"
+import { useShortcutHandlers } from "@/state/shortcuts"
 import {
   Tree,
   TreeDragLine,
@@ -120,8 +114,8 @@ import { openTabAtom, shellWorkspaceAtom } from "@/state/shell-tabs"
 import { closeTabsWhere } from "@/state/shell-workspace"
 import { tabForPath, tabPath } from "@/state/tab-descriptor"
 import type { ClaimCreate } from "@/plugin-api/types"
-import { claimsAtom, folderClaimsAtom, surfacesAtom } from "@/state/plugins"
-import { createTaskAtom, openTaskCountAtom } from "@/state/tasks"
+import { claimsAtom, folderClaimsAtom } from "@/state/plugins"
+import { createTaskAtom } from "@/state/tasks"
 import { setTreeOrderAtom, treeOrderAtom } from "@/state/tree-order"
 import {
   activeRemoteAtom,
@@ -137,7 +131,6 @@ import {
   vaultsAtom,
 } from "@/state/vaults"
 import {
-  AppWindowIcon,
   ArrowDownIcon,
   ArrowUpIcon,
   EllipsisIcon,
@@ -147,24 +140,11 @@ import {
   FolderPlusIcon,
   LinkIcon,
   ListChecksIcon,
-  SearchIcon,
   PencilIcon,
   PlusIcon,
-  SquareKanbanIcon,
   SquareSplitHorizontalIcon,
   Trash2Icon,
 } from "lucide-react"
-
-/** The header tab id of the task board, beside the document paths. */
-export const BOARD_TAB = "holi:board"
-
-/** The header tab id of the vault's apps, beside the board. */
-export const APPS_TAB = "holi:apps"
-
-/** Whether vault apps are on: the Apps row is there only while they are. */
-export function useAppsOn(): boolean {
-  return useAtomValue(surfacesAtom).has("app")
-}
 
 const INDENT = 16
 
@@ -264,81 +244,6 @@ async function attempt(what: string, action: () => Promise<void>) {
       `Couldn't ${what}. Check that the vault is reachable, then try again.`
     )
   }
-}
-
-/** The reveal curve for things that arrive (ReUI's motion rules). */
-const ARRIVE =
-  "animate-in fade-in-0 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
-
-/** Search, Board and Apps, at the top of the Documents tab. */
-export function DocumentsNav({
-  activeId,
-  onOpenSearch,
-  onOpen,
-}: {
-  activeId: string | null
-  onOpenSearch: () => void
-  onOpen: (id: string) => void
-}) {
-  const openTasks = useAtomValue(openTaskCountAtom)
-  // The Board row drags as its tab, onto the content or the strip.
-  const tabDrag = useTabDrag()
-  const appsOn = useAppsOn()
-
-  return (
-    <SidebarMenu className="gap-0.5 px-2">
-      <SidebarMenuItem>
-        <SidebarMenuButton onClick={onOpenSearch} className={SIDEBAR_ROW_FILL}>
-          <SearchIcon aria-hidden="true" />
-          <span>Search</span>
-          <KbdGroup className="ms-auto">
-            {hotkeyLabels("⌘K", isMac()).map((label) => (
-              <Kbd key={label}>{label}</Kbd>
-            ))}
-          </KbdGroup>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          isActive={activeId === BOARD_TAB}
-          aria-current={activeId === BOARD_TAB ? "page" : undefined}
-          onClick={() => onOpen(BOARD_TAB)}
-          {...tabDrag({ kind: "board" })}
-          className={SIDEBAR_ROW_FILL}
-        >
-          <SquareKanbanIcon aria-hidden="true" />
-          <span>Board</span>
-          {openTasks > 0 ? (
-            <span className="sr-only">, {openTasks} open tasks</span>
-          ) : null}
-        </SidebarMenuButton>
-        {/* A sibling of the button, where the badge's own placement applies;
-            keyed on the count, so a change pops it in again. */}
-        {openTasks > 0 ? (
-          <SidebarMenuBadge
-            key={openTasks}
-            aria-hidden="true"
-            className={cn(ARRIVE, "zoom-in-95 motion-reduce:zoom-in-100")}
-          >
-            {openTasks}
-          </SidebarMenuBadge>
-        ) : null}
-      </SidebarMenuItem>
-      {appsOn ? (
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            isActive={activeId === APPS_TAB}
-            aria-current={activeId === APPS_TAB ? "page" : undefined}
-            onClick={() => onOpen(APPS_TAB)}
-            className={SIDEBAR_ROW_FILL}
-          >
-            <AppWindowIcon aria-hidden="true" />
-            <span>Apps</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      ) : null}
-    </SidebarMenu>
-  )
 }
 
 /** A new, uniquely named note at the vault's root, for New document and +. */

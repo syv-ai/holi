@@ -17,7 +17,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import type { RichTextSnapshot } from "./rich-text-state"
-import { keepEditorFocus, ShortcutKeys } from "./rich-text-toolbar"
+import { ShortcutKeys } from "@/composites/shortcut-keys"
+import { keepEditorFocus } from "./rich-text-toolbar"
 import { HighlighterIcon, CheckIcon, BanIcon } from "lucide-react"
 
 interface HighlightColor {

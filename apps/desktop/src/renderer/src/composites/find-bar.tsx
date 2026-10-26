@@ -8,7 +8,6 @@
  * replaces and ⌘Enter replaces all.
  */
 import {
-  type ComponentProps,
   type KeyboardEvent,
   type ReactNode,
   type Ref,
@@ -26,8 +25,7 @@ import {
   XIcon,
 } from "lucide-react"
 
-import { ShortcutKeys } from "@/features/documents/rich-text/rich-text-toolbar"
-import { Button } from "@/components/ui/button"
+import { IconButton } from "./icon-button"
 import { Card } from "@/components/ui/card"
 import {
   InputGroup,
@@ -155,14 +153,14 @@ export function FindBar({
   return (
     <Card size="sm" className="p-1" onKeyDown={handleKeyDown}>
       <div role="search" aria-label={label} className="flex gap-1">
-        <BarButton
+        <IconButton
           label={replacing ? "Hide replace" : "Show replace"}
           onClick={() => onReplacingChange(!replacing)}
           aria-expanded={replacing}
           disabled={!editable}
         >
           {replacing ? <ChevronDownIcon /> : <ChevronRightIcon />}
-        </BarButton>
+        </IconButton>
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex items-center gap-1">
             <InputGroup className="w-72">
@@ -212,25 +210,25 @@ export function FindBar({
                 </OptionToggle>
               </InputGroupAddon>
             </InputGroup>
-            <BarButton
+            <IconButton
               label="Previous match"
               shortcut={["shift", "mod", "G"]}
               disabled={none}
               onClick={onPrev}
             >
               <ArrowUpIcon />
-            </BarButton>
-            <BarButton
+            </IconButton>
+            <IconButton
               label="Next match"
               shortcut={["mod", "G"]}
               disabled={none}
               onClick={onNext}
             >
               <ArrowDownIcon />
-            </BarButton>
-            <BarButton label="Close" shortcut={["Esc"]} onClick={onClose}>
+            </IconButton>
+            <IconButton label="Close" shortcut={["Esc"]} onClick={onClose}>
               <XIcon />
-            </BarButton>
+            </IconButton>
           </div>
           {replacing && editable ? (
             <div className="flex items-center gap-1">
@@ -245,57 +243,27 @@ export function FindBar({
                   onKeyDown={handleReplaceKeyDown}
                 />
               </InputGroup>
-              <BarButton
+              <IconButton
                 label="Replace"
                 shortcut={["⏎"]}
                 disabled={none}
                 onClick={onReplace}
               >
                 <ReplaceIcon />
-              </BarButton>
-              <BarButton
+              </IconButton>
+              <IconButton
                 label="Replace all"
                 shortcut={["mod", "⏎"]}
                 disabled={none}
                 onClick={onReplaceAll}
               >
                 <ReplaceAllIcon />
-              </BarButton>
+              </IconButton>
             </div>
           ) : null}
         </div>
       </div>
     </Card>
-  )
-}
-
-function BarButton({
-  label,
-  shortcut,
-  children,
-  ...props
-}: Omit<ComponentProps<typeof Button>, "size" | "variant"> & {
-  label: string
-  shortcut?: readonly string[]
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label={label}
-          {...props}
-        >
-          {children}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>
-        {label}
-        {shortcut ? <ShortcutKeys keys={shortcut} /> : null}
-      </TooltipContent>
-    </Tooltip>
   )
 }
 

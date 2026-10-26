@@ -23,7 +23,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import type { RichTextSnapshot } from "./rich-text-state"
-import { keepEditorFocus, ShortcutKeys } from "./rich-text-toolbar"
+import { ShortcutKeys } from "@/composites/shortcut-keys"
+import { keepEditorFocus } from "./rich-text-toolbar"
 import { LinkIcon, CheckIcon, Link2OffIcon, ExternalLinkIcon, PencilIcon } from "lucide-react"
 
 const BARE_DOMAIN = /^[\w-]+(\.[\w-]+)+(:\d+)?([/?#]\S*)?$/
