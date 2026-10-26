@@ -20,16 +20,13 @@ import { useState } from 'react'
 import { useHasCapability } from '@/plugin-api'
 import { createHoliAtom, holisAtom, holiWizardAtom } from '../state'
 import { initialDraft, stepProblem, toHabit, toHoliDraft, type WizardDraft } from './draft'
-import {
-  DoesStep,
-  HabitStep,
-  MayStep,
-  ReviewStep,
-  StepHeading,
-  WhatStep,
-  WhoStep,
-  WorkStep,
-} from './steps'
+import { DoesStep } from './does-step'
+import { HabitStep } from './habit-step'
+import { MayStep } from './may-step'
+import { ReviewStep } from './review-step'
+import { StepHeading } from './step-parts'
+import { WhatStep, WorkStep } from './steps'
+import { WhoStep } from './who-step'
 import { WizardRail, type RailStep } from './wizard-rail'
 import { Button } from '@/components/ui/button'
 import { Frame, FramePanel } from '@/components/reui/frame'

@@ -14,7 +14,8 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import { AgentsSidebar } from '../renderer/agents/agents-sidebar'
 import { agentsStatusAtom, inboxCountAtom } from '../renderer/state/agents-status'
 import { agentsViewAtom } from '../renderer/state/agents-view'
-import { SessionHistory, SessionSearch } from '../renderer/sessions/session-list'
+import { SessionHistory } from '../renderer/sessions/session-list'
+import { SessionSearch } from '../renderer/sessions/session-filters'
 import {
   NO_FILTER,
   sessionFilterAtom,

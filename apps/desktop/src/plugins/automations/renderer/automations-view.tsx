@@ -10,7 +10,8 @@ import { Clock, Plus, Search, Zap } from 'lucide-react'
 import { useState } from 'react'
 import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
 import { cn } from '@/plugin-api'
-import { AutomationEditor, useInitialDraft } from './automation-editor'
+import { AutomationEditor } from './automation-editor'
+import { useInitialDraft } from './automation-draft'
 import {
   automationsAtom,
   automationsLoadedAtom,

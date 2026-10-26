@@ -9,7 +9,8 @@ import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { activeRemoteAtom } from '@/plugin-api'
-import { AutomationEditor, draftOf } from '../renderer/automation-editor'
+import { AutomationEditor } from '../renderer/automation-editor'
+import { draftOf } from '../renderer/automation-draft'
 import type { ScheduleSummary } from '../renderer/schedules-cap'
 
 const run = vi.hoisted(() => vi.fn())
