@@ -127,7 +127,7 @@ Plan/spec: [`agent-first.md`](agent-first.md)
 - **Decision:** split by folder so no two agents edit one file; the shared files (component variants in `components/ui`) are merged by hand at integration. CI does not run ahead of the merge.
 - **Cost if wrong:** cheap.
 
-## D18. CI tests run on Linux [provisional]
+## D18. CI tests run on Linux [superseded by D22]
 
 - **Context:** the tooling draft picked ubuntu-24.04 for case-sensitive import checking; the watcher tests were tuned on macOS fsevents.
 - **Decision:** keep Linux; if the watcher suite is red there, move only the `test` job to `macos-latest`.
@@ -151,3 +151,9 @@ Plan/spec: [`agent-first.md`](agent-first.md)
 - **Context:** `simple-git-hooks` cannot install from a git worktree (it tries to create `.git/hooks`, but in a worktree `.git` is a file), so from this checkout the hooks were never installed.
 - **Decision:** `scripts/install-hooks.mjs`, run by `prepare`, writes the two guarded hooks (D19) into `git rev-parse --git-common-dir`/hooks. `HOLI_SKIP_HOOKS=1` skips them.
 - **Cost if wrong:** cheap.
+
+## D22. CI tests run on macOS; the structure checks stay on Linux
+
+- **Context:** the first CI run failed on Linux in `packages/shared/test/path-safety-node.test.ts`, which checks that a path is refused when its case differs from the one on disk. That only holds on a case-insensitive filesystem, which is what Holi ships on (macOS, Windows).
+- **Decision:** the `test` job runs on `macos-latest`; the `checks` job (typecheck, lint, knip, rulecast, format, commit messages) stays on Linux, where a wrongly cased import fails.
+- **Cost if wrong:** cheap; macOS runners are slower and cost more minutes.

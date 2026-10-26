@@ -2,8 +2,8 @@
 # is not in this file does not exist (docs/refactor/agent-first.md). The registry of
 # what each step enforces is .agents/skills/holi-rules/SKILL.md.
 #
-# Runs on Linux on purpose: it is case-sensitive, so an import that only resolves on
-# macOS fails here. The tests fake the PTY and never launch Electron, so neither the
+# The checks run on Linux on purpose: it is case-sensitive, so an import that only
+# resolves on macOS fails there. The tests run on macOS (see the test job). The tests fake the PTY and never launch Electron, so neither the
 # Electron binary nor a rebuilt node-pty is needed.
 name: CI
 
@@ -84,7 +84,11 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-24.04
+    # macOS on purpose: the tests encode the filesystem Holi ships on (macOS and
+    # Windows are case-insensitive; path-safety's exact-case check needs that), and
+    # the vault watcher tests were tuned on fsevents. The checks job above stays on
+    # Linux, where a wrongly cased import fails.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
 
