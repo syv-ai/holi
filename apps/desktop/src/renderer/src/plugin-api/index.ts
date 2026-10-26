@@ -116,5 +116,5 @@ export {
 export { askPrompt } from '@/lib/ask-agent'
 export { useGlobalPanelLayout } from '@/state/preferences'
 export { matchHotkey } from '@/lib/hotkey'
-export { DiffView } from '@/editor/diff-view'
+export { DiffView } from '@/composites/diff-view'
 export { plainMarkdownExtensions } from '@/editor/extensions'

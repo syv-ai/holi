@@ -32,7 +32,13 @@
       "ignore": ["test/fixtures/**"],
       // plugin-api.ts is the facade plugins import core through. It re-exports
       // more than any one plugin uses today, deliberately.
-      "ignoreIssues": { "src/main/plugin-api.ts": ["exports", "types"] },
+      "ignoreIssues": {
+        "src/main/plugin-api.ts": ["exports", "types"],
+        // Stock shadcn and ReUI files, installed by the CLI and edited in place:
+        // they export a component's whole API whether or not Holi uses it yet.
+        "src/renderer/src/components/ui/**": ["exports", "types"],
+        "src/renderer/src/components/reui/**": ["exports", "types"],
+      },
       // A system binary one community-plugin test shells out to.
       "ignoreBinaries": ["pgrep"],
       "ignoreDependencies": [

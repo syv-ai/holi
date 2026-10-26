@@ -12,7 +12,7 @@
 import { EditorView } from '@codemirror/view'
 import { render } from '@/test/render'
 import { afterEach, expect, test, vi } from 'vitest'
-import { DiffView } from '../diff-view'
+import { DiffView } from '@/composites/diff-view'
 
 const BEFORE = 'one\ntwo\nthree\n'
 const AFTER = 'one\nCHANGED\nthree\n'

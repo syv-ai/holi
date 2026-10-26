@@ -160,7 +160,7 @@ const elementTypes = {
   rules: [
     { from: ['ui'], allow: ['lib', 'hooks'] },
     { from: ['reui'], allow: ['ui', 'lib', 'hooks'] },
-    { from: ['composites'], allow: ['ui', 'reui', 'lib', 'hooks', 'state'] },
+    { from: ['composites'], allow: ['ui', 'reui', 'editor', 'lib', 'hooks', 'state'] },
     {
       from: ['features'],
       // Another feature is allowed (a feature may open another's view); cycles are

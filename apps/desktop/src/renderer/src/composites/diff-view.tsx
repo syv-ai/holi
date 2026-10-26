@@ -11,8 +11,8 @@ import { unifiedMergeView } from '@codemirror/merge'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { useEffect, useRef } from 'react'
-import { colorModeAware } from './color-mode'
-import { editorTheme } from './theme'
+import { colorModeAware } from '@/editor/color-mode'
+import { editorTheme } from '@/editor/theme'
 
 /**
  * The diff's palette, from the app's tokens rather than the mode, so almost
