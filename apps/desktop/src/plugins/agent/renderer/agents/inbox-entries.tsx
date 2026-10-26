@@ -8,7 +8,6 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { X } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { Button, IconButton } from '@/primitives'
 import { cn } from '@/plugin-api'
 import {
   dismissInboxEntryAtom,
@@ -17,6 +16,8 @@ import {
   openInboxEntryAtom,
   type InboxEntry,
 } from '../state/inbox'
+import { Button } from '@/components/ui/button'
+import { IconButton } from '@/composites/icon-button'
 
 /** Today's time alone, an earlier day's date with it. */
 function when(iso: string): string {
@@ -62,12 +63,13 @@ function Row({ entry, unread }: { entry: InboxEntry; unread: boolean }): React.J
         )}
       </Button>
       <IconButton
-        icon={X}
         label="Dismiss"
-        size="sm"
+        size="icon-xs"
         className="absolute end-1.5 top-1.5 opacity-0 focus-visible:opacity-100 group-focus-within/row:opacity-100 group-hover/row:opacity-100"
         onClick={() => void dismiss(entry.id)}
-      />
+      >
+        <X />
+      </IconButton>
     </li>
   )
 }

@@ -5,8 +5,8 @@
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Zap } from 'lucide-react'
-import { SidebarNavItem } from '@/composites'
 import { automationsAtom, openAutomationAtom, selectAutomationAtom } from './state'
+import { SidebarNavItem } from '@/composites/sidebar-nav-item'
 
 export function AutomationsSection(): React.JSX.Element {
   const open = useAtomValue(openAutomationAtom)

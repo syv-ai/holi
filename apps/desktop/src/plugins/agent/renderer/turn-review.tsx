@@ -12,8 +12,6 @@
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
-import { DiffView, DrawerShell, DrawerTitle, EmptyState, LoadingRows } from '@/composites'
-import { Button, Tooltip } from '@/primitives'
 import { cn, useAck } from '@/plugin-api'
 import {
   reviewTurnAtom,
@@ -26,6 +24,11 @@ import {
   turnReviewOpenAtom,
   type TurnFile,
 } from './state/turns'
+import { DiffView } from '@/composites/diff-view'
+import { DrawerShell, DrawerTitle } from '@/composites/drawer-shell'
+import { EmptyState, LoadingRows } from '@/composites/empty-state'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 /** `at` is an ISO string, not a Date: no superjson transformer on the ipcLink. */
 const when = (iso: string) =>
@@ -122,8 +125,9 @@ export function TurnReview(): React.JSX.Element | null {
     </Button>
   )
   const tipped = (file: TurnFile) => (
-    <Tooltip key={file.path} content={file.path}>
-      {row(file)}
+    <Tooltip key={file.path}>
+      <TooltipTrigger asChild>{row(file)}</TooltipTrigger>
+      <TooltipContent side="bottom">{file.path}</TooltipContent>
     </Tooltip>
   )
 

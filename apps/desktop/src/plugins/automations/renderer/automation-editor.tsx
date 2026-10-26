@@ -34,36 +34,6 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { EmptyState } from '@/composites'
-import {
-  Badge,
-  Button,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-  Frame,
-  FramePanel,
-  Icon,
-  IconButton,
-  Input,
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Switch,
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-  Textarea,
-} from '@/primitives'
 import { activeRemoteAtom, cn } from '@/plugin-api'
 import {
   CronError,
@@ -79,6 +49,31 @@ import {
 import { HoliPicker } from './holi-picker'
 import { schedulesCap, selectAutomationAtom, type ScheduleSummary } from './state'
 import type { RunRecord } from './schedules-cap'
+import { EmptyState } from '@/composites/empty-state'
+import { Badge } from '@/components/reui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Frame, FramePanel } from '@/components/reui/frame'
+import { IconButton } from '@/composites/icon-button'
+import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Textarea } from '@/components/ui/textarea'
 
 /** What the editor holds while it is open. */
 export interface Draft {
@@ -125,7 +120,10 @@ const same = (a: Draft, b: Draft): boolean => JSON.stringify(a) === JSON.stringi
 
 const pad = (n: number): string => String(n).padStart(2, '0')
 /** Every half hour of the day, as MonoCode offers them. */
-const TIMES = Array.from({ length: 48 }, (_, i) => `${pad(Math.floor(i / 2))}:${i % 2 ? '30' : '00'}`)
+const TIMES = Array.from(
+  { length: 48 },
+  (_, i) => `${pad(Math.floor(i / 2))}:${i % 2 ? '30' : '00'}`,
+)
 const MINUTES = [0, 15, 30, 45]
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
@@ -240,12 +238,13 @@ function TriggerRow({
   const next = nextOf(trigger)
   const error = cronFor(trigger).error
   const times = TIMES.map((t) => ({ value: t, label: t }))
-  const withTime = 'time' in trigger && !TIMES.includes(trigger.time)
-    ? [{ value: trigger.time, label: trigger.time }, ...times]
-    : times
+  const withTime =
+    'time' in trigger && !TIMES.includes(trigger.time)
+      ? [{ value: trigger.time, label: trigger.time }, ...times]
+      : times
   return (
     <li className="group/trigger flex min-h-10 flex-wrap items-center gap-2 py-1 text-sm">
-      <Icon icon={Clock} size="sm" tone="muted" />
+      <Clock className="size-3.5 text-muted-foreground" />
       <Pill
         label="How often"
         value={trigger.kind}
@@ -299,12 +298,13 @@ function TriggerRow({
         {error !== undefined ? error : next === null ? '' : `Next run ${next}`}
       </span>
       <IconButton
-        icon={X}
         label="Remove trigger"
-        size="sm"
+        size="icon-xs"
         className="ms-auto opacity-0 group-hover/trigger:opacity-100 focus-visible:opacity-100"
         onClick={onRemove}
-      />
+      >
+        <X />
+      </IconButton>
     </li>
   )
 }
@@ -358,13 +358,14 @@ function EventRow({
   onRemove: () => void
 }): React.JSX.Element {
   const error = eventError(trigger)
+  const EventIcon = EVENT_ICON[trigger.source]
   const muted = (text: string) => <span className="text-muted-foreground">{text}</span>
   return (
     <li
       className="group/trigger flex min-h-10 flex-wrap items-center gap-2 py-1 text-sm"
       data-event-trigger={trigger.source}
     >
-      <Icon icon={EVENT_ICON[trigger.source]} size="sm" tone="muted" />
+      <EventIcon className="size-3.5 text-muted-foreground" />
       {trigger.source === 'file' && (
         <>
           {muted('When a file is')}
@@ -437,12 +438,13 @@ function EventRow({
       )}
       {error !== undefined && <span className="text-xs text-destructive">{error}</span>}
       <IconButton
-        icon={X}
         label="Remove trigger"
-        size="sm"
+        size="icon-xs"
         className="ms-auto opacity-0 group-hover/trigger:opacity-100 focus-visible:opacity-100"
         onClick={onRemove}
-      />
+      >
+        <X />
+      </IconButton>
     </li>
   )
 }
@@ -460,9 +462,9 @@ function AllowPill({
     <Popover onOpenChange={(open) => open && setText(allow.join('\n'))}>
       <PopoverTrigger asChild>
         <Button variant="secondary" size="xs" className="gap-1">
-          <Icon icon={ShieldCheck} size="sm" />
+          <ShieldCheck className="size-3.5" />
           {allow.length === 0 ? 'Asks for everything' : `${allow.length} allowed`}
-          <Icon icon={ChevronDown} size="sm" className="size-3" />
+          <ChevronDown className="size-3" />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="flex w-80 flex-col gap-2">
@@ -685,7 +687,7 @@ export function AutomationEditor({
                   })
                 }
               >
-                <Icon icon={Play} size="sm" />
+                <Play className="size-3.5" />
                 Run now
               </Button>
             )}
@@ -721,7 +723,9 @@ export function AutomationEditor({
               <span aria-hidden="true" className="h-3 w-px bg-divider" />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <IconButton icon={Ellipsis} label="More" size="sm" />
+                  <IconButton label="More" size="icon-xs">
+                    <Ellipsis />
+                  </IconButton>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
                   <DropdownMenuItem variant="destructive" onSelect={() => setRemoving(true)}>
@@ -801,7 +805,7 @@ export function AutomationEditor({
                   className="h-12 w-full justify-start gap-2 rounded-none px-(--frame-panel-px) font-normal text-muted-foreground hover:text-foreground"
                   disabled={triggerCount >= 20}
                 >
-                  <Icon icon={Plus} size="sm" />
+                  <Plus className="size-3.5" />
                   Add trigger
                 </Button>
               </DropdownMenuTrigger>
@@ -906,11 +910,11 @@ export function AutomationEditor({
               <span className="text-sm font-medium text-foreground">Advanced</span>
               <span className="text-xs text-muted-foreground">Catch-up window for missed runs</span>
             </span>
-            <Icon
-              icon={ChevronDown}
-              size="sm"
-              tone="muted"
-              className={cn('motion-respond', advanced && 'rotate-180')}
+            <ChevronDown
+              className={cn(
+                'size-3.5 text-muted-foreground',
+                cn('motion-respond', advanced && 'rotate-180'),
+              )}
             />
           </Button>
           {advanced && (

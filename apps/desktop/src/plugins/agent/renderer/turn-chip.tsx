@@ -11,7 +11,6 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef } from 'react'
 import { useAck } from '@/plugin-api'
-import { Button, Tooltip } from '@/primitives'
 import { agentSessionsAtom } from './state/sessions'
 import {
   latestTurnsAtom,
@@ -22,6 +21,8 @@ import {
   turnCountsAtom,
   turnReviewOpenAtom,
 } from './state/turns'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 export function TurnChip({ sessionId }: { sessionId: string }): React.JSX.Element | null {
   const working =
@@ -75,28 +76,29 @@ export function TurnChip({ sessionId }: { sessionId: string }): React.JSX.Elemen
 
   const files = `${count} ${count === 1 ? 'file' : 'files'}`
   return (
-    <Tooltip
-      content={
-        turn.overlapped === true
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          ref={chipRef}
+          variant="link"
+          data-turn-chip={sessionId}
+          className="h-auto shrink-0 justify-start p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
+          onClick={() => {
+            setReviewTurn(turn)
+            setOpen(true)
+          }}
+        >
+          Claude changed {files}
+          {turn.overlapped === true && (
+            <span className="text-muted-foreground"> · overlapped another session</span>
+          )}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        {turn.overlapped === true
           ? 'See what this turn changed. Another session was working at the same time, so the range holds its edits too — they shared one settle commit and cannot be told apart by git.'
-          : "See what this session's last turn changed, and take any of it back"
-      }
-    >
-      <Button
-        ref={chipRef}
-        variant="link"
-        data-turn-chip={sessionId}
-        className="h-auto shrink-0 justify-start p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
-        onClick={() => {
-          setReviewTurn(turn)
-          setOpen(true)
-        }}
-      >
-        Claude changed {files}
-        {turn.overlapped === true && (
-          <span className="text-muted-foreground"> · overlapped another session</span>
-        )}
-      </Button>
+          : "See what this session's last turn changed, and take any of it back"}
+      </TooltipContent>
     </Tooltip>
   )
 }

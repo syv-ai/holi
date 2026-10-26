@@ -9,18 +9,6 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Clock, Plus, Settings, Sparkles, StickyNote } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { EmptyState, PixelPersona } from '@/composites'
-import {
-  Badge,
-  Button,
-  Icon,
-  IconButton,
-  Skeleton,
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@/primitives'
 import {
   activeRemoteAtom,
   agentsSelectionAtom,
@@ -40,6 +28,14 @@ import {
   pendingApprovalAtom,
   type HoliSummary,
 } from './state'
+import { EmptyState } from '@/composites/empty-state'
+import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
+import { Badge } from '@/components/reui/badge'
+import { Button } from '@/components/ui/button'
+import { IconButton } from '@/composites/icon-button'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { DEFAULT_HOLI_COLOUR } from './parts'
 
 /** An automation as the Habits tab lists it: what `schedules.list` answers. */
 interface Habit {
@@ -140,7 +136,7 @@ function Habits({ holi }: { holi: HoliSummary }): React.JSX.Element {
           onClick={() => select({ owner: AUTOMATIONS, id: h.path })}
         >
           <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-foreground/[0.06]">
-            <Icon icon={Clock} size="sm" tone="muted" />
+            <Clock className="size-3.5 text-muted-foreground" />
           </span>
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="truncate text-sm font-medium text-foreground">{h.name}</span>
@@ -166,7 +162,7 @@ function Habits({ holi }: { holi: HoliSummary }): React.JSX.Element {
         </Button>
       ))}
       <Button variant="ghost" size="sm" className="self-start" onClick={newHabit}>
-        <Icon icon={Plus} size="sm" />
+        <Plus className="size-3.5" />
         New habit
       </Button>
     </div>
@@ -209,7 +205,7 @@ export function HoliView({ id }: { id: string }): React.JSX.Element {
         {holi.mascot !== undefined && (
           <PixelPersona
             name={holi.mascot}
-            color={holi.color ?? '#8f8f94'}
+            color={holi.color ?? DEFAULT_HOLI_COLOUR}
             status={state}
             crop="full"
           />
@@ -220,23 +216,26 @@ export function HoliView({ id }: { id: string }): React.JSX.Element {
         </span>
         <div className="ms-auto flex items-center gap-0.5">
           <IconButton
-            icon={Sparkles}
             label="Soul"
-            size="sm"
+            size="icon-xs"
             onClick={() => openSettings({ id: holi.id, section: 'soul' })}
-          />
+          >
+            <Sparkles />
+          </IconButton>
           <IconButton
-            icon={StickyNote}
             label="Memory"
-            size="sm"
+            size="icon-xs"
             onClick={() => openSettings({ id: holi.id, section: 'memory' })}
-          />
+          >
+            <StickyNote />
+          </IconButton>
           <IconButton
-            icon={Settings}
             label="Settings"
-            size="sm"
+            size="icon-xs"
             onClick={() => openSettings({ id: holi.id, section: 'general' })}
-          />
+          >
+            <Settings />
+          </IconButton>
         </div>
       </div>
 

@@ -12,21 +12,18 @@ import { SiClaude } from '@icons-pack/react-simple-icons'
 import { useAtomValue } from 'jotai'
 import { Check, ChevronDown } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { PixelPersona } from '@/composites'
+import { activeRemoteAtom, capClient, cn, useHasCapability, type UiCapability } from '@/plugin-api'
+import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
+import { Button } from '@/components/ui/button'
 import {
-  Button,
   Command,
   CommandEmpty,
   CommandGroup,
   CommandInput,
   CommandItem,
   CommandList,
-  Icon,
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/primitives'
-import { activeRemoteAtom, capClient, cn, useHasCapability, type UiCapability } from '@/plugin-api'
+} from '@/components/ui/command'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 /** What the picker needs of a Holi, by shape. */
 export interface PickableHoli {
@@ -66,10 +63,8 @@ export function useHolis(): PickableHoli[] {
 
 function Face({ holi, className }: { holi?: PickableHoli; className?: string }) {
   return holi === undefined ? (
-    <Icon
-      icon={SiClaude}
-      size="sm"
-      className={cn('text-orange-500 dark:text-orange-400', className)}
+    <SiClaude
+      className={cn('size-3.5', cn('text-orange-500 dark:text-orange-400', className))}
       aria-hidden="true"
     />
   ) : (
@@ -111,10 +106,8 @@ export function HoliPicker({
         >
           <Face {...(current === undefined ? {} : { holi: current })} />
           <span className="font-medium text-foreground">{label}</span>
-          <Icon
-            icon={ChevronDown}
-            size="sm"
-            className={cn('size-3 motion-respond', open && 'rotate-180')}
+          <ChevronDown
+            className={cn('size-3.5', cn('size-3 motion-respond', open && 'rotate-180'))}
           />
         </Button>
       </PopoverTrigger>
@@ -126,7 +119,7 @@ export function HoliPicker({
             <CommandGroup>
               <CommandItem value="claude" onSelect={() => pick(undefined)}>
                 <span className="flex size-4 items-center justify-center">
-                  {value === undefined ? <Icon icon={Check} size="sm" /> : <Face />}
+                  {value === undefined ? <Check className="size-3.5" /> : <Face />}
                 </span>
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate font-medium">Claude</span>
@@ -138,7 +131,7 @@ export function HoliPicker({
               {list.map((h) => (
                 <CommandItem key={h.id} value={`${h.name} ${h.id}`} onSelect={() => pick(h.id)}>
                   <span className="flex size-4 items-center justify-center">
-                    {h.id === value ? <Icon icon={Check} size="sm" /> : <Face holi={h} />}
+                    {h.id === value ? <Check className="size-3.5" /> : <Face holi={h} />}
                   </span>
                   <span className="flex min-w-0 flex-1 flex-col">
                     <span className="truncate font-medium">{h.name}</span>

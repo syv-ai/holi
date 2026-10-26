@@ -10,8 +10,10 @@
  */
 import { Check, CircleAlert, LoaderCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { Icon } from '@/primitives'
 import { cn } from '@/plugin-api'
+
+/** The grey of a Holi that has no colour yet. */
+export const DEFAULT_HOLI_COLOUR = '#8f8f94'
 
 export function StateLabel({
   state,
@@ -28,7 +30,7 @@ export function StateLabel({
           className,
         )}
       >
-        <Icon icon={CircleAlert} size="sm" className="size-3" />
+        <CircleAlert className="size-3" />
         Need approval
       </span>
     )
@@ -37,7 +39,7 @@ export function StateLabel({
     return (
       <span className={cn('inline-flex shrink-0 items-center gap-1 text-foreground', className)}>
         {/* The one in-flight loop: the house orbit (docs/ui-system.md, Motion). */}
-        <Icon icon={LoaderCircle} size="sm" className="size-3 motion-orbit" />
+        <LoaderCircle className="size-3 motion-orbit" />
         Working…
       </span>
     )
@@ -49,7 +51,7 @@ export function StateLabel({
         className,
       )}
     >
-      <Icon icon={Check} size="sm" className="size-3" />
+      <Check className="size-3" />
       Done
     </span>
   )

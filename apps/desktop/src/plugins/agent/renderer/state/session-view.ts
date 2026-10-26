@@ -6,7 +6,6 @@
  */
 import { atom } from 'jotai'
 import type { AgentProviderId } from '@holi/shared'
-import { toast } from '@/primitives'
 import {
   activeRemoteAtom,
   appModeAtom,
@@ -19,6 +18,7 @@ import { agentsViewAtom, viewTerminalsAtom } from './agents-view'
 import { newSessionProviderAtom, providerLabel } from './providers'
 import { agentGeometryAtom } from './sessions'
 import { respawnSessionAtom, type AgentResult } from './send'
+import { toast } from 'sonner'
 
 /** The line an ask opens with for each app it is about: the agent reads the
  *  app's folder itself, in the clone, with its own permissions. */

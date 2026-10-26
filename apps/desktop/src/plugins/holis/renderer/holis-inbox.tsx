@@ -5,10 +5,10 @@
  * seen. A run waiting on a permission prompt is the agent's own row there.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
-import { PixelPersona } from '@/composites'
-import { Button } from '@/primitives'
 import { holiAsksAtom, openHoliAtom } from './state'
-import { ago, useNow } from './parts'
+import { DEFAULT_HOLI_COLOUR, ago, useNow } from './parts'
+import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
+import { Button } from '@/components/ui/button'
 
 export function HolisInbox(): React.JSX.Element | null {
   const asks = useAtomValue(holiAsksAtom)
@@ -29,7 +29,7 @@ export function HolisInbox(): React.JSX.Element | null {
             <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
               <PixelPersona
                 name={holi.mascot ?? 'strategist'}
-                color={holi.color ?? '#8f8f94'}
+                color={holi.color ?? DEFAULT_HOLI_COLOUR}
                 status="needs-you"
               />
               <span className="min-w-0 flex-1 truncate">{holi.name}</span>

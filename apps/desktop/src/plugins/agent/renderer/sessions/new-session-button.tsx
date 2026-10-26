@@ -9,6 +9,13 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { PlusIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import {
+  loadProvidersAtom,
+  newSessionProviderAtom,
+  providerLabel,
+  providersAtom,
+} from '../state/providers'
+import { startViewSessionAtom } from '../state/session-view'
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -16,16 +23,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuShortcut,
   DropdownMenuTrigger,
-  IconButton,
-} from '@/primitives'
-import { AgentMark } from '@/composites'
-import {
-  loadProvidersAtom,
-  newSessionProviderAtom,
-  providerLabel,
-  providersAtom,
-} from '../state/providers'
-import { startViewSessionAtom } from '../state/session-view'
+} from '@/components/ui/dropdown-menu'
+import { Button } from '@/components/ui/button'
+import { AgentMark } from '@/composites/marks'
 
 /** How long the pointer rests on the + before the menu opens, and how long
  *  it may be off both before it closes: crossing the gap is not leaving. */
@@ -80,12 +80,13 @@ export function NewSessionButton(): React.JSX.Element {
         }}
         onClick={startDefault}
       >
-        <IconButton
-          icon={PlusIcon}
-          label={`New ${providerLabel(fallback)} session`}
-          size="sm"
-          tooltip={false}
-        />
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`New ${providerLabel(fallback)} session`}
+        >
+          <PlusIcon />
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"

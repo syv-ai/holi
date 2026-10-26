@@ -7,6 +7,7 @@
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Plus } from 'lucide-react'
+import { holisAtom, holiWizardAtom, sendableFor, sendToHoliAtom, type HoliSummary } from './state'
 import {
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -14,16 +15,19 @@ import {
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
-  Icon,
-} from '@/primitives'
-import { PixelPersona } from '@/composites'
-import { holisAtom, holiWizardAtom, sendableFor, sendToHoliAtom, type HoliSummary } from './state'
+} from '@/components/ui/dropdown-menu'
+import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
+import { DEFAULT_HOLI_COLOUR } from './parts'
 
 function HoliItem({ holi, path }: { holi: HoliSummary; path: string }): React.JSX.Element {
   const send = useSetAtom(sendToHoliAtom)
   return (
     <DropdownMenuItem onSelect={() => void send({ holi, path })}>
-      <PixelPersona name={holi.mascot ?? 'strategist'} color={holi.color ?? '#8f8f94'} still />
+      <PixelPersona
+        name={holi.mascot ?? 'strategist'}
+        color={holi.color ?? DEFAULT_HOLI_COLOUR}
+        still
+      />
       <span className="min-w-0 flex-1 truncate">{holi.name}</span>
       {holi.status !== 'approved' && (
         <span className="text-xs text-muted-foreground">
@@ -54,7 +58,11 @@ export function DocumentHoliActions({ path }: { path: string }): React.JSX.Eleme
           <DropdownMenuSubContent>
             {rest.map((h) => (
               <DropdownMenuItem key={h.id} disabled>
-                <PixelPersona name={h.mascot ?? 'strategist'} color={h.color ?? '#8f8f94'} still />
+                <PixelPersona
+                  name={h.mascot ?? 'strategist'}
+                  color={h.color ?? DEFAULT_HOLI_COLOUR}
+                  still
+                />
                 <span className="min-w-0 flex-1 truncate">{h.name}</span>
                 <span className="text-xs text-muted-foreground">Takes other documents</span>
               </DropdownMenuItem>
@@ -71,7 +79,7 @@ export function DocumentHoliActions({ path }: { path: string }): React.JSX.Eleme
           })
         }
       >
-        <Icon icon={Plus} size="sm" />
+        <Plus className="size-3.5" />
         New Holi…
       </DropdownMenuItem>
     </>

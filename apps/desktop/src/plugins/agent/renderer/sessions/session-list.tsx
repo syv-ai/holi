@@ -47,16 +47,6 @@ import {
   type KeyboardEvent,
 } from "react"
 import { Badge } from "@/components/reui/badge"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import {
   ContextMenu,
@@ -97,8 +87,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { AgentMark, PixelPersona } from "@/composites"
-import { IconButton, toast } from "@/primitives"
+import { ConfirmDialog } from "@/composites/confirm-dialog"
+import { AgentMark } from "@/composites/marks"
+import { PixelPersona } from "@/composites/pixel-persona/pixel-persona"
+import { toast } from "sonner"
+import { useNow } from "../lib/use-now"
 import { providersAtom } from "../state/providers"
 import { reviewSessionTurnAtom } from "../state/turns"
 import { NewSessionButton } from "./new-session-button"
@@ -141,16 +134,6 @@ import {
   type SessionRow,
   type SessionSource,
 } from "../state/session-list"
-
-/** "now" that moves, so the cards' ages stay true. */
-function useNow(stepMs = 30_000): number {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), stepMs)
-    return () => window.clearInterval(id)
-  }, [stepMs])
-  return now
-}
 
 const STATE_FILTERS: readonly {
   value: SessionFilter["states"][number]
@@ -395,7 +378,7 @@ function tabOf(
  * who ran it (the mark and the model) and where. The title is the only line
  * in the foreground; the vault is left out, since every card is in this one.
  */
-function SessionCard({
+export function SessionCard({
   row,
   now,
   focusable,
@@ -855,62 +838,28 @@ function DeleteDialog({
   onClose: () => void
 }): React.JSX.Element {
   const remove = useSetAtom(deleteSessionRowAtom)
-  const [pending, setPending] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const confirm = async () => {
     if (row === null) return
-    setPending(true)
-    setError(null)
     try {
       const res = (await remove(row.item.key)) as
         { ok: true } | { ok: false; message: string } | undefined
-      if (res !== undefined && !res.ok) setError(res.message)
-      else onClose()
+      if (res !== undefined && !res.ok) toast.error(res.message)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setPending(false)
+      toast.error(err instanceof Error ? err.message : String(err))
     }
   }
   return (
-    <AlertDialog
+    <ConfirmDialog
       open={row !== null}
       onOpenChange={(open) => {
-        if (!open && !pending) {
-          setError(null)
-          onClose()
-        }
+        if (!open) onClose()
       }}
-    >
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete “{row?.item.title ?? ""}”?</AlertDialogTitle>
-          <AlertDialogDescription>
-            Holi forgets this conversation on this machine: its row and Holi’s
-            copy of the transcript. Claude Code’s own transcript stays where
-            Claude Code keeps it.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        {error !== null && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        )}
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={pending}
-            onClick={(e) => {
-              e.preventDefault()
-              void confirm()
-            }}
-          >
-            Delete
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+      title={`Delete “${row?.item.title ?? ""}”?`}
+      description="Holi forgets this conversation on this machine: its row and Holi’s copy of the transcript. Claude Code’s own transcript stays where Claude Code keeps it."
+      confirmLabel="Delete"
+      destructive
+      onConfirm={() => void confirm()}
+    />
   )
 }
 

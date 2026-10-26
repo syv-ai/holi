@@ -19,7 +19,6 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { Inbox, SquarePen, TerminalSquare } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
-import { Skeleton } from '@/primitives'
 import { activeRemoteAtom, agentsSlotsAtom } from '@/plugin-api'
 import { agentCap } from '../agent-cap'
 import { SessionTerminal } from '../session-terminal'
@@ -27,12 +26,12 @@ import { inboxCountAtom } from '../state/agents-status'
 import { inboxAtom } from '../state/inbox'
 import { agentsViewAtom, agentsViewOf, viewTerminalsAtom } from '../state/agents-view'
 import { newSessionProviderAtom, providerLabel } from '../state/providers'
-import { newSessionAtom } from '../state/session-list'
-import { SessionHistory, SessionSearch } from '../sessions/session-list'
+import { newSessionAtom, sessionRowsAtom } from '../state/session-list'
+import { SessionCard, SessionHistory, SessionSearch } from '../sessions/session-list'
 import { agentGeometryAtom, agentSessionsAtom } from '../state/sessions'
 import { InboxEntries } from './inbox-entries'
-import { SessionCard } from './parts'
-import { useNow } from './agents-sidebar'
+import { useNow } from '../lib/use-now'
+import { Skeleton } from '@/components/ui/skeleton'
 
 function Bar({
   children,
@@ -53,14 +52,15 @@ function Bar({
  *  a question, then what each plugin adds. Empty, it says what lands here. */
 function InboxView(): React.JSX.Element {
   const sessions = useAtomValue(agentSessionsAtom)
-  const remote = useAtomValue(activeRemoteAtom)
+  const rows = useAtomValue(sessionRowsAtom)
   const slots = useAtomValue(agentsSlotsAtom)
   const count = useAtomValue(inboxCountAtom)
   const entries = useAtomValue(inboxAtom).entries.length
   const setView = useSetAtom(agentsViewAtom)
   const create = useSetAtom(newSessionAtom)
   const now = useNow()
-  const waiting = sessions.filter((s) => s.state === 'needs-you')
+  const ids = new Set(sessions.filter((s) => s.state === 'needs-you').map((s) => s.id))
+  const waiting = rows.filter((r) => r.item.jobId !== undefined && ids.has(r.item.jobId))
   return (
     <>
       <Bar>
@@ -85,14 +85,14 @@ function InboxView(): React.JSX.Element {
               <section aria-label="Sessions waiting on you" className="flex flex-col gap-2">
                 <h2 className="text-xs font-medium text-muted-foreground">Waiting on you</h2>
                 <div className="flex flex-col gap-1">
-                  {waiting.map((s) => (
+                  {waiting.map((row) => (
                     <SessionCard
-                      key={s.id}
-                      session={s}
-                      vault={remote ?? ''}
-                      current={false}
+                      key={row.item.key}
+                      row={row}
                       now={now}
-                      onClick={() => setView({ kind: 'session', id: s.id })}
+                      focusable
+                      onFocus={() => {}}
+                      onOpen={() => setView({ kind: 'session', id: row.item.jobId ?? '' })}
                     />
                   ))}
                 </div>
@@ -214,7 +214,11 @@ function SessionView({ id }: { id: string }): React.JSX.Element {
   }
   if (terminalId === null) {
     return (
-      <div className="flex flex-1 flex-col gap-2 p-6" role="status" aria-label="Opening the terminal">
+      <div
+        className="flex flex-1 flex-col gap-2 p-6"
+        role="status"
+        aria-label="Opening the terminal"
+      >
         <Skeleton className="h-4 w-2/3" />
         <Skeleton className="h-4 w-1/2" />
         <Skeleton className="h-4 w-3/5" />

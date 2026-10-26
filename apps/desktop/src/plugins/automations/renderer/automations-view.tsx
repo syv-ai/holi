@@ -8,17 +8,6 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Clock, Plus, Search, Zap } from 'lucide-react'
 import { useState } from 'react'
-import { EmptyState } from '@/composites'
-import {
-  Badge,
-  Button,
-  Icon,
-  IconButton,
-  InputGroup,
-  InputGroupAddon,
-  InputGroupInput,
-  Skeleton,
-} from '@/primitives'
 import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
 import { cn } from '@/plugin-api'
 import { AutomationEditor, useInitialDraft } from './automation-editor'
@@ -29,6 +18,12 @@ import {
   selectAutomationAtom,
   type ScheduleSummary,
 } from './state'
+import { EmptyState } from '@/composites/empty-state'
+import { Badge } from '@/components/reui/badge'
+import { Button } from '@/components/ui/button'
+import { IconButton } from '@/composites/icon-button'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
+import { Skeleton } from '@/components/ui/skeleton'
 
 const lastFormat = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' })
 
@@ -45,7 +40,7 @@ function Card({ a, current }: { a: ScheduleSummary; current: boolean }): React.J
       onClick={() => select(a.path)}
     >
       <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-        <Icon icon={Clock} size="sm" className="size-3" />
+        <Clock className="size-3" />
         <span className="min-w-0 flex-1 truncate">{a.error ?? a.when ?? ''}</span>
         <Badge variant={a.status === 'on' ? 'primary-light' : 'outline'}>
           {a.status === 'on'
@@ -75,14 +70,11 @@ function List({ open }: { open: string }): React.JSX.Element {
   const q = query.trim().toLowerCase()
   const shown = all.filter((a) => q === '' || a.name.toLowerCase().includes(q))
   return (
-    <aside
-      aria-label="Automations"
-      className="flex w-72 shrink-0 flex-col border-e border-divider"
-    >
+    <aside aria-label="Automations" className="flex w-72 shrink-0 flex-col border-e border-divider">
       <div className="flex shrink-0 items-center gap-1 border-b border-divider p-2">
         <InputGroup>
           <InputGroupAddon>
-            <Icon icon={Search} size="sm" tone="muted" />
+            <Search className="size-3.5 text-muted-foreground" />
           </InputGroupAddon>
           <InputGroupInput
             placeholder="Filter automations"
@@ -91,7 +83,9 @@ function List({ open }: { open: string }): React.JSX.Element {
             onChange={(e) => setQuery(e.target.value)}
           />
         </InputGroup>
-        <IconButton icon={Plus} label="New automation" size="sm" onClick={() => select('new')} />
+        <IconButton label="New automation" size="icon-xs" onClick={() => select('new')}>
+          <Plus />
+        </IconButton>
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5">
         {loaded === 'loading' && all.length === 0 ? (
@@ -154,7 +148,7 @@ export function AutomationsView({ id }: { id: string }): React.JSX.Element {
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-automations-view="">
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-divider px-4 text-sm">
-        <Icon icon={Zap} size="sm" tone="muted" />
+        <Zap className="size-3.5 text-muted-foreground" />
         <span className="font-medium">Automations</span>
       </div>
       <div className="flex min-h-0 flex-1">

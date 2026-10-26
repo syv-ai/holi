@@ -17,7 +17,6 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { ArrowLeft, Sparkles } from 'lucide-react'
 import { useState } from 'react'
-import { Button, Dialog, Frame, FramePanel, Icon, toast } from '@/primitives'
 import { useHasCapability } from '@/plugin-api'
 import { createHoliAtom, holisAtom, holiWizardAtom } from '../state'
 import { initialDraft, stepProblem, toHabit, toHoliDraft, type WizardDraft } from './draft'
@@ -32,6 +31,10 @@ import {
   WorkStep,
 } from './steps'
 import { WizardRail, type RailStep } from './wizard-rail'
+import { Button } from '@/components/ui/button'
+import { Frame, FramePanel } from '@/components/reui/frame'
+import { toast } from 'sonner'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 
 type StepId = 'what' | 'work' | 'who' | 'does' | 'may' | 'habit' | 'review'
 
@@ -158,12 +161,12 @@ function Wizard({
       <aside className="flex w-64 shrink-0 flex-col gap-4 p-6 pe-4">
         <header className="flex min-h-8 items-center justify-between gap-2">
           <span className="flex items-center gap-2 text-sm font-medium">
-            <Icon icon={Sparkles} size="sm" tone="muted" />
+            <Sparkles className="size-3.5 text-muted-foreground" />
             {mode === 'learn' ? 'How Holis work' : 'New Holi'}
           </span>
           {current > 1 ? (
             <Button variant="ghost" size="sm" onClick={() => go(current - 1)}>
-              <Icon icon={ArrowLeft} size="sm" />
+              <ArrowLeft className="size-3.5" />
               Back
             </Button>
           ) : null}
@@ -242,18 +245,26 @@ export function HoliWizardDialog(): React.JSX.Element | null {
   return (
     <Dialog
       open
-      size="full"
-      title={open.mode === 'learn' ? 'How Holis work' : 'New Holi'}
-      onClose={() => setOpen(null)}
+      onOpenChange={(next) => {
+        if (!next) setOpen(null)
+      }}
     >
-      <Wizard
-        // From learning to making, the wizard starts again on making.
-        key={open.mode}
-        mode={open.mode}
-        draft={open.draft}
-        skipIntro={open.skipIntro === true}
-        onMode={(mode) => setOpen({ ...open, mode, skipIntro: true })}
-      />
+      <DialogContent
+        className="flex h-[85vh] flex-col overflow-hidden sm:max-w-6xl"
+        aria-describedby={undefined}
+      >
+        <DialogTitle className="sr-only">
+          {open.mode === 'learn' ? 'How Holis work' : 'New Holi'}
+        </DialogTitle>
+        <Wizard
+          // From learning to making, the wizard starts again on making.
+          key={open.mode}
+          mode={open.mode}
+          draft={open.draft}
+          skipIntro={open.skipIntro === true}
+          onMode={(mode) => setOpen({ ...open, mode, skipIntro: true })}
+        />
+      </DialogContent>
     </Dialog>
   )
 }

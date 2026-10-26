@@ -15,28 +15,6 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Pencil, Plus, Settings, Sparkles, StickyNote, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { PixelPersona } from '@/composites'
-import {
-  Button,
-  Dialog,
-  Frame,
-  FramePanel,
-  Icon,
-  IconButton,
-  Input,
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Skeleton,
-  Textarea,
-  ToggleGroup,
-  ToggleGroupItem,
-} from '@/primitives'
 import { activeRemoteAtom, appModeAtom, cn, openPathAtom } from '@/plugin-api'
 import {
   HOLI_COLOURS,
@@ -62,6 +40,24 @@ import {
   type HoliSummary,
   type SettingsSection,
 } from './state'
+import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
+import { Button } from '@/components/ui/button'
+import { Frame, FramePanel } from '@/components/reui/frame'
+import { IconButton } from '@/composites/icon-button'
+import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Textarea } from '@/components/ui/textarea'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { DEFAULT_HOLI_COLOUR } from './parts'
 
 const SECTIONS: { id: SettingsSection; label: string; icon: typeof Settings }[] = [
   { id: 'general', label: 'General', icon: Settings },
@@ -182,7 +178,7 @@ function General({ holi, onError }: { holi: HoliSummary; onError: (m: string) =>
             <Button variant="outline" className="size-20" aria-label="Change its face and colour">
               <PixelPersona
                 name={holi.mascot ?? 'strategist'}
-                color={holi.color ?? '#8f8f94'}
+                color={holi.color ?? DEFAULT_HOLI_COLOUR}
                 crop="full"
                 scale={2}
               />
@@ -200,7 +196,7 @@ function General({ holi, onError }: { holi: HoliSummary; onError: (m: string) =>
             >
               {HOLI_MASCOTS.map((m) => (
                 <ToggleGroupItem key={m} value={m} aria-label={HOLI_MASCOT_LABELS[m]}>
-                  <PixelPersona name={m} color={holi.color ?? '#8f8f94'} still />
+                  <PixelPersona name={m} color={holi.color ?? DEFAULT_HOLI_COLOUR} still />
                 </ToggleGroupItem>
               ))}
             </ToggleGroup>
@@ -534,12 +530,9 @@ function Memory({ holi, onError }: { holi: HoliSummary; onError: (m: string) => 
         <p className="min-w-0 flex-1 text-xs text-muted-foreground">
           What it has learned, one fact a line. Its runs add to it; nothing here is an instruction.
         </p>
-        <IconButton
-          icon={Plus}
-          label="Remember something"
-          size="sm"
-          onClick={() => setAdding('')}
-        />
+        <IconButton label="Remember something" size="icon-xs" onClick={() => setAdding('')}>
+          <Plus />
+        </IconButton>
       </div>
       {adding !== null && (
         <Input
@@ -574,7 +567,7 @@ function Memory({ holi, onError }: { holi: HoliSummary; onError: (m: string) => 
               className="group/fact flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-foreground/[0.04]"
             >
               <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-foreground/[0.06]">
-                <Icon icon={StickyNote} size="sm" tone="muted" />
+                <StickyNote className="size-3.5 text-muted-foreground" />
               </span>
               {editing?.index === line.index ? (
                 <Input
@@ -615,17 +608,19 @@ function Memory({ holi, onError }: { holi: HoliSummary; onError: (m: string) => 
               {editing?.index !== line.index && (
                 <span className="flex shrink-0 gap-0.5 opacity-0 group-focus-within/fact:opacity-100 group-hover/fact:opacity-100">
                   <IconButton
-                    icon={Pencil}
                     label="Edit"
-                    size="sm"
+                    size="icon-xs"
                     onClick={() => setEditing({ index: line.index, text: line.text })}
-                  />
+                  >
+                    <Pencil />
+                  </IconButton>
                   <IconButton
-                    icon={Trash2}
                     label="Forget"
-                    size="sm"
+                    size="icon-xs"
                     onClick={() => tryWrite(() => withoutLine(files.memory, line.index))}
-                  />
+                  >
+                    <Trash2 />
+                  </IconButton>
                 </span>
               )}
             </li>
@@ -666,43 +661,50 @@ export function HoliSettingsDialog(): React.JSX.Element | null {
   return (
     <Dialog
       open
-      size="full"
-      onClose={() => {
+      onOpenChange={(next) => {
+        if (next) return
         setError(null)
         setOpen(null)
       }}
     >
-      <Dialog.Header>{holi.name} settings</Dialog.Header>
-      <div className="flex min-h-0 flex-1 gap-6">
-        <nav aria-label="Settings" className="flex w-40 shrink-0 flex-col gap-0.5">
-          {SECTIONS.map((s) => (
-            <Button
-              key={s.id}
-              variant="ghost"
-              className="h-8 justify-start gap-2.5 rounded-lg px-2.5 text-nav font-medium text-muted-foreground motion-respond hover:bg-foreground/[0.04] hover:text-foreground aria-[current=page]:bg-foreground/[0.06] aria-[current=page]:text-foreground"
-              aria-current={open.section === s.id ? 'page' : undefined}
-              onClick={() => setOpen({ id: holi.id, section: s.id })}
-            >
-              <Icon icon={s.icon} size="sm" />
-              {s.label}
-            </Button>
-          ))}
-        </nav>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain pe-1">
-          {error !== null && (
-            <p role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
-          )}
-          {open.section === 'general' ? (
-            <General holi={holi} onError={setError} />
-          ) : open.section === 'soul' ? (
-            <Soul holi={holi} onError={setError} />
-          ) : (
-            <Memory holi={holi} onError={setError} />
-          )}
+      <DialogContent
+        className="flex h-[85vh] flex-col overflow-hidden sm:max-w-6xl"
+        aria-describedby={undefined}
+      >
+        <DialogHeader>
+          <DialogTitle>{holi.name} settings</DialogTitle>
+        </DialogHeader>
+        <div className="flex min-h-0 flex-1 gap-6">
+          <nav aria-label="Settings" className="flex w-40 shrink-0 flex-col gap-0.5">
+            {SECTIONS.map((s) => (
+              <Button
+                key={s.id}
+                variant="ghost"
+                className="h-8 justify-start gap-2.5 rounded-lg px-2.5 text-nav font-medium text-muted-foreground motion-respond hover:bg-foreground/[0.04] hover:text-foreground aria-[current=page]:bg-foreground/[0.06] aria-[current=page]:text-foreground"
+                aria-current={open.section === s.id ? 'page' : undefined}
+                onClick={() => setOpen({ id: holi.id, section: s.id })}
+              >
+                <s.icon className="size-3.5" />
+                {s.label}
+              </Button>
+            ))}
+          </nav>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain pe-1">
+            {error !== null && (
+              <p role="alert" className="text-sm text-destructive">
+                {error}
+              </p>
+            )}
+            {open.section === 'general' ? (
+              <General holi={holi} onError={setError} />
+            ) : open.section === 'soul' ? (
+              <Soul holi={holi} onError={setError} />
+            ) : (
+              <Memory holi={holi} onError={setError} />
+            )}
+          </div>
         </div>
-      </div>
+      </DialogContent>
     </Dialog>
   )
 }

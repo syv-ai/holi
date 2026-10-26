@@ -6,8 +6,8 @@
  */
 import { useSetAtom } from 'jotai'
 import { LayoutList, Plus } from 'lucide-react'
-import { IconButton } from '@/primitives'
 import { openOverviewAtom, startSessionAtom } from './state/send'
+import { IconButton } from '@/composites/icon-button'
 
 export function SessionActions(): React.JSX.Element {
   const startSession = useSetAtom(startSessionAtom)
@@ -15,19 +15,23 @@ export function SessionActions(): React.JSX.Element {
   return (
     <>
       <IconButton
-        icon={LayoutList}
         label="Open overview"
         className="ml-1"
         data-session-overview=""
         onClick={() => void openOverview()}
-      />
+        size="icon-xs"
+      >
+        <LayoutList />
+      </IconButton>
       <IconButton
-        icon={Plus}
         label="Start another session"
         className="ml-1"
         data-session-new=""
         onClick={() => void startSession()}
-      />
+        size="icon-xs"
+      >
+        <Plus />
+      </IconButton>
     </>
   )
 }

@@ -38,6 +38,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { IconButton } from '@/composites/icon-button'
 import { activeRemoteAtom } from '@/plugin-api'
 import { addressFor, type PageInfo } from '../shared/page'
 import { addressAskAtom, BROWSER, browserCap, pagesAtom } from './state'
@@ -160,36 +161,6 @@ function usePlacement(
   return still
 }
 
-function NavButton({
-  label,
-  onClick,
-  disabled,
-  children,
-}: {
-  label: string
-  onClick: () => void
-  disabled?: boolean
-  children: React.ReactNode
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label={label}
-          disabled={disabled}
-          onClick={onClick}
-        >
-          {children}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
-  )
-}
-
 /** The site's icon in the address bar, a spinner while it loads. */
 function SiteMark({ page }: { page: PageInfo | undefined }) {
   const [failed, setFailed] = useState<string | null>(null)
@@ -248,32 +219,35 @@ export function BrowserSurface({ id, visible }: { id?: string; visible: boolean 
   return (
     <div className="bg-background flex h-full min-h-0 flex-col" data-browser-tab={id}>
       <form onSubmit={go} className="flex items-center gap-1 border-b px-2 py-1.5">
-        <NavButton
+        <IconButton
+          type="button"
           label="Back"
           disabled={!page?.canGoBack}
           onClick={() => run(browserCap.back(remote, tab))}
         >
           <ArrowLeftIcon />
-        </NavButton>
-        <NavButton
+        </IconButton>
+        <IconButton
+          type="button"
           label="Forward"
           disabled={!page?.canGoForward}
           onClick={() => run(browserCap.forward(remote, tab))}
         >
           <ArrowRightIcon />
-        </NavButton>
+        </IconButton>
         {page?.loading ? (
-          <NavButton label="Stop" onClick={() => run(browserCap.stop(remote, tab))}>
+          <IconButton type="button" label="Stop" onClick={() => run(browserCap.stop(remote, tab))}>
             <XIcon />
-          </NavButton>
+          </IconButton>
         ) : (
-          <NavButton
+          <IconButton
+            type="button"
             label="Reload"
             disabled={page === undefined || page.url === ''}
             onClick={() => run(browserCap.reload(remote, tab))}
           >
             <RotateCwIcon />
-          </NavButton>
+          </IconButton>
         )}
         <InputGroup className="flex-1">
           <InputGroupAddon>

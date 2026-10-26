@@ -15,27 +15,15 @@
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { History, Inbox } from 'lucide-react'
-import { useEffect, useState } from 'react'
 import { SidebarMenu } from '@/components/ui/sidebar'
-import { SidebarNavItem } from '@/composites'
 import { agentsSlotsAtom } from '@/plugin-api'
 import { SessionList } from '../sessions/session-list'
 import { inboxCountAtom } from '../state/agents-status'
 import { agentsViewAtom } from '../state/agents-view'
+import { SidebarNavItem } from '@/composites/sidebar-nav-item'
 
 /** Where the agent's own sessions sit among the slots' sections. */
 const SESSIONS_ORDER = 100
-
-/** "now" that moves, so the cards' times stay true.
- *  Reading the wall clock is the point: an age ("5m") counts from it. */
-export function useNow(stepMs = 30_000): number {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), stepMs)
-    return () => window.clearInterval(id)
-  }, [stepMs])
-  return now
-}
 
 export function AgentsSidebar(): React.JSX.Element {
   const view = useAtomValue(agentsViewAtom)

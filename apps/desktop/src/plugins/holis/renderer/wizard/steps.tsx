@@ -18,31 +18,7 @@ import {
   Terminal,
   X,
 } from 'lucide-react'
-import { useState } from 'react'
-import { PixelPersona } from '@/composites'
-import {
-  Badge,
-  Frame,
-  FramePanel,
-  FormField,
-  Icon,
-  IconButton,
-  IconTile,
-  Input,
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-  InputGroupInput,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Switch,
-  Textarea,
-  ToggleGroup,
-  ToggleGroupItem,
-} from '@/primitives'
+import { cloneElement, isValidElement, useId, useState } from 'react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/reui/alert'
 import {
   HOLI_COLOURS,
@@ -53,6 +29,72 @@ import {
   type HoliMascot,
 } from '@holi/shared'
 import { DAYS, habitCron, nextHabitRun, TIMES, type WizardDraft } from './draft'
+import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
+import { Badge } from '@/components/reui/badge'
+import { Frame, FramePanel } from '@/components/reui/frame'
+import { IconButton } from '@/composites/icon-button'
+import { IconTile } from '@/components/reui/icon-tile'
+import { Input } from '@/components/ui/input'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from '@/components/ui/input-group'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { Field, FieldError, FieldLabel } from '@/components/ui/field'
+
+/** A captioned control. The caption names the control: `Input`, `Textarea` and
+ *  `Switch` are linked to it by id, the rest carry their own `aria-label`. */
+function FormField({
+  label,
+  required,
+  error,
+  orientation = 'vertical',
+  children,
+}: {
+  label: string
+  required?: boolean
+  error?: string
+  orientation?: 'vertical' | 'horizontal'
+  children: React.ReactElement<{ id?: string }>
+}): React.JSX.Element {
+  const id = useId()
+  const linkable =
+    isValidElement(children) && [Input, Textarea, Switch].includes(children.type as never)
+  const control = linkable ? cloneElement(children, { id }) : children
+  const caption = (
+    <>
+      {label}
+      {required === true && <span className="text-destructive"> *</span>}
+    </>
+  )
+  return (
+    <Field orientation={orientation}>
+      <FieldLabel
+        htmlFor={linkable ? id : undefined}
+        className="text-xs font-normal text-muted-foreground"
+      >
+        {caption}
+      </FieldLabel>
+      {orientation === 'horizontal' ? (
+        <div className="flex flex-1 justify-end">{control}</div>
+      ) : (
+        control
+      )}
+      {error !== undefined && <FieldError>{error}</FieldError>}
+    </Field>
+  )
+}
 
 /** The heading every step opens with, as the block's `StepHeading`. */
 export function StepHeading({
@@ -73,7 +115,7 @@ export function StepHeading({
 /** One row of an explaining list: its mark, a title, a line, and maybe the
  *  file it lives in. */
 function Fact({
-  icon,
+  icon: Glyph,
   title,
   file,
   children,
@@ -86,7 +128,7 @@ function Fact({
   return (
     <FramePanel className="flex items-start gap-3">
       <IconTile size="sm">
-        <Icon icon={icon} size="sm" />
+        <Glyph className="size-3.5" />
       </IconTile>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex flex-wrap items-center gap-2">
@@ -141,7 +183,7 @@ export function WhatStep(): React.JSX.Element {
 // ── 2. How it gets work ───────────────────────────────────────────────────
 
 function Way({
-  icon,
+  icon: Glyph,
   title,
   example,
   children,
@@ -154,7 +196,7 @@ function Way({
   return (
     <FramePanel className="flex flex-col gap-3">
       <IconTile size="sm">
-        <Icon icon={icon} size="sm" />
+        <Glyph className="size-3.5" />
       </IconTile>
       <div className="flex flex-col gap-1">
         <span className="text-sm font-medium">{title}</span>
@@ -168,11 +210,11 @@ function Way({
 }
 
 /** One stop on a run's path, for the small diagram under the two ways. */
-function Stop({ icon, label }: { icon: typeof Clock; label: string }): React.JSX.Element {
+function Stop({ icon: Glyph, label }: { icon: typeof Clock; label: string }): React.JSX.Element {
   return (
     <li className="flex min-w-0 flex-1 flex-col items-center gap-1.5 text-center">
       <IconTile size="xs" variant="elevated">
-        <Icon icon={icon} size="sm" />
+        <Glyph className="size-3.5" />
       </IconTile>
       <span className="text-xs text-muted-foreground">{label}</span>
     </li>
@@ -196,11 +238,11 @@ export function WorkStep(): React.JSX.Element {
         <span className="text-xs font-medium text-muted-foreground">Every run</span>
         <ol aria-label="Every run" className="flex items-start gap-1">
           <Stop icon={Sparkles} label="Its soul, memory and rules" />
-          <Icon icon={ArrowRight} size="sm" tone="muted" className="mt-1.5 shrink-0" />
+          <ArrowRight className="size-3.5 text-muted-foreground mt-1.5 shrink-0" />
           <Stop icon={Terminal} label="Claude Code in the vault" />
-          <Icon icon={ArrowRight} size="sm" tone="muted" className="mt-1.5 shrink-0" />
+          <ArrowRight className="size-3.5 text-muted-foreground mt-1.5 shrink-0" />
           <Stop icon={ShieldCheck} label="Asks you what its rules do not allow" />
-          <Icon icon={ArrowRight} size="sm" tone="muted" className="mt-1.5 shrink-0" />
+          <ArrowRight className="size-3.5 text-muted-foreground mt-1.5 shrink-0" />
           <Stop icon={MessageSquareReply} label="Reports what came of it" />
         </ol>
       </div>
@@ -421,7 +463,7 @@ function AddField({
         />
         <InputGroupAddon align="inline-end">
           <InputGroupButton onClick={add}>
-            <Icon icon={Plus} size="sm" />
+            <Plus className="size-3.5" />
             {button}
           </InputGroupButton>
         </InputGroupAddon>
@@ -481,11 +523,12 @@ export function MayStep({
                 <Badge variant="secondary" size="lg" className="gap-1 pe-0.5 font-mono">
                   {rule}
                   <IconButton
-                    icon={X}
-                    size="sm"
+                    size="icon-xs"
                     label={`Remove ${rule}`}
                     onClick={() => set({ allow: draft.allow.filter((r) => r !== rule) })}
-                  />
+                  >
+                    <X />
+                  </IconButton>
                 </Badge>
               </li>
             ))}
@@ -532,7 +575,7 @@ export function HabitStep({
       {habit.on ? (
         <>
           <div className="flex flex-wrap items-center gap-2 text-sm">
-            <Icon icon={Clock} size="sm" tone="muted" />
+            <Clock className="size-3.5 text-muted-foreground" />
             <Select
               value={habit.kind}
               onValueChange={(k) => put({ kind: k as WizardDraft['habit']['kind'] })}
@@ -594,7 +637,7 @@ export function HabitStep({
             />
           </FormField>
           <Alert>
-            <Icon icon={ShieldCheck} size="sm" />
+            <ShieldCheck className="size-3.5" />
             <AlertTitle>Written switched off</AlertTitle>
             <AlertDescription>
               Turn it on in Automations on the machine that should run it: that approves the habit

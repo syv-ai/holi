@@ -8,16 +8,6 @@
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { CircleHelp, Ellipsis, Plus } from 'lucide-react'
-import { PixelPersona, SectionLabel } from '@/composites'
-import {
-  Button,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  IconButton,
-  Skeleton,
-} from '@/primitives'
 import { appModeAtom, cn, openPathAtom, useTabDrag } from '@/plugin-api'
 import { HOLI_COLOURS, HOLI_MASCOTS } from '@holi/shared'
 import { HoliDialogs } from './holi-dialogs'
@@ -33,13 +23,23 @@ import {
   selectedHoliAtom,
   type HoliSummary,
 } from './state'
+import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
+import { SectionLabel } from '@/composites/section-label'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { IconButton } from '@/composites/icon-button'
+import { Skeleton } from '@/components/ui/skeleton'
+import { DEFAULT_HOLI_COLOUR } from './parts'
 
 /** The chrome row (`docs/ui-system.md`, Rules): one fill scale on the
  *  foreground, `text-nav`. */
 const ROW =
   'h-8 w-full min-w-0 justify-start gap-2 rounded-lg px-2 pe-8 text-nav font-medium text-muted-foreground motion-respond hover:bg-foreground/[0.04] hover:text-foreground active:bg-foreground/[0.07] aria-[current=page]:bg-foreground/[0.06] aria-[current=page]:text-foreground'
-
-const GREY = '#8f8f94'
 
 function HoliRow({ holi }: { holi: HoliSummary }): React.JSX.Element {
   const selected = useAtomValue(selectedHoliAtom)
@@ -72,11 +72,16 @@ function HoliRow({ holi }: { holi: HoliSummary }): React.JSX.Element {
       >
         <span className="relative flex size-5 shrink-0 items-center justify-center">
           {broken ? (
-            <PixelPersona name={holi.mascot ?? 'strategist'} color={GREY} still muted />
+            <PixelPersona
+              name={holi.mascot ?? 'strategist'}
+              color={DEFAULT_HOLI_COLOUR}
+              still
+              muted
+            />
           ) : (
             <PixelPersona
               name={holi.mascot ?? 'strategist'}
-              color={holi.color ?? GREY}
+              color={holi.color ?? DEFAULT_HOLI_COLOUR}
               status={state}
             />
           )}
@@ -108,11 +113,12 @@ function HoliRow({ holi }: { holi: HoliSummary }): React.JSX.Element {
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <IconButton
-            icon={Ellipsis}
             label={`${holi.name} options`}
-            size="sm"
+            size="icon-xs"
             className="absolute end-1 top-1 opacity-0 group-hover/holi:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
-          />
+          >
+            <Ellipsis />
+          </IconButton>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={() => open(holi.id)}>Open</DropdownMenuItem>
@@ -181,17 +187,15 @@ export function HolisSection(): React.JSX.Element {
         {holis.length > 0 && (
           <div className="flex items-center gap-0.5">
             <IconButton
-              icon={CircleHelp}
               label="How Holis work"
-              size="sm"
+              size="icon-xs"
               onClick={() => wizard({ mode: 'learn' })}
-            />
-            <IconButton
-              icon={Plus}
-              label="New Holi"
-              size="sm"
-              onClick={() => wizard({ mode: 'create' })}
-            />
+            >
+              <CircleHelp />
+            </IconButton>
+            <IconButton label="New Holi" size="icon-xs" onClick={() => wizard({ mode: 'create' })}>
+              <Plus />
+            </IconButton>
           </div>
         )}
       </div>

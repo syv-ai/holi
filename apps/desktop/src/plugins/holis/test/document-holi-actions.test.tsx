@@ -10,10 +10,14 @@ import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { expect, test, vi } from 'vitest'
 import { activeRemoteAtom } from '@/plugin-api'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/primitives'
 import { ApproveHoliDialog } from '../renderer/approve-holi-dialog'
 import { DocumentHoliActions } from '../renderer/document-holi-actions'
 import { holisAtom, holiWizardAtom, pendingApprovalAtom, type HoliSummary } from '../renderer/state'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 const send = vi.fn()
 const create = vi.fn()

@@ -1,13 +1,12 @@
 /**
  * The wizard's rail of steps: ReUI's `onboarding-2` block's sidebar stepper
  * (`OnboardingStepper`), installed with the shadcn CLI and kept as it ships,
- * on the ReUI Stepper (`@/primitives`). Only its type moved up to the house
+ * on the ReUI Stepper (`@/components/reui/stepper`). Only its type moved up to the house
  * floor (`text-xs`, `text-nav`) and its steps are the wizard's. A step is a
  * button while it may be visited: one already reached, or one that explains.
  */
 import { Check } from 'lucide-react'
 import {
-  Icon,
   Stepper,
   StepperDescription,
   StepperIndicator,
@@ -16,8 +15,7 @@ import {
   StepperSeparator,
   StepperTitle,
   StepperTrigger,
-} from '@/primitives'
-
+} from '@/components/reui/stepper'
 export interface RailStep {
   id: string
   label: string
@@ -31,7 +29,7 @@ const INDICATOR_CLASSNAME =
 const SEPARATOR_COLOR_CLASSNAME =
   'bg-muted-foreground/12 group-data-[state=active]/step:bg-muted-foreground/12 group-data-[state=inactive]/step:bg-muted-foreground/12 group-data-[state=completed]/step:bg-success dark:bg-muted-foreground/18 dark:group-data-[state=active]/step:bg-muted-foreground/18 dark:group-data-[state=inactive]/step:bg-muted-foreground/18'
 
-const COMPLETED_INDICATOR = <Icon icon={Check} size="sm" className="size-3" />
+const COMPLETED_INDICATOR = <Check className="size-3" />
 
 export function WizardRail({
   steps,

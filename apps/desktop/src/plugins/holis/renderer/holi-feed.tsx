@@ -12,8 +12,6 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { ChevronRight, FileText, Plus } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
-import { Churn } from '@/composites'
-import { Button, Icon } from '@/primitives'
 import {
   agentRunFilesAtom,
   agentRunsReviewedAtom,
@@ -29,6 +27,8 @@ import {
 } from '@/plugin-api'
 import { StateLabel, ago, useNow } from './parts'
 import { holiSeenAtom, runNeedsYou, runState, type HoliRun, type HoliSummary } from './state'
+import { Churn } from '@/composites/churn'
+import { Button } from '@/components/ui/button'
 
 const stamp = new Intl.DateTimeFormat(undefined, {
   weekday: 'short',
@@ -169,7 +169,7 @@ function Quiet({
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        <Icon icon={ChevronRight} size="sm" className={cn('motion-respond', open && 'rotate-90')} />
+        <ChevronRight className={cn('size-3.5', cn('motion-respond', open && 'rotate-90'))} />
         {runs.length} quiet {runs.length === 1 ? 'run' : 'runs'}, nothing to report
       </Button>
       {open &&
