@@ -1,6 +1,7 @@
 /**
- * Naming a new vault: one name, slugified live, and the account or org it is
- * created under. The link to join an existing vault instead lives here too.
+ * Naming a new vault: one name, slugified live, what the vault is for (optional,
+ * written into its README), and the account or org it is created under. The
+ * link to join an existing vault instead lives here too.
  *
  * Owns the org list: `read:org` buys exactly one feature, offering an org as
  * the owner, and when it fails the personal account still works.
@@ -23,16 +24,30 @@ import { CEREMONY_GHOST } from './ceremony'
 interface Props {
   name: string
   owner: string
+  /** "What is this vault for?": optional, it becomes the README's paragraph. */
+  purpose: string
   slug: string
   error: string | null
   /** True while this act is the one on screen, so the name field takes focus. */
   active: boolean
   onName: (name: string) => void
   onOwner: (owner: string) => void
+  onPurpose: (purpose: string) => void
   onJoin: () => void
 }
 
-export function NamingAct({ name, owner, slug, error, active, onName, onOwner, onJoin }: Props) {
+export function NamingAct({
+  name,
+  owner,
+  purpose,
+  slug,
+  error,
+  active,
+  onName,
+  onOwner,
+  onPurpose,
+  onJoin,
+}: Props) {
   const session = useAtomValue(sessionAtom)
   const [orgs, setOrgs] = useState<string[]>([])
   const nameRef = useRef<HTMLInputElement>(null)
@@ -76,6 +91,21 @@ export function NamingAct({ name, owner, slug, error, active, onName, onOwner, o
       </div>
 
       <div className="obrit-form">
+        <div className="obrit-field">
+          <div className="obrit-field-label">WHAT IS THIS VAULT FOR?</div>
+          <Input
+            variant="underline"
+            aria-label="What is this vault for?"
+            value={purpose}
+            onChange={(e) => onPurpose(e.target.value)}
+            placeholder="optional"
+            autoComplete="off"
+            maxLength={300}
+          />
+          <div className="obrit-field-caption">
+            the first lines of the vault's README. you can change it later.
+          </div>
+        </div>
         <div className="obrit-field">
           <div className="obrit-field-label">OWNER</div>
           <Select value={owner} onValueChange={onOwner}>

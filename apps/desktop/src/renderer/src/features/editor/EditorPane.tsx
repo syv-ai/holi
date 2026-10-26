@@ -53,11 +53,13 @@ import {
   threadLinesAtom,
   threadsByPathAtom,
 } from '@/state/comments'
+import { workspaceAtom } from '@/state/panes'
 import { normalizersAtom, owningClaimsAtom } from '@/state/plugins'
 import { trpc } from '@/lib/trpc'
 import { fileHistoryAtom } from '@/state/file-history'
 import { editorSelectionAtom } from '@/state/ui-report'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { rememberedPosition, rememberPosition } from './view-positions'
 
 /** Quiet before the buffer reaches disk. Shorter than main's commit debounce on
  *  purpose: the file has to be there before the commit timer decides to look. */
@@ -356,12 +358,15 @@ export function EditorPane({
     void trpc.notes.read.query({ remote, path }).then((text) => {
       if (disposed) return
       baseRef.current = text
+      // Back where this note was left, when its tab was switched away from.
+      const left = rememberedPosition(remote, path, text.length, plain ? 0 : bodyStart(text))
       const view = new EditorView({
+        ...(left?.scrollTo === undefined ? {} : { scrollTo: left.scrollTo }),
         state: EditorState.create({
           doc: text,
-          // Open the caret in the body, below the frontmatter widget. `assoc: 1`
-          // binds it to the body side of the seam.
-          selection: EditorSelection.cursor(plain ? 0 : bodyStart(text), 1),
+          // Otherwise open the caret in the body, below the frontmatter widget.
+          // `assoc: 1` binds it to the body side of the seam.
+          selection: left?.selection ?? EditorSelection.cursor(plain ? 0 : bodyStart(text), 1),
           extensions: [
             ...(plain
               ? plainTextExtensions(path, readOnly)
@@ -393,8 +398,7 @@ export function EditorPane({
         parent: host,
       })
       viewRef.current = view
-      // A fresh editor opens on a caret: whatever this path had selected before
-      // is gone.
+      // Report the caret the editor opened on, remembered or fresh.
       reportSelection(view.state)
       reportCaretHeading(view.state)
       // Fade in when the document arrives, after the IPC read, not when the
@@ -448,6 +452,7 @@ export function EditorPane({
         if (hasNewText(baseRef.current, text, path, normalizers.current)) {
           void trpc.notes.write.mutate({ remote, path, text })
         }
+        rememberPosition(remote, path, view, store.get(workspaceAtom))
         view.destroy()
       }
       viewRef.current = null
@@ -482,7 +487,7 @@ export function EditorPane({
   // The file's claim came or went (its plugin turned on or off): the open
   // view takes the new claim layer, and starts or stops taking comment
   // threads, in place, caret and undo kept.
-  const { frontmatterAlwaysOpen, claimExtensions } = deps
+  const { frontmatterAlwaysOpen, claimExtensions, pluginExtensions } = deps
   useEffect(() => {
     const view = viewRef.current
     if (view === null || path === null || plain) return
@@ -502,7 +507,7 @@ export function EditorPane({
       unfollowCommentsRef.current()
       unfollowCommentsRef.current = null
     }
-  }, [frontmatterAlwaysOpen, claimExtensions, commentable, path, plain, store])
+  }, [frontmatterAlwaysOpen, claimExtensions, pluginExtensions, commentable, path, plain, store])
 
   /**
    * The vault changed somewhere: re-read our own file and decide. The snapshot

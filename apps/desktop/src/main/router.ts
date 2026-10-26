@@ -6,7 +6,7 @@
  * with no server, a check running on the machine of the person it restricts is
  * theatre. GitHub decides what leaves, at push time (docs/features/auth.md).
  */
-import { readFile, rm, stat } from 'node:fs/promises'
+import { readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
 import { exactPath } from '@holi/shared/path-safety-node'
@@ -60,6 +60,7 @@ import {
   withFileLock,
   writeAtomic,
 } from './vault/vault-files'
+import { vaultReadme } from './vault/readme'
 import { renameNote } from './vault/rename'
 import {
   addReply,
@@ -85,6 +86,9 @@ import { repoName, type VaultRegistry } from './vault/registry'
 import type { UpdateStatus } from './updates/state'
 import type { Updater } from './updates/updater'
 import { isReleaseVersion, type ReleaseNotesAnswer } from './updates/release-notes'
+
+/** The longest answer to "What is this vault for?", as the onboarding field caps it. */
+const PURPOSE_MAX = 300
 
 const t = initTRPC.create()
 
@@ -426,7 +430,7 @@ export function createRouter(deps: RouterDeps) {
   async function addVault(
     remote: string,
     url: string | undefined,
-    opts: { requireVault?: boolean } = {},
+    opts: { requireVault?: boolean; readme?: string } = {},
   ): Promise<VaultSnapshot> {
     const { repo, outcome } = await ensureClone({
       root: deps.vaultRoot,
@@ -448,6 +452,16 @@ export function createRouter(deps: RouterDeps) {
       )
     }
     await deps.seed(repo.root)
+    // A new vault's README, beside the seed so it lands in the first commit.
+    // Not a once-seed file: it is written from this vault's own answer. Never
+    // over one that is already there (`wx`).
+    if (opts.readme !== undefined) {
+      await writeFile(join(repo.root, 'README.md'), opts.readme, { flag: 'wx' }).catch(
+        (err: NodeJS.ErrnoException) => {
+          if (err.code !== 'EEXIST') throw err
+        },
+      )
+    }
     await deps.registry.add({
       remote,
       path: repo.root,
@@ -737,13 +751,23 @@ export function createRouter(deps: RouterDeps) {
       ),
 
     create: t.procedure
-      .input(fields({ name: 'string', owner: 'string?', url: 'string?' }))
-      // A private repo, seeded, committed, pushed, opened.
+      .input(fields({ name: 'string', owner: 'string?', url: 'string?', purpose: 'string?' }))
+      // A private repo, seeded, committed, pushed, opened. `purpose` is the
+      // answer to "What is this vault for?": the README's paragraph and the
+      // repo's description on GitHub.
       .mutation(async ({ input }): Promise<VaultSnapshot> => {
+        // The renderer caps the answer; this caps a raw call the same way.
+        const purpose = [...(input.purpose?.trim() ?? '')].slice(0, PURPOSE_MAX).join('')
         const repo = await gh(() =>
-          deps.session.api.createRepo({ name: input.name, owner: repoOwner(input.owner) }),
+          deps.session.api.createRepo({
+            name: input.name,
+            owner: repoOwner(input.owner),
+            ...(purpose === '' ? {} : { description: purpose }),
+          }),
         )
-        const snapshot = await addVault(repo.remote, input.url)
+        const snapshot = await addVault(repo.remote, input.url, {
+          readme: vaultReadme(repoName(repo.remote), purpose),
+        })
         // The seed is the repo's first commit, and it has to leave the machine:
         // a "vault" that exists only locally is not one anybody can be invited
         // to. A brand-new repo should not wait out the coalesce timer to become
@@ -1117,8 +1141,9 @@ export function createRouter(deps: RouterDeps) {
     // rewrite runs before the move, so a mid-run failure leaves the source in
     // place and visible in `git status` (there is no transaction).
     // Commits are the renderer's job (it flushes and commits around this call).
+    // `localLinksOnly` leaves committed notes' links alone (`renameNote`).
     rename: vaultMutation
-      .input(fields({ remote: 'string', from: 'string', to: 'string' }))
+      .input(fields({ remote: 'string', from: 'string', to: 'string', localLinksOnly: 'boolean?' }))
       .mutation(async ({ input }): Promise<{ rewritten: { path: string; count: number }[] }> => {
         const root = await rootFor(input.remote)
         const from = safe(input.from)
@@ -1126,7 +1151,7 @@ export function createRouter(deps: RouterDeps) {
         if (await exists(root, to)) {
           throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${to}` })
         }
-        return renameNote(root, from, to)
+        return renameNote(root, from, to, { localLinksOnly: input.localLinksOnly === true })
       }),
 
     // Batch move: one commit-pair from the renderer, one single-pass link

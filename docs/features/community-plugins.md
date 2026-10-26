@@ -60,6 +60,11 @@ plugin or its folder, and `commit`), and turns it on with
 `plugins: { community: true, <id>: true }` in `.holi/settings/plugins.yaml`, beside the first-party plugins. A folder
 install is never pinned.
 
+**Adding a plugin from settings uses it in the open vault.** Settings is always inside a vault, so
+a release added there under "Add a plugin" is pinned and turned on in that vault once it is allowed
+and set up, as its switch would. One the vault already has on stays as the vault has it. A folder
+added with "Use a folder" is only installed; its switch turns it on.
+
 **Vault apps.** A manifest's `apps` names folders in the plugin, each a vault app (`Notes.app`
 with its `index.html` and `app.yaml`). Each is copied to the vault's root once: when the vault
 turns the plugin on, when setup finishes in a vault that runs it, and when a vault that runs it
@@ -106,6 +111,22 @@ dialog naming the repository, version, commit, both commands and the commands it
 its output streamed into the dialog and kept in `setup.log`. A folder install asks nothing: it is
 the person's own checkout.
 
+**A readiness check.** A plugin that needs something outside Holi before it can work, such as a
+setting switched on in a companion app, says how to tell in its manifest:
+
+```json
+"check": { "run": ["dashctl", "version"], "hint": "Switch on Let other agents control Dash in Dash" }
+```
+
+`run` is an argv like `setup`, with `{vault}` its only placeholder, run in the plugin's folder with no shell
+and on the same `PATH`; it passes when it exits 0 within 10 seconds, and is killed with what it
+started when it does not. `hint` is one short line for the person. Main asks it for each plugin that
+runs in the vault: when the vault opens, when a plugin is turned on there, right after its setup
+succeeds, and when the person clicks **Check again**, never on a timer. The last answer is kept in
+memory per vault and plugin, and leaving the vault drops it. A failing check does not stop the
+plugin: its skills and commands stay and it still counts as running. Its settings row and the
+vault notice show the hint in place of "Ready", with **Check again** beside it.
+
 **A row's status**, as settings and the vault notice show it: `not-installed` (pinned, absent here),
 `pin-differs` (this machine has another release), `needs-consent`, `needs-setup`, `setup-failed`,
 `ready`. A plugin is running where the vault turns it on and it is `ready`; only then does its claim
@@ -131,7 +152,12 @@ release, asks in the consent dialog, sets it up and, where the vault pins the pl
 release, so its members are offered it in turn.
 
 **The vault notice.** A vault that turns on a plugin this machine cannot run says so under the file
-tree, with the one next step (install the pinned version, or allow and set up).
+tree, with the one next step (install the pinned version, or allow and set up). A running plugin
+whose readiness check fails is there too, with its hint and **Check again**.
+
+**The agent knows the plugins.** The session overview the agent gets at each start names every
+plugin the vault pins, whether the vault turns it on, and the commands it gives the agent
+([agent-memory.md](agent-memory.md)), so it finds the plugin before it goes looking elsewhere.
 
 ## Rules
 
@@ -179,7 +205,7 @@ tree, with the one next step (install the pinned version, or allow and set up).
 - `packages/shared/src/community-plugin.ts`: the manifest and pin grammar, `opensPath`,
   `pluginServerOrigin`, `PLUGIN_COMMANDS_DIR`.
 - `apps/desktop/src/plugins/community/main/`: the install store, fetch, the topic search, setup,
-  consent, the supervisor, the agent's commands (`commands.ts`) and the `community.*` capabilities.
+  consent, the readiness checks (`checks.ts`), the supervisor, the agent's commands (`commands.ts`) and the `community.*` capabilities.
 - `apps/desktop/src/plugins/community/renderer/`: the tab (`PluginFrame`), the settings section, the
   consent dialog and the vault notice.
 - `apps/desktop/src/main/window-guard.ts`: `originFrameExit`.

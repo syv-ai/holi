@@ -21,6 +21,9 @@ export interface OnboardingState {
   name: string
   /** GitHub login or org the vault repo is created under. */
   owner: string
+  /** "What is this vault for?", as typed. Optional; it becomes the README's
+   *  paragraph. */
+  purpose: string
   error: string | null
   submitting: boolean
   /** The settings act's answers, keyed by `VaultSettingDescriptor.key`. Seeded
@@ -52,6 +55,7 @@ export const initialState = (mode: Mode, owner: string): OnboardingState => ({
   view: 'form',
   name: '',
   owner,
+  purpose: '',
   error: null,
   submitting: false,
   settings: Object.fromEntries(VAULT_SETTING_DESCRIPTORS.map((d) => [d.key, d.default])),
@@ -76,6 +80,7 @@ export type Action =
   | { type: 'toForm' }
   | { type: 'setName'; name: string }
   | { type: 'setOwner'; owner: string }
+  | { type: 'setPurpose'; purpose: string }
   | { type: 'setSetting'; key: string; value: unknown }
   | { type: 'setPlugin'; id: string; on: boolean; byDefault: boolean }
   | { type: 'submitStart' }
@@ -101,6 +106,8 @@ export const reduce = (s: OnboardingState, a: Action): OnboardingState => {
       return { ...s, name: a.name }
     case 'setOwner':
       return { ...s, owner: a.owner }
+    case 'setPurpose':
+      return { ...s, purpose: a.purpose }
     case 'setSetting':
       // A fresh object rather than a mutation: the view re-renders off identity.
       // Normalised, because one answer can withdraw another's options: turning

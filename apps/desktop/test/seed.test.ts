@@ -12,7 +12,7 @@ import {
   OS_JUNK_FILES,
   VAULT_MARKER_FILE,
 } from '@holi/shared'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsFragment } from '../src/main/vault/seed/types'
 import { claudeSeed, agentSettings } from '../src/plugins/agent/main/claude/seed'
 import { appsSeed } from '../src/plugins/apps/main/seed'
@@ -20,7 +20,7 @@ import { googleSeed } from '../src/plugins/google/main/seed'
 import { pdfSeed } from '../src/plugins/pdf/main/seed'
 import { tasksSeed } from '../src/plugins/tasks/main/seed'
 import { coreSeed, GITIGNORE } from '../src/main/vault/seed/core'
-import { ensureSeeded as ensureSeededWith } from '../src/main/vault/seed/seed'
+import { ensureSeeded as ensureSeededWith, shippedFiles } from '../src/main/vault/seed/seed'
 import {
   pendingShipped as pendingWith,
   stagedPath,
@@ -31,6 +31,24 @@ import { updateOnOpen } from '../src/main/vault/seed/update-on-open'
 import { SEED_CONTRIBUTIONS, seedVault as ensureSeeded } from './helpers/seed'
 
 const exec = promisify(execFile)
+
+/**
+ * A version of the vault-apps skill an older Holi shipped: today's with its
+ * first line swapped, added to the shipped history for this file's tests.
+ */
+const OLDER_SHIPPED = vi.hoisted(() => ({ rel: '.claude/skills/vault-apps/SKILL.md', text: '' }))
+vi.mock('../src/main/vault/seed/shipped-history.json', async (importOriginal) => {
+  const { createHash } = await import('node:crypto')
+  const { readFile } = await import('node:fs/promises')
+  const shipped = await readFile(
+    new URL(`../src/plugins/apps/main/vault/shipped/${OLDER_SHIPPED.rel}`, import.meta.url),
+    'utf8',
+  )
+  OLDER_SHIPPED.text = ['# an older first line', ...shipped.split('\n').slice(1)].join('\n')
+  const real = (await importOriginal<{ default: Record<string, string[]> }>()).default
+  const sha = createHash('sha256').update(OLDER_SHIPPED.text, 'utf8').digest('hex')
+  return { default: { ...real, [OLDER_SHIPPED.rel]: [...real[OLDER_SHIPPED.rel]!, sha] } }
+})
 
 // no __dirname under vitest's ESM transform
 const HOOKS_DIR = fileURLToPath(
@@ -1076,6 +1094,59 @@ describe('updateShipped: what `holi skills update` does', () => {
     await expect(readFile(join(root, stagedPath(SKILL, 'base')), 'utf8')).rejects.toThrow()
   })
 
+  it('replaces a version an older Holi shipped, with no record: a clone made elsewhere', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await writeFile(join(root, SKILL), OLDER_SHIPPED.text)
+    await rm(join(root, SEED_STATE_FILE))
+
+    const report = await updateShipped(root)
+    expect(report.updated).toEqual([SKILL])
+    expect(report.conflicts).toEqual([])
+    expect(await readFile(join(root, SKILL), 'utf8')).toBe(shipped())
+  })
+
+  describe('with no record, the base is the newest shipped version git has', () => {
+    /** A vault whose history holds the older shipped skill, then `commits`
+     *  on top, with no seed record on this machine. */
+    async function cloned(...commits: string[]): Promise<string> {
+      const root = await tempDir()
+      const git = (...args: string[]) =>
+        exec('git', ['-c', 'user.name=Ada Holm', '-c', 'user.email=ada@syv.ai', ...args], {
+          cwd: root,
+        })
+      await git('init', '-q')
+      await ensureSeeded(root)
+      await rm(join(root, SEED_STATE_FILE))
+      for (const text of [OLDER_SHIPPED.text, ...commits]) {
+        await writeFile(join(root, SKILL), text)
+        await git('add', '-A')
+        await git('commit', '-qm', 'autosave')
+      }
+      return root
+    }
+
+    it("merges the vault's changes on top of it", async () => {
+      const root = await cloned()
+      await writeFile(join(root, SKILL), `${OLDER_SHIPPED.text}\n## Ours\n`)
+
+      const report = await updateShipped(root)
+      expect(report.merged).toEqual([SKILL])
+      expect(await readFile(join(root, SKILL), 'utf8')).toBe(`${shipped()}\n## Ours\n`)
+    })
+
+    it('stages it beside a conflict, past newer commits Holi never shipped', async () => {
+      const [, ...rest] = shipped().split('\n')
+      const mine = ['# our first line', ...rest].join('\n')
+      const root = await cloned(mine)
+
+      const report = await updateShipped(root)
+      expect(report.conflicts).toEqual([SKILL])
+      expect(await readFile(join(root, SKILL), 'utf8')).toBe(mine)
+      expect(await readFile(join(root, stagedPath(SKILL, 'base')), 'utf8')).toBe(OLDER_SHIPPED.text)
+    })
+  })
+
   it('leaves a skill the vault deleted deleted, and adds one it never had', async () => {
     const root = await tempDir()
     await ensureSeeded(root)
@@ -1128,6 +1199,23 @@ describe('updateShipped: what `holi skills update` does', () => {
   })
 })
 
+describe('the shipped history', () => {
+  it('holds every file shipped today, so a vault with no record can match it', async () => {
+    const history = JSON.parse(
+      await readFile(
+        new URL('../src/main/vault/seed/shipped-history.json', import.meta.url),
+        'utf8',
+      ),
+    ) as Record<string, string[]>
+    for (const [rel, text] of shippedFiles([...SEED_CONTRIBUTIONS, tasksSeed])) {
+      expect(
+        history[rel] ?? [],
+        `${rel} changed: run \`pnpm --filter @holi/desktop shipped-history\``,
+      ).toContain(sha256(text))
+    }
+  })
+})
+
 describe('pendingShipped: whether an update exists', () => {
   const SKILL = '.claude/skills/vault-apps/SKILL.md'
   const THEME = '.claude/skills/theme/SKILL.md'
@@ -1145,6 +1233,14 @@ describe('pendingShipped: whether an update exists', () => {
     await recordSeeded(root, SKILL, '# an older version\n')
     expect(await pendingShipped(root)).toEqual([SKILL])
     await writeFile(join(root, SKILL), '# an older version\n## Ours\n')
+    expect(await pendingShipped(root)).toEqual([SKILL])
+  })
+
+  it('names a file that is exactly an older shipped version, with no record', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await writeFile(join(root, SKILL), OLDER_SHIPPED.text)
+    await rm(join(root, SEED_STATE_FILE))
     expect(await pendingShipped(root)).toEqual([SKILL])
   })
 

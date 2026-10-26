@@ -18,6 +18,16 @@ clone, on its config directory, with one environment. The supervisor takes its e
 whichever `claude` process started it and hands it to every session, so every call carrying Holi's
 bin directory first on `PATH` is what keeps `holi` resolvable in all of them.
 
+**Hooks need a `node`, and a Dock-launched Holi has none on its `PATH`.** Every seeded hook is
+`node "<script>"`, and an app opened from the Dock or Finder has launchd's `PATH`
+(`/usr/bin:/bin:/usr/sbin:/sbin`). Left like that every hook exits 127, which Claude Code counts as
+non-blocking, so the turn signals, the focus context and the Google send gate quietly stop. The
+agent's `PATH` is therefore Holi's bin directory, the inherited `PATH`, the usual tool directories
+(`toolPath`: Homebrew's, `~/.local/bin` and so on), and last Holi's own `node` (`bin/fallback/node`,
+written at every launch: the app's executable run with `ELECTRON_RUN_AS_NODE`). A `node` the machine
+has is always found first. The supervisor keeps the environment of the process that started it, so an
+already running one picks this up only after it has exited (it does when idle).
+
 **Terminals are windows.** A Holi terminal is a PTY running `claude agents` (the list) or
 `claude attach <id>` (one session), with a headless-xterm `TerminalMirror` as its record. Closing
 one detaches: the session keeps running. Its tab is labelled in Holi's names, so tab and row

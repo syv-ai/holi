@@ -10,7 +10,7 @@
  * rescan. See the comment in `vitest.config.ts`.
  */
 import { watch, type FSWatcher } from 'chokidar'
-import { isWatchIgnoredPath, toVaultRel } from './vault-files'
+import { isNonContentPath, isWatchIgnoredPath, toVaultRel } from './vault-files'
 
 export interface VaultWatcher {
   close(): Promise<void>
@@ -21,6 +21,10 @@ export async function watchVault(args: {
   onChange: () => void
   /** Quiet period before firing. Short — the file tree has to feel live. */
   debounceMs?: number
+  /** A file to watch although `isWatchIgnoredPath` would skip it: a local
+   *  file a plugin claims (a private task), which has to reload live like
+   *  any task. Asked of files only, never of a non-content path. */
+  watches?: (rel: string) => boolean
 }): Promise<VaultWatcher> {
   const debounceMs = args.debounceMs ?? 200
   let timer: NodeJS.Timeout | null = null
@@ -39,7 +43,8 @@ export async function watchVault(args: {
       if (rel === null) return true
       // `toVaultRel` also rejects anything `vaultRelPath` refuses, so an unsafe
       // path never reaches the callback.
-      return isWatchIgnoredPath(rel)
+      if (!isWatchIgnoredPath(rel)) return false
+      return isNonContentPath(rel) || args.watches?.(rel) !== true
     },
   })
 

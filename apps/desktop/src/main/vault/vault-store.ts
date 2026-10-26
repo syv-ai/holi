@@ -143,9 +143,15 @@ export async function scanVault(
         .then((s) => s.mtime.toISOString())
         .catch(() => new Date(0).toISOString())
 
-    // Non-markdown and local-only paths are plain files. Hidden Markdown
-    // remains visible to the vault's document snapshot, but not CLI writes.
-    if (!path.endsWith('.md') || isLocalOnlyPath(path)) {
+    // Ask claims before treating local-only Markdown as a plain file. A plugin
+    // may own private content (for example, a local task) even though it is not
+    // part of the ordinary note graph.
+    const claim = path.endsWith('.md') ? claims.find((c) => c.match(path)) : undefined
+
+    // Non-markdown and unclaimed local-only paths are plain files. Hidden
+    // Markdown remains visible to the vault snapshot, but not CLI writes or the
+    // link-aware note graph.
+    if (claim === undefined && (!path.endsWith('.md') || isLocalOnlyPath(path))) {
       snapshot.files.push({ path, updatedAt: await mtime() })
       continue
     }
@@ -155,7 +161,6 @@ export async function scanVault(
     // watcher is about to tell us about it anyway.
     if (text === null) continue
 
-    const claim = claims.find((c) => c.match(path))
     if (claim !== undefined) {
       const into = snapshot.claimed[claim.plugin]!
       try {

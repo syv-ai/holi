@@ -45,7 +45,7 @@ version. **Release notes** are each release's GitHub notes, for the version foun
 running, fetched from GitHub's releases API by tag (`v<version>`) when first shown
 (`src/main/updates/release-notes.ts`, `trpc.updates.notes`). They are Markdown, rendered as formatted
 text (headings, lists, emphasis, code, links) from `marked`'s tokens straight into React elements
-(`ReleaseNotesText`), so nothing in them ever becomes HTML: raw HTML shows as its text. A link opens
+(`ReleaseNotesText`, over the `MarkdownText` composite), so nothing in them ever becomes HTML: raw HTML shows as its text. A link opens
 in the browser and only when it is `http:` or `https:`; any other is shown as its words. Below them
 is a link to the release built from the tag; a version with no release, such as a local build, has
 none. GitHub not answering (offline, rate
@@ -68,7 +68,8 @@ started) and after the vault's first pull has caught up with its remote, which t
 then rather than waiting for a focus or the pull timer. A teammate may already have brought the
 release in, and an update ahead of the pull would write it twice. It writes only what
 `pendingShipped` reports, with the same rules for a file the vault edited; a file that differs
-with no base on this machine is left alone rather than staged as a conflict nobody asked about. A
+from every shipped version with no base on this machine is left alone rather than staged as a
+conflict nobody asked about. A
 vault left before then is not touched, and one skills update runs at a time, asked for or not.
 Main pushes what changed (`vault:skills`), and the nav's update item says it, naming the files,
 until **Done** or the vault is left; the vault is not offered the update meanwhile. Unasked, it

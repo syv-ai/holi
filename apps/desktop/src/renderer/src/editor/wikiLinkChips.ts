@@ -12,7 +12,7 @@ export class WikiLinkChip extends WidgetType {
     readonly target: string,
     readonly label: string,
     readonly exists: boolean,
-    readonly look?: { orb?: string; struck?: boolean },
+    readonly look?: { orb?: string; struck?: boolean; url?: string },
   ) {
     super()
   }
@@ -23,7 +23,8 @@ export class WikiLinkChip extends WidgetType {
       other.label === this.label &&
       other.exists === this.exists &&
       other.look?.orb === this.look?.orb &&
-      other.look?.struck === this.look?.struck
+      other.look?.struck === this.look?.struck &&
+      other.look?.url === this.look?.url
     )
   }
 
@@ -40,6 +41,8 @@ export class WikiLinkChip extends WidgetType {
       .join(' ')
     // The dataset key `resolveLinkClick` routes on.
     el.dataset['wikiTarget'] = this.target
+    // A saved link's address: ⌘-click opens it rather than the file.
+    if (this.look?.url !== undefined) el.dataset['wikiUrl'] = this.look.url
     if (this.look?.orb !== undefined) el.appendChild(linkOrb(this.look.orb))
     el.appendChild(document.createTextNode(this.label))
     return el

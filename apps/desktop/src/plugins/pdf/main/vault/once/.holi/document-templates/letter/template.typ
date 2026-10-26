@@ -18,7 +18,7 @@
       grid(
         columns: (1fr, 1fr),
         align(left + horizon, image("../_brand/logo.png", height: 1.25cm)),
-        align(right + horizon, if d != none { d.display("[day] [month repr:long] [year]") } else { [] }),
+        align(right + horizon, if d != none { dato(d) } else { [] }),
       )
       v(-0.1cm)
     },

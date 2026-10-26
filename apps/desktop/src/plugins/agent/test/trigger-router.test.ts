@@ -16,7 +16,7 @@ import {
 } from '../main/schedules/router'
 
 const INBOX = {
-  path: '.holi/schedules/inbox.md',
+  path: '.holi/schedules/inbox.local.md',
   on: [{ source: 'file', glob: 'inbox/**', changed: false }] as Trigger[],
 }
 const MIN = 60_000

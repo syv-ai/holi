@@ -39,6 +39,7 @@ other rather than repeating each other.
 | [quick-agent](features/quick-agent.md)             | The global keys, the quick panel and its dock, question cards            |
 | [google](features/google.md)                       | Gmail and Calendar per vault                                             |
 | [pdf](features/pdf.md)                             | Typst export, templates, the PDF viewer                                  |
+| [links](features/links.md)                         | Web addresses saved as link files, and the page previews                 |
 | [vault-apps](features/vault-apps.md)               | Agent-written apps in their own origin, their records, slash commands    |
 | [community-plugins](features/community-plugins.md) | Plugins from other repositories, run as their own processes              |
 | [command-palette](features/command-palette.md)     | Quick open and the one table of commands                                 |

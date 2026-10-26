@@ -29,9 +29,11 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import {
   claimedFiles,
   cleanLogins,
+  fileSlug,
   firstHeading,
   FrontmatterError,
   hasLogin,
+  isLocalOnlyPath,
   parseStamp,
   sameLogin,
   splitFrontmatter,
@@ -84,29 +86,29 @@ const KNOWN_KEYS = new Set([
 const SLUG_MAX = 60
 const SLUG_FALLBACK = 'task'
 
-/** `Review the Q2 doc` -> `review-the-q2-doc`. Never empty, never edge-dashed.
- *
- * This result becomes a **filename**, so collapsing every non-alphanumeric run
- * is load-bearing rather than cosmetic: a surviving `/` would silently relocate
- * the task into another folder (changing its lane), and `..` would leave the
- * vault entirely. */
+/** `Review the Q2 doc` -> `review-the-q2-doc`, by the shared file-name rule
+ *  (`fileSlug`): lower case, dashes, æ ø å written out. Never empty, never
+ *  edge-dashed, and never a `/` or `..` that would move the task into another
+ *  lane or out of the vault. */
 export function taskSlug(title: string): string {
-  const slug = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, SLUG_MAX)
-    .replace(/-+$/, '')
-  return slug === '' ? SLUG_FALLBACK : slug
+  return fileSlug(title, { max: SLUG_MAX, fallback: SLUG_FALLBACK })
 }
 
-export function taskFileName(title: string): string {
-  return `${TASK_PREFIX}${taskSlug(title)}.md`
+/** The end of a private task's name, `task.<name>.local.md`: the `.local.`
+ * marker keeps the file on this machine (`isLocalOnlyPath`), so it is never
+ * committed and never reaches anyone else's board. */
+const PRIVATE_SUFFIX = '.local.md'
+
+/** A new task's filename. `shared` says whether it syncs: a private task
+ * carries the `.local.` marker. Every caller names it, because private is a
+ * default of the ways a task is created, not of the format. */
+export function taskFileName(title: string, shared: boolean): string {
+  return `${TASK_PREFIX}${taskSlug(title)}${shared ? '.md' : PRIVATE_SUFFIX}`
 }
 
 /** The canonical path for a new task in `folder` ('' = the vault root). */
-export function taskFilePath(folder: string, title: string): string {
-  const name = taskFileName(title)
+export function taskFilePath(folder: string, title: string, shared: boolean): string {
+  const name = taskFileName(title, shared)
   return folder === '' ? name : `${folder}/${name}`
 }
 
@@ -114,6 +116,44 @@ export function taskFilePath(folder: string, title: string): string {
 export function isTaskFilePath(rel: string): boolean {
   const base = rel.split('/').at(-1) ?? ''
   return base.startsWith(TASK_PREFIX) && base.endsWith('.md')
+}
+
+/**
+ * Where a private task goes to be shared with the vault: its name without the
+ * marker (`task.fix-login.local.md` to `task.fix-login.md`). Null for anything
+ * that is not a private task: a shared one, or a task file in a local folder,
+ * or one whose marker is somewhere other than the end of its name.
+ */
+export function sharedTaskPath(rel: string): string | null {
+  if (!rel.endsWith(PRIVATE_SUFFIX)) return null
+  const shared = `${rel.slice(0, -PRIVATE_SUFFIX.length)}.md`
+  return isTaskFilePath(shared) && !isLocalOnlyPath(shared) ? shared : null
+}
+
+/**
+ * Is this a private task: `task.<name>.local.md`, in a folder that syncs? Only
+ * the file's own name makes a task private, and a rename of it shares it. A
+ * task file inside a `.local.` folder is no task at all (`isBoardTaskPath`).
+ */
+export function isPrivateTask(rel: string): boolean {
+  return sharedTaskPath(rel) !== null
+}
+
+/**
+ * Is this a file the board takes: a shared task, or a private one. Any other
+ * local file named like a task (one in a `.local.` folder, a personal space the
+ * watcher does not walk) stays a plain local file, as every local file is.
+ */
+export function isBoardTaskPath(rel: string): boolean {
+  return isTaskFilePath(rel) && (!isLocalOnlyPath(rel) || isPrivateTask(rel))
+}
+
+/** Where a shared task goes to be made private: its name with the marker
+ * (`task.fix-login.md` to `task.fix-login.local.md`). Null for a task that is
+ * private already. */
+export function privateTaskPath(rel: string): string | null {
+  if (!isTaskFilePath(rel) || isLocalOnlyPath(rel)) return null
+  return `${rel.slice(0, -'.md'.length)}${PRIVATE_SUFFIX}`
 }
 
 /**
@@ -125,7 +165,11 @@ export function isTaskFilePath(rel: string): boolean {
  */
 export function titleFromTaskPath(rel: string): string {
   const base = rel.split('/').at(-1) ?? ''
-  const stem = base.slice(TASK_PREFIX.length).replace(/\.md$/, '')
+  // The privacy marker is not part of the name.
+  const stem = base
+    .slice(TASK_PREFIX.length)
+    .replace(/\.md$/, '')
+    .replace(/\.local$/, '')
   const words = stem.replace(/-+/g, ' ').trim()
   return words === '' ? SLUG_FALLBACK : words.charAt(0).toUpperCase() + words.slice(1)
 }
@@ -450,7 +494,7 @@ export const TASKS_CLAIM = 'tasks'
  * wrong is a thing to surface, not to rewrite.
  */
 export const taskClaim: SnapshotClaim = {
-  match: isTaskFilePath,
+  match: isBoardTaskPath,
   parse: (text, path) => parseTaskFile(text, path),
   normalize(text) {
     try {
