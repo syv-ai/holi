@@ -1,9 +1,9 @@
 'use no memo'
 
 import type { StatusDef, Task } from '@holi/shared'
-import { Badge } from '@/components/reui/badge'
-import { type DataGridFeatures } from '@/components/reui/data-grid/data-grid'
-import { DataGridColumnHeader } from '@/components/reui/data-grid/data-grid-column-header'
+import { Badge } from '@/components/ui/badge'
+import { type DataGridFeatures } from '@/components/ui/data-grid/data-grid'
+import { DataGridColumnHeader } from '@/components/ui/data-grid/data-grid-column-header'
 import { type ColumnDef } from '@tanstack/react-table'
 import { cn } from '@/lib/cn'
 

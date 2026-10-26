@@ -9,7 +9,7 @@ import {
   syncLabel,
   type SyncLabel,
 } from '@holi/shared'
-import { Badge } from '@/components/reui/badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { useAgentService } from '@/state/agent-service'

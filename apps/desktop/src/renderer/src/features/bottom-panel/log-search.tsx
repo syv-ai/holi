@@ -2,15 +2,15 @@ import { type ReactNode } from 'react'
 import { useAtom, type PrimitiveAtom } from 'jotai'
 import { ListFilterIcon, SearchIcon, XIcon } from 'lucide-react'
 
-import { Badge } from '@/components/reui/badge'
-import { Filters } from '@/components/reui/filters/filters'
-import { type FilterOperatorLabels } from '@/components/reui/filters/filters-operators'
-import { countFilterRules, createFilterQuery } from '@/components/reui/filters/filters-query'
+import { Badge } from '@/components/ui/badge'
+import { Filters } from '@/components/ui/filters/filters'
+import { type FilterOperatorLabels } from '@/components/ui/filters/filters-operators'
+import { countFilterRules, createFilterQuery } from '@/components/ui/filters/filters-query'
 import {
   type FilterField,
   type FilterQuery,
   type FilterValueDisplayContext,
-} from '@/components/reui/filters/filters-types'
+} from '@/components/ui/filters/filters-types'
 import {
   InputGroup,
   InputGroupAddon,

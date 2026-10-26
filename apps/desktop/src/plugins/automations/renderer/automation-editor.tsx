@@ -35,7 +35,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Frame, FramePanel } from '@/components/reui/frame'
+import { Frame, FramePanel } from '@/components/ui/frame'
 import { IconButton } from '@/composites/icon-button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'

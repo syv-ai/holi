@@ -32,7 +32,7 @@ import { installedPluginsAtom, runningPluginsAtom } from '@/state/plugins'
 import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
 import { activeRemoteAtom, syncStateAtom } from '@/state/vaults'
 
-import { createFilterQuery, createFilterRule } from '@/components/reui/filters/filters-query'
+import { createFilterQuery, createFilterRule } from '@/components/ui/filters/filters-query'
 
 import { BottomPanel } from '../../bottom-panel/bottom-panel'
 import { OutputSearch } from '../../bottom-panel/output-search'

@@ -5,7 +5,7 @@ import {
   StepperNav,
   StepperSeparator,
   StepperTitle,
-} from '@/components/reui/stepper'
+} from '@/components/ui/stepper'
 import type { Act } from '@/state/onboarding-flow'
 
 /** The acts the stepper counts, and each one's name on it. */
@@ -19,7 +19,7 @@ const STEP_TITLES: Partial<Record<Act, string>> = {
 /**
  * Where the ritual is, above the act: the step count, then a numbered step
  * per act with its name, the rule between two filling as the first is done
- * (`components/reui/stepper.tsx`). It counts only the acts that ask something
+ * (`components/ui/stepper.tsx`). It counts only the acts that ask something
  * (`STEPPED`): the greeting is the door in and the threshold is the result,
  * so on those the stepper fades out, keeping its height so the act does not
  * jump. Progress only: the acts are gated by what each one needs, so there
@@ -53,7 +53,7 @@ export function RitualSteps({
         aria-valuetext={`Step ${Math.min(Math.max(at, 1), steps.length)} of ${steps.length}: ${STEP_TITLES[current] ?? ''}`}
         className="w-full max-w-md"
       >
-        {/* The nav is what lays the steps in a row (`components/reui/stepper.tsx`):
+        {/* The nav is what lays the steps in a row (`components/ui/stepper.tsx`):
             without it they stack. */}
         <StepperNav>
           {steps.map((act, i) => {

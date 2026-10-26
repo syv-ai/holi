@@ -4,14 +4,14 @@
 // in docs/renderer.md.
 //
 //   layer direction ......... eslint-plugin-boundaries (element-types, below)
-//   Radix / Base UI ......... only components/ui and components/reui
-//   native form elements .... only components/ui and components/reui
+//   Radix / Base UI ......... only components/ui
+//   native form elements .... only components/ui
 //   motion, type, colour,
 //   title= .................. no-restricted-syntax selectors (below)
 //   styling contracts ....... @shadcn/lint, policy in design-system.lint.json
 //   plugin seam ............. no-restricted-imports (below)
 //
-// components/ui and components/reui are vendored (installed by the shadcn CLI and
+// components/ui are vendored (installed by the shadcn CLI and
 // edited in place), so they are the layer that may do what the rest may not.
 import { plugin as shadcn } from '@shadcn/lint'
 import boundaries from 'eslint-plugin-boundaries'
@@ -36,9 +36,7 @@ const LINTED = [
 // The layer that is allowed native form elements, Radix and its own motion.
 const VENDORED = [
   'src/renderer/src/components/ui/**',
-  'src/renderer/src/components/reui/**',
   'test/fixtures/gate/renderer/components/ui/**',
-  'test/fixtures/gate/renderer/components/reui/**',
 ]
 // Tests render components and fake the world; the layer rules are about shipped code.
 const TESTS = [
@@ -62,7 +60,7 @@ const NATIVE = 'JSXOpeningElement[name.name=/^(button|input|select|textarea|dial
 const nativeRule = {
   selector: NATIVE,
   message:
-    'native <button>/<input>/<select>/<textarea>/<dialog>/<form> outside components/ui and components/reui. Use the installed component (Button, Input, Select, Textarea, Dialog, Field) from @/components/ui, so focus, disabled and keyboard behaviour stay in one place.',
+    'native <button>/<input>/<select>/<textarea>/<dialog>/<form> outside components/ui. Use the installed component (Button, Input, Select, Textarea, Dialog, Field) from @/components/ui, so focus, disabled and keyboard behaviour stay in one place.',
 }
 
 // Arbitrary COLOUR literals only. `bg-[var(--token)]`, `w-[32px]`, `text-[13px]`
@@ -139,7 +137,6 @@ const GATE = [...colourRules, ...motionRules, titleRule, ...typeRules]
 const elements = [
   ...RENDERER_ROOTS.flatMap((root) => [
     { type: 'ui', pattern: `${root}/components/ui`, mode: 'folder' },
-    { type: 'reui', pattern: `${root}/components/reui`, mode: 'folder' },
     { type: 'composites', pattern: `${root}/composites`, mode: 'folder' },
     { type: 'features', pattern: `${root}/features/*`, mode: 'folder', capture: ['feature'] },
     { type: 'editor', pattern: `${root}/editor`, mode: 'folder' },
@@ -159,23 +156,12 @@ const elementTypes = {
   default: 'disallow',
   rules: [
     { from: ['ui'], allow: ['lib', 'hooks'] },
-    { from: ['reui'], allow: ['ui', 'lib', 'hooks'] },
-    { from: ['composites'], allow: ['ui', 'reui', 'editor', 'lib', 'hooks', 'state'] },
+    { from: ['composites'], allow: ['ui', 'editor', 'lib', 'hooks', 'state'] },
     {
       from: ['features'],
       // Another feature is allowed (a feature may open another's view); cycles are
       // not expressible here and are a review finding.
-      allow: [
-        'ui',
-        'reui',
-        'composites',
-        'lib',
-        'hooks',
-        'state',
-        'editor',
-        'plugin-api',
-        'features',
-      ],
+      allow: ['ui', 'composites', 'lib', 'hooks', 'state', 'editor', 'plugin-api', 'features'],
     },
     { from: ['editor'], allow: ['lib', 'state'] },
     { from: ['state'], allow: ['lib'] },
@@ -183,12 +169,12 @@ const elementTypes = {
     { from: ['lib'], allow: [] },
     {
       from: ['plugin-api'],
-      allow: ['ui', 'reui', 'composites', 'features', 'editor', 'state', 'lib', 'hooks'],
+      allow: ['ui', 'composites', 'features', 'editor', 'state', 'lib', 'hooks'],
     },
     {
       // A plugin's renderer is a feature that reaches core through @/plugin-api only.
       from: ['plugins'],
-      allow: ['ui', 'reui', 'composites', 'plugin-api', ['plugins', { plugin: '${from.plugin}' }]],
+      allow: ['ui', 'composites', 'plugin-api', ['plugins', { plugin: '${from.plugin}' }]],
     },
   ],
 }
@@ -200,7 +186,7 @@ const external = {
       from: ['composites', 'features', 'editor', 'state', 'lib', 'hooks', 'plugin-api', 'plugins'],
       disallow: ['@radix-ui/*', 'radix-ui', 'radix-ui/*', '@base-ui/react', '@base-ui/react/*'],
       message:
-        'Radix (radix-ui, @radix-ui/*) and Base UI (@base-ui/react) are imported only inside components/ui and components/reui. Use the installed component, or add one with the shadcn CLI, so every overlay and control behaves the same.',
+        'Radix (radix-ui, @radix-ui/*) and Base UI (@base-ui/react) are imported only inside components/ui. Use the installed component, or add one with the shadcn CLI, so every overlay and control behaves the same.',
     },
   ],
 }
@@ -225,9 +211,9 @@ const pluginImports = [
   {
     // A regex, not a gitignore-style group: `@/*` swallows `@/components` as a
     // directory, and a child (`@/components/ui`) cannot be re-included from it.
-    regex: '^@/(?!(components/(ui|reui)|composites|plugin-api|test)(/|$))',
+    regex: '^@/(?!(components/ui|composites|plugin-api|test)(/|$))',
     message:
-      'a plugin reaches core through @/plugin-api (plus components/ui, components/reui and composites). Export what you need from plugin-api instead, so core can change without breaking plugins.',
+      'a plugin reaches core through @/plugin-api (plus components/ui and composites). Export what you need from plugin-api instead, so core can change without breaking plugins.',
   },
   {
     // Into core's main or renderer by a relative path: from inside
@@ -297,7 +283,7 @@ export default [
     settings: {
       shadcn: {
         // Recognised as "ours" besides components.json's @/components/ui.
-        componentImports: ['^@/components/reui(/|$)', '^@/composites(/|$)'],
+        componentImports: ['^@/components/ui(/|$)', '^@/composites(/|$)'],
         note: 'Styling rules: docs/renderer.md. Every lint rule and its fix: .agents/skills/holi-rules/SKILL.md.',
       },
     },

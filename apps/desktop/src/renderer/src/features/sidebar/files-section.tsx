@@ -36,7 +36,7 @@ import {
 } from '@/components/ui/sidebar'
 import { useRequest } from '@/hooks/use-request'
 import { useShortcutHandlers } from '@/hooks/use-shortcuts'
-import { Tree, TreeDragLine, TreeItem, TreeItemLabel } from '@/components/reui/tree'
+import { Tree, TreeDragLine, TreeItem, TreeItemLabel } from '@/components/ui/tree'
 import { folderDocumentAt } from '@/state/folder-documents'
 import { revealInFilesRequestAtom } from '@/state/reveal-in-files'
 import { buildTreeData, ROOT_ID, type TreeItemData } from '@/lib/tree-data'

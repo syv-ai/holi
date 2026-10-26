@@ -11,13 +11,14 @@ design system on top of the stock one.
 
 ## The design system is the stock one
 
-- **`components/ui`** is stock shadcn (style `radix-nova`, base colour `neutral`), installed with
-  the CLI and edited in place. **`components/reui`** is stock ReUI (`@reui` in `components.json`,
-  which reads `REUI_LICENSE_KEY` from `apps/desktop/.env.local`). Neither is ever re-added over
-  the edits, and neither is wrapped to give it a second look.
+- **`components/ui`** holds the stock components: shadcn's (style `radix-nova`, base colour
+  `neutral`) and ReUI's (`@reui` in `components.json`, which reads `REUI_LICENSE_KEY` from
+  `apps/desktop/.env.local`), side by side. `pnpm ui:add` installs both; a ReUI file's first line
+  names the item it came from. They are edited in place, never re-added over the edits, and
+  never wrapped to give them a second look.
 - **A caller places a component and picks its `variant` and `size`.** It never sets height,
   radius, padding, shadow or motion on one. A look the component lacks is a variant or size added
-  to its file in `components/ui` or `components/reui`, so every caller gets it.
+  to its file in `components/ui`, so every caller gets it.
 - **Composites** (`composites/`) are Holi's reusable pieces, built only from `components/*`:
   `icon-button`, `confirm-dialog`, `empty-state`, `setting-card`, `pane-toolbar`, `panel-header`,
   `drawer-shell`, `section-label`, `person-avatar`, `find-bar`. One concept, one file; see
@@ -28,7 +29,7 @@ design system on top of the stock one.
 - **The lint gate** (`apps/desktop/eslint.config.mjs` with `@shadcn/lint`, run by `pnpm lint` and
   the pre-commit hook) rejects, in the renderer and the plugin renderers:
   - native `<button|input|select|textarea|dialog|form>` and Radix or Base UI imports outside
-    `components/ui` and `components/reui`;
+    `components/ui`;
   - upward imports and plugins reaching into core;
   - a `title=` tooltip on a DOM element (use `Tooltip`);
   - type under the floor: an arbitrary `text-[…]` below 12px;
@@ -41,7 +42,7 @@ design system on top of the stock one.
     only, overlay content (`DialogContent`, `AlertDialogContent`, `SheetContent`,
     `PopoverContent`) takes none, `CardTitle` and `FrameTitle` are never resized.
 
-  `components/ui` and `components/reui` are exempt from the class-shape rules only. Each rule, its
+  `components/ui` are exempt from the class-shape rules only. Each rule, its
   message and its exemptions are in the [rules registry](../.agents/skills/holi-rules/SKILL.md).
 
 ## Tokens
@@ -108,11 +109,11 @@ would only fight them.
   Disabled is `aria-disabled`, never the native attribute, so the tooltip, the one place that
   says why it is off, still shows.
 - **File-type colours** are `--file-*` tokens, not hex at the call site. ReUI's `FileType`
-  (`components/reui/file-type.tsx`) is the larger form; `variant="mono"` where the shape should
+  (`components/ui/file-type.tsx`) is the larger form; `variant="mono"` where the shape should
   speak, not the hue. **Marks** (`composites/marks.tsx`) are what the app shows for the things it
   plugs into: a brand's own mark where there is a brand (Claude, Google, a PDF page), a lucide
   glyph where the thing is Holi's own, `Plug` for anything without one; `pluginMark(id)` is keyed
-  by plugin id. A mark sits on an `IconTile` (`components/reui/icon-tile.tsx`).
+  by plugin id. A mark sits on an `IconTile` (`components/ui/icon-tile.tsx`).
 
 ## Motion
 
@@ -157,7 +158,7 @@ ritual's shape (`features/onboarding/`, `features/auth/sign-in.tsx`).
   `Button` with `ArrowLeft`) at the start; the one primary action, a `Button` with `ArrowRight`, at
   the end, with a `Kbd` hint where Enter runs it. The stage between is the scroller.
 - **The page is the surface.** No card around a screen's content. A list of options is one stacked
-  ReUI `Frame` (`components/reui/frame.tsx`), its rows the panels; a page has one container family,
+  ReUI `Frame` (`components/ui/frame.tsx`), its rows the panels; a page has one container family,
   and never a `Card` inside a `Frame` or the reverse.
 - **Widths by content:** prose and a single question centre in `max-w-xl`; a list takes
   `max-w-2xl`; a field is as wide as its longest likely value (`max-w-sm` for a name).
@@ -174,11 +175,11 @@ ritual's shape (`features/onboarding/`, `features/auth/sign-in.tsx`).
     that switches a panel: `Tabs`; more than five, or a search: `Select` or `Command`;
   - a labelled control: `Field` (`components/ui/field.tsx`), vertical or horizontal;
   - a search with a scope: one `InputGroup`, the scope as a menu inside the field's end;
-  - progress through a sequence: `Stepper` (`components/reui/stepper.tsx`), progress only, never a
+  - progress through a sequence: `Stepper` (`components/ui/stepper.tsx`), progress only, never a
     way to jump ahead;
   - a pane's row of controls: `composites/pane-toolbar` (one left edge for every plugin pane);
   - a state or category beside a name: `Badge`; a count in chrome is a `secondary` badge;
-  - a tree: `components/reui/tree.tsx` over `@headless-tree/react`, calm (hover colour only, a
+  - a tree: `components/ui/tree.tsx` over `@headless-tree/react`, calm (hover colour only, a
     folder opens at once). The file tree, the settings rail and History share it
     ([file-tree](features/file-tree.md)).
 - **Doing the work last.** A flow that changes the world (creates a repo, writes files, sends
@@ -253,7 +254,7 @@ motion, header and edge through the injected stylesheet and cannot resize.
 - `apps/desktop/src/renderer/src/index.css`: tokens, the `icon-*` and `motion-*`
   utilities, glass and window rules.
 - `apps/desktop/eslint.config.mjs`, `apps/desktop/design-system.lint.json`: the gate.
-- `apps/desktop/src/renderer/src/components/ui/`, `components/reui/`, `composites/`.
+- `apps/desktop/src/renderer/src/components/ui/`, `components/ui/`, `composites/`.
 - `apps/desktop/src/renderer/src/lib/motion.ts`, `hooks/use-ack.ts`, `lib/drawer.ts`,
   `composites/drawer-shell.tsx`.
 - `apps/desktop/src/plugins/pdf/renderer/pdf-viewer-config.ts`.

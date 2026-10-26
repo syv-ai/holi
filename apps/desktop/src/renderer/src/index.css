@@ -389,7 +389,7 @@
   height: var(--icon-lg);
   stroke-width: var(--icon-stroke);
 }
-/* A file type's glyph colour, set per type by `components/reui/file-type.tsx`. */
+/* A file type's glyph colour, set per type by `components/ui/file-type.tsx`. */
 @utility file-type-glyph {
   color: var(--file-type-glyph, var(--file-type-foreground));
 }

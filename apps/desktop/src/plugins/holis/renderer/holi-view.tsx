@@ -10,7 +10,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { Clock, Plus, Settings, Sparkles, StickyNote } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { activeRemoteAtom, agentsSelectionAtom, useHasCapability } from '@/plugin-api'
-import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
+import { IconStackEmpty } from '@/components/ui/icon-stack-empty'
 import { HoliFeed } from './holi-feed'
 import {
   holiSettingsAtom,
@@ -24,7 +24,7 @@ import {
 } from './state'
 import { EmptyState } from '@/composites/empty-state'
 import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
-import { Badge } from '@/components/reui/badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/composites/icon-button'
 import { Skeleton } from '@/components/ui/skeleton'

@@ -1,13 +1,9 @@
 // ReUI block: @reui/data-grid-grouping-1 (`npx shadcn@latest view @reui/data-grid-grouping-1` shows the published source)
 import { useMemo, useState, type ReactNode } from 'react'
 import type { StatusDef, Task } from '@holi/shared'
-import {
-  DataGrid,
-  DataGridContainer,
-  dataGridFeatures,
-} from '@/components/reui/data-grid/data-grid'
-import { DataGridScrollArea } from '@/components/reui/data-grid/data-grid-scroll-area'
-import { DataGridTable } from '@/components/reui/data-grid/data-grid-table'
+import { DataGrid, DataGridContainer, dataGridFeatures } from '@/components/ui/data-grid/data-grid'
+import { DataGridScrollArea } from '@/components/ui/data-grid/data-grid-scroll-area'
+import { DataGridTable } from '@/components/ui/data-grid/data-grid-table'
 import { useTable, type ColumnVisibilityState, type ExpandedState } from '@tanstack/react-table'
 
 import { Button } from '@/components/ui/button'

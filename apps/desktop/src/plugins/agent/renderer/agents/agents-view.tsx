@@ -18,7 +18,7 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Inbox, SquarePen, TerminalSquare } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
+import { IconStackEmpty } from '@/components/ui/icon-stack-empty'
 import { activeRemoteAtom, agentsSlotsAtom, useNow } from '@/plugin-api'
 import { agentCap } from '../agent-cap'
 import { SessionTerminal } from '../session-terminal'

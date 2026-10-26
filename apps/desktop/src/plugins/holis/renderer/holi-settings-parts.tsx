@@ -4,7 +4,7 @@
  */
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Frame, FramePanel } from '@/components/reui/frame'
+import { Frame, FramePanel } from '@/components/ui/frame'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 

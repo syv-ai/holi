@@ -3,9 +3,9 @@
 'use no memo'
 
 import { AppWindowIcon, CpuIcon, SignalIcon, TagIcon, TextIcon } from 'lucide-react'
-import { type DataGridFeatures } from '@/components/reui/data-grid/data-grid'
-import { DataGridColumnHeader } from '@/components/reui/data-grid/data-grid-column-header'
-import { type FilterField } from '@/components/reui/filters/filters-types'
+import { type DataGridFeatures } from '@/components/ui/data-grid/data-grid'
+import { DataGridColumnHeader } from '@/components/ui/data-grid/data-grid-column-header'
+import { type FilterField } from '@/components/ui/filters/filters-types'
 import { type ColumnDef } from '@tanstack/react-table'
 
 import { Skeleton } from '@/components/ui/skeleton'

@@ -1,7 +1,7 @@
 import { useAtomValue } from 'jotai'
 import { AppWindowIcon, AstroidIcon, FileTextIcon, SearchIcon } from 'lucide-react'
 
-import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
+import { IconStackEmpty } from '@/components/ui/icon-stack-empty'
 import { SettingsView } from '@/features/settings/settings-view'
 import { runningPluginsAtom, surfacesAtom } from '@/state/plugins'
 import { parseTabKey } from '@/state/tab-descriptor'

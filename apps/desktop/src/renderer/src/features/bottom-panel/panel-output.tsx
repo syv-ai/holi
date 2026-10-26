@@ -2,7 +2,7 @@ import { useEffect, useMemo } from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { ScrollTextIcon } from 'lucide-react'
 
-import { createFilterQuery } from '@/components/reui/filters/filters-query'
+import { createFilterQuery } from '@/components/ui/filters/filters-query'
 import {
   activityEntriesAtom,
   activityLoadAtom,

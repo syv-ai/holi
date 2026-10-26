@@ -1,7 +1,7 @@
 /**
  * The shape of a filter query (ReUI's `Filters` edits the same tree), for the
  * stores that hold one. Pure data, so state need not reach into
- * `components/reui`; the component's own types are structurally the same.
+ * `components/ui`; the component's own types are structurally the same.
  */
 
 export interface FilterRule {

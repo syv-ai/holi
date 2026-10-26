@@ -9,7 +9,7 @@
 import type { CSSProperties, ReactNode } from 'react'
 
 import { cn } from '@/lib/cn'
-import { IconTile } from '@/components/reui/icon-tile'
+import { IconTile } from '@/components/ui/icon-tile'
 import {
   Field,
   FieldContent,

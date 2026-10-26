@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useSetAtom } from 'jotai'
 import { GitBranchIcon, GitBranchPlusIcon } from 'lucide-react'
 
-import { Alert, AlertAction, AlertTitle } from '@/components/reui/alert'
+import { Alert, AlertAction, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   Command,

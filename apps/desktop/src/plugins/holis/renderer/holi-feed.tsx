@@ -11,7 +11,7 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { ChevronRight, FileText, Plus } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
+import { IconStackEmpty } from '@/components/ui/icon-stack-empty'
 import {
   agentRunFilesAtom,
   agentRunsReviewedAtom,

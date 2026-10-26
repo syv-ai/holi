@@ -16,7 +16,7 @@ import type { ReactNode } from 'react'
 import { SiClaude } from '@icons-pack/react-simple-icons'
 import { Blocks, Plug, Puzzle, SquareTerminal } from 'lucide-react'
 import { cn } from '@/lib/cn'
-import { FileType } from '@/components/reui/file-type'
+import { FileType } from '@/components/ui/file-type'
 import type { IconGlyph } from '@/lib/icon-glyph'
 
 /** Google's four-colour G. simple-icons draws it in one colour, which reads as

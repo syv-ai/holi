@@ -6,7 +6,7 @@ import {
   CodeBlock,
   CodeBlockContent,
   CodeBlockCopyButton,
-} from '@/components/reui/code-block/code-block'
+} from '@/components/ui/code-block/code-block'
 import { Button } from '@/components/ui/button'
 
 /**

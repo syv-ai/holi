@@ -35,12 +35,12 @@ repos:
 
       # --- retired folders -----------------------------------------------------
       - id: renderer/retired-folders
-        name: primitives/ and components/blocks/ no longer exist
-        files: '^apps/desktop/src/renderer/src/(primitives|components/blocks)/'
+        name: primitives/, components/blocks/ and components/reui/ no longer exist
+        files: '^apps/desktop/src/(renderer/src/(primitives|components/blocks|components/reui)|components/reui)/'
         detect:
           path: {}
         refuse_write: true
-        message: '{{file}} is in a retired folder. primitives/ was replaced by the stock components in components/ui and components/reui, and ReUI blocks live in the feature they became (features/<feature>/, with `// ReUI block: @reui/<name>` on the first line). Put the file there, or use the component that already exists, so there is one design system and one place for each screen.'
+        message: "{{file}} is in a retired folder. primitives/ was replaced by the stock components in components/ui, ReUI components live in components/ui beside shadcn's (install them with `pnpm ui:add`, which moves them there), and ReUI blocks live in the feature they became (features/<feature>/, with `// ReUI block: @reui/<name>` on the first line). Put the file there, or use the component that already exists, so there is one design system and one place for each screen."
         context:
           - '@docs/renderer.md#layers'
         examples:
@@ -49,6 +49,9 @@ repos:
               code: |
                 // x
             - path: apps/desktop/src/renderer/src/components/blocks/profile-9/page.tsx
+              code: |
+                // x
+            - path: apps/desktop/src/renderer/src/components/reui/badge.tsx
               code: |
                 // x
 

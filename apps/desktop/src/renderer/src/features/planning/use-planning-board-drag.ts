@@ -8,7 +8,7 @@ import { useRef, useState } from 'react'
 import { columnFor, type StatusDef, type Task } from '@holi/shared'
 import { useSetAtom } from 'jotai'
 
-import type { KanbanCommitMeta } from '@/components/reui/kanban'
+import type { KanbanCommitMeta } from '@/components/ui/kanban'
 import { rankAt } from '@/lib/board-order'
 import { patchTaskAtom, rankTasksAtom } from '@/state/tasks'
 

@@ -12,7 +12,7 @@ import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { AppWindowIcon, ArchiveIcon, PlusIcon, SettingsIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
-import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
+import { IconStackEmpty } from '@/components/ui/icon-stack-empty'
 import { Toggle } from '@/components/ui/toggle'
 import { ViewHeader, ViewHeaderTitle } from '@/composites/view-header'
 import { canStartConversationAtom, startConversationAtom } from '@/state/agents-slots'

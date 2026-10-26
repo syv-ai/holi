@@ -19,7 +19,7 @@ import {
   XIcon,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/reui/alert'
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   Empty,

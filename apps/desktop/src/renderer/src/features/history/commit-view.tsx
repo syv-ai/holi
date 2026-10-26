@@ -4,7 +4,7 @@ import {
   CodeBlock,
   CodeBlockContent,
   CodeBlockCopyButton,
-} from '@/components/reui/code-block/code-block'
+} from '@/components/ui/code-block/code-block'
 import { Skeleton } from '@/components/ui/skeleton'
 import { trpc } from '@/lib/trpc'
 

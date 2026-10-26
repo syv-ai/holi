@@ -10,7 +10,7 @@ import { MessagesSquareIcon } from 'lucide-react'
 import { RichTextHistory } from '@/features/documents/rich-text/rich-text-controls'
 import { useRichTextState } from '@/features/documents/rich-text/rich-text-state'
 import { RichTextToolbarSeparator } from '@/features/documents/rich-text/rich-text-toolbar'
-import { Badge } from '@/components/reui/badge'
+import { Badge } from '@/components/ui/badge'
 import { Toggle } from '@/components/ui/toggle'
 import { ViewHeader, ViewHeaderTitle } from '@/composites/view-header'
 import {

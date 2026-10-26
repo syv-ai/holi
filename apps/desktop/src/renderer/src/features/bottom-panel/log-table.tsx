@@ -8,11 +8,11 @@ import {
   DataGrid,
   dataGridFeatures,
   type DataGridFeatures,
-} from '@/components/reui/data-grid/data-grid'
+} from '@/components/ui/data-grid/data-grid'
 import {
   DataGridTableVirtual,
   type DataGridTableVirtualizerOptions,
-} from '@/components/reui/data-grid/data-grid-table-virtual'
+} from '@/components/ui/data-grid/data-grid-table-virtual'
 import {
   useTable,
   type ColumnDef,
@@ -20,7 +20,7 @@ import {
   type Row,
   type SortingState,
 } from '@tanstack/react-table'
-import { Badge } from '@/components/reui/badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'

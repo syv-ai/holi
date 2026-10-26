@@ -29,7 +29,7 @@ import { WhatStep, WorkStep } from './steps'
 import { WhoStep } from './who-step'
 import { WizardRail, type RailStep } from './wizard-rail'
 import { Button } from '@/components/ui/button'
-import { Frame, FramePanel } from '@/components/reui/frame'
+import { Frame, FramePanel } from '@/components/ui/frame'
 import { toast } from 'sonner'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 

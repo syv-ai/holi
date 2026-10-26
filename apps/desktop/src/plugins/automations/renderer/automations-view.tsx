@@ -8,7 +8,7 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Clock, Plus, Search, Zap } from 'lucide-react'
 import { useState } from 'react'
-import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
+import { IconStackEmpty } from '@/components/ui/icon-stack-empty'
 import { cn } from '@/plugin-api'
 import { AutomationEditor } from './automation-editor'
 import { useInitialDraft } from './automation-draft'
@@ -20,7 +20,7 @@ import {
   type ScheduleSummary,
 } from './state'
 import { EmptyState } from '@/composites/empty-state'
-import { Badge } from '@/components/reui/badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/composites/icon-button'
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'

@@ -89,7 +89,7 @@ clone so rulecast findings reach Claude Code while it edits.
 
 The tree is Prettier-clean, so `pnpm format` only touches what you changed; the
 pre-commit hook and CI check it. `.prettierignore` keeps out the stock
-`components/ui` and `components/reui` files (upstream's style), the vault seed folders
+`components/ui` files (upstream's style), the vault seed folders
 (`vault/once/`, `vault/shipped/`: written into vaults byte for byte, and shipped files are
 matched by content hash) and the ReUI installer's `.agents/skills/reui/`. The one
 formatting commit is listed in `.git-blame-ignore-revs`.
@@ -123,11 +123,10 @@ bodies, and tags. The `commit-msg` hook (`scripts/check-commit-msg.mjs`, install
 
 The renderer's layers, names, test locations and styling rules are in
 [`docs/renderer.md`](docs/renderer.md); read it before adding a file under
-`apps/desktop/src/renderer/src` or a plugin's `renderer/`. In short: stock shadcn lives
-in `components/ui`, stock ReUI in `components/reui`, Holi's reusable pieces in
-`composites/`, screens in `features/<feature>/`; every file is kebab-case; there are no
-barrels; check `components/ui`, `components/reui` and `composites/` before writing a
-component.
+`apps/desktop/src/renderer/src` or a plugin's `renderer/`. In short: stock components, shadcn's
+and ReUI's alike, live in `components/ui` (install them with `pnpm ui:add`), Holi's reusable
+pieces in `composites/`, screens in `features/<feature>/`; every file is kebab-case; there
+are no barrels; check `components/ui` and `composites/` before writing a component.
 
 ## Conventions and boundaries
 
@@ -139,9 +138,8 @@ component.
 - Import the browser-safe root `@holi/shared` from renderer and ordinary pure
   code. `@holi/shared/path-safety-node` is the explicit Node-only subpath and
   imports `node:fs`; never pull it into renderer/browser-safe code.
-- Renderer components follow `components/ui` and `components/reui` → `composites/`
-  → `features/`. `components/ui` and `components/reui` (stock shadcn and ReUI) are the
-  only place for native form/dialog elements or Radix; a lower layer cannot import an
+- Renderer components follow `components/ui` → `composites/` → `features/`.
+  `components/ui` (stock shadcn and ReUI) is the only place for native form/dialog elements or Radix; a lower layer cannot import an
   upper one, and plugin renderers reach core only through `@/plugin-api`. The ESLint
   gate also rejects native `title=` tooltips, arbitrary colour literals, raw
   durations and curves, and type under `text-xs`; use the shared semantic tokens and
@@ -264,12 +262,14 @@ Gotchas of a fresh checkout or worktree that no file states.
 - `REUI_LICENSE_KEY`, the key the `@reui` registry in `components.json` reads, lives in
   `apps/desktop/.env.local` (gitignored, never copied into worktrees). Without it some
   `shadcn add @reui/<name>` installs fail with a 401.
-- The shadcn CLI: run it from `apps/desktop` (where `components.json` is) with
-  `pnpm exec shadcn` (4.21.3 is pinned). It installs `cn` from npm; remove that and use
-  `@/lib/cn`. ReUI files land in `apps/desktop/src/components/reui`; move them to
-  `apps/desktop/src/renderer/src/components/reui`. Answer no to every overwrite prompt,
+- Install stock components with `pnpm ui:add <name>` (`@reui/<name>` for ReUI), never
+  with the shadcn CLI directly. The CLI writes ReUI files into a `components/reui` folder
+  (under the wrong root, too) and adds `cn` from npm; the script moves them into
+  `components/ui`, rewrites their imports, marks each with its ReUI item and drops `cn`.
+  rulecast refuses any file under `components/reui`. Answer no to every overwrite prompt,
   then check `git status` for a rewritten `index.css`. A block moves into the feature it
-  becomes (`docs/renderer.md#add-a-reui-block`).
+  becomes (`docs/renderer.md#add-a-reui-block`). The ReUI skill in `.agents/skills/reui/`
+  is the installer's and still says `components/reui`; this file wins.
 - On macOS the disk is case-insensitive: rename `Foo.tsx` to `foo.tsx` in two `git mv`
   steps (`git mv Foo.tsx tmp && git mv tmp foo.tsx`), then check `git ls-files`. CI runs on
   Linux and fails any import whose case macOS tolerated.
@@ -316,8 +316,7 @@ Gotchas of a fresh checkout or worktree that no file states.
   `motion-*` utilities win, and the lint gate rejects the raw values.
 
 Re-running the ReUI installer rewrites the block below between its markers. The factual
-fixes in it (rule 1's `@/components/ui` and `@/components/reui`, rule 2's Badge path, rule 5's
-layering) and the motion rule above (`motion-*` utilities win over the skill's raw values)
+fixes in it (rule 1's and rule 2's `@/components/ui` paths, rule 5's layering) and the motion rule above (`motion-*` utilities win over the skill's raw values)
 must be re-applied afterwards.
 
 <!-- BEGIN:reui-agent-rules -->
@@ -326,11 +325,11 @@ must be re-applied afterwards.
 
 This project uses an existing design system: ReUI on shadcn/ui. Keep its look. Generic frontend advice (vary fonts or themes, gradients, page-load or staggered reveals, "2-3 intentional motions", Framer Motion) does not apply here, and other design skills lose where they disagree.
 
-1. Use installed components first (`@/components/ui` for shadcn and `@/components/reui` for ReUI; `apps/desktop/components.json` maps `ui` to `@/components/ui`): tables `data-grid`, filtering `filters`, boards `kanban`, modals `Dialog` or `AlertDialog`, toasts `sonner`. Never set height, radius, padding, shadow or motion on them; use `size`, `variant`, `spacing`.
-2. Color: semantic tokens. State: `<Badge variant="success-light">` from `@/components/reui/badge` at default size, or Alert variants. Raw palette only for categorical identity, with its `dark:` pair.
+1. Use installed components first (`@/components/ui` for shadcn and ReUI alike, installed with `pnpm ui:add`): tables `data-grid`, filtering `filters`, boards `kanban`, modals `Dialog` or `AlertDialog`, toasts `sonner`. Never set height, radius, padding, shadow or motion on them; use `size`, `variant`, `spacing`.
+2. Color: semantic tokens. State: `<Badge variant="success-light">` from `@/components/ui/badge` at default size, or Alert variants. Raw palette only for categorical identity, with its `dark:` pair.
 3. Spacing: `gap-*` on the parent: `gap-1` to `gap-2` in a row, `gap-3` to `gap-4` between groups, `gap-6` to `gap-8` between sections. Type: `text-sm` body, `text-xs` meta, nothing smaller; never resize FrameTitle or CardTitle.
 4. Motion: installed parts already animate; never retime them. Yours goes through the house utilities in `index.css` (the lint gate rejects raw durations and curves): hover `motion-respond`; arriving `motion-in-*` / `motion-out-*`; transform and opacity only; never `transition-all`, bounce, or a stagger on table rows or lists of 20+; at most 1 entrance per view; `MotionConfig reducedMotion="user"` plus `motion-reduce:`.
-5. Keep the layering: a ReUI component lives in `components/reui` (shadcn in `components/ui`); composites build on `components/*` and features on both, never the other way.
+5. Keep the layering: shadcn and ReUI components live in `components/ui`; composites build on them and features on both, never the other way.
 6. Every data region: empty state with an action, `Skeleton` loading, inline error with Retry.
 7. Before UI code, write the plan from `.agents/skills/reui/SKILL.md` in your reply. Before you finish, run its self-check on the files you changed and fix every hit (2 rounds at most). Full rules: `.agents/skills/reui/SKILL.md`. If that folder is missing, call the `reui` MCP tool `get_agent_skill`.
 

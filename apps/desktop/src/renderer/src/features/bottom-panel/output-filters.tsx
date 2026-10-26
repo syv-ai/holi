@@ -1,6 +1,6 @@
 import { FolderGit2Icon, RadioTowerIcon, SignalIcon, TextIcon } from 'lucide-react'
 
-import { type FilterField } from '@/components/reui/filters/filters-types'
+import { type FilterField } from '@/components/ui/filters/filters-types'
 import {
   ACTIVITY_CHANNEL_LABELS,
   ACTIVITY_LEVEL_LABELS,

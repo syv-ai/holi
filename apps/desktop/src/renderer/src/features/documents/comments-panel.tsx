@@ -22,8 +22,8 @@ import {
   XIcon,
 } from 'lucide-react'
 
-import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/reui/alert'
-import { Badge } from '@/components/reui/badge'
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Item, ItemContent, ItemFooter, ItemHeader } from '@/components/ui/item'
 import { ScrollArea } from '@/components/ui/scroll-area'

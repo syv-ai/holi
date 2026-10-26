@@ -51,7 +51,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react'
 import { toast } from 'sonner'
 
-import { FileType, getFileType } from '@/components/reui/file-type'
+import { FileType, getFileType } from '@/components/ui/file-type'
 import { Button } from '@/components/ui/button'
 import {
   Command,

@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, test } from 'vitest'
 
 /**
  * The lint gate's self-test. `test/fixtures/gate/` mirrors the renderer layout
- * (`renderer/{components/ui,components/reui,composites,features,lib,state}`) and
+ * (`renderer/{components/ui,components/ui,composites,features,lib,state}`) and
  * the plugin layout (`plugins/<id>/renderer`), and each fixture states in its
  * first line whether it must fail or pass. This file asserts the exact rules
  * each one trips, so deleting a rule, loosening a pattern or moving a layer
@@ -48,13 +48,12 @@ describe('layers and the plugin seam', () => {
   const expected: Record<string, string[]> = {
     // The vendored layer may use native elements, Radix, its own motion and type.
     'renderer/components/ui/vendored.tsx': [],
-    'renderer/components/reui/imports-ui.tsx': [],
-    // Direction only goes down: ui < reui < composites < features, lib at the bottom.
+    // Direction only goes down: components/ui < composites < features, lib at the bottom.
     'renderer/components/ui/imports-composite.tsx': ['boundaries/element-types'],
     'renderer/composites/imports-feature.tsx': ['boundaries/element-types'],
     'renderer/lib/imports-state.ts': ['boundaries/element-types'],
     'renderer/state/count.ts': [],
-    // Radix only inside components/ui and components/reui.
+    // Radix only inside components/ui.
     'renderer/composites/radix.tsx': ['boundaries/external'],
     // A feature may import another feature; it may not import a plugin.
     'renderer/features/a/uses-feature-b.tsx': [],

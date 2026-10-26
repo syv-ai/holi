@@ -1,5 +1,5 @@
 import type { ReactNode, Ref } from 'react'
-import { IconTile } from '@/components/reui/icon-tile'
+import { IconTile } from '@/components/ui/icon-tile'
 import { PluginKey } from '@tiptap/pm/state'
 import { Extension, type Editor, type Range } from '@tiptap/react'
 import { Suggestion, type SuggestionProps } from '@tiptap/suggestion'

@@ -6,7 +6,7 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { FileWarningIcon, TriangleAlertIcon } from 'lucide-react'
 
-import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/reui/alert'
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { retryPlanningFilesAtom, statusesFileAtom } from '@/state/planning'
 import { brokenTasksAtom } from '@/state/tasks'

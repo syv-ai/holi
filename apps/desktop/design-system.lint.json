@@ -1,7 +1,7 @@
 {
   "notes": {
-    "overrides": "components/ui and components/reui are the design system itself (installed by the shadcn CLI, edited in place): they write the classes everyone else may not restyle, and stock components use arbitrary values, inline styles for measured geometry and runtime-built classes by design (data-grid, charts, sidebar). So no-restyle, no-arbitrary-values, no-inline-styles and require-static-classes are off inside them; no-raw-colors and no-unknown-classes stay on, since stock code uses tokens.",
-    "shadcn/no-restyle": "Encodes AGENTS.md's ReUI rule 1 and nothing stricter (docs/refactor/design-decisions.md D10): an installed component keeps its height, padding, radius, shadow and motion. A caller may place it (layout, margins), colour its text and set its type, which the ReUI blocks do in their published markup. Need a size or look the component lacks? Add a variant or size in its file under components/ui or components/reui so every caller gets it. Controls (Button, Input, Badge, TabsTrigger …) also keep their height: a fixed h-*/size-* on one is a size prop that is missing. Skeleton and Spinner are sized by their caller.",
+    "overrides": "components/ui are the design system itself (installed by the shadcn CLI, edited in place): they write the classes everyone else may not restyle, and stock components use arbitrary values, inline styles for measured geometry and runtime-built classes by design (data-grid, charts, sidebar). So no-restyle, no-arbitrary-values, no-inline-styles and require-static-classes are off inside them; no-raw-colors and no-unknown-classes stay on, since stock code uses tokens.",
+    "shadcn/no-restyle": "Encodes AGENTS.md's ReUI rule 1 and nothing stricter (docs/refactor/design-decisions.md D10): an installed component keeps its height, padding, radius, shadow and motion. A caller may place it (layout, margins), colour its text and set its type, which the ReUI blocks do in their published markup. Need a size or look the component lacks? Add a variant or size in its file under components/ui so every caller gets it. Controls (Button, Input, Badge, TabsTrigger …) also keep their height: a fixed h-*/size-* on one is a size prop that is missing. Skeleton and Spinner are sized by their caller.",
     "shadcn/no-restyle.DialogContent": "Overlay content may be given a width and placement (the shadcn idiom sm:max-w-lg), never padding, radius, shadow or motion.",
     "shadcn/no-restyle.CardTitle": "Titles are never resized (AGENTS.md, ReUI rule 3)."
   },
@@ -168,9 +168,8 @@
     {
       "files": [
         "src/renderer/src/components/ui/**",
-        "src/renderer/src/components/reui/**",
         "test/fixtures/gate/renderer/components/ui/**",
-        "test/fixtures/gate/renderer/components/reui/**"
+        "test/fixtures/gate/renderer/components/ui/**"
       ],
       "rules": {
         "shadcn/no-restyle": "off",

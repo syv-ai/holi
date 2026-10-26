@@ -25,8 +25,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { useAtomValue } from 'jotai'
 import type { Repo } from '@holi/shared'
 import { ArrowLeft, ChevronDown, Search, X } from 'lucide-react'
-import { Badge } from '@/components/reui/badge'
-import { Frame, FramePanel } from '@/components/reui/frame'
+import { Badge } from '@/components/ui/badge'
+import { Frame, FramePanel } from '@/components/ui/frame'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,

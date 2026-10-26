@@ -7,7 +7,7 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { AppWindowIcon, CodeIcon, SearchIcon } from 'lucide-react'
 
-import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
+import { IconStackEmpty } from '@/components/ui/icon-stack-empty'
 import { Button } from '@/components/ui/button'
 import { ViewHeader, ViewHeaderTitle } from '@/composites/view-header'
 import { surfacesAtom } from '@/state/plugins'

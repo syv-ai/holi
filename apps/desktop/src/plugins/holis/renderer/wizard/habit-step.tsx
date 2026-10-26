@@ -1,6 +1,6 @@
 /** The wizard's optional habit step: an automation the Holi carries out. */
 import { Clock, ShieldCheck } from 'lucide-react'
-import { Alert, AlertDescription, AlertTitle } from '@/components/reui/alert'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { DAYS, habitCron, nextHabitRun, TIMES, type WizardDraft } from './draft'
 import {
   Select,

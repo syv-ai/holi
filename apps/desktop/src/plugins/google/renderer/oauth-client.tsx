@@ -13,7 +13,7 @@
 import { useAtomValue } from 'jotai'
 import { ExternalLinkIcon, KeyRoundIcon, TriangleAlertIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { Alert, AlertDescription, AlertTitle } from '@/components/reui/alert'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,

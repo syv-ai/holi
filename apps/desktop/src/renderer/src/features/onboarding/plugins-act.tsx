@@ -22,7 +22,7 @@ import { useAtomValue } from 'jotai'
 import { installedPluginsAtom } from '@/state/plugins'
 import { OptionCard } from '@/composites/option-card'
 import { pluginMark } from '@/composites/marks'
-import { Badge } from '@/components/reui/badge'
+import { Badge } from '@/components/ui/badge'
 
 interface Props {
   plugins: PluginSettings

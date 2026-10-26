@@ -23,7 +23,7 @@ import {
   type ViewUpdate,
 } from '@codemirror/view'
 
-import { highlightCode } from '@/components/reui/code-block/code-block-highlight'
+import { highlightCode } from '@/components/ui/code-block/code-block-highlight'
 
 import { codeLanguage } from '@/editor/languages'
 

@@ -2,7 +2,7 @@
 import { HOLI_MASCOT_LABELS } from '@holi/shared'
 import { DAYS, type WizardDraft } from './draft'
 import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
-import { Frame, FramePanel } from '@/components/reui/frame'
+import { Frame, FramePanel } from '@/components/ui/frame'
 import { KINDS } from './habit-step'
 
 function Line({ label, children }: { label: string; children: React.ReactNode }) {

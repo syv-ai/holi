@@ -18,7 +18,7 @@ import {
   type PluginInfo,
 } from '@holi/shared'
 
-import { Badge } from '@/components/reui/badge'
+import { Badge } from '@/components/ui/badge'
 import { ConfirmDialog } from '@/composites/confirm-dialog'
 import { pluginMark } from '@/composites/marks'
 import { Switch } from '@/components/ui/switch'

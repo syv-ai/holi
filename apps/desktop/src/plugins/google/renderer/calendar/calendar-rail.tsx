@@ -14,11 +14,11 @@
  * block.
  */
 import { useMemo, useState, type CSSProperties } from 'react'
-import { Badge } from '@/components/reui/badge'
-import { getDayKey } from '@/components/reui/event-calendar/event-calendar-lib'
-import { expandRecurrence } from '@/components/reui/event-calendar/event-calendar-recurrence'
-import type { EventCalendarOccurrence } from '@/components/reui/event-calendar/event-calendar-types'
-import { IconTile } from '@/components/reui/icon-tile'
+import { Badge } from '@/components/ui/badge'
+import { getDayKey } from '@/components/ui/event-calendar/event-calendar-lib'
+import { expandRecurrence } from '@/components/ui/event-calendar/event-calendar-recurrence'
+import type { EventCalendarOccurrence } from '@/components/ui/event-calendar/event-calendar-types'
+import { IconTile } from '@/components/ui/icon-tile'
 import { cn } from '@/plugin-api'
 import { addDays, startOfDay, startOfMonth, startOfWeek, subDays } from 'date-fns'
 import { DayButton } from 'react-day-picker'

@@ -25,7 +25,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 
-import { Badge } from '@/components/reui/badge'
+import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/cn'
 import { priorityName, shortDate } from '@/lib/planning'
 

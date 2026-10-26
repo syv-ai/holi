@@ -8,8 +8,8 @@ import { type ComponentProps } from 'react'
 import type { StatusDef, Task } from '@holi/shared'
 import { PlusIcon } from 'lucide-react'
 
-import { Badge } from '@/components/reui/badge'
-import { Frame, FrameHeader, FrameTitle } from '@/components/reui/frame'
+import { Badge } from '@/components/ui/badge'
+import { Frame, FrameHeader, FrameTitle } from '@/components/ui/frame'
 import {
   Kanban,
   KanbanBoard as KanbanBoardPrimitive,
@@ -17,7 +17,7 @@ import {
   KanbanColumnContent,
   KanbanOverlay,
   type KanbanCommitMeta,
-} from '@/components/reui/kanban'
+} from '@/components/ui/kanban'
 
 import { Button } from '@/components/ui/button'
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'

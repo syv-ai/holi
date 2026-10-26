@@ -17,7 +17,7 @@ import {
   XIcon,
 } from 'lucide-react'
 
-import { Badge } from '@/components/reui/badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import {

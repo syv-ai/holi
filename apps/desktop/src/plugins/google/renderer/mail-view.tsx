@@ -66,7 +66,7 @@ import {
   openExternal,
 } from '@/plugin-api'
 import { buildSummarizePrompt } from './summarize-prompt'
-import { Badge } from '@/components/reui/badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {

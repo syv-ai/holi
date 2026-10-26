@@ -15,7 +15,7 @@
  * and, on creation, a place.
  */
 import { useState } from 'react'
-import { Badge } from '@/components/reui/badge'
+import { Badge } from '@/components/ui/badge'
 import { cn } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'

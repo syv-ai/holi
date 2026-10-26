@@ -2,7 +2,7 @@
 import { Clock } from 'lucide-react'
 import type { RunRecord } from './schedules-cap'
 import { EmptyState } from '@/composites/empty-state'
-import { Badge } from '@/components/reui/badge'
+import { Badge } from '@/components/ui/badge'
 
 const runFormat = new Intl.DateTimeFormat(undefined, {
   day: 'numeric',

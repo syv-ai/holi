@@ -3,8 +3,8 @@
 'use no memo'
 
 import { EyeOffIcon, FilterIcon } from 'lucide-react'
-import { type DataGridFeatures } from '@/components/reui/data-grid/data-grid'
-import { DataGridColumnHeader } from '@/components/reui/data-grid/data-grid-column-header'
+import { type DataGridFeatures } from '@/components/ui/data-grid/data-grid'
+import { DataGridColumnHeader } from '@/components/ui/data-grid/data-grid-column-header'
 import { type ColumnDef } from '@tanstack/react-table'
 
 import {

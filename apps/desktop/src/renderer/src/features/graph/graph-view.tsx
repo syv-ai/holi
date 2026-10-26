@@ -15,7 +15,7 @@ import { useAtomValue } from 'jotai'
 import { isTaskFilePath, MEMORY_DIR } from '@holi/shared'
 import { WaypointsIcon } from 'lucide-react'
 
-import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
+import { IconStackEmpty } from '@/components/ui/icon-stack-empty'
 import { ErrorState } from '@/composites/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'

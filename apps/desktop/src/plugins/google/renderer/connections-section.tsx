@@ -26,8 +26,8 @@
 import { useAtomValue } from 'jotai'
 import { ImageIcon, ShieldCheckIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { Alert, AlertDescription, AlertTitle } from '@/components/reui/alert'
-import { Frame, FramePanel } from '@/components/reui/frame'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Frame, FramePanel } from '@/components/ui/frame'
 import { ConfirmDialog } from '@/composites/confirm-dialog'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -39,7 +39,7 @@ import {
   ItemMedia,
   ItemTitle,
 } from '@/components/ui/item'
-import { IconTile } from '@/components/reui/icon-tile'
+import { IconTile } from '@/components/ui/icon-tile'
 import { pluginMark } from '@/composites/marks'
 import { activeRemoteAtom } from '@/plugin-api'
 import { googleCap } from './google-cap'

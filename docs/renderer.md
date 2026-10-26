@@ -17,8 +17,7 @@ Direction only goes down the table. ESLint (`eslint-plugin-boundaries`) fails an
 | Path                  | Holds                                                                                                                                                               | May import                                                                     |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | `main.tsx`, `App.tsx` | Entry and composition root: installs the plugin list, mounts providers and the sign-in / onboarding / vault gate                                                    | anything                                                                       |
-| `components/ui/`      | Stock shadcn, installed by the CLI, edited in place, never re-added                                                                                                 | `lib/`, `hooks/`                                                               |
-| `components/reui/`    | Stock ReUI components, same rules                                                                                                                                   | `components/ui`, `lib/`, `hooks/`                                              |
+| `components/ui/`      | Stock components, shadcn's and ReUI's alike, installed with `pnpm ui:add`, edited in place, never re-added; a ReUI file's first line names its source item          | `lib/`, `hooks/`                                                               |
 | `composites/`         | Holi's own reusable pieces, built only from `components/*`; one concept, one file (`icon-button`, `confirm-dialog`, `empty-state`, `find-bar`, …)                   | `components/*`, `editor/`, `lib/`, `hooks/`, `state/`                          |
 | `features/<feature>/` | One folder per screen or area: shell, sidebar, command-menu, status-bar, bottom-panel, documents, files, history, planning, apps, graph, settings, auth, onboarding | everything above, `editor/`, `plugin-api/`, other features (no cycles: review) |
 | `editor/`             | CodeMirror extensions, for code files and plain markdown only                                                                                                       | `lib/`, `state/`                                                               |
@@ -28,7 +27,7 @@ Direction only goes down the table. ESLint (`eslint-plugin-boundaries`) fails an
 | `plugin-api/`         | The renderer half of the plugin seam (`@/plugin-api`)                                                                                                               | everything in core                                                             |
 | `test/`               | Test helpers (`render.tsx`, which wraps the ambient providers)                                                                                                      | anything                                                                       |
 
-`components/ui` and `components/reui` are the only places for native form elements (`button`,
+`components/ui` is the only place for native form elements (`button`,
 `input`, `select`, `textarea`, `dialog`, `form`) and for Radix and Base UI imports.
 
 `primitives/` and `components/blocks/` no longer exist. There are no barrels: import each module by
@@ -47,10 +46,11 @@ imports the plugin list (`src/plugins/renderer.ts`), and core never imports from
 
 Ask in order and stop at the first yes. If you have to think hard, it is probably two things.
 
-- **Q1: Is it a stock shadcn component?** Install it with the CLI into `components/ui` and edit
-  it there. Never copy it into a feature or write a second Button.
-- **Q2: Is it a stock ReUI component** (data-grid, filters, kanban, tree, …)? `components/reui`,
-  installed with the CLI, same rules.
+- **Q1: Is it a stock component**, from shadcn or from ReUI (data-grid, filters, kanban, tree, …)?
+  `pnpm ui:add <name>` installs it into `components/ui`; edit it there. Never copy it into a
+  feature or write a second Button.
+- **Q2: Does shadcn and ReUI each have one by that name?** Keep the one already in
+  `components/ui`; `pnpm ui:add` never replaces a file, so there is never a second copy.
 - **Q3: Is it a ReUI block** (a page-sized layout such as `app-shell-21`)? Install it, then move it
   into the feature it becomes. See [Add a ReUI block](#add-a-reui-block).
 - **Q4: Is it a Holi component with no domain state or fetch, or one that two features need?** A
@@ -67,7 +67,7 @@ Ask in order and stop at the first yes. If you have to think hard, it is probabl
 - **Q10: Is it part of an optional plugin?** `src/plugins/<id>/renderer/`, reaching core through
   `@/plugin-api`.
 
-Before writing a component, check `components/ui`, then `components/reui`, then `composites/`.
+Before writing a component, check `components/ui`, then `composites/`.
 Each thing has one definition: **IconButton** (`composites/icon-button`, stock `Button` ghost
 `icon-sm` plus `Tooltip`, with `label` as both the tooltip and the accessible name),
 **ConfirmDialog** (`composites/confirm-dialog`, stock `AlertDialog` with a title, a description,
@@ -117,7 +117,7 @@ Some tests read source or CSS as text (`focus-treatment`, `motion`, `theme-token
 Stock components are used as shipped. A caller places a component (margin, width, flex position)
 and picks its `variant` and `size`; it never sets height, radius, padding, shadow or motion on one.
 Need something the component lacks? Add a variant or size to its file in `components/ui` or
-`components/reui`, so every caller gets it. The full design rules are [ui-system](ui-system.md);
+`components/ui`, so every caller gets it. The full design rules are [ui-system](ui-system.md);
 the summary:
 
 - **Colour** is a semantic token (`bg-background`, `text-muted-foreground`). State is a `Badge`
@@ -136,7 +136,7 @@ the summary:
   error with Retry.
 - **Toasts**: `toast()` from `sonner`; `<Toaster />` from `@/components/ui/sonner`, mounted once.
 - A ReUI block's markup and classes are kept as published; the contracts deny only what the
-  ReUI rule forbids on installed components. `components/ui` and `components/reui` are exempt from
+  ReUI rule forbids on installed components. `components/ui` is exempt from
   the class-shape rules (`no-restyle`, `no-arbitrary-values`, `no-inline-styles`,
   `require-static-classes`); everything else is not.
 
@@ -147,7 +147,7 @@ tool below.
 
 | Tool                                                                     | Owns                                                                                                                                                            | Command                                                   |
 | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| ESLint (`apps/desktop/eslint.config.mjs`)                                | Layer direction, the plugin seam, native elements and Radix only in `components/ui` + `components/reui`, motion, type floor, colour literals, `title=`          | `pnpm lint`                                               |
+| ESLint (`apps/desktop/eslint.config.mjs`)                                | Layer direction, the plugin seam, native elements and Radix only in `components/ui`, motion, type floor, colour literals, `title=`                              | `pnpm lint`                                               |
 | `@shadcn/lint` (same ESLint run; `apps/desktop/design-system.lint.json`) | Styling: `no-restyle` contracts on stock components, `no-raw-colors`, `no-arbitrary-values`, `no-inline-styles`, `no-unknown-classes`, `require-static-classes` | `pnpm lint`                                               |
 | rulecast (`.rulecast-config.yaml`)                                       | Repository structure: kebab-case names, folder placement, test locations, retired folders staying retired; injects docs when an agent touches an area           | `pnpm rulecast`, `pnpm rulecast:install` (once per clone) |
 | knip (`knip.jsonc`)                                                      | Dead files, unused exports and dependencies (all error level; `/** @public */` exempts an export a test reaches)                                                | `pnpm knip`, `pnpm knip:production`                       |
@@ -182,9 +182,8 @@ Each pair below was checked against its uses; neither half can go without a beha
 
 ### Add a component
 
-1. Stock shadcn or ReUI part? `pnpm exec shadcn add <name>` from `apps/desktop`; see
-   [Add a ReUI block](#add-a-reui-block) for the CLI's quirks.
-2. Otherwise check `components/ui`, `components/reui`, `composites/`. If it exists, use it.
+1. Stock shadcn or ReUI part? `pnpm ui:add <name>` (or `@reui/<name>`) from the repository root.
+2. Otherwise check `components/ui`, then `composites/`. If it exists, use it.
 3. If it is new, reusable and domain-free, add `composites/<name>.tsx` built from `components/*`,
    with a test in `composites/__tests__/`. If one feature uses it, put it in that feature. A
    reusable control with its own behaviour is a composite over the existing one, named for what
@@ -202,15 +201,13 @@ Each pair below was checked against its uses; neither half can go without a beha
 
 ### Add a ReUI block
 
-1. From `apps/desktop` (where `components.json` is): `pnpm exec shadcn add @reui/<name>`. The CLI is
-   pinned in `package.json`; `npx shadcn@latest add @reui/<name>` is the same command. The `@reui`
-   registry reads `REUI_LICENSE_KEY` from `apps/desktop/.env.local` (gitignored, so a fresh
-   worktree lacks it and some installs get a 401).
-2. Answer no to every overwrite prompt. The CLI may install `cn` from npm; remove it and use
-   `@/lib/cn`. Check `git status` for a rewritten `index.css`.
-3. ReUI files land in `apps/desktop/src/components/reui`. Move them to
-   `src/renderer/src/components/reui`, and the block itself into the feature it becomes
-   (`features/<feature>/`), renamed to kebab-case domain names.
+1. `pnpm ui:add @reui/<name>` from the repository root. It runs the pinned shadcn CLI in
+   `apps/desktop` with `REUI_LICENSE_KEY` from `apps/desktop/.env.local` (gitignored, so a fresh
+   worktree lacks it and some installs get a 401), moves every component the block brings into
+   `components/ui`, points its imports there and undoes the CLI's `cn` npm dependency.
+2. Answer no to every overwrite prompt. Check `git status` for a rewritten `index.css`.
+3. Move the block's own files into the feature it becomes (`features/<feature>/`), renamed to
+   kebab-case domain names.
 4. Make the first line of the block's entry file `// ReUI block: @reui/<name>`, so
    `shadcn view @reui/<name>` still finds the source for a diff.
 5. Wire real data. Keep the block's markup and classes; fix only what lint reports.
@@ -227,7 +224,7 @@ Each pair below was checked against its uses; neither half can go without a beha
    - `state.ts`, or `state/` once it is several files: the atoms. Hooks are `use-*.ts` beside
      the views, not in the state file.
    - `<feature>-view.tsx` and its parts: one concern per file.
-2. Import only `@/components/ui`, `@/components/reui`, `@/composites/*`, `@/plugin-api` and
+2. Import only `@/components/ui`, `@/composites/*`, `@/plugin-api` and
    `@/test`; reach your main side through `capClient`, with `import type` from `../main`
    (a lint rule rejects a value import). A call into another plugin is typed by hand with
    `UiCapability`, from a shape in `packages/shared` (`plugin-wire.ts`), and the answering

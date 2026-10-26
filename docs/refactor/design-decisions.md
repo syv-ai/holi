@@ -157,3 +157,10 @@ Plan/spec: [`agent-first.md`](agent-first.md)
 - **Context:** the first CI run failed on Linux in `packages/shared/test/path-safety-node.test.ts`, which checks that a path is refused when its case differs from the one on disk. That only holds on a case-insensitive filesystem, which is what Holi ships on (macOS, Windows).
 - **Decision:** the `test` job runs on `macos-latest`; the `checks` job (typecheck, lint, knip, rulecast, format, commit messages) stays on Linux, where a wrongly cased import fails.
 - **Cost if wrong:** cheap; macOS runners are slower and cost more minutes.
+
+## D23. ReUI components live in `components/ui` beside shadcn's
+
+- **Context:** a folder named after a component registry (`components/reui`) existed only because ReUI's registry items name that path as their target; the user does not want a product folder named after a vendor.
+- **Decision:** every ReUI component moved into `components/ui`; each file's first line names its ReUI item (`// ReUI: @reui/<name>`). `pnpm ui:add` (`scripts/ui-add.mjs`) is the one way to install stock components: it runs the shadcn CLI, moves what lands in `components/reui` into `components/ui`, rewrites imports, adds the provenance line, never replaces an existing file, and undoes the CLI's `cn` dependency. rulecast refuses files under `components/reui`.
+- **Alternatives:** keep two folders — two places to look for one kind of thing.
+- **Cost if wrong:** cheap; no file names collide today, and a future name clash keeps the file already in `components/ui`.

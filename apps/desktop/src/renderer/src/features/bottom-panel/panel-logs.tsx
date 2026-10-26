@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { useAtom, useAtomValue } from 'jotai'
 import { TerminalSquareIcon } from 'lucide-react'
 
-import { createFilterQuery } from '@/components/reui/filters/filters-query'
+import { createFilterQuery } from '@/components/ui/filters/filters-query'
 import {
   appLogEntriesAtom,
   appLogLoadAtom,

@@ -2,7 +2,7 @@ import type { ComponentType, ReactElement } from 'react'
 import type { ItemInstance } from '@headless-tree/core'
 import { FolderIcon, FolderOpenIcon } from 'lucide-react'
 
-import { FileType, getFileType } from '@/components/reui/file-type'
+import { FileType, getFileType } from '@/components/ui/file-type'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import type { TreeItemData } from '@/lib/tree-data'
 

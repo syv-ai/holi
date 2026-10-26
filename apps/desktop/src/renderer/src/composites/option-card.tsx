@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/cn'
-import { IconTile } from '@/components/reui/icon-tile'
+import { IconTile } from '@/components/ui/icon-tile'
 
 /**
  * One option among several, as a card you tick (after ReUI's `settings-1`):

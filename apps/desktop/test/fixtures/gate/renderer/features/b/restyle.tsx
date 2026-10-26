@@ -1,6 +1,6 @@
 // FIXTURE - styling contracts (@shadcn/lint). Padded, Overlay, Resized and Tinted must fail
 // no-restyle; Placed only places the button and passes.
-import { Badge } from '@/components/reui/badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent } from '@/components/ui/dialog'

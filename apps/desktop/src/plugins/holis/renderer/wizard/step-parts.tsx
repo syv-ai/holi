@@ -1,9 +1,9 @@
 /** The pieces the wizard's steps share: a captioned field, the step heading, a fact row. */
 import { Clock } from 'lucide-react'
 import { cloneElement, isValidElement, useId } from 'react'
-import { Badge } from '@/components/reui/badge'
-import { FramePanel } from '@/components/reui/frame'
-import { IconTile } from '@/components/reui/icon-tile'
+import { Badge } from '@/components/ui/badge'
+import { FramePanel } from '@/components/ui/frame'
+import { IconTile } from '@/components/ui/icon-tile'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'

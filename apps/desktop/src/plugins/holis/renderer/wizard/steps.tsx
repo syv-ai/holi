@@ -17,9 +17,9 @@ import {
 } from 'lucide-react'
 import { HOLI_COLOURS, HOLI_MASCOTS } from '@holi/shared'
 import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
-import { Badge } from '@/components/reui/badge'
-import { Frame, FramePanel } from '@/components/reui/frame'
-import { IconTile } from '@/components/reui/icon-tile'
+import { Badge } from '@/components/ui/badge'
+import { Frame, FramePanel } from '@/components/ui/frame'
+import { IconTile } from '@/components/ui/icon-tile'
 import { Fact } from './step-parts'
 
 export function WhatStep(): React.JSX.Element {

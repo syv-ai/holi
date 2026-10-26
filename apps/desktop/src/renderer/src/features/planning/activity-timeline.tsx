@@ -8,7 +8,7 @@ import {
   TimelineItem,
   TimelineSeparator,
   TimelineTitle,
-} from '@/components/reui/timeline'
+} from '@/components/ui/timeline'
 
 import { Button } from '@/components/ui/button'
 import type { ActivityItem } from './activity-data'

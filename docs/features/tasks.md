@@ -68,7 +68,7 @@ the [planning](planning.md) view shows every task in the vault by them.
   optional on `due` and `reminder`, and its absence means "that day", not midnight.
 - **Editing a task is editing its file.** A card's title opens it as a tab, its fields drawn as a
   row of chips above the body ([planning](planning.md)), each change a write to the file.
-- **Board.** ReUI's kanban (`components/reui/kanban.tsx`; the board is `features/planning/board/kanban-board.tsx`): Todo, Doing and Done are three column
+- **Board.** ReUI's kanban (`components/ui/kanban.tsx`; the board is `features/planning/board/kanban-board.tsx`): Todo, Doing and Done are three column
   surfaces (`bg-muted`, rounded, full height, `gap-4` apart in `p-4`), each headed by its name, a
   count `Badge` and a + that opens quick add creating in that column. Inside a column the cards
   are grouped by lane: the vault root first (unlabelled), then folders alphabetically, each
@@ -235,4 +235,4 @@ the [planning](planning.md) view shows every task in the vault by them.
 - `apps/desktop/src/renderer/src/state/clock.ts`: `nowAtom` and `todayAtom`, the minute the overdue labels and the daily note read.
 - `apps/desktop/src/renderer/src/features/planning/`: the board, the task dialogs and
   fields ([planning](planning.md)); `lib/board-order.ts`.
-- `apps/desktop/src/renderer/src/components/reui/kanban.tsx`: ReUI's kanban, on dnd-kit.
+- `apps/desktop/src/renderer/src/components/ui/kanban.tsx`: ReUI's kanban, on dnd-kit.

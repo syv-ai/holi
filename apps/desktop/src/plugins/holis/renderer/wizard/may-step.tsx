@@ -3,8 +3,8 @@ import { FileText, Plus, ShieldCheck, StickyNote, X } from 'lucide-react'
 import { useState } from 'react'
 import { holiRuleError } from '@holi/shared'
 import { type WizardDraft } from './draft'
-import { Badge } from '@/components/reui/badge'
-import { Frame } from '@/components/reui/frame'
+import { Badge } from '@/components/ui/badge'
+import { Frame } from '@/components/ui/frame'
 import { IconButton } from '@/composites/icon-button'
 import {
   InputGroup,

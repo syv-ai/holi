@@ -1,6 +1,6 @@
 // ReUI block: @reui/stats-9 (`npx shadcn@latest view @reui/stats-9` shows the published source)
 import type { CSSProperties, ReactNode } from 'react'
-import { Frame, FramePanel } from '@/components/reui/frame'
+import { Frame, FramePanel } from '@/components/ui/frame'
 
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/cn'

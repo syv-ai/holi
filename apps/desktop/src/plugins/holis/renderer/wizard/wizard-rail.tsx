@@ -1,7 +1,7 @@
 /**
  * The wizard's rail of steps: ReUI's `onboarding-2` block's sidebar stepper
  * (`OnboardingStepper`), installed with the shadcn CLI and kept as it ships,
- * on the ReUI Stepper (`@/components/reui/stepper`). Only its type moved up to the house
+ * on the ReUI Stepper (`@/components/ui/stepper`). Only its type moved up to the house
  * floor (`text-xs`, `text-nav`) and its steps are the wizard's. A step is a
  * button while it may be visited: one already reached, or one that explains.
  */
@@ -15,7 +15,7 @@ import {
   StepperSeparator,
   StepperTitle,
   StepperTrigger,
-} from '@/components/reui/stepper'
+} from '@/components/ui/stepper'
 export interface RailStep {
   id: string
   label: string

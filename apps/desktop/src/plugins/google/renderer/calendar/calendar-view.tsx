@@ -20,19 +20,19 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import {
   EventCalendar,
   type EventCalendarRenderEventProps,
-} from '@/components/reui/event-calendar/event-calendar'
-import { EventCalendarContent } from '@/components/reui/event-calendar/event-calendar-content'
-import { EVENT_CALENDAR_FADE_TRUNCATE } from '@/components/reui/event-calendar/event-calendar-event'
+} from '@/components/ui/event-calendar/event-calendar'
+import { EventCalendarContent } from '@/components/ui/event-calendar/event-calendar-content'
+import { EVENT_CALENDAR_FADE_TRUNCATE } from '@/components/ui/event-calendar/event-calendar-event'
 import {
   EventCalendarNav,
   EventCalendarToolbar,
-} from '@/components/reui/event-calendar/event-calendar-nav'
+} from '@/components/ui/event-calendar/event-calendar-nav'
 import type {
   EventCalendarOccurrence,
   EventCalendarProposedUpdate,
   EventCalendarSlotDraft,
   EventCalendarSlotInfo,
-} from '@/components/reui/event-calendar/event-calendar-types'
+} from '@/components/ui/event-calendar/event-calendar-types'
 import { Button } from '@/components/ui/button'
 import {
   Empty,

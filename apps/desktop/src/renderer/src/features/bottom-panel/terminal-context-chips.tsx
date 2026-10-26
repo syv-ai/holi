@@ -1,7 +1,7 @@
 import { FileDiffIcon, FolderIcon, GitBranchIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
-import { Badge } from '@/components/reui/badge'
+import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/cn'

@@ -10,7 +10,7 @@ import type { ReactNode } from 'react'
 import type { Priority } from '@holi/shared'
 import { ArrowUpDownIcon, FilterIcon, PlusIcon, SearchIcon, XIcon } from 'lucide-react'
 
-import { Badge } from '@/components/reui/badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,

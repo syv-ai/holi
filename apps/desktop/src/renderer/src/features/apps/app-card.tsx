@@ -28,7 +28,7 @@ import {
 } from 'lucide-react'
 import { isLocalOnlyPath } from '@holi/shared'
 
-import { Badge } from '@/components/reui/badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardTitle } from '@/components/ui/card'
 import {

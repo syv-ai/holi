@@ -99,7 +99,7 @@ Optional parts of Holi are plugins: first-party modules in the build, under
 `apps/desktop/src/plugins/<id>/`, listed once per process in `src/plugins/main.ts` and
 `src/plugins/renderer.ts`. Only the composition roots (`src/main/index.ts`, the renderer's
 `main.tsx`) import those lists. A plugin reaches core through one module per process,
-`src/main/plugin-api.ts` and `@/plugin-api`, plus the renderer's `components/ui`, `components/reui`
+`src/main/plugin-api.ts` and `@/plugin-api`, plus the renderer's `components/ui`
 and `composites/`; ESLint holds the renderer side and plugin code to that, and
 `test/plugin-boundary.test.ts` holds main.
 A plugin's renderer reaches its main side only through capabilities that open the `ui` door: the

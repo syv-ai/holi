@@ -18,8 +18,8 @@ import {
   UsersIcon,
 } from 'lucide-react'
 
-import { Badge } from '@/components/reui/badge'
-import { Frame, FrameHeader, FramePanel, FrameTitle } from '@/components/reui/frame'
+import { Badge } from '@/components/ui/badge'
+import { Frame, FrameHeader, FramePanel, FrameTitle } from '@/components/ui/frame'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
