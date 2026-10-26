@@ -152,17 +152,14 @@ export function createCoreServices(
             expectedRevision === null ? null : await readFile(join(root, path)).catch(() => null)
           const worktreeRevision =
             worktree === null ? null : createHash('sha256').update(worktree).digest('hex')
-          const cleanWorktree =
-            worktreeRevision === expectedRevision && expectedRevision !== null
-              ? await tryGit(root, ['hash-object', '--path', path, path])
+          const normalizedExpected =
+            worktreeRevision === expectedRevision && expectedRevision !== null && worktree !== null
+              ? Buffer.from(worktree.toString('binary').replace(/\r\n/g, '\n'), 'binary')
               : null
-          const committedObject = cleanWorktree?.ok
-            ? await tryGit(root, ['rev-parse', `HEAD:${path}`])
-            : null
           const normalizationOnly =
-            cleanWorktree?.ok &&
-            committedObject?.ok &&
-            cleanWorktree.stdout.trim() === committedObject.stdout.trim()
+            current.ok &&
+            normalizedExpected !== null &&
+            Buffer.from(current.stdout).equals(normalizedExpected)
           postHookMismatch =
             expectedRevision === null
               ? current.ok

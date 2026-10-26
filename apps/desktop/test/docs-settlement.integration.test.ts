@@ -199,6 +199,31 @@ describe('CLI note settlement with a real local origin', () => {
     expect(await plainGit(origin, ['rev-parse', 'refs/heads/main'])).toBe(delivered.commitSha)
   })
 
+  it('rejects a lossy clean filter before pushing', async () => {
+    const origin = await makeRemote()
+    const root = await makeClone(origin, 'docs-clean-filter')
+    const originHead = await plainGit(origin, ['rev-parse', 'refs/heads/main'])
+    await plainGit(root, ['config', 'filter.strip.clean', "sed '/REMOVE_ME/d'"])
+    await writeFile(join(root, '.git', 'info', 'attributes'), 'integration.md filter=strip\n')
+    const body = 'keep this\nREMOVE_ME\nkeep this too\n'
+    await writeFile(join(root, 'integration.md'), body)
+    let pushes = 0
+    const core = realRepoServices(root, async (repo) => {
+      pushes++
+      await repo.push()
+    })
+
+    const result = await core.settle('integration.md', digest(body))
+    expect(result).toMatchObject({
+      pushed: false,
+      phase: 'commit',
+      reason: 'post-hook-mismatch',
+    })
+    expect(pushes).toBe(0)
+    expect(await plainGit(origin, ['rev-parse', 'refs/heads/main'])).toBe(originHead)
+    expect(await readFile(join(root, 'integration.md'), 'utf8')).toBe(body)
+  })
+
   it('does not mistake a hook rewrite for Git normalization', async () => {
     const origin = await makeRemote()
     const root = await makeClone(origin, 'docs-hook-rewrite')
