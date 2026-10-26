@@ -8,8 +8,9 @@ assistant. There is no Holi server or database.
 ## Stack and layout
 
 - Node.js `>=20.19` with pnpm workspaces (`apps/*`, `packages/*`).
-- `apps/desktop`: Electron 43, Vite, React 19, Jotai, CodeMirror 6, Tailwind v4,
-  Radix/shadcn components, tRPC over IPC, xterm, and Vitest 4.
+- `apps/desktop`: Electron 43, Vite, React 19, Jotai, Tiptap (notes), CodeMirror 6
+  (code files and plain markdown), Tailwind v4, stock shadcn and ReUI components,
+  tRPC over IPC, xterm, and Vitest 4.
 - `packages/shared`: browser-safe TypeScript rules and types for vault paths,
   task files, wiki-links, dates, recurrence/reminders, settings, plugins, themes,
   and text merging. Rules only one plugin uses live in its own `shared/`.
@@ -22,9 +23,9 @@ Node access or GitHub credentials. `router.ts` is main's typed API seam; keep
 Electron dependencies out of code that should remain testable under plain Node.
 
 Optional parts of Holi are plugins under `src/plugins/<id>/` (tasks, automations,
-Holis, saved links, PDF, Google, vault apps and community plugins so far), each
-with its own `main/`, `renderer/`, `shared/` and
-`test/`, reaching core only through `src/main/plugin-api.ts` and
+Holis, saved links, the browser, PDF, Google, vault apps and community plugins so
+far), each with its own `main/`, `renderer/` and `test/` (and a `shared/` where it
+has rules of its own), reaching core only through `src/main/plugin-api.ts` and
 `@/plugin-api`. The agent lives there too, written to the same contract,
 but is built in (`PluginInfo.builtIn`): it always runs, Settings does not list
 it, and a stale `agent:` pin in `plugins.yaml` is ignored, as is a `chat:` pin
@@ -37,8 +38,11 @@ community plugins: processes the `community` plugin runs, never code it loads.
 
 Start with [`docs/README.md`](docs/README.md), then read
 [`docs/architecture.md`](docs/architecture.md) and the relevant page in
-[`docs/features/`](docs/features/). The glossary is canonical for domain terms,
-and [`docs/ui-system.md`](docs/ui-system.md) holds the renderer's design rules.
+[`docs/features/`](docs/features/). The glossary is canonical for domain terms.
+[`docs/renderer.md`](docs/renderer.md) is the renderer's standing convention (layers,
+names, tests, rules) and [`docs/ui-system.md`](docs/ui-system.md) holds its design
+rules. [`docs/refactor/`](docs/refactor/agent-first.md) is the plan and decision log
+of the agent-first renderer refactor.
 The docs describe the current design and why. Code is the authority for what is
 actually implemented: verify a page against the code rather than trusting it.
 
@@ -71,25 +75,55 @@ no Docker, database, or compose setup.
 pnpm test
 pnpm typecheck
 pnpm lint
-pnpm exec prettier --check AGENTS.md
+pnpm knip
+pnpm rulecast
+pnpm exec prettier --check <the files you touched>
 ```
+
+CI (`.github/workflows/ci.yml`) runs all of them on every push and pull request, plus
+`pnpm knip:production`, the rulecast validation and the commit-message range. A rule that
+is not in CI does not exist. When one fails, read its id in the output and look it up in
+[`.agents/skills/holi-rules/SKILL.md`](.agents/skills/holi-rules/SKILL.md): it says what
+the rule forbids, the fix, and how to change a rule. Run `pnpm rulecast:install` once per
+clone so rulecast findings reach Claude Code while it edits.
 
 Do not run the repository-wide `pnpm format` for a scoped change: the existing
 tree is not globally Prettier-clean, so it rewrites unrelated files. Format or
 check only the files you touched.
 
-`pnpm test` runs both workspace test scripts. Desktop Node tests are matched by
-`apps/desktop/test/**/*.test.ts`; renderer tests are a separate jsdom project
-matched by `apps/desktop/src/renderer/**/*.test.tsx`. The desktop Node project
-has `fileParallelism: false` intentionally: watcher and git tests must run one
+`pnpm test` runs both workspace test scripts. The desktop Node project matches
+`apps/desktop/test/**/*.test.ts` and `src/plugins/*/test/**/*.test.ts`; the jsdom
+project matches renderer tests (`src/renderer/**/*.test.ts(x)`) and plugin
+component tests (`src/plugins/**/*.test.tsx`). Where a new test goes is in
+[`docs/renderer.md`](docs/renderer.md#tests); some renderer state tests still sit in
+`apps/desktop/test/` and are a known exception, not a model. The Node project has
+`fileParallelism: false` intentionally: watcher and git tests must run one
 file at a time. Do not “fix” flakes by parallelising that project or merely
 increasing event waits. Shared-package tests run from its own Vitest script.
 
-`pnpm typecheck` runs each package's `tsc --noEmit`. `pnpm lint` intentionally
-lints only `apps/desktop/src/renderer/src/**/*.{ts,tsx}`; main and preload are
-not ESLint-covered, so use typecheck, tests, and the Electron build for those
-areas. The renderer gate already runs at error level; `pnpm lint:gate` is a
-legacy alias with the same behavior as `pnpm lint`.
+`pnpm typecheck` runs each package's `tsc --noEmit`. `pnpm lint` is ESLint with the
+layer boundaries and `@shadcn/lint` over `apps/desktop/src/renderer/src/**` and
+`apps/desktop/src/plugins/**` (`--max-warnings 0`); main and preload are not
+ESLint-covered, so use typecheck, tests, and the Electron build for those areas.
+There is no `lint:gate`.
+
+## Commits
+
+A commit message is a single subject line, `type: subject`, with type one of `feat`,
+`fix`, `chore`, `doc` or `refac`. No body and no attribution trailers of any kind (no
+`Co-Authored-By`, no session links, no “Generated with” line), in commits, PR titles and
+bodies, and tags. The `commit-msg` hook (`scripts/check-commit-msg.mjs`, installed by
+`pnpm install` through `prepare`) and CI enforce it.
+
+## Renderer
+
+The renderer's layers, names, test locations and styling rules are in
+[`docs/renderer.md`](docs/renderer.md); read it before adding a file under
+`apps/desktop/src/renderer/src` or a plugin's `renderer/`. In short: stock shadcn lives
+in `components/ui`, stock ReUI in `components/reui`, Holi's reusable pieces in
+`composites/`, screens in `features/<feature>/`; every file is kebab-case; there are no
+barrels; check `components/ui`, `components/reui` and `composites/` before writing a
+component.
 
 ## Conventions and boundaries
 
@@ -101,11 +135,13 @@ legacy alias with the same behavior as `pnpm lint`.
 - Import the browser-safe root `@holi/shared` from renderer and ordinary pure
   code. `@holi/shared/path-safety-node` is the explicit Node-only subpath and
   imports `node:fs`; never pull it into renderer/browser-safe code.
-- Renderer components follow `primitives/` → `composites/` → `features/`.
-  Primitives are the only place for native form/dialog elements or Radix;
-  lower layers cannot import upper layers and features cannot import each other.
-  The renderer ESLint gate also rejects native `title=` tooltips and arbitrary
-  colour literals; use the shared semantic tokens.
+- Renderer components follow `components/ui` and `components/reui` → `composites/`
+  → `features/`. `components/ui` and `components/reui` (stock shadcn and ReUI) are the
+  only place for native form/dialog elements or Radix; a lower layer cannot import an
+  upper one, and plugin renderers reach core only through `@/plugin-api`. The ESLint
+  gate also rejects native `title=` tooltips, arbitrary colour literals, raw
+  durations and curves, and type under `text-xs`; use the shared semantic tokens and
+  the `motion-*` utilities. `docs/renderer.md` has the full table.
 - Keep vault-scoped stores mounted in the app shell, not inside whichever view
   first reads them. The active-vault snapshot and watcher are shared state, not
   per-component caches.
@@ -194,8 +230,61 @@ Keep main/preload/renderer changes on their respective sides of the IPC seam,
 and put pure domain rules in `packages/shared` rather than duplicating them in
 UI or main. When a feature changes a documented contract, update its
 feature page or the architecture text; do not treat a plan or an issue body as
-an implementation specification. Before finishing, run the narrow checks for
-the touched package and the root checks above.
+an implementation specification.
+
+### Before you finish
+
+Run these from the repository root and fix what they report:
+
+```sh
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm knip
+pnpm rulecast
+pnpm exec prettier --check <the files you touched>
+```
+
+Then check that the commit message is one `type: subject` line and that any page in
+`docs/` you changed still matches the code.
+
+## What you will not find in the code
+
+Gotchas of a fresh checkout or worktree that no file states.
+
+- A git worktree has no `node_modules` and no `apps/desktop/.env.local`. Run
+  `pnpm install`; if Electron's binary is missing (`pnpm dev` or an Electron-based
+  check fails to start it), run `node apps/desktop/node_modules/electron/install.js`.
+  Every fresh install then needs `pnpm --filter @holi/desktop run rebuild:natives`
+  before `pnpm dev`, because `node-pty` is built for Node's ABI, not Electron's.
+- `REUI_LICENSE_KEY` lives in `apps/desktop/.env.local` (gitignored, never copied into
+  worktrees). Without it `shadcn add @reui/<pro block>` fails with a 401.
+- The shadcn CLI: run it from `apps/desktop` (where `components.json` is) with
+  `pnpm exec shadcn` (4.21.3 is pinned). It installs `cn` from npm; remove that and use
+  `@/lib/cn`. ReUI files land in `apps/desktop/src/components/reui`; move them to
+  `apps/desktop/src/renderer/src/components/reui`. Answer no to every overwrite prompt,
+  then check `git status` for a rewritten `index.css`. A block moves into the feature it
+  becomes (`docs/renderer.md#add-a-reui-block`).
+- On macOS the disk is case-insensitive: rename `Foo.tsx` to `foo.tsx` in two `git mv`
+  steps (`git mv Foo.tsx tmp && git mv tmp foo.tsx`), then check `git ls-files`. CI runs on
+  Linux and fails any import whose case macOS tolerated.
+- The repo's `typescript` is version 7, which has no JavaScript API, so a codemod that
+  uses the compiler API needs TypeScript 5 from `node_modules/.pnpm/typescript@5.*`.
+- Some tests read CSS or source as text (`focus-treatment`, `motion`, `theme-tokens`,
+  `syntax-tokens`). They break silently when a file moves; grep `apps/desktop/test` for the
+  old path after any move.
+- To check UI in the running app, start `pnpm dev:debug` (remote debugging port 9333) and
+  drive the window with `node apps/desktop/cdp.mjs '<js expression>'`;
+  `apps/desktop/scripts/seed-demo.mjs` seeds demo data. The app needs a signed-in GitHub
+  session and a vault.
+- The ReUI skill (`.agents/skills/reui/SKILL.md`) and the ReUI MCP tell you to use
+  `transition-colors` and `duration-200 ease-[cubic-bezier(…)]`. In this repository the
+  `motion-*` utilities win, and the lint gate rejects the raw values.
+
+Re-running the ReUI installer rewrites the block below between its markers. The factual
+fixes in it (rule 1's `@/components/ui` and `@/components/reui`, rule 2's Badge path, rule 5's
+layering) and the motion rule above (`motion-*` utilities win over the skill's raw values)
+must be re-applied afterwards.
 
 <!-- BEGIN:reui-agent-rules -->
 
@@ -203,11 +292,11 @@ the touched package and the root checks above.
 
 This project uses an existing design system: ReUI on shadcn/ui. Keep its look. Generic frontend advice (vary fonts or themes, gradients, page-load or staggered reveals, "2-3 intentional motions", Framer Motion) does not apply here, and other design skills lose where they disagree.
 
-1. Use installed components first (`@/primitives`, where shadcn and ReUI components are installed; `apps/desktop/components.json` maps `ui` there): tables `data-grid`, filtering `filters`, boards `kanban`, modals `Dialog` or `AlertDialog`, toasts `sonner`. Never set height, radius, padding, shadow or motion on them; use `size`, `variant`, `spacing`.
-2. Color: semantic tokens. State: `<Badge variant="success-light">` from `@/primitives` at default size, or Alert variants. Raw palette only for categorical identity, with its `dark:` pair.
+1. Use installed components first (`@/components/ui` for shadcn and `@/components/reui` for ReUI; `apps/desktop/components.json` maps `ui` to `@/components/ui`): tables `data-grid`, filtering `filters`, boards `kanban`, modals `Dialog` or `AlertDialog`, toasts `sonner`. Never set height, radius, padding, shadow or motion on them; use `size`, `variant`, `spacing`.
+2. Color: semantic tokens. State: `<Badge variant="success-light">` from `@/components/reui/badge` at default size, or Alert variants. Raw palette only for categorical identity, with its `dark:` pair.
 3. Spacing: `gap-*` on the parent: `gap-1` to `gap-2` in a row, `gap-3` to `gap-4` between groups, `gap-6` to `gap-8` between sections. Type: `text-sm` body, `text-xs` meta, nothing smaller; never resize FrameTitle or CardTitle.
 4. Motion: installed parts already animate; never retime them. Yours goes through the house utilities in `index.css` (the lint gate rejects raw durations and curves): hover `motion-respond`; arriving `motion-in-*` / `motion-out-*`; transform and opacity only; never `transition-all`, bounce, or a stagger on table rows or lists of 20+; at most 1 entrance per view; `MotionConfig reducedMotion="user"` plus `motion-reduce:`.
-5. Keep the layering: a ReUI component is a primitive; composites build on primitives and features on both, never the other way.
+5. Keep the layering: a ReUI component lives in `components/reui` (shadcn in `components/ui`); composites build on `components/*` and features on both, never the other way.
 6. Every data region: empty state with an action, `Skeleton` loading, inline error with Retry.
 7. Before UI code, write the plan from `.agents/skills/reui/SKILL.md` in your reply. Before you finish, run its self-check on the files you changed and fix every hit (2 rounds at most). Full rules: `.agents/skills/reui/SKILL.md`. If that folder is missing, call the `reui` MCP tool `get_agent_skill`.
 
