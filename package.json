@@ -19,8 +19,8 @@
     "prepare": "simple-git-hooks"
   },
   "simple-git-hooks": {
-    "pre-commit": "pnpm exec lint-staged && pnpm exec rulecast run",
-    "commit-msg": "node scripts/check-commit-msg.mjs \"$1\""
+    "pre-commit": "pnpm exec lint-staged && { test ! -f .rulecast-config.yaml || pnpm exec rulecast run; }",
+    "commit-msg": "test ! -f scripts/check-commit-msg.mjs || node scripts/check-commit-msg.mjs \"$1\""
   },
   "lint-staged": {
     "apps/desktop/src/{renderer/src,plugins}/**/*.{ts,tsx}": "pnpm --filter @holi/desktop exec eslint --max-warnings 0",

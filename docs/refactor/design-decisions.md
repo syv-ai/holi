@@ -132,3 +132,9 @@ Plan/spec: [`agent-first.md`](agent-first.md)
 - **Context:** the tooling draft picked ubuntu-24.04 for case-sensitive import checking; the watcher tests were tuned on macOS fsevents.
 - **Decision:** keep Linux; if the watcher suite is red there, move only the `test` job to `macos-latest`.
 - **Cost if wrong:** cheap; one line in ci.yml.
+
+## D19. Git hooks skip a check whose tool the checked-out branch does not have
+
+- **Context:** `.git/hooks` is shared by every worktree of the repository, and `prepare` reinstalls the hooks on any `pnpm install`. Once this branch installs them, a worktree on another branch (the main checkout is on `feat/agents-holis-automations`) would run `rulecast` and `scripts/check-commit-msg.mjs`, which it does not have, and every commit there would fail.
+- **Decision:** the hook commands test for `.rulecast-config.yaml` and the script before running them. Where they exist they block as normal.
+- **Cost if wrong:** cheap; CI runs both checks regardless.
