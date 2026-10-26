@@ -1,7 +1,6 @@
 /**
  * Holis' capabilities, as the renderer calls them (`../main/capabilities.ts`),
- * and the shapes they answer with. Types only from main: a value import would
- * bundle main-process code into the renderer.
+ * and the shapes they answer with.
  */
 import { capClient } from '@/plugin-api'
 import type { holiCapabilities } from '../main/capabilities'

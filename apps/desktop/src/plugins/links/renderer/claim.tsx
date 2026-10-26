@@ -11,7 +11,7 @@ import type { PathClaim } from '@/plugin-api/types'
 import { isLinkFilePath, linkTitle, parseLinkFile, snapshotLinks } from '../shared/link-file'
 import { isWebUrl } from '../shared/preview'
 import { PreviewCard } from './preview-card'
-import { linksCap } from './use-preview'
+import { linksCap } from './links-cap'
 
 /** The vault's link files, by path. */
 const linksAtom = atom(

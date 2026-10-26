@@ -12,7 +12,6 @@ import { atom } from 'jotai'
 import { GlobeIcon } from 'lucide-react'
 import {
   activeRemoteAtom,
-  capClient,
   closeSurfaceTabsAtom,
   openSurfaceAtom,
   surfaceTabIdsAtom,
@@ -22,13 +21,11 @@ import {
   type PluginStore,
   type SurfaceTabLook,
 } from '@/plugin-api'
-import type { browserCapabilities } from '../main/capabilities'
+import { browserCap } from './browser-cap'
 import { pageLabel, type PageInfo } from '../shared/page'
 
 export const BROWSER = 'browser'
 export const BROWSER_SURFACE = 'browser'
-
-export const browserCap = capClient<ReturnType<typeof browserCapabilities>>(BROWSER)
 
 /** Every page main has open in this vault. */
 export const pagesAtom = atom<readonly PageInfo[]>([])

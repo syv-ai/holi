@@ -1,6 +1,6 @@
 /**
  * The Agents sidebar's one session list (docs/features/agent-sessions.md, The
- * Agents view): the rows every plugin adds through its slot (chats, a Holi's
+ * Agents view): the rows every plugin adds through its slot (a Holi's
  * runs, an automation's runs) and the agent's own live sessions, merged by job
  * id, with the state each row shows, the filter, and the groups.
  *
@@ -474,7 +474,7 @@ const keepSessionOpenAtom = atom(null, (_get, set, key: string) =>
 
 /**
  * Close a row in the Sessions list: it leaves the list for History, and what
- * it runs stops, through its owner (a chat's turn) or as the agent's live
+ * it runs stops, through its owner (a Holi's run) or as the agent's live
  * session (`claude stop`). A tab showing it is not closed: that is the tab's.
  */
 export const closeSessionRowAtom = atom(null, async (get, set, item: AgentsSessionItem) => {

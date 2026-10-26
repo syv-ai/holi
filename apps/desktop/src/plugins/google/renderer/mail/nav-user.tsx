@@ -13,7 +13,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { activeRemoteAtom } from '@/plugin-api'
-import { googleCap, useGoogleAccount } from '../account'
+import { googleCap } from '../google-cap'
+import { useGoogleAccount } from '../account'
 import { initialsOf } from './data'
 
 // ── Nav User ──

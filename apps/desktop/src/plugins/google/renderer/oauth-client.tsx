@@ -35,7 +35,7 @@ import {
 } from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
 import { activeRemoteAtom } from '@/plugin-api'
-import { googleCap } from './account'
+import { googleCap } from './google-cap'
 
 type ClientInfo = Awaited<ReturnType<typeof googleCap.client>>
 

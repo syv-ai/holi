@@ -33,16 +33,16 @@ vi.mock('../renderer/agent-cap', () => ({ agentCap }))
 vi.mock('@/state/agents-slots', async (orig) => {
   const real = await orig<typeof import('@/state/agents-slots')>()
   const { atom } = await import('jotai')
-  const chatItems = atom<AgentsSessionItem[]>([])
-  const chatStatus = atom<'loading' | 'ready' | 'error'>('ready')
+  const fakeItems = atom<AgentsSessionItem[]>([])
+  const fakeStatus = atom<'loading' | 'ready' | 'error'>('ready')
   const reloads = atom(0)
   const reload = atom(null, (_get, set) => set(reloads, (n) => n + 1))
   const create = atom(null, (_get, set) =>
-    set(real.agentsSelectionAtom, { owner: 'chat', id: 'new' }),
+    set(real.agentsSelectionAtom, { owner: 'fake', id: 'new' }),
   )
   const archive = atom(null, () => {})
   const close = atom(null, (_get, set, key: string) => set(calls, (c) => [...c, `close ${key}`]))
-  // What the menus asked the chat slot to do, in order.
+  // What the menus asked the fake slot to do, in order.
   const calls = atom<string[]>([])
   const rename = atom(null, (_get, set, key: string, title: string) =>
     set(calls, (c) => [...c, `rename ${key} ${title}`]),
@@ -56,7 +56,7 @@ vi.mock('@/state/agents-slots', async (orig) => {
   })
   return {
     ...real,
-    __test: { chatItems, chatStatus, reloads, calls },
+    __test: { fakeItems, fakeStatus, reloads, calls },
     agentsSlotsAtom: atom(() => [
       {
         plugin: 'automations',
@@ -71,11 +71,11 @@ vi.mock('@/state/agents-slots', async (orig) => {
         status: atom({ needsYou: 1, working: 0 }),
       },
       {
-        plugin: 'chat',
+        plugin: 'fake',
         status: atom({ needsYou: 0, working: 1 }),
         sessions: {
-          items: chatItems,
-          status: chatStatus,
+          items: fakeItems,
+          status: fakeStatus,
           reload,
           create,
           archive,
@@ -95,8 +95,8 @@ const slots: unknown = await import('@/state/agents-slots')
 const fixtures = (
   slots as {
     __test: {
-      chatItems: PrimitiveAtom<AgentsSessionItem[]>
-      chatStatus: PrimitiveAtom<'loading' | 'ready' | 'error'>
+      fakeItems: PrimitiveAtom<AgentsSessionItem[]>
+      fakeStatus: PrimitiveAtom<'loading' | 'ready' | 'error'>
       reloads: PrimitiveAtom<number>
       calls: PrimitiveAtom<string[]>
     }
@@ -111,10 +111,10 @@ beforeEach(() => {
 
 const NOW = Date.now()
 
-const chat = (id: string, over: Partial<AgentsSessionItem> = {}): AgentsSessionItem => ({
-  key: `chat:${id}`,
-  selection: { owner: 'chat', id },
-  title: `Chat ${id}`,
+const fake = (id: string, over: Partial<AgentsSessionItem> = {}): AgentsSessionItem => ({
+  key: `fake:${id}`,
+  selection: { owner: 'fake', id },
+  title: `Fake ${id}`,
   state: 'idle',
   updatedAt: NOW - 60_000,
   ...over,
@@ -122,10 +122,10 @@ const chat = (id: string, over: Partial<AgentsSessionItem> = {}): AgentsSessionI
 
 function setup({
   sessions = true,
-  chats = [
-    chat('c1', { title: 'Drafting the plan', state: 'working', model: 'opus' }),
-    chat('c2', { title: 'Weekly review', endedAt: NOW - 30_000, updatedAt: NOW - 30_000 }),
-    chat('c3', { title: 'Old notes', archived: true }),
+  fakes = [
+    fake('c1', { title: 'Drafting the plan', state: 'working', model: 'opus' }),
+    fake('c2', { title: 'Weekly review', endedAt: NOW - 30_000, updatedAt: NOW - 30_000 }),
+    fake('c3', { title: 'Old notes', archived: true }),
   ],
   status = 'ready' as 'loading' | 'ready' | 'error',
   // Since 0: every row the person started is open.
@@ -137,8 +137,8 @@ function setup({
   store.set(sessionsSeenAtom, { since: 0, seen: {} })
   store.set(sessionFilterAtom, NO_FILTER)
   store.set(sessionsOpenAtom, open)
-  store.set(fixtures.chatItems, chats)
-  store.set(fixtures.chatStatus, status)
+  store.set(fixtures.fakeItems, fakes)
+  store.set(fixtures.fakeStatus, status)
   if (sessions) {
     store.set(agentSessionsAtom, [
       {
@@ -196,45 +196,45 @@ test('the Inbox and History, the slots in order, then the sessions', () => {
   expect(sections).toEqual(['Holis', 'Sessions'])
 })
 
-test('Sessions lists the open chats and live sessions, what needs you first, without day groups', () => {
+test('Sessions lists the open plugin rows and live sessions, what needs you first, without day groups', () => {
   setup()
-  expect(cardKeys()).toEqual(['agent:abcd1234', 'chat:c2', 'chat:c1', 'agent:efgh5678'])
+  expect(cardKeys()).toEqual(['agent:abcd1234', 'fake:c2', 'fake:c1', 'agent:efgh5678'])
   expect(groupsOf('Sessions')).toEqual([])
 })
 
 test('History has every row by day, archived left out', () => {
   setup({ history: true })
-  expect(cardKeys('History')).toEqual(['agent:abcd1234', 'chat:c2', 'chat:c1', 'agent:efgh5678'])
+  expect(cardKeys('History')).toEqual(['agent:abcd1234', 'fake:c2', 'fake:c1', 'agent:efgh5678'])
   expect(groupsOf('History')).toEqual(['Needs you', 'Today'])
 })
 
 test('a row started before this machine kept track waits in History until opened', async () => {
   const store = setup({
     sessions: false,
-    chats: [chat('c1', { title: 'Old plan' }), chat('c2', { title: 'New plan', updatedAt: NOW })],
+    fakes: [fake('c1', { title: 'Old plan' }), fake('c2', { title: 'New plan', updatedAt: NOW })],
     open: { since: NOW - 1000, opened: {}, closed: {} },
     history: true,
   })
-  expect(cardKeys()).toEqual(['chat:c2'])
+  expect(cardKeys()).toEqual(['fake:c2'])
   await userEvent.click(
     within(screen.getByRole('region', { name: 'History' })).getByRole('button', {
       name: 'Old plan',
     }),
   )
-  expect(store.get(sessionsOpenAtom).opened['chat:c1']).toBe(true)
-  expect(cardKeys()).toEqual(['chat:c2', 'chat:c1'])
+  expect(store.get(sessionsOpenAtom).opened['fake:c1']).toBe(true)
+  expect(cardKeys()).toEqual(['fake:c2', 'fake:c1'])
 })
 
 test("a Holi's run is in Sessions only while it needs you", () => {
   const by = { kind: 'holi' as const, name: 'Mina' }
   setup({
     sessions: false,
-    chats: [
-      chat('h1', { title: 'Asks', by, state: 'needs-you', waitingFor: 'Edit a.md?' }),
-      chat('h2', { title: 'Ran', by }),
+    fakes: [
+      fake('h1', { title: 'Asks', by, state: 'needs-you', waitingFor: 'Edit a.md?' }),
+      fake('h2', { title: 'Ran', by }),
     ],
   })
-  expect(cardKeys()).toEqual(['chat:h1'])
+  expect(cardKeys()).toEqual(['fake:h1'])
 })
 
 test("a card's × closes it: it leaves Sessions for History and what it runs stops", async () => {
@@ -242,10 +242,10 @@ test("a card's × closes it: it leaves Sessions for History and what it runs sto
   store.set(fixtures.calls, [])
   const sessions = within(screen.getByRole('region', { name: 'Sessions' }))
   await userEvent.click(sessions.getByRole('button', { name: 'Close Weekly review' }))
-  expect(cardKeys()).not.toContain('chat:c2')
-  expect(cardKeys('History')).toContain('chat:c2')
-  expect(store.get(fixtures.calls)).toEqual(['close chat:c2'])
-  expect(store.get(sessionsOpenAtom).closed['chat:c2']).toBeGreaterThan(0)
+  expect(cardKeys()).not.toContain('fake:c2')
+  expect(cardKeys('History')).toContain('fake:c2')
+  expect(store.get(fixtures.calls)).toEqual(['close fake:c2'])
+  expect(store.get(sessionsOpenAtom).closed['fake:c2']).toBeGreaterThan(0)
 
   await userEvent.click(sessions.getByRole('button', { name: 'Close Notes pass' }))
   expect(agentCap.stop).toHaveBeenCalledWith('o/notes', { id: 'efgh5678' })
@@ -273,8 +273,8 @@ test('each state reads in words, never colour alone', () => {
 test('opening a done row marks it read, and selects what it stands for', async () => {
   const store = setup()
   await userEvent.click(screen.getByRole('button', { name: /^Weekly review/ }))
-  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'chat', id: 'c2' })
-  expect(store.get(sessionsSeenAtom).seen['chat:c2']).toBeGreaterThan(0)
+  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'fake', id: 'c2' })
+  expect(store.get(sessionsSeenAtom).seen['fake:c2']).toBeGreaterThan(0)
   await userEvent.click(screen.getByRole('button', { name: /^Inbox cleanup/ }))
   expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'abcd1234' })
   expect(screen.getByRole('button', { name: 'Weekly review' })).toBeTruthy()
@@ -283,7 +283,7 @@ test('opening a done row marks it read, and selects what it stands for', async (
 test('search narrows History by title', async () => {
   setup({ history: true })
   await userEvent.type(screen.getByLabelText('Search conversations'), 'weekly')
-  expect(cardKeys('History')).toEqual(['chat:c2'])
+  expect(cardKeys('History')).toEqual(['fake:c2'])
   await userEvent.clear(screen.getByLabelText('Search conversations'))
   await userEvent.type(screen.getByLabelText('Search conversations'), 'zzz')
   expect(screen.getByText('No conversations match.')).toBeTruthy()
@@ -295,12 +295,12 @@ test('the filter menu keeps a state, and shows archived on request', async () =>
   await userEvent.click(await screen.findByRole('menuitemcheckbox', { name: 'Working' }))
   expect(store.get(sessionFilterAtom).states).toEqual(['working'])
   await userEvent.keyboard('{Escape}')
-  expect(cardKeys('History')).toEqual(['chat:c1'])
+  expect(cardKeys('History')).toEqual(['fake:c1'])
   await userEvent.click(screen.getByRole('button', { name: 'Filter, on' }))
   await userEvent.click(await screen.findByRole('menuitemcheckbox', { name: 'Working' }))
   await userEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Show archived' }))
   await userEvent.keyboard('{Escape}')
-  expect(cardKeys('History')).toContain('chat:c3')
+  expect(cardKeys('History')).toContain('fake:c3')
   expect(screen.getByRole('button', { name: 'Filter, on' })).toBeTruthy()
 })
 
@@ -322,7 +322,7 @@ test('the toggle and the Inbox count sessions and slots alike', () => {
 })
 
 test('with nothing yet, an empty state starts one in the default agent', async () => {
-  const store = setup({ sessions: false, chats: [] })
+  const store = setup({ sessions: false, fakes: [] })
   expect(screen.getByText('No active sessions')).toBeTruthy()
   const start = within(screen.getByRole('region', { name: 'Sessions' })).getAllByRole('button', {
     name: 'New session',
@@ -344,7 +344,7 @@ test('with nothing yet, an empty state starts one in the default agent', async (
 test('Open in terminal resumes a copy of the conversation by its id', async () => {
   setup({
     sessions: false,
-    chats: [chat('c2', { title: 'Weekly review', sessionId: 'conv-2' })],
+    fakes: [fake('c2', { title: 'Weekly review', sessionId: 'conv-2' })],
   })
   await menuOf(/^Weekly review/)
   await userEvent.click(screen.getByRole('menuitem', { name: 'Open in terminal' }))
@@ -352,12 +352,12 @@ test('Open in terminal resumes a copy of the conversation by its id', async () =
 })
 
 test('loading draws skeletons', () => {
-  setup({ sessions: false, chats: [], status: 'loading' })
+  setup({ sessions: false, fakes: [], status: 'loading' })
   expect(screen.getByRole('status', { name: 'Loading conversations' })).toBeTruthy()
 })
 
 test('an error offers Retry, which asks the slots again', async () => {
-  const store = setup({ sessions: false, chats: [], status: 'error' })
+  const store = setup({ sessions: false, fakes: [], status: 'error' })
   expect(screen.getByRole('alert').textContent).toMatch(/Could not load/)
   await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
   expect(store.get(fixtures.reloads)).toBe(1)
@@ -376,9 +376,9 @@ async function menuOf(title: RegExp): Promise<string[]> {
     .map((i) => i.textContent ?? '')
 }
 
-test("a chat's menu offers what its owner backs, and a live run its own verbs", async () => {
+test("a fake row's menu offers what its owner backs, and a live run its own verbs", async () => {
   const store = setup({
-    chats: [chat('c2', { title: 'Weekly review', sessionId: 'conv-2', updatedAt: NOW - 30_000 })],
+    fakes: [fake('c2', { title: 'Weekly review', sessionId: 'conv-2', updatedAt: NOW - 30_000 })],
   })
   store.set(fixtures.calls, [])
   expect(await menuOf(/^Weekly review/)).toEqual([
@@ -409,42 +409,42 @@ test("a chat's menu offers what its owner backs, and a live run its own verbs", 
 test('Pin to top asks the owner, and a pinned row sits in Pinned above the days', async () => {
   const store = setup({
     history: true,
-    chats: [
-      chat('c1', { title: 'Weekly review' }),
-      chat('c2', { title: 'Plan the week', pinned: true, updatedAt: NOW - 3 * 86_400_000 }),
+    fakes: [
+      fake('c1', { title: 'Weekly review' }),
+      fake('c2', { title: 'Plan the week', pinned: true, updatedAt: NOW - 3 * 86_400_000 }),
     ],
   })
   store.set(fixtures.calls, [])
   expect(groupsOf('History')).toEqual(['Needs you', 'Pinned', 'Today'])
   // Open, it sits above the others in Sessions too.
-  expect(cardKeys().slice(1)).toEqual(['chat:c2', 'chat:c1', 'agent:efgh5678'])
+  expect(cardKeys().slice(1)).toEqual(['fake:c2', 'fake:c1', 'agent:efgh5678'])
   await menuOf(/^Weekly review/)
   await userEvent.click(screen.getByRole('menuitem', { name: 'Pin to top' }))
-  expect(store.get(fixtures.calls)).toEqual(['pin chat:c1 true'])
+  expect(store.get(fixtures.calls)).toEqual(['pin fake:c1 true'])
 })
 
 test('Rename opens a field in the row: Enter saves, Escape cancels', async () => {
-  const store = setup({ sessions: false, chats: [chat('c1', { title: 'Weekly review' })] })
+  const store = setup({ sessions: false, fakes: [fake('c1', { title: 'Weekly review' })] })
   store.set(fixtures.calls, [])
   await menuOf(/^Weekly review/)
   await userEvent.click(screen.getByRole('menuitem', { name: 'Rename' }))
   const field = await screen.findByRole('textbox', { name: 'Rename Weekly review' })
   await userEvent.clear(field)
   await userEvent.type(field, 'Review the week{Enter}')
-  expect(store.get(fixtures.calls)).toEqual(['rename chat:c1 Review the week'])
+  expect(store.get(fixtures.calls)).toEqual(['rename fake:c1 Review the week'])
   expect(screen.queryByRole('textbox', { name: /^Rename/ })).toBeNull()
 
   cards()[0]!.focus()
   await userEvent.keyboard('{F2}')
   const again = await screen.findByRole('textbox', { name: 'Rename Weekly review' })
   await userEvent.type(again, 'x{Escape}')
-  expect(store.get(fixtures.calls)).toEqual(['rename chat:c1 Review the week'])
+  expect(store.get(fixtures.calls)).toEqual(['rename fake:c1 Review the week'])
 })
 
 test('Delete asks first, naming the session and what stays', async () => {
   const store = setup({
     sessions: false,
-    chats: [chat('c1', { title: 'Greeting only, no task yet' })],
+    fakes: [fake('c1', { title: 'Greeting only, no task yet' })],
   })
   store.set(fixtures.calls, [])
   await menuOf(/^Greeting only/)
@@ -454,12 +454,12 @@ test('Delete asks first, naming the session and what stays', async () => {
   expect(dialog.textContent).toMatch(/Claude Code’s own transcript stays/)
   expect(store.get(fixtures.calls)).toEqual([])
   await userEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
-  expect(store.get(fixtures.calls)).toEqual(['delete chat:c1'])
+  expect(store.get(fixtures.calls)).toEqual(['delete fake:c1'])
   expect(screen.queryByRole('alertdialog')).toBeNull()
 })
 
 test('Mark as unread makes a read row done until it is opened, and back', async () => {
-  const store = setup({ sessions: false, chats: [chat('c1', { title: 'Weekly review' })] })
+  const store = setup({ sessions: false, fakes: [fake('c1', { title: 'Weekly review' })] })
   await menuOf(/^Weekly review/)
   await userEvent.click(screen.getByRole('menuitem', { name: 'Mark as unread' }))
   expect(cards()[0]!.getAttribute('aria-label')).toBe('Weekly review, done, not opened yet')

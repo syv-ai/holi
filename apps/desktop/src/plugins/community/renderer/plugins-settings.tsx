@@ -8,19 +8,13 @@
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useEffect, useState } from 'react'
 import { SettingsHeading, SettingsList, SettingsNote, SettingsRow } from '@/composites/settings-ui'
-import { openDialogAtom, trpc } from '@/plugin-api'
+import { openDialogAtom } from '@/plugin-api'
+import { communityCap, setPluginSwitch } from './community-cap'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { askToRun, installAndAsk, updatePlugin, type InstallFlow } from './install-flow'
 import { PluginSearch } from './plugin-search'
-import {
-  communityCap,
-  refreshRows,
-  refreshUpdates,
-  rowsAtom,
-  updatesAtom,
-  type PluginRow,
-} from './state'
+import { refreshRows, refreshUpdates, rowsAtom, updatesAtom, type PluginRow } from './state'
 
 /** A row's state, in words. */
 const STATUS: Record<PluginRow['status'], string> = {
@@ -40,11 +34,7 @@ async function setOn(remote: string, row: PluginRow, on: boolean): Promise<void>
   if (on && row.install?.kind === 'release' && row.pin?.commit !== row.install.commit)
     await communityCap.pin(remote, { id: row.id })
   if (on && row.install?.kind === 'dev') await communityCap.skills(remote, { id: row.id })
-  const settings = await trpc.settings.read.query({ remote })
-  await trpc.settings.write.mutate({
-    remote,
-    committedJson: JSON.stringify({ plugins: { ...settings.plugins.vault, [row.id]: on } }),
-  })
+  await setPluginSwitch(remote, row.id, on)
 }
 
 /** Once a plugin added here is set up, use it in this vault too: settings is

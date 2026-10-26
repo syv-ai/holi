@@ -12,7 +12,8 @@ import { useEffect, useState } from 'react'
 import { pluginServerOrigin } from '@holi/shared'
 import { activeRemoteAtom, cn } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
-import { communityCap, rowsAtom, servingRow, serversAtom, type ServerState } from './state'
+import { communityCap } from './community-cap'
+import { rowsAtom, servingRow, serversAtom, type ServerState } from './state'
 
 type Phase =
   { kind: 'starting' } | { kind: 'running'; port: number } | { kind: 'failed'; message: string }

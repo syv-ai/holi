@@ -57,7 +57,7 @@ export const googleRenderer: RendererPlugin = {
       // Nothing on disk in the vault: a Google grant is the machine's, held by
       // main's credential storage, and the renderer never sees a token.
       files: [],
-      Component: () => <ConnectionsSection />,
+      Component: ConnectionsSection,
     },
   ],
 }

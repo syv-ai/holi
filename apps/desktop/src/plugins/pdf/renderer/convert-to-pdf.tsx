@@ -2,8 +2,8 @@ import type { TemplateField } from '../shared/template-fields'
 import { useSetAtom } from 'jotai'
 import { useEffect, useId, useMemo, useState } from 'react'
 import { TriangleAlert } from 'lucide-react'
-import { capClient, openNoteTabAtom, trpc } from '@/plugin-api'
-import type { PdfCapabilities } from '../main/capabilities'
+import { openNoteTabAtom } from '@/plugin-api'
+import { pdfCap, readNoteText } from './pdf-cap'
 import { FieldWidget } from './field-widget'
 import {
   metaFromValues,
@@ -56,8 +56,6 @@ function LabelledField({
   )
 }
 
-const pdf = capClient<PdfCapabilities>('pdf')
-
 interface TemplateOption {
   name: string
   slug: string
@@ -107,7 +105,7 @@ export function ConvertToPdf({
 
   useEffect(() => {
     let live = true
-    void pdf
+    void pdfCap
       .templates(remote)
       .then((list) => {
         if (!live) return
@@ -123,8 +121,7 @@ export function ConvertToPdf({
   // Read the note once on open so its frontmatter can pre-fill matching fields.
   useEffect(() => {
     let live = true
-    void trpc.notes.read
-      .query({ remote, path })
+    void readNoteText(remote, path)
       .then((text) => live && setFrontmatter(parseFrontmatter(text)))
       .catch(() => live && setFrontmatter({}))
     return () => {
@@ -168,7 +165,7 @@ export function ConvertToPdf({
         return // user cancelled the save dialog
       }
       const meta = metaFromValues(selected.fields, values)
-      const { pdfPath, vaultPath, warnings } = await pdf.render(remote, {
+      const { pdfPath, vaultPath, warnings } = await pdfCap.render(remote, {
         path,
         template: slug,
         out: outPath,

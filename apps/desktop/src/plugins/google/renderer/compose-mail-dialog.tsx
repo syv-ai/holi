@@ -11,7 +11,7 @@
 import { useAtomValue } from 'jotai'
 import { useEffect, useState } from 'react'
 import { MailComposer } from './mail-composer'
-import { googleCap } from './account'
+import { googleCap } from './google-cap'
 import { activeRemoteAtom } from '@/plugin-api'
 import { DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { MailAddress } from './mail-types'

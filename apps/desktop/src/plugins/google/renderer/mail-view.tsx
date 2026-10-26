@@ -99,7 +99,7 @@ import {
 import type { ComposeIntent } from './compose-intent'
 import { listStamp, messageStamp } from './mail-stamp'
 import type { MailAddress, MailAttachment as Attachment, ThreadMessage } from './mail-types'
-import { googleCap } from './account'
+import { googleCap } from './google-cap'
 import { explainWriteFailure, isDisconnected } from './google-errors'
 import { TASKS_CREATE, tasksCreateCap } from './tasks-cap'
 

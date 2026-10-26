@@ -5,11 +5,9 @@
  */
 import { useAtomValue } from 'jotai'
 import { useEffect, useState } from 'react'
-import { activeRemoteAtom, capClient } from '@/plugin-api'
-import type { linkCapabilities } from '../main/capabilities'
+import { activeRemoteAtom } from '@/plugin-api'
+import { linksCap } from './links-cap'
 import type { LinkPreview } from '../shared/preview'
-
-export const linksCap = capClient<ReturnType<typeof linkCapabilities>>('links')
 
 /** Per vault and address: what a card asked, or is asking. */
 const asked = new Map<string, Promise<LinkPreview>>()

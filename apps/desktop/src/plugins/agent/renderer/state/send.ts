@@ -94,7 +94,7 @@ export const openOverviewAtom = atom(null, async (get, set): Promise<AgentResult
 /**
  * A conversation in a terminal of its own, by Claude Code's id for it:
  * `claude --resume <id> --fork-session`, a copy, so it never fights the
- * chat's own process for the conversation.
+ * session's own process for the conversation.
  */
 export const openConversationTerminalAtom = atom(
   null,

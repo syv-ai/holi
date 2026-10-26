@@ -10,14 +10,8 @@ import { releaseTag } from '@holi/shared'
 import { activeRemoteAtom, cn, type PluginStore } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
 import { DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import {
-  communityCap,
-  refreshRows,
-  refreshUpdates,
-  rowsAtom,
-  setupLogsAtom,
-  type PluginRow,
-} from './state'
+import { communityCap } from './community-cap'
+import { refreshRows, refreshUpdates, rowsAtom, setupLogsAtom, type PluginRow } from './state'
 
 /** The command as a person would type it. */
 const shown = (argv: readonly string[]) =>

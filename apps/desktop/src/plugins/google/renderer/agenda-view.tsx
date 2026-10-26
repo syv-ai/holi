@@ -56,7 +56,7 @@ import {
   useGlobalPanelLayout,
   useHasCapability,
 } from '@/plugin-api'
-import { googleCap } from './account'
+import { googleCap } from './google-cap'
 import { isDisconnected } from './google-errors'
 import { TASKS_CREATE, tasksCreateCap } from './tasks-cap'
 import { MonthView } from './month-view'

@@ -14,14 +14,11 @@
  */
 import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { unwrap } from 'jotai/utils'
-import { activeRemoteAtom, capClient } from '@/plugin-api'
-import type { GoogleCapabilities } from '../main/capabilities'
+import { activeRemoteAtom } from '@/plugin-api'
+import { googleCap } from './google-cap'
 import type { GoogleAccount } from '../main/session'
 
 export type { GoogleAccount }
-
-/** Google's capabilities at the UI door, each call naming the vault it is for. */
-export const googleCap = capClient<GoogleCapabilities>('google')
 
 /** An account connected on this machine, as the picker needs it. */
 interface ConnectedGoogleAccount {

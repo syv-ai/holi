@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react'
 import { FilePen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { EmptyState, LoadingRows } from '@/composites/empty-state'
-import { googleCap } from './account'
+import { googleCap } from './google-cap'
 import { activeRemoteAtom } from '@/plugin-api'
 import type { MailAddress } from './mail-types'
 

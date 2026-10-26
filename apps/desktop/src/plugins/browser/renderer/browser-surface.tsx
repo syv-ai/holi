@@ -41,7 +41,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { IconButton } from '@/composites/icon-button'
 import { activeRemoteAtom } from '@/plugin-api'
 import { addressFor, type PageInfo } from '../shared/page'
-import { addressAskAtom, BROWSER, browserCap, pagesAtom } from './state'
+import { browserCap } from './browser-cap'
+import { addressAskAtom, BROWSER, pagesAtom } from './state'
 
 /** What of Holi's can be drawn over a page: Radix's floating content and
  *  every dialog, each a child of `<body>` through its portal. */

@@ -28,7 +28,7 @@ import { mailHtmlToMarkdown } from './mail-unmarkdown'
 import { sanitizeMailHtml } from './mail-html'
 import { describeSendFailure, type SendFailure } from './mail-send-failure'
 import type { MailAddress } from './mail-types'
-import { googleCap } from './account'
+import { googleCap } from './google-cap'
 
 /**
  * Idle time before an autosave. A keystroke-rate debounce turns a paragraph

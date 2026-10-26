@@ -22,8 +22,8 @@ import { COMMUNITY_INFO } from '../info'
 import { askToRun, installAndAsk, updatePlugin, type InstallFlow } from './install-flow'
 import { PluginFrame } from './plugin-frame'
 import { PluginsSettings } from './plugins-settings'
+import { communityCap } from './community-cap'
 import {
-  communityCap,
   followRows,
   refreshRows,
   rowsAtom,
@@ -224,7 +224,7 @@ export const communityRenderer: RendererPlugin = {
       within: 'plugins',
       headings: [],
       files: ['.holi/plugins'],
-      Component: ({ remote }) => <PluginsSettings remote={remote} />,
+      Component: PluginsSettings,
     },
   ],
   vault: (remote, store) => {

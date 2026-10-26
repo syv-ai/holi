@@ -10,7 +10,7 @@ import { cn } from '@/plugin-api'
 import { Command, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import type { Candidate } from '../main/search'
-import { communityCap } from './state'
+import { communityCap } from './community-cap'
 
 /** Long enough that typing `syv-ai/prezzi` is one search, not thirteen. */
 const DEBOUNCE_MS = 300

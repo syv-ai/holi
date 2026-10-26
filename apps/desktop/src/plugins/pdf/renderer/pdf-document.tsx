@@ -102,23 +102,19 @@ import {
   activeModeAtom,
   activeRemoteAtom,
   askPrompt,
-  capClient,
   cn,
   sessionAtom,
   snapshotAtom,
-  trpc,
   useAgentService,
   type AskTargets,
 } from '@/plugin-api'
-import type { PdfCapabilities } from '../main/capabilities'
-
-/** How long the marks have to be quiet before the file is rewritten. A file
- *  write the autosave commit then picks up, not a commit itself. */
-const pdfCaps = capClient<PdfCapabilities>('pdf')
+import { pdfCap, readPdf, writePdf } from './pdf-cap'
 
 /** Read in place of the agent's targets while there is no agent. */
 const NO_TARGETS = atom<AskTargets>({ sessions: [], default: 'new' })
 
+/** How long the marks have to be quiet before the file is rewritten. A file
+ *  write the autosave commit then picks up, not a commit itself. */
 const SAVE_QUIET_MS = 1000
 
 /** How long the viewer may stay invisible waiting for a page. Measured opens
@@ -319,7 +315,7 @@ export function PdfDocument({
     if (remote === null) return
     let cancelled = false
     let url: string | null = null
-    trpc.files.read.query({ remote, path }).then(
+    readPdf(remote, path).then(
       (bytes) => {
         if (cancelled) return
         // tRPC's inferred output for a `Uint8Array` is a JSON-shaped stand-in;
@@ -362,11 +358,7 @@ export function PdfDocument({
     }
     try {
       const buffer = await exporter.saveAsCopy().toPromise()
-      const { updatedAt } = await trpc.files.write.mutate({
-        remote,
-        path,
-        bytes: new Uint8Array(buffer),
-      })
+      const { updatedAt } = await writePdf(remote, path, new Uint8Array(buffer))
       knownMtimeRef.current = updatedAt
     } catch (err) {
       console.error(`[pdf] could not save marks into ${path}:`, err)
@@ -622,7 +614,7 @@ export function PdfDocument({
       if (signatures !== null && remote !== null) {
         // Subscribed only once the saved list is in, so loading it is never
         // taken for a change and written straight back.
-        void pdfCaps
+        void pdfCap
           .signatures(remote)
           .then((json) => {
             signatures.loadEntries(
@@ -633,7 +625,7 @@ export function PdfDocument({
           .finally(() => {
             signatures.onEntriesChange((entries) => {
               const entriesJson = JSON.stringify(serializeEntries(entries))
-              void pdfCaps
+              void pdfCap
                 .saveSignatures(remote, { entriesJson })
                 .catch((err: unknown) => console.error('[pdf] could not save signatures:', err))
             })

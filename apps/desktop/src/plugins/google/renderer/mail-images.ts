@@ -16,7 +16,7 @@
  */
 import { atom, getDefaultStore, useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect } from 'react'
-import { googleCap } from './account'
+import { googleCap } from './google-cap'
 import { activeRemoteAtom } from '@/plugin-api'
 
 /** Message keys unblocked this session. A `ReadonlySet` replaced wholesale, so

@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { dayAfter, localDate } from '@holi/shared'
 import type { CalendarEvent as CalendarItem } from '@/components/reui/event-calendar/event-calendar-types'
 import type { CalendarChoice, CalendarEvent as GoogleEvent } from '../main/calendar'
-import { googleCap } from './account'
+import { googleCap } from './google-cap'
 import { isDisconnected, messageOf } from './google-errors'
 
 export type { CalendarChoice, GoogleEvent }
