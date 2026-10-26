@@ -23,7 +23,7 @@ import {
 import type { ComposeIntent } from '../compose-intent'
 import { MailComposer } from '../mail-composer'
 import { buildSummarizePrompt } from '../summarize-prompt'
-import { TASKS_CREATE, tasksCap } from '../tasks'
+import { TASKS_CREATE, tasksCreateCap } from '../tasks-cap'
 import { googleCap, useGoogleAccount } from '../account'
 import { AppHeader, type ThreadCommands } from './mail-header'
 import { AppSidebar } from './mail-sidebar'
@@ -130,7 +130,7 @@ export function MailShell({ className }: { className?: string }) {
       : () => {
           const row = thread ?? mail.openRow
           if (row === null || remote === null) return
-          void tasksCap
+          void tasksCreateCap
             .create(remote, {
               title: row.subject,
               folder: '',

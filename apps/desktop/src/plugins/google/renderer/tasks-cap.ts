@@ -1,16 +1,14 @@
 /**
  * The one call Google makes into the tasks plugin: a task made from a thread
  * or an event. Typed here, as only this slice, because a plugin never imports
- * another; the views offer it only while `useHasCapability('tasks.create')`
- * says the vault runs tasks.
+ * another (the params are `@holi/shared`'s `TaskCreateDraft`); the views offer
+ * it only while `useHasCapability('tasks.create')` says the vault runs tasks.
  */
+import type { TaskCreateDraft } from '@holi/shared'
 import { capClient, type UiCapability } from '@/plugin-api'
 
-export const tasksCap = capClient<{
-  'tasks.create': UiCapability<
-    { title: string; folder?: string; description?: string },
-    { path: string }
-  >
+export const tasksCreateCap = capClient<{
+  'tasks.create': UiCapability<TaskCreateDraft, { path: string }>
 }>('tasks')
 
 /** The capability's name, for `useHasCapability`. */

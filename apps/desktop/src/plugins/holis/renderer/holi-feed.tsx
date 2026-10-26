@@ -24,8 +24,10 @@ import {
   revertAgentRunAtom,
   showAgentSessionAtom,
   useHasCapability,
+  useNow,
 } from '@/plugin-api'
-import { StateLabel, ago, useNow } from './parts'
+import { relativeAge } from '@holi/shared'
+import { StateLabel } from './state-label'
 import { holiSeenAtom, runNeedsYou, runState, type HoliRun, type HoliSummary } from './state'
 import { Churn } from '@/composites/churn'
 import { Button } from '@/components/ui/button'
@@ -86,7 +88,7 @@ function Entry({
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
         <span className="min-w-0 truncate font-mono text-foreground/85">{run.path}</span>
         <span className="tabular-nums">{stamp.format(new Date(run.at))}</span>
-        <span className="tabular-nums">· {ago(new Date(run.at).getTime(), now)}</span>
+        <span className="tabular-nums">· {relativeAge(new Date(run.at).getTime(), now)}</span>
         <span className="ms-auto flex items-center gap-2">
           {needs ? (
             <StateLabel state="needs-you" />

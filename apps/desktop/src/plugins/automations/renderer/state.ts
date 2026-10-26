@@ -20,7 +20,6 @@ import {
 import { schedulesCap, type ScheduleSummary } from './schedules-cap'
 
 export type { ScheduleSummary }
-export { schedulesCap }
 
 /** The plugin's id: the owner of its rows in the Agents view. */
 const AUTOMATIONS_OWNER = 'automations'

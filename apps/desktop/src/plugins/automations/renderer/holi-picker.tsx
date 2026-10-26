@@ -12,7 +12,9 @@ import { SiClaude } from '@icons-pack/react-simple-icons'
 import { useAtomValue } from 'jotai'
 import { Check, ChevronDown } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { activeRemoteAtom, capClient, cn, useHasCapability, type UiCapability } from '@/plugin-api'
+import { activeRemoteAtom, cn, useHasCapability } from '@/plugin-api'
+import { DEFAULT_HOLI_COLOUR, type PickableHoli } from '@holi/shared'
+import { holisCap } from './holis-cap'
 import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
 import { Button } from '@/components/ui/button'
 import {
@@ -25,18 +27,6 @@ import {
 } from '@/components/ui/command'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
-/** What the picker needs of a Holi, by shape. */
-interface PickableHoli {
-  id: string
-  name: string
-  mascot?: string
-  color?: string
-  status: string
-  description?: string
-}
-
-const holis = capClient<{ 'holis.list': UiCapability<void, PickableHoli[]> }>('holis')
-
 /** The vault's Holis, while the Holis plugin runs; `[]` otherwise. */
 function useHolis(): PickableHoli[] {
   const remote = useAtomValue(activeRemoteAtom)
@@ -48,7 +38,7 @@ function useHolis(): PickableHoli[] {
       return
     }
     let gone = false
-    void holis.list(remote).then(
+    void holisCap.list(remote).then(
       (all) => {
         if (!gone) setList(all.filter((h) => h.status !== 'invalid'))
       },
@@ -70,7 +60,7 @@ function Face({ holi, className }: { holi?: PickableHoli; className?: string }) 
   ) : (
     <PixelPersona
       name={holi.mascot ?? 'strategist'}
-      color={holi.color ?? '#8f8f94'}
+      color={holi.color ?? DEFAULT_HOLI_COLOUR}
       still
       className={className}
     />

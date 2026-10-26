@@ -6,7 +6,8 @@
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { holiAsksAtom, openHoliAtom } from './state'
-import { DEFAULT_HOLI_COLOUR, ago, useNow } from './parts'
+import { DEFAULT_HOLI_COLOUR, relativeAge } from '@holi/shared'
+import { useNow } from '@/plugin-api'
 import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
 import { Button } from '@/components/ui/button'
 
@@ -35,7 +36,9 @@ export function HolisInbox(): React.JSX.Element | null {
                 />
                 <span className="min-w-0 flex-1 truncate">{holi.name}</span>
                 <span className="tabular-nums">
-                  {run.report === undefined ? '' : ago(new Date(run.report.at).getTime(), now)}
+                  {run.report === undefined
+                    ? ''
+                    : relativeAge(new Date(run.report.at).getTime(), now)}
                 </span>
               </span>
               <span className="line-clamp-2 text-sm font-semibold whitespace-normal text-foreground">

@@ -116,6 +116,9 @@ export function holiMascotOf(value: unknown): HoliMascot | undefined {
   return Object.hasOwn(LEGACY_HOLI_MASCOTS, value) ? LEGACY_HOLI_MASCOTS[value] : undefined
 }
 
+/** The grey of a Holi that has no colour yet. */
+export const DEFAULT_HOLI_COLOUR = '#8f8f94'
+
 /** Soft identity colours a new Holi is given in turn: categorical, the one
  *  place hue is a Holi's own. */
 export const HOLI_COLOURS = [

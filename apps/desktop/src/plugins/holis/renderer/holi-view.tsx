@@ -9,13 +9,7 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Clock, Plus, Settings, Sparkles, StickyNote } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import {
-  activeRemoteAtom,
-  agentsSelectionAtom,
-  capClient,
-  useHasCapability,
-  type UiCapability,
-} from '@/plugin-api'
+import { activeRemoteAtom, agentsSelectionAtom, useHasCapability } from '@/plugin-api'
 import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
 import { HoliFeed } from './holi-feed'
 import {
@@ -35,22 +29,8 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/composites/icon-button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { DEFAULT_HOLI_COLOUR } from './parts'
-
-/** An automation as the Habits tab lists it: what `schedules.list` answers. */
-interface Habit {
-  path: string
-  name: string
-  status: 'on' | 'off' | 'changed' | 'invalid'
-  holi?: string
-  when?: string
-  nextRun?: string
-  error?: string
-}
-
-/** The automations plugin's list, asked by name: a plugin cannot import
- *  another's types, and its answer is checked by shape here. */
-const schedules = capClient<{ 'schedules.list': UiCapability<void, Habit[]> }>('schedules')
+import { DEFAULT_HOLI_COLOUR, type HabitSummary } from '@holi/shared'
+import { habitsCap } from './habits-cap'
 
 const AUTOMATIONS = 'automations'
 
@@ -67,7 +47,7 @@ function Habits({ holi }: { holi: HoliSummary }): React.JSX.Element {
   const epoch = useAtomValue(holisEpochAtom)
   const select = useSetAtom(agentsSelectionAtom)
   const has = useHasCapability('schedules.list')
-  const [habits, setHabits] = useState<Habit[] | null>(null)
+  const [habits, setHabits] = useState<HabitSummary[] | null>(null)
   const [error, setError] = useState(false)
   const [attempt, setAttempt] = useState(0)
 
@@ -75,7 +55,7 @@ function Habits({ holi }: { holi: HoliSummary }): React.JSX.Element {
     if (remote === null || !has) return
     let gone = false
     setError(false)
-    void schedules.list(remote).then(
+    void habitsCap.list(remote).then(
       (all) => {
         if (!gone) setHabits(all.filter((h) => h.holi === holi.id))
       },

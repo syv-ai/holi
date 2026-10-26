@@ -54,6 +54,7 @@ export { cn } from '@/lib/cn'
 export { /** @public */ openExternal } from '@/lib/open-external'
 export { /** @public */ vaultAssetUrl } from '@/lib/vault-asset'
 export { useAck } from '@/hooks/use-ack'
+export { useNow } from '@/hooks/use-now'
 export { DRAWER_WIDTH } from '@/lib/drawer'
 export {
   activeRemoteAtom,

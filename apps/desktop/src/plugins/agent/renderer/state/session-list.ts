@@ -297,24 +297,6 @@ export function groupRows(rows: readonly SessionRow[], now: number): SessionGrou
     .map((id) => ({ id, label: GROUP_LABEL[id], rows: buckets[id] }))
 }
 
-/** "now", "10m", "5h 43m", "3d", then "7 Oct": how long ago, as MonoCode's
- *  `formatRelative` puts it. */
-export function age(at: number, now: number): string {
-  if (!Number.isFinite(at) || at <= 0) return ''
-  const seconds = Math.max(0, Math.round((now - at) / 1000))
-  if (seconds < 60) return 'now'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) {
-    const rest = minutes % 60
-    return rest ? `${hours}h ${rest}m` : `${hours}h`
-  }
-  const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d`
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date(at))
-}
-
 // ----------------------------------------------------------------- atoms
 
 /**

@@ -9,7 +9,7 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { CircleHelp, Ellipsis, Plus } from 'lucide-react'
 import { appModeAtom, cn, openPathAtom, useTabDrag } from '@/plugin-api'
-import { HOLI_COLOURS, HOLI_MASCOTS } from '@holi/shared'
+import { DEFAULT_HOLI_COLOUR, HOLI_COLOURS, HOLI_MASCOTS } from '@holi/shared'
 import { HoliDialogs } from './holi-dialogs'
 import {
   holiSettingsAtom,
@@ -34,7 +34,6 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { IconButton } from '@/composites/icon-button'
 import { Skeleton } from '@/components/ui/skeleton'
-import { DEFAULT_HOLI_COLOUR } from './parts'
 
 /** The chrome row (`docs/ui-system.md`, Rules): one fill scale on the
  *  foreground, `text-nav`. */

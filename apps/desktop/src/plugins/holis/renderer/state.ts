@@ -24,13 +24,11 @@ import {
   type PluginEventHandler,
   type PluginStore,
 } from '@/plugin-api'
-import { globToRegExp, HOLI_COLOURS, type HoliDraft } from '@holi/shared'
-import { habitsCap, type HabitDraft } from './habits-cap'
+import { globToRegExp, HOLI_COLOURS, type HabitDraft, type HoliDraft } from '@holi/shared'
+import { habitsCap } from './habits-cap'
 import { holiCap, type HoliEdits, type HoliRun, type HoliSummary } from './holis-cap'
 
 export type { HoliRun, HoliSummary }
-
-export { holiCap }
 
 /** The plugin's id: the owner of its rows in the Agents view. */
 export const HOLIS_OWNER = 'holis'

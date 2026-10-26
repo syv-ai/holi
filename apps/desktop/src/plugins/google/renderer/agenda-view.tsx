@@ -58,7 +58,7 @@ import {
 } from '@/plugin-api'
 import { googleCap } from './account'
 import { isDisconnected } from './google-errors'
-import { TASKS_CREATE, tasksCap } from './tasks'
+import { TASKS_CREATE, tasksCreateCap } from './tasks-cap'
 import { MonthView } from './month-view'
 import { NewEventDialog, type NewEventValues } from './new-event-dialog'
 import { eventDays, monthWindow, shiftMonth } from './month-days'
@@ -331,7 +331,7 @@ export function AgendaView({
     if (remote === null) return
     setCreating(eventKey(event))
     try {
-      const { path } = await tasksCap.create(remote, {
+      const { path } = await tasksCreateCap.create(remote, {
         title: event.title,
         folder: '',
         // The link first, then whatever the invitation said.

@@ -47,7 +47,8 @@ import {
   type Trigger,
 } from '@holi/shared'
 import { HoliPicker } from './holi-picker'
-import { schedulesCap, selectAutomationAtom, type ScheduleSummary } from './state'
+import { schedulesCap, type ScheduleSummary } from './schedules-cap'
+import { selectAutomationAtom } from './state'
 import type { RunRecord } from './schedules-cap'
 import { EmptyState } from '@/composites/empty-state'
 import { Badge } from '@/components/reui/badge'

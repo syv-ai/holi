@@ -101,7 +101,7 @@ import { listStamp, messageStamp } from './mail-stamp'
 import type { MailAddress, MailAttachment as Attachment, ThreadMessage } from './mail-types'
 import { googleCap } from './account'
 import { explainWriteFailure, isDisconnected } from './google-errors'
-import { TASKS_CREATE, tasksCap } from './tasks'
+import { TASKS_CREATE, tasksCreateCap } from './tasks-cap'
 
 interface ThreadSummary {
   id: string
@@ -637,7 +637,7 @@ export function MailView() {
    */
   const linkToTask = async (thread: { subject: string; webUrl: string }) => {
     if (remote === null) return
-    const { path } = await tasksCap.create(remote, {
+    const { path } = await tasksCreateCap.create(remote, {
       title: thread.subject,
       folder: '',
       description: `[${thread.subject}](${thread.webUrl})\n`,

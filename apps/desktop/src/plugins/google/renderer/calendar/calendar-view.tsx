@@ -70,7 +70,7 @@ import {
   type GoogleEventData,
 } from '../calendar-data'
 import { messageOf } from '../google-errors'
-import { TASKS_CREATE, tasksCap } from '../tasks'
+import { TASKS_CREATE, tasksCreateCap } from '../tasks-cap'
 import { CalendarRail } from './calendar-rail'
 import { CalendarsMenu } from './calendars-menu'
 import { WEEK_STARTS_ON, hhmm, timeOf } from './calendar-format'
@@ -272,7 +272,7 @@ export function CalendarView(): React.JSX.Element {
     const draft = sheet?.draft
     if (remote === null || draft?.data === undefined) return
     try {
-      const { path } = await tasksCap.create(remote, {
+      const { path } = await tasksCreateCap.create(remote, {
         title: draft.title,
         folder: '',
         description:

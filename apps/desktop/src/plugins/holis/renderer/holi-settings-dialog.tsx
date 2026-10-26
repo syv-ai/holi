@@ -17,6 +17,7 @@ import { Pencil, Plus, Settings, Sparkles, StickyNote, Trash2 } from 'lucide-rea
 import { useEffect, useRef, useState } from 'react'
 import { activeRemoteAtom, appModeAtom, cn, openPathAtom } from '@/plugin-api'
 import {
+  DEFAULT_HOLI_COLOUR,
   HOLI_COLOURS,
   HOLI_MASCOTS,
   HOLI_MASCOT_LABELS,
@@ -28,10 +29,9 @@ import {
   withoutLine,
   type HoliMascot,
 } from '@holi/shared'
-import type { HoliFiles } from './holis-cap'
+import { holiCap, type HoliFiles } from './holis-cap'
 import {
   failed,
-  holiCap,
   holiSettingsAtom,
   holisAtom,
   holisEpochAtom,
@@ -57,7 +57,6 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { DEFAULT_HOLI_COLOUR } from './parts'
 
 const SECTIONS: { id: SettingsSection; label: string; icon: typeof Settings }[] = [
   { id: 'general', label: 'General', icon: Settings },

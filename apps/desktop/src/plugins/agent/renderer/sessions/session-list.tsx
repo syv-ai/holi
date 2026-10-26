@@ -79,11 +79,11 @@ import { ConfirmDialog } from '@/composites/confirm-dialog'
 import { AgentMark } from '@/composites/marks'
 import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
 import { toast } from 'sonner'
-import { useNow } from '../lib/use-now'
 import { providersAtom } from '../state/providers'
 import { reviewSessionTurnAtom } from '../state/turns'
 import { NewSessionButton } from './new-session-button'
-import { cn, openTabAtom, useTabDrag } from '@/plugin-api'
+import { cn, openTabAtom, useNow, useTabDrag } from '@/plugin-api'
+import { DEFAULT_HOLI_COLOUR, relativeAge } from '@holi/shared'
 import { agentSessionsAtom } from '../state/sessions'
 import { agentsViewAtom } from '../state/agents-view'
 import {
@@ -94,7 +94,6 @@ import {
   stopSessionAtom,
 } from '../state/send'
 import {
-  age,
   archiveSessionRowAtom,
   closeSessionRowAtom,
   deleteSessionRowAtom,
@@ -264,7 +263,7 @@ function CardStatus({ row, now }: { row: SessionRow; now: number }): React.JSX.E
       </span>
     )
   }
-  const when = age(item.endedAt ?? item.updatedAt, now)
+  const when = relativeAge(item.endedAt ?? item.updatedAt, now, { precise: true })
   if (state === 'done') {
     return (
       <span className="flex items-center gap-1 text-xs text-success-foreground tabular-nums">
@@ -285,7 +284,7 @@ function CardMark({ row }: { row: SessionRow }): React.JSX.Element {
     return (
       <PixelPersona
         name={by.mascot}
-        color={by.color ?? '#8f8f94'}
+        color={by.color ?? DEFAULT_HOLI_COLOUR}
         status={row.state === 'done' ? 'idle' : row.state}
         still={row.state === 'idle' || row.state === 'done'}
         className="size-4"

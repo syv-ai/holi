@@ -1,12 +1,11 @@
 /**
  * The session list's rules: how the slots' rows and the live sessions merge,
  * the state each row shows (working, needs you, done until opened), the
- * search and filter, the groups, and the age.
+ * search and filter, the groups.
  */
 import { expect, test, vi } from 'vitest'
 import type { AgentsSessionItem } from '@/plugin-api'
 import {
-  age,
   groupRows,
   mergeSessionItems,
   modelLabel,
@@ -187,15 +186,6 @@ test('what needs you is pinned first, then today, yesterday and earlier, newest 
     ['Yesterday', ['y']],
     ['Earlier', ['old']],
   ])
-})
-
-test('ages as MonoCode puts them', () => {
-  const now = new Date(2026, 9, 23, 15, 0).getTime()
-  expect(age(now - 20_000, now)).toBe('now')
-  expect(age(now - 10 * 60_000, now)).toBe('10m')
-  expect(age(now - (5 * 60 + 43) * 60_000, now)).toBe('5h 43m')
-  expect(age(now - 3 * 86_400_000, now)).toBe('3d')
-  expect(age(new Date(2026, 9, 7).getTime(), now)).toMatch(/7/)
 })
 
 test('a pinned row sits in Pinned, under what needs you and above the days', () => {

@@ -17,7 +17,7 @@ import {
   DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu'
 import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
-import { DEFAULT_HOLI_COLOUR } from './parts'
+import { DEFAULT_HOLI_COLOUR } from '@holi/shared'
 
 function HoliItem({ holi, path }: { holi: HoliSummary; path: string }): React.JSX.Element {
   const send = useSetAtom(sendToHoliAtom)
