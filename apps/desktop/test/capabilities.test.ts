@@ -29,6 +29,7 @@ import { googleCapabilities, GOOGLE_NAMESPACES } from '../src/plugins/google/mai
 import { taskCapabilities, TASKS_NAMESPACES } from '../src/plugins/tasks/main/capabilities'
 import { parseTaskFile, taskClaim } from '../src/plugins/tasks/shared/task-file'
 import { MEMBERS_TTL_MS, createMembersCache } from '../src/main/github/members-cache'
+import { withFileLock } from '../src/main/vault/vault-files'
 
 const registry = createCapabilityRegistry()
 /** What `docs.open` asked to show, by vault path. */
@@ -431,6 +432,32 @@ describe('docs CLI writes', () => {
       revision: createHash('sha256').update('second').digest('hex'),
     })
     await expect(readText(join(root, 'unscanned.md'), 'utf8')).rejects.toThrow()
+  })
+
+  it('rechecks update and delete revisions after a competing editor save', async () => {
+    for (const operation of ['docs.update', 'docs.delete'] as const) {
+      const path = `${operation.split('.')[1]}.md`
+      await writeFile(join(root, path), 'base')
+      let entered!: () => void
+      let release!: () => void
+      const locked = new Promise<void>((resolve) => (entered = resolve))
+      const gate = new Promise<void>((resolve) => (release = resolve))
+      const editorSave = withFileLock(join(root, path), async () => {
+        entered()
+        await gate
+        await writeFile(join(root, path), 'editor save')
+      })
+      await locked
+      const mutation = runCapability('docs.' + operation.split('.')[1], 'cli', cliCtx(), {
+        path,
+        revision: createHash('sha256').update('base').digest('hex'),
+        ...(operation === 'docs.update' ? { body: 'CLI update' } : {}),
+      })
+      release()
+      await editorSave
+      await expect(mutation).rejects.toThrow(/Stale revision/)
+      expect(await readText(join(root, path), 'utf8')).toBe('editor save')
+    }
   })
 
   it('refuses ignored and plugin-claimed notes even before the watcher lists them', async () => {

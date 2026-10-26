@@ -472,6 +472,39 @@ describe('ActiveVault — commit', () => {
     expect(await plainGit(origin, ['show', 'main:settled.md'])).toBe('current')
   })
 
+  it('keeps a hook-rejected CLI commit from auto-pushing until a verified retry', async () => {
+    const { active, dir, origin } = await vault({
+      commitQuietMs: 60_000,
+      pushQuietMs: 80,
+      healIntervalMs: 60_000,
+      pullIntervalMs: 60_000,
+    })
+    await plainGit(dir, ['config', 'filter.strip.clean', "sed '/REJECTED/d'"])
+    await writeFile(join(dir, '.git', 'info', 'attributes'), 'note.md filter=strip\\n')
+    const rejected = 'wanted\\nREJECTED\\n'
+    await writeFile(join(dir, 'note.md'), rejected)
+    const rejectedDelivery = await active.deliverNow(async () =>
+      (await plainGit(dir, ['show', 'HEAD:note.md'])) === rejected,
+    )
+    expect(rejectedDelivery).toBe(false)
+    await sleep(250)
+    expect(await plainGit(origin, ['rev-parse', 'refs/heads/main'])).not.toBe(
+      await plainGit(dir, ['rev-parse', 'HEAD']),
+    )
+    expect(await plainGit(origin, ['cat-file', '-e', 'main:note.md']).catch(() => '')).toBe('')
+
+    const corrected = 'wanted\\ncorrected\\n'
+    await writeFile(join(dir, 'note.md'), corrected)
+    expect(
+      await active.deliverNow(async () =>
+        (await plainGit(dir, ['show', 'HEAD:note.md'])) === corrected,
+      ),
+    ).toBe(true)
+    await waitFor('the corrected note to reach origin', async () =>
+      (await plainGit(origin, ['show', 'main:note.md']).catch(() => '')) === corrected,
+    )
+  })
+
   it('deliverNow joins an in-flight push before finishing', async () => {
     const { active, dir, origin } = await vault({
       commitQuietMs: 60_000,

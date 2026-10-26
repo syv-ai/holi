@@ -235,6 +235,11 @@ export async function openActiveVault(args: {
    *  against the same refs. Its recovery pull releases this before delegating to
    *  `maybePull` (see there), which is why `maybePull`'s guard does NOT check it. */
   let pushInFlight = false
+  // A CLI delivery owns verification between committing and deciding whether
+  // that commit is eligible to leave. A failed check quarantines pushes until
+  // a later verified delivery succeeds.
+  let deliveryVerifying = false
+  let rejectedDelivery = false
   let lastFocusPull = 0
   /** The last network attempt failed. A flag rather than a state, so the
    *  `finally` that clears `syncing` cannot overwrite it. */
@@ -381,8 +386,13 @@ export async function openActiveVault(args: {
    * watcher, so a dropped event delays a commit by one heal tick instead of
    * losing it (see the file header).
    */
-  async function maybeCommit(duringPull = false): Promise<string | null> {
-    if (closed || committing || manualPause !== null) return null
+  async function maybeCommit(duringPull = false, duringDelivery = false): Promise<string | null> {
+    if (
+      closed ||
+      committing ||
+      manualPause !== null ||
+      (deliveryVerifying && !duringDelivery)
+    ) return null
     /**
      * A commit must not run while a pull is merging: `git commit` and
      * `git merge` both take `.git/index.lock`, so an autosave landing inside a
@@ -555,7 +565,7 @@ export async function openActiveVault(args: {
    *  landed commit, so continuous typing pushes a handful of times rather than
    *  once per idle debounce. */
   function schedulePush(): void {
-    if (closed) return
+    if (closed || deliveryVerifying || rejectedDelivery) return
     if (pushTimer !== null) clearTimeout(pushTimer)
     pushTimer = setTimeout(() => {
       pushTimer = null
@@ -579,7 +589,13 @@ export async function openActiveVault(args: {
   async function pushNow(): Promise<void> {
     // A reconcile owns the tree; a sticky conflict means the remote has moved
     // under us and only a reconcile clears it. Pushing into either is wrong.
-    if (closed || manualPause !== null || conflictPaths !== null) return
+    if (
+      closed ||
+      manualPause !== null ||
+      conflictPaths !== null ||
+      deliveryVerifying ||
+      rejectedDelivery
+    ) return
     // Single-flight against itself, the pull loop, and a commit, all of which
     // touch refs or the index. Claimed synchronously, before the first await.
     if (pushInFlight || pullInFlight || committing) return
@@ -695,31 +711,58 @@ export async function openActiveVault(args: {
         clearTimeout(commitTimer)
         commitTimer = null
       }
-      // An autosave may already own the commit or push. Join it rather than
-      // treating its single-flight decline as an empty successful delivery.
+      // Claim before the first await so a due push timer (and new automatic
+      // pushes) cannot race the verification window. Join any push already
+      // underway before this delivery creates its commit.
+      deliveryVerifying = true
       await waitForSync()
-      if (closed) return false
-      const status = await args.repo.status().catch(() => null)
-      if (status === null || blockedReason(status) !== null || manualPause !== null) return false
-      await maybeCommit()
-      await waitForSync()
-      if (closed) return false
-      const afterCommit = await args.repo.status().catch(() => null)
-      if (afterCommit === null || blockedReason(afterCommit) !== null || manualPause !== null) {
+      if (closed) {
+        deliveryVerifying = false
         return false
       }
-      if (!(await verify())) return false
-      // A push already in progress may have started after our wait. Join it,
-      // then drain any autosave that began during that push before returning.
+      const status = await args.repo.status().catch(() => null)
+      if (status === null || blockedReason(status) !== null || manualPause !== null) {
+        deliveryVerifying = false
+        return false
+      }
+      await maybeCommit(false, true)
+      await waitForSync()
+      if (closed) {
+        deliveryVerifying = false
+        return false
+      }
+      const afterCommit = await args.repo.status().catch(() => null)
+      if (afterCommit === null || blockedReason(afterCommit) !== null || manualPause !== null) {
+        deliveryVerifying = false
+        return false
+      }
+      if (!(await verify())) {
+        rejectedDelivery = true
+        deliveryVerifying = false
+        scheduleCommit()
+        return false
+      }
+      rejectedDelivery = false
+      deliveryVerifying = false
+      // A watcher tick that fired during verification may have declined to
+      // commit. Resume unrelated edits now; the push quarantine, if any, still
+      // prevents their commits from carrying rejected work to the remote.
+      scheduleCommit()
+      // A push already in progress may have started before this delivery's
+      // synchronous claim. It was joined above, before our commit was made.
       await pushNow()
       await waitForSync()
       if (closed) return false
       const latest = await args.repo.status().catch(() => null)
       if (latest === null || blockedReason(latest) !== null || manualPause !== null) return false
       if (latest.dirty) {
-        if ((await maybeCommit()) !== null) {
+        if ((await maybeCommit(false, true)) !== null) {
           await waitForSync()
-          if (closed || !(await verify())) return false
+          if (closed || !(await verify())) {
+            rejectedDelivery = true
+            return false
+          }
+          rejectedDelivery = false
         }
       }
       const finalStatus = await args.repo.status().catch(() => null)
