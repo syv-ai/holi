@@ -169,7 +169,10 @@ change the rule as that page describes (fixture first, then config, then registr
    [Add a ReUI block](#add-a-reui-block) for the CLI's quirks.
 2. Otherwise check `components/ui`, `components/reui`, `composites/`. If it exists, use it.
 3. If it is new, reusable and domain-free, add `composites/<name>.tsx` built from `components/*`,
-   with a test in `composites/__tests__/`. If one feature uses it, put it in that feature.
+   with a test in `composites/__tests__/`. If one feature uses it, put it in that feature. A
+   reusable control with its own behaviour is a composite over the existing one, named for what
+   it does: a copy button is `composites/copy-button.tsx` exporting `CopyButton`, built on
+   `IconButton`; it is not a second button.
 
 ### Add a feature
 

@@ -113,7 +113,8 @@ There is no `lint:gate`.
 ## Commits
 
 A commit message is a single subject line, `type: subject`, with type one of `feat`,
-`fix`, `chore`, `doc` or `refac`. No body and no attribution trailers of any kind (no
+`fix`, `chore`, `doc` or `refac`, and the subject in lowercase saying what the change
+does (`feat: an inbox tab for messages that need you`). No body and no attribution trailers of any kind (no
 `Co-Authored-By`, no session links, no “Generated with” line), in commits, PR titles and
 bodies, and tags. The `commit-msg` hook (`scripts/check-commit-msg.mjs`, installed by
 `pnpm install` through `prepare`) and CI enforce it.
