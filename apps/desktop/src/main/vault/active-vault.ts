@@ -781,7 +781,9 @@ export async function openActiveVault(args: {
         if (rejectedDeliveries.size === 0) schedulePush()
       }
     },
-    pushNow,
+    async pushNow() {
+      await pushNow()
+    },
     onFocus() {
       // A fetch is already running, so this focus needs neither a pull nor a
       // throttle window of its own. Checked before stamping, or a focus that
