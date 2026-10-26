@@ -130,14 +130,11 @@ export function RichTextSuggestionMenu<T>({
       shouldFilter={false}
       loop
       onMouseDown={keepEditorFocus}
-      className={cn("ring-foreground/10 w-72 ring-1", className)}
+      className={cn("w-72", className)}
     >
       {/* The list ships its bar hidden; the fade marks the cut-off rows. A short
           reveal keeps it full when the list overflows by only a row or two. */}
-      <CommandList
-        label={label}
-        className="supports-[animation-timeline:scroll()]:scroll-fade-y [--scroll-fade-reveal:--spacing(6)]"
-      >
+      <CommandList label={label}>
         <CommandEmpty>{empty}</CommandEmpty>
         {groups.map((group) =>
           group.items.length ? (

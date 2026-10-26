@@ -8,8 +8,6 @@ import {
 } from "react"
 import type { Editor } from "@tiptap/react"
 
-import { Card } from "@/components/ui/card"
-
 import { RichTextToolbar } from "./rich-text-toolbar"
 
 const FIRST_STOP = "[data-toolbar-item][tabindex='0']"
@@ -139,16 +137,15 @@ export function RichTextBubbleBar({
   }
 
   return (
-    <Card
+    <div
       ref={barRef}
-      size="sm"
-      className="p-1"
+      className="bg-card text-card-foreground ring-foreground/10 overflow-hidden rounded-xl p-1 text-sm ring-1"
       onPointerDownCapture={handlePointerDown}
       onKeyDown={handleKeyDown}
     >
       <RichTextToolbar aria-label={label} aria-keyshortcuts="Alt+F10">
         {children}
       </RichTextToolbar>
-    </Card>
+    </div>
   )
 }

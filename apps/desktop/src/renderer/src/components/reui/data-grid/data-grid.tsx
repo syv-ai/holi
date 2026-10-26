@@ -881,6 +881,8 @@ export interface DataGridProps<
     cellBorder?: boolean
     rowBorder?: boolean
     rowRounded?: boolean
+    /** Inset the first and last cell of every row to line up with a page gutter. */
+    edgeInset?: boolean
     stripped?: boolean
     headerBackground?: boolean
     footerBackground?: boolean

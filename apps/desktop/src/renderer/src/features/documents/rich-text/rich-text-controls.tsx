@@ -347,7 +347,6 @@ export function RichTextAlignMenu({ editor, state }: ControlProps) {
                 size="sm"
                 aria-label={`Alignment, ${ALIGN_LABELS[state.align]}`}
                 disabled={!state.editable}
-                className="gap-0.5 px-1.5"
                 data-toolbar-item=""
               >
                 {ALIGN_ICONS[state.align]}

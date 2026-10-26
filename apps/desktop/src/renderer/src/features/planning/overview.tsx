@@ -86,7 +86,7 @@ function Section({
 }) {
   return (
     <Frame className={cn("w-full", className)}>
-      <FrameHeader className="flex min-h-9 flex-row items-center justify-between gap-2">
+      <FrameHeader className="min-h-9 flex-row items-center justify-between">
         <FrameTitle>{title}</FrameTitle>
         {action}
       </FrameHeader>
@@ -171,8 +171,8 @@ export function Overview({
     )
 
   return (
-    <div className="grid w-full max-w-6xl grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
-      <div className="flex min-w-0 flex-col gap-6">
+    <div className="grid w-full max-w-6xl grid-cols-1 gap-6 lg:grid-cols-3">
+      <div className="flex min-w-0 flex-col gap-6 lg:col-span-2">
         <Section title="About" action={editButton}>
           {projectRegion((p) =>
             p.about.trim() === "" ? (
@@ -333,31 +333,35 @@ function ComingUpRow({
   const status = columnFor(statuses, task.status)
   const overdue = task.due !== undefined && isOverdue(task.due, now)
   return (
-    <li>
-      <button
+    <li className="-mx-2">
+      <Button
         type="button"
+        variant="ghost"
+        size="inline"
         onClick={onOpen}
-        className="hover:bg-muted/60 focus-visible:ring-ring/50 -mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-md px-2 py-1.5 text-left transition-colors outline-none focus-visible:ring-2"
+        className="w-full justify-start text-left"
       >
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">
-          {task.title}
-        </span>
-        <span className="hidden sm:inline-flex">
-          <StatusBadge status={status} />
-        </span>
-        {task.priority !== undefined ? (
-          <span className="hidden md:inline-flex">
-            <PriorityBadge priority={task.priority} />
+        <span className="flex w-full min-w-0 items-center gap-3 px-2 py-1.5">
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">
+            {task.title}
           </span>
-        ) : null}
-        <PeopleStack logins={task.assignees} max={2} />
-        <DateBadge
-          stamp={task.due!}
-          today={today}
-          overdue={overdue}
-          label="Due"
-        />
-      </button>
+          <span className="hidden sm:inline-flex">
+            <StatusBadge status={status} />
+          </span>
+          {task.priority !== undefined ? (
+            <span className="hidden md:inline-flex">
+              <PriorityBadge priority={task.priority} />
+            </span>
+          ) : null}
+          <PeopleStack logins={task.assignees} max={2} />
+          <DateBadge
+            stamp={task.due!}
+            today={today}
+            overdue={overdue}
+            label="Due"
+          />
+        </span>
+      </Button>
     </li>
   )
 }
@@ -424,14 +428,16 @@ function DetailRows({
     },
   ]
   return (
-    <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-6 gap-y-3 text-sm">
+    <dl className="flex flex-col gap-3 text-sm">
       {rows.map((row) => (
-        <div key={row.label} className="contents">
-          <dt className="text-muted-foreground flex items-center gap-2 [&_svg]:size-4">
+        <div key={row.label} className="flex items-center gap-6">
+          <dt className="text-muted-foreground flex w-28 shrink-0 items-center gap-2 [&_svg]:size-4">
             {row.icon}
             {row.label}
           </dt>
-          <dd className="flex min-h-6 min-w-0 items-center">{row.value}</dd>
+          <dd className="flex min-h-6 min-w-0 flex-1 items-center">
+            {row.value}
+          </dd>
         </div>
       ))}
     </dl>

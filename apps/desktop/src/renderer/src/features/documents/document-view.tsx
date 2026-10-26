@@ -108,7 +108,7 @@ const SELECTION_DELAY_MS = 250
 
 // The block drop line, as the rich-text block draws it.
 const DROP_LINE =
-  "[&_.prosemirror-dropcursor-block]:text-primary [&_.prosemirror-dropcursor-block]:h-0.5! [&_.prosemirror-dropcursor-block]:-translate-y-[0.5px] [&_.prosemirror-dropcursor-block]:rounded-full"
+  "[&_.prosemirror-dropcursor-block]:text-primary [&_.prosemirror-dropcursor-block]:h-0.5! [&_.prosemirror-dropcursor-block]:rounded-full"
 
 type Load =
   | { kind: "loading" }

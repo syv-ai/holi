@@ -4,17 +4,8 @@
  * the one thing to do next, and an inline error that can be retried.
  */
 import type { ReactNode } from "react"
-import { CircleAlertIcon } from "lucide-react"
 
-import {
-  Alert,
-  AlertAction,
-  AlertDescription,
-  AlertTitle,
-} from "@/components/reui/alert"
-import { Button } from "@/components/ui/button"
-import { EmptyState } from "@/composites/empty-state"
-import { cn } from "@/lib/cn"
+import { EmptyState, ErrorState } from "@/composites/empty-state"
 import type { IconGlyph } from "@/lib/icon-glyph"
 
 export function RegionError({
@@ -27,16 +18,12 @@ export function RegionError({
   onRetry: () => void
 }) {
   return (
-    <Alert variant="destructive">
-      <CircleAlertIcon aria-hidden="true" />
-      <AlertTitle>{title}</AlertTitle>
-      <AlertDescription>{message}</AlertDescription>
-      <AlertAction>
-        <Button variant="outline" size="sm" onClick={onRetry}>
-          Retry
-        </Button>
-      </AlertAction>
-    </Alert>
+    <ErrorState
+      title={title}
+      message={message}
+      onRetry={onRetry}
+      className="h-auto"
+    />
   )
 }
 
@@ -55,16 +42,17 @@ export function RegionEmpty({
   action?: ReactNode
   outlined?: boolean
 }) {
-  return (
+  const empty = (
     <EmptyState
       icon={icon}
       title={title}
       description={description}
-      className={cn("h-auto", outlined && "border")}
+      className="h-auto"
     >
       {action}
     </EmptyState>
   )
+  return outlined ? <div className="rounded-lg border">{empty}</div> : empty
 }
 
 /** Search and filters left nothing to show: says so, and is the one way back

@@ -141,12 +141,18 @@ export function EditProjectDialog({
         onOpenChange(next)
       }}
     >
-      <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-lg">
-        <form
-          className="flex flex-col gap-6"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void submit()
+      <DialogContent className="sm:max-w-lg">
+        <div
+          className="flex max-h-160 flex-col gap-6 overflow-y-auto"
+          onKeyDown={(event) => {
+            // Enter in a one-line field saves, as the form it replaced did.
+            if (
+              event.key === "Enter" &&
+              event.target instanceof HTMLInputElement
+            ) {
+              event.preventDefault()
+              void submit()
+            }
           }}
         >
           <DialogHeader>
@@ -156,7 +162,7 @@ export function EditProjectDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <FieldGroup className="gap-4">
+          <FieldGroup>
             <Field>
               <FieldLabel htmlFor="project-name">Name</FieldLabel>
               <Input
@@ -236,7 +242,7 @@ export function EditProjectDialog({
               />
             </Field>
 
-            <FieldSet className="gap-3">
+            <FieldSet>
               <FieldLegend variant="label">Milestones</FieldLegend>
               {draft.milestones.map((milestone, index) => (
                 <div key={index} className="flex items-center gap-2">
@@ -300,11 +306,11 @@ export function EditProjectDialog({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={busy}>
+            <Button type="button" disabled={busy} onClick={() => void submit()}>
               Save project
             </Button>
           </DialogFooter>
-        </form>
+        </div>
       </DialogContent>
     </Dialog>
   )

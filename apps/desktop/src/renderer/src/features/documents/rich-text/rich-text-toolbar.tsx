@@ -163,18 +163,17 @@ export function RichTextToggle({
   onToggle,
   children,
 }: RichTextToggleProps) {
-  // An icon has no label to pad, so the toggle stays square (px-0).
+  // An icon has no label to pad, so the toggle stays square (size="icon").
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <Toggle
-          size="sm"
+          size="icon"
           aria-label={label}
           pressed={pressed}
           disabled={disabled}
           onPressedChange={onToggle}
           onMouseDown={keepEditorFocus}
-          className="px-0"
           data-toolbar-item=""
         >
           {children}

@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type FormEvent, type RefObject } from "react"
+import { useId, useRef, useState, type RefObject } from "react"
 import { useEditorState, type Editor } from "@tiptap/react"
 import { BubbleMenu } from "@tiptap/react/menus"
 
@@ -54,9 +54,7 @@ function LinkForm({ editor, href, inputRef, onDone }: LinkFormProps) {
   const [invalid, setInvalid] = useState(false)
   const errorId = useId()
 
-  function apply(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-
+  function apply() {
     // Enter on an empty field is a no-op, not an error.
     if (!draft.trim()) return
 
@@ -93,7 +91,7 @@ function LinkForm({ editor, href, inputRef, onDone }: LinkFormProps) {
   }
 
   return (
-    <form onSubmit={apply}>
+    <div>
       <Field data-invalid={invalid || undefined}>
         <InputGroup>
           <InputGroupAddon>
@@ -110,16 +108,21 @@ function LinkForm({ editor, href, inputRef, onDone }: LinkFormProps) {
               setDraft(event.target.value)
               setInvalid(false)
             }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault()
+                apply()
+              }
+            }}
           />
           <InputGroupAddon align="inline-end">
             {/* Announced disabled, never natively disabled: a native one
               dims the whole field with it. */}
             <InputGroupButton
-              type="submit"
               size="icon-xs"
               aria-label="Apply link"
               aria-disabled={!draft.trim()}
-              className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
+              onClick={apply}
             >
               <CheckIcon aria-hidden="true" />
             </InputGroupButton>
@@ -143,7 +146,7 @@ function LinkForm({ editor, href, inputRef, onDone }: LinkFormProps) {
           </FieldError>
         ) : null}
       </Field>
-    </form>
+    </div>
   )
 }
 
@@ -170,12 +173,11 @@ export function RichTextLinkPopover({
           <span className="flex">
             <PopoverTrigger asChild>
               <Toggle
-                size="sm"
+                size="icon"
                 aria-label="Link"
                 pressed={state.link !== null}
                 disabled={!state.canFormat}
                 onMouseDown={keepEditorFocus}
-                className="px-0"
                 data-toolbar-item=""
               >
                 <LinkIcon aria-hidden="true" />

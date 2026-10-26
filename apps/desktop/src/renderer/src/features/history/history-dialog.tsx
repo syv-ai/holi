@@ -94,33 +94,39 @@ export function HistoryDialog({
     >
       <DialogContent className="sm:max-w-4xl">
         <DialogHeader>
-          <DialogTitle>{detail === null ? "Commits" : detail.commit.subject}</DialogTitle>
-          <DialogDescription className="flex flex-wrap items-center gap-x-1">
-            {detail === null ? (
-              <>
-                History for{" "}
-                {segments.map((segment, index) => (
-                  <span key={index} className="flex items-center gap-x-1">
-                    {index > 0 ? <span aria-hidden="true">/</span> : null}
-                    <span
-                      className={
-                        index === segments.length - 1
-                          ? "text-foreground font-medium"
-                          : undefined
-                      }
-                    >
-                      {segment}
+          <DialogTitle>
+            {detail === null ? "Commits" : detail.commit.subject}
+          </DialogTitle>
+          <DialogDescription>
+            <span className="flex flex-wrap items-center gap-x-1">
+              {detail === null ? (
+                <>
+                  History for{" "}
+                  {segments.map((segment, index) => (
+                    <span key={index} className="flex items-center gap-x-1">
+                      {index > 0 ? <span aria-hidden="true">/</span> : null}
+                      <span
+                        className={
+                          index === segments.length - 1
+                            ? "text-foreground font-medium"
+                            : undefined
+                        }
+                      >
+                        {segment}
+                      </span>
                     </span>
+                  ))}
+                </>
+              ) : (
+                <>
+                  {detail.commit.author} committed on{" "}
+                  {ON_DAY.format(new Date(detail.commit.date))} ·{" "}
+                  <span className="font-mono">
+                    {shortSha(detail.commit.sha)}
                   </span>
-                ))}
-              </>
-            ) : (
-              <>
-                {detail.commit.author} committed on{" "}
-                {ON_DAY.format(new Date(detail.commit.date))} ·{" "}
-                <span className="font-mono">{shortSha(detail.commit.sha)}</span>
-              </>
-            )}
+                </>
+              )}
+            </span>
           </DialogDescription>
         </DialogHeader>
 
@@ -152,7 +158,7 @@ export function HistoryDialog({
                 File at this commit
               </Button>
             </div>
-            <div className="max-h-[min(65vh,44rem)] min-w-0 overflow-auto">
+            <div className="max-h-160 min-w-0 overflow-auto">
               <CommitView
                 key={`${detail.commit.sha}:${detail.show}`}
                 path={path}
@@ -263,7 +269,7 @@ function CommitList({
         </Select>
       </div>
 
-      <div className="max-h-[min(65vh,44rem)] overflow-y-auto">
+      <div className="max-h-160 overflow-y-auto">
         {days.length === 0 ? (
           <EmptyState
             title="No commits match"
@@ -347,17 +353,23 @@ function CommitRow({
 }) {
   const who = author.login ?? author.name
   return (
-    <li className="hover:bg-muted/50 motion-respond flex items-center gap-3 px-4 py-3 transition-colors">
-      <button
+    <li className="hover:bg-muted/50 motion-respond flex items-center gap-3 px-4 py-3">
+      <Button
         type="button"
+        variant="text"
+        size="inline"
         onClick={() => onOpen(commit, "diff")}
-        className="flex min-w-0 flex-1 flex-col items-start gap-1 text-start outline-none focus-visible:underline"
+        className="min-w-0 flex-1 flex-col items-start justify-start text-start"
       >
         <span className="w-full truncate text-sm font-medium">{commit.subject}</span>
         <span className="text-muted-foreground flex items-center gap-1.5 text-xs">
-          <Avatar className="size-4">
-            {author.avatarUrl ? <AvatarImage src={author.avatarUrl} alt="" /> : null}
-            <AvatarFallback className="text-xs">{initials(author.name)}</AvatarFallback>
+          <Avatar size="sm">
+            {author.avatarUrl ? (
+              <AvatarImage src={author.avatarUrl} alt="" />
+            ) : null}
+            <AvatarFallback className="text-xs">
+              {initials(author.name)}
+            </AvatarFallback>
           </Avatar>
           <span className="text-foreground">{who}</span> committed on{" "}
           {ON_DAY.format(new Date(commit.date))}
@@ -367,7 +379,7 @@ function CommitRow({
             <span className="text-destructive">−{commit.removed}</span>
           </span>
         </span>
-      </button>
+      </Button>
       <span className="font-mono text-xs">{shortSha(commit.sha)}</span>
       <div className="flex items-center gap-0.5">
         <IconAction

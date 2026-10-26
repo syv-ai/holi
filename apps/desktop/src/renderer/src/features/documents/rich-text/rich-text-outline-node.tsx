@@ -15,8 +15,6 @@ import {
 import type { RichTextSlashItem } from "./rich-text-slash-menu"
 import { TableOfContentsIcon } from "lucide-react"
 
-const LINK_INDENT = ["", "ps-4", "ps-8"] as const
-
 function OutlineBlockView({ editor }: ReactNodeViewProps) {
   // Heading edits elsewhere never reach this node, so it reads the editor.
   const outline = useRichTextOutline(editor)
@@ -29,12 +27,13 @@ function OutlineBlockView({ editor }: ReactNodeViewProps) {
           {outline.map((entry, index) => (
             <Button
               key={entry.id}
-              variant="link"
-              size="sm"
+              variant="text"
+              size="inline"
               onClick={() => scrollToRichTextHeading(editor, index)}
               className={cn(
-                "text-muted-foreground hover:text-foreground h-auto max-w-full px-0 py-0.5 font-normal",
-                LINK_INDENT[entry.depth]
+                "text-muted-foreground hover:text-foreground max-w-full",
+                entry.depth === 1 && "ms-4",
+                entry.depth === 2 && "ms-8"
               )}
             >
               <span className="truncate">{entry.text}</span>

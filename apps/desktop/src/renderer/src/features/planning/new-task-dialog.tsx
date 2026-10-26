@@ -124,11 +124,19 @@ export function NewTaskDialog({
       }}
     >
       <DialogContent className="sm:max-w-xl">
-        <form
+        <div
           className="flex flex-col gap-6"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void submit()
+          onKeyDown={(event) => {
+            // Enter in a one-line field creates, as the form it replaced did.
+            if (
+              event.key === "Enter" &&
+              event.target instanceof HTMLInputElement &&
+              !busy &&
+              title.trim() !== ""
+            ) {
+              event.preventDefault()
+              void submit()
+            }
           }}
         >
           <DialogHeader>
@@ -138,7 +146,7 @@ export function NewTaskDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <FieldGroup className="gap-4">
+          <FieldGroup>
             <Field>
               <FieldLabel htmlFor="new-task-title" className="sr-only">
                 Title
@@ -185,11 +193,15 @@ export function NewTaskDialog({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={busy || title.trim() === ""}>
+            <Button
+              type="button"
+              disabled={busy || title.trim() === ""}
+              onClick={() => void submit()}
+            >
               Create task
             </Button>
           </DialogFooter>
-        </form>
+        </div>
       </DialogContent>
     </Dialog>
   )

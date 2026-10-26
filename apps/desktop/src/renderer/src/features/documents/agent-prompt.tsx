@@ -43,9 +43,9 @@ export function AgentPrompt({
 
   return (
     // Solid, over the glass: the input group's own fill is translucent.
-    <InputGroup className="bg-popover dark:bg-popover shadow-sm">
+    <InputGroup className="bg-popover dark:bg-popover">
       <InputGroupAddon align="block-start">
-        <InputGroupText className="text-primary gap-1.5">
+        <InputGroupText className="text-primary">
           <SparklesIcon aria-hidden="true" />
           Ask Sonnet to write or change this document
         </InputGroupText>

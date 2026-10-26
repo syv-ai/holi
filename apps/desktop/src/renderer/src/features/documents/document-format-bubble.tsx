@@ -139,7 +139,7 @@ export function DocumentFormatBubble({
                   variant="ghost"
                   size="sm"
                   aria-label="Ask AI"
-                  className="text-primary shrink-0 gap-1"
+                  className="text-primary shrink-0"
                   data-toolbar-item=""
                 >
                   <SparklesIcon aria-hidden="true" />

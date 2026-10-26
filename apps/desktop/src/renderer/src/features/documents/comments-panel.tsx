@@ -120,51 +120,55 @@ function Thread({
       data-active={active || undefined}
       className={cn("flex-col items-stretch", active && "border-primary")}
     >
-      <ItemHeader className="gap-2">
-        <button
+      <ItemHeader>
+        <Button
           type="button"
+          variant="text"
+          size="inline"
           onClick={onSelect}
           disabled={!placed}
           aria-label={
             placed ? "Show the passage" : "The passage is no longer in the note"
           }
-          className="focus-visible:ring-ring/50 hover:text-foreground min-w-0 flex-1 rounded-sm text-start transition-colors outline-none focus-visible:ring-2 disabled:cursor-default"
+          className="hover:text-foreground min-w-0 flex-1 justify-start text-start disabled:cursor-default"
         >
           <Quote text={thread.anchor.quote} />
-        </button>
+        </Button>
         {!placed ? (
           <Badge variant="warning-light" className="shrink-0">
             Detached
           </Badge>
         ) : null}
       </ItemHeader>
-      <ItemContent className="gap-3">
-        <ul className="flex flex-col gap-3">
-          {thread.comments.map((comment) => (
-            <Comment key={comment.id} comment={comment} />
-          ))}
-        </ul>
-        {resolved && thread.status !== null ? (
-          <p className="text-muted-foreground text-xs">
-            Resolved by {thread.status.by}
-          </p>
-        ) : null}
-        {replying ? (
-          <CommentField
-            label="Reply"
-            placeholder="Reply…"
-            submitLabel="Reply"
-            autoFocus
-            onSubmit={async (body) => {
-              await onReply(body)
-              setReplying(false)
-            }}
-            onCancel={() => setReplying(false)}
-          />
-        ) : null}
+      <ItemContent>
+        <div className="flex flex-col gap-3">
+          <ul className="flex flex-col gap-3">
+            {thread.comments.map((comment) => (
+              <Comment key={comment.id} comment={comment} />
+            ))}
+          </ul>
+          {resolved && thread.status !== null ? (
+            <p className="text-muted-foreground text-xs">
+              Resolved by {thread.status.by}
+            </p>
+          ) : null}
+          {replying ? (
+            <CommentField
+              label="Reply"
+              placeholder="Reply…"
+              submitLabel="Reply"
+              autoFocus
+              onSubmit={async (body) => {
+                await onReply(body)
+                setReplying(false)
+              }}
+              onCancel={() => setReplying(false)}
+            />
+          ) : null}
+        </div>
       </ItemContent>
       {!replying ? (
-        <ItemFooter className="justify-end gap-1">
+        <ItemFooter className="justify-end">
           {!resolved ? (
             <Button variant="ghost" size="sm" onClick={() => setReplying(true)}>
               Reply

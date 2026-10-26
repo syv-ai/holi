@@ -30,7 +30,7 @@ export const RICH_TEXT_PROSE = cn(
   "[&_.tiptap_.ProseMirror-selectednode]:outline-ring/50 [&_.tiptap_.ProseMirror-selectednode]:outline-2",
   // Core paints the gap cursor black in an unlayered sheet, hence the !.
   "[&_.ProseMirror-gapcursor]:after:border-t-foreground!",
-  "[&_.tiptap_.is-empty]:before:text-muted-foreground [&_.tiptap_.is-empty]:before:pointer-events-none [&_.tiptap_.is-empty]:before:float-start [&_.tiptap_.is-empty]:before:h-0 [&_.tiptap_.is-empty]:before:content-[attr(data-placeholder)]"
+  "[&_.tiptap_.is-empty]:before:text-muted-foreground [&_.tiptap_.is-empty]:before:pointer-events-none [&_.tiptap_.is-empty]:before:float-start [&_.tiptap_.is-empty]:before:h-0"
 )
 
 interface RichTextContentProps {

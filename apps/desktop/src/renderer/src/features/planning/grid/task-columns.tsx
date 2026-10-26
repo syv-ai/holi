@@ -73,7 +73,7 @@ function GroupExpandButton({
     >
       <ChevronRightIcon
         className={cn(
-          "size-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none rtl:-scale-x-100",
+          "motion-respond size-3.5 shrink-0 rtl:-scale-x-100",
           expanded && "rotate-90"
         )}
         aria-hidden="true"
@@ -123,15 +123,17 @@ function TaskTitleCell({
 }) {
   return (
     <div data-task-row="task" className="flex min-w-0 items-center gap-3 ps-8">
-      <button
+      <Button
         type="button"
+        variant="text"
+        size="inline"
         onClick={onOpen}
-        className="group/task-title focus-visible:ring-ring/50 flex max-w-full min-w-0 items-center gap-1 rounded-sm text-start text-sm leading-5 font-medium outline-none focus-visible:ring-2"
+        className="group/task-title max-w-full min-w-0 justify-start text-start text-sm leading-5 font-medium"
       >
         <span
           data-slot="task-title"
           className={cn(
-            "group-hover/task-title:text-primary text-foreground min-w-0 flex-1 truncate py-0.25 transition-colors",
+            "motion-respond group-hover/task-title:text-primary text-foreground min-w-0 flex-1 truncate py-0.25",
             isDone && "text-muted-foreground line-through"
           )}
         >
@@ -139,10 +141,10 @@ function TaskTitleCell({
         </span>
         <PrivateMark path={task.path} />
         <ArrowRightIcon
-          className="size-3 shrink-0 opacity-0 transition-opacity group-hover/task-title:opacity-100 rtl:-scale-x-100"
+          className="motion-respond size-3 shrink-0 opacity-0 group-hover/task-title:opacity-100 rtl:-scale-x-100"
           aria-hidden="true"
         />
-      </button>
+      </Button>
     </div>
   )
 }
@@ -158,13 +160,14 @@ function StatusCell({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button
+        <Button
           type="button"
+          variant="text"
+          size="inline"
           aria-label={`Status of ${row.task.title}: ${row.status.name}`}
-          className="focus-visible:ring-ring/50 rounded-md outline-none focus-visible:ring-2"
         >
           <StatusBadge status={row.status} />
-        </button>
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-44">
         <DropdownMenuLabel>Move to</DropdownMenuLabel>

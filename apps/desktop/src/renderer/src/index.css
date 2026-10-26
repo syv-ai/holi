@@ -186,6 +186,16 @@
   pointer-events: none;
 }
 
+/* The generated content of two note parts (`rich-text-content.tsx`,
+   `rich-text-table.tsx`): the empty block's placeholder text, and the layer
+   that tints a selected table cell. Their looks stay in the utility classes. */
+.tiptap .is-empty::before {
+  content: attr(data-placeholder);
+}
+.tiptap .selectedCell::after {
+  content: '';
+}
+
 /* Type a step under Tailwind's defaults, the size desktop tools set their
    chrome in (13px body, 11px meta): the type shrinks, the spacing does not. */
 @theme {

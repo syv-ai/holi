@@ -392,14 +392,16 @@ export function GraphView({
               ? "Couldn’t lay out the graph"
               : "Couldn’t read the vault’s links"}
           </AlertTitle>
-          <AlertDescription className="flex flex-col items-start gap-2">
-            {failed
-              ? "The layout stopped before it finished."
-              : "Holi could not walk the vault’s notes just now."}
-            <Button variant="outline" size="sm" onClick={retry}>
-              <RefreshCwIcon data-icon="inline-start" aria-hidden="true" />
-              Retry
-            </Button>
+          <AlertDescription>
+            <div className="flex flex-col items-start gap-2">
+              {failed
+                ? "The layout stopped before it finished."
+                : "Holi could not walk the vault’s notes just now."}
+              <Button variant="outline" size="sm" onClick={retry}>
+                <RefreshCwIcon data-icon="inline-start" aria-hidden="true" />
+                Retry
+              </Button>
+            </div>
           </AlertDescription>
         </Alert>
       </div>
@@ -414,7 +416,7 @@ export function GraphView({
         className="flex flex-1 flex-col gap-3 p-4"
       >
         <Skeleton className="h-4 w-40" />
-        <Skeleton className="min-h-0 flex-1 motion-reduce:animate-none" />
+        <Skeleton className="min-h-0 flex-1" />
       </div>
     )
   }
@@ -504,9 +506,9 @@ const GraphEdge = memo(function GraphEdge({
 
 /** Undo the zoom, so a label reads at the same size at any zoom. */
 const LABEL_STYLE = {
-  fontSize: "calc(12px / var(--graph-k))",
-  transform: "translateY(calc(12px / var(--graph-k)))",
-} as const
+  "--label-size": "calc(12px / var(--graph-k))",
+  "--label-shift": "calc(12px / var(--graph-k))",
+} as React.CSSProperties
 
 /** A note: a dot sized by its links, a link to open it beside the graph. */
 const GraphNode = memo(function GraphNode({
@@ -570,7 +572,10 @@ const GraphNode = memo(function GraphNode({
           y={at.y + radius}
           textAnchor="middle"
           style={LABEL_STYLE}
-          className={centre ? "fill-foreground" : "fill-muted-foreground"}
+          className={cn(
+            "translate-y-(--label-shift) text-(length:--label-size)",
+            centre ? "fill-foreground" : "fill-muted-foreground"
+          )}
         >
           {labelOf(path)}
         </text>

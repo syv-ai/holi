@@ -685,10 +685,13 @@ function Kanban<T>({
 
 export interface KanbanBoardProps extends HTMLAttributes<HTMLDivElement> {
   asChild?: boolean
+  /** `row` lays the columns in one scrolling line instead of a grid. */
+  variant?: "grid" | "row"
 }
 
 function KanbanBoard({
   className,
+  variant = "grid",
   asChild = false,
   children,
   ...props
@@ -700,7 +703,12 @@ function KanbanBoard({
     <SortableContext items={columnIds} strategy={rectSortingStrategy}>
       <Comp
         data-slot="kanban-board"
-        className={cn("grid auto-rows-fr gap-4 sm:grid-cols-3", className)}
+        className={cn(
+          variant === "row"
+            ? "flex min-w-full items-start gap-3 p-1"
+            : "grid auto-rows-fr gap-4 sm:grid-cols-3",
+          className
+        )}
         {...props}
       >
         {children}

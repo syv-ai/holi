@@ -9,6 +9,8 @@ import type { ComponentProps } from "react"
 import type { Task } from "@holi/shared"
 import { ClockIcon } from "lucide-react"
 
+import { Badge } from "@/components/reui/badge"
+import { Button } from "@/components/ui/button"
 import { KanbanItem, KanbanItemHandle } from "@/components/reui/kanban"
 import { cn } from "@/lib/cn"
 import { PersonAvatar } from "@/composites/person-avatar"
@@ -27,15 +29,12 @@ import {
 
 type DueState = "normal" | "watch" | "risk" | "cleared"
 
-const DUE_STATE_CLASSNAME: Record<DueState, string> = {
-  normal:
-    "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300",
-  watch:
-    "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-400/35 dark:bg-amber-400/10 dark:text-amber-300",
-  risk: "border-red-300 bg-red-50 text-red-700 dark:border-red-400/35 dark:bg-red-400/10 dark:text-red-300",
-  cleared:
-    "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/35 dark:bg-emerald-400/10 dark:text-emerald-300",
-}
+const DUE_STATE_VARIANT = {
+  normal: "info-light",
+  watch: "warning-light",
+  risk: "destructive-light",
+  cleared: "success-light",
+} as const satisfies Record<DueState, string>
 
 /** The chip's name, worded like `DateBadge`'s everywhere else. */
 const DUE_STATE_LABEL: Record<DueState, (date: string) => string> = {
@@ -45,18 +44,11 @@ const DUE_STATE_LABEL: Record<DueState, (date: string) => string> = {
   cleared: (date) => `Was due ${date}`,
 }
 
-const CARD_STATE_CLASSNAME: Record<DueState, string> = {
-  normal: "",
-  watch: "border-amber-300/70 dark:border-amber-400/35",
-  risk: "border-red-300/90 bg-red-50/20 dark:border-red-400/40 dark:bg-red-950/10",
-  cleared: "",
-}
-
 const TASK_TITLE_CLASSNAME =
   "line-clamp-2 w-auto text-sm leading-5 font-semibold"
 
 const TASK_KEY_CLASSNAME =
-  "text-muted-foreground text-[0.6875rem] leading-none font-medium"
+  "text-muted-foreground text-xs leading-none font-medium"
 
 /** What the board needs to draw one card. */
 export interface CardContext {
@@ -86,17 +78,14 @@ function DueChip({
 }) {
   const date = shortDate(due, today)
   return (
-    <span
-      className={cn(
-        "flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-1 text-[0.6875rem] leading-none font-medium",
-        DUE_STATE_CLASSNAME[state],
-        className
-      )}
+    <Badge
+      variant={DUE_STATE_VARIANT[state]}
+      className={className}
       aria-label={DUE_STATE_LABEL[state](date)}
     >
-      <ClockIcon className="size-3.5 shrink-0" aria-hidden="true" />
+      <ClockIcon aria-hidden="true" />
       <span className="shrink-0 font-semibold tabular-nums">{date}</span>
-    </span>
+    </Badge>
   )
 }
 
@@ -154,12 +143,15 @@ function TaskItem({
       size="sm"
       data-task={task.path}
       className={cn(
-        "bg-card hover:border-foreground/20 items-stretch gap-3 transition-colors hover:shadow-sm",
-        task.due !== undefined && CARD_STATE_CLASSNAME[state],
-        isOverlay && "shadow-lg"
+        "bg-card hover:border-foreground/20 items-stretch",
+        task.due !== undefined && state === "watch" && "border-warning/40",
+        task.due !== undefined &&
+          state === "risk" &&
+          "border-destructive/40 bg-destructive/5",
+        isOverlay && "border-foreground/30"
       )}
     >
-      <ItemHeader className="min-w-0 flex-col items-stretch gap-1.5">
+      <ItemHeader className="min-w-0 flex-col items-stretch">
         {task.tags.length > 0 || task.priority !== undefined ? (
           <div className="flex min-w-0 items-center justify-between gap-2">
             <ItemDescription className={cn(TASK_KEY_CLASSNAME, "truncate")}>
@@ -174,19 +166,21 @@ function TaskItem({
           </div>
         ) : null}
 
-        <ItemContent className="min-w-0 gap-1">
+        <ItemContent className="min-w-0">
           <ItemTitle className={TASK_TITLE_CLASSNAME}>
             {/* The title opens the task; the rest of the card drags it. */}
-            <button
+            <Button
               type="button"
+              variant="text"
+              size="inline"
               onClick={() => context.onOpenTask(task.path)}
               className={cn(
-                "focus-visible:ring-ring/50 hover:text-primary rounded-sm text-start transition-colors outline-none focus-visible:ring-2",
+                "hover:text-primary text-start leading-5 font-semibold",
                 isDone && "text-muted-foreground line-through"
               )}
             >
               {task.title}
-            </button>
+            </Button>
             <PrivateMark path={task.path} />
           </ItemTitle>
           {plan !== null ? (
@@ -197,7 +191,7 @@ function TaskItem({
         </ItemContent>
       </ItemHeader>
 
-      <ItemFooter className="min-w-0 items-center gap-3">
+      <ItemFooter className="min-w-0 items-center">
         <AssigneeLine logins={task.assignees} />
         {task.due !== undefined ? (
           <DueChip

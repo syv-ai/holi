@@ -441,7 +441,7 @@ export function RichTextBlockGutter({
       data-visible={visible ? "" : undefined}
       data-present={visible || dragging ? "" : undefined}
       inert={!visible && !dragging}
-      className="pointer-events-none absolute top-0 left-0 z-10 hidden -translate-x-full -translate-y-1/2 items-center gap-0.5 opacity-0 transition-[opacity,display] transition-discrete duration-150 ease-out data-visible:pointer-events-auto data-visible:opacity-100 motion-reduce:transition-none data-present:sm:flex data-visible:starting:opacity-0"
+      className="pointer-events-none absolute top-0 left-0 z-10 hidden -translate-x-full -translate-y-1/2 items-center gap-0.5 motion-respond opacity-0 data-visible:pointer-events-auto data-visible:opacity-100 data-present:sm:flex data-visible:starting:opacity-0"
     >
       <Tooltip>
         <TooltipTrigger asChild>

@@ -1,7 +1,8 @@
 // ReUI block: @reui/stats-9 (`npx shadcn@latest view @reui/stats-9` shows the published source)
-import type { ReactNode } from "react"
+import type { CSSProperties, ReactNode } from "react"
 import { Frame, FramePanel } from "@/components/reui/frame"
 
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/cn"
 
 export type StatsBucket = {
@@ -40,61 +41,67 @@ export function OverviewStats({
   return (
     <Frame className="w-full">
       {/* Content */}
-      <FramePanel className="flex flex-col gap-5">
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold">{title}</h3>
-          {action ?? (
-            <span className="text-muted-foreground text-xs tabular-nums">
-              {done} of {total} {doneLabel.toLowerCase()}
-            </span>
-          )}
-        </div>
-
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <span className="text-3xl font-semibold tracking-tight tabular-nums">
-              {percent}%
-            </span>
-            {meta}
-          </div>
-
-          {/* One bar, split by status: the done share and the rest at once. */}
-          <div
-            role="img"
-            aria-label={`${percent}% done`}
-            className="bg-muted flex h-2 w-full overflow-hidden rounded-full"
-          >
-            {buckets.map((bucket) =>
-              bucket.value > 0 ? (
-                <div
-                  key={bucket.id}
-                  className={cn("h-full", bucket.dotClassName)}
-                  style={{
-                    width: `${(bucket.value / Math.max(total, 1)) * 100}%`,
-                  }}
-                />
-              ) : null
+      <FramePanel>
+        <div className="flex flex-col gap-5">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold">{title}</h3>
+            {action ?? (
+              <span className="text-muted-foreground text-xs tabular-nums">
+                {done} of {total} {doneLabel.toLowerCase()}
+              </span>
             )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            {buckets.map((bucket) => (
-              <button
-                key={bucket.id}
-                type="button"
-                onClick={() => onSelectBucket?.(bucket.id)}
-                className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 flex items-center gap-1.5 rounded-sm text-sm transition-colors outline-none focus-visible:ring-2"
-              >
-                <span
-                  aria-hidden="true"
-                  className={cn("size-2 rounded-full", bucket.dotClassName)}
-                />
-                {bucket.label}
-                <span className="text-foreground font-medium tabular-nums">
-                  {bucket.value}
-                </span>
-              </button>
-            ))}
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="text-3xl font-semibold tracking-tight tabular-nums">
+                {percent}%
+              </span>
+              {meta}
+            </div>
+
+            {/* One bar, split by status: the done share and the rest at once. */}
+            <div
+              role="img"
+              aria-label={`${percent}% done`}
+              className="bg-muted flex h-2 w-full overflow-hidden rounded-full"
+            >
+              {buckets.map((bucket) =>
+                bucket.value > 0 ? (
+                  <div
+                    key={bucket.id}
+                    className={cn("h-full w-(--share)", bucket.dotClassName)}
+                    style={
+                      {
+                        "--share": `${(bucket.value / Math.max(total, 1)) * 100}%`,
+                      } as CSSProperties
+                    }
+                  />
+                ) : null
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              {buckets.map((bucket) => (
+                <Button
+                  key={bucket.id}
+                  type="button"
+                  variant="text"
+                  size="inline"
+                  onClick={() => onSelectBucket?.(bucket.id)}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <span
+                    aria-hidden="true"
+                    className={cn("size-2 rounded-full", bucket.dotClassName)}
+                  />
+                  {bucket.label}
+                  <span className="text-foreground font-medium tabular-nums">
+                    {bucket.value}
+                  </span>
+                </Button>
+              ))}
+            </div>
           </div>
         </div>
       </FramePanel>

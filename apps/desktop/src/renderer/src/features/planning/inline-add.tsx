@@ -28,8 +28,9 @@ export function InlineAdd({
     return (
       <Button
         type="button"
-        variant="outline"
-        className="text-muted-foreground hover:text-foreground bg-background/70 h-20 w-full border-dashed"
+        variant="dashed"
+        size="lg"
+        className="w-full"
         aria-label={label}
         onClick={() => setOpen(true)}
       >

@@ -102,7 +102,7 @@ function BoardSkeleton() {
   return (
     <div className="flex gap-3" role="status" aria-label="Loading tasks">
       {Array.from({ length: 4 }, (_, i) => (
-        <div key={i} className="flex w-[17.5rem] shrink-0 flex-col gap-2">
+        <div key={i} className="flex w-72 shrink-0 flex-col gap-2">
           <Skeleton className="h-8 w-1/2" />
           <Skeleton className="h-24 w-full" />
           <Skeleton className="h-24 w-full" />

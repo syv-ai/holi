@@ -214,6 +214,8 @@ export function TaskGridView({
       tableLayout={{
         dense: true,
         rowBorder: true,
+        // Level with the toolbar above, now the grid runs to the pane's edge.
+        edgeInset: true,
         headerSticky: variant === "table",
         columnsVisibility: false,
         columnsResizable: false,
@@ -223,9 +225,7 @@ export function TaskGridView({
       tableClassNames={{
         body: "[&>tr:has(>td:only-child:empty)]:hidden",
         bodyRow:
-          "group/task-row [&>td]:h-9 [&:has([data-task-row=group])>td]:h-11 [&:has([data-task-row=group])>td]:bg-muted/45 [&:has([data-task-row=group])>td]:shadow-none [&:has([data-task-row=group])>td]:hover:bg-muted/45",
-        // Level with the toolbar above, now the grid runs to the pane's edge.
-        edgeCell: "first:ps-4 last:pe-4 lg:first:ps-6 lg:last:pe-6",
+          "group/task-row [&>td]:h-9 [&:has([data-task-row=group])>td]:h-11 [&:has([data-task-row=group])>td]:bg-muted/45 [&:has([data-task-row=group])>td]:hover:bg-muted/45",
       }}
     >
       <section className="flex min-h-0 w-full flex-1 flex-col">
@@ -243,11 +243,13 @@ export function TaskGridView({
                 {notices}
               </div>
             ) : null}
-            <DataGridContainer className="border-b">
-              <DataGridScrollArea>
-                <DataGridTable renderHeader={variant === "table"} />
-              </DataGridScrollArea>
-            </DataGridContainer>
+            <div className="border-b">
+              <DataGridContainer>
+                <DataGridScrollArea>
+                  <DataGridTable renderHeader={variant === "table"} />
+                </DataGridScrollArea>
+              </DataGridContainer>
+            </div>
           </PanelBody>
         )}
       </section>

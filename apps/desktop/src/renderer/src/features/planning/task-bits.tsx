@@ -36,10 +36,7 @@ const CATEGORY_ICON: Record<
 > = {
   backlog: { icon: CircleDashedIcon, className: "text-muted-foreground" },
   unstarted: { icon: CircleIcon, className: "text-muted-foreground" },
-  started: {
-    icon: CircleDotIcon,
-    className: "text-amber-500 dark:text-amber-400",
-  },
+  started: { icon: CircleDotIcon, className: "text-warning" },
   review: { icon: CircleEllipsisIcon, className: "text-info" },
   completed: { icon: CircleCheckIcon, className: "text-success" },
 }
@@ -57,7 +54,7 @@ export function StatusIcon({
 
 export function StatusBadge({ status }: { status: StatusDef }) {
   return (
-    <Badge variant="outline" className="gap-1.5">
+    <Badge variant="outline">
       <StatusIcon status={status} />
       {status.name}
     </Badge>
@@ -76,7 +73,7 @@ const PRIORITY_VARIANT: Record<
 
 export function PriorityBadge({ priority }: { priority: Priority }) {
   return (
-    <Badge variant={PRIORITY_VARIANT[priority]} className="gap-1">
+    <Badge variant={PRIORITY_VARIANT[priority]}>
       <FlagIcon aria-hidden="true" />
       {priorityName(priority)}
     </Badge>
@@ -98,7 +95,7 @@ export function DateBadge({
   return (
     <Badge
       variant={overdue ? "destructive-light" : "outline"}
-      className={cn("gap-1.5 font-normal", !overdue && "bg-background")}
+      className={cn("font-normal", !overdue && "bg-background")}
       aria-label={`${label} ${shortDate(stamp, today)}${overdue ? ", overdue" : ""}`}
     >
       <CalendarDaysIcon
@@ -114,7 +111,7 @@ export function EstimateBadge({ estimate }: { estimate: string }) {
   return (
     <Badge
       variant="outline"
-      className="bg-background gap-1 font-normal"
+      className="bg-background font-normal"
       aria-label={`Estimate ${estimate}`}
     >
       <TimerIcon

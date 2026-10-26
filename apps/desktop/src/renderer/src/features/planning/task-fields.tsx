@@ -307,7 +307,7 @@ function DateField({
           {value !== undefined ? shortDate(value, today) : null}
         </Chip>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-auto p-0">
+      <PopoverContent align="start" className="w-auto">
         <Calendar
           mode="single"
           selected={day}
@@ -447,7 +447,7 @@ function LabelsField({
           {value.length <= 2 ? value.join(", ") : `${value.length} labels`}
         </Chip>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-64 p-0">
+      <PopoverContent align="start" className="w-64">
         <PickList
           placeholder="Find or add a label…"
           options={options}
@@ -489,7 +489,7 @@ function ProjectField({
           {value.split("/").at(-1)}
         </Chip>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-72 p-0">
+      <PopoverContent align="start" className="w-72">
         <PickList
           placeholder="Find or name a project…"
           options={options}
@@ -548,12 +548,14 @@ function EstimateField({
           <span className="tabular-nums">{value}</span>
         </Chip>
       </PopoverTrigger>
-      <PopoverContent align="start" className="flex w-60 flex-col gap-3">
-        <form
+      <PopoverContent align="start" className="w-60">
+        <div
           className="flex flex-col gap-1.5"
-          onSubmit={(event) => {
-            event.preventDefault()
-            commit(draft)
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault()
+              commit(draft)
+            }
           }}
         >
           <Input
@@ -572,7 +574,7 @@ function EstimateField({
           >
             A number and m, h, d or w, like 30m or 1.5d.
           </p>
-        </form>
+        </div>
         <div className="flex flex-wrap gap-1">
           {ESTIMATE_PRESETS.map((preset) => (
             <Button

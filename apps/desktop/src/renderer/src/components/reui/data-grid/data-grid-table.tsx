@@ -38,6 +38,18 @@ import { flexRender, Subscribe } from "@tanstack/react-table"
 import type { Cell, Column, Header, Row } from "@tanstack/react-table"
 import { cn } from "@/lib/cn"
 
+/** The first and last cell's extra class: the `edgeInset` inset, then any `edgeCell`. */
+function edgeCellClassName(props: {
+  tableLayout?: { edgeInset?: boolean }
+  tableClassNames?: { edgeCell?: string }
+}) {
+  return cn(
+    props.tableLayout?.edgeInset &&
+      "first:ps-4 last:pe-4 lg:first:ps-6 lg:last:pe-6",
+    props.tableClassNames?.edgeCell
+  )
+}
+
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Spinner } from "@/components/ui/spinner"
@@ -1499,7 +1511,7 @@ function DataGridTableHeadRowCell<TData extends object>({
             "[&[data-pinned=end][data-last-col=end]]:shadow-[inset_calc(1px*var(--data-grid-dir,1))_0_0_0_var(--border)] [&[data-pinned=start][data-last-col=start]]:shadow-[inset_calc(-1px*var(--data-grid-dir,1))_0_0_0_var(--border)]"
           ),
         header.column.columnDef.meta?.headerClassName,
-        edges.isFirst || edges.isLast ? props.tableClassNames?.edgeCell : ""
+        edges.isFirst || edges.isLast ? edgeCellClassName(props) : ""
       )}
     >
       {isBanded ? (
@@ -2042,7 +2054,7 @@ function DataGridTableBodyRowSkeletonCell<TData extends object>({
         props.tableLayout?.columnsPinnable &&
           column.getCanPin() &&
           "data-pinned:isolate data-pinned:bg-[color:var(--data-grid-surface,var(--data-grid-card-surface,var(--background)))] [&[data-pinned=end][data-last-col=end]]:shadow-[inset_calc(1px*var(--data-grid-dir,1))_0_0_0_var(--border)] [&[data-pinned=start][data-last-col=start]]:shadow-[inset_calc(-1px*var(--data-grid-dir,1))_0_0_0_var(--border)]",
-        edges.isFirst || edges.isLast ? props.tableClassNames?.edgeCell : ""
+        edges.isFirst || edges.isLast ? edgeCellClassName(props) : ""
       )}
     >
       {children}
@@ -2366,7 +2378,7 @@ function DataGridTableBodyRowCell<TData extends object>({
             "[&[data-pinned=start][data-last-col=start]]:shadow-[inset_calc(-1px*var(--data-grid-dir,1))_0_0_0_var(--border)]",
             "[&[data-pinned=end][data-last-col=end]]:shadow-[inset_calc(1px*var(--data-grid-dir,1))_0_0_0_var(--border)]"
           ),
-        edges.isFirst || edges.isLast ? props.tableClassNames?.edgeCell : "",
+        edges.isFirst || edges.isLast ? edgeCellClassName(props) : "",
         selection && dataGridCellSelectionCellClasses
       )}
     >

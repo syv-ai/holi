@@ -38,28 +38,30 @@ export function Navbar({
     <Tabs
       value={value}
       onValueChange={onValueChange}
-      className="flex min-h-0 flex-1 flex-col gap-0"
+      className="min-h-0 flex-1"
     >
-      <header className="border-border flex w-full shrink-0 flex-col gap-3 border-b px-4 pt-4 lg:px-6">
-        {/* Row 1: title + status | people + actions */}
-        <div className="flex min-h-8 items-center justify-between gap-2">
-          <NavbarProject title={title} status={status} />
-          <div className="flex shrink-0 items-center gap-2">
-            <PeopleStack logins={people} max={4} />
-            {actions}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <header className="border-border flex w-full shrink-0 flex-col gap-3 border-b px-4 pt-4 lg:px-6">
+          {/* Row 1: title + status | people + actions */}
+          <div className="flex min-h-8 items-center justify-between gap-2">
+            <NavbarProject title={title} status={status} />
+            <div className="flex shrink-0 items-center gap-2">
+              <PeopleStack logins={people} max={4} />
+              {actions}
+            </div>
           </div>
-        </div>
-        {/* Row 2: the tabs, on the header's bottom edge */}
-        <div className="flex h-9 items-end">
-          <NavbarTabs
-            items={tabs}
-            value={value}
-            onValueChange={onValueChange}
-          />
-        </div>
-      </header>
+          {/* Row 2: the tabs, on the header's bottom edge */}
+          <div className="flex h-9 items-end">
+            <NavbarTabs
+              items={tabs}
+              value={value}
+              onValueChange={onValueChange}
+            />
+          </div>
+        </header>
 
-      {children}
+        {children}
+      </div>
     </Tabs>
   )
 }

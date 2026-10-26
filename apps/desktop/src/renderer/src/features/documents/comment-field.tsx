@@ -88,13 +88,7 @@ export function CommentField({
   }
 
   return (
-    <form
-      className="flex flex-col gap-2"
-      onSubmit={(event) => {
-        event.preventDefault()
-        void submit()
-      }}
-    >
+    <div className="flex flex-col gap-2">
       <Popover open={open}>
         <PopoverAnchor asChild>
           <Textarea
@@ -152,7 +146,7 @@ export function CommentField({
         </PopoverAnchor>
         <PopoverContent
           align="start"
-          className="w-56 p-1"
+          className="w-56"
           // The text box keeps focus: the keys above drive the list.
           onOpenAutoFocus={(event) => event.preventDefault()}
           onCloseAutoFocus={(event) => event.preventDefault()}
@@ -192,10 +186,15 @@ export function CommentField({
             Cancel
           </Button>
         ) : null}
-        <Button type="submit" size="sm" disabled={busy || text.trim() === ""}>
+        <Button
+          type="button"
+          size="sm"
+          disabled={busy || text.trim() === ""}
+          onClick={() => void submit()}
+        >
           {submitLabel}
         </Button>
       </div>
-    </form>
+    </div>
   )
 }

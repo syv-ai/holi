@@ -33,7 +33,7 @@ export function NavbarTabs({ items, value, onValueChange }: NavbarTabsProps) {
             {item.icon}
             {item.label}
             {item.badge != null && (
-              <Badge variant="secondary" className="rounded-full!">
+              <Badge variant="secondary" radius="full">
                 {item.badge}
               </Badge>
             )}
@@ -65,7 +65,8 @@ export function NavbarTabs({ items, value, onValueChange }: NavbarTabsProps) {
                   {item.badge != null && (
                     <Badge
                       variant="secondary"
-                      className="ml-auto rounded-full!"
+                      radius="full"
+                      className="ml-auto"
                     >
                       {item.badge}
                     </Badge>

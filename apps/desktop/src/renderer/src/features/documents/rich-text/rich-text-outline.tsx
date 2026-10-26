@@ -11,7 +11,6 @@ import type { Editor } from "@tiptap/react"
 import { cn } from "@/lib/cn"
 
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 
 import { useRichTextSelector } from "./rich-text-state"
 
@@ -216,9 +215,6 @@ export function useRichTextActiveHeading(
   return outline.length ? Math.min(active, outline.length - 1) : -1
 }
 
-// One 8px step per heading level, on top of the row's own inset.
-const LIST_INDENT = ["", "ps-4", "ps-6"] as const
-
 interface RichTextOutlineListProps {
   outline: RichTextOutlineEntry[]
   activeIndex: number
@@ -286,12 +282,18 @@ export function RichTextOutlineList({
           aria-current={index === activeIndex ? "location" : undefined}
           onFocus={() => setFocused(index)}
           onClick={() => onSelect(index)}
-          className={cn(
-            "text-muted-foreground aria-[current=location]:bg-muted aria-[current=location]:text-foreground dark:aria-[current=location]:bg-muted/50 w-full justify-start font-normal aria-[current=location]:font-medium",
-            LIST_INDENT[entry.depth]
-          )}
+          className="text-muted-foreground aria-[current=location]:bg-muted aria-[current=location]:text-foreground dark:aria-[current=location]:bg-muted/50 w-full justify-start font-normal aria-[current=location]:font-medium"
         >
-          <span className="truncate">{entry.text}</span>
+          {/* One step in per heading level, on top of the row's own inset. */}
+          <span
+            className={cn(
+              "truncate",
+              entry.depth === 1 && "ms-1.5",
+              entry.depth === 2 && "ms-3.5"
+            )}
+          >
+            {entry.text}
+          </span>
         </Button>
       ))}
     </div>
@@ -321,7 +323,7 @@ export function RichTextOutlineRail({
     <nav aria-label={label} className={cn("group/outline", className)}>
       <div
         aria-hidden="true"
-        className="flex w-10 flex-col items-end gap-2.5 py-3 pe-1 transition-opacity duration-150 group-focus-within/outline:opacity-0 group-hover/outline:opacity-0 motion-reduce:transition-none"
+        className="flex w-10 flex-col items-end gap-2.5 py-3 pe-1 motion-respond group-focus-within/outline:opacity-0 group-hover/outline:opacity-0"
       >
         {outline.map((entry, index) => (
           <span
@@ -337,19 +339,14 @@ export function RichTextOutlineRail({
       </div>
       {/* Keeps its one tab stop while hidden, so a keyboard user opens it by focus.
           The inset is menu-tight, so the rows sit close to the card edge. */}
-      <Card
-        size="sm"
-        className="pointer-events-none absolute end-0 top-0 w-56 opacity-0 transition-opacity duration-150 [--card-spacing:--spacing(1)] group-focus-within/outline:pointer-events-auto group-focus-within/outline:opacity-100 group-hover/outline:pointer-events-auto group-hover/outline:opacity-100 motion-reduce:transition-none"
-      >
-        <CardContent>
-          <RichTextOutlineList
-            outline={outline}
-            activeIndex={activeIndex}
-            onSelect={onSelect}
-            className="no-scrollbar supports-[animation-timeline:scroll()]:scroll-fade-y max-h-80 overflow-y-auto p-0.5"
-          />
-        </CardContent>
-      </Card>
+      <div className="bg-card text-card-foreground ring-foreground/10 motion-respond pointer-events-none absolute end-0 top-0 w-56 overflow-hidden rounded-xl p-1 text-sm opacity-0 ring-1 group-focus-within/outline:pointer-events-auto group-focus-within/outline:opacity-100 group-hover/outline:pointer-events-auto group-hover/outline:opacity-100">
+        <RichTextOutlineList
+          outline={outline}
+          activeIndex={activeIndex}
+          onSelect={onSelect}
+          className="no-scrollbar supports-[animation-timeline:scroll()]:scroll-fade-y max-h-80 overflow-y-auto p-0.5"
+        />
+      </div>
     </nav>
   )
 }

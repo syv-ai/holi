@@ -43,7 +43,7 @@ export const RICH_TEXT_TABLE_PROSE = cn(
   "[&_.tiptap_table]:w-full [&_.tiptap_table]:table-fixed [&_.tiptap_table]:border-collapse [&_.tiptap_table]:text-sm",
   "[&_.tiptap_:is(td,th)]:border-border [&_.tiptap_:is(td,th)]:relative [&_.tiptap_:is(td,th)]:border [&_.tiptap_:is(td,th)]:px-3 [&_.tiptap_:is(td,th)]:py-2 [&_.tiptap_:is(td,th)]:text-start [&_.tiptap_:is(td,th)]:align-top",
   "[&_.tiptap_th]:bg-muted [&_.tiptap_th]:text-muted-foreground [&_.tiptap_th]:font-medium",
-  "[&_.tiptap_.selectedCell]:after:bg-primary/10 [&_.tiptap_.selectedCell]:after:pointer-events-none [&_.tiptap_.selectedCell]:after:absolute [&_.tiptap_.selectedCell]:after:inset-0 [&_.tiptap_.selectedCell]:after:content-['']",
+  "[&_.tiptap_.selectedCell]:after:bg-primary/10 [&_.tiptap_.selectedCell]:after:pointer-events-none [&_.tiptap_.selectedCell]:after:absolute [&_.tiptap_.selectedCell]:after:inset-0",
   "[&_.tiptap_.column-resize-handle]:bg-primary [&_.tiptap_.column-resize-handle]:pointer-events-none [&_.tiptap_.column-resize-handle]:absolute [&_.tiptap_.column-resize-handle]:inset-y-0 [&_.tiptap_.column-resize-handle]:-end-px [&_.tiptap_.column-resize-handle]:z-10 [&_.tiptap_.column-resize-handle]:w-0.5",
   "[&_.tiptap.resize-cursor]:cursor-col-resize"
 )

@@ -111,12 +111,11 @@ export function RichTextHighlightPopover({
           <span className="flex">
             <PopoverTrigger asChild>
               <Toggle
-                size="sm"
+                size="icon"
                 aria-label="Highlight"
                 pressed={state.highlight !== null}
                 disabled={!state.canFormat}
                 onMouseDown={keepEditorFocus}
-                className="px-0"
                 data-toolbar-item=""
               >
                 <HighlighterIcon aria-hidden="true" />

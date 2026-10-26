@@ -1,7 +1,6 @@
 /**
- * One vault app on the Apps page, on ReUI's c-card-7 (`components/examples/
- * c-card-7.tsx`, kept as installed): the inset image is the app's preview,
- * the picture taken the last time it ran here, or its own icon on a muted
+ * One vault app on the Apps page, on ReUI's c-card-7 example: the inset
+ * image is the app's preview, the picture taken the last time it ran here, or its own icon on a muted
  * plate when it has none; the Trending badge says whether the app is shared
  * through the vault or personal to this machine; Featured is its folder; the
  * blurb is its manifest's description; Get Started opens it. The name, which
@@ -156,74 +155,80 @@ export function AppCard({
 
   const card = (
     <Card className="w-full">
-      <CardContent className="flex flex-col gap-4">
-        <div className="bg-muted relative flex h-48 w-full items-center justify-center overflow-hidden rounded-lg">
-          {preview.kind === "loading" ? (
-            <Skeleton
-              className="size-full"
-              aria-label={`Loading the preview of ${name}`}
-            />
-          ) : preview.url !== null ? (
-            <img
-              src={preview.url}
-              alt={`${name}, as it last looked`}
-              className="size-full object-cover object-left-top"
-            />
-          ) : (
-            <Icon className="text-muted-foreground size-12" />
-          )}
-        </div>
-
-        <div className="flex items-center justify-between gap-5">
-          <Badge variant="outline">
-            {personal ? (
-              <LockIcon aria-hidden="true" />
+      <CardContent>
+        <div className="flex flex-col gap-4">
+          <div className="bg-muted relative flex h-48 w-full items-center justify-center overflow-hidden rounded-lg">
+            {preview.kind === "loading" ? (
+              <Skeleton
+                className="size-full"
+                aria-label={`Loading the preview of ${name}`}
+              />
+            ) : preview.url !== null ? (
+              <img
+                src={preview.url}
+                alt={`${name}, as it last looked`}
+                className="size-full object-cover object-left-top"
+              />
             ) : (
-              <UsersIcon aria-hidden="true" />
+              <Icon className="text-muted-foreground size-12" />
             )}
-            {personal ? "Personal" : "Shared"}
-          </Badge>
-          <div className="flex min-w-0 items-center gap-1">
-            <FolderIcon className="size-4 shrink-0" aria-hidden="true" />
-            <span className="text-secondary-foreground truncate text-xs font-medium">
-              {folder ?? "Vault root"}
-            </span>
           </div>
-        </div>
 
-        <div className="flex flex-col gap-0.5">
-          <CardTitle className="truncate">{name}</CardTitle>
-          {description.kind === "loading" ? (
-            <div
-              className="flex flex-col gap-1.5 py-0.5"
-              aria-label="Loading the description"
-            >
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-2/3" />
+          <div className="flex items-center justify-between gap-5">
+            <Badge variant="outline">
+              {personal ? (
+                <LockIcon aria-hidden="true" />
+              ) : (
+                <UsersIcon aria-hidden="true" />
+              )}
+              {personal ? "Personal" : "Shared"}
+            </Badge>
+            <div className="flex min-w-0 items-center gap-1">
+              <FolderIcon className="size-4 shrink-0" aria-hidden="true" />
+              <span className="text-secondary-foreground truncate text-xs font-medium">
+                {folder ?? "Vault root"}
+              </span>
             </div>
-          ) : description.kind === "error" ? (
-            <div className="flex items-center justify-between gap-2">
+          </div>
+
+          <div className="flex flex-col gap-0.5">
+            <CardTitle>
+              <span className="block truncate">{name}</span>
+            </CardTitle>
+            {description.kind === "loading" ? (
+              <div
+                className="flex flex-col gap-1.5 py-0.5"
+                aria-label="Loading the description"
+              >
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-2/3" />
+              </div>
+            ) : description.kind === "error" ? (
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-muted-foreground text-sm">
+                  Couldn't read its description.
+                </p>
+                <Button variant="outline" size="sm" onClick={retry}>
+                  <RefreshCwIcon data-icon="inline-start" aria-hidden="true" />
+                  Retry
+                </Button>
+              </div>
+            ) : description.text === null ? (
               <p className="text-muted-foreground text-sm">
-                Couldn't read its description.
+                No description yet.
               </p>
-              <Button variant="outline" size="sm" onClick={retry}>
-                <RefreshCwIcon data-icon="inline-start" aria-hidden="true" />
-                Retry
-              </Button>
-            </div>
-          ) : description.text === null ? (
-            <p className="text-muted-foreground text-sm">No description yet.</p>
-          ) : (
-            <p className="text-foreground line-clamp-3 text-sm">
-              {description.text}
-            </p>
-          )}
-        </div>
+            ) : (
+              <p className="text-foreground line-clamp-3 text-sm">
+                {description.text}
+              </p>
+            )}
+          </div>
 
-        <Button onClick={onOpen} aria-label={`Open ${name}`}>
-          Open
-          <ArrowRightIcon aria-hidden="true" />
-        </Button>
+          <Button onClick={onOpen} aria-label={`Open ${name}`}>
+            Open
+            <ArrowRightIcon aria-hidden="true" />
+          </Button>
+        </div>
       </CardContent>
     </Card>
   )
@@ -297,17 +302,19 @@ export function AppCard({
 export function AppCardSkeleton() {
   return (
     <Card className="w-full" aria-hidden="true">
-      <CardContent className="flex flex-col gap-4">
-        <Skeleton className="h-48 w-full" />
-        <div className="flex items-center justify-between gap-5">
-          <Skeleton className="h-5 w-20" />
-          <Skeleton className="h-4 w-24" />
+      <CardContent>
+        <div className="flex flex-col gap-4">
+          <Skeleton className="h-48 w-full" />
+          <div className="flex items-center justify-between gap-5">
+            <Skeleton className="h-5 w-20" />
+            <Skeleton className="h-4 w-24" />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Skeleton className="h-5 w-1/2" />
+            <Skeleton className="h-4 w-full" />
+          </div>
+          <Skeleton className="h-8 w-full" />
         </div>
-        <div className="flex flex-col gap-1.5">
-          <Skeleton className="h-5 w-1/2" />
-          <Skeleton className="h-4 w-full" />
-        </div>
-        <Skeleton className="h-8 w-full" />
       </CardContent>
     </Card>
   )
