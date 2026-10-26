@@ -19,7 +19,7 @@ import {
 } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
 import { tryGit } from '../git'
-import { isOrdinaryNotePath } from '../vault/vault-store'
+import { isMarkdownNotePath, isOrdinaryNotePath } from '../vault/vault-store'
 import { writeScreenshot } from '../screenshot-files'
 import { readVaultSettings } from '../vault/settings'
 import { withFileLock, writeAtomic } from '../vault/vault-files'
@@ -255,10 +255,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       const temporary = `${abs}.holi-${process.pid}-${Date.now()}.local.tmp`
       try {
         const initial = await readFromStart(handle)
-        if (
-          revision(initial) !== expected ||
-          (await exactPath(ctx.root, rel)) !== abs
-        ) {
+        if (revision(initial) !== expected || (await exactPath(ctx.root, rel)) !== abs) {
           throw new CapabilityError('CONFLICT', 'Stale revision')
         }
         const tempHandle = await open(
@@ -303,10 +300,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       const handle = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW)
       try {
         const existing = await readFromStart(handle)
-        if (
-          revision(existing) !== expected ||
-          (await exactPath(ctx.root, rel)) !== abs
-        ) {
+        if (revision(existing) !== expected || (await exactPath(ctx.root, rel)) !== abs) {
           throw new CapabilityError('CONFLICT', 'Stale revision')
         }
       } finally {
@@ -464,7 +458,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     run: async (ctx, { path, text, base }): Promise<{ path: string }> => {
       requireOpen(ctx)
       const rel = writablePath(path)
-      if (!rel.endsWith('.md')) {
+      if (!isMarkdownNotePath(rel)) {
         throw new CapabilityError('BAD_REQUEST', `only a note (.md) can be written: ${rel}`)
       }
       const abs = await writableFile(ctx, rel)

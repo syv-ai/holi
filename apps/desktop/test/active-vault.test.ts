@@ -437,6 +437,77 @@ describe('ActiveVault — commit', () => {
     expect(committed).toHaveLength(1)
   })
 
+  it('deliverNow joins a commit already in flight before verifying and pushing', async () => {
+    const { active, dir, origin } = await vault({
+      commitQuietMs: 60_000,
+      pushQuietMs: 60_000,
+      healIntervalMs: 60_000,
+      pullIntervalMs: 60_000,
+    })
+    const repo = active.repo
+    const commit = repo.commitAll.bind(repo)
+    let started!: () => void
+    let release!: () => void
+    const entered = new Promise<void>((resolve) => (started = resolve))
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    repo.commitAll = async (...args) => {
+      started()
+      await gate
+      return commit(...args)
+    }
+    await writeFile(join(dir, 'settled.md'), 'current\n')
+    const committing = active.commitNow()
+    await entered
+    let verified = false
+    const delivery = active.deliverNow(async () => {
+      verified = true
+      return (await plainGit(dir, ['show', 'HEAD:settled.md'])) === 'current\n'
+    })
+    await sleep(20)
+    expect(verified).toBe(false)
+    release()
+    await committing
+    expect(await delivery).toBe(true)
+    expect(verified).toBe(true)
+    expect(await plainGit(origin, ['show', 'main:settled.md'])).toBe('current\n')
+  })
+
+  it('deliverNow joins an in-flight push before finishing', async () => {
+    const { active, dir, origin } = await vault({
+      commitQuietMs: 60_000,
+      pushQuietMs: 60_000,
+      healIntervalMs: 60_000,
+      pullIntervalMs: 60_000,
+    })
+    const repo = active.repo
+    const push = repo.push.bind(repo)
+    let started!: () => void
+    let release!: () => void
+    const entered = new Promise<void>((resolve) => (started = resolve))
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    repo.push = async () => {
+      started()
+      await gate
+      return push()
+    }
+    await writeFile(join(dir, 'pushed.md'), 'current\n')
+    await active.commitNow()
+    const pushing = active.pushNow()
+    await entered
+    let verified = false
+    const delivery = active.deliverNow(async () => {
+      verified = true
+      return true
+    })
+    await sleep(20)
+    expect(verified).toBe(false)
+    release()
+    await pushing
+    expect(await delivery).toBe(true)
+    expect(verified).toBe(true)
+    expect(await plainGit(origin, ['show', 'main:pushed.md'])).toBe('current\n')
+  })
+
   it('commitNow() returns null and commits nothing on a clean tree', async () => {
     const { active, dir } = await vault(quick)
     const before = await count(dir)

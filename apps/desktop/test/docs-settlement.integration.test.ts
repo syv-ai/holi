@@ -30,15 +30,16 @@ function realRepoServices(root: string, push?: (repo: GitRepo) => Promise<void>)
       root,
       syncState: () => ({ kind: 'up-to-date' as const }),
       heldBack: () => [],
-      commitNow: () => repo.commitAll('CLI note mutation', ['integration.md']),
-      pushNow: async () => {
+      deliverNow: async (verify) => {
+        await repo.commitAll('CLI note mutation', ['integration.md'])
+        if (!(await verify())) return false
         if (push) await push(repo)
         else await repo.push()
+        return true
       },
     }),
     reports: { get: () => ({ focusedPath: null, openPaths: [], recents: [] }) } as never,
     members: { get: async () => [] } as never,
-    claims: async () => [],
   })(REMOTE, root)
 }
 
@@ -65,20 +66,18 @@ describe('CLI note settlement with a real local origin', () => {
       root,
       syncState: () => state,
       heldBack: () => [],
-      commitNow: async () => {
+      deliverNow: async (verify) => {
         await plainGit(root, ['add', '-A'])
         const changed = await plainGit(root, ['diff', '--cached', '--quiet']).then(
           () => false,
           () => true,
         )
-        if (!changed) return null
-        await plainGit(root, ['commit', '-m', 'CLI note mutation'])
-        return plainGit(root, ['rev-parse', 'HEAD'])
-      },
-      pushNow: async () => {
+        if (changed) await plainGit(root, ['commit', '-m', 'CLI note mutation'])
+        if (!(await verify())) return false
         if (state.kind === 'offline' || state.kind === 'no-access')
           throw new Error('remote rejected')
         await plainGit(root, ['push', 'origin', 'HEAD:main'])
+        return true
       },
       snapshot: () => snapshot,
       refresh: async () => {
@@ -90,7 +89,6 @@ describe('CLI note settlement with a real local origin', () => {
       active: () => active,
       reports: reports as never,
       members: { get: async () => [] } as never,
-      claims: async () => [],
     })
     const registry = createCapabilityRegistry()
     registry.register(
@@ -212,17 +210,15 @@ describe('CLI note settlement with a real local origin', () => {
         root,
         syncState: () => ({ kind: 'up-to-date' as const }),
         heldBack: () => [],
-        commitNow: async () => {
+        deliverNow: async (verify) => {
           await writeFile(join(root, 'integration.md'), 'rewritten')
-          return repo.commitAll('Hook rewrite', ['integration.md'])
-        },
-        pushNow: async () => {
+          await repo.commitAll('Hook rewrite', ['integration.md'])
+          if (!(await verify())) return false
           throw new Error('must not push a rewritten note')
         },
       }),
       reports: { get: () => ({ focusedPath: null, openPaths: [], recents: [] }) } as never,
       members: { get: async () => [] } as never,
-      claims: async () => [],
     })(REMOTE, root)
 
     expect(await core.settle('integration.md', digest('requested'))).toMatchObject({
@@ -275,14 +271,15 @@ describe('CLI note settlement with a real local origin', () => {
         root,
         syncState: () => ({ kind: 'up-to-date' as const }),
         heldBack: () => [],
-        commitNow: () => repo.commitAll('Add first note', ['first.md']),
-        pushNow: async () => {
+        deliverNow: async (verify) => {
+          await repo.commitAll('Add first note', ['first.md'])
+          if (!(await verify())) return false
           await repo.push()
+          return true
         },
       }),
       reports: { get: () => ({ focusedPath: null, openPaths: [], recents: [] }) } as never,
       members: { get: async () => [] } as never,
-      claims: async () => [],
     })
 
     const result = await core(REMOTE, root).settle('first.md', digest('first'))
