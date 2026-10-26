@@ -30,7 +30,7 @@ function realRepoServices(root: string, push?: (repo: GitRepo) => Promise<void>)
       root,
       syncState: () => ({ kind: 'up-to-date' as const }),
       heldBack: () => [],
-      deliverNow: async (verify) => {
+      deliverNow: async (_path, verify) => {
         await repo.commitAll('CLI note mutation', ['integration.md'])
         if (!(await verify())) return false
         if (push) await push(repo)
@@ -66,7 +66,7 @@ describe('CLI note settlement with a real local origin', () => {
       root,
       syncState: () => state,
       heldBack: () => [],
-      deliverNow: async (verify) => {
+      deliverNow: async (_path, verify) => {
         await plainGit(root, ['add', '-A'])
         const changed = await plainGit(root, ['diff', '--cached', '--quiet']).then(
           () => false,
@@ -235,7 +235,7 @@ describe('CLI note settlement with a real local origin', () => {
         root,
         syncState: () => ({ kind: 'up-to-date' as const }),
         heldBack: () => [],
-        deliverNow: async (verify) => {
+        deliverNow: async (_path, verify) => {
           await writeFile(join(root, 'integration.md'), 'rewritten')
           await repo.commitAll('Hook rewrite', ['integration.md'])
           if (!(await verify())) return false
@@ -296,7 +296,7 @@ describe('CLI note settlement with a real local origin', () => {
         root,
         syncState: () => ({ kind: 'up-to-date' as const }),
         heldBack: () => [],
-        deliverNow: async (verify) => {
+        deliverNow: async (_path, verify) => {
           await repo.commitAll('Add first note', ['first.md'])
           if (!(await verify())) return false
           await repo.push()

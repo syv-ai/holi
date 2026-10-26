@@ -81,7 +81,7 @@ export interface ActiveVault {
   /** Commit whatever is dirty, now — ⌘S, vault switch, quit. */
   commitNow(): Promise<string | null>
   /** Drain commits, verify their content, then push and wait for in-flight work. */
-  deliverNow(verify: () => Promise<boolean>): Promise<boolean>
+  deliverNow(path: string, verify: () => Promise<boolean>): Promise<boolean>
   /**
    * Push local commits now, best-effort. Recovers from a non-fast-forward
    * rejection by pulling inline and retrying (a conflicting pull routes to the
@@ -237,9 +237,9 @@ export async function openActiveVault(args: {
   let pushInFlight = false
   // A CLI delivery owns verification between committing and deciding whether
   // that commit is eligible to leave. A failed check quarantines pushes until
-  // a later verified delivery succeeds.
+  // that path passes a later verification.
   let deliveryVerifying = false
-  let rejectedDelivery = false
+  const rejectedDeliveries = new Set<string>()
   let lastFocusPull = 0
   /** The last network attempt failed. A flag rather than a state, so the
    *  `finally` that clears `syncing` cannot overwrite it. */
@@ -565,7 +565,7 @@ export async function openActiveVault(args: {
    *  landed commit, so continuous typing pushes a handful of times rather than
    *  once per idle debounce. */
   function schedulePush(): void {
-    if (closed || deliveryVerifying || rejectedDelivery) return
+    if (closed || deliveryVerifying || rejectedDeliveries.size > 0) return
     if (pushTimer !== null) clearTimeout(pushTimer)
     pushTimer = setTimeout(() => {
       pushTimer = null
@@ -594,7 +594,7 @@ export async function openActiveVault(args: {
       manualPause !== null ||
       conflictPaths !== null ||
       deliveryVerifying ||
-      rejectedDelivery
+      rejectedDeliveries.size > 0
     ) return
     // Single-flight against itself, the pull loop, and a commit, all of which
     // touch refs or the index. Claimed synchronously, before the first await.
@@ -701,7 +701,7 @@ export async function openActiveVault(args: {
       }
       return maybeCommit()
     },
-    async deliverNow(verify) {
+    async deliverNow(path, verify) {
       const waitForSync = async () => {
         while (!closed && (committing || pullInFlight || pushInFlight)) {
           await new Promise((resolve) => setTimeout(resolve, 10))
@@ -715,65 +715,54 @@ export async function openActiveVault(args: {
       // pushes) cannot race the verification window. Join any push already
       // underway before this delivery creates its commit.
       deliveryVerifying = true
-      await waitForSync()
-      if (closed) {
-        deliveryVerifying = false
-        return false
-      }
-      const status = await args.repo.status().catch(() => null)
-      if (status === null || blockedReason(status) !== null || manualPause !== null) {
-        deliveryVerifying = false
-        return false
-      }
-      await maybeCommit(false, true)
-      await waitForSync()
-      if (closed) {
-        deliveryVerifying = false
-        return false
-      }
-      const afterCommit = await args.repo.status().catch(() => null)
-      if (afterCommit === null || blockedReason(afterCommit) !== null || manualPause !== null) {
-        deliveryVerifying = false
-        return false
-      }
-      if (!(await verify())) {
-        rejectedDelivery = true
-        deliveryVerifying = false
-        scheduleCommit()
-        return false
-      }
-      rejectedDelivery = false
-      deliveryVerifying = false
-      // A watcher tick that fired during verification may have declined to
-      // commit. Resume unrelated edits now; the push quarantine, if any, still
-      // prevents their commits from carrying rejected work to the remote.
-      scheduleCommit()
-      // A push already in progress may have started before this delivery's
-      // synchronous claim. It was joined above, before our commit was made.
-      await pushNow()
-      await waitForSync()
-      if (closed) return false
-      const latest = await args.repo.status().catch(() => null)
-      if (latest === null || blockedReason(latest) !== null || manualPause !== null) return false
-      if (latest.dirty) {
-        if ((await maybeCommit(false, true)) !== null) {
-          await waitForSync()
-          if (closed || !(await verify())) {
-            rejectedDelivery = true
-            return false
-          }
-          rejectedDelivery = false
+      try {
+        await waitForSync()
+        if (closed) return false
+        const status = await args.repo.status().catch(() => null)
+        if (status === null || blockedReason(status) !== null || manualPause !== null) return false
+        await maybeCommit(false, true)
+        await waitForSync()
+        if (closed) return false
+        const afterCommit = await args.repo.status().catch(() => null)
+        if (afterCommit === null || blockedReason(afterCommit) !== null || manualPause !== null) return false
+        if (!(await verify())) {
+          rejectedDeliveries.add(path)
+          scheduleCommit()
+          return false
         }
-      }
-      const finalStatus = await args.repo.status().catch(() => null)
-      if (finalStatus === null || blockedReason(finalStatus) !== null || manualPause !== null) {
-        return false
-      }
-      if (finalStatus.ahead > 0) {
+        rejectedDeliveries.delete(path)
+        // A watcher tick that fired during verification may have declined to
+        // commit. Resume unrelated edits; no automatic push may run while any
+        // previously rejected path remains quarantined.
+        scheduleCommit()
+        schedulePush()
         await pushNow()
         await waitForSync()
+        if (closed) return false
+        const latest = await args.repo.status().catch(() => null)
+        if (latest === null || blockedReason(latest) !== null || manualPause !== null) return false
+        if (latest.dirty) {
+          if ((await maybeCommit(false, true)) !== null) {
+            await waitForSync()
+            if (closed || !(await verify())) {
+              rejectedDeliveries.add(path)
+              return false
+            }
+            rejectedDeliveries.delete(path)
+            schedulePush()
+          }
+        }
+        const finalStatus = await args.repo.status().catch(() => null)
+        if (finalStatus === null || blockedReason(finalStatus) !== null || manualPause !== null) return false
+        if (finalStatus.ahead > 0) {
+          await pushNow()
+          await waitForSync()
+        }
+        return !closed
+      } finally {
+        deliveryVerifying = false
+        if (rejectedDeliveries.size === 0) schedulePush()
       }
-      return !closed
     },
     pushNow,
     onFocus() {
