@@ -113,7 +113,7 @@ export function NoMatchingLines({ onClear }: { onClear: () => void }) {
       title="No matching lines"
       description="Nothing in the log matches this search and these filters."
       action={{ label: "Clear filters", onClick: onClear }}
-      className="h-auto py-6"
+      className="h-auto"
     />
   )
 }
@@ -207,7 +207,7 @@ export function LogTable<T extends LogLine>({
             <ChevronRightIcon
               aria-hidden
               className={cn(
-                "transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+                "motion-respond motion-reduce:transition-none",
                 row.getIsExpanded() && "rotate-90"
               )}
             />
@@ -271,7 +271,6 @@ export function LogTable<T extends LogLine>({
       emptyMessage={emptyMessage}
       tableLayout={{ dense: true, headerSticky: true, headerBackground: false }}
       tableClassNames={{
-        edgeCell: "first:ps-3 last:pe-3",
         bodyRow: "[&:has([aria-expanded=true])]:bg-muted/30",
       }}
     >

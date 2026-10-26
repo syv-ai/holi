@@ -1,9 +1,9 @@
 /**
  * The app, once someone is signed in: what keeps a vault alive (opening it in
- * main, settings that follow the disk, the clock), the shell (ReUI's
- * app-shell-21 as published, `components/blocks/app-shell-21`) and the two flows that leave
- * the open vault, switching and adding one, which ask first when leaving would
- * stop something.
+ * main, settings that follow the disk, the clock), the shell
+ * (`app-shell.tsx`, adapted from ReUI's app-shell-21 block) and the two flows
+ * that leave the open vault, switching and adding one, which ask first when
+ * leaving would stop something.
  *
  * A vault's theme file (`.holi/settings/theme.css`) does not reach the screen
  * here: the fresh frontend is shadcn's neutral theme until theming is rebuilt

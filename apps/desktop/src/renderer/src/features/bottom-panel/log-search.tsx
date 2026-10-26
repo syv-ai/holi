@@ -67,7 +67,7 @@ export const faceValue = (face: (value: string) => ReactNode, empty: string) =>
   }
 
 /** Short operator words keep the builder's rows narrow. */
-export const COMPACT_OPERATORS: FilterOperatorLabels = {
+const COMPACT_OPERATORS: FilterOperatorLabels = {
   is_not: "is not",
   is_any_of: "any of",
   is_none_of: "none of",
@@ -160,7 +160,7 @@ export function LogSearch({
           <PopoverContent
             align="end"
             aria-label="Filters"
-            className="w-[36rem] max-w-[90vw]"
+            className="w-144 max-w-(--radix-popover-content-available-width)"
             onClick={(e) => e.stopPropagation()}
           >
             <Filters

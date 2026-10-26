@@ -81,7 +81,7 @@ export function StatusBarItem({
           aria-label={label}
           aria-pressed={pressed}
           onClick={onClick}
-          className="text-muted-foreground aria-pressed:text-foreground font-normal [&_svg:not([class*='size-'])]:size-3.5"
+          className="text-muted-foreground aria-pressed:text-foreground font-normal"
         >
           {children}
         </Button>
@@ -92,7 +92,7 @@ export function StatusBarItem({
 }
 
 /** What `sync.info` answers: the branch, the tree, ahead and behind. */
-export interface SyncInfoView {
+interface SyncInfoView {
   branch: string
   dirty: boolean
   ahead: number

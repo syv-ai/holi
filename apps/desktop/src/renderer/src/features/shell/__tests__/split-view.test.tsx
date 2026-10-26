@@ -280,13 +280,19 @@ test("dragging a strip tab onto the view's right part opens a gap there, and the
   await waitFor(() => expect(target.dataset.dropSlot).toBe("insert:1"))
   // The view in front shrinks to the left half; the gap names the tab.
   const body = document.querySelector<HTMLElement>("[data-preview-member]")!
-  expect([body.style.left, body.style.width]).toEqual(["0px", "500px"])
+  expect([
+      body.style.getPropertyValue("--span-left"),
+      body.style.getPropertyValue("--span-width"),
+    ]).toEqual(["0px", "500px"])
   const gap = document.querySelector<HTMLElement>("[data-drop-gap]")!
   expect(gap.textContent).toContain("A")
   // Across to the left part: the gap moves there, the view the right half.
   fireEvent(target, at(createEvent.dragOver(target, { dataTransfer }), 100))
   await waitFor(() => expect(target.dataset.dropSlot).toBe("insert:0"))
-  expect([body.style.left, body.style.width]).toEqual(["500px", "500px"])
+  expect([
+      body.style.getPropertyValue("--span-left"),
+      body.style.getPropertyValue("--span-width"),
+    ]).toEqual(["500px", "500px"])
   fireEvent(target, at(createEvent.dragOver(target, { dataTransfer }), 900))
   fireEvent(target, at(createEvent.drop(target, { dataTransfer }), 900))
   await waitFor(() => expect(views()).toHaveLength(2))

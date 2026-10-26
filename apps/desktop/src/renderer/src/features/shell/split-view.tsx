@@ -10,9 +10,12 @@ import {
 import { createPortal } from "react-dom"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import { MotionConfig } from "motion/react"
-import { Separator } from "motion-panels/react"
 
-import { Panel, PanelGroup } from "@/components/ui/motion-panels"
+import {
+  Panel,
+  PanelGroup,
+  PanelSeparator,
+} from "@/components/ui/motion-panels"
 import { cn } from "@/lib/cn"
 import { shellWorkspaceAtom } from "@/state/shell-tabs"
 import {
@@ -125,17 +128,9 @@ type Preview =
   /** The member at `index` is replaced (or swapped), whole. */
   | { kind: "replace"; index: number }
 
-/** The house curve for what slides: the reveal's 200ms, no bounce, and
- *  nothing under reduced motion. */
-const SLIDE =
-  "transition-[left,width] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
-
-/** A panel while a tab is dragged: the box its member is laid out from,
- *  letting it out so a shrunk member can sit where the drop will put it.
- *  The library clips inline, so this has to win over that. */
-function panelWhileDragging(dragging: string | null): string | false {
-  return dragging !== null && "relative overflow-visible!"
-}
+/** The house curve for what slides: no bounce, and nothing under reduced
+ *  motion. */
+const SLIDE = "motion-slide motion-reduce:transition-none"
 
 export function SplitView({
   entryId,
@@ -450,13 +445,17 @@ export function SplitView({
         style={
           span === undefined
             ? undefined
-            : { left: span.offset, width: span.width }
+            : ({
+                "--span-left": `${span.offset}px`,
+                "--span-width": `${span.width}px`,
+              } as CSSProperties)
         }
         className={cn(
           "flex h-full min-h-0 min-w-0",
           dragging !== null
             ? "absolute inset-y-0 left-0 w-full"
             : "relative w-full",
+          span !== undefined && "left-(--span-left) w-(--span-width)",
           landing ? "transition-none" : SLIDE
         )}
       >
@@ -467,7 +466,14 @@ export function SplitView({
       children.push(
         <Panel
           key="fill"
-          className={cn("min-h-0 min-w-0", panelWhileDragging(dragging))}
+          // While a tab is dragged, the box its member is laid out from lets
+          // it out, so a shrunk member can sit where the drop will put it.
+          // The library clips inline, so this has to win over that.
+          className={
+            dragging !== null
+              ? "relative min-h-0 min-w-0 overflow-visible!"
+              : "min-h-0 min-w-0"
+          }
         >
           {body}
         </Panel>
@@ -486,7 +492,11 @@ export function SplitView({
               onShareChange(member.key, Number.parseFloat(size) / 100)
             }
           }}
-          className={cn("min-h-0", panelWhileDragging(dragging))}
+          className={
+            dragging !== null
+              ? "relative min-h-0 overflow-visible!"
+              : "min-h-0"
+          }
         >
           {body}
         </Panel>
@@ -594,20 +604,18 @@ function DropPreview({
           data-drop-gap=""
           style={
             {
-              width: gap.width,
-              transform: `translateX(${gap.start}px)`,
+              "--gap-width": `${gap.width}px`,
+              "--gap-start": `${gap.start}px`,
             } as CSSProperties
           }
           className={cn(
-            "absolute inset-y-0 left-0 p-1.5",
+            "absolute inset-y-0 left-0 w-(--gap-width) translate-x-(--gap-start) p-1.5",
             open ? "opacity-100" : "opacity-0",
-            open && wasOpen
-              ? "transition-[transform,opacity] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
-              : "transition-opacity duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]",
+            open && wasOpen ? "motion-slide" : "motion-fade",
             "motion-reduce:transition-none"
           )}
         >
-          <Label
+          <DropLabel
             tab={dragged}
             className="bg-muted/40 border-border border border-dashed"
           />
@@ -615,12 +623,12 @@ function DropPreview({
       )}
       {rest === null ? null : (
         <Box at={rest}>
-          <Label tab={fills!} className="bg-muted ring-border ring-1" />
+          <DropLabel tab={fills!} className="bg-muted ring-border ring-1" />
         </Box>
       )}
       {replaced === null ? null : (
         <Box at={replaced} key={`replace-${preview!.index}`}>
-          <Label tab={dragged} className="bg-muted ring-primary/50 ring-2" />
+          <DropLabel tab={dragged} className="bg-muted ring-primary/50 ring-2" />
         </Box>
       )}
       {moving === null ||
@@ -632,8 +640,12 @@ function DropPreview({
           </Box>
           <div
             data-drop-line=""
-            style={{ left: geometry.edges[preview.index]! - 1 }}
-            className="bg-primary absolute inset-y-1.5 w-0.5 rounded-full"
+            style={
+              {
+                "--line-left": `${geometry.edges[preview.index]! - 1}px`,
+              } as CSSProperties
+            }
+            className="bg-primary absolute inset-y-1.5 left-(--line-left) w-0.5 rounded-full"
           />
         </>
       )}
@@ -651,8 +663,13 @@ function Box({
 }) {
   return (
     <div
-      style={{ left: at.left, width: at.width }}
-      className="animate-in fade-in-0 absolute inset-y-0 p-1.5 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:animate-none"
+      style={
+        {
+          "--box-left": `${at.left}px`,
+          "--box-width": `${at.width}px`,
+        } as CSSProperties
+      }
+      className="motion-in-fade absolute inset-y-0 left-(--box-left) w-(--box-width) p-1.5"
     >
       {children}
     </div>
@@ -660,7 +677,7 @@ function Box({
 }
 
 /** A view's mark and title, centred in its place. */
-function Label({
+function DropLabel({
   tab,
   className,
 }: {
@@ -710,24 +727,11 @@ function LineSeparator({
   landing: boolean
 }) {
   return (
-    <Separator
-      data-slot="panel-separator"
+    <PanelSeparator
+      variant="line"
       aria-label="Resize view"
-      style={
-        shift === "hidden"
-          ? { opacity: 0 }
-          : shift === undefined
-            ? undefined
-            : { transform: `translateX(${shift}px)` }
-      }
-      className={cn(
-        "bg-border relative z-10 w-px shrink-0 cursor-col-resize outline-hidden",
-        landing
-          ? "transition-none"
-          : "transition-[color,background-color,transform,opacity] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
-        "after:absolute after:inset-y-0 after:-inset-x-1 after:content-['']",
-        "hover:bg-ring data-crossing:bg-ring data-resizing:bg-ring focus-visible:bg-ring"
-      )}
+      shift={shift}
+      landing={landing}
     />
   )
 }

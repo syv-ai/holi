@@ -33,7 +33,7 @@ import { switchBranchAtom } from "@/state/vaults"
  */
 
 /** What `sync.branches` answers. */
-export interface BranchListView {
+interface BranchListView {
   current: string | null
   local: { name: string; upstream: string | null }[]
   remote: { name: string }[]
@@ -255,7 +255,8 @@ export function BranchPicker({ trigger }: { trigger: ReactNode }) {
       <PopoverContent
         align="start"
         side="top"
-        className="w-72 p-0"
+        variant="flush"
+        className="w-72"
         aria-label="Switch branch"
       >
         {refusal === null ? null : (

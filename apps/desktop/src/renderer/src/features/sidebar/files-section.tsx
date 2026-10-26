@@ -29,7 +29,6 @@ import {
   TASKS_CLAIM,
 } from "@holi/shared"
 import { cn } from "@/lib/cn"
-import { ARRIVE } from "./documents-nav"
 
 import {
   AlertDialog,
@@ -968,7 +967,7 @@ export function FilesSection({
   const focused = empty ? null : (tree.getSelectedItems()[0] ?? null)
 
   return (
-    <SidebarGroup className="min-h-0 flex-1 px-2 pb-0">
+    <SidebarGroup className="min-h-0 flex-1">
       <SidebarGroupLabel>Files</SidebarGroupLabel>
       {/* New document sits beside the menu, where the section's actions are. */}
       <Tooltip>
@@ -1033,12 +1032,8 @@ export function FilesSection({
               }}
               // Rows fade out toward the foot; at the end of the list the
               // bottom padding lifts the last row clear of the fade.
-              style={{
-                maskImage:
-                  "linear-gradient(to bottom, #000 calc(100% - 3rem), transparent calc(100% - 1rem))",
-              }}
               className={cn(
-                "relative min-h-0 flex-1 overflow-y-auto pb-12 overscroll-contain rounded-md transition-colors",
+                "fade-foot relative min-h-0 flex-1 overflow-y-auto pb-12 overscroll-contain rounded-md motion-respond",
                 "data-dropping:bg-foreground/5 data-dropping:ring-ring/50 data-dropping:ring-1"
               )}
             >
@@ -1079,19 +1074,11 @@ export function FilesSection({
                           return next
                         })
                       }
-                      className={cn(
-                        arrived.has(item.getId()) &&
-                          cn(
-                            ARRIVE,
-                            "slide-in-from-top-1 motion-reduce:slide-in-from-top-0"
-                          )
-                      )}
+                      arrived={arrived.has(item.getId())}
                     >
                       <TreeItemLabel
                         className={cn(
                           "hover:bg-foreground/5 bg-transparent",
-                          // The folder arrow turns rather than snaps.
-                          "[&>svg:first-child]:transition-transform [&>svg:first-child]:duration-150 [&>svg:first-child]:ease-[cubic-bezier(0.22,1,0.36,1)]",
                           item.getId() === activeId && "bg-foreground/10"
                         )}
                       >
@@ -1118,7 +1105,7 @@ export function FilesSection({
                                   )
                                 }}
                                 onClick={(event) => event.stopPropagation()}
-                                className="h-6 px-1.5"
+                                className="-my-1.5"
                               />
                             ) : (
                               <span className="truncate">
@@ -1205,7 +1192,12 @@ function RowHover({
   return (
     <HoverCard openDelay={500} closeDelay={100}>
       <HoverCardTrigger asChild>{children}</HoverCardTrigger>
-      <HoverCardContent side="right" align="start" className="w-80 p-0">
+      <HoverCardContent
+        side="right"
+        align="start"
+        variant="flush"
+        className="w-80"
+      >
         <Card path={path} />
       </HoverCardContent>
     </HoverCard>
@@ -1235,23 +1227,20 @@ function AskNameDialog({
     onClose()
   }
   const label = asking?.create.label ?? ""
+  const submit = () => {
+    if (name.trim() === "" || busy) return
+    setBusy(true)
+    setError(null)
+    onMake(name.trim())
+      .then(close, (err: unknown) =>
+        setError(err instanceof Error ? err.message : String(err))
+      )
+      .finally(() => setBusy(false))
+  }
   return (
     <Dialog open={asking !== null} onOpenChange={(open) => !open && close()}>
       <DialogContent className="sm:max-w-md">
-        <form
-          className="flex flex-col gap-6"
-          onSubmit={(event) => {
-            event.preventDefault()
-            if (name.trim() === "" || busy) return
-            setBusy(true)
-            setError(null)
-            onMake(name.trim())
-              .then(close, (err: unknown) =>
-                setError(err instanceof Error ? err.message : String(err))
-              )
-              .finally(() => setBusy(false))
-          }}
-        >
+        <div className="flex flex-col gap-6">
           <DialogHeader>
             <DialogTitle>{label}</DialogTitle>
             <DialogDescription>
@@ -1270,6 +1259,12 @@ function AskNameDialog({
               spellCheck={false}
               aria-invalid={error !== null || undefined}
               onChange={(event) => setName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || event.nativeEvent.isComposing)
+                  return
+                event.preventDefault()
+                submit()
+              }}
             />
             {error !== null ? <FieldError>{error}</FieldError> : null}
           </Field>
@@ -1277,11 +1272,15 @@ function AskNameDialog({
             <Button type="button" variant="outline" onClick={close}>
               Cancel
             </Button>
-            <Button type="submit" disabled={busy || name.trim() === ""}>
+            <Button
+              type="button"
+              disabled={busy || name.trim() === ""}
+              onClick={submit}
+            >
               {busy ? "Saving…" : "Save"}
             </Button>
           </DialogFooter>
-        </form>
+        </div>
       </DialogContent>
     </Dialog>
   )

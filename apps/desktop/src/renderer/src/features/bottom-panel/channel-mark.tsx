@@ -27,7 +27,7 @@ function HoliGlyph({ className }: { className?: string }) {
   )
 }
 
-export function ChannelMark({
+function ChannelMark({
   channel,
   className,
 }: {

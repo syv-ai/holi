@@ -77,7 +77,7 @@ export function TerminalContextChips({
                 copy()
               }
             }}
-            className="text-muted-foreground hover:bg-accent hover:text-foreground min-w-0 cursor-pointer justify-start font-mono font-normal transition-colors"
+            className="text-muted-foreground hover:bg-accent hover:text-foreground min-w-0 cursor-pointer justify-start font-mono font-normal"
           >
             <FolderIcon aria-hidden />
             <span className="truncate">{middleTruncate(label)}</span>

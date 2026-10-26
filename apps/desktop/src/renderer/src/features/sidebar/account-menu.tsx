@@ -371,9 +371,9 @@ export function AccountMenu({ collapsed = false }: { collapsed?: boolean }) {
             variant="ghost"
             size="icon"
             aria-label={`Account menu${offering}`}
-            className="relative size-8 shrink-0 rounded-full"
+            className="relative shrink-0"
           >
-            <Avatar className="size-7">
+            <Avatar>
               <AvatarImage src={viewer?.avatarUrl} alt="" />
               <AvatarFallback className="text-xs">{initials}</AvatarFallback>
             </Avatar>
@@ -390,14 +390,15 @@ export function AccountMenu({ collapsed = false }: { collapsed?: boolean }) {
       {/* Sidebar */}
       <SidebarMenuItem>
         <DropdownMenu>
-          <DropdownMenuTrigger
-            className="hover:bg-foreground/5 h-auto rounded-lg bg-transparent py-1.5 ps-1.5 pe-1.5"
-            asChild
-          >
-            <SidebarMenuButton aria-label={`Open account menu${offering}`}>
+          <DropdownMenuTrigger asChild>
+            <SidebarMenuButton
+              variant="fill"
+              size="lg"
+              aria-label={`Open account menu${offering}`}
+            >
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <span className="relative shrink-0">
-                  <Avatar className="size-8">
+                  <Avatar>
                     <AvatarImage src={viewer?.avatarUrl} alt="" />
                     <AvatarFallback className="text-xs font-semibold">
                       {initials}

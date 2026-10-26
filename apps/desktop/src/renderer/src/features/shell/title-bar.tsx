@@ -1,4 +1,4 @@
-import { type ReactNode, type Ref } from "react"
+import { type CSSProperties, type ReactNode, type Ref } from "react"
 
 import { IconButton } from "@/composites/icon-button"
 import { PanelLeftIcon } from "lucide-react"
@@ -42,8 +42,12 @@ export function TitleBar({
         ref={leadRef}
         data-window-band="lights"
         data-open={sidebarOpen || undefined}
-        style={sidebarOpen ? { width: leadWidth(sidebarWidth) } : undefined}
-        className="group/lead data-open:border-e flex h-full shrink-0 items-center gap-1 overflow-hidden px-2"
+        style={
+          sidebarOpen
+            ? ({ "--lead-width": `${leadWidth(sidebarWidth)}px` } as CSSProperties)
+            : undefined
+        }
+        className="group/lead data-open:border-e data-open:w-(--lead-width) flex h-full shrink-0 items-center gap-1 overflow-hidden px-2"
       >
         {/* Open, the toggle rides the divider (and so follows a resize);
             collapsed, it sits by the traffic lights. Off the attribute the

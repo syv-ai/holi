@@ -31,19 +31,16 @@ function getVaultInitials(name: string): string {
 
 function HoliLogo({ className }: { className?: string }) {
   return (
-    <Item
+    <div
       className={cn(
-        "p-0",
-        "bg-primary text-primary-foreground flex size-8 shrink-0 items-center justify-center",
+        "bg-primary text-primary-foreground flex size-8 shrink-0 items-center justify-center rounded-lg",
         className
       )}
       aria-hidden="true"
     >
-      <ItemMedia variant="icon" className="size-auto">
-        {/* Holi's mark alone: the wordmark has no room in a tile. */}
-        <BrandMark variant="monogram" className="h-4" />
-      </ItemMedia>
-    </Item>
+      {/* Holi's mark alone: the wordmark has no room in a tile. */}
+      <BrandMark variant="monogram" className="h-4" />
+    </div>
   )
 }
 
@@ -63,22 +60,19 @@ function SidebarLogo({ className }: { className?: string }) {
 function VaultAvatar({
   vault,
   className,
-  size = "default",
 }: {
   vault: VaultEntry
   className?: string
-  size?: "default" | "sm" | "lg"
 }) {
   const initials = getVaultInitials(vault.name)
   return (
-    <Avatar size={size} className={cn("size-6! shrink-0", className)}>
+    <Avatar size="sm" shape="square" className={className}>
       {/* The owner's GitHub avatar, falling back to the initial offline. */}
       <AvatarImage
         src={`https://github.com/${vault.remote.split("/")[0]}.png?size=48`}
         alt=""
-        className="rounded-md"
       />
-      <AvatarFallback className="bg-primary text-primary-foreground rounded-md text-sm">
+      <AvatarFallback className="bg-primary text-primary-foreground text-sm">
         {initials}
       </AvatarFallback>
     </Avatar>
@@ -120,7 +114,7 @@ export function VaultSwitcher({ onAddVault }: { onAddVault: () => void }) {
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <SidebarMenuButton className="h-9" aria-label="Switch vault">
+            <SidebarMenuButton aria-label="Switch vault">
               <SidebarLogo />
               <div className="truncate font-semibold">{active?.name}</div>
               <MoreHorizontalIcon

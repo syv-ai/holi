@@ -25,13 +25,11 @@ export function SidebarAppItem({
   active,
   collapsed,
   onSelect,
-  className,
 }: {
   app: SidebarApp
   active: boolean
   collapsed: boolean
   onSelect: (id: string) => void
-  className?: string
 }) {
   const visible = useAtomValue(app.visible ?? LISTED)
   if (!visible) return null
@@ -43,7 +41,8 @@ export function SidebarAppItem({
         isActive={active}
         aria-current={active ? "page" : undefined}
         onClick={() => onSelect(app.id)}
-        className={className}
+        variant="fill"
+        size={collapsed ? "rail" : "default"}
       >
         <Icon aria-hidden={true} />
         <span>{app.label}</span>

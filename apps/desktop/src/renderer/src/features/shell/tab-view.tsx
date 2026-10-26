@@ -110,7 +110,7 @@ export function TabView({
       return (
         <div
           key={tab}
-          className="animate-in fade-in-0 slide-in-from-left-3 motion-reduce:slide-in-from-left-0 flex min-h-0 flex-1 flex-col duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
+          className="motion-in-rise flex min-h-0 flex-1 flex-col"
         >
           <AppView />
         </div>

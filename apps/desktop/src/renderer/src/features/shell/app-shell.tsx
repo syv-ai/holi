@@ -1,5 +1,5 @@
-// ReUI block: @reui/app-shell-21 (`npx shadcn@latest view @reui/app-shell-21` shows the published source)
-import { useEffect, useRef, useState } from "react"
+// Adapted from ReUI's app-shell-21 block (`npx shadcn@latest view @reui/app-shell-21` shows the published source).
+import { useEffect, useRef, useState, type CSSProperties } from "react"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import { cn } from "@/lib/cn"
 import { type PanelImperativeHandle } from "react-resizable-panels"
@@ -143,8 +143,8 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const split = activeSplit(ws)
   /** The view in front (the active tab, or the split's focused member):
    *  what the sidebar marks and the keys act on. */
-  const activeThreadId = focusedTab(ws)
-  const activeTab = activeThreadId === null ? null : parseTabKey(activeThreadId)
+  const focusedKey = focusedTab(ws)
+  const activeTab = focusedKey === null ? null : parseTabKey(focusedKey)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -184,7 +184,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const newAgentSession = useSetAtom(newAgentSessionAtom)
   const look = useTabLook()
   useSettingsHotkey()
-  useSessionTabs(activeThreadId)
+  useSessionTabs(focusedKey)
 
   useEffect(() => {
     return () => {
@@ -209,7 +209,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   useEffect(() => {
     if (openRequest === seenOpen.current) return
     seenOpen.current = openRequest
-    if (openRequest !== null) handleSelectThread(openRequest.path)
+    if (openRequest !== null) openTabKey(openRequest.path)
     // Only a new request opens; the handler reads the latest state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openRequest])
@@ -304,7 +304,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
    *  folded sidebar opens for it, since the nav is how its pages are reached. */
   function openSettings() {
     setMobileNavOpen(false)
-    if (activeThreadId !== SETTINGS_KEY) beforeSettings.current = activeThreadId
+    if (focusedKey !== SETTINGS_KEY) beforeSettings.current = focusedKey
     update((w) => openTabIn(w, SETTINGS_KEY))
     if (!isMobile && sidebarPanel.current?.isCollapsed()) toggleSidebar()
   }
@@ -343,7 +343,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
 
   /** Open a vault path, the board, or any tab key: as a tab, or in the
    *  active split's focused member (`openTab`). */
-  function handleSelectThread(id: string) {
+  function openTabKey(id: string) {
     const key = keyFor(id)
     if (parseTabKey(key)?.kind === "doc" || key.endsWith(".app")) {
       setSection("documents")
@@ -379,9 +379,9 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     })
   }
 
-  const newDocument = useNewDocument(handleSelectThread)
-  function handleNewChat() {
-    void newDocument()
+  const createDocument = useNewDocument(openTabKey)
+  function newDocument() {
+    void createDocument()
   }
 
   useShortcutDispatcher()
@@ -391,12 +391,12 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   usePanelTerminals()
   // Which hidden document tabs changed, for the strip's Updated.
   useDocChangeMarks()
-  useClaudeFirstRun(handleSelectThread)
+  useClaudeFirstRun(openTabKey)
   useShellShortcuts({
     // Split tabs: the keys step over strip entries, and ⌘W closes the view
     // in front (a split's focused member).
     tabIds: entryIds(ws),
-    activeTabId: activeThreadId,
+    activeTabId: focusedKey,
     activeEntryId: ws.active,
     newTab: openNewTab,
     separate:
@@ -405,13 +405,13 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
       split === null ? undefined : (step) => update((w) => stepMember(w, step)),
     app,
     apps,
-    open: handleSelectThread,
+    open: openTabKey,
     selectTab: (id) => update((w) => selectEntry(w, id)),
     closeTab,
     closeAllTabs,
     reopenTab: () => update(reopenClosed),
     splitRight: () => update(splitActive),
-    newDocument: handleNewChat,
+    newDocument,
     toggleFiles,
     showFiles: () => {
       if (isMobile) return setMobileNavOpen(true)
@@ -431,10 +431,10 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
       collapsed={false}
       onToggle={isMobile ? () => setMobileNavOpen(false) : toggleFiles}
       onOpenSearch={() => setSearchOpen(true)}
-      activeId={activeThreadId}
-      onOpen={handleSelectThread}
+      activeId={focusedKey}
+      onOpen={openTabKey}
       onMoved={retargetTabs}
-      onNewDocument={handleNewChat}
+      onNewDocument={newDocument}
       onAddVault={onAddVault}
       activeApp={app}
       onOpenApp={openApp}
@@ -446,10 +446,10 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
       collapsed
       onToggle={toggleFiles}
       onOpenSearch={() => setSearchOpen(true)}
-      activeId={activeThreadId}
-      onOpen={handleSelectThread}
+      activeId={focusedKey}
+      onOpen={openTabKey}
       onMoved={retargetTabs}
-      onNewDocument={handleNewChat}
+      onNewDocument={newDocument}
       onAddVault={onAddVault}
       activeApp={app}
       onOpenApp={openApp}
@@ -464,13 +464,13 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const members: MemberSlot[] =
     split !== null
       ? split.views.map((key, i) => ({ key, share: split.shares[i]! }))
-      : [{ key: activeThreadId ?? NO_TAB, share: 1 }]
+      : [{ key: focusedKey ?? NO_TAB, share: 1 }]
 
   /** One view: its header in a split, then what it shows. Focus follows a
    *  press or keyboard focus into a split's member. */
   function memberBody(key: string) {
     const tab = key === NO_TAB ? null : key
-    const isFocused = tab === activeThreadId
+    const isFocused = tab === focusedKey
     const focus = () => {
       if (split !== null && tab !== null) {
         update((w) => focusMember(w, split.id, tab))
@@ -498,7 +498,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
             settingsNavInSidebar={
               isFocused && settingsActive && !isMobile && sidebarOpen
             }
-            onOpen={handleSelectThread}
+            onOpen={openTabKey}
             onOpenBeside={(id) => update((w) => openInSplit(w, keyFor(id)))}
             reading={
               members
@@ -506,7 +506,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
                 .find((path) => path !== null && path !== tab) ?? null
             }
             onMoved={(from, to) => retargetTabs([{ from, to }])}
-            onNewDocument={handleNewChat}
+            onNewDocument={newDocument}
             onOpenSearch={() => setSearchOpen(true)}
           />
         </div>
@@ -535,7 +535,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <main className="flex min-h-0 min-w-0 flex-1 flex-col">
             {isMobile ? (
-              memberBody(activeThreadId ?? NO_TAB)
+              memberBody(focusedKey ?? NO_TAB)
             ) : (
               <SplitView
                 entryId={ws.active}
@@ -572,7 +572,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
             <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
               <MobileHeader
                 onOpenSearch={() => setSearchOpen(true)}
-                onNewChat={handleNewChat}
+                onNewChat={newDocument}
               />
               {main}
             </div>
@@ -581,7 +581,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
             <SheetContent
               side="left"
               showCloseButton={false}
-              className="w-72 p-0"
+              className="w-72"
             >
               <SheetHeader className="sr-only">
                 <SheetTitle>Chats</SheetTitle>
@@ -604,11 +604,8 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
             </TitleBar>
             <ResizablePanelGroup
               orientation="horizontal"
-              className={cn(
-                "group/panels min-h-0 flex-1",
-                animate &&
-                  "[&>[data-panel]:first-child]:transition-[flex] [&>[data-panel]:first-child]:duration-200 [&>[data-panel]:first-child]:ease-linear has-[[data-separator=active]]:[&>[data-panel]:first-child]:transition-none"
-              )}
+              animateFirst={animate}
+              className="group/panels min-h-0 flex-1"
             >
               {/* One mounted panel that animates between rail and full width, the
                 way the shadcn sidebar transitions. */}
@@ -626,9 +623,10 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
                   const lead = leadRef.current
                   if (lead) {
                     const wide = size.inPixels > RAIL_THRESHOLD
-                    lead.style.width = wide
-                      ? `${leadWidth(size.inPixels)}px`
-                      : ""
+                    lead.style.setProperty(
+                      "--lead-width",
+                      wide ? `${leadWidth(size.inPixels)}px` : ""
+                    )
                     lead.toggleAttribute("data-open", wide)
                   }
                   // Drags update everything else live too; the animated
@@ -641,7 +639,10 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
                     )
                     if (open && pinRef.current) {
                       widthRef.current = size.inPixels
-                      pinRef.current.style.width = `${size.inPixels}px`
+                      pinRef.current.style.setProperty(
+                        "--sidebar-pin",
+                        `${size.inPixels}px`
+                      )
                     }
                     setSidebarOpen(open)
                   }
@@ -657,14 +658,16 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
                   <div
                     ref={pinRef}
                     inert={!sidebarOpen}
-                    style={{ width: sidebarWidth }}
-                    className="h-full transition-opacity duration-200 group-data-[state=collapsed]/fade:pointer-events-none group-data-[state=collapsed]/fade:opacity-0"
+                    style={
+                      { "--sidebar-pin": `${sidebarWidth}px` } as CSSProperties
+                    }
+                    className="motion-respond h-full w-(--sidebar-pin) group-data-[state=collapsed]/fade:pointer-events-none group-data-[state=collapsed]/fade:opacity-0"
                   >
                     {sidebar}
                   </div>
                   <div
                     inert={sidebarOpen}
-                    className="pointer-events-none absolute inset-y-0 start-0 w-12 opacity-0 transition-opacity duration-200 group-data-[state=collapsed]/fade:pointer-events-auto group-data-[state=collapsed]/fade:opacity-100"
+                    className="pointer-events-none absolute inset-y-0 start-0 w-12 opacity-0 motion-respond group-data-[state=collapsed]/fade:pointer-events-auto group-data-[state=collapsed]/fade:opacity-100"
                   >
                     {rail}
                   </div>
@@ -684,7 +687,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
                   if (moved > 4) return
                   toggleFiles()
                 }}
-                className="hover:bg-primary data-[separator=hover]:bg-primary data-[separator=active]:bg-primary hover:[&>div]:bg-primary [&[data-separator=hover]>div]:bg-primary [&[data-separator=active]>div]:bg-primary relative z-10 cursor-col-resize transition-colors after:w-3 [&>div]:transition-colors"
+                variant="primary"
               />
 
               <ResizablePanel minSize={360} className="min-h-0">
@@ -700,7 +703,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
           onOpen={(id, beside) =>
             beside
               ? update((w) => openInSplit(w, keyFor(id)))
-              : handleSelectThread(id)
+              : openTabKey(id)
           }
           onAddVault={onAddVault}
         />

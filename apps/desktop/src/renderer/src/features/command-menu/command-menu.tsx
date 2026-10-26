@@ -12,6 +12,7 @@
  * (`RendererPlugin.commandMenu`).
  * Ranking is `lib/command-menu-rows.ts`, outside cmdk (`shouldFilter={false}`).
  */
+import { cn } from "@/lib/cn"
 import { atom, useAtomValue, useSetAtom } from "jotai"
 import {
   AppWindowIcon,
@@ -705,28 +706,34 @@ function PlaceItem({
     <CommandItem
       value={value ?? `place:${place.kind}:${place.key}`}
       onSelect={onSelect}
-      className={place.dim ? "opacity-60" : undefined}
     >
-      {place.emoji !== undefined ? (
-        <span aria-hidden="true" className="w-4 shrink-0 text-center">
-          {place.emoji}
-        </span>
-      ) : place.kind === "app" ? (
-        <AppWindowIcon aria-hidden="true" />
-      ) : (
-        <FileType
-          type={getFileType(place.key)}
-          size="mini"
-          aria-hidden="true"
-          className="shrink-0"
-        />
-      )}
-      <span className="truncate">{place.name}</span>
-      {place.snippet !== undefined || place.detail !== undefined ? (
-        <span className="text-muted-foreground min-w-0 flex-1 truncate text-xs">
-          {place.snippet ?? place.detail}
-        </span>
-      ) : null}
+      <span
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-2",
+          place.dim && "opacity-60"
+        )}
+      >
+        {place.emoji !== undefined ? (
+          <span aria-hidden="true" className="w-4 shrink-0 text-center">
+            {place.emoji}
+          </span>
+        ) : place.kind === "app" ? (
+          <AppWindowIcon aria-hidden="true" />
+        ) : (
+          <FileType
+            type={getFileType(place.key)}
+            size="mini"
+            aria-hidden="true"
+            className="shrink-0"
+          />
+        )}
+        <span className="truncate">{place.name}</span>
+        {place.snippet !== undefined || place.detail !== undefined ? (
+          <span className="text-muted-foreground min-w-0 flex-1 truncate text-xs">
+            {place.snippet ?? place.detail}
+          </span>
+        ) : null}
+      </span>
     </CommandItem>
   )
 }

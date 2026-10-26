@@ -33,7 +33,7 @@ import {
 import { EmptyState } from "@/composites/empty-state"
 
 /** The live table, grouped, filtered by label, group or key name. */
-export function shortcutSections(
+function shortcutSections(
   live: ReadonlySet<string>,
   query: string,
   mac: boolean
@@ -148,14 +148,15 @@ export function ShortcutsDialog() {
           pending.current = null
           if (id !== null) runShortcut(id)
         }}
-        className="gap-0 p-0 sm:max-w-lg"
+        variant="flush"
+        className="sm:max-w-lg"
       >
-        <DialogHeader className="p-4 pb-2">
+        <div className="flex flex-col gap-2 p-4 pb-2">
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogDescription>
             Keys that work in Holi right now. Choose one to run it.
           </DialogDescription>
-        </DialogHeader>
+        </div>
 
         {/* Filtered by `shortcutSections`, not cmdk's fuzzy match, so a
             search means the same thing it always has. */}
@@ -179,9 +180,8 @@ export function ShortcutsDialog() {
                     onSelect={() => {
                       if (line.run !== undefined) choose(line.run)
                     }}
-                    className="justify-between gap-4"
                   >
-                    <span className="min-w-0 truncate">{line.label}</span>
+                    <span className="min-w-0 flex-1 truncate">{line.label}</span>
                     <CommandShortcut className="tracking-normal">
                       {line.gesture === undefined ? (
                         <Keys specs={line.specs} mac={mac} />
@@ -207,7 +207,7 @@ export function ShortcutsDialog() {
                   searchRef.current?.focus()
                 },
               }}
-              className="h-auto border-0 py-10"
+              className="h-auto"
             />
           ) : null}
         </Command>

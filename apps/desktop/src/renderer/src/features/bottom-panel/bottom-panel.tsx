@@ -3,6 +3,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
   type PointerEvent,
 } from "react"
@@ -181,10 +182,14 @@ export function BottomPanel({ onRetryOutput }: { onRetryOutput: () => void }) {
       data-bottom-panel
       data-glass-ground
       hidden={!panel.open}
-      style={panel.maximized ? undefined : { height: shown }}
+      style={
+        panel.maximized
+          ? undefined
+          : ({ "--panel-height": `${shown}px` } as CSSProperties)
+      }
       className={cn(
         "bg-background relative flex min-h-0 shrink-0 flex-col",
-        panel.maximized && "flex-1"
+        panel.maximized ? "flex-1" : "h-(--panel-height)"
       )}
     >
       {/* The top edge: a hairline that is the resize handle. */}
@@ -206,7 +211,7 @@ export function BottomPanel({ onRetryOutput }: { onRetryOutput: () => void }) {
           onPointerCancel={onPointerUp}
           onDoubleClick={() => commit(PANEL_DEFAULT_HEIGHT)}
           onKeyDown={onKeyDown}
-          className="bg-border hover:bg-ring focus-visible:bg-ring data-resizing:bg-ring relative z-10 h-px shrink-0 cursor-row-resize outline-hidden transition-colors after:absolute after:inset-x-0 after:-inset-y-1 after:content-['']"
+          className="bg-border hover:bg-ring focus-visible:bg-ring data-resizing:bg-ring relative z-10 h-px shrink-0 cursor-row-resize outline-hidden motion-respond after:absolute after:inset-x-0 after:-inset-y-1"
         />
       )}
       <BottomPanelHeader
@@ -259,7 +264,6 @@ function BottomPanelHeader({
 }) {
   return (
     <PanelHeader
-      className="h-9 ps-2 pe-1.5"
       extra={
         <>
           {tab === "terminal" ? (

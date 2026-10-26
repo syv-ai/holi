@@ -7,14 +7,7 @@ import {
   ArcadeTakeControl,
   HoliArcade,
 } from "@/composites/arcade/holi-arcade"
-import {
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemGroup,
-  ItemMedia,
-  ItemTitle,
-} from "@/components/ui/item"
+import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { BrandMark } from "@/composites/brand-mark"
 import { cn } from "@/lib/cn"
@@ -169,21 +162,22 @@ export function NewTabView({
                 {vaultName}
               </p>
             ) : null}
-            <h1 className="text-2xl leading-tight font-semibold tracking-[-0.02em]">
+            <h1 className="text-2xl leading-tight font-semibold tracking-tight">
               {dayLabel(today)}
             </h1>
-            <p className="text-muted-foreground text-sm">
+            <p className="text-muted-foreground flex items-center text-sm">
               <span className="text-foreground font-medium tabular-nums">
                 {openTasks === 0 ? "No" : openTasks}
-              </span>{" "}
-              open{" "}
-              <button
+              </span>
+              &nbsp;open
+              <Button
                 type="button"
+                variant="link"
                 onClick={() => onOpen(BOARD_TAB)}
-                className="text-foreground decoration-foreground/30 hover:decoration-foreground focus-visible:ring-ring/50 rounded-sm underline underline-offset-4 outline-none motion-respond focus-visible:ring-3"
+                className="text-foreground"
               >
                 {openTasks === 1 ? "task" : "tasks"}
-              </button>
+              </Button>
             </p>
           </header>
 
@@ -199,7 +193,7 @@ export function NewTabView({
             >
               Start
             </h2>
-            <ItemGroup className="grid gap-2 @lg:grid-cols-3">
+            <div role="list" className="grid gap-2 @lg:grid-cols-3">
               <StartCard
                 icon={<FilePlusIcon />}
                 label="New document"
@@ -217,7 +211,7 @@ export function NewTabView({
                   onClick={() => void newAgentSession()}
                 />
               ) : null}
-            </ItemGroup>
+            </div>
           </section>
 
           {/* MonoCode's take-control pill, in the band under the content
@@ -256,32 +250,19 @@ function StartCard({
   return (
     // The group is a list; the card's button keeps its own role inside it.
     <div role="listitem">
-      <Item
-        asChild
+      <Button
+        type="button"
         variant="outline"
-        size="sm"
-        className="hover:bg-foreground/5 focus-visible:bg-foreground/5 text-start"
+        size="lg"
+        onClick={onClick}
+        className="w-full justify-start font-normal"
       >
-        <button type="button" onClick={onClick}>
-          <ItemMedia
-            variant="icon"
-            aria-hidden="true"
-            className="text-muted-foreground"
-          >
-            {icon}
-          </ItemMedia>
-          <ItemContent className="min-w-0">
-            <ItemTitle className="block w-full truncate font-normal">
-              {label}
-            </ItemTitle>
-          </ItemContent>
-          {keys ? (
-            <ItemActions>
-              <Kbd>{keys}</Kbd>
-            </ItemActions>
-          ) : null}
-        </button>
-      </Item>
+        <span aria-hidden="true" className="text-muted-foreground">
+          {icon}
+        </span>
+        <span className="min-w-0 truncate">{label}</span>
+        {keys ? <Kbd className="ms-auto">{keys}</Kbd> : null}
+      </Button>
     </div>
   )
 }

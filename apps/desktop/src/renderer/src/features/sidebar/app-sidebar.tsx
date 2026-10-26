@@ -14,7 +14,6 @@ import {
 } from "@/components/ui/sidebar"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/cn"
-import { SIDEBAR_ROW_FILL } from "@/composites/sidebar-nav-item"
 import { runningPluginsAtom } from "@/state/plugins"
 import {
   sidebarSectionAtom,
@@ -35,8 +34,6 @@ import {
   SearchIcon,
   SquareKanbanIcon,
 } from "lucide-react"
-
-const RAIL_BUTTON = `${SIDEBAR_ROW_FILL} size-8 p-2 [&>span:last-child]:sr-only`
 
 export function AppSidebar({
   activeId,
@@ -82,13 +79,15 @@ export function AppSidebar({
     return (
       <Sidebar collapsible="none" className="h-full w-full overflow-hidden">
         <SidebarContent className="overflow-hidden">
-          <SidebarMenu className="gap-0.5 px-2 pt-2">
+          <div className="px-2 pt-2">
+          <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
                 tooltip="Search"
                 onClick={onOpenSearch}
                 aria-label="Search"
-                className={RAIL_BUTTON}
+                variant="fill"
+                size="rail"
               >
                 <SearchIcon aria-hidden="true" />
                 <span>Search</span>
@@ -101,7 +100,8 @@ export function AppSidebar({
                 isActive={activeId === BOARD_TAB}
                 onClick={() => onOpen(BOARD_TAB)}
                 aria-label="Board"
-                className={RAIL_BUTTON}
+                variant="fill"
+                size="rail"
               >
                 <SquareKanbanIcon aria-hidden="true" />
                 <span>Board</span>
@@ -115,7 +115,8 @@ export function AppSidebar({
                   isActive={activeId === APPS_TAB}
                   onClick={() => onOpen(APPS_TAB)}
                   aria-label="Apps"
-                  className={RAIL_BUTTON}
+                  variant="fill"
+                size="rail"
                 >
                   <AppWindowIcon aria-hidden="true" />
                   <span>Apps</span>
@@ -128,17 +129,19 @@ export function AppSidebar({
                 tooltip="New document"
                 onClick={onNewDocument}
                 aria-label="New document"
-                className={RAIL_BUTTON}
+                variant="fill"
+                size="rail"
               >
                 <PlusIcon aria-hidden="true" />
                 <span>New document</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
+          </div>
         </SidebarContent>
 
-        <SidebarFooter className="gap-1 px-2 pb-3">
-          <SidebarMenu className="gap-0.5">
+        <SidebarFooter>
+          <SidebarMenu>
             {apps.map((app) => (
               <SidebarAppItem
                 key={app.id}
@@ -146,7 +149,6 @@ export function AppSidebar({
                 collapsed
                 active={app.id === activeApp}
                 onSelect={onOpenApp}
-                className={RAIL_BUTTON}
               />
             ))}
           </SidebarMenu>
@@ -160,7 +162,7 @@ export function AppSidebar({
     <Sidebar collapsible="none" className="h-full w-full">
       {/* On desktop the title band carries these; the phone sheet has no band. */}
       {isMobile ? (
-        <SidebarHeader className="gap-2">
+        <SidebarHeader>
           <div className="flex items-center gap-2 px-1 pt-1">
             <BrandMark variant="monogram" className="h-5" />
             <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
@@ -211,7 +213,7 @@ export function AppSidebar({
           className={cn(
             "flex min-h-0 flex-1 flex-col",
             switched &&
-              "animate-in fade-in-0 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
+              "motion-in-fade"
           )}
         >
           {section === "documents" ? (
@@ -242,9 +244,9 @@ export function AppSidebar({
         </div>
       </SidebarContent>
 
-      <SidebarFooter className="gap-2">
+      <SidebarFooter>
         {/* Apps that take the window over (Mail, Calendar), above the profile. */}
-        <SidebarMenu className="gap-0.5">
+        <SidebarMenu>
           {apps.map((app) => (
             <SidebarAppItem
               key={app.id}
@@ -252,7 +254,6 @@ export function AppSidebar({
               collapsed={false}
               active={app.id === activeApp}
               onSelect={onOpenApp}
-              className={SIDEBAR_ROW_FILL}
             />
           ))}
         </SidebarMenu>

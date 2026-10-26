@@ -171,7 +171,7 @@ export function TabStrip({
       <Tabs
         value={ws.active ?? ""}
         onValueChange={(id) => act((w) => selectEntry(w, id))}
-        className="min-w-0 flex-1 items-center gap-1 data-horizontal:flex-row"
+        className="min-w-0 flex-1 items-center data-horizontal:flex-row"
       >
         {count > 0 ? (
           <TabsList
@@ -247,11 +247,9 @@ export function TabStrip({
                             ?.getAttribute("data-member")
                           if (member) act((w) => focusMember(w, id, member))
                         }}
+                        variant="tab"
                         className={cn(
-                          "hover:bg-foreground/5 flex-none justify-start gap-2 rounded-md px-3 after:hidden",
-                          // The badge holds the × place, and gives it up on
-                          // hover.
-                          tab?.status !== undefined ? "pe-1.5" : "pe-8",
+                          "hover:bg-foreground/5",
                           "group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 dark:group-data-[variant=line]/tabs-list:data-active:bg-foreground/8",
                           tab !== null
                             ? "w-56"
@@ -280,23 +278,28 @@ export function TabStrip({
                           />
                         )}
                       </TabsTrigger>
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label={
-                          tab !== null
-                            ? `Close ${tab.title}`
-                            : "Close split view"
-                        }
-                        onClick={() => act((w) => closeEntry(w, id))}
+                      {/* Shown on hover and keyboard focus, and always on the tab
+                          in front unless its status badge holds the place. */}
+                      <span
                         className={cn(
-                          "absolute end-1.5 top-1/2 -translate-y-1/2 opacity-0 group-hover/tab:opacity-100 focus-visible:opacity-100",
+                          "absolute end-1.5 top-1/2 -translate-y-1/2 opacity-0 group-hover/tab:opacity-100 has-focus-visible:opacity-100",
                           tab?.status === undefined &&
                             "group-has-data-active/tab:opacity-100"
                         )}
                       >
-                        <XIcon aria-hidden="true" />
-                      </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={
+                            tab !== null
+                              ? `Close ${tab.title}`
+                              : "Close split view"
+                          }
+                          onClick={() => act((w) => closeEntry(w, id))}
+                        >
+                          <XIcon aria-hidden="true" />
+                        </Button>
+                      </span>
                     </div>
                   </ContextMenuTrigger>
                   <EntryMenu
@@ -410,7 +413,7 @@ function SplitMembers({
             data-member={member.id}
             {...(drag ? drag(member.id) : {})}
             className={cn(
-              "flex min-w-0 flex-1 basis-0 items-center gap-1.5 transition-colors",
+              "flex min-w-0 flex-1 basis-0 items-center gap-1.5 motion-respond",
               focused !== null &&
                 focused !== member.id &&
                 "text-muted-foreground"
@@ -524,23 +527,20 @@ const TAB_STATUS = {
 function TabStatus({ status }: { status: NonNullable<HeaderTab["status"]> }) {
   const { variant, label } = TAB_STATUS[status]
   return (
-    <Badge
-      aria-hidden="true"
-      variant={variant}
-      data-tab-status={status}
-      className="ms-auto group-hover/tab:opacity-0 group-has-[button:focus-visible]/tab:opacity-0"
-    >
-      {status === "working" ? (
-        <Spinner className="size-3 motion-reduce:animate-none" />
-      ) : status === "needs-you" ? (
-        <CircleAlertIcon />
-      ) : status === "done" ? (
-        <CheckIcon />
-      ) : (
-        <PencilIcon />
-      )}
-      {label}
-    </Badge>
+    <span className="ms-auto group-hover/tab:opacity-0 group-has-[button:focus-visible]/tab:opacity-0">
+      <Badge aria-hidden="true" variant={variant} data-tab-status={status}>
+        {status === "working" ? (
+          <Spinner className="size-3" />
+        ) : status === "needs-you" ? (
+          <CircleAlertIcon />
+        ) : status === "done" ? (
+          <CheckIcon />
+        ) : (
+          <PencilIcon />
+        )}
+        {label}
+      </Badge>
+    </span>
   )
 }
 

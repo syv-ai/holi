@@ -1,6 +1,4 @@
 import { useAtomValue } from "jotai"
-import { cn } from "@/lib/cn"
-import { SIDEBAR_ROW_FILL } from "@/composites/sidebar-nav-item"
 
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import {
@@ -31,10 +29,6 @@ export function useAppsOn(): boolean {
   return useAtomValue(surfacesAtom).has("app")
 }
 
-/** The reveal curve for things that arrive (ReUI's motion rules). */
-export const ARRIVE =
-  "animate-in fade-in-0 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
-
 /** Search, Board and Apps, at the top of the Documents tab. */
 export function DocumentsNav({
   activeId,
@@ -51,9 +45,10 @@ export function DocumentsNav({
   const appsOn = useAppsOn()
 
   return (
-    <SidebarMenu className="gap-0.5 px-2">
+    <div className="px-2">
+    <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton onClick={onOpenSearch} className={SIDEBAR_ROW_FILL}>
+        <SidebarMenuButton onClick={onOpenSearch} variant="fill">
           <SearchIcon aria-hidden="true" />
           <span>Search</span>
           <KbdGroup className="ms-auto">
@@ -69,7 +64,7 @@ export function DocumentsNav({
           aria-current={activeId === BOARD_TAB ? "page" : undefined}
           onClick={() => onOpen(BOARD_TAB)}
           {...tabDrag({ kind: "board" })}
-          className={SIDEBAR_ROW_FILL}
+          variant="fill"
         >
           <SquareKanbanIcon aria-hidden="true" />
           <span>Board</span>
@@ -77,14 +72,9 @@ export function DocumentsNav({
             <span className="sr-only">, {openTasks} open tasks</span>
           ) : null}
         </SidebarMenuButton>
-        {/* A sibling of the button, where the badge's own placement applies;
-            keyed on the count, so a change pops it in again. */}
+        {/* A sibling of the button, where the badge's own placement applies. */}
         {openTasks > 0 ? (
-          <SidebarMenuBadge
-            key={openTasks}
-            aria-hidden="true"
-            className={cn(ARRIVE, "zoom-in-95 motion-reduce:zoom-in-100")}
-          >
+          <SidebarMenuBadge key={openTasks} aria-hidden="true">
             {openTasks}
           </SidebarMenuBadge>
         ) : null}
@@ -95,7 +85,7 @@ export function DocumentsNav({
             isActive={activeId === APPS_TAB}
             aria-current={activeId === APPS_TAB ? "page" : undefined}
             onClick={() => onOpen(APPS_TAB)}
-            className={SIDEBAR_ROW_FILL}
+            variant="fill"
           >
             <AppWindowIcon aria-hidden="true" />
             <span>Apps</span>
@@ -103,5 +93,6 @@ export function DocumentsNav({
         </SidebarMenuItem>
       ) : null}
     </SidebarMenu>
+    </div>
   )
 }
