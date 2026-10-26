@@ -17,27 +17,16 @@
  * in the content's flow rather than over it; and the HUD and the pill are
  * Holi's own components.
  */
-import {
-  forwardRef,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-} from "react"
+import { forwardRef, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 
-import { toast } from "sonner"
+import { toast } from 'sonner'
 
-import { Button } from "@/components/ui/button"
-import { Kbd } from "@/components/ui/kbd"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { heroModeNow } from "@/composites/pixel-persona/hero-mode"
-import {
-  cropBox,
-  personaRuns,
-  type Frame,
-} from "@/composites/pixel-persona/personas"
-import { cn } from "@/lib/cn"
+import { Button } from '@/components/ui/button'
+import { Kbd } from '@/components/ui/kbd'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { heroModeNow } from '@/composites/pixel-persona/hero-mode'
+import { cropBox, personaRuns, type Frame } from '@/composites/pixel-persona/personas'
+import { cn } from '@/lib/cn'
 
 import {
   ARCADE_MODES,
@@ -46,12 +35,12 @@ import {
   type ArcadeSprite,
   type CellRect,
   type GridArcade,
-} from "./grid-arcade"
-import { createPaperRun, stackScore } from "./paper-run"
-import { ArcadeScoreboard } from "./arcade-scoreboard"
-import { slowerMode } from "./scoreboard"
-import { drawSpeechBubble } from "./speech-bubble"
-import { useScoreboard } from "./use-scoreboard"
+} from './grid-arcade'
+import { createPaperRun, stackScore } from './paper-run'
+import { ArcadeScoreboard } from './arcade-scoreboard'
+import { slowerMode } from './scoreboard'
+import { drawSpeechBubble } from './speech-bubble'
+import { useScoreboard } from './use-scoreboard'
 
 const CELL = 6
 const GAP = 1
@@ -73,9 +62,9 @@ const IDLE_BUBBLE_OPACITY = 0.7
  * is softened at the sides.
  */
 const IDLE_STYLE = {
-  "--idle-mask":
-    "linear-gradient(to bottom, #000 calc(40% - 6rem), transparent 40%), linear-gradient(to right, transparent, #000 10%, #000 90%, transparent)",
-  "--idle-blur": "0.6px",
+  '--idle-mask':
+    'linear-gradient(to bottom, #000 calc(40% - 6rem), transparent 40%), linear-gradient(to right, transparent, #000 10%, #000 90%, transparent)',
+  '--idle-blur': '0.6px',
 } as CSSProperties
 /** Under the logo (the keep-out): a whisper of the board. */
 const KEEP_DIM = 0.12
@@ -97,12 +86,12 @@ const HEADING: Record<string, { x: number; y: number }> = {
 }
 
 /** A conflict, in pixels of a 5×5 box: a cross, the shape of "these disagree". */
-const CONFLICT_ART = ["#...#", ".#.#.", "..#..", ".#.#.", "#...#"]
+const CONFLICT_ART = ['#...#', '.#.#.', '..#..', '.#.#.', '#...#']
 
 const MODE_LABEL: Record<ArcadeMode, string> = {
-  low: "Slow",
-  mid: "Steady",
-  hard: "Fast",
+  low: 'Slow',
+  mid: 'Steady',
+  hard: 'Fast',
 }
 
 /** The theme's colours, as CSS colour strings the canvas takes directly.
@@ -112,7 +101,7 @@ type Ink = { fg: string; surface: string; alert: string }
 
 function readInk(probe: HTMLElement | null): Ink {
   if (!probe) {
-    return { fg: "CanvasText", surface: "Canvas", alert: "CanvasText" }
+    return { fg: 'CanvasText', surface: 'Canvas', alert: 'CanvasText' }
   }
   const style = getComputedStyle(probe)
   return {
@@ -128,13 +117,13 @@ function readInk(probe: HTMLElement | null): Ink {
  * only blits. A sprite pixel is one CSS pixel (whole device pixels at any
  * whole devicePixelRatio), which keeps the figure sharp and about a tile wide.
  */
-const FIGURE = cropBox("full")
-type Frames = Record<"rest" | "walk" | "talkA" | "talkB", HTMLCanvasElement>
+const FIGURE = cropBox('full')
+type Frames = Record<'rest' | 'walk' | 'talkA' | 'talkB', HTMLCanvasElement>
 const FRAMES: Record<keyof Frames, Frame> = {
-  rest: { pose: "rest", mouth: "smile", blink: false },
-  walk: { pose: "rest", mouth: "closed", blink: false },
-  talkA: { pose: "waveA", mouth: "open", blink: false },
-  talkB: { pose: "waveB", mouth: "smile", blink: false },
+  rest: { pose: 'rest', mouth: 'smile', blink: false },
+  walk: { pose: 'rest', mouth: 'closed', blink: false },
+  talkA: { pose: 'waveA', mouth: 'open', blink: false },
+  talkB: { pose: 'waveB', mouth: 'smile', blink: false },
 }
 /** ms a waving frame holds while a Holi talks. */
 const WAVE_MS = 200
@@ -145,12 +134,12 @@ function figure(mascot: string, hero: boolean): Frames {
   const hit = sheet.get(mascot)
   if (hit) return hit
   const paint = (frame: Frame) => {
-    const canvas = document.createElement("canvas")
+    const canvas = document.createElement('canvas')
     canvas.width = FIGURE.w
     canvas.height = FIGURE.h
-    const ctx = canvas.getContext("2d")
+    const ctx = canvas.getContext('2d')
     if (!ctx) return canvas
-    for (const run of personaRuns(mascot, frame, hero, "full")) {
+    for (const run of personaRuns(mascot, frame, hero, 'full')) {
       ctx.fillStyle = run.fill
       ctx.fillRect(run.x - FIGURE.x, run.y - FIGURE.y, run.w, 1)
     }
@@ -170,25 +159,23 @@ function figure(mascot: string, hero: boolean): Frames {
  *  up mid-step, waving while it talks. */
 function drawHoli(
   ctx: CanvasRenderingContext2D,
-  sprite: Extract<ArcadeSprite, { kind: "holi" }>,
+  sprite: Extract<ArcadeSprite, { kind: 'holi' }>,
   hero: boolean,
-  now: number
+  now: number,
 ) {
   const frames = figure(sprite.mascot, hero)
   const image =
-    sprite.frame === "talk"
+    sprite.frame === 'talk'
       ? Math.floor(now / WAVE_MS) % 2 === 0
         ? frames.talkA
         : frames.talkB
-      : sprite.frame === "walk"
+      : sprite.frame === 'walk'
         ? frames.walk
         : frames.rest
   // Whole CSS pixels, so a sprite pixel never straddles two device pixels.
   const left = Math.round(sprite.cx * PITCH + CELL / 2 - 16)
   const top =
-    Math.round(sprite.cy * PITCH + CELL / 2 - 16) +
-    FIGURE.y -
-    (sprite.frame === "walk" ? 1 : 0)
+    Math.round(sprite.cy * PITCH + CELL / 2 - 16) + FIGURE.y - (sprite.frame === 'walk' ? 1 : 0)
   if (sprite.dx < 0) {
     ctx.save()
     ctx.translate(left + FIGURE.w, 0)
@@ -204,14 +191,14 @@ function drawHoli(
  *  a checkbox. */
 function drawPaper(
   ctx: CanvasRenderingContext2D,
-  sprite: Extract<ArcadeSprite, { kind: "paper" }>
+  sprite: Extract<ArcadeSprite, { kind: 'paper' }>,
 ) {
   const side = sprite.size * PITCH
   const px = sprite.cx * PITCH + CELL / 2
   const py = sprite.cy * PITCH + CELL / 2
   ctx.fillStyle = sprite.color
   ctx.strokeStyle = sprite.color
-  if (sprite.paper === "task") {
+  if (sprite.paper === 'task') {
     const s = side * 0.7
     ctx.lineWidth = 2
     ctx.strokeRect(px - s / 2 + 1, py - s / 2 + 1, s - 2, s - 2)
@@ -234,8 +221,8 @@ function drawPaper(
 
 function drawConflict(
   ctx: CanvasRenderingContext2D,
-  sprite: Extract<ArcadeSprite, { kind: "conflict" }>,
-  fill: string
+  sprite: Extract<ArcadeSprite, { kind: 'conflict' }>,
+  fill: string,
 ) {
   const span = sprite.size * PITCH * 0.7
   const unit = span / 5
@@ -244,7 +231,7 @@ function drawConflict(
   ctx.fillStyle = fill
   CONFLICT_ART.forEach((row, y) => {
     for (let x = 0; x < row.length; x++) {
-      if (row[x] === "#") {
+      if (row[x] === '#') {
         ctx.fillRect(left + x * unit, top + y * unit, unit, unit)
       }
     }
@@ -280,7 +267,7 @@ export function HoliArcade({
   const refreshRef = useRef<() => void>(() => undefined)
   const [score, setScore] = useState(0)
   const [carrying, setCarrying] = useState(0)
-  const [mode, setMode] = useState<ArcadeMode>("mid")
+  const [mode, setMode] = useState<ArcadeMode>('mid')
   const modeRef = useRef(mode)
   modeRef.current = mode
   /** The slowest speed this run has been played at: what it counts as on
@@ -310,10 +297,9 @@ export function HoliArcade({
       const runMode = runModeRef.current
       void recordRef.current(runMode, finished).then(
         (best) => {
-          if (best !== null)
-            toast.success(`New best at ${MODE_LABEL[runMode]}: ${best}`)
+          if (best !== null) toast.success(`New best at ${MODE_LABEL[runMode]}: ${best}`)
         },
-        () => toast.error("Couldn’t save your score to the vault.")
+        () => toast.error('Couldn’t save your score to the vault.'),
       )
     }
     runModeRef.current = modeRef.current
@@ -336,7 +322,7 @@ export function HoliArcade({
   useEffect(() => {
     const root = rootRef.current
     const canvas = canvasRef.current
-    const ctx = canvas?.getContext("2d")
+    const ctx = canvas?.getContext('2d')
     if (!root || !canvas || !ctx) return
 
     const arcade = createPaperRun()
@@ -345,10 +331,10 @@ export function HoliArcade({
 
     // The cell outlines never move, so they're stroked once here and
     // blitted each frame instead of thousands of strokeRects per paint.
-    const gridCanvas = document.createElement("canvas")
-    const gridCtx = gridCanvas.getContext("2d")
-    const reducedQuery = window.matchMedia("(prefers-reduced-motion: reduce)")
-    const schemeQuery = window.matchMedia("(prefers-color-scheme: dark)")
+    const gridCanvas = document.createElement('canvas')
+    const gridCtx = gridCanvas.getContext('2d')
+    const reducedQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const schemeQuery = window.matchMedia('(prefers-color-scheme: dark)')
 
     let raf = 0
     let cols = 0
@@ -380,12 +366,7 @@ export function HoliArcade({
           const under = shade[y * cols + x] ?? 1
           if (under <= KEEP_DIM) continue
           gridCtx.globalAlpha = BORDER_OPACITY * under
-          gridCtx.strokeRect(
-            x * PITCH + 0.5,
-            y * PITCH + 0.5,
-            CELL - 1,
-            CELL - 1
-          )
+          gridCtx.strokeRect(x * PITCH + 0.5, y * PITCH + 0.5, CELL - 1, CELL - 1)
         }
       }
       gridCtx.globalAlpha = 1
@@ -402,7 +383,7 @@ export function HoliArcade({
         arcade.setKeepOut(rects)
         return
       }
-      host?.querySelectorAll("[data-arcade-keepout]").forEach((el) => {
+      host?.querySelectorAll('[data-arcade-keepout]').forEach((el) => {
         const r = el.getBoundingClientRect()
         if (r.width <= 0 || r.height <= 0) return
         const x0 = Math.max(0, Math.floor((r.left - box.left) / PITCH) - 1)
@@ -490,8 +471,7 @@ export function HoliArcade({
       for (let y = 0; y < rows; y++) {
         for (let x = 0; x < cols; x++) {
           const at = y * cols + x
-          const opacity =
-            (stamp[at] ?? 0) * peak * (controlled ? 1 : (shade[at] ?? 1))
+          const opacity = (stamp[at] ?? 0) * peak * (controlled ? 1 : (shade[at] ?? 1))
           if (opacity > 0.02) {
             ctx.globalAlpha = opacity
             ctx.fillRect(x * PITCH, y * PITCH, CELL, CELL)
@@ -514,8 +494,8 @@ export function HoliArcade({
         const opacity = sprite.alpha * spriteDim * under
         if (opacity <= 0.02) continue
         ctx.globalAlpha = opacity
-        if (sprite.kind === "holi") drawHoli(ctx, sprite, hero, now)
-        else if (sprite.kind === "paper") drawPaper(ctx, sprite)
+        if (sprite.kind === 'holi') drawHoli(ctx, sprite, hero, now)
+        else if (sprite.kind === 'paper') drawPaper(ctx, sprite)
         else drawConflict(ctx, sprite, ink.alert)
       }
       ctx.globalAlpha = 1
@@ -549,7 +529,7 @@ export function HoliArcade({
         CELL,
         { width, height },
         bubble.alpha * (controlled ? BUBBLE_OPACITY : IDLE_BUBBLE_OPACITY),
-        { fg: ink.fg, bg: ink.surface, accent: bubble.accent }
+        { fg: ink.fg, bg: ink.surface, accent: bubble.accent },
       )
     }
 
@@ -600,14 +580,14 @@ export function HoliArcade({
 
     layout()
 
-    document.addEventListener("visibilitychange", start)
-    reducedQuery.addEventListener("change", start)
-    schemeQuery.addEventListener("change", recolour)
+    document.addEventListener('visibilitychange', start)
+    reducedQuery.addEventListener('change', start)
+    schemeQuery.addEventListener('change', recolour)
 
     const resizeObserver = new ResizeObserver(layout)
     resizeObserver.observe(root)
     root.parentElement
-      ?.querySelectorAll("[data-arcade-keepout]")
+      ?.querySelectorAll('[data-arcade-keepout]')
       .forEach((el) => resizeObserver.observe(el))
 
     // The content scrolls over a board that stays put, so the logo moves.
@@ -617,7 +597,7 @@ export function HoliArcade({
       drawGrid()
       if (still()) paintStill()
     }
-    host?.addEventListener("scroll", onScroll, { capture: true, passive: true })
+    host?.addEventListener('scroll', onScroll, { capture: true, passive: true })
 
     const visibility = new IntersectionObserver((entries) => {
       onScreen = entries.some((entry) => entry.isIntersecting)
@@ -630,17 +610,17 @@ export function HoliArcade({
     const themeObserver = new MutationObserver(recolour)
     themeObserver.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["class", "style", "data-theme", "data-glass"],
+      attributeFilter: ['class', 'style', 'data-theme', 'data-glass'],
     })
 
     return () => {
       cancelAnimationFrame(raf)
       kickRef.current = () => undefined
       refreshRef.current = () => undefined
-      document.removeEventListener("visibilitychange", start)
-      reducedQuery.removeEventListener("change", start)
-      schemeQuery.removeEventListener("change", recolour)
-      host?.removeEventListener("scroll", onScroll, { capture: true })
+      document.removeEventListener('visibilitychange', start)
+      reducedQuery.removeEventListener('change', start)
+      schemeQuery.removeEventListener('change', recolour)
+      host?.removeEventListener('scroll', onScroll, { capture: true })
       resizeObserver.disconnect()
       visibility.disconnect()
       themeObserver.disconnect()
@@ -669,13 +649,10 @@ export function HoliArcade({
         return
       }
       const active = document.activeElement
-      if (
-        active !== root &&
-        !(active instanceof Node && root?.contains(active))
-      ) {
+      if (active !== root && !(active instanceof Node && root?.contains(active))) {
         return
       }
-      if (event.key === "Escape") {
+      if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
         release()
@@ -688,8 +665,8 @@ export function HoliArcade({
       arcadeRef.current?.steer(heading.x, heading.y)
     }
 
-    window.addEventListener("keydown", onKey, true)
-    return () => window.removeEventListener("keydown", onKey, true)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [playing, release])
 
   return (
@@ -698,17 +675,13 @@ export function HoliArcade({
       data-slot="arcade"
       data-playing={playing}
       tabIndex={playing ? 0 : -1}
-      role={playing ? "application" : undefined}
-      aria-label={
-        playing
-          ? "Paper run. Arrow keys or WASD to move, Escape to release."
-          : undefined
-      }
+      role={playing ? 'application' : undefined}
+      aria-label={playing ? 'Paper run. Arrow keys or WASD to move, Escape to release.' : undefined}
       aria-hidden={playing ? undefined : true}
       className={cn(
-        "absolute inset-0 overflow-hidden outline-none",
-        playing ? "z-20" : "pointer-events-none",
-        className
+        'absolute inset-0 overflow-hidden outline-none',
+        playing ? 'z-20' : 'pointer-events-none',
+        className,
       )}
     >
       {/* The theme's ink, read by the canvas: foreground, the bubble's
@@ -723,24 +696,18 @@ export function HoliArcade({
       <div
         aria-hidden="true"
         className={cn(
-          "bg-background absolute inset-0 motion-respond",
-          playing ? "opacity-100" : "opacity-0"
+          'bg-background absolute inset-0 motion-respond',
+          playing ? 'opacity-100' : 'opacity-0',
         )}
       />
       <div
-        className={cn(
-          "absolute inset-0",
-          !playing && "mask-(--idle-mask) mask-intersect"
-        )}
+        className={cn('absolute inset-0', !playing && 'mask-(--idle-mask) mask-intersect')}
         style={IDLE_STYLE}
       >
         <canvas
           ref={canvasRef}
           aria-hidden="true"
-          className={cn(
-            "absolute inset-0 size-full",
-            !playing && "blur-(--idle-blur)"
-          )}
+          className={cn('absolute inset-0 size-full', !playing && 'blur-(--idle-blur)')}
         />
       </div>
 
@@ -773,12 +740,7 @@ export function HoliArcade({
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={release}
-            className="justify-self-end"
-          >
+          <Button variant="outline" size="sm" onClick={release} className="justify-self-end">
             Release
             <Kbd>Esc</Kbd>
           </Button>
@@ -812,8 +774,8 @@ export const ArcadeTakeControl = forwardRef<
     <div
       data-show={show}
       className={cn(
-        "motion-respond pointer-events-none w-fit opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 data-[show=true]:pointer-events-auto data-[show=true]:opacity-100",
-        className
+        'motion-respond pointer-events-none w-fit opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 data-[show=true]:pointer-events-auto data-[show=true]:opacity-100',
+        className,
       )}
     >
       <Button

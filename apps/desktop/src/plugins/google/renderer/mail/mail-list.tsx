@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react"
+import { useState, type ReactNode } from 'react'
 import {
   CalendarDaysIcon,
   ChevronDownIcon,
@@ -13,10 +13,10 @@ import {
   SquarePlusIcon,
   StarIcon,
   XIcon,
-} from "lucide-react"
-import { Badge } from "@/components/reui/badge"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Button } from "@/components/ui/button"
+} from 'lucide-react'
+import { Badge } from '@/components/reui/badge'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,7 +25,7 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from '@/components/ui/dropdown-menu'
 import {
   Empty,
   EmptyContent,
@@ -33,42 +33,38 @@ import {
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from "@/components/ui/empty"
+} from '@/components/ui/empty'
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
-} from "@/components/ui/input-group"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
-import { cn } from "@/plugin-api"
-import { listStamp } from "../mail-stamp"
-import { CATEGORIES, MAILBOXES, initialsOf, type MailFolder } from "./data"
-import { senderIconUrl } from "./sender-icon"
-import type { DraftSummary, MailState, ThreadSummary } from "./use-mail"
+} from '@/components/ui/input-group'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/plugin-api'
+import { listStamp } from '../mail-stamp'
+import { CATEGORIES, MAILBOXES, initialsOf, type MailFolder } from './data'
+import { senderIconUrl } from './sender-icon'
+import type { DraftSummary, MailState, ThreadSummary } from './use-mail'
 
 // ── Filter Tabs ──
 
 /** The pills that narrow the inbox. Starred is Gmail's `is:starred`, the
  *  list's starred folder, so it and Unread are one or the other. */
-type FilterTab = "all" | "unread" | "starred"
+type FilterTab = 'all' | 'unread' | 'starred'
 
 const TABS: { id: FilterTab; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "unread", label: "Unread" },
-  { id: "starred", label: "Starred" },
+  { id: 'all', label: 'All' },
+  { id: 'unread', label: 'Unread' },
+  { id: 'starred', label: 'Starred' },
 ]
 
 /** A Gmail tab's label for a row chip; Primary and no tab say nothing. */
-function categoryChip(category: ThreadSummary["category"]): string | null {
-  if (category === null || category === "primary") return null
+function categoryChip(category: ThreadSummary['category']): string | null {
+  if (category === null || category === 'primary') return null
   return CATEGORIES.find((c) => c.value === category)?.label ?? null
 }
 
@@ -89,22 +85,22 @@ function MailRow({
     <div
       id={id}
       role="listitem"
-      aria-current={isSelected ? "true" : undefined}
+      aria-current={isSelected ? 'true' : undefined}
       tabIndex={0}
       onClick={onClick}
       onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
+        if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
           onClick()
         }
       }}
       className={cn(
-        "relative flex cursor-pointer items-start gap-1.5 md:gap-2.5",
-        "border-border/40 border-b px-1.5 py-2 md:px-3 md:py-3",
-        "focus-visible:ring-ring motion-respond focus-visible:ring-1 focus-visible:outline-none focus-visible:ring-inset",
+        'relative flex cursor-pointer items-start gap-1.5 md:gap-2.5',
+        'border-border/40 border-b px-1.5 py-2 md:px-3 md:py-3',
+        'focus-visible:ring-ring motion-respond focus-visible:ring-1 focus-visible:outline-none focus-visible:ring-inset',
         isSelected
-          ? "bg-accent/60 dark:bg-accent/20"
-          : "hover:bg-accent/60 dark:hover:bg-accent/20"
+          ? 'bg-accent/60 dark:bg-accent/20'
+          : 'hover:bg-accent/60 dark:hover:bg-accent/20',
       )}
     >
       {children}
@@ -126,9 +122,7 @@ function SenderAvatar({ name, email }: { name: string; email: string }) {
           className="bg-muted object-contain"
         />
       )}
-      <AvatarFallback className="text-xs font-semibold">
-        {initialsOf(name, email)}
-      </AvatarFallback>
+      <AvatarFallback className="text-xs font-semibold">{initialsOf(name, email)}</AvatarFallback>
     </Avatar>
   )
 }
@@ -166,10 +160,8 @@ function MailItem({
           <div className="flex min-w-0 items-center gap-1">
             <span
               className={cn(
-                "truncate text-sm leading-tight",
-                thread.unread
-                  ? "text-foreground font-semibold"
-                  : "text-foreground/75 font-medium"
+                'truncate text-sm leading-tight',
+                thread.unread ? 'text-foreground font-semibold' : 'text-foreground/75 font-medium',
               )}
             >
               {thread.from.name}
@@ -213,10 +205,8 @@ function MailItem({
             )}
             <span
               className={cn(
-                "text-xs whitespace-nowrap tabular-nums",
-                thread.unread
-                  ? "text-foreground/70 font-medium"
-                  : "text-muted-foreground/60"
+                'text-xs whitespace-nowrap tabular-nums',
+                thread.unread ? 'text-foreground/70 font-medium' : 'text-muted-foreground/60',
               )}
             >
               {listStamp(thread.date)}
@@ -228,10 +218,8 @@ function MailItem({
         <div className="mb-1 grid">
           <p
             className={cn(
-              "min-w-0 truncate text-xs leading-tight",
-              thread.unread
-                ? "text-foreground/90 font-medium"
-                : "text-foreground/70"
+              'min-w-0 truncate text-xs leading-tight',
+              thread.unread ? 'text-foreground/90 font-medium' : 'text-foreground/70',
             )}
           >
             {thread.subject}
@@ -240,9 +228,7 @@ function MailItem({
 
         {/* Preview */}
         <div className="mb-1 grid">
-          <p className="text-muted-foreground truncate text-xs leading-snug">
-            {thread.snippet}
-          </p>
+          <p className="text-muted-foreground truncate text-xs leading-snug">{thread.snippet}</p>
         </div>
 
         {/* Gmail's tab, outlined, and the person's own labels */}
@@ -266,19 +252,11 @@ function MailItem({
 }
 
 function recipients(draft: DraftSummary): string {
-  if (draft.to.length === 0) return "(no recipient)"
-  return draft.to
-    .map((address) => (address.name === "" ? address.email : address.name))
-    .join(", ")
+  if (draft.to.length === 0) return '(no recipient)'
+  return draft.to.map((address) => (address.name === '' ? address.email : address.name)).join(', ')
 }
 
-function DraftItem({
-  draft,
-  onClick,
-}: {
-  draft: DraftSummary
-  onClick: () => void
-}) {
+function DraftItem({ draft, onClick }: { draft: DraftSummary; onClick: () => void }) {
   const first = draft.to[0]
   return (
     <MailRow id={draft.draftId} isSelected={false} onClick={onClick}>
@@ -303,13 +281,11 @@ function DraftItem({
         </div>
         <div className="mb-1 grid">
           <p className="text-foreground/70 min-w-0 truncate text-xs leading-tight">
-            {draft.subject === "" ? "(no subject)" : draft.subject}
+            {draft.subject === '' ? '(no subject)' : draft.subject}
           </p>
         </div>
         <div className="mb-1 grid">
-          <p className="text-muted-foreground truncate text-xs leading-snug">
-            {draft.snippet}
-          </p>
+          <p className="text-muted-foreground truncate text-xs leading-snug">{draft.snippet}</p>
         </div>
       </div>
     </MailRow>
@@ -353,13 +329,11 @@ function ListMessage({
   alert?: boolean
 }) {
   return (
-    <Empty role={alert ? "alert" : undefined}>
+    <Empty role={alert ? 'alert' : undefined}>
       <EmptyHeader>
         <EmptyMedia variant="icon">{icon}</EmptyMedia>
         <EmptyTitle>{title}</EmptyTitle>
-        {description !== undefined && (
-          <EmptyDescription>{description}</EmptyDescription>
-        )}
+        {description !== undefined && <EmptyDescription>{description}</EmptyDescription>}
       </EmptyHeader>
       {action !== undefined && <EmptyContent>{action}</EmptyContent>}
     </Empty>
@@ -387,22 +361,20 @@ export function MailList({
   onOpenDraft,
   onOpenConnections,
 }: MailListProps) {
-  const [query, setQuery] = useState("")
+  const [query, setQuery] = useState('')
   /** Starred is a pill on the inbox, so the title still says Inbox. */
-  const mailbox =
-    MAILBOXES.find((m) => m.id === mail.folder) ?? MAILBOXES[0]!
-  const inbox = mail.folder === "inbox" && !mail.searching
+  const mailbox = MAILBOXES.find((m) => m.id === mail.folder) ?? MAILBOXES[0]!
+  const inbox = mail.folder === 'inbox' && !mail.searching
   /** Sent and Drafts have no unread or starred pills. */
-  const filterable = mail.folder === "inbox" || mail.folder === "starred"
-  const categoryLabel =
-    CATEGORIES.find((c) => c.value === mail.category)?.label ?? "All tabs"
+  const filterable = mail.folder === 'inbox' || mail.folder === 'starred'
+  const categoryLabel = CATEGORIES.find((c) => c.value === mail.category)?.label ?? 'All tabs'
 
   const title = mail.searching
-    ? "Search"
+    ? 'Search'
     : inbox && mail.category !== null
       ? categoryLabel
-      : mail.folder === "starred"
-        ? "Starred"
+      : mail.folder === 'starred'
+        ? 'Starred'
         : mailbox.label
   const unreadCount = !inbox
     ? null
@@ -411,16 +383,15 @@ export function MailList({
       : (mail.categoryCounts?.[mail.category]?.count ?? null)
 
   const clearSearch = () => {
-    setQuery("")
-    mail.search("")
+    setQuery('')
+    mail.search('')
   }
 
   const body = (() => {
     if (mail.showsDrafts) {
       const drafts = mail.drafts
-      if (drafts.kind === "loading")
-        return <MailSkeleton label="Loading drafts" />
-      if (drafts.kind === "error")
+      if (drafts.kind === 'loading') return <MailSkeleton label="Loading drafts" />
+      if (drafts.kind === 'error')
         return (
           <ListMessage
             alert
@@ -451,19 +422,15 @@ export function MailList({
       return (
         <div role="list" aria-label="Drafts">
           {drafts.drafts.map((draft) => (
-            <DraftItem
-              key={draft.draftId}
-              draft={draft}
-              onClick={() => onOpenDraft(draft)}
-            />
+            <DraftItem key={draft.draftId} draft={draft} onClick={() => onOpenDraft(draft)} />
           ))}
         </div>
       )
     }
 
     const list = mail.list
-    if (list.kind === "loading") return <MailSkeleton label="Loading mail" />
-    if (list.kind === "disconnected")
+    if (list.kind === 'loading') return <MailSkeleton label="Loading mail" />
+    if (list.kind === 'disconnected')
       return (
         <ListMessage
           icon={<MailXIcon aria-hidden="true" />}
@@ -476,7 +443,7 @@ export function MailList({
           }
         />
       )
-    if (list.kind === "error")
+    if (list.kind === 'error')
       return (
         <ListMessage
           alert
@@ -496,14 +463,14 @@ export function MailList({
           icon={<InboxIcon aria-hidden="true" />}
           title={
             mail.searching
-              ? "No messages matching your search"
+              ? 'No messages matching your search'
               : mail.unreadOnly && filterable
-                ? "Nothing unread"
+                ? 'Nothing unread'
                 : `Nothing in ${title}`
           }
           description={
             inbox && mail.category !== null
-              ? "Gmail’s tabs only apply if your inbox uses them."
+              ? 'Gmail’s tabs only apply if your inbox uses them.'
               : undefined
           }
           action={
@@ -512,11 +479,7 @@ export function MailList({
                 Clear search
               </Button>
             ) : mail.unreadOnly && filterable ? (
-              <Button
-                variant="outline"
-                size="xs"
-                onClick={() => mail.setUnreadOnly(false)}
-              >
+              <Button variant="outline" size="xs" onClick={() => mail.setUnreadOnly(false)}>
                 Show all mail
               </Button>
             ) : (
@@ -543,13 +506,8 @@ export function MailList({
         {list.nextPageToken !== null && (
           <div className="flex justify-center px-3 py-3">
             {/* A button, not an infinite scroll: Gmail is rate limited. */}
-            <Button
-              variant="outline"
-              size="xs"
-              disabled={mail.loadingMore}
-              onClick={mail.loadMore}
-            >
-              {mail.loadingMore ? "Loading…" : "Load more"}
+            <Button variant="outline" size="xs" disabled={mail.loadingMore} onClick={mail.loadMore}>
+              {mail.loadingMore ? 'Loading…' : 'Load more'}
             </Button>
           </div>
         )}
@@ -558,20 +516,16 @@ export function MailList({
   })()
 
   const tab: FilterTab =
-    mail.folder === "starred"
-      ? "starred"
-      : mail.unreadOnly && filterable
-        ? "unread"
-        : "all"
+    mail.folder === 'starred' ? 'starred' : mail.unreadOnly && filterable ? 'unread' : 'all'
 
   const selectTab = (next: FilterTab) => {
-    if (next === "starred") {
-      if (mail.folder !== "starred") onSelectFolder("starred")
+    if (next === 'starred') {
+      if (mail.folder !== 'starred') onSelectFolder('starred')
       mail.setUnreadOnly(false)
       return
     }
-    if (mail.folder !== "inbox") onSelectFolder("inbox")
-    mail.setUnreadOnly(next === "unread")
+    if (mail.folder !== 'inbox') onSelectFolder('inbox')
+    mail.setUnreadOnly(next === 'unread')
   }
 
   return (
@@ -590,18 +544,13 @@ export function MailList({
                 aria-label={`Mailbox: ${mailbox.label}`}
                 className="-ml-2 min-w-0 font-semibold"
               >
-                <span className="truncate">
-                  {mail.searching ? "Search" : mailbox.label}
-                </span>
-                <ChevronDownIcon
-                  className="text-muted-foreground"
-                  aria-hidden="true"
-                />
+                <span className="truncate">{mail.searching ? 'Search' : mailbox.label}</span>
+                <ChevronDownIcon className="text-muted-foreground" aria-hidden="true" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-48">
               <DropdownMenuRadioGroup
-                value={mail.searching ? "" : mailbox.id}
+                value={mail.searching ? '' : mailbox.id}
                 onValueChange={(value) => onSelectFolder(value as MailFolder)}
               >
                 {MAILBOXES.map((m) => (
@@ -640,16 +589,11 @@ export function MailList({
           {inbox && (
             <DropdownMenu
               onOpenChange={(open) => {
-                if (open && mail.categoryCounts === null)
-                  mail.loadCategoryCounts()
+                if (open && mail.categoryCounts === null) mail.loadCategoryCounts()
               }}
             >
               <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={`Inbox tab: ${categoryLabel}`}
-                >
+                <Button variant="ghost" size="icon-sm" aria-label={`Inbox tab: ${categoryLabel}`}>
                   <FilterIcon aria-hidden="true" />
                 </Button>
               </DropdownMenuTrigger>
@@ -659,12 +603,10 @@ export function MailList({
                     Gmail tab
                   </DropdownMenuLabel>
                   <DropdownMenuRadioGroup
-                    value={mail.category ?? "all"}
+                    value={mail.category ?? 'all'}
                     onValueChange={(value) =>
                       mail.setCategory(
-                        value === "all"
-                          ? null
-                          : (value as NonNullable<typeof mail.category>)
+                        value === 'all' ? null : (value as NonNullable<typeof mail.category>),
                       )
                     }
                   >
@@ -674,15 +616,15 @@ export function MailList({
                           ? mail.counts?.unread
                           : mail.categoryCounts?.[category.value]
                       const shown =
-                        typeof count === "number"
+                        typeof count === 'number'
                           ? count
                           : count == null
                             ? null
-                            : `${count.count}${count.more ? "+" : ""}`
+                            : `${count.count}${count.more ? '+' : ''}`
                       return (
                         <DropdownMenuRadioItem
-                          key={category.value ?? "all"}
-                          value={category.value ?? "all"}
+                          key={category.value ?? 'all'}
+                          value={category.value ?? 'all'}
                         >
                           {category.label}
                           {shown !== null && shown !== 0 && (
@@ -727,18 +669,14 @@ export function MailList({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") mail.search(query.trim())
-              if (e.key === "Escape" && query !== "") clearSearch()
+              if (e.key === 'Enter') mail.search(query.trim())
+              if (e.key === 'Escape' && query !== '') clearSearch()
             }}
             aria-label="Search mail"
           />
-          {(query !== "" || mail.searching) && (
+          {(query !== '' || mail.searching) && (
             <InputGroupAddon align="inline-end">
-              <InputGroupButton
-                size="icon-xs"
-                onClick={clearSearch}
-                aria-label="Clear search"
-              >
+              <InputGroupButton size="icon-xs" onClick={clearSearch} aria-label="Clear search">
                 <XIcon aria-hidden="true" />
               </InputGroupButton>
             </InputGroupAddon>
@@ -766,11 +704,7 @@ export function MailList({
       )}
 
       {/* ── Filter Tabs + Mail Content ── */}
-      <Tabs
-        value={tab}
-        onValueChange={(v) => selectTab(v as FilterTab)}
-        className="min-h-0 flex-1"
-      >
+      <Tabs value={tab} onValueChange={(v) => selectTab(v as FilterTab)} className="min-h-0 flex-1">
         {/* Tab bar row: only on the inbox, where the pills apply */}
         {filterable && (
           <div className="border-border/60 flex shrink-0 items-center overflow-x-auto border-b px-1.5 py-1.5 md:px-2">

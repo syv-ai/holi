@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  basename,
-  expandToFiles,
-  joinPath,
-  parentOf,
-  remapUnder,
-} from '@/lib/tree-paths'
+import { basename, expandToFiles, joinPath, parentOf, remapUnder } from '@/lib/tree-paths'
 
 describe('tree-paths', () => {
   it('joins, tolerating empty parent', () => {

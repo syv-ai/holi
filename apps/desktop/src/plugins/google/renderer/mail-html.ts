@@ -105,8 +105,7 @@ const CSS_IMPORT = /@import\b[^;}]*;?/gi
  *
  * Bounded by `[^;{}]`, so it cannot take a neighbouring rule with it.
  */
-const CSS_REMOTE_DECLARATION =
-  /[a-zA-Z-]+\s*:\s*[^;{}]*url\(\s*['"]?\s*(?:https?:)?\/\/[^;{}]*/g
+const CSS_REMOTE_DECLARATION = /[a-zA-Z-]+\s*:\s*[^;{}]*url\(\s*['"]?\s*(?:https?:)?\/\/[^;{}]*/g
 
 export function sanitizeMailHtml(html: string, options: SanitizeMailOptions = {}): SanitizedMail {
   const fragment = DOMPurify.sanitize(html, {

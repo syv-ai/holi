@@ -3,11 +3,11 @@
  * a one-line title field. Enter adds and stays open for the next one, the way
  * a list is typed in; Escape, or leaving it empty, closes it.
  */
-import { useState } from "react"
-import { PlusIcon } from "lucide-react"
+import { useState } from 'react'
+import { PlusIcon } from 'lucide-react'
 
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 export function InlineAdd({
   label,
@@ -21,7 +21,7 @@ export function InlineAdd({
   dashed?: boolean
 }) {
   const [open, setOpen] = useState(false)
-  const [title, setTitle] = useState("")
+  const [title, setTitle] = useState('')
   const [busy, setBusy] = useState(false)
 
   if (!open && dashed) {
@@ -57,11 +57,11 @@ export function InlineAdd({
 
   const submit = async () => {
     const text = title.trim()
-    if (text === "") return setOpen(false)
+    if (text === '') return setOpen(false)
     setBusy(true)
     try {
       await onAdd(text)
-      setTitle("")
+      setTitle('')
     } finally {
       setBusy(false)
     }
@@ -76,15 +76,15 @@ export function InlineAdd({
       readOnly={busy}
       onChange={(event) => setTitle(event.target.value)}
       onBlur={() => {
-        if (title.trim() === "") setOpen(false)
+        if (title.trim() === '') setOpen(false)
       }}
       onKeyDown={(event) => {
-        if (event.key === "Enter") {
+        if (event.key === 'Enter') {
           event.preventDefault()
           void submit()
-        } else if (event.key === "Escape") {
+        } else if (event.key === 'Escape') {
           event.preventDefault()
-          setTitle("")
+          setTitle('')
           setOpen(false)
         }
       }}

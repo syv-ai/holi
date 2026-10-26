@@ -1,5 +1,5 @@
-import { atom, useAtomValue } from "jotai"
-import { useCallback } from "react"
+import { atom, useAtomValue } from 'jotai'
+import { useCallback } from 'react'
 import {
   AppWindowIcon,
   FileTextIcon,
@@ -9,29 +9,26 @@ import {
   WaypointsIcon,
   SquarePenIcon,
   ZapIcon,
-} from "lucide-react"
+} from 'lucide-react'
 
-import { AgentMark } from "@/composites/marks"
-import { PixelPersona } from "@/composites/pixel-persona/pixel-persona"
-import type { AgentsTabLook } from "@/plugin-api"
-import { changedDocsAtom } from "@/state/doc-changes"
-import { runningPluginsAtom, surfacesAtom } from "@/state/plugins"
-import { parseTabKey } from "@/state/tab-descriptor"
+import { AgentMark } from '@/composites/marks'
+import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
+import type { AgentsTabLook } from '@/plugin-api'
+import { changedDocsAtom } from '@/state/doc-changes'
+import { runningPluginsAtom, surfacesAtom } from '@/state/plugins'
+import { parseTabKey } from '@/state/tab-descriptor'
 
-import type { HeaderTab } from "./tab-strip"
-import { useSidebarApps } from "../sidebar/sidebar-apps"
+import type { HeaderTab } from './tab-strip'
+import { useSidebarApps } from '../sidebar/sidebar-apps'
 
-type LookUp = (selection: {
-  owner: string
-  id: string
-}) => AgentsTabLook | undefined
+type LookUp = (selection: { owner: string; id: string }) => AgentsTabLook | undefined
 
 const NO_LOOKS = atom<LookUp>(() => () => undefined)
 
 /** A file's name as its tab says it, as the files list shows it: without its
  *  folders or its extension. */
 function fileTitle(path: string): string {
-  return path.slice(path.lastIndexOf("/") + 1).replace(/(?<=.)\.[^./]+$/, "")
+  return path.slice(path.lastIndexOf('/') + 1).replace(/(?<=.)\.[^./]+$/, '')
 }
 
 /** A session's mark: the Holi's face when one ran it, the automation's
@@ -39,12 +36,12 @@ function fileTitle(path: string): string {
  *  list draws them. */
 function SessionMark({ look }: { look: AgentsTabLook | undefined }) {
   const by = look?.by
-  if (by?.kind === "holi" && by.mascot !== undefined) {
+  if (by?.kind === 'holi' && by.mascot !== undefined) {
     return (
       <PixelPersona
         name={by.mascot}
-        color={by.color ?? "#8f8f94"}
-        status={look?.state === "done" ? "idle" : look?.state}
+        color={by.color ?? '#8f8f94'}
+        status={look?.state === 'done' ? 'idle' : look?.state}
         still
         className="size-4 shrink-0"
       />
@@ -52,10 +49,7 @@ function SessionMark({ look }: { look: AgentsTabLook | undefined }) {
   }
   if (by !== undefined) {
     return (
-      <ZapIcon
-        aria-hidden="true"
-        className="size-4 shrink-0 text-amber-600 dark:text-amber-400"
-      />
+      <ZapIcon aria-hidden="true" className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
     )
   }
   return <AgentMark agent={look?.agent} className="size-4" />
@@ -67,65 +61,60 @@ export function useTabLook(): (key: string) => HeaderTab {
   const apps = useSidebarApps()
   const surfaces = useAtomValue(surfacesAtom)
   const looksAtom =
-    useAtomValue(runningPluginsAtom).find((plugin) => plugin.agentsMode)
-      ?.agentsMode?.tabLook ?? NO_LOOKS
+    useAtomValue(runningPluginsAtom).find((plugin) => plugin.agentsMode)?.agentsMode?.tabLook ??
+    NO_LOOKS
   const lookUp = useAtomValue(looksAtom)
   const changedDocs = useAtomValue(changedDocsAtom)
   return useCallback(
     (key: string): HeaderTab => {
       const tab = parseTabKey(key)
       switch (tab?.kind) {
-        case "doc":
+        case 'doc':
           return {
             id: key,
             title: fileTitle(tab.path),
             icon: FileTextIcon,
-            ...(changedDocs.has(tab.path) ? { status: "updated" as const } : {}),
+            ...(changedDocs.has(tab.path) ? { status: 'updated' as const } : {}),
           }
-        case "vault-app":
+        case 'vault-app':
           return { id: key, title: fileTitle(tab.path), icon: AppWindowIcon }
-        case "board":
-          return { id: key, title: "Board", icon: SquareKanbanIcon }
-        case "graph":
-          return { id: key, title: "Graph", icon: WaypointsIcon }
-        case "apps":
-          return { id: key, title: "Apps", icon: LayoutGridIcon }
-        case "surface": {
+        case 'board':
+          return { id: key, title: 'Board', icon: SquareKanbanIcon }
+        case 'graph':
+          return { id: key, title: 'Graph', icon: WaypointsIcon }
+        case 'apps':
+          return { id: key, title: 'Apps', icon: LayoutGridIcon }
+        case 'surface': {
           const label = surfaces.get(tab.surface)?.label
           return {
             id: key,
-            title:
-              typeof label === "function"
-                ? label(tab.id ?? "")
-                : (label ?? tab.surface),
+            title: typeof label === 'function' ? label(tab.id ?? '') : (label ?? tab.surface),
             icon: AppWindowIcon,
           }
         }
-        case "new":
-          return { id: key, title: "New tab" }
-        case "agents-home":
-          return { id: key, title: "New session", icon: SquarePenIcon }
-        case "settings":
-          return { id: key, title: "Settings", icon: SettingsIcon }
-        case "app": {
+        case 'new':
+          return { id: key, title: 'New tab' }
+        case 'agents-home':
+          return { id: key, title: 'New session', icon: SquarePenIcon }
+        case 'settings':
+          return { id: key, title: 'Settings', icon: SettingsIcon }
+        case 'app': {
           const app = apps.find((candidate) => candidate.id === tab.id)
           return { id: key, title: app?.label ?? tab.id, icon: app?.icon }
         }
-        case "session": {
+        case 'session': {
           const look = lookUp({ owner: tab.owner, id: tab.id })
           return {
             id: key,
-            title: look?.title ?? "Session",
+            title: look?.title ?? 'Session',
             mark: <SessionMark look={look} />,
-            ...(look === undefined || look.state === "idle"
-              ? {}
-              : { status: look.state }),
+            ...(look === undefined || look.state === 'idle' ? {} : { status: look.state }),
           }
         }
         default:
           return { id: key, title: key }
       }
     },
-    [apps, surfaces, lookUp, changedDocs]
+    [apps, surfaces, lookUp, changedDocs],
   )
 }

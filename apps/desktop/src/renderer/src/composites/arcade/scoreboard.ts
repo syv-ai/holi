@@ -8,9 +8,9 @@
  * game. A file names its player again inside, so a renamed file still
  * credits the right person.
  */
-import { ARCADE_MODES, type ArcadeMode } from "./grid-arcade"
+import { ARCADE_MODES, type ArcadeMode } from './grid-arcade'
 
-const SCORES_DIR = ".holi/arcade/scores/"
+const SCORES_DIR = '.holi/arcade/scores/'
 
 interface BestRun {
   score: number
@@ -37,23 +37,22 @@ export interface BoardRow {
 /** A GitHub login as a file name: logins are already `[A-Za-z0-9-]`, so
  *  this only guards against a malformed one. */
 export function scoresPath(login: string): string {
-  return `${SCORES_DIR}${login.toLowerCase().replace(/[^a-z0-9-]/g, "-")}.json`
+  return `${SCORES_DIR}${login.toLowerCase().replace(/[^a-z0-9-]/g, '-')}.json`
 }
 
 export function isScoresPath(path: string): boolean {
   return (
     path.startsWith(SCORES_DIR) &&
-    path.endsWith(".json") &&
-    !path.slice(SCORES_DIR.length).includes("/")
+    path.endsWith('.json') &&
+    !path.slice(SCORES_DIR.length).includes('/')
   )
 }
 
 function bestRun(raw: unknown): BestRun | undefined {
-  if (typeof raw !== "object" || raw === null) return undefined
+  if (typeof raw !== 'object' || raw === null) return undefined
   const { score, at } = raw as Record<string, unknown>
-  if (typeof score !== "number" || !Number.isFinite(score) || score < 0)
-    return undefined
-  return { score: Math.floor(score), at: typeof at === "string" ? at : "" }
+  if (typeof score !== 'number' || !Number.isFinite(score) || score < 0) return undefined
+  return { score: Math.floor(score), at: typeof at === 'string' ? at : '' }
 }
 
 /** A player's file, or null when it is not one: a hand-edited or broken
@@ -65,12 +64,12 @@ export function parsePlayerScores(text: string): PlayerScores | null {
   } catch {
     return null
   }
-  if (typeof raw !== "object" || raw === null) return null
+  if (typeof raw !== 'object' || raw === null) return null
   const data = raw as Record<string, unknown>
-  if (typeof data.login !== "string" || data.login === "") return null
-  const best: PlayerScores["best"] = {}
+  if (typeof data.login !== 'string' || data.login === '') return null
+  const best: PlayerScores['best'] = {}
   const rawBest =
-    typeof data.best === "object" && data.best !== null
+    typeof data.best === 'object' && data.best !== null
       ? (data.best as Record<string, unknown>)
       : {}
   for (const mode of ARCADE_MODES) {
@@ -79,10 +78,8 @@ export function parsePlayerScores(text: string): PlayerScores | null {
   }
   return {
     login: data.login,
-    ...(typeof data.name === "string" ? { name: data.name } : {}),
-    ...(typeof data.avatarUrl === "string"
-      ? { avatarUrl: data.avatarUrl }
-      : {}),
+    ...(typeof data.name === 'string' ? { name: data.name } : {}),
+    ...(typeof data.avatarUrl === 'string' ? { avatarUrl: data.avatarUrl } : {}),
     best,
   }
 }
@@ -101,7 +98,7 @@ export function recordRun(
   player: { login: string; name?: string; avatarUrl?: string },
   mode: ArcadeMode,
   score: number,
-  at: string
+  at: string,
 ): PlayerScores | null {
   if (score <= 0) return null
   const previous = current?.best[mode]
@@ -115,10 +112,7 @@ export function recordRun(
 }
 
 /** The board at one speed: highest first, the earlier run winning a tie. */
-export function boardFor(
-  players: readonly PlayerScores[],
-  mode: ArcadeMode
-): BoardRow[] {
+export function boardFor(players: readonly PlayerScores[], mode: ArcadeMode): BoardRow[] {
   const rows: BoardRow[] = []
   for (const player of players) {
     const run = player.best[mode]

@@ -15,14 +15,14 @@ function note(event: MouseEvent | KeyboardEvent) {
   last = { alt: event.altKey, at: performance.now() }
 }
 
-if (typeof window !== "undefined") {
-  window.addEventListener("click", note, true)
+if (typeof window !== 'undefined') {
+  window.addEventListener('click', note, true)
   window.addEventListener(
-    "keydown",
+    'keydown',
     (event) => {
-      if (event.key === "Enter") note(event)
+      if (event.key === 'Enter') note(event)
     },
-    true
+    true,
   )
 }
 

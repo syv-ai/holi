@@ -11,7 +11,7 @@
  * Ask about this app, Reveal in Files, Copy path, Refresh preview and
  * Archive.
  */
-import { useEffect, useRef, useState, type ComponentType } from "react"
+import { useEffect, useRef, useState, type ComponentType } from 'react'
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
@@ -25,42 +25,39 @@ import {
   SparklesIcon,
   SquareSplitHorizontalIcon,
   UsersIcon,
-} from "lucide-react"
-import { isLocalOnlyPath } from "@holi/shared"
+} from 'lucide-react'
+import { isLocalOnlyPath } from '@holi/shared'
 
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardTitle } from "@/components/ui/card"
+import { Badge } from '@/components/reui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardTitle } from '@/components/ui/card'
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
-} from "@/components/ui/context-menu"
-import { Skeleton } from "@/components/ui/skeleton"
+} from '@/components/ui/context-menu'
+import { Skeleton } from '@/components/ui/skeleton'
 
-type Description =
-  | { kind: "loading" }
-  | { kind: "ready"; text: string | null }
-  | { kind: "error" }
+type Description = { kind: 'loading' } | { kind: 'ready'; text: string | null } | { kind: 'error' }
 
 /** The manifest's description, read again when `stamp` (the newest of the
  *  app's files) moves or Retry is pressed. */
 function useDescription(
   describe: (() => Promise<string | null>) | undefined,
-  stamp: string
+  stamp: string,
 ): [Description, () => void] {
   const [state, setState] = useState<Description>(
-    describe === undefined ? { kind: "ready", text: null } : { kind: "loading" }
+    describe === undefined ? { kind: 'ready', text: null } : { kind: 'loading' },
   )
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     if (describe === undefined) return
     let live = true
     describe().then(
-      (text) => live && setState({ kind: "ready", text }),
-      () => live && setState({ kind: "error" })
+      (text) => live && setState({ kind: 'ready', text }),
+      () => live && setState({ kind: 'error' }),
     )
     return () => {
       live = false
@@ -72,13 +69,13 @@ function useDescription(
   return [
     state,
     () => {
-      setState({ kind: "loading" })
+      setState({ kind: 'loading' })
       setAttempt((n) => n + 1)
     },
   ]
 }
 
-type Preview = { kind: "loading" } | { kind: "ready"; url: string | null }
+type Preview = { kind: 'loading' } | { kind: 'ready'; url: string | null }
 
 /** The app's preview, read again when `stamp` or `version` moves. One that
  *  cannot be read is no preview: the icon plate stands in, as for an app
@@ -86,17 +83,17 @@ type Preview = { kind: "loading" } | { kind: "ready"; url: string | null }
 function usePreview(
   preview: (() => Promise<string | null>) | undefined,
   stamp: string,
-  version: number
+  version: number,
 ): Preview {
   const [state, setState] = useState<Preview>(
-    preview === undefined ? { kind: "ready", url: null } : { kind: "loading" }
+    preview === undefined ? { kind: 'ready', url: null } : { kind: 'loading' },
   )
   useEffect(() => {
     if (preview === undefined) return
     let live = true
     preview().then(
-      (url) => live && setState({ kind: "ready", url }),
-      () => live && setState({ kind: "ready", url: null })
+      (url) => live && setState({ kind: 'ready', url }),
+      () => live && setState({ kind: 'ready', url: null }),
     )
     return () => {
       live = false
@@ -149,7 +146,7 @@ export function AppCard({
   const [description, retry] = useDescription(describe, stamp)
   const preview = usePreview(readPreview, stamp, previewVersion)
   const leaving = useRef(false)
-  const slash = path.lastIndexOf("/")
+  const slash = path.lastIndexOf('/')
   const folder = slash === -1 ? null : path.slice(0, slash)
   const personal = isLocalOnlyPath(path)
 
@@ -158,11 +155,8 @@ export function AppCard({
       <CardContent>
         <div className="flex flex-col gap-4">
           <div className="bg-muted relative flex h-48 w-full items-center justify-center overflow-hidden rounded-lg">
-            {preview.kind === "loading" ? (
-              <Skeleton
-                className="size-full"
-                aria-label={`Loading the preview of ${name}`}
-              />
+            {preview.kind === 'loading' ? (
+              <Skeleton className="size-full" aria-label={`Loading the preview of ${name}`} />
             ) : preview.url !== null ? (
               <img
                 src={preview.url}
@@ -176,17 +170,13 @@ export function AppCard({
 
           <div className="flex items-center justify-between gap-5">
             <Badge variant="outline">
-              {personal ? (
-                <LockIcon aria-hidden="true" />
-              ) : (
-                <UsersIcon aria-hidden="true" />
-              )}
-              {personal ? "Personal" : "Shared"}
+              {personal ? <LockIcon aria-hidden="true" /> : <UsersIcon aria-hidden="true" />}
+              {personal ? 'Personal' : 'Shared'}
             </Badge>
             <div className="flex min-w-0 items-center gap-1">
               <FolderIcon className="size-4 shrink-0" aria-hidden="true" />
               <span className="text-secondary-foreground truncate text-xs font-medium">
-                {folder ?? "Vault root"}
+                {folder ?? 'Vault root'}
               </span>
             </div>
           </div>
@@ -195,32 +185,23 @@ export function AppCard({
             <CardTitle>
               <span className="block truncate">{name}</span>
             </CardTitle>
-            {description.kind === "loading" ? (
-              <div
-                className="flex flex-col gap-1.5 py-0.5"
-                aria-label="Loading the description"
-              >
+            {description.kind === 'loading' ? (
+              <div className="flex flex-col gap-1.5 py-0.5" aria-label="Loading the description">
                 <Skeleton className="h-4 w-full" />
                 <Skeleton className="h-4 w-2/3" />
               </div>
-            ) : description.kind === "error" ? (
+            ) : description.kind === 'error' ? (
               <div className="flex items-center justify-between gap-2">
-                <p className="text-muted-foreground text-sm">
-                  Couldn't read its description.
-                </p>
+                <p className="text-muted-foreground text-sm">Couldn't read its description.</p>
                 <Button variant="outline" size="sm" onClick={retry}>
                   <RefreshCwIcon data-icon="inline-start" aria-hidden="true" />
                   Retry
                 </Button>
               </div>
             ) : description.text === null ? (
-              <p className="text-muted-foreground text-sm">
-                No description yet.
-              </p>
+              <p className="text-muted-foreground text-sm">No description yet.</p>
             ) : (
-              <p className="text-foreground line-clamp-3 text-sm">
-                {description.text}
-              </p>
+              <p className="text-foreground line-clamp-3 text-sm">{description.text}</p>
             )}
           </div>
 
@@ -289,7 +270,7 @@ export function AppCard({
               ) : (
                 <ArchiveIcon aria-hidden="true" />
               )}
-              {archived ? "Unarchive" : "Archive"}
+              {archived ? 'Unarchive' : 'Archive'}
             </ContextMenuItem>
           </>
         ) : null}

@@ -1,6 +1,6 @@
-import { Badge } from "@/components/reui/badge"
+import { Badge } from '@/components/reui/badge'
 
-import { Button } from "@/components/ui/button"
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -8,10 +8,10 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { TabsList, TabsTrigger } from "@/components/ui/tabs"
-import type { TabItem } from "./data"
-import { MenuIcon } from "lucide-react"
+} from '@/components/ui/dropdown-menu'
+import { TabsList, TabsTrigger } from '@/components/ui/tabs'
+import type { TabItem } from './data'
+import { MenuIcon } from 'lucide-react'
 
 // ── Navbar tabs (line variant + optional badge; must be used inside Tabs) ──
 
@@ -44,12 +44,7 @@ export function NavbarTabs({ items, value, onValueChange }: NavbarTabsProps) {
       {/* Narrow: a menu of the same tabs */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label="Choose a view"
-            className="md:hidden"
-          >
+          <Button variant="ghost" size="sm" aria-label="Choose a view" className="md:hidden">
             <MenuIcon data-icon="inline-start" aria-hidden="true" />
             {current?.label}
           </Button>
@@ -63,11 +58,7 @@ export function NavbarTabs({ items, value, onValueChange }: NavbarTabsProps) {
                   {item.icon}
                   {item.label}
                   {item.badge != null && (
-                    <Badge
-                      variant="secondary"
-                      radius="full"
-                      className="ml-auto"
-                    >
+                    <Badge variant="secondary" radius="full" className="ml-auto">
                       {item.badge}
                     </Badge>
                   )}

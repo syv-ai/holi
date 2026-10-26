@@ -1,34 +1,31 @@
-import { useEffect, useRef, useState } from "react"
-import { useAtomValue, useSetAtom } from "jotai"
-import { toast } from "sonner"
-import { AstroidIcon, CalendarDaysIcon, FilePlusIcon } from "lucide-react"
+import { useEffect, useRef, useState } from 'react'
+import { useAtomValue, useSetAtom } from 'jotai'
+import { toast } from 'sonner'
+import { AstroidIcon, CalendarDaysIcon, FilePlusIcon } from 'lucide-react'
 
-import {
-  ArcadeTakeControl,
-  HoliArcade,
-} from "@/composites/arcade/holi-arcade"
-import { Button } from "@/components/ui/button"
-import { Kbd } from "@/components/ui/kbd"
-import { BrandMark } from "@/composites/brand-mark"
-import { cn } from "@/lib/cn"
-import { hotkeyLabels } from "@/lib/hotkey"
-import { SHORTCUTS } from "@/lib/shortcuts"
-import { isMac } from "@/state/shortcuts"
-import { newAgentSessionAtom } from "@/state/agents-slots"
-import { todayAtom } from "@/state/clock"
-import { ensureTodaysDailyAtom } from "@/state/daily"
-import { arcadeCastAtom, gridArcadeAtom } from "@/state/grid-arcade"
-import { runningPluginsAtom } from "@/state/plugins"
-import { openTaskCountAtom } from "@/state/tasks"
-import { activeRemoteAtom, vaultsAtom } from "@/state/vaults"
+import { ArcadeTakeControl, HoliArcade } from '@/composites/arcade/holi-arcade'
+import { Button } from '@/components/ui/button'
+import { Kbd } from '@/components/ui/kbd'
+import { BrandMark } from '@/composites/brand-mark'
+import { cn } from '@/lib/cn'
+import { hotkeyLabels } from '@/lib/hotkey'
+import { SHORTCUTS } from '@/lib/shortcuts'
+import { isMac } from '@/state/shortcuts'
+import { newAgentSessionAtom } from '@/state/agents-slots'
+import { todayAtom } from '@/state/clock'
+import { ensureTodaysDailyAtom } from '@/state/daily'
+import { arcadeCastAtom, gridArcadeAtom } from '@/state/grid-arcade'
+import { runningPluginsAtom } from '@/state/plugins'
+import { openTaskCountAtom } from '@/state/tasks'
+import { activeRemoteAtom, vaultsAtom } from '@/state/vaults'
 
-import { BOARD_TAB } from "../sidebar/documents-nav"
+import { BOARD_TAB } from '../sidebar/documents-nav'
 
 /** A tab opened with +: it shows this view until something is picked in it,
  *  and then becomes that thing. Nothing is written to the vault until then.
  * @public exported for its test
  */
-export const NEW_TAB_PREFIX = "holi:new:"
+export const NEW_TAB_PREFIX = 'holi:new:'
 
 /** A shortcut's first key as it reads on this platform: `⇧⌘D`, or
  *  `Ctrl Shift D`. */
@@ -36,18 +33,18 @@ function keysOf(id: string): string | undefined {
   const spec = SHORTCUTS.find((row) => row.id === id)?.keys[0]
   if (spec === undefined) return undefined
   const mac = isMac()
-  return hotkeyLabels(spec, mac).join(mac ? "" : " ")
+  return hotkeyLabels(spec, mac).join(mac ? '' : ' ')
 }
 
 /** "Friday 23 October", from the clock's `YYYY-MM-DD`. */
 const DAY = new Intl.DateTimeFormat(undefined, {
-  weekday: "long",
-  day: "numeric",
-  month: "long",
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
 })
 
 function dayLabel(today: string): string {
-  const [year = 1970, month = 1, day = 1] = today.split("-").map(Number)
+  const [year = 1970, month = 1, day = 1] = today.split('-').map(Number)
   return DAY.format(new Date(year, month - 1, day))
 }
 
@@ -74,7 +71,7 @@ export function NewTabView({
   const newAgentSession = useSetAtom(newAgentSessionAtom)
   /** A new agent session only where the agent can start one. */
   const hasAgents = useAtomValue(runningPluginsAtom).some(
-    (plugin) => plugin.agentsMode?.newSession !== undefined
+    (plugin) => plugin.agentsMode?.newSession !== undefined,
   )
 
   const arcadeOn = useAtomValue(gridArcadeAtom)
@@ -100,21 +97,18 @@ export function NewTabView({
     const free =
       target === event.currentTarget ||
       target === columnRef.current ||
-      target.closest("[data-arcade-free]") !== null
+      target.closest('[data-arcade-free]') !== null
     if (free !== overBoard) setOverBoard(free)
   }
 
-  const vaultName =
-    vaults.find((vault) => vault.remote === remote)?.name ?? remote
+  const vaultName = vaults.find((vault) => vault.remote === remote)?.name ?? remote
 
   async function openToday() {
     try {
       const path = await ensureDaily()
       if (path !== null) onOpen(path)
     } catch {
-      toast.error(
-        "Couldn’t open today’s note. Check that the vault is reachable, then try again."
-      )
+      toast.error('Couldn’t open today’s note. Check that the vault is reachable, then try again.')
     }
   }
 
@@ -144,8 +138,8 @@ export function NewTabView({
         onPointerMove={arcadeOn ? trackBoard : undefined}
         onPointerLeave={() => setOverBoard(false)}
         className={cn(
-          "relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto motion-respond",
-          playing && "opacity-0"
+          'relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto motion-respond',
+          playing && 'opacity-0',
         )}
       >
         {/* Centred in the pane; no entrance, since a New tab opens many times
@@ -156,16 +150,14 @@ export function NewTabView({
         >
           <header className="flex flex-col gap-1">
             {vaultName ? (
-              <p className="text-muted-foreground text-xs font-medium">
-                {vaultName}
-              </p>
+              <p className="text-muted-foreground text-xs font-medium">{vaultName}</p>
             ) : null}
             <h1 className="text-2xl leading-tight font-semibold tracking-tight">
               {dayLabel(today)}
             </h1>
             <p className="text-muted-foreground flex items-center text-sm">
               <span className="text-foreground font-medium tabular-nums">
-                {openTasks === 0 ? "No" : openTasks}
+                {openTasks === 0 ? 'No' : openTasks}
               </span>
               &nbsp;open
               <Button
@@ -174,7 +166,7 @@ export function NewTabView({
                 onClick={() => onOpen(BOARD_TAB)}
                 className="text-foreground"
               >
-                {openTasks === 1 ? "task" : "tasks"}
+                {openTasks === 1 ? 'task' : 'tasks'}
               </Button>
             </p>
           </header>
@@ -185,18 +177,11 @@ export function NewTabView({
           </div>
 
           <section aria-labelledby="start" className="flex flex-col gap-2">
-            <h2
-              id="start"
-              className="text-muted-foreground text-xs font-medium"
-            >
+            <h2 id="start" className="text-muted-foreground text-xs font-medium">
               Start
             </h2>
             <div role="list" className="grid gap-2 @lg:grid-cols-3">
-              <StartCard
-                icon={<FilePlusIcon />}
-                label="New document"
-                onClick={onNewDocument}
-              />
+              <StartCard icon={<FilePlusIcon />} label="New document" onClick={onNewDocument} />
               <StartCard
                 icon={<CalendarDaysIcon />}
                 label="Today’s note"
@@ -216,10 +201,7 @@ export function NewTabView({
             rather than over it: shown while the pointer is on the board's
             free ground, or on keyboard focus. */}
           {arcadeOn ? (
-            <div
-              data-arcade-free=""
-              className="hidden justify-center py-2 @3xl:flex"
-            >
+            <div data-arcade-free="" className="hidden justify-center py-2 @3xl:flex">
               <ArcadeTakeControl
                 ref={takeControlRef}
                 show={overBoard}

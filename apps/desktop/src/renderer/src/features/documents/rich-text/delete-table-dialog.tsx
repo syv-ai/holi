@@ -1,6 +1,6 @@
-import { useState } from "react"
-import { findParentNodeClosestToPos, type Editor } from "@tiptap/react"
-import { toast } from "sonner"
+import { useState } from 'react'
+import { findParentNodeClosestToPos, type Editor } from '@tiptap/react'
+import { toast } from 'sonner'
 
 import {
   AlertDialog,
@@ -11,9 +11,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+} from '@/components/ui/alert-dialog'
 
-import { TOAST_SUCCESS_ICON } from "./icons"
+import { TOAST_SUCCESS_ICON } from './icons'
 
 // Long enough to reach Undo from the keyboard (WCAG 2.2.1).
 const UNDO_TOAST_MS = 8000
@@ -22,19 +22,19 @@ const UNDO_TOAST_MS = 8000
 function tableName(editor: Editor) {
   const table = findParentNodeClosestToPos(
     editor.state.selection.$from,
-    (node) => node.type.name === "table"
+    (node) => node.type.name === 'table',
   )
-  let heading = ""
+  let heading = ''
 
   editor.state.doc.descendants((node, pos) => {
     if (!table || pos >= table.pos) return false
-    if (node.type.name === "heading" && node.textContent.trim()) {
+    if (node.type.name === 'heading' && node.textContent.trim()) {
       heading = node.textContent.trim()
     }
-    return node.type.name !== "heading"
+    return node.type.name !== 'heading'
   })
 
-  return heading ? `${heading} table` : "This table"
+  return heading ? `${heading} table` : 'This table'
 }
 
 interface DeleteTableDialogProps {
@@ -44,12 +44,8 @@ interface DeleteTableDialogProps {
 }
 
 /** Confirms before a whole table goes, then offers Undo. */
-export function DeleteTableDialog({
-  editor,
-  open,
-  onOpenChange,
-}: DeleteTableDialogProps) {
-  const [name, setName] = useState("This table")
+export function DeleteTableDialog({ editor, open, onOpenChange }: DeleteTableDialogProps) {
+  const [name, setName] = useState('This table')
   const [shownOpen, setShownOpen] = useState(open)
 
   // Named once on open, so the copy holds through the closing animation.
@@ -61,12 +57,12 @@ export function DeleteTableDialog({
   function deleteTable() {
     editor?.chain().focus().deleteTable().run()
     onOpenChange(false)
-    toast.success("Table deleted", {
+    toast.success('Table deleted', {
       icon: TOAST_SUCCESS_ICON,
       description: name,
       duration: UNDO_TOAST_MS,
       action: {
-        label: "Undo",
+        label: 'Undo',
         onClick: () => editor?.chain().focus().undo().run(),
       },
     })
@@ -85,8 +81,8 @@ export function DeleteTableDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Delete Table?</AlertDialogTitle>
           <AlertDialogDescription>
-            <span className="text-foreground font-medium">{name}</span> and
-            every row in it leave the page until you undo it.
+            <span className="text-foreground font-medium">{name}</span> and every row in it leave
+            the page until you undo it.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

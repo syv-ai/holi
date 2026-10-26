@@ -1,13 +1,13 @@
-"use no memo"
+'use no memo'
 
-import type { StatusDef, Task } from "@holi/shared"
-import { Badge } from "@/components/reui/badge"
-import { type DataGridFeatures } from "@/components/reui/data-grid/data-grid"
-import { DataGridColumnHeader } from "@/components/reui/data-grid/data-grid-column-header"
-import { type ColumnDef } from "@tanstack/react-table"
-import { cn } from "@/lib/cn"
+import type { StatusDef, Task } from '@holi/shared'
+import { Badge } from '@/components/reui/badge'
+import { type DataGridFeatures } from '@/components/reui/data-grid/data-grid'
+import { DataGridColumnHeader } from '@/components/reui/data-grid/data-grid-column-header'
+import { type ColumnDef } from '@tanstack/react-table'
+import { cn } from '@/lib/cn'
 
-import { Button } from "@/components/ui/button"
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,10 +15,10 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { ArrowRightIcon, ChevronRightIcon } from "lucide-react"
-import { PeopleStack } from "@/composites/person-avatar"
-import { InlineAdd } from "../inline-add"
+} from '@/components/ui/dropdown-menu'
+import { ArrowRightIcon, ChevronRightIcon } from 'lucide-react'
+import { PeopleStack } from '@/composites/person-avatar'
+import { InlineAdd } from '../inline-add'
 import {
   DateBadge,
   EstimateBadge,
@@ -27,13 +27,8 @@ import {
   StatusBadge,
   StatusIcon,
   TagBadges,
-} from "../task-bits"
-import {
-  COLUMN_LABELS,
-  type TaskGroupRow,
-  type TaskItemRow,
-  type TaskTableRow,
-} from "./task-rows"
+} from '../task-bits'
+import { COLUMN_LABELS, type TaskGroupRow, type TaskItemRow, type TaskTableRow } from './task-rows'
 
 export interface TaskColumnsContext {
   statuses: readonly StatusDef[]
@@ -45,7 +40,7 @@ export interface TaskColumnsContext {
 }
 
 function isTaskRow(row: TaskTableRow): row is TaskItemRow {
-  return row.kind === "task"
+  return row.kind === 'task'
 }
 
 function GroupExpandButton({
@@ -72,10 +67,7 @@ function GroupExpandButton({
       }}
     >
       <ChevronRightIcon
-        className={cn(
-          "motion-respond size-3.5 shrink-0 rtl:-scale-x-100",
-          expanded && "rotate-90"
-        )}
+        className={cn('motion-respond size-3.5 shrink-0 rtl:-scale-x-100', expanded && 'rotate-90')}
         aria-hidden="true"
       />
     </Button>
@@ -91,14 +83,10 @@ function GroupCell({
   expanded: boolean
   onToggle: () => void
 }) {
-  const count = row.subRows.filter((r) => r.kind === "task").length
+  const count = row.subRows.filter((r) => r.kind === 'task').length
   return (
     <div data-task-row="group" className="flex min-w-0 items-center gap-1.5">
-      <GroupExpandButton
-        label={row.status.name}
-        expanded={expanded}
-        onToggle={onToggle}
-      />
+      <GroupExpandButton label={row.status.name} expanded={expanded} onToggle={onToggle} />
       <StatusIcon status={row.status} className="size-4" />
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <span className="text-foreground shrink-0 truncate text-sm font-medium">
@@ -133,8 +121,8 @@ function TaskTitleCell({
         <span
           data-slot="task-title"
           className={cn(
-            "motion-respond group-hover/task-title:text-primary text-foreground min-w-0 flex-1 truncate py-0.25",
-            isDone && "text-muted-foreground line-through"
+            'motion-respond group-hover/task-title:text-primary text-foreground min-w-0 flex-1 truncate py-0.25',
+            isDone && 'text-muted-foreground line-through',
           )}
         >
           {task.title}
@@ -150,13 +138,7 @@ function TaskTitleCell({
 }
 
 /** The status, and a menu that moves the task to another one. */
-function StatusCell({
-  row,
-  context,
-}: {
-  row: TaskItemRow
-  context: TaskColumnsContext
-}) {
+function StatusCell({ row, context }: { row: TaskItemRow; context: TaskColumnsContext }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -191,27 +173,26 @@ function StatusCell({
 
 /** A cell that draws only on a task row. */
 function onTask(
-  draw: (row: TaskItemRow) => React.ReactNode
-): ColumnDef<DataGridFeatures, TaskTableRow>["cell"] {
+  draw: (row: TaskItemRow) => React.ReactNode,
+): ColumnDef<DataGridFeatures, TaskTableRow>['cell'] {
   return ({ row }) => (isTaskRow(row.original) ? draw(row.original) : null)
 }
 
 export function createTaskColumns(
-  context: TaskColumnsContext
+  context: TaskColumnsContext,
 ): ColumnDef<DataGridFeatures, TaskTableRow>[] {
   const header =
-    (title: string): ColumnDef<DataGridFeatures, TaskTableRow>["header"] =>
+    (title: string): ColumnDef<DataGridFeatures, TaskTableRow>['header'] =>
     ({ column }) => <DataGridColumnHeader title={title} column={column} />
 
   return [
     {
-      accessorFn: (row) =>
-        row.kind === "task" ? row.task.title : row.status.name,
-      id: "task",
-      header: header("Task"),
+      accessorFn: (row) => (row.kind === 'task' ? row.task.title : row.status.name),
+      id: 'task',
+      header: header('Task'),
       cell: ({ row }) => {
         const original = row.original
-        if (original.kind === "group") {
+        if (original.kind === 'group') {
           return (
             <GroupCell
               row={original}
@@ -220,7 +201,7 @@ export function createTaskColumns(
             />
           )
         }
-        if (original.kind === "add") {
+        if (original.kind === 'add') {
           return (
             <div className="ps-6">
               <InlineAdd
@@ -233,7 +214,7 @@ export function createTaskColumns(
         return (
           <TaskTitleCell
             task={original.task}
-            isDone={original.status.category === "completed"}
+            isDone={original.status.category === 'completed'}
             onOpen={() => context.onOpenTask(original.task.path)}
           />
         )
@@ -241,10 +222,10 @@ export function createTaskColumns(
       enableHiding: false,
       enableSorting: false,
       minSize: 280,
-      meta: { headerTitle: "Task", autoSize: true },
+      meta: { headerTitle: 'Task', autoSize: true },
     },
     {
-      id: "status",
+      id: 'status',
       accessorFn: (row) => row.status.name,
       header: header(COLUMN_LABELS.status),
       cell: onTask((row) => <StatusCell row={row} context={context} />),
@@ -253,36 +234,34 @@ export function createTaskColumns(
       meta: { headerTitle: COLUMN_LABELS.status },
     },
     {
-      id: "assignee",
-      accessorFn: (row) => (isTaskRow(row) ? row.task.assignees.join(",") : ""),
+      id: 'assignee',
+      accessorFn: (row) => (isTaskRow(row) ? row.task.assignees.join(',') : ''),
       header: header(COLUMN_LABELS.assignee),
       cell: onTask((row) =>
         row.task.assignees.length > 0 ? (
           <PeopleStack logins={row.task.assignees} />
         ) : (
           <span className="text-muted-foreground text-xs">Unassigned</span>
-        )
+        ),
       ),
       size: 110,
       enableSorting: false,
       meta: { headerTitle: COLUMN_LABELS.assignee },
     },
     {
-      id: "priority",
-      accessorFn: (row) => (isTaskRow(row) ? (row.task.priority ?? "") : ""),
+      id: 'priority',
+      accessorFn: (row) => (isTaskRow(row) ? (row.task.priority ?? '') : ''),
       header: header(COLUMN_LABELS.priority),
       cell: onTask((row) =>
-        row.task.priority !== undefined ? (
-          <PriorityBadge priority={row.task.priority} />
-        ) : null
+        row.task.priority !== undefined ? <PriorityBadge priority={row.task.priority} /> : null,
       ),
       size: 100,
       enableSorting: false,
       meta: { headerTitle: COLUMN_LABELS.priority },
     },
     {
-      id: "due",
-      accessorFn: (row) => (isTaskRow(row) ? (row.task.due ?? "") : ""),
+      id: 'due',
+      accessorFn: (row) => (isTaskRow(row) ? (row.task.due ?? '') : ''),
       header: header(COLUMN_LABELS.due),
       cell: onTask((row) =>
         row.task.due !== undefined ? (
@@ -292,45 +271,39 @@ export function createTaskColumns(
             overdue={context.isOverdue(row.task)}
             label="Due"
           />
-        ) : null
+        ) : null,
       ),
       size: 100,
       enableSorting: false,
       meta: { headerTitle: COLUMN_LABELS.due },
     },
     {
-      id: "start",
-      accessorFn: (row) => (isTaskRow(row) ? (row.task.start ?? "") : ""),
+      id: 'start',
+      accessorFn: (row) => (isTaskRow(row) ? (row.task.start ?? '') : ''),
       header: header(COLUMN_LABELS.start),
       cell: onTask((row) =>
         row.task.start !== undefined ? (
-          <DateBadge
-            stamp={row.task.start}
-            today={context.today}
-            label="Start"
-          />
-        ) : null
+          <DateBadge stamp={row.task.start} today={context.today} label="Start" />
+        ) : null,
       ),
       size: 100,
       enableSorting: false,
       meta: { headerTitle: COLUMN_LABELS.start },
     },
     {
-      id: "estimate",
-      accessorFn: (row) => (isTaskRow(row) ? (row.task.estimate ?? "") : ""),
+      id: 'estimate',
+      accessorFn: (row) => (isTaskRow(row) ? (row.task.estimate ?? '') : ''),
       header: header(COLUMN_LABELS.estimate),
       cell: onTask((row) =>
-        row.task.estimate !== undefined ? (
-          <EstimateBadge estimate={row.task.estimate} />
-        ) : null
+        row.task.estimate !== undefined ? <EstimateBadge estimate={row.task.estimate} /> : null,
       ),
       size: 90,
       enableSorting: false,
       meta: { headerTitle: COLUMN_LABELS.estimate },
     },
     {
-      id: "tags",
-      accessorFn: (row) => (isTaskRow(row) ? row.task.tags.join(" ") : ""),
+      id: 'tags',
+      accessorFn: (row) => (isTaskRow(row) ? row.task.tags.join(' ') : ''),
       header: header(COLUMN_LABELS.tags),
       cell: onTask((row) => (
         <div className="flex min-w-0 flex-wrap gap-1">

@@ -4,7 +4,7 @@
  * activity on the right. Everything is read from the vault: the project file,
  * the task files, and git's log.
  */
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   columnFor,
   isOverdue,
@@ -12,8 +12,8 @@ import {
   type Project,
   type StatusDef,
   type Task,
-} from "@holi/shared"
-import { useAtomValue } from "jotai"
+} from '@holi/shared'
+import { useAtomValue } from 'jotai'
 import {
   CalendarCheckIcon,
   CalendarIcon,
@@ -23,48 +23,33 @@ import {
   PlusIcon,
   UserIcon,
   UsersIcon,
-} from "lucide-react"
+} from 'lucide-react'
 
-import { Badge } from "@/components/reui/badge"
-import {
-  Frame,
-  FrameHeader,
-  FramePanel,
-  FrameTitle,
-} from "@/components/reui/frame"
-import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
-import { cn } from "@/lib/cn"
-import {
-  CATEGORY_DOT,
-  comingUp,
-  daysUntil,
-  progressSummary,
-  shortDate,
-} from "@/lib/planning"
-import { relativeTime } from "@/lib/relative-time"
-import { trpc } from "@/lib/trpc"
-import { historyEpochsAtom } from "@/state/vaults"
-import { OverviewStats } from "./overview-stats"
-import { ActivityTimeline } from "./activity-timeline"
-import type { ActivityItem } from "./activity-data"
-import { RegionEmpty, RegionError } from "./states"
-import { PeopleStack, PersonAvatar } from "@/composites/person-avatar"
-import {
-  DateBadge,
-  PriorityBadge,
-  StatusBadge,
-} from "./task-bits"
+import { Badge } from '@/components/reui/badge'
+import { Frame, FrameHeader, FramePanel, FrameTitle } from '@/components/reui/frame'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
+import { cn } from '@/lib/cn'
+import { CATEGORY_DOT, comingUp, daysUntil, progressSummary, shortDate } from '@/lib/planning'
+import { relativeTime } from '@/lib/relative-time'
+import { trpc } from '@/lib/trpc'
+import { historyEpochsAtom } from '@/state/vaults'
+import { OverviewStats } from './overview-stats'
+import { ActivityTimeline } from './activity-timeline'
+import type { ActivityItem } from './activity-data'
+import { RegionEmpty, RegionError } from './states'
+import { PeopleStack, PersonAvatar } from '@/composites/person-avatar'
+import { DateBadge, PriorityBadge, StatusBadge } from './task-bits'
 
 const PROJECT_STATUS_VARIANT = {
-  planning: "secondary",
-  active: "info-light",
-  "at-risk": "warning-light",
-  "on-hold": "secondary",
-  complete: "success-light",
+  planning: 'secondary',
+  active: 'info-light',
+  'at-risk': 'warning-light',
+  'on-hold': 'secondary',
+  complete: 'success-light',
 } as const
 
-export function ProjectStatusBadge({ status }: { status: Project["status"] }) {
+export function ProjectStatusBadge({ status }: { status: Project['status'] }) {
   return (
     <Badge variant={PROJECT_STATUS_VARIANT[status]}>
       {PROJECT_STATUSES.find((s) => s.id === status)?.name ?? status}
@@ -85,7 +70,7 @@ function Section({
   className?: string
 }) {
   return (
-    <Frame className={cn("w-full", className)}>
+    <Frame className={cn('w-full', className)}>
       <FrameHeader className="min-h-9 flex-row items-center justify-between">
         <FrameTitle>{title}</FrameTitle>
         {action}
@@ -99,19 +84,14 @@ function LinesSkeleton({ lines = 3 }: { lines?: number }) {
   return (
     <div className="flex flex-col gap-2" role="status" aria-label="Loading">
       {Array.from({ length: lines }, (_, i) => (
-        <Skeleton
-          key={i}
-          className={cn("h-4", i === lines - 1 ? "w-2/3" : "w-full")}
-        />
+        <Skeleton key={i} className={cn('h-4', i === lines - 1 ? 'w-2/3' : 'w-full')} />
       ))}
     </div>
   )
 }
 
 export type ProjectState =
-  | { state: "loading" }
-  | { state: "error"; message: string }
-  | { state: "ready"; project: Project }
+  { state: 'loading' } | { state: 'error'; message: string } | { state: 'ready'; project: Project }
 
 export interface OverviewProps {
   projectState: ProjectState
@@ -145,11 +125,10 @@ export function Overview({
   onShowStatus,
   onNewTask,
 }: OverviewProps) {
-  const project = projectState.state === "ready" ? projectState.project : null
+  const project = projectState.state === 'ready' ? projectState.project : null
   const summary = progressSummary(tasks, statuses, now)
   const soon = comingUp(tasks, statuses)
-  const daysLeft =
-    project?.due !== undefined ? daysUntil(today, project.due) : null
+  const daysLeft = project?.due !== undefined ? daysUntil(today, project.due) : null
   const editButton = (
     <Button variant="ghost" size="sm" onClick={onEditProject}>
       <PencilIcon data-icon="inline-start" aria-hidden="true" />
@@ -158,9 +137,9 @@ export function Overview({
   )
 
   const projectRegion = (body: (project: Project) => ReactNode, lines = 3) =>
-    projectState.state === "loading" ? (
+    projectState.state === 'loading' ? (
       <LinesSkeleton lines={lines} />
-    ) : projectState.state === "error" ? (
+    ) : projectState.state === 'error' ? (
       <RegionError
         title="The project file could not be read"
         message={projectState.message}
@@ -175,13 +154,11 @@ export function Overview({
       <div className="flex min-w-0 flex-col gap-6 lg:col-span-2">
         <Section title="About" action={editButton}>
           {projectRegion((p) =>
-            p.about.trim() === "" ? (
+            p.about.trim() === '' ? (
               <Quiet>No description yet. Say what this project is for.</Quiet>
             ) : (
-              <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                {p.about.trim()}
-              </p>
-            )
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">{p.about.trim()}</p>
+            ),
           )}
         </Section>
 
@@ -201,14 +178,12 @@ export function Overview({
                 {daysLeft !== null && project?.due !== undefined ? (
                   <span className="text-muted-foreground text-sm">
                     {daysLeft >= 0
-                      ? `${daysLeft} ${daysLeft === 1 ? "day" : "days"} until ${shortDate(project.due, today)}`
-                      : `Due ${shortDate(project.due, today)}, ${-daysLeft} ${daysLeft === -1 ? "day" : "days"} ago`}
+                      ? `${daysLeft} ${daysLeft === 1 ? 'day' : 'days'} until ${shortDate(project.due, today)}`
+                      : `Due ${shortDate(project.due, today)}, ${-daysLeft} ${daysLeft === -1 ? 'day' : 'days'} ago`}
                   </span>
                 ) : null}
                 {summary.overdue > 0 ? (
-                  <Badge variant="destructive-light">
-                    {summary.overdue} overdue
-                  </Badge>
+                  <Badge variant="destructive-light">{summary.overdue} overdue</Badge>
                 ) : null}
               </>
             }
@@ -260,7 +235,7 @@ export function Overview({
             (p) => (
               <DetailRows project={p} today={today} members={members} />
             ),
-            5
+            5,
           )}
         </Section>
 
@@ -281,22 +256,16 @@ export function Overview({
                 {p.milestones.map((m) => {
                   const passed = m.date < today
                   return (
-                    <li
-                      key={`${m.date}-${m.name}`}
-                      className="flex h-8 items-center gap-3 text-sm"
-                    >
+                    <li key={`${m.date}-${m.name}`} className="flex h-8 items-center gap-3 text-sm">
                       <span
                         aria-hidden="true"
                         className={cn(
-                          "size-2.5 shrink-0 rotate-45 rounded-xs",
-                          passed ? "bg-success" : "bg-primary"
+                          'size-2.5 shrink-0 rotate-45 rounded-xs',
+                          passed ? 'bg-success' : 'bg-primary',
                         )}
                       />
                       <span
-                        className={cn(
-                          "min-w-0 flex-1 truncate",
-                          passed && "text-muted-foreground"
-                        )}
+                        className={cn('min-w-0 flex-1 truncate', passed && 'text-muted-foreground')}
                       >
                         {m.name}
                       </span>
@@ -307,7 +276,7 @@ export function Overview({
                   )
                 })}
               </ul>
-            )
+            ),
           )}
         </Section>
 
@@ -342,9 +311,7 @@ function ComingUpRow({
         className="w-full justify-start text-left"
       >
         <span className="flex w-full min-w-0 items-center gap-3 px-2 py-1.5">
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">
-            {task.title}
-          </span>
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{task.title}</span>
           <span className="hidden sm:inline-flex">
             <StatusBadge status={status} />
           </span>
@@ -354,12 +321,7 @@ function ComingUpRow({
             </span>
           ) : null}
           <PeopleStack logins={task.assignees} max={2} />
-          <DateBadge
-            stamp={task.due!}
-            today={today}
-            overdue={overdue}
-            label="Due"
-          />
+          <DateBadge stamp={task.due!} today={today} overdue={overdue} label="Due" />
         </span>
       </Button>
     </li>
@@ -385,12 +347,12 @@ function DetailRows({
   const none = <span className="text-muted-foreground">Not set</span>
   const rows: { label: string; icon: ReactNode; value: ReactNode }[] = [
     {
-      label: "Status",
+      label: 'Status',
       icon: <CircleDotIcon aria-hidden="true" />,
       value: <ProjectStatusBadge status={project.status} />,
     },
     {
-      label: "Lead",
+      label: 'Lead',
       icon: <UserIcon aria-hidden="true" />,
       value:
         project.lead !== undefined ? (
@@ -403,18 +365,17 @@ function DetailRows({
         ),
     },
     {
-      label: "Start",
+      label: 'Start',
       icon: <CalendarIcon aria-hidden="true" />,
-      value:
-        project.start !== undefined ? shortDate(project.start, today) : none,
+      value: project.start !== undefined ? shortDate(project.start, today) : none,
     },
     {
-      label: "Due",
+      label: 'Due',
       icon: <FlagIcon aria-hidden="true" />,
       value: project.due !== undefined ? shortDate(project.due, today) : none,
     },
     {
-      label: "Members",
+      label: 'Members',
       icon: <UsersIcon aria-hidden="true" />,
       value:
         members.length === 0 ? (
@@ -435,9 +396,7 @@ function DetailRows({
             {row.icon}
             {row.label}
           </dt>
-          <dd className="flex min-h-6 min-w-0 flex-1 items-center">
-            {row.value}
-          </dd>
+          <dd className="flex min-h-6 min-w-0 flex-1 items-center">{row.value}</dd>
         </div>
       ))}
     </dl>
@@ -445,9 +404,9 @@ function DetailRows({
 }
 
 type Activity =
-  | { state: "loading" }
-  | { state: "error"; message: string }
-  | { state: "ready"; items: ActivityItem[] }
+  | { state: 'loading' }
+  | { state: 'error'; message: string }
+  | { state: 'ready'; items: ActivityItem[] }
 
 /** What changed lately in the project: commits that touched a task file or
  *  the project file, newest first. Autosave commits name only the file, so
@@ -461,14 +420,12 @@ function RecentActivity({
 }) {
   const epochs = useAtomValue(historyEpochsAtom)
   const [retry, setRetry] = useState(0)
-  const [activity, setActivity] = useState<Activity>({ state: "loading" })
+  const [activity, setActivity] = useState<Activity>({ state: 'loading' })
   const titles = new Map(tasks.map((t) => [t.path, t.title]))
 
   useEffect(() => {
     let live = true
-    setActivity((current) =>
-      current.state === "ready" ? current : { state: "loading" }
-    )
+    setActivity((current) => (current.state === 'ready' ? current : { state: 'loading' }))
     trpc.history.activity
       .query()
       .then((entries) => {
@@ -476,16 +433,13 @@ function RecentActivity({
         const items: ActivityItem[] = []
         for (const { commit, files } of entries) {
           for (const path of files) {
-            if (
-              !/(^|\/)task\.[^/]*\.md$/.test(path) &&
-              path !== ".holi/project.md"
-            ) {
+            if (!/(^|\/)task\.[^/]*\.md$/.test(path) && path !== '.holi/project.md') {
               continue
             }
             items.push({
               id: items.length + 1,
               actor: commit.author,
-              action: "changed",
+              action: 'changed',
               target: path,
               path,
               date: relativeTime(commit.date),
@@ -495,12 +449,12 @@ function RecentActivity({
           }
           if (items.length >= 8) break
         }
-        setActivity({ state: "ready", items })
+        setActivity({ state: 'ready', items })
       })
       .catch((err: unknown) => {
         if (live) {
           setActivity({
-            state: "error",
+            state: 'error',
             message: err instanceof Error ? err.message : String(err),
           })
         }
@@ -512,9 +466,9 @@ function RecentActivity({
 
   return (
     <Section title="Recent activity">
-      {activity.state === "loading" ? (
+      {activity.state === 'loading' ? (
         <LinesSkeleton lines={4} />
-      ) : activity.state === "error" ? (
+      ) : activity.state === 'error' ? (
         <RegionError
           title="History could not be read"
           message={activity.message}
@@ -527,13 +481,10 @@ function RecentActivity({
           items={activity.items.map((item) => ({
             ...item,
             target:
-              item.path === ".holi/project.md"
-                ? "the project"
-                : (titles.get(item.path!) ?? item.target.split("/").at(-1)!),
-            path:
-              item.path !== undefined && titles.has(item.path)
-                ? item.path
-                : undefined,
+              item.path === '.holi/project.md'
+                ? 'the project'
+                : (titles.get(item.path!) ?? item.target.split('/').at(-1)!),
+            path: item.path !== undefined && titles.has(item.path) ? item.path : undefined,
           }))}
           onOpen={onOpen}
         />

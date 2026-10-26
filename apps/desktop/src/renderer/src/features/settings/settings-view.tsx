@@ -4,8 +4,8 @@
  * nav out of sight (the sidebar folded to its rail, or a phone) a picker in
  * the heading reaches the other pages.
  */
-import { useAtom, useAtomValue } from "jotai"
-import { useEffect, useRef } from "react"
+import { useAtom, useAtomValue } from 'jotai'
+import { useEffect, useRef } from 'react'
 
 import {
   Select,
@@ -15,11 +15,11 @@ import {
   SelectLabel,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { settingsSectionAtom } from "@/state/settings-section"
-import { activeRemoteAtom } from "@/state/vaults"
+} from '@/components/ui/select'
+import { settingsSectionAtom } from '@/state/settings-section'
+import { activeRemoteAtom } from '@/state/vaults'
 
-import { pageFor, settingsGroupsAtom } from "./settings-pages"
+import { pageFor, settingsGroupsAtom } from './settings-pages'
 
 export function SettingsView({ navHidden }: { navHidden: boolean }) {
   const groups = useAtomValue(settingsGroupsAtom)
@@ -43,13 +43,9 @@ export function SettingsView({ navHidden }: { navHidden: boolean }) {
       <div className="mx-auto flex w-full max-w-3xl min-w-0 flex-col gap-8 p-3 sm:p-4 lg:p-6">
         <div className="flex min-w-0 items-start justify-between gap-3">
           <div className="flex min-w-0 flex-col gap-0.5">
-            <h1 className="truncate text-xl font-semibold tracking-tight">
-              {page.label}
-            </h1>
+            <h1 className="truncate text-xl font-semibold tracking-tight">{page.label}</h1>
             {page.description ? (
-              <p className="text-muted-foreground text-sm">
-                {page.description}
-              </p>
+              <p className="text-muted-foreground text-sm">{page.description}</p>
             ) : null}
           </div>
           {navHidden ? (

@@ -10,10 +10,10 @@
  * `onMoved` lets whatever shows it follow the new path. Making a task private
  * asks first: it leaves every teammate's board (docs/features/tasks.md).
  */
-import { useState } from "react"
-import { isPrivateTask, type Task } from "@holi/shared"
-import { useAtomValue, useSetAtom } from "jotai"
-import { toast } from "sonner"
+import { useState } from 'react'
+import { isPrivateTask, type Task } from '@holi/shared'
+import { useAtomValue, useSetAtom } from 'jotai'
+import { toast } from 'sonner'
 
 import {
   AlertDialog,
@@ -24,23 +24,19 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
-import { cn } from "@/lib/cn"
-import { todayAtom } from "@/state/clock"
-import { parentOf } from "@/lib/tree-paths"
-import { statusesAtom } from "@/state/planning"
+} from '@/components/ui/alert-dialog'
+import { cn } from '@/lib/cn'
+import { todayAtom } from '@/state/clock'
+import { parentOf } from '@/lib/tree-paths'
+import { statusesAtom } from '@/state/planning'
 import {
   makeTaskPrivateAtom,
   moveTaskAtom,
   patchTaskAtom,
   shareTaskAtom,
   tasksAtom,
-} from "@/state/tasks"
-import {
-  TaskFields,
-  type TaskFieldChange,
-  type TaskFieldValues,
-} from "./task-fields"
+} from '@/state/tasks'
+import { TaskFields, type TaskFieldChange, type TaskFieldValues } from './task-fields'
 
 function valuesOf(task: Task): TaskFieldValues {
   return {
@@ -85,7 +81,7 @@ export function TaskProperties({
   if (task === undefined) return null
 
   const fail = (err: unknown) =>
-    toast.error("The task could not be saved", {
+    toast.error('The task could not be saved', {
       description: err instanceof Error ? err.message : String(err),
     })
 
@@ -98,14 +94,14 @@ export function TaskProperties({
 
   const write = async (change: TaskFieldChange) => {
     try {
-      if (change.field === "shared") {
+      if (change.field === 'shared') {
         if (change.value === !isPrivateTask(path)) return
         if (change.value) await renamed(() => share(path))
         else setAsking(true)
         return
       }
       await beforeWrite()
-      if (change.field === "folder") {
+      if (change.field === 'folder') {
         if (change.value === parentOf(path)) return
         const to = await move(path, change.value)
         if (to !== null && to !== path) onMoved?.(path, to)
@@ -131,17 +127,14 @@ export function TaskProperties({
           <AlertDialogHeader>
             <AlertDialogTitle>Make this task private?</AlertDialogTitle>
             <AlertDialogDescription>
-              {task.title} will stay on this machine only. It leaves every
-              teammate’s board the next time they sync. Git history keeps the
-              shared version, so anyone with the vault can still find it there.
-              Links to it from shared notes stop resolving.
+              {task.title} will stay on this machine only. It leaves every teammate’s board the next
+              time they sync. Git history keeps the shared version, so anyone with the vault can
+              still find it there. Links to it from shared notes stop resolving.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep it shared</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => void renamed(() => makePrivate(path)).catch(fail)}
-            >
+            <AlertDialogAction onClick={() => void renamed(() => makePrivate(path)).catch(fail)}>
               Make private
             </AlertDialogAction>
           </AlertDialogFooter>

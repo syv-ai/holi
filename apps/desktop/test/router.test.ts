@@ -4,12 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import {
-  parseTaskFile,
-  privateTaskPath,
-  sharedTaskPath,
-  taskClaim,
-} from '@holi/shared'
+import { parseTaskFile, privateTaskPath, sharedTaskPath, taskClaim } from '@holi/shared'
 import { SETTINGS_FILE, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'

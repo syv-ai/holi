@@ -6,22 +6,18 @@ import {
   type MouseEvent as ReactMouseEvent,
   type RefObject,
   type SyntheticEvent,
-} from "react"
-import { NodeSelection, Selection, type Transaction } from "@tiptap/pm/state"
-import type { EditorView } from "@tiptap/pm/view"
-import type { Editor } from "@tiptap/react"
+} from 'react'
+import { NodeSelection, Selection, type Transaction } from '@tiptap/pm/state'
+import type { EditorView } from '@tiptap/pm/view'
+import type { Editor } from '@tiptap/react'
 
-import { Button } from "@/components/ui/button"
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
+} from '@/components/ui/dropdown-menu'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   ACTIVE_BLOCK_KEY,
   blockCommand,
@@ -33,23 +29,23 @@ import {
   selectionBlockTarget,
   type ActiveBlock,
   type BlockTarget,
-} from "./rich-text-block-actions"
+} from './rich-text-block-actions'
 import {
   blockMenuSelection,
   readBlockMenu,
   RichTextBlockMenuItems,
   type BlockMenuState,
-} from "./rich-text-block-menu"
-import { ShortcutKeys } from "@/composites/shortcut-keys"
-import { keepEditorFocus } from "./rich-text-toolbar"
-import { PlusIcon, GripVerticalIcon } from "lucide-react"
+} from './rich-text-block-menu'
+import { ShortcutKeys } from '@/composites/shortcut-keys'
+import { keepEditorFocus } from './rich-text-toolbar'
+import { PlusIcon, GripVerticalIcon } from 'lucide-react'
 
 // Room between the gutter and the text, and how far below the last row a
 // pointer still counts as on it (the widest gap between blocks is 40px).
 const GUTTER_GAP = 4
 const ROW_REACH = 48
 // Tailwind's sm: below it the gutter is not laid out.
-const SM_QUERY = "(min-width: 40rem)"
+const SM_QUERY = '(min-width: 40rem)'
 
 /** The block on the row under clientY, probed just inside the text's edge so
  * a pointer over the gutter still finds its row. */
@@ -60,10 +56,7 @@ function blockTargetAtY(view: EditorView, clientY: number) {
   if (!hit) return null
   const { doc } = view.state
   const inner = hit.inside >= 0 ? doc.nodeAt(hit.inside) : null
-  const target = findBlockTarget(
-    doc,
-    inner?.isAtom && inner.isBlock ? hit.inside : hit.pos
-  )
+  const target = findBlockTarget(doc, inner?.isAtom && inner.isBlock ? hit.inside : hit.pos)
   const block = target ? view.nodeDOM(target.pos) : null
   if (!target || !(block instanceof HTMLElement)) return null
 
@@ -73,17 +66,13 @@ function blockTargetAtY(view: EditorView, clientY: number) {
 }
 
 /** Viewport y of the middle of the block's first line. */
-function firstLineCenter(
-  view: EditorView,
-  target: BlockTarget,
-  block: HTMLElement
-) {
+function firstLineCenter(view: EditorView, target: BlockTarget, block: HTMLElement) {
   let line: HTMLElement = block
 
   if (target.node.type.spec.tableRole) {
-    line = block.querySelector<HTMLElement>("tr") ?? block
+    line = block.querySelector<HTMLElement>('tr') ?? block
   } else if (target.node.isAtom) {
-    line = block.querySelector<HTMLElement>("p") ?? block
+    line = block.querySelector<HTMLElement>('p') ?? block
   } else if (!target.node.isTextblock) {
     let textPos = -1
     target.node.descendants((child, offset) => {
@@ -99,7 +88,7 @@ function firstLineCenter(
   const lineHeight = parseFloat(style.lineHeight)
 
   // Table rows, rules and unset line heights center on the box instead.
-  if (line.tagName === "TR" || !(rect.height >= lineHeight)) {
+  if (line.tagName === 'TR' || !(rect.height >= lineHeight)) {
     return rect.top + rect.height / 2
   }
   const inset = parseFloat(style.paddingTop) + parseFloat(style.borderTopWidth)
@@ -111,7 +100,7 @@ function gutterPoint(
   view: EditorView,
   target: BlockTarget,
   scroller: HTMLElement,
-  gutter: HTMLElement
+  gutter: HTMLElement,
 ) {
   const block = view.nodeDOM(target.pos)
   if (!(block instanceof HTMLElement)) return null
@@ -130,20 +119,16 @@ function gutterPoint(
 
 /** dragstart on the grip: it sits outside the editor, so ProseMirror's own
  * dragstart never runs and everything it would set is set here. */
-function startBlockDrag(
-  view: EditorView,
-  target: BlockTarget,
-  event: DragEvent
-) {
+function startBlockDrag(view: EditorView, target: BlockTarget, event: DragEvent) {
   const data = event.dataTransfer
   if (!data || !view.editable) return undefined
   const selection = NodeSelection.create(view.state.doc, target.pos)
   const { dom, text, slice } = view.serializeForClipboard(selection.content())
 
   data.clearData()
-  data.setData("text/html", dom.innerHTML)
-  data.setData("text/plain", text)
-  data.effectAllowed = "copyMove"
+  data.setData('text/html', dom.innerHTML)
+  data.setData('text/plain', text)
+  data.effectAllowed = 'copyMove'
   const block = view.nodeDOM(target.pos)
   if (block instanceof HTMLElement) {
     const rect = block.getBoundingClientRect()
@@ -157,7 +142,7 @@ function startBlockDrag(
   // After the browser snapshots the drag image, so the ghost is not faded.
   window.setTimeout(() => {
     if (view.isDestroyed || view.dragging !== dragging) return
-    const mark = { pos: dragging.node.from, kind: "drag" } satisfies ActiveBlock
+    const mark = { pos: dragging.node.from, kind: 'drag' } satisfies ActiveBlock
     view.dispatch(view.state.tr.setMeta(ACTIVE_BLOCK_KEY, mark))
   }, 0)
   return dragging
@@ -168,7 +153,7 @@ function startBlockDrag(
 function endBlockDrag(view: EditorView, dragging: object | undefined) {
   if (view.isDestroyed) return
   if (dragging && view.dragging === dragging) view.dragging = null
-  if (ACTIVE_BLOCK_KEY.getState(view.state)?.kind === "drag") {
+  if (ACTIVE_BLOCK_KEY.getState(view.state)?.kind === 'drag') {
     view.dispatch(view.state.tr.setMeta(ACTIVE_BLOCK_KEY, null))
   }
 }
@@ -216,7 +201,7 @@ export function RichTextBlockGutter({
     menuRef.current = true
     const { view } = editor
     const selection = blockMenuSelection(editor, target)
-    const mark = { pos: target.pos, kind: "menu" } satisfies ActiveBlock
+    const mark = { pos: target.pos, kind: 'menu' } satisfies ActiveBlock
     const tr = view.state.tr.setMeta(ACTIVE_BLOCK_KEY, mark)
     view.dispatch(selection ? tr.setSelection(selection) : tr)
 
@@ -234,7 +219,7 @@ export function RichTextBlockGutter({
     menuRef.current = false
     setMenuOpen(false)
     const { view } = editor
-    if (ACTIVE_BLOCK_KEY.getState(view.state)?.kind === "menu") {
+    if (ACTIVE_BLOCK_KEY.getState(view.state)?.kind === 'menu') {
       view.dispatch(view.state.tr.setMeta(ACTIVE_BLOCK_KEY, null))
     }
     followRef.current?.()
@@ -250,7 +235,7 @@ export function RichTextBlockGutter({
     const gutter = gutterRef.current
     if (!scroller || !gutter) return
     const { view } = editor
-    const fine = window.matchMedia("(pointer: fine)")
+    const fine = window.matchMedia('(pointer: fine)')
     const wide = window.matchMedia(SM_QUERY)
     let lastX = -1
     let lastY = -1
@@ -292,7 +277,7 @@ export function RichTextBlockGutter({
     followRef.current = follow
 
     function handlePointerMove(event: PointerEvent) {
-      if (event.pointerType === "touch") return
+      if (event.pointerType === 'touch') return
       if (event.clientX === lastX && event.clientY === lastY) return
       lastX = event.clientX
       lastY = event.clientY
@@ -307,7 +292,7 @@ export function RichTextBlockGutter({
 
     // Typing hides the gutter until the pointer moves again.
     function handleKeyDown(event: KeyboardEvent) {
-      if (["Alt", "Control", "Meta", "Shift"].includes(event.key)) return
+      if (['Alt', 'Control', 'Meta', 'Shift'].includes(event.key)) return
       pointerRef.current = null
       follow()
     }
@@ -325,14 +310,10 @@ export function RichTextBlockGutter({
     // send the caret to the end of the page.
     function handleInsetPress(event: MouseEvent) {
       const box = view.dom.getBoundingClientRect()
-      const onInset =
-        event.target === scroller || event.target === view.dom.parentElement
+      const onInset = event.target === scroller || event.target === view.dom.parentElement
       if (!onInset || event.button !== 0 || !view.editable) return
       if (event.clientY < box.top || event.clientY > box.bottom) return
-      const left = Math.min(
-        Math.max(event.clientX, box.left + 1),
-        box.right - 1
-      )
+      const left = Math.min(Math.max(event.clientX, box.left + 1), box.right - 1)
       const hit = view.posAtCoords({ left, top: event.clientY })
       if (!hit) return
       event.preventDefault()
@@ -371,42 +352,39 @@ export function RichTextBlockGutter({
     observer.observe(view.dom)
     // The gutter is not laid out while hidden, so its width lands on first show.
     observer.observe(gutter)
-    scroller.addEventListener("pointermove", handlePointerMove)
-    scroller.addEventListener("pointerleave", handlePointerLeave)
-    scroller.addEventListener("scroll", handleScroll, { passive: true })
-    scroller.addEventListener("mousedown", handleInsetPress, true)
-    view.dom.addEventListener("keydown", handleKeyDown)
-    editor.on("transaction", handleTransaction)
-    editor.on("focus", refresh)
-    editor.on("blur", handleBlur)
+    scroller.addEventListener('pointermove', handlePointerMove)
+    scroller.addEventListener('pointerleave', handlePointerLeave)
+    scroller.addEventListener('scroll', handleScroll, { passive: true })
+    scroller.addEventListener('mousedown', handleInsetPress, true)
+    view.dom.addEventListener('keydown', handleKeyDown)
+    editor.on('transaction', handleTransaction)
+    editor.on('focus', refresh)
+    editor.on('blur', handleBlur)
     const unregister = registerBlockMenuOpener(editor, openFromShortcut)
 
     return () => {
       followRef.current = null
       unregister()
       observer.disconnect()
-      scroller.removeEventListener("pointermove", handlePointerMove)
-      scroller.removeEventListener("pointerleave", handlePointerLeave)
-      scroller.removeEventListener("scroll", handleScroll)
-      scroller.removeEventListener("mousedown", handleInsetPress, true)
-      view.dom.removeEventListener("keydown", handleKeyDown)
-      editor.off("transaction", handleTransaction)
-      editor.off("focus", refresh)
-      editor.off("blur", handleBlur)
+      scroller.removeEventListener('pointermove', handlePointerMove)
+      scroller.removeEventListener('pointerleave', handlePointerLeave)
+      scroller.removeEventListener('scroll', handleScroll)
+      scroller.removeEventListener('mousedown', handleInsetPress, true)
+      view.dom.removeEventListener('keydown', handleKeyDown)
+      editor.off('transaction', handleTransaction)
+      editor.off('focus', refresh)
+      editor.off('blur', handleBlur)
     }
   }, [editor, scrollerRef])
 
   function insertRow(event: ReactMouseEvent) {
     const pos = targetRef.current
     if (pos === null) return
-    const row = blockCommand(
-      insertBlockRow(event.altKey ? "before" : "after"),
-      pos
-    )
+    const row = blockCommand(insertBlockRow(event.altKey ? 'before' : 'after'), pos)
     // A chain runs every step, so a refused row would type "/" at the caret.
     if (!editor.can().command(row)) return
     // Typing "/" opens the slash menu there, as on any empty line.
-    editor.chain().focus().command(row).insertContent("/").run()
+    editor.chain().focus().command(row).insertContent('/').run()
     pointerRef.current = null
     followRef.current?.()
   }
@@ -414,9 +392,7 @@ export function RichTextBlockGutter({
   function handleDragStart(event: ReactDragEvent<HTMLButtonElement>) {
     const pos = targetRef.current
     const target = pos === null ? null : blockTargetAtPos(editor.state.doc, pos)
-    const started = target
-      ? startBlockDrag(editor.view, target, event.nativeEvent)
-      : undefined
+    const started = target ? startBlockDrag(editor.view, target, event.nativeEvent) : undefined
     if (!started) return event.preventDefault()
     dragRef.current = started
     // Next task: nothing on the drag source changes while the drag starts.
@@ -438,8 +414,8 @@ export function RichTextBlockGutter({
   return (
     <div
       ref={gutterRef}
-      data-visible={visible ? "" : undefined}
-      data-present={visible || dragging ? "" : undefined}
+      data-visible={visible ? '' : undefined}
+      data-present={visible || dragging ? '' : undefined}
       inert={!visible && !dragging}
       className="pointer-events-none absolute top-0 left-0 z-10 hidden -translate-x-full -translate-y-1/2 items-center gap-0.5 motion-respond opacity-0 data-visible:pointer-events-auto data-visible:opacity-100 data-present:sm:flex data-visible:starting:opacity-0"
     >
@@ -462,22 +438,15 @@ export function RichTextBlockGutter({
             <span>Add block below</span>
             <span className="flex items-center gap-1.5">
               Add above
-              <ShortcutKeys keys={["alt", "Click"]} />
+              <ShortcutKeys keys={['alt', 'Click']} />
             </span>
           </span>
         </TooltipContent>
       </Tooltip>
       <DropdownMenu open={menuOpen} onOpenChange={handleMenuOpenChange}>
-        <Tooltip
-          open={tipOpen && !dragging && !menuOpen}
-          onOpenChange={setTipOpen}
-        >
+        <Tooltip open={tipOpen && !dragging && !menuOpen} onOpenChange={setTipOpen}>
           <TooltipTrigger asChild>
-            <span
-              className="flex"
-              onPointerDownCapture={holdPress}
-              onMouseDownCapture={holdPress}
-            >
+            <span className="flex" onPointerDownCapture={holdPress} onMouseDownCapture={holdPress}>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="ghost"
@@ -486,9 +455,7 @@ export function RichTextBlockGutter({
                   draggable
                   aria-label="Block actions"
                   onClick={() =>
-                    menuOpen
-                      ? handleMenuOpenChange(false)
-                      : openMenu(targetRef.current)
+                    menuOpen ? handleMenuOpenChange(false) : openMenu(targetRef.current)
                   }
                   onDragStart={handleDragStart}
                   onDragEnd={handleDragEnd}
@@ -504,7 +471,7 @@ export function RichTextBlockGutter({
               <span>Drag to reorder</span>
               <span className="flex items-center gap-1.5">
                 Block actions
-                <ShortcutKeys keys={["mod", "/"]} />
+                <ShortcutKeys keys={['mod', '/']} />
               </span>
             </span>
           </TooltipContent>
@@ -517,11 +484,7 @@ export function RichTextBlockGutter({
           }}
         >
           {menu ? (
-            <RichTextBlockMenuItems
-              editor={editor}
-              menu={menu}
-              onDeleteTable={onDeleteTable}
-            />
+            <RichTextBlockMenuItems editor={editor} menu={menu} onDeleteTable={onDeleteTable} />
           ) : null}
         </DropdownMenuContent>
       </DropdownMenu>

@@ -1,37 +1,30 @@
 // Reads the TanStack table instance directly, which React Compiler cannot see.
-"use no memo"
+'use no memo'
 
-import {
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react"
-import { ChevronRightIcon, SearchXIcon } from "lucide-react"
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ChevronRightIcon, SearchXIcon } from 'lucide-react'
 
 import {
   DataGrid,
   dataGridFeatures,
   type DataGridFeatures,
-} from "@/components/reui/data-grid/data-grid"
+} from '@/components/reui/data-grid/data-grid'
 import {
   DataGridTableVirtual,
   type DataGridTableVirtualizerOptions,
-} from "@/components/reui/data-grid/data-grid-table-virtual"
+} from '@/components/reui/data-grid/data-grid-table-virtual'
 import {
   useTable,
   type ColumnDef,
   type ExpandedState,
   type Row,
   type SortingState,
-} from "@tanstack/react-table"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
-import { cn } from "@/lib/cn"
-import { EmptyState, ErrorState } from "@/composites/empty-state"
+} from '@tanstack/react-table'
+import { Badge } from '@/components/reui/badge'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
+import { cn } from '@/lib/cn'
+import { EmptyState, ErrorState } from '@/composites/empty-state'
 
 /**
  * The bottom panel's log grid, shared by the Output and the Logs tab
@@ -41,20 +34,19 @@ import { EmptyState, ErrorState } from "@/composites/empty-state"
  * anywhere on it does the same as its chevron.
  */
 
-export type LogLevel = "debug" | "info" | "warn" | "error"
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
 const LEVEL_LOOK: Record<
   LogLevel,
   {
     label: string
-    variant:
-      "invert-light" | "info-light" | "warning-light" | "destructive-light"
+    variant: 'invert-light' | 'info-light' | 'warning-light' | 'destructive-light'
   }
 > = {
-  debug: { label: "Debug", variant: "invert-light" },
-  info: { label: "Info", variant: "info-light" },
-  warn: { label: "Warning", variant: "warning-light" },
-  error: { label: "Error", variant: "destructive-light" },
+  debug: { label: 'Debug', variant: 'invert-light' },
+  info: { label: 'Info', variant: 'info-light' },
+  warn: { label: 'Warning', variant: 'warning-light' },
+  error: { label: 'Error', variant: 'destructive-light' },
 }
 
 /** A line's level, for a cell, a filter value or a picker row. */
@@ -74,11 +66,7 @@ export const LEVEL_RANK: Record<LogLevel, number> = {
 /** The first read, in the grid's own shape. */
 export function LogLoading({ label }: { label: string }) {
   return (
-    <div
-      role="status"
-      aria-label={label}
-      className="flex min-h-0 flex-1 flex-col gap-2 px-3 py-2"
-    >
+    <div role="status" aria-label={label} className="flex min-h-0 flex-1 flex-col gap-2 px-3 py-2">
       {[0, 1, 2, 3].map((i) => (
         <div key={i} className="flex items-center gap-2">
           <Skeleton className="h-4 w-16" />
@@ -100,9 +88,7 @@ export function LogLoadError({
   description: string
   onRetry: () => void
 }) {
-  return (
-    <ErrorState title={title} message={description} onRetry={onRetry} />
-  )
+  return <ErrorState title={title} message={description} onRetry={onRetry} />
 }
 
 /** A search or filters that leave nothing. */
@@ -112,7 +98,7 @@ export function NoMatchingLines({ onClear }: { onClear: () => void }) {
       icon={SearchXIcon}
       title="No matching lines"
       description="Nothing in the log matches this search and these filters."
-      action={{ label: "Clear filters", onClick: onClear }}
+      action={{ label: 'Clear filters', onClick: onClear }}
       className="h-auto"
     />
   )
@@ -145,7 +131,7 @@ function DetailFrame({
     if (!el) return
     const report = () => onHeight(id, el.offsetHeight)
     report()
-    if (typeof ResizeObserver === "undefined") return
+    if (typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(report)
     observer.observe(el)
     return () => observer.disconnect()
@@ -171,25 +157,19 @@ export function LogTable<T extends LogLine>({
   renderDetail: (entry: T) => ReactNode
   emptyMessage: ReactNode
 }) {
-  const [sorting, setSorting] = useState<SortingState>([
-    { id: "time", desc: true },
-  ])
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'time', desc: true }])
   const [expanded, setExpanded] = useState<ExpandedState>({})
   /** Each opened line's panel height, as it measured itself. */
-  const [detailHeights, setDetailHeights] = useState<
-    Readonly<Record<number, number>>
-  >({})
+  const [detailHeights, setDetailHeights] = useState<Readonly<Record<number, number>>>({})
 
   const onDetailHeight = useCallback((id: number, height: number) => {
-    setDetailHeights((was) =>
-      was[id] === height ? was : { ...was, [id]: height }
-    )
+    setDetailHeights((was) => (was[id] === height ? was : { ...was, [id]: height }))
   }, [])
 
   const allColumns = useMemo<ColumnDef<DataGridFeatures, T>[]>(
     () => [
       {
-        id: "expand",
+        id: 'expand',
         header: () => <span className="sr-only">Details</span>,
         cell: ({ row }) => (
           <Button
@@ -197,7 +177,7 @@ export function LogTable<T extends LogLine>({
             variant="ghost"
             size="icon-xs"
             aria-expanded={row.getIsExpanded()}
-            aria-label={`${row.getIsExpanded() ? "Hide" : "Show"} details: ${row.original.message}`}
+            aria-label={`${row.getIsExpanded() ? 'Hide' : 'Show'} details: ${row.original.message}`}
             className="text-muted-foreground"
             onClick={(e) => {
               e.stopPropagation()
@@ -207,8 +187,8 @@ export function LogTable<T extends LogLine>({
             <ChevronRightIcon
               aria-hidden
               className={cn(
-                "motion-respond motion-reduce:transition-none",
-                row.getIsExpanded() && "rotate-90"
+                'motion-respond motion-reduce:transition-none',
+                row.getIsExpanded() && 'rotate-90',
               )}
             />
           </Button>
@@ -228,7 +208,7 @@ export function LogTable<T extends LogLine>({
       },
       ...columns,
     ],
-    [columns, renderDetail, onDetailHeight]
+    [columns, renderDetail, onDetailHeight],
   )
 
   const table = useTable({
@@ -260,7 +240,7 @@ export function LogTable<T extends LogLine>({
         getItemKey: (_index: number, row: Row<DataGridFeatures, T>) => row.id,
       }) as DataGridTableVirtualizerOptions<T>,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [detailHeights, expanded]
+    [detailHeights, expanded],
   )
 
   return (
@@ -271,7 +251,7 @@ export function LogTable<T extends LogLine>({
       emptyMessage={emptyMessage}
       tableLayout={{ dense: true, headerSticky: true, headerBackground: false }}
       tableClassNames={{
-        bodyRow: "[&:has([aria-expanded=true])]:bg-muted/30",
+        bodyRow: '[&:has([aria-expanded=true])]:bg-muted/30',
       }}
     >
       {/* The table is its own scroll container: the scroll area's outer

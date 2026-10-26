@@ -1,15 +1,11 @@
-import { FileDiffIcon, FolderIcon, GitBranchIcon } from "lucide-react"
-import { toast } from "sonner"
+import { FileDiffIcon, FolderIcon, GitBranchIcon } from 'lucide-react'
+import { toast } from 'sonner'
 
-import { Badge } from "@/components/reui/badge"
-import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
-import { cn } from "@/lib/cn"
-import type { TerminalContext } from "@/state/panel-terminals"
+import { Badge } from '@/components/reui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/cn'
+import type { TerminalContext } from '@/state/panel-terminals'
 
 /**
  * The front terminal's context chips (docs/features/status-bar.md), as Warp
@@ -45,14 +41,10 @@ export function TerminalContextChips({
   context: TerminalContext | null
   className?: string
 }) {
-  const row = cn("flex min-w-0 shrink-0 items-center gap-1.5", className)
+  const row = cn('flex min-w-0 shrink-0 items-center gap-1.5', className)
   if (context === null) {
     return (
-      <div
-        className={row}
-        role="status"
-        aria-label="Reading where the shell is"
-      >
+      <div className={row} role="status" aria-label="Reading where the shell is">
         <Skeleton className="h-5.5 w-40" />
         <Skeleton className="h-5.5 w-24" />
       </div>
@@ -62,8 +54,8 @@ export function TerminalContextChips({
   const copy = () => {
     void navigator.clipboard
       .writeText(cwd)
-      .then(() => toast.success("Path copied"))
-      .catch(() => toast.error("Could not copy the path"))
+      .then(() => toast.success('Path copied'))
+      .catch(() => toast.error('Could not copy the path'))
   }
   return (
     <div className={row} data-terminal-context>
@@ -77,7 +69,7 @@ export function TerminalContextChips({
             aria-label={`Copy ${cwd}`}
             onClick={copy}
             onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
+              if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault()
                 copy()
               }
@@ -111,9 +103,7 @@ export function TerminalContextChips({
             >
               <FileDiffIcon aria-hidden />
               <span>{count.format(git.files)}</span>
-              {git.added === 0 && git.removed === 0 ? null : (
-                <span aria-hidden>•</span>
-              )}
+              {git.added === 0 && git.removed === 0 ? null : <span aria-hidden>•</span>}
               {git.added === 0 ? null : (
                 <span className="text-success-foreground dark:text-success">
                   +{count.format(git.added)}
@@ -132,7 +122,7 @@ export function TerminalContextChips({
   )
 }
 
-function changesLabel(git: NonNullable<TerminalContext["git"]>): string {
-  const files = `${git.files} changed ${git.files === 1 ? "file" : "files"}`
+function changesLabel(git: NonNullable<TerminalContext['git']>): string {
+  const files = `${git.files} changed ${git.files === 1 ? 'file' : 'files'}`
   return `${files}, ${git.added} lines added, ${git.removed} removed`
 }

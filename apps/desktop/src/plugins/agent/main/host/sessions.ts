@@ -50,7 +50,6 @@ export interface Geometry {
   rows?: number
 }
 
-
 /**
  * The vault the sessions run in, as its activation hands it over.
  * @public exported for its test

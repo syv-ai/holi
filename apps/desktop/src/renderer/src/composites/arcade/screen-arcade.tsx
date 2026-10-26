@@ -1,8 +1,8 @@
-import { useAtomValue } from "jotai"
+import { useAtomValue } from 'jotai'
 
-import { arcadeCastAtom, gridArcadeAtom } from "@/state/grid-arcade"
+import { arcadeCastAtom, gridArcadeAtom } from '@/state/grid-arcade'
 
-import { HoliArcade } from "./holi-arcade"
+import { HoliArcade } from './holi-arcade'
 
 const NEVER = () => undefined
 
@@ -17,12 +17,5 @@ export function ScreenArcade() {
   const on = useAtomValue(gridArcadeAtom)
   const cast = useAtomValue(arcadeCastAtom)
   if (!on) return null
-  return (
-    <HoliArcade
-      cast={cast}
-      playing={false}
-      onRelease={NEVER}
-      className="max-md:hidden"
-    />
-  )
+  return <HoliArcade cast={cast} playing={false} onRelease={NEVER} className="max-md:hidden" />
 }

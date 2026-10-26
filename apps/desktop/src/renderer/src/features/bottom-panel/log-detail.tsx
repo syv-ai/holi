@@ -1,13 +1,13 @@
-import { useState, type ReactNode } from "react"
-import { CheckIcon, CopyIcon } from "lucide-react"
-import { toast } from "sonner"
+import { useState, type ReactNode } from 'react'
+import { CheckIcon, CopyIcon } from 'lucide-react'
+import { toast } from 'sonner'
 
 import {
   CodeBlock,
   CodeBlockContent,
   CodeBlockCopyButton,
-} from "@/components/reui/code-block/code-block"
-import { Button } from "@/components/ui/button"
+} from '@/components/reui/code-block/code-block'
+import { Button } from '@/components/ui/button'
 
 /**
  * A log line, opened under its row (docs/features/status-bar.md), for the
@@ -29,11 +29,11 @@ function CopyLineButton({ text }: { text: string }) {
         void navigator.clipboard
           .writeText(text)
           .then(() => setCopied(true))
-          .catch(() => toast.error("Could not copy the line"))
+          .catch(() => toast.error('Could not copy the line'))
       }}
     >
       {copied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
-      {copied ? "Copied" : "Copy line"}
+      {copied ? 'Copied' : 'Copy line'}
     </Button>
   )
 }

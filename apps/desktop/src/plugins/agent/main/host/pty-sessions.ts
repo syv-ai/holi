@@ -110,7 +110,11 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   /** A session's name: what Holi was told, else the title its program set. */
   const nameFor = (s: Session): string => {
     if (s.name !== null) return s.name
-    const title = deps.terminals.list().find((t) => t.id === s.terminalId)?.title.trim() ?? ''
+    const title =
+      deps.terminals
+        .list()
+        .find((t) => t.id === s.terminalId)
+        ?.title.trim() ?? ''
     return title === '' ? NEW_SESSION : title
   }
 
@@ -151,8 +155,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   const api: PtySessions = {
     sessions: summaries,
     has: (id) => sessions.has(id),
-    ownsTerminal: (terminalId) =>
-      [...sessions.values()].some((s) => s.terminalId === terminalId),
+    ownsTerminal: (terminalId) => [...sessions.values()].some((s) => s.terminalId === terminalId),
     terminalOf: (id) => sessions.get(id)?.terminalId ?? null,
 
     async start(providerId, { name, prompt, resume, cols, rows }) {
@@ -224,7 +227,9 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       session = {
         id,
         provider: provider.id,
-        name: (name === undefined ? null : nameOf(name)) ?? (prompt === undefined ? null : nameOf(prompt)),
+        name:
+          (name === undefined ? null : nameOf(name)) ??
+          (prompt === undefined ? null : nameOf(prompt)),
         startedAt: Date.now(),
         terminalId: opened.id,
         attention: false,

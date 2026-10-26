@@ -3,46 +3,37 @@
  * name and save state, who has written it (GitHub), undo and redo, and the
  * document menu.
  */
-import { type Ref } from "react"
-import type { Editor } from "@tiptap/react"
-import { MessagesSquareIcon } from "lucide-react"
+import { type Ref } from 'react'
+import type { Editor } from '@tiptap/react'
+import { MessagesSquareIcon } from 'lucide-react'
 
-import { RichTextHistory } from "@/features/documents/rich-text/rich-text-controls"
-import { useRichTextState } from "@/features/documents/rich-text/rich-text-state"
-import { RichTextToolbarSeparator } from "@/features/documents/rich-text/rich-text-toolbar"
-import { Badge } from "@/components/reui/badge"
-import { Toggle } from "@/components/ui/toggle"
-import { ViewHeader, ViewHeaderTitle } from "@/composites/view-header"
+import { RichTextHistory } from '@/features/documents/rich-text/rich-text-controls'
+import { useRichTextState } from '@/features/documents/rich-text/rich-text-state'
+import { RichTextToolbarSeparator } from '@/features/documents/rich-text/rich-text-toolbar'
+import { Badge } from '@/components/reui/badge'
+import { Toggle } from '@/components/ui/toggle'
+import { ViewHeader, ViewHeaderTitle } from '@/composites/view-header'
 import {
   Avatar,
   AvatarFallback,
   AvatarGroup,
   AvatarGroupCount,
   AvatarImage,
-} from "@/components/ui/avatar"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
+} from '@/components/ui/avatar'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
-import { FileHistoryButton } from "../history/file-history-button"
-import { initials, useFileAuthors } from "../history/use-file-history"
+import { FileHistoryButton } from '../history/file-history-button'
+import { initials, useFileAuthors } from '../history/use-file-history'
 
-import { DocumentActions, type DocumentActionsProps } from "./document-actions"
+import { DocumentActions, type DocumentActionsProps } from './document-actions'
 
-export type SaveState = "saved" | "saving" | "error"
+export type SaveState = 'saved' | 'saving' | 'error'
 
 /** Faces shown before the rest fold into "+N". */
 const MAX_FACES = 4
 
 function Dot() {
-  return (
-    <span
-      aria-hidden="true"
-      className="bg-muted-foreground/40 size-1 shrink-0 rounded-full"
-    />
-  )
+  return <span aria-hidden="true" className="bg-muted-foreground/40 size-1 shrink-0 rounded-full" />
 }
 
 /** Who has written the file: GitHub accounts where commits link to one. */
@@ -51,8 +42,8 @@ function Contributors({ path }: { path: string }) {
   if (data.length === 0) return null
 
   const shown = data.slice(0, MAX_FACES)
-  const label = `Written by ${new Intl.ListFormat("en-US").format(
-    data.map((person) => person.login ?? person.name)
+  const label = `Written by ${new Intl.ListFormat('en-US').format(
+    data.map((person) => person.login ?? person.name),
   )}`
   return (
     <Tooltip>
@@ -66,9 +57,7 @@ function Contributors({ path }: { path: string }) {
         >
           {shown.map((person) => (
             <Avatar key={person.login ?? person.name} size="sm">
-              {person.avatarUrl ? (
-                <AvatarImage src={person.avatarUrl} alt={person.name} />
-              ) : null}
+              {person.avatarUrl ? <AvatarImage src={person.avatarUrl} alt={person.name} /> : null}
               <AvatarFallback>{initials(person.name)}</AvatarFallback>
             </Avatar>
           ))}
@@ -82,7 +71,7 @@ function Contributors({ path }: { path: string }) {
   )
 }
 
-interface DocumentHeaderProps extends Omit<DocumentActionsProps, "editor"> {
+interface DocumentHeaderProps extends Omit<DocumentActionsProps, 'editor'> {
   ref?: Ref<HTMLElement>
   editor: Editor | null
   path: string
@@ -110,7 +99,7 @@ export function DocumentHeader({
   ...actions
 }: DocumentHeaderProps) {
   const state = useRichTextState(editor)
-  const folder = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : null
+  const folder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : null
 
   // One row at every width (`ViewHeader`): as the pane narrows the commit
   // line goes first, then the faces, History's label, and undo and redo
@@ -135,11 +124,7 @@ export function DocumentHeader({
               </>
             ) : null}
             <span aria-live="polite" className="shrink-0">
-              {saveState === "saving"
-                ? "Saving…"
-                : saveState === "error"
-                  ? "Not saved"
-                  : "Saved"}
+              {saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : 'Saved'}
             </span>
           </>
         }
@@ -152,17 +137,11 @@ export function DocumentHeader({
           size="sm"
           pressed={comments.open}
           onPressedChange={comments.onOpenChange}
-          aria-label={
-            comments.count > 0
-              ? `Comments, ${comments.count} open`
-              : "Comments"
-          }
+          aria-label={comments.count > 0 ? `Comments, ${comments.count} open` : 'Comments'}
           className="shrink-0"
         >
           <MessagesSquareIcon aria-hidden="true" />
-          {comments.count > 0 ? (
-            <span className="tabular-nums">{comments.count}</span>
-          ) : null}
+          {comments.count > 0 ? <span className="tabular-nums">{comments.count}</span> : null}
         </Toggle>
       ) : null}
 

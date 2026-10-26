@@ -5,36 +5,32 @@ import {
   type FocusEvent,
   type KeyboardEvent,
   type ReactNode,
-} from "react"
-import { cn } from "@/lib/cn"
+} from 'react'
+import { cn } from '@/lib/cn'
 
-import { IconButton } from "@/composites/icon-button"
-import { ShortcutKeys } from "@/composites/shortcut-keys"
-import { Separator } from "@/components/ui/separator"
-import { Toggle } from "@/components/ui/toggle"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
+import { IconButton } from '@/composites/icon-button'
+import { ShortcutKeys } from '@/composites/shortcut-keys'
+import { Separator } from '@/components/ui/separator'
+import { Toggle } from '@/components/ui/toggle'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 // Every control carries this, so arrow keys can walk the bar in DOM order.
-const TOOLBAR_ITEM = "[data-toolbar-item]"
+const TOOLBAR_ITEM = '[data-toolbar-item]'
 
 function isEnabled(item: HTMLElement) {
-  return !item.hasAttribute("disabled") && !item.hasAttribute("data-disabled")
+  return !item.hasAttribute('disabled') && !item.hasAttribute('data-disabled')
 }
 
 /** Arrows wrap at the ends, as the toolbar pattern expects. */
 function stepFrom(key: string, current: number, last: number) {
   switch (key) {
-    case "ArrowRight":
+    case 'ArrowRight':
       return current === last ? 0 : current + 1
-    case "ArrowLeft":
+    case 'ArrowLeft':
       return current === 0 ? last : current - 1
-    case "Home":
+    case 'Home':
       return 0
-    case "End":
+    case 'End':
       return last
     default:
       return null
@@ -42,18 +38,12 @@ function stepFrom(key: string, current: number, last: number) {
 }
 
 /** One tab stop for the whole bar; arrows, Home and End move inside it. */
-export function RichTextToolbar({
-  className,
-  children,
-  ...props
-}: ComponentProps<"div">) {
+export function RichTextToolbar({ className, children, ...props }: ComponentProps<'div'>) {
   const ref = useRef<HTMLDivElement>(null)
   const activeRef = useRef<HTMLElement | null>(null)
 
   function items() {
-    return Array.from(
-      ref.current?.querySelectorAll<HTMLElement>(TOOLBAR_ITEM) ?? []
-    )
+    return Array.from(ref.current?.querySelectorAll<HTMLElement>(TOOLBAR_ITEM) ?? [])
   }
 
   function rove(active: HTMLElement | null) {
@@ -91,7 +81,7 @@ export function RichTextToolbar({
 
     event.preventDefault()
     enabled[next]?.focus()
-    enabled[next]?.scrollIntoView({ block: "nearest", inline: "nearest" })
+    enabled[next]?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }
 
   return (
@@ -102,8 +92,8 @@ export function RichTextToolbar({
       onFocus={handleFocus}
       onKeyDown={handleKeyDown}
       className={cn(
-        "no-scrollbar supports-[animation-timeline:scroll()]:scroll-fade-x flex items-center gap-1 overflow-x-auto overflow-y-hidden",
-        className
+        'no-scrollbar supports-[animation-timeline:scroll()]:scroll-fade-x flex items-center gap-1 overflow-x-auto overflow-y-hidden',
+        className,
       )}
       {...props}
     >
@@ -112,31 +102,16 @@ export function RichTextToolbar({
   )
 }
 
-export function RichTextToolbarGroup({
-  label,
-  children,
-}: {
-  label: string
-  children: ReactNode
-}) {
+export function RichTextToolbarGroup({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div
-      role="group"
-      aria-label={label}
-      className="flex shrink-0 items-center gap-0.5"
-    >
+    <div role="group" aria-label={label} className="flex shrink-0 items-center gap-0.5">
       {children}
     </div>
   )
 }
 
 export function RichTextToolbarSeparator() {
-  return (
-    <Separator
-      orientation="vertical"
-      className="h-4 shrink-0 data-vertical:self-center"
-    />
-  )
+  return <Separator orientation="vertical" className="h-4 shrink-0 data-vertical:self-center" />
 }
 
 // A pointer press must not pull focus out of the text, or the caret blinks

@@ -24,38 +24,38 @@
  */
 
 export type TabDescriptor =
-  | { kind: "doc"; path: string }
-  | { kind: "vault-app"; path: string }
-  | { kind: "board" }
+  | { kind: 'doc'; path: string }
+  | { kind: 'vault-app'; path: string }
+  | { kind: 'board' }
   /** The vault's notes and their links, drawn (docs/features/graph.md). */
-  | { kind: "graph" }
+  | { kind: 'graph' }
   /** The vault's apps, beside the board. */
-  | { kind: "apps" }
+  | { kind: 'apps' }
   /** A tab onto a registered surface (`surfacesAtom`), by its name and the
    *  id it was opened with: the agent's terminal after onboarding. */
-  | { kind: "surface"; surface: string; id?: string }
+  | { kind: 'surface'; surface: string; id?: string }
   /** A tab showing the empty view until something is picked in it,
    *  numbered so two of them are two tabs. */
-  | { kind: "new"; n: number }
+  | { kind: 'new'; n: number }
   /** The Agents mode's home: the new-session page. */
-  | { kind: "agents-home" }
+  | { kind: 'agents-home' }
   /** A row of the Agents sidebar, by the selection it makes
    *  (`AgentsSelection`). */
-  | { kind: "session"; owner: string; id: string }
+  | { kind: 'session'; owner: string; id: string }
   /** A sidebar app (Mail, Calendar), by its id. */
-  | { kind: "app"; id: string }
+  | { kind: 'app'; id: string }
   /** Settings: one tab, ever. Its section is the nav's own state
    *  (`settingsSectionAtom`), not the tab's. */
-  | { kind: "settings" }
+  | { kind: 'settings' }
 
-type TabKind = TabDescriptor["kind"]
+type TabKind = TabDescriptor['kind']
 
-const SCHEME = "holi:"
-const APP_SUFFIX = ".app"
+const SCHEME = 'holi:'
+const APP_SUFFIX = '.app'
 
 /** A key for a view that is not a vault path. */
 function view(...parts: (string | number)[]): string {
-  return SCHEME + parts.join(":")
+  return SCHEME + parts.join(':')
 }
 
 /** Whether a bare path would parse as something other than a document. */
@@ -66,79 +66,77 @@ function ambiguous(path: string): boolean {
 /** The tab's key: stable, and parsed back by `parseTabKey`. */
 export function tabKey(tab: TabDescriptor): string {
   switch (tab.kind) {
-    case "doc":
-      return ambiguous(tab.path) ? view("doc", tab.path) : tab.path
-    case "vault-app":
+    case 'doc':
+      return ambiguous(tab.path) ? view('doc', tab.path) : tab.path
+    case 'vault-app':
       return tab.path
-    case "board":
-      return view("board")
-    case "graph":
-      return view("graph")
-    case "apps":
-      return view("apps")
-    case "surface":
+    case 'board':
+      return view('board')
+    case 'graph':
+      return view('graph')
+    case 'apps':
+      return view('apps')
+    case 'surface':
       return tab.id === undefined
-        ? view("surface", tab.surface)
-        : view("surface", tab.surface, tab.id)
-    case "new":
-      return view("new", tab.n)
-    case "agents-home":
-      return view("agents")
-    case "session":
-      return view("session", tab.owner, tab.id)
-    case "app":
-      return view("app", tab.id)
-    case "settings":
-      return view("settings")
+        ? view('surface', tab.surface)
+        : view('surface', tab.surface, tab.id)
+    case 'new':
+      return view('new', tab.n)
+    case 'agents-home':
+      return view('agents')
+    case 'session':
+      return view('session', tab.owner, tab.id)
+    case 'app':
+      return view('app', tab.id)
+    case 'settings':
+      return view('settings')
   }
 }
 
 /** A key back into its descriptor; null for a `holi:` key that names no
  *  view this build knows, or one missing its parts. */
 export function parseTabKey(key: string): TabDescriptor | null {
-  if (key === "") return null
+  if (key === '') return null
   if (!key.startsWith(SCHEME)) {
-    return key.endsWith(APP_SUFFIX)
-      ? { kind: "vault-app", path: key }
-      : { kind: "doc", path: key }
+    return key.endsWith(APP_SUFFIX) ? { kind: 'vault-app', path: key } : { kind: 'doc', path: key }
   }
   const rest = key.slice(SCHEME.length)
-  const colon = rest.indexOf(":")
+  const colon = rest.indexOf(':')
   const kind = colon === -1 ? rest : rest.slice(0, colon)
   const tail = colon === -1 ? null : rest.slice(colon + 1)
   switch (kind) {
-    case "board":
-      return tail === null ? { kind: "board" } : null
-    case "graph":
-      return tail === null ? { kind: "graph" } : null
-    case "apps":
-      return tail === null ? { kind: "apps" } : null
-    case "surface": {
+    case 'board':
+      return tail === null ? { kind: 'board' } : null
+    case 'graph':
+      return tail === null ? { kind: 'graph' } : null
+    case 'apps':
+      return tail === null ? { kind: 'apps' } : null
+    case 'surface': {
       if (!tail) return null
-      const at = tail.indexOf(":")
+      const at = tail.indexOf(':')
       if (at === 0) return null
       return at === -1
-        ? { kind: "surface", surface: tail }
-        : { kind: "surface", surface: tail.slice(0, at), id: tail.slice(at + 1) }
+        ? { kind: 'surface', surface: tail }
+        : { kind: 'surface', surface: tail.slice(0, at), id: tail.slice(at + 1) }
     }
-    case "agents":
-      return tail === null ? { kind: "agents-home" } : null
-    case "settings":
-      return tail === null ? { kind: "settings" } : null
-    case "doc":
-      return tail ? { kind: "doc", path: tail } : null
-    case "new": {
+    case 'agents':
+      return tail === null ? { kind: 'agents-home' } : null
+    case 'settings':
+      return tail === null ? { kind: 'settings' } : null
+    case 'doc':
+      return tail ? { kind: 'doc', path: tail } : null
+    case 'new': {
       const n = Number(tail)
-      return tail && /^\d+$/.test(tail) ? { kind: "new", n } : null
+      return tail && /^\d+$/.test(tail) ? { kind: 'new', n } : null
     }
-    case "app":
-      return tail ? { kind: "app", id: tail } : null
-    case "session": {
+    case 'app':
+      return tail ? { kind: 'app', id: tail } : null
+    case 'session': {
       if (tail === null) return null
-      const at = tail.indexOf(":")
+      const at = tail.indexOf(':')
       if (at <= 0 || at === tail.length - 1) return null
       return {
-        kind: "session",
+        kind: 'session',
         owner: tail.slice(0, at),
         id: tail.slice(at + 1),
       }
@@ -151,25 +149,23 @@ export function parseTabKey(key: string): TabDescriptor | null {
 /** The tab a vault path opens as: its app when it is a bundle, else the
  *  document. */
 export function tabForPath(path: string): TabDescriptor {
-  return path.endsWith(APP_SUFFIX)
-    ? { kind: "vault-app", path }
-    : { kind: "doc", path }
+  return path.endsWith(APP_SUFFIX) ? { kind: 'vault-app', path } : { kind: 'doc', path }
 }
 
 /** The vault path a tab shows, for a document or a vault app. */
 export function tabPath(key: string | null): string | null {
   if (key === null) return null
   const tab = parseTabKey(key)
-  return tab?.kind === "doc" || tab?.kind === "vault-app" ? tab.path : null
+  return tab?.kind === 'doc' || tab?.kind === 'vault-app' ? tab.path : null
 }
 
 /** @public exported for its test */
-export const BOARD_KEY = tabKey({ kind: "board" })
-export const GRAPH_KEY = tabKey({ kind: "graph" })
-export const SETTINGS_KEY = tabKey({ kind: "settings" })
-export const AGENTS_HOME_KEY = tabKey({ kind: "agents-home" })
+export const BOARD_KEY = tabKey({ kind: 'board' })
+export const GRAPH_KEY = tabKey({ kind: 'graph' })
+export const SETTINGS_KEY = tabKey({ kind: 'settings' })
+export const AGENTS_HOME_KEY = tabKey({ kind: 'agents-home' })
 
 /** The key of a session tab, from the selection it makes. */
 export function sessionKey(selection: { owner: string; id: string }): string {
-  return tabKey({ kind: "session", owner: selection.owner, id: selection.id })
+  return tabKey({ kind: 'session', owner: selection.owner, id: selection.id })
 }

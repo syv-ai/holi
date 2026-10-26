@@ -12,8 +12,8 @@
  * (`RendererPlugin.commandMenu`).
  * Ranking is `lib/command-menu-rows.ts`, outside cmdk (`shouldFilter={false}`).
  */
-import { cn } from "@/lib/cn"
-import { atom, useAtomValue, useSetAtom } from "jotai"
+import { cn } from '@/lib/cn'
+import { atom, useAtomValue, useSetAtom } from 'jotai'
 import {
   AppWindowIcon,
   AstroidIcon,
@@ -50,19 +50,12 @@ import {
   MoonIcon,
   SunIcon,
   UserIcon,
-} from "lucide-react"
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ComponentType,
-  type ReactNode,
-} from "react"
-import { toast } from "sonner"
+} from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react'
+import { toast } from 'sonner'
 
-import { FileType, getFileType } from "@/components/reui/file-type"
-import { Button } from "@/components/ui/button"
+import { FileType, getFileType } from '@/components/reui/file-type'
+import { Button } from '@/components/ui/button'
 import {
   Command,
   CommandDialog,
@@ -72,10 +65,10 @@ import {
   CommandItem,
   CommandList,
   CommandShortcut,
-} from "@/components/ui/command"
-import { Kbd } from "@/components/ui/kbd"
-import { hotkeyLabels } from "@/lib/hotkey"
-import { SHORTCUTS } from "@/lib/shortcuts"
+} from '@/components/ui/command'
+import { Kbd } from '@/components/ui/kbd'
+import { hotkeyLabels } from '@/lib/hotkey'
+import { SHORTCUTS } from '@/lib/shortcuts'
 import {
   actionQuery,
   buildPlaces,
@@ -84,39 +77,39 @@ import {
   textPlaces,
   type ActionRow,
   type PlaceRow,
-} from "@/lib/command-menu-rows"
-import { trpc } from "@/lib/trpc"
+} from '@/lib/command-menu-rows'
+import { trpc } from '@/lib/trpc'
 import {
   canStartConversationAtom,
   newAgentSessionAtom,
   startConversationAtom,
-} from "@/state/agents-slots"
-import { ensureTodaysDailyAtom } from "@/state/daily"
+} from '@/state/agents-slots'
+import { ensureTodaysDailyAtom } from '@/state/daily'
 import {
   commandMenuEntriesAtom,
   runCommandMenuEntryAtom,
   runningPluginsAtom,
   surfacesAtom,
-} from "@/state/plugins"
-import { openSettingsAtom } from "@/state/settings-section"
-import { isMac, liveShortcutIdsAtom, runShortcutAtom } from "@/state/shortcuts"
-import { createTaskAtom } from "@/state/tasks"
-import { AGENTS_HOME_KEY, GRAPH_KEY } from "@/state/tab-descriptor"
-import { switchVaultAtom } from "@/state/vault-switch"
-import { activeRemoteAtom, snapshotAtom, vaultsAtom } from "@/state/vaults"
+} from '@/state/plugins'
+import { openSettingsAtom } from '@/state/settings-section'
+import { isMac, liveShortcutIdsAtom, runShortcutAtom } from '@/state/shortcuts'
+import { createTaskAtom } from '@/state/tasks'
+import { AGENTS_HOME_KEY, GRAPH_KEY } from '@/state/tab-descriptor'
+import { switchVaultAtom } from '@/state/vault-switch'
+import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 
-import { settingsGroupsAtom } from "@/features/settings/settings-pages"
-import { useNewApp } from "@/features/apps/use-new-app"
-import { writeColorSchemeAtom } from "@/state/color-scheme"
-import { signOutAtom } from "@/state/session"
-import { openSettingsSectionAtom } from "@/state/settings-section"
+import { settingsGroupsAtom } from '@/features/settings/settings-pages'
+import { useNewApp } from '@/features/apps/use-new-app'
+import { writeColorSchemeAtom } from '@/state/color-scheme'
+import { signOutAtom } from '@/state/session'
+import { openSettingsSectionAtom } from '@/state/settings-section'
 
-import { APPS_TAB, BOARD_TAB } from "../sidebar/documents-nav"
+import { APPS_TAB, BOARD_TAB } from '../sidebar/documents-nav'
 
 /** How long typing must pause before the note bodies are searched. */
 const TEXT_SEARCH_MS = 150
 
-type MenuIcon = ComponentType<{ className?: string; "aria-hidden"?: boolean }>
+type MenuIcon = ComponentType<{ className?: string; 'aria-hidden'?: boolean }>
 
 interface MenuAction extends ActionRow {
   icon: MenuIcon
@@ -133,13 +126,13 @@ interface GroupedAction extends MenuAction {
 }
 
 const THEMES = [
-  { value: "light", label: "Light theme", icon: SunIcon },
-  { value: "dark", label: "Dark theme", icon: MoonIcon },
-  { value: "system", label: "System theme", icon: MonitorIcon },
+  { value: 'light', label: 'Light theme', icon: SunIcon },
+  { value: 'dark', label: 'Dark theme', icon: MoonIcon },
+  { value: 'system', label: 'System theme', icon: MonitorIcon },
 ] as const
 
-const DOCS_URL = "https://github.com/syv-ai/holi/tree/main/docs"
-const ISSUE_URL = "https://github.com/syv-ai/holi/issues/new"
+const DOCS_URL = 'https://github.com/syv-ai/holi/tree/main/docs'
+const ISSUE_URL = 'https://github.com/syv-ai/holi/issues/new'
 
 /** The table's rows the menu offers as actions, in this order, each with
  *  its icon. Gestures, steppers and the menu's own key are left out. */
@@ -148,22 +141,22 @@ const SHORTCUT_ACTIONS: readonly {
   icon: MenuIcon
   keywords?: string[]
 }[] = [
-  { id: "document.new", icon: FilePlusIcon },
-  { id: "tab.new", icon: PlusIcon },
-  { id: "tab.reopen", icon: RotateCcwIcon },
-  { id: "tab.close", icon: XIcon },
-  { id: "tab.closeAll", icon: XIcon },
-  { id: "pane.split", icon: SquareSplitHorizontalIcon },
-  { id: "split.separate", icon: ColumnsIcon },
-  { id: "sidebar.toggle", icon: PanelLeftIcon },
-  { id: "files.collapseAll", icon: ChevronsDownUpIcon },
-  { id: "panel.terminal", icon: TerminalIcon, keywords: ["shell", "console"] },
+  { id: 'document.new', icon: FilePlusIcon },
+  { id: 'tab.new', icon: PlusIcon },
+  { id: 'tab.reopen', icon: RotateCcwIcon },
+  { id: 'tab.close', icon: XIcon },
+  { id: 'tab.closeAll', icon: XIcon },
+  { id: 'pane.split', icon: SquareSplitHorizontalIcon },
+  { id: 'split.separate', icon: ColumnsIcon },
+  { id: 'sidebar.toggle', icon: PanelLeftIcon },
+  { id: 'files.collapseAll', icon: ChevronsDownUpIcon },
+  { id: 'panel.terminal', icon: TerminalIcon, keywords: ['shell', 'console'] },
   {
-    id: "panel.output",
+    id: 'panel.output',
     icon: PanelBottomIcon,
-    keywords: ["log", "activity", "sync"],
+    keywords: ['log', 'activity', 'sync'],
   },
-  { id: "shortcuts.show", icon: KeyboardIcon },
+  { id: 'shortcuts.show', icon: KeyboardIcon },
 ]
 
 /** The table's places to go, as the menu names them. */
@@ -172,10 +165,10 @@ const SHORTCUT_PLACES: readonly {
   label: string
   icon: MenuIcon
 }[] = [
-  { id: "sidebar.documents", label: "Documents sidebar", icon: FolderTreeIcon },
-  { id: "sidebar.agents", label: "Agents sidebar", icon: AstroidIcon },
-  { id: "app.mail", label: "Mail", icon: MailIcon },
-  { id: "app.calendar", label: "Calendar", icon: CalendarIcon },
+  { id: 'sidebar.documents', label: 'Documents sidebar', icon: FolderTreeIcon },
+  { id: 'sidebar.agents', label: 'Agents sidebar', icon: AstroidIcon },
+  { id: 'app.mail', label: 'Mail', icon: MailIcon },
+  { id: 'app.calendar', label: 'Calendar', icon: CalendarIcon },
 ]
 
 function shortcut(id: string) {
@@ -185,7 +178,7 @@ function shortcut(id: string) {
 /** A key spec as it reads on this platform: `⇧⌘B`, or `Ctrl Shift B`. */
 function keyText(spec: string): string {
   const mac = isMac()
-  return hotkeyLabels(spec, mac).join(mac ? "" : " ")
+  return hotkeyLabels(spec, mac).join(mac ? '' : ' ')
 }
 
 export function CommandMenu({
@@ -202,14 +195,14 @@ export function CommandMenu({
   /** Clone another GitHub repository as a vault. */
   onAddVault: () => void
 }) {
-  const [query, setQuery] = useState("")
+  const [query, setQuery] = useState('')
   const snapshot = useAtomValue(snapshotAtom)
   const remote = useAtomValue(activeRemoteAtom)
   const vaults = useAtomValue(vaultsAtom)
   const live = useAtomValue(liveShortcutIdsAtom)
   const surfaces = useAtomValue(surfacesAtom)
   const hasAgents = useAtomValue(runningPluginsAtom).some(
-    (plugin) => plugin.agentsMode !== undefined
+    (plugin) => plugin.agentsMode !== undefined,
   )
   const runShortcut = useSetAtom(runShortcutAtom)
   const openSettings = useSetAtom(openSettingsAtom)
@@ -230,7 +223,7 @@ export function CommandMenu({
   const beside = useRef(false)
 
   // Each vault app, by its bundle path and the app surface's label for it.
-  const appSurface = surfaces.get("app")
+  const appSurface = surfaces.get('app')
   const appsAtom = useMemo(
     () =>
       atom((get) => {
@@ -238,10 +231,10 @@ export function CommandMenu({
         const label = appSurface.label
         return get(appSurface.instances).map((id) => ({
           id,
-          label: typeof label === "function" ? label(id) : label,
+          label: typeof label === 'function' ? label(id) : label,
         }))
       }),
-    [appSurface]
+    [appSurface],
   )
   const apps = useAtomValue(appsAtom)
   const places = useMemo(() => buildPlaces(snapshot, apps), [snapshot, apps])
@@ -250,7 +243,7 @@ export function CommandMenu({
    *  give back, and a dialog it opens is not closed with this one. */
   function choose(run: () => void | Promise<void>) {
     onOpenChange(false)
-    setQuery("")
+    setQuery('')
     requestAnimationFrame(() => void run())
   }
 
@@ -259,9 +252,7 @@ export function CommandMenu({
       const path = await ensureDaily()
       if (path !== null) onOpen(path, false)
     } catch {
-      toast.error(
-        "Couldn’t open today’s note. Check that the vault is reachable, then try again."
-      )
+      toast.error('Couldn’t open today’s note. Check that the vault is reachable, then try again.')
     }
   }
 
@@ -275,13 +266,13 @@ export function CommandMenu({
   async function newTask() {
     try {
       const path = await createTask({
-        title: "Untitled task",
-        status: "todo",
-        folder: "",
+        title: 'Untitled task',
+        status: 'todo',
+        folder: '',
       })
       if (path) onOpen(path, false)
     } catch {
-      toast.error("Couldn’t create the task. Try again.")
+      toast.error('Couldn’t create the task. Try again.')
     }
   }
 
@@ -300,55 +291,53 @@ export function CommandMenu({
 
   const goTo: MenuAction[] = [
     {
-      id: "go.board",
-      label: "Board",
-      keywords: ["tasks", "planning", "kanban"],
+      id: 'go.board',
+      label: 'Board',
+      keywords: ['tasks', 'planning', 'kanban'],
       icon: SquareKanbanIcon,
-      keys: "⇧⌘B",
+      keys: '⇧⌘B',
       run: () => onOpen(BOARD_TAB, beside.current),
     },
     {
-      id: "go.graph",
-      label: "Graph",
-      keywords: ["links", "map", "network"],
+      id: 'go.graph',
+      label: 'Graph',
+      keywords: ['links', 'map', 'network'],
       icon: WaypointsIcon,
       run: () => onOpen(GRAPH_KEY, beside.current),
     },
-    ...(surfaces.has("app")
+    ...(surfaces.has('app')
       ? [
           {
-            id: "go.apps",
-            label: "Apps",
-            keywords: ["vault apps"],
+            id: 'go.apps',
+            label: 'Apps',
+            keywords: ['vault apps'],
             icon: AppWindowIcon,
             run: () => onOpen(APPS_TAB, beside.current),
           },
         ]
       : []),
     {
-      id: "go.today",
-      label: "Today’s note",
-      keywords: ["daily", "journal"],
+      id: 'go.today',
+      label: 'Today’s note',
+      keywords: ['daily', 'journal'],
       icon: CalendarIcon,
-      keys: shortcut("daily.open")?.keys[0],
+      keys: shortcut('daily.open')?.keys[0],
       run: openToday,
     },
-    ...pluginRows("go"),
-    ...SHORTCUT_PLACES.filter((place) => live.has(place.id)).map(
-      (place): MenuAction => ({
-        id: place.id,
-        label: place.label,
-        icon: place.icon,
-        keys: shortcut(place.id)?.keys[0],
-        run: () => void runShortcut(place.id),
-      })
-    ),
+    ...pluginRows('go'),
+    ...SHORTCUT_PLACES.filter((place) => live.has(place.id)).map((place): MenuAction => ({
+      id: place.id,
+      label: place.label,
+      icon: place.icon,
+      keys: shortcut(place.id)?.keys[0],
+      run: () => void runShortcut(place.id),
+    })),
     {
-      id: "go.settings",
-      label: "Settings",
-      keywords: ["preferences", "plugins", "theme"],
+      id: 'go.settings',
+      label: 'Settings',
+      keywords: ['preferences', 'plugins', 'theme'],
       icon: SettingsIcon,
-      keys: "⌘,",
+      keys: '⌘,',
       run: () => openSettings(),
     },
   ]
@@ -368,23 +357,23 @@ export function CommandMenu({
             run: () => void runShortcut(id),
           },
         ]
-      }
+      },
     ),
     {
-      id: "task.new",
-      label: "New task",
-      keywords: ["todo"],
+      id: 'task.new',
+      label: 'New task',
+      keywords: ['todo'],
       icon: ListChecksIcon,
       run: newTask,
     },
     ...(hasAgents
       ? [
           {
-            id: "session.new",
-            label: "New session",
-            keywords: ["agent", "chat", "claude", "codex"],
+            id: 'session.new',
+            label: 'New session',
+            keywords: ['agent', 'chat', 'claude', 'codex'],
             icon: MessageSquarePlusIcon,
-            keys: shortcut("session.new")?.keys[0],
+            keys: shortcut('session.new')?.keys[0],
             run: () => {
               if (!newAgentSession(beside.current)) {
                 onOpen(AGENTS_HOME_KEY, beside.current)
@@ -397,28 +386,26 @@ export function CommandMenu({
       ? []
       : [
           {
-            id: "app.new",
-            label: "New app",
-            keywords: ["vault app", "html", "create"],
+            id: 'app.new',
+            label: 'New app',
+            keywords: ['vault app', 'html', 'create'],
             icon: AppWindowMacIcon,
             run: newApp,
           },
         ]),
-    ...pluginRows("action"),
+    ...pluginRows('action'),
     {
-      id: "sync.now",
-      label: "Sync now",
-      keywords: ["push", "pull", "commit", "git"],
+      id: 'sync.now',
+      label: 'Sync now',
+      keywords: ['push', 'pull', 'commit', 'git'],
       icon: CloudUploadIcon,
       run: () =>
-        void trpc.sync.now
-          .mutate()
-          .catch(() => toast.error("Couldn’t sync. The Output says why.")),
+        void trpc.sync.now.mutate().catch(() => toast.error('Couldn’t sync. The Output says why.')),
     },
     {
-      id: "vault.add",
-      label: "Add vault",
-      keywords: ["clone", "repository", "github"],
+      id: 'vault.add',
+      label: 'Add vault',
+      keywords: ['clone', 'repository', 'github'],
       icon: FolderPlusIcon,
       run: onAddVault,
     },
@@ -427,7 +414,7 @@ export function CommandMenu({
       .map((vault): MenuAction => ({
         id: `vault.switch:${vault.remote}`,
         label: `Switch to ${vault.name}`,
-        keywords: ["vault", vault.remote],
+        keywords: ['vault', vault.remote],
         icon: ArrowRightLeftIcon,
         run: () => switchVault(vault.remote),
       })),
@@ -439,53 +426,51 @@ export function CommandMenu({
       group.pages.map((page): GroupedAction => ({
         id: `settings:${page.id}`,
         label: page.label,
-        group: "Settings",
+        group: 'Settings',
         detail: group.label,
-        keywords: ["settings", group.label],
+        keywords: ['settings', group.label],
         icon: page.icon,
         run: () => openSection(page.id),
-      }))
+      })),
     ),
     ...THEMES.map((theme): GroupedAction => ({
       id: `theme:${theme.value}`,
       label: theme.label,
-      group: "Theme",
-      keywords: ["theme", "appearance", "mode", "color"],
+      group: 'Theme',
+      keywords: ['theme', 'appearance', 'mode', 'color'],
       icon: theme.icon,
       run: () => void setTheme(theme.value),
     })),
     {
-      id: "help.docs",
-      label: "Help",
-      group: "Help",
-      keywords: ["docs", "documentation", "how"],
+      id: 'help.docs',
+      label: 'Help',
+      group: 'Help',
+      keywords: ['docs', 'documentation', 'how'],
       icon: HelpCircleIcon,
       run: () => void window.holi.openExternal(DOCS_URL),
     },
     {
-      id: "help.issue",
-      label: "File an issue",
-      group: "Help",
-      keywords: ["bug", "feedback", "report"],
+      id: 'help.issue',
+      label: 'File an issue',
+      group: 'Help',
+      keywords: ['bug', 'feedback', 'report'],
       icon: BugIcon,
       run: () => void window.holi.openExternal(ISSUE_URL),
     },
-    ...fromPlugins.filter(
-      (row) => row.group !== "go" && row.group !== "action"
-    ),
+    ...fromPlugins.filter((row) => row.group !== 'go' && row.group !== 'action'),
     {
-      id: "account.profile",
-      label: "Profile",
-      group: "Account",
-      keywords: ["account", "github"],
+      id: 'account.profile',
+      label: 'Profile',
+      group: 'Account',
+      keywords: ['account', 'github'],
       icon: UserIcon,
-      run: () => openSection("account"),
+      run: () => openSection('account'),
     },
     {
-      id: "account.signOut",
-      label: "Sign out",
-      group: "Account",
-      keywords: ["log out", "account"],
+      id: 'account.signOut',
+      label: 'Sign out',
+      group: 'Account',
+      keywords: ['log out', 'account'],
       icon: LogOutIcon,
       run: () => void signOut(),
     },
@@ -498,13 +483,13 @@ export function CommandMenu({
   const shownActions = rankActions(actions, term)
   /** Each typed-only group in the order its rows were listed. */
   const shownMore =
-    term.trim() === ""
+    term.trim() === ''
       ? []
       : [...new Set(more.map((row) => row.group))].map((group) => ({
           group,
           rows: rankActions(
             more.filter((row) => row.group === group),
-            term
+            term,
           ),
         }))
 
@@ -512,23 +497,23 @@ export function CommandMenu({
   // the box is dropped.
   const [text, setText] = useState<{
     q: string
-    status: "loading" | "ready" | "error"
+    status: 'loading' | 'ready' | 'error'
     hits: { path: string; snippet?: string }[]
-  }>({ q: "", status: "ready", hits: [] })
+  }>({ q: '', status: 'ready', hits: [] })
   const [retry, setRetry] = useState(0)
-  const textQuery = commandsOnly === null ? query.trim() : ""
+  const textQuery = commandsOnly === null ? query.trim() : ''
   useEffect(() => {
     if (!open || remote === null || textQuery.length < 2) return
     let stale = false
-    setText({ q: textQuery, status: "loading", hits: [] })
+    setText({ q: textQuery, status: 'loading', hits: [] })
     const timer = window.setTimeout(() => {
       trpc.notes.search
         .query({ remote, q: textQuery })
         .then((hits) => {
-          if (!stale) setText({ q: textQuery, status: "ready", hits })
+          if (!stale) setText({ q: textQuery, status: 'ready', hits })
         })
         .catch(() => {
-          if (!stale) setText({ q: textQuery, status: "error", hits: [] })
+          if (!stale) setText({ q: textQuery, status: 'error', hits: [] })
         })
     }, TEXT_SEARCH_MS)
     return () => {
@@ -538,12 +523,10 @@ export function CommandMenu({
   }, [open, remote, textQuery, retry])
   const textState = text.q === textQuery ? text : null
   const inText =
-    textState?.status === "ready"
-      ? textPlaces(places, shownPlaces, textState.hits)
-      : []
+    textState?.status === 'ready' ? textPlaces(places, shownPlaces, textState.hits) : []
 
   function handleOpenChange(next: boolean) {
-    if (!next) setQuery("")
+    if (!next) setQuery('')
     onOpenChange(next)
   }
 
@@ -559,8 +542,7 @@ export function CommandMenu({
         shouldFilter={false}
         loop
         onKeyDown={(event) => {
-          if (event.key === "Enter")
-            beside.current = event.metaKey || event.ctrlKey
+          if (event.key === 'Enter') beside.current = event.metaKey || event.ctrlKey
         }}
       >
         <CommandInput
@@ -572,26 +554,20 @@ export function CommandMenu({
         <CommandList>
           <CommandEmpty>
             <div className="flex flex-col items-center gap-3">
-              <p className="text-muted-foreground text-sm">
-                Nothing matches “{term.trim()}”.
-              </p>
-              <Button variant="outline" size="sm" onClick={() => setQuery("")}>
+              <p className="text-muted-foreground text-sm">Nothing matches “{term.trim()}”.</p>
+              <Button variant="outline" size="sm" onClick={() => setQuery('')}>
                 Clear search
               </Button>
             </div>
           </CommandEmpty>
 
           {shownPlaces.length > 0 ? (
-            <CommandGroup
-              heading={query.trim() === "" ? "Recent" : "Documents"}
-            >
+            <CommandGroup heading={query.trim() === '' ? 'Recent' : 'Documents'}>
               {shownPlaces.map((place) => (
                 <PlaceItem
                   key={`${place.kind}:${place.key}`}
                   place={place}
-                  onSelect={() =>
-                    choose(() => onOpen(place.key, beside.current))
-                  }
+                  onSelect={() => choose(() => onOpen(place.key, beside.current))}
                 />
               ))}
             </CommandGroup>
@@ -599,24 +575,18 @@ export function CommandMenu({
 
           {/* Shown while the search runs, on an error, or with what it found;
               a search that found nothing new says nothing. */}
-          {textQuery.length >= 2 &&
-          (textState?.status !== "ready" || inText.length > 0) ? (
+          {textQuery.length >= 2 && (textState?.status !== 'ready' || inText.length > 0) ? (
             <CommandGroup heading="In text">
-              {textState === null || textState.status === "loading" ? (
+              {textState === null || textState.status === 'loading' ? (
                 <CommandItem value="text:loading" disabled>
                   <LoaderCircleIcon
                     aria-hidden="true"
                     className="motion-orbit text-muted-foreground"
                   />
-                  <span className="text-muted-foreground">
-                    Searching note text…
-                  </span>
+                  <span className="text-muted-foreground">Searching note text…</span>
                 </CommandItem>
-              ) : textState.status === "error" ? (
-                <CommandItem
-                  value="text:retry"
-                  onSelect={() => setRetry((n) => n + 1)}
-                >
+              ) : textState.status === 'error' ? (
+                <CommandItem value="text:retry" onSelect={() => setRetry((n) => n + 1)}>
                   <RefreshCwIcon aria-hidden="true" />
                   <span>Couldn’t search note text. Retry</span>
                 </CommandItem>
@@ -626,9 +596,7 @@ export function CommandMenu({
                     key={`text:${place.key}`}
                     value={`text:${place.key}`}
                     place={place}
-                    onSelect={() =>
-                      choose(() => onOpen(place.key, beside.current))
-                    }
+                    onSelect={() => choose(() => onOpen(place.key, beside.current))}
                   />
                 ))
               )}
@@ -636,23 +604,14 @@ export function CommandMenu({
           ) : null}
 
           <ActionGroup heading="Go to" actions={shownGoTo} onSelect={choose} />
-          <ActionGroup
-            heading="Actions"
-            actions={shownActions}
-            onSelect={choose}
-          />
+          <ActionGroup heading="Actions" actions={shownActions} onSelect={choose} />
           {shownMore.map(({ group, rows }) => (
-            <ActionGroup
-              key={group}
-              heading={group}
-              actions={rows}
-              onSelect={choose}
-            />
+            <ActionGroup key={group} heading={group} actions={rows} onSelect={choose} />
           ))}
 
           {/* Whatever was typed can go to the agent instead: the last row,
               and the only one, already selected, when nothing else matches. */}
-          {canAsk && commandsOnly === null && query.trim() !== "" ? (
+          {canAsk && commandsOnly === null && query.trim() !== '' ? (
             <CommandGroup heading="Ask">
               <CommandItem value="ask" onSelect={() => choose(ask)}>
                 <SparklesIcon aria-hidden="true" />
@@ -668,11 +627,11 @@ export function CommandMenu({
 
         {/* What the keys do here, as the menu's foot. */}
         <div className="text-muted-foreground flex items-center gap-4 border-t px-3 py-2 text-xs">
-          <Hint keys={["↵"]}>Open</Hint>
-          <Hint keys={hotkeyLabels("⌘↵", isMac())}>Open beside</Hint>
-          <Hint keys={[">"]}>Actions only</Hint>
+          <Hint keys={['↵']}>Open</Hint>
+          <Hint keys={hotkeyLabels('⌘↵', isMac())}>Open beside</Hint>
+          <Hint keys={['>']}>Actions only</Hint>
           <span className="ms-auto">
-            <Hint keys={["esc"]}>Close</Hint>
+            <Hint keys={['esc']}>Close</Hint>
           </span>
         </div>
       </Command>
@@ -703,21 +662,13 @@ function PlaceItem({
   onSelect: () => void
 }) {
   return (
-    <CommandItem
-      value={value ?? `place:${place.kind}:${place.key}`}
-      onSelect={onSelect}
-    >
-      <span
-        className={cn(
-          "flex min-w-0 flex-1 items-center gap-2",
-          place.dim && "opacity-60"
-        )}
-      >
+    <CommandItem value={value ?? `place:${place.kind}:${place.key}`} onSelect={onSelect}>
+      <span className={cn('flex min-w-0 flex-1 items-center gap-2', place.dim && 'opacity-60')}>
         {place.emoji !== undefined ? (
           <span aria-hidden="true" className="w-4 shrink-0 text-center">
             {place.emoji}
           </span>
-        ) : place.kind === "app" ? (
+        ) : place.kind === 'app' ? (
           <AppWindowIcon aria-hidden="true" />
         ) : (
           <FileType

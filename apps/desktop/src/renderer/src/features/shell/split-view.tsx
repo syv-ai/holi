@@ -6,18 +6,14 @@ import {
   type CSSProperties,
   type DragEvent,
   type ReactNode,
-} from "react"
-import { createPortal } from "react-dom"
-import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { MotionConfig } from "motion/react"
+} from 'react'
+import { createPortal } from 'react-dom'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { MotionConfig } from 'motion/react'
 
-import {
-  Panel,
-  PanelGroup,
-  PanelSeparator,
-} from "@/components/ui/motion-panels"
-import { cn } from "@/lib/cn"
-import { shellWorkspaceAtom } from "@/state/shell-tabs"
+import { Panel, PanelGroup, PanelSeparator } from '@/components/ui/motion-panels'
+import { cn } from '@/lib/cn'
+import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import {
   activeSplit,
   dropTab,
@@ -27,10 +23,10 @@ import {
   MAX_SPLIT,
   openTab,
   type ShellWorkspace,
-} from "@/state/shell-workspace"
+} from '@/state/shell-workspace'
 
-import { TabMark } from "./tab-strip"
-import { useTabLook } from "./tab-look"
+import { TabMark } from './tab-strip'
+import { useTabLook } from './tab-look'
 import {
   insertPreview,
   notePlaced,
@@ -38,7 +34,7 @@ import {
   TAB_MIME,
   tabDragAtom,
   type DropSlot,
-} from "./use-tab-drag"
+} from './use-tab-drag'
 
 /**
  * The active strip entry's views side by side, on motion-panels (MIT,
@@ -77,13 +73,13 @@ import {
 
 const MIN_MEMBER = 240
 
-type Role = "start" | "fill" | "end" | "end2"
+type Role = 'start' | 'fill' | 'end' | 'end2'
 
 function roles(count: number): Role[] {
-  if (count <= 1) return ["fill"]
-  if (count === 2) return ["fill", "end"]
-  if (count === 3) return ["start", "fill", "end"]
-  return ["start", "fill", "end", "end2"]
+  if (count <= 1) return ['fill']
+  if (count === 2) return ['fill', 'end']
+  if (count === 3) return ['start', 'fill', 'end']
+  return ['start', 'fill', 'end', 'end2']
 }
 
 /** A view as laid out: its tab key and its share of the width. */
@@ -114,7 +110,7 @@ type Preview =
    *  now (the tab in front dragged to its own edge splits with its
    *  neighbour). */
   | {
-      kind: "insert"
+      kind: 'insert'
       index: number
       gapStart: number
       gapWidth: number
@@ -124,13 +120,13 @@ type Preview =
     }
   /** A split's own member moves to edge `index`: a line there, nothing
    *  slides (the count stays). */
-  | { kind: "move"; index: number; from: number }
+  | { kind: 'move'; index: number; from: number }
   /** The member at `index` is replaced (or swapped), whole. */
-  | { kind: "replace"; index: number }
+  | { kind: 'replace'; index: number }
 
 /** The house curve for what slides: no bounce, and nothing under reduced
  *  motion. */
-const SLIDE = "motion-slide motion-reduce:transition-none"
+const SLIDE = 'motion-slide motion-reduce:transition-none'
 
 export function SplitView({
   entryId,
@@ -149,8 +145,8 @@ export function SplitView({
   function hostFor(key: string): HTMLDivElement {
     let host = hosts.current.get(key)
     if (host === undefined) {
-      host = document.createElement("div")
-      host.className = "flex h-full min-h-0 w-full min-w-0 flex-col"
+      host = document.createElement('div')
+      host.className = 'flex h-full min-h-0 w-full min-w-0 flex-col'
       host.dataset.paneHost = key
       hosts.current.set(key, host)
     }
@@ -187,13 +183,10 @@ export function SplitView({
       const layoutBefore = roles(before.members.length)
       const leaving = before.members
         .map((member, at) => ({ member, at }))
-        .filter(
-          ({ member, at }) =>
-            !keys.has(member.key) && layoutBefore[at] !== "fill"
-        )
+        .filter(({ member, at }) => !keys.has(member.key) && layoutBefore[at] !== 'fill')
       const layoutNow = roles(members.length + leaving.length)
       const arriving = members.filter(
-        (member, at) => !old.has(member.key) && layoutNow[at] !== "fill"
+        (member, at) => !old.has(member.key) && layoutNow[at] !== 'fill',
       )
       if (leaving.length > 0) setGhosts((g) => [...g, ...leaving])
       if (arriving.length > 0) {
@@ -262,25 +255,20 @@ export function SplitView({
       return
     }
     const over = () => setDrag(null)
-    window.addEventListener("pointermove", over)
-    return () => window.removeEventListener("pointermove", over)
+    window.addEventListener('pointermove', over)
+    return () => window.removeEventListener('pointermove', over)
   }, [dragging, setDrag])
 
   function measure(): Geometry | null {
     const root = area.current
     if (root === null) return null
     const left = root.getBoundingClientRect().left
-    const bodies = [
-      ...root.querySelectorAll<HTMLElement>("[data-preview-member]"),
-    ]
+    const bodies = [...root.querySelectorAll<HTMLElement>('[data-preview-member]')]
     if (bodies.length === 0) return null
     const rects = bodies.map((body) => body.getBoundingClientRect())
     return {
       keys: bodies.map((body) => body.dataset.previewMember!),
-      edges: [
-        ...rects.map((rect) => rect.left - left),
-        rects[rects.length - 1]!.right - left,
-      ],
+      edges: [...rects.map((rect) => rect.left - left), rects[rects.length - 1]!.right - left],
     }
   }
 
@@ -289,35 +277,33 @@ export function SplitView({
   function plan(
     key: string,
     slot: DropSlot,
-    at: Geometry
+    at: Geometry,
   ): { next: ShellWorkspace; show: Preview } | null {
     if (ws.active === null) {
       // The empty strip's view: whatever is dropped opens there.
       const next = openTab(ws, key)
-      return next === ws ? null : { next, show: { kind: "replace", index: 0 } }
+      return next === ws ? null : { next, show: { kind: 'replace', index: 0 } }
     }
     const split = activeSplit(ws)
-    if (slot.kind === "replace") {
+    if (slot.kind === 'replace') {
       const target = at.keys[slot.index]
       if (target === undefined) return null
-      const next = dropTab(ws, key, target, "center")
+      const next = dropTab(ws, key, target, 'center')
       return next === ws ? null : { next, show: slot }
     }
     const next = insertIntoActive(ws, key, slot.index)
     if (next === ws) return null
     const from = split === null ? -1 : split.views.indexOf(key)
     if (from !== -1) {
-      return { next, show: { kind: "move", index: slot.index, from } }
+      return { next, show: { kind: 'move', index: slot.index, from } }
     }
     const landed = entryOf(next, key)
     const fills =
-      split === null && isSplit(landed)
-        ? (landed.views.find((v) => v !== key) ?? null)
-        : null
+      split === null && isSplit(landed) ? (landed.views.find((v) => v !== key) ?? null) : null
     return {
       next,
       show: {
-        kind: "insert",
+        kind: 'insert',
         index: slot.index,
         ...insertPreview(at.edges, slot.index),
         fills: fills !== null && !at.keys.includes(fills) ? fills : null,
@@ -354,14 +340,12 @@ export function SplitView({
     dragging === null ? null : (
       <div
         data-drop-target=""
-        data-drop-slot={
-          preview === null ? undefined : `${preview.kind}:${preview.index}`
-        }
+        data-drop-slot={preview === null ? undefined : `${preview.kind}:${preview.index}`}
         className="absolute inset-0 z-40"
         onDragOver={(event) => {
           if (!track(event)) return
           event.preventDefault()
-          event.dataTransfer.dropEffect = "move"
+          event.dataTransfer.dropEffect = 'move'
         }}
         onDragLeave={(event) => {
           const to = event.relatedTarget
@@ -385,7 +369,7 @@ export function SplitView({
     )
 
   const spans = new Map<string, { offset: number; width: number }>()
-  if (preview?.kind === "insert" && geometry.current !== null) {
+  if (preview?.kind === 'insert' && geometry.current !== null) {
     geometry.current.keys.forEach((key, i) => {
       const span = preview.spans[i]
       if (span !== undefined) spans.set(key, span)
@@ -401,35 +385,27 @@ export function SplitView({
   }
   const layout = roles(slots.length)
   const count = slots.length
-  const maxSize = count === 2 ? "75%" : count === 3 ? "45%" : "35%"
+  const maxSize = count === 2 ? '75%' : count === 3 ? '45%' : '35%'
 
   /** The divider before slot `at`, moving to where the shrunk members
    *  meet: hidden where the gap opens. */
-  function separatorShift(at: number): number | "hidden" | undefined {
-    if (preview?.kind !== "insert") return undefined
-    if (at === preview.index) return "hidden"
+  function separatorShift(at: number): number | 'hidden' | undefined {
+    if (preview?.kind !== 'insert') return undefined
+    if (at === preview.index) return 'hidden'
     return preview.boundaries[at]
   }
 
   const children: ReactNode[] = []
   slots.forEach(({ member, ghost }, index) => {
     const role = layout[index]!
-    if (role === "fill" && index > 0) {
+    if (role === 'fill' && index > 0) {
       children.push(
-        <LineSeparator
-          key="sep-start"
-          shift={separatorShift(index)}
-          landing={landing}
-        />
+        <LineSeparator key="sep-start" shift={separatorShift(index)} landing={landing} />,
       )
     }
-    if (role === "end" || role === "end2") {
+    if (role === 'end' || role === 'end2') {
       children.push(
-        <LineSeparator
-          key={`sep-${role}`}
-          shift={separatorShift(index)}
-          landing={landing}
-        />
+        <LineSeparator key={`sep-${role}`} shift={separatorShift(index)} landing={landing} />,
       )
     }
     // While a gap opens, the member shrinks into its span of the layout the
@@ -446,23 +422,21 @@ export function SplitView({
           span === undefined
             ? undefined
             : ({
-                "--span-left": `${span.offset}px`,
-                "--span-width": `${span.width}px`,
+                '--span-left': `${span.offset}px`,
+                '--span-width': `${span.width}px`,
               } as CSSProperties)
         }
         className={cn(
-          "flex h-full min-h-0 min-w-0",
-          dragging !== null
-            ? "absolute inset-y-0 left-0 w-full"
-            : "relative w-full",
-          span !== undefined && "left-(--span-left) w-(--span-width)",
-          landing ? "transition-none" : SLIDE
+          'flex h-full min-h-0 min-w-0',
+          dragging !== null ? 'absolute inset-y-0 left-0 w-full' : 'relative w-full',
+          span !== undefined && 'left-(--span-left) w-(--span-width)',
+          landing ? 'transition-none' : SLIDE,
         )}
       >
         {ghost ? null : <HostSlot host={hostFor(member.key)} />}
       </div>
     )
-    if (role === "fill") {
+    if (role === 'fill') {
       children.push(
         <Panel
           key="fill"
@@ -470,13 +444,11 @@ export function SplitView({
           // it out, so a shrunk member can sit where the drop will put it.
           // The library clips inline, so this has to win over that.
           className={
-            dragging !== null
-              ? "relative min-h-0 min-w-0 overflow-visible!"
-              : "min-h-0 min-w-0"
+            dragging !== null ? 'relative min-h-0 min-w-0 overflow-visible!' : 'min-h-0 min-w-0'
           }
         >
           {body}
-        </Panel>
+        </Panel>,
       )
     } else {
       children.push(
@@ -492,14 +464,10 @@ export function SplitView({
               onShareChange(member.key, Number.parseFloat(size) / 100)
             }
           }}
-          className={
-            dragging !== null
-              ? "relative min-h-0 overflow-visible!"
-              : "min-h-0"
-          }
+          className={dragging !== null ? 'relative min-h-0 overflow-visible!' : 'min-h-0'}
         >
           {body}
-        </Panel>
+        </Panel>,
       )
     }
   })
@@ -526,16 +494,14 @@ export function SplitView({
             geometry={geometry.current}
             dragged={look(dragging)}
             fills={
-              preview?.kind === "insert" && preview.fills !== null
-                ? look(preview.fills)
-                : null
+              preview?.kind === 'insert' && preview.fills !== null ? look(preview.fills) : null
             }
           />
         )}
         {catcher}
       </div>
       {members.map((member) =>
-        createPortal(renderMember(member.key), hostFor(member.key), member.key)
+        createPortal(renderMember(member.key), hostFor(member.key), member.key),
       )}
     </MotionConfig>
   )
@@ -561,23 +527,17 @@ function DropPreview({
   dragged: ReturnType<ReturnType<typeof useTabLook>>
   fills: ReturnType<ReturnType<typeof useTabLook>> | null
 }) {
-  const open = preview?.kind === "insert"
+  const open = preview?.kind === 'insert'
   // The gap's last place, kept while it fades out, and whether it was open
   // the render before: one that opens jumps to its place, then slides.
-  const [last, setLast] = useState<{ start: number; width: number } | null>(
-    null
-  )
+  const [last, setLast] = useState<{ start: number; width: number } | null>(null)
   const [wasOpen, setWasOpen] = useState(false)
-  if (
-    open &&
-    (last?.start !== preview.gapStart || last.width !== preview.gapWidth)
-  ) {
+  if (open && (last?.start !== preview.gapStart || last.width !== preview.gapWidth)) {
     setLast({ start: preview.gapStart, width: preview.gapWidth })
   }
   if (open !== wasOpen) setWasOpen(open)
   const gap = open ? { start: preview.gapStart, width: preview.gapWidth } : last
-  const total =
-    geometry === null ? 0 : geometry.edges[geometry.edges.length - 1]!
+  const total = geometry === null ? 0 : geometry.edges[geometry.edges.length - 1]!
   const span = (index: number) =>
     geometry === null
       ? null
@@ -585,8 +545,8 @@ function DropPreview({
           left: geometry.edges[index]!,
           width: geometry.edges[index + 1]! - geometry.edges[index]!,
         }
-  const replaced = preview?.kind === "replace" ? span(preview.index) : null
-  const moving = preview?.kind === "move" ? span(preview.from) : null
+  const replaced = preview?.kind === 'replace' ? span(preview.index) : null
+  const moving = preview?.kind === 'move' ? span(preview.from) : null
   const rest =
     open && fills !== null
       ? preview.index === 0
@@ -595,30 +555,24 @@ function DropPreview({
       : null
 
   return (
-    <div
-      aria-hidden="true"
-      className="pointer-events-none absolute inset-0 z-30"
-    >
+    <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-30">
       {gap === null ? null : (
         <div
           data-drop-gap=""
           style={
             {
-              "--gap-width": `${gap.width}px`,
-              "--gap-start": `${gap.start}px`,
+              '--gap-width': `${gap.width}px`,
+              '--gap-start': `${gap.start}px`,
             } as CSSProperties
           }
           className={cn(
-            "absolute inset-y-0 left-0 w-(--gap-width) translate-x-(--gap-start) p-1.5",
-            open ? "opacity-100" : "opacity-0",
-            open && wasOpen ? "motion-slide" : "motion-fade",
-            "motion-reduce:transition-none"
+            'absolute inset-y-0 left-0 w-(--gap-width) translate-x-(--gap-start) p-1.5',
+            open ? 'opacity-100' : 'opacity-0',
+            open && wasOpen ? 'motion-slide' : 'motion-fade',
+            'motion-reduce:transition-none',
           )}
         >
-          <DropLabel
-            tab={dragged}
-            className="bg-muted/40 border-border border border-dashed"
-          />
+          <DropLabel tab={dragged} className="bg-muted/40 border-border border border-dashed" />
         </div>
       )}
       {rest === null ? null : (
@@ -631,9 +585,7 @@ function DropPreview({
           <DropLabel tab={dragged} className="bg-muted ring-primary/50 ring-2" />
         </Box>
       )}
-      {moving === null ||
-      preview?.kind !== "move" ||
-      geometry === null ? null : (
+      {moving === null || preview?.kind !== 'move' || geometry === null ? null : (
         <>
           <Box at={moving}>
             <div className="bg-background/50 size-full" />
@@ -642,7 +594,7 @@ function DropPreview({
             data-drop-line=""
             style={
               {
-                "--line-left": `${geometry.edges[preview.index]! - 1}px`,
+                '--line-left': `${geometry.edges[preview.index]! - 1}px`,
               } as CSSProperties
             }
             className="bg-primary absolute inset-y-1.5 left-(--line-left) w-0.5 rounded-full"
@@ -654,19 +606,13 @@ function DropPreview({
 }
 
 /** A member's place over the views, fading in. */
-function Box({
-  at,
-  children,
-}: {
-  at: { left: number; width: number }
-  children: ReactNode
-}) {
+function Box({ at, children }: { at: { left: number; width: number }; children: ReactNode }) {
   return (
     <div
       style={
         {
-          "--box-left": `${at.left}px`,
-          "--box-width": `${at.width}px`,
+          '--box-left': `${at.left}px`,
+          '--box-width': `${at.width}px`,
         } as CSSProperties
       }
       className="motion-in-fade absolute inset-y-0 left-(--box-left) w-(--box-width) p-1.5"
@@ -687,8 +633,8 @@ function DropLabel({
   return (
     <div
       className={cn(
-        "text-muted-foreground flex size-full items-center justify-center gap-2 overflow-hidden px-4 text-sm",
-        className
+        'text-muted-foreground flex size-full items-center justify-center gap-2 overflow-hidden px-4 text-sm',
+        className,
       )}
     >
       <TabMark tab={tab} />
@@ -723,15 +669,8 @@ function LineSeparator({
 }: {
   /** While a drag opens a gap: how far it slides with its neighbours, or
    *  hidden where the gap opens. */
-  shift?: number | "hidden"
+  shift?: number | 'hidden'
   landing: boolean
 }) {
-  return (
-    <PanelSeparator
-      variant="line"
-      aria-label="Resize view"
-      shift={shift}
-      landing={landing}
-    />
-  )
+  return <PanelSeparator variant="line" aria-label="Resize view" shift={shift} landing={landing} />
 }

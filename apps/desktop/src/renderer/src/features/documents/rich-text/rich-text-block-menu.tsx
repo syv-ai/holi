@@ -1,5 +1,5 @@
-import { NodeSelection, Selection, TextSelection } from "@tiptap/pm/state"
-import type { Editor } from "@tiptap/react"
+import { NodeSelection, Selection, TextSelection } from '@tiptap/pm/state'
+import type { Editor } from '@tiptap/react'
 
 import {
   DropdownMenuGroup,
@@ -12,7 +12,7 @@ import {
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
-} from "@/components/ui/dropdown-menu"
+} from '@/components/ui/dropdown-menu'
 import {
   blockCommand,
   blockTargetAtPos,
@@ -23,59 +23,54 @@ import {
   moveBlockDown,
   moveBlockUp,
   type BlockTarget,
-} from "./rich-text-block-actions"
-import { RICH_TEXT_BASIC_SLASH_ITEMS } from "./rich-text-slash-menu"
-import { RICH_TEXT_TABLE_SLASH_ITEM } from "./rich-text-table"
-import { useShortcutLabel } from "@/composites/shortcut-keys"
-import { RefreshCwIcon, CopyIcon, ArrowUpIcon, ArrowDownIcon, Trash2Icon } from "lucide-react"
+} from './rich-text-block-actions'
+import { RICH_TEXT_BASIC_SLASH_ITEMS } from './rich-text-slash-menu'
+import { RICH_TEXT_TABLE_SLASH_ITEM } from './rich-text-table'
+import { useShortcutLabel } from '@/composites/shortcut-keys'
+import { RefreshCwIcon, CopyIcon, ArrowUpIcon, ArrowDownIcon, Trash2Icon } from 'lucide-react'
 
 const TURN_INTO_IDS = new Set([
-  "text",
-  "heading-1",
-  "heading-2",
-  "heading-3",
-  "bullet-list",
-  "numbered-list",
-  "task-list",
-  "quote",
-  "code-block",
+  'text',
+  'heading-1',
+  'heading-2',
+  'heading-3',
+  'bullet-list',
+  'numbered-list',
+  'task-list',
+  'quote',
+  'code-block',
 ])
 
-const TURN_INTO = RICH_TEXT_BASIC_SLASH_ITEMS.filter((item) =>
-  TURN_INTO_IDS.has(item.id)
-)
+const TURN_INTO = RICH_TEXT_BASIC_SLASH_ITEMS.filter((item) => TURN_INTO_IDS.has(item.id))
 
 const BLOCK_TITLES = new Map(
-  [
-    ...RICH_TEXT_BASIC_SLASH_ITEMS,
-    RICH_TEXT_TABLE_SLASH_ITEM,
-  ].map((item) => [item.id, item.title])
+  [...RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_TABLE_SLASH_ITEM].map((item) => [item.id, item.title]),
 )
 
 const LIST_KINDS: Record<string, string> = {
-  bulletList: "bullet-list",
-  orderedList: "numbered-list",
-  taskList: "task-list",
+  bulletList: 'bullet-list',
+  orderedList: 'numbered-list',
+  taskList: 'task-list',
 }
 
 // Quotes and list items are left first, so a pick converts just that block.
-const WRAPPERS = new Set(["blockquote", "listItem", "taskItem"])
+const WRAPPERS = new Set(['blockquote', 'listItem', 'taskItem'])
 
 /** The slash menu id for a block, so the menu names it and Turn Into checks it. */
 function blockKind({ node, parent }: BlockTarget) {
   switch (node.type.name) {
-    case "paragraph":
-      return "text"
-    case "heading":
+    case 'paragraph':
+      return 'text'
+    case 'heading':
       return `heading-${String(node.attrs.level)}`
-    case "codeBlock":
-      return "code-block"
-    case "blockquote":
-      return "quote"
-    case "horizontalRule":
-      return "divider"
-    case "table":
-      return "table"
+    case 'codeBlock':
+      return 'code-block'
+    case 'blockquote':
+      return 'quote'
+    case 'horizontalRule':
+      return 'divider'
+    case 'table':
+      return 'table'
     default:
       return LIST_KINDS[parent.type.name] ?? node.type.name
   }
@@ -84,10 +79,10 @@ function blockKind({ node, parent }: BlockTarget) {
 /** Lifts the caret's lines out of every list and quote around them. */
 function unwrapBlock(editor: Editor) {
   for (let level = 0; level < 8; level++) {
-    const item = ["taskItem", "listItem"].find((name) => editor.isActive(name))
+    const item = ['taskItem', 'listItem'].find((name) => editor.isActive(name))
     const lifted = item
       ? editor.commands.liftListItem(item)
-      : editor.isActive("blockquote") && editor.commands.lift("blockquote")
+      : editor.isActive('blockquote') && editor.commands.lift('blockquote')
     if (!lifted) return
   }
 }
@@ -111,19 +106,14 @@ export function blockMenuSelection(editor: Editor, target: BlockTarget) {
 }
 
 /** Reads the menu for a block, once the caret sits inside it. */
-export function readBlockMenu(
-  editor: Editor,
-  target: BlockTarget
-): BlockMenuState {
+export function readBlockMenu(editor: Editor, target: BlockTarget): BlockMenuState {
   const kind = blockKind(target)
   let allowed: string[] = []
   // A quote or list item is unwrapped first, so every kind fits there.
   if (WRAPPERS.has(target.node.type.name)) {
     allowed = TURN_INTO.map((item) => item.id)
   } else if (TURN_INTO_IDS.has(kind)) {
-    allowed = TURN_INTO.filter((item) => item.can(editor)).map(
-      (item) => item.id
-    )
+    allowed = TURN_INTO.filter((item) => item.can(editor)).map((item) => item.id)
   }
   return {
     pos: target.pos,
@@ -156,7 +146,7 @@ export function RichTextBlockMenuItems({
 
   function removeBlock() {
     // The table dialog reads the caret, which the menu already put inside.
-    if (menu.kind === "table") onDeleteTable()
+    if (menu.kind === 'table') onDeleteTable()
     else runOnBlock(deleteBlock)
   }
 
@@ -177,9 +167,7 @@ export function RichTextBlockMenuItems({
   return (
     <>
       <DropdownMenuGroup>
-        <DropdownMenuLabel>
-          {BLOCK_TITLES.get(menu.kind) ?? "Block"}
-        </DropdownMenuLabel>
+        <DropdownMenuLabel>{BLOCK_TITLES.get(menu.kind) ?? 'Block'}</DropdownMenuLabel>
         {menu.allowed.length ? (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
@@ -191,7 +179,7 @@ export function RichTextBlockMenuItems({
                 value={menu.kind}
                 onValueChange={(value) => {
                   // Picking the current kind again would toggle it off.
-                  if (typeof value === "string" && value !== menu.kind) {
+                  if (typeof value === 'string' && value !== menu.kind) {
                     turnInto(value)
                   }
                 }}
@@ -200,9 +188,7 @@ export function RichTextBlockMenuItems({
                   <DropdownMenuRadioItem
                     key={item.id}
                     value={item.id}
-                    disabled={
-                      item.id !== menu.kind && !menu.allowed.includes(item.id)
-                    }
+                    disabled={item.id !== menu.kind && !menu.allowed.includes(item.id)}
                   >
                     {item.icon}
                     {item.title}
@@ -215,23 +201,17 @@ export function RichTextBlockMenuItems({
         <DropdownMenuItem onClick={() => runOnBlock(duplicateBlock)}>
           <CopyIcon aria-hidden="true" />
           Duplicate
-          <MenuShortcut keys={["shift", "alt", "↓"]} />
+          <MenuShortcut keys={['shift', 'alt', '↓']} />
         </DropdownMenuItem>
-        <DropdownMenuItem
-          disabled={!menu.canUp}
-          onClick={() => runOnBlock(moveBlockUp)}
-        >
+        <DropdownMenuItem disabled={!menu.canUp} onClick={() => runOnBlock(moveBlockUp)}>
           <ArrowUpIcon aria-hidden="true" />
           Move Up
-          <MenuShortcut keys={["mod", "shift", "↑"]} />
+          <MenuShortcut keys={['mod', 'shift', '↑']} />
         </DropdownMenuItem>
-        <DropdownMenuItem
-          disabled={!menu.canDown}
-          onClick={() => runOnBlock(moveBlockDown)}
-        >
+        <DropdownMenuItem disabled={!menu.canDown} onClick={() => runOnBlock(moveBlockDown)}>
           <ArrowDownIcon aria-hidden="true" />
           Move Down
-          <MenuShortcut keys={["mod", "shift", "↓"]} />
+          <MenuShortcut keys={['mod', 'shift', '↓']} />
         </DropdownMenuItem>
       </DropdownMenuGroup>
       <DropdownMenuSeparator />

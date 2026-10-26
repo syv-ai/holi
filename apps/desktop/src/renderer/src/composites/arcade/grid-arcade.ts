@@ -10,11 +10,11 @@
  * A game speaks `GridArcade` so the canvas renderer (`holi-arcade.tsx`) can
  * host it without knowing its rules.
  */
-import type { ArcadeCastMember } from "@/state/plugin-types"
+import type { ArcadeCastMember } from '@/state/plugin-types'
 
 export type { ArcadeCastMember }
 
-export const ARCADE_MODES = ["low", "mid", "hard"] as const
+export const ARCADE_MODES = ['low', 'mid', 'hard'] as const
 export type ArcadeMode = (typeof ARCADE_MODES)[number]
 
 /** A pixel speech bubble trailing whoever is talking. */
@@ -32,12 +32,12 @@ export type SpeechBubble = {
 export type CellRect = { x: number; y: number; w: number; h: number }
 
 /** What a paper on the board is: a document, or a task. */
-export type PaperKind = "doc" | "task"
+export type PaperKind = 'doc' | 'task'
 
 /** A drawn piece on top of the stamped grid: a Holi, a carried paper, a conflict. */
 export type ArcadeSprite =
   | {
-      kind: "holi"
+      kind: 'holi'
       /** Centre of the sprite, in grid cells. */
       cx: number
       cy: number
@@ -51,12 +51,12 @@ export type ArcadeSprite =
       mascot: string
       color: string
       /** Standing, mid-step, or saying something (`speechBubble`). */
-      frame: "rest" | "walk" | "talk"
+      frame: 'rest' | 'walk' | 'talk'
       /** The one the player steers. */
       player: boolean
     }
   | {
-      kind: "paper"
+      kind: 'paper'
       paper: PaperKind
       cx: number
       cy: number
@@ -66,7 +66,7 @@ export type ArcadeSprite =
       color: string
     }
   | {
-      kind: "conflict"
+      kind: 'conflict'
       cx: number
       cy: number
       size: number

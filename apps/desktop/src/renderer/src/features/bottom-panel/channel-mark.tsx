@@ -1,9 +1,9 @@
-import { SiClaude, SiGit, SiGithub } from "@icons-pack/react-simple-icons"
-import { PuzzleIcon } from "lucide-react"
+import { SiClaude, SiGit, SiGithub } from '@icons-pack/react-simple-icons'
+import { PuzzleIcon } from 'lucide-react'
 
-import { BRAND_MONOGRAM } from "@/lib/brand-shapes"
-import { cn } from "@/lib/cn"
-import { channelLabel, type ActivityChannel } from "@/state/activity"
+import { BRAND_MONOGRAM } from '@/lib/brand-shapes'
+import { cn } from '@/lib/cn'
+import { channelLabel, type ActivityChannel } from '@/state/activity'
 
 /**
  * An Output channel's mark: the brand's own where the channel is a brand's
@@ -27,42 +27,23 @@ function HoliGlyph({ className }: { className?: string }) {
   )
 }
 
-function ChannelMark({
-  channel,
-  className,
-}: {
-  channel: ActivityChannel
-  className?: string
-}) {
-  const look = cn("size-3.5 shrink-0", className)
+function ChannelMark({ channel, className }: { channel: ActivityChannel; className?: string }) {
+  const look = cn('size-3.5 shrink-0', className)
   switch (channel) {
-    case "git":
+    case 'git':
       return (
-        <SiGit
-          aria-hidden="true"
-          className={cn(look, "text-orange-600 dark:text-orange-500")}
-        />
+        <SiGit aria-hidden="true" className={cn(look, 'text-orange-600 dark:text-orange-500')} />
       )
-    case "sync":
+    case 'sync':
+      return <SiGithub aria-hidden="true" className={cn(look, 'text-foreground')} />
+    case 'agent':
       return (
-        <SiGithub aria-hidden="true" className={cn(look, "text-foreground")} />
+        <SiClaude aria-hidden="true" className={cn(look, 'text-orange-500 dark:text-orange-400')} />
       )
-    case "agent":
-      return (
-        <SiClaude
-          aria-hidden="true"
-          className={cn(look, "text-orange-500 dark:text-orange-400")}
-        />
-      )
-    case "plugins":
-      return (
-        <PuzzleIcon
-          aria-hidden="true"
-          className={cn(look, "text-muted-foreground")}
-        />
-      )
-    case "app":
-      return <HoliGlyph className={cn(look, "text-foreground w-auto")} />
+    case 'plugins':
+      return <PuzzleIcon aria-hidden="true" className={cn(look, 'text-muted-foreground')} />
+    case 'app':
+      return <HoliGlyph className={cn(look, 'text-foreground w-auto')} />
   }
 }
 
@@ -75,7 +56,7 @@ export function ChannelTag({
   className?: string
 }) {
   return (
-    <span className={cn("inline-flex min-w-0 items-center gap-1.5", className)}>
+    <span className={cn('inline-flex min-w-0 items-center gap-1.5', className)}>
       <ChannelMark channel={channel} />
       <span className="truncate">{channelLabel(channel)}</span>
     </span>

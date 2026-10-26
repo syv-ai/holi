@@ -16,68 +16,58 @@
  * tinted in it (`document-comments.ts`): the format bubble's Comment, or
  * ⌘⌥M, starts one on the selection.
  */
-import { useEffect, useMemo, useRef, useState } from "react"
-import { createPortal } from "react-dom"
-import {
-  holiLink,
-  isHoliLinkable,
-  isResolved,
-  type CommentAnchor,
-} from "@holi/shared"
-import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { findNext, findPrev } from "prosemirror-search"
-import { EditorContent, useEditor } from "@tiptap/react"
-import { SparklesIcon } from "lucide-react"
-import { toast } from "sonner"
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { holiLink, isHoliLinkable, isResolved, type CommentAnchor } from '@holi/shared'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { findNext, findPrev } from 'prosemirror-search'
+import { EditorContent, useEditor } from '@tiptap/react'
+import { SparklesIcon } from 'lucide-react'
+import { toast } from 'sonner'
 
-import { DeleteTableDialog } from "@/features/documents/rich-text/delete-table-dialog"
-import { RichTextBlockActions } from "@/features/documents/rich-text/rich-text-block-actions"
-import { RichTextBlockGutter } from "@/features/documents/rich-text/rich-text-block-gutter"
-import { setRichTextBubble } from "@/features/documents/rich-text/rich-text-bubble-bar"
-import { RICH_TEXT_PROSE } from "@/features/documents/rich-text/rich-text-content"
-import { RichTextLinkBubble } from "@/features/documents/rich-text/rich-text-link"
+import { DeleteTableDialog } from '@/features/documents/rich-text/delete-table-dialog'
+import { RichTextBlockActions } from '@/features/documents/rich-text/rich-text-block-actions'
+import { RichTextBlockGutter } from '@/features/documents/rich-text/rich-text-block-gutter'
+import { setRichTextBubble } from '@/features/documents/rich-text/rich-text-bubble-bar'
+import { RICH_TEXT_PROSE } from '@/features/documents/rich-text/rich-text-content'
+import { RichTextLinkBubble } from '@/features/documents/rich-text/rich-text-link'
 import {
   RICH_TEXT_BASIC_SLASH_ITEMS,
   RichTextSlashCommand,
   type RichTextSlashItem,
-} from "@/features/documents/rich-text/rich-text-slash-menu"
-import { useRichTextSelector } from "@/features/documents/rich-text/rich-text-state"
+} from '@/features/documents/rich-text/rich-text-slash-menu'
+import { useRichTextSelector } from '@/features/documents/rich-text/rich-text-state'
 import {
   RICH_TEXT_TABLE_PROSE,
   RICH_TEXT_TABLE_SLASH_ITEM,
   RichTextTable,
   RichTextTableBubble,
-} from "@/features/documents/rich-text/rich-text-table"
-import { useIsApplePlatform } from "@/composites/shortcut-keys"
-import { Skeleton } from "@/components/ui/skeleton"
-import { TooltipProvider } from "@/components/ui/tooltip"
-import { cn } from "@/lib/cn"
-import { TaskProperties } from "@/features/planning/task-properties"
-import { trpc } from "@/lib/trpc"
+} from '@/features/documents/rich-text/rich-text-table'
+import { useIsApplePlatform } from '@/composites/shortcut-keys'
+import { Skeleton } from '@/components/ui/skeleton'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { cn } from '@/lib/cn'
+import { TaskProperties } from '@/features/planning/task-properties'
+import { trpc } from '@/lib/trpc'
 import {
   addThreadAtom,
   refreshThreadsAtom,
   replyThreadAtom,
   resolveThreadAtom,
   threadsLoadAtom,
-} from "@/state/comments"
-import { sawText } from "@/state/doc-changes"
-import { pendingHeadingAtom } from "@/state/open-document"
-import { useViewMemory } from "@/state/view-memory"
-import { claimsAtom, pluginSlashCommandsAtom } from "@/state/plugins"
-import { editorSelectionAtom } from "@/state/ui-report"
-import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
+} from '@/state/comments'
+import { sawText } from '@/state/doc-changes'
+import { pendingHeadingAtom } from '@/state/open-document'
+import { useViewMemory } from '@/state/view-memory'
+import { claimsAtom, pluginSlashCommandsAtom } from '@/state/plugins'
+import { editorSelectionAtom } from '@/state/ui-report'
+import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
-import { AgentPrompt, AgentStatus } from "./agent-prompt"
-import { agentPromptKey, agentPromptPos, onEmptyLine, setAgentPrompt } from "./agent-trigger"
-import {
-  artifactPathFor,
-  isRunLive,
-  locksDocument,
-  useDocumentAgent,
-} from "./document-agent"
-import { parentOf } from "@/lib/tree-paths"
-import { CommentsPanel } from "./comments-panel"
+import { AgentPrompt, AgentStatus } from './agent-prompt'
+import { agentPromptKey, agentPromptPos, onEmptyLine, setAgentPrompt } from './agent-trigger'
+import { artifactPathFor, isRunLive, locksDocument, useDocumentAgent } from './document-agent'
+import { parentOf } from '@/lib/tree-paths'
+import { CommentsPanel } from './comments-panel'
 import {
   DocumentComments,
   placeThreads,
@@ -85,20 +75,15 @@ import {
   selectionLines,
   setCommentRanges,
   type PlacedRange,
-} from "./document-comments"
-import { createDocumentExtensions } from "./document-extensions"
-import { headingAtCaret, landOnHeading } from "./document-headings"
-import { DocumentFindBar, type FindRequest } from "./document-find-bar"
-import { pluginSlashItem } from "./plugin-slash"
-import { DocumentFormatBubble } from "./document-format-bubble"
-import { DocumentHeader, type SaveState } from "./document-header"
-import {
-  AGENT_MARKER,
-  documentTitle,
-  joinDocument,
-  splitDocument,
-} from "./markdown"
-import { ErrorState } from "@/composites/empty-state"
+} from './document-comments'
+import { createDocumentExtensions } from './document-extensions'
+import { headingAtCaret, landOnHeading } from './document-headings'
+import { DocumentFindBar, type FindRequest } from './document-find-bar'
+import { pluginSlashItem } from './plugin-slash'
+import { DocumentFormatBubble } from './document-format-bubble'
+import { DocumentHeader, type SaveState } from './document-header'
+import { AGENT_MARKER, documentTitle, joinDocument, splitDocument } from './markdown'
+import { ErrorState } from '@/composites/empty-state'
 
 // How long typing has to pause before the file is written.
 const SAVE_DELAY_MS = 600
@@ -108,34 +93,26 @@ const SELECTION_DELAY_MS = 250
 
 // The block drop line, as the rich-text block draws it.
 const DROP_LINE =
-  "[&_.prosemirror-dropcursor-block]:text-primary [&_.prosemirror-dropcursor-block]:h-0.5! [&_.prosemirror-dropcursor-block]:rounded-full"
+  '[&_.prosemirror-dropcursor-block]:text-primary [&_.prosemirror-dropcursor-block]:h-0.5! [&_.prosemirror-dropcursor-block]:rounded-full'
 
 type Load =
-  | { kind: "loading" }
-  | { kind: "ready"; head: string; body: string; text: string }
-  | { kind: "error"; message: string }
+  | { kind: 'loading' }
+  | { kind: 'ready'; head: string; body: string; text: string }
+  | { kind: 'error'; message: string }
 
 /** The vault path a `[[target]]` names: an exact path, else a markdown
  *  file whose name matches, nearest folder first. */
 function resolveLink(
   target: string,
   from: string,
-  docs: readonly { path: string }[]
+  docs: readonly { path: string }[],
 ): string | null {
-  const wanted = target.toLowerCase().replace(/\.md$/, "")
-  const exact = docs.find(
-    (doc) => doc.path.toLowerCase().replace(/\.md$/, "") === wanted
-  )
+  const wanted = target.toLowerCase().replace(/\.md$/, '')
+  const exact = docs.find((doc) => doc.path.toLowerCase().replace(/\.md$/, '') === wanted)
   if (exact) return exact.path
-  const named = docs.filter(
-    (doc) => documentTitle(doc.path).toLowerCase() === wanted
-  )
+  const named = docs.filter((doc) => documentTitle(doc.path).toLowerCase() === wanted)
   const folder = parentOf(from)
-  return (
-    named.find((doc) => parentOf(doc.path) === folder)?.path ??
-    named[0]?.path ??
-    null
-  )
+  return named.find((doc) => parentOf(doc.path) === folder)?.path ?? named[0]?.path ?? null
 }
 
 export function DocumentView({
@@ -152,24 +129,24 @@ export function DocumentView({
   const remote = useAtomValue(activeRemoteAtom)
   const docs = useAtomValue(snapshotAtom).docs
   const mtime = docs.find((doc) => doc.path === path)?.updatedAt
-  const [load, setLoad] = useState<Load>({ kind: "loading" })
+  const [load, setLoad] = useState<Load>({ kind: 'loading' })
   const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     if (remote === null) return
     let live = true
-    setLoad({ kind: "loading" })
+    setLoad({ kind: 'loading' })
     trpc.notes.read
       .query({ remote, path })
       .then((text) => {
         if (!live) return
         const { head, body } = splitDocument(text)
-        setLoad({ kind: "ready", head, body, text })
+        setLoad({ kind: 'ready', head, body, text })
       })
       .catch((err: unknown) => {
         if (live)
           setLoad({
-            kind: "error",
+            kind: 'error',
             message: err instanceof Error ? err.message : String(err),
           })
       })
@@ -178,12 +155,12 @@ export function DocumentView({
     }
   }, [remote, path, attempt])
 
-  if (load.kind === "loading") return <DocumentSkeleton />
-  if (load.kind === "error" || remote === null)
+  if (load.kind === 'loading') return <DocumentSkeleton />
+  if (load.kind === 'error' || remote === null)
     return (
       <ErrorState
         title={`Couldn’t open ${documentTitle(path)}`}
-        message={load.kind === "error" ? load.message : "No vault is open."}
+        message={load.kind === 'error' ? load.message : 'No vault is open.'}
         onRetry={() => setAttempt((n) => n + 1)}
       />
     )
@@ -221,7 +198,7 @@ function DocumentEditor({
 }) {
   const agent = useDocumentAgent(path)
   const locked = locksDocument(agent.run)
-  const [saveState, setSaveState] = useState<SaveState>("saved")
+  const [saveState, setSaveState] = useState<SaveState>('saved')
   const [linkOpen, setLinkOpen] = useState(false)
   const [deleteTableOpen, setDeleteTableOpen] = useState(false)
   const [fullWidth, setFullWidth] = useState(false)
@@ -233,11 +210,11 @@ function DocumentEditor({
    *  (`agentPromptKey`), and it renders into `promptBox` on that line. */
   const [promptOpen, setPromptOpen] = useState(false)
   /** What the ask prompt opens with: an app command's instruction. */
-  const [promptInitial, setPromptInitial] = useState("")
+  const [promptInitial, setPromptInitial] = useState('')
   const [promptBox] = useState(() => {
-    const box = document.createElement("div")
-    box.contentEditable = "false"
-    box.className = "my-1"
+    const box = document.createElement('div')
+    box.contentEditable = 'false'
+    box.className = 'my-1'
     return box
   })
   const pageRef = useRef<HTMLDivElement>(null)
@@ -266,7 +243,7 @@ function DocumentEditor({
     () => [
       ...createDocumentExtensions({
         folder: parentOf(path),
-        placeholder: "Type / for commands, or Space to ask AI",
+        placeholder: 'Type / for commands, or Space to ask AI',
         onOpenLink: (target) => handlers.current.openLink(target),
         onAgentTrigger: (pos) => handlers.current.trigger(pos),
         promptContainer: promptBox,
@@ -285,36 +262,33 @@ function DocumentEditor({
         more: () => handlers.current.pluginItems(),
       }),
     ],
-    [path, promptBox]
+    [path, promptBox],
   )
 
   const editor = useEditor(
     {
       extensions,
       content: initial.body,
-      contentType: "markdown",
+      contentType: 'markdown',
       immediatelyRender: false,
       editorProps: {
         attributes: {
-          role: "textbox",
-          "aria-label": `${documentTitle(path)} document`,
-          "aria-multiline": "true",
+          role: 'textbox',
+          'aria-label': `${documentTitle(path)} document`,
+          'aria-multiline': 'true',
         },
       },
       onUpdate: ({ transaction }) => {
         if (!transaction.docChanged) return
-        setSaveState("saving")
+        setSaveState('saving')
         window.clearTimeout(saveTimer.current)
         saveTimer.current = window.setTimeout(() => void save(), SAVE_DELAY_MS)
       },
     },
-    [extensions]
+    [extensions],
   )
 
-  const editable = useRichTextSelector(
-    editor,
-    (current) => current?.isEditable ?? true
-  )
+  const editable = useRichTextSelector(editor, (current) => current?.isEditable ?? true)
 
   // The note's comment threads: the panel, and their passages in the text.
   const threadsLoad = useAtomValue(threadsLoadAtom)(path)
@@ -328,10 +302,10 @@ function DocumentEditor({
   const [activeThread, setActiveThread] = useState<string | null>(null)
   /** Every thread whose passage was found in the text at the last placing. */
   const [placed, setPlaced] = useState<ReadonlySet<string>>(new Set())
-  const threads = threadsLoad.state === "ready" ? threadsLoad.threads : null
-  const commentable = threadsLoad.state !== "unavailable"
+  const threads = threadsLoad.state === 'ready' ? threadsLoad.threads : null
+  const commentable = threadsLoad.state !== 'unavailable'
   const hasSelection = useRichTextSelector(editor, (current) =>
-    current ? !current.state.selection.empty : false
+    current ? !current.state.selection.empty : false,
   )
 
   // Read again whenever the vault is: a pull or the agent may have written
@@ -347,9 +321,7 @@ function DocumentEditor({
     if (!editor || editor.isDestroyed || threads === null) return
     const ranges: PlacedRange[] = placeThreads(editor, head.current, threads)
     setPlaced(new Set(ranges.map((range) => range.id)))
-    const open = new Set(
-      threads.filter((t) => !isResolved(t)).map((t) => t.id)
-    )
+    const open = new Set(threads.filter((t) => !isResolved(t)).map((t) => t.id))
     setCommentRanges(editor, {
       ranges: ranges.filter((range) => open.has(range.id)),
     })
@@ -381,9 +353,9 @@ function DocumentEditor({
         })
       }, SELECTION_DELAY_MS)
     }
-    editor.on("selectionUpdate", report)
+    editor.on('selectionUpdate', report)
     return () => {
-      editor.off("selectionUpdate", report)
+      editor.off('selectionUpdate', report)
       window.clearTimeout(timer)
     }
   }, [editor, path, setEditorSelection])
@@ -394,14 +366,13 @@ function DocumentEditor({
   const memory = useViewMemory()
   /** What the first claim on this path draws above it: a link's card. */
   const Banner = useAtomValue(claimsAtom).find(
-    (claim) => claim.banner !== undefined && claim.match(path)
+    (claim) => claim.banner !== undefined && claim.match(path),
   )?.banner
   const [pendingHeading, setPendingHeading] = useAtom(pendingHeadingAtom)
   const headingWaiting = pendingHeading?.path === path
   useEffect(() => {
     const scroller = scrollerRef.current
-    if (!editor || editor.isDestroyed || remote === null || scroller === null)
-      return
+    if (!editor || editor.isDestroyed || remote === null || scroller === null) return
     const spot = memory.get(remote, path)
     if (spot !== undefined && !headingWaiting) {
       const size = editor.state.doc.content.size
@@ -424,13 +395,12 @@ function DocumentEditor({
       const { anchor, head } = editor.state.selection
       memory.note(remote, path, { anchor, head })
     }
-    const noteScroll = () =>
-      memory.note(remote, path, { scrollTop: scroller.scrollTop })
-    editor.on("selectionUpdate", noteSelection)
-    scroller.addEventListener("scroll", noteScroll, { passive: true })
+    const noteScroll = () => memory.note(remote, path, { scrollTop: scroller.scrollTop })
+    editor.on('selectionUpdate', noteSelection)
+    scroller.addEventListener('scroll', noteScroll, { passive: true })
     return () => {
-      editor.off("selectionUpdate", noteSelection)
-      scroller.removeEventListener("scroll", noteScroll)
+      editor.off('selectionUpdate', noteSelection)
+      scroller.removeEventListener('scroll', noteScroll)
     }
     // Once per editor: a heading arriving later is the effect below's.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -470,7 +440,7 @@ function DocumentEditor({
     if (!range) return
     const { node } = editor.view.domAtPos(range.from)
     const element = node instanceof Element ? node : node.parentElement
-    element?.scrollIntoView({ block: "center" })
+    element?.scrollIntoView({ block: 'center' })
   }
 
   async function commentOnSelection() {
@@ -479,8 +449,8 @@ function DocumentEditor({
     await save()
     const anchor = selectionAnchor(editor, head.current)
     if (anchor === null) {
-      toast.error("That passage can’t take a comment", {
-        description: "Select text in the note, outside images and raw HTML.",
+      toast.error('That passage can’t take a comment', {
+        description: 'Select text in the note, outside images and raw HTML.',
       })
       return
     }
@@ -510,16 +480,16 @@ function DocumentEditor({
     if (!editor || editor.isDestroyed) return
     const text = markdown()
     if (text === lastText.current) {
-      setSaveState("saved")
+      setSaveState('saved')
       return
     }
     try {
       await trpc.notes.write.mutate({ remote, path, text })
       lastText.current = text
-      setSaveState("saved")
+      setSaveState('saved')
       placeRef.current()
     } catch {
-      setSaveState("error")
+      setSaveState('error')
     }
   }
 
@@ -533,7 +503,7 @@ function DocumentEditor({
       if (pending) void save()
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [editor]
+    [editor],
   )
 
   // A change on disk comes back in, unless local edits are still pending.
@@ -549,7 +519,7 @@ function DocumentEditor({
         head.current = next.head
         lastText.current = text
         editor.commands.setContent(next.body, {
-          contentType: "markdown",
+          contentType: 'markdown',
           emitUpdate: false,
         })
         placeRef.current()
@@ -572,14 +542,14 @@ function DocumentEditor({
   // opened or dismissed.
   useEffect(() => {
     const run = agent.run
-    if (!run || run.status !== "done" || run.kind === "artifact") return
+    if (!run || run.status !== 'done' || run.kind === 'artifact') return
     const timer = window.setTimeout(agent.dismiss, 1500)
     return () => window.clearTimeout(timer)
   }, [agent.run, agent.dismiss])
 
   handlers.current.trigger = (pos, instruction) => {
     if (!editor || !agent.available || isRunLive(agent.run)) return
-    setPromptInitial(instruction ?? "")
+    setPromptInitial(instruction ?? '')
     setAgentPrompt(editor, pos)
     setPromptOpen(true)
   }
@@ -592,8 +562,8 @@ function DocumentEditor({
       .filter((command) => command.offeredIn?.(path) ?? true)
       .map((command) =>
         pluginSlashItem(command, path, (pos, instruction) =>
-          handlers.current.trigger(pos, instruction)
-        )
+          handlers.current.trigger(pos, instruction),
+        ),
       )
 
   function closePrompt() {
@@ -601,7 +571,7 @@ function DocumentEditor({
     const pos = agentPromptPos(editor.state)
     setAgentPrompt(editor, null)
     setPromptOpen(false)
-    editor.commands.focus(pos ?? "end")
+    editor.commands.focus(pos ?? 'end')
   }
 
   async function sendPrompt(request: string) {
@@ -618,17 +588,17 @@ function DocumentEditor({
     editor.view.dispatch(tr)
     setPromptOpen(false)
     await save()
-    await agent.start("write", request)
+    await agent.start('write', request)
   }
 
   async function quickCommand(verb: string, passage: string) {
     await save()
-    await agent.start("rewrite", verb, passage)
+    await agent.start('rewrite', verb, passage)
   }
 
   async function turnIntoArtifact() {
     await save()
-    await agent.start("artifact", "Make an artifact")
+    await agent.start('artifact', 'Make an artifact')
   }
 
   /**
@@ -652,26 +622,25 @@ function DocumentEditor({
     if (event.clientY > text.bottom) {
       const { doc, schema } = editor.state
       const last = doc.lastChild
-      const emptyLast =
-        last?.type.name === "paragraph" && last.content.size === 0
+      const emptyLast = last?.type.name === 'paragraph' && last.content.size === 0
       if (!emptyLast) {
         editor
           .chain()
           .insertContentAt(doc.content.size, { type: schema.nodes.paragraph!.name })
           .run()
       }
-      editor.commands.focus("end")
+      editor.commands.focus('end')
       return
     }
     const x = Math.min(Math.max(event.clientX, text.left + 1), text.right - 1)
     const at = editor.view.posAtCoords({ left: x, top: event.clientY })
-    editor.commands.focus(at?.pos ?? "end")
+    editor.commands.focus(at?.pos ?? 'end')
   }
 
   function openLinkEditor() {
     if (!editor?.isEditable || !editor.can().toggleBold()) return
-    if (editor.isActive("link")) editor.chain().extendMarkRange("link").run()
-    setRichTextBubble(editor, "documentFormatBubble", "show")
+    if (editor.isActive('link')) editor.chain().extendMarkRange('link').run()
+    setRichTextBubble(editor, 'documentFormatBubble', 'show')
     setLinkOpen(true)
   }
 
@@ -683,21 +652,13 @@ function DocumentEditor({
    */
   function isFindKey(event: KeyboardEvent | React.KeyboardEvent) {
     const mod = apple ? event.metaKey : event.ctrlKey
-    return (
-      mod &&
-      !event.altKey &&
-      !event.shiftKey &&
-      event.key.toLowerCase() === "f"
-    )
+    return mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'f'
   }
 
   function openFind() {
     if (!editor) return
     const { from, to, $from, $to } = editor.state.selection
-    const text =
-      from < to && $from.sameParent($to)
-        ? editor.state.doc.textBetween(from, to)
-        : null
+    const text = from < to && $from.sameParent($to) ? editor.state.doc.textBetween(from, to) : null
     setFind((current) => ({ token: (current?.token ?? 0) + 1, text }))
   }
 
@@ -716,17 +677,17 @@ function DocumentEditor({
       const root = viewRef.current
       const target = event.target instanceof Element ? event.target : null
       if (!root || target?.closest("[data-pane], [role='dialog']")) return
-      const pane = root.closest("[data-pane]")
+      const pane = root.closest('[data-pane]')
       const inFront =
         !pane ||
-        pane.hasAttribute("data-pane-focused") ||
-        document.querySelectorAll("[data-pane]").length === 1
+        pane.hasAttribute('data-pane-focused') ||
+        document.querySelectorAll('[data-pane]').length === 1
       if (!inFront) return
       event.preventDefault()
       openFindRef.current()
     }
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor, apple])
 
@@ -734,20 +695,17 @@ function DocumentEditor({
     if (!editor || event.defaultPrevented) return
     const mod = apple ? event.metaKey : event.ctrlKey
     const key = event.key.toLowerCase()
-    if (mod && event.altKey && !event.shiftKey && event.code === "KeyM") {
+    if (mod && event.altKey && !event.shiftKey && event.code === 'KeyM') {
       // ⌘⌥M, as in other editors: comment on the selection.
       event.preventDefault()
       void commentOnSelection()
     } else if (isFindKey(event)) {
       event.preventDefault()
       openFind()
-    } else if (find && mod && !event.altKey && key === "g") {
+    } else if (find && mod && !event.altKey && key === 'g') {
       event.preventDefault()
-      ;(event.shiftKey ? findPrev : findNext)(
-        editor.state,
-        editor.view.dispatch
-      )
-    } else if (find && event.key === "Escape" && editor.view.hasFocus()) {
+      ;(event.shiftKey ? findPrev : findNext)(editor.state, editor.view.dispatch)
+    } else if (find && event.key === 'Escape' && editor.view.hasFocus()) {
       event.preventDefault()
       setFind(null)
     }
@@ -790,146 +748,136 @@ function DocumentEditor({
             }
           />
           <div className="flex min-h-0 flex-1">
-          <div
-            ref={scrollerRef}
-            className="relative min-h-0 min-w-0 flex-1 overflow-y-auto"
-            onMouseDown={pressPage}
-          >
-            {/* The find bar floats at the page's top right, over the text,
+            <div
+              ref={scrollerRef}
+              className="relative min-h-0 min-w-0 flex-1 overflow-y-auto"
+              onMouseDown={pressPage}
+            >
+              {/* The find bar floats at the page's top right, over the text,
                 and stays there as it scrolls. */}
-            {editor && find ? (
-              <div className="sticky top-2 z-40 flex h-0 items-start justify-end px-4">
-                <DocumentFindBar
-                  editor={editor}
-                  request={find}
-                  onClose={() => setFind(null)}
-                />
-              </div>
-            ) : null}
-            {/* A plugin's card for the file it claims, a link's page. */}
-            {Banner !== undefined ? (
-              <div
-                className={cn(
-                  "mx-auto w-full px-4 pt-8 sm:px-16 sm:pt-12",
-                  fullWidth ? "max-w-none" : "max-w-3xl"
-                )}
-              >
-                <Banner path={path} />
-              </div>
-            ) : null}
-            {/* A task's fields, on the body's column; nothing for a note. */}
-            <TaskProperties
-              path={path}
-              beforeWrite={save}
-              onMoved={onMoved}
-              className={cn(
-                "mx-auto w-full px-4 pt-8 sm:px-16 sm:pt-12",
-                fullWidth ? "max-w-none" : "max-w-3xl"
-              )}
-            />
-            <div ref={pageRef} className={cn("relative min-h-full", DROP_LINE)}>
-              {editor ? (
-                <EditorContent
-                  editor={editor}
-                  onKeyDown={(event) => {
-                    const mod = event.metaKey || event.ctrlKey
-                    if (mod && !event.altKey && event.key.toLowerCase() === "k") {
-                      event.preventDefault()
-                      openLinkEditor()
-                    }
-                  }}
-                  className={cn(
-                    RICH_TEXT_PROSE,
-                    RICH_TEXT_TABLE_PROSE,
-                    "mx-auto w-full px-4 py-8 sm:px-16 sm:py-12",
-                    fullWidth ? "max-w-none" : "max-w-3xl",
-                    smallText && "text-sm/6",
-                    locked && "opacity-60"
-                  )}
-                />
-              ) : (
-                <DocumentSkeleton />
-              )}
-              {editor ? (
-                <>
-                  <DocumentFormatBubble
-                    editor={editor}
-                    linkOpen={linkOpen}
-                    onLinkOpenChange={setLinkOpen}
-                    onQuickCommand={
-                      canAsk
-                        ? (verb, passage) => void quickCommand(verb, passage)
-                        : null
-                    }
-                    onComment={
-                      commentable ? () => void commentOnSelection() : null
-                    }
-                  />
-                  <RichTextLinkBubble editor={editor} onEdit={openLinkEditor} />
-                  <RichTextTableBubble
-                    editor={editor}
-                    onDeleteTable={() => setDeleteTableOpen(true)}
-                  />
-                  <RichTextBlockGutter
-                    editor={editor}
-                    editable={editable}
-                    scrollerRef={pageRef}
-                    onDeleteTable={() => setDeleteTableOpen(true)}
-                  />
-                </>
+              {editor && find ? (
+                <div className="sticky top-2 z-40 flex h-0 items-start justify-end px-4">
+                  <DocumentFindBar editor={editor} request={find} onClose={() => setFind(null)} />
+                </div>
               ) : null}
-              {promptOpen
-                ? createPortal(
-                    <AgentPrompt
-                      initial={promptInitial}
-                      onSubmit={(request) => void sendPrompt(request)}
-                      onCancel={closePrompt}
-                    />,
-                    promptBox
-                  )
-                : null}
+              {/* A plugin's card for the file it claims, a link's page. */}
+              {Banner !== undefined ? (
+                <div
+                  className={cn(
+                    'mx-auto w-full px-4 pt-8 sm:px-16 sm:pt-12',
+                    fullWidth ? 'max-w-none' : 'max-w-3xl',
+                  )}
+                >
+                  <Banner path={path} />
+                </div>
+              ) : null}
+              {/* A task's fields, on the body's column; nothing for a note. */}
+              <TaskProperties
+                path={path}
+                beforeWrite={save}
+                onMoved={onMoved}
+                className={cn(
+                  'mx-auto w-full px-4 pt-8 sm:px-16 sm:pt-12',
+                  fullWidth ? 'max-w-none' : 'max-w-3xl',
+                )}
+              />
+              <div ref={pageRef} className={cn('relative min-h-full', DROP_LINE)}>
+                {editor ? (
+                  <EditorContent
+                    editor={editor}
+                    onKeyDown={(event) => {
+                      const mod = event.metaKey || event.ctrlKey
+                      if (mod && !event.altKey && event.key.toLowerCase() === 'k') {
+                        event.preventDefault()
+                        openLinkEditor()
+                      }
+                    }}
+                    className={cn(
+                      RICH_TEXT_PROSE,
+                      RICH_TEXT_TABLE_PROSE,
+                      'mx-auto w-full px-4 py-8 sm:px-16 sm:py-12',
+                      fullWidth ? 'max-w-none' : 'max-w-3xl',
+                      smallText && 'text-sm/6',
+                      locked && 'opacity-60',
+                    )}
+                  />
+                ) : (
+                  <DocumentSkeleton />
+                )}
+                {editor ? (
+                  <>
+                    <DocumentFormatBubble
+                      editor={editor}
+                      linkOpen={linkOpen}
+                      onLinkOpenChange={setLinkOpen}
+                      onQuickCommand={
+                        canAsk ? (verb, passage) => void quickCommand(verb, passage) : null
+                      }
+                      onComment={commentable ? () => void commentOnSelection() : null}
+                    />
+                    <RichTextLinkBubble editor={editor} onEdit={openLinkEditor} />
+                    <RichTextTableBubble
+                      editor={editor}
+                      onDeleteTable={() => setDeleteTableOpen(true)}
+                    />
+                    <RichTextBlockGutter
+                      editor={editor}
+                      editable={editable}
+                      scrollerRef={pageRef}
+                      onDeleteTable={() => setDeleteTableOpen(true)}
+                    />
+                  </>
+                ) : null}
+                {promptOpen
+                  ? createPortal(
+                      <AgentPrompt
+                        initial={promptInitial}
+                        onSubmit={(request) => void sendPrompt(request)}
+                        onCancel={closePrompt}
+                      />,
+                      promptBox,
+                    )
+                  : null}
+              </div>
             </div>
-          </div>
-          {commentable && commentsOpen ? (
-            <CommentsPanel
-              load={threadsLoad}
-              placed={placed}
-              active={activeThread}
-              draft={draft}
-              onSelect={showThread}
-              onDraftSubmit={(body) =>
-                commentWrite("The comment could not be saved", async () => {
-                  if (draft === null) return
-                  const id = await addThread({ path, anchor: draft, body })
+            {commentable && commentsOpen ? (
+              <CommentsPanel
+                load={threadsLoad}
+                placed={placed}
+                active={activeThread}
+                draft={draft}
+                onSelect={showThread}
+                onDraftSubmit={(body) =>
+                  commentWrite('The comment could not be saved', async () => {
+                    if (draft === null) return
+                    const id = await addThread({ path, anchor: draft, body })
+                    setDraft(null)
+                    if (id) setActiveThread(id)
+                  })
+                }
+                onDraftCancel={() => setDraft(null)}
+                onReply={(thread, body) =>
+                  commentWrite('The reply could not be saved', () =>
+                    replyThread({ path, thread, body }),
+                  )
+                }
+                onResolve={(thread, resolved) =>
+                  commentWrite(
+                    resolved
+                      ? 'The thread could not be resolved'
+                      : 'The thread could not be reopened',
+                    () => resolveThread({ path, thread, resolved }),
+                  ).catch(() => undefined)
+                }
+                onRetry={() => void refreshThreads(path)}
+                onClose={() => {
+                  setCommentsOpen(false)
                   setDraft(null)
-                  if (id) setActiveThread(id)
-                })
-              }
-              onDraftCancel={() => setDraft(null)}
-              onReply={(thread, body) =>
-                commentWrite("The reply could not be saved", () =>
-                  replyThread({ path, thread, body })
-                )
-              }
-              onResolve={(thread, resolved) =>
-                commentWrite(
-                  resolved
-                    ? "The thread could not be resolved"
-                    : "The thread could not be reopened",
-                  () => resolveThread({ path, thread, resolved })
-                ).catch(() => undefined)
-              }
-              onRetry={() => void refreshThreads(path)}
-              onClose={() => {
-                setCommentsOpen(false)
-                setDraft(null)
-                setActiveThread(null)
-              }}
-              onCommentSelection={
-                hasSelection ? () => void commentOnSelection() : null
-              }
-            />
-          ) : null}
+                  setActiveThread(null)
+                }}
+                onCommentSelection={hasSelection ? () => void commentOnSelection() : null}
+              />
+            ) : null}
           </div>
         </div>
 
@@ -949,36 +897,25 @@ function DocumentEditor({
           </div>
         ) : null}
       </div>
-      <DeleteTableDialog
-        editor={editor}
-        open={deleteTableOpen}
-        onOpenChange={setDeleteTableOpen}
-      />
+      <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </TooltipProvider>
   )
 }
 
 /** Whether `pos` is still on an empty top-level paragraph. */
-function onEmptyLineAt(
-  doc: import("@tiptap/pm/model").Node,
-  pos: number
-): boolean {
+function onEmptyLineAt(doc: import('@tiptap/pm/model').Node, pos: number): boolean {
   const $pos = doc.resolve(pos)
-  return (
-    $pos.depth === 1 &&
-    $pos.parent.type.name === "paragraph" &&
-    $pos.parent.content.size === 0
-  )
+  return $pos.depth === 1 && $pos.parent.type.name === 'paragraph' && $pos.parent.content.size === 0
 }
 
 /** "/ai": the same prompt Space opens, for those who reach for the slash. */
 function ASK_AI_SLASH_ITEM(open: (pos: number) => void): RichTextSlashItem {
   return {
-    id: "ask-ai",
-    group: "AI",
-    title: "Ask AI",
-    hint: "Have Sonnet write or change the document",
-    keywords: ["ai", "agent", "write", "sonnet", "claude"],
+    id: 'ask-ai',
+    group: 'AI',
+    title: 'Ask AI',
+    hint: 'Have Sonnet write or change the document',
+    keywords: ['ai', 'agent', 'write', 'sonnet', 'claude'],
     icon: <SparklesIcon aria-hidden="true" />,
     can: (editor) => editor.isEditable,
     run: (editor, range) => {

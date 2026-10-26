@@ -1,11 +1,5 @@
-import {
-  useCallback,
-  useEffect,
-  useState,
-  type ComponentProps,
-  type ReactNode,
-} from "react"
-import { useAtomValue, useSetAtom } from "jotai"
+import { useCallback, useEffect, useState, type ComponentProps, type ReactNode } from 'react'
+import { useAtomValue, useSetAtom } from 'jotai'
 import {
   CloudOffIcon,
   GitBranchIcon,
@@ -13,35 +7,19 @@ import {
   ScrollTextIcon,
   SquareTerminalIcon,
   TriangleAlertIcon,
-} from "lucide-react"
-import { syncLabel, type SyncState } from "@holi/shared"
+} from 'lucide-react'
+import { syncLabel, type SyncState } from '@holi/shared'
 
-import { Button } from "@/components/ui/button"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
-import { cn } from "@/lib/cn"
-import { trpc } from "@/lib/trpc"
-import {
-  activityEntriesAtom,
-  activityUnseenErrorAtom,
-  type ActivityEntry,
-} from "@/state/activity"
-import {
-  bottomPanelAtom,
-  showPanelAtom,
-  togglePanelAtom,
-} from "@/state/bottom-panel"
-import { runningPluginsAtom } from "@/state/plugins"
-import { isMac } from "@/state/shortcuts"
-import { BranchPicker } from "./branch-picker"
-import {
-  activeRemoteAtom,
-  historyEpochsAtom,
-  syncStateAtom,
-} from "@/state/vaults"
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/cn'
+import { trpc } from '@/lib/trpc'
+import { activityEntriesAtom, activityUnseenErrorAtom, type ActivityEntry } from '@/state/activity'
+import { bottomPanelAtom, showPanelAtom, togglePanelAtom } from '@/state/bottom-panel'
+import { runningPluginsAtom } from '@/state/plugins'
+import { isMac } from '@/state/shortcuts'
+import { BranchPicker } from './branch-picker'
+import { activeRemoteAtom, historyEpochsAtom, syncStateAtom } from '@/state/vaults'
 
 /**
  * The status bar (docs/features/status-bar.md), VS Code's: one thin row at
@@ -61,9 +39,9 @@ export function StatusBarItem({
   pressed,
   children,
   ...rest
-}: Omit<ComponentProps<typeof Button>, "onClick"> & {
+}: Omit<ComponentProps<typeof Button>, 'onClick'> & {
   tooltip: string
-  onClick?: ComponentProps<typeof Button>["onClick"]
+  onClick?: ComponentProps<typeof Button>['onClick']
   /** Its accessible name, when the visible text is not enough. */
   label?: string
   /** A toggle's state, for the panel's two. */
@@ -107,8 +85,8 @@ interface SyncInfoView {
  */
 export function syncedAgo(iso: string, now: number): string {
   const seconds = Math.max(0, Math.round((now - Date.parse(iso)) / 1000))
-  if (Number.isNaN(seconds)) return ""
-  if (seconds < 60) return "Synced just now"
+  if (Number.isNaN(seconds)) return ''
+  if (seconds < 60) return 'Synced just now'
   const minutes = Math.round(seconds / 60)
   if (minutes < 60) return `Synced ${minutes}m ago`
   const hours = Math.round(minutes / 60)
@@ -122,29 +100,29 @@ export function syncedAgo(iso: string, now: number): string {
  */
 export function syncItemView(state: SyncState): {
   busy: boolean
-  problem: "offline" | "warn" | null
+  problem: 'offline' | 'warn' | null
   /** `sync`: run a sync now. `output`: the state needs reading, not a retry
    *  (a conflict, a pause, no access): open the log. */
-  click: "sync" | "output"
+  click: 'sync' | 'output'
 } {
   switch (state.kind) {
-    case "up-to-date":
-      return { busy: false, problem: null, click: "sync" }
-    case "pulling":
-      return { busy: true, problem: null, click: "output" }
-    case "offline":
-      return { busy: false, problem: "offline", click: "sync" }
-    case "reconciling":
-      return { busy: true, problem: "warn", click: "output" }
-    case "paused":
+    case 'up-to-date':
+      return { busy: false, problem: null, click: 'sync' }
+    case 'pulling':
+      return { busy: true, problem: null, click: 'output' }
+    case 'offline':
+      return { busy: false, problem: 'offline', click: 'sync' }
+    case 'reconciling':
+      return { busy: true, problem: 'warn', click: 'output' }
+    case 'paused':
       return {
         busy: false,
-        problem: state.manual ? null : "warn",
-        click: "output",
+        problem: state.manual ? null : 'warn',
+        click: 'output',
       }
-    case "no-access":
-    case "conflict":
-      return { busy: false, problem: "warn", click: "output" }
+    case 'no-access':
+    case 'conflict':
+      return { busy: false, problem: 'warn', click: 'output' }
   }
 }
 
@@ -152,7 +130,7 @@ export function syncItemView(state: SyncState): {
 function lastGitLine(entries: readonly ActivityEntry[]): number {
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i]!
-    if (e.channel === "git" || e.channel === "sync") return e.id
+    if (e.channel === 'git' || e.channel === 'sync') return e.id
   }
   return 0
 }
@@ -218,14 +196,14 @@ function SyncItems() {
   const view = syncItemView(state)
 
   const syncNow = useCallback(() => {
-    if (view.click === "output") {
-      showPanel("output")
+    if (view.click === 'output') {
+      showPanel('output')
       return
     }
     setRunning(true)
     void trpc.sync.now
       .mutate()
-      .catch(() => showPanel("output"))
+      .catch(() => showPanel('output'))
       .finally(() => setRunning(false))
   }, [view.click, showPanel])
 
@@ -235,11 +213,11 @@ function SyncItems() {
   const counts = `${info.behind}↓ ${info.ahead}↑`
   const tooltip = [
     `Sync: ${label.text}`,
-    info.lastError === null ? null : info.lastError.split("\n")[0],
-    view.click === "sync" ? "Click to sync now" : "Click to open the output",
+    info.lastError === null ? null : info.lastError.split('\n')[0],
+    view.click === 'sync' ? 'Click to sync now' : 'Click to open the output',
   ]
     .filter((line) => line !== null)
-    .join(". ")
+    .join('. ')
 
   return (
     <>
@@ -251,12 +229,12 @@ function SyncItems() {
                 ? `Branch ${info.branch}, with changes not yet committed. Click to switch branch`
                 : `Branch ${info.branch}. Click to switch branch`
             }
-            label={`Branch ${info.branch}${info.dirty ? ", uncommitted changes" : ""}`}
+            label={`Branch ${info.branch}${info.dirty ? ', uncommitted changes' : ''}`}
           >
             <GitBranchIcon aria-hidden />
             <span className="max-w-40 truncate">
               {info.branch}
-              {info.dirty ? "*" : ""}
+              {info.dirty ? '*' : ''}
             </span>
           </StatusBarItem>
         }
@@ -266,23 +244,18 @@ function SyncItems() {
         label={`Sync: ${label.text}, ${info.behind} behind, ${info.ahead} ahead`}
         onClick={syncNow}
       >
-        {view.problem === "offline" ? (
+        {view.problem === 'offline' ? (
           <CloudOffIcon aria-hidden className="text-warning size-3.5" />
-        ) : view.problem === "warn" && !busy ? (
+        ) : view.problem === 'warn' && !busy ? (
           <TriangleAlertIcon aria-hidden className="text-warning size-3.5" />
         ) : (
           <RefreshCwIcon
             aria-hidden
-            className={cn(
-              "size-3.5",
-              busy && "animate-spin motion-reduce:animate-none"
-            )}
+            className={cn('size-3.5', busy && 'animate-spin motion-reduce:animate-none')}
           />
         )}
         <span className="tabular-nums">{counts}</span>
-        {view.problem === null ? null : (
-          <span className="max-w-48 truncate">{label.text}</span>
-        )}
+        {view.problem === null ? null : <span className="max-w-48 truncate">{label.text}</span>}
       </StatusBarItem>
       {info.lastSyncAt === null ? null : (
         <span className="text-muted-foreground hidden px-1 text-xs @2xl/status:inline">
@@ -297,17 +270,17 @@ function PanelToggles() {
   const panel = useAtomValue(bottomPanelAtom)
   const toggle = useSetAtom(togglePanelAtom)
   const unseenError = useAtomValue(activityUnseenErrorAtom)
-  const onTerminal = panel.open && panel.tab === "terminal"
+  const onTerminal = panel.open && panel.tab === 'terminal'
   const mac = isMac()
-  const terminalKey = mac ? "⌃`" : "Ctrl+`"
-  const outputKey = mac ? "⇧⌘U" : "Ctrl+Shift+U"
-  const onOutput = panel.open && panel.tab === "output"
+  const terminalKey = mac ? '⌃`' : 'Ctrl+`'
+  const outputKey = mac ? '⇧⌘U' : 'Ctrl+Shift+U'
+  const onOutput = panel.open && panel.tab === 'output'
   return (
     <>
       <StatusBarItem
-        tooltip={`${onTerminal ? "Hide" : "Show"} the terminal (${terminalKey})`}
+        tooltip={`${onTerminal ? 'Hide' : 'Show'} the terminal (${terminalKey})`}
         pressed={onTerminal}
-        onClick={() => toggle("terminal")}
+        onClick={() => toggle('terminal')}
       >
         <SquareTerminalIcon aria-hidden />
         Terminal
@@ -316,11 +289,11 @@ function PanelToggles() {
         tooltip={
           unseenError
             ? `Something failed in the background: show the output (${outputKey})`
-            : `${onOutput ? "Hide" : "Show"} the output (${outputKey})`
+            : `${onOutput ? 'Hide' : 'Show'} the output (${outputKey})`
         }
-        label={unseenError ? "Output, with a new error" : undefined}
+        label={unseenError ? 'Output, with a new error' : undefined}
         pressed={onOutput}
-        onClick={() => toggle("output")}
+        onClick={() => toggle('output')}
       >
         <span className="relative inline-flex">
           <ScrollTextIcon aria-hidden className="size-3.5" />
@@ -341,11 +314,11 @@ export function StatusBar() {
   const running = useAtomValue(runningPluginsAtom)
   const items = running
     .flatMap(({ info, statusItems = [] }) =>
-      statusItems.map((item) => ({ ...item, key: `${info.id}:${item.id}` }))
+      statusItems.map((item) => ({ ...item, key: `${info.id}:${item.id}` })),
     )
     .sort((a, b) => (a.order ?? 100) - (b.order ?? 100))
-  const left = items.filter((item) => item.side === "left")
-  const right = items.filter((item) => item.side === "right")
+  const left = items.filter((item) => item.side === 'left')
+  const right = items.filter((item) => item.side === 'right')
   return (
     <footer
       data-slot="app-chrome"

@@ -5,14 +5,14 @@
  * selection. A thread whose passage is gone from the note is detached, never
  * dropped. Pressing a thread's passage shows it in the text.
  */
-import { useState } from "react"
+import { useState } from 'react'
 import {
   commentByline,
   isResolved,
   loginOf,
   type CommentAnchor,
   type CommentThread,
-} from "@holi/shared"
+} from '@holi/shared'
 import {
   CheckIcon,
   MessageSquarePlusIcon,
@@ -20,37 +20,32 @@ import {
   RotateCcwIcon,
   TriangleAlertIcon,
   XIcon,
-} from "lucide-react"
+} from 'lucide-react'
 
-import {
-  Alert,
-  AlertAction,
-  AlertDescription,
-  AlertTitle,
-} from "@/components/reui/alert"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { Item, ItemContent, ItemFooter, ItemHeader } from "@/components/ui/item"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { cn } from "@/lib/cn"
-import type { ThreadsLoad } from "@/state/comments"
-import { PersonAvatar } from "@/composites/person-avatar"
-import { CommentField } from "./comment-field"
-import { EmptyState } from "@/composites/empty-state"
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/reui/alert'
+import { Badge } from '@/components/reui/badge'
+import { Button } from '@/components/ui/button'
+import { Item, ItemContent, ItemFooter, ItemHeader } from '@/components/ui/item'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { cn } from '@/lib/cn'
+import type { ThreadsLoad } from '@/state/comments'
+import { PersonAvatar } from '@/composites/person-avatar'
+import { CommentField } from './comment-field'
+import { EmptyState } from '@/composites/empty-state'
 
-type Shown = "open" | "resolved"
+type Shown = 'open' | 'resolved'
 
 /** When a comment was written, to the minute. */
 function when(iso: string): string {
   const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return ""
+  if (Number.isNaN(date.getTime())) return ''
   return date.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
   })
 }
 
@@ -62,15 +57,13 @@ function Quote({ text }: { text: string }) {
   )
 }
 
-function Comment({ comment }: { comment: CommentThread["comments"][number] }) {
+function Comment({ comment }: { comment: CommentThread['comments'][number] }) {
   return (
     <li className="flex gap-2" data-comment={comment.id}>
       <PersonAvatar login={loginOf(comment.author)} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex min-w-0 items-baseline gap-2">
-          <span className="truncate text-sm font-medium">
-            {commentByline(comment)}
-          </span>
+          <span className="truncate text-sm font-medium">{commentByline(comment)}</span>
           <time
             dateTime={comment.at}
             className="text-muted-foreground shrink-0 text-xs tabular-nums"
@@ -78,9 +71,7 @@ function Comment({ comment }: { comment: CommentThread["comments"][number] }) {
             {when(comment.at)}
           </time>
         </div>
-        <p className="text-sm break-words whitespace-pre-wrap">
-          {comment.body}
-        </p>
+        <p className="text-sm break-words whitespace-pre-wrap">{comment.body}</p>
       </div>
     </li>
   )
@@ -118,7 +109,7 @@ function Thread({
       size="sm"
       data-thread={thread.id}
       data-active={active || undefined}
-      className={cn("flex-col items-stretch", active && "border-primary")}
+      className={cn('flex-col items-stretch', active && 'border-primary')}
     >
       <ItemHeader>
         <Button
@@ -127,9 +118,7 @@ function Thread({
           size="inline"
           onClick={onSelect}
           disabled={!placed}
-          aria-label={
-            placed ? "Show the passage" : "The passage is no longer in the note"
-          }
+          aria-label={placed ? 'Show the passage' : 'The passage is no longer in the note'}
           className="hover:text-foreground min-w-0 flex-1 justify-start text-start disabled:cursor-default"
         >
           <Quote text={thread.anchor.quote} />
@@ -148,9 +137,7 @@ function Thread({
             ))}
           </ul>
           {resolved && thread.status !== null ? (
-            <p className="text-muted-foreground text-xs">
-              Resolved by {thread.status.by}
-            </p>
+            <p className="text-muted-foreground text-xs">Resolved by {thread.status.by}</p>
           ) : null}
           {replying ? (
             <CommentField
@@ -174,18 +161,13 @@ function Thread({
               Reply
             </Button>
           ) : null}
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={busy}
-            onClick={() => void toggle()}
-          >
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => void toggle()}>
             {resolved ? (
               <RotateCcwIcon data-icon="inline-start" aria-hidden="true" />
             ) : (
               <CheckIcon data-icon="inline-start" aria-hidden="true" />
             )}
-            {resolved ? "Reopen" : "Resolve"}
+            {resolved ? 'Reopen' : 'Resolve'}
           </Button>
         </ItemFooter>
       ) : null}
@@ -195,11 +177,7 @@ function Thread({
 
 function PanelSkeleton() {
   return (
-    <div
-      className="flex flex-col gap-3"
-      role="status"
-      aria-label="Loading comments"
-    >
+    <div className="flex flex-col gap-3" role="status" aria-label="Loading comments">
       {Array.from({ length: 3 }, (_, i) => (
         <div key={i} className="flex flex-col gap-2">
           <Skeleton className="h-4 w-3/4" />
@@ -240,11 +218,11 @@ export function CommentsPanel({
   /** Start a thread on the text's selection; null with nothing selected. */
   onCommentSelection: (() => void) | null
 }) {
-  const [shown, setShown] = useState<Shown>("open")
-  const threads = load.state === "ready" ? load.threads : []
+  const [shown, setShown] = useState<Shown>('open')
+  const threads = load.state === 'ready' ? load.threads : []
   const open = threads.filter((t) => !isResolved(t))
   const resolved = threads.filter((t) => isResolved(t))
-  const list = shown === "open" ? open : resolved
+  const list = shown === 'open' ? open : resolved
 
   return (
     <aside
@@ -253,17 +231,9 @@ export function CommentsPanel({
       className="bg-background flex h-full w-80 shrink-0 flex-col border-l"
     >
       <div className="flex items-center gap-2 border-b px-3 py-2">
-        <MessagesSquareIcon
-          className="text-muted-foreground size-4"
-          aria-hidden="true"
-        />
+        <MessagesSquareIcon className="text-muted-foreground size-4" aria-hidden="true" />
         <h2 className="flex-1 text-sm font-medium">Comments</h2>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Close comments"
-          onClick={onClose}
-        >
+        <Button variant="ghost" size="icon-sm" aria-label="Close comments" onClick={onClose}>
           <XIcon aria-hidden="true" />
         </Button>
       </div>
@@ -284,12 +254,7 @@ export function CommentsPanel({
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-3 p-3">
           {draft !== null ? (
-            <Item
-              variant="outline"
-              size="sm"
-              className="flex-col items-stretch"
-              data-comment-draft
-            >
+            <Item variant="outline" size="sm" className="flex-col items-stretch" data-comment-draft>
               <ItemHeader>
                 <Quote text={draft.quote} />
               </ItemHeader>
@@ -305,9 +270,9 @@ export function CommentsPanel({
               </ItemContent>
             </Item>
           ) : null}
-          {load.state === "loading" ? (
+          {load.state === 'loading' ? (
             <PanelSkeleton />
-          ) : load.state === "error" ? (
+          ) : load.state === 'error' ? (
             <Alert variant="destructive">
               <TriangleAlertIcon aria-hidden="true" />
               <AlertTitle>The comments could not be read</AlertTitle>
@@ -321,23 +286,18 @@ export function CommentsPanel({
           ) : list.length === 0 && draft === null ? (
             <EmptyState
               icon={MessagesSquareIcon}
-              title={
-                shown === "open" ? "No open comments" : "Nothing resolved yet"
-              }
+              title={shown === 'open' ? 'No open comments' : 'Nothing resolved yet'}
               description="Select text in the note to comment on it."
               className="h-auto"
             >
-              {shown === "open" ? (
+              {shown === 'open' ? (
                 <Button
                   variant="outline"
                   size="sm"
                   disabled={onCommentSelection === null}
                   onClick={() => onCommentSelection?.()}
                 >
-                  <MessageSquarePlusIcon
-                    data-icon="inline-start"
-                    aria-hidden="true"
-                  />
+                  <MessageSquarePlusIcon data-icon="inline-start" aria-hidden="true" />
                   Comment on selection
                 </Button>
               ) : null}

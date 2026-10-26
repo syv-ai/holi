@@ -11,7 +11,6 @@ import { Button } from '@/components/ui/button'
 import { InputGroupInput } from '@/components/ui/input-group'
 import type { MailAddress as ChipAddress } from './mail-types'
 
-
 export interface ChipInputProps {
   value: ChipAddress[]
   onChange: (next: ChipAddress[]) => void

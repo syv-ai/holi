@@ -6,8 +6,8 @@ import {
   type CSSProperties,
   type KeyboardEvent,
   type PointerEvent,
-} from "react"
-import { useAtom, useAtomValue, useSetAtom } from "jotai"
+} from 'react'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import {
   CopyIcon,
   EraserIcon,
@@ -16,8 +16,8 @@ import {
   PlusIcon,
   Trash2Icon,
   XIcon,
-} from "lucide-react"
-import { toast } from "sonner"
+} from 'lucide-react'
+import { toast } from 'sonner'
 
 import {
   Select,
@@ -25,11 +25,11 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { IconButton } from "@/composites/icon-button"
-import { PanelHeader } from "@/composites/panel-header"
-import { cn } from "@/lib/cn"
+} from '@/components/ui/select'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { IconButton } from '@/composites/icon-button'
+import { PanelHeader } from '@/composites/panel-header'
+import { cn } from '@/lib/cn'
 import {
   activityEntriesAtom,
   activityQueryAtom,
@@ -37,7 +37,7 @@ import {
   clearActivityAtom,
   entryText,
   shownEntries,
-} from "@/state/activity"
+} from '@/state/activity'
 import {
   bottomPanelAtom,
   clampPanelHeight,
@@ -47,7 +47,7 @@ import {
   togglePanelAtom,
   writePanelHeight,
   type PanelTab,
-} from "@/state/bottom-panel"
+} from '@/state/bottom-panel'
 import {
   activePanelTerminalAtom,
   createPanelTerminalAtom,
@@ -55,7 +55,7 @@ import {
   panelTerminalErrorAtom,
   panelTerminalsAtom,
   terminalLabel,
-} from "@/state/panel-terminals"
+} from '@/state/panel-terminals'
 import {
   appLogEntriesAtom,
   appLogQueryAtom,
@@ -64,15 +64,15 @@ import {
   clearAppLogAtom,
   shownAppLog,
   useAppLog,
-} from "@/state/app-logs"
-import { useShortcutHandlers } from "@/state/shortcuts"
-import { activeRemoteAtom } from "@/state/vaults"
+} from '@/state/app-logs'
+import { useShortcutHandlers } from '@/state/shortcuts'
+import { activeRemoteAtom } from '@/state/vaults'
 
-import { PanelLogs, LogsSearch } from "./panel-logs"
-import { PanelOutput } from "./panel-output"
-import { OutputSearch } from "./output-search"
-import { PanelTerminal } from "./panel-terminal"
-import { EmptyState, ErrorState } from "@/composites/empty-state"
+import { PanelLogs, LogsSearch } from './panel-logs'
+import { PanelOutput } from './panel-output'
+import { OutputSearch } from './output-search'
+import { PanelTerminal } from './panel-terminal'
+import { EmptyState, ErrorState } from '@/composites/empty-state'
 
 /**
  * The bottom panel (docs/features/status-bar.md), VS Code's Panel: under every
@@ -105,8 +105,8 @@ export function BottomPanel({ onRetryOutput }: { onRetryOutput: () => void }) {
   const drag = useRef<{ y: number; height: number } | null>(null)
 
   useShortcutHandlers({
-    "panel.terminal": () => toggle("terminal"),
-    "panel.output": () => toggle("output"),
+    'panel.terminal': () => toggle('terminal'),
+    'panel.output': () => toggle('output'),
   })
 
   useEffect(() => {
@@ -128,9 +128,7 @@ export function BottomPanel({ onRetryOutput }: { onRetryOutput: () => void }) {
 
   function commit(next: number) {
     const clamped =
-      available > 0
-        ? clampPanelHeight(next, available)
-        : Math.max(PANEL_MIN_HEIGHT, next)
+      available > 0 ? clampPanelHeight(next, available) : Math.max(PANEL_MIN_HEIGHT, next)
     setHeight(clamped)
     writePanelHeight(clamped)
   }
@@ -171,10 +169,7 @@ export function BottomPanel({ onRetryOutput }: { onRetryOutput: () => void }) {
 
   if (!everOpen) return <div ref={rootRef} hidden />
 
-  const max =
-    available > 0
-      ? clampPanelHeight(Number.MAX_SAFE_INTEGER, available)
-      : undefined
+  const max = available > 0 ? clampPanelHeight(Number.MAX_SAFE_INTEGER, available) : undefined
 
   return (
     <div
@@ -182,14 +177,10 @@ export function BottomPanel({ onRetryOutput }: { onRetryOutput: () => void }) {
       data-bottom-panel
       data-glass-ground
       hidden={!panel.open}
-      style={
-        panel.maximized
-          ? undefined
-          : ({ "--panel-height": `${shown}px` } as CSSProperties)
-      }
+      style={panel.maximized ? undefined : ({ '--panel-height': `${shown}px` } as CSSProperties)}
       className={cn(
-        "bg-background relative flex min-h-0 shrink-0 flex-col",
-        panel.maximized ? "flex-1" : "h-(--panel-height)"
+        'bg-background relative flex min-h-0 shrink-0 flex-col',
+        panel.maximized ? 'flex-1' : 'h-(--panel-height)',
       )}
     >
       {/* The top edge: a hairline that is the resize handle. */}
@@ -219,29 +210,14 @@ export function BottomPanel({ onRetryOutput }: { onRetryOutput: () => void }) {
         onTab={(tab) => setPanel((p) => ({ ...p, tab }))}
         maximized={panel.maximized}
         onMaximize={() => setPanel((p) => ({ ...p, maximized: !p.maximized }))}
-        onClose={() =>
-          setPanel((p) => ({ ...p, open: false, maximized: false }))
-        }
+        onClose={() => setPanel((p) => ({ ...p, open: false, maximized: false }))}
       />
       <div className="flex min-h-0 flex-1 flex-col">
-        <TerminalTab visible={panel.open && panel.tab === "terminal"} />
-        <div
-          className={cn(
-            "flex min-h-0 flex-1 flex-col",
-            panel.tab !== "output" && "hidden"
-          )}
-        >
-          <PanelOutput
-            visible={panel.open && panel.tab === "output"}
-            onRetry={onRetryOutput}
-          />
+        <TerminalTab visible={panel.open && panel.tab === 'terminal'} />
+        <div className={cn('flex min-h-0 flex-1 flex-col', panel.tab !== 'output' && 'hidden')}>
+          <PanelOutput visible={panel.open && panel.tab === 'output'} onRetry={onRetryOutput} />
         </div>
-        <div
-          className={cn(
-            "flex min-h-0 flex-1 flex-col",
-            panel.tab !== "logs" && "hidden"
-          )}
-        >
+        <div className={cn('flex min-h-0 flex-1 flex-col', panel.tab !== 'logs' && 'hidden')}>
           <PanelLogs onRetry={retryLogs} />
         </div>
       </div>
@@ -266,9 +242,9 @@ function BottomPanelHeader({
     <PanelHeader
       extra={
         <>
-          {tab === "terminal" ? (
+          {tab === 'terminal' ? (
             <TerminalControls />
-          ) : tab === "output" ? (
+          ) : tab === 'output' ? (
             <OutputControls />
           ) : (
             <LogsControls />
@@ -279,11 +255,11 @@ function BottomPanelHeader({
       actions={[
         {
           icon: maximized ? Minimize2Icon : Maximize2Icon,
-          label: maximized ? "Restore panel size" : "Maximize panel",
+          label: maximized ? 'Restore panel size' : 'Maximize panel',
           onSelect: onMaximize,
         },
       ]}
-      close={{ icon: XIcon, label: "Close panel", onSelect: onClose }}
+      close={{ icon: XIcon, label: 'Close panel', onSelect: onClose }}
     >
       <Tabs value={tab} onValueChange={(v) => onTab(v as PanelTab)}>
         <TabsList variant="line">
@@ -324,14 +300,16 @@ function TerminalControls() {
           </SelectContent>
         </Select>
       ) : null}
-      <IconButton size="icon-xs"
+      <IconButton
+        size="icon-xs"
         label="New terminal"
         disabled={remote === null}
         onClick={() => void create()}
       >
         <PlusIcon aria-hidden className="size-3.5" />
       </IconButton>
-      <IconButton size="icon-xs"
+      <IconButton
+        size="icon-xs"
         label="Kill terminal"
         disabled={active === null}
         onClick={() => {
@@ -353,19 +331,21 @@ function OutputControls() {
   return (
     <>
       <OutputSearch />
-      <IconButton size="icon-xs"
+      <IconButton
+        size="icon-xs"
         label="Copy output"
         disabled={shown.length === 0}
         onClick={() => {
           void navigator.clipboard
-            .writeText(shown.map(entryText).join("\n"))
-            .then(() => toast.success("Output copied"))
-            .catch(() => toast.error("Could not copy the output"))
+            .writeText(shown.map(entryText).join('\n'))
+            .then(() => toast.success('Output copied'))
+            .catch(() => toast.error('Could not copy the output'))
         }}
       >
         <CopyIcon aria-hidden className="size-3.5" />
       </IconButton>
-      <IconButton size="icon-xs"
+      <IconButton
+        size="icon-xs"
         label="Clear output"
         disabled={entries.length === 0}
         onClick={() => void clear()}
@@ -385,19 +365,21 @@ function LogsControls() {
   return (
     <>
       <LogsSearch />
-      <IconButton size="icon-xs"
+      <IconButton
+        size="icon-xs"
         label="Copy logs"
         disabled={shown.length === 0}
         onClick={() => {
           void navigator.clipboard
-            .writeText(shown.map(appLogText).join("\n"))
-            .then(() => toast.success("Logs copied"))
-            .catch(() => toast.error("Could not copy the logs"))
+            .writeText(shown.map(appLogText).join('\n'))
+            .then(() => toast.success('Logs copied'))
+            .catch(() => toast.error('Could not copy the logs'))
         }}
       >
         <CopyIcon aria-hidden className="size-3.5" />
       </IconButton>
-      <IconButton size="icon-xs"
+      <IconButton
+        size="icon-xs"
         label="Clear logs"
         disabled={entries.length === 0}
         onClick={() => void clear()}
@@ -432,7 +414,7 @@ function TerminalTab({ visible }: { visible: boolean }) {
   }, [visible, remote, terminals.length, error, create])
 
   return (
-    <div className={cn("flex min-h-0 flex-1 flex-col", !visible && "hidden")}>
+    <div className={cn('flex min-h-0 flex-1 flex-col', !visible && 'hidden')}>
       {terminals.map((t) => (
         <PanelTerminal
           key={t.id}

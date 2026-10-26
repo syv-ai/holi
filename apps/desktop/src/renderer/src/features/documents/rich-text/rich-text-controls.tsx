@@ -1,8 +1,8 @@
-import type { ReactNode } from "react"
-import { useShortcutLabel } from "@/composites/shortcut-keys"
-import type { Editor } from "@tiptap/react"
+import type { ReactNode } from 'react'
+import { useShortcutLabel } from '@/composites/shortcut-keys'
+import type { Editor } from '@tiptap/react'
 
-import { Button } from "@/components/ui/button"
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,17 +12,23 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuShortcut,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from '@/components/ui/dropdown-menu'
+import { type RichTextBlockType, type RichTextSnapshot } from './rich-text-state'
+import { RichTextButton, RichTextToggle, RichTextToolbarGroup } from './rich-text-toolbar'
 import {
-  type RichTextBlockType,
-  type RichTextSnapshot,
-} from "./rich-text-state"
-import {
-  RichTextButton,
-  RichTextToggle,
-  RichTextToolbarGroup,
-} from "./rich-text-toolbar"
-import { Undo2Icon, Redo2Icon, TypeIcon, Heading1Icon, Heading2Icon, Heading3Icon, ChevronDownIcon, BoldIcon, ItalicIcon, UnderlineIcon, StrikethroughIcon, CodeIcon } from "lucide-react"
+  Undo2Icon,
+  Redo2Icon,
+  TypeIcon,
+  Heading1Icon,
+  Heading2Icon,
+  Heading3Icon,
+  ChevronDownIcon,
+  BoldIcon,
+  ItalicIcon,
+  UnderlineIcon,
+  StrikethroughIcon,
+  CodeIcon,
+} from 'lucide-react'
 
 interface ControlProps {
   editor: Editor | null
@@ -42,7 +48,7 @@ export function RichTextHistory({ editor, state }: ControlProps) {
     <RichTextToolbarGroup label="History">
       <RichTextButton
         label="Undo"
-        shortcut={["mod", "Z"]}
+        shortcut={['mod', 'Z']}
         disabled={!state.canUndo}
         onClick={() => editor?.chain().focus().undo().run()}
       >
@@ -50,7 +56,7 @@ export function RichTextHistory({ editor, state }: ControlProps) {
       </RichTextButton>
       <RichTextButton
         label="Redo"
-        shortcut={["mod", "shift", "Z"]}
+        shortcut={['mod', 'shift', 'Z']}
         disabled={!state.canRedo}
         onClick={() => editor?.chain().focus().redo().run()}
       >
@@ -70,36 +76,28 @@ interface BlockTypeOption {
 // Whole static glyphs per type, so the trigger can mirror the current block.
 const BLOCK_TYPES: BlockTypeOption[] = [
   {
-    value: "paragraph",
-    label: "Text",
-    keys: ["mod", "alt", "0"],
-    icon: (
-      <TypeIcon aria-hidden="true" />
-    ),
+    value: 'paragraph',
+    label: 'Text',
+    keys: ['mod', 'alt', '0'],
+    icon: <TypeIcon aria-hidden="true" />,
   },
   {
-    value: "heading-1",
-    label: "Heading 1",
-    keys: ["mod", "alt", "1"],
-    icon: (
-      <Heading1Icon aria-hidden="true" />
-    ),
+    value: 'heading-1',
+    label: 'Heading 1',
+    keys: ['mod', 'alt', '1'],
+    icon: <Heading1Icon aria-hidden="true" />,
   },
   {
-    value: "heading-2",
-    label: "Heading 2",
-    keys: ["mod", "alt", "2"],
-    icon: (
-      <Heading2Icon aria-hidden="true" />
-    ),
+    value: 'heading-2',
+    label: 'Heading 2',
+    keys: ['mod', 'alt', '2'],
+    icon: <Heading2Icon aria-hidden="true" />,
   },
   {
-    value: "heading-3",
-    label: "Heading 3",
-    keys: ["mod", "alt", "3"],
-    icon: (
-      <Heading3Icon aria-hidden="true" />
-    ),
+    value: 'heading-3',
+    label: 'Heading 3',
+    keys: ['mod', 'alt', '3'],
+    icon: <Heading3Icon aria-hidden="true" />,
   },
 ]
 
@@ -109,9 +107,9 @@ const isBlockType = (value: unknown): value is RichTextBlockType =>
 function setBlockType(editor: Editor | null, value: RichTextBlockType) {
   const chain = editor?.chain().focus()
 
-  if (value === "heading-1") chain?.setHeading({ level: 1 }).run()
-  else if (value === "heading-2") chain?.setHeading({ level: 2 }).run()
-  else if (value === "heading-3") chain?.setHeading({ level: 3 }).run()
+  if (value === 'heading-1') chain?.setHeading({ level: 1 }).run()
+  else if (value === 'heading-2') chain?.setHeading({ level: 2 }).run()
+  else if (value === 'heading-3') chain?.setHeading({ level: 3 }).run()
   else chain?.setParagraph().run()
 }
 
@@ -120,9 +118,7 @@ function MenuShortcut({ keys }: { keys: readonly string[] }) {
 }
 
 export function RichTextBlockTypeMenu({ editor, state }: ControlProps) {
-  const current =
-    BLOCK_TYPES.find((option) => option.value === state.blockType) ??
-    BLOCK_TYPES[0]!
+  const current = BLOCK_TYPES.find((option) => option.value === state.blockType) ?? BLOCK_TYPES[0]!
 
   // Fixed width on desktop, so the bar never shifts as the label changes;
   // the current block's glyph alone below sm, so the marks stay in view.
@@ -142,11 +138,7 @@ export function RichTextBlockTypeMenu({ editor, state }: ControlProps) {
           <ChevronDownIcon aria-hidden="true" className="opacity-60" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="start"
-        className="w-auto"
-        onCloseAutoFocus={focusEditor(editor)}
-      >
+      <DropdownMenuContent align="start" className="w-auto" onCloseAutoFocus={focusEditor(editor)}>
         <DropdownMenuGroup>
           <DropdownMenuLabel>Turn Into</DropdownMenuLabel>
           <DropdownMenuRadioGroup
@@ -159,7 +151,7 @@ export function RichTextBlockTypeMenu({ editor, state }: ControlProps) {
               <DropdownMenuRadioItem
                 key={option.value}
                 value={option.value}
-                disabled={option.value !== "paragraph" && !state.canHeading}
+                disabled={option.value !== 'paragraph' && !state.canHeading}
               >
                 {option.icon}
                 {option.label}
@@ -180,7 +172,7 @@ export function RichTextMarkToggles({ editor, state }: ControlProps) {
     <RichTextToolbarGroup label="Text style">
       <RichTextToggle
         label="Bold"
-        shortcut={["mod", "B"]}
+        shortcut={['mod', 'B']}
         pressed={state.bold}
         disabled={disabled}
         onToggle={() => editor?.chain().focus().toggleBold().run()}
@@ -189,7 +181,7 @@ export function RichTextMarkToggles({ editor, state }: ControlProps) {
       </RichTextToggle>
       <RichTextToggle
         label="Italic"
-        shortcut={["mod", "I"]}
+        shortcut={['mod', 'I']}
         pressed={state.italic}
         disabled={disabled}
         onToggle={() => editor?.chain().focus().toggleItalic().run()}
@@ -198,7 +190,7 @@ export function RichTextMarkToggles({ editor, state }: ControlProps) {
       </RichTextToggle>
       <RichTextToggle
         label="Underline"
-        shortcut={["mod", "U"]}
+        shortcut={['mod', 'U']}
         pressed={state.underline}
         disabled={disabled}
         onToggle={() => editor?.chain().focus().toggleUnderline().run()}
@@ -207,7 +199,7 @@ export function RichTextMarkToggles({ editor, state }: ControlProps) {
       </RichTextToggle>
       <RichTextToggle
         label="Strikethrough"
-        shortcut={["mod", "shift", "S"]}
+        shortcut={['mod', 'shift', 'S']}
         pressed={state.strike}
         disabled={disabled}
         onToggle={() => editor?.chain().focus().toggleStrike().run()}
@@ -216,7 +208,7 @@ export function RichTextMarkToggles({ editor, state }: ControlProps) {
       </RichTextToggle>
       <RichTextToggle
         label="Inline code"
-        shortcut={["mod", "E"]}
+        shortcut={['mod', 'E']}
         pressed={state.code}
         disabled={!state.canCode}
         onToggle={() => editor?.chain().focus().toggleCode().run()}

@@ -221,8 +221,7 @@ function pluginLegalValues(type: PluginSettingType): string {
 /** `key: value` at `indent`, as one line or a nested block, each line marked
  *  commented or not: uncommenting is the whole edit. */
 function entryLines(key: string, value: unknown, indent: string, mark: string): string[] {
-  const isEmpty =
-    typeof value === 'object' && value !== null && Object.keys(value).length === 0
+  const isEmpty = typeof value === 'object' && value !== null && Object.keys(value).length === 0
   if (typeof value !== 'object' || value === null || isEmpty) {
     return [`${mark}${indent}${key}: ${inline(value)}`]
   }

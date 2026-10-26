@@ -1,7 +1,7 @@
-import { useAtom, useAtomValue } from "jotai"
-import { useState } from "react"
+import { useAtom, useAtomValue } from 'jotai'
+import { useState } from 'react'
 
-import { Button } from "@/components/ui/button"
+import { Button } from '@/components/ui/button'
 import {
   Sidebar,
   SidebarContent,
@@ -11,29 +11,20 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
-} from "@/components/ui/sidebar"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { cn } from "@/lib/cn"
-import { runningPluginsAtom } from "@/state/plugins"
-import {
-  sidebarSectionAtom,
-  type SidebarSection,
-} from "@/state/sidebar-section"
-import { activeRemoteAtom } from "@/state/vaults"
-import type { Move } from "@/lib/tree-actions"
-import { APPS_TAB, BOARD_TAB, DocumentsNav, useAppsOn } from "./documents-nav"
-import { FilesSection } from "./files-section"
-import { AccountMenu } from "./account-menu"
-import { BrandMark } from "@/composites/brand-mark"
-import { VaultSwitcher } from "./vault-switcher"
-import { SidebarAppItem, useSidebarApps } from "./sidebar-apps"
-import {
-  AppWindowIcon,
-  PanelLeftIcon,
-  PlusIcon,
-  SearchIcon,
-  SquareKanbanIcon,
-} from "lucide-react"
+} from '@/components/ui/sidebar'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { cn } from '@/lib/cn'
+import { runningPluginsAtom } from '@/state/plugins'
+import { sidebarSectionAtom, type SidebarSection } from '@/state/sidebar-section'
+import { activeRemoteAtom } from '@/state/vaults'
+import type { Move } from '@/lib/tree-actions'
+import { APPS_TAB, BOARD_TAB, DocumentsNav, useAppsOn } from './documents-nav'
+import { FilesSection } from './files-section'
+import { AccountMenu } from './account-menu'
+import { BrandMark } from '@/composites/brand-mark'
+import { VaultSwitcher } from './vault-switcher'
+import { SidebarAppItem, useSidebarApps } from './sidebar-apps'
+import { AppWindowIcon, PanelLeftIcon, PlusIcon, SearchIcon, SquareKanbanIcon } from 'lucide-react'
 
 export function AppSidebar({
   activeId,
@@ -69,9 +60,8 @@ export function AppSidebar({
    *  back by a fade. */
   const [switched, setSwitched] = useState(false)
   const { isMobile } = useSidebar()
-  const AgentsSidebar = useAtomValue(runningPluginsAtom).find(
-    (plugin) => plugin.agentsMode
-  )?.agentsMode?.sidebar
+  const AgentsSidebar = useAtomValue(runningPluginsAtom).find((plugin) => plugin.agentsMode)
+    ?.agentsMode?.sidebar
 
   if (collapsed) {
     // Same SidebarMenuButton as the expanded nav, so hover, active and the
@@ -80,63 +70,63 @@ export function AppSidebar({
       <Sidebar collapsible="none" className="h-full w-full overflow-hidden">
         <SidebarContent className="overflow-hidden">
           <div className="px-2 pt-2">
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                tooltip="Search"
-                onClick={onOpenSearch}
-                aria-label="Search"
-                variant="fill"
-                size="rail"
-              >
-                <SearchIcon aria-hidden="true" />
-                <span>Search</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                tooltip="Board"
-                isActive={activeId === BOARD_TAB}
-                onClick={() => onOpen(BOARD_TAB)}
-                aria-label="Board"
-                variant="fill"
-                size="rail"
-              >
-                <SquareKanbanIcon aria-hidden="true" />
-                <span>Board</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-
-            {appsOn ? (
+            <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
-                  tooltip="Apps"
-                  isActive={activeId === APPS_TAB}
-                  onClick={() => onOpen(APPS_TAB)}
-                  aria-label="Apps"
+                  tooltip="Search"
+                  onClick={onOpenSearch}
+                  aria-label="Search"
                   variant="fill"
-                size="rail"
+                  size="rail"
                 >
-                  <AppWindowIcon aria-hidden="true" />
-                  <span>Apps</span>
+                  <SearchIcon aria-hidden="true" />
+                  <span>Search</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
-            ) : null}
 
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                tooltip="New document"
-                onClick={onNewDocument}
-                aria-label="New document"
-                variant="fill"
-                size="rail"
-              >
-                <PlusIcon aria-hidden="true" />
-                <span>New document</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  tooltip="Board"
+                  isActive={activeId === BOARD_TAB}
+                  onClick={() => onOpen(BOARD_TAB)}
+                  aria-label="Board"
+                  variant="fill"
+                  size="rail"
+                >
+                  <SquareKanbanIcon aria-hidden="true" />
+                  <span>Board</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              {appsOn ? (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    tooltip="Apps"
+                    isActive={activeId === APPS_TAB}
+                    onClick={() => onOpen(APPS_TAB)}
+                    aria-label="Apps"
+                    variant="fill"
+                    size="rail"
+                  >
+                    <AppWindowIcon aria-hidden="true" />
+                    <span>Apps</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ) : null}
+
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  tooltip="New document"
+                  onClick={onNewDocument}
+                  aria-label="New document"
+                  variant="fill"
+                  size="rail"
+                >
+                  <PlusIcon aria-hidden="true" />
+                  <span>New document</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
           </div>
         </SidebarContent>
 
@@ -168,20 +158,10 @@ export function AppSidebar({
             <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
               Holi
             </span>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Search"
-              onClick={onOpenSearch}
-            >
+            <Button variant="ghost" size="icon-sm" aria-label="Search" onClick={onOpenSearch}>
               <SearchIcon aria-hidden="true" />
             </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Close sidebar"
-              onClick={onToggle}
-            >
+            <Button variant="ghost" size="icon-sm" aria-label="Close sidebar" onClick={onToggle}>
               <PanelLeftIcon aria-hidden="true" />
             </Button>
           </div>
@@ -210,30 +190,18 @@ export function AppSidebar({
         {/* A switch of tab or vault cross-fades the body instead of swapping it. */}
         <div
           key={`${section}:${remote}`}
-          className={cn(
-            "flex min-h-0 flex-1 flex-col",
-            switched &&
-              "motion-in-fade"
-          )}
+          className={cn('flex min-h-0 flex-1 flex-col', switched && 'motion-in-fade')}
         >
-          {section === "documents" ? (
+          {section === 'documents' ? (
             // Space between the groups, not a rule, as in the Agents tab; the
             // Files group's own inset makes up the rest.
             <div className="flex min-h-0 flex-1 flex-col gap-2">
-              <DocumentsNav
-                activeId={activeId}
-                onOpenSearch={onOpenSearch}
-                onOpen={onOpen}
-              />
-              <FilesSection
-                activeId={activeId}
-                onOpen={onOpen}
-                onMoved={onMoved}
-              />
+              <DocumentsNav activeId={activeId} onOpenSearch={onOpenSearch} onOpen={onOpen} />
+              <FilesSection activeId={activeId} onOpen={onOpen} onMoved={onMoved} />
             </div>
           ) : null}
 
-          {section === "agents" ? (
+          {section === 'agents' ? (
             // The agent plugin's own sidebar: Inbox, Automations, Holis, sessions.
             AgentsSidebar ? (
               <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">

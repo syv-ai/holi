@@ -6,10 +6,10 @@ import {
   type ComponentType,
   type ReactNode,
   type Ref,
-} from "react"
-import { ReactRenderer, type Editor } from "@tiptap/react"
-import type { SuggestionOptions, SuggestionProps } from "@tiptap/suggestion"
-import { cn } from "@/lib/cn"
+} from 'react'
+import { ReactRenderer, type Editor } from '@tiptap/react'
+import type { SuggestionOptions, SuggestionProps } from '@tiptap/suggestion'
+import { cn } from '@/lib/cn'
 
 import {
   Command,
@@ -17,9 +17,9 @@ import {
   CommandGroup,
   CommandItem,
   CommandList,
-} from "@/components/ui/command"
+} from '@/components/ui/command'
 
-import { keepEditorFocus } from "./rich-text-toolbar"
+import { keepEditorFocus } from './rich-text-toolbar'
 
 /** What the editor calls while a suggestion list is open. */
 export interface RichTextSuggestionHandle {
@@ -32,14 +32,14 @@ export interface RichTextSuggestionGroup<T> {
 }
 
 // The list owns these keys while open; everything else keeps typing the query.
-const LIST_KEYS = new Set(["ArrowUp", "ArrowDown", "Enter"])
+const LIST_KEYS = new Set(['ArrowUp', 'ArrowDown', 'Enter'])
 
 // The caret stays in the text, so the editor carries the combobox wiring.
 const EDITOR_ARIA = [
-  "aria-haspopup",
-  "aria-autocomplete",
-  "aria-controls",
-  "aria-activedescendant",
+  'aria-haspopup',
+  'aria-autocomplete',
+  'aria-controls',
+  'aria-activedescendant',
 ] as const
 
 interface RichTextSuggestionMenuProps<T> {
@@ -68,14 +68,14 @@ export function RichTextSuggestionMenu<T>({
 }: RichTextSuggestionMenuProps<T>) {
   const rootRef = useRef<HTMLDivElement>(null)
   const keys = groups.flatMap((group) => group.items.map(getKey))
-  const signature = keys.join("\n")
-  const [value, setValue] = useState(keys[0] ?? "")
+  const signature = keys.join('\n')
+  const [value, setValue] = useState(keys[0] ?? '')
   const [shown, setShown] = useState(signature)
 
   // A new query restarts the highlight at the first match.
   if (shown !== signature) {
     setShown(signature)
-    setValue(keys[0] ?? "")
+    setValue(keys[0] ?? '')
   }
 
   useImperativeHandle(
@@ -86,30 +86,30 @@ export function RichTextSuggestionMenu<T>({
 
         // Command listens on its root, so the key is replayed there.
         rootRef.current?.dispatchEvent(
-          new KeyboardEvent("keydown", {
+          new KeyboardEvent('keydown', {
             key: event.key,
             bubbles: true,
             cancelable: true,
-          })
+          }),
         )
         return true
       },
     }),
-    [keys.length]
+    [keys.length],
   )
 
   useEffect(() => {
     const dom = editor.view.dom
     // Command marks the active option after this commit, so read it a task later.
     const timer = window.setTimeout(() => {
-      const list = rootRef.current?.querySelector("[cmdk-list]")
+      const list = rootRef.current?.querySelector('[cmdk-list]')
       const active = list?.querySelector('[aria-selected="true"]')?.id
 
-      dom.setAttribute("aria-haspopup", "listbox")
-      dom.setAttribute("aria-autocomplete", "list")
-      if (list?.id) dom.setAttribute("aria-controls", list.id)
-      if (active) dom.setAttribute("aria-activedescendant", active)
-      else dom.removeAttribute("aria-activedescendant")
+      dom.setAttribute('aria-haspopup', 'listbox')
+      dom.setAttribute('aria-autocomplete', 'list')
+      if (list?.id) dom.setAttribute('aria-controls', list.id)
+      if (active) dom.setAttribute('aria-activedescendant', active)
+      else dom.removeAttribute('aria-activedescendant')
     })
 
     return () => window.clearTimeout(timer)
@@ -119,7 +119,7 @@ export function RichTextSuggestionMenu<T>({
     () => () => {
       for (const name of EDITOR_ARIA) editor.view.dom.removeAttribute(name)
     },
-    [editor]
+    [editor],
   )
 
   return (
@@ -130,7 +130,7 @@ export function RichTextSuggestionMenu<T>({
       shouldFilter={false}
       loop
       onMouseDown={keepEditorFocus}
-      className={cn("w-72", className)}
+      className={cn('w-72', className)}
     >
       {/* The list ships its bar hidden; the fade marks the cut-off rows. A short
           reveal keeps it full when the list overflows by only a row or two. */}
@@ -151,7 +151,7 @@ export function RichTextSuggestionMenu<T>({
                 </CommandItem>
               ))}
             </CommandGroup>
-          ) : null
+          ) : null,
         )}
       </CommandList>
     </Command>
@@ -164,13 +164,10 @@ type SuggestionListProps<I, S> = SuggestionProps<I, S> & {
 
 /** Mounts a list at the caret for one Suggestion plugin and tears it down on exit. */
 export function createRichTextSuggestionRender<I, S>(
-  List: ComponentType<SuggestionListProps<I, S>>
-): NonNullable<SuggestionOptions<I, S>["render"]> {
+  List: ComponentType<SuggestionListProps<I, S>>,
+): NonNullable<SuggestionOptions<I, S>['render']> {
   return () => {
-    let renderer: ReactRenderer<
-      RichTextSuggestionHandle,
-      SuggestionListProps<I, S>
-    > | null = null
+    let renderer: ReactRenderer<RichTextSuggestionHandle, SuggestionListProps<I, S>> | null = null
     let unmount: (() => void) | null = null
 
     return {
@@ -178,7 +175,7 @@ export function createRichTextSuggestionRender<I, S>(
         renderer = new ReactRenderer(List, {
           editor: props.editor,
           props,
-          className: "z-50",
+          className: 'z-50',
         })
         unmount = props.mount(renderer.element)
       },

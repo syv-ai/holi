@@ -8,9 +8,9 @@
  * rest of Holi uses, then the vault is re-read. Nothing here keeps a copy of
  * a task: a drag keeps its arrangement only until its write lands.
  */
-import { useMemo, useRef, useState } from "react"
-import { columnFor, isOverdue, openingStatus, type Task } from "@holi/shared"
-import { useAtom, useAtomValue, useSetAtom } from "jotai"
+import { useMemo, useRef, useState } from 'react'
+import { columnFor, isOverdue, openingStatus, type Task } from '@holi/shared'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import {
   FileWarningIcon,
   LayoutGridIcon,
@@ -21,27 +21,18 @@ import {
   SquareKanbanIcon,
   TableIcon,
   TriangleAlertIcon,
-} from "lucide-react"
-import { toast } from "sonner"
+} from 'lucide-react'
+import { toast } from 'sonner'
 
-import type { KanbanCommitMeta } from "@/components/reui/kanban"
-import {
-  Alert,
-  AlertAction,
-  AlertDescription,
-  AlertTitle,
-} from "@/components/reui/alert"
-import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
-import { TabsContent } from "@/components/ui/tabs"
-import { rankAt } from "@/lib/board-order"
-import {
-  EMPTY_PLANNING_FILTER,
-  groupByStatus,
-  matchesPlanningFilter,
-} from "@/lib/planning"
-import { nowAtom, todayAtom } from "@/state/clock"
-import { memberLoginsAtom } from "@/state/members"
+import type { KanbanCommitMeta } from '@/components/reui/kanban'
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/reui/alert'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
+import { TabsContent } from '@/components/ui/tabs'
+import { rankAt } from '@/lib/board-order'
+import { EMPTY_PLANNING_FILTER, groupByStatus, matchesPlanningFilter } from '@/lib/planning'
+import { nowAtom, todayAtom } from '@/state/clock'
+import { memberLoginsAtom } from '@/state/members'
 import {
   planningFilterAtom,
   planningSortAtom,
@@ -52,7 +43,7 @@ import {
   statusesAtom,
   statusesFileAtom,
   type PlanningTab,
-} from "@/state/planning"
+} from '@/state/planning'
 import {
   brokenTasksAtom,
   createTaskAtom,
@@ -61,37 +52,32 @@ import {
   setTaskStatusAtom,
   taskTagsAtom,
   tasksAtom,
-} from "@/state/tasks"
-import {
-  activeRemoteAtom,
-  loadSnapshotAtom,
-  snapshotLoadedAtom,
-  vaultsAtom,
-} from "@/state/vaults"
-import { TaskGridView } from "./grid/task-grid-view"
-import { KanbanBoard } from "./board/kanban-board"
-import { Navbar } from "./navbar/planning-navbar"
-import { EditProjectDialog } from "./edit-project-dialog"
-import { NewTaskDialog, type NewTaskInput } from "./new-task-dialog"
-import { Overview, ProjectStatusBadge, type ProjectState } from "./overview"
-import { NoMatches, RegionEmpty } from "./states"
-import { PanelBody, PlanningToolbar } from "./planning-toolbar"
+} from '@/state/tasks'
+import { activeRemoteAtom, loadSnapshotAtom, snapshotLoadedAtom, vaultsAtom } from '@/state/vaults'
+import { TaskGridView } from './grid/task-grid-view'
+import { KanbanBoard } from './board/kanban-board'
+import { Navbar } from './navbar/planning-navbar'
+import { EditProjectDialog } from './edit-project-dialog'
+import { NewTaskDialog, type NewTaskInput } from './new-task-dialog'
+import { Overview, ProjectStatusBadge, type ProjectState } from './overview'
+import { NoMatches, RegionEmpty } from './states'
+import { PanelBody, PlanningToolbar } from './planning-toolbar'
 
 type Columns = Record<string, Task[]>
 
 const TABS: { value: PlanningTab; label: string; icon: React.ReactNode }[] = [
   {
-    value: "overview",
-    label: "Overview",
+    value: 'overview',
+    label: 'Overview',
     icon: <LayoutGridIcon aria-hidden="true" />,
   },
   {
-    value: "board",
-    label: "Board",
+    value: 'board',
+    label: 'Board',
     icon: <SquareKanbanIcon aria-hidden="true" />,
   },
-  { value: "list", label: "List", icon: <ListIcon aria-hidden="true" /> },
-  { value: "table", label: "Table", icon: <TableIcon aria-hidden="true" /> },
+  { value: 'list', label: 'List', icon: <ListIcon aria-hidden="true" /> },
+  { value: 'table', label: 'Table', icon: <TableIcon aria-hidden="true" /> },
 ]
 
 function message(err: unknown): string {
@@ -114,11 +100,7 @@ function BoardSkeleton() {
 
 function GridSkeleton() {
   return (
-    <div
-      className="flex flex-col gap-2"
-      role="status"
-      aria-label="Loading tasks"
-    >
+    <div className="flex flex-col gap-2" role="status" aria-label="Loading tasks">
       {Array.from({ length: 6 }, (_, i) => (
         <Skeleton key={i} className="h-9 w-full" />
       ))}
@@ -163,31 +145,21 @@ export function PlanningView({
   const committing = useRef(false)
 
   const vaultName =
-    vaults.find((v) => v.remote === remote)?.name ??
-    remote?.split("/").at(-1) ??
-    "Vault"
-  const project = projectFile.state === "ready" ? projectFile.value : undefined
+    vaults.find((v) => v.remote === remote)?.name ?? remote?.split('/').at(-1) ?? 'Vault'
+  const project = projectFile.state === 'ready' ? projectFile.value : undefined
   const projectState: ProjectState =
-    projectFile.state === "ready"
-      ? { state: "ready", project: projectFile.value }
-      : projectFile
+    projectFile.state === 'ready' ? { state: 'ready', project: projectFile.value } : projectFile
 
   const tasks = useMemo(() => [...taskMap.values()], [taskMap])
   const shown = useMemo(
     () => tasks.filter((t) => matchesPlanningFilter(t, filter)),
-    [tasks, filter]
+    [tasks, filter],
   )
-  const resting = useMemo(
-    () => groupByStatus(shown, statuses, sort),
-    [shown, statuses, sort]
-  )
-  const assigned = useMemo(
-    () => [...new Set(tasks.flatMap((t) => t.assignees))],
-    [tasks]
-  )
+  const resting = useMemo(() => groupByStatus(shown, statuses, sort), [shown, statuses, sort])
+  const assigned = useMemo(() => [...new Set(tasks.flatMap((t) => t.assignees))], [tasks])
   const overdue = (task: Task) =>
     task.due !== undefined &&
-    columnFor(statuses, task.status).category !== "completed" &&
+    columnFor(statuses, task.status).category !== 'completed' &&
     isOverdue(task.due, now)
 
   const report = (what: string) => (err: unknown) => {
@@ -196,9 +168,9 @@ export function PlanningView({
 
   const addTask = async (status: string, title: string) => {
     try {
-      await createTask({ title, status, folder: "" })
+      await createTask({ title, status, folder: '' })
     } catch (err) {
-      report("The task could not be created")(err)
+      report('The task could not be created')(err)
       throw err
     }
   }
@@ -209,7 +181,7 @@ export function PlanningView({
   }
 
   const moveTo = (task: Task, status: string) => {
-    setStatus(task.path, status).catch(report("The task could not be moved"))
+    setStatus(task.path, status).catch(report('The task could not be moved'))
   }
 
   /** A drop's writes: the status when the column changed, and the card's
@@ -220,8 +192,7 @@ export function PlanningView({
     if (!task) return
     const from = columnFor(statuses, task.status).id
     const newStatus = column !== from ? column : undefined
-    const ranks =
-      sort === "manual" ? rankAt(resting[column] ?? [], path, index) : null
+    const ranks = sort === 'manual' ? rankAt(resting[column] ?? [], path, index) : null
     const rank = ranks?.at(-1)?.order
     if (newStatus === undefined && rank === undefined) return
     if (ranks && ranks.length > 1) await rankAll(ranks.slice(0, -1))
@@ -232,7 +203,7 @@ export function PlanningView({
   }
 
   const onCommit = (final: Columns, meta: KanbanCommitMeta<Task>) => {
-    if (meta.kind !== "item") return
+    if (meta.kind !== 'item') return
     committing.current = true
     const column = meta.overContainer
     const path = String(meta.event.active.id)
@@ -240,15 +211,14 @@ export function PlanningView({
       .slice(0, meta.overIndex)
       .filter((t) => t.path !== path).length
     void commit(path, column, index)
-      .catch(report("The task could not be moved"))
+      .catch(report('The task could not be moved'))
       .finally(() => {
         committing.current = false
         setPreview(null)
       })
   }
 
-  const openNewTask = (status = openingStatus(statuses).id) =>
-    setNewTask({ status })
+  const openNewTask = (status = openingStatus(statuses).id) => setNewTask({ status })
 
   const noTasks = loaded && tasks.length === 0
   /** Tasks exist, but the search and filters hide every one. */
@@ -267,39 +237,34 @@ export function PlanningView({
   )
 
   const hasNotices =
-    statusesFile.state === "error" ||
-    (statusesFile.state === "ready" && statusesFile.warnings.length > 0) ||
+    statusesFile.state === 'error' ||
+    (statusesFile.state === 'ready' && statusesFile.warnings.length > 0) ||
     broken.length > 0
   const notices = (
     <>
-      {statusesFile.state === "error" ? (
+      {statusesFile.state === 'error' ? (
         <Alert variant="warning">
           <TriangleAlertIcon aria-hidden="true" />
           <AlertTitle>The statuses file could not be read</AlertTitle>
-          <AlertDescription>
-            Showing the default columns. {statusesFile.message}
-          </AlertDescription>
+          <AlertDescription>Showing the default columns. {statusesFile.message}</AlertDescription>
           <AlertAction>
             <Button variant="outline" size="sm" onClick={retryFiles}>
               Retry
             </Button>
           </AlertAction>
         </Alert>
-      ) : statusesFile.state === "ready" && statusesFile.warnings.length > 0 ? (
+      ) : statusesFile.state === 'ready' && statusesFile.warnings.length > 0 ? (
         <Alert variant="warning">
           <TriangleAlertIcon aria-hidden="true" />
-          <AlertTitle>
-            Part of .holi/statuses.yaml was not understood
-          </AlertTitle>
-          <AlertDescription>{statusesFile.warnings.join(" ")}</AlertDescription>
+          <AlertTitle>Part of .holi/statuses.yaml was not understood</AlertTitle>
+          <AlertDescription>{statusesFile.warnings.join(' ')}</AlertDescription>
         </Alert>
       ) : null}
       {broken.length > 0 ? (
         <Alert variant="destructive">
           <FileWarningIcon aria-hidden="true" />
           <AlertTitle>
-            {broken.length} task {broken.length === 1 ? "file" : "files"} could
-            not be read
+            {broken.length} task {broken.length === 1 ? 'file' : 'files'} could not be read
           </AlertTitle>
           <AlertDescription>
             <ul className="flex flex-col gap-0.5">
@@ -314,9 +279,7 @@ export function PlanningView({
             <Button
               variant="outline"
               size="sm"
-              onClick={() =>
-                void reload().catch(report("The vault could not be read"))
-              }
+              onClick={() => void reload().catch(report('The vault could not be read'))}
             >
               Retry
             </Button>
@@ -341,29 +304,18 @@ export function PlanningView({
     />
   )
   const nothingMatches = (
-    <NoMatches
-      search={filter.search}
-      onClear={() => setFilter(EMPTY_PLANNING_FILTER)}
-    />
+    <NoMatches search={filter.search} onClear={() => setFilter(EMPTY_PLANNING_FILTER)} />
   )
 
-  const panel = "flex min-h-0 flex-1 flex-col"
+  const panel = 'flex min-h-0 flex-1 flex-col'
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-planning-view>
       <Navbar
         title="Board"
-        status={
-          project !== undefined ? (
-            <ProjectStatusBadge status={project.status} />
-          ) : null
-        }
+        status={project !== undefined ? <ProjectStatusBadge status={project.status} /> : null}
         actions={
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setEditingProject(true)}
-          >
+          <Button variant="ghost" size="sm" onClick={() => setEditingProject(true)}>
             <PencilIcon data-icon="inline-start" aria-hidden="true" />
             Edit project
           </Button>
@@ -387,7 +339,7 @@ export function PlanningView({
               onEditProject={() => setEditingProject(true)}
               onRetryProject={retryFiles}
               onOpenTask={onOpenTask}
-              onShowStatus={() => setTab("list")}
+              onShowStatus={() => setTab('list')}
               onNewTask={() => openNewTask()}
             />
           </PanelBody>
@@ -425,7 +377,7 @@ export function PlanningView({
           </PanelBody>
         </TabsContent>
 
-        {(["list", "table"] as const).map((variant) => (
+        {(['list', 'table'] as const).map((variant) => (
           <TabsContent key={variant} value={variant} className={panel}>
             {!loaded || noTasks ? (
               <>
@@ -469,7 +421,7 @@ export function PlanningView({
         <EditProjectDialog
           open
           onOpenChange={setEditingProject}
-          project={project ?? { status: "planning", milestones: [], about: "" }}
+          project={project ?? { status: 'planning', milestones: [], about: '' }}
           fallbackName={vaultName}
           people={people}
           onSave={saveProject}

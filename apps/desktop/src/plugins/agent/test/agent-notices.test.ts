@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  agentIndicator,
-  contextColour,
-  sessionsWorthAsking,
-} from '../renderer/lib/notices'
+import { agentIndicator, contextColour, sessionsWorthAsking } from '../renderer/lib/notices'
 
 describe('agentIndicator', () => {
   const idle = { state: 'idle' as const }

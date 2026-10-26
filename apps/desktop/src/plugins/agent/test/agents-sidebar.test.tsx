@@ -328,7 +328,10 @@ test('with nothing yet, an empty state starts one in the default agent', async (
     name: 'New session',
   })
   await userEvent.click(start.at(-1)!)
-  expect(agentCap.start).toHaveBeenCalledWith('o/notes', expect.objectContaining({ provider: 'claude' }))
+  expect(agentCap.start).toHaveBeenCalledWith(
+    'o/notes',
+    expect.objectContaining({ provider: 'claude' }),
+  )
   expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'agent', id: 'session:p0123456789ab' })
   await userEvent.click(
     within(screen.getByRole('region', { name: 'Sessions' })).getByRole('button', {

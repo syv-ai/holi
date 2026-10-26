@@ -17,13 +17,13 @@ export interface LineDiff {
   removed: number[]
 }
 
-type Op = { kind: "same" | "add" | "remove"; text: string }
+type Op = { kind: 'same' | 'add' | 'remove'; text: string }
 
 function splitLines(text: string): string[] {
-  if (text === "") return []
-  const lines = text.split("\n")
+  if (text === '') return []
+  const lines = text.split('\n')
   // A final newline ends the last line; it does not start another.
-  if (lines.at(-1) === "") lines.pop()
+  if (lines.at(-1) === '') lines.pop()
   return lines
 }
 
@@ -32,8 +32,8 @@ function middleOps(a: string[], b: string[]): Op[] {
   const m = b.length
   if (n * m > MAX_CELLS) {
     return [
-      ...a.map((text): Op => ({ kind: "remove", text })),
-      ...b.map((text): Op => ({ kind: "add", text })),
+      ...a.map((text): Op => ({ kind: 'remove', text })),
+      ...b.map((text): Op => ({ kind: 'add', text })),
     ]
   }
   // lcs[i][j]: the common run of a[i..] and b[j..], flattened.
@@ -52,17 +52,17 @@ function middleOps(a: string[], b: string[]): Op[] {
   let j = 0
   while (i < n && j < m) {
     if (a[i] === b[j]) {
-      ops.push({ kind: "same", text: a[i]! })
+      ops.push({ kind: 'same', text: a[i]! })
       i++
       j++
     } else if (lcs[(i + 1) * width + j]! >= lcs[i * width + j + 1]!) {
-      ops.push({ kind: "remove", text: a[i++]! })
+      ops.push({ kind: 'remove', text: a[i++]! })
     } else {
-      ops.push({ kind: "add", text: b[j++]! })
+      ops.push({ kind: 'add', text: b[j++]! })
     }
   }
-  while (i < n) ops.push({ kind: "remove", text: a[i++]! })
-  while (j < m) ops.push({ kind: "add", text: b[j++]! })
+  while (i < n) ops.push({ kind: 'remove', text: a[i++]! })
+  while (j < m) ops.push({ kind: 'add', text: b[j++]! })
   return ops
 }
 
@@ -80,16 +80,16 @@ export function lineDiff(before: string, after: string): LineDiff {
     tail++
 
   const ops: Op[] = [
-    ...a.slice(0, head).map((text): Op => ({ kind: "same", text })),
+    ...a.slice(0, head).map((text): Op => ({ kind: 'same', text })),
     ...middleOps(a.slice(head, a.length - tail), b.slice(head, b.length - tail)),
-    ...a.slice(a.length - tail).map((text): Op => ({ kind: "same", text })),
+    ...a.slice(a.length - tail).map((text): Op => ({ kind: 'same', text })),
   ]
 
   const added: number[] = []
   const removed: number[] = []
   ops.forEach((op, index) => {
-    if (op.kind === "add") added.push(index + 1)
-    else if (op.kind === "remove") removed.push(index + 1)
+    if (op.kind === 'add') added.push(index + 1)
+    else if (op.kind === 'remove') removed.push(index + 1)
   })
-  return { code: ops.map((op) => op.text).join("\n"), added, removed }
+  return { code: ops.map((op) => op.text).join('\n'), added, removed }
 }

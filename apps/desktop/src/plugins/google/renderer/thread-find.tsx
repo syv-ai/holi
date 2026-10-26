@@ -133,7 +133,9 @@ export function ThreadFind({
         {term !== '' && (
           <span
             role="status"
-            aria-label={marks.length === 0 ? 'No matches' : `Match ${active + 1} of ${marks.length}`}
+            aria-label={
+              marks.length === 0 ? 'No matches' : `Match ${active + 1} of ${marks.length}`
+            }
             className="shrink-0 text-xs text-muted-foreground tabular-nums"
           >
             {marks.length === 0 ? 'No matches' : `${active + 1}/${marks.length}`}

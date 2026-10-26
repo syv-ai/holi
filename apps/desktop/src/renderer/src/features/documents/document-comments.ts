@@ -14,17 +14,17 @@
  * panel is on stronger, and reports a press on one. Between placements the
  * tints follow the document's edits.
  */
-import { Extension, type Editor } from "@tiptap/react"
-import type { Node as PMNode } from "@tiptap/pm/model"
-import { Plugin, PluginKey, type EditorState } from "@tiptap/pm/state"
-import { Decoration, DecorationSet } from "@tiptap/pm/view"
+import { Extension, type Editor } from '@tiptap/react'
+import type { Node as PMNode } from '@tiptap/pm/model'
+import { Plugin, PluginKey, type EditorState } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import {
   anchorAt,
   locateAnchor,
   type CommentAnchor,
   type CommentThread,
   type LineRange,
-} from "@holi/shared"
+} from '@holi/shared'
 
 /** The first private-use code point; a range `i` is marked by `BASE + 2i`
  *  at its start and `BASE + 2i + 1` at its end. */
@@ -55,7 +55,7 @@ function markdownOf(editor: Editor, doc: PMNode): string | null {
  */
 function selectionInFile(
   editor: Editor,
-  head: string
+  head: string,
 ): { text: string; from: number; to: number } | null {
   const { from, to } = editor.state.selection
   if (from >= to) return null
@@ -68,7 +68,7 @@ function selectionInFile(
   const start = marked.indexOf(String.fromCharCode(BASE))
   const end = marked.indexOf(String.fromCharCode(BASE + 1))
   if (start === -1 || end === -1 || end < start) return null
-  const body = marked.replace(MARKS, "")
+  const body = marked.replace(MARKS, '')
   // Between the marks, less the start's own.
   if (end - 1 <= start) return null
   return {
@@ -79,10 +79,7 @@ function selectionInFile(
 }
 
 /** The anchor for the editor's selection, quoted from the file it saves. */
-export function selectionAnchor(
-  editor: Editor,
-  head: string
-): CommentAnchor | null {
+export function selectionAnchor(editor: Editor, head: string): CommentAnchor | null {
   const at = selectionInFile(editor, head)
   return at === null ? null : anchorAt(at.text, at.from, at.to)
 }
@@ -95,24 +92,20 @@ export function selectionAnchor(
 export function selectionLines(editor: Editor, head: string): LineRange | null {
   const at = selectionInFile(editor, head)
   if (at === null) return null
-  const lineOf = (offset: number) => at.text.slice(0, offset).split("\n").length
-  const endsAtLineStart = at.to > at.from && at.text[at.to - 1] === "\n"
+  const lineOf = (offset: number) => at.text.slice(0, offset).split('\n').length
+  const endsAtLineStart = at.to > at.from && at.text[at.to - 1] === '\n'
   const startLine = lineOf(at.from)
-  const endLine = Math.max(
-    startLine,
-    lineOf(endsAtLineStart ? at.to - 1 : at.to)
-  )
+  const endLine = Math.max(startLine, lineOf(endsAtLineStart ? at.to - 1 : at.to))
   return { startLine, endLine }
 }
 
 /** Block syntax at a line's start: a mark before it would end the block. */
-const LINE_SYNTAX =
-  /^(?: {0,3}(?:#{1,6} |>\s?|[-*+] (?:\[[ xX]\] )?|\d{1,9}[.)] ))+/
+const LINE_SYNTAX = /^(?: {0,3}(?:#{1,6} |>\s?|[-*+] (?:\[[ xX]\] )?|\d{1,9}[.)] ))+/
 
 /** Where to put a range's start mark: past the block syntax a line begins
  *  with, so the heading or list item stays one. */
 function startAt(body: string, at: number): number {
-  if (at !== 0 && body[at - 1] !== "\n") return at
+  if (at !== 0 && body[at - 1] !== '\n') return at
   const syntax = LINE_SYNTAX.exec(body.slice(at, at + 64))
   return syntax ? at + syntax[0].length : at
 }
@@ -121,7 +114,7 @@ function startAt(body: string, at: number): number {
  *  never begins the next block. */
 function endAt(body: string, at: number, from: number): number {
   let end = at
-  while (end > from && body[end - 1] === "\n") end--
+  while (end > from && body[end - 1] === '\n') end--
   return end
 }
 
@@ -135,7 +128,7 @@ function endAt(body: string, at: number, from: number): number {
 export function placeThreads(
   editor: Editor,
   head: string,
-  threads: readonly CommentThread[]
+  threads: readonly CommentThread[],
 ): PlacedRange[] {
   const manager = editor.markdown
   if (!manager || threads.length === 0) return []
@@ -209,14 +202,12 @@ interface CommentsState {
 
 type CommentsMeta = { ranges?: readonly PlacedRange[]; active?: string | null }
 
-const documentCommentsKey = new PluginKey<CommentsState>(
-  "documentComments"
-)
+const documentCommentsKey = new PluginKey<CommentsState>('documentComments')
 
 function decorate(
   doc: PMNode,
   ranges: readonly PlacedRange[],
-  active: string | null
+  active: string | null,
 ): DecorationSet {
   return DecorationSet.create(
     doc,
@@ -225,15 +216,12 @@ function decorate(
         range.from,
         range.to,
         {
-          class:
-            range.id === active
-              ? "holi-comment holi-comment-active"
-              : "holi-comment",
-          "data-comment-thread": range.id,
+          class: range.id === active ? 'holi-comment holi-comment-active' : 'holi-comment',
+          'data-comment-thread': range.id,
         },
-        { id: range.id }
-      )
-    )
+        { id: range.id },
+      ),
+    ),
   )
 }
 
@@ -259,7 +247,7 @@ export function threadsAt(state: EditorState, pos: number): string[] {
 export const DocumentComments = Extension.create<{
   onPress: (id: string) => void
 }>({
-  name: "documentComments",
+  name: 'documentComments',
 
   addOptions() {
     return { onPress: () => undefined }
@@ -277,12 +265,10 @@ export const DocumentComments = Extension.create<{
             decorations: DecorationSet.empty,
           }),
           apply(tr, value, _old, state) {
-            const meta = tr.getMeta(documentCommentsKey) as
-              CommentsMeta | undefined
+            const meta = tr.getMeta(documentCommentsKey) as CommentsMeta | undefined
             if (meta !== undefined) {
               const ranges = meta.ranges ?? value.ranges
-              const active =
-                meta.active === undefined ? value.active : meta.active
+              const active = meta.active === undefined ? value.active : meta.active
               return {
                 ranges,
                 active,

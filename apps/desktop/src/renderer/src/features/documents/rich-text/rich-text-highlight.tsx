@@ -1,25 +1,17 @@
-import { useState } from "react"
-import { Highlight } from "@tiptap/extension-highlight"
-import type { Editor } from "@tiptap/react"
-import { cn } from "@/lib/cn"
+import { useState } from 'react'
+import { Highlight } from '@tiptap/extension-highlight'
+import type { Editor } from '@tiptap/react'
+import { cn } from '@/lib/cn'
 
-import { Button } from "@/components/ui/button"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
-import { Separator } from "@/components/ui/separator"
-import { Toggle } from "@/components/ui/toggle"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
-import type { RichTextSnapshot } from "./rich-text-state"
-import { ShortcutKeys } from "@/composites/shortcut-keys"
-import { keepEditorFocus } from "./rich-text-toolbar"
-import { HighlighterIcon, CheckIcon, BanIcon } from "lucide-react"
+import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Separator } from '@/components/ui/separator'
+import { Toggle } from '@/components/ui/toggle'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import type { RichTextSnapshot } from './rich-text-state'
+import { ShortcutKeys } from '@/composites/shortcut-keys'
+import { keepEditorFocus } from './rich-text-toolbar'
+import { HighlighterIcon, CheckIcon, BanIcon } from 'lucide-react'
 
 interface HighlightColor {
   id: string
@@ -33,38 +25,38 @@ interface HighlightColor {
 // Light and dark pairs per color, so a highlight stays legible in both themes.
 export const HIGHLIGHT_COLORS = [
   {
-    id: "yellow",
-    label: "Yellow",
-    swatch: "bg-yellow-200 dark:bg-yellow-400/40",
-    mark: "[&_.tiptap_mark]:bg-yellow-200 dark:[&_.tiptap_mark]:bg-yellow-400/30",
+    id: 'yellow',
+    label: 'Yellow',
+    swatch: 'bg-yellow-200 dark:bg-yellow-400/40',
+    mark: '[&_.tiptap_mark]:bg-yellow-200 dark:[&_.tiptap_mark]:bg-yellow-400/30',
   },
   {
-    id: "green",
-    label: "Green",
-    swatch: "bg-emerald-200 dark:bg-emerald-400/40",
-    mark: "[&_.tiptap_mark[data-color=green]]:bg-emerald-200 dark:[&_.tiptap_mark[data-color=green]]:bg-emerald-400/30",
+    id: 'green',
+    label: 'Green',
+    swatch: 'bg-emerald-200 dark:bg-emerald-400/40',
+    mark: '[&_.tiptap_mark[data-color=green]]:bg-emerald-200 dark:[&_.tiptap_mark[data-color=green]]:bg-emerald-400/30',
   },
   {
-    id: "blue",
-    label: "Blue",
-    swatch: "bg-sky-200 dark:bg-sky-400/40",
-    mark: "[&_.tiptap_mark[data-color=blue]]:bg-sky-200 dark:[&_.tiptap_mark[data-color=blue]]:bg-sky-400/30",
+    id: 'blue',
+    label: 'Blue',
+    swatch: 'bg-sky-200 dark:bg-sky-400/40',
+    mark: '[&_.tiptap_mark[data-color=blue]]:bg-sky-200 dark:[&_.tiptap_mark[data-color=blue]]:bg-sky-400/30',
   },
   {
-    id: "pink",
-    label: "Pink",
-    swatch: "bg-pink-200 dark:bg-pink-400/40",
-    mark: "[&_.tiptap_mark[data-color=pink]]:bg-pink-200 dark:[&_.tiptap_mark[data-color=pink]]:bg-pink-400/30",
+    id: 'pink',
+    label: 'Pink',
+    swatch: 'bg-pink-200 dark:bg-pink-400/40',
+    mark: '[&_.tiptap_mark[data-color=pink]]:bg-pink-200 dark:[&_.tiptap_mark[data-color=pink]]:bg-pink-400/30',
   },
   {
-    id: "violet",
-    label: "Violet",
-    swatch: "bg-violet-200 dark:bg-violet-400/40",
-    mark: "[&_.tiptap_mark[data-color=violet]]:bg-violet-200 dark:[&_.tiptap_mark[data-color=violet]]:bg-violet-400/30",
+    id: 'violet',
+    label: 'Violet',
+    swatch: 'bg-violet-200 dark:bg-violet-400/40',
+    mark: '[&_.tiptap_mark[data-color=violet]]:bg-violet-200 dark:[&_.tiptap_mark[data-color=violet]]:bg-violet-400/30',
   },
 ] as const satisfies readonly HighlightColor[]
 
-export type HighlightColorId = (typeof HIGHLIGHT_COLORS)[number]["id"]
+export type HighlightColorId = (typeof HIGHLIGHT_COLORS)[number]['id']
 
 /** Stores the color id, never inline CSS, so the prose classes theme it. */
 export const RichTextHighlight = Highlight.extend({
@@ -72,9 +64,8 @@ export const RichTextHighlight = Highlight.extend({
     return {
       color: {
         default: null,
-        parseHTML: (element) => element.getAttribute("data-color"),
-        renderHTML: (attributes) =>
-          attributes.color ? { "data-color": attributes.color } : {},
+        parseHTML: (element) => element.getAttribute('data-color'),
+        renderHTML: (attributes) => (attributes.color ? { 'data-color': attributes.color } : {}),
       },
     }
   },
@@ -85,10 +76,7 @@ interface RichTextHighlightPopoverProps {
   state: RichTextSnapshot
 }
 
-export function RichTextHighlightPopover({
-  editor,
-  state,
-}: RichTextHighlightPopoverProps) {
+export function RichTextHighlightPopover({ editor, state }: RichTextHighlightPopoverProps) {
   const [open, setOpen] = useState(false)
 
   function apply(color: HighlightColorId | null) {
@@ -125,7 +113,7 @@ export function RichTextHighlightPopover({
         </TooltipTrigger>
         <TooltipContent>
           Highlight
-          <ShortcutKeys keys={["mod", "shift", "H"]} />
+          <ShortcutKeys keys={['mod', 'shift', 'H']} />
         </TooltipContent>
       </Tooltip>
       <PopoverContent
@@ -153,21 +141,16 @@ export function RichTextHighlightPopover({
                 <span
                   aria-hidden="true"
                   className={cn(
-                    "text-foreground flex size-5 items-center justify-center rounded-full",
-                    color.swatch
+                    'text-foreground flex size-5 items-center justify-center rounded-full',
+                    color.swatch,
                   )}
                 >
-                  {selected ? (
-                    <CheckIcon aria-hidden="true" />
-                  ) : null}
+                  {selected ? <CheckIcon aria-hidden="true" /> : null}
                 </span>
               </Button>
             )
           })}
-          <Separator
-            orientation="vertical"
-            className="h-4 data-vertical:self-center"
-          />
+          <Separator orientation="vertical" className="h-4 data-vertical:self-center" />
           <Button
             variant="ghost"
             size="icon-sm"

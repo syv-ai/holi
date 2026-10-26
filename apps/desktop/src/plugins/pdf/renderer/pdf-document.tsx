@@ -718,7 +718,10 @@ export function PdfDocument({
         <PDFViewer
           key={src}
           ref={viewerRef}
-          className={cn('h-full min-h-0 flex-1', revealedSrc === src ? 'motion-in-fade' : 'opacity-0')}
+          className={cn(
+            'h-full min-h-0 flex-1',
+            revealedSrc === src ? 'motion-in-fade' : 'opacity-0',
+          )}
           onInit={onInit}
           onReady={onReady}
           config={{

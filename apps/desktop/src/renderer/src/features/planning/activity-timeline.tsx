@@ -8,15 +8,15 @@ import {
   TimelineItem,
   TimelineSeparator,
   TimelineTitle,
-} from "@/components/reui/timeline"
+} from '@/components/reui/timeline'
 
-import { Button } from "@/components/ui/button"
-import type { ActivityItem } from "./activity-data"
+import { Button } from '@/components/ui/button'
+import type { ActivityItem } from './activity-data'
 
 export function ActivityTimeline({
   items,
   onOpen,
-  label = "Recent activity",
+  label = 'Recent activity',
 }: {
   items: ActivityItem[]
   onOpen?: (path: string) => void
@@ -32,10 +32,8 @@ export function ActivityTimeline({
               <TimelineIndicator />
 
               <TimelineTitle className="min-w-0 text-sm leading-5">
-                <span className="font-medium">{item.actor}</span>{" "}
-                <span className="text-muted-foreground font-normal">
-                  {item.action}
-                </span>{" "}
+                <span className="font-medium">{item.actor}</span>{' '}
+                <span className="text-muted-foreground font-normal">{item.action}</span>{' '}
                 {item.path !== undefined && onOpen ? (
                   <Button
                     type="button"

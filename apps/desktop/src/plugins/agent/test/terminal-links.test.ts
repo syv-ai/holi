@@ -9,9 +9,7 @@ const has = (p: string) => FILES.has(p)
 describe('vault paths in terminal output', () => {
   it('links the paths the vault has, where they are in the line', () => {
     const line = '  Editing Planning/Q4.md (+3) and notes/b.md'
-    expect(vaultLinks(line, has, ROOT)).toEqual([
-      { path: 'Planning/Q4.md', start: 10, end: 24 },
-    ])
+    expect(vaultLinks(line, has, ROOT)).toEqual([{ path: 'Planning/Q4.md', start: 10, end: 24 }])
   })
 
   it('reads an absolute path inside the clone, and ./, but nothing outside', () => {

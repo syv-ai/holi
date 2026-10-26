@@ -1,9 +1,9 @@
 // ReUI block: @reui/stats-9 (`npx shadcn@latest view @reui/stats-9` shows the published source)
-import type { CSSProperties, ReactNode } from "react"
-import { Frame, FramePanel } from "@/components/reui/frame"
+import type { CSSProperties, ReactNode } from 'react'
+import { Frame, FramePanel } from '@/components/reui/frame'
 
-import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/cn"
+import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/cn'
 
 type StatsBucket = {
   id: string
@@ -54,9 +54,7 @@ export function OverviewStats({
 
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <span className="text-3xl font-semibold tracking-tight tabular-nums">
-                {percent}%
-              </span>
+              <span className="text-3xl font-semibold tracking-tight tabular-nums">{percent}%</span>
               {meta}
             </div>
 
@@ -70,14 +68,14 @@ export function OverviewStats({
                 bucket.value > 0 ? (
                   <div
                     key={bucket.id}
-                    className={cn("h-full w-(--share)", bucket.dotClassName)}
+                    className={cn('h-full w-(--share)', bucket.dotClassName)}
                     style={
                       {
-                        "--share": `${(bucket.value / Math.max(total, 1)) * 100}%`,
+                        '--share': `${(bucket.value / Math.max(total, 1)) * 100}%`,
                       } as CSSProperties
                     }
                   />
-                ) : null
+                ) : null,
               )}
             </div>
 
@@ -93,12 +91,10 @@ export function OverviewStats({
                 >
                   <span
                     aria-hidden="true"
-                    className={cn("size-2 rounded-full", bucket.dotClassName)}
+                    className={cn('size-2 rounded-full', bucket.dotClassName)}
                   />
                   {bucket.label}
-                  <span className="text-foreground font-medium tabular-nums">
-                    {bucket.value}
-                  </span>
+                  <span className="text-foreground font-medium tabular-nums">{bucket.value}</span>
                 </Button>
               ))}
             </div>

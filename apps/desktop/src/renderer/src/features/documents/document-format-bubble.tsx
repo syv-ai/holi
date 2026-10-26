@@ -4,10 +4,10 @@
  * keep it), and an Ask AI menu of quick commands that hand the selected
  * passage to the document agent.
  */
-import { useCallback, useLayoutEffect, useRef } from "react"
-import type { EditorState } from "@tiptap/pm/state"
-import { isTextSelection, type Editor } from "@tiptap/react"
-import { BubbleMenu } from "@tiptap/react/menus"
+import { useCallback, useLayoutEffect, useRef } from 'react'
+import type { EditorState } from '@tiptap/pm/state'
+import { isTextSelection, type Editor } from '@tiptap/react'
+import { BubbleMenu } from '@tiptap/react/menus'
 import {
   ChevronDownIcon,
   MessageSquarePlusIcon,
@@ -16,23 +16,21 @@ import {
   SpellCheckIcon,
   WandSparklesIcon,
   ScissorsIcon,
-} from "lucide-react"
+} from 'lucide-react'
 
-import {
-  RichTextBubbleBar,
-} from "@/features/documents/rich-text/rich-text-bubble-bar"
+import { RichTextBubbleBar } from '@/features/documents/rich-text/rich-text-bubble-bar'
 import {
   RichTextBlockTypeMenu,
   RichTextMarkToggles,
-} from "@/features/documents/rich-text/rich-text-controls"
-import { RichTextHighlightPopover } from "@/features/documents/rich-text/rich-text-highlight"
-import { RichTextLinkPopover } from "@/features/documents/rich-text/rich-text-link"
-import { useRichTextState } from "@/features/documents/rich-text/rich-text-state"
+} from '@/features/documents/rich-text/rich-text-controls'
+import { RichTextHighlightPopover } from '@/features/documents/rich-text/rich-text-highlight'
+import { RichTextLinkPopover } from '@/features/documents/rich-text/rich-text-link'
+import { useRichTextState } from '@/features/documents/rich-text/rich-text-state'
 import {
   RichTextToolbarGroup,
   RichTextToolbarSeparator,
-} from "@/features/documents/rich-text/rich-text-toolbar"
-import { Button } from "@/components/ui/button"
+} from '@/features/documents/rich-text/rich-text-toolbar'
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,21 +38,31 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from '@/components/ui/dropdown-menu'
 
-import { extraSelections } from "./multi-cursor"
+import { extraSelections } from './multi-cursor'
 
-const FORMAT_BUBBLE_KEY = "documentFormatBubble"
+const FORMAT_BUBBLE_KEY = 'documentFormatBubble'
 
-const FORMAT_BUBBLE_OPTIONS = { placement: "top", offset: 8 } as const
+const FORMAT_BUBBLE_OPTIONS = { placement: 'top', offset: 8 } as const
 
 /** The quick commands: what the menu says, and the verb the agent is given
  *  ("In `x.md`, <verb> this passage"). */
 const QUICK_COMMANDS = [
-  { id: "improve", label: "Improve writing", verb: "improve the writing of", icon: WandSparklesIcon },
-  { id: "grammar", label: "Fix spelling and grammar", verb: "fix the spelling and grammar of", icon: SpellCheckIcon },
-  { id: "simplify", label: "Simplify", verb: "simplify the language of", icon: MinimizeIcon },
-  { id: "shorter", label: "Make shorter", verb: "shorten", icon: ScissorsIcon },
+  {
+    id: 'improve',
+    label: 'Improve writing',
+    verb: 'improve the writing of',
+    icon: WandSparklesIcon,
+  },
+  {
+    id: 'grammar',
+    label: 'Fix spelling and grammar',
+    verb: 'fix the spelling and grammar of',
+    icon: SpellCheckIcon,
+  },
+  { id: 'simplify', label: 'Simplify', verb: 'simplify the language of', icon: MinimizeIcon },
+  { id: 'shorter', label: 'Make shorter', verb: 'shorten', icon: ScissorsIcon },
 ] as const
 
 interface ShouldShowProps {
@@ -99,22 +107,18 @@ export function DocumentFormatBubble({
       // Marks would reach only the newest of several ⌘D selections.
       if (extraSelections(doc).length > 0) return false
       if (!doc.doc.textBetween(from, to).trim()) return false
-      if (
-        current.isActive("codeBlock") ||
-        current.isActive("table") ||
-        current.isActive("link")
-      ) {
+      if (current.isActive('codeBlock') || current.isActive('table') || current.isActive('link')) {
         return false
       }
       return current.view.hasFocus() || element.contains(document.activeElement)
     },
-    []
+    [],
   )
 
   const runCommand = (verb: string) => {
     const { from, to } = editor.state.selection
-    const passage = editor.state.doc.textBetween(from, to, "\n\n").trim()
-    if (passage !== "") onQuickCommand?.(verb, passage)
+    const passage = editor.state.doc.textBetween(from, to, '\n\n').trim()
+    if (passage !== '') onQuickCommand?.(verb, passage)
   }
 
   return (
@@ -151,10 +155,7 @@ export function DocumentFormatBubble({
                 <DropdownMenuGroup>
                   <DropdownMenuLabel>Rewrite the selection</DropdownMenuLabel>
                   {QUICK_COMMANDS.map((command) => (
-                    <DropdownMenuItem
-                      key={command.id}
-                      onClick={() => runCommand(command.verb)}
-                    >
+                    <DropdownMenuItem key={command.id} onClick={() => runCommand(command.verb)}>
                       <command.icon aria-hidden="true" />
                       {command.label}
                     </DropdownMenuItem>

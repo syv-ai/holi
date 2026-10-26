@@ -3,16 +3,11 @@
  * writes the file whole (`serializeProjectFile`), keeping any key this
  * version does not know.
  */
-import { useState } from "react"
-import {
-  PROJECT_STATUSES,
-  type Milestone,
-  type Project,
-  type ProjectStatus,
-} from "@holi/shared"
-import { PlusIcon, Trash2Icon } from "lucide-react"
+import { useState } from 'react'
+import { PROJECT_STATUSES, type Milestone, type Project, type ProjectStatus } from '@holi/shared'
+import { PlusIcon, Trash2Icon } from 'lucide-react'
 
-import { Button } from "@/components/ui/button"
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -20,7 +15,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
+} from '@/components/ui/dialog'
 import {
   Field,
   FieldError,
@@ -28,18 +23,18 @@ import {
   FieldLabel,
   FieldLegend,
   FieldSet,
-} from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
+} from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { Textarea } from "@/components/ui/textarea"
+} from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 
-const NO_LEAD = "none"
+const NO_LEAD = 'none'
 
 type Draft = {
   name: string
@@ -52,11 +47,11 @@ type Draft = {
 }
 
 /** A stamp's day, for a date field: `2026-10-01T09:00` edits as its day. */
-const day = (stamp: string | undefined) => (stamp ?? "").slice(0, 10)
+const day = (stamp: string | undefined) => (stamp ?? '').slice(0, 10)
 
 function draftOf(project: Project): Draft {
   return {
-    name: project.name ?? "",
+    name: project.name ?? '',
     status: project.status,
     lead: project.lead ?? NO_LEAD,
     start: day(project.start),
@@ -68,17 +63,17 @@ function draftOf(project: Project): Draft {
 
 function projectOf(draft: Draft, base: Project): Project {
   const keep = (stamp: string | undefined, edited: string) =>
-    edited === "" ? undefined : day(stamp) === edited ? stamp : edited
+    edited === '' ? undefined : day(stamp) === edited ? stamp : edited
   const project: Project = {
     status: draft.status,
     milestones: draft.milestones
-      .filter((m) => m.name.trim() !== "" && m.date !== "")
+      .filter((m) => m.name.trim() !== '' && m.date !== '')
       .map((m) => ({ name: m.name.trim(), date: m.date }))
       .sort((a, b) => a.date.localeCompare(b.date)),
     about: draft.about,
     ...(base.extra ? { extra: base.extra } : {}),
   }
-  if (draft.name.trim() !== "") project.name = draft.name.trim()
+  if (draft.name.trim() !== '') project.name = draft.name.trim()
   if (draft.lead !== NO_LEAD) project.lead = draft.lead
   const start = keep(base.start, draft.start)
   const due = keep(base.due, draft.due)
@@ -108,15 +103,11 @@ export function EditProjectDialog({
   const [error, setError] = useState<string | null>(null)
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }))
   const leads =
-    draft.lead !== NO_LEAD && !people.includes(draft.lead)
-      ? [draft.lead, ...people]
-      : people
+    draft.lead !== NO_LEAD && !people.includes(draft.lead) ? [draft.lead, ...people] : people
 
   const setMilestone = (index: number, patch: Partial<Milestone>) =>
     set({
-      milestones: draft.milestones.map((m, i) =>
-        i === index ? { ...m, ...patch } : m
-      ),
+      milestones: draft.milestones.map((m, i) => (i === index ? { ...m, ...patch } : m)),
     })
 
   const submit = async () => {
@@ -146,10 +137,7 @@ export function EditProjectDialog({
           className="flex max-h-160 flex-col gap-6 overflow-y-auto"
           onKeyDown={(event) => {
             // Enter in a one-line field saves, as the form it replaced did.
-            if (
-              event.key === "Enter" &&
-              event.target instanceof HTMLInputElement
-            ) {
+            if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
               event.preventDefault()
               void submit()
             }
@@ -177,9 +165,7 @@ export function EditProjectDialog({
                 <FieldLabel htmlFor="project-status">Status</FieldLabel>
                 <Select
                   value={draft.status}
-                  onValueChange={(value) =>
-                    set({ status: value as ProjectStatus })
-                  }
+                  onValueChange={(value) => set({ status: value as ProjectStatus })}
                 >
                   <SelectTrigger id="project-status" className="w-full">
                     <SelectValue />
@@ -195,10 +181,7 @@ export function EditProjectDialog({
               </Field>
               <Field>
                 <FieldLabel htmlFor="project-lead">Lead</FieldLabel>
-                <Select
-                  value={draft.lead}
-                  onValueChange={(value) => set({ lead: value })}
-                >
+                <Select value={draft.lead} onValueChange={(value) => set({ lead: value })}>
                   <SelectTrigger id="project-lead" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
@@ -250,18 +233,14 @@ export function EditProjectDialog({
                     aria-label={`Milestone ${index + 1} name`}
                     value={milestone.name}
                     placeholder="Milestone"
-                    onChange={(event) =>
-                      setMilestone(index, { name: event.target.value })
-                    }
+                    onChange={(event) => setMilestone(index, { name: event.target.value })}
                   />
                   <Input
                     aria-label={`Milestone ${index + 1} date`}
                     type="date"
                     className="w-40 shrink-0"
                     value={milestone.date}
-                    onChange={(event) =>
-                      setMilestone(index, { date: event.target.value })
-                    }
+                    onChange={(event) => setMilestone(index, { date: event.target.value })}
                   />
                   <Button
                     type="button"
@@ -270,9 +249,7 @@ export function EditProjectDialog({
                     aria-label={`Remove milestone ${index + 1}`}
                     onClick={() =>
                       set({
-                        milestones: draft.milestones.filter(
-                          (_, i) => i !== index
-                        ),
+                        milestones: draft.milestones.filter((_, i) => i !== index),
                       })
                     }
                   >
@@ -287,7 +264,7 @@ export function EditProjectDialog({
                 className="self-start"
                 onClick={() =>
                   set({
-                    milestones: [...draft.milestones, { name: "", date: "" }],
+                    milestones: [...draft.milestones, { name: '', date: '' }],
                   })
                 }
               >
@@ -299,11 +276,7 @@ export function EditProjectDialog({
           </FieldGroup>
 
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
             <Button type="button" disabled={busy} onClick={() => void submit()}>

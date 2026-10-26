@@ -1,8 +1,8 @@
-import { useEffect, useMemo } from "react"
-import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { ScrollTextIcon } from "lucide-react"
+import { useEffect, useMemo } from 'react'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { ScrollTextIcon } from 'lucide-react'
 
-import { createFilterQuery } from "@/components/reui/filters/filters-query"
+import { createFilterQuery } from '@/components/reui/filters/filters-query'
 import {
   activityEntriesAtom,
   activityLoadAtom,
@@ -11,16 +11,11 @@ import {
   markActivitySeenAtom,
   shownEntries,
   withChannelRule,
-} from "@/state/activity"
+} from '@/state/activity'
 
-import { createOutputColumns, outputDetail } from "./output-columns"
-import {
-  LogLoadError,
-  LogLoading,
-  LogTable,
-  NoMatchingLines,
-} from "./log-table"
-import { EmptyState } from "@/composites/empty-state"
+import { createOutputColumns, outputDetail } from './output-columns'
+import { LogLoadError, LogLoading, LogTable, NoMatchingLines } from './log-table'
+import { EmptyState } from '@/composites/empty-state'
 
 /**
  * The bottom panel's Output (docs/features/status-bar.md): what Holi did in
@@ -42,28 +37,24 @@ export function PanelOutput({
   const [search, setSearch] = useAtom(activitySearchAtom)
   const markSeen = useSetAtom(markActivitySeenAtom)
 
-  const entries = useMemo(
-    () => shownEntries(all, query, search),
-    [all, query, search]
-  )
+  const entries = useMemo(() => shownEntries(all, query, search), [all, query, search])
   const columns = useMemo(
     () =>
       createOutputColumns({
-        onChannelFilter: (channel, mode) =>
-          setQuery((q) => withChannelRule(q, channel, mode)),
+        onChannelFilter: (channel, mode) => setQuery((q) => withChannelRule(q, channel, mode)),
       }),
-    [setQuery]
+    [setQuery],
   )
 
   useEffect(() => {
     if (visible) markSeen()
   }, [visible, all, markSeen])
 
-  if (load === "loading" && all.length === 0) {
+  if (load === 'loading' && all.length === 0) {
     return <LogLoading label="Loading the output" />
   }
 
-  if (load === "error" && all.length === 0) {
+  if (load === 'error' && all.length === 0) {
     return (
       <LogLoadError
         title="Could not load the output"
@@ -92,7 +83,7 @@ export function PanelOutput({
         <NoMatchingLines
           onClear={() => {
             setQuery(createFilterQuery())
-            setSearch("")
+            setSearch('')
           }}
         />
       }

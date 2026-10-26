@@ -16,8 +16,8 @@ import {
   StarIcon,
   Trash2Icon,
   VideoIcon,
-} from "lucide-react"
-import { Button } from "@/components/ui/button"
+} from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,15 +25,11 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Separator } from "@/components/ui/separator"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
-import { cn } from "@/plugin-api"
-import type { MailState } from "./use-mail"
+} from '@/components/ui/dropdown-menu'
+import { Separator } from '@/components/ui/separator'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/plugin-api'
+import type { MailState } from './use-mail'
 
 // ── App Header ──
 
@@ -59,25 +55,22 @@ interface AppHeaderProps {
  */
 export function AppHeader({ mail, commands }: AppHeaderProps) {
   const reader = mail.reader
-  const thread = reader.kind === "ready" ? reader.thread : null
+  const thread = reader.kind === 'ready' ? reader.thread : null
   const row = mail.openRow
-  const subject = thread?.subject ?? row?.subject ?? ""
+  const subject = thread?.subject ?? row?.subject ?? ''
   const starred = row?.starred === true
   const openId = mail.openId
 
   const index = mail.threads.findIndex((t) => t.id === openId)
   const previous = index > 0 ? mail.threads[index - 1] : undefined
-  const next =
-    index !== -1 && index < mail.threads.length - 1
-      ? mail.threads[index + 1]
-      : undefined
+  const next = index !== -1 && index < mail.threads.length - 1 ? mail.threads[index + 1] : undefined
   const meeting = mail.meeting
 
   return (
     <header
       className={cn(
-        "border-border flex h-(--header-height) min-w-0 shrink-0 items-center gap-1 border-b px-2 py-1.5",
-        "sm:gap-1.5 sm:px-4"
+        'border-border flex h-(--header-height) min-w-0 shrink-0 items-center gap-1 border-b px-2 py-1.5',
+        'sm:gap-1.5 sm:px-4',
       )}
     >
       <Button
@@ -128,9 +121,7 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
                   : `Open ${meeting.title} in Google Calendar`
               }
               onClick={() =>
-                void window.holi.openExternal(
-                  meeting.conferenceUrl ?? meeting.htmlLink
-                )
+                void window.holi.openExternal(meeting.conferenceUrl ?? meeting.htmlLink)
               }
             >
               {meeting.conferenceUrl !== null ? (
@@ -138,7 +129,7 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
               ) : (
                 <CalendarDaysIcon aria-hidden="true" />
               )}
-              {meeting.conferenceUrl !== null ? "Join" : "Meeting"}
+              {meeting.conferenceUrl !== null ? 'Join' : 'Meeting'}
             </Button>
           )}
 
@@ -163,22 +154,22 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
               <Button
                 variant="ghost"
                 size="icon-sm"
-                aria-label={starred ? "Unstar thread" : "Star thread"}
+                aria-label={starred ? 'Unstar thread' : 'Star thread'}
                 aria-pressed={starred}
                 onClick={() => void mail.setStarred(openId, !starred)}
               >
                 <StarIcon
                   aria-hidden="true"
                   className={cn(
-                    "shrink-0",
+                    'shrink-0',
                     starred
-                      ? "fill-amber-500 text-amber-500 dark:fill-amber-400 dark:text-amber-400"
-                      : "text-muted-foreground"
+                      ? 'fill-amber-500 text-amber-500 dark:fill-amber-400 dark:text-amber-400'
+                      : 'text-muted-foreground',
                   )}
                 />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{starred ? "Unstar" : "Star"}</TooltipContent>
+            <TooltipContent>{starred ? 'Unstar' : 'Star'}</TooltipContent>
           </Tooltip>
 
           <Tooltip>
@@ -187,15 +178,13 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
                 variant="ghost"
                 size="icon-sm"
                 aria-label="Archive thread"
-                onClick={() => void mail.removeThreads([openId], "archive")}
+                onClick={() => void mail.removeThreads([openId], 'archive')}
                 className="text-muted-foreground shrink-0"
               >
                 <ArchiveIcon aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
-              Archive: out of the inbox, kept in All Mail
-            </TooltipContent>
+            <TooltipContent>Archive: out of the inbox, kept in All Mail</TooltipContent>
           </Tooltip>
 
           <Tooltip>
@@ -204,15 +193,13 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
                 variant="ghost"
                 size="icon-sm"
                 aria-label="Move thread to trash"
-                onClick={() => void mail.removeThreads([openId], "trash")}
+                onClick={() => void mail.removeThreads([openId], 'trash')}
                 className="text-muted-foreground hover:text-destructive shrink-0"
               >
                 <Trash2Icon aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
-              Move to trash: recoverable for 30 days
-            </TooltipContent>
+            <TooltipContent>Move to trash: recoverable for 30 days</TooltipContent>
           </Tooltip>
 
           <div className="mx-0.5 hidden items-center sm:flex">
@@ -232,17 +219,11 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-60">
               <DropdownMenuGroup>
-                <DropdownMenuItem
-                  disabled={thread === null}
-                  onSelect={() => commands.reply(false)}
-                >
+                <DropdownMenuItem disabled={thread === null} onSelect={() => commands.reply(false)}>
                   <ReplyIcon aria-hidden="true" />
                   Reply
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={thread === null}
-                  onSelect={commands.forward}
-                >
+                <DropdownMenuItem disabled={thread === null} onSelect={commands.forward}>
                   <ForwardIcon aria-hidden="true" />
                   Forward
                 </DropdownMenuItem>
@@ -252,24 +233,18 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
                     Continue your draft
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuItem
-                  onSelect={() => void mail.setRead(openId, false)}
-                >
+                <DropdownMenuItem onSelect={() => void mail.setRead(openId, false)}>
                   <MailIcon aria-hidden="true" />
                   Mark as unread
                 </DropdownMenuItem>
               </DropdownMenuGroup>
 
-              {(commands.summarize !== null ||
-                commands.linkToTask !== null) && (
+              {(commands.summarize !== null || commands.linkToTask !== null) && (
                 <>
                   <DropdownMenuSeparator />
                   <DropdownMenuGroup>
                     {commands.summarize !== null && (
-                      <DropdownMenuItem
-                        disabled={thread === null}
-                        onSelect={commands.summarize}
-                      >
+                      <DropdownMenuItem disabled={thread === null} onSelect={commands.summarize}>
                         <SparklesIcon aria-hidden="true" />
                         Summarize with the assistant
                       </DropdownMenuItem>
@@ -290,9 +265,7 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
                 {/* Advertised by the sender; opened, never requested. */}
                 {row?.unsubscribeUrl != null && (
                   <DropdownMenuItem
-                    onSelect={() =>
-                      void window.holi.openExternal(row.unsubscribeUrl!)
-                    }
+                    onSelect={() => void window.holi.openExternal(row.unsubscribeUrl!)}
                   >
                     <MailMinusIcon aria-hidden="true" />
                     Open the sender’s unsubscribe page
@@ -300,11 +273,7 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
                 )}
                 {(thread?.webUrl ?? row?.webUrl) !== undefined && (
                   <DropdownMenuItem
-                    onSelect={() =>
-                      void window.holi.openExternal(
-                        (thread?.webUrl ?? row?.webUrl)!
-                      )
-                    }
+                    onSelect={() => void window.holi.openExternal((thread?.webUrl ?? row?.webUrl)!)}
                   >
                     <ExternalLinkIcon aria-hidden="true" />
                     Open in Gmail

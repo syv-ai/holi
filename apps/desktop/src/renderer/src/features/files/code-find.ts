@@ -6,28 +6,23 @@
  * match a quiet tint and the one the selection is on a stronger one, in the
  * find tokens the document's find uses.
  */
-import {
-  getSearchQuery,
-  search,
-  SearchQuery,
-  setSearchQuery,
-} from "@codemirror/search"
+import { getSearchQuery, search, SearchQuery, setSearchQuery } from '@codemirror/search'
 import {
   RangeSetBuilder,
   StateEffect,
   StateField,
   type EditorState,
   type Extension,
-} from "@codemirror/state"
+} from '@codemirror/state'
 import {
   Decoration,
   EditorView,
   ViewPlugin,
   type DecorationSet,
   type ViewUpdate,
-} from "@codemirror/view"
+} from '@codemirror/view'
 
-import type { FindCount, FindOptions } from "../../composites/find-bar"
+import type { FindCount, FindOptions } from '../../composites/find-bar'
 
 /** As many matches as the count says exactly; past it, "1000+" would lie
  *  less than a slow keystroke. */
@@ -58,9 +53,9 @@ const findOpen = StateField.define<boolean>({
   },
 })
 
-const match = Decoration.mark({ class: "cm-searchMatch" })
+const match = Decoration.mark({ class: 'cm-searchMatch' })
 const current = Decoration.mark({
-  class: "cm-searchMatch cm-searchMatch-selected",
+  class: 'cm-searchMatch cm-searchMatch-selected',
 })
 
 function highlight(view: EditorView): DecorationSet {
@@ -72,11 +67,7 @@ function highlight(view: EditorView): DecorationSet {
     const cursor = query.getCursor(view.state, from, to)
     for (let next = cursor.next(); !next.done; next = cursor.next()) {
       const hit = next.value
-      builder.add(
-        hit.from,
-        hit.to,
-        hit.from === selFrom && hit.to === selTo ? current : match
-      )
+      builder.add(hit.from, hit.to, hit.from === selFrom && hit.to === selTo ? current : match)
     }
   }
   return builder.finish()
@@ -92,7 +83,7 @@ const highlighter = ViewPlugin.fromClass(
       this.decorations = highlight(update.view)
     }
   },
-  { decorations: (plugin) => plugin.decorations }
+  { decorations: (plugin) => plugin.decorations },
 )
 
 /** What a code editor needs for its find bar. */
@@ -101,11 +92,7 @@ export function codeFind(): Extension {
 }
 
 /** Put `options` in force (or clear it, with the bar closed). */
-export function setCodeQuery(
-  view: EditorView,
-  options: FindOptions,
-  open: boolean
-): void {
+export function setCodeQuery(view: EditorView, options: FindOptions, open: boolean): void {
   view.dispatch({
     effects: [setSearchQuery.of(codeQuery(options)), setCodeFindOpen.of(open)],
   })

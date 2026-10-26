@@ -8,10 +8,10 @@
  * parent (`h-full`) and brings its own folder rail and list column. Not
  * mounted yet; see the plugin's `index.tsx` for the surfaces that are.
  */
-import { useState, type CSSProperties } from "react"
-import { useAtomValue, useSetAtom, useStore } from "jotai"
-import { SidebarProvider } from "@/components/ui/sidebar"
-import { TooltipProvider } from "@/components/ui/tooltip"
+import { useState, type CSSProperties } from 'react'
+import { useAtomValue, useSetAtom, useStore } from 'jotai'
+import { SidebarProvider } from '@/components/ui/sidebar'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import {
   activeRemoteAtom,
   cn,
@@ -19,19 +19,19 @@ import {
   openSettingsSectionAtom,
   useAgentService,
   useHasCapability,
-} from "@/plugin-api"
-import type { ComposeIntent } from "../compose-intent"
-import { MailComposer } from "../mail-composer"
-import { buildSummarizePrompt } from "../summarize-prompt"
-import { TASKS_CREATE, tasksCap } from "../tasks"
-import { googleCap, useGoogleAccount } from "../account"
-import { AppHeader, type ThreadCommands } from "./mail-header"
-import { AppSidebar } from "./mail-sidebar"
-import { ComposeDialog, type ComposeRequest } from "./compose-dialog"
-import { MailList } from "./mail-list"
-import { MailReader } from "./mail-reader"
-import { NavUser } from "./nav-user"
-import { replyTarget, useMail, type DraftSummary } from "./use-mail"
+} from '@/plugin-api'
+import type { ComposeIntent } from '../compose-intent'
+import { MailComposer } from '../mail-composer'
+import { buildSummarizePrompt } from '../summarize-prompt'
+import { TASKS_CREATE, tasksCap } from '../tasks'
+import { googleCap, useGoogleAccount } from '../account'
+import { AppHeader, type ThreadCommands } from './mail-header'
+import { AppSidebar } from './mail-sidebar'
+import { ComposeDialog, type ComposeRequest } from './compose-dialog'
+import { MailList } from './mail-list'
+import { MailReader } from './mail-reader'
+import { NavUser } from './nav-user'
+import { replyTarget, useMail, type DraftSummary } from './use-mail'
 
 /** The block's provider is only context here: its open state, keyboard
  *  shortcut and cookie belong to Holi's own sidebar, so this one never
@@ -57,8 +57,8 @@ export function MailShell({ className }: { className?: string }) {
     key: number
   } | null>(null)
 
-  const openConnections = () => openSettingsSection("connections")
-  const thread = mail.reader.kind === "ready" ? mail.reader.thread : null
+  const openConnections = () => openSettingsSection('connections')
+  const thread = mail.reader.kind === 'ready' ? mail.reader.thread : null
 
   const startCompose = (draftId?: string) =>
     setCompose((previous) => ({ draftId, key: (previous?.key ?? 0) + 1 }))
@@ -76,7 +76,7 @@ export function MailShell({ className }: { className?: string }) {
       const parent = replyTarget(thread, mail.sendAs)
       if (parent === null) return
       openInline({
-        kind: "reply",
+        kind: 'reply',
         threadId: thread.id,
         subject: thread.subject,
         parent,
@@ -88,7 +88,7 @@ export function MailShell({ className }: { className?: string }) {
       const parent = replyTarget(thread, mail.sendAs)
       if (parent === null) return
       openInline({
-        kind: "forward",
+        kind: 'forward',
         threadId: thread.id,
         subject: thread.subject,
         parent,
@@ -108,7 +108,7 @@ export function MailShell({ className }: { className?: string }) {
             .pop()
           if (newest !== undefined) openDraft(newest)
         })
-        .catch(() => mail.reportError("Could not open that draft."))
+        .catch(() => mail.reportError('Could not open that draft.'))
     },
     summarize:
       agent === null
@@ -122,8 +122,7 @@ export function MailShell({ className }: { className?: string }) {
             })
             const target = store.get(agent.targets).default
             void agent.ask({ text, target }).then((res) => {
-              if (!res.ok && target !== "new")
-                void agent.ask({ text, target: "new" })
+              if (!res.ok && target !== 'new') void agent.ask({ text, target: 'new' })
             })
           },
     linkToTask: !canLinkToTask
@@ -134,13 +133,11 @@ export function MailShell({ className }: { className?: string }) {
           void tasksCap
             .create(remote, {
               title: row.subject,
-              folder: "",
+              folder: '',
               description: `[${row.subject}](${row.webUrl})\n`,
             })
             .then(({ path }) => openNote(path))
-            .catch(() =>
-              mail.reportError("Could not make a task from this thread.")
-            )
+            .catch(() => mail.reportError('Could not make a task from this thread.'))
         },
   }
 
@@ -174,30 +171,21 @@ export function MailShell({ className }: { className?: string }) {
       <SidebarProvider
         open
         onOpenChange={keepOpen}
-        className={cn(
-          "relative h-full min-h-0",
-          className
-        )}
+        className={cn('relative h-full min-h-0', className)}
         style={
           {
-            "--sidebar-width": "440px",
-            "--header-height": "50px",
-            "--sidebar-accent":
-              "color-mix(in oklab, var(--color-primary) 5%, transparent)",
-            "--sidebar-accent-foreground": "var(--color-primary)",
+            '--sidebar-width': '440px',
+            '--header-height': '50px',
+            '--sidebar-accent': 'color-mix(in oklab, var(--color-primary) 5%, transparent)',
+            '--sidebar-accent-foreground': 'var(--color-primary)',
           } as CSSProperties
         }
       >
         {/* The list column, with the account and the mailbox menu atop it */}
-        <AppSidebar
-          expanded={expanded}
-          onToggle={() => setExpanded((value) => !value)}
-        >
+        <AppSidebar expanded={expanded} onToggle={() => setExpanded((value) => !value)}>
           <MailList
             mail={mail}
-            account={
-              <NavUser onManage={openConnections} onError={mail.reportError} />
-            }
+            account={<NavUser onManage={openConnections} onError={mail.reportError} />}
             onSelectFolder={(folder) => {
               mail.setFolder(folder)
               setInline(null)
@@ -215,7 +203,7 @@ export function MailShell({ className }: { className?: string }) {
             mail={mail}
             composer={
               inline !== null &&
-              inline.intent.kind !== "new" &&
+              inline.intent.kind !== 'new' &&
               inline.intent.threadId === mail.openId
                 ? composer
                 : null

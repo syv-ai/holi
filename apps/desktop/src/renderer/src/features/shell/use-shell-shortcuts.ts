@@ -1,14 +1,14 @@
-import { atom, useAtom, useAtomValue, useSetAtom } from "jotai"
-import { useMemo } from "react"
-import { toast } from "sonner"
+import { atom, useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { useMemo } from 'react'
+import { toast } from 'sonner'
 
-import type { SidebarApp } from "@/plugin-api"
-import { newAgentSessionAtom } from "@/state/agents-slots"
-import { ensureTodaysDailyAtom } from "@/state/daily"
-import { runningPluginsAtom } from "@/state/plugins"
-import { shortcutsDialogOpenAtom, useShortcutHandlers } from "@/state/shortcuts"
-import { sidebarSectionAtom } from "@/state/sidebar-section"
-import { BOARD_TAB } from "../sidebar/documents-nav"
+import type { SidebarApp } from '@/plugin-api'
+import { newAgentSessionAtom } from '@/state/agents-slots'
+import { ensureTodaysDailyAtom } from '@/state/daily'
+import { runningPluginsAtom } from '@/state/plugins'
+import { shortcutsDialogOpenAtom, useShortcutHandlers } from '@/state/shortcuts'
+import { sidebarSectionAtom } from '@/state/sidebar-section'
+import { BOARD_TAB } from '../sidebar/documents-nav'
 
 /** What the shell can do, for its keys (`lib/shortcuts.ts`). */
 export interface ShellActions {
@@ -54,16 +54,16 @@ export function useShellShortcuts(shell: ShellActions): void {
   const newAgentSession = useSetAtom(newAgentSessionAtom)
   const ensureDaily = useSetAtom(ensureTodaysDailyAtom)
   const hasAgents = useAtomValue(runningPluginsAtom).some(
-    (plugin) => plugin.agentsMode !== undefined
+    (plugin) => plugin.agentsMode !== undefined,
   )
   const listedAtom = useMemo(
     () =>
       atom((get) =>
         shell.apps
           .filter((app) => app.visible === undefined || get(app.visible))
-          .map((app) => app.id)
+          .map((app) => app.id),
       ),
-    [shell.apps]
+    [shell.apps],
   )
   const listed = useAtomValue(listedAtom)
 
@@ -77,8 +77,7 @@ export function useShellShortcuts(shell: ShellActions): void {
   /** The entry `step` places from the active one, wrapping. */
   function stepTab(step: number) {
     if (tabIds.length === 0) return
-    const current =
-      shell.activeEntryId === undefined ? activeTabId : shell.activeEntryId
+    const current = shell.activeEntryId === undefined ? activeTabId : shell.activeEntryId
     const at = current === null ? -1 : tabIds.indexOf(current)
     const from = at < 0 ? (step > 0 ? -1 : 0) : at
     const id = tabIds[(from + step + tabIds.length) % tabIds.length]
@@ -88,7 +87,7 @@ export function useShellShortcuts(shell: ShellActions): void {
     shell.setSearchOpen(() => false)
     setDialogOpen((open) => !open)
   }
-  function showSection(section: "documents" | "agents") {
+  function showSection(section: 'documents' | 'agents') {
     setSection(section)
     shell.showFiles()
   }
@@ -97,58 +96,56 @@ export function useShellShortcuts(shell: ShellActions): void {
   }
 
   useShortcutHandlers({
-    "shortcuts.show": toggleDialog,
-    "shortcuts.toggle": toggleDialog,
-    "search.open": () => {
+    'shortcuts.show': toggleDialog,
+    'shortcuts.toggle': toggleDialog,
+    'search.open': () => {
       setDialogOpen(false)
       shell.setSearchOpen((open) => !open)
     },
-    "sidebar.toggle": toggleSidebar,
-    "sidebar.documents": () => showSection("documents"),
-    "sidebar.agents": hasAgents ? () => showSection("agents") : undefined,
-    "board.open": () => shell.open(BOARD_TAB),
-    "tab.next": () => stepTab(1),
-    "tab.previous": () => stepTab(-1),
+    'sidebar.toggle': toggleSidebar,
+    'sidebar.documents': () => showSection('documents'),
+    'sidebar.agents': hasAgents ? () => showSection('agents') : undefined,
+    'board.open': () => shell.open(BOARD_TAB),
+    'tab.next': () => stepTab(1),
+    'tab.previous': () => stepTab(-1),
     // ⌘9 is the last tab, as in a browser.
-    "tab.goto": (index) => {
+    'tab.goto': (index) => {
       const id = index === 8 ? tabIds[tabIds.length - 1] : tabIds[index]
       if (id !== undefined) shell.selectTab(id)
     },
     // An app (Mail, Calendar) is a tab too: ⌘W puts it away like any other.
     // Inside a split `activeTabId` is the focused member, so ⌘W closes that
     // one, and a 2-split it leaves turns back into a tab.
-    "tab.close": () => {
+    'tab.close': () => {
       if (activeTabId !== null) shell.closeTab(activeTabId)
     },
-    "tab.closeAll": shell.closeAllTabs,
-    "tab.reopen": shell.reopenTab,
-    "pane.split": shell.splitRight,
+    'tab.closeAll': shell.closeAllTabs,
+    'tab.reopen': shell.reopenTab,
+    'pane.split': shell.splitRight,
     // Split tabs: ⌘T, separate, and the members' focus.
-    "tab.new": shell.newTab,
-    "split.separate": shell.separate,
-    "split.next":
-      shell.stepMember === undefined ? undefined : () => shell.stepMember?.(1),
-    "split.previous":
-      shell.stepMember === undefined ? undefined : () => shell.stepMember?.(-1),
+    'tab.new': shell.newTab,
+    'split.separate': shell.separate,
+    'split.next': shell.stepMember === undefined ? undefined : () => shell.stepMember?.(1),
+    'split.previous': shell.stepMember === undefined ? undefined : () => shell.stepMember?.(-1),
     // ⌘N is the side's own new: a session on the Agents side (the mode's
     // `newSession`), a document on the Documents side.
-    "document.new": () => {
-      if (section === "agents" && hasAgents && newAgentSession()) return
+    'document.new': () => {
+      if (section === 'agents' && hasAgents && newAgentSession()) return
       shell.newDocument()
     },
-    "daily.open": () => {
+    'daily.open': () => {
       ensureDaily().then(
         (path) => {
           if (path !== null) shell.open(path)
         },
         () =>
           toast.error(
-            "Couldn’t open today’s note. Check that the vault is reachable, then try again."
-          )
+            'Couldn’t open today’s note. Check that the vault is reachable, then try again.',
+          ),
       )
     },
-    "session.new": hasAgents ? () => void newAgentSession() : undefined,
-    "app.mail": app("mail"),
-    "app.calendar": app("calendar"),
+    'session.new': hasAgents ? () => void newAgentSession() : undefined,
+    'app.mail': app('mail'),
+    'app.calendar': app('calendar'),
   })
 }

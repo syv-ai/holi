@@ -267,11 +267,7 @@ function DaySheetRows({
             onClick={() => onOpen(occurrence)}
             className="w-full"
           >
-            <IconTile
-              variant="outline"
-              size="xs"
-              radius="full"
-            >
+            <IconTile variant="outline" size="xs" radius="full">
               {tileIcon(data)}
             </IconTile>
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">

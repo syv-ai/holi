@@ -1,9 +1,9 @@
-import { useAtomValue, useSetAtom } from "jotai"
-import { AstroidIcon } from "lucide-react"
+import { useAtomValue, useSetAtom } from 'jotai'
+import { AstroidIcon } from 'lucide-react'
 
-import { appModeAtom, StatusBarItem } from "@/plugin-api"
-import { agentsStatusAtom } from "../state/agents-status"
-import { openSessionRowsAtom } from "../state/session-list"
+import { appModeAtom, StatusBarItem } from '@/plugin-api'
+import { agentsStatusAtom } from '../state/agents-status'
+import { openSessionRowsAtom } from '../state/session-list'
 
 /**
  * The agent's item in the status bar (docs/features/status-bar.md): how many
@@ -14,12 +14,11 @@ import { openSessionRowsAtom } from "../state/session-list"
  */
 function agentStatusText(
   sessions: number,
-  status: { needsYou: number; working: number }
+  status: { needsYou: number; working: number },
 ): string | null {
-  if (status.needsYou > 0)
-    return `${status.needsYou} need${status.needsYou === 1 ? "s" : ""} you`
+  if (status.needsYou > 0) return `${status.needsYou} need${status.needsYou === 1 ? 's' : ''} you`
   if (status.working > 0) return `${status.working} working`
-  if (sessions > 0) return `${sessions} session${sessions === 1 ? "" : "s"}`
+  if (sessions > 0) return `${sessions} session${sessions === 1 ? '' : 's'}`
   return null
 }
 
@@ -32,7 +31,7 @@ export function AgentStatusItem() {
   return (
     <StatusBarItem
       tooltip={`Agents: ${text}. Click to open Agents`}
-      onClick={() => setMode("agents")}
+      onClick={() => setMode('agents')}
     >
       <AstroidIcon aria-hidden />
       {text}

@@ -1,7 +1,7 @@
-import { type CSSProperties, type ReactNode, type Ref } from "react"
+import { type CSSProperties, type ReactNode, type Ref } from 'react'
 
-import { IconButton } from "@/composites/icon-button"
-import { PanelLeftIcon } from "lucide-react"
+import { IconButton } from '@/composites/icon-button'
+import { PanelLeftIcon } from 'lucide-react'
 
 /**
  * The window's one top band, after MonoCode and Superset: the traffic lights,
@@ -34,17 +34,14 @@ export function TitleBar({
   children: ReactNode
 }) {
   return (
-    <header
-      data-slot="app-chrome"
-      className="app-drag flex h-11 shrink-0 items-center border-b"
-    >
+    <header data-slot="app-chrome" className="app-drag flex h-11 shrink-0 items-center border-b">
       <div
         ref={leadRef}
         data-window-band="lights"
         data-open={sidebarOpen || undefined}
         style={
           sidebarOpen
-            ? ({ "--lead-width": `${leadWidth(sidebarWidth)}px` } as CSSProperties)
+            ? ({ '--lead-width': `${leadWidth(sidebarWidth)}px` } as CSSProperties)
             : undefined
         }
         className="group/lead data-open:border-e data-open:w-(--lead-width) flex h-full shrink-0 items-center gap-1 overflow-hidden px-2"
@@ -54,7 +51,7 @@ export function TitleBar({
             shell flips mid-toggle, so it moves with the motion. */}
         <div className="hidden flex-1 group-data-open/lead:block" />
         <IconButton
-          label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+          label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
           onClick={onToggleSidebar}
         >
           <PanelLeftIcon aria-hidden="true" />

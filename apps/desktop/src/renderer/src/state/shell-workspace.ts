@@ -15,7 +15,7 @@
  * Every function returns the same workspace when it changes nothing, so a
  * caller (a drop target asking whether to take a drop) can tell a no-op.
  */
-import { parseTabKey, tabForPath, tabKey } from "./tab-descriptor"
+import { parseTabKey, tabForPath, tabKey } from './tab-descriptor'
 
 /** Up to four views in a split: a session beside a document beside the
  *  board beside an app, each still wide enough to use on a laptop. */
@@ -57,10 +57,8 @@ export function emptyWorkspace(): ShellWorkspace {
 
 // ------------------------------------------------------------------ reading
 
-export function isSplit(
-  entry: ShellEntry | null | undefined
-): entry is ShellSplit {
-  return typeof entry === "object" && entry !== null
+export function isSplit(entry: ShellEntry | null | undefined): entry is ShellSplit {
+  return typeof entry === 'object' && entry !== null
 }
 
 /** An entry's id: a single view's key, a split's own id. */
@@ -108,7 +106,7 @@ export function entryIds(ws: ShellWorkspace): string[] {
 }
 
 function isNewKey(key: string | null): boolean {
-  return key !== null && parseTabKey(key)?.kind === "new"
+  return key !== null && parseTabKey(key)?.kind === 'new'
 }
 
 // ------------------------------------------------------------------ helpers
@@ -131,11 +129,7 @@ function nextSplitId(ws: ShellWorkspace): { id: string; seq: number } {
   return { id: `holi:split:${seq}`, seq }
 }
 
-function replaceEntryAt(
-  ws: ShellWorkspace,
-  at: number,
-  entry: ShellEntry
-): ShellEntry[] {
+function replaceEntryAt(ws: ShellWorkspace, at: number, entry: ShellEntry): ShellEntry[] {
   return ws.entries.map((e, i) => (i === at ? entry : e))
 }
 
@@ -150,10 +144,7 @@ function splitWithout(split: ShellSplit, key: string): ShellEntry {
   const shares = split.shares.filter((_, i) => i !== at)
   const heir = at > 0 ? at - 1 : 0
   shares[heir] = (shares[heir] ?? 0) + (split.shares[at] ?? 0)
-  const focused =
-    split.focused === key
-      ? views[Math.min(at, views.length - 1)]!
-      : split.focused
+  const focused = split.focused === key ? views[Math.min(at, views.length - 1)]! : split.focused
   return { ...split, views, shares: normalise(shares), focused }
 }
 
@@ -169,12 +160,7 @@ function detach(ws: ShellWorkspace, key: string): ShellWorkspace {
   if (!isSplit(entry)) {
     const entries = ws.entries.filter((_, i) => i !== at)
     const heir = entries[Math.min(at, entries.length - 1)]
-    const active =
-      ws.active === key
-        ? heir === undefined
-          ? null
-          : entryId(heir)
-        : ws.active
+    const active = ws.active === key ? (heir === undefined ? null : entryId(heir)) : ws.active
     return { ...ws, entries, active }
   }
   const left = splitWithout(entry, key)
@@ -189,7 +175,7 @@ function insertEntry(
   ws: ShellWorkspace,
   entry: ShellEntry,
   index: number,
-  select = true
+  select = true,
 ): ShellWorkspace {
   const at = Math.max(0, Math.min(index, ws.entries.length))
   const entries = [...ws.entries.slice(0, at), entry, ...ws.entries.slice(at)]
@@ -213,7 +199,7 @@ function replaceIn(
   splitId: string,
   member: string,
   key: string,
-  drop: (key: string) => boolean = isNewKey
+  drop: (key: string) => boolean = isNewKey,
 ): ShellWorkspace {
   const at = indexOfEntry(ws, splitId)
   const split = ws.entries[at]
@@ -238,8 +224,8 @@ function replaceIn(
 function addToActive(
   ws: ShellWorkspace,
   key: string,
-  side: "left" | "right",
-  beside?: string
+  side: 'left' | 'right',
+  beside?: string,
 ): ShellWorkspace {
   const entry = activeEntry(ws)
   if (entry === null) return insertEntry(ws, key, ws.entries.length)
@@ -249,11 +235,7 @@ function addToActive(
   const views = entryViews(entry)
   const anchor = beside === undefined ? -1 : views.indexOf(beside)
   const index =
-    anchor === -1
-      ? side === "left"
-        ? 0
-        : views.length
-      : anchor + (side === "left" ? 0 : 1)
+    anchor === -1 ? (side === 'left' ? 0 : views.length) : anchor + (side === 'left' ? 0 : 1)
   return insertMember(ws, key, index)
 }
 
@@ -265,11 +247,7 @@ function addToActive(
  * the gap the drag preview opens (`split-view.tsx`). The caller checks for
  * room.
  */
-function insertMember(
-  ws: ShellWorkspace,
-  key: string,
-  index: number
-): ShellWorkspace {
+function insertMember(ws: ShellWorkspace, key: string, index: number): ShellWorkspace {
   const entry = activeEntry(ws)
   if (entry === null) return insertEntry(ws, key, ws.entries.length)
   const at = indexOfEntry(ws, entryId(entry))
@@ -278,9 +256,7 @@ function insertMember(
   const views = [...before]
   views.splice(where, 0, key)
   const n = views.length
-  const shares = (isSplit(entry) ? entry.shares : [1]).map(
-    (s) => (s * (n - 1)) / n
-  )
+  const shares = (isSplit(entry) ? entry.shares : [1]).map((s) => (s * (n - 1)) / n)
   shares.splice(where, 0, 1 / n)
   if (!isSplit(entry)) {
     const { id, seq } = nextSplitId(ws)
@@ -322,20 +298,18 @@ function isViewKey(key: string): boolean {
 export function openTab(
   ws: ShellWorkspace,
   key: string,
-  replaces: (active: string) => boolean = isNewKey
+  replaces: (active: string) => boolean = isNewKey,
 ): ShellWorkspace {
   const holder = entryOf(ws, key)
   if (holder !== null) {
-    return isSplit(holder)
-      ? focusMember(ws, holder.id, key)
-      : selectEntry(ws, key)
+    return isSplit(holder) ? focusMember(ws, holder.id, key) : selectEntry(ws, key)
   }
   const split = activeSplit(ws)
   if (split !== null && replaces(split.focused)) {
     return replaceIn(ws, split.id, split.focused, key, replaces)
   }
   const active = activeEntry(ws)
-  if (typeof active === "string" && replaces(active)) {
+  if (typeof active === 'string' && replaces(active)) {
     const at = indexOfEntry(ws, active)
     return { ...ws, entries: replaceEntryAt(ws, at, key), active: key }
   }
@@ -345,7 +319,7 @@ export function openTab(
 /** A New tab of its own at the strip's end, selected (⌘T, +). */
 export function openNewTab(ws: ShellWorkspace): ShellWorkspace {
   const seq = ws.seq + 1
-  const key = tabKey({ kind: "new", n: seq })
+  const key = tabKey({ kind: 'new', n: seq })
   return insertEntry({ ...ws, seq }, key, ws.entries.length)
 }
 
@@ -360,11 +334,7 @@ export function selectEntry(ws: ShellWorkspace, id: string): ShellWorkspace {
 }
 
 /** Select a split with `key` its focused member, as a click in it does. */
-export function focusMember(
-  ws: ShellWorkspace,
-  splitId: string,
-  key: string
-): ShellWorkspace {
+export function focusMember(ws: ShellWorkspace, splitId: string, key: string): ShellWorkspace {
   const at = indexOfEntry(ws, splitId)
   const split = ws.entries[at]
   if (!isSplit(split) || !split.views.includes(key)) return ws
@@ -399,9 +369,7 @@ export function closeTab(ws: ShellWorkspace, key: string): ShellWorkspace {
 }
 
 function closedOf(entry: ShellEntry): ClosedEntry {
-  return isSplit(entry)
-    ? { views: [...entry.views], shares: [...entry.shares] }
-    : entry
+  return isSplit(entry) ? { views: [...entry.views], shares: [...entry.shares] } : entry
 }
 
 /** Close a whole entry: a tab, or a split with every member (reopened as
@@ -411,8 +379,7 @@ export function closeEntry(ws: ShellWorkspace, id: string): ShellWorkspace {
   if (at === -1) return closeTab(ws, id)
   const entries = ws.entries.filter((_, i) => i !== at)
   const heir = entries[Math.min(at, entries.length - 1)]
-  const active =
-    ws.active === id ? (heir === undefined ? null : entryId(heir)) : ws.active
+  const active = ws.active === id ? (heir === undefined ? null : entryId(heir)) : ws.active
   return {
     ...ws,
     entries,
@@ -424,7 +391,7 @@ export function closeEntry(ws: ShellWorkspace, id: string): ShellWorkspace {
 function closeWhere(
   ws: ShellWorkspace,
   keep: (index: number) => boolean,
-  active: string | null
+  active: string | null,
 ): ShellWorkspace {
   const gone = ws.entries.filter((_, i) => !keep(i))
   if (gone.length === 0) {
@@ -449,10 +416,7 @@ export function closeOtherTabs(ws: ShellWorkspace, id: string): ShellWorkspace {
 
 /** Close the entries after `id`; `id` comes forward when the active one
  *  went with them. */
-export function closeTabsToRight(
-  ws: ShellWorkspace,
-  id: string
-): ShellWorkspace {
+export function closeTabsToRight(ws: ShellWorkspace, id: string): ShellWorkspace {
   const at = indexOfEntry(ws, id)
   if (at === -1) return ws
   const kept = ws.active !== null && indexOfEntry(ws, ws.active) <= at
@@ -477,7 +441,7 @@ export function reopenClosed(ws: ShellWorkspace): ShellWorkspace {
       return ws.closed.length === 0 ? ws : { ...ws, closed }
     }
     const base = { ...ws, closed }
-    if (typeof entry === "string") {
+    if (typeof entry === 'string') {
       if (isNewKey(entry) || entryOf(ws, entry) !== null) continue
       return insertEntry(base, entry, afterActive(base))
     }
@@ -511,7 +475,7 @@ export function splitActive(ws: ShellWorkspace): ShellWorkspace {
   if (entry === null) return ws
   if (isSplit(entry) && entry.views.length >= MAX_SPLIT) return ws
   const seq = ws.seq + 1
-  return addToActive({ ...ws, seq }, tabKey({ kind: "new", n: seq }), "right")
+  return addToActive({ ...ws, seq }, tabKey({ kind: 'new', n: seq }), 'right')
 }
 
 /**
@@ -527,7 +491,7 @@ export function openInSplit(ws: ShellWorkspace, key: string): ShellWorkspace {
     return isSplit(entry) ? focusMember(ws, entry.id, key) : splitActive(ws)
   }
   // `key` is not in the active entry, so taking it out leaves that alone.
-  return addToActive(detach(ws, key), key, "right")
+  return addToActive(detach(ws, key), key, 'right')
 }
 
 /** Separate a split: every member back to a tab of its own, in place, the
@@ -536,11 +500,7 @@ export function separate(ws: ShellWorkspace, splitId: string): ShellWorkspace {
   const at = indexOfEntry(ws, splitId)
   const split = ws.entries[at]
   if (!isSplit(split)) return ws
-  const entries = [
-    ...ws.entries.slice(0, at),
-    ...split.views,
-    ...ws.entries.slice(at + 1),
-  ]
+  const entries = [...ws.entries.slice(0, at), ...split.views, ...ws.entries.slice(at + 1)]
   const active = ws.active === splitId ? split.focused : ws.active
   return { ...ws, entries, active }
 }
@@ -550,11 +510,7 @@ export function separate(ws: ShellWorkspace, splitId: string): ShellWorkspace {
  * split or at strip `index` (its header dragged to the strip), and comes
  * forward. A 2-split it leaves turns back into a tab.
  */
-export function moveOut(
-  ws: ShellWorkspace,
-  key: string,
-  index?: number
-): ShellWorkspace {
+export function moveOut(ws: ShellWorkspace, key: string, index?: number): ShellWorkspace {
   const holder = entryOf(ws, key)
   if (!isSplit(holder)) return ws
   const at = indexOfEntry(ws, holder.id)
@@ -563,14 +519,11 @@ export function moveOut(
 
 /** Replace with…: the member's place goes to a New tab, focused; the view
  *  it held keeps a tab of its own. */
-export function replaceWithNew(
-  ws: ShellWorkspace,
-  member: string
-): ShellWorkspace {
+export function replaceWithNew(ws: ShellWorkspace, member: string): ShellWorkspace {
   const holder = entryOf(ws, member)
   if (!isSplit(holder) || isNewKey(member)) return ws
   const seq = ws.seq + 1
-  const blank = tabKey({ kind: "new", n: seq })
+  const blank = tabKey({ kind: 'new', n: seq })
   return replaceIn({ ...ws, seq }, holder.id, member, blank)
 }
 
@@ -578,17 +531,10 @@ export function replaceWithNew(
  *  entry there now).
  * @public exported for its test
  */
-export function moveEntry(
-  ws: ShellWorkspace,
-  id: string,
-  index: number
-): ShellWorkspace {
+export function moveEntry(ws: ShellWorkspace, id: string, index: number): ShellWorkspace {
   const from = indexOfEntry(ws, id)
   if (from === -1) return ws
-  const to = Math.max(
-    0,
-    Math.min(from < index ? index - 1 : index, ws.entries.length - 1)
-  )
+  const to = Math.max(0, Math.min(from < index ? index - 1 : index, ws.entries.length - 1))
   if (to === from) return ws
   const entries = ws.entries.filter((_, i) => i !== from)
   entries.splice(to, 0, ws.entries[from]!)
@@ -601,11 +547,7 @@ export function moveEntry(
  * tab of its own there; a view not open yet (dragged from the sidebar) opens
  * as a tab there, selected.
  */
-export function dropOnStrip(
-  ws: ShellWorkspace,
-  dragged: string,
-  index: number
-): ShellWorkspace {
+export function dropOnStrip(ws: ShellWorkspace, dragged: string, index: number): ShellWorkspace {
   if (indexOfEntry(ws, dragged) !== -1) return moveEntry(ws, dragged, index)
   if (entryOf(ws, dragged) === null) {
     return isViewKey(dragged) ? insertEntry(ws, dragged, index) : ws
@@ -615,7 +557,7 @@ export function dropOnStrip(
 
 /** Where a view dropped on the content goes: beside the view under it, or
  *  in its place. */
-export type DropZone = "left" | "right" | "center"
+export type DropZone = 'left' | 'right' | 'center'
 
 /**
  * A view dragged onto the content (docs/features/tabs-panes.md, Making a
@@ -639,26 +581,26 @@ export function dropTab(
   ws: ShellWorkspace,
   key: string,
   target: string,
-  zone: DropZone
+  zone: DropZone,
 ): ShellWorkspace {
   const entry = activeEntry(ws)
   if (entry === null) return ws
   if (key === target) {
-    return !isSplit(entry) && zone !== "center" ? splitOwn(ws, key, zone) : ws
+    return !isSplit(entry) && zone !== 'center' ? splitOwn(ws, key, zone) : ws
   }
   if (!entryViews(entry).includes(target) || !isViewKey(key)) return ws
   if (!isSplit(entry)) {
-    if (zone === "center") return ws
+    if (zone === 'center') return ws
     return addToActive(detach(ws, key), key, zone)
   }
   if (entry.views.includes(key)) {
     const views = [...entry.views]
-    if (zone === "center") {
+    if (zone === 'center') {
       views[views.indexOf(key)] = target
       views[entry.views.indexOf(target)] = key
     } else {
       views.splice(views.indexOf(key), 1)
-      views.splice(views.indexOf(target) + (zone === "right" ? 1 : 0), 0, key)
+      views.splice(views.indexOf(target) + (zone === 'right' ? 1 : 0), 0, key)
     }
     if (views.every((v, i) => v === entry.views[i])) return ws
     const at = indexOfEntry(ws, entry.id)
@@ -666,7 +608,7 @@ export function dropTab(
     return { ...ws, entries: replaceEntryAt(ws, at, split), active: entry.id }
   }
   const out = detach(ws, key)
-  if (zone === "center" || entry.views.length >= MAX_SPLIT) {
+  if (zone === 'center' || entry.views.length >= MAX_SPLIT) {
     return replaceIn(out, entry.id, target, key)
   }
   return addToActive(out, key, zone, target)
@@ -674,21 +616,15 @@ export function dropTab(
 
 /** The active tab `key` dropped on its own `side`: beside its neighbour in
  *  the strip, else beside a New tab. */
-function splitOwn(
-  ws: ShellWorkspace,
-  key: string,
-  side: "left" | "right"
-): ShellWorkspace {
+function splitOwn(ws: ShellWorkspace, key: string, side: 'left' | 'right'): ShellWorkspace {
   const at = indexOfEntry(ws, key)
-  const near = [ws.entries[at - 1], ws.entries[at + 1]].find(
-    (e) => e !== undefined && !isSplit(e)
-  )
+  const near = [ws.entries[at - 1], ws.entries[at + 1]].find((e) => e !== undefined && !isSplit(e))
   if (near !== undefined) {
     return addToActive(detach({ ...ws, active: entryId(near) }, key), key, side)
   }
   const seq = ws.seq + 1
-  const fresh = tabKey({ kind: "new", n: seq })
-  const views = side === "left" ? [key, fresh] : [fresh, key]
+  const fresh = tabKey({ kind: 'new', n: seq })
+  const views = side === 'left' ? [key, fresh] : [fresh, key]
   const next = nextSplitId({ ...ws, seq })
   const split: ShellSplit = {
     id: next.id,
@@ -720,25 +656,18 @@ function splitOwn(
  *
  * A drop that would change nothing is the same workspace.
  */
-export function insertIntoActive(
-  ws: ShellWorkspace,
-  key: string,
-  index: number
-): ShellWorkspace {
+export function insertIntoActive(ws: ShellWorkspace, key: string, index: number): ShellWorkspace {
   if (!isViewKey(key)) return ws
   const entry = activeEntry(ws)
   if (entry === null) return openTab(ws, key)
   if (!isSplit(entry)) {
-    const side = index <= 0 ? "left" : "right"
+    const side = index <= 0 ? 'left' : 'right'
     if (entry === key) return splitOwn(ws, key, side)
     return addToActive(detach(ws, key), key, side)
   }
   const from = entry.views.indexOf(key)
   if (from !== -1) {
-    const to = Math.max(
-      0,
-      Math.min(from < index ? index - 1 : index, entry.views.length - 1)
-    )
+    const to = Math.max(0, Math.min(from < index ? index - 1 : index, entry.views.length - 1))
     if (to === from) return ws
     const views = entry.views.filter((_, i) => i !== from)
     const shares = entry.shares.filter((_, i) => i !== from)
@@ -754,11 +683,7 @@ export function insertIntoActive(
 }
 
 /** A split's shares, in member order, normalised to sum to 1. */
-export function setShares(
-  ws: ShellWorkspace,
-  splitId: string,
-  shares: number[]
-): ShellWorkspace {
+export function setShares(ws: ShellWorkspace, splitId: string, shares: number[]): ShellWorkspace {
   const at = indexOfEntry(ws, splitId)
   const split = ws.entries[at]
   if (!isSplit(split) || shares.length !== split.views.length) return ws
@@ -775,35 +700,28 @@ export function setShares(
  *  split, in front, and in Reopen. */
 export function retargetTabs(
   ws: ShellWorkspace,
-  moves: readonly { from: string; to: string }[]
+  moves: readonly { from: string; to: string }[],
 ): ShellWorkspace {
-  const to = new Map(
-    moves.map((m) => [tabKey(tabForPath(m.from)), tabKey(tabForPath(m.to))])
-  )
+  const to = new Map(moves.map((m) => [tabKey(tabForPath(m.from)), tabKey(tabForPath(m.to))]))
   const move = (key: string) => to.get(key) ?? key
   const inClosed = ws.closed.some((c) =>
-    typeof c === "string" ? to.has(c) : c.views.some((v) => to.has(v))
+    typeof c === 'string' ? to.has(c) : c.views.some((v) => to.has(v)),
   )
   if (!allTabs(ws).some((k) => to.has(k)) && !inClosed) return ws
   return {
     ...ws,
     entries: ws.entries.map((e) =>
-      isSplit(e)
-        ? { ...e, views: e.views.map(move), focused: move(e.focused) }
-        : move(e)
+      isSplit(e) ? { ...e, views: e.views.map(move), focused: move(e.focused) } : move(e),
     ),
     active: ws.active === null ? null : move(ws.active),
     closed: ws.closed.map((c) =>
-      typeof c === "string" ? move(c) : { ...c, views: c.views.map(move) }
+      typeof c === 'string' ? move(c) : { ...c, views: c.views.map(move) },
     ),
   }
 }
 
 /** Close the views `gone` says are gone (a deleted file, a removed
  *  session), wherever they are, without offering them to Reopen. */
-export function closeTabsWhere(
-  ws: ShellWorkspace,
-  gone: (key: string) => boolean
-): ShellWorkspace {
+export function closeTabsWhere(ws: ShellWorkspace, gone: (key: string) => boolean): ShellWorkspace {
   return allTabs(ws).filter(gone).reduce(detach, ws)
 }

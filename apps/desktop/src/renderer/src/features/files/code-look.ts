@@ -14,18 +14,18 @@
  * **The block's measures.** 13px mono on 24px lines, the numbers muted in
  * a gutter as wide as the block's, on the page's own ground.
  */
-import { StateEffect, StateField, type Extension } from "@codemirror/state"
+import { StateEffect, StateField, type Extension } from '@codemirror/state'
 import {
   Decoration,
   EditorView,
   ViewPlugin,
   type DecorationSet,
   type ViewUpdate,
-} from "@codemirror/view"
+} from '@codemirror/view'
 
-import { highlightCode } from "@/components/reui/code-block/code-block-highlight"
+import { highlightCode } from '@/components/reui/code-block/code-block-highlight'
 
-import { codeLanguage } from "@/editor/languages"
+import { codeLanguage } from '@/editor/languages'
 
 /** Past this, the editor stays plain rather than tokenizing a lockfile. */
 const HIGHLIGHT_LIMIT = 300_000
@@ -46,19 +46,19 @@ const colours = StateField.define<DecorationSet>({
 const markCache = new Map<string, Decoration>()
 
 function markFor(color?: string, colorDark?: string, fontStyle?: string) {
-  const key = `${color ?? ""}|${colorDark ?? ""}|${fontStyle ?? ""}`
+  const key = `${color ?? ''}|${colorDark ?? ''}|${fontStyle ?? ''}`
   let mark = markCache.get(key)
   if (mark === undefined) {
     const style = [
-      color ? `--cb-c:${color}` : "",
-      colorDark ? `--cb-cd:${colorDark}` : "",
-      fontStyle === "italic" ? "font-style:italic" : "",
-      fontStyle === "bold" ? "font-weight:600" : "",
-      fontStyle === "underline" ? "text-decoration:underline" : "",
+      color ? `--cb-c:${color}` : '',
+      colorDark ? `--cb-cd:${colorDark}` : '',
+      fontStyle === 'italic' ? 'font-style:italic' : '',
+      fontStyle === 'bold' ? 'font-weight:600' : '',
+      fontStyle === 'underline' ? 'text-decoration:underline' : '',
     ]
       .filter(Boolean)
-      .join(";")
-    mark = Decoration.mark({ class: "cm-shiki", attributes: { style } })
+      .join(';')
+    mark = Decoration.mark({ class: 'cm-shiki', attributes: { style } })
     markCache.set(key, mark)
   }
   return mark
@@ -89,7 +89,7 @@ function shikiPlugin(language: string) {
         const pass = ++this.pass
         const lines = await highlightCode(doc.toString(), {
           language,
-          instanceKey: "file-editor",
+          instanceKey: 'file-editor',
         }).catch(() => null)
         // A newer pass, or an edit since this one began, wins.
         if (lines === null || pass !== this.pass) return
@@ -103,9 +103,7 @@ function shikiPlugin(language: string) {
             const to = at + token.content.length
             if (to > line.to) break
             if (to > at && (token.color || token.colorDark || token.fontStyle)) {
-              ranges.push(
-                markFor(token.color, token.colorDark, token.fontStyle).range(at, to)
-              )
+              ranges.push(markFor(token.color, token.colorDark, token.fontStyle).range(at, to))
             }
             at = to
           }
@@ -119,37 +117,38 @@ function shikiPlugin(language: string) {
         window.clearTimeout(this.timer)
         this.pass++
       }
-    }
+    },
   )
 }
 
 const LOOK = EditorView.theme({
-  "&": { fontSize: "0.8125rem" },
-  ".cm-scroller": {
-    fontFamily: "var(--font-mono)",
-    lineHeight: "1.5rem",
+  '&': { fontSize: '0.8125rem' },
+  '.cm-scroller': {
+    fontFamily: 'var(--font-mono)',
+    lineHeight: '1.5rem',
   },
-  ".cm-content": { paddingBlock: "0.75rem" },
-  ".cm-line": { paddingInline: "0.75rem" },
-  ".cm-gutters": {
-    backgroundColor: "transparent",
-    border: "none",
-    color: "var(--muted-foreground)",
+  '.cm-content': { paddingBlock: '0.75rem' },
+  '.cm-line': { paddingInline: '0.75rem' },
+  '.cm-gutters': {
+    backgroundColor: 'transparent',
+    border: 'none',
+    color: 'var(--muted-foreground)',
   },
-  ".cm-lineNumbers .cm-gutterElement": {
-    minWidth: "2.25rem",
-    paddingInline: "0 0.625rem",
-    textAlign: "end",
+  '.cm-lineNumbers .cm-gutterElement': {
+    minWidth: '2.25rem',
+    paddingInline: '0 0.625rem',
+    textAlign: 'end',
   },
-  ".cm-activeLineGutter": {
-    backgroundColor: "transparent",
-    color: "var(--foreground)",
+  '.cm-activeLineGutter': {
+    backgroundColor: 'transparent',
+    color: 'var(--foreground)',
   },
-  ".cm-activeLine": { backgroundColor: "transparent" },
+  '.cm-activeLine': { backgroundColor: 'transparent' },
   // Over the plain stack's own token colours, whichever span is outermost.
-  ".cm-shiki, .cm-shiki span": { color: "var(--cb-c, inherit)" },
-  ":root[data-theme='dark'] & .cm-shiki, :root[data-theme='dark'] & .cm-shiki span":
-    { color: "var(--cb-cd, inherit)" },
+  '.cm-shiki, .cm-shiki span': { color: 'var(--cb-c, inherit)' },
+  ":root[data-theme='dark'] & .cm-shiki, :root[data-theme='dark'] & .cm-shiki span": {
+    color: 'var(--cb-cd, inherit)',
+  },
 })
 
 /** The block's colours and measures for the file at `path`. */

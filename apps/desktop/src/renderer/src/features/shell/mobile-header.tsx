@@ -1,7 +1,7 @@
-import { Button } from "@/components/ui/button"
-import { SheetTrigger } from "@/components/ui/sheet"
-import { BrandMark } from "@/composites/brand-mark"
-import { MenuIcon, SearchIcon, PlusIcon } from "lucide-react"
+import { Button } from '@/components/ui/button'
+import { SheetTrigger } from '@/components/ui/sheet'
+import { BrandMark } from '@/composites/brand-mark'
+import { MenuIcon, SearchIcon, PlusIcon } from 'lucide-react'
 
 /** Below md the thread sidebar lives in a sheet, so this bar repeats its header
     and keeps search and a new chat one tap away. */
@@ -21,23 +21,11 @@ export function MobileHeader({
         </Button>
       </SheetTrigger>
       <BrandMark variant="monogram" className="h-5" />
-      <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
-        Holi
-      </span>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        aria-label="Search chats"
-        onClick={onOpenSearch}
-      >
+      <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">Holi</span>
+      <Button variant="ghost" size="icon-sm" aria-label="Search chats" onClick={onOpenSearch}>
         <SearchIcon aria-hidden="true" />
       </Button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        aria-label="New chat"
-        onClick={onNewChat}
-      >
+      <Button variant="ghost" size="icon-sm" aria-label="New chat" onClick={onNewChat}>
         <PlusIcon aria-hidden="true" />
       </Button>
     </div>

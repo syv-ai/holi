@@ -6,7 +6,7 @@
  * Pressing a chip asks `onOpen` (set by the document view) to open the
  * target; resolving the name to a path is the view's business.
  */
-import { mergeAttributes, Node } from "@tiptap/react"
+import { mergeAttributes, Node } from '@tiptap/react'
 
 const WIKI_LINK = /^\[\[([^[\]\n|]+)(?:\|([^[\]\n]+))?\]\]/
 
@@ -15,8 +15,8 @@ export interface WikiLinkOptions {
 }
 
 export const WikiLink = Node.create<WikiLinkOptions>({
-  name: "wikiLink",
-  group: "inline",
+  name: 'wikiLink',
+  group: 'inline',
   inline: true,
   atom: true,
   selectable: true,
@@ -27,22 +27,22 @@ export const WikiLink = Node.create<WikiLinkOptions>({
 
   addAttributes() {
     return {
-      target: { default: "" },
+      target: { default: '' },
       label: { default: null },
     }
   },
 
   parseHTML() {
-    return [{ tag: "span[data-wiki-link]" }]
+    return [{ tag: 'span[data-wiki-link]' }]
   },
 
   renderHTML({ node, HTMLAttributes }) {
     return [
-      "span",
+      'span',
       mergeAttributes(HTMLAttributes, {
-        "data-wiki-link": node.attrs.target,
+        'data-wiki-link': node.attrs.target,
         class:
-          "text-primary cursor-pointer rounded-sm underline decoration-current/30 underline-offset-2 hover:decoration-current",
+          'text-primary cursor-pointer rounded-sm underline decoration-current/30 underline-offset-2 hover:decoration-current',
       }),
       node.attrs.label ?? node.attrs.target,
     ]
@@ -53,14 +53,14 @@ export const WikiLink = Node.create<WikiLinkOptions>({
   },
 
   markdownTokenizer: {
-    name: "wikiLink",
-    level: "inline",
-    start: (src: string) => src.indexOf("[["),
+    name: 'wikiLink',
+    level: 'inline',
+    start: (src: string) => src.indexOf('[['),
     tokenize(src: string) {
       const match = WIKI_LINK.exec(src)
       if (!match) return undefined
       return {
-        type: "wikiLink",
+        type: 'wikiLink',
         raw: match[0],
         target: match[1]!.trim(),
         label: match[2]?.trim() ?? null,
@@ -70,7 +70,7 @@ export const WikiLink = Node.create<WikiLinkOptions>({
 
   parseMarkdown(token) {
     return {
-      type: "wikiLink",
+      type: 'wikiLink',
       attrs: { target: token.target, label: token.label ?? null },
     }
   },
@@ -82,12 +82,12 @@ export const WikiLink = Node.create<WikiLinkOptions>({
 
   addNodeView() {
     return ({ node }) => {
-      const dom = document.createElement("span")
+      const dom = document.createElement('span')
       dom.dataset.wikiLink = node.attrs.target
       dom.className =
-        "text-primary cursor-pointer rounded-sm underline decoration-current/30 underline-offset-2 hover:decoration-current"
+        'text-primary cursor-pointer rounded-sm underline decoration-current/30 underline-offset-2 hover:decoration-current'
       dom.textContent = node.attrs.label ?? node.attrs.target
-      dom.addEventListener("mousedown", (event) => {
+      dom.addEventListener('mousedown', (event) => {
         event.preventDefault()
         this.options.onOpen(node.attrs.target)
       })

@@ -24,7 +24,11 @@ export function BrandMark({
       role="img"
       aria-label="Holi"
       fill="currentColor"
-      className={cn('w-auto shrink-0', size === 'xl' ? 'h-24' : size === 'lg' ? 'h-16' : 'h-10', className)}
+      className={cn(
+        'w-auto shrink-0',
+        size === 'xl' ? 'h-24' : size === 'lg' ? 'h-16' : 'h-10',
+        className,
+      )}
     >
       {shape.paths.map((d) => (
         <path key={d} d={d} fillRule={shape.fillRule} clipRule={shape.fillRule} />

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest"
+import { describe, expect, test } from 'vitest'
 
 import {
   activeSplit,
@@ -33,15 +33,15 @@ import {
   stepMember,
   type ShellSplit,
   type ShellWorkspace,
-} from "../shell-workspace"
-import { AGENTS_HOME_KEY, parseTabKey, sessionKey } from "../tab-descriptor"
+} from '../shell-workspace'
+import { AGENTS_HOME_KEY, parseTabKey, sessionKey } from '../tab-descriptor'
 
-const A = "Notes/A.md"
-const B = "Notes/B.md"
-const C = "Notes/C.md"
-const D = "Notes/D.md"
-const E = "Notes/E.md"
-const S = sessionKey({ owner: "chat", id: "s1" })
+const A = 'Notes/A.md'
+const B = 'Notes/B.md'
+const C = 'Notes/C.md'
+const D = 'Notes/D.md'
+const E = 'Notes/E.md'
+const S = sessionKey({ owner: 'chat', id: 's1' })
 
 function withTabs(...keys: string[]): ShellWorkspace {
   return keys.reduce((ws, key) => openTab(ws, key), emptyWorkspace())
@@ -53,7 +53,7 @@ function split(ws: ShellWorkspace): ShellSplit {
   return s!
 }
 
-const isNew = (key: string) => parseTabKey(key)?.kind === "new"
+const isNew = (key: string) => parseTabKey(key)?.kind === 'new'
 
 /** The strip as views: a tab's key, a split's keys. */
 function strip(ws: ShellWorkspace): (string | string[])[] {
@@ -65,8 +65,8 @@ function pair(): ShellWorkspace {
   return openInSplit(selectEntry(withTabs(A, B, C), A), B)
 }
 
-describe("the strip", () => {
-  test("a tab opens after the active one and comes forward", () => {
+describe('the strip', () => {
+  test('a tab opens after the active one and comes forward', () => {
     let ws = withTabs(A, B)
     ws = selectEntry(ws, A)
     ws = openTab(ws, C)
@@ -74,7 +74,7 @@ describe("the strip", () => {
     expect(focusedTab(ws)).toBe(C)
   })
 
-  test("an open tab is selected where it is, not opened twice", () => {
+  test('an open tab is selected where it is, not opened twice', () => {
     const ws = withTabs(A, B)
     const next = openTab(ws, A)
     expect(next.active).toBe(A)
@@ -82,7 +82,7 @@ describe("the strip", () => {
     expect(openTab(next, A)).toBe(next)
   })
 
-  test("a New tab gives its place to what is opened from it", () => {
+  test('a New tab gives its place to what is opened from it', () => {
     let ws = openNewTab(withTabs(A))
     ws = openTab(ws, B)
     expect(strip(ws)).toEqual([A, B])
@@ -102,7 +102,7 @@ describe("the strip", () => {
     expect(ws.active).toBe(entryIds(ws)[2])
   })
 
-  test("an entry drags to another place in the strip", () => {
+  test('an entry drags to another place in the strip', () => {
     const ws = withTabs(A, B, C)
     expect(strip(moveEntry(ws, C, 0))).toEqual([C, A, B])
     expect(strip(moveEntry(ws, A, 3))).toEqual([B, C, A])
@@ -110,8 +110,8 @@ describe("the strip", () => {
   })
 })
 
-describe("making a split", () => {
-  test("⌘\\ on a tab makes a split of it and a New tab, focused on the right", () => {
+describe('making a split', () => {
+  test('⌘\\ on a tab makes a split of it and a New tab, focused on the right', () => {
     const ws = splitActive(withTabs(A, B))
     expect(ws.entries).toHaveLength(2)
     const s = split(ws)
@@ -121,19 +121,19 @@ describe("making a split", () => {
     expect(s.shares).toEqual([0.5, 0.5])
   })
 
-  test("open in split view pairs the active tab with that tab, whose own entry goes", () => {
+  test('open in split view pairs the active tab with that tab, whose own entry goes', () => {
     let ws = selectEntry(withTabs(A, B, C), A)
     ws = openInSplit(ws, C)
     expect(strip(ws)).toEqual([[A, C], B])
     expect(focusedTab(ws)).toBe(C)
   })
 
-  test("open in split view on a split with room adds a member", () => {
+  test('open in split view on a split with room adds a member', () => {
     const ws = openInSplit(pair(), C)
     expect(strip(ws)).toEqual([[A, B, C]])
   })
 
-  test("a split holds at most MAX_SPLIT views; ⌘\\ then does nothing", () => {
+  test('a split holds at most MAX_SPLIT views; ⌘\\ then does nothing', () => {
     const ws = openInSplit(openInSplit(pair(), C), D)
     expect(split(ws).views).toHaveLength(MAX_SPLIT)
     expect(splitActive(ws)).toBe(ws)
@@ -141,44 +141,44 @@ describe("making a split", () => {
 
   test("a tab dropped on the content's edge splits with it there", () => {
     const ws = withTabs(A, B)
-    expect(strip(dropTab(ws, A, B, "right"))).toEqual([[B, A]])
-    expect(strip(dropTab(ws, A, B, "left"))).toEqual([[A, B]])
-    expect(dropTab(ws, A, B, "center")).toBe(ws)
-    expect(dropTab(ws, B, B, "center")).toBe(ws)
+    expect(strip(dropTab(ws, A, B, 'right'))).toEqual([[B, A]])
+    expect(strip(dropTab(ws, A, B, 'left'))).toEqual([[A, B]])
+    expect(dropTab(ws, A, B, 'center')).toBe(ws)
+    expect(dropTab(ws, B, B, 'center')).toBe(ws)
   })
 
-  test("the tab in front dropped on its own edge splits with its neighbour", () => {
+  test('the tab in front dropped on its own edge splits with its neighbour', () => {
     const ws = selectEntry(withTabs(A, B, C), B)
-    expect(strip(dropTab(ws, B, B, "right"))).toEqual([[A, B], C])
-    expect(strip(dropTab(ws, B, B, "left"))).toEqual([[B, A], C])
-    expect(focusedTab(dropTab(ws, B, B, "right"))).toBe(B)
-    const alone = dropTab(withTabs(A), A, A, "right")
+    expect(strip(dropTab(ws, B, B, 'right'))).toEqual([[A, B], C])
+    expect(strip(dropTab(ws, B, B, 'left'))).toEqual([[B, A], C])
+    expect(focusedTab(dropTab(ws, B, B, 'right'))).toBe(B)
+    const alone = dropTab(withTabs(A), A, A, 'right')
     expect(isSplit(alone.entries[0]!)).toBe(true)
     expect(focusedTab(alone)).toBe(A)
   })
 
-  test("a tab dropped on a member replaces it, the replaced one keeping a tab", () => {
-    const ws = dropTab(pair(), C, A, "center")
+  test('a tab dropped on a member replaces it, the replaced one keeping a tab', () => {
+    const ws = dropTab(pair(), C, A, 'center')
     expect(strip(ws)).toEqual([[C, B], A])
     expect(focusedTab(ws)).toBe(C)
   })
 
-  test("at four members an edge drop replaces instead of splitting", () => {
+  test('at four members an edge drop replaces instead of splitting', () => {
     let ws = selectEntry(withTabs(A, B, C, D, E), A)
     ws = openInSplit(openInSplit(openInSplit(ws, B), C), D)
-    ws = dropTab(ws, E, B, "right")
+    ws = dropTab(ws, E, B, 'right')
     expect(strip(ws)).toEqual([[A, E, C, D], B])
   })
 
-  test("within a split a drop reorders or swaps", () => {
+  test('within a split a drop reorders or swaps', () => {
     const ws = pair()
-    expect(strip(dropTab(ws, B, A, "left"))).toEqual([[B, A], C])
-    expect(strip(dropTab(ws, A, B, "center"))).toEqual([[B, A], C])
-    expect(dropTab(ws, A, B, "left")).toBe(ws)
+    expect(strip(dropTab(ws, B, A, 'left'))).toEqual([[B, A], C])
+    expect(strip(dropTab(ws, A, B, 'center'))).toEqual([[B, A], C])
+    expect(dropTab(ws, A, B, 'left')).toBe(ws)
   })
 })
 
-describe("inserting at a place (the drag preview)", () => {
+describe('inserting at a place (the drag preview)', () => {
   test("a tab dropped at a single view's edge splits with it there, half and half", () => {
     const ws = withTabs(A, B)
     expect(strip(insertIntoActive(ws, A, 1))).toEqual([[B, A]])
@@ -187,13 +187,13 @@ describe("inserting at a place (the drag preview)", () => {
     expect(focusedTab(insertIntoActive(ws, A, 0))).toBe(A)
   })
 
-  test("the tab in front dropped on its own edge splits with its neighbour", () => {
+  test('the tab in front dropped on its own edge splits with its neighbour', () => {
     const ws = selectEntry(withTabs(A, B, C), B)
     expect(strip(insertIntoActive(ws, B, 1))).toEqual([[A, B], C])
     expect(strip(insertIntoActive(ws, B, 0))).toEqual([[B, A], C])
   })
 
-  test("a view lands between two members with an even share, the others keeping their proportions", () => {
+  test('a view lands between two members with an even share, the others keeping their proportions', () => {
     let ws = pair()
     ws = setShares(ws, split(ws).id, [0.6, 0.4])
     ws = insertIntoActive(ws, C, 1)
@@ -207,13 +207,13 @@ describe("inserting at a place (the drag preview)", () => {
     expect(strip(insertIntoActive(pair(), C, 2))).toEqual([[A, B, C]])
   })
 
-  test("a view not open yet opens in that place; one open elsewhere moves there", () => {
+  test('a view not open yet opens in that place; one open elsewhere moves there', () => {
     expect(strip(insertIntoActive(pair(), D, 1))).toEqual([[A, D, B], C])
     expect(strip(insertIntoActive(withTabs(A), S, 0))).toEqual([[S, A]])
     expect(strip(insertIntoActive(emptyWorkspace(), D, 0))).toEqual([D])
   })
 
-  test("a member of the split moves to that place, its share with it", () => {
+  test('a member of the split moves to that place, its share with it', () => {
     let ws = openInSplit(pair(), C)
     ws = setShares(ws, split(ws).id, [0.5, 0.3, 0.2])
     ws = insertIntoActive(ws, A, 3)
@@ -231,30 +231,30 @@ describe("inserting at a place (the drag preview)", () => {
     expect(insertIntoActive(two, split(two).id, 1)).toBe(two)
   })
 
-  test("a view not open yet replaces a member, or opens on the strip", () => {
-    expect(strip(dropTab(pair(), D, A, "center"))).toEqual([[D, B], A, C])
+  test('a view not open yet replaces a member, or opens on the strip', () => {
+    expect(strip(dropTab(pair(), D, A, 'center'))).toEqual([[D, B], A, C])
     expect(strip(dropOnStrip(withTabs(A, B), D, 1))).toEqual([A, D, B])
     expect(withTabs(A, B).active).toBe(B)
     expect(dropOnStrip(withTabs(A, B), D, 1).active).toBe(D)
   })
 })
 
-describe("inside a split", () => {
-  test("closing a member of a 2-split turns it back into a tab", () => {
+describe('inside a split', () => {
+  test('closing a member of a 2-split turns it back into a tab', () => {
     const ws = closeTab(pair(), B)
     expect(strip(ws)).toEqual([A, C])
     expect(ws.active).toBe(A)
     expect(ws.closed).toEqual([B])
   })
 
-  test("separate puts every member back as a tab, the focused one in front", () => {
+  test('separate puts every member back as a tab, the focused one in front', () => {
     const ws = pair()
     const out = separate(ws, split(ws).id)
     expect(strip(out)).toEqual([A, B, C])
     expect(out.active).toBe(B)
   })
 
-  test("move out of split makes a member its own tab, after the split", () => {
+  test('move out of split makes a member its own tab, after the split', () => {
     let ws = openInSplit(pair(), C)
     ws = moveOut(ws, A)
     expect(strip(ws)).toEqual([[B, C], A])
@@ -266,7 +266,7 @@ describe("inside a split", () => {
     expect(strip(ws)).toEqual([A, B, C])
   })
 
-  test("replace with… puts a New tab in the member, keeping the old view", () => {
+  test('replace with… puts a New tab in the member, keeping the old view', () => {
     const ws = replaceWithNew(pair(), A)
     const s = split(ws)
     expect(isNew(s.views[0]!)).toBe(true)
@@ -274,32 +274,32 @@ describe("inside a split", () => {
     expect(strip(ws).slice(1)).toEqual([A, C])
   })
 
-  test("opening while a split is up is a new tab after it; the split stays whole", () => {
+  test('opening while a split is up is a new tab after it; the split stays whole', () => {
     const ws = openTab(pair(), D)
     expect(strip(ws)).toEqual([[A, B], D, C])
     expect(ws.active).toBe(D)
     expect(focusedTab(ws)).toBe(D)
   })
 
-  test("⌘\\ on a split adds a third side, and the next open fills it", () => {
+  test('⌘\\ on a split adds a third side, and the next open fills it', () => {
     const ws = openTab(splitActive(pair()), D)
     expect(strip(ws)).toEqual([[A, B, D], C])
     expect(focusedTab(ws)).toBe(D)
   })
 
-  test("a New tab member is simply given up to what opens in it", () => {
+  test('a New tab member is simply given up to what opens in it', () => {
     const ws = openTab(splitActive(withTabs(A)), B)
     expect(strip(ws)).toEqual([[A, B]])
   })
 
-  test("opening an already-open member selects its split and focuses it", () => {
+  test('opening an already-open member selects its split and focuses it', () => {
     let ws = selectEntry(pair(), C)
     ws = openTab(ws, A)
     expect(ws.active).toBe(split(ws).id)
     expect(focusedTab(ws)).toBe(A)
   })
 
-  test("stepping members wraps; focusing one selects the split", () => {
+  test('stepping members wraps; focusing one selects the split', () => {
     let ws = pair()
     expect(focusedTab(stepMember(ws, 1))).toBe(A)
     const id = split(ws).id
@@ -309,15 +309,15 @@ describe("inside a split", () => {
     expect(focusedTab(ws)).toBe(A)
   })
 
-  test("shares belong to the split and sum to one", () => {
+  test('shares belong to the split and sum to one', () => {
     let ws = pair()
     ws = setShares(ws, split(ws).id, [3, 1])
     expect(split(ws).shares).toEqual([0.75, 0.25])
   })
 })
 
-describe("closing and reopening", () => {
-  test("closing the active tab hands over to the next, else the previous", () => {
+describe('closing and reopening', () => {
+  test('closing the active tab hands over to the next, else the previous', () => {
     let ws = selectEntry(withTabs(A, B, C), B)
     ws = closeTab(ws, B)
     expect(ws.active).toBe(C)
@@ -325,7 +325,7 @@ describe("closing and reopening", () => {
     expect(ws.active).toBe(A)
   })
 
-  test("close others and close to the right", () => {
+  test('close others and close to the right', () => {
     const ws = selectEntry(withTabs(A, B, C), C)
     expect(strip(closeOtherTabs(ws, B))).toEqual([B])
     const right = closeTabsToRight(ws, A)
@@ -334,7 +334,7 @@ describe("closing and reopening", () => {
     expect(closeAllTabs(ws).entries).toEqual([])
   })
 
-  test("a closed split reopens as the split it was", () => {
+  test('a closed split reopens as the split it was', () => {
     let ws = pair()
     ws = setShares(ws, split(ws).id, [2, 1])
     ws = closeEntry(ws, split(ws).id)
@@ -344,7 +344,7 @@ describe("closing and reopening", () => {
     expect(split(ws).shares.map((s) => Math.round(s * 100))).toEqual([67, 33])
   })
 
-  test("reopen skips New tabs", () => {
+  test('reopen skips New tabs', () => {
     let ws = openNewTab(withTabs(A))
     ws = closeTab(ws, entryIds(ws)[1]!)
     ws = closeTab(ws, A)
@@ -354,18 +354,18 @@ describe("closing and reopening", () => {
   })
 })
 
-describe("files", () => {
+describe('files', () => {
   test("a moved file's tab follows it, inside a split and in Reopen", () => {
     let ws = closeTab(pair(), C)
     ws = retargetTabs(ws, [
-      { from: A, to: "Notes/A2.md" },
-      { from: C, to: "Notes/C2.md" },
+      { from: A, to: 'Notes/A2.md' },
+      { from: C, to: 'Notes/C2.md' },
     ])
-    expect(strip(ws)).toEqual([["Notes/A2.md", B]])
-    expect(ws.closed).toEqual(["Notes/C2.md"])
-    ws = focusMember(ws, split(ws).id, "Notes/A2.md")
-    ws = retargetTabs(ws, [{ from: "Notes/A2.md", to: "Notes/A3.md" }])
-    expect(focusedTab(ws)).toBe("Notes/A3.md")
+    expect(strip(ws)).toEqual([['Notes/A2.md', B]])
+    expect(ws.closed).toEqual(['Notes/C2.md'])
+    ws = focusMember(ws, split(ws).id, 'Notes/A2.md')
+    ws = retargetTabs(ws, [{ from: 'Notes/A2.md', to: 'Notes/A3.md' }])
+    expect(focusedTab(ws)).toBe('Notes/A3.md')
   })
 
   test("a single active tab's move keeps it active", () => {
@@ -373,13 +373,13 @@ describe("files", () => {
     expect(ws.active).toBe(B)
   })
 
-  test("gone views close wherever they are, not offered to Reopen", () => {
+  test('gone views close wherever they are, not offered to Reopen', () => {
     const ws = closeTabsWhere(pair(), (k) => k === B || k === C)
     expect(strip(ws)).toEqual([A])
     expect(ws.closed).toEqual([])
   })
 
-  test("a no-op returns the same workspace", () => {
+  test('a no-op returns the same workspace', () => {
     const ws = withTabs(A)
     expect(retargetTabs(ws, [{ from: C, to: D }])).toBe(ws)
     expect(closeTabsWhere(ws, () => false)).toBe(ws)

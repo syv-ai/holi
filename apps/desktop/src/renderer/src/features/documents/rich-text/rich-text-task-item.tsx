@@ -1,13 +1,13 @@
-import { TaskItem } from "@tiptap/extension-list"
+import { TaskItem } from '@tiptap/extension-list'
 import {
   NodeViewContent,
   NodeViewWrapper,
   ReactNodeViewRenderer,
   useEditorState,
   type ReactNodeViewProps,
-} from "@tiptap/react"
+} from '@tiptap/react'
 
-import { Checkbox } from "@/components/ui/checkbox"
+import { Checkbox } from '@/components/ui/checkbox'
 
 function TaskItemView({ node, editor, updateAttributes }: ReactNodeViewProps) {
   const editable = useEditorState({
@@ -15,7 +15,7 @@ function TaskItemView({ node, editor, updateAttributes }: ReactNodeViewProps) {
     selector: ({ editor: current }) => current.isEditable,
   })
   const checked = node.attrs.checked === true
-  const task = node.textContent || "Empty task"
+  const task = node.textContent || 'Empty task'
 
   return (
     <NodeViewWrapper className="flex items-start gap-2.5">
@@ -30,9 +30,7 @@ function TaskItemView({ node, editor, updateAttributes }: ReactNodeViewProps) {
           checked={checked}
           disabled={!editable}
           aria-label={task}
-          onCheckedChange={(next) =>
-            updateAttributes({ checked: next === true })
-          }
+          onCheckedChange={(next) => updateAttributes({ checked: next === true })}
         />
       </span>
       <NodeViewContent className="min-w-0 flex-1" />
@@ -44,14 +42,13 @@ function TaskItemView({ node, editor, updateAttributes }: ReactNodeViewProps) {
 export const RichTextTaskItem = TaskItem.extend({
   addNodeView() {
     return ReactNodeViewRenderer(TaskItemView, {
-      as: "li",
+      as: 'li',
       attrs: ({ node }) => ({
-        "data-checked": String(node.attrs.checked === true),
+        'data-checked': String(node.attrs.checked === true),
       }),
       // The editor leaves pointer and key events on the checkbox alone.
       stopEvent: ({ event }) =>
-        event.target instanceof Element &&
-        event.target.closest("[data-task-toggle]") !== null,
+        event.target instanceof Element && event.target.closest('[data-task-toggle]') !== null,
     })
   },
 })

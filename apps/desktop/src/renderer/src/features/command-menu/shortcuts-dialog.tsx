@@ -1,5 +1,5 @@
-import { Fragment, useMemo, useRef, useState } from "react"
-import { useAtom, useAtomValue, useSetAtom } from "jotai"
+import { Fragment, useMemo, useRef, useState } from 'react'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 
 import {
   Command,
@@ -8,47 +8,44 @@ import {
   CommandItem,
   CommandList,
   CommandShortcut,
-} from "@/components/ui/command"
+} from '@/components/ui/command'
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { Kbd, KbdGroup } from "@/components/ui/kbd"
-import { hotkeyLabels } from "@/lib/hotkey"
+} from '@/components/ui/dialog'
+import { Kbd, KbdGroup } from '@/components/ui/kbd'
+import { hotkeyLabels } from '@/lib/hotkey'
 import {
   liveShortcuts,
   SHORTCUT_GROUPS,
   type ShortcutGroup,
   type ShortcutLine,
-} from "@/lib/shortcuts"
+} from '@/lib/shortcuts'
 import {
   isMac,
   liveShortcutIdsAtom,
   runShortcutAtom,
   shortcutsDialogOpenAtom,
-} from "@/state/shortcuts"
-import { EmptyState } from "@/composites/empty-state"
+} from '@/state/shortcuts'
+import { EmptyState } from '@/composites/empty-state'
 
 /** The live table, grouped, filtered by label, group or key name. */
 function shortcutSections(
   live: ReadonlySet<string>,
   query: string,
-  mac: boolean
+  mac: boolean,
 ): { group: ShortcutGroup; lines: ShortcutLine[] }[] {
   const term = query.trim().toLowerCase()
   const lines = liveShortcuts(live)
   return SHORTCUT_GROUPS.flatMap((group) => {
     const inGroup = lines.filter((line) => {
       if (line.group !== group) return false
-      if (term === "") return true
+      if (term === '') return true
       const keys = line.specs.flatMap((spec) => hotkeyLabels(spec, mac))
-      return [group, line.label, ...keys, line.gesture ?? ""]
-        .join(" ")
-        .toLowerCase()
-        .includes(term)
+      return [group, line.label, ...keys, line.gesture ?? ''].join(' ').toLowerCase().includes(term)
     })
     return inGroup.length > 0 ? [{ group, lines: inGroup }] : []
   })
@@ -57,9 +54,7 @@ function shortcutSections(
 /** A line's keys in words for its accessible name: `⇧ ⌘ T or …`. */
 function keysName(line: ShortcutLine, mac: boolean): string {
   if (line.gesture !== undefined) return line.gesture
-  return line.specs
-    .map((spec) => hotkeyLabels(spec, mac).join(" "))
-    .join(" or ")
+  return line.specs.map((spec) => hotkeyLabels(spec, mac).join(' ')).join(' or ')
 }
 
 function Keys({ specs, mac }: { specs: string[]; mac: boolean }) {
@@ -69,16 +64,11 @@ function Keys({ specs, mac }: { specs: string[]; mac: boolean }) {
         const labels = hotkeyLabels(spec, mac)
         return (
           <Fragment key={spec}>
-            {index > 0 ? (
-              <span className="text-muted-foreground text-xs">or</span>
-            ) : null}
+            {index > 0 ? <span className="text-muted-foreground text-xs">or</span> : null}
             <KbdGroup>
               {labels.map((label) => (
                 // The selected row is bg-muted, as a cap is: lift the cap.
-                <Kbd
-                  key={label}
-                  className="group-data-selected/command-item:bg-background"
-                >
+                <Kbd key={label} className="group-data-selected/command-item:bg-background">
                   {label}
                 </Kbd>
               ))}
@@ -100,7 +90,7 @@ export function ShortcutsDialog() {
   const [open, setOpen] = useAtom(shortcutsDialogOpenAtom)
   const live = useAtomValue(liveShortcutIdsAtom)
   const runShortcut = useSetAtom(runShortcutAtom)
-  const [query, setQuery] = useState("")
+  const [query, setQuery] = useState('')
   const searchRef = useRef<HTMLInputElement | null>(null)
   /** Where focus was when the dialog opened, to hand it back before a run. */
   const returnFocus = useRef<HTMLElement | null>(null)
@@ -108,13 +98,10 @@ export function ShortcutsDialog() {
   const pending = useRef<string | null>(null)
   const mac = isMac()
 
-  const sections = useMemo(
-    () => shortcutSections(live, query, mac),
-    [live, query, mac]
-  )
+  const sections = useMemo(() => shortcutSections(live, query, mac), [live, query, mac])
 
   function handleOpenChange(next: boolean) {
-    if (!next) setQuery("")
+    if (!next) setQuery('')
     setOpen(next)
   }
 
@@ -129,9 +116,7 @@ export function ShortcutsDialog() {
         onOpenAutoFocus={(event) => {
           // Still the element focused before the dialog took focus.
           returnFocus.current =
-            document.activeElement instanceof HTMLElement
-              ? document.activeElement
-              : null
+            document.activeElement instanceof HTMLElement ? document.activeElement : null
           event.preventDefault()
           searchRef.current?.focus()
         }}
@@ -201,9 +186,9 @@ export function ShortcutsDialog() {
               title="No shortcuts found"
               description="Try an action, a section or a key name."
               action={{
-                label: "Clear search",
+                label: 'Clear search',
                 onClick: () => {
-                  setQuery("")
+                  setQuery('')
                   searchRef.current?.focus()
                 },
               }}

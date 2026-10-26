@@ -23,12 +23,21 @@ const CAL_LIST = 'https://www.googleapis.com/calendar/v3/users/me/calendarList'
 /** A minimal Teams-shaped invite. `\r\n` on purpose: ICS is a CRLF format and
  *  the folding rule is defined in terms of it. */
 function ics(lines: string[]): string {
-  return ['BEGIN:VCALENDAR', 'METHOD:REQUEST', 'BEGIN:VEVENT', ...lines, 'END:VEVENT', 'END:VCALENDAR'].join('\r\n')
+  return [
+    'BEGIN:VCALENDAR',
+    'METHOD:REQUEST',
+    'BEGIN:VEVENT',
+    ...lines,
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n')
 }
 
 describe('icsUid', () => {
   it('reads the UID', () => {
-    expect(icsUid(ics(['UID:040000008200E00074C5B7101A82E008']))).toBe('040000008200E00074C5B7101A82E008')
+    expect(icsUid(ics(['UID:040000008200E00074C5B7101A82E008']))).toBe(
+      '040000008200E00074C5B7101A82E008',
+    )
   })
 
   /**
@@ -125,7 +134,9 @@ const EVENT = {
   start: { dateTime: '2026-08-19T12:00:00Z' },
   end: { dateTime: '2026-08-19T13:00:00Z' },
   conferenceData: {
-    entryPoints: [{ entryPointType: 'video', uri: 'https://teams.microsoft.com/l/meetup-join/19%3aX/0' }],
+    entryPoints: [
+      { entryPointType: 'video', uri: 'https://teams.microsoft.com/l/meetup-join/19%3aX/0' },
+    ],
   },
 }
 

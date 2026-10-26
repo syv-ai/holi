@@ -6,13 +6,13 @@
  * `state/commands.ts` keeps for ⌘W alone. A key a focused widget already
  * handled (`defaultPrevented`) is left to it.
  */
-import { useSetAtom } from "jotai"
-import { useEffect } from "react"
+import { useSetAtom } from 'jotai'
+import { useEffect } from 'react'
 
-import { matchHotkey } from "@/lib/hotkey"
-import { openSettingsAtom } from "@/state/settings-section"
+import { matchHotkey } from '@/lib/hotkey'
+import { openSettingsAtom } from '@/state/settings-section'
 
-const SETTINGS_HOTKEY = "⌘,"
+const SETTINGS_HOTKEY = '⌘,'
 
 export function useSettingsHotkey(): void {
   const open = useSetAtom(openSettingsAtom)
@@ -22,7 +22,7 @@ export function useSettingsHotkey(): void {
       event.preventDefault()
       open()
     }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [open])
 }

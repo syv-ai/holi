@@ -49,7 +49,9 @@ describe('the Codex provider', () => {
   it('has a hook that parses as shell and does nothing outside a session', () => {
     execFileSync('sh', ['-n', '-c', NOTIFY_SCRIPT])
     const env = { PATH: process.env.PATH ?? '' }
-    expect(() => execFileSync('sh', ['-c', NOTIFY_SCRIPT, 'holi-notify', '{}'], { env })).not.toThrow()
+    expect(() =>
+      execFileSync('sh', ['-c', NOTIFY_SCRIPT, 'holi-notify', '{}'], { env }),
+    ).not.toThrow()
   })
 })
 

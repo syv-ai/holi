@@ -1759,29 +1759,29 @@ function MessageBlock({
         className="-mx-2 flex hover:bg-transparent dark:hover:bg-transparent"
       >
         <span className="flex min-w-0 flex-1 flex-col">
-        <span className="flex items-baseline gap-2 text-sm">
-          {shown ? (
-            <ChevronDown className="size-3.5 self-center text-muted-foreground" />
-          ) : (
-            <ChevronRight className="size-3.5 self-center text-muted-foreground" />
-          )}
-          <span className="min-w-0 flex-1 truncate font-medium">{message.from.name}</span>
-          {/* Where you are in the conversation. Suppressed on a one-message
+          <span className="flex items-baseline gap-2 text-sm">
+            {shown ? (
+              <ChevronDown className="size-3.5 self-center text-muted-foreground" />
+            ) : (
+              <ChevronRight className="size-3.5 self-center text-muted-foreground" />
+            )}
+            <span className="min-w-0 flex-1 truncate font-medium">{message.from.name}</span>
+            {/* Where you are in the conversation. Suppressed on a one-message
               thread, where "1/1" is noise. */}
-          {total > 1 && (
+            {total > 1 && (
+              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                {position}/{total}
+              </span>
+            )}
             <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-              {position}/{total}
+              {messageStamp(message.date)}
+            </span>
+          </span>
+          {!shown && (
+            <span className="block truncate pl-5.5 text-xs font-normal text-muted-foreground">
+              {message.body.slice(0, 200)}
             </span>
           )}
-          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-            {messageStamp(message.date)}
-          </span>
-        </span>
-        {!shown && (
-          <span className="block truncate pl-5.5 text-xs font-normal text-muted-foreground">
-            {message.body.slice(0, 200)}
-          </span>
-        )}
         </span>
       </Button>
 

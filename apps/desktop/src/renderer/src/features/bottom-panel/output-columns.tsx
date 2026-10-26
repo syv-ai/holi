@@ -1,20 +1,20 @@
 // Cell templates read state through builder calls on a stable row/column,
 // which React Compiler cannot see.
-"use no memo"
+'use no memo'
 
-import { EyeOffIcon, FilterIcon } from "lucide-react"
-import { type DataGridFeatures } from "@/components/reui/data-grid/data-grid"
-import { DataGridColumnHeader } from "@/components/reui/data-grid/data-grid-column-header"
-import { type ColumnDef } from "@tanstack/react-table"
+import { EyeOffIcon, FilterIcon } from 'lucide-react'
+import { type DataGridFeatures } from '@/components/reui/data-grid/data-grid'
+import { DataGridColumnHeader } from '@/components/reui/data-grid/data-grid-column-header'
+import { type ColumnDef } from '@tanstack/react-table'
 
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
-} from "@/components/ui/context-menu"
-import { Skeleton } from "@/components/ui/skeleton"
-import { cn } from "@/lib/cn"
+} from '@/components/ui/context-menu'
+import { Skeleton } from '@/components/ui/skeleton'
+import { cn } from '@/lib/cn'
 import {
   ACTIVITY_LEVEL_LABELS,
   channelLabel,
@@ -23,11 +23,11 @@ import {
   fullTime,
   type ActivityChannel,
   type ActivityEntry,
-} from "@/state/activity"
+} from '@/state/activity'
 
-import { ChannelTag } from "./channel-mark"
-import { LogDetail } from "./log-detail"
-import { LEVEL_RANK, LevelBadge } from "./log-table"
+import { ChannelTag } from './channel-mark'
+import { LogDetail } from './log-detail'
+import { LEVEL_RANK, LevelBadge } from './log-table'
 
 /**
  * The Output grid's columns, after the audit log's in ReUI's
@@ -35,7 +35,7 @@ import { LEVEL_RANK, LevelBadge } from "./log-table"
  * level, message, vault. A channel's context menu filters by it.
  */
 
-export type ChannelFilterMode = "only" | "hide"
+export type ChannelFilterMode = 'only' | 'hide'
 
 /** The channel's context menu narrows to it or hides it. A plain click is
  *  the row's, and opens the line. */
@@ -55,11 +55,11 @@ function ChannelCell({
         </span>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-48">
-        <ContextMenuItem onSelect={() => onFilter(channel, "only")}>
+        <ContextMenuItem onSelect={() => onFilter(channel, 'only')}>
           <FilterIcon aria-hidden />
           Only {label}
         </ContextMenuItem>
-        <ContextMenuItem onSelect={() => onFilter(channel, "hide")}>
+        <ContextMenuItem onSelect={() => onFilter(channel, 'hide')}>
           <EyeOffIcon aria-hidden />
           Hide {label}
         </ContextMenuItem>
@@ -75,17 +75,17 @@ export function outputDetail(entry: ActivityEntry) {
       id={entry.id}
       fields={[
         {
-          label: "Time",
+          label: 'Time',
           value: (
             <time dateTime={entry.at} className="tabular-nums">
               {fullTime(entry.at)}
             </time>
           ),
         },
-        { label: "Channel", value: <ChannelTag channel={entry.channel} /> },
-        { label: "Level", value: ACTIVITY_LEVEL_LABELS[entry.level] },
+        { label: 'Channel', value: <ChannelTag channel={entry.channel} /> },
+        { label: 'Level', value: ACTIVITY_LEVEL_LABELS[entry.level] },
         {
-          label: "Vault",
+          label: 'Vault',
           value:
             entry.remote === undefined ? (
               <span className="text-muted-foreground">None</span>
@@ -108,60 +108,52 @@ export function createOutputColumns({
 }): ColumnDef<DataGridFeatures, ActivityEntry>[] {
   return [
     {
-      id: "time",
+      id: 'time',
       // The id is the log's own order: two lines in one second keep theirs.
       accessorFn: (entry) => entry.id,
       header: ({ column }) => <DataGridColumnHeader column={column} />,
       cell: ({ row }) => (
-        <time
-          dateTime={row.original.at}
-          className="font-mono text-xs tabular-nums"
-        >
+        <time dateTime={row.original.at} className="font-mono text-xs tabular-nums">
           {clockTime(row.original.at)}
         </time>
       ),
       size: 88,
       meta: {
-        headerTitle: "Time",
+        headerTitle: 'Time',
         skeleton: <Skeleton className="h-4 w-16" />,
       },
     },
     {
-      id: "channel",
+      id: 'channel',
       accessorFn: (entry) => channelLabel(entry.channel),
       header: ({ column }) => <DataGridColumnHeader column={column} />,
-      cell: ({ row }) => (
-        <ChannelCell
-          channel={row.original.channel}
-          onFilter={onChannelFilter}
-        />
-      ),
+      cell: ({ row }) => <ChannelCell channel={row.original.channel} onFilter={onChannelFilter} />,
       size: 112,
       meta: {
-        headerTitle: "Channel",
+        headerTitle: 'Channel',
         skeleton: <Skeleton className="h-4 w-16" />,
       },
     },
     {
-      id: "level",
+      id: 'level',
       accessorFn: (entry) => LEVEL_RANK[entry.level],
       header: ({ column }) => <DataGridColumnHeader column={column} />,
       cell: ({ row }) => <LevelBadge level={row.original.level} />,
       size: 96,
       meta: {
-        headerTitle: "Level",
+        headerTitle: 'Level',
         skeleton: <Skeleton className="h-5 w-14 rounded-full" />,
       },
     },
     {
-      id: "message",
-      accessorKey: "message",
+      id: 'message',
+      accessorKey: 'message',
       header: ({ column }) => <DataGridColumnHeader column={column} />,
       cell: ({ row }) => (
         <span
           className={cn(
-            "block truncate font-mono text-xs",
-            row.original.level === "error" && "text-destructive"
+            'block truncate font-mono text-xs',
+            row.original.level === 'error' && 'text-destructive',
           )}
         >
           {row.original.message}
@@ -172,13 +164,13 @@ export function createOutputColumns({
       size: 400,
       enableSorting: false,
       meta: {
-        headerTitle: "Message",
+        headerTitle: 'Message',
         skeleton: <Skeleton className="h-4 w-64" />,
       },
     },
     {
-      id: "vault",
-      accessorFn: (entry) => entry.remote ?? "",
+      id: 'vault',
+      accessorFn: (entry) => entry.remote ?? '',
       header: ({ column }) => <DataGridColumnHeader column={column} />,
       cell: ({ row }) =>
         row.original.remote === undefined ? (
@@ -190,7 +182,7 @@ export function createOutputColumns({
         ),
       size: 200,
       meta: {
-        headerTitle: "Vault",
+        headerTitle: 'Vault',
         skeleton: <Skeleton className="h-4 w-28" />,
       },
     },

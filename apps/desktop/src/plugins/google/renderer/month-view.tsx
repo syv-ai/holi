@@ -76,10 +76,7 @@ export function MonthView({
       className="flex h-full min-h-0 flex-col"
       style={{ '--month-cols': '2rem repeat(7, minmax(0, 1fr))' } as CSSProperties}
     >
-      <div
-        role="row"
-        className="grid shrink-0 grid-cols-(--month-cols) border-b border-divider"
-      >
+      <div role="row" className="grid shrink-0 grid-cols-(--month-cols) border-b border-divider">
         <span />
         {WEEKDAYS.map((name) => (
           <span
@@ -161,7 +158,11 @@ export function MonthView({
                           // never opacity, which would stack on the muted token.
                           (past || !event.busy || !event.mine) && 'text-muted-foreground',
                         )}
-                        style={event.allDay ? ({ '--chip-bg': tint(event.color) } as CSSProperties) : undefined}
+                        style={
+                          event.allDay
+                            ? ({ '--chip-bg': tint(event.color) } as CSSProperties)
+                            : undefined
+                        }
                         onClick={(click) => {
                           click.stopPropagation()
                           onPickEvent(event)
@@ -174,7 +175,11 @@ export function MonthView({
                               'h-3.5 w-1 shrink-0 rounded-full',
                               event.color === null ? 'bg-muted-foreground' : 'bg-(color:--swatch)',
                             )}
-                            style={event.color === null ? undefined : ({ '--swatch': event.color } as CSSProperties)}
+                            style={
+                              event.color === null
+                                ? undefined
+                                : ({ '--swatch': event.color } as CSSProperties)
+                            }
                           />
                         )}
                         <span className="truncate">{event.title}</span>

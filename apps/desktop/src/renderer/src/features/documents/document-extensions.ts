@@ -6,31 +6,31 @@
  * Text alignment is left out: markdown has no way to say it, so it would look
  * applied and vanish on the next open.
  */
-import Image from "@tiptap/extension-image"
-import { mergeAttributes, Node } from "@tiptap/react"
+import Image from '@tiptap/extension-image'
+import { mergeAttributes, Node } from '@tiptap/react'
 
-import { createRichTextExtensions } from "@/features/documents/rich-text/rich-text-extensions"
-import { vaultAssetUrl } from "@/lib/vault-asset"
+import { createRichTextExtensions } from '@/features/documents/rich-text/rich-text-extensions'
+import { vaultAssetUrl } from '@/lib/vault-asset'
 
-import { AgentTrigger } from "./agent-trigger"
-import { DocumentFind } from "./document-find"
-import { AGENT_MARKER, DocumentMarkdown } from "./markdown"
-import { MultiCursor } from "./multi-cursor"
-import { WikiLink } from "./wiki-link"
+import { AgentTrigger } from './agent-trigger'
+import { DocumentFind } from './document-find'
+import { AGENT_MARKER, DocumentMarkdown } from './markdown'
+import { MultiCursor } from './multi-cursor'
+import { WikiLink } from './wiki-link'
 
 /** `src` as written in the file, resolved against the document's folder for
  *  display only: the markdown keeps the path it had. */
 function displaySrc(src: string, folder: string): string {
   if (/^(https?:|data:|holi-vault:)/.test(src)) return src
-  const parts = (src.startsWith("/") ? src.slice(1) : `${folder}/${src}`)
-    .split("/")
-    .filter((part) => part !== "" && part !== ".")
+  const parts = (src.startsWith('/') ? src.slice(1) : `${folder}/${src}`)
+    .split('/')
+    .filter((part) => part !== '' && part !== '.')
   const resolved: string[] = []
   for (const part of parts) {
-    if (part === "..") resolved.pop()
+    if (part === '..') resolved.pop()
     else resolved.push(decodeURI(part))
   }
-  return vaultAssetUrl(resolved.join("/"))
+  return vaultAssetUrl(resolved.join('/'))
 }
 
 /** An image at its natural size up to the column's width, never scaled up.
@@ -39,17 +39,17 @@ function displaySrc(src: string, folder: string): string {
  *  and only a tall portrait one is held to the screen; in a table cell it
  *  stays thumbnail-sized. */
 const IMAGE_CLASS =
-  "h-auto w-auto max-w-full max-h-[max(70vh,48rem)] rounded-md in-[td]:max-h-80 in-[th]:max-h-80"
+  'h-auto w-auto max-w-full max-h-[max(70vh,48rem)] rounded-md in-[td]:max-h-80 in-[th]:max-h-80'
 
 const DocumentImage = Image.extend<{ folder: string }>({
   addOptions() {
-    return { ...this.parent!(), folder: "" }
+    return { ...this.parent!(), folder: '' }
   },
   renderHTML({ HTMLAttributes }) {
     return [
-      "img",
+      'img',
       mergeAttributes(HTMLAttributes, {
-        src: displaySrc(String(HTMLAttributes.src ?? ""), this.options.folder),
+        src: displaySrc(String(HTMLAttributes.src ?? ''), this.options.folder),
         class: IMAGE_CLASS,
       }),
     ]
@@ -59,15 +59,15 @@ const DocumentImage = Image.extend<{ folder: string }>({
 /** A block of raw HTML from the file, shown as its source and written back
  *  unchanged. */
 const HtmlBlock = Node.create({
-  name: "htmlBlock",
-  group: "block",
+  name: 'htmlBlock',
+  group: 'block',
   atom: true,
-  markdownTokenName: "html",
+  markdownTokenName: 'html',
   addAttributes() {
-    return { html: { default: "" } }
+    return { html: { default: '' } }
   },
   parseHTML() {
-    return [{ tag: "pre[data-html-block]" }]
+    return [{ tag: 'pre[data-html-block]' }]
   },
   renderHTML({ node }) {
     // The agent's marker shows as where it is writing, not as a comment: a
@@ -78,72 +78,68 @@ const HtmlBlock = Node.create({
     // selection ring the caret leaves on it after sending stays off.
     if (String(node.attrs.html).trim() === AGENT_MARKER) {
       const line = (width: string) => [
-        "div",
+        'div',
         { class: `bg-primary/15 h-2.5 rounded-full ${width}` },
       ]
       return [
-        "div",
+        'div',
         {
-          "data-html-block": "",
-          "data-agent-marker": "",
-          role: "status",
-          "aria-label": "Sonnet is writing here",
+          'data-html-block': '',
+          'data-agent-marker': '',
+          role: 'status',
+          'aria-label': 'Sonnet is writing here',
           class:
-            "not-prose border-primary/30 bg-primary/5 my-3 flex flex-col gap-3 rounded-lg border border-dashed px-4 py-3 [&.ProseMirror-selectednode]:outline-none",
+            'not-prose border-primary/30 bg-primary/5 my-3 flex flex-col gap-3 rounded-lg border border-dashed px-4 py-3 [&.ProseMirror-selectednode]:outline-none',
         },
         [
-          "div",
+          'div',
           {
-            class: "text-primary flex items-center gap-2 text-sm font-medium",
-            "aria-hidden": "true",
+            class: 'text-primary flex items-center gap-2 text-sm font-medium',
+            'aria-hidden': 'true',
           },
           [
-            "span",
-            { class: "relative flex size-2 shrink-0" },
+            'span',
+            { class: 'relative flex size-2 shrink-0' },
             [
-              "span",
+              'span',
               {
                 class:
-                  "bg-primary absolute inline-flex size-full animate-ping rounded-full opacity-60 motion-reduce:animate-none",
+                  'bg-primary absolute inline-flex size-full animate-ping rounded-full opacity-60 motion-reduce:animate-none',
               },
             ],
-            [
-              "span",
-              { class: "bg-primary relative inline-flex size-2 rounded-full" },
-            ],
+            ['span', { class: 'bg-primary relative inline-flex size-2 rounded-full' }],
           ],
-          ["span", {}, "Sonnet is writing here…"],
+          ['span', {}, 'Sonnet is writing here…'],
         ],
         [
-          "div",
+          'div',
           {
-            class:
-              "flex animate-pulse flex-col gap-2 motion-reduce:animate-none",
-            "aria-hidden": "true",
+            class: 'flex animate-pulse flex-col gap-2 motion-reduce:animate-none',
+            'aria-hidden': 'true',
           },
-          line("w-11/12"),
-          line("w-4/5"),
-          line("w-3/5"),
+          line('w-11/12'),
+          line('w-4/5'),
+          line('w-3/5'),
         ],
       ]
     }
     return [
-      "pre",
+      'pre',
       {
-        "data-html-block": "",
+        'data-html-block': '',
         class:
-          "text-muted-foreground bg-muted rounded-md px-3 py-2 font-mono text-xs whitespace-pre-wrap",
+          'text-muted-foreground bg-muted rounded-md px-3 py-2 font-mono text-xs whitespace-pre-wrap',
       },
       node.attrs.html,
     ]
   },
   parseMarkdown(token) {
     // Inline HTML (a `<br>` in a sentence) stays text; only a block is a node.
-    if (!token.block) return { type: "text", text: token.raw ?? "" }
-    return { type: "htmlBlock", attrs: { html: (token.raw ?? "").trimEnd() } }
+    if (!token.block) return { type: 'text', text: token.raw ?? '' }
+    return { type: 'htmlBlock', attrs: { html: (token.raw ?? '').trimEnd() } }
   },
   renderMarkdown(node) {
-    return node.attrs?.html ?? ""
+    return node.attrs?.html ?? ''
   },
 })
 
@@ -165,7 +161,7 @@ export function createDocumentExtensions({
 }) {
   return [
     ...createRichTextExtensions({ placeholder }).filter(
-      (extension) => extension.name !== "textAlign"
+      (extension) => extension.name !== 'textAlign',
     ),
     WikiLink.configure({ onOpen: onOpenLink }),
     DocumentImage.configure({ folder }),

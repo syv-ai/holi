@@ -7,8 +7,8 @@ import {
   type DragEvent,
   type ReactElement,
   type ReactNode,
-} from "react"
-import { useAtom, useAtomValue, useSetAtom } from "jotai"
+} from 'react'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import {
   dragAndDropFeature,
   expandAllFeature,
@@ -18,17 +18,11 @@ import {
   syncDataLoaderFeature,
   type DragTarget,
   type ItemInstance,
-} from "@headless-tree/core"
-import { useTree } from "@headless-tree/react"
-import { toast } from "sonner"
-import {
-  GITKEEP,
-  holiLink,
-  isHiddenPath,
-  isHoliLinkable,
-  TASKS_CLAIM,
-} from "@holi/shared"
-import { cn } from "@/lib/cn"
+} from '@headless-tree/core'
+import { useTree } from '@headless-tree/react'
+import { toast } from 'sonner'
+import { GITKEEP, holiLink, isHiddenPath, isHoliLinkable, TASKS_CLAIM } from '@holi/shared'
+import { cn } from '@/lib/cn'
 
 import {
   AlertDialog,
@@ -39,7 +33,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+} from '@/components/ui/alert-dialog'
 import {
   ContextMenu,
   ContextMenuCheckboxItem,
@@ -51,7 +45,7 @@ import {
   ContextMenuSubContent,
   ContextMenuSubTrigger,
   ContextMenuTrigger,
-} from "@/components/ui/context-menu"
+} from '@/components/ui/context-menu'
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -64,9 +58,9 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { FileType, getFileType } from "@/components/reui/file-type"
-import { Button } from "@/components/ui/button"
+} from '@/components/ui/dropdown-menu'
+import { FileType, getFileType } from '@/components/reui/file-type'
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -74,48 +68,35 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { Field, FieldError, FieldLabel } from "@/components/ui/field"
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card"
-import { Input } from "@/components/ui/input"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
+} from '@/components/ui/dialog'
+import { Field, FieldError, FieldLabel } from '@/components/ui/field'
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
+import { Input } from '@/components/ui/input'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   SidebarGroup,
   SidebarGroupAction,
   SidebarGroupLabel,
   SidebarMenuSkeleton,
   useSidebar,
-} from "@/components/ui/sidebar"
-import { useShortcutHandlers } from "@/state/shortcuts"
-import {
-  Tree,
-  TreeDragLine,
-  TreeItem,
-  TreeItemLabel,
-} from "@/components/reui/tree"
-import { folderDocumentAt } from "@/state/folder-documents"
-import { revealInFilesRequestAtom } from "@/state/reveal-in-files"
-import { buildTreeData, ROOT_ID, type TreeItemData } from "@/lib/tree-data"
-import { planMoveInto, planRenameFolder, type Move } from "@/lib/tree-actions"
-import { basename, joinPath, parentOf } from "@/lib/tree-paths"
-import { canMoveInto } from "@/lib/tree-view"
-import { useTabDrag } from "../shell/use-tab-drag"
-import { openDialogAtom } from "@/state/dialogs"
-import { openTabAtom, shellWorkspaceAtom } from "@/state/shell-tabs"
-import { closeTabsWhere } from "@/state/shell-workspace"
-import { tabForPath, tabPath } from "@/state/tab-descriptor"
-import type { ClaimCreate } from "@/plugin-api/types"
-import { claimsAtom, folderClaimsAtom } from "@/state/plugins"
-import { createTaskAtom } from "@/state/tasks"
-import { setTreeOrderAtom, treeOrderAtom } from "@/state/tree-order"
+} from '@/components/ui/sidebar'
+import { useShortcutHandlers } from '@/state/shortcuts'
+import { Tree, TreeDragLine, TreeItem, TreeItemLabel } from '@/components/reui/tree'
+import { folderDocumentAt } from '@/state/folder-documents'
+import { revealInFilesRequestAtom } from '@/state/reveal-in-files'
+import { buildTreeData, ROOT_ID, type TreeItemData } from '@/lib/tree-data'
+import { planMoveInto, planRenameFolder, type Move } from '@/lib/tree-actions'
+import { basename, joinPath, parentOf } from '@/lib/tree-paths'
+import { canMoveInto } from '@/lib/tree-view'
+import { useTabDrag } from '../shell/use-tab-drag'
+import { openDialogAtom } from '@/state/dialogs'
+import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
+import { closeTabsWhere } from '@/state/shell-workspace'
+import { tabForPath, tabPath } from '@/state/tab-descriptor'
+import type { ClaimCreate } from '@/plugin-api/types'
+import { claimsAtom, folderClaimsAtom } from '@/state/plugins'
+import { createTaskAtom } from '@/state/tasks'
+import { setTreeOrderAtom, treeOrderAtom } from '@/state/tree-order'
 import {
   activeRemoteAtom,
   createFolderAtom,
@@ -128,7 +109,7 @@ import {
   snapshotAtom,
   snapshotLoadedAtom,
   vaultsAtom,
-} from "@/state/vaults"
+} from '@/state/vaults'
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -143,17 +124,12 @@ import {
   PlusIcon,
   SquareSplitHorizontalIcon,
   Trash2Icon,
-} from "lucide-react"
+} from 'lucide-react'
 
 const INDENT = 16
 
 /** `base`, then `base 2`, `base 3`… : the first name the folder does not hold. */
-function freeName(
-  taken: ReadonlySet<string>,
-  parent: string,
-  base: string,
-  ext = ""
-): string {
+function freeName(taken: ReadonlySet<string>, parent: string, base: string, ext = ''): string {
   for (let n = 1; ; n++) {
     const name = n === 1 ? `${base}${ext}` : `${base} ${n}${ext}`
     if (!taken.has(joinPath(parent, name))) return name
@@ -180,13 +156,10 @@ function useFiles() {
       ...Object.entries(snapshot.claimed).flatMap(([id, set]) =>
         id === TASKS_CLAIM && !showTasks
           ? []
-          : [
-              ...set.items.map((item) => item.path),
-              ...set.broken.map((item) => item.path),
-            ]
+          : [...set.items.map((item) => item.path), ...set.broken.map((item) => item.path)],
       ),
     ],
-    [snapshot, showTasks]
+    [snapshot, showTasks],
   )
   // Everything a rename or a new name must not collide with, or must carry
   // along: task files too, shown or not.
@@ -199,21 +172,17 @@ function useFiles() {
         ...set.broken.map((item) => item.path),
       ]),
     ],
-    [snapshot]
+    [snapshot],
   )
   // Memoised: the tree rebuilds whenever these change identity, and a
   // rebuild re-renders this component.
   const paths = useMemo(
-    () =>
-      showHidden ? docPaths : docPaths.filter((path) => !isHiddenPath(path)),
-    [docPaths, showHidden]
+    () => (showHidden ? docPaths : docPaths.filter((path) => !isHiddenPath(path))),
+    [docPaths, showHidden],
   )
   const dirs = useMemo(
-    () =>
-      showHidden
-        ? snapshot.dirs
-        : snapshot.dirs.filter((dir) => !isHiddenPath(dir)),
-    [snapshot.dirs, showHidden]
+    () => (showHidden ? snapshot.dirs : snapshot.dirs.filter((dir) => !isHiddenPath(dir))),
+    [snapshot.dirs, showHidden],
   )
 
   return {
@@ -226,11 +195,9 @@ function useFiles() {
     showHidden,
     showTasks,
     toggleHidden: () =>
-      remote !== null &&
-      setHiddenByVault({ ...hiddenByVault, [remote]: !showHidden }),
+      remote !== null && setHiddenByVault({ ...hiddenByVault, [remote]: !showHidden }),
     toggleTasks: () =>
-      remote !== null &&
-      setTasksByVault({ ...tasksByVault, [remote]: !showTasks }),
+      remote !== null && setTasksByVault({ ...tasksByVault, [remote]: !showTasks }),
   }
 }
 
@@ -239,9 +206,7 @@ async function attempt(what: string, action: () => Promise<void>) {
   try {
     await action()
   } catch {
-    toast.error(
-      `Couldn't ${what}. Check that the vault is reachable, then try again.`
-    )
+    toast.error(`Couldn't ${what}. Check that the vault is reachable, then try again.`)
   }
 }
 
@@ -250,8 +215,8 @@ export function useNewDocument(onCreated: (path: string) => void) {
   const { taken } = useFiles()
   const createNote = useSetAtom(createNoteAtom)
   return () =>
-    attempt("create a document", async () => {
-      const path = freeName(taken, "", "Untitled", ".md")
+    attempt('create a document', async () => {
+      const path = freeName(taken, '', 'Untitled', '.md')
       await createNote(path)
       onCreated(path)
     })
@@ -263,7 +228,7 @@ export function useNewDocument(onCreated: (path: string) => void) {
  */
 type MenuAction =
   | {
-      kind: "item"
+      kind: 'item'
       label: string
       icon?: ReactNode
       shortcut?: string
@@ -271,16 +236,16 @@ type MenuAction =
       destructive?: boolean
       run: () => void
     }
-  | { kind: "check"; label: string; checked: boolean; toggle: () => void }
-  | { kind: "sub"; label: string; icon?: ReactNode; items: MenuAction[] }
-  | { kind: "separator" }
+  | { kind: 'check'; label: string; checked: boolean; toggle: () => void }
+  | { kind: 'sub'; label: string; icon?: ReactNode; items: MenuAction[] }
+  | { kind: 'separator' }
 
 function ContextMenuActions({ actions }: { actions: MenuAction[] }) {
   return actions.map((action, index) => {
     switch (action.kind) {
-      case "separator":
+      case 'separator':
         return <ContextMenuSeparator key={index} />
-      case "check":
+      case 'check':
         return (
           <ContextMenuCheckboxItem
             key={index}
@@ -290,7 +255,7 @@ function ContextMenuActions({ actions }: { actions: MenuAction[] }) {
             {action.label}
           </ContextMenuCheckboxItem>
         )
-      case "sub":
+      case 'sub':
         return (
           <ContextMenuSub key={index}>
             <ContextMenuSubTrigger>
@@ -302,19 +267,17 @@ function ContextMenuActions({ actions }: { actions: MenuAction[] }) {
             </ContextMenuSubContent>
           </ContextMenuSub>
         )
-      case "item":
+      case 'item':
         return (
           <ContextMenuItem
             key={index}
-            variant={action.destructive ? "destructive" : "default"}
+            variant={action.destructive ? 'destructive' : 'default'}
             disabled={action.disabled}
             onSelect={action.run}
           >
             {action.icon}
             {action.label}
-            {action.shortcut ? (
-              <ContextMenuShortcut>{action.shortcut}</ContextMenuShortcut>
-            ) : null}
+            {action.shortcut ? <ContextMenuShortcut>{action.shortcut}</ContextMenuShortcut> : null}
           </ContextMenuItem>
         )
     }
@@ -324,9 +287,9 @@ function ContextMenuActions({ actions }: { actions: MenuAction[] }) {
 function DropdownMenuActions({ actions }: { actions: MenuAction[] }) {
   return actions.map((action, index) => {
     switch (action.kind) {
-      case "separator":
+      case 'separator':
         return <DropdownMenuSeparator key={index} />
-      case "check":
+      case 'check':
         return (
           <DropdownMenuCheckboxItem
             key={index}
@@ -336,7 +299,7 @@ function DropdownMenuActions({ actions }: { actions: MenuAction[] }) {
             {action.label}
           </DropdownMenuCheckboxItem>
         )
-      case "sub":
+      case 'sub':
         return (
           <DropdownMenuSub key={index}>
             <DropdownMenuSubTrigger>
@@ -348,11 +311,11 @@ function DropdownMenuActions({ actions }: { actions: MenuAction[] }) {
             </DropdownMenuSubContent>
           </DropdownMenuSub>
         )
-      case "item":
+      case 'item':
         return (
           <DropdownMenuItem
             key={index}
-            variant={action.destructive ? "destructive" : "default"}
+            variant={action.destructive ? 'destructive' : 'default'}
             disabled={action.disabled}
             onSelect={action.run}
           >
@@ -398,16 +361,13 @@ export function FilesSection({
   /** What plugins make from the New menu, with the folder document each
    *  one's entry belongs to: a new app opens as the app, not its `index.html`. */
   const creates = claims.flatMap((claim) =>
-    claim.create === undefined
-      ? []
-      : [{ ...claim.create, entry: claim.folder?.entry }]
+    claim.create === undefined ? [] : [{ ...claim.create, entry: claim.folder?.entry }],
   )
   /** What a web address dropped from a browser is saved as: a link. */
   const urlCreate = creates.find((create) => create.fromUrl === true)
   /** A row's hover card, from the first claim on its path that draws one. */
   const hoverOf = (path: string) =>
-    claims.find((claim) => claim.hover !== undefined && claim.match(path))
-      ?.hover
+    claims.find((claim) => claim.hover !== undefined && claim.match(path))?.hover
   /** A New menu item asking for its name first (a link's address), and
    *  the folder it goes in, while its dialog is open. */
   const [asking, setAsking] = useState<{
@@ -433,8 +393,7 @@ export function FilesSection({
   /** Rows that just landed (made, moved, renamed, dropped in): they fade in
    *  once, so the eye finds where they went. */
   const [arrived, setArrived] = useState<ReadonlySet<string>>(new Set())
-  const markArrived = (paths: string[]) =>
-    setArrived((current) => new Set([...current, ...paths]))
+  const markArrived = (paths: string[]) => setArrived((current) => new Set([...current, ...paths]))
 
   const data = useMemo(
     () =>
@@ -442,13 +401,13 @@ export function FilesSection({
         files.paths,
         files.dirs,
         (folder, has) => folderDocumentAt(folderClaims, folder, has) !== null,
-        order
+        order,
       ),
-    [files.paths, files.dirs, folderClaims, order]
+    [files.paths, files.dirs, folderClaims, order],
   )
 
   const folderOf = (item: ItemInstance<TreeItemData>) =>
-    item.getId() === ROOT_ID ? "" : item.getId()
+    item.getId() === ROOT_ID ? '' : item.getId()
 
   async function move(moves: Move[]) {
     await moveNotes({ moves })
@@ -471,9 +430,7 @@ export function FilesSection({
           .filter((source) => source.startsWith(prefix))
           .map((source) => source.slice(prefix.length))
       : []
-    const outside = sources.filter(
-      (source) => !prefix || !source.startsWith(prefix)
-    )
+    const outside = sources.filter((source) => !prefix || !source.startsWith(prefix))
     if (inside.length > 0) await moveInto(inside, dest)
     if (outside.length > 0) {
       const skipped = await importFiles(outside, dest)
@@ -483,7 +440,7 @@ export function FilesSection({
         outside
           .map((source) => basename(source))
           .filter((name) => !took.has(name))
-          .map((name) => joinPath(dest, name))
+          .map((name) => joinPath(dest, name)),
       )
     }
   }
@@ -493,16 +450,14 @@ export function FilesSection({
   async function rename(item: ItemInstance<TreeItemData>, value: string) {
     const from = item.getId()
     const name = value.trim()
-    if (name === "" || name === basename(from)) return
-    if (name.includes("/")) {
-      toast.error("Use a name without “/”.")
+    if (name === '' || name === basename(from)) return
+    if (name.includes('/')) {
+      toast.error('Use a name without “/”.')
       return
     }
     const to = joinPath(parentOf(from), name)
     if (files.taken.has(to)) {
-      toast.error(
-        `“${name}” already exists in this folder. Choose another name.`
-      )
+      toast.error(`“${name}” already exists in this folder. Choose another name.`)
       return
     }
     // The row keeps its place in a hand-made order, and a folder keeps its own.
@@ -511,14 +466,14 @@ export function FilesSection({
     if (siblings?.includes(from)) {
       setOrder(
         parent,
-        siblings.map((id) => (id === from ? to : id))
+        siblings.map((id) => (id === from ? to : id)),
       )
     }
     const inside = order[from]
     if (inside) {
       setOrder(
         to,
-        inside.map((id) => joinPath(to, id.slice(from.length + 1)))
+        inside.map((id) => joinPath(to, id.slice(from.length + 1))),
       )
     }
     if (item.getItemData()?.isFolder !== true) {
@@ -527,24 +482,19 @@ export function FilesSection({
       const { moves } = planRenameFolder(files.allPaths, from, name)
       // An empty folder holds only its keep file.
       await move(
-        moves.length > 0
-          ? moves
-          : [{ from: `${from}/${GITKEEP}`, to: `${to}/${GITKEEP}` }]
+        moves.length > 0 ? moves : [{ from: `${from}/${GITKEEP}`, to: `${to}/${GITKEEP}` }],
       )
     }
     markArrived([to])
   }
 
-  async function onDrop(
-    items: ItemInstance<TreeItemData>[],
-    target: DragTarget<TreeItemData>
-  ) {
+  async function onDrop(items: ItemInstance<TreeItemData>[], target: DragTarget<TreeItemData>) {
     const dest = folderOf(target.item)
     const sources = items.map((item) => item.getId())
     const moving = sources.filter((source) => parentOf(source) !== dest)
     if (moving.length > 0) await moveInto(moving, dest)
     // Between two rows: the moved rows land there in the folder's order.
-    if ("insertionIndex" in target) {
+    if ('insertionIndex' in target) {
       const landed = sources.map((source) => joinPath(dest, basename(source)))
       const siblings = target.item
         .getChildren()
@@ -560,15 +510,14 @@ export function FilesSection({
   const tree = useTree<TreeItemData>({
     rootItemId: ROOT_ID,
     indent: INDENT,
-    getItemName: (item) => item.getItemData()?.name ?? "",
+    getItemName: (item) => item.getItemData()?.name ?? '',
     // An app's bundle is one document: it opens rather than expands.
     isItemFolder: (item) =>
-      item.getItemData()?.isFolder === true &&
-      item.getItemData()?.isDocument !== true,
+      item.getItemData()?.isFolder === true && item.getItemData()?.isDocument !== true,
     dataLoader: {
       getItem: (id) =>
         data[id] ?? {
-          name: "",
+          name: '',
           isFolder: false,
           isDocument: false,
           children: [],
@@ -582,19 +531,18 @@ export function FilesSection({
     onRename: (item, value) =>
       void attempt(`rename “${item.getItemName()}”`, () => rename(item, value)),
     canReorder: true,
-    onDrop: (items, target) =>
-      void attempt("move the files", () => onDrop(items, target)),
+    onDrop: (items, target) => void attempt('move the files', () => onDrop(items, target)),
     canDropForeignDragObject: (dataTransfer) =>
-      dataTransfer.types.includes("Files") ||
-      (urlCreate !== undefined && dataTransfer.types.includes("text/uri-list")),
+      dataTransfer.types.includes('Files') ||
+      (urlCreate !== undefined && dataTransfer.types.includes('text/uri-list')),
     onDropForeignDragObject: (dataTransfer, target) => {
       const url = droppedUrl(dataTransfer)
       if (url !== null) return dropUrl(url, folderOf(target.item))
-      void attempt("add the files", () =>
+      void attempt('add the files', () =>
         dropPaths(
           [...dataTransfer.files].map((file) => window.holi.pathForFile(file)),
-          folderOf(target.item)
-        )
+          folderOf(target.item),
+        ),
       )
     },
     features: [
@@ -623,15 +571,15 @@ export function FilesSection({
     if (data[revealRequest.path] === undefined) return
     revealedSeq = revealRequest.seq
     const path = revealRequest.path
-    const parts = path.split("/")
+    const parts = path.split('/')
     for (let i = 1; i < parts.length; i++) {
-      tree.getItemInstance(parts.slice(0, i).join("/")).expand()
+      tree.getItemInstance(parts.slice(0, i).join('/')).expand()
     }
     const frame = requestAnimationFrame(() => {
       const item = tree.getItemInstance(path)
       item.setFocused()
       tree.setSelectedItems([path])
-      void item.scrollTo({ block: "nearest" })
+      void item.scrollTo({ block: 'nearest' })
       markArrived([path])
     })
     return () => cancelAnimationFrame(frame)
@@ -641,8 +589,8 @@ export function FilesSection({
   // row from anywhere else, while the sidebar is open to show the field.
   const { open: sidebarOpen } = useSidebar()
   useShortcutHandlers({
-    "files.collapseAll": () => tree.collapseAll(),
-    "files.rename": sidebarOpen
+    'files.collapseAll': () => tree.collapseAll(),
+    'files.rename': sidebarOpen
       ? () => {
           if (tree.getElement()?.contains(document.activeElement)) return
           const item = tree.getSelectedItems()[0]
@@ -654,19 +602,12 @@ export function FilesSection({
   /** Make what a New menu item makes, named `name` in `parent`, and open
    *  it: a folder document as itself, not its entry file. Throws the
    *  plugin's refusal. */
-  async function made(
-    create: ClaimCreate & { entry?: string },
-    parent: string,
-    name: string
-  ) {
+  async function made(create: ClaimCreate & { entry?: string }, parent: string, name: string) {
     if (files.remote === null) return
     const path = await create.run({ remote: files.remote, parent, name })
     if (!path) return
     const suffix = create.entry === undefined ? null : `/${create.entry}`
-    const opened =
-      suffix !== null && path.endsWith(suffix)
-        ? path.slice(0, -suffix.length)
-        : path
+    const opened = suffix !== null && path.endsWith(suffix) ? path.slice(0, -suffix.length) : path
     reveal(parent)
     markArrived([opened])
     onOpen(opened)
@@ -676,17 +617,17 @@ export function FilesSection({
   function droppedUrl(data: DataTransfer): string | null {
     if (urlCreate === undefined || data.files.length > 0) return null
     const listed = data
-      .getData("text/uri-list")
+      .getData('text/uri-list')
       .split(/\r?\n/)
-      .find((line) => line !== "" && !line.startsWith("#"))
-    const url = (listed ?? data.getData("text/plain")).trim()
+      .find((line) => line !== '' && !line.startsWith('#'))
+    const url = (listed ?? data.getData('text/plain')).trim()
     return /^https?:\/\//i.test(url) ? url : null
   }
 
   /** A web address dropped from a browser, saved as a link in `parent`. */
   function dropUrl(url: string, parent: string) {
     if (urlCreate === undefined) return
-    void attempt("save the link", () => made(urlCreate, parent, url))
+    void attempt('save the link', () => made(urlCreate, parent, url))
   }
 
   /** Finder drops on the empty space below the rows land at the root, and a
@@ -697,20 +638,18 @@ export function FilesSection({
     const url = droppedUrl(event.dataTransfer)
     if (url !== null) {
       event.preventDefault()
-      dropUrl(url, "")
+      dropUrl(url, '')
       return
     }
     if (event.dataTransfer.files.length === 0) return
     event.preventDefault()
-    const sources = [...event.dataTransfer.files].map((file) =>
-      window.holi.pathForFile(file)
-    )
-    void attempt("add the files", () => dropPaths(sources, ""))
+    const sources = [...event.dataTransfer.files].map((file) => window.holi.pathForFile(file))
+    void attempt('add the files', () => dropPaths(sources, ''))
   }
 
   function newNote() {
-    void attempt("create a document", async () => {
-      const name = freeName(files.taken, "", "Untitled", ".md")
+    void attempt('create a document', async () => {
+      const name = freeName(files.taken, '', 'Untitled', '.md')
       await createNote(name)
       markArrived([name])
       onOpen(name)
@@ -738,8 +677,8 @@ export function FilesSection({
     const siblings = parent?.getChildren().map((child) => child.getId()) ?? []
     const index = siblings.indexOf(id)
     const here = parentOf(id)
-    const destinations = ["", ...files.dirs].filter(
-      (dir) => dir !== here && dir !== id && !dir.startsWith(`${id}/`)
+    const destinations = ['', ...files.dirs].filter(
+      (dir) => dir !== here && dir !== id && !dir.startsWith(`${id}/`),
     )
     // A file or an app opens beside what is in front, as ⌥-click does; a
     // folder has nothing to open.
@@ -751,68 +690,67 @@ export function FilesSection({
       ...(openable
         ? ([
             {
-              kind: "item",
-              label: "Open in split view",
+              kind: 'item',
+              label: 'Open in split view',
               icon: <SquareSplitHorizontalIcon aria-hidden="true" />,
               run: () => openTab(tabForPath(id), { beside: true }),
             },
             ...(linkable
               ? ([
                   {
-                    kind: "item",
-                    label: "Copy Holi link",
+                    kind: 'item',
+                    label: 'Copy Holi link',
                     icon: <LinkIcon aria-hidden="true" />,
                     run: () => void copyLink(id),
                   },
                 ] satisfies MenuAction[])
               : []),
-            { kind: "separator" },
+            { kind: 'separator' },
           ] satisfies MenuAction[])
         : []),
       {
-        kind: "item",
-        label: "Rename",
+        kind: 'item',
+        label: 'Rename',
         icon: <PencilIcon aria-hidden="true" />,
-        shortcut: "F2",
+        shortcut: 'F2',
         run: () => {
           renameNext.current = id
         },
       },
       {
-        kind: "item",
-        label: "Move up",
+        kind: 'item',
+        label: 'Move up',
         icon: <ArrowUpIcon aria-hidden="true" />,
         disabled: index <= 0,
         run: () => shift(id, -1),
       },
       {
-        kind: "item",
-        label: "Move down",
+        kind: 'item',
+        label: 'Move down',
         icon: <ArrowDownIcon aria-hidden="true" />,
         disabled: index < 0 || index >= siblings.length - 1,
         run: () => shift(id, 1),
       },
       {
-        kind: "sub",
-        label: "Move to",
+        kind: 'sub',
+        label: 'Move to',
         icon: <FolderInputIcon aria-hidden="true" />,
         items: destinations.map((dest) => ({
-          kind: "item",
-          label: dest === "" ? "Vault root" : dest,
-          run: () =>
-            void attempt(`move “${basename(id)}”`, () => moveInto([id], dest)),
+          kind: 'item',
+          label: dest === '' ? 'Vault root' : dest,
+          run: () => void attempt(`move “${basename(id)}”`, () => moveInto([id], dest)),
         })),
       },
       ...pluginRowActions(id),
-      { kind: "separator" },
+      { kind: 'separator' },
       {
-        kind: "item",
-        label: "Delete",
+        kind: 'item',
+        label: 'Delete',
         icon: <Trash2Icon aria-hidden="true" />,
         destructive: true,
         run: () => setDeleting(id),
       },
-      { kind: "separator" },
+      { kind: 'separator' },
     ]
   }
 
@@ -822,10 +760,10 @@ export function FilesSection({
     if (remote === null) return
     try {
       await navigator.clipboard.writeText(holiLink({ remote, path }))
-      toast.success("Holi link copied", { description: basename(path) })
+      toast.success('Holi link copied', { description: basename(path) })
     } catch {
-      toast.error("Copy failed", {
-        description: "The clipboard could not be written.",
+      toast.error('Copy failed', {
+        description: 'The clipboard could not be written.',
       })
     }
   }
@@ -837,15 +775,13 @@ export function FilesSection({
     const inside = (path: string) => path === id || path.startsWith(`${id}/`)
     void attempt(`delete “${basename(id)}”`, async () => {
       await deleteMany(
-        folder
-          ? { paths: files.allPaths.filter(inside), folders: [id] }
-          : { paths: [id] }
+        folder ? { paths: files.allPaths.filter(inside), folders: [id] } : { paths: [id] },
       )
       setWorkspace((ws) =>
         closeTabsWhere(ws, (key) => {
           const path = tabPath(key)
           return path !== null && inside(path)
-        })
+        }),
       )
     })
   }
@@ -861,9 +797,9 @@ export function FilesSection({
       .filter((item) => item.when?.(id, snapshot) ?? true)
     if (items.length === 0) return []
     return [
-      { kind: "separator" },
+      { kind: 'separator' },
       ...items.map((item): MenuAction => ({
-        kind: "item",
+        kind: 'item',
         label: item.label,
         run: () => item.run({ remote, path: id, openDialog }),
       })),
@@ -873,50 +809,47 @@ export function FilesSection({
   /** The folder a menu's New items make things in: the folder row it was
    *  opened on, the folder of the file row it was opened on, or the root. */
   function newParent(target: string | null): string {
-    if (target === null || target === ROOT_ID) return ""
+    if (target === null || target === ROOT_ID) return ''
     const item = tree.getItemInstance(target)
     return item.isFolder() ? target : parentOf(target)
   }
 
   /** Shows what was just made inside `parent`, which may be collapsed. */
   function reveal(parent: string) {
-    if (parent !== "") tree.getItemInstance(parent).expand()
+    if (parent !== '') tree.getItemInstance(parent).expand()
   }
 
   const newActions = (target: string | null): MenuAction[] => {
     const parent = newParent(target)
     return [
       {
-        kind: "item",
-        label: "New folder",
+        kind: 'item',
+        label: 'New folder',
         icon: <FolderPlusIcon aria-hidden="true" />,
         run: () =>
-          void attempt("create the folder", async () => {
-            const name = joinPath(
-              parent,
-              freeName(files.taken, parent, "New folder")
-            )
+          void attempt('create the folder', async () => {
+            const name = joinPath(parent, freeName(files.taken, parent, 'New folder'))
             await createFolder(name)
             reveal(parent)
             markArrived([name])
           }),
       },
       {
-        kind: "item",
-        label: "New task",
+        kind: 'item',
+        label: 'New task',
         icon: <ListChecksIcon aria-hidden="true" />,
         run: () =>
-          void attempt("create the task", async () => {
+          void attempt('create the task', async () => {
             const path = await createTask({
-              title: "Untitled task",
-              status: "todo",
+              title: 'Untitled task',
+              status: 'todo',
               folder: parent,
             })
             if (path) onOpen(path)
           }),
       },
       ...creates.map((create): MenuAction => ({
-        kind: "item",
+        kind: 'item',
         label: create.label,
         icon: <create.icon aria-hidden={true} />,
         disabled: files.remote === null,
@@ -927,28 +860,25 @@ export function FilesSection({
                 made(
                   create,
                   parent,
-                  freeName(files.taken, parent, "Untitled", ".app").replace(
-                    /\.app$/,
-                    ""
-                  )
-                )
+                  freeName(files.taken, parent, 'Untitled', '.app').replace(/\.app$/, ''),
+                ),
               ),
       })),
-      { kind: "separator" },
+      { kind: 'separator' },
       {
-        kind: "check",
-        label: "Show task files",
+        kind: 'check',
+        label: 'Show task files',
         checked: files.showTasks,
         toggle: files.toggleTasks,
       },
       {
-        kind: "check",
-        label: "Show hidden files",
+        kind: 'check',
+        label: 'Show hidden files',
         checked: files.showHidden,
         toggle: files.toggleHidden,
       },
-      { kind: "separator" },
-      { kind: "item", label: "Collapse all", run: () => tree.collapseAll() },
+      { kind: 'separator' },
+      { kind: 'item', label: 'Collapse all', run: () => tree.collapseAll() },
     ]
   }
 
@@ -986,11 +916,7 @@ export function FilesSection({
             <span className="sr-only">More file actions</span>
           </SidebarGroupAction>
         </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="end"
-          className="w-56"
-          onCloseAutoFocus={openRenameOnClose}
-        >
+        <DropdownMenuContent align="end" className="w-56" onCloseAutoFocus={openRenameOnClose}>
           {focused ? (
             <>
               <DropdownMenuLabel className="text-muted-foreground truncate text-xs font-normal">
@@ -1012,29 +938,26 @@ export function FilesSection({
               onDragOver={(event) => {
                 const types = event.dataTransfer.types
                 if (
-                  !types.includes("Files") &&
-                  !(urlCreate !== undefined && types.includes("text/uri-list"))
+                  !types.includes('Files') &&
+                  !(urlCreate !== undefined && types.includes('text/uri-list'))
                 )
                   return
                 event.preventDefault()
                 setDropping(true)
               }}
               onDragLeave={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget as Node))
-                  setDropping(false)
+                if (!event.currentTarget.contains(event.relatedTarget as Node)) setDropping(false)
               }}
               onDrop={onAreaDrop}
               onContextMenu={(event) => {
-                const row = (event.target as Element).closest(
-                  "[data-slot=tree-item]"
-                )
+                const row = (event.target as Element).closest('[data-slot=tree-item]')
                 if (!row) setMenuTarget(null)
               }}
               // Rows fade out toward the foot; at the end of the list the
               // bottom padding lifts the last row clear of the fade.
               className={cn(
-                "fade-foot relative min-h-0 flex-1 overflow-y-auto pb-12 overscroll-contain rounded-md motion-respond",
-                "data-dropping:bg-foreground/5 data-dropping:ring-ring/50 data-dropping:ring-1"
+                'fade-foot relative min-h-0 flex-1 overflow-y-auto pb-12 overscroll-contain rounded-md motion-respond',
+                'data-dropping:bg-foreground/5 data-dropping:ring-ring/50 data-dropping:ring-1',
               )}
             >
               {!loaded ? (
@@ -1059,14 +982,11 @@ export function FilesSection({
                     <TreeItem
                       key={item.getId()}
                       item={item}
-                      aria-current={
-                        item.getId() === activeId ? "page" : undefined
-                      }
+                      aria-current={item.getId() === activeId ? 'page' : undefined}
                       onContextMenu={() => setMenuTarget(item.getId())}
-                      {...tabDrag(
-                        item.isFolder() ? null : tabForPath(item.getId()),
-                        { alongside: true }
-                      )}
+                      {...tabDrag(item.isFolder() ? null : tabForPath(item.getId()), {
+                        alongside: true,
+                      })}
                       onAnimationEnd={() =>
                         setArrived((current) => {
                           const next = new Set(current)
@@ -1078,14 +998,11 @@ export function FilesSection({
                     >
                       <TreeItemLabel
                         className={cn(
-                          "hover:bg-foreground/5 bg-transparent",
-                          item.getId() === activeId && "bg-foreground/10"
+                          'hover:bg-foreground/5 bg-transparent',
+                          item.getId() === activeId && 'bg-foreground/10',
                         )}
                       >
-                        <RowHover
-                          card={hoverOf(item.getId())}
-                          path={item.getId()}
-                        >
+                        <RowHover card={hoverOf(item.getId())} path={item.getId()}>
                           <span className="flex min-w-0 items-center gap-2">
                             <FileGlyph item={item} />
                             {item.isRenaming() ? (
@@ -1096,21 +1013,17 @@ export function FilesSection({
                                 // The name without its extension, ready to type over.
                                 onFocus={(event) => {
                                   const value = event.currentTarget.value
-                                  const dot = value.lastIndexOf(".")
+                                  const dot = value.lastIndexOf('.')
                                   event.currentTarget.setSelectionRange(
                                     0,
-                                    item.isFolder() || dot <= 0
-                                      ? value.length
-                                      : dot
+                                    item.isFolder() || dot <= 0 ? value.length : dot,
                                   )
                                 }}
                                 onClick={(event) => event.stopPropagation()}
                                 className="-my-1.5"
                               />
                             ) : (
-                              <span className="truncate">
-                                {displayName(item)}
-                              </span>
+                              <span className="truncate">{displayName(item)}</span>
                             )}
                           </span>
                         </RowHover>
@@ -1123,13 +1036,8 @@ export function FilesSection({
             </div>
           </ContextMenuTrigger>
 
-          <ContextMenuContent
-            className="w-52"
-            onCloseAutoFocus={openRenameOnClose}
-          >
-            {menuTarget !== null ? (
-              <ContextMenuActions actions={rowActions(menuTarget)} />
-            ) : null}
+          <ContextMenuContent className="w-52" onCloseAutoFocus={openRenameOnClose}>
+            {menuTarget !== null ? <ContextMenuActions actions={rowActions(menuTarget)} /> : null}
             <ContextMenuActions actions={newActions(menuTarget)} />
           </ContextMenuContent>
         </ContextMenu>
@@ -1144,12 +1052,12 @@ export function FilesSection({
         <AlertDialogContent size="sm">
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Delete “{deleting === null ? "" : basename(deleting)}”?
+              Delete “{deleting === null ? '' : basename(deleting)}”?
             </AlertDialogTitle>
             <AlertDialogDescription>
               {deleting !== null && snapshot.dirs.includes(deleting)
-                ? "It and everything in it leave the vault for everyone it syncs with."
-                : "It leaves the vault for everyone it syncs with."}{" "}
+                ? 'It and everything in it leave the vault for everyone it syncs with.'
+                : 'It leaves the vault for everyone it syncs with.'}{' '}
               Its history keeps the last version.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -1169,9 +1077,7 @@ export function FilesSection({
         asking={asking}
         onClose={() => setAsking(null)}
         onMake={(name) =>
-          asking === null
-            ? Promise.resolve()
-            : made(asking.create, asking.parent, name)
+          asking === null ? Promise.resolve() : made(asking.create, asking.parent, name)
         }
       />
     </SidebarGroup>
@@ -1192,12 +1098,7 @@ function RowHover({
   return (
     <HoverCard openDelay={500} closeDelay={100}>
       <HoverCardTrigger asChild>{children}</HoverCardTrigger>
-      <HoverCardContent
-        side="right"
-        align="start"
-        variant="flush"
-        className="w-80"
-      >
+      <HoverCardContent side="right" align="start" variant="flush" className="w-80">
         <Card path={path} />
       </HoverCardContent>
     </HoverCard>
@@ -1218,23 +1119,21 @@ function AskNameDialog({
   onClose: () => void
   onMake: (name: string) => Promise<void>
 }) {
-  const [name, setName] = useState("")
+  const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const close = () => {
-    setName("")
+    setName('')
     setError(null)
     onClose()
   }
-  const label = asking?.create.label ?? ""
+  const label = asking?.create.label ?? ''
   const submit = () => {
-    if (name.trim() === "" || busy) return
+    if (name.trim() === '' || busy) return
     setBusy(true)
     setError(null)
     onMake(name.trim())
-      .then(close, (err: unknown) =>
-        setError(err instanceof Error ? err.message : String(err))
-      )
+      .then(close, (err: unknown) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setBusy(false))
   }
   return (
@@ -1244,7 +1143,7 @@ function AskNameDialog({
           <DialogHeader>
             <DialogTitle>{label}</DialogTitle>
             <DialogDescription>
-              {asking?.parent ? `In ${asking.parent}.` : "At the vault’s top."}
+              {asking?.parent ? `In ${asking.parent}.` : 'At the vault’s top.'}
             </DialogDescription>
           </DialogHeader>
           <Field data-invalid={error !== null || undefined}>
@@ -1260,8 +1159,7 @@ function AskNameDialog({
               aria-invalid={error !== null || undefined}
               onChange={(event) => setName(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key !== "Enter" || event.nativeEvent.isComposing)
-                  return
+                if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
                 event.preventDefault()
                 submit()
               }}
@@ -1272,12 +1170,8 @@ function AskNameDialog({
             <Button type="button" variant="outline" onClick={close}>
               Cancel
             </Button>
-            <Button
-              type="button"
-              disabled={busy || name.trim() === ""}
-              onClick={submit}
-            >
-              {busy ? "Saving…" : "Save"}
+            <Button type="button" disabled={busy || name.trim() === ''} onClick={submit}>
+              {busy ? 'Saving…' : 'Save'}
             </Button>
           </DialogFooter>
         </div>
@@ -1291,7 +1185,7 @@ function AskNameDialog({
 function displayName(item: ItemInstance<TreeItemData>): string {
   const name = item.getItemName()
   if (item.isFolder() && !item.getItemData()?.isDocument) return name
-  const dot = name.lastIndexOf(".")
+  const dot = name.lastIndexOf('.')
   return dot > 0 ? name.slice(0, dot) : name
 }
 
@@ -1301,10 +1195,7 @@ function FileGlyph({ item }: { item: ItemInstance<TreeItemData> }) {
   const data = item.getItemData()
   if (item.isFolder() && !data?.isDocument) {
     return item.isExpanded() ? (
-      <FolderOpenIcon
-        className="text-muted-foreground size-4"
-        aria-hidden="true"
-      />
+      <FolderOpenIcon className="text-muted-foreground size-4" aria-hidden="true" />
     ) : (
       <FolderIcon className="text-muted-foreground size-4" aria-hidden="true" />
     )

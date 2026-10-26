@@ -1,26 +1,26 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState } from 'react'
 
 import {
   CodeBlock,
   CodeBlockContent,
   CodeBlockCopyButton,
-} from "@/components/reui/code-block/code-block"
-import { Skeleton } from "@/components/ui/skeleton"
-import { trpc } from "@/lib/trpc"
+} from '@/components/reui/code-block/code-block'
+import { Skeleton } from '@/components/ui/skeleton'
+import { trpc } from '@/lib/trpc'
 
-import { codeLanguage } from "@/editor/languages"
-import { basename } from "@/lib/tree-paths"
-import { lineDiff, type LineDiff } from "./line-diff"
-import { ErrorState } from "@/composites/empty-state"
+import { codeLanguage } from '@/editor/languages'
+import { basename } from '@/lib/tree-paths'
+import { lineDiff, type LineDiff } from './line-diff'
+import { ErrorState } from '@/composites/empty-state'
 
 /** Past this, a version shows as plain text rather than tokenizing a
  *  generated file or a lockfile line by line. */
 const HIGHLIGHT_LIMIT = 300_000
 
 type Load =
-  | { kind: "loading" }
-  | { kind: "error"; message: string }
-  | { kind: "ready"; before: string; after: string }
+  | { kind: 'loading' }
+  | { kind: 'error'; message: string }
+  | { kind: 'ready'; before: string; after: string }
 
 /**
  * One commit of a file, from git (`history.fileDiff`): what it removed and
@@ -34,31 +34,31 @@ export function CommitView({
 }: {
   path: string
   sha: string
-  show: "diff" | "file"
+  show: 'diff' | 'file'
 }) {
-  const [load, setLoad] = useState<Load>({ kind: "loading" })
+  const [load, setLoad] = useState<Load>({ kind: 'loading' })
   const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     let live = true
-    setLoad({ kind: "loading" })
+    setLoad({ kind: 'loading' })
     trpc.history.fileDiff
       .query({ path, sha })
-      .then(({ before, after }) => live && setLoad({ kind: "ready", before, after }))
+      .then(({ before, after }) => live && setLoad({ kind: 'ready', before, after }))
       .catch(
         (err: unknown) =>
           live &&
           setLoad({
-            kind: "error",
+            kind: 'error',
             message: err instanceof Error ? err.message : String(err),
-          })
+          }),
       )
     return () => {
       live = false
     }
   }, [path, sha, attempt])
 
-  if (load.kind === "loading") {
+  if (load.kind === 'loading') {
     return (
       <div className="flex flex-col gap-2.5 py-2" role="status" aria-label="Loading the commit">
         <Skeleton className="h-4 w-1/2" />
@@ -67,7 +67,7 @@ export function CommitView({
       </div>
     )
   }
-  if (load.kind === "error") {
+  if (load.kind === 'error') {
     return (
       <ErrorState
         title="This commit could not be read"
@@ -77,7 +77,7 @@ export function CommitView({
     )
   }
 
-  if (show === "file") {
+  if (show === 'file') {
     return (
       <CodeBlock
         code={load.after}
@@ -96,9 +96,8 @@ export function CommitView({
   return (
     <div className="flex flex-col gap-2">
       <p className="text-muted-foreground text-xs tabular-nums">
-        <span className="text-success-foreground">+{diff.added.length}</span>{" "}
-        <span className="text-destructive">−{diff.removed.length}</span>{" "}
-        lines in {basename(path)}
+        <span className="text-success-foreground">+{diff.added.length}</span>{' '}
+        <span className="text-destructive">−{diff.removed.length}</span> lines in {basename(path)}
       </p>
       <CodeBlock
         code={diff.code}

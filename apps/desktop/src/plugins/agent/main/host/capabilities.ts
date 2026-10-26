@@ -115,7 +115,8 @@ function geometry(raw: Record<string, unknown>): Geometry {
 function providerParam(raw: Record<string, unknown>): ProviderId | undefined {
   const value = raw['provider']
   if (value === undefined || value === null) return undefined
-  if (!isProviderId(value)) throw new CapabilityError('BAD_REQUEST', 'provider is not an agent Holi knows')
+  if (!isProviderId(value))
+    throw new CapabilityError('BAD_REQUEST', 'provider is not an agent Holi knows')
   return value
 }
 

@@ -80,7 +80,11 @@ export interface TurnRouteDeps {
   onStatus?(remote: string, id: string, status: unknown): void
   /** What the session said about itself at a turn's end: its first ask,
    *  which names it, and the provider's id for the conversation. */
-  onConversation?(remote: string, id: string, about: { name?: string; conversationId?: string }): void
+  onConversation?(
+    remote: string,
+    id: string,
+    about: { name?: string; conversationId?: string },
+  ): void
   /** The session said where it takes messages: its inbox socket and token
    *  (`background`'s `message`). */
   onChannel?(remote: string, id: string, channel: SessionChannel): void

@@ -4,29 +4,26 @@
  * automatically is the vault's committed setting, and the account menu
  * offers the update while there is one, with a dot on the avatar.
  */
-import {
-  VAULT_SETTING_DEFAULTS,
-  type ResolvedVaultSettings,
-} from "@holi/shared"
-import userEvent from "@testing-library/user-event"
-import { createStore, Provider } from "jotai"
-import { beforeEach, expect, test, vi } from "vitest"
+import { VAULT_SETTING_DEFAULTS, type ResolvedVaultSettings } from '@holi/shared'
+import userEvent from '@testing-library/user-event'
+import { createStore, Provider } from 'jotai'
+import { beforeEach, expect, test, vi } from 'vitest'
 
-import { render, screen, waitFor, within } from "@/test/render"
-import { AccountMenu } from "@/features/sidebar/account-menu"
-import { SidebarProvider } from "@/components/ui/sidebar"
-import { vaultSettingsAtom } from "@/state/settings"
-import { watchPendingSkills } from "@/state/skills"
-import { updateStatusAtom } from "@/state/updates"
-import { activeRemoteAtom } from "@/state/vaults"
+import { render, screen, waitFor, within } from '@/test/render'
+import { AccountMenu } from '@/features/sidebar/account-menu'
+import { SidebarProvider } from '@/components/ui/sidebar'
+import { vaultSettingsAtom } from '@/state/settings'
+import { watchPendingSkills } from '@/state/skills'
+import { updateStatusAtom } from '@/state/updates'
+import { activeRemoteAtom } from '@/state/vaults'
 
-import { UpdatesPage } from "../pages/app-pages"
+import { UpdatesPage } from '../pages/app-pages'
 
 const run = vi.hoisted(() => vi.fn())
 const write = vi.hoisted(() => vi.fn())
 const notes = vi.hoisted(() => vi.fn())
 
-vi.mock("@/lib/trpc", () => ({
+vi.mock('@/lib/trpc', () => ({
   trpc: {
     cap: { run: { mutate: (input: unknown) => run(input) } },
     settings: {
@@ -48,23 +45,23 @@ const SETTINGS: ResolvedVaultSettings = {
 beforeEach(() => {
   run.mockReset()
   run.mockImplementation(async ({ name }: { name: string }) =>
-    name === "skills.status"
+    name === 'skills.status'
       ? {
-          pending: [".claude/skills/a/SKILL.md"],
-          release: "0.5.0",
+          pending: ['.claude/skills/a/SKILL.md'],
+          release: '0.5.0',
           autoUpdate: false,
         }
-      : { summary: "Updated 1 file.", changed: [], conflicts: null }
+      : { summary: 'Updated 1 file.', changed: [], conflicts: null },
   )
   write.mockReset()
   write.mockResolvedValue({ ok: true, warnings: [] })
   notes.mockReset()
   notes.mockResolvedValue({
-    kind: "found",
+    kind: 'found',
     notes: {
-      name: "Holi 0.6.0",
-      body: "## Fixes\n\n- Comments in documents",
-      url: "https://github.com/syv-ai/holi/releases/tag/v0.6.0",
+      name: 'Holi 0.6.0',
+      body: '## Fixes\n\n- Comments in documents',
+      url: 'https://github.com/syv-ai/holi/releases/tag/v0.6.0',
     },
   })
   Object.assign(window, {
@@ -78,15 +75,15 @@ beforeEach(() => {
 
 function setup() {
   const store = createStore()
-  store.set(activeRemoteAtom, "syv/vault")
-  store.set(vaultSettingsAtom, { remote: "syv/vault", settings: SETTINGS })
+  store.set(activeRemoteAtom, 'syv/vault')
+  store.set(vaultSettingsAtom, { remote: 'syv/vault', settings: SETTINGS })
   store.set(updateStatusAtom, {
-    channel: "stable",
+    channel: 'stable',
     supported: true,
     enabled: true,
-    version: "0.5.0",
-    state: "ready",
-    availableVersion: "0.6.0",
+    version: '0.5.0',
+    state: 'ready',
+    availableVersion: '0.6.0',
     percent: null,
     lastCheckAt: Date.now(),
     checkStartedAt: null,
@@ -102,19 +99,15 @@ test("a release's notes open formatted, from GitHub", async () => {
   render(
     <Provider store={store}>
       <UpdatesPage />
-    </Provider>
+    </Provider>,
   )
   expect(screen.getByText(/Last checked just now/)).toBeInTheDocument()
-  const row = screen
-    .getByText("What’s new in Holi 0.6.0")
-    .closest("[data-slot=field]")!
-  await user.click(
-    within(row as HTMLElement).getByRole("button", { name: "Release notes" })
-  )
-  const dialog = await screen.findByRole("dialog")
-  expect(await within(dialog).findByText("Fixes")).toBeInTheDocument()
-  expect(within(dialog).getByText("Comments in documents")).toBeInTheDocument()
-  expect(notes).toHaveBeenCalledWith({ version: "0.6.0" })
+  const row = screen.getByText('What’s new in Holi 0.6.0').closest('[data-slot=field]')!
+  await user.click(within(row as HTMLElement).getByRole('button', { name: 'Release notes' }))
+  const dialog = await screen.findByRole('dialog')
+  expect(await within(dialog).findByText('Fixes')).toBeInTheDocument()
+  expect(within(dialog).getByText('Comments in documents')).toBeInTheDocument()
+  expect(notes).toHaveBeenCalledWith({ version: '0.6.0' })
 })
 
 test("the vault's skills update on request, and Update skills automatically is committed", async () => {
@@ -123,30 +116,24 @@ test("the vault's skills update on request, and Update skills automatically is c
   render(
     <Provider store={store}>
       <UpdatesPage />
-    </Provider>
+    </Provider>,
   )
-  expect(
-    await screen.findByText(/has 1 newer file for this vault/)
-  ).toBeInTheDocument()
-  await user.click(screen.getByRole("button", { name: "Update skills" }))
+  expect(await screen.findByText(/has 1 newer file for this vault/)).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Update skills' }))
   await waitFor(() =>
-    expect(run).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "skills.update" })
-    )
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ name: 'skills.update' })),
   )
-  await user.click(
-    screen.getByRole("switch", { name: "Update skills automatically" })
-  )
+  await user.click(screen.getByRole('switch', { name: 'Update skills automatically' }))
   await waitFor(() =>
     expect(write).toHaveBeenCalledWith(
       expect.objectContaining({
         committedJson: JSON.stringify({ autoUpdateSkills: true }),
-      })
-    )
+      }),
+    ),
   )
 })
 
-test("the account menu offers the update, with a dot on the avatar", async () => {
+test('the account menu offers the update, with a dot on the avatar', async () => {
   const user = userEvent.setup()
   const store = setup()
   render(
@@ -154,23 +141,17 @@ test("the account menu offers the update, with a dot on the avatar", async () =>
       <SidebarProvider>
         <AccountMenu />
       </SidebarProvider>
-    </Provider>
+    </Provider>,
   )
-  const trigger = await screen.findByRole("button", {
-    name: "Open account menu, an update to look at",
+  const trigger = await screen.findByRole('button', {
+    name: 'Open account menu, an update to look at',
   })
-  expect(document.querySelector("[data-update-dot]")).not.toBeNull()
+  expect(document.querySelector('[data-update-dot]')).not.toBeNull()
   await user.click(trigger)
-  expect(
-    await screen.findByRole("menuitem", { name: /Restart to update/ })
-  ).toBeInTheDocument()
-  expect(
-    screen.getByRole("menuitem", { name: /Update skills/ })
-  ).toBeInTheDocument()
-  await user.click(screen.getByRole("menuitem", { name: "Not now" }))
+  expect(await screen.findByRole('menuitem', { name: /Restart to update/ })).toBeInTheDocument()
+  expect(screen.getByRole('menuitem', { name: /Update skills/ })).toBeInTheDocument()
+  await user.click(screen.getByRole('menuitem', { name: 'Not now' }))
   await user.click(trigger)
-  expect(
-    await screen.findByRole("menuitem", { name: /Restart to update/ })
-  ).toBeInTheDocument()
-  expect(screen.queryByRole("menuitem", { name: /Update skills/ })).toBeNull()
+  expect(await screen.findByRole('menuitem', { name: /Restart to update/ })).toBeInTheDocument()
+  expect(screen.queryByRole('menuitem', { name: /Update skills/ })).toBeNull()
 })

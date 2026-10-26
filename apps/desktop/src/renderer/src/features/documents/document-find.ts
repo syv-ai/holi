@@ -5,15 +5,11 @@
  * own, so a match inside a link, a mark or a list item maps exactly. The bar
  * that drives it is `document-find-bar.tsx`.
  */
-import { Extension } from "@tiptap/react"
-import type { EditorState } from "@tiptap/pm/state"
-import {
-  getMatchHighlights,
-  search,
-  SearchQuery,
-} from "prosemirror-search"
+import { Extension } from '@tiptap/react'
+import type { EditorState } from '@tiptap/pm/state'
+import { getMatchHighlights, search, SearchQuery } from 'prosemirror-search'
 
-import type { FindOptions } from "../../composites/find-bar"
+import type { FindOptions } from '../../composites/find-bar'
 
 export type { FindOptions }
 
@@ -38,14 +34,12 @@ export function findCount(state: EditorState): {
     .find()
     .sort((a, b) => a.from - b.from)
   const { from, to } = state.selection
-  const index = matches.findIndex(
-    (match) => match.from === from && match.to === to
-  )
+  const index = matches.findIndex((match) => match.from === from && match.to === to)
   return { total: matches.length, current: index < 0 ? null : index + 1 }
 }
 
 export const DocumentFind = Extension.create({
-  name: "documentFind",
+  name: 'documentFind',
 
   addProseMirrorPlugins() {
     return [search()]

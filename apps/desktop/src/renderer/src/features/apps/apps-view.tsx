@@ -7,33 +7,21 @@
  * archived app leaves the grid for the Archived view, behind the header's
  * toggle, until it is brought back.
  */
-import { useMemo, useState } from "react"
-import { atom, useAtomValue, useSetAtom } from "jotai"
-import {
-  AppWindowIcon,
-  ArchiveIcon,
-  PlusIcon,
-  SettingsIcon,
-} from "lucide-react"
-import { toast } from "sonner"
+import { useMemo, useState } from 'react'
+import { atom, useAtomValue, useSetAtom } from 'jotai'
+import { AppWindowIcon, ArchiveIcon, PlusIcon, SettingsIcon } from 'lucide-react'
+import { toast } from 'sonner'
 
-import { IconStackEmpty } from "@/components/reui/icon-stack-empty"
-import { Toggle } from "@/components/ui/toggle"
-import { ViewHeader, ViewHeaderTitle } from "@/composites/view-header"
-import {
-  canStartConversationAtom,
-  startConversationAtom,
-} from "@/state/agents-slots"
-import { claimsAtom, surfacesAtom } from "@/state/plugins"
-import { revealInFilesAtom } from "@/state/reveal-in-files"
-import { openTabAtom } from "@/state/shell-tabs"
-import {
-  activeRemoteAtom,
-  snapshotAtom,
-  snapshotLoadedAtom,
-} from "@/state/vaults"
-import { AppCard, AppCardSkeleton, type AppCardActions } from "./app-card"
-import { useNewApp } from "./use-new-app"
+import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
+import { Toggle } from '@/components/ui/toggle'
+import { ViewHeader, ViewHeaderTitle } from '@/composites/view-header'
+import { canStartConversationAtom, startConversationAtom } from '@/state/agents-slots'
+import { claimsAtom, surfacesAtom } from '@/state/plugins'
+import { revealInFilesAtom } from '@/state/reveal-in-files'
+import { openTabAtom } from '@/state/shell-tabs'
+import { activeRemoteAtom, snapshotAtom, snapshotLoadedAtom } from '@/state/vaults'
+import { AppCard, AppCardSkeleton, type AppCardActions } from './app-card'
+import { useNewApp } from './use-new-app'
 
 const NO_APPS = atom<readonly string[]>([])
 const NO_VERSIONS = atom<Readonly<Record<string, number>>>({})
@@ -41,7 +29,7 @@ const NO_ARCHIVE = atom(null, async () => {})
 const NO_REFRESH = atom(null, async (_get, _set, _id: string) => {})
 
 export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
-  const surface = useAtomValue(surfacesAtom).get("app")
+  const surface = useAtomValue(surfacesAtom).get('app')
   const live = useAtomValue(surface?.instances ?? NO_APPS)
   const archivedApps = useAtomValue(surface?.archived ?? NO_APPS)
   const versions = useAtomValue(surface?.previewVersions ?? NO_VERSIONS)
@@ -64,10 +52,9 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
   const stamps = useMemo(() => {
     const out = new Map<string, string>()
     for (const app of all) {
-      let newest = ""
+      let newest = ''
       for (const file of snapshot.files) {
-        if (file.path.startsWith(`${app}/`) && file.updatedAt > newest)
-          newest = file.updatedAt
+        if (file.path.startsWith(`${app}/`) && file.updatedAt > newest) newest = file.updatedAt
       }
       out.set(app, newest)
     }
@@ -80,7 +67,7 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
   const labelOf = (path: string) =>
     surface === undefined
       ? path
-      : typeof surface.label === "function"
+      : typeof surface.label === 'function'
         ? surface.label(path)
         : surface.label
 
@@ -94,7 +81,7 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
       toast.error(
         archived
           ? `Couldn't archive ${name}. Check its app.yaml, then try again.`
-          : `Couldn't bring ${name} back. Try again.`
+          : `Couldn't bring ${name} back. Try again.`,
       )
       return
     }
@@ -104,7 +91,7 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
       duration: Infinity,
       closeButton: true,
       action: {
-        label: "Undo",
+        label: 'Undo',
         onClick: () => void setArchived(path, !archived, false),
       },
     })
@@ -113,7 +100,7 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
   async function copyPath(path: string) {
     try {
       await navigator.clipboard.writeText(path)
-      toast.success("Path copied", { description: path })
+      toast.success('Path copied', { description: path })
     } catch {
       toast.error("Couldn't copy the path. Try again.")
     }
@@ -123,8 +110,8 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
    *  app as a chip in its composer. */
   async function ask(path: string) {
     const res = await startConversation({
-      text: "",
-      context: [{ kind: "app", path, name: labelOf(path) }],
+      text: '',
+      context: [{ kind: 'app', path, name: labelOf(path) }],
       beside: true,
     })
     if (!res.ok) toast.error(`Couldn't start the chat. ${res.message}`)
@@ -132,8 +119,7 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
 
   function actionsFor(path: string): AppCardActions {
     return {
-      onOpenBeside: () =>
-        openTab({ kind: "vault-app", path }, { beside: true }),
+      onOpenBeside: () => openTab({ kind: 'vault-app', path }, { beside: true }),
       onAsk: canAsk ? () => void ask(path) : undefined,
       onReveal: () => reveal(path),
       onCopyPath: () => void copyPath(path),
@@ -142,12 +128,10 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
           ? undefined
           : () =>
               void refreshPreview(path).catch(() =>
-                toast.error("Couldn't refresh the preview. Try again.")
+                toast.error("Couldn't refresh the preview. Try again."),
               ),
       onArchive:
-        surface?.archive === undefined
-          ? undefined
-          : () => void setArchived(path, !inArchive),
+        surface?.archive === undefined ? undefined : () => void setArchived(path, !inArchive),
     }
   }
 
@@ -155,12 +139,10 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
     <div className="flex min-h-0 flex-1 flex-col">
       <ViewHeader>
         <ViewHeaderTitle
-          title={inArchive ? "Archived apps" : "Apps"}
+          title={inArchive ? 'Archived apps' : 'Apps'}
           badge={
             apps.length > 0 ? (
-              <span className="text-muted-foreground text-xs tabular-nums">
-                {apps.length}
-              </span>
+              <span className="text-muted-foreground text-xs tabular-nums">{apps.length}</span>
             ) : undefined
           }
         />
@@ -171,13 +153,11 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
             className="ms-auto"
             pressed={inArchive}
             onPressedChange={setShowArchived}
-            aria-label={inArchive ? "Show the apps" : "Show the archived apps"}
+            aria-label={inArchive ? 'Show the apps' : 'Show the archived apps'}
           >
             <ArchiveIcon aria-hidden="true" />
             Archived
-            <span className="text-muted-foreground tabular-nums">
-              {archivedApps.length}
-            </span>
+            <span className="text-muted-foreground tabular-nums">{archivedApps.length}</span>
           </Toggle>
         ) : null}
       </ViewHeader>
@@ -189,9 +169,9 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
             title="Vault apps are off"
             description="Turn on the Vault apps plugin in Settings to open the apps in this vault."
             action={{
-              label: "Open Settings",
+              label: 'Open Settings',
               icon: SettingsIcon,
-              onClick: () => openTab({ kind: "settings" }),
+              onClick: () => openTab({ kind: 'settings' }),
             }}
           />
         ) : !loaded && remote !== null ? (
@@ -211,7 +191,7 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
             title="Every app is archived"
             description="Archived apps stay in the vault and open from the files tree. Bring one back to list it here again."
             action={{
-              label: "Show archived",
+              label: 'Show archived',
               icon: ArchiveIcon,
               onClick: () => setShowArchived(true),
             }}
@@ -225,7 +205,7 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
               newApp === undefined
                 ? undefined
                 : {
-                    label: creating ? "Creating…" : "New app",
+                    label: creating ? 'Creating…' : 'New app',
                     icon: PlusIcon,
                     disabled: creating || newApp === undefined,
                     onClick: () => void newApp?.(),
@@ -243,7 +223,7 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
                     path={path}
                     name={labelOf(path)}
                     icon={surface.icon}
-                    stamp={stamps.get(path) ?? ""}
+                    stamp={stamps.get(path) ?? ''}
                     describe={
                       describe === undefined || remote === null
                         ? undefined

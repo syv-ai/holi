@@ -25,8 +25,7 @@ const FONT = `600 ${FONT_PX}px ui-monospace, SFMono-Regular, Menlo, monospace`
 
 const snap = (value: number) => Math.round(value / UNIT) * UNIT
 
-const clamp = (value: number, min: number, max: number) =>
-  Math.max(min, Math.min(max, value))
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
 
 type Point = [number, number]
 
@@ -41,7 +40,7 @@ function outline(
   w: number,
   h: number,
   tailX: number,
-  below: boolean
+  below: boolean,
 ): Point[] {
   const points: Point[] = []
   const at = (px: number, py: number) => points.push([px, py])
@@ -110,13 +109,13 @@ export function drawSpeechBubble(
   headSize: number,
   bounds: { width: number; height: number },
   alpha: number,
-  theme: BubbleTheme
+  theme: BubbleTheme,
 ) {
   if (alpha <= 0.01) return
 
   ctx.save()
   ctx.font = FONT
-  if ("letterSpacing" in ctx) ctx.letterSpacing = "1px"
+  if ('letterSpacing' in ctx) ctx.letterSpacing = '1px'
 
   const w = snap(ctx.measureText(text).width + PAD_X * 2)
   const h = snap(FONT_PX + PAD_Y * 2)
@@ -130,17 +129,11 @@ export function drawSpeechBubble(
 
   // Aim the tail at the head, then keep the whole bubble on screen.
   const preferred = headX - 4 * STEP
-  const x = snap(
-    clamp(preferred, margin, Math.max(margin, bounds.width - w - margin))
-  )
-  const tailX = clamp(
-    snap(headX - x),
-    2 * STEP,
-    Math.max(2 * STEP, w - (TAIL_STEPS + 2) * STEP)
-  )
+  const x = snap(clamp(preferred, margin, Math.max(margin, bounds.width - w - margin)))
+  const tailX = clamp(snap(headX - x), 2 * STEP, Math.max(2 * STEP, w - (TAIL_STEPS + 2) * STEP))
 
   ctx.globalAlpha = alpha
-  ctx.lineJoin = "miter"
+  ctx.lineJoin = 'miter'
   ctx.lineWidth = UNIT
 
   const edge = theme.accent ?? theme.fg
@@ -159,8 +152,8 @@ export function drawSpeechBubble(
   ctx.stroke()
 
   ctx.fillStyle = theme.fg
-  ctx.textBaseline = "middle"
-  ctx.textAlign = "left"
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'left'
   ctx.fillText(text, x + PAD_X, y + h / 2 + 1)
 
   ctx.restore()

@@ -1,4 +1,4 @@
-import type { Node as ProseMirrorNode, ResolvedPos } from "@tiptap/pm/model"
+import type { Node as ProseMirrorNode, ResolvedPos } from '@tiptap/pm/model'
 import {
   NodeSelection,
   Plugin,
@@ -7,10 +7,10 @@ import {
   TextSelection,
   type EditorState,
   type Transaction,
-} from "@tiptap/pm/state"
-import { dropPoint } from "@tiptap/pm/transform"
-import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view"
-import { Extension, type Command, type Editor } from "@tiptap/react"
+} from '@tiptap/pm/state'
+import { dropPoint } from '@tiptap/pm/transform'
+import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
+import { Extension, type Command, type Editor } from '@tiptap/react'
 
 /** A block the gutter acts on: a top-level block or one list item. */
 export interface BlockTarget {
@@ -23,26 +23,21 @@ export interface BlockTarget {
   parent: ProseMirrorNode
 }
 
-type BlockAction = (
-  state: EditorState,
-  target: BlockTarget
-) => Transaction | null
+type BlockAction = (state: EditorState, target: BlockTarget) => Transaction | null
 
-const LIST_ITEMS = new Set(["listItem", "taskItem"])
+const LIST_ITEMS = new Set(['listItem', 'taskItem'])
 
 /** The block being dragged, or the one the block menu acts on. */
 export interface ActiveBlock {
   pos: number
-  kind: "drag" | "menu"
+  kind: 'drag' | 'menu'
 }
 
 /** Holds the active block; set and cleared through transaction meta. */
-export const ACTIVE_BLOCK_KEY = new PluginKey<ActiveBlock | null>(
-  "richTextActiveBlock"
-)
+export const ACTIVE_BLOCK_KEY = new PluginKey<ActiveBlock | null>('richTextActiveBlock')
 
 // Dragging fades the block; the menu paints its text like a selection.
-const ACTIVE_BLOCK_CLASS = { drag: "opacity-50", menu: "selection" } as const
+const ACTIVE_BLOCK_CLASS = { drag: 'opacity-50', menu: 'selection' } as const
 
 // The gutter registers here what Mod-/ opens; false leaves the key alone.
 const menuOpeners = new WeakMap<Editor, () => boolean>()
@@ -66,10 +61,7 @@ function targetAt($pos: ResolvedPos, depth: number): BlockTarget {
 
 /** The block that owns a position: the innermost list item, else the
  * top-level block; anything inside a table resolves to the table. */
-export function findBlockTarget(
-  doc: ProseMirrorNode,
-  pos: number
-): BlockTarget | null {
+export function findBlockTarget(doc: ProseMirrorNode, pos: number): BlockTarget | null {
   const $pos = doc.resolve(Math.max(0, Math.min(pos, doc.content.size)))
 
   // Between top-level blocks (an atom, the gap around a table): the next one.
@@ -90,10 +82,7 @@ export function findBlockTarget(
 }
 
 /** Re-reads a target from its position after the document changed. */
-export function blockTargetAtPos(
-  doc: ProseMirrorNode,
-  pos: number
-): BlockTarget | null {
+export function blockTargetAtPos(doc: ProseMirrorNode, pos: number): BlockTarget | null {
   if (pos < 0 || pos >= doc.content.size) return null
   const node = doc.nodeAt(pos)
   if (!node || !node.isBlock) return null
@@ -128,8 +117,7 @@ export function isListItem(node: ProseMirrorNode) {
 
 /** The block's own text: a list item's first line, else every line. */
 export function blockTextRange({ node, pos }: BlockTarget) {
-  if (node.isTextblock)
-    return { from: pos + 1, to: pos + 1 + node.content.size }
+  if (node.isTextblock) return { from: pos + 1, to: pos + 1 + node.content.size }
   if (node.isAtom || node.type.spec.tableRole) return null
   let from = -1
   let to = -1
@@ -146,16 +134,11 @@ export function blockTextRange({ node, pos }: BlockTarget) {
 }
 
 function isEmptyParagraph(node: ProseMirrorNode) {
-  return node.type.name === "paragraph" && node.childCount === 0
+  return node.type.name === 'paragraph' && node.childCount === 0
 }
 
 /** Keeps the selection at the same spot inside a block that moved to newPos. */
-function carryAcross(
-  tr: Transaction,
-  state: EditorState,
-  target: BlockTarget,
-  newPos: number
-) {
+function carryAcross(tr: Transaction, state: EditorState, target: BlockTarget, newPos: number) {
   const { selection } = state
   const end = target.pos + target.node.nodeSize
 
@@ -167,8 +150,8 @@ function carryAcross(
     return tr.setSelection(
       TextSelection.between(
         tr.doc.resolve(selection.anchor + shift),
-        tr.doc.resolve(selection.head + shift)
-      )
+        tr.doc.resolve(selection.head + shift),
+      ),
     )
   }
   return tr
@@ -176,9 +159,7 @@ function carryAcross(
 
 /** Caret on the first text inside the node at `at`, else the node itself. */
 function selectBlockStart(tr: Transaction, at: number, node: ProseMirrorNode) {
-  const found = node.isAtom
-    ? null
-    : Selection.findFrom(tr.doc.resolve(at + 1), 1, true)
+  const found = node.isAtom ? null : Selection.findFrom(tr.doc.resolve(at + 1), 1, true)
 
   if (found && found.from < at + node.nodeSize) return tr.setSelection(found)
   return tr.setSelection(NodeSelection.create(tr.doc, at))
@@ -196,9 +177,7 @@ function removalRange(doc: ProseMirrorNode, target: BlockTarget) {
 }
 
 export function canMoveBlock(target: BlockTarget, dir: -1 | 1) {
-  return dir < 0
-    ? target.index > 0
-    : target.index < target.parent.childCount - 1
+  return dir < 0 ? target.index > 0 : target.index < target.parent.childCount - 1
 }
 
 /** Swaps the block with its previous or next sibling in one step. */
@@ -217,20 +196,16 @@ function moveBlock(state: EditorState, target: BlockTarget, dir: -1 | 1) {
   return carryAcross(tr, state, target, pos + sibling.nodeSize).scrollIntoView()
 }
 
-export const moveBlockUp: BlockAction = (state, target) =>
-  moveBlock(state, target, -1)
+export const moveBlockUp: BlockAction = (state, target) => moveBlock(state, target, -1)
 
-export const moveBlockDown: BlockAction = (state, target) =>
-  moveBlock(state, target, 1)
+export const moveBlockDown: BlockAction = (state, target) => moveBlock(state, target, 1)
 
 /** Inserts a copy right after the block and moves the selection into it. */
 export const duplicateBlock: BlockAction = (state, target) => {
   const at = target.pos + target.node.nodeSize
   const tr = state.tr.insert(at, target.node)
   const { selection } = state
-  const inside =
-    selection.from >= target.pos &&
-    selection.to <= target.pos + target.node.nodeSize
+  const inside = selection.from >= target.pos && selection.to <= target.pos + target.node.nodeSize
 
   if (inside) return carryAcross(tr, state, target, at).scrollIntoView()
   return selectBlockStart(tr, at, target.node).scrollIntoView()
@@ -242,26 +217,20 @@ export const deleteBlock: BlockAction = (state, target) => {
   const tr = state.tr
 
   if (depth === 1 && state.doc.childCount === 1) {
-    tr.replaceWith(
-      0,
-      state.doc.content.size,
-      state.schema.nodes.paragraph!.create()
-    )
+    tr.replaceWith(0, state.doc.content.size, state.schema.nodes.paragraph!.create())
   } else {
     tr.delete(from, to)
   }
   const $at = tr.doc.resolve(Math.min(from, tr.doc.content.size))
   // The caret lands at the end of the block above, else the start of the next.
   const selection =
-    Selection.findFrom($at, -1, true) ??
-    Selection.findFrom($at, 1, true) ??
-    Selection.near($at)
+    Selection.findFrom($at, -1, true) ?? Selection.findFrom($at, 1, true) ?? Selection.near($at)
   return tr.setSelection(selection).scrollIntoView()
 }
 
 /** An empty row above or below the block with the caret in it: a paragraph,
  * or an item where only items fit; an empty row is reused, never doubled. */
-export function insertBlockRow(side: "before" | "after"): BlockAction {
+export function insertBlockRow(side: 'before' | 'after'): BlockAction {
   return (state, target) => {
     const tr = state.tr
     const { node, parent, pos } = target
@@ -276,14 +245,14 @@ export function insertBlockRow(side: "before" | "after"): BlockAction {
       }
     }
 
-    const index = side === "before" ? target.index : target.index + 1
+    const index = side === 'before' ? target.index : target.index + 1
     const paragraph = state.schema.nodes.paragraph!
     const row = parent.canReplaceWith(index, index, paragraph)
       ? paragraph.create()
       : node.type.createAndFill()
     if (!row) return null
 
-    const at = side === "before" ? pos : pos + node.nodeSize
+    const at = side === 'before' ? pos : pos + node.nodeSize
     tr.insert(at, row)
     return selectBlockStart(tr, at, row).scrollIntoView()
   }
@@ -293,33 +262,23 @@ export function insertBlockRow(side: "before" | "after"): BlockAction {
 export function blockCommand(action: BlockAction, pos?: number): Command {
   return ({ state }) => {
     const target =
-      pos === undefined
-        ? selectionBlockTarget(state)
-        : blockTargetAtPos(state.doc, pos)
+      pos === undefined ? selectionBlockTarget(state) : blockTargetAtPos(state.doc, pos)
 
     return target ? action(state, target) !== null : false
   }
 }
 
 /** True when a drop would put the block back where it already is. */
-function isDropOnSelf(
-  doc: ProseMirrorNode,
-  dragPos: number,
-  insertPos: number
-) {
+function isDropOnSelf(doc: ProseMirrorNode, dragPos: number, insertPos: number) {
   const node = doc.nodeAt(dragPos)
-  return node
-    ? insertPos >= dragPos && insertPos <= dragPos + node.nodeSize
-    : false
+  return node ? insertPos >= dragPos && insertPos <= dragPos + node.nodeSize : false
 }
 
 /** Where an item dropped beside a list of its kind joins it: that list's
  * end, else its start; null where the stock drop already lands it right. */
 function listEdge(doc: ProseMirrorNode, at: number, item: ProseMirrorNode) {
   const holds = (list: ProseMirrorNode | null | undefined) =>
-    !!list &&
-    !list.isTextblock &&
-    list.canReplaceWith(list.childCount, list.childCount, item.type)
+    !!list && !list.isTextblock && list.canReplaceWith(list.childCount, list.childCount, item.type)
   const $at = doc.resolve(at)
   if (holds($at.parent)) return null
 
@@ -352,24 +311,22 @@ function dropIntoList(view: EditorView, source: NodeSelection, at: number) {
   tr.insert(mapped.pos, source.node)
   selectBlockStart(tr, mapped.pos, source.node)
   view.focus()
-  view.dispatch(tr.setMeta("uiEvent", "drop"))
+  view.dispatch(tr.setMeta('uiEvent', 'drop'))
   return true
 }
 
 export const RichTextBlockActions = Extension.create({
-  name: "richTextBlockActions",
+  name: 'richTextBlockActions',
 
   addKeyboardShortcuts() {
-    const run = (action: BlockAction) => () =>
-      this.editor.commands.command(blockCommand(action))
+    const run = (action: BlockAction) => () => this.editor.commands.command(blockCommand(action))
 
     return {
-      "Mod-Shift-ArrowUp": run(moveBlockUp),
-      "Mod-Shift-ArrowDown": run(moveBlockDown),
+      'Mod-Shift-ArrowUp': run(moveBlockUp),
+      'Mod-Shift-ArrowDown': run(moveBlockDown),
       // VS Code's copy line down: ⌘D selects the next occurrence instead.
-      "Shift-Alt-ArrowDown": run(duplicateBlock),
-      "Mod-/": () =>
-        this.editor.isEditable && (menuOpeners.get(this.editor)?.() ?? false),
+      'Shift-Alt-ArrowDown': run(duplicateBlock),
+      'Mod-/': () => this.editor.isEditable && (menuOpeners.get(this.editor)?.() ?? false),
     }
   },
 
@@ -380,10 +337,9 @@ export const RichTextBlockActions = Extension.create({
         state: {
           init: () => null,
           apply(tr, value) {
-            const meta: ActiveBlock | null | undefined =
-              tr.getMeta(ACTIVE_BLOCK_KEY)
+            const meta: ActiveBlock | null | undefined = tr.getMeta(ACTIVE_BLOCK_KEY)
             if (meta !== undefined) return meta
-            if (!value || tr.getMeta("uiEvent") === "drop") return null
+            if (!value || tr.getMeta('uiEvent') === 'drop') return null
             const mapped = tr.mapping.mapResult(value.pos)
             return mapped.deleted ? null : { ...value, pos: mapped.pos }
           },
@@ -392,29 +348,23 @@ export const RichTextBlockActions = Extension.create({
           // Node decorations reach node views too, with no React render.
           decorations(state) {
             const active = ACTIVE_BLOCK_KEY.getState(state)
-            const target = active
-              ? blockTargetAtPos(state.doc, active.pos)
-              : null
+            const target = active ? blockTargetAtPos(state.doc, active.pos) : null
             if (!active || !target) return null
             const attrs = { class: ACTIVE_BLOCK_CLASS[active.kind] }
-            const text = active.kind === "menu" ? blockTextRange(target) : null
+            const text = active.kind === 'menu' ? blockTextRange(target) : null
 
             // The menu tints text only, so task checkboxes stay visible.
             return DecorationSet.create(state.doc, [
               text && text.to > text.from
                 ? Decoration.inline(text.from, text.to, attrs)
-                : Decoration.node(
-                    target.pos,
-                    target.pos + target.node.nodeSize,
-                    attrs
-                  ),
+                : Decoration.node(target.pos, target.pos + target.node.nodeSize, attrs),
             ])
           },
           // Stock drops delete and reinsert, which records an empty undo step,
           // and drop an item beside its list into a new one-item list.
           handleDrop(view, event, slice, moved) {
             const { dragging } = view
-            const source = dragging && "node" in dragging ? dragging.node : null
+            const source = dragging && 'node' in dragging ? dragging.node : null
             if (!moved || !(source instanceof NodeSelection)) return false
             const hit = view.posAtCoords({
               left: event.clientX,

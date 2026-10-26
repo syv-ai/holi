@@ -6,18 +6,12 @@
  * Table's Display) ride in `extra`. It spans the tab as a bar of its own,
  * and `PanelBody` holds what it narrows.
  */
-import type { ReactNode } from "react"
-import type { Priority } from "@holi/shared"
-import {
-  ArrowUpDownIcon,
-  FilterIcon,
-  PlusIcon,
-  SearchIcon,
-  XIcon,
-} from "lucide-react"
+import type { ReactNode } from 'react'
+import type { Priority } from '@holi/shared'
+import { ArrowUpDownIcon, FilterIcon, PlusIcon, SearchIcon, XIcon } from 'lucide-react'
 
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
+import { Badge } from '@/components/reui/badge'
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -29,13 +23,13 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from '@/components/ui/dropdown-menu'
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
-} from "@/components/ui/input-group"
+} from '@/components/ui/input-group'
 import {
   EMPTY_PLANNING_FILTER,
   isFiltered,
@@ -43,15 +37,11 @@ import {
   PRIORITIES,
   type PlanningFilter,
   type PlanningSort,
-} from "@/lib/planning"
-import { cn } from "@/lib/cn"
+} from '@/lib/planning'
+import { cn } from '@/lib/cn'
 
 function toggled<T>(list: readonly T[], item: T, on: boolean): T[] {
-  return on
-    ? list.includes(item)
-      ? [...list]
-      : [...list, item]
-    : list.filter((x) => x !== item)
+  return on ? (list.includes(item) ? [...list] : [...list, item]) : list.filter((x) => x !== item)
 }
 
 export function PlanningToolbar({
@@ -74,27 +64,21 @@ export function PlanningToolbar({
   onNewTask: () => void
   extra?: ReactNode
 }) {
-  const active =
-    filter.people.length + filter.tags.length + filter.priorities.length
-  const priorities: { id: Priority | "none"; name: string }[] = [
+  const active = filter.people.length + filter.tags.length + filter.priorities.length
+  const priorities: { id: Priority | 'none'; name: string }[] = [
     ...PRIORITIES,
-    { id: "none", name: "No priority" },
+    { id: 'none', name: 'No priority' },
   ]
 
   return (
     <div className="border-border flex shrink-0 flex-col gap-3 border-b px-4 py-2 lg:flex-row lg:items-center lg:justify-between lg:px-6">
       <InputGroup className="w-full min-w-0 lg:max-w-xs">
         <InputGroupAddon align="inline-start">
-          <SearchIcon
-            className="text-muted-foreground size-4"
-            aria-hidden="true"
-          />
+          <SearchIcon className="text-muted-foreground size-4" aria-hidden="true" />
         </InputGroupAddon>
         <InputGroupInput
           value={filter.search}
-          onChange={(event) =>
-            onFilterChange({ ...filter, search: event.target.value })
-          }
+          onChange={(event) => onFilterChange({ ...filter, search: event.target.value })}
           placeholder="Search tasks…"
           aria-label="Search tasks"
         />
@@ -103,7 +87,7 @@ export function PlanningToolbar({
             <InputGroupButton
               size="icon-xs"
               aria-label="Clear search"
-              onClick={() => onFilterChange({ ...filter, search: "" })}
+              onClick={() => onFilterChange({ ...filter, search: '' })}
             >
               <XIcon className="size-4" aria-hidden="true" />
             </InputGroupButton>
@@ -135,11 +119,7 @@ export function PlanningToolbar({
                   onCheckedChange={(checked) =>
                     onFilterChange({
                       ...filter,
-                      priorities: toggled(
-                        filter.priorities,
-                        priority.id,
-                        checked === true
-                      ),
+                      priorities: toggled(filter.priorities, priority.id, checked === true),
                     })
                   }
                 >
@@ -160,11 +140,7 @@ export function PlanningToolbar({
                       onCheckedChange={(checked) =>
                         onFilterChange({
                           ...filter,
-                          people: toggled(
-                            filter.people,
-                            login,
-                            checked === true
-                          ),
+                          people: toggled(filter.people, login, checked === true),
                         })
                       }
                     >
@@ -221,8 +197,7 @@ export function PlanningToolbar({
           <DropdownMenuTrigger asChild>
             <Button type="button" variant="ghost" size="sm">
               <ArrowUpDownIcon data-icon="inline-start" aria-hidden="true" />
-              Sort:{" "}
-              {PLANNING_SORTS.find((s) => s.id === sort)?.name ?? "Manual"}
+              Sort: {PLANNING_SORTS.find((s) => s.id === sort)?.name ?? 'Manual'}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-44">
@@ -264,18 +239,12 @@ export function PlanningToolbar({
 
 /** What sits under the toolbar: the tab's scrolling content. `flush` runs
  *  it to the pane's edges, for a grid whose rows are the edge. */
-export function PanelBody({
-  children,
-  flush = false,
-}: {
-  children: ReactNode
-  flush?: boolean
-}) {
+export function PanelBody({ children, flush = false }: { children: ReactNode; flush?: boolean }) {
   return (
     <div
       className={cn(
-        "flex min-h-0 flex-1 flex-col overflow-auto",
-        !flush && "gap-4 px-4 py-4 lg:px-6"
+        'flex min-h-0 flex-1 flex-col overflow-auto',
+        !flush && 'gap-4 px-4 py-4 lg:px-6',
       )}
     >
       {children}

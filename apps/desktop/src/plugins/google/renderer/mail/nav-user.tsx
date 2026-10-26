@@ -1,8 +1,8 @@
-import { useState } from "react"
-import { CheckIcon, ChevronsUpDownIcon, SettingsIcon } from "lucide-react"
-import { useAtomValue } from "jotai"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Button } from "@/components/ui/button"
+import { useState } from 'react'
+import { CheckIcon, ChevronsUpDownIcon, SettingsIcon } from 'lucide-react'
+import { useAtomValue } from 'jotai'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,10 +11,10 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { activeRemoteAtom } from "@/plugin-api"
-import { googleCap, useGoogleAccount } from "../account"
-import { initialsOf } from "./data"
+} from '@/components/ui/dropdown-menu'
+import { activeRemoteAtom } from '@/plugin-api'
+import { googleCap, useGoogleAccount } from '../account'
+import { initialsOf } from './data'
 
 // ── Nav User ──
 
@@ -36,7 +36,7 @@ export function NavUser({
   const remote = useAtomValue(activeRemoteAtom)
   const { account, accounts, currentSub, refresh } = useGoogleAccount()
   const [switching, setSwitching] = useState(false)
-  const email = account?.email ?? ""
+  const email = account?.email ?? ''
   const others = accounts.filter((a) => a.sub !== currentSub)
 
   const use = (sub: string) => {
@@ -45,7 +45,7 @@ export function NavUser({
     void googleCap
       .useAccount(remote, { sub })
       .then(refresh)
-      .catch(() => onError("Could not switch accounts. Try again."))
+      .catch(() => onError('Could not switch accounts. Try again.'))
       .finally(() => setSwitching(false))
   }
 
@@ -55,22 +55,17 @@ export function NavUser({
         <Button
           variant="ghost"
           className="w-full justify-start"
-          aria-label={
-            email === "" ? "Google account" : `Google account ${email}`
-          }
+          aria-label={email === '' ? 'Google account' : `Google account ${email}`}
         >
           <Avatar size="sm">
             <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">
-              {initialsOf("", email)}
+              {initialsOf('', email)}
             </AvatarFallback>
           </Avatar>
           <span className="min-w-0 flex-1 truncate text-left">
-            {email === "" ? "Not connected" : email}
+            {email === '' ? 'Not connected' : email}
           </span>
-          <ChevronsUpDownIcon
-            className="text-muted-foreground"
-            aria-hidden="true"
-          />
+          <ChevronsUpDownIcon className="text-muted-foreground" aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
 
@@ -85,15 +80,13 @@ export function NavUser({
             <div className="flex items-center gap-2.5">
               <Avatar>
                 <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">
-                  {initialsOf("", email)}
+                  {initialsOf('', email)}
                 </AvatarFallback>
               </Avatar>
               <div className="flex min-w-0 flex-col">
-                <span className="text-foreground text-sm font-semibold">
-                  Google
-                </span>
+                <span className="text-foreground text-sm font-semibold">Google</span>
                 <span className="text-muted-foreground truncate text-xs font-normal">
-                  {email === "" ? "Not connected" : email}
+                  {email === '' ? 'Not connected' : email}
                 </span>
               </div>
             </div>

@@ -4,9 +4,9 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { MailComposer } from "../mail-composer"
-import type { MailAddress } from "./use-mail"
+} from '@/components/ui/dialog'
+import { MailComposer } from '../mail-composer'
+import type { MailAddress } from './use-mail'
 
 export interface ComposeRequest {
   /** The Gmail draft to continue, or none for a new message. */
@@ -37,9 +37,7 @@ export function ComposeDialog({
     <Dialog open={request !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>
-            {request?.draftId === undefined ? "New message" : "Draft"}
-          </DialogTitle>
+          <DialogTitle>{request?.draftId === undefined ? 'New message' : 'Draft'}</DialogTitle>
           <DialogDescription className="sr-only">
             Write in markdown; it is sent as the preview shows it.
           </DialogDescription>
@@ -47,7 +45,7 @@ export function ComposeDialog({
         {request !== null && (
           <MailComposer
             key={request.key}
-            intent={{ kind: "new" }}
+            intent={{ kind: 'new' }}
             draftId={request.draftId}
             sendAs={sendAs}
             suggestions={contacts}

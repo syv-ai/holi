@@ -1,31 +1,23 @@
-import { useId, useRef, useState, type RefObject } from "react"
-import { useEditorState, type Editor } from "@tiptap/react"
-import { BubbleMenu } from "@tiptap/react/menus"
+import { useId, useRef, useState, type RefObject } from 'react'
+import { useEditorState, type Editor } from '@tiptap/react'
+import { BubbleMenu } from '@tiptap/react/menus'
 
-import { Button } from "@/components/ui/button"
-import { ButtonGroup } from "@/components/ui/button-group"
-import { Field, FieldError } from "@/components/ui/field"
+import { Button } from '@/components/ui/button'
+import { ButtonGroup } from '@/components/ui/button-group'
+import { Field, FieldError } from '@/components/ui/field'
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
-} from "@/components/ui/input-group"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
-import { Toggle } from "@/components/ui/toggle"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
-import type { RichTextSnapshot } from "./rich-text-state"
-import { ShortcutKeys } from "@/composites/shortcut-keys"
-import { keepEditorFocus } from "./rich-text-toolbar"
-import { LinkIcon, CheckIcon, Link2OffIcon, ExternalLinkIcon, PencilIcon } from "lucide-react"
+} from '@/components/ui/input-group'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Toggle } from '@/components/ui/toggle'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import type { RichTextSnapshot } from './rich-text-state'
+import { ShortcutKeys } from '@/composites/shortcut-keys'
+import { keepEditorFocus } from './rich-text-toolbar'
+import { LinkIcon, CheckIcon, Link2OffIcon, ExternalLinkIcon, PencilIcon } from 'lucide-react'
 
 const BARE_DOMAIN = /^[\w-]+(\.[\w-]+)+(:\d+)?([/?#]\S*)?$/
 
@@ -39,7 +31,7 @@ function normalizeHref(value: string) {
 }
 
 function removeLink(editor: Editor | null) {
-  editor?.chain().focus().extendMarkRange("link").unsetLink().run()
+  editor?.chain().focus().extendMarkRange('link').unsetLink().run()
 }
 
 interface LinkFormProps {
@@ -50,7 +42,7 @@ interface LinkFormProps {
 }
 
 function LinkForm({ editor, href, inputRef, onDone }: LinkFormProps) {
-  const [draft, setDraft] = useState(href ?? "")
+  const [draft, setDraft] = useState(href ?? '')
   const [invalid, setInvalid] = useState(false)
   const errorId = useId()
 
@@ -68,23 +60,18 @@ function LinkForm({ editor, href, inputRef, onDone }: LinkFormProps) {
     const { empty } = editor.state.selection
 
     // With nothing selected, the address becomes the link text itself.
-    if (empty && !editor.isActive("link")) {
+    if (empty && !editor.isActive('link')) {
       editor
         .chain()
         .focus()
         .insertContent({
-          type: "text",
+          type: 'text',
           text: draft.trim(),
-          marks: [{ type: "link", attrs: { href: next } }],
+          marks: [{ type: 'link', attrs: { href: next } }],
         })
         .run()
     } else {
-      editor
-        .chain()
-        .focus()
-        .extendMarkRange("link")
-        .setLink({ href: next })
-        .run()
+      editor.chain().focus().extendMarkRange('link').setLink({ href: next }).run()
     }
 
     onDone()
@@ -109,7 +96,7 @@ function LinkForm({ editor, href, inputRef, onDone }: LinkFormProps) {
               setInvalid(false)
             }}
             onKeyDown={(event) => {
-              if (event.key === "Enter") {
+              if (event.key === 'Enter') {
                 event.preventDefault()
                 apply()
               }
@@ -141,9 +128,7 @@ function LinkForm({ editor, href, inputRef, onDone }: LinkFormProps) {
           </InputGroupAddon>
         </InputGroup>
         {invalid ? (
-          <FieldError id={errorId}>
-            Enter a web address, like example.com
-          </FieldError>
+          <FieldError id={errorId}>Enter a web address, like example.com</FieldError>
         ) : null}
       </Field>
     </div>
@@ -187,7 +172,7 @@ export function RichTextLinkPopover({
         </TooltipTrigger>
         <TooltipContent>
           Link
-          <ShortcutKeys keys={["mod", "K"]} />
+          <ShortcutKeys keys={['mod', 'K']} />
         </TooltipContent>
       </Tooltip>
       <PopoverContent
@@ -215,18 +200,12 @@ export function RichTextLinkPopover({
   )
 }
 
-const BUBBLE_OPTIONS = { placement: "bottom-start", offset: 6 } as const
+const BUBBLE_OPTIONS = { placement: 'bottom-start', offset: 6 } as const
 
-function showAtLink({
-  editor,
-  element,
-}: {
-  editor: Editor
-  element: HTMLElement
-}) {
+function showAtLink({ editor, element }: { editor: Editor; element: HTMLElement }) {
   return (
     editor.isEditable &&
-    editor.isActive("link") &&
+    editor.isActive('link') &&
     (editor.view.hasFocus() || element.contains(document.activeElement))
   )
 }
@@ -237,15 +216,12 @@ interface RichTextLinkBubbleProps {
 }
 
 /** Surfaces the address under the caret, which the text alone never shows. */
-export function RichTextLinkBubble({
-  editor,
-  onEdit,
-}: RichTextLinkBubbleProps) {
+export function RichTextLinkBubble({ editor, onEdit }: RichTextLinkBubbleProps) {
   const href = useEditorState({
     editor,
     selector: ({ editor: current }) =>
-      current.isActive("link")
-        ? ((current.getAttributes("link").href as string | undefined) ?? null)
+      current.isActive('link')
+        ? ((current.getAttributes('link').href as string | undefined) ?? null)
         : null,
   })
   // Stored JSON skips Link's own check, so only a vetted address goes live.
@@ -270,21 +246,14 @@ export function RichTextLinkBubble({
           >
             <a href={safeHref} target="_blank" rel="noopener noreferrer">
               <ExternalLinkIcon aria-hidden="true" />
-              <span className="truncate">
-                {safeHref.replace(/^https?:\/\//, "")}
-              </span>
+              <span className="truncate">{safeHref.replace(/^https?:\/\//, '')}</span>
               <span className="sr-only">(opens in a new tab)</span>
             </a>
           </Button>
         ) : null}
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button
-              variant="outline"
-              size="icon-sm"
-              aria-label="Edit link"
-              onClick={onEdit}
-            >
+            <Button variant="outline" size="icon-sm" aria-label="Edit link" onClick={onEdit}>
               <PencilIcon aria-hidden="true" />
             </Button>
           </TooltipTrigger>

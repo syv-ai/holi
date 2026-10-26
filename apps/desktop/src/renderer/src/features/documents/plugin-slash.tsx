@@ -2,12 +2,12 @@
  * A plugin's slash command (a vault app's, docs/features/vault-apps.md) as a
  * row of the document editor's slash menu.
  */
-import type { Editor, JSONContent, Range } from "@tiptap/react"
-import { SquareSlashIcon } from "lucide-react"
-import { toast } from "sonner"
+import type { Editor, JSONContent, Range } from '@tiptap/react'
+import { SquareSlashIcon } from 'lucide-react'
+import { toast } from 'sonner'
 
-import type { RichTextSlashItem } from "@/features/documents/rich-text/rich-text-slash-menu"
-import type { SlashCommand } from "@/plugin-api/types"
+import type { RichTextSlashItem } from '@/features/documents/rich-text/rich-text-slash-menu'
+import type { SlashCommand } from '@/plugin-api/types'
 
 /**
  * A plugin's command as a slash menu row. Picked, the typed "/query" goes,
@@ -20,13 +20,13 @@ import type { SlashCommand } from "@/plugin-api/types"
 export function pluginSlashItem(
   command: SlashCommand,
   path: string,
-  ask: (pos: number, instruction: string) => void
+  ask: (pos: number, instruction: string) => void,
 ): RichTextSlashItem {
   return {
-    id: `plugin:${command.meta ?? ""}:${command.name}`,
-    group: command.meta ?? "Commands",
+    id: `plugin:${command.meta ?? ''}:${command.name}`,
+    group: command.meta ?? 'Commands',
     title: command.name,
-    hint: command.detail ?? (command.meta ? `From ${command.meta}` : ""),
+    hint: command.detail ?? (command.meta ? `From ${command.meta}` : ''),
     keywords: [command.name, ...(command.meta ? [command.meta] : [])],
     icon: <SquareSlashIcon aria-hidden="true" />,
     can: (editor) => editor.isEditable,
@@ -35,24 +35,18 @@ export function pluginSlashItem(
       const line = lineWithout(editor, range)
       editor.chain().focus().deleteRange(range).run()
       const at = range.from
-      command.run({ text: "", line, path }).then(
+      command.run({ text: '', line, path }).then(
         (result) => {
           if (result === null || editor.isDestroyed) return
-          if ("agent" in result) return ask(at, result.agent)
-          const written = "replace" in result ? result.replace : result.insert
-          if (written === "") return
-          editor
-            .chain()
-            .focus()
-            .insertContentAt(at, asContent(editor, written))
-            .run()
+          if ('agent' in result) return ask(at, result.agent)
+          const written = 'replace' in result ? result.replace : result.insert
+          if (written === '') return
+          editor.chain().focus().insertContentAt(at, asContent(editor, written)).run()
         },
         () =>
           toast.error(`/${command.name} did not run`, {
-            description: command.meta
-              ? `${command.meta}’s log says why.`
-              : undefined,
-          })
+            description: command.meta ? `${command.meta}’s log says why.` : undefined,
+          }),
       )
     },
   }
@@ -71,18 +65,13 @@ function lineWithout(editor: Editor, range: Range): string {
  * stays on the caret's line (a number, a bold word, a link), and anything
  * more (a list, two paragraphs) is inserted as its blocks.
  */
-function asContent(
-  editor: Editor,
-  markdown: string
-): JSONContent | JSONContent[] {
+function asContent(editor: Editor, markdown: string): JSONContent | JSONContent[] {
   const doc = editor.markdown?.parse(markdown) ?? {
-    type: "doc",
-    content: [
-      { type: "paragraph", content: [{ type: "text", text: markdown }] },
-    ],
+    type: 'doc',
+    content: [{ type: 'paragraph', content: [{ type: 'text', text: markdown }] }],
   }
   const blocks = doc.content ?? []
-  if (blocks.length === 1 && blocks[0]!.type === "paragraph") {
+  if (blocks.length === 1 && blocks[0]!.type === 'paragraph') {
     return blocks[0]!.content ?? []
   }
   return blocks

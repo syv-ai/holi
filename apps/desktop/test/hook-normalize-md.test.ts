@@ -164,10 +164,7 @@ describe('what it must never touch', () => {
 
 describe('task files', () => {
   it('canonicalizes frontmatter key order through the task round-trip', async () => {
-    await file(
-      'task.fix-login.md',
-      '---\npriority: high\nstatus: todo\n---\n\nbody\n',
-    )
+    await file('task.fix-login.md', '---\npriority: high\nstatus: todo\n---\n\nbody\n')
     const result = await normalizeMd(root, staging(['task.fix-login.md']))
     expect(result.changed).toEqual(['task.fix-login.md'])
     const text = await read('task.fix-login.md')

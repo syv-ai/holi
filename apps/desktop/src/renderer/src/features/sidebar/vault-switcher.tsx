@@ -1,11 +1,11 @@
-import { useAtomValue, useSetAtom } from "jotai"
-import type { VaultEntry } from "@holi/shared"
-import { cn } from "@/lib/cn"
+import { useAtomValue, useSetAtom } from 'jotai'
+import type { VaultEntry } from '@holi/shared'
+import { cn } from '@/lib/cn'
 
-import { activeRemoteAtom, vaultsAtom } from "@/state/vaults"
-import { switchVaultAtom } from "@/state/vault-switch"
+import { activeRemoteAtom, vaultsAtom } from '@/state/vaults'
+import { switchVaultAtom } from '@/state/vault-switch'
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,16 +14,12 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Item, ItemMedia } from "@/components/ui/item"
-import { BrandMark } from "@/composites/brand-mark"
-import {
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-} from "@/components/ui/sidebar"
+} from '@/components/ui/dropdown-menu'
+import { Item, ItemMedia } from '@/components/ui/item'
+import { BrandMark } from '@/composites/brand-mark'
+import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar'
 
-import { CheckIcon, MoreHorizontalIcon, PlusIcon } from "lucide-react"
+import { CheckIcon, MoreHorizontalIcon, PlusIcon } from 'lucide-react'
 
 function getVaultInitials(name: string): string {
   return name.charAt(0).toUpperCase()
@@ -33,8 +29,8 @@ function HoliLogo({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "bg-primary text-primary-foreground flex size-8 shrink-0 items-center justify-center rounded-lg",
-        className
+        'bg-primary text-primary-foreground flex size-8 shrink-0 items-center justify-center rounded-lg',
+        className,
       )}
       aria-hidden="true"
     >
@@ -46,32 +42,18 @@ function HoliLogo({ className }: { className?: string }) {
 
 function SidebarLogo({ className }: { className?: string }) {
   return (
-    <span
-      className={cn(
-        "relative flex size-6 shrink-0 items-center justify-center",
-        className
-      )}
-    >
+    <span className={cn('relative flex size-6 shrink-0 items-center justify-center', className)}>
       <HoliLogo className="absolute top-1/2 left-1/2 origin-center -translate-x-1/2 -translate-y-1/2 scale-75" />
     </span>
   )
 }
 
-function VaultAvatar({
-  vault,
-  className,
-}: {
-  vault: VaultEntry
-  className?: string
-}) {
+function VaultAvatar({ vault, className }: { vault: VaultEntry; className?: string }) {
   const initials = getVaultInitials(vault.name)
   return (
     <Avatar size="sm" shape="square" className={className}>
       {/* The owner's GitHub avatar, falling back to the initial offline. */}
-      <AvatarImage
-        src={`https://github.com/${vault.remote.split("/")[0]}.png?size=48`}
-        alt=""
-      />
+      <AvatarImage src={`https://github.com/${vault.remote.split('/')[0]}.png?size=48`} alt="" />
       <AvatarFallback className="bg-primary text-primary-foreground text-sm">
         {initials}
       </AvatarFallback>
@@ -94,9 +76,7 @@ function VaultItem({
       <div className="flex items-center gap-1">
         <span className="truncate text-sm">{vault.name}</span>
       </div>
-      {isActive && (
-        <CheckIcon aria-hidden="true" className="ml-auto size-3.5" />
-      )}
+      {isActive && <CheckIcon aria-hidden="true" className="ml-auto size-3.5" />}
     </DropdownMenuItem>
   )
 }
@@ -117,10 +97,7 @@ export function VaultSwitcher({ onAddVault }: { onAddVault: () => void }) {
             <SidebarMenuButton aria-label="Switch vault">
               <SidebarLogo />
               <div className="truncate font-semibold">{active?.name}</div>
-              <MoreHorizontalIcon
-                aria-hidden="true"
-                className="ml-auto size-3.5 opacity-60"
-              />
+              <MoreHorizontalIcon aria-hidden="true" className="ml-auto size-3.5 opacity-60" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
 

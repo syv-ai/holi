@@ -5,17 +5,17 @@
  * (overdue reads as the block's breach risk, due within two days as its
  * watch), and its assignee line the first person the task is for.
  */
-import type { ComponentProps } from "react"
-import type { Task } from "@holi/shared"
-import { ClockIcon } from "lucide-react"
+import type { ComponentProps } from 'react'
+import type { Task } from '@holi/shared'
+import { ClockIcon } from 'lucide-react'
 
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { KanbanItem, KanbanItemHandle } from "@/components/reui/kanban"
-import { cn } from "@/lib/cn"
-import { PersonAvatar } from "@/composites/person-avatar"
-import { PriorityBadge, PrivateMark } from "../task-bits"
-import { daysUntil, shortDate } from "@/lib/planning"
+import { Badge } from '@/components/reui/badge'
+import { Button } from '@/components/ui/button'
+import { KanbanItem, KanbanItemHandle } from '@/components/reui/kanban'
+import { cn } from '@/lib/cn'
+import { PersonAvatar } from '@/composites/person-avatar'
+import { PriorityBadge, PrivateMark } from '../task-bits'
+import { daysUntil, shortDate } from '@/lib/planning'
 
 import {
   Item,
@@ -25,15 +25,15 @@ import {
   ItemFooter,
   ItemHeader,
   ItemTitle,
-} from "@/components/ui/item"
+} from '@/components/ui/item'
 
-type DueState = "normal" | "watch" | "risk" | "cleared"
+type DueState = 'normal' | 'watch' | 'risk' | 'cleared'
 
 const DUE_STATE_VARIANT = {
-  normal: "info-light",
-  watch: "warning-light",
-  risk: "destructive-light",
-  cleared: "success-light",
+  normal: 'info-light',
+  watch: 'warning-light',
+  risk: 'destructive-light',
+  cleared: 'success-light',
 } as const satisfies Record<DueState, string>
 
 /** The chip's name, worded like `DateBadge`'s everywhere else. */
@@ -44,11 +44,9 @@ const DUE_STATE_LABEL: Record<DueState, (date: string) => string> = {
   cleared: (date) => `Was due ${date}`,
 }
 
-const TASK_TITLE_CLASSNAME =
-  "line-clamp-2 w-auto text-sm leading-5 font-semibold"
+const TASK_TITLE_CLASSNAME = 'line-clamp-2 w-auto text-sm leading-5 font-semibold'
 
-const TASK_KEY_CLASSNAME =
-  "text-muted-foreground text-xs leading-none font-medium"
+const TASK_KEY_CLASSNAME = 'text-muted-foreground text-xs leading-none font-medium'
 
 /** What the board needs to draw one card. */
 export interface CardContext {
@@ -58,11 +56,10 @@ export interface CardContext {
 }
 
 function dueState(task: Task, context: CardContext, isDone: boolean) {
-  if (isDone) return "cleared"
-  if (context.isOverdue(task)) return "risk"
-  const days =
-    task.due !== undefined ? daysUntil(context.today, task.due) : null
-  return days !== null && days <= 2 ? "watch" : "normal"
+  if (isDone) return 'cleared'
+  if (context.isOverdue(task)) return 'risk'
+  const days = task.due !== undefined ? daysUntil(context.today, task.due) : null
+  return days !== null && days <= 2 ? 'watch' : 'normal'
 }
 
 function DueChip({
@@ -92,24 +89,15 @@ function DueChip({
 function AssigneeLine({ logins }: { logins: readonly string[] }) {
   const [login] = logins
   if (login === undefined) {
-    return (
-      <div className="text-muted-foreground min-w-0 truncate text-xs">
-        Unassigned
-      </div>
-    )
+    return <div className="text-muted-foreground min-w-0 truncate text-xs">Unassigned</div>
   }
   const rest = logins.length - 1
   return (
-    <div
-      className="flex min-w-0 items-center gap-1.5"
-      aria-label={logins.join(", ")}
-    >
+    <div className="flex min-w-0 items-center gap-1.5" aria-label={logins.join(', ')}>
       <PersonAvatar login={login} alt="" className="size-5" />
       <div className="min-w-0 truncate text-xs font-medium" aria-hidden="true">
         {login}
-        {rest > 0 ? (
-          <span className="text-muted-foreground tabular-nums"> +{rest}</span>
-        ) : null}
+        {rest > 0 ? <span className="text-muted-foreground tabular-nums"> +{rest}</span> : null}
       </div>
     </div>
   )
@@ -121,7 +109,7 @@ function planLine(task: Task, today: string): string | null {
     task.start !== undefined ? `Starts ${shortDate(task.start, today)}` : null,
     task.estimate ?? null,
   ].filter((part) => part !== null)
-  return parts.length > 0 ? parts.join(" · ") : null
+  return parts.length > 0 ? parts.join(' · ') : null
 }
 
 function TaskItem({
@@ -143,19 +131,17 @@ function TaskItem({
       size="sm"
       data-task={task.path}
       className={cn(
-        "bg-card hover:border-foreground/20 items-stretch",
-        task.due !== undefined && state === "watch" && "border-warning/40",
-        task.due !== undefined &&
-          state === "risk" &&
-          "border-destructive/40 bg-destructive/5",
-        isOverlay && "border-foreground/30"
+        'bg-card hover:border-foreground/20 items-stretch',
+        task.due !== undefined && state === 'watch' && 'border-warning/40',
+        task.due !== undefined && state === 'risk' && 'border-destructive/40 bg-destructive/5',
+        isOverlay && 'border-foreground/30',
       )}
     >
       <ItemHeader className="min-w-0 flex-col items-stretch">
         {task.tags.length > 0 || task.priority !== undefined ? (
           <div className="flex min-w-0 items-center justify-between gap-2">
-            <ItemDescription className={cn(TASK_KEY_CLASSNAME, "truncate")}>
-              {task.tags.join(" · ")}
+            <ItemDescription className={cn(TASK_KEY_CLASSNAME, 'truncate')}>
+              {task.tags.join(' · ')}
             </ItemDescription>
 
             {task.priority !== undefined ? (
@@ -175,8 +161,8 @@ function TaskItem({
               size="inline"
               onClick={() => context.onOpenTask(task.path)}
               className={cn(
-                "hover:text-primary text-start leading-5 font-semibold",
-                isDone && "text-muted-foreground line-through"
+                'hover:text-primary text-start leading-5 font-semibold',
+                isDone && 'text-muted-foreground line-through',
               )}
             >
               {task.title}
@@ -184,9 +170,7 @@ function TaskItem({
             <PrivateMark path={task.path} />
           </ItemTitle>
           {plan !== null ? (
-            <ItemDescription className="line-clamp-1 text-xs">
-              {plan}
-            </ItemDescription>
+            <ItemDescription className="line-clamp-1 text-xs">{plan}</ItemDescription>
           ) : null}
         </ItemContent>
       </ItemHeader>
@@ -194,51 +178,26 @@ function TaskItem({
       <ItemFooter className="min-w-0 items-center">
         <AssigneeLine logins={task.assignees} />
         {task.due !== undefined ? (
-          <DueChip
-            due={task.due}
-            state={state}
-            today={context.today}
-            className="ml-auto"
-          />
+          <DueChip due={task.due} state={state} today={context.today} className="ml-auto" />
         ) : null}
       </ItemFooter>
     </Item>
   )
 }
 
-interface TaskCardProps extends Omit<
-  ComponentProps<typeof KanbanItem>,
-  "value" | "children"
-> {
+interface TaskCardProps extends Omit<ComponentProps<typeof KanbanItem>, 'value' | 'children'> {
   task: Task
   context: CardContext
   isDone?: boolean
   isOverlay?: boolean
 }
 
-export function TaskCard({
-  task,
-  context,
-  isDone = false,
-  isOverlay,
-  ...props
-}: TaskCardProps) {
-  const item = (
-    <TaskItem
-      task={task}
-      context={context}
-      isDone={isDone}
-      isOverlay={isOverlay}
-    />
-  )
+export function TaskCard({ task, context, isDone = false, isOverlay, ...props }: TaskCardProps) {
+  const item = <TaskItem task={task} context={context} isDone={isDone} isOverlay={isOverlay} />
 
   return (
     <KanbanItem value={task.path} {...props}>
-      {isOverlay ? (
-        item
-      ) : (
-        <KanbanItemHandle className="block">{item}</KanbanItemHandle>
-      )}
+      {isOverlay ? item : <KanbanItemHandle className="block">{item}</KanbanItemHandle>}
     </KanbanItem>
   )
 }

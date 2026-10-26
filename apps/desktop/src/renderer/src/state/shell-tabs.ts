@@ -10,36 +10,26 @@
  * shell's own effects (an app folding the sidebar) follow from the tab that
  * comes forward.
  */
-import { atom } from "jotai"
+import { atom } from 'jotai'
 
-import {
-  emptyWorkspace,
-  openInSplit,
-  openTab,
-  type ShellWorkspace,
-} from "./shell-workspace"
-import { openingBeside } from "./alt-open"
-import { tabKey, type TabDescriptor } from "./tab-descriptor"
-import { activeRemoteAtom } from "./vaults"
+import { emptyWorkspace, openInSplit, openTab, type ShellWorkspace } from './shell-workspace'
+import { openingBeside } from './alt-open'
+import { tabKey, type TabDescriptor } from './tab-descriptor'
+import { activeRemoteAtom } from './vaults'
 
 const workspacesAtom = atom<Record<string, ShellWorkspace>>({})
 const EMPTY = emptyWorkspace()
 
 /** The open vault's workspace. Written with a value or an update. */
 export const shellWorkspaceAtom = atom(
-  (get): ShellWorkspace =>
-    get(workspacesAtom)[get(activeRemoteAtom) ?? ""] ?? EMPTY,
-  (
-    get,
-    set,
-    update: ShellWorkspace | ((ws: ShellWorkspace) => ShellWorkspace)
-  ) => {
-    const remote = get(activeRemoteAtom) ?? ""
+  (get): ShellWorkspace => get(workspacesAtom)[get(activeRemoteAtom) ?? ''] ?? EMPTY,
+  (get, set, update: ShellWorkspace | ((ws: ShellWorkspace) => ShellWorkspace)) => {
+    const remote = get(activeRemoteAtom) ?? ''
     const current = get(workspacesAtom)[remote] ?? EMPTY
-    const next = typeof update === "function" ? update(current) : update
+    const next = typeof update === 'function' ? update(current) : update
     if (next === current) return
     set(workspacesAtom, (all) => ({ ...all, [remote]: next }))
-  }
+  },
 )
 
 /** Open a tab, or select it where it is (its split, focused on it);
@@ -51,8 +41,6 @@ export const openTabAtom = atom(
     const key = tabKey(tab)
     // Read once, outside the update: reading spends the ⌥.
     const beside = options?.beside === true || openingBeside()
-    set(shellWorkspaceAtom, (ws) =>
-      beside ? openInSplit(ws, key) : openTab(ws, key)
-    )
-  }
+    set(shellWorkspaceAtom, (ws) => (beside ? openInSplit(ws, key) : openTab(ws, key)))
+  },
 )

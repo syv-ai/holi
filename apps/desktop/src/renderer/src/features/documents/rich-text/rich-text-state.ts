@@ -1,15 +1,14 @@
-import { useEditorState, type Editor } from "@tiptap/react"
+import { useEditorState, type Editor } from '@tiptap/react'
 
-export type RichTextBlockType =
-  "paragraph" | "heading-1" | "heading-2" | "heading-3"
+export type RichTextBlockType = 'paragraph' | 'heading-1' | 'heading-2' | 'heading-3'
 
-type RichTextAlign = "left" | "center" | "right" | "justify"
+type RichTextAlign = 'left' | 'center' | 'right' | 'justify'
 
 const RICH_TEXT_ALIGNS = [
-  "left",
-  "center",
-  "right",
-  "justify",
+  'left',
+  'center',
+  'right',
+  'justify',
 ] as const satisfies readonly RichTextAlign[]
 
 export interface RichTextSnapshot {
@@ -40,7 +39,7 @@ export interface RichTextSnapshot {
 
 const IDLE_SNAPSHOT: RichTextSnapshot = {
   editable: false,
-  blockType: "paragraph",
+  blockType: 'paragraph',
   bold: false,
   italic: false,
   underline: false,
@@ -51,7 +50,7 @@ const IDLE_SNAPSHOT: RichTextSnapshot = {
   taskList: false,
   blockquote: false,
   codeBlock: false,
-  align: "left",
+  align: 'left',
   highlight: null,
   link: null,
   canUndo: false,
@@ -62,39 +61,35 @@ const IDLE_SNAPSHOT: RichTextSnapshot = {
 }
 
 function readBlockType(editor: Editor): RichTextBlockType {
-  if (editor.isActive("heading", { level: 1 })) return "heading-1"
-  if (editor.isActive("heading", { level: 2 })) return "heading-2"
-  if (editor.isActive("heading", { level: 3 })) return "heading-3"
-  return "paragraph"
+  if (editor.isActive('heading', { level: 1 })) return 'heading-1'
+  if (editor.isActive('heading', { level: 2 })) return 'heading-2'
+  if (editor.isActive('heading', { level: 3 })) return 'heading-3'
+  return 'paragraph'
 }
 
 function readSnapshot(editor: Editor | null): RichTextSnapshot {
   if (!editor) return IDLE_SNAPSHOT
 
   const editable = editor.isEditable
-  const highlight = editor.isActive("highlight")
-    ? (editor.getAttributes("highlight").color ?? "yellow")
+  const highlight = editor.isActive('highlight')
+    ? (editor.getAttributes('highlight').color ?? 'yellow')
     : null
-  const link = editor.isActive("link")
-    ? (editor.getAttributes("link").href ?? null)
-    : null
+  const link = editor.isActive('link') ? (editor.getAttributes('link').href ?? null) : null
 
   return {
     editable,
     blockType: readBlockType(editor),
-    bold: editor.isActive("bold"),
-    italic: editor.isActive("italic"),
-    underline: editor.isActive("underline"),
-    strike: editor.isActive("strike"),
-    code: editor.isActive("code"),
-    bulletList: editor.isActive("bulletList"),
-    orderedList: editor.isActive("orderedList"),
-    taskList: editor.isActive("taskList"),
-    blockquote: editor.isActive("blockquote"),
-    codeBlock: editor.isActive("codeBlock"),
-    align:
-      RICH_TEXT_ALIGNS.find((align) => editor.isActive({ textAlign: align })) ??
-      "left",
+    bold: editor.isActive('bold'),
+    italic: editor.isActive('italic'),
+    underline: editor.isActive('underline'),
+    strike: editor.isActive('strike'),
+    code: editor.isActive('code'),
+    bulletList: editor.isActive('bulletList'),
+    orderedList: editor.isActive('orderedList'),
+    taskList: editor.isActive('taskList'),
+    blockquote: editor.isActive('blockquote'),
+    codeBlock: editor.isActive('codeBlock'),
+    align: RICH_TEXT_ALIGNS.find((align) => editor.isActive({ textAlign: align })) ?? 'left',
     highlight,
     link,
     canUndo: editable && editor.can().undo(),
@@ -109,7 +104,7 @@ function readSnapshot(editor: Editor | null): RichTextSnapshot {
 // so every selector falls back to the instance it was handed.
 export function useRichTextSelector<T>(
   editor: Editor | null,
-  select: (editor: Editor | null) => T
+  select: (editor: Editor | null) => T,
 ) {
   return useEditorState({
     editor,

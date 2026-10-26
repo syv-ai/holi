@@ -10,9 +10,9 @@
  * Sharing is whether the file is committed: a private task is
  * `task.<name>.local.md`, on this machine only (docs/features/tasks.md).
  */
-import { useState, type ReactNode } from "react"
-import { isEstimate, type Priority, type StatusDef } from "@holi/shared"
-import { useAtomValue } from "jotai"
+import { useState, type ReactNode } from 'react'
+import { isEstimate, type Priority, type StatusDef } from '@holi/shared'
+import { useAtomValue } from 'jotai'
 import {
   CalendarDaysIcon,
   CalendarPlusIcon,
@@ -25,10 +25,10 @@ import {
   TimerIcon,
   UserIcon,
   UsersIcon,
-} from "lucide-react"
+} from 'lucide-react'
 
-import { Button } from "@/components/ui/button"
-import { Calendar } from "@/components/ui/calendar"
+import { Button } from '@/components/ui/button'
+import { Calendar } from '@/components/ui/calendar'
 import {
   Command,
   CommandEmpty,
@@ -36,7 +36,7 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-} from "@/components/ui/command"
+} from '@/components/ui/command'
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -46,21 +46,17 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Input } from "@/components/ui/input"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
-import { cn } from "@/lib/cn"
-import { parentOf } from "@/lib/tree-paths"
-import { PRIORITIES, shortDate } from "@/lib/planning"
-import { memberLoginsAtom } from "@/state/members"
-import { taskTagsAtom, tasksAtom } from "@/state/tasks"
-import { snapshotAtom } from "@/state/vaults"
-import { PeopleStack } from "@/composites/person-avatar"
-import { StatusIcon } from "./task-bits"
+} from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { cn } from '@/lib/cn'
+import { parentOf } from '@/lib/tree-paths'
+import { PRIORITIES, shortDate } from '@/lib/planning'
+import { memberLoginsAtom } from '@/state/members'
+import { taskTagsAtom, tasksAtom } from '@/state/tasks'
+import { snapshotAtom } from '@/state/vaults'
+import { PeopleStack } from '@/composites/person-avatar'
+import { StatusIcon } from './task-bits'
 
 /** What the row edits. `folder` is vault-relative, `""` the vault root. */
 export interface TaskFieldValues {
@@ -88,13 +84,13 @@ function useProjects(): string[] {
   const tasks = useAtomValue(tasksAtom)
   const all = new Set<string>()
   for (const dir of dirs) {
-    if (dir !== "" && !dir.split("/").some((part) => part.startsWith("."))) {
+    if (dir !== '' && !dir.split('/').some((part) => part.startsWith('.'))) {
       all.add(dir)
     }
   }
   for (const path of tasks.keys()) {
     const folder = parentOf(path)
-    if (folder !== "") all.add(folder)
+    if (folder !== '') all.add(folder)
   }
   return [...all].sort((a, b) => a.localeCompare(b))
 }
@@ -110,10 +106,10 @@ function stampDay(stamp: string | undefined): Date | undefined {
 function dayStamp(day: Date, previous: string | undefined): string {
   const date = [
     day.getFullYear(),
-    String(day.getMonth() + 1).padStart(2, "0"),
-    String(day.getDate()).padStart(2, "0"),
-  ].join("-")
-  const time = previous?.match(/T\d{2}:\d{2}$/)?.[0] ?? ""
+    String(day.getMonth() + 1).padStart(2, '0'),
+    String(day.getDate()).padStart(2, '0'),
+  ].join('-')
+  const time = previous?.match(/T\d{2}:\d{2}$/)?.[0] ?? ''
   return `${date}${time}`
 }
 
@@ -135,7 +131,7 @@ function Chip({
       type="button"
       variant="outline"
       size="sm"
-      className={cn(!set && "text-muted-foreground")}
+      className={cn(!set && 'text-muted-foreground')}
       {...props}
     >
       {icon}
@@ -204,9 +200,7 @@ function AssigneesField({
           }
           set={value.length > 0}
           label="Assignee"
-          aria-label={
-            value.length > 0 ? `Assignees: ${value.join(", ")}` : "Assignee"
-          }
+          aria-label={value.length > 0 ? `Assignees: ${value.join(', ')}` : 'Assignee'}
         >
           {value.length === 1 ? value[0] : `${value.length} people`}
         </Chip>
@@ -234,7 +228,7 @@ function AssigneesField({
   )
 }
 
-const NO_PRIORITY = "none"
+const NO_PRIORITY = 'none'
 
 function PriorityField({
   value,
@@ -251,7 +245,7 @@ function PriorityField({
           icon={<FlagIcon data-icon="inline-start" aria-hidden="true" />}
           set={value !== undefined}
           label="Priority"
-          aria-label={name !== undefined ? `Priority: ${name}` : "Priority"}
+          aria-label={name !== undefined ? `Priority: ${name}` : 'Priority'}
         >
           {name}
         </Chip>
@@ -259,9 +253,7 @@ function PriorityField({
       <DropdownMenuContent align="start" className="min-w-40">
         <DropdownMenuRadioGroup
           value={value ?? NO_PRIORITY}
-          onValueChange={(next) =>
-            onChange(next === NO_PRIORITY ? undefined : (next as Priority))
-          }
+          onValueChange={(next) => onChange(next === NO_PRIORITY ? undefined : (next as Priority))}
         >
           {PRIORITIES.map((priority) => (
             <DropdownMenuRadioItem key={priority.id} value={priority.id}>
@@ -269,9 +261,7 @@ function PriorityField({
             </DropdownMenuRadioItem>
           ))}
           <DropdownMenuSeparator />
-          <DropdownMenuRadioItem value={NO_PRIORITY}>
-            No priority
-          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value={NO_PRIORITY}>No priority</DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -300,9 +290,7 @@ function DateField({
           icon={icon}
           set={value !== undefined}
           label={label}
-          aria-label={
-            value !== undefined ? `${label}: ${shortDate(value, today)}` : label
-          }
+          aria-label={value !== undefined ? `${label}: ${shortDate(value, today)}` : label}
         >
           {value !== undefined ? shortDate(value, today) : null}
         </Chip>
@@ -357,32 +345,21 @@ function PickList({
   /** A first item meaning "none", like the vault root for a project. */
   emptyOption?: { label: string; value: string }
 }) {
-  const [query, setQuery] = useState("")
+  const [query, setQuery] = useState('')
   const typed = query.trim()
   const isNew =
-    typed !== "" &&
-    !options.some((option) => option.toLowerCase() === typed.toLowerCase())
+    typed !== '' && !options.some((option) => option.toLowerCase() === typed.toLowerCase())
   return (
     <Command>
-      <CommandInput
-        placeholder={placeholder}
-        value={query}
-        onValueChange={setQuery}
-      />
+      <CommandInput placeholder={placeholder} value={query} onValueChange={setQuery} />
       <CommandList>
         <CommandEmpty>Type a name to add it.</CommandEmpty>
         <CommandGroup>
           {emptyOption !== undefined ? (
-            <CommandItem
-              value={emptyOption.label}
-              onSelect={() => onPick(emptyOption.value)}
-            >
+            <CommandItem value={emptyOption.label} onSelect={() => onPick(emptyOption.value)}>
               {emptyOption.label}
               <CheckIcon
-                className={cn(
-                  "ml-auto",
-                  !selected.includes(emptyOption.value) && "opacity-0"
-                )}
+                className={cn('ml-auto', !selected.includes(emptyOption.value) && 'opacity-0')}
                 aria-hidden="true"
               />
             </CommandItem>
@@ -393,15 +370,12 @@ function PickList({
               value={option}
               onSelect={() => {
                 onPick(option)
-                if (!multiple) setQuery("")
+                if (!multiple) setQuery('')
               }}
             >
               {render(option)}
               <CheckIcon
-                className={cn(
-                  "ml-auto",
-                  !selected.includes(option) && "opacity-0"
-                )}
+                className={cn('ml-auto', !selected.includes(option) && 'opacity-0')}
                 aria-hidden="true"
               />
             </CommandItem>
@@ -411,7 +385,7 @@ function PickList({
               value={`create ${typed}`}
               onSelect={() => {
                 onPick(typed)
-                setQuery("")
+                setQuery('')
               }}
             >
               <PlusIcon aria-hidden="true" />
@@ -424,13 +398,7 @@ function PickList({
   )
 }
 
-function LabelsField({
-  value,
-  onChange,
-}: {
-  value: string[]
-  onChange: (tags: string[]) => void
-}) {
+function LabelsField({ value, onChange }: { value: string[]; onChange: (tags: string[]) => void }) {
   const known = useAtomValue(taskTagsAtom)
   const options = [...new Set([...known, ...value])]
   return (
@@ -440,11 +408,9 @@ function LabelsField({
           icon={<TagIcon data-icon="inline-start" aria-hidden="true" />}
           set={value.length > 0}
           label="Labels"
-          aria-label={
-            value.length > 0 ? `Labels: ${value.join(", ")}` : "Labels"
-          }
+          aria-label={value.length > 0 ? `Labels: ${value.join(', ')}` : 'Labels'}
         >
-          {value.length <= 2 ? value.join(", ") : `${value.length} labels`}
+          {value.length <= 2 ? value.join(', ') : `${value.length} labels`}
         </Chip>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-64">
@@ -454,11 +420,7 @@ function LabelsField({
           selected={value}
           multiple
           onPick={(tag) =>
-            onChange(
-              value.includes(tag)
-                ? value.filter((t) => t !== tag)
-                : [...value, tag]
-            )
+            onChange(value.includes(tag) ? value.filter((t) => t !== tag) : [...value, tag])
           }
         />
       </PopoverContent>
@@ -466,27 +428,20 @@ function LabelsField({
   )
 }
 
-function ProjectField({
-  value,
-  onChange,
-}: {
-  value: string
-  onChange: (folder: string) => void
-}) {
+function ProjectField({ value, onChange }: { value: string; onChange: (folder: string) => void }) {
   const [open, setOpen] = useState(false)
   const projects = useProjects()
-  const options =
-    value !== "" && !projects.includes(value) ? [...projects, value] : projects
+  const options = value !== '' && !projects.includes(value) ? [...projects, value] : projects
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Chip
           icon={<FolderIcon data-icon="inline-start" aria-hidden="true" />}
-          set={value !== ""}
+          set={value !== ''}
           label="Project"
-          aria-label={value !== "" ? `Project: ${value}` : "Project"}
+          aria-label={value !== '' ? `Project: ${value}` : 'Project'}
         >
-          {value.split("/").at(-1)}
+          {value.split('/').at(-1)}
         </Chip>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72">
@@ -495,7 +450,7 @@ function ProjectField({
           options={options}
           selected={[value]}
           multiple={false}
-          emptyOption={{ label: "No project", value: "" }}
+          emptyOption={{ label: 'No project', value: '' }}
           render={(folder) => (
             <span className="flex min-w-0 items-center gap-2">
               <FolderIcon aria-hidden="true" />
@@ -503,7 +458,7 @@ function ProjectField({
             </span>
           )}
           onPick={(folder) => {
-            onChange(folder.replace(/^\/+|\/+$/g, ""))
+            onChange(folder.replace(/^\/+|\/+$/g, ''))
             setOpen(false)
           }}
         />
@@ -512,7 +467,7 @@ function ProjectField({
   )
 }
 
-const ESTIMATE_PRESETS = ["30m", "1h", "2h", "4h", "1d", "1w"]
+const ESTIMATE_PRESETS = ['30m', '1h', '2h', '4h', '1d', '1w']
 
 function EstimateField({
   value,
@@ -522,19 +477,19 @@ function EstimateField({
   onChange: (estimate: string | undefined) => void
 }) {
   const [open, setOpen] = useState(false)
-  const [draft, setDraft] = useState(value ?? "")
-  const bad = draft.trim() !== "" && !isEstimate(draft.trim())
+  const [draft, setDraft] = useState(value ?? '')
+  const bad = draft.trim() !== '' && !isEstimate(draft.trim())
   const commit = (next: string) => {
     const trimmed = next.trim()
-    if (trimmed !== "" && !isEstimate(trimmed)) return
-    onChange(trimmed === "" ? undefined : trimmed)
+    if (trimmed !== '' && !isEstimate(trimmed)) return
+    onChange(trimmed === '' ? undefined : trimmed)
     setOpen(false)
   }
   return (
     <Popover
       open={open}
       onOpenChange={(next) => {
-        if (next) setDraft(value ?? "")
+        if (next) setDraft(value ?? '')
         setOpen(next)
       }}
     >
@@ -543,7 +498,7 @@ function EstimateField({
           icon={<TimerIcon data-icon="inline-start" aria-hidden="true" />}
           set={value !== undefined}
           label="Estimate"
-          aria-label={value !== undefined ? `Estimate: ${value}` : "Estimate"}
+          aria-label={value !== undefined ? `Estimate: ${value}` : 'Estimate'}
         >
           <span className="tabular-nums">{value}</span>
         </Chip>
@@ -552,7 +507,7 @@ function EstimateField({
         <div
           className="flex flex-col gap-1.5"
           onKeyDown={(event) => {
-            if (event.key === "Enter") {
+            if (event.key === 'Enter') {
               event.preventDefault()
               commit(draft)
             }
@@ -566,12 +521,7 @@ function EstimateField({
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
           />
-          <p
-            className={cn(
-              "text-xs",
-              bad ? "text-destructive" : "text-muted-foreground"
-            )}
-          >
+          <p className={cn('text-xs', bad ? 'text-destructive' : 'text-muted-foreground')}>
             A number and m, h, d or w, like 30m or 1.5d.
           </p>
         </div>
@@ -580,7 +530,7 @@ function EstimateField({
             <Button
               key={preset}
               type="button"
-              variant={preset === value ? "secondary" : "ghost"}
+              variant={preset === value ? 'secondary' : 'ghost'}
               size="xs"
               onClick={() => commit(preset)}
             >
@@ -588,12 +538,7 @@ function EstimateField({
             </Button>
           ))}
           {value !== undefined ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              onClick={() => commit("")}
-            >
+            <Button type="button" variant="ghost" size="xs" onClick={() => commit('')}>
               Clear
             </Button>
           ) : null}
@@ -605,15 +550,15 @@ function EstimateField({
 
 const SHARINGS = [
   {
-    value: "private",
-    name: "Private",
-    detail: "Only on this machine",
+    value: 'private',
+    name: 'Private',
+    detail: 'Only on this machine',
     icon: <LockIcon aria-hidden="true" />,
   },
   {
-    value: "shared",
-    name: "Shared with vault",
-    detail: "Synced to everyone",
+    value: 'shared',
+    name: 'Shared with vault',
+    detail: 'Synced to everyone',
     icon: <UsersIcon aria-hidden="true" />,
   },
 ] as const
@@ -641,22 +586,20 @@ function SharingField({
           label="Sharing"
           aria-label={`Sharing: ${current.name}`}
         >
-          {value ? "Shared" : "Private"}
+          {value ? 'Shared' : 'Private'}
         </Chip>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-52">
         <DropdownMenuRadioGroup
           value={current.value}
-          onValueChange={(next) => onChange(next === "shared")}
+          onValueChange={(next) => onChange(next === 'shared')}
         >
           {SHARINGS.map((sharing) => (
             <DropdownMenuRadioItem key={sharing.value} value={sharing.value}>
               {sharing.icon}
               <span className="flex flex-col">
                 <span>{sharing.name}</span>
-                <span className="text-muted-foreground text-xs">
-                  {sharing.detail}
-                </span>
+                <span className="text-muted-foreground text-xs">{sharing.detail}</span>
               </span>
             </DropdownMenuRadioItem>
           ))}
@@ -683,50 +626,47 @@ export function TaskFields({
     <div
       role="group"
       aria-label="Task fields"
-      className={cn("flex flex-wrap items-center gap-2", className)}
+      className={cn('flex flex-wrap items-center gap-2', className)}
     >
       <StatusField
         statuses={statuses}
         value={values.status}
-        onChange={(value) => onChange({ field: "status", value })}
+        onChange={(value) => onChange({ field: 'status', value })}
       />
       <AssigneesField
         value={values.assignees}
-        onChange={(value) => onChange({ field: "assignees", value })}
+        onChange={(value) => onChange({ field: 'assignees', value })}
       />
       <PriorityField
         value={values.priority}
-        onChange={(value) => onChange({ field: "priority", value })}
+        onChange={(value) => onChange({ field: 'priority', value })}
       />
       <DateField
         label="Due date"
         icon={<CalendarDaysIcon data-icon="inline-start" aria-hidden="true" />}
         value={values.due}
         today={today}
-        onChange={(value) => onChange({ field: "due", value })}
+        onChange={(value) => onChange({ field: 'due', value })}
       />
       <DateField
         label="Start date"
         icon={<CalendarPlusIcon data-icon="inline-start" aria-hidden="true" />}
         value={values.start}
         today={today}
-        onChange={(value) => onChange({ field: "start", value })}
+        onChange={(value) => onChange({ field: 'start', value })}
       />
-      <LabelsField
-        value={values.tags}
-        onChange={(value) => onChange({ field: "tags", value })}
-      />
+      <LabelsField value={values.tags} onChange={(value) => onChange({ field: 'tags', value })} />
       <ProjectField
         value={values.folder}
-        onChange={(value) => onChange({ field: "folder", value })}
+        onChange={(value) => onChange({ field: 'folder', value })}
       />
       <EstimateField
         value={values.estimate}
-        onChange={(value) => onChange({ field: "estimate", value })}
+        onChange={(value) => onChange({ field: 'estimate', value })}
       />
       <SharingField
         value={values.shared}
-        onChange={(value) => onChange({ field: "shared", value })}
+        onChange={(value) => onChange({ field: 'shared', value })}
       />
     </div>
   )

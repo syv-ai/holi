@@ -1,17 +1,12 @@
-import { TaskList } from "@tiptap/extension-list"
-import { TextAlign } from "@tiptap/extension-text-align"
-import { CharacterCount, Placeholder, Selection } from "@tiptap/extensions"
-import {
-  NodeSelection,
-  Plugin,
-  PluginKey,
-  type EditorState,
-} from "@tiptap/pm/state"
-import { Decoration, DecorationSet } from "@tiptap/pm/view"
-import { StarterKit } from "@tiptap/starter-kit"
+import { TaskList } from '@tiptap/extension-list'
+import { TextAlign } from '@tiptap/extension-text-align'
+import { CharacterCount, Placeholder, Selection } from '@tiptap/extensions'
+import { NodeSelection, Plugin, PluginKey, type EditorState } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
+import { StarterKit } from '@tiptap/starter-kit'
 
-import { RichTextHighlight } from "./rich-text-highlight"
-import { RichTextTaskItem } from "./rich-text-task-item"
+import { RichTextHighlight } from './rich-text-highlight'
+import { RichTextTaskItem } from './rich-text-task-item'
 
 interface RichTextExtensionOptions {
   /** Hint on the empty line under the caret. */
@@ -25,7 +20,7 @@ const RichTextSelection = Selection.extend({
     const { editor, options } = this
     // The painted range, held from a press into the blurred editor until the
     // press's own selection reaches the state.
-    let pressed: EditorState["selection"] | null = null
+    let pressed: EditorState['selection'] | null = null
     let fallback: ReturnType<typeof setTimeout> | undefined
     const release = () => {
       clearTimeout(fallback)
@@ -38,13 +33,11 @@ const RichTextSelection = Selection.extend({
       else fallback = setTimeout(release, 150)
     }
     const isRange = ({ selection }: EditorState) =>
-      !selection.empty &&
-      !(selection instanceof NodeSelection) &&
-      editor.isEditable
+      !selection.empty && !(selection instanceof NodeSelection) && editor.isEditable
 
     return [
       new Plugin({
-        key: new PluginKey("selection"),
+        key: new PluginKey('selection'),
         view: () => ({
           update(view) {
             if (pressed && !pressed.eq(view.state.selection)) release()
@@ -70,7 +63,7 @@ const RichTextSelection = Selection.extend({
               if (!isRange(view.state)) return false
               if (event.button !== 0 || event.shiftKey) return false
               pressed = view.state.selection
-              window.addEventListener("mouseup", settle, {
+              window.addEventListener('mouseup', settle, {
                 capture: true,
                 once: true,
               })
@@ -96,24 +89,20 @@ const RichTextSelection = Selection.extend({
 })
 
 /** The editor preset; call it at module scope (useEditor compares by identity). */
-export function createRichTextExtensions({
-  placeholder,
-}: RichTextExtensionOptions) {
+export function createRichTextExtensions({ placeholder }: RichTextExtensionOptions) {
   return [
     // v3 StarterKit already carries Link, Underline, list keys and undo history.
     StarterKit.configure({
       heading: { levels: [1, 2, 3] },
-      link: { openOnClick: false, defaultProtocol: "https" },
+      link: { openOnClick: false, defaultProtocol: 'https' },
     }),
     TaskList,
     RichTextTaskItem.configure({ nested: true }),
-    TextAlign.configure({ types: ["heading", "paragraph"] }),
+    TextAlign.configure({ types: ['heading', 'paragraph'] }),
     RichTextHighlight.configure({ multicolor: true }),
     Placeholder.configure({
       placeholder: ({ node }) =>
-        node.type.name === "heading"
-          ? `Heading ${node.attrs.level}`
-          : placeholder,
+        node.type.name === 'heading' ? `Heading ${node.attrs.level}` : placeholder,
     }),
     CharacterCount,
     RichTextSelection,

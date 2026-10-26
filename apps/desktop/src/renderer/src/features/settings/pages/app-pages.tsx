@@ -3,35 +3,35 @@
  * updates, each release's notes and start, with where the open vault's skills
  * stand against this release (Updates), and who is signed in (Account).
  */
-import { useAtomValue, useSetAtom } from "jotai"
-import { useEffect, useId, useState } from "react"
-import type { ColorScheme, WindowGlass } from "@holi/shared"
+import { useAtomValue, useSetAtom } from 'jotai'
+import { useEffect, useId, useState } from 'react'
+import type { ColorScheme, WindowGlass } from '@holi/shared'
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { ConfirmDialog } from "@/composites/confirm-dialog"
-import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { ConfirmDialog } from '@/composites/confirm-dialog'
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Field, FieldLabel } from "@/components/ui/field"
-import { Switch } from "@/components/ui/switch"
-import { MarkdownText, openableUrl } from "@/composites/markdown-text"
-import { trpc } from "@/lib/trpc"
-import { colorSchemeAtom, writeColorSchemeAtom } from "@/state/color-scheme"
-import { sessionAtom, signOutAtom } from "@/state/session"
+} from '@/components/ui/dialog'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Field, FieldLabel } from '@/components/ui/field'
+import { Switch } from '@/components/ui/switch'
+import { MarkdownText, openableUrl } from '@/composites/markdown-text'
+import { trpc } from '@/lib/trpc'
+import { colorSchemeAtom, writeColorSchemeAtom } from '@/state/color-scheme'
+import { sessionAtom, signOutAtom } from '@/state/session'
 import {
   dismissSkillsNoticeAtom,
   mergeSkillsConflictsAtom,
   openSkillsStatusAtom,
   skillsNoticeAtom,
   updateSkillsAtom,
-} from "@/state/skills"
+} from '@/state/skills'
 import {
   checkForUpdateAtom,
   installUpdateAtom,
@@ -40,8 +40,8 @@ import {
   setUpdateChannelAtom,
   updateHeadline,
   updateStatusAtom,
-} from "@/state/updates"
-import { windowGlassAtom, writeWindowGlassAtom } from "@/state/window-glass"
+} from '@/state/updates'
+import { windowGlassAtom, writeWindowGlassAtom } from '@/state/window-glass'
 import {
   BlendIcon,
   ExternalLinkIcon,
@@ -50,46 +50,41 @@ import {
   SquareDashedIcon,
   SquareIcon,
   SunIcon,
-} from "lucide-react"
+} from 'lucide-react'
 
-import {
-  Segmented,
-  SettingsGroup,
-  SettingsFieldRow,
-  type Choice,
-} from "../settings-kit"
-import { useVaultSettings } from "../use-vault-settings"
+import { Segmented, SettingsGroup, SettingsFieldRow, type Choice } from '../settings-kit'
+import { useVaultSettings } from '../use-vault-settings'
 
 // ── Appearance ──
 
 const THEMES: readonly Choice<ColorScheme>[] = [
-  { value: "light", label: "Light", icon: <SunIcon aria-hidden="true" /> },
-  { value: "dark", label: "Dark", icon: <MoonIcon aria-hidden="true" /> },
+  { value: 'light', label: 'Light', icon: <SunIcon aria-hidden="true" /> },
+  { value: 'dark', label: 'Dark', icon: <MoonIcon aria-hidden="true" /> },
   {
-    value: "system",
-    label: "System",
+    value: 'system',
+    label: 'System',
     icon: <MonitorIcon aria-hidden="true" />,
   },
 ]
 
 const GLASSES: readonly Choice<WindowGlass>[] = [
   {
-    value: "clear",
-    label: "Clear",
+    value: 'clear',
+    label: 'Clear',
     icon: <SquareDashedIcon aria-hidden="true" />,
   },
   {
-    value: "frosted",
-    label: "Frosted",
+    value: 'frosted',
+    label: 'Frosted',
     icon: <BlendIcon aria-hidden="true" />,
   },
-  { value: "solid", label: "Solid", icon: <SquareIcon aria-hidden="true" /> },
+  { value: 'solid', label: 'Solid', icon: <SquareIcon aria-hidden="true" /> },
 ]
 
 /** The window is glass only on a Mac. Read at render: `main.tsx` stamps the
  *  platform after the modules load. */
 function isMac() {
-  return document.documentElement.dataset.platform === "mac"
+  return document.documentElement.dataset.platform === 'mac'
 }
 
 export function AppearancePage() {
@@ -106,10 +101,7 @@ export function AppearancePage() {
       title="Window"
       description="How Holi looks on this machine. Your teammates keep their own."
     >
-      <SettingsFieldRow
-        title="Theme"
-        description="Light, dark, or whatever your system is set to."
-      >
+      <SettingsFieldRow title="Theme" description="Light, dark, or whatever your system is set to.">
         <Segmented
           label="Theme"
           value={scheme}
@@ -139,7 +131,7 @@ export function AppearancePage() {
           id="settings-grid-arcade"
           disabled={resolved === null}
           checked={resolved?.gridArcade ?? true}
-          onCheckedChange={(on) => void write("gridArcade", on, "local")}
+          onCheckedChange={(on) => void write('gridArcade', on, 'local')}
         />
       </SettingsFieldRow>
       <SettingsFieldRow
@@ -151,9 +143,7 @@ export function AppearancePage() {
           id="settings-fold-sidebar"
           disabled={resolved === null}
           checked={resolved?.foldSidebarForApps ?? true}
-          onCheckedChange={(on) =>
-            void write("foldSidebarForApps", on, "local")
-          }
+          onCheckedChange={(on) => void write('foldSidebarForApps', on, 'local')}
         />
       </SettingsFieldRow>
     </SettingsGroup>
@@ -165,12 +155,12 @@ export function AppearancePage() {
 /** "just now", "12m ago", "3h ago", "yesterday", "4d ago". */
 function checkedAgo(at: number, now: number = Date.now()): string {
   const minutes = Math.floor((now - at) / 60_000)
-  if (minutes < 1) return "just now"
+  if (minutes < 1) return 'just now'
   if (minutes < 60) return `${minutes}m ago`
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return `${hours}h ago`
   const days = Math.floor(hours / 24)
-  return days === 1 ? "yesterday" : `${days}d ago`
+  return days === 1 ? 'yesterday' : `${days}d ago`
 }
 
 export function UpdatesPage() {
@@ -182,11 +172,11 @@ export function UpdatesPage() {
   const setChannel = useSetAtom(setUpdateChannelAtom)
   const supported = status?.supported === true
 
-  const action = !supported ? null : status.state === "ready" ? (
+  const action = !supported ? null : status.state === 'ready' ? (
     <Button size="sm" onClick={() => void install()}>
       Restart to update
     </Button>
-  ) : status.state === "available" && status.lastError !== null ? (
+  ) : status.state === 'available' && status.lastError !== null ? (
     <Button variant="outline" size="sm" onClick={() => void retry()}>
       Retry
     </Button>
@@ -194,7 +184,7 @@ export function UpdatesPage() {
     <Button
       variant="outline"
       size="sm"
-      disabled={status.state !== "idle"}
+      disabled={status.state !== 'idle'}
       onClick={() => void check()}
     >
       Check now
@@ -205,63 +195,60 @@ export function UpdatesPage() {
     status === null
       ? undefined
       : [
-          status.version === "" ? null : `You have Holi ${status.version}.`,
-          status.lastCheckAt === null
-            ? null
-            : `Last checked ${checkedAgo(status.lastCheckAt)}.`,
+          status.version === '' ? null : `You have Holi ${status.version}.`,
+          status.lastCheckAt === null ? null : `Last checked ${checkedAgo(status.lastCheckAt)}.`,
           status.lastError,
         ]
-          .filter((part) => part !== null && part !== "")
-          .join(" ") || undefined
+          .filter((part) => part !== null && part !== '')
+          .join(' ') || undefined
 
   return (
     <div className="flex flex-col gap-8">
-    <SettingsGroup title="Updates" description="Holi itself, on this machine.">
-      <SettingsFieldRow title={updateHeadline(status)} description={described}>
-        {action}
-      </SettingsFieldRow>
-      {status?.availableVersion != null &&
-      status.availableVersion !== status.version ? (
-        <ReleaseNotesRow
-          key={status.availableVersion}
-          version={status.availableVersion}
-          title={`What’s new in Holi ${status.availableVersion}`}
-        />
-      ) : null}
-      {status !== null && status.version !== "" ? (
-        <ReleaseNotesRow
-          key={status.version}
-          version={status.version}
-          title={`Holi ${status.version}, the version you have`}
-        />
-      ) : null}
-      <SettingsFieldRow
-        title="Dev prereleases"
-        description="Development releases instead of stable ones. Turning this off downloads the latest stable release, even when it is older than yours; restart to install it."
-        htmlFor="settings-dev-channel"
-      >
-        <Switch
-          id="settings-dev-channel"
-          disabled={!supported}
-          checked={status?.channel === "dev"}
-          onCheckedChange={(on) => void setChannel(on ? "dev" : "stable")}
-        />
-      </SettingsFieldRow>
-      <SettingsFieldRow
-        title="Update automatically"
-        description="Download new versions in the background. One installs when you quit Holi."
-        htmlFor="settings-auto-update"
-      >
-        <Switch
-          id="settings-auto-update"
-          disabled={!supported}
-          checked={status?.enabled === true}
-          onCheckedChange={(on) => void setEnabled(on)}
-        />
-      </SettingsFieldRow>
-      <OpenAtLoginRow />
-    </SettingsGroup>
-    <VaultSkillsCard />
+      <SettingsGroup title="Updates" description="Holi itself, on this machine.">
+        <SettingsFieldRow title={updateHeadline(status)} description={described}>
+          {action}
+        </SettingsFieldRow>
+        {status?.availableVersion != null && status.availableVersion !== status.version ? (
+          <ReleaseNotesRow
+            key={status.availableVersion}
+            version={status.availableVersion}
+            title={`What’s new in Holi ${status.availableVersion}`}
+          />
+        ) : null}
+        {status !== null && status.version !== '' ? (
+          <ReleaseNotesRow
+            key={status.version}
+            version={status.version}
+            title={`Holi ${status.version}, the version you have`}
+          />
+        ) : null}
+        <SettingsFieldRow
+          title="Dev prereleases"
+          description="Development releases instead of stable ones. Turning this off downloads the latest stable release, even when it is older than yours; restart to install it."
+          htmlFor="settings-dev-channel"
+        >
+          <Switch
+            id="settings-dev-channel"
+            disabled={!supported}
+            checked={status?.channel === 'dev'}
+            onCheckedChange={(on) => void setChannel(on ? 'dev' : 'stable')}
+          />
+        </SettingsFieldRow>
+        <SettingsFieldRow
+          title="Update automatically"
+          description="Download new versions in the background. One installs when you quit Holi."
+          htmlFor="settings-auto-update"
+        >
+          <Switch
+            id="settings-auto-update"
+            disabled={!supported}
+            checked={status?.enabled === true}
+            onCheckedChange={(on) => void setEnabled(on)}
+          />
+        </SettingsFieldRow>
+        <OpenAtLoginRow />
+      </SettingsGroup>
+      <VaultSkillsCard />
     </div>
   )
 }
@@ -282,14 +269,13 @@ function ReleaseNotesRow({ version, title }: { version: string; title: string })
     trpc.updates.notes
       .query({ version })
       .then((found) => live && setAnswer(found))
-      .catch(() => live && setAnswer({ kind: "unreachable" }))
+      .catch(() => live && setAnswer({ kind: 'unreachable' }))
     return () => {
       live = false
     }
   }, [open, answer, version])
 
-  const url =
-    answer?.kind === "found" ? openableUrl(answer.notes.url) : null
+  const url = answer?.kind === 'found' ? openableUrl(answer.notes.url) : null
   return (
     <SettingsFieldRow title={title}>
       <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
@@ -300,14 +286,14 @@ function ReleaseNotesRow({ version, title }: { version: string; title: string })
         onOpenChange={(next) => {
           setOpen(next)
           // Unanswered is asked again when shown again.
-          if (!next && answer?.kind === "unreachable") setAnswer(undefined)
+          if (!next && answer?.kind === 'unreachable') setAnswer(undefined)
         }}
       >
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Holi {version}</DialogTitle>
             <DialogDescription>
-              {answer?.kind === "found" ? answer.notes.name : "Release notes"}
+              {answer?.kind === 'found' ? answer.notes.name : 'Release notes'}
             </DialogDescription>
           </DialogHeader>
           {answer === undefined ? (
@@ -316,15 +302,13 @@ function ReleaseNotesRow({ version, title }: { version: string; title: string })
               <Skeleton className="h-4 w-full" />
               <Skeleton className="h-4 w-5/6" />
             </div>
-          ) : answer.kind === "unreachable" ? (
+          ) : answer.kind === 'unreachable' ? (
             <p className="text-muted-foreground text-sm">
               GitHub did not answer. Close this and try again.
             </p>
-          ) : answer.kind === "none" ? (
-            <p className="text-muted-foreground text-sm">
-              GitHub has no notes for this version.
-            </p>
-          ) : answer.notes.body.trim() === "" ? (
+          ) : answer.kind === 'none' ? (
+            <p className="text-muted-foreground text-sm">GitHub has no notes for this version.</p>
+          ) : answer.notes.body.trim() === '' ? (
             <p className="text-muted-foreground text-sm">No notes for this version.</p>
           ) : (
             <MarkdownText
@@ -340,7 +324,7 @@ function ReleaseNotesRow({ version, title }: { version: string; title: string })
               onClick={() => void window.holi.openExternal(url)}
             >
               <ExternalLinkIcon data-icon="inline-start" aria-hidden="true" />
-              {answer?.kind === "found" ? answer.notes.name : "The release"} on GitHub
+              {answer?.kind === 'found' ? answer.notes.name : 'The release'} on GitHub
             </Button>
           ) : null}
         </DialogContent>
@@ -384,12 +368,12 @@ function VaultSkillsCard() {
         <SettingsFieldRow
           title={
             pending === 0
-              ? "Skills and hooks are up to date"
-              : `This version of Holi has ${pending} newer ${pending === 1 ? "file" : "files"} for this vault`
+              ? 'Skills and hooks are up to date'
+              : `This version of Holi has ${pending} newer ${pending === 1 ? 'file' : 'files'} for this vault`
           }
           description={
             status.release === null
-              ? "Holi has not written this vault’s skills on this machine."
+              ? 'Holi has not written this vault’s skills on this machine.'
               : `Last brought in by Holi ${status.release}.`
           }
         >
@@ -405,7 +389,7 @@ function VaultSkillsCard() {
           title="Updated when the vault opened"
           description={
             notice.changed.length > 0
-              ? `${notice.summary} ${notice.changed.join(", ")}`
+              ? `${notice.summary} ${notice.changed.join(', ')}`
               : notice.summary
           }
         >
@@ -430,9 +414,7 @@ function VaultSkillsCard() {
           id="settings-auto-skills"
           disabled={resolved === null}
           checked={resolved?.autoUpdateSkills === true}
-          onCheckedChange={(on) =>
-            void write("autoUpdateSkills", on, "committed")
-          }
+          onCheckedChange={(on) => void write('autoUpdateSkills', on, 'committed')}
         />
       </SettingsFieldRow>
     </SettingsGroup>
@@ -476,7 +458,7 @@ function OpenAtLoginRow() {
 export function AccountPage() {
   const viewer = useAtomValue(sessionAtom)
   const [confirming, setConfirming] = useState(false)
-  const name = viewer?.name ?? viewer?.login ?? ""
+  const name = viewer?.name ?? viewer?.login ?? ''
 
   return (
     <SettingsGroup
@@ -488,9 +470,7 @@ export function AccountPage() {
           <span className="flex items-center gap-2">
             <Avatar>
               <AvatarImage src={viewer?.avatarUrl} alt="" />
-              <AvatarFallback className="text-xs">
-                {name.slice(0, 2).toUpperCase()}
-              </AvatarFallback>
+              <AvatarFallback className="text-xs">{name.slice(0, 2).toUpperCase()}</AvatarFallback>
             </Avatar>
             <span className="flex min-w-0 flex-col">
               <span className="truncate">{name}</span>
@@ -506,21 +486,13 @@ export function AccountPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() =>
-                void window.holi.openExternal(
-                  `https://github.com/${viewer.login}`
-                )
-              }
+              onClick={() => void window.holi.openExternal(`https://github.com/${viewer.login}`)}
             >
               Profile
               <ExternalLinkIcon data-icon="inline-end" aria-hidden="true" />
             </Button>
           ) : null}
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => setConfirming(true)}
-          >
+          <Button variant="destructive" size="sm" onClick={() => setConfirming(true)}>
             Sign out
           </Button>
         </div>
@@ -540,9 +512,7 @@ function SignOutConfirm({
   const signOut = useSetAtom(signOutAtom)
   const [deleteClones, setDeleteClones] = useState(false)
   /** Vaults holding commits GitHub does not have yet, asked when it opens. */
-  const [unpushed, setUnpushed] = useState<{ remote: string; ahead: number }[]>(
-    []
-  )
+  const [unpushed, setUnpushed] = useState<{ remote: string; ahead: number }[]>([])
   const id = useId()
 
   useEffect(() => {
@@ -569,27 +539,27 @@ function SignOutConfirm({
       destructive
       onConfirm={() => void signOut({ deleteClones })}
     >
-        <Field orientation="horizontal">
-          <Checkbox
-            id={id}
-            checked={deleteClones}
-            onCheckedChange={(next) => setDeleteClones(next === true)}
-          />
-          <FieldLabel htmlFor={id} className="font-normal">
-            Also move the vaults on this machine to the Trash
-          </FieldLabel>
-        </Field>
-        {unpushed.length > 0 ? (
-          <p className="text-destructive text-sm">
-            {unpushed
-              .map(
-                (v) =>
-                  `${v.remote} has ${v.ahead} ${v.ahead === 1 ? "commit" : "commits"} GitHub does not have yet`
-              )
-              .join("; ")}
-            .
-          </p>
-        ) : null}
+      <Field orientation="horizontal">
+        <Checkbox
+          id={id}
+          checked={deleteClones}
+          onCheckedChange={(next) => setDeleteClones(next === true)}
+        />
+        <FieldLabel htmlFor={id} className="font-normal">
+          Also move the vaults on this machine to the Trash
+        </FieldLabel>
+      </Field>
+      {unpushed.length > 0 ? (
+        <p className="text-destructive text-sm">
+          {unpushed
+            .map(
+              (v) =>
+                `${v.remote} has ${v.ahead} ${v.ahead === 1 ? 'commit' : 'commits'} GitHub does not have yet`,
+            )
+            .join('; ')}
+          .
+        </p>
+      ) : null}
     </ConfirmDialog>
   )
 }

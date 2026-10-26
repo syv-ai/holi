@@ -135,7 +135,10 @@ export async function syncThreads(
 
   // Only the threads that actually moved, and never one we already know has
   // gone. Two changed threads cost two requests, not 25.
-  const refetched = await fetchThreadSummaries(api, [...changed].filter((id) => !gone.has(id)))
+  const refetched = await fetchThreadSummaries(
+    api,
+    [...changed].filter((id) => !gone.has(id)),
+  )
 
   const threads = merge(cached, refetched, gone, patches, options)
   cache.writeThreads(key, threads)

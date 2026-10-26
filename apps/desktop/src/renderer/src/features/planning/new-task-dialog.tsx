@@ -4,10 +4,10 @@
  * file, in the chosen project's folder (the vault root without one). Private
  * unless Sharing says otherwise, as every new task is (docs/features/tasks.md).
  */
-import { useState } from "react"
-import type { StatusDef, Task } from "@holi/shared"
+import { useState } from 'react'
+import type { StatusDef, Task } from '@holi/shared'
 
-import { Button } from "@/components/ui/button"
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -15,16 +15,11 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import {
-  Field,
-  FieldError,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { TaskFields, type TaskFieldValues } from "./task-fields"
+} from '@/components/ui/dialog'
+import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { TaskFields, type TaskFieldValues } from './task-fields'
 
 export type NewTaskInput = {
   title: string
@@ -32,9 +27,7 @@ export type NewTaskInput = {
   folder: string
   description?: string
   shared: boolean
-  extra: Partial<
-    Pick<Task, "priority" | "start" | "due" | "estimate" | "tags" | "assignees">
-  >
+  extra: Partial<Pick<Task, 'priority' | 'start' | 'due' | 'estimate' | 'tags' | 'assignees'>>
 }
 
 function emptyDraft(status: string, folder: string): TaskFieldValues {
@@ -46,7 +39,7 @@ export function NewTaskDialog({
   onOpenChange,
   statuses,
   defaultStatus,
-  defaultFolder = "",
+  defaultFolder = '',
   today,
   onCreate,
 }: {
@@ -58,45 +51,31 @@ export function NewTaskDialog({
   today: string
   onCreate: (input: NewTaskInput) => Promise<void>
 }) {
-  const [title, setTitle] = useState("")
-  const [description, setDescription] = useState("")
-  const [fields, setFields] = useState(() =>
-    emptyDraft(defaultStatus, defaultFolder)
-  )
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [fields, setFields] = useState(() => emptyDraft(defaultStatus, defaultFolder))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const reset = () => {
-    setTitle("")
-    setDescription("")
+    setTitle('')
+    setDescription('')
     setFields(emptyDraft(defaultStatus, defaultFolder))
     setError(null)
   }
 
   const submit = async () => {
-    if (title.trim() === "") return
+    if (title.trim() === '') return
     setBusy(true)
     setError(null)
-    const {
-      status,
-      folder,
-      assignees,
-      tags,
-      priority,
-      due,
-      start,
-      estimate,
-      shared,
-    } = fields
+    const { status, folder, assignees, tags, priority, due, start, estimate, shared } = fields
     try {
       await onCreate({
         title: title.trim(),
         status,
         folder,
         shared,
-        ...(description.trim() !== ""
-          ? { description: description.trim() }
-          : {}),
+        ...(description.trim() !== '' ? { description: description.trim() } : {}),
         extra: {
           ...(priority !== undefined ? { priority } : {}),
           ...(start !== undefined ? { start } : {}),
@@ -129,10 +108,10 @@ export function NewTaskDialog({
           onKeyDown={(event) => {
             // Enter in a one-line field creates, as the form it replaced did.
             if (
-              event.key === "Enter" &&
+              event.key === 'Enter' &&
               event.target instanceof HTMLInputElement &&
               !busy &&
-              title.trim() !== ""
+              title.trim() !== ''
             ) {
               event.preventDefault()
               void submit()
@@ -141,9 +120,7 @@ export function NewTaskDialog({
         >
           <DialogHeader>
             <DialogTitle>New task</DialogTitle>
-            <DialogDescription>
-              Saved as a task file in the vault.
-            </DialogDescription>
+            <DialogDescription>Saved as a task file in the vault.</DialogDescription>
           </DialogHeader>
 
           <FieldGroup>
@@ -186,16 +163,12 @@ export function NewTaskDialog({
           </FieldGroup>
 
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
             <Button
               type="button"
-              disabled={busy || title.trim() === ""}
+              disabled={busy || title.trim() === ''}
               onClick={() => void submit()}
             >
               Create task

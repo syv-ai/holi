@@ -1,24 +1,21 @@
-import { useCallback, useEffect, useRef } from "react"
-import { useAtomValue } from "jotai"
-import { FitAddon } from "@xterm/addon-fit"
-import { WebLinksAddon } from "@xterm/addon-web-links"
-import { WebglAddon } from "@xterm/addon-webgl"
-import { Terminal } from "@xterm/xterm"
-import "@xterm/xterm/css/xterm.css"
+import { useCallback, useEffect, useRef } from 'react'
+import { useAtomValue } from 'jotai'
+import { FitAddon } from '@xterm/addon-fit'
+import { WebLinksAddon } from '@xterm/addon-web-links'
+import { WebglAddon } from '@xterm/addon-webgl'
+import { Terminal } from '@xterm/xterm'
+import '@xterm/xterm/css/xterm.css'
 
-import { cn } from "@/lib/cn"
-import { matchShortcutKey } from "@/lib/hotkey"
-import { terminalFont, terminalTheme } from "@/lib/terminal-theme"
-import { trpc } from "@/lib/trpc"
-import { activeModeAtom } from "@/state/color-scheme"
-import {
-  registerTerminalSink,
-  type TerminalContext,
-} from "@/state/panel-terminals"
-import { isMac } from "@/state/shortcuts"
-import { activeRemoteAtom } from "@/state/vaults"
+import { cn } from '@/lib/cn'
+import { matchShortcutKey } from '@/lib/hotkey'
+import { terminalFont, terminalTheme } from '@/lib/terminal-theme'
+import { trpc } from '@/lib/trpc'
+import { activeModeAtom } from '@/state/color-scheme'
+import { registerTerminalSink, type TerminalContext } from '@/state/panel-terminals'
+import { isMac } from '@/state/shortcuts'
+import { activeRemoteAtom } from '@/state/vaults'
 
-import { TerminalContextChips } from "./terminal-context-chips"
+import { TerminalContextChips } from './terminal-context-chips'
 
 /**
  * One of the bottom panel's shells in an xterm (docs/features/status-bar.md).
@@ -38,7 +35,7 @@ const MIN_FITTABLE_PX = 10
 
 /** The panel's own keys pass through xterm to the shell's dispatcher, or
  *  ⌃` would be typed into the shell and the panel could not close. */
-const PANEL_KEYS = ["⌃`", "⇧⌘U"]
+const PANEL_KEYS = ['⌃`', '⇧⌘U']
 
 export function PanelTerminal({
   id,
@@ -66,10 +63,7 @@ export function PanelTerminal({
     const fit = fitRef.current
     const mount = mountRef.current
     if (!term || !fit || !mount?.isConnected) return
-    if (
-      mount.clientWidth < MIN_FITTABLE_PX ||
-      mount.clientHeight < MIN_FITTABLE_PX
-    ) {
+    if (mount.clientWidth < MIN_FITTABLE_PX || mount.clientHeight < MIN_FITTABLE_PX) {
       return
     }
     try {
@@ -84,9 +78,7 @@ export function PanelTerminal({
     lastSize.current = { cols, rows }
     const at = remoteRef.current
     if (at !== null) {
-      void trpc.terminal.resize
-        .mutate({ remote: at, id, cols, rows })
-        .catch(() => {})
+      void trpc.terminal.resize.mutate({ remote: at, id, cols, rows }).catch(() => {})
     }
   }, [id])
 
@@ -97,7 +89,7 @@ export function PanelTerminal({
       fontSize: 12,
       lineHeight: 1.3,
       fontFamily: terminalFont(mount),
-      cursorStyle: "bar",
+      cursorStyle: 'bar',
       cursorWidth: 2,
       cursorBlink: true,
       scrollback: 10_000,
@@ -111,7 +103,7 @@ export function PanelTerminal({
       new WebLinksAddon((event, uri) => {
         event.preventDefault()
         void window.holi?.openExternal(uri)
-      })
+      }),
     )
     term.open(mount)
     // WebGL draws on the cell grid (see SessionTerminal); a lost context
@@ -127,14 +119,12 @@ export function PanelTerminal({
     fitRef.current = fit
 
     term.attachCustomKeyEventHandler(
-      (e) => !PANEL_KEYS.some((spec) => matchShortcutKey(e, spec, isMac()))
+      (e) => !PANEL_KEYS.some((spec) => matchShortcutKey(e, spec, isMac())),
     )
     const typed = term.onData((data) => {
       const at = remoteRef.current
       if (at !== null) {
-        void trpc.terminal.write
-          .mutate({ remote: at, id, data })
-          .catch(() => {})
+        void trpc.terminal.write.mutate({ remote: at, id, data }).catch(() => {})
       }
     })
 
@@ -147,8 +137,8 @@ export function PanelTerminal({
     const at = remoteRef.current
     void (
       at === null
-        ? Promise.resolve("")
-        : trpc.terminal.replay.query({ remote: at, id }).catch(() => "")
+        ? Promise.resolve('')
+        : trpc.terminal.replay.query({ remote: at, id }).catch(() => '')
     ).then((text) => {
       if (text) term.write(text)
       live = true
@@ -181,9 +171,7 @@ export function PanelTerminal({
       if (cancelled) return
       build()
       termRef.current?.focus()
-      frame = requestAnimationFrame(() =>
-        requestAnimationFrame(() => syncSize())
-      )
+      frame = requestAnimationFrame(() => requestAnimationFrame(() => syncSize()))
     }
     const mount = mountRef.current
     if (termRef.current || !mount || !document.fonts) show()
@@ -213,7 +201,7 @@ export function PanelTerminal({
   return (
     <div
       data-panel-terminal={id}
-      className={cn("flex min-h-0 flex-1 flex-col", !visible && "hidden")}
+      className={cn('flex min-h-0 flex-1 flex-col', !visible && 'hidden')}
     >
       <TerminalContextChips context={context} className="px-3 pt-2.5" />
       <div className="relative min-h-0 flex-1">

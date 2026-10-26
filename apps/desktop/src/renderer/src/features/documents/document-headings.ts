@@ -5,14 +5,14 @@
  * heading at the top level counts, since only that one is written as an ATX
  * line the anchors see.
  */
-import { headingAnchors, headingSlug } from "@holi/shared"
-import type { Editor } from "@tiptap/react"
+import { headingAnchors, headingSlug } from '@holi/shared'
+import type { Editor } from '@tiptap/react'
 
 /** The editor's top-level headings, top to bottom, by position. */
 function headings(editor: Editor): number[] {
   const at: number[] = []
   editor.state.doc.forEach((node, offset) => {
-    if (node.type.name === "heading") at.push(offset)
+    if (node.type.name === 'heading') at.push(offset)
   })
   return at
 }
@@ -36,16 +36,12 @@ export function headingAtCaret(editor: Editor, text: string): string | null {
  * its words (the first heading with those words), and scroll to it. False
  * when no heading matches, and the caret stays where it was.
  */
-export function landOnHeading(
-  editor: Editor,
-  text: string,
-  heading: string
-): boolean {
+export function landOnHeading(editor: Editor, text: string, heading: string): boolean {
   const anchors = headingAnchors(text)
-  const exact = heading.normalize("NFC").trim()
+  const exact = heading.normalize('NFC').trim()
   const words = headingSlug(heading)
   let index = anchors.findIndex((anchor) => anchor.slug === exact)
-  if (index === -1 && words !== "") {
+  if (index === -1 && words !== '') {
     index = anchors.findIndex((anchor) => anchor.slug === words)
   }
   const pos = index === -1 ? undefined : headings(editor)[index]

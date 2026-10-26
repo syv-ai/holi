@@ -1,15 +1,15 @@
-import type { StatusDef, Task } from "@holi/shared"
+import type { StatusDef, Task } from '@holi/shared'
 
 /** A status's heading row; its tasks are its sub-rows. */
 export interface TaskGroupRow {
-  kind: "group"
+  kind: 'group'
   id: string
   status: StatusDef
   subRows: TaskTableRow[]
 }
 
 export interface TaskItemRow {
-  kind: "task"
+  kind: 'task'
   id: string
   status: StatusDef
   task: Task
@@ -17,7 +17,7 @@ export interface TaskItemRow {
 
 /** The List's "Add task" line at the foot of a group. */
 interface TaskAddRow {
-  kind: "add"
+  kind: 'add'
   id: string
   status: StatusDef
 }
@@ -25,14 +25,14 @@ interface TaskAddRow {
 export type TaskTableRow = TaskGroupRow | TaskItemRow | TaskAddRow
 
 export type TaskColumnKey =
-  "status" | "assignee" | "priority" | "due" | "start" | "estimate" | "tags"
+  'status' | 'assignee' | 'priority' | 'due' | 'start' | 'estimate' | 'tags'
 
 export const COLUMN_LABELS: Record<TaskColumnKey, string> = {
-  status: "Status",
-  assignee: "Assignee",
-  priority: "Priority",
-  due: "Due",
-  start: "Start",
-  estimate: "Estimate",
-  tags: "Tags",
+  status: 'Status',
+  assignee: 'Assignee',
+  priority: 'Priority',
+  due: 'Due',
+  start: 'Start',
+  estimate: 'Estimate',
+  tags: 'Tags',
 }

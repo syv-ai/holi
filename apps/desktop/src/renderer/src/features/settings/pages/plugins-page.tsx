@@ -8,15 +8,15 @@
  * asks first while any of those has something to lose (its `leaveGuard`, the
  * agent's busy sessions).
  */
-import { useAtomValue } from "jotai"
-import { useEffect, useState } from "react"
+import { useAtomValue } from 'jotai'
+import { useEffect, useState } from 'react'
 import {
   PLUGINS_LOCAL_FILE,
   optionalPlugins,
   pluginLabels,
   resolvePlugins,
   type PluginInfo,
-} from "@holi/shared"
+} from '@holi/shared'
 
 import {
   AlertDialog,
@@ -27,17 +27,17 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
-import { Badge } from "@/components/reui/badge"
-import { pluginMark } from "@/composites/marks"
-import { Switch } from "@/components/ui/switch"
-import { trpc } from "@/lib/trpc"
-import type { SettingsSection } from "@/plugin-api/types"
-import { installedPluginsAtom, leaveReasonByPluginAtom } from "@/state/plugins"
-import { activeRemoteAtom } from "@/state/vaults"
+} from '@/components/ui/alert-dialog'
+import { Badge } from '@/components/reui/badge'
+import { pluginMark } from '@/composites/marks'
+import { Switch } from '@/components/ui/switch'
+import { trpc } from '@/lib/trpc'
+import type { SettingsSection } from '@/plugin-api/types'
+import { installedPluginsAtom, leaveReasonByPluginAtom } from '@/state/plugins'
+import { activeRemoteAtom } from '@/state/vaults'
 
-import { SettingsGroup, SettingsFieldRow, SettingsRowsLoading } from "../settings-kit"
-import { useVaultSettings } from "../use-vault-settings"
+import { SettingsGroup, SettingsFieldRow, SettingsRowsLoading } from '../settings-kit'
+import { useVaultSettings } from '../use-vault-settings'
 
 export function PluginsPage({
   nested,
@@ -109,7 +109,7 @@ function PluginSwitches() {
       return reason === undefined ? [] : [reason]
     })
     if (lost.length > 0) setAsking({ vault, off: info, reasons: lost })
-    else void write("plugins", vault, "committed")
+    else void write('plugins', vault, 'committed')
   }
 
   return (
@@ -122,12 +122,10 @@ function PluginSwitches() {
         const failure = running.has(info.id) ? failures[info.id] : undefined
         const id = `settings-plugin-${info.id}`
         const notes = [
-          st?.kind === "needs"
+          st?.kind === 'needs'
             ? `Needs ${pluginLabels(st.missing, infos)}, so it is not running.`
             : null,
-          st?.kind === "off-here"
-            ? `Off on this machine, in ${PLUGINS_LOCAL_FILE}.`
-            : null,
+          st?.kind === 'off-here' ? `Off on this machine, in ${PLUGINS_LOCAL_FILE}.` : null,
         ].filter((note) => note !== null)
         return (
           <SettingsFieldRow
@@ -139,7 +137,7 @@ function PluginSwitches() {
             titleAddon={
               failure !== undefined ? (
                 <Badge variant="destructive-light">Did not start</Badge>
-              ) : st?.kind === "needs" || st?.kind === "off-here" ? (
+              ) : st?.kind === 'needs' || st?.kind === 'off-here' ? (
                 <Badge variant="secondary">Not running</Badge>
               ) : null
             }
@@ -152,9 +150,7 @@ function PluginSwitches() {
                   </span>
                 ))}
                 {failure !== undefined ? (
-                  <span className="text-destructive text-xs break-words">
-                    {failure}
-                  </span>
+                  <span className="text-destructive text-xs break-words">{failure}</span>
                 ) : null}
               </span>
             }
@@ -178,9 +174,7 @@ function PluginSwitches() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Turn off {asking?.off.label}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {asking?.reasons.join(" ")}
-            </AlertDialogDescription>
+            <AlertDialogDescription>{asking?.reasons.join(' ')}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep it on</AlertDialogCancel>
@@ -188,7 +182,7 @@ function PluginSwitches() {
               variant="destructive"
               onClick={() => {
                 if (asking !== null) {
-                  void write("plugins", asking.vault, "committed")
+                  void write('plugins', asking.vault, 'committed')
                 }
                 setAsking(null)
               }}

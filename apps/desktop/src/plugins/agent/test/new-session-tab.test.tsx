@@ -69,7 +69,10 @@ test('a new session starts in the default agent and its tab comes forward', asyn
   await act(async () => {
     await store.set(newSessionAtom)
   })
-  expect(agentCap.start).toHaveBeenCalledWith('o/r', expect.objectContaining({ provider: 'claude' }))
+  expect(agentCap.start).toHaveBeenCalledWith(
+    'o/r',
+    expect.objectContaining({ provider: 'claude' }),
+  )
   expect(focusedTab(store.get(shellWorkspaceAtom))).toBe(SESSION)
 })
 

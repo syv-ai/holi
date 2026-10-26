@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react"
-import { useSetAtom } from "jotai"
-import { GitBranchIcon, GitBranchPlusIcon } from "lucide-react"
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useSetAtom } from 'jotai'
+import { GitBranchIcon, GitBranchPlusIcon } from 'lucide-react'
 
-import { Alert, AlertAction, AlertTitle } from "@/components/reui/alert"
-import { Button } from "@/components/ui/button"
+import { Alert, AlertAction, AlertTitle } from '@/components/reui/alert'
+import { Button } from '@/components/ui/button'
 import {
   Command,
   CommandEmpty,
@@ -12,18 +12,14 @@ import {
   CommandItem,
   CommandList,
   CommandSeparator,
-} from "@/components/ui/command"
-import { Field, FieldError, FieldLabel } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Spinner } from "@/components/ui/spinner"
-import { trpc } from "@/lib/trpc"
-import { switchBranchAtom } from "@/state/vaults"
+} from '@/components/ui/command'
+import { Field, FieldError, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Spinner } from '@/components/ui/spinner'
+import { trpc } from '@/lib/trpc'
+import { switchBranchAtom } from '@/state/vaults'
 
 /**
  * The status bar's branch picker (docs/features/status-bar.md), VS Code's:
@@ -41,25 +37,21 @@ interface BranchListView {
 
 /** The refusal's words, from a tRPC error or anything else thrown. */
 function messageOf(err: unknown): string {
-  return err instanceof Error && err.message !== ""
-    ? err.message
-    : "Something went wrong"
+  return err instanceof Error && err.message !== '' ? err.message : 'Something went wrong'
 }
 
 /** How long a typed name rests before main is asked whether git takes it. */
 const VALIDATE_MS = 150
 
 type Load =
-  | { kind: "loading" }
-  | { kind: "error"; message: string }
-  | { kind: "ready"; list: BranchListView }
+  { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; list: BranchListView }
 
 /**
  * The branch list while the picker is open: read at once from what the clone
  * knows, then fetched (debounced in main) and read again.
  */
 function useBranches(open: boolean) {
-  const [load, setLoad] = useState<Load>({ kind: "loading" })
+  const [load, setLoad] = useState<Load>({ kind: 'loading' })
   const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
@@ -67,11 +59,11 @@ function useBranches(open: boolean) {
     let live = true
     const read = () =>
       trpc.sync.branches.query().then((list) => {
-        if (live) setLoad({ kind: "ready", list })
+        if (live) setLoad({ kind: 'ready', list })
       })
     read()
       .catch((err: unknown) => {
-        if (live) setLoad({ kind: "error", message: messageOf(err) })
+        if (live) setLoad({ kind: 'error', message: messageOf(err) })
       })
       .then(() => trpc.sync.fetchBranches.mutate())
       .then(() => read())
@@ -84,7 +76,7 @@ function useBranches(open: boolean) {
   }, [open, attempt])
 
   const retry = useCallback(() => {
-    setLoad({ kind: "loading" })
+    setLoad({ kind: 'loading' })
     setAttempt((n) => n + 1)
   }, [])
   return { load, retry }
@@ -97,7 +89,7 @@ function useNameProblem(name: string, taken: readonly string[]) {
   const typed = name.trim()
 
   useEffect(() => {
-    if (typed === "") {
+    if (typed === '') {
       setProblem(null)
       setChecking(false)
       return
@@ -113,8 +105,7 @@ function useNameProblem(name: string, taken: readonly string[]) {
       trpc.sync.branchNameValid
         .query({ name: typed })
         .then((ok) => {
-          if (live)
-            setProblem(ok ? null : `“${typed}” is not a valid branch name`)
+          if (live) setProblem(ok ? null : `“${typed}” is not a valid branch name`)
         })
         .catch((err: unknown) => {
           if (live) setProblem(messageOf(err))
@@ -149,12 +140,12 @@ function CreateBranch({
 }) {
   const [name, setName] = useState(initial)
   const { problem, checking, typed } = useNameProblem(name, taken)
-  const ready = typed !== "" && problem === null && !checking && !busy
+  const ready = typed !== '' && problem === null && !checking && !busy
   return (
     <div className="flex flex-col gap-3 p-2">
       <Field data-invalid={problem !== null}>
         <FieldLabel htmlFor="new-branch-name">
-          {from === null ? "New branch" : `New branch from ${from}`}
+          {from === null ? 'New branch' : `New branch from ${from}`}
         </FieldLabel>
         <Input
           id="new-branch-name"
@@ -167,10 +158,10 @@ function CreateBranch({
           autoCorrect="off"
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && ready) {
+            if (e.key === 'Enter' && ready) {
               e.preventDefault()
               onCreate(typed)
-            } else if (e.key === "Escape") {
+            } else if (e.key === 'Escape') {
               e.preventDefault()
               e.stopPropagation()
               onCancel()
@@ -183,12 +174,7 @@ function CreateBranch({
         <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
           Cancel
         </Button>
-        <Button
-          type="button"
-          size="sm"
-          disabled={!ready}
-          onClick={() => onCreate(typed)}
-        >
+        <Button type="button" size="sm" disabled={!ready} onClick={() => onCreate(typed)}>
           {busy ? <Spinner aria-hidden /> : null}
           Create branch
         </Button>
@@ -199,11 +185,7 @@ function CreateBranch({
 
 function LoadingRows() {
   return (
-    <div
-      role="status"
-      aria-label="Loading branches"
-      className="flex flex-col gap-2 p-2"
-    >
+    <div role="status" aria-label="Loading branches" className="flex flex-col gap-2 p-2">
       <Skeleton className="h-4 w-3/4" />
       <Skeleton className="h-4 w-1/2" />
       <Skeleton className="h-4 w-2/3" />
@@ -217,8 +199,8 @@ function LoadingRows() {
  */
 export function BranchPicker({ trigger }: { trigger: ReactNode }) {
   const [open, setOpen] = useState(false)
-  const [mode, setMode] = useState<"list" | "create">("list")
-  const [query, setQuery] = useState("")
+  const [mode, setMode] = useState<'list' | 'create'>('list')
+  const [query, setQuery] = useState('')
   const [pending, setPending] = useState<string | null>(null)
   const [refusal, setRefusal] = useState<string | null>(null)
   const { load, retry } = useBranches(open)
@@ -228,8 +210,8 @@ export function BranchPicker({ trigger }: { trigger: ReactNode }) {
   const onOpenChange = useCallback((next: boolean) => {
     setOpen(next)
     if (!next) {
-      setMode("list")
-      setQuery("")
+      setMode('list')
+      setQuery('')
       setRefusal(null)
     }
   }, [])
@@ -243,10 +225,10 @@ export function BranchPicker({ trigger }: { trigger: ReactNode }) {
         .catch((err: unknown) => setRefusal(messageOf(err)))
         .finally(() => setPending(null))
     },
-    [switchBranch, onOpenChange]
+    [switchBranch, onOpenChange],
   )
 
-  const list = load.kind === "ready" ? load.list : null
+  const list = load.kind === 'ready' ? load.list : null
   const taken = list === null ? [] : list.local.map((b) => b.name)
 
   return (
@@ -262,19 +244,17 @@ export function BranchPicker({ trigger }: { trigger: ReactNode }) {
         {refusal === null ? null : (
           <div className="p-1 pb-0">
             <Alert variant="destructive">
-              <AlertTitle className="line-clamp-none text-xs">
-                {refusal}
-              </AlertTitle>
+              <AlertTitle className="line-clamp-none text-xs">{refusal}</AlertTitle>
             </Alert>
           </div>
         )}
-        {mode === "create" ? (
+        {mode === 'create' ? (
           <CreateBranch
             from={list?.current ?? null}
             initial={query}
             taken={taken}
             busy={busy}
-            onCancel={() => setMode("list")}
+            onCancel={() => setMode('list')}
             onCreate={(name) => run(name, true)}
           />
         ) : (
@@ -285,19 +265,12 @@ export function BranchPicker({ trigger }: { trigger: ReactNode }) {
               onValueChange={setQuery}
               disabled={busy}
             />
-            {load.kind === "error" ? (
+            {load.kind === 'error' ? (
               <div className="p-1">
                 <Alert variant="destructive">
-                  <AlertTitle className="text-xs">
-                    Could not list the branches
-                  </AlertTitle>
+                  <AlertTitle className="text-xs">Could not list the branches</AlertTitle>
                   <AlertAction>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="xs"
-                      onClick={retry}
-                    >
+                    <Button type="button" variant="outline" size="xs" onClick={retry}>
                       Retry
                     </Button>
                   </AlertAction>
@@ -310,16 +283,14 @@ export function BranchPicker({ trigger }: { trigger: ReactNode }) {
                 <CommandItem
                   value="Create branch…"
                   forceMount
-                  disabled={busy || load.kind !== "ready"}
-                  onSelect={() => setMode("create")}
+                  disabled={busy || load.kind !== 'ready'}
+                  onSelect={() => setMode('create')}
                 >
                   <GitBranchPlusIcon aria-hidden />
-                  {query.trim() === ""
-                    ? "Create branch…"
-                    : `Create branch “${query.trim()}”…`}
+                  {query.trim() === '' ? 'Create branch…' : `Create branch “${query.trim()}”…`}
                 </CommandItem>
               </CommandGroup>
-              {load.kind === "loading" ? <LoadingRows /> : null}
+              {load.kind === 'loading' ? <LoadingRows /> : null}
               {list === null ? null : (
                 <>
                   <CommandSeparator />
@@ -363,9 +334,7 @@ export function BranchPicker({ trigger }: { trigger: ReactNode }) {
                           ) : (
                             <GitBranchIcon aria-hidden />
                           )}
-                          <span className="min-w-0 truncate">
-                            origin/{b.name}
-                          </span>
+                          <span className="min-w-0 truncate">origin/{b.name}</span>
                         </CommandItem>
                       ))}
                     </CommandGroup>

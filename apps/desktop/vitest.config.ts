@@ -13,10 +13,7 @@ export default defineConfig({
         resolve: { alias },
         test: {
           name: 'node',
-          include: [
-            'test/**/*.test.ts',
-            'src/plugins/*/test/**/*.test.ts',
-          ],
+          include: ['test/**/*.test.ts', 'src/plugins/*/test/**/*.test.ts'],
           environment: 'node',
           passWithNoTests: true,
           // Vitest swaps every CSS import for an empty string unless it is

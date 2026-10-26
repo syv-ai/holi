@@ -24,7 +24,7 @@
  * Random on purpose (`Math.random`): where papers land, and how the idle brain
  * breaks a tie.
  */
-import { HOLI_COLOURS, holiMascotOf, type HoliMascot } from "@holi/shared"
+import { HOLI_COLOURS, holiMascotOf, type HoliMascot } from '@holi/shared'
 
 import type {
   ArcadeCastMember,
@@ -34,7 +34,7 @@ import type {
   GridArcade,
   PaperKind,
   SpeechBubble,
-} from "./grid-arcade"
+} from './grid-arcade'
 
 const BOOT_FADE_MS = 420
 
@@ -100,65 +100,60 @@ const OUTBOX_VALUE = 0.55
  * The papers and the outbox, traced on the grid: `#` lit, `+` half lit. A
  * document is a page with its corner turned; a task is an open checkbox.
  */
-const GLYPHS: Record<PaperKind | "outbox", readonly string[]> = {
-  doc: ["##+.", "#+#.", "#+#.", "###."],
-  task: ["###.", "#.#.", "###.", "...."],
+const GLYPHS: Record<PaperKind | 'outbox', readonly string[]> = {
+  doc: ['##+.', '#+#.', '#+#.', '###.'],
+  task: ['###.', '#.#.', '###.', '....'],
   outbox: [
-    "...##...",
-    "...##...",
-    ".######.",
-    "..####..",
-    "#..##..#",
-    "#......#",
-    "########",
-    "........",
+    '...##...',
+    '...##...',
+    '.######.',
+    '..####..',
+    '#..##..#',
+    '#......#',
+    '########',
+    '........',
   ],
 }
 
 /** What any Holi says when it files a stack. */
 const FILED_LINES = [
-  "FILED!",
-  "INBOX ZERO",
-  "DONE AND DUSTED",
-  "DIGEST READY",
-  "PROPOSAL SENT",
-  "ALL CHECKED OFF",
-  "ON YOUR DESK",
+  'FILED!',
+  'INBOX ZERO',
+  'DONE AND DUSTED',
+  'DIGEST READY',
+  'PROPOSAL SENT',
+  'ALL CHECKED OFF',
+  'ON YOUR DESK',
   "THAT'S A WRAP",
-  "COMMITTED",
-  "SIGNED AND SENT",
-  "NOTES IN ORDER",
+  'COMMITTED',
+  'SIGNED AND SENT',
+  'NOTES IN ORDER',
 ]
 
 /** A stack of four or more. */
-const STACK_LINES = [
-  "A WHOLE STACK!",
-  "WORK OF THE WEEK",
-  "BATCH FILED",
-  "ALL OF IT, DONE",
-]
+const STACK_LINES = ['A WHOLE STACK!', 'WORK OF THE WEEK', 'BATCH FILED', 'ALL OF IT, DONE']
 
 /** Each figure's own way of putting it. */
 const VOICE: Record<HoliMascot, readonly string[]> = {
-  captain: ["CAPTAIN ON DECK", "FILED. CASE CLOSED"],
-  strategist: ["ALL ACCORDING TO PLAN", "A STRATEGIC FILING"],
-  skipper: ["FULL STEAM TO OUTBOX", "ALL HANDS, FILED"],
-  spy: ["MISSION COMPLETE", "FILED. TOP SECRET"],
-  professor: ["CLASS DISMISSED", "TEXTBOOK FILING"],
-  operator: ["SHIPPED TO PROD", "RUNNING IN PRODUCTION"],
-  starter: ["OFF TO A FLYING START", "AND WE'RE OFF"],
-  scout: ["FRESH FROM THE FIELD", "REPORTING BACK"],
-  champion: ["GOLD MEDAL FILING", "UNDEFEATED"],
-  benchmarker: ["NEW HIGH SCORE", "TOP OF THE BENCHMARK"],
+  captain: ['CAPTAIN ON DECK', 'FILED. CASE CLOSED'],
+  strategist: ['ALL ACCORDING TO PLAN', 'A STRATEGIC FILING'],
+  skipper: ['FULL STEAM TO OUTBOX', 'ALL HANDS, FILED'],
+  spy: ['MISSION COMPLETE', 'FILED. TOP SECRET'],
+  professor: ['CLASS DISMISSED', 'TEXTBOOK FILING'],
+  operator: ['SHIPPED TO PROD', 'RUNNING IN PRODUCTION'],
+  starter: ['OFF TO A FLYING START', "AND WE'RE OFF"],
+  scout: ['FRESH FROM THE FIELD', 'REPORTING BACK'],
+  champion: ['GOLD MEDAL FILING', 'UNDEFEATED'],
+  benchmarker: ['NEW HIGH SCORE', 'TOP OF THE BENCHMARK'],
 }
 
 /** The Holi that just walked into a conflict. */
 const CONFLICT_LINES = [
-  "MERGE CONFLICT!",
-  "WHO EDITED THIS?",
-  "OURS OR THEIRS?",
-  "REBASING…",
-  "SHOULD HAVE PULLED",
+  'MERGE CONFLICT!',
+  'WHO EDITED THIS?',
+  'OURS OR THEIRS?',
+  'REBASING…',
+  'SHOULD HAVE PULLED',
 ]
 
 /**
@@ -166,17 +161,17 @@ const CONFLICT_LINES = [
  * @public exported for its test
  */
 export const DEFAULT_CAST: readonly ArcadeCastMember[] = [
-  { id: "captain", name: "Captain", mascot: "captain", color: HOLI_COLOURS[0] },
+  { id: 'captain', name: 'Captain', mascot: 'captain', color: HOLI_COLOURS[0] },
   {
-    id: "professor",
-    name: "Professor",
-    mascot: "professor",
+    id: 'professor',
+    name: 'Professor',
+    mascot: 'professor',
     color: HOLI_COLOURS[1],
   },
   {
-    id: "operator",
-    name: "Operator",
-    mascot: "operator",
+    id: 'operator',
+    name: 'Operator',
+    mascot: 'operator',
     color: HOLI_COLOURS[2],
   },
 ]
@@ -257,18 +252,16 @@ export function createPaperRun(): GridArcade {
   let outboxFlash = 0
 
   let speech: Speech | null = null
-  let lastLine = ""
+  let lastLine = ''
 
   let booted = 0
   let player = false
   let pending: Tile | null = null
   let score = 0
-  let mode: ArcadeMode = "mid"
+  let mode: ArcadeMode = 'mid'
 
-  const wrapX = (x: number) =>
-    tileCols ? ((x % tileCols) + tileCols) % tileCols : 0
-  const wrapY = (y: number) =>
-    tileRows ? ((y % tileRows) + tileRows) % tileRows : 0
+  const wrapX = (x: number) => (tileCols ? ((x % tileCols) + tileCols) % tileCols : 0)
+  const wrapY = (y: number) => (tileRows ? ((y % tileRows) + tileRows) % tileRows : 0)
 
   /** Shortest signed run from a to b on a board that wraps. */
   const span = (a: number, b: number, size: number) => {
@@ -296,8 +289,7 @@ export function createPaperRun(): GridArcade {
     span(outbox.y, y, tileRows) >= 0 &&
     span(outbox.y, y, tileRows) < OUTBOX_TILES
 
-  const paperAt = (x: number, y: number) =>
-    papers.find((paper) => paper.x === x && paper.y === y)
+  const paperAt = (x: number, y: number) => papers.find((paper) => paper.x === x && paper.y === y)
 
   /** Never the same line twice running, whoever says it. A line already up
    *  keeps the floor unless `force` (the player's own). */
@@ -314,10 +306,7 @@ export function createPaperRun(): GridArcade {
 
   const speechAlpha = (state: Speech) => {
     const fadeIn = Math.min(1, state.age / SPEECH_FADE_MS)
-    const fadeOut = Math.max(
-      0,
-      1 - (state.age - SPEECH_HOLD_MS) / SPEECH_FADE_MS
-    )
+    const fadeOut = Math.max(0, 1 - (state.age - SPEECH_HOLD_MS) / SPEECH_FADE_MS)
     return Math.min(fadeIn, fadeOut)
   }
 
@@ -332,18 +321,14 @@ export function createPaperRun(): GridArcade {
         ? wrapY(near.y + Math.round((Math.random() * 2 - 1) * radius))
         : Math.floor(Math.random() * tileRows)
       if (isKept(x, y) || onOutbox(x, y) || paperAt(x, y)) continue
-      if (
-        !near &&
-        holis.some((holi) => distance({ x, y }, { x: holi.tx, y: holi.ty }) < 2)
-      )
+      if (!near && holis.some((holi) => distance({ x, y }, { x: holi.tx, y: holi.ty }) < 2))
         continue
       return { x, y }
     }
     return null
   }
 
-  const paperCap = () =>
-    clamp(Math.floor((tileCols * tileRows) / 40), 4, 16) + (player ? 2 : 0)
+  const paperCap = () => clamp(Math.floor((tileCols * tileRows) / 40), 4, 16) + (player ? 2 : 0)
 
   const spawnPaper = () => {
     if (papers.length >= paperCap()) return
@@ -352,7 +337,7 @@ export function createPaperRun(): GridArcade {
     papers.push({
       id: nextPaperId++,
       ...spot,
-      kind: Math.random() < TASK_SHARE ? "task" : "doc",
+      kind: Math.random() < TASK_SHARE ? 'task' : 'doc',
       age: 0,
     })
   }
@@ -419,10 +404,7 @@ export function createPaperRun(): GridArcade {
     for (let attempt = 0; attempt < 20; attempt++) {
       const spot = freeTile()
       if (!spot) continue
-      const reach = Math.min(
-        ...holis.map((holi) => distance(spot, { x: holi.tx, y: holi.ty })),
-        99
-      )
+      const reach = Math.min(...holis.map((holi) => distance(spot, { x: holi.tx, y: holi.ty })), 99)
       if (reach > bestReach) {
         best = spot
         bestReach = reach
@@ -496,10 +478,7 @@ export function createPaperRun(): GridArcade {
   const danger = (x: number, y: number) =>
     conflicts.some(
       (c) =>
-        distance(
-          { x, y },
-          { x: wrapX(Math.round(atX(c))), y: wrapY(Math.round(atY(c))) }
-        ) <= 1
+        distance({ x, y }, { x: wrapX(Math.round(atX(c))), y: wrapY(Math.round(atY(c))) }) <= 1,
     )
 
   /**
@@ -530,9 +509,7 @@ export function createPaperRun(): GridArcade {
     if (holi.carry.length >= holi.cap) {
       target = nearestOutbox()
     } else {
-      const claimed = new Set(
-        holis.filter((other) => other !== holi).map((other) => other.goal)
-      )
+      const claimed = new Set(holis.filter((other) => other !== holi).map((other) => other.goal))
       let best: Paper | null = null
       let bestDistance = Infinity
       for (const paper of papers) {
@@ -558,17 +535,12 @@ export function createPaperRun(): GridArcade {
     if (!target) return
 
     const moving = holi.dx !== 0 || holi.dy !== 0
-    const options = DIRS.filter(
-      (dir) => !moving || !(dir.x === -holi.dx && dir.y === -holi.dy)
-    )
+    const options = DIRS.filter((dir) => !moving || !(dir.x === -holi.dx && dir.y === -holi.dy))
     let choice: Tile = options[0]!
     let bestScore = -Infinity
     for (const dir of options) {
       const next = { x: wrapX(holi.tx + dir.x), y: wrapY(holi.ty + dir.y) }
-      const value =
-        -distance(next, target) -
-        (danger(next.x, next.y) ? 6 : 0) +
-        Math.random() * 0.4
+      const value = -distance(next, target) - (danger(next.x, next.y) ? 6 : 0) + Math.random() * 0.4
       if (value > bestScore) {
         bestScore = value
         choice = dir
@@ -675,9 +647,7 @@ export function createPaperRun(): GridArcade {
           conflict.dy = sy
         }
       } else if (roll > 0.72) {
-        const turn = pick(
-          DIRS.filter((d) => !(d.x === -conflict.dx && d.y === -conflict.dy))
-        )
+        const turn = pick(DIRS.filter((d) => !(d.x === -conflict.dx && d.y === -conflict.dy)))
         conflict.dx = turn.x
         conflict.dy = turn.y
       }
@@ -741,7 +711,7 @@ export function createPaperRun(): GridArcade {
             member.id === cast[i]?.id &&
             member.mascot === cast[i]?.mascot &&
             member.color === cast[i]?.color &&
-            member.name === cast[i]?.name
+            member.name === cast[i]?.name,
         )
       if (same) return
       cast = next
@@ -862,18 +832,17 @@ export function createPaperRun(): GridArcade {
         const rival = player && !isPlayer
         // The stack rides the tiles just left, sliding along with the Holi.
         holi.trail.forEach((tile, i) => {
-          const kind = holi.carry[holi.carry.length - 1 - i] ?? "doc"
+          const kind = holi.carry[holi.carry.length - 1 - i] ?? 'doc'
           const from = { x: tile.x, y: tile.y }
           const to = i === 0 ? { x: holi.tx, y: holi.ty } : holi.trail[i - 1]!
-          const jump =
-            Math.abs(to.x - from.x) > 1 || Math.abs(to.y - from.y) > 1
+          const jump = Math.abs(to.x - from.x) > 1 || Math.abs(to.y - from.y) > 1
           const t = holi.stun > 0 || jump ? 0 : holi.progress
           const at = {
             x: from.x + (to.x - from.x) * t,
             y: from.y + (to.y - from.y) * t,
           }
           out.push({
-            kind: "paper",
+            kind: 'paper',
             paper: kind,
             cx: centreX(at.x),
             cy: centreY(at.y),
@@ -883,10 +852,9 @@ export function createPaperRun(): GridArcade {
           })
         })
 
-        const dazed =
-          holi.stun > 0 && Math.floor(holi.stun / STUN_BLINK_MS) % 2 === 0
+        const dazed = holi.stun > 0 && Math.floor(holi.stun / STUN_BLINK_MS) % 2 === 0
         out.push({
-          kind: "holi",
+          kind: 'holi',
           cx: centreX(atX(holi)),
           cy: centreY(atY(holi)),
           size: TILE,
@@ -896,18 +864,14 @@ export function createPaperRun(): GridArcade {
           mascot: holi.member.mascot,
           color: holi.member.color,
           frame:
-            holi.talk > 0
-              ? "talk"
-              : (holi.dx || holi.dy) && holi.steps % 2 === 1
-                ? "walk"
-                : "rest",
+            holi.talk > 0 ? 'talk' : (holi.dx || holi.dy) && holi.steps % 2 === 1 ? 'walk' : 'rest',
           player: isPlayer,
         })
       })
 
       for (const conflict of conflicts) {
         out.push({
-          kind: "conflict",
+          kind: 'conflict',
           cx: centreX(atX(conflict)),
           cy: centreY(atY(conflict)),
           size: TILE,
@@ -931,30 +895,19 @@ export function createPaperRun(): GridArcade {
         const index = y * stampCols + x
         if ((out[index] ?? 0) < value) out[index] = value
       }
-      const glyph = (
-        rows: readonly string[],
-        left: number,
-        top: number,
-        strength: number
-      ) => {
+      const glyph = (rows: readonly string[], left: number, top: number, strength: number) => {
         rows.forEach((row, dy) => {
           for (let dx = 0; dx < row.length; dx++) {
             const ch = row[dx]
-            if (ch === "#") light(left + dx, top + dy, strength)
-            else if (ch === "+")
-              light(left + dx, top + dy, strength * PAPER_SOFT)
+            if (ch === '#') light(left + dx, top + dy, strength)
+            else if (ch === '+') light(left + dx, top + dy, strength * PAPER_SOFT)
           }
         })
       }
 
       for (const paper of papers) {
         const fadeIn = Math.min(1, paper.age / PAPER_FADE_MS)
-        glyph(
-          GLYPHS[paper.kind],
-          cellX(paper.x),
-          cellY(paper.y),
-          PAPER_VALUE * fadeIn
-        )
+        glyph(GLYPHS[paper.kind], cellX(paper.x), cellY(paper.y), PAPER_VALUE * fadeIn)
       }
 
       const flash = outboxFlash / OUTBOX_FLASH_MS
@@ -962,7 +915,7 @@ export function createPaperRun(): GridArcade {
         GLYPHS.outbox,
         cellX(outbox.x),
         cellY(outbox.y),
-        OUTBOX_VALUE + (1 - OUTBOX_VALUE) * flash
+        OUTBOX_VALUE + (1 - OUTBOX_VALUE) * flash,
       )
 
       if (alpha >= 0.999) return

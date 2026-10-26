@@ -97,12 +97,7 @@ export function DraftsList({
       {drafts.map((draft) => (
         <li key={draft.draftId} className="border-b border-divider">
           {/* The stock `Button`: the gate bans a native `<button>`. */}
-          <Button
-            variant="ghost"
-            size="row"
-            className="w-full"
-            onClick={() => onOpen(draft)}
-          >
+          <Button variant="ghost" size="row" className="w-full" onClick={() => onOpen(draft)}>
             <span className="flex min-w-0 flex-1 flex-col">
               {/* The second lines start where the recipient does: the icon's
                   14px plus the row's `gap-2`. */}

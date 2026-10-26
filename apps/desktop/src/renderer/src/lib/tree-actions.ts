@@ -3,21 +3,11 @@
  * request become concrete `{ from, to }` moves or copies. `useExplorerActions`
  * applies them.
  */
-import {
-  basename,
-  expandToFiles,
-  joinPath,
-  parentOf,
-  remapUnder,
-} from './tree-paths'
+import { basename, expandToFiles, joinPath, parentOf, remapUnder } from './tree-paths'
 
 export type Move = { from: string; to: string }
 /** Move `sources` into `destFolder`, dropping the no-op (already-there) moves. */
-export function planMoveInto(
-  docPaths: string[],
-  sources: string[],
-  destFolder: string,
-): Move[] {
+export function planMoveInto(docPaths: string[], sources: string[], destFolder: string): Move[] {
   return sources
     .flatMap((s) => remapUnder(docPaths, s, joinPath(destFolder, basename(s))))
     .filter((m) => m.from !== m.to)

@@ -12,16 +12,16 @@
  *
  * Kept for this window only, like the tabs themselves.
  */
-import { useEffect, useRef } from "react"
-import { atom, useAtomValue, useSetAtom } from "jotai"
-import { normalizeText } from "@holi/shared"
+import { useEffect, useRef } from 'react'
+import { atom, useAtomValue, useSetAtom } from 'jotai'
+import { normalizeText } from '@holi/shared'
 
-import { trpc } from "@/lib/trpc"
+import { trpc } from '@/lib/trpc'
 
-import { shellWorkspaceAtom } from "./shell-tabs"
-import { activeEntry, entryViews, type ShellWorkspace } from "./shell-workspace"
-import { parseTabKey } from "./tab-descriptor"
-import { activeRemoteAtom, snapshotAtom } from "./vaults"
+import { shellWorkspaceAtom } from './shell-tabs'
+import { activeEntry, entryViews, type ShellWorkspace } from './shell-workspace'
+import { parseTabKey } from './tab-descriptor'
+import { activeRemoteAtom, snapshotAtom } from './vaults'
 
 /** The documents open in a tab, and those of them in front (the active
  *  tab, or every member of the active split).
@@ -33,7 +33,7 @@ export function docTabs(ws: ShellWorkspace): {
 } {
   const pathOf = (key: string) => {
     const tab = parseTabKey(key)
-    return tab?.kind === "doc" ? tab.path : null
+    return tab?.kind === 'doc' ? tab.path : null
   }
   const paths = (keys: string[]) =>
     new Set(keys.map(pathOf).filter((path): path is string => path !== null))

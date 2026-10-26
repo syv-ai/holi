@@ -2,30 +2,30 @@
  * The agent's two surfaces in a document: the prompt that opens on an empty
  * line (Space), and the status pill that says what a run is doing, with Stop.
  */
-import { useState } from "react"
-import { useAtomValue, useSetAtom } from "jotai"
-import { ArrowUpIcon, SparklesIcon, SquareIcon, XIcon } from "lucide-react"
+import { useState } from 'react'
+import { useAtomValue, useSetAtom } from 'jotai'
+import { ArrowUpIcon, SparklesIcon, SquareIcon, XIcon } from 'lucide-react'
 
-import { Button } from "@/components/ui/button"
+import { Button } from '@/components/ui/button'
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupText,
   InputGroupTextarea,
-} from "@/components/ui/input-group"
-import { Kbd } from "@/components/ui/kbd"
-import { Spinner } from "@/components/ui/spinner"
-import { showAgentSessionAtom } from "@/state/agent-service"
-import { claudeFirstRunAtom } from "@/state/claude-first-run"
-import { activeRemoteAtom } from "@/state/vaults"
+} from '@/components/ui/input-group'
+import { Kbd } from '@/components/ui/kbd'
+import { Spinner } from '@/components/ui/spinner'
+import { showAgentSessionAtom } from '@/state/agent-service'
+import { claudeFirstRunAtom } from '@/state/claude-first-run'
+import { activeRemoteAtom } from '@/state/vaults'
 
-import type { AgentRun } from "./document-agent"
+import type { AgentRun } from './document-agent'
 
 /** Where the person types what the agent should write, on the line they
  *  opened it from. Enter sends, Shift+Enter breaks the line, Escape closes. */
 export function AgentPrompt({
-  initial = "",
+  initial = '',
   onSubmit,
   onCancel,
 }: {
@@ -38,7 +38,7 @@ export function AgentPrompt({
   const [text, setText] = useState(initial)
   const send = () => {
     const request = text.trim()
-    if (request !== "") onSubmit(request)
+    if (request !== '') onSubmit(request)
   }
 
   return (
@@ -58,10 +58,10 @@ export function AgentPrompt({
         placeholder="Draft an introduction, turn the list into a table…"
         onChange={(event) => setText(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key === "Escape") {
+          if (event.key === 'Escape') {
             event.preventDefault()
             onCancel()
-          } else if (event.key === "Enter" && !event.shiftKey) {
+          } else if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault()
             send()
           }
@@ -76,7 +76,7 @@ export function AgentPrompt({
           variant="default"
           size="icon-xs"
           aria-label="Send"
-          disabled={text.trim() === ""}
+          disabled={text.trim() === ''}
           onClick={send}
         >
           <ArrowUpIcon aria-hidden="true" />
@@ -86,10 +86,10 @@ export function AgentPrompt({
   )
 }
 
-const WORKING: Record<AgentRun["kind"], string> = {
-  write: "Writing",
-  rewrite: "Rewriting",
-  artifact: "Making the artifact",
+const WORKING: Record<AgentRun['kind'], string> = {
+  write: 'Writing',
+  rewrite: 'Rewriting',
+  artifact: 'Making the artifact',
 }
 
 /** What a run is doing, at the foot of the document. Stop ends it; a run
@@ -110,27 +110,23 @@ export function AgentStatus({
   const firstRun = useSetAtom(claudeFirstRunAtom)
   /** Claude Code refuses a background session in a folder it was never
    *  asked to trust: the fix is its own prompt, in a terminal. */
-  const untrusted =
-    run.status === "failed" && /not trusted/i.test(run.message ?? "")
-  const live =
-    run.status === "starting" ||
-    run.status === "working" ||
-    run.status === "needs-you"
+  const untrusted = run.status === 'failed' && /not trusted/i.test(run.message ?? '')
+  const live = run.status === 'starting' || run.status === 'working' || run.status === 'needs-you'
 
   const text =
-    run.status === "starting"
-      ? "Starting Sonnet…"
-      : run.status === "working"
+    run.status === 'starting'
+      ? 'Starting Sonnet…'
+      : run.status === 'working'
         ? `${WORKING[run.kind]}…`
-        : run.status === "needs-you"
-          ? "Waiting for you in Agents"
-          : run.status === "failed"
-            ? (run.message ?? "The agent could not run.")
-            : run.status === "stopped"
-              ? "Stopped"
-              : run.kind === "artifact"
-                ? "The artifact is ready"
-                : "Done"
+        : run.status === 'needs-you'
+          ? 'Waiting for you in Agents'
+          : run.status === 'failed'
+            ? (run.message ?? 'The agent could not run.')
+            : run.status === 'stopped'
+              ? 'Stopped'
+              : run.kind === 'artifact'
+                ? 'The artifact is ready'
+                : 'Done'
 
   return (
     <div
@@ -145,17 +141,15 @@ export function AgentStatus({
       )}
       <span className="min-w-0 truncate">
         {text}
-        {live && run.kind !== "artifact" ? (
+        {live && run.kind !== 'artifact' ? (
           <span className="text-muted-foreground"> · {run.label}</span>
         ) : null}
       </span>
-      {run.status === "needs-you" && run.sessionId !== null ? (
+      {run.status === 'needs-you' && run.sessionId !== null ? (
         <Button
           variant="ghost"
           size="xs"
-          onClick={() =>
-            void showSession({ session: run.sessionId!, live: true })
-          }
+          onClick={() => void showSession({ session: run.sessionId!, live: true })}
         >
           Open
         </Button>
@@ -179,17 +173,12 @@ export function AgentStatus({
               Trust in Claude Code
             </Button>
           ) : null}
-          {run.kind === "artifact" && run.status === "done" ? (
+          {run.kind === 'artifact' && run.status === 'done' ? (
             <Button variant="secondary" size="xs" onClick={onOpenArtifact}>
               Open
             </Button>
           ) : null}
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Dismiss"
-            onClick={onDismiss}
-          >
+          <Button variant="ghost" size="icon-xs" aria-label="Dismiss" onClick={onDismiss}>
             <XIcon aria-hidden="true" />
           </Button>
         </>

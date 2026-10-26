@@ -3,15 +3,10 @@
  * Typing moves the selection to the first match from where the caret was;
  * Escape closes it and gives the editor back with the match selected.
  */
-import { useEffect, useRef, useState } from "react"
-import {
-  findNext,
-  findPrevious,
-  replaceAll,
-  replaceNext,
-} from "@codemirror/search"
-import { EditorSelection } from "@codemirror/state"
-import type { EditorView } from "@codemirror/view"
+import { useEffect, useRef, useState } from 'react'
+import { findNext, findPrevious, replaceAll, replaceNext } from '@codemirror/search'
+import { EditorSelection } from '@codemirror/state'
+import type { EditorView } from '@codemirror/view'
 
 import {
   EMPTY_FIND_OPTIONS,
@@ -19,8 +14,8 @@ import {
   type FindCount,
   type FindOptions,
   type FindRequest,
-} from "../../composites/find-bar"
-import { codeQuery, setCodeQuery } from "./code-find"
+} from '../../composites/find-bar'
+import { codeQuery, setCodeQuery } from './code-find'
 
 export function CodeFindBar({
   view,
@@ -36,7 +31,7 @@ export function CodeFindBar({
 }) {
   const [options, setOptions] = useState<FindOptions>({
     ...EMPTY_FIND_OPTIONS,
-    search: request.text ?? "",
+    search: request.text ?? '',
   })
   const [replacing, setReplacing] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -75,7 +70,7 @@ export function CodeFindBar({
     () => () => {
       setCodeQuery(view, EMPTY_FIND_OPTIONS, false)
     },
-    [view]
+    [view],
   )
 
   return (
@@ -83,11 +78,9 @@ export function CodeFindBar({
       label="Find in file"
       inputRef={inputRef}
       options={options}
-      onOptionsChange={(patch) =>
-        setOptions((current) => ({ ...current, ...patch }))
-      }
+      onOptionsChange={(patch) => setOptions((current) => ({ ...current, ...patch }))}
       count={count}
-      invalid={options.regexp && options.search !== "" && !query.valid}
+      invalid={options.regexp && options.search !== '' && !query.valid}
       editable={!view.state.readOnly}
       replacing={replacing}
       onReplacingChange={setReplacing}

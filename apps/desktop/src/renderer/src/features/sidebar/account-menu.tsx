@@ -1,29 +1,22 @@
-import type { ReactNode } from "react"
-import { useAtomValue, useSetAtom } from "jotai"
-import type { ColorScheme, WindowGlass } from "@holi/shared"
+import type { ReactNode } from 'react'
+import { useAtomValue, useSetAtom } from 'jotai'
+import type { ColorScheme, WindowGlass } from '@holi/shared'
 
-import { colorSchemeAtom, writeColorSchemeAtom } from "@/state/color-scheme"
-import { windowGlassAtom, writeWindowGlassAtom } from "@/state/window-glass"
-import { sessionAtom, signOutAtom } from "@/state/session"
+import { colorSchemeAtom, writeColorSchemeAtom } from '@/state/color-scheme'
+import { windowGlassAtom, writeWindowGlassAtom } from '@/state/window-glass'
+import { sessionAtom, signOutAtom } from '@/state/session'
 import {
   dismissSkillsOfferAtom,
   skillsNoticeAtom,
   skillsOfferAtom,
   updateSkillsAtom,
-} from "@/state/skills"
-import {
-  installUpdateAtom,
-  retryUpdateDownloadAtom,
-  updateStatusAtom,
-} from "@/state/updates"
-import { shortcutsDialogOpenAtom } from "@/state/shortcuts"
-import {
-  openSettingsAtom,
-  openSettingsSectionAtom,
-} from "@/state/settings-section"
+} from '@/state/skills'
+import { installUpdateAtom, retryUpdateDownloadAtom, updateStatusAtom } from '@/state/updates'
+import { shortcutsDialogOpenAtom } from '@/state/shortcuts'
+import { openSettingsAtom, openSettingsSectionAtom } from '@/state/settings-section'
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Button } from "@/components/ui/button"
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,14 +26,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuShortcut,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from '@/components/ui/dropdown-menu'
 import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
-} from "@/components/ui/sidebar"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+} from '@/components/ui/sidebar'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   SunIcon,
   MoonIcon,
@@ -59,24 +52,24 @@ import {
   MoreHorizontalIcon,
   RefreshCwIcon,
   SparklesIcon,
-} from "lucide-react"
+} from 'lucide-react'
 
 // ── Theme Toggle ──
 
 const THEMES: { value: ColorScheme; label: string; icon: ReactNode }[] = [
   {
-    value: "light",
-    label: "Light",
+    value: 'light',
+    label: 'Light',
     icon: <SunIcon aria-hidden="true" />,
   },
   {
-    value: "dark",
-    label: "Dark",
+    value: 'dark',
+    label: 'Dark',
     icon: <MoonIcon aria-hidden="true" />,
   },
   {
-    value: "system",
-    label: "System",
+    value: 'system',
+    label: 'System',
     icon: <MonitorIcon aria-hidden="true" />,
   },
 ]
@@ -111,16 +104,16 @@ function ThemeSegmentedToggle() {
 
 const GLASSES: { value: WindowGlass; label: string; icon: ReactNode }[] = [
   {
-    value: "clear",
-    label: "Clear",
+    value: 'clear',
+    label: 'Clear',
     icon: <SquareDashedIcon aria-hidden="true" />,
   },
   {
-    value: "frosted",
-    label: "Frosted",
+    value: 'frosted',
+    label: 'Frosted',
     icon: <BlendIcon aria-hidden="true" />,
   },
-  { value: "solid", label: "Solid", icon: <SquareIcon aria-hidden="true" /> },
+  { value: 'solid', label: 'Solid', icon: <SquareIcon aria-hidden="true" /> },
 ]
 
 function GlassSegmentedToggle() {
@@ -149,7 +142,7 @@ function GlassSegmentedToggle() {
 /** The window is glass only on a Mac, so only there is there anything to set.
  *  Read at render: `main.tsx` stamps the platform after the modules load. */
 function isMac() {
-  return document.documentElement.dataset.platform === "mac"
+  return document.documentElement.dataset.platform === 'mac'
 }
 
 // ── Account Menu ──
@@ -167,10 +160,10 @@ function useUpdateOffers() {
   const app =
     status?.supported !== true
       ? null
-      : status.state === "ready"
-        ? ("ready" as const)
-        : status.state === "available" && status.lastError !== null
-          ? ("failed" as const)
+      : status.state === 'ready'
+        ? ('ready' as const)
+        : status.state === 'available' && status.lastError !== null
+          ? ('failed' as const)
           : null
   return {
     app,
@@ -189,20 +182,20 @@ function UpdateItems() {
   const notNow = useSetAtom(dismissSkillsOfferAtom)
   const openSection = useSetAtom(openSettingsSectionAtom)
   if (!offers.any) return null
-  const holi = offers.version === null ? "An update" : `Holi ${offers.version}`
+  const holi = offers.version === null ? 'An update' : `Holi ${offers.version}`
   return (
     <>
       <DropdownMenuGroup>
         <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
           Updates
         </DropdownMenuLabel>
-        {offers.app === "ready" ? (
+        {offers.app === 'ready' ? (
           <DropdownMenuItem onSelect={() => void install()}>
             <RefreshCwIcon aria-hidden="true" />
             Restart to update
             <DropdownMenuShortcut>{holi}</DropdownMenuShortcut>
           </DropdownMenuItem>
-        ) : offers.app === "failed" ? (
+        ) : offers.app === 'failed' ? (
           <DropdownMenuItem onSelect={() => void retry()}>
             <RefreshCwIcon aria-hidden="true" />
             {holi} could not download: try again
@@ -214,21 +207,18 @@ function UpdateItems() {
               <SparklesIcon aria-hidden="true" />
               Update skills
               <DropdownMenuShortcut>
-                {offers.skills.length}{" "}
-                {offers.skills.length === 1 ? "file" : "files"}
+                {offers.skills.length} {offers.skills.length === 1 ? 'file' : 'files'}
               </DropdownMenuShortcut>
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => notNow()}>
-              Not now
-            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => notNow()}>Not now</DropdownMenuItem>
           </>
         ) : null}
         {offers.notice !== null ? (
-          <DropdownMenuItem onSelect={() => openSection("updates")}>
+          <DropdownMenuItem onSelect={() => openSection('updates')}>
             <SparklesIcon aria-hidden="true" />
             {offers.notice.conflicts !== null
-              ? "Skills updated, with files to merge"
-              : "Skills updated"}
+              ? 'Skills updated, with files to merge'
+              : 'Skills updated'}
           </DropdownMenuItem>
         ) : null}
       </DropdownMenuGroup>
@@ -258,7 +248,7 @@ function AccountMenuContent({ isMobile }: { isMobile: boolean }) {
 
   return (
     <DropdownMenuContent
-      side={isMobile ? "top" : "right"}
+      side={isMobile ? 'top' : 'right'}
       align="end"
       sideOffset={8}
       className="w-60"
@@ -268,12 +258,12 @@ function AccountMenuContent({ isMobile }: { isMobile: boolean }) {
         <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
           Account
         </DropdownMenuLabel>
-        <DropdownMenuItem onSelect={() => openSection("account")}>
+        <DropdownMenuItem onSelect={() => openSection('account')}>
           <UserIcon aria-hidden="true" />
           Profile
         </DropdownMenuItem>
         {/* Preferences are how Holi looks to you: Settings' Appearance. */}
-        <DropdownMenuItem onSelect={() => openSection("appearance")}>
+        <DropdownMenuItem onSelect={() => openSection('appearance')}>
           <SlidersHorizontalIcon aria-hidden="true" />
           Preferences
         </DropdownMenuItem>
@@ -322,9 +312,7 @@ function AccountMenuContent({ isMobile }: { isMobile: boolean }) {
       <DropdownMenuGroup>
         <DropdownMenuItem
           onSelect={() =>
-            void window.holi.openExternal(
-              "https://github.com/syv-ai/holi/issues/new"
-            )
+            void window.holi.openExternal('https://github.com/syv-ai/holi/issues/new')
           }
         >
           <BugIcon aria-hidden="true" />
@@ -332,9 +320,7 @@ function AccountMenuContent({ isMobile }: { isMobile: boolean }) {
         </DropdownMenuItem>
         <DropdownMenuItem
           onSelect={() =>
-            void window.holi.openExternal(
-              "https://github.com/syv-ai/holi/tree/main/docs"
-            )
+            void window.holi.openExternal('https://github.com/syv-ai/holi/tree/main/docs')
           }
         >
           <HelpCircleIcon aria-hidden="true" />
@@ -357,10 +343,10 @@ function AccountMenuContent({ isMobile }: { isMobile: boolean }) {
 export function AccountMenu({ collapsed = false }: { collapsed?: boolean }) {
   const { isMobile } = useSidebar()
   const viewer = useAtomValue(sessionAtom)
-  const name = viewer?.name ?? viewer?.login ?? ""
+  const name = viewer?.name ?? viewer?.login ?? ''
   const initials = name.slice(0, 2).toUpperCase()
   // The dot says it to the eye; the label says it to a screen reader.
-  const offering = useUpdateOffers().any ? ", an update to look at" : ""
+  const offering = useUpdateOffers().any ? ', an update to look at' : ''
 
   // Rail mode: the avatar is the whole control, and the menu is unchanged.
   if (collapsed) {
@@ -391,26 +377,18 @@ export function AccountMenu({ collapsed = false }: { collapsed?: boolean }) {
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <SidebarMenuButton
-              variant="fill"
-              size="lg"
-              aria-label={`Open account menu${offering}`}
-            >
+            <SidebarMenuButton variant="fill" size="lg" aria-label={`Open account menu${offering}`}>
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <span className="relative shrink-0">
                   <Avatar>
                     <AvatarImage src={viewer?.avatarUrl} alt="" />
-                    <AvatarFallback className="text-xs font-semibold">
-                      {initials}
-                    </AvatarFallback>
+                    <AvatarFallback className="text-xs font-semibold">{initials}</AvatarFallback>
                   </Avatar>
                   <UpdateDot />
                 </span>
                 <div className="flex min-w-0 flex-col">
                   <span className="truncate text-sm font-medium">{name}</span>
-                  <span className="text-muted-foreground truncate text-xs">
-                    @{viewer?.login}
-                  </span>
+                  <span className="text-muted-foreground truncate text-xs">@{viewer?.login}</span>
                 </div>
               </div>
               <MoreHorizontalIcon

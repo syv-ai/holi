@@ -11,7 +11,7 @@
  * selection alone, so a block-level key never runs at a place it cannot see.
  * Escape collapses back to the main selection.
  */
-import { Extension } from "@tiptap/react"
+import { Extension } from '@tiptap/react'
 import {
   Plugin,
   PluginKey,
@@ -19,9 +19,9 @@ import {
   type Command,
   type EditorState,
   type Transaction,
-} from "@tiptap/pm/state"
-import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view"
-import { SearchQuery } from "prosemirror-search"
+} from '@tiptap/pm/state'
+import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
+import { SearchQuery } from 'prosemirror-search'
 
 export interface Range {
   from: number
@@ -37,7 +37,7 @@ interface MultiCursorState {
 
 const EMPTY: MultiCursorState = { extras: [], wholeWord: false }
 
-const multiCursorKey = new PluginKey<MultiCursorState>("multiCursor")
+const multiCursorKey = new PluginKey<MultiCursorState>('multiCursor')
 
 /** The selections besides the main one, for tests and the format bubble. */
 export function extraSelections(state: EditorState): readonly Range[] {
@@ -51,7 +51,7 @@ function wordAt(state: EditorState, pos: number): Range | null {
   const $pos = state.doc.resolve(pos)
   const parent = $pos.parent
   if (!parent.isTextblock) return null
-  const text = parent.textBetween(0, parent.content.size, undefined, "￼")
+  const text = parent.textBetween(0, parent.content.size, undefined, '￼')
   let start = $pos.parentOffset
   let end = start
   while (start > 0 && WORD.test(text[start - 1]!)) start--
@@ -68,12 +68,12 @@ const overlaps = (a: Range, b: Range) => a.from < b.to && b.from < a.to
 function nextOccurrence(
   state: EditorState,
   ranges: readonly Range[],
-  wholeWord: boolean
+  wholeWord: boolean,
 ): Range | null {
   const { from, to, $from, $to } = state.selection
   if (!$from.sameParent($to)) return null
-  const search = state.doc.textBetween(from, to, undefined, "￼")
-  if (search === "") return null
+  const search = state.doc.textBetween(from, to, undefined, '￼')
+  if (search === '') return null
   const query = new SearchQuery({
     search,
     caseSensitive: true,
@@ -110,7 +110,7 @@ const selectNextOccurrence: Command = (state, dispatch) => {
       state.tr
         .setSelection(TextSelection.create(state.doc, word.from, word.to))
         .setMeta(multiCursorKey, { extras: [], wholeWord: true })
-        .scrollIntoView()
+        .scrollIntoView(),
     )
     return true
   }
@@ -126,17 +126,14 @@ const selectNextOccurrence: Command = (state, dispatch) => {
         extras: [...ranges].sort((a, b) => a.from - b.from),
         wholeWord: current.wholeWord,
       })
-      .scrollIntoView()
+      .scrollIntoView(),
   )
   return true
 }
 
 /** One edit at every selection. `op` edits the range in `tr` (whose doc is
  *  untouched up to the range's end) and says where its caret lands. */
-function editAll(
-  state: EditorState,
-  op: (tr: Transaction, range: Range) => number
-): Transaction {
+function editAll(state: EditorState, op: (tr: Transaction, range: Range) => number): Transaction {
   const main = state.selection
   const ranges = [
     ...extraSelections(state).map((range) => ({ ...range, main: false })),
@@ -175,7 +172,7 @@ function insertEverywhere(view: EditorView, text: string): boolean {
     editAll(view.state, (tr, { from, to }) => {
       tr.insertText(text, from, to)
       return from + text.length
-    }).setMeta("uiEvent", "input")
+    }).setMeta('uiEvent', 'input'),
   )
   return true
 }
@@ -198,7 +195,7 @@ function deleteEverywhere(view: EditorView, dir: -1 | 1): boolean {
       }
       tr.delete(from, from + 1)
       return from
-    })
+    }),
   )
   return true
 }
@@ -210,7 +207,7 @@ function moveEverywhere(view: EditorView, dir: -1 | 1): boolean {
       const $pos = tr.doc.resolve(from)
       if (dir < 0) return $pos.parentOffset === 0 ? from : from - 1
       return $pos.parentOffset === $pos.parent.content.size ? from : from + 1
-    })
+    }),
   )
   return true
 }
@@ -220,22 +217,21 @@ function dropExtras(view: EditorView) {
 }
 
 const caret = () => {
-  const element = document.createElement("span")
-  element.className = "rich-text-extra-caret"
-  element.setAttribute("aria-hidden", "true")
+  const element = document.createElement('span')
+  element.className = 'rich-text-extra-caret'
+  element.setAttribute('aria-hidden', 'true')
   return element
 }
 
 export const MultiCursor = Extension.create({
-  name: "multiCursor",
+  name: 'multiCursor',
   // Ahead of the slash menu, Space-to-ask and the list keys, so a key with
   // several selections is seen here first.
   priority: 1000,
 
   addKeyboardShortcuts() {
     return {
-      "Mod-d": ({ editor }) =>
-        selectNextOccurrence(editor.state, editor.view.dispatch),
+      'Mod-d': ({ editor }) => selectNextOccurrence(editor.state, editor.view.dispatch),
       Escape: ({ editor }) => {
         if (extraSelections(editor.state).length === 0) return false
         dropExtras(editor.view)
@@ -251,13 +247,11 @@ export const MultiCursor = Extension.create({
         state: {
           init: () => EMPTY,
           apply(tr, value, before, after) {
-            const meta = tr.getMeta(multiCursorKey) as
-              MultiCursorState | undefined
+            const meta = tr.getMeta(multiCursorKey) as MultiCursorState | undefined
             if (meta !== undefined) return meta
             if (value.extras.length === 0) return value
             // The main selection moved by other means: the rest let go.
-            if (!after.selection.eq(before.selection.map(tr.doc, tr.mapping)))
-              return EMPTY
+            if (!after.selection.eq(before.selection.map(tr.doc, tr.mapping))) return EMPTY
             if (!tr.docChanged) return value
             const extras = value.extras.map((range) => ({
               from: tr.mapping.map(range.from, 1),
@@ -279,12 +273,12 @@ export const MultiCursor = Extension.create({
                 range.from === range.to
                   ? Decoration.widget(range.from, caret, {
                       side: -1,
-                      key: "extra-caret",
+                      key: 'extra-caret',
                     })
                   : Decoration.inline(range.from, range.to, {
-                      class: "rich-text-extra-selection",
-                    })
-              )
+                      class: 'rich-text-extra-selection',
+                    }),
+              ),
             )
           },
           handleKeyDown(view, event) {
@@ -293,22 +287,19 @@ export const MultiCursor = Extension.create({
             const mod = event.metaKey || event.ctrlKey
             const plain = !mod && !event.altKey
 
-            if (plain && !event.shiftKey && event.key === "Backspace")
+            if (plain && !event.shiftKey && event.key === 'Backspace')
               return deleteEverywhere(view, -1)
-            if (plain && !event.shiftKey && event.key === "Delete")
-              return deleteEverywhere(view, 1)
-            if (plain && !event.shiftKey && event.key === "ArrowLeft")
+            if (plain && !event.shiftKey && event.key === 'Delete') return deleteEverywhere(view, 1)
+            if (plain && !event.shiftKey && event.key === 'ArrowLeft')
               return moveEverywhere(view, -1)
-            if (plain && !event.shiftKey && event.key === "ArrowRight")
+            if (plain && !event.shiftKey && event.key === 'ArrowRight')
               return moveEverywhere(view, 1)
             // A printable character (⌥ types them too on a Mac).
-            if (!mod && [...event.key].length === 1)
-              return insertEverywhere(view, event.key)
+            if (!mod && [...event.key].length === 1) return insertEverywhere(view, event.key)
             // ⌘D, Escape, the marks and undo are keys the main selection
             // keeps; anything else is for one selection.
-            if (mod || event.key === "Escape") return false
-            if (["Shift", "Alt", "Meta", "Control"].includes(event.key))
-              return false
+            if (mod || event.key === 'Escape') return false
+            if (['Shift', 'Alt', 'Meta', 'Control'].includes(event.key)) return false
             dropExtras(view)
             return false
           },
@@ -318,9 +309,8 @@ export const MultiCursor = Extension.create({
           },
           handlePaste(view, event) {
             if (extraSelections(view.state).length === 0) return false
-            const text = event.clipboardData?.getData("text/plain") ?? ""
-            if (text !== "" && !/[\r\n]/.test(text))
-              return insertEverywhere(view, text)
+            const text = event.clipboardData?.getData('text/plain') ?? ''
+            if (text !== '' && !/[\r\n]/.test(text)) return insertEverywhere(view, text)
             dropExtras(view)
             return false
           },

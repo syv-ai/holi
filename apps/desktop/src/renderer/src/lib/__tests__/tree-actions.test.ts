@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  planMoveInto,
-  planRenameFolder,
-} from '@/lib/tree-actions'
+import { planMoveInto, planRenameFolder } from '@/lib/tree-actions'
 
 const DOCS = ['a.md', 'notes/b.md', 'notes/deep/c.md', 'other/d.md']
 

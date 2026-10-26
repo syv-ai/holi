@@ -5,8 +5,8 @@
  * Turn into an artifact. A copy confirms in place on its item; only a failure
  * toasts.
  */
-import { useEffect, useRef, useState } from "react"
-import type { Editor } from "@tiptap/react"
+import { useEffect, useRef, useState } from 'react'
+import type { Editor } from '@tiptap/react'
 import {
   ArrowLeftRightIcon,
   CheckIcon,
@@ -17,10 +17,10 @@ import {
   MoreHorizontalIcon,
   SparklesIcon,
   TypeIcon,
-} from "lucide-react"
-import { toast } from "sonner"
+} from 'lucide-react'
+import { toast } from 'sonner'
 
-import { Button } from "@/components/ui/button"
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -30,9 +30,9 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from '@/components/ui/dropdown-menu'
 
-type CopyFormat = "markdown" | "html" | "link" | "heading-link"
+type CopyFormat = 'markdown' | 'html' | 'link' | 'heading-link'
 
 // Long enough to read the swap, short enough to copy again.
 const COPIED_MS = 1600
@@ -70,19 +70,19 @@ export function DocumentActions({
   async function copyAs(format: CopyFormat) {
     if (!editor) return
     const value =
-      format === "html"
+      format === 'html'
         ? editor.getHTML()
-        : format === "link"
+        : format === 'link'
           ? holiLinks?.file()
-          : format === "heading-link"
+          : format === 'heading-link'
             ? holiLinks?.heading()
             : markdown()
     if (value === undefined || value === null) return
     try {
       await navigator.clipboard.writeText(value)
     } catch {
-      toast.error("Copy failed", {
-        description: "The clipboard could not be written.",
+      toast.error('Copy failed', {
+        description: 'The clipboard could not be written.',
       })
       return
     }
@@ -125,26 +125,26 @@ export function DocumentActions({
               <DropdownMenuLabel>Share</DropdownMenuLabel>
               <DropdownMenuItem
                 onSelect={(event) => event.preventDefault()}
-                onClick={() => void copyAs("link")}
+                onClick={() => void copyAs('link')}
               >
-                {copied === "link" ? (
+                {copied === 'link' ? (
                   <CheckIcon aria-hidden="true" />
                 ) : (
                   <LinkIcon aria-hidden="true" />
                 )}
-                {copied === "link" ? "Copied" : "Copy Holi Link"}
+                {copied === 'link' ? 'Copied' : 'Copy Holi Link'}
               </DropdownMenuItem>
               <DropdownMenuItem
                 onSelect={(event) => event.preventDefault()}
                 disabled={!editor || holiLinks.heading() === null}
-                onClick={() => void copyAs("heading-link")}
+                onClick={() => void copyAs('heading-link')}
               >
-                {copied === "heading-link" ? (
+                {copied === 'heading-link' ? (
                   <CheckIcon aria-hidden="true" />
                 ) : (
                   <HashIcon aria-hidden="true" />
                 )}
-                {copied === "heading-link" ? "Copied" : "Copy Link to Heading"}
+                {copied === 'heading-link' ? 'Copied' : 'Copy Link to Heading'}
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
@@ -156,26 +156,22 @@ export function DocumentActions({
           <DropdownMenuItem
             onSelect={(event) => event.preventDefault()}
             disabled={!editor}
-            onClick={() => void copyAs("markdown")}
+            onClick={() => void copyAs('markdown')}
           >
-            {copied === "markdown" ? (
+            {copied === 'markdown' ? (
               <CheckIcon aria-hidden="true" />
             ) : (
               <FileTextIcon aria-hidden="true" />
             )}
-            {copied === "markdown" ? "Copied" : "Copy Markdown"}
+            {copied === 'markdown' ? 'Copied' : 'Copy Markdown'}
           </DropdownMenuItem>
           <DropdownMenuItem
             onSelect={(event) => event.preventDefault()}
             disabled={!editor}
-            onClick={() => void copyAs("html")}
+            onClick={() => void copyAs('html')}
           >
-            {copied === "html" ? (
-              <CheckIcon aria-hidden="true" />
-            ) : (
-              <CodeIcon aria-hidden="true" />
-            )}
-            {copied === "html" ? "Copied" : "Copy HTML"}
+            {copied === 'html' ? <CheckIcon aria-hidden="true" /> : <CodeIcon aria-hidden="true" />}
+            {copied === 'html' ? 'Copied' : 'Copy HTML'}
           </DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />

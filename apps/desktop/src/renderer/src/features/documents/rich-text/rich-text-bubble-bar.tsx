@@ -5,33 +5,27 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type PointerEvent as ReactPointerEvent,
-} from "react"
-import type { Editor } from "@tiptap/react"
+} from 'react'
+import type { Editor } from '@tiptap/react'
 
-import { RichTextToolbar } from "./rich-text-toolbar"
+import { RichTextToolbar } from './rich-text-toolbar'
 
 const FIRST_STOP = "[data-toolbar-item][tabindex='0']"
-const ANY_STOP = "[data-toolbar-item]:not([disabled]):not([data-disabled])"
+const ANY_STOP = '[data-toolbar-item]:not([disabled]):not([data-disabled])'
 
 /** Asks a bubble plugin to show or hide its menu now. */
-export function setRichTextBubble(
-  editor: Editor,
-  pluginKey: string,
-  action: "show" | "hide"
-) {
+export function setRichTextBubble(editor: Editor, pluginKey: string, action: 'show' | 'hide') {
   const { view } = editor
 
   view.dispatch(view.state.tr.setMeta(pluginKey, action))
-  if (action === "show") {
-    view.dispatch(view.state.tr.setMeta(pluginKey, "updatePosition"))
+  if (action === 'show') {
+    view.dispatch(view.state.tr.setMeta(pluginKey, 'updatePosition'))
   }
 }
 
 // Menus and popovers portal out, yet React still bubbles their events here.
 function fromOwnDom(event: { target: EventTarget; currentTarget: Element }) {
-  return (
-    event.target instanceof Node && event.currentTarget.contains(event.target)
-  )
+  return event.target instanceof Node && event.currentTarget.contains(event.target)
 }
 
 interface RichTextBubbleBarProps {
@@ -78,7 +72,7 @@ export function RichTextBubbleBar({
 
         if (editor.isDestroyed || !bar) return
         if (holdRef.current) {
-          setRichTextBubble(editor, pluginKey, "show")
+          setRichTextBubble(editor, pluginKey, 'show')
           return
         }
         if (pressed || !bar.isConnected || editor.view.hasFocus()) return
@@ -87,7 +81,7 @@ export function RichTextBubbleBar({
           (next instanceof Node && bar.parentElement?.contains(next)) ||
           bar.querySelector("[aria-expanded='true']") !== null
 
-        if (!staysNear) setRichTextBubble(editor, pluginKey, "hide")
+        if (!staysNear) setRichTextBubble(editor, pluginKey, 'hide')
       })
     }
 
@@ -95,26 +89,25 @@ export function RichTextBubbleBar({
     function handleShortcut(event: KeyboardEvent) {
       const bar = barRef.current
 
-      if (!event.altKey || event.key !== "F10" || !bar?.isConnected) return
+      if (!event.altKey || event.key !== 'F10' || !bar?.isConnected) return
 
       const stop =
-        bar.querySelector<HTMLElement>(FIRST_STOP) ??
-        bar.querySelector<HTMLElement>(ANY_STOP)
+        bar.querySelector<HTMLElement>(FIRST_STOP) ?? bar.querySelector<HTMLElement>(ANY_STOP)
 
       if (!stop) return
       event.preventDefault()
       stop.focus()
     }
 
-    editor.on("blur", handleBlur)
-    dom.addEventListener("keydown", handleShortcut)
-    document.addEventListener("pointerup", release, true)
-    document.addEventListener("pointercancel", release, true)
+    editor.on('blur', handleBlur)
+    dom.addEventListener('keydown', handleShortcut)
+    document.addEventListener('pointerup', release, true)
+    document.addEventListener('pointercancel', release, true)
     return () => {
-      editor.off("blur", handleBlur)
-      dom.removeEventListener("keydown", handleShortcut)
-      document.removeEventListener("pointerup", release, true)
-      document.removeEventListener("pointercancel", release, true)
+      editor.off('blur', handleBlur)
+      dom.removeEventListener('keydown', handleShortcut)
+      document.removeEventListener('pointerup', release, true)
+      document.removeEventListener('pointercancel', release, true)
     }
   }, [editor, pluginKey])
 
@@ -124,13 +117,11 @@ export function RichTextBubbleBar({
     if (!fromOwnDom(event)) return
 
     pressingRef.current = true
-    event.currentTarget.dispatchEvent(
-      new MouseEvent("mousedown", { bubbles: true })
-    )
+    event.currentTarget.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
   }
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-    if (event.key !== "Escape" || !fromOwnDom(event)) return
+    if (event.key !== 'Escape' || !fromOwnDom(event)) return
 
     event.preventDefault()
     editor.commands.focus()

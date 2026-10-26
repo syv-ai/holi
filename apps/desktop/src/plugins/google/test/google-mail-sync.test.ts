@@ -46,7 +46,15 @@ function rawThread(id: string, subject: string, labels: string[] = ['INBOX']) {
   return {
     id,
     messages: [
-      message(`${id}-m1`, id, [['Subject', subject], ['From', 'Jane <jane@x.com>']], labels),
+      message(
+        `${id}-m1`,
+        id,
+        [
+          ['Subject', subject],
+          ['From', 'Jane <jane@x.com>'],
+        ],
+        labels,
+      ),
     ],
   }
 }
@@ -199,9 +207,7 @@ describe('syncThreads', () => {
         historyId: '5003',
         history: [
           {
-            labelsRemoved: [
-              { message: { id: 't1-m1', threadId: 't1' }, labelIds: ['UNREAD'] },
-            ],
+            labelsRemoved: [{ message: { id: 't1-m1', threadId: 't1' }, labelIds: ['UNREAD'] }],
           },
         ],
       },
@@ -346,7 +352,8 @@ describe('syncThreads', () => {
       await cachedInbox()
       cache.dropThread('t2')
       await syncThreads(
-        gmail({ history: archivedInHistory('t2'), threads: { t2: rawThread('t2', 'Two', []) } }).api,
+        gmail({ history: archivedInHistory('t2'), threads: { t2: rawThread('t2', 'Two', []) } })
+          .api,
         cache,
         {},
       )
@@ -365,7 +372,8 @@ describe('syncThreads', () => {
       await cachedInbox()
 
       const page = await syncThreads(
-        gmail({ history: archivedInHistory('t2'), threads: { t2: rawThread('t2', 'Two', []) } }).api,
+        gmail({ history: archivedInHistory('t2'), threads: { t2: rawThread('t2', 'Two', []) } })
+          .api,
         cache,
         {},
       )

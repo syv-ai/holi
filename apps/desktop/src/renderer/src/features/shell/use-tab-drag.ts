@@ -16,14 +16,14 @@
  * The keyboard's way to the same places is the menus: Open in split view,
  * Separate, Replace with…, Move out of split, and ⌥-click.
  */
-import { atom, useSetAtom } from "jotai"
-import { useCallback, type DragEvent } from "react"
+import { atom, useSetAtom } from 'jotai'
+import { useCallback, type DragEvent } from 'react'
 
-import { activeSplit, type ShellWorkspace } from "@/state/shell-workspace"
-import { tabKey, type TabDescriptor } from "@/state/tab-descriptor"
+import { activeSplit, type ShellWorkspace } from '@/state/shell-workspace'
+import { tabKey, type TabDescriptor } from '@/state/tab-descriptor'
 
 /** The drag's MIME type; its data is the tab's key or the split's id. */
-export const TAB_MIME = "application/x-holi-tab"
+export const TAB_MIME = 'application/x-holi-tab'
 
 /** The tab or split being dragged, or null. */
 export const tabDragAtom = atom<string | null>(null)
@@ -42,14 +42,14 @@ export function useTabDragSource(): (key: string) => DragSourceProps {
       draggable: true,
       onDragStart: (event: DragEvent) => {
         event.dataTransfer.setData(TAB_MIME, key)
-        event.dataTransfer.effectAllowed = "move"
+        event.dataTransfer.effectAllowed = 'move'
         // A frame later: changing the page under the pointer in dragstart
         // itself can cancel the drag.
         window.setTimeout(() => setDrag(key), 0)
       },
       onDragEnd: () => setDrag(null),
     }),
-    [setDrag]
+    [setDrag],
   )
 }
 
@@ -74,10 +74,7 @@ type NoProps = Record<string, never>
  */
 export function useTabDrag(): {
   (tab: TabDescriptor | null): DragSourceProps | NoProps
-  (
-    tab: TabDescriptor | null,
-    options: { alongside: true }
-  ): AlongsideProps | NoProps
+  (tab: TabDescriptor | null, options: { alongside: true }): AlongsideProps | NoProps
 } {
   const source = useTabDragSource()
   const setDrag = useSetAtom(tabDragAtom)
@@ -94,7 +91,7 @@ export function useTabDrag(): {
         onDragEndCapture: () => setDrag(null),
       }
     },
-    [setDrag, source]
+    [setDrag, source],
   ) as ReturnType<typeof useTabDrag>
 }
 
@@ -122,8 +119,7 @@ export function placedByDrop(splitId: string, count: number): boolean {
  * count: an outer edge or the gap between two members), or in member
  * `index`'s place.
  */
-export type DropSlot =
-  { kind: "insert"; index: number } | { kind: "replace"; index: number }
+export type DropSlot = { kind: 'insert'; index: number } | { kind: 'replace'; index: number }
 
 /**
  * The slot under the pointer at `x`, from the members' edges as laid out
@@ -138,11 +134,7 @@ export type DropSlot =
  *   third replaces it;
  * - a full split (`full`): every member is replaced, whole; nothing slides.
  */
-export function slotAt(
-  x: number,
-  edges: readonly number[],
-  full: boolean
-): DropSlot | null {
+export function slotAt(x: number, edges: readonly number[], full: boolean): DropSlot | null {
   const count = edges.length - 1
   if (count < 1) return null
   const left = edges[0]!
@@ -150,14 +142,14 @@ export function slotAt(
   const at = Math.max(left, Math.min(x, right - 0.01))
   let index = 0
   while (index < count - 1 && at >= edges[index + 1]!) index += 1
-  if (full) return { kind: "replace", index }
+  if (full) return { kind: 'replace', index }
   const start = edges[index]!
   const width = edges[index + 1]! - start
   const where = width > 0 ? (at - start) / width : 0.5
-  if (count === 1) return { kind: "insert", index: where < 0.5 ? 0 : 1 }
-  if (where < 1 / 3) return { kind: "insert", index }
-  if (where > 2 / 3) return { kind: "insert", index: index + 1 }
-  return { kind: "replace", index }
+  if (count === 1) return { kind: 'insert', index: where < 0.5 ? 0 : 1 }
+  if (where < 1 / 3) return { kind: 'insert', index }
+  if (where > 2 / 3) return { kind: 'insert', index: index + 1 }
+  return { kind: 'replace', index }
 }
 
 /**
@@ -173,7 +165,7 @@ export function slotAt(
  */
 export function insertPreview(
   edges: readonly number[],
-  index: number
+  index: number,
 ): {
   gapStart: number
   gapWidth: number

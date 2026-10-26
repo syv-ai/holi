@@ -53,7 +53,7 @@ function vaultPinning(text: string, over: Partial<ResolvedVaultSettings> = {}) {
   return store
 }
 
-test('a vault with chat: false pinned still opens on the agent\'s home', () => {
+test("a vault with chat: false pinned still opens on the agent's home", () => {
   const store = vaultPinning('plugins:\n  chat: false\n  agent: false\n')
   render(
     <Provider store={store}>

@@ -1,25 +1,20 @@
-import { useMemo } from "react"
-import { useAtom, useAtomValue } from "jotai"
-import { TerminalSquareIcon } from "lucide-react"
+import { useMemo } from 'react'
+import { useAtom, useAtomValue } from 'jotai'
+import { TerminalSquareIcon } from 'lucide-react'
 
-import { createFilterQuery } from "@/components/reui/filters/filters-query"
+import { createFilterQuery } from '@/components/reui/filters/filters-query'
 import {
   appLogEntriesAtom,
   appLogLoadAtom,
   appLogQueryAtom,
   appLogSearchAtom,
   shownAppLog,
-} from "@/state/app-logs"
+} from '@/state/app-logs'
 
-import { LogSearch } from "./log-search"
-import {
-  LogLoadError,
-  LogLoading,
-  LogTable,
-  NoMatchingLines,
-} from "./log-table"
-import { LOGS_COLUMNS, logsDetail, logsFilterFields } from "./logs-columns"
-import { EmptyState } from "@/composites/empty-state"
+import { LogSearch } from './log-search'
+import { LogLoadError, LogLoading, LogTable, NoMatchingLines } from './log-table'
+import { LOGS_COLUMNS, logsDetail, logsFilterFields } from './logs-columns'
+import { EmptyState } from '@/composites/empty-state'
 
 /**
  * The bottom panel's Logs (docs/features/status-bar.md): everything Holi
@@ -31,16 +26,13 @@ export function PanelLogs({ onRetry }: { onRetry: () => void }) {
   const load = useAtomValue(appLogLoadAtom)
   const [query, setQuery] = useAtom(appLogQueryAtom)
   const [search, setSearch] = useAtom(appLogSearchAtom)
-  const entries = useMemo(
-    () => shownAppLog(all, query, search),
-    [all, query, search]
-  )
+  const entries = useMemo(() => shownAppLog(all, query, search), [all, query, search])
 
-  if (load === "loading" && all.length === 0) {
+  if (load === 'loading' && all.length === 0) {
     return <LogLoading label="Loading the logs" />
   }
 
-  if (load === "error" && all.length === 0) {
+  if (load === 'error' && all.length === 0) {
     return (
       <LogLoadError
         title="Could not load the logs"
@@ -69,7 +61,7 @@ export function PanelLogs({ onRetry }: { onRetry: () => void }) {
         <NoMatchingLines
           onClear={() => {
             setQuery(createFilterQuery())
-            setSearch("")
+            setSearch('')
           }}
         />
       }
@@ -81,13 +73,8 @@ export function PanelLogs({ onRetry }: { onRetry: () => void }) {
 export function LogsSearch() {
   const entries = useAtomValue(appLogEntriesAtom)
   const scopes = useMemo(
-    () =>
-      [
-        ...new Set(
-          entries.flatMap((e) => (e.scope === undefined ? [] : [e.scope]))
-        ),
-      ].sort(),
-    [entries]
+    () => [...new Set(entries.flatMap((e) => (e.scope === undefined ? [] : [e.scope])))].sort(),
+    [entries],
   )
   const fields = useMemo(() => logsFilterFields(scopes), [scopes])
   return (

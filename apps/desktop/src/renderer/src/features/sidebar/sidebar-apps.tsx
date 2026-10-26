@@ -1,19 +1,16 @@
-import { atom, useAtomValue } from "jotai"
-import { useMemo } from "react"
+import { atom, useAtomValue } from 'jotai'
+import { useMemo } from 'react'
 
-import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar"
-import type { SidebarApp } from "@/plugin-api"
-import { runningPluginsAtom } from "@/state/plugins"
+import { SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar'
+import type { SidebarApp } from '@/plugin-api'
+import { runningPluginsAtom } from '@/state/plugins'
 
 /** Every running plugin's apps (Mail, Calendar), in their order. */
 export function useSidebarApps(): readonly SidebarApp[] {
   const plugins = useAtomValue(runningPluginsAtom)
   return useMemo(
-    () =>
-      plugins
-        .flatMap((plugin) => plugin.sidebarApps ?? [])
-        .sort((a, b) => a.order - b.order),
-    [plugins]
+    () => plugins.flatMap((plugin) => plugin.sidebarApps ?? []).sort((a, b) => a.order - b.order),
+    [plugins],
   )
 }
 
@@ -39,10 +36,10 @@ export function SidebarAppItem({
       <SidebarMenuButton
         tooltip={collapsed ? app.label : undefined}
         isActive={active}
-        aria-current={active ? "page" : undefined}
+        aria-current={active ? 'page' : undefined}
         onClick={() => onSelect(app.id)}
         variant="fill"
-        size={collapsed ? "rail" : "default"}
+        size={collapsed ? 'rail' : 'default'}
       >
         <Icon aria-hidden={true} />
         <span>{app.label}</span>

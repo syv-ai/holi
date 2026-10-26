@@ -153,7 +153,19 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
   }
 
   const api: AgentTerminals = {
-    open({ remote, cwd, command, notInstalled, attach, onInput, onOutput, onExit, cols, rows, notice }) {
+    open({
+      remote,
+      cwd,
+      command,
+      notInstalled,
+      attach,
+      onInput,
+      onOutput,
+      onExit,
+      cols,
+      rows,
+      notice,
+    }) {
       if (command === null) return { ok: false, message: notInstalled }
       const id = randomUUID()
       const mirror = new TerminalMirror(cols ?? 80, rows ?? 24)

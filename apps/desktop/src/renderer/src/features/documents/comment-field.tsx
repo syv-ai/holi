@@ -3,21 +3,18 @@
  * from the vault's members (a mention reaches them with their next pull,
  * docs/features/note-comments.md), sent with ⌘Enter or its button.
  */
-import { useId, useRef, useState } from "react"
-import { useAtomValue } from "jotai"
+import { useId, useRef, useState } from 'react'
+import { useAtomValue } from 'jotai'
 
-import { Button } from "@/components/ui/button"
-import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
-import { Textarea } from "@/components/ui/textarea"
-import { cn } from "@/lib/cn"
-import { memberLoginsAtom } from "@/state/members"
-import { PersonAvatar } from "@/composites/person-avatar"
+import { Button } from '@/components/ui/button'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { Textarea } from '@/components/ui/textarea'
+import { cn } from '@/lib/cn'
+import { memberLoginsAtom } from '@/state/members'
+import { PersonAvatar } from '@/composites/person-avatar'
 
 /** The `@word` the caret is at the end of, or null. */
-function mentionAt(
-  text: string,
-  caret: number
-): { start: number; query: string } | null {
+function mentionAt(text: string, caret: number): { start: number; query: string } | null {
   const match = /(^|[\s(])@([A-Za-z0-9-]*)$/.exec(text.slice(0, caret))
   if (!match) return null
   return { start: caret - match[2]!.length - 1, query: match[2]!.toLowerCase() }
@@ -42,7 +39,7 @@ export function CommentField({
   onCancel?: () => void
 }) {
   const members = useAtomValue(memberLoginsAtom)
-  const [text, setText] = useState("")
+  const [text, setText] = useState('')
   const [caret, setCaret] = useState(0)
   const [picked, setPicked] = useState(0)
   const [busy, setBusy] = useState(false)
@@ -74,11 +71,11 @@ export function CommentField({
 
   const submit = async () => {
     const body = text.trim()
-    if (body === "" || busy) return
+    if (body === '' || busy) return
     setBusy(true)
     try {
       await onSubmit(body)
-      setText("")
+      setText('')
       setCaret(0)
     } catch {
       // The caller says what went wrong; the text stays to send again.
@@ -111,28 +108,17 @@ export function CommentField({
             }}
             onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
             onKeyDown={(event) => {
-              if (
-                open &&
-                (event.key === "ArrowDown" || event.key === "ArrowUp")
-              ) {
+              if (open && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
                 event.preventDefault()
-                const step = event.key === "ArrowDown" ? 1 : -1
-                setPicked(
-                  (current + step + suggestions.length) % suggestions.length
-                )
-              } else if (
-                open &&
-                (event.key === "Enter" || event.key === "Tab")
-              ) {
+                const step = event.key === 'ArrowDown' ? 1 : -1
+                setPicked((current + step + suggestions.length) % suggestions.length)
+              } else if (open && (event.key === 'Enter' || event.key === 'Tab')) {
                 event.preventDefault()
                 complete(suggestions[current]!)
-              } else if (
-                event.key === "Enter" &&
-                (event.metaKey || event.ctrlKey)
-              ) {
+              } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
                 event.preventDefault()
                 void submit()
-              } else if (event.key === "Escape") {
+              } else if (event.key === 'Escape') {
                 if (open) {
                   event.preventDefault()
                   setCaret(-1)
@@ -151,12 +137,7 @@ export function CommentField({
           onOpenAutoFocus={(event) => event.preventDefault()}
           onCloseAutoFocus={(event) => event.preventDefault()}
         >
-          <ul
-            id={listId}
-            role="listbox"
-            aria-label="Mention"
-            className="flex flex-col gap-0.5"
-          >
+          <ul id={listId} role="listbox" aria-label="Mention" className="flex flex-col gap-0.5">
             {suggestions.map((login, i) => (
               <li
                 key={login}
@@ -164,8 +145,8 @@ export function CommentField({
                 role="option"
                 aria-selected={i === current}
                 className={cn(
-                  "flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm",
-                  i === current && "bg-accent text-accent-foreground"
+                  'flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm',
+                  i === current && 'bg-accent text-accent-foreground',
                 )}
                 onMouseDown={(event) => {
                   // Keep the text box's focus and caret.
@@ -189,7 +170,7 @@ export function CommentField({
         <Button
           type="button"
           size="sm"
-          disabled={busy || text.trim() === ""}
+          disabled={busy || text.trim() === ''}
           onClick={() => void submit()}
         >
           {submitLabel}

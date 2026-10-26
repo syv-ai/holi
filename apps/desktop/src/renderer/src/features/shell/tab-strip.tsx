@@ -1,7 +1,7 @@
-"use client"
+'use client'
 
-import { Fragment, useState, type DragEvent, type ReactNode } from "react"
-import { useAtom, useAtomValue, useSetAtom } from "jotai"
+import { Fragment, useState, type DragEvent, type ReactNode } from 'react'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import {
   CheckIcon,
   CircleAlertIcon,
@@ -15,11 +15,11 @@ import {
   SquareSplitHorizontalIcon,
   UngroupIcon,
   XIcon,
-} from "lucide-react"
+} from 'lucide-react'
 
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { Spinner } from "@/components/ui/spinner"
+import { Badge } from '@/components/reui/badge'
+import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -28,7 +28,7 @@ import {
   ContextMenuSeparator,
   ContextMenuShortcut,
   ContextMenuTrigger,
-} from "@/components/ui/context-menu"
+} from '@/components/ui/context-menu'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,16 +36,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuShortcut,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
-import { cn } from "@/lib/cn"
-import type { IconGlyph } from "@/lib/icon-glyph"
-import { shellWorkspaceAtom } from "@/state/shell-tabs"
+} from '@/components/ui/dropdown-menu'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/cn'
+import type { IconGlyph } from '@/lib/icon-glyph'
+import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import {
   activeSplit,
   closeAllTabs,
@@ -67,10 +63,10 @@ import {
   splitActive,
   type ShellSplit,
   type ShellWorkspace,
-} from "@/state/shell-workspace"
+} from '@/state/shell-workspace'
 
-import { useTabLook } from "./tab-look"
-import { TAB_MIME, tabDragAtom, useTabDragSource } from "./use-tab-drag"
+import { useTabLook } from './tab-look'
+import { TAB_MIME, tabDragAtom, useTabDragSource } from './use-tab-drag'
 
 export type HeaderTab = {
   id: string
@@ -81,20 +77,18 @@ export type HeaderTab = {
   mark?: ReactNode
   /** A session's state, or a document's Updated: a badge on a tab, a dot
    *  on a split member's mark. */
-  status?: "working" | "needs-you" | "done" | "updated"
+  status?: 'working' | 'needs-you' | 'done' | 'updated'
 }
 
-const STATUS_WORDS: Record<NonNullable<HeaderTab["status"]>, string> = {
-  working: "working",
-  "needs-you": "needs you",
-  done: "done, not opened yet",
-  updated: "changed since you last looked",
+const STATUS_WORDS: Record<NonNullable<HeaderTab['status']>, string> = {
+  working: 'working',
+  'needs-you': 'needs you',
+  done: 'done, not opened yet',
+  updated: 'changed since you last looked',
 }
 
 function spoken(tab: HeaderTab): string {
-  return tab.status === undefined
-    ? tab.title
-    : `${tab.title}, ${STATUS_WORDS[tab.status]}`
+  return tab.status === undefined ? tab.title : `${tab.title}, ${STATUS_WORDS[tab.status]}`
 }
 
 /**
@@ -143,8 +137,7 @@ export function TabStrip({
   /** The insertion point under the pointer: before the first entry whose
    *  middle is right of it, else the end. */
   function indexAt(event: DragEvent<HTMLElement>): number {
-    const items =
-      event.currentTarget.querySelectorAll<HTMLElement>("[data-entry-id]")
+    const items = event.currentTarget.querySelectorAll<HTMLElement>('[data-entry-id]')
     for (let i = 0; i < items.length; i += 1) {
       const rect = items[i]!.getBoundingClientRect()
       if (event.clientX < rect.left + rect.width / 2) return i
@@ -169,7 +162,7 @@ export function TabStrip({
       className="group/strip flex h-full min-w-0 flex-1 items-center gap-2 px-2"
     >
       <Tabs
-        value={ws.active ?? ""}
+        value={ws.active ?? ''}
         onValueChange={(id) => act((w) => selectEntry(w, id))}
         className="min-w-0 flex-1 items-center data-horizontal:flex-row"
       >
@@ -183,7 +176,7 @@ export function TabStrip({
               if (at !== dropAt) setDropAt(at)
               if (at === null) return
               event.preventDefault()
-              event.dataTransfer.dropEffect = "move"
+              event.dataTransfer.dropEffect = 'move'
             }}
             onDragLeave={(event) => {
               const to = event.relatedTarget
@@ -206,9 +199,7 @@ export function TabStrip({
               const members = isSplit(entry) ? entry.views.map(look) : null
               const tab = members === null ? look(id) : null
               const label =
-                tab !== null
-                  ? spoken(tab)
-                  : `Split view: ${members!.map(spoken).join(", ")}`
+                tab !== null ? spoken(tab) : `Split view: ${members!.map(spoken).join(', ')}`
               return (
                 <ContextMenu key={id}>
                   <ContextMenuTrigger asChild>
@@ -218,23 +209,21 @@ export function TabStrip({
                       data-entry-id={id}
                       data-tab-key={tab === null ? undefined : id}
                       data-drop-before={dropAt === index || undefined}
-                      data-drop-after={
-                        (dropAt === count && index === count - 1) || undefined
-                      }
+                      data-drop-after={(dropAt === count && index === count - 1) || undefined}
                       {...(draggable ? dragSource(id) : {})}
                       onContextMenu={(event) =>
                         setMenuMember(
                           (event.target as HTMLElement)
-                            .closest<HTMLElement>("[data-member]")
-                            ?.getAttribute("data-member") ?? null
+                            .closest<HTMLElement>('[data-member]')
+                            ?.getAttribute('data-member') ?? null,
                         )
                       }
                       className={cn(
-                        "group/tab relative flex h-full",
+                        'group/tab relative flex h-full',
                         // Where a dragged entry would land: a hairline in
                         // the gap.
-                        "data-drop-before:before:bg-primary data-drop-before:before:absolute data-drop-before:before:inset-y-1.5 data-drop-before:before:-start-0.5 data-drop-before:before:w-0.5 data-drop-before:before:rounded-full",
-                        "data-drop-after:after:bg-primary data-drop-after:after:absolute data-drop-after:after:inset-y-1.5 data-drop-after:after:-end-0.5 data-drop-after:after:w-0.5 data-drop-after:after:rounded-full"
+                        'data-drop-before:before:bg-primary data-drop-before:before:absolute data-drop-before:before:inset-y-1.5 data-drop-before:before:-start-0.5 data-drop-before:before:w-0.5 data-drop-before:before:rounded-full',
+                        'data-drop-after:after:bg-primary data-drop-after:after:absolute data-drop-after:after:inset-y-1.5 data-drop-after:after:-end-0.5 data-drop-after:after:w-0.5 data-drop-after:after:rounded-full',
                       )}
                     >
                       <TabsTrigger
@@ -243,38 +232,28 @@ export function TabStrip({
                         onClick={(event) => {
                           // A member's part of the pill focuses that member.
                           const member = (event.target as HTMLElement)
-                            .closest<HTMLElement>("[data-member]")
-                            ?.getAttribute("data-member")
+                            .closest<HTMLElement>('[data-member]')
+                            ?.getAttribute('data-member')
                           if (member) act((w) => focusMember(w, id, member))
                         }}
                         variant="tab"
                         className={cn(
-                          "hover:bg-foreground/5",
-                          "group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 dark:group-data-[variant=line]/tabs-list:data-active:bg-foreground/8",
-                          tab !== null
-                            ? "w-56"
-                            : members!.length > 2
-                              ? "w-80"
-                              : "w-64"
+                          'hover:bg-foreground/5',
+                          'group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 dark:group-data-[variant=line]/tabs-list:data-active:bg-foreground/8',
+                          tab !== null ? 'w-56' : members!.length > 2 ? 'w-80' : 'w-64',
                         )}
                       >
                         {tab !== null ? (
                           <>
                             <TabMark tab={tab} dot={false} />
                             <span className="truncate">{tab.title}</span>
-                            {tab.status !== undefined ? (
-                              <TabStatus status={tab.status} />
-                            ) : null}
+                            {tab.status !== undefined ? <TabStatus status={tab.status} /> : null}
                           </>
                         ) : (
                           <SplitMembers
                             drag={draggable ? memberDrag : undefined}
                             members={members!}
-                            focused={
-                              split?.id === id
-                                ? (entry as ShellSplit).focused
-                                : null
-                            }
+                            focused={split?.id === id ? (entry as ShellSplit).focused : null}
                           />
                         )}
                       </TabsTrigger>
@@ -282,19 +261,14 @@ export function TabStrip({
                           in front unless its status badge holds the place. */}
                       <span
                         className={cn(
-                          "absolute end-1.5 top-1/2 -translate-y-1/2 opacity-0 group-hover/tab:opacity-100 has-focus-visible:opacity-100",
-                          tab?.status === undefined &&
-                            "group-has-data-active/tab:opacity-100"
+                          'absolute end-1.5 top-1/2 -translate-y-1/2 opacity-0 group-hover/tab:opacity-100 has-focus-visible:opacity-100',
+                          tab?.status === undefined && 'group-has-data-active/tab:opacity-100',
                         )}
                       >
                         <Button
                           variant="ghost"
                           size="icon-xs"
-                          aria-label={
-                            tab !== null
-                              ? `Close ${tab.title}`
-                              : "Close split view"
-                          }
+                          aria-label={tab !== null ? `Close ${tab.title}` : 'Close split view'}
                           onClick={() => act((w) => closeEntry(w, id))}
                         >
                           <XIcon aria-hidden="true" />
@@ -305,9 +279,7 @@ export function TabStrip({
                   <EntryMenu
                     split={isSplit(entry) ? entry : null}
                     member={
-                      isSplit(entry) &&
-                      menuMember !== null &&
-                      entry.views.includes(menuMember)
+                      isSplit(entry) && menuMember !== null && entry.views.includes(menuMember)
                         ? (members!.find((m) => m.id === menuMember) ?? null)
                         : null
                     }
@@ -330,12 +302,7 @@ export function TabStrip({
         ) : null}
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="New tab"
-              onClick={onNewTab}
-            >
+            <Button variant="ghost" size="icon-sm" aria-label="New tab" onClick={onNewTab}>
               <PlusIcon aria-hidden="true" />
             </Button>
           </TooltipTrigger>
@@ -351,10 +318,7 @@ export function TabStrip({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
           <DropdownMenuItem
-            disabled={
-              ws.active === null ||
-              (split !== null && split.views.length >= MAX_SPLIT)
-            }
+            disabled={ws.active === null || (split !== null && split.views.length >= MAX_SPLIT)}
             onSelect={() => act(splitActive)}
           >
             <Columns2Icon aria-hidden="true" />
@@ -362,9 +326,7 @@ export function TabStrip({
             <DropdownMenuShortcut>⌘\</DropdownMenuShortcut>
           </DropdownMenuItem>
           {split !== null ? (
-            <DropdownMenuItem
-              onSelect={() => act((w) => separate(w, split.id))}
-            >
+            <DropdownMenuItem onSelect={() => act((w) => separate(w, split.id))}>
               <UngroupIcon aria-hidden="true" />
               Separate
               <DropdownMenuShortcut>⇧⌘\</DropdownMenuShortcut>
@@ -376,10 +338,7 @@ export function TabStrip({
             Reopen closed tab
             <DropdownMenuShortcut>⇧⌘T</DropdownMenuShortcut>
           </DropdownMenuItem>
-          <DropdownMenuItem
-            disabled={count === 0}
-            onSelect={() => act(closeAllTabs)}
-          >
+          <DropdownMenuItem disabled={count === 0} onSelect={() => act(closeAllTabs)}>
             <XIcon aria-hidden="true" />
             Close all tabs
             <DropdownMenuShortcut>⌥⌘W</DropdownMenuShortcut>
@@ -406,17 +365,13 @@ function SplitMembers({
     <span className="flex min-w-0 flex-1 items-center gap-2">
       {members.map((member, at) => (
         <Fragment key={member.id}>
-          {at > 0 ? (
-            <span aria-hidden="true" className="bg-border h-4 w-px shrink-0" />
-          ) : null}
+          {at > 0 ? <span aria-hidden="true" className="bg-border h-4 w-px shrink-0" /> : null}
           <span
             data-member={member.id}
             {...(drag ? drag(member.id) : {})}
             className={cn(
-              "flex min-w-0 flex-1 basis-0 items-center gap-1.5 motion-respond",
-              focused !== null &&
-                focused !== member.id &&
-                "text-muted-foreground"
+              'flex min-w-0 flex-1 basis-0 items-center gap-1.5 motion-respond',
+              focused !== null && focused !== member.id && 'text-muted-foreground',
             )}
           >
             <TabMark tab={member} />
@@ -518,22 +473,22 @@ function EntryMenu({
  *  changed while another tab was in front. Said in the tab's own label, so
  *  hidden from the reader here. */
 const TAB_STATUS = {
-  working: { variant: "info-light", label: "Working" },
-  "needs-you": { variant: "warning-light", label: "Needs you" },
-  done: { variant: "success-light", label: "Done" },
-  updated: { variant: "primary-light", label: "Updated" },
+  working: { variant: 'info-light', label: 'Working' },
+  'needs-you': { variant: 'warning-light', label: 'Needs you' },
+  done: { variant: 'success-light', label: 'Done' },
+  updated: { variant: 'primary-light', label: 'Updated' },
 } as const
 
-function TabStatus({ status }: { status: NonNullable<HeaderTab["status"]> }) {
+function TabStatus({ status }: { status: NonNullable<HeaderTab['status']> }) {
   const { variant, label } = TAB_STATUS[status]
   return (
     <span className="ms-auto group-hover/tab:opacity-0 group-has-[button:focus-visible]/tab:opacity-0">
       <Badge aria-hidden="true" variant={variant} data-tab-status={status}>
-        {status === "working" ? (
+        {status === 'working' ? (
           <Spinner className="size-3" />
-        ) : status === "needs-you" ? (
+        ) : status === 'needs-you' ? (
           <CircleAlertIcon />
-        ) : status === "done" ? (
+        ) : status === 'done' ? (
           <CheckIcon />
         ) : (
           <PencilIcon />
@@ -546,13 +501,7 @@ function TabStatus({ status }: { status: NonNullable<HeaderTab["status"]> }) {
 
 /** A tab's mark, with its state as a dot on its corner where there is no
  *  room for its badge (`dot`: a split's members, a dragged view's label). */
-export function TabMark({
-  tab,
-  dot = true,
-}: {
-  tab: HeaderTab
-  dot?: boolean
-}) {
+export function TabMark({ tab, dot = true }: { tab: HeaderTab; dot?: boolean }) {
   const Glyph = tab.icon ?? FileTextIcon
   return (
     <span className="relative flex shrink-0 items-center">
@@ -562,12 +511,11 @@ export function TabMark({
           aria-hidden="true"
           data-tab-status={tab.status}
           className={cn(
-            "ring-background absolute -end-0.5 -top-0.5 size-1.5 rounded-full ring-2",
-            tab.status === "working" &&
-              "bg-info animate-pulse motion-reduce:animate-none",
-            tab.status === "needs-you" && "bg-warning",
-            tab.status === "done" && "bg-success",
-            tab.status === "updated" && "bg-primary"
+            'ring-background absolute -end-0.5 -top-0.5 size-1.5 rounded-full ring-2',
+            tab.status === 'working' && 'bg-info animate-pulse motion-reduce:animate-none',
+            tab.status === 'needs-you' && 'bg-warning',
+            tab.status === 'done' && 'bg-success',
+            tab.status === 'updated' && 'bg-primary',
           )}
         />
       ) : null}

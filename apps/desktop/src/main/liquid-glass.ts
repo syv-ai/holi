@@ -13,7 +13,10 @@ import type { BrowserWindow } from 'electron'
 
 type LiquidGlass = {
   isGlassSupported(): boolean
-  addView(handle: Buffer, options?: { cornerRadius?: number; tintColor?: string; opaque?: boolean }): number
+  addView(
+    handle: Buffer,
+    options?: { cornerRadius?: number; tintColor?: string; opaque?: boolean },
+  ): number
   unstable_setSubdued(id: number, subdued: number): void
 }
 

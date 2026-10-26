@@ -118,8 +118,7 @@ export function createNotificationScanner(onNotify: () => void): (data: string) 
 export function createTurnSignals(deps: TurnSignalsDeps): TurnSignals {
   const idleMs = deps.idleMs ?? IDLE_MS
   const setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
-  const clearTimer =
-    deps.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>))
+  const clearTimer = deps.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>))
   let inTurn = false
   let timer: unknown = null
   let disposed = false

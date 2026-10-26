@@ -20,7 +20,11 @@ export interface PathLink {
 const CANDIDATE = /(?:\.{0,2}\/)?(?:[\w@.+-]+\/)*[\w@.+-]+\.[A-Za-z0-9]{1,10}/g
 
 /** The vault paths in `line`, for a vault at `root` that has `has`. */
-export function vaultLinks(line: string, has: (path: string) => boolean, root: string | null): PathLink[] {
+export function vaultLinks(
+  line: string,
+  has: (path: string) => boolean,
+  root: string | null,
+): PathLink[] {
   const out: PathLink[] = []
   const prefix = root === null ? null : root.endsWith('/') ? root : `${root}/`
   for (const match of line.matchAll(CANDIDATE)) {

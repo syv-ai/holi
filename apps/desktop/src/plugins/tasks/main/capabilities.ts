@@ -429,7 +429,11 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
           // Under the file's lock, as `tasks.update` writes: a field change
           // made meanwhile is read here rather than written over.
           await withFileLock(absPathFor(ctx.root, from), async () => {
-            const next = await patched(ctx.root, await readTask(ctx.root, from), patchOf(fieldPatch))
+            const next = await patched(
+              ctx.root,
+              await readTask(ctx.root, from),
+              patchOf(fieldPatch),
+            )
             await writeAtomic(ctx.root, from, serializeTaskFile(next))
           })
         }

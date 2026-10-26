@@ -1,4 +1,4 @@
-import { CircleCheckIcon } from "lucide-react";
+import { CircleCheckIcon } from 'lucide-react'
 
 // The Toaster's glyph carries no state colour, so typed toasts pass these.
 export const TOAST_SUCCESS_ICON = (

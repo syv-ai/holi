@@ -1,11 +1,11 @@
-import { useAtomValue } from "jotai"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useAtomValue } from 'jotai'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { trpc } from "@/lib/trpc"
-import { sessionAtom } from "@/state/session"
-import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
+import { trpc } from '@/lib/trpc'
+import { sessionAtom } from '@/state/session'
+import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
-import type { ArcadeMode } from "./grid-arcade"
+import type { ArcadeMode } from './grid-arcade'
 import {
   isScoresPath,
   parsePlayerScores,
@@ -13,7 +13,7 @@ import {
   scoresPath,
   serializePlayerScores,
   type PlayerScores,
-} from "./scoreboard"
+} from './scoreboard'
 
 const decoder = new TextDecoder()
 const encoder = new TextEncoder()
@@ -37,11 +37,8 @@ export function useScoreboard(): {
   const [players, setPlayers] = useState<PlayerScores[]>([])
 
   // The board's files and when each last changed: the key to read again by.
-  const scoreFiles = useMemo(
-    () => files.filter((file) => isScoresPath(file.path)),
-    [files]
-  )
-  const key = scoreFiles.map((f) => `${f.path}@${f.updatedAt}`).join("|")
+  const scoreFiles = useMemo(() => files.filter((file) => isScoresPath(file.path)), [files])
+  const key = scoreFiles.map((f) => `${f.path}@${f.updatedAt}`).join('|')
 
   useEffect(() => {
     if (remote === null) {
@@ -54,11 +51,9 @@ export function useScoreboard(): {
         trpc.files.read
           .query({ remote, path: file.path })
           // The IPC carries the bytes; tRPC types them as a plain shape.
-          .then((bytes) =>
-            parsePlayerScores(decoder.decode(bytes as unknown as Uint8Array))
-          )
-          .catch(() => null)
-      )
+          .then((bytes) => parsePlayerScores(decoder.decode(bytes as unknown as Uint8Array)))
+          .catch(() => null),
+      ),
     ).then((read) => {
       if (live) setPlayers(read.filter((p): p is PlayerScores => p !== null))
     })
@@ -76,16 +71,8 @@ export function useScoreboard(): {
     async (mode: ArcadeMode, score: number): Promise<number | null> => {
       if (remote === null || !viewer) return null
       const mine =
-        playersRef.current.find(
-          (p) => p.login.toLowerCase() === viewer.login.toLowerCase()
-        ) ?? null
-      const next = recordRun(
-        mine,
-        viewer,
-        mode,
-        score,
-        new Date().toISOString()
-      )
+        playersRef.current.find((p) => p.login.toLowerCase() === viewer.login.toLowerCase()) ?? null
+      const next = recordRun(mine, viewer, mode, score, new Date().toISOString())
       if (next === null) return null
       await trpc.files.write.mutate({
         remote,
@@ -99,7 +86,7 @@ export function useScoreboard(): {
       ])
       return score
     },
-    [remote, viewer]
+    [remote, viewer],
   )
 
   return { players, me: viewer?.login ?? null, record }

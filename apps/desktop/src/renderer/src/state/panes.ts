@@ -422,4 +422,3 @@ export function closePane(workspace: Workspace, index: number): Workspace {
     workspace.active > index ? workspace.active - 1 : Math.min(workspace.active, panes.length - 1)
   return { panes, active }
 }
-

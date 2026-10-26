@@ -4,11 +4,11 @@
  * the account's. The nav and the page both read `settingsGroupsAtom`, so a
  * page is one entry here, or a plugin's `settingsSections`, and nothing else.
  */
-import { atom } from "jotai"
-import type { ComponentType } from "react"
+import { atom } from 'jotai'
+import type { ComponentType } from 'react'
 
-import type { IconGlyph } from "@/lib/icon-glyph"
-import { runningPluginsAtom } from "@/state/plugins"
+import type { IconGlyph } from '@/lib/icon-glyph'
+import { runningPluginsAtom } from '@/state/plugins'
 import {
   CableIcon,
   GitCommitHorizontalIcon,
@@ -19,17 +19,12 @@ import {
   RefreshCwIcon,
   UserRoundIcon,
   UsersIcon,
-} from "lucide-react"
+} from 'lucide-react'
 
-import { AccountPage, AppearancePage, UpdatesPage } from "./pages/app-pages"
-import { PluginsPage } from "./pages/plugins-page"
-import { SettingsGroup } from "./settings-kit"
-import {
-  CommitsPage,
-  EditorPage,
-  GeneralPage,
-  MembersPage,
-} from "./pages/vault-pages"
+import { AccountPage, AppearancePage, UpdatesPage } from './pages/app-pages'
+import { PluginsPage } from './pages/plugins-page'
+import { SettingsGroup } from './settings-kit'
+import { CommitsPage, EditorPage, GeneralPage, MembersPage } from './pages/vault-pages'
 
 export type SettingsPage = {
   id: string
@@ -46,54 +41,54 @@ export type SettingsGroup = {
 }
 
 const VAULT: SettingsGroup = {
-  id: "vault",
-  label: "Vault",
+  id: 'vault',
+  label: 'Vault',
   pages: [
     {
-      id: "general",
-      label: "General",
+      id: 'general',
+      label: 'General',
       icon: HardDriveIcon,
-      description: "What this vault is, where it lives and how it syncs.",
+      description: 'What this vault is, where it lives and how it syncs.',
       Component: GeneralPage,
     },
     {
-      id: "members",
-      label: "Members",
+      id: 'members',
+      label: 'Members',
       icon: UsersIcon,
-      description: "Who can open this vault, as GitHub sees it.",
+      description: 'Who can open this vault, as GitHub sees it.',
       Component: MembersPage,
     },
     {
-      id: "editor",
-      label: "Editor",
+      id: 'editor',
+      label: 'Editor',
       icon: PenLineIcon,
-      description: "How notes read and what the editor does as you type.",
+      description: 'How notes read and what the editor does as you type.',
       Component: EditorPage,
     },
     {
-      id: "commits",
-      label: "Commits",
+      id: 'commits',
+      label: 'Commits',
       icon: GitCommitHorizontalIcon,
-      description: "What happens to your work as it is saved.",
+      description: 'What happens to your work as it is saved.',
       Component: CommitsPage,
     },
   ],
 }
 
 const APP: SettingsGroup = {
-  id: "app",
-  label: "This machine",
+  id: 'app',
+  label: 'This machine',
   pages: [
     {
-      id: "appearance",
-      label: "Appearance",
+      id: 'appearance',
+      label: 'Appearance',
       icon: PaletteIcon,
-      description: "Theme and transparency, on this machine only.",
+      description: 'Theme and transparency, on this machine only.',
       Component: AppearancePage,
     },
     {
-      id: "updates",
-      label: "Updates",
+      id: 'updates',
+      label: 'Updates',
       icon: RefreshCwIcon,
       description: "Holi's own version, and how it starts.",
       Component: UpdatesPage,
@@ -102,14 +97,14 @@ const APP: SettingsGroup = {
 }
 
 const ACCOUNT: SettingsGroup = {
-  id: "account",
-  label: "Account",
+  id: 'account',
+  label: 'Account',
   pages: [
     {
-      id: "account",
-      label: "GitHub",
+      id: 'account',
+      label: 'GitHub',
       icon: UserRoundIcon,
-      description: "Who you are signed in as.",
+      description: 'Who you are signed in as.',
       Component: AccountPage,
     },
   ],
@@ -122,23 +117,21 @@ export const settingsGroupsAtom = atom((get): readonly SettingsGroup[] => {
     (plugin.settingsSections ?? []).map((section) => ({
       info: plugin.info,
       section,
-    }))
+    })),
   )
   const nested = owned
-    .filter(({ section }) => section.within === "plugins")
+    .filter(({ section }) => section.within === 'plugins')
     .map(({ section }) => section)
   const plugins: SettingsGroup = {
-    id: "plugins",
-    label: "Plugins",
+    id: 'plugins',
+    label: 'Plugins',
     pages: [
       {
-        id: "plugins",
-        label: "Plugins",
+        id: 'plugins',
+        label: 'Plugins',
         icon: PuzzleIcon,
-        description: "What this vault runs beyond the core.",
-        Component: ({ remote }) => (
-          <PluginsPage nested={nested} remote={remote} />
-        ),
+        description: 'What this vault runs beyond the core.',
+        Component: ({ remote }) => <PluginsPage nested={nested} remote={remote} />,
       },
       // A plugin's own page draws what it likes inside one card, titled with
       // the plugin's name and what it is.
@@ -148,7 +141,7 @@ export const settingsGroupsAtom = atom((get): readonly SettingsGroup[] => {
           id: section.id,
           label: section.label,
           icon: section.icon ?? CableIcon,
-          description: section.description ?? "",
+          description: section.description ?? '',
           Component: ({ remote }: { remote: string }) => (
             <SettingsGroup title={info.label} description={info.description}>
               <div className="px-4 py-3">
@@ -164,10 +157,7 @@ export const settingsGroupsAtom = atom((get): readonly SettingsGroup[] => {
 
 /** The page `id` names, or the first when it names none (a plugin turned off
  *  while its page was open). */
-export function pageFor(
-  groups: readonly SettingsGroup[],
-  id: string | null
-): SettingsPage {
+export function pageFor(groups: readonly SettingsGroup[], id: string | null): SettingsPage {
   const pages = groups.flatMap((group) => group.pages)
   return pages.find((page) => page.id === id) ?? pages[0]!
 }

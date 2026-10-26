@@ -4,12 +4,12 @@
  * kanban-board-6's cards. The block's column grip is left out, since the
  * columns' order is `.holi/statuses.yaml`'s and the board does not write it.
  */
-import { type ComponentProps } from "react"
-import type { StatusDef, Task } from "@holi/shared"
-import { PlusIcon } from "lucide-react"
+import { type ComponentProps } from 'react'
+import type { StatusDef, Task } from '@holi/shared'
+import { PlusIcon } from 'lucide-react'
 
-import { Badge } from "@/components/reui/badge"
-import { Frame, FrameHeader, FrameTitle } from "@/components/reui/frame"
+import { Badge } from '@/components/reui/badge'
+import { Frame, FrameHeader, FrameTitle } from '@/components/reui/frame'
 import {
   Kanban,
   KanbanBoard as KanbanBoardPrimitive,
@@ -17,21 +17,17 @@ import {
   KanbanColumnContent,
   KanbanOverlay,
   type KanbanCommitMeta,
-} from "@/components/reui/kanban"
+} from '@/components/reui/kanban'
 
-import { Button } from "@/components/ui/button"
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
-import { InlineAdd } from "../inline-add"
-import { StatusIcon } from "../task-bits"
-import {
-  TaskCard,
-  type CardContext,
-} from "./task-card"
-
+import { Button } from '@/components/ui/button'
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
+import { InlineAdd } from '../inline-add'
+import { StatusIcon } from '../task-bits'
+import { TaskCard, type CardContext } from './task-card'
 
 interface StatusColumnProps extends Omit<
   ComponentProps<typeof KanbanColumn>,
-  "value" | "children"
+  'value' | 'children'
 > {
   status: StatusDef
   tasks: Task[]
@@ -48,16 +44,11 @@ function StatusColumn({
   onNewTask,
   ...props
 }: StatusColumnProps) {
-  const isDone = status.category === "completed"
+  const isDone = status.category === 'completed'
   const addLabel = `Add task to ${status.name}`
 
   return (
-    <KanbanColumn
-      value={status.id}
-      data-column={status.id}
-      className="w-72 shrink-0"
-      {...props}
-    >
+    <KanbanColumn value={status.id} data-column={status.id} className="w-72 shrink-0" {...props}>
       <Frame
         spacing="sm"
         className="group/column"
@@ -95,12 +86,7 @@ function StatusColumn({
 
         <KanbanColumnContent value={status.id}>
           {tasks.map((task) => (
-            <TaskCard
-              key={task.path}
-              task={task}
-              context={context}
-              isDone={isDone}
-            />
+            <TaskCard key={task.path} task={task} context={context} isDone={isDone} />
           ))}
           <InlineAdd
             label={addLabel}
@@ -118,10 +104,7 @@ export interface KanbanBoardProps {
   /** The cards as drawn: the vault's, or the arrangement mid-drag. */
   value: Record<string, Task[]>
   onValueChange: (value: Record<string, Task[]>) => void
-  onValueCommit: (
-    value: Record<string, Task[]>,
-    meta: KanbanCommitMeta<Task>
-  ) => void
+  onValueCommit: (value: Record<string, Task[]>, meta: KanbanCommitMeta<Task>) => void
   onDragEnd: () => void
   onDragCancel: () => void
   context: CardContext
@@ -180,7 +163,7 @@ export function KanbanBoard({
 
       <KanbanOverlay>
         {({ value: path, variant }) => {
-          if (variant === "column") return null
+          if (variant === 'column') return null
           const found = find(String(path))
           if (!found) return null
           const status = statuses.find((s) => s.id === found.column)
@@ -189,7 +172,7 @@ export function KanbanBoard({
               task={found.task}
               context={context}
               isOverlay
-              isDone={status?.category === "completed"}
+              isDone={status?.category === 'completed'}
             />
           )
         }}

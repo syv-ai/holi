@@ -10,7 +10,7 @@
  * the time's place": working spins, needs you is a badge and pins the row to
  * the top, done shows a check until the row is opened.
  */
-import { useAtom, useAtomValue, useSetAtom } from "jotai"
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import {
   ArchiveIcon,
   Columns2Icon,
@@ -37,7 +37,7 @@ import {
   Trash2Icon,
   XIcon,
   ZapIcon,
-} from "lucide-react"
+} from 'lucide-react'
 import {
   useEffect,
   useMemo,
@@ -45,17 +45,17 @@ import {
   useState,
   type ComponentProps,
   type KeyboardEvent,
-} from "react"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
+} from 'react'
+import { Badge } from '@/components/reui/badge'
+import { Button } from '@/components/ui/button'
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
-} from "@/components/ui/context-menu"
-import { Input } from "@/components/ui/input"
+} from '@/components/ui/context-menu'
+import { Input } from '@/components/ui/input'
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -66,45 +66,41 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from '@/components/ui/dropdown-menu'
 import {
   Empty,
   EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyTitle,
-} from "@/components/ui/empty"
+} from '@/components/ui/empty'
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
-} from "@/components/ui/input-group"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Spinner } from "@/components/ui/spinner"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
-import { ConfirmDialog } from "@/composites/confirm-dialog"
-import { AgentMark } from "@/composites/marks"
-import { PixelPersona } from "@/composites/pixel-persona/pixel-persona"
-import { toast } from "sonner"
-import { useNow } from "../lib/use-now"
-import { providersAtom } from "../state/providers"
-import { reviewSessionTurnAtom } from "../state/turns"
-import { NewSessionButton } from "./new-session-button"
-import { cn, openTabAtom, useTabDrag } from "@/plugin-api"
-import { agentSessionsAtom } from "../state/sessions"
-import { agentsViewAtom } from "../state/agents-view"
+} from '@/components/ui/input-group'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Spinner } from '@/components/ui/spinner'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { ConfirmDialog } from '@/composites/confirm-dialog'
+import { AgentMark } from '@/composites/marks'
+import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
+import { toast } from 'sonner'
+import { useNow } from '../lib/use-now'
+import { providersAtom } from '../state/providers'
+import { reviewSessionTurnAtom } from '../state/turns'
+import { NewSessionButton } from './new-session-button'
+import { cn, openTabAtom, useTabDrag } from '@/plugin-api'
+import { agentSessionsAtom } from '../state/sessions'
+import { agentsViewAtom } from '../state/agents-view'
 import {
   duplicateSessionAtom,
   openConversationTerminalAtom,
   openSessionAtom,
   respawnSessionAtom,
   stopSessionAtom,
-} from "../state/send"
+} from '../state/send'
 import {
   age,
   archiveSessionRowAtom,
@@ -133,21 +129,21 @@ import {
   type SessionGroup,
   type SessionRow,
   type SessionSource,
-} from "../state/session-list"
+} from '../state/session-list'
 
 const STATE_FILTERS: readonly {
-  value: SessionFilter["states"][number]
+  value: SessionFilter['states'][number]
   label: string
 }[] = [
-  { value: "needs-you", label: "Needs you" },
-  { value: "working", label: "Working" },
-  { value: "done", label: "Done" },
+  { value: 'needs-you', label: 'Needs you' },
+  { value: 'working', label: 'Working' },
+  { value: 'done', label: 'Done' },
 ]
 
 const SOURCES: readonly { value: SessionSource; label: string }[] = [
-  { value: "all", label: "Anyone" },
-  { value: "mine", label: "You" },
-  { value: "agents", label: "Holis and automations" },
+  { value: 'all', label: 'Anyone' },
+  { value: 'mine', label: 'You' },
+  { value: 'agents', label: 'Holis and automations' },
 ]
 
 /** MonoCode's search field with its filter button, as a ReUI input group. */
@@ -155,12 +151,10 @@ export function SessionSearch(): React.JSX.Element {
   const [query, setQuery] = useAtom(sessionQueryAtom)
   const [filter, setFilter] = useAtom(sessionFilterAtom)
   const active = filterActive(filter)
-  const toggleState = (value: SessionFilter["states"][number]) =>
+  const toggleState = (value: SessionFilter['states'][number]) =>
     setFilter((f) => ({
       ...f,
-      states: f.states.includes(value)
-        ? f.states.filter((s) => s !== value)
-        : [...f.states, value],
+      states: f.states.includes(value) ? f.states.filter((s) => s !== value) : [...f.states, value],
     }))
   return (
     <InputGroup>
@@ -176,9 +170,9 @@ export function SessionSearch(): React.JSX.Element {
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Escape" && query !== "") {
+          if (e.key === 'Escape' && query !== '') {
             e.preventDefault()
-            setQuery("")
+            setQuery('')
           }
         }}
       />
@@ -187,9 +181,9 @@ export function SessionSearch(): React.JSX.Element {
           <DropdownMenuTrigger asChild>
             <InputGroupButton
               size="icon-xs"
-              aria-label={active ? "Filter, on" : "Filter"}
-              data-filter-on={active ? "" : undefined}
-              className={cn("relative", active && "text-foreground")}
+              aria-label={active ? 'Filter, on' : 'Filter'}
+              data-filter-on={active ? '' : undefined}
+              className={cn('relative', active && 'text-foreground')}
             >
               <ListFilterIcon aria-hidden="true" />
               {active && (
@@ -216,9 +210,7 @@ export function SessionSearch(): React.JSX.Element {
             <DropdownMenuLabel>Started by</DropdownMenuLabel>
             <DropdownMenuRadioGroup
               value={filter.source}
-              onValueChange={(v) =>
-                setFilter((f) => ({ ...f, source: v as SessionSource }))
-              }
+              onValueChange={(v) => setFilter((f) => ({ ...f, source: v as SessionSource }))}
             >
               {SOURCES.map((s) => (
                 <DropdownMenuRadioItem
@@ -233,9 +225,7 @@ export function SessionSearch(): React.JSX.Element {
             <DropdownMenuSeparator />
             <DropdownMenuCheckboxItem
               checked={filter.archived}
-              onCheckedChange={(v) =>
-                setFilter((f) => ({ ...f, archived: v === true }))
-              }
+              onCheckedChange={(v) => setFilter((f) => ({ ...f, archived: v === true }))}
               onSelect={(e) => e.preventDefault()}
             >
               Show archived
@@ -256,15 +246,9 @@ export function SessionSearch(): React.JSX.Element {
 }
 
 /** The state or the age, right-aligned on the card's first line. */
-function CardStatus({
-  row,
-  now,
-}: {
-  row: SessionRow
-  now: number
-}): React.JSX.Element {
+function CardStatus({ row, now }: { row: SessionRow; now: number }): React.JSX.Element {
   const { item, state } = row
-  if (state === "needs-you") {
+  if (state === 'needs-you') {
     const badge = (
       <Badge variant="warning-light">
         <CircleAlertIcon aria-hidden="true" />
@@ -280,20 +264,16 @@ function CardStatus({
       </Tooltip>
     )
   }
-  if (state === "working") {
+  if (state === 'working') {
     return (
       <span className="flex items-center gap-1 text-xs text-foreground">
-        <Spinner
-          aria-hidden="true"
-          role="presentation"
-          className="size-3"
-        />
+        <Spinner aria-hidden="true" role="presentation" className="size-3" />
         Working
       </span>
     )
   }
   const when = age(item.endedAt ?? item.updatedAt, now)
-  if (state === "done") {
+  if (state === 'done') {
     return (
       <span className="flex items-center gap-1 text-xs text-success-foreground tabular-nums">
         <CheckIcon aria-hidden="true" className="size-3" />
@@ -302,22 +282,20 @@ function CardStatus({
       </span>
     )
   }
-  return (
-    <span className="text-xs text-muted-foreground tabular-nums">{when}</span>
-  )
+  return <span className="text-xs text-muted-foreground tabular-nums">{when}</span>
 }
 
 /** The mark on the first line: the Holi's face when one ran it, the
  *  automation's bolt, else the provider's. */
 function CardMark({ row }: { row: SessionRow }): React.JSX.Element {
   const by = row.item.by
-  if (by?.kind === "holi" && by.mascot !== undefined) {
+  if (by?.kind === 'holi' && by.mascot !== undefined) {
     return (
       <PixelPersona
         name={by.mascot}
-        color={by.color ?? "#8f8f94"}
-        status={row.state === "done" ? "idle" : row.state}
-        still={row.state === "idle" || row.state === "done"}
+        color={by.color ?? '#8f8f94'}
+        status={row.state === 'done' ? 'idle' : row.state}
+        still={row.state === 'idle' || row.state === 'done'}
         className="size-4"
       />
     )
@@ -335,42 +313,39 @@ function CardMark({ row }: { row: SessionRow }): React.JSX.Element {
 
 function stateWords(row: SessionRow): string {
   switch (row.state) {
-    case "needs-you":
-      return row.item.waitingFor === undefined
-        ? "needs you"
-        : `needs you: ${row.item.waitingFor}`
-    case "working":
-      return "working"
-    case "done":
-      return "done, not opened yet"
+    case 'needs-you':
+      return row.item.waitingFor === undefined ? 'needs you' : `needs you: ${row.item.waitingFor}`
+    case 'working':
+      return 'working'
+    case 'done':
+      return 'done, not opened yet'
     default:
-      return ""
+      return ''
   }
 }
 
 /** What a row selects as a tab of its own, if it can be one: its slot's
  *  selection, or a live session of the agent's. */
 function rowSelection(
-  item: SessionRow["item"],
-  isLive: boolean
+  item: SessionRow['item'],
+  isLive: boolean,
 ): { owner: string; id: string } | undefined {
   return (
     item.selection ??
     (isLive && item.jobId !== undefined
-      ? { owner: "agent", id: `session:${item.jobId}` }
+      ? { owner: 'agent', id: `session:${item.jobId}` }
       : undefined)
   )
 }
 
 /** The tab a row drags as, or null for one that opens none. */
 function tabOf(
-  item: SessionRow["item"],
-  live: readonly { id: string }[]
-): { kind: "session"; owner: string; id: string } | null {
-  const isLive =
-    item.jobId !== undefined && live.some((s) => s.id === item.jobId)
+  item: SessionRow['item'],
+  live: readonly { id: string }[],
+): { kind: 'session'; owner: string; id: string } | null {
+  const isLive = item.jobId !== undefined && live.some((s) => s.id === item.jobId)
   const selection = rowSelection(item, isLive)
-  return selection === undefined ? null : { kind: "session", ...selection }
+  return selection === undefined ? null : { kind: 'session', ...selection }
 }
 
 /**
@@ -386,7 +361,7 @@ export function SessionCard({
   onFocus,
   className,
   ...props
-}: Omit<ComponentProps<"button">, "onFocus"> & {
+}: Omit<ComponentProps<'button'>, 'onFocus'> & {
   row: SessionRow
   now: number
   focusable: boolean
@@ -396,16 +371,16 @@ export function SessionCard({
   const { item, state, current } = row
   const by =
     item.by === undefined
-      ? ""
-      : `${item.by.kind === "holi" ? "Holi" : "Automation"} ${item.by.name}`
-  const label = [item.title, stateWords(row), by].filter(Boolean).join(", ")
+      ? ''
+      : `${item.by.kind === 'holi' ? 'Holi' : 'Automation'} ${item.by.name}`
+  const label = [item.title, stateWords(row), by].filter(Boolean).join(', ')
   const meta = [
     item.by === undefined ? undefined : item.by.name,
     modelLabel(item.model),
     item.location,
   ]
     .filter(Boolean)
-    .join(" · ")
+    .join(' · ')
   return (
     <Button
       {...props}
@@ -413,33 +388,29 @@ export function SessionCard({
       type="button"
       data-session-card={item.key}
       data-session-state={state}
-      aria-current={current ? "true" : undefined}
+      aria-current={current ? 'true' : undefined}
       aria-label={label}
       tabIndex={focusable ? 0 : -1}
       onClick={onOpen}
       onFocus={onFocus}
       className={cn(
-        "h-auto w-full min-w-0 justify-start text-start font-normal whitespace-normal",
+        'h-auto w-full min-w-0 justify-start text-start font-normal whitespace-normal',
         // The sidebar's one fill scale, as the rows above and in Documents.
-        "hover:bg-foreground/5",
-        current && "bg-foreground/10 hover:bg-foreground/12"
+        'hover:bg-foreground/5',
+        current && 'bg-foreground/10 hover:bg-foreground/12',
       )}
     >
       <span
         className={cn(
-          "flex w-full min-w-0 flex-col gap-0.5 rounded-lg border px-1 py-1.5",
-          state === "needs-you"
-            ? "border-dashed border-border"
-            : "border-transparent",
-          className
+          'flex w-full min-w-0 flex-col gap-0.5 rounded-lg border px-1 py-1.5',
+          state === 'needs-you' ? 'border-dashed border-border' : 'border-transparent',
+          className,
         )}
       >
         <span className="flex min-w-0 items-center gap-2">
           <Tooltip>
             <TooltipTrigger asChild>
-              <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-                {item.title}
-              </span>
+              <span className="min-w-0 flex-1 truncate text-sm text-foreground">{item.title}</span>
             </TooltipTrigger>
             <TooltipContent side="right">{item.title}</TooltipContent>
           </Tooltip>
@@ -465,45 +436,45 @@ export function SessionCard({
  */
 type MenuAction =
   | {
-      kind: "item"
+      kind: 'item'
       label: string
       icon: React.ReactNode
       destructive?: boolean
       run: () => void
     }
-  | { kind: "separator" }
+  | { kind: 'separator' }
 
 function ContextMenuActions({ actions }: { actions: MenuAction[] }) {
   return actions.map((action, index) =>
-    action.kind === "separator" ? (
+    action.kind === 'separator' ? (
       <ContextMenuSeparator key={index} />
     ) : (
       <ContextMenuItem
         key={index}
-        variant={action.destructive ? "destructive" : "default"}
+        variant={action.destructive ? 'destructive' : 'default'}
         onSelect={action.run}
       >
         {action.icon}
         {action.label}
       </ContextMenuItem>
-    )
+    ),
   )
 }
 
 function DropdownMenuActions({ actions }: { actions: MenuAction[] }) {
   return actions.map((action, index) =>
-    action.kind === "separator" ? (
+    action.kind === 'separator' ? (
       <DropdownMenuSeparator key={index} />
     ) : (
       <DropdownMenuItem
         key={index}
-        variant={action.destructive ? "destructive" : "default"}
+        variant={action.destructive ? 'destructive' : 'default'}
         onSelect={action.run}
       >
         {action.icon}
         {action.label}
       </DropdownMenuItem>
-    )
+    ),
   )
 }
 
@@ -511,7 +482,7 @@ function DropdownMenuActions({ actions }: { actions: MenuAction[] }) {
 function joinGroups(groups: MenuAction[][]): MenuAction[] {
   return groups
     .filter((g) => g.length > 0)
-    .flatMap((g, i) => (i === 0 ? g : [{ kind: "separator" as const }, ...g]))
+    .flatMap((g, i) => (i === 0 ? g : [{ kind: 'separator' as const }, ...g]))
 }
 
 /** What a row's menu offers, as data both menus draw. */
@@ -521,7 +492,7 @@ function useRowActions(
     onRename,
     onDelete,
     onClose,
-  }: { onRename: () => void; onDelete: () => void; onClose?: () => void }
+  }: { onRename: () => void; onDelete: () => void; onClose?: () => void },
 ): MenuAction[] {
   const live = useAtomValue(agentSessionsAtom)
   const abilities = useAtomValue(rowAbilitiesAtom)
@@ -544,9 +515,8 @@ function useRowActions(
   // Restart and Duplicate are a background session's: an agent Holi runs
   // itself has neither.
   const background =
-    providers.kind !== "ready" ||
-    providers.providers.find((p) => p.id === (item.agent ?? "claude"))
-      ?.background !== false
+    providers.kind !== 'ready' ||
+    providers.providers.find((p) => p.id === (item.agent ?? 'claude'))?.background !== false
   const sessionId = item.sessionId ?? jobId
   const icon = (Glyph: typeof PinIcon) => <Glyph aria-hidden="true" />
 
@@ -558,12 +528,12 @@ function useRowActions(
       ? []
       : [
           {
-            kind: "item",
-            label: "Open to the side",
+            kind: 'item',
+            label: 'Open to the side',
             icon: icon(Columns2Icon),
             run: () => {
               markRead(item.key)
-              openTab({ kind: "session", ...selection }, { beside: true })
+              openTab({ kind: 'session', ...selection }, { beside: true })
             },
           },
         ]
@@ -572,15 +542,15 @@ function useRowActions(
   const conversationId = item.sessionId
   if (conversationId !== undefined) {
     place.push({
-      kind: "item",
-      label: "Open in terminal",
+      kind: 'item',
+      label: 'Open in terminal',
       icon: icon(SquareTerminalIcon),
       run: () => void openFork(conversationId),
     })
   } else if (isLive) {
     place.push({
-      kind: "item",
-      label: "Open in terminal",
+      kind: 'item',
+      label: 'Open in terminal',
       icon: icon(SquareTerminalIcon),
       run: () => void attach(jobId),
     })
@@ -589,41 +559,41 @@ function useRowActions(
   const own: MenuAction[] = []
   if (can?.pin) {
     own.push({
-      kind: "item",
-      label: item.pinned ? "Unpin" : "Pin to top",
+      kind: 'item',
+      label: item.pinned ? 'Unpin' : 'Pin to top',
       icon: icon(item.pinned ? PinOffIcon : PinIcon),
       run: () => void pin({ key: item.key, pinned: item.pinned !== true }),
     })
   }
   if (can?.rename) {
     own.push({
-      kind: "item",
-      label: "Rename",
+      kind: 'item',
+      label: 'Rename',
       icon: icon(PencilIcon),
       run: onRename,
     })
   }
   // Read state is this machine's, for any row; one that is working or
   // waiting on you is neither.
-  if (state === "done") {
+  if (state === 'done') {
     own.push({
-      kind: "item",
-      label: "Mark as read",
+      kind: 'item',
+      label: 'Mark as read',
       icon: icon(MailCheckIcon),
       run: () => markRead(item.key),
     })
-  } else if (state === "idle" && !row.current) {
+  } else if (state === 'idle' && !row.current) {
     own.push({
-      kind: "item",
-      label: "Mark as unread",
+      kind: 'item',
+      label: 'Mark as unread',
       icon: icon(CircleDotIcon),
       run: () => markUnread(item.key),
     })
   }
   if (sessionId !== undefined) {
     own.push({
-      kind: "item",
-      label: "Copy session ID",
+      kind: 'item',
+      label: 'Copy session ID',
       icon: icon(CopyIcon),
       run: () => void navigator.clipboard?.writeText(sessionId),
     })
@@ -632,8 +602,8 @@ function useRowActions(
   const running: MenuAction[] = []
   if (onClose !== undefined) {
     running.push({
-      kind: "item",
-      label: "Close session",
+      kind: 'item',
+      label: 'Close session',
       icon: icon(XIcon),
       run: onClose,
     })
@@ -642,12 +612,12 @@ function useRowActions(
     // The turn review, which the session's own view (its terminal) has no
     // room for.
     running.push({
-      kind: "item",
-      label: "Review last turn",
+      kind: 'item',
+      label: 'Review last turn',
       icon: icon(FileDiffIcon),
       run: () =>
         void reviewTurn(jobId).then((found) => {
-          if (!found) toast("No turn of this session is on record yet.")
+          if (!found) toast('No turn of this session is on record yet.')
         }),
     })
   }
@@ -655,44 +625,41 @@ function useRowActions(
     if (background) {
       running.push(
         {
-          kind: "item",
-          label: "Restart",
+          kind: 'item',
+          label: 'Restart',
           icon: icon(RotateCwIcon),
           run: () => void respawn(jobId),
         },
         {
-          kind: "item",
-          label: "Duplicate",
+          kind: 'item',
+          label: 'Duplicate',
           icon: icon(CopyPlusIcon),
           run: () => void duplicate(jobId),
-        }
+        },
       )
     }
-    running.push(
-      {
-        kind: "item",
-        label: "Stop session",
-        icon: icon(SquareIcon),
-        destructive: true,
-        run: () => void stop(jobId),
-      }
-    )
+    running.push({
+      kind: 'item',
+      label: 'Stop session',
+      icon: icon(SquareIcon),
+      destructive: true,
+      run: () => void stop(jobId),
+    })
   }
 
   const keep: MenuAction[] = []
   if (can?.archive) {
     keep.push({
-      kind: "item",
-      label: item.archived === true ? "Unarchive" : "Archive",
+      kind: 'item',
+      label: item.archived === true ? 'Unarchive' : 'Archive',
       icon: icon(item.archived === true ? ArchiveRestoreIcon : ArchiveIcon),
-      run: () =>
-        void archive({ key: item.key, archived: item.archived !== true }),
+      run: () => void archive({ key: item.key, archived: item.archived !== true }),
     })
   }
   if (can?.remove) {
     keep.push({
-      kind: "item",
-      label: "Delete…",
+      kind: 'item',
+      label: 'Delete…',
       icon: icon(Trash2Icon),
       destructive: true,
       run: onDelete,
@@ -768,11 +735,7 @@ function CardWithMenu({
               <EllipsisIcon aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="end"
-            className="w-52"
-            onCloseAutoFocus={closeAutoFocus}
-          >
+          <DropdownMenuContent align="end" className="w-52" onCloseAutoFocus={closeAutoFocus}>
             <DropdownMenuActions actions={actions} />
           </DropdownMenuContent>
         </DropdownMenu>
@@ -793,20 +756,14 @@ function CardWithMenu({
 
 /** The card's title as a field: Enter saves, Escape cancels, and leaving it
  *  saves, as the documents tree's rename does. */
-function RenameField({
-  row,
-  onDone,
-}: {
-  row: SessionRow
-  onDone: () => void
-}): React.JSX.Element {
+function RenameField({ row, onDone }: { row: SessionRow; onDone: () => void }): React.JSX.Element {
   const rename = useSetAtom(renameSessionRowAtom)
   const done = useRef(false)
   const finish = (value: string | null) => {
     if (done.current) return
     done.current = true
-    const title = value?.trim() ?? ""
-    if (title !== "" && title !== row.item.title) {
+    const title = value?.trim() ?? ''
+    if (title !== '' && title !== row.item.title) {
       void rename({ key: row.item.key, title })
     }
     onDone()
@@ -819,10 +776,10 @@ function RenameField({
         aria-label={`Rename ${row.item.title}`}
         onFocus={(e) => e.currentTarget.select()}
         onKeyDown={(e) => {
-          if (e.key === "Enter") {
+          if (e.key === 'Enter') {
             e.preventDefault()
             finish(e.currentTarget.value)
-          } else if (e.key === "Escape") {
+          } else if (e.key === 'Escape') {
             e.preventDefault()
             finish(null)
           }
@@ -855,7 +812,7 @@ function DeleteDialog({
       onOpenChange={(open) => {
         if (!open) onClose()
       }}
-      title={`Delete “${row?.item.title ?? ""}”?`}
+      title={`Delete “${row?.item.title ?? ''}”?`}
       description="Holi forgets this conversation on this machine: its row and Holi’s copy of the transcript. Claude Code’s own transcript stays where Claude Code keeps it."
       confirmLabel="Delete"
       destructive
@@ -866,11 +823,7 @@ function DeleteDialog({
 
 function LoadingCards(): React.JSX.Element {
   return (
-    <div
-      role="status"
-      aria-label="Loading conversations"
-      className="flex flex-col gap-1"
-    >
+    <div role="status" aria-label="Loading conversations" className="flex flex-col gap-1">
       {[0, 1, 2].map((i) => (
         <div key={i} className="flex flex-col gap-1.5 px-2 py-1.5">
           <Skeleton className="h-4 w-full" />
@@ -883,7 +836,7 @@ function LoadingCards(): React.JSX.Element {
 
 /** A run of cards under a heading, or none: the sidebar's open ones are one
  *  run without. */
-type CardGroup = Pick<SessionGroup, "rows"> & { id: string; label?: string }
+type CardGroup = Pick<SessionGroup, 'rows'> & { id: string; label?: string }
 
 /**
  * Cards in groups, with arrow keys between them, their menus, Rename in place
@@ -920,22 +873,20 @@ function SessionCards({
     order[0]
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const keys = ["ArrowDown", "ArrowUp", "Home", "End"]
+    const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End']
     if (!keys.includes(e.key)) return
     const cards = Array.from(
-      listRef.current?.querySelectorAll<HTMLButtonElement>(
-        "[data-session-card]"
-      ) ?? []
+      listRef.current?.querySelectorAll<HTMLButtonElement>('[data-session-card]') ?? [],
     )
     if (cards.length === 0) return
     e.preventDefault()
     const at = cards.findIndex((c) => c === document.activeElement)
     const next =
-      e.key === "Home"
+      e.key === 'Home'
         ? 0
-        : e.key === "End"
+        : e.key === 'End'
           ? cards.length - 1
-          : e.key === "ArrowDown"
+          : e.key === 'ArrowDown'
             ? Math.min(cards.length - 1, at + 1)
             : Math.max(0, at - 1)
     cards[next]?.focus()
@@ -943,16 +894,11 @@ function SessionCards({
 
   return (
     <>
-      <div
-        ref={listRef}
-        onKeyDown={onKeyDown}
-        className="flex flex-col gap-3"
-        data-session-list=""
-      >
+      <div ref={listRef} onKeyDown={onKeyDown} className="flex flex-col gap-3" data-session-list="">
         {groups.map((group) => (
           <div
             key={group.id}
-            role={group.label === undefined ? undefined : "group"}
+            role={group.label === undefined ? undefined : 'group'}
             aria-label={group.label}
             className="flex flex-col gap-0.5"
           >
@@ -960,8 +906,8 @@ function SessionCards({
               <div
                 aria-hidden="true"
                 className={cn(
-                  "px-2 pt-1 pb-0.5 text-xs text-muted-foreground/70",
-                  group.id === "needs-you" && "font-medium text-foreground"
+                  'px-2 pt-1 pb-0.5 text-xs text-muted-foreground/70',
+                  group.id === 'needs-you' && 'font-medium text-foreground',
                 )}
               >
                 {group.label}
@@ -982,9 +928,9 @@ function SessionCards({
                     requestAnimationFrame(() =>
                       listRef.current
                         ?.querySelector<HTMLButtonElement>(
-                          `[data-session-card="${CSS.escape(row.item.key)}"]`
+                          `[data-session-card="${CSS.escape(row.item.key)}"]`,
                         )
-                        ?.focus()
+                        ?.focus(),
                     )
                   }}
                   onDelete={() => setDeleting(row)}
@@ -1002,10 +948,7 @@ function SessionCards({
                     {...tabDrag(tabOf(row.item, live))}
                     onKeyDown={(e) => {
                       // F2 renames, as it does in the documents tree.
-                      if (
-                        e.key === "F2" &&
-                        abilities.get(keyOwner(row.item.key))?.rename
-                      ) {
+                      if (e.key === 'F2' && abilities.get(keyOwner(row.item.key))?.rename) {
                         e.preventDefault()
                         setRenaming(row.item.key)
                       }
@@ -1014,8 +957,8 @@ function SessionCards({
                     // open card.
                     className={
                       withClose
-                        ? "group-hover/card:pe-16 group-focus-within/card:pe-16"
-                        : "group-hover/card:pe-9 group-focus-within/card:pe-9"
+                        ? 'group-hover/card:pe-16 group-focus-within/card:pe-16'
+                        : 'group-hover/card:pe-9 group-focus-within/card:pe-9'
                     }
                   />
                 </CardWithMenu>
@@ -1054,14 +997,12 @@ export function SessionList(): React.JSX.Element {
       <div className="flex items-center justify-between gap-2 pe-1">
         <h3 className="flex items-center gap-1.5 px-2 text-xs font-medium text-muted-foreground select-none">
           Sessions
-          {rows.length > 0 && (
-            <span className="tabular-nums">{rows.length}</span>
-          )}
+          {rows.length > 0 && <span className="tabular-nums">{rows.length}</span>}
         </h3>
         <NewSessionButton />
       </div>
 
-      {status === "error" ? (
+      {status === 'error' ? (
         <div
           role="alert"
           className="flex items-center justify-between gap-2 px-2 text-xs text-muted-foreground"
@@ -1071,15 +1012,14 @@ export function SessionList(): React.JSX.Element {
             Retry
           </Button>
         </div>
-      ) : status === "loading" && all.length === 0 ? (
+      ) : status === 'loading' && all.length === 0 ? (
         <LoadingCards />
       ) : rows.length === 0 ? (
         <Empty>
           <EmptyHeader>
             <EmptyTitle className="text-sm">No active sessions</EmptyTitle>
             <EmptyDescription className="text-xs">
-              Start one and it works in this vault while you write. Closed ones
-              are in History.
+              Start one and it works in this vault while you write. Closed ones are in History.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent className="flex-row justify-center">
@@ -1087,23 +1027,14 @@ export function SessionList(): React.JSX.Element {
               <MessageSquarePlusIcon aria-hidden="true" />
               New session
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setView({ kind: "history" })}
-            >
+            <Button variant="ghost" size="sm" onClick={() => setView({ kind: 'history' })}>
               <HistoryIcon aria-hidden="true" />
               History
             </Button>
           </EmptyContent>
         </Empty>
       ) : (
-        <SessionCards
-          groups={[{ id: "open", rows }]}
-          now={now}
-          openKeys={openKeys}
-          closable
-        />
+        <SessionCards groups={[{ id: 'open', rows }]} now={now} openKeys={openKeys} closable />
       )}
     </section>
   )
@@ -1125,14 +1056,14 @@ export function SessionHistory(): React.JSX.Element {
 
   const visible = useMemo(
     () => rows.filter((r) => rowMatches(r, query, filter)),
-    [rows, query, filter]
+    [rows, query, filter],
   )
   const groups = useMemo(() => groupRows(visible, now), [visible, now])
   const listed = rows.some((r) => r.item.archived !== true || filter.archived)
 
   return (
     <section aria-label="History" className="flex flex-col gap-4">
-      {status === "error" ? (
+      {status === 'error' ? (
         <div
           role="alert"
           className="flex items-center justify-between gap-2 px-2 text-sm text-muted-foreground"
@@ -1142,15 +1073,15 @@ export function SessionHistory(): React.JSX.Element {
             Retry
           </Button>
         </div>
-      ) : status === "loading" && rows.length === 0 ? (
+      ) : status === 'loading' && rows.length === 0 ? (
         <LoadingCards />
       ) : !listed ? (
         <Empty>
           <EmptyHeader>
             <EmptyTitle className="text-sm">No conversations yet</EmptyTitle>
             <EmptyDescription className="text-xs">
-              Start one and it works in this vault while you write. Holis and
-              automations list their runs here too.
+              Start one and it works in this vault while you write. Holis and automations list their
+              runs here too.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
@@ -1167,7 +1098,7 @@ export function SessionHistory(): React.JSX.Element {
             size="xs"
             variant="ghost"
             onClick={() => {
-              setQuery("")
+              setQuery('')
               setFilter(NO_FILTER)
             }}
           >
@@ -1175,12 +1106,7 @@ export function SessionHistory(): React.JSX.Element {
           </Button>
         </div>
       ) : (
-        <SessionCards
-          groups={groups}
-          now={now}
-          openKeys={openKeys}
-          closable={false}
-        />
+        <SessionCards groups={groups} now={now} openKeys={openKeys} closable={false} />
       )}
     </section>
   )

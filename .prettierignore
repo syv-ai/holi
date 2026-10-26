@@ -8,3 +8,10 @@ patches/
 out/
 dist/
 release/
+
+# Vault seed files are written into users' vaults byte for byte, and shipped ones
+# are matched by content hash (shipped-history.json): never reformat them.
+**/vault/once/
+**/vault/shipped/
+# Written by the ReUI installer; a re-run would undo any formatting.
+.agents/skills/reui/
