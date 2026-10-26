@@ -494,11 +494,31 @@ describe('ActiveVault — commit', () => {
     )
     expect(await plainGit(origin, ['cat-file', '-e', 'main:note.md']).catch(() => '')).toBe('')
 
+    // The path reservation survives close/reopen; open-time auto-push must not
+    // publish the outstanding rejected commit.
+    await active.close()
+    const reopened = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: {
+        commitQuietMs: 60_000,
+        pushQuietMs: 60_000,
+        healIntervalMs: 60_000,
+        pullIntervalMs: 60_000,
+      },
+    })
+    open.push(reopened)
+    await sleep(100)
+    expect(await plainGit(origin, ['cat-file', '-e', 'main:note.md']).catch(() => '')).toBe('')
+
     // Verifying another note must not release note.md's quarantine. Both
     // commits remain local until the rejected path itself is corrected.
     await writeFile(join(dir, 'other.md'), 'unrelated\n')
     expect(
-      await active.deliverNow(
+      await reopened.deliverNow(
         'other.md',
         async () => (await plainGit(dir, ['show', 'HEAD:other.md'])) === 'unrelated',
       ),
@@ -510,7 +530,7 @@ describe('ActiveVault — commit', () => {
     const corrected = 'wanted\ncorrected\n'
     await writeFile(join(dir, 'note.md'), corrected)
     expect(
-      await active.deliverNow(
+      await reopened.deliverNow(
         'note.md',
         async () => (await plainGit(dir, ['show', 'HEAD:note.md'])) === corrected.trimEnd(),
       ),
