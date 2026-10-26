@@ -18,10 +18,6 @@ import type { TransformResult } from './relink'
 
 const exec = promisify(execFile)
 
-/** Re-exported, never restated, so the settings resolver and the runner cannot
- *  disagree about which transforms exist. */
-export type { TransformName } from '@holi/shared'
-
 export interface Transform {
   name: TransformName
   /** **May never throw as a veto.** The runner catches, logs, notifies, and the

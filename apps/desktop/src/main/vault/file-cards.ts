@@ -27,7 +27,7 @@ export interface FileCard {
 }
 
 /** At most this many files per call: a folder is a screen, not the vault. */
-export const FILE_CARDS_LIMIT = 200
+const FILE_CARDS_LIMIT = 200
 /** Git processes at once. */
 const PARALLEL = 6
 

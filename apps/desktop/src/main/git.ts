@@ -131,7 +131,7 @@ export type PullResult =
   | { kind: 'merged'; commits: number; from: string; to: string }
   | { kind: 'conflict'; paths: string[] }
 
-export type PushResult =
+type PushResult =
   | { kind: 'pushed'; commits: number; branch: string }
   | { kind: 'nothing-to-push' }
   | { kind: 'rejected'; reason: 'permission' | 'non-fast-forward' }
@@ -323,7 +323,7 @@ export async function runGit(cwd: string, args: string[], opts: RunOpts = {}): P
  * cannot take the index reports no unmerged paths, and calling it a conflict
  * latches the sticky sync pause on a race that will be over in 200 ms.
  */
-export function isIndexLockFailure(outcome: { ok: boolean; stderr: string }): boolean {
+function isIndexLockFailure(outcome: { ok: boolean; stderr: string }): boolean {
   return !outcome.ok && INDEX_LOCK.test(outcome.stderr)
 }
 

@@ -60,7 +60,7 @@ export interface SyncTimings {
   pushBudgetMs: number
 }
 
-export const DEFAULT_TIMINGS: SyncTimings = {
+const DEFAULT_TIMINGS: SyncTimings = {
   rescanDebounceMs: 200,
   commitQuietMs: 3_000,
   healIntervalMs: 30_000,
@@ -148,7 +148,7 @@ export interface ActiveVault {
 }
 
 /** How recent a fetch the branch picker accepts instead of fetching again. */
-export const FETCH_DEBOUNCE_MS = 15_000
+const FETCH_DEBOUNCE_MS = 15_000
 /** How long a switch waits for a commit, pull or push already running. */
 const SWITCH_WAIT_MS = 5_000
 

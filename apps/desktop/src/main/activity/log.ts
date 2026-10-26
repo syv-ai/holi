@@ -15,14 +15,6 @@
 
 export type ActivityChannel = 'git' | 'sync' | 'agent' | 'plugins' | 'app'
 
-export const ACTIVITY_CHANNELS: readonly ActivityChannel[] = [
-  'git',
-  'sync',
-  'agent',
-  'plugins',
-  'app',
-]
-
 export type ActivityLevel = 'info' | 'warn' | 'error'
 
 /** One line of the log, as the renderer gets it. */
@@ -42,7 +34,7 @@ export interface ActivityEntry {
 }
 
 /** What a writer gives; the log stamps the rest. */
-export interface ActivityInput {
+interface ActivityInput {
   channel: ActivityChannel
   level?: ActivityLevel
   message: string
@@ -61,7 +53,7 @@ export interface ActivityLog {
   clear(): void
 }
 
-export const ACTIVITY_CAPACITY = 2000
+const ACTIVITY_CAPACITY = 2000
 
 /** A detail longer than this is cut: a git error is a few lines, and a
  *  runaway stderr must not fill the ring's memory. */

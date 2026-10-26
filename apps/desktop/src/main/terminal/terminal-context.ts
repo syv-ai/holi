@@ -140,7 +140,7 @@ export function parseLsofCwd(out: string): string | null {
 export type RunFile = (file: string, args: string[], cwd?: string) => Promise<string>
 
 /** A child process's stdout, or a rejection. Bounded in time and size. */
-export const defaultRun: RunFile = (file, args, cwd) =>
+const defaultRun: RunFile = (file, args, cwd) =>
   new Promise((resolve, reject) => {
     execFile(
       file,

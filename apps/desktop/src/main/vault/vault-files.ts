@@ -20,7 +20,7 @@ import {
   type VaultRelPath,
 } from '@holi/shared'
 
-export const TMP_MARKER = '.holi-tmp-'
+const TMP_MARKER = '.holi-tmp-'
 const JUNK = new Set(OS_JUNK_FILES)
 
 export function absPathFor(root: string, rel: VaultRelPath): string {

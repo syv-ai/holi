@@ -16,38 +16,32 @@
     },
     "apps/desktop": {
       "entry": [
-        // electron-vite's three targets: main, preload, renderer.
-        "src/main/index.ts!",
-        "src/preload/index.ts!",
+        // electron-vite's three targets (main, preload, renderer main.tsx) come
+        // from its knip plugin; only the HTML shell is named here.
         "src/renderer/index.html!",
-        "src/renderer/src/main.tsx!",
         // Plugin lists, imported by the composition roots above; named here so a
         // plugin that is dropped from the list shows as dead.
         "src/plugins/main.ts!",
         "src/plugins/renderer.ts!",
         // Loaded with `new Worker(new URL(...))`, which the import graph cannot see.
         "src/**/*.worker.ts!",
-        "electron.vite.config.ts",
         "scripts/*.{mjs,cjs}",
-        // vitest's setupFiles, read from vitest.config.ts by path.
-        "test/setup.dom.ts",
       ],
-      "project": ["src/**/*.{ts,tsx}!", "test/**/*.ts", "scripts/**"],
+      "project": ["src/**/*.{ts,tsx,css}!", "test/**/*.ts", "scripts/**"],
       // The gate self-test lints these on purpose; they are inputs, not code.
       "ignore": ["test/fixtures/**"],
+      // plugin-api.ts is the facade plugins import core through. It re-exports
+      // more than any one plugin uses today, deliberately.
+      "ignoreIssues": { "src/main/plugin-api.ts": ["exports", "types"] },
       // A system binary one community-plugin test shells out to.
       "ignoreBinaries": ["pgrep"],
       "ignoreDependencies": [
-        // Run as binaries by electron-vite, electron-builder and the rebuild script.
-        "electron",
-        "electron-builder",
-        "@electron/rebuild",
-        // Imported from index.css (@import), not from TS.
-        "tw-animate-css",
+        // Loaded at runtime with createRequire (a lazy, optional require), which
+        // knip's import graph cannot see.
+        "mermaid",
       ],
     },
     "packages/shared": {
-      "entry": ["src/index.ts!", "src/path-safety-node.ts!"],
       "project": ["src/**/*.ts!", "test/**/*.ts"],
     },
   },

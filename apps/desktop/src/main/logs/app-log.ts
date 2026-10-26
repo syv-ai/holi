@@ -35,7 +35,7 @@ export interface AppLogEntry {
   detail?: string
 }
 
-export interface AppLogInput {
+interface AppLogInput {
   level: AppLogLevel
   source: AppLogSource
   text: string
@@ -49,7 +49,7 @@ export interface AppLog {
   clear(): void
 }
 
-export const APP_LOG_CAPACITY = 5000
+const APP_LOG_CAPACITY = 5000
 
 /** A line longer than this is cut: one runaway dump must not fill the ring's
  *  memory. */

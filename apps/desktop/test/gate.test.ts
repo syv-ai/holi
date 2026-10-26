@@ -150,8 +150,8 @@ describe('@shadcn/lint', () => {
   ]
 
   test('no-restyle: a caller places a component and does not restyle it', () => {
-    // Button p-4/rounded-full (9), DialogContent className (12), CardTitle resize
-    // (17), Badge colour (20). `<Button className="w-full mt-4">` (8) passes.
+    // Button p-4/rounded-full (9), DialogContent padding (12), CardTitle resize
+    // (17), Badge shadow (20). A width on DialogContent and a colour are placement and pass. `<Button className="w-full mt-4">` (8) passes.
     expect(byLine('renderer/features/b/restyle.tsx', 'shadcn/no-restyle')).toEqual([9, 12, 17, 20])
   })
 

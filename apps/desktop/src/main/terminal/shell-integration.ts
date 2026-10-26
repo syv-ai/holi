@@ -32,7 +32,7 @@ export interface ShellLaunch {
 }
 
 /** zsh: where it would have read its startup files, before Holi's ZDOTDIR. */
-export const USER_ZDOTDIR = 'HOLI_USER_ZDOTDIR'
+const USER_ZDOTDIR = 'HOLI_USER_ZDOTDIR'
 
 /** Swap to the person's ZDOTDIR, source their `file`, and swap back,
  *  remembering where they left ZDOTDIR (their `.zshenv` may move it). */
@@ -66,7 +66,7 @@ autoload -Uz add-zsh-hook && add-zsh-hook precmd __holi_osc7`
 
 const HEADER = '# Holi shell integration (docs/features/status-bar.md). Rewritten each run.'
 
-export const ZSH_FILES: Record<string, string> = {
+const ZSH_FILES: Record<string, string> = {
   '.zshenv': `${HEADER}\n${zshSource('.zshenv')}\n`,
   '.zprofile': `${HEADER}\n${zshSource('.zprofile')}\n`,
   '.zshrc': [
@@ -82,7 +82,7 @@ export const ZSH_FILES: Record<string, string> = {
   '.zlogin': `${HEADER}\n${zshSource('.zlogin')}\n${ZSH_FINISH}\n`,
 }
 
-export const BASH_INIT = `${HEADER}
+const BASH_INIT = `${HEADER}
 # What a login bash reads, since --init-file makes it a non-login one.
 if [ -r /etc/profile ]; then . /etc/profile; fi
 for __holi_f in ~/.bash_profile ~/.bash_login ~/.profile; do

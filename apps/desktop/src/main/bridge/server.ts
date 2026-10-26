@@ -27,7 +27,7 @@ import { refusalText, resolveArgv } from './cli'
 import { SPILL_BYTES, spillNotice, spillOutput } from './spill'
 
 /** What a route answers. No body is an empty one. */
-export interface Reply {
+interface Reply {
   status: number
   body?: string
   /** `text/plain` when absent. */

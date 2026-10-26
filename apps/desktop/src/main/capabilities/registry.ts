@@ -53,6 +53,8 @@ export interface CapabilityContext {
 /**
  * How an entry reads as a `holi <namespace> <verb>` command: required at the
  * CLI door, where the bridge resolves argv against it (`bridge/cli.ts`).
+ *
+ * @public Plugins write these through `plugin-api.ts`.
  */
 export interface CliSpec {
   /** Positional params, in order. A trailing `?` marks an optional one, and

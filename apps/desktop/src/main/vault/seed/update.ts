@@ -44,12 +44,6 @@ export interface UpdateReport {
   deleted: string[]
 }
 
-/** What an update answers across the CLI and IPC: the report, and the
- *  session its conflicts were handed to, if any. */
-export type SkillsUpdate =
-  | { ok: true; report: UpdateReport; summary: string; terminalId?: string }
-  | { ok: false; message: string }
-
 /**
  * Where a conflict's other versions wait for the agent: beside the file, with
  * `.shipped.local` or `.base.local` before its extension. `.local.` keeps them
@@ -68,7 +62,7 @@ export function stagedPath(rel: string, which: 'shipped' | 'base'): string {
 const SHIPPED_HISTORY: Record<string, readonly string[]> = shippedHistory
 
 /** Is `text` a version of `rel` that some release of Holi shipped? */
-export const everShipped = (rel: string, text: string): boolean =>
+const everShipped = (rel: string, text: string): boolean =>
   SHIPPED_HISTORY[rel]?.includes(sha256(text)) ?? false
 
 /**

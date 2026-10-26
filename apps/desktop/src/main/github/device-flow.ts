@@ -13,7 +13,7 @@
 
 /** What the renderer shows. The `device_code` is deliberately absent: it is the
  * half of the pair that authenticates, and the UI has no use for it. */
-export interface DeviceCode {
+interface DeviceCode {
   userCode: string
   verificationUri: string
   /** Epoch ms. The UI counts down against it; the poller stops at it. */

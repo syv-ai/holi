@@ -3,7 +3,7 @@
  * Keep a found or downloading update when checks overlap.
  */
 
-export type UpdateState = 'idle' | 'checking' | 'available' | 'downloading' | 'ready'
+type UpdateState = 'idle' | 'checking' | 'available' | 'downloading' | 'ready'
 
 /** Everything the renderer knows about updating Holi, pushed whole on change. */
 export type UpdateChannel = 'stable' | 'dev'

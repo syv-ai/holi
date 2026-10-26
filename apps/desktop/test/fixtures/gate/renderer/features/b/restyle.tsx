@@ -9,7 +9,7 @@ export const Placed = (): React.JSX.Element => <Button className="w-full mt-4">o
 export const Padded = (): React.JSX.Element => <Button className="p-4 rounded-full">no</Button>
 export const Overlay = (): React.JSX.Element => (
   <Dialog>
-    <DialogContent className="sm:max-w-3xl">no</DialogContent>
+    <DialogContent className="p-8 sm:max-w-3xl">no</DialogContent>
   </Dialog>
 )
 export const Resized = (): React.JSX.Element => (
@@ -17,4 +17,4 @@ export const Resized = (): React.JSX.Element => (
     <CardTitle className="text-2xl font-bold">no</CardTitle>
   </Card>
 )
-export const Tinted = (): React.JSX.Element => <Badge className="bg-primary">no</Badge>
+export const Tinted = (): React.JSX.Element => <Badge className="shadow-lg">no</Badge>

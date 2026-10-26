@@ -49,7 +49,7 @@ export class ClonePathInUse extends Error {
  * all, and treating "cannot compare" as "does not match" would refuse a clone
  * that is legitimately ours.
  */
-export function githubRemoteOf(url: string): string | null {
+function githubRemoteOf(url: string): string | null {
   const match =
     /^https:\/\/github\.com\/([^/]+)\/(.+?)(?:\.git)?$/.exec(url) ??
     /^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/.exec(url)

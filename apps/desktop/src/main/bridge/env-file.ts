@@ -32,7 +32,7 @@ export const BRIDGE_ENV_FILE = '.holi/state/bridge.local.env'
 const KEY = /^HOLI_[A-Z_]+$/
 const VALUE = /^[0-9a-f]+$/
 
-export type BridgeVars = Readonly<Record<string, string>>
+type BridgeVars = Readonly<Record<string, string>>
 
 export interface BridgeEnv {
   /** Add `vars` to this vault's file. A key has one contributor. Returns the
@@ -45,7 +45,7 @@ export interface BridgeEnv {
 }
 
 /** The file's text: `KEY=value` lines, sorted. Throws on an unsafe pair. */
-export function bridgeEnvText(vars: BridgeVars): string {
+function bridgeEnvText(vars: BridgeVars): string {
   return Object.keys(vars)
     .sort()
     .map((key) => {

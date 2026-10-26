@@ -26,13 +26,6 @@ import {
 } from '@holi/shared'
 import { installedInfos } from '../plugin-host/installed'
 
-/**
- * The committed settings and the personal override beside it. The local file
- * also holds the reminder delivery watermark, which is why the resolver ignores
- * keys it does not know rather than warning about them.
- */
-export { SETTINGS_FILE, SETTINGS_LOCAL_FILE }
-
 async function readOrNull(abs: string): Promise<string | null> {
   try {
     return await readFile(abs, 'utf8')

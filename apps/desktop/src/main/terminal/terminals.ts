@@ -36,7 +36,7 @@ import {
   type TerminalContext,
 } from './terminal-context'
 
-export type { GitSummary, TerminalContext }
+export type { TerminalContext }
 
 /** A terminal as the panel lists it. */
 export interface TerminalInfo {
@@ -103,7 +103,7 @@ export interface TerminalsDeps {
 const POLL_MIN_INTERVAL_MS = 2_000
 
 /** How much output each terminal keeps for a replay. */
-export const REPLAY_BYTES = 256 * 1024
+const REPLAY_BYTES = 256 * 1024
 
 /** Environment that must not leak into a person's shell: Electron's own
  *  switches, which would make a `node` there behave as Electron. */
