@@ -306,6 +306,10 @@ export async function openActiveVault(args: {
    *  against the same refs. Its recovery pull releases this before delegating to
    *  `maybePull` (see there), which is why `maybePull`'s guard does NOT check it. */
   let pushInFlight = false
+  /** The running push, and the one follow-up push a request that arrived
+   *  meanwhile is waiting on. Requests coalesce into that single follow-up. */
+  let pushRun: Promise<void> | null = null
+  let pushFollowUp: Promise<void> | null = null
   let lastFocusPull = 0
   /** The last network attempt failed. A flag rather than a state, so the
    *  `finally` that clears `syncing` cannot overwrite it. */
@@ -696,17 +700,39 @@ export async function openActiveVault(args: {
    *   - **network** → `offline`; the coalescer, focus and the pull loop retry.
    *   - **permission** → `no-access`, never dressed as offline.
    *
+   * A request that arrives while a push is running follows it: it resolves
+   * only after one more push, so a commit that landed after the running push
+   * started is on the remote when an explicit caller (⌘S) is told so. Any number
+   * of such requests share that one follow-up. A pull or commit in flight still
+   * declines: a merging pull schedules its own push, and a commit re-arms the
+   * coalescer, so neither strands work.
+   *
    * Never throws: every path is caught, so quit and vault switch can race it
    * against a timeout without risking an unhandled rejection.
    */
-  async function pushNow(): Promise<void> {
+  function pushNow(): Promise<void> {
     // A reconcile owns the tree; a sticky conflict means the remote has moved
     // under us and only a reconcile clears it. Pushing into either is wrong.
-    if (closed || manualPause !== null || conflictPaths !== null) return
+    if (closed || manualPause !== null || conflictPaths !== null) return Promise.resolve()
     // Single-flight against itself, the pull loop, and a commit, all of which
     // touch refs or the index. Claimed synchronously, before the first await.
-    if (pushInFlight || pullInFlight || committing) return
+    if (pullInFlight || committing) return Promise.resolve()
+    if (pushInFlight) {
+      // `pushRun` never rejects, so the follow-up cannot either.
+      pushFollowUp ??= pushRun!.then(() => {
+        pushFollowUp = null
+        return pushNow()
+      })
+      return pushFollowUp
+    }
     pushInFlight = true
+    pushRun = runPush().finally(() => {
+      pushRun = null
+    })
+    return pushRun
+  }
+
+  async function runPush(): Promise<void> {
     try {
       let result = await args.repo.push()
       if (result.kind === 'rejected' && result.reason === 'non-fast-forward') {

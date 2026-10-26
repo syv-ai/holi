@@ -1746,17 +1746,6 @@ describe('sync', () => {
     await caller.sync.commitNow()
     expect(await caller.sync.pushNow()).toEqual({ ok: true })
 
-    // Wait until dest's commits are all on origin (nothing ahead) before cloning
-    // the checker — the explicit pushNow can no-op if the seed's open-drain push
-    // is still in flight, and the coalescer's retry lands a beat later.
-    for (let i = 0; i < 200; i++) {
-      const ahead = await plainGit(dest, ['rev-list', '--count', 'origin/main..HEAD']).catch(
-        () => '1',
-      )
-      if (ahead === '0') break
-      await new Promise((r) => setTimeout(r, 20))
-    }
-
     const check = await makeClone(origin, 'check')
     expect(await readFile(join(check, 'ship.md'), 'utf8')).toBe('# Ship\n')
     expect(dest).toBeTruthy()

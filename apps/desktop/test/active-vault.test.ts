@@ -655,6 +655,69 @@ describe('ActiveVault — sync', () => {
     await waitFor('the vault to settle up-to-date', () => active.syncState().kind === 'up-to-date')
   })
 
+  it('an explicit push requested while another push is in flight follows it', async () => {
+    // The open-drain push can still be running when ⌘S asks for a push. That
+    // request must not be dropped: it resolves only once a second push has
+    // carried the commit that landed after the first one started.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const real = openRepo(dir)
+    let pushes = 0
+    let running = 0
+    let overlapped = false
+    let started!: () => void
+    const firstStarted = new Promise<void>((r) => (started = r))
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: {
+        ...real,
+        push: async () => {
+          const n = ++pushes
+          running++
+          if (running > 1) overlapped = true
+          try {
+            const result = await real.push()
+            if (n === 1) {
+              started()
+              await gate
+            }
+            return result
+          } finally {
+            running--
+          }
+        },
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      // Neither timer may do the work: the explicit request has to.
+      timings: {
+        commitQuietMs: 60_000,
+        pushQuietMs: 60_000,
+        pullIntervalMs: 60_000,
+        healIntervalMs: 60_000,
+      },
+    })
+    open.push(active)
+    await firstStarted
+
+    await writeFile(join(dir, 'late.md'), 'late\n', 'utf8')
+    await plainGit(dir, ['add', 'late.md'])
+    await plainGit(dir, ['commit', '-m', 'late'])
+
+    const explicit = active.pushNow()
+    const second = active.pushNow()
+    release()
+    await Promise.all([explicit, second])
+
+    expect(await plainGit(origin, ['log', 'main', '--format=%s'])).toContain('late')
+    expect(pushes).toBe(2)
+    expect(overlapped).toBe(false)
+  })
+
   it('shows offline with the waiting count when a push cannot reach the remote', async () => {
     // The one time unpushed commits are worth naming: the network is gone and
     // they are piling up. The indicator must not say "synced" then, and a bare
