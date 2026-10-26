@@ -82,7 +82,7 @@ export function TurnChip({ sessionId }: { sessionId: string }): React.JSX.Elemen
           ref={chipRef}
           variant="link"
           data-turn-chip={sessionId}
-          className="h-auto shrink-0 justify-start p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
+          className="h-auto shrink-0 justify-start text-xs font-normal text-muted-foreground hover:text-foreground"
           onClick={() => {
             setReviewTurn(turn)
             setOpen(true)

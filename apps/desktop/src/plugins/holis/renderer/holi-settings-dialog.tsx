@@ -109,15 +109,17 @@ function Row({
   children?: React.ReactNode
 }): React.JSX.Element {
   return (
-    <FramePanel className="flex flex-col gap-2">
-      <div className="flex items-center gap-4">
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="text-sm font-medium">{label}</span>
-          {hint !== undefined && <span className="text-xs text-muted-foreground">{hint}</span>}
+    <FramePanel>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-4">
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="text-sm font-medium">{label}</span>
+            {hint !== undefined && <span className="text-xs text-muted-foreground">{hint}</span>}
+          </div>
+          {control}
         </div>
-        {control}
+        {children}
       </div>
-      {children}
     </FramePanel>
   )
 }
@@ -175,16 +177,18 @@ function General({ holi, onError }: { holi: HoliSummary; onError: (m: string) =>
       <div className="flex flex-col items-center gap-3 pt-2">
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="outline" className="size-20" aria-label="Change its face and colour">
-              <PixelPersona
-                name={holi.mascot ?? 'strategist'}
-                color={holi.color ?? DEFAULT_HOLI_COLOUR}
-                crop="full"
-                scale={2}
-              />
+            <Button variant="outline" className="h-auto" aria-label="Change its face and colour">
+              <span className="py-2">
+                <PixelPersona
+                  name={holi.mascot ?? 'strategist'}
+                  color={holi.color ?? DEFAULT_HOLI_COLOUR}
+                  crop="full"
+                  scale={2}
+                />
+              </span>
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="flex w-68 flex-col gap-3">
+          <PopoverContent className="w-68">
             <ToggleGroup
               type="single"
               size="sm"
@@ -213,7 +217,10 @@ function General({ holi, onError }: { holi: HoliSummary; onError: (m: string) =>
               {HOLI_COLOURS.map((c) => (
                 <ToggleGroupItem key={c} value={c} aria-label={`Colour ${c}`}>
                   {/* The Holi's own colour: categorical identity, as data. */}
-                  <span className="size-4 rounded-full" style={{ backgroundColor: c }} />
+                  <span
+                    className="size-4 rounded-full bg-(--swatch)"
+                    style={{ '--swatch': c } as React.CSSProperties}
+                  />
                 </ToggleGroupItem>
               ))}
             </ToggleGroup>
@@ -631,14 +638,18 @@ function Memory({ holi, onError }: { holi: HoliSummary; onError: (m: string) => 
         <div className="h-px overflow-hidden rounded-full bg-foreground/[0.08]">
           <div
             className={cn(
-              'h-full',
+              'h-full w-(--fill)',
               dropped > 0
                 ? 'bg-destructive'
                 : count >= MEMORY_MAX_LINES * 0.8
                   ? 'bg-amber-500 dark:bg-amber-400'
                   : 'bg-foreground/40',
             )}
-            style={{ width: `${Math.min(100, (count / MEMORY_MAX_LINES) * 100)}%` }}
+            style={
+              {
+                '--fill': `${Math.min(100, (count / MEMORY_MAX_LINES) * 100)}%`,
+              } as React.CSSProperties
+            }
           />
         </div>
         <span className="text-xs text-muted-foreground tabular-nums">
@@ -667,20 +678,17 @@ export function HoliSettingsDialog(): React.JSX.Element | null {
         setOpen(null)
       }}
     >
-      <DialogContent
-        className="flex h-[85vh] flex-col overflow-hidden sm:max-w-6xl"
-        aria-describedby={undefined}
-      >
+      <DialogContent className="sm:max-w-6xl" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>{holi.name} settings</DialogTitle>
         </DialogHeader>
-        <div className="flex min-h-0 flex-1 gap-6">
+        <div className="flex h-170 min-h-0 gap-6">
           <nav aria-label="Settings" className="flex w-40 shrink-0 flex-col gap-0.5">
             {SECTIONS.map((s) => (
               <Button
                 key={s.id}
                 variant="ghost"
-                className="h-8 justify-start gap-2.5 rounded-lg px-2.5 text-nav font-medium text-muted-foreground motion-respond hover:bg-foreground/[0.04] hover:text-foreground aria-[current=page]:bg-foreground/[0.06] aria-[current=page]:text-foreground"
+                className="justify-start text-nav font-medium text-muted-foreground hover:bg-foreground/5 hover:text-foreground aria-[current=page]:bg-foreground/10 aria-[current=page]:text-foreground"
                 aria-current={open.section === s.id ? 'page' : undefined}
                 onClick={() => setOpen({ id: holi.id, section: s.id })}
               >

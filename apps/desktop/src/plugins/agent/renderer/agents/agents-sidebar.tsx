@@ -42,7 +42,7 @@ export function AgentsSidebar(): React.JSX.Element {
       data-agents-sidebar=""
     >
       {/* The Documents tab's rows: the sidebar's menu, its badge for a count. */}
-      <SidebarMenu className="gap-0.5">
+      <SidebarMenu>
         <SidebarNavItem
           icon={Inbox}
           label="Inbox"

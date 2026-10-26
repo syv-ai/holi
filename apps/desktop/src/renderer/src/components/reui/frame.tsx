@@ -101,8 +101,13 @@ function Frame({
 function FramePanel({
   className,
   fit,
+  flush,
   ...props
-}: React.ComponentProps<"div"> & { fit?: boolean }) {
+}: React.ComponentProps<"div"> & {
+  fit?: boolean
+  /** No padding of its own: rows, lists and textareas that run edge to edge. */
+  flush?: boolean
+}) {
   return (
     <div
       className={cn(
@@ -112,7 +117,7 @@ function FramePanel({
         !fit && "grow",
         "before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--frame-panel-radius)-1px)] before:shadow-black/5",
         "dark:bg-clip-border dark:before:shadow-white/5",
-        "px-(--frame-panel-px) py-(--frame-panel-py)",
+        flush ? "p-0" : "px-(--frame-panel-px) py-(--frame-panel-py)",
         className
       )}
       data-slot="frame-panel"

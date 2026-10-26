@@ -126,16 +126,18 @@ function Fact({
   children: React.ReactNode
 }): React.JSX.Element {
   return (
-    <FramePanel className="flex items-start gap-3">
-      <IconTile size="sm">
-        <Glyph className="size-3.5" />
-      </IconTile>
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium">{title}</span>
-          {file !== undefined && <Badge variant="outline">{file}</Badge>}
+    <FramePanel>
+      <div className="flex items-start gap-3">
+        <IconTile size="sm">
+          <Glyph className="size-3.5" />
+        </IconTile>
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium">{title}</span>
+            {file !== undefined && <Badge variant="outline">{file}</Badge>}
+          </div>
+          <p className="text-xs text-pretty text-muted-foreground">{children}</p>
         </div>
-        <p className="text-xs text-pretty text-muted-foreground">{children}</p>
       </div>
     </FramePanel>
   )
@@ -194,17 +196,19 @@ function Way({
   children: React.ReactNode
 }): React.JSX.Element {
   return (
-    <FramePanel className="flex flex-col gap-3">
-      <IconTile size="sm">
-        <Glyph className="size-3.5" />
-      </IconTile>
-      <div className="flex flex-col gap-1">
-        <span className="text-sm font-medium">{title}</span>
-        <p className="text-xs text-pretty text-muted-foreground">{children}</p>
+    <FramePanel>
+      <div className="flex h-full flex-col gap-3">
+        <IconTile size="sm">
+          <Glyph className="size-3.5" />
+        </IconTile>
+        <div className="flex flex-col gap-1">
+          <span className="text-sm font-medium">{title}</span>
+          <p className="text-xs text-pretty text-muted-foreground">{children}</p>
+        </div>
+        <Badge variant="outline" className="mt-auto">
+          {example}
+        </Badge>
       </div>
-      <Badge variant="outline" className="mt-auto">
-        {example}
-      </Badge>
     </FramePanel>
   )
 }
@@ -326,7 +330,10 @@ export function WhoStep({
           {HOLI_COLOURS.map((c) => (
             <ToggleGroupItem key={c} value={c} aria-label={`Colour ${c}`}>
               {/* The Holi's own colour: categorical identity, as data. */}
-              <span className="size-4 rounded-full" style={{ backgroundColor: c }} />
+              <span
+                className="size-4 rounded-full bg-(--swatch)"
+                style={{ '--swatch': c } as React.CSSProperties}
+              />
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
@@ -411,7 +418,7 @@ export function DoesStep({
 // ── 5. What it may do ─────────────────────────────────────────────────────
 
 /** A folder as the rule that lets a run write in it. */
-export function folderRule(folder: string): string {
+function folderRule(folder: string): string {
   const clean = folder.trim().replace(/^\/+|\/+$/g, '')
   return `Edit(${clean}/**)`
 }
@@ -520,7 +527,7 @@ export function MayStep({
           <ul aria-label="Allowed without asking" className="flex flex-wrap gap-2">
             {draft.allow.map((rule) => (
               <li key={rule}>
-                <Badge variant="secondary" size="lg" className="gap-1 pe-0.5 font-mono">
+                <Badge variant="secondary" size="lg" className="font-mono">
                   {rule}
                   <IconButton
                     size="icon-xs"
@@ -659,9 +666,11 @@ export function HabitStep({
 
 function Line({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <FramePanel className="flex items-start gap-4">
-      <span className="w-28 shrink-0 text-xs text-muted-foreground">{label}</span>
-      <div className="min-w-0 flex-1 text-sm break-words">{children}</div>
+    <FramePanel>
+      <div className="flex items-start gap-4">
+        <span className="w-28 shrink-0 text-xs text-muted-foreground">{label}</span>
+        <div className="min-w-0 flex-1 text-sm break-words">{children}</div>
+      </div>
     </FramePanel>
   )
 }
@@ -724,7 +733,7 @@ export function ReviewStep({
 }
 
 /** A field of one entry a line, as a list. */
-export function lines(text: string): string[] {
+function lines(text: string): string[] {
   return text
     .split('\n')
     .map((l) => l.trim())

@@ -157,7 +157,7 @@ function Wizard({
   }
 
   return (
-    <div className="flex min-h-0 flex-1">
+    <div className="flex h-170 min-h-0 flex-1">
       <aside className="flex w-64 shrink-0 flex-col gap-4 p-6 pe-4">
         <header className="flex min-h-8 items-center justify-between gap-2">
           <span className="flex items-center gap-2 text-sm font-medium">
@@ -179,56 +179,61 @@ function Wizard({
         <Frame
           variant="ghost"
           spacing="xs"
-          className="flex w-full flex-1 gap-0 overflow-hidden bg-muted/60 dark:bg-muted/10"
+          className="flex w-full flex-1 overflow-hidden bg-muted/60 dark:bg-muted/10"
         >
-          <FramePanel className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-10 py-12">
-            {/* The view's one entrance: each step rises in as it is shown;
+          <FramePanel
+            flush
+            className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain"
+          >
+            <div className="flex flex-1 flex-col px-10 py-12">
+              {/* The view's one entrance: each step rises in as it is shown;
                 reduced motion fades it instead (the house's `motion-in-rise`). */}
-            <div
-              key={meta.id}
-              className="mx-auto flex w-full max-w-lg flex-1 flex-col motion-in-rise"
-            >
-              <div className="flex flex-col gap-8">
-                <StepHeading title={meta.title} description={meta.description} />
-                {meta.id === 'what' && <WhatStep />}
-                {meta.id === 'work' && <WorkStep />}
-                {meta.id === 'who' && <WhoStep draft={draft} set={set} />}
-                {meta.id === 'does' && <DoesStep draft={draft} set={set} />}
-                {meta.id === 'may' && <MayStep draft={draft} set={set} />}
-                {meta.id === 'habit' && <HabitStep draft={draft} set={set} />}
-                {meta.id === 'review' && <ReviewStep draft={draft} habits={habits} />}
-              </div>
-              <div className="mt-auto flex flex-col gap-2 pt-8">
-                {error !== null && (
-                  <p role="alert" className="text-sm text-destructive">
-                    {error}
-                  </p>
-                )}
-                {mode === 'learn' && last ? (
-                  <>
-                    <Button className="w-full" onClick={() => onMode('create')}>
-                      Create a Holi
+              <div
+                key={meta.id}
+                className="mx-auto flex w-full max-w-lg flex-1 flex-col motion-in-rise"
+              >
+                <div className="flex flex-col gap-8">
+                  <StepHeading title={meta.title} description={meta.description} />
+                  {meta.id === 'what' && <WhatStep />}
+                  {meta.id === 'work' && <WorkStep />}
+                  {meta.id === 'who' && <WhoStep draft={draft} set={set} />}
+                  {meta.id === 'does' && <DoesStep draft={draft} set={set} />}
+                  {meta.id === 'may' && <MayStep draft={draft} set={set} />}
+                  {meta.id === 'habit' && <HabitStep draft={draft} set={set} />}
+                  {meta.id === 'review' && <ReviewStep draft={draft} habits={habits} />}
+                </div>
+                <div className="mt-auto flex flex-col gap-2 pt-8">
+                  {error !== null && (
+                    <p role="alert" className="text-sm text-destructive">
+                      {error}
+                    </p>
+                  )}
+                  {mode === 'learn' && last ? (
+                    <>
+                      <Button className="w-full" onClick={() => onMode('create')}>
+                        Create a Holi
+                      </Button>
+                      <Button variant="ghost" className="w-full" onClick={() => close(null)}>
+                        Close
+                      </Button>
+                    </>
+                  ) : meta.id === 'review' ? (
+                    <Button className="w-full" disabled={busy} onClick={submit}>
+                      {busy ? 'Creating…' : error === null ? 'Create Holi' : 'Try again'}
                     </Button>
-                    <Button variant="ghost" className="w-full" onClick={() => close(null)}>
-                      Close
+                  ) : (
+                    <Button
+                      className="w-full"
+                      disabled={problem !== null}
+                      onClick={() => go(current + 1)}
+                    >
+                      Continue
                     </Button>
-                  </>
-                ) : meta.id === 'review' ? (
-                  <Button className="w-full" disabled={busy} onClick={submit}>
-                    {busy ? 'Creating…' : error === null ? 'Create Holi' : 'Try again'}
-                  </Button>
-                ) : (
-                  <Button
-                    className="w-full"
-                    disabled={problem !== null}
-                    onClick={() => go(current + 1)}
-                  >
-                    Continue
-                  </Button>
-                )}
-                {problem !== null && meta.id !== 'who' && (
-                  <p className="text-xs text-muted-foreground">{problem}</p>
-                )}
+                  )}
+                  {problem !== null && meta.id !== 'who' && (
+                    <p className="text-xs text-muted-foreground">{problem}</p>
+                  )}
+                </div>
               </div>
             </div>
           </FramePanel>
@@ -249,10 +254,7 @@ export function HoliWizardDialog(): React.JSX.Element | null {
         if (!next) setOpen(null)
       }}
     >
-      <DialogContent
-        className="flex h-[85vh] flex-col overflow-hidden sm:max-w-6xl"
-        aria-describedby={undefined}
-      >
+      <DialogContent className="sm:max-w-6xl" aria-describedby={undefined}>
         <DialogTitle className="sr-only">
           {open.mode === 'learn' ? 'How Holis work' : 'New Holi'}
         </DialogTitle>

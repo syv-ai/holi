@@ -23,24 +23,26 @@ export function HolisInbox(): React.JSX.Element | null {
           <Button
             key={run.jobId}
             variant="ghost"
-            className="h-auto w-full flex-col items-stretch gap-1 rounded-lg border border-dashed border-foreground/25 bg-foreground/[0.05] px-2.5 py-2 text-start font-normal motion-respond hover:bg-foreground/[0.08]"
+            className="h-auto w-full text-start font-normal"
             onClick={() => open(holi.id)}
           >
-            <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-              <PixelPersona
-                name={holi.mascot ?? 'strategist'}
-                color={holi.color ?? DEFAULT_HOLI_COLOUR}
-                status="needs-you"
-              />
-              <span className="min-w-0 flex-1 truncate">{holi.name}</span>
-              <span className="tabular-nums">
-                {run.report === undefined ? '' : ago(new Date(run.report.at).getTime(), now)}
+            <span className="flex w-full min-w-0 flex-col gap-1 rounded-lg border border-dashed border-foreground/25 bg-foreground/5 px-1 py-2">
+              <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                <PixelPersona
+                  name={holi.mascot ?? 'strategist'}
+                  color={holi.color ?? DEFAULT_HOLI_COLOUR}
+                  status="needs-you"
+                />
+                <span className="min-w-0 flex-1 truncate">{holi.name}</span>
+                <span className="tabular-nums">
+                  {run.report === undefined ? '' : ago(new Date(run.report.at).getTime(), now)}
+                </span>
               </span>
+              <span className="line-clamp-2 text-sm font-semibold whitespace-normal text-foreground">
+                {run.report?.text}
+              </span>
+              <span className="truncate font-mono text-xs text-muted-foreground">{run.path}</span>
             </span>
-            <span className="line-clamp-2 text-sm font-semibold whitespace-normal text-foreground">
-              {run.report?.text}
-            </span>
-            <span className="truncate font-mono text-xs text-muted-foreground">{run.path}</span>
           </Button>
         ))}
       </div>

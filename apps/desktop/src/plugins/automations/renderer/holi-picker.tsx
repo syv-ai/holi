@@ -26,7 +26,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 /** What the picker needs of a Holi, by shape. */
-export interface PickableHoli {
+interface PickableHoli {
   id: string
   name: string
   mascot?: string
@@ -38,7 +38,7 @@ export interface PickableHoli {
 const holis = capClient<{ 'holis.list': UiCapability<void, PickableHoli[]> }>('holis')
 
 /** The vault's Holis, while the Holis plugin runs; `[]` otherwise. */
-export function useHolis(): PickableHoli[] {
+function useHolis(): PickableHoli[] {
   const remote = useAtomValue(activeRemoteAtom)
   const has = useHasCapability('holis.list')
   const [list, setList] = useState<PickableHoli[]>([])
@@ -102,7 +102,7 @@ export function HoliPicker({
           variant="ghost"
           size="xs"
           aria-label={`Carried out by ${label}`}
-          className="gap-1.5 text-muted-foreground data-[state=open]:bg-accent"
+          className="text-muted-foreground data-[state=open]:bg-accent"
         >
           <Face {...(current === undefined ? {} : { holi: current })} />
           <span className="font-medium text-foreground">{label}</span>
@@ -111,7 +111,7 @@ export function HoliPicker({
           />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-72 p-0">
+      <PopoverContent align="start" className="w-72">
         <Command>
           <CommandInput placeholder="Search Holis…" />
           <CommandList>

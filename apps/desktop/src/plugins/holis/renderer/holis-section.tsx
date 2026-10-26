@@ -4,7 +4,7 @@
  * see NOTICE.md): a "Holis" label with its +, then one row per Holi, its pixel
  * persona with a status dot. With none yet, an intro card that says what a Holi
  * is and makes the first one. Making one, and reading how they work, is the
- * wizard (`wizard/HoliWizard.tsx`).
+ * wizard (`wizard/holi-wizard.tsx`).
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { CircleHelp, Ellipsis, Plus } from 'lucide-react'
@@ -39,7 +39,7 @@ import { DEFAULT_HOLI_COLOUR } from './parts'
 /** The chrome row (`docs/ui-system.md`, Rules): one fill scale on the
  *  foreground, `text-nav`. */
 const ROW =
-  'h-8 w-full min-w-0 justify-start gap-2 rounded-lg px-2 pe-8 text-nav font-medium text-muted-foreground motion-respond hover:bg-foreground/[0.04] hover:text-foreground active:bg-foreground/[0.07] aria-[current=page]:bg-foreground/[0.06] aria-[current=page]:text-foreground'
+  'w-full min-w-0 justify-start text-nav font-medium text-muted-foreground hover:bg-foreground/5 hover:text-foreground aria-[current=page]:bg-foreground/10 aria-[current=page]:text-foreground'
 
 function HoliRow({ holi }: { holi: HoliSummary }): React.JSX.Element {
   const selected = useAtomValue(selectedHoliAtom)
@@ -88,7 +88,7 @@ function HoliRow({ holi }: { holi: HoliSummary }): React.JSX.Element {
           <span
             aria-hidden="true"
             className={cn(
-              'absolute -end-0.5 -top-0.5 size-[7px] rounded-full ring-2 ring-ground',
+              'absolute -end-0.5 -top-0.5 size-1.75 rounded-full ring-2 ring-sidebar',
               state === 'needs-you'
                 ? 'bg-amber-600 dark:bg-amber-400'
                 : state === 'working'
@@ -100,7 +100,10 @@ function HoliRow({ holi }: { holi: HoliSummary }): React.JSX.Element {
           />
         </span>
         <span
-          className={cn('min-w-0 flex-1 truncate text-start', broken && 'text-muted-foreground')}
+          className={cn(
+            'min-w-0 flex-1 truncate pe-5 text-start',
+            broken && 'text-muted-foreground',
+          )}
         >
           {holi.name}
         </span>
@@ -110,36 +113,34 @@ function HoliRow({ holi }: { holi: HoliSummary }): React.JSX.Element {
           </span>
         )}
       </Button>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <IconButton
-            label={`${holi.name} options`}
-            size="icon-xs"
-            className="absolute end-1 top-1 opacity-0 group-hover/holi:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
-          >
-            <Ellipsis />
-          </IconButton>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={() => open(holi.id)}>Open</DropdownMenuItem>
-          <DropdownMenuItem
-            onSelect={() => {
-              open(holi.id)
-              settings({ id: holi.id, section: 'general' })
-            }}
-          >
-            Settings…
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onSelect={() => {
-              setMode('documents')
-              void openPath(holi.path)
-            }}
-          >
-            Edit its file
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <span className="absolute end-1 top-1 opacity-0 focus-within:opacity-100 group-hover/holi:opacity-100 has-data-[state=open]:opacity-100">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <IconButton label={`${holi.name} options`} size="icon-xs">
+              <Ellipsis />
+            </IconButton>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => open(holi.id)}>Open</DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => {
+                open(holi.id)
+                settings({ id: holi.id, section: 'general' })
+              }}
+            >
+              Settings…
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => {
+                setMode('documents')
+                void openPath(holi.path)
+              }}
+            >
+              Edit its file
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </span>
     </div>
   )
 }
@@ -183,7 +184,7 @@ export function HolisSection(): React.JSX.Element {
   return (
     <section aria-label="Holis" className="flex flex-col gap-px">
       <div className="flex items-center justify-between pe-1">
-        <SectionLabel className="pb-0">Holis</SectionLabel>
+        <SectionLabel>Holis</SectionLabel>
         {holis.length > 0 && (
           <div className="flex items-center gap-0.5">
             <IconButton

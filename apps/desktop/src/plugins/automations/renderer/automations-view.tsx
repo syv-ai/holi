@@ -33,29 +33,31 @@ function Card({ a, current }: { a: ScheduleSummary; current: boolean }): React.J
     <Button
       variant="ghost"
       className={cn(
-        'h-auto w-full flex-col items-stretch gap-1 rounded-lg px-2.5 py-2 text-start font-normal motion-respond hover:bg-foreground/[0.04]',
-        current && 'bg-foreground/[0.06]',
+        'h-auto w-full text-start font-normal hover:bg-foreground/5',
+        current && 'bg-foreground/10',
       )}
       aria-current={current ? 'page' : undefined}
       onClick={() => select(a.path)}
     >
-      <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-        <Clock className="size-3" />
-        <span className="min-w-0 flex-1 truncate">{a.error ?? a.when ?? ''}</span>
-        <Badge variant={a.status === 'on' ? 'primary-light' : 'outline'}>
-          {a.status === 'on'
-            ? 'Active'
-            : a.status === 'changed'
-              ? 'Changed'
-              : a.status === 'invalid'
-                ? 'Invalid'
-                : 'Off'}
-        </Badge>
-      </span>
-      <span className="truncate text-sm font-semibold text-foreground">{a.name}</span>
-      <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-        <span className="min-w-0 truncate">{a.holiName ?? a.holi ?? 'Claude'}</span>
-        {a.lastRun !== undefined && <span>· {lastFormat.format(new Date(a.lastRun))}</span>}
+      <span className="flex w-full min-w-0 flex-col gap-1 py-1">
+        <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <Clock className="size-3" />
+          <span className="min-w-0 flex-1 truncate">{a.error ?? a.when ?? ''}</span>
+          <Badge variant={a.status === 'on' ? 'primary-light' : 'outline'}>
+            {a.status === 'on'
+              ? 'Active'
+              : a.status === 'changed'
+                ? 'Changed'
+                : a.status === 'invalid'
+                  ? 'Invalid'
+                  : 'Off'}
+          </Badge>
+        </span>
+        <span className="truncate text-sm font-semibold text-foreground">{a.name}</span>
+        <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <span className="min-w-0 truncate">{a.holiName ?? a.holi ?? 'Claude'}</span>
+          {a.lastRun !== undefined && <span>· {lastFormat.format(new Date(a.lastRun))}</span>}
+        </span>
       </span>
     </Button>
   )

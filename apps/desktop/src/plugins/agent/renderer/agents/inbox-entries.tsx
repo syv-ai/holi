@@ -36,40 +36,39 @@ function Row({ entry, unread }: { entry: InboxEntry; unread: boolean }): React.J
       <Button
         variant="ghost"
         className={cn(
-          'h-auto w-full min-w-0 flex-col items-stretch gap-1 rounded-lg border border-transparent px-2.5 py-2 pe-9 text-start font-normal motion-respond hover:bg-foreground/[0.04] active:bg-foreground/[0.07] disabled:opacity-100',
-          unread && 'bg-foreground/[0.05]',
+          'h-auto w-full min-w-0 items-stretch text-start font-normal',
+          unread && 'bg-foreground/5',
         )}
         disabled={!opens}
         onClick={() => open(entry)}
       >
-        <span className="flex min-w-0 items-baseline gap-3">
-          <span
-            className={cn(
-              'min-w-0 flex-1 truncate text-sm text-foreground',
-              unread ? 'font-semibold' : 'font-medium',
-            )}
-          >
-            {entry.title}
+        <span className="flex w-full min-w-0 flex-col gap-1 py-1 pe-7">
+          <span className="flex min-w-0 items-baseline gap-3">
+            <span
+              className={cn(
+                'min-w-0 flex-1 truncate text-sm text-foreground',
+                unread ? 'font-semibold' : 'font-medium',
+              )}
+            >
+              {entry.title}
+            </span>
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+              {when(entry.at)}
+            </span>
           </span>
-          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-            {when(entry.at)}
-          </span>
+          {entry.line !== '' && (
+            <span className="whitespace-normal text-sm text-muted-foreground">{entry.line}</span>
+          )}
+          {entry.path !== undefined && (
+            <span className="truncate font-mono text-xs text-muted-foreground">{entry.path}</span>
+          )}
         </span>
-        {entry.line !== '' && (
-          <span className="whitespace-normal text-sm text-muted-foreground">{entry.line}</span>
-        )}
-        {entry.path !== undefined && (
-          <span className="truncate font-mono text-xs text-muted-foreground">{entry.path}</span>
-        )}
       </Button>
-      <IconButton
-        label="Dismiss"
-        size="icon-xs"
-        className="absolute end-1.5 top-1.5 opacity-0 focus-visible:opacity-100 group-focus-within/row:opacity-100 group-hover/row:opacity-100"
-        onClick={() => void dismiss(entry.id)}
-      >
-        <X />
-      </IconButton>
+      <span className="absolute end-1.5 top-1.5 opacity-0 focus-within:opacity-100 group-focus-within/row:opacity-100 group-hover/row:opacity-100">
+        <IconButton label="Dismiss" size="icon-xs" onClick={() => void dismiss(entry.id)}>
+          <X />
+        </IconButton>
+      </span>
     </li>
   )
 }

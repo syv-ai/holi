@@ -78,7 +78,7 @@ const list = (text: string): string[] =>
     .map((l) => l.trim())
     .filter((l) => l !== '')
 
-export function draftName(d: WizardDraft): string {
+function draftName(d: WizardDraft): string {
   return (d.name ?? HOLI_MASCOT_LABELS[d.mascot]).trim()
 }
 

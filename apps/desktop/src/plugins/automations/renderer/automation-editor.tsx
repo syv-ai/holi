@@ -90,7 +90,7 @@ export interface Draft {
 }
 
 /** A new automation, after MonoCode's defaults: weekdays at 09:00, active. */
-export function blankDraft(holi?: string): Draft {
+function blankDraft(holi?: string): Draft {
   return {
     name: '',
     active: true,
@@ -297,14 +297,11 @@ function TriggerRow({
       <span className="text-xs text-muted-foreground">
         {error !== undefined ? error : next === null ? '' : `Next run ${next}`}
       </span>
-      <IconButton
-        label="Remove trigger"
-        size="icon-xs"
-        className="ms-auto opacity-0 group-hover/trigger:opacity-100 focus-visible:opacity-100"
-        onClick={onRemove}
-      >
-        <X />
-      </IconButton>
+      <span className="ms-auto opacity-0 focus-within:opacity-100 group-hover/trigger:opacity-100">
+        <IconButton label="Remove trigger" size="icon-xs" onClick={onRemove}>
+          <X />
+        </IconButton>
+      </span>
     </li>
   )
 }
@@ -437,14 +434,11 @@ function EventRow({
         </>
       )}
       {error !== undefined && <span className="text-xs text-destructive">{error}</span>}
-      <IconButton
-        label="Remove trigger"
-        size="icon-xs"
-        className="ms-auto opacity-0 group-hover/trigger:opacity-100 focus-visible:opacity-100"
-        onClick={onRemove}
-      >
-        <X />
-      </IconButton>
+      <span className="ms-auto opacity-0 focus-within:opacity-100 group-hover/trigger:opacity-100">
+        <IconButton label="Remove trigger" size="icon-xs" onClick={onRemove}>
+          <X />
+        </IconButton>
+      </span>
     </li>
   )
 }
@@ -461,13 +455,13 @@ function AllowPill({
   return (
     <Popover onOpenChange={(open) => open && setText(allow.join('\n'))}>
       <PopoverTrigger asChild>
-        <Button variant="secondary" size="xs" className="gap-1">
+        <Button variant="secondary" size="xs">
           <ShieldCheck className="size-3.5" />
           {allow.length === 0 ? 'Asks for everything' : `${allow.length} allowed`}
           <ChevronDown className="size-3" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="flex w-80 flex-col gap-2">
+      <PopoverContent align="start" className="w-80">
         <p className="text-xs text-muted-foreground">
           Claude Code rules it may use without asking, one a line. Name the folders it writes:{' '}
           <code className="font-mono">Edit(tilbud/**)</code>, never a bare Edit. Everything else
@@ -661,7 +655,7 @@ export function AutomationEditor({
             autoFocus={isNew}
             aria-label="Automation name"
             placeholder="Untitled"
-            className="min-w-0 flex-1 bg-transparent px-0 text-xl font-semibold tracking-tight"
+            className="min-w-0 flex-1 bg-transparent text-xl font-semibold tracking-tight"
             value={draft.name}
             onChange={(e) => set({ name: e.target.value })}
           />
@@ -797,12 +791,13 @@ export function AutomationEditor({
               </ul>
             </FramePanel>
           )}
-          <FramePanel className="p-0">
+          <FramePanel flush>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="ghost"
-                  className="h-12 w-full justify-start gap-2 rounded-none px-(--frame-panel-px) font-normal text-muted-foreground hover:text-foreground"
+                  size="lg"
+                  className="w-full justify-start font-normal text-muted-foreground hover:text-foreground"
                   disabled={triggerCount >= 20}
                 >
                   <Plus className="size-3.5" />
@@ -856,7 +851,7 @@ export function AutomationEditor({
       <section aria-label="Instructions" className="flex flex-col gap-3">
         <h2 className="px-1 text-xs font-medium text-muted-foreground">Instructions</h2>
         <Frame spacing="sm">
-          <FramePanel className="flex flex-col gap-2 p-0">
+          <FramePanel flush className="flex flex-col">
             <Textarea
               aria-label="Instructions"
               className="min-h-56 resize-y bg-transparent text-sm"
@@ -899,14 +894,14 @@ export function AutomationEditor({
       </section>
 
       <Frame spacing="sm">
-        <FramePanel className="flex flex-col gap-0 p-0">
+        <FramePanel flush className="flex flex-col">
           <Button
             variant="ghost"
-            className="h-14 w-full justify-between rounded-none px-(--frame-panel-px) text-start font-normal"
+            className="h-auto w-full justify-between text-start font-normal"
             aria-expanded={advanced}
             onClick={() => setAdvanced((v) => !v)}
           >
-            <span className="flex flex-col gap-0.5">
+            <span className="flex flex-col gap-0.5 py-1">
               <span className="text-sm font-medium text-foreground">Advanced</span>
               <span className="text-xs text-muted-foreground">Catch-up window for missed runs</span>
             </span>
@@ -948,7 +943,7 @@ export function AutomationEditor({
       {isNew ? (
         <div className="min-h-0 flex-1 overflow-y-auto">{settings}</div>
       ) : (
-        <Tabs defaultValue="settings" className="flex min-h-0 flex-1 flex-col gap-0">
+        <Tabs defaultValue="settings" className="flex min-h-0 flex-1 flex-col">
           <div className="mx-auto w-full max-w-4xl px-8 pt-3">
             <TabsList>
               <TabsTrigger value="settings">Settings</TabsTrigger>

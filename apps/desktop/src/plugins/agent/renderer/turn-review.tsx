@@ -105,22 +105,24 @@ export function TurnReview(): React.JSX.Element | null {
       aria-label={`${file.path}, +${file.added} −${file.removed}`}
       onClick={() => void loadDiff(file.path)}
       className={cn(
-        'h-auto w-full min-w-0 justify-between gap-2 px-2 py-1 text-left text-xs font-normal',
+        'h-auto w-full min-w-0 justify-between text-left text-xs font-normal',
         selected === file.path ? 'bg-accent text-foreground' : 'text-muted-foreground',
       )}
     >
-      {/* The name first and the folder after it, muted: a path cut at its
-          end loses the filename, the one part that says which file it is.
-          The whole path is the tooltip. */}
-      <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-        <span className="shrink-0 truncate text-foreground">{basename(file.path)}</span>
-        {folder(file.path) !== '' && (
-          <span className="min-w-0 truncate text-muted-foreground">{folder(file.path)}</span>
-        )}
-      </span>
-      <span className="shrink-0 font-mono text-xs tabular-nums">
-        <span className="text-diff-added-foreground">+{file.added}</span>{' '}
-        <span className="text-diff-removed-foreground">−{file.removed}</span>
+      <span className="flex w-full min-w-0 items-baseline justify-between gap-2 py-1">
+        {/* The name first and the folder after it, muted: a path cut at its
+            end loses the filename, the one part that says which file it is.
+            The whole path is the tooltip. */}
+        <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+          <span className="shrink-0 truncate text-foreground">{basename(file.path)}</span>
+          {folder(file.path) !== '' && (
+            <span className="min-w-0 truncate text-muted-foreground">{folder(file.path)}</span>
+          )}
+        </span>
+        <span className="shrink-0 font-mono text-xs tabular-nums">
+          <span className="text-diff-added-foreground">+{file.added}</span>{' '}
+          <span className="text-diff-removed-foreground">−{file.removed}</span>
+        </span>
       </span>
     </Button>
   )

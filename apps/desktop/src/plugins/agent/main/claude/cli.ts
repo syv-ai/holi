@@ -166,8 +166,8 @@ export interface ClaudeCliDeps {
   log?: (msg: string) => void
 }
 
-export type ActionResult = { ok: true } | { ok: false; message: string }
-export type StartResult = { ok: true; id: string } | { ok: false; message: string }
+type ActionResult = { ok: true } | { ok: false; message: string }
+type StartResult = { ok: true; id: string } | { ok: false; message: string }
 
 export interface ClaudeCli {
   /** `claude agents --json`, raw. Null for every failure: no binary, a
@@ -187,7 +187,7 @@ export interface ClaudeCli {
   forkBg(target: VaultCliTarget, sessionId: string, name?: string): Promise<StartResult>
 }
 
-export interface StartBgOptions {
+interface StartBgOptions {
   name?: string
   prompt?: string
   model?: string
@@ -210,7 +210,6 @@ export function sessionName(raw: string | undefined): string | null {
   return clean === '' ? null : clean
 }
 
-// eslint-disable-next-line no-control-regex -- stripping the terminal's own colour codes
 const ANSI = /\x1b\[[0-9;]*m/g
 
 /** The id out of `backgrounded · <id> · <name>`, or null. */
@@ -224,13 +223,13 @@ export function parseBackgrounded(stdout: string): string | null {
  * A prompt as the last arguments: after `--`, so one that starts with a dash
  * (`- tidy the list`) is the prompt and not an unknown option.
  */
-export function promptArgs(prompt: string | undefined): string[] {
+function promptArgs(prompt: string | undefined): string[] {
   return prompt ? ['--', prompt] : []
 }
 
 /** The environment every `claude` Holi runs for a vault gets. It is also the
  *  vault's supervisor's, which its background sessions inherit. */
-export function cliEnv(base: NodeJS.ProcessEnv, target: VaultCliTarget): Record<string, string> {
+function cliEnv(base: NodeJS.ProcessEnv, target: VaultCliTarget): Record<string, string> {
   return buildAgentEnv(base, {
     configDir: target.configDir,
     binDir: target.binDir,

@@ -165,7 +165,8 @@ function Quiet({
     <div className="flex flex-col border-b border-divider">
       <Button
         variant="ghost"
-        className="h-9 w-full justify-start gap-2 rounded-none px-6 text-xs font-normal text-muted-foreground hover:bg-foreground/[0.03]"
+        size="lg"
+        className="w-full justify-start text-xs font-normal text-muted-foreground hover:bg-foreground/5"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
