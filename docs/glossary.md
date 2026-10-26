@@ -245,3 +245,11 @@ plus the repository, the plugin's folder in it and the commit every member is of
 What the `UserPromptSubmit` hook adds to every prompt: the note focused in the editor with the
 lines selected in it, and what changed since the session's last turn that the session did not
 change. Nothing else the agent could find itself. See [agent-config](features/agent-config.md).
+
+### Renderer names
+
+The suffix says what a renderer component is: **Dialog** is a modal, **Sheet** a side panel,
+**View** the content of a tab, **Page** a settings page, **Section** a sidebar group. A **feature**
+is a folder of `features/` (one screen or area); a **composite** is one of Holi's own reusable
+components, built only from stock ones; a **ReUI block** is a page-sized layout installed with the
+shadcn CLI and then moved into the feature it becomes. See [renderer](renderer.md).

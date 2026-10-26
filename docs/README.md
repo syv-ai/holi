@@ -5,13 +5,15 @@ other rather than repeating each other.
 
 ## Foundation
 
-| Page                            | What it is                                                                  |
-| ------------------------------- | --------------------------------------------------------------------------- |
-| [vision](vision.md)             | What Holi is, its principles, and what comes after v1                       |
-| [architecture](architecture.md) | A map of the system: processes, the vault, the agent, security              |
-| [ui-system](ui-system.md)       | The renderer's component layers, tokens, focus, motion, drawers and theming |
-| [glossary](glossary.md)         | Canonical terms; when a word is ambiguous, this wins                        |
-| [not-built](not-built.md)       | Designed and wanted, but absent                                             |
+| Page                                | What it is                                                                                                                     |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| [vision](vision.md)                 | What Holi is, its principles, and what comes after v1                                                                          |
+| [architecture](architecture.md)     | A map of the system: processes, the vault, the agent, security                                                                 |
+| [renderer](renderer.md)             | The renderer's layers, names, test locations and the rules that enforce them                                                   |
+| [ui-system](ui-system.md)           | The renderer's design rules: stock components, tokens, focus, motion, drawers, theming                                         |
+| [glossary](glossary.md)             | Canonical terms; when a word is ambiguous, this wins                                                                           |
+| [not-built](not-built.md)           | Designed and wanted, but absent                                                                                                |
+| [refactor](refactor/agent-first.md) | The agent-first renderer refactor: plan, [decisions](refactor/design-decisions.md) and [review findings](refactor/findings.md) |
 
 ## Features
 

@@ -8,7 +8,7 @@ Holi is one desktop app. There is no server, no database and no hosted service.
 
 ```
 ┌──────────────────────── apps/desktop (Electron) ────────────────────────┐
-│  Renderer (React, Jotai, CodeMirror)       Main (Node)                  │
+│  Renderer (React, Jotai, Tiptap)           Main (Node)                  │
 │  editor · board · drawers · views          vault store (walk, watcher)  │
 │              │                             sync engine (commit, pull,   │
 │              │  tRPC over IPC                push, reconcile)           │
@@ -54,6 +54,9 @@ channel; it was retired because it bound the session UI to one agent's protocol.
 - **Preload** is a narrow `contextBridge` adapter over `ipcRenderer`.
 - **Renderer** is the React UI. It runs with `contextIsolation` and without Node, and never sees a
   token. It reaches main through a typed tRPC router (`src/main/router.ts`).
+  Its layers (stock shadcn and ReUI in `components/`, `composites/`, `features/`, `state/`,
+  `lib/`) and the direction imports may go are [renderer](renderer.md); notes are Tiptap
+  (`features/documents/rich-text`), code files and plain markdown CodeMirror (`editor/`).
 
 Across the seam a document is named by its vault-relative path, validated with `vaultRelPath`,
 never by an absolute path or a generated id. A binary the renderer draws itself (a PDF) crosses as
@@ -96,8 +99,9 @@ Optional parts of Holi are plugins: first-party modules in the build, under
 `apps/desktop/src/plugins/<id>/`, listed once per process in `src/plugins/main.ts` and
 `src/plugins/renderer.ts`. Only the composition roots (`src/main/index.ts`, the renderer's
 `main.tsx`) import those lists. A plugin reaches core through one module per process,
-`src/main/plugin-api.ts` and `@/plugin-api`, plus the renderer's primitives and composites; ESLint
-holds the renderer side and plugin code to that, and `test/plugin-boundary.test.ts` holds main.
+`src/main/plugin-api.ts` and `@/plugin-api`, plus the renderer's `components/ui`, `components/reui`
+and `composites/`; ESLint holds the renderer side and plugin code to that, and
+`test/plugin-boundary.test.ts` holds main.
 A plugin's renderer reaches its main side only through capabilities that open the `ui` door: the
 `cap.run` mutation, called through `capClient<typeof table>(namespace)`, which offers just those
 verbs with their types read from the table (params cross as JSON, results by structured clone).
@@ -164,8 +168,9 @@ is ready, so every scheme in the build (vault apps' `holi-app:`) is registered a
 core's `holi-vault:`, and a plugin's handler answers 404 while the open vault has the plugin off. A scheme
 marked `frame` serves framed pages: the window guard lets such a frame move within its scheme and
 sends a link out of it to the browser.
-A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
-renderer imports its main side as types only, for `capClient`. The built-in part is the agent
+A plugin's own code sits in `main/`, `renderer/` and `test/` under its folder, and `shared/` where
+it has rules of its own (apps, browser, links, pdf); its renderer imports its main side as types
+only, for `capClient`, and its tests live in its own `test/`. The built-in part is the agent
 ([agent-sessions](features/agent-sessions.md)). The optional plugins are tasks
 ([tasks](features/tasks.md)), automations and Holis, built on the agent, PDF
 ([pdf](features/pdf.md)), links ([links](features/links.md)), the browser
@@ -333,3 +338,8 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 (`apps/desktop/electron-builder.yml`); CI publishes a signed, notarized build as a GitHub release
 whenever the version changes, and the installed app updates itself from there
 ([updates](features/updates.md)). There is no Docker, database or compose file.
+
+Every structural rule is a tool, and `.github/workflows/ci.yml` runs them all on each push and
+pull request: `pnpm typecheck`, `pnpm lint` (layers, styling, motion, the plugin seam), `pnpm knip`,
+`pnpm rulecast` (names and folders), `pnpm test` and the commit-message check. A rule that is not in
+CI does not exist; [renderer](renderer.md#rules) lists who owns which.
