@@ -138,3 +138,10 @@ Plan/spec: [`agent-first.md`](agent-first.md)
 - **Context:** `.git/hooks` is shared by every worktree of the repository, and `prepare` reinstalls the hooks on any `pnpm install`. Once this branch installs them, a worktree on another branch (the main checkout is on `feat/agents-holis-automations`) would run `rulecast` and `scripts/check-commit-msg.mjs`, which it does not have, and every commit there would fail.
 - **Decision:** the hook commands test for `.rulecast-config.yaml` and the script before running them. Where they exist they block as normal.
 - **Cost if wrong:** cheap; CI runs both checks regardless.
+
+## D20. Prettier runs over the whole tree once, so the format check can block
+
+- **Context:** the pre-commit hook and CI check formatting of changed files, but the tree was never Prettier-clean (AGENTS.md said not to run `pnpm format` for that reason). Every agent in the fix wave had to skip the hook, which means the check enforces nothing.
+- **Decision:** one `chore:` commit runs Prettier over every file it covers (vendored `components/ui`, `components/reui`, the lockfile and patches stay ignored), recorded in `.git-blame-ignore-revs`. AGENTS.md drops the "do not run format" warning.
+- **Alternatives:** keep checking only changed files on a dirty tree — every touched file drags in unrelated reformatting, which is what made agents skip the hook.
+- **Cost if wrong:** moderate; a large formatting diff makes merging `main` noisier once. `git blame` skips it.
