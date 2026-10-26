@@ -95,27 +95,30 @@ export function DraftsList({
   return (
     <ul aria-label="Drafts">
       {drafts.map((draft) => (
-        <li key={draft.draftId}>
-          {/* The `Button` primitive: the boundaries gate bans native `<button>`. */}
+        <li key={draft.draftId} className="border-b border-divider">
+          {/* The stock `Button`: the gate bans a native `<button>`. */}
           <Button
             variant="ghost"
-            className="block h-auto w-full rounded-none border-b border-divider px-4 py-2 text-left"
+            size="row"
+            className="w-full"
             onClick={() => onOpen(draft)}
           >
-            {/* The second lines start where the recipient does: the icon's
-                14px plus the row's `gap-2`. */}
-            <span className="flex items-baseline gap-2">
-              <FilePen className="size-3.5 self-center text-muted-foreground" />
-              <span className="min-w-0 flex-1 truncate text-sm">{recipients(draft.to)}</span>
-              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                {shortDate(draft.date)}
+            <span className="flex min-w-0 flex-1 flex-col">
+              {/* The second lines start where the recipient does: the icon's
+                  14px plus the row's `gap-2`. */}
+              <span className="flex items-baseline gap-2">
+                <FilePen className="size-3.5 self-center text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate text-sm">{recipients(draft.to)}</span>
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                  {shortDate(draft.date)}
+                </span>
               </span>
-            </span>
-            <span className="block truncate pl-5.5 text-sm">
-              {draft.subject === '' ? '(no subject)' : draft.subject}
-            </span>
-            <span className="block truncate pl-5.5 text-xs text-muted-foreground">
-              {draft.snippet}
+              <span className="block truncate pl-5.5 text-sm">
+                {draft.subject === '' ? '(no subject)' : draft.subject}
+              </span>
+              <span className="block truncate pl-5.5 text-xs text-muted-foreground">
+                {draft.snippet}
+              </span>
             </span>
           </Button>
         </li>

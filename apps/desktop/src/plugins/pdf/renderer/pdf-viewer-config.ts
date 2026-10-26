@@ -96,7 +96,7 @@ export function pdfViewerTheme(mode: 'light' | 'dark') {
       errorLight: v('destructive'),
     },
     // Holi's tooltip is the popover surface, not an inverted chip
-    // (`primitives/Tooltip.tsx`). The scrollbar's shape is `PDF_SCROLLBAR_CSS`.
+    // (`components/ui/tooltip.tsx`). The scrollbar's shape is `PDF_SCROLLBAR_CSS`.
     tooltip: {
       background: v('popover'),
       foreground: v('popover-foreground'),
@@ -209,7 +209,7 @@ export const PDF_SIGNATURE_DIALOG_CSS = [
   `${SIGNATURE_HEADER} > button { flex: none; width: 32px; height: 32px; margin: 0; padding: 0; border-radius: 6px; font-size: 0; background-color: transparent; background-image: linear-gradient(${v('foreground')}, ${v('foreground')}), linear-gradient(${v('foreground')}, ${v('foreground')}); background-size: 12px 1.5px, 1.5px 12px; background-position: center; background-repeat: no-repeat; }`,
   `${SIGNATURE_HEADER} > button:hover { background-color: ${v('accent')}; }`,
   // `PDF_SIGNATURE_NOTE`: Tailwind does not reach into the shadow root.
-  `.holi-signature-note { margin: 0; padding: 12px 16px; font-size: 12px; line-height: 1.5; color: ${v('muted-foreground')}; }`,
+  `[data-signature-note] { margin: 0; padding: 12px 16px; font-size: 12px; line-height: 1.5; color: ${v('muted-foreground')}; }`,
 ].join('\n')
 
 /**
@@ -366,7 +366,7 @@ export const PDF_TOOLBAR_CSS = [
   // by the viewer's spacers, which keep only a little room between groups.
   `${TOOLBAR} { justify-content: center; }`,
   `${TOOLBAR} > [data-epdf-i^="spacer-"] { flex: 0 0 0.5rem; }`,
-  // Its icons are Holi's icons (`primitives/Icon.tsx`): the toolbar size and
+  // Its icons are Holi's icons (`--icon-md`, `--icon-stroke`): the toolbar size and
   // stroke, muted at rest and the foreground under the pointer or while on.
   `${TOOLBAR} button svg:is(.h-5, .h-4) { width: var(--icon-md); height: var(--icon-md); stroke-width: var(--icon-stroke); }`,
   `${TOOLBAR} button svg { color: ${v('muted-foreground')}; }`,
@@ -452,7 +452,7 @@ export const PDF_SIDEBAR_MOTION_CSS = [
 ].join('\n')
 
 /**
- * Holi's comment field (`PdfCommentField.tsx`) in the viewer's
+ * Holi's comment field (`pdf-comment-field.tsx`) in the viewer's
  * comment row, in place of the viewer's one-line input.
  *
  * The textarea is portalled in after the viewer's input and send button, so
@@ -460,13 +460,13 @@ export const PDF_SIDEBAR_MOTION_CSS = [
  * focusable but out of sight: selecting a comment focuses it, and Holi's field
  * takes that focus over. The field grows to about eight lines, then scrolls.
  */
-const COMMENT_ROW = '[data-sidebar-id="comment-panel"] div:has(> .holi-comment-field)'
+const COMMENT_ROW = '[data-sidebar-id="comment-panel"] div:has(> [data-comment-field])'
 export const PDF_COMMENT_FIELD_CSS = [
   `${COMMENT_ROW} { gap: 8px; }`,
   `${COMMENT_ROW} > * { margin: 0; }`,
   `${COMMENT_ROW} > input[type="text"] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }`,
-  `textarea.holi-comment-field { order: -1; flex: 1; min-width: 0; min-height: 36px; max-height: 176px; field-sizing: content; resize: none; box-sizing: border-box; padding: 7px 12px; border: 1px solid ${v('divider')}; border-radius: 8px; background-color: ${v('input')}; color: ${v('foreground')}; font: inherit; font-size: 14px; line-height: 20px; outline: none; box-shadow: none; }`,
-  `textarea.holi-comment-field::placeholder { color: ${v('muted-foreground')}; }`,
+  `textarea[data-comment-field] { order: -1; flex: 1; min-width: 0; min-height: 36px; max-height: 176px; field-sizing: content; resize: none; box-sizing: border-box; padding: 7px 12px; border: 1px solid ${v('divider')}; border-radius: 8px; background-color: ${v('input')}; color: ${v('foreground')}; font: inherit; font-size: 14px; line-height: 20px; outline: none; box-shadow: none; }`,
+  `textarea[data-comment-field]::placeholder { color: ${v('muted-foreground')}; }`,
 ].join('\n')
 
 /**
@@ -587,7 +587,7 @@ export function hexOfRgb(css: string): string | null {
 }
 
 /** The widest a PDF opens: 150%, where 100% is one CSS pixel per PDF point. */
-export const PDF_OPENING_ZOOM_MAX = 1.5
+const PDF_OPENING_ZOOM_MAX = 1.5
 
 /**
  * A PDF opens at 150%, or at fit-width when the page would overflow the pane

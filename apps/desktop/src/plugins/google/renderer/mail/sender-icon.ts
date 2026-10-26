@@ -35,7 +35,7 @@ const UNDER_COUNTRY = new Set(["co", "com", "org", "net", "ac", "gov", "edu"])
 
 /** The site a mail domain belongs to: `notifications.github.com` is
  *  `github.com`, `mail.bbc.co.uk` is `bbc.co.uk`. Close enough for an icon. */
-export function siteOf(domain: string): string {
+function siteOf(domain: string): string {
   const labels = domain.toLowerCase().split(".").filter(Boolean)
   if (labels.length <= 2) return labels.join(".")
   const tld = labels[labels.length - 1]!

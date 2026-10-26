@@ -176,7 +176,7 @@ function unusable(bytes: Uint8Array, format: string): string | null {
 }
 
 /** The markdown that stands in for an image: the image itself, in Typst. */
-export function imageMarkdown(bytes: Uint8Array, format: string, alt: string): string {
+function imageMarkdown(bytes: Uint8Array, format: string, alt: string): string {
   const altArg = alt === '' ? '' : `, alt: ${commentSafeString(alt)}`
   return `<!--raw-typst #image(bytes((${bytes.join(',')})), format: "${format}"${altArg})-->`
 }

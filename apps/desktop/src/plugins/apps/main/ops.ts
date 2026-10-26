@@ -18,7 +18,6 @@ import { writeAtomic } from '../../../main/plugin-api'
 
 const ENTRY_FILE = 'index.html'
 
-export type AppOpResult = { ok: true } | { ok: false; error: string }
 export type AppInitResult = { ok: true; created: string[] } | { ok: false; error: string }
 
 const BUNDLE_RULE =

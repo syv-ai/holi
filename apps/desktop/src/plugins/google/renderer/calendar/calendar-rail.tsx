@@ -13,7 +13,7 @@
  * many invitations wait for an answer; a row's tile says meeting, call or
  * block.
  */
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type CSSProperties } from 'react'
 import { Badge } from '@/components/reui/badge'
 import { getDayKey } from '@/components/reui/event-calendar/event-calendar-lib'
 import { expandRecurrence } from '@/components/reui/event-calendar/event-calendar-recurrence'
@@ -22,6 +22,7 @@ import { IconTile } from '@/components/reui/icon-tile'
 import { cn } from '@/plugin-api'
 import { addDays, startOfDay, startOfMonth, startOfWeek, subDays } from 'date-fns'
 import { DayButton } from 'react-day-picker'
+import { Button } from '@/components/ui/button'
 import { Calendar, CalendarDayButton } from '@/components/ui/calendar'
 import { Item, ItemContent, ItemDescription, ItemTitle } from '@/components/ui/item'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -32,7 +33,7 @@ import type { CalendarChoice, GoogleCalendarItem, GoogleEventData } from '../cal
 import { CalendarsMenu } from './calendars-menu'
 import { WEEK_STARTS_ON, shortDay, timeOf } from './calendar-format'
 
-// The calendar primitive resolves this same default when no timeZone prop is
+// The event calendar resolves this same default when no timeZone prop is
 // passed; matching it keeps the rail's dots aligned with the grid's days.
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone
 
@@ -134,7 +135,7 @@ export function CalendarRail({
           onSelect={(next) => next && onDateChange(next)}
           weekStartsOn={WEEK_STARTS_ON}
           buttonVariant="ghost"
-          className="w-full bg-transparent p-0 [--cell-size:--spacing(7)]"
+          className="w-full bg-transparent"
           components={{
             DayButton: ({
               day,
@@ -175,7 +176,7 @@ export function CalendarRail({
             <Item size="xs" variant="outline" className="bg-accent mb-1">
               <ItemContent>
                 <ItemTitle>{shortDay(date)}</ItemTitle>
-                <ItemDescription className="flex items-center gap-1.5 tabular-nums">
+                <ItemDescription className="flex items-center tabular-nums">
                   {loading ? (
                     <Skeleton className="h-3 w-24" />
                   ) : (
@@ -258,17 +259,18 @@ function DaySheetRows({
       {occurrences.map((occurrence) => {
         const data = occurrence.event.data
         return (
-          <button
+          <Button
             key={occurrence.key}
             type="button"
+            variant="ghost"
+            size="row"
             onClick={() => onOpen(occurrence)}
-            className="hover:bg-accent focus-visible:ring-ring -mx-2 flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2"
+            className="w-full"
           >
             <IconTile
               variant="outline"
               size="xs"
               radius="full"
-              className="[--icon-tile-icon-size:--spacing(3)]"
             >
               {tileIcon(data)}
             </IconTile>
@@ -285,8 +287,8 @@ function DaySheetRows({
               <span className="text-muted-foreground flex min-w-0 items-center gap-1.5 text-xs">
                 <span
                   aria-hidden="true"
-                  className="size-1.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: occurrence.event.color }}
+                  className="size-1.5 shrink-0 rounded-full bg-(color:--swatch)"
+                  style={{ '--swatch': occurrence.event.color } as CSSProperties}
                 />
                 <span className="shrink-0 tabular-nums">
                   {occurrence.allDay ? 'All day' : timeOf(occurrence.start)}
@@ -309,7 +311,7 @@ function DaySheetRows({
                 Maybe
               </Badge>
             )}
-          </button>
+          </Button>
         )
       })}
     </>

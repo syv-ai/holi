@@ -80,7 +80,7 @@ const readArchivedAtom = unwrap(
  * made, so the read after the write replaces it, and a card does not flicker
  * back in between.
  */
-export const archiveOverridesAtom = atom<
+const archiveOverridesAtom = atom<
   Readonly<Record<string, { archived: boolean; signature: string }>>
 >({})
 

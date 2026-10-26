@@ -9,7 +9,7 @@ import { fetchEventColors } from './event-colors'
 const BASE = 'https://www.googleapis.com/calendar/v3'
 
 /** The user's own answer to an invitation. */
-export type RsvpStatus = 'needsAction' | 'tentative' | 'accepted' | 'declined'
+type RsvpStatus = 'needsAction' | 'tentative' | 'accepted' | 'declined'
 
 /**
  * What kind of block this is.
@@ -18,7 +18,7 @@ export type RsvpStatus = 'needsAction' | 'tentative' | 'accepted' | 'declined'
  * working day and they are a setting rather than an event, so they are filtered
  * out entirely.
  */
-export type EventKind = 'default' | 'outOfOffice' | 'focusTime' | 'birthday' | 'fromGmail'
+type EventKind = 'default' | 'outOfOffice' | 'focusTime' | 'birthday' | 'fromGmail'
 
 export interface CalendarEvent {
   id: string

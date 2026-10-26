@@ -24,7 +24,7 @@ export type { GoogleAccount }
 export const googleCap = capClient<GoogleCapabilities>('google')
 
 /** An account connected on this machine, as the picker needs it. */
-export interface ConnectedGoogleAccount {
+interface ConnectedGoogleAccount {
   sub: string
   email: string
 }
@@ -94,7 +94,7 @@ const currentConnectionAtom = atom((get): Connection | undefined => {
 })
 
 /** `undefined`: not asked yet. `null`: asked, nothing connected. */
-export const googleAccountAtom = atom(
+const googleAccountAtom = atom(
   (get): GoogleAccount | null | undefined => get(currentConnectionAtom)?.account,
 )
 

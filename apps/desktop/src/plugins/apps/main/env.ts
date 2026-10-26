@@ -40,7 +40,7 @@ export function parseDotenv(text: string): Record<string, string> {
 }
 
 /** The vault's secrets, `.env.local` over `.env`. */
-export async function readVaultEnv(root: string): Promise<Record<string, string>> {
+async function readVaultEnv(root: string): Promise<Record<string, string>> {
   const merged: Record<string, string> = {}
   for (const file of ENV_FILES) {
     const text = await readFile(join(root, file), 'utf8').catch(() => null)

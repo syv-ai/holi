@@ -127,7 +127,7 @@ export interface CommunityDeps {
 }
 
 /** The vault's pins, by id; an unreadable one is left out. */
-export async function readPins(root: string): Promise<Map<string, PluginPin>> {
+async function readPins(root: string): Promise<Map<string, PluginPin>> {
   const pins = new Map<string, PluginPin>()
   const dirs = await readdir(join(root, PLUGIN_PINS_DIR)).catch(() => [] as string[])
   for (const id of dirs) {

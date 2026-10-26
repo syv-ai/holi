@@ -13,7 +13,7 @@
  * The `mail-` modules are not mail-specific and are deliberately not renamed,
  * so the security-relevant code and its test suites stay put.
  */
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { ImageOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -260,8 +260,8 @@ function HtmlFrame({
       // lets framed content drop its own sandbox.
       sandbox="allow-same-origin"
       aria-label={label}
-      className="block w-full rounded-md border-0"
-      style={{ height }}
+      className="block h-(--frame-height) w-full rounded-md border-0"
+      style={{ '--frame-height': `${height}px` } as CSSProperties}
     />
   )
 }

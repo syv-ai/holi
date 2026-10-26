@@ -264,31 +264,35 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
           onKeyDown={(event) => {
             if (event.key === 'Escape') decide(false)
           }}
-          className="absolute top-1/2 left-1/2 z-20 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 outline-none"
+          className="absolute top-1/2 left-1/2 z-20 w-11/12 max-w-md -translate-x-1/2 -translate-y-1/2"
         >
           <CardHeader>
             <CardTitle id="app-approval-title">
               {name} wants permission to read {reads}
             </CardTitle>
           </CardHeader>
-          <CardContent className="flex min-w-0 flex-col gap-4">
-            <div className="grid gap-3 text-sm text-pretty text-muted-foreground">
-              <p>
-                {name} can store what it reads, and what it stores may sync to others in this vault
-                or leave this machine. Allow it only if you trust who wrote it.
-              </p>
-              <AppsWords asked={ask.affordances} reasons={reasons} />
-              <p>Holi asks again in 30 days, or sooner if the app changes.</p>
+          <CardContent>
+            <div className="flex min-w-0 flex-col gap-4">
+              <div className="grid gap-3 text-sm text-pretty text-muted-foreground">
+                <p>
+                  {name} can store what it reads, and what it stores may sync to others in this
+                  vault or leave this machine. Allow it only if you trust who wrote it.
+                </p>
+                <AppsWords asked={ask.affordances} reasons={reasons} />
+                <p>Holi asks again in 30 days, or sooner if the app changes.</p>
+              </div>
+              <WrittenBy authorship={authorship} />
             </div>
-            <WrittenBy authorship={authorship} />
           </CardContent>
-          <CardFooter className="justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={() => decide(false)}>
-              Not now
-            </Button>
-            <Button size="sm" onClick={() => decide(true)}>
-              Allow for 30 days
-            </Button>
+          <CardFooter className="justify-end">
+            <div className="flex gap-2">
+              <Button variant="ghost" size="sm" onClick={() => decide(false)}>
+                Not now
+              </Button>
+              <Button size="sm" onClick={() => decide(true)}>
+                Allow for 30 days
+              </Button>
+            </div>
           </CardFooter>
         </Card>
       )}
@@ -383,7 +387,7 @@ function WrittenBy({ authorship }: { authorship: Authorship }): React.JSX.Elemen
 
 function CommitLine({ lead, commit }: { lead: string; commit: AppCommit }): React.JSX.Element {
   const openCommit = useSetAtom(openCommitInHistoryAtom)
-  const link = 'h-auto p-0 text-xs text-foreground'
+  const link = '-mx-2 text-xs text-foreground'
   return (
     <span className="min-w-0">
       {lead}{' '}

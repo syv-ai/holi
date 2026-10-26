@@ -3,7 +3,7 @@
  *
  * **Right-click only, no hover `⋯`.** A row's entire area already means "open
  * this", and a second target inside it makes that a coin toss near the right
- * edge. It is the `ContextMenu` primitive fed items: there is no per-surface
+ * edge. It is the stock `ContextMenu` fed items: there is no per-surface
  * menu in this codebase (recorded on `ContextMenuContent`).
  *
  * **Nothing here talks to tRPC.** The actions arrive as callbacks from

@@ -8,6 +8,7 @@ import * as React from 'react'
 import { X } from 'lucide-react'
 import { cn } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
+import { InputGroupInput } from '@/components/ui/input-group'
 import type { MailAddress as ChipAddress } from './mail-types'
 
 export type { ChipAddress }
@@ -164,7 +165,7 @@ export function ChipInput({
             variant="ghost"
             size="icon-xs"
             aria-label={`Remove ${address.name}`}
-            className="size-4 rounded-full"
+            className="-my-1 -me-1.5"
             onClick={() => onChange(value.filter((a) => a.email !== address.email))}
           >
             <X className="size-3" />
@@ -173,7 +174,7 @@ export function ChipInput({
       ))}
 
       <div className="relative min-w-40 flex-1">
-        <input
+        <InputGroupInput
           id={inputId}
           aria-label={label}
           aria-invalid={invalid}
@@ -181,10 +182,7 @@ export function ChipInput({
           // role would describe navigation that does not exist.
           placeholder={placeholder}
           value={text}
-          className={cn(
-            'w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground',
-            invalid && 'text-destructive',
-          )}
+          className={cn('w-full', invalid && 'text-destructive')}
           onChange={(event) => {
             setText(event.target.value)
             setInvalid(false)
@@ -203,14 +201,13 @@ export function ChipInput({
           >
             {matches.map((person, index) => (
               <li key={person.email}>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="row"
                   role="option"
                   aria-selected={index === active}
-                  className={cn(
-                    'flex w-full flex-col items-start px-2 py-1 text-left text-sm',
-                    index === active && 'bg-accent',
-                  )}
+                  className={cn('w-full', index === active && 'bg-accent')}
                   // `onMouseDown`: with `onClick` the input's blur commits and
                   // closes the list before the click lands.
                   onMouseDown={(event) => {
@@ -218,9 +215,11 @@ export function ChipInput({
                     add(person)
                   }}
                 >
-                  <span>{person.name}</span>
-                  <span className="text-xs text-muted-foreground">{person.email}</span>
-                </button>
+                  <span className="flex flex-col items-start">
+                    <span>{person.name}</span>
+                    <span className="text-xs text-muted-foreground">{person.email}</span>
+                  </span>
+                </Button>
               </li>
             ))}
           </ul>

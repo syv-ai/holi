@@ -66,7 +66,7 @@ function saveAddresses(addresses: Record<string, string>): void {
 }
 
 /** A new tab, opened in the active pane. */
-export const newPageAtom = atom(null, async (get, set, url?: string): Promise<void> => {
+const newPageAtom = atom(null, async (get, set, url?: string): Promise<void> => {
   const remote = get(activeRemoteAtom)
   if (remote === null) return
   const page = await browserCap.open(remote, { shown: true, ...(url === undefined ? {} : { url }) })

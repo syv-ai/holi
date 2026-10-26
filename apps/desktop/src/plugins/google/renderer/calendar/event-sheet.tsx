@@ -47,8 +47,6 @@ import { SandboxedHtml } from '../sandboxed-html'
 import { dayMonth, longDay, timeOf } from './calendar-format'
 import { CalendarDot, DateField, TimeSelect } from './event-fields'
 
-export const EVENT_FORM_ID = 'event-calendar-form'
-
 /** The edit buffer. Dates are "yyyy-MM-dd", times are "HH:mm". */
 export interface EventDraft {
   /** The calendar item's id; absent while creating. */
@@ -69,7 +67,7 @@ export interface EventDraft {
   data?: GoogleEventData
 }
 
-export type EventSheetMode = 'view' | 'edit' | 'create'
+type EventSheetMode = 'view' | 'edit' | 'create'
 
 export interface EventSheetState {
   mode: EventSheetMode
@@ -207,7 +205,7 @@ export function EventSheet({
         onOpenAutoFocus={(event) => event.preventDefault()}
         side="right"
         showCloseButton={false}
-        className="inset-y-4 right-4 left-auto flex h-[calc(100svh-2rem)] w-[min(30rem,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden rounded-xl p-0 outline-none"
+        className="sm:max-w-lg"
       >
         {state &&
           (isForm ? (
@@ -474,15 +472,17 @@ function EventForm({
       {/* Form body */}
       <div className="min-h-0 flex-1">
         <ScrollArea className="h-full">
-          <form
-            id={EVENT_FORM_ID}
+          {/* Enter in a text field saves, as a form would. */}
+          <div
             className="flex flex-col gap-5 px-5 py-5"
-            onSubmit={(event) => {
-              event.preventDefault()
-              onSave()
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && event.target instanceof HTMLInputElement && !saving) {
+                event.preventDefault()
+                onSave()
+              }
             }}
           >
-            <Field className="gap-1.5">
+            <Field>
               <FieldLabel htmlFor="event-title">Title</FieldLabel>
               <Input
                 id="event-title"
@@ -493,7 +493,7 @@ function EventForm({
               />
             </Field>
 
-            <Field className="gap-1.5">
+            <Field>
               <FieldLabel>Calendar</FieldLabel>
               <div className="flex min-w-0 items-center gap-2 text-sm">
                 <CalendarDot color={draft.color} />
@@ -509,7 +509,7 @@ function EventForm({
             </Field>
 
             <Field orientation="horizontal">
-              <FieldLabel htmlFor="event-all-day" className="flex items-center gap-1.5">
+              <FieldLabel htmlFor="event-all-day">
                 All day
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -535,7 +535,7 @@ function EventForm({
             </Field>
 
             <div className="flex gap-3">
-              <Field className="min-w-0 flex-1 gap-1.5">
+              <Field className="min-w-0 flex-1">
                 <FieldLabel htmlFor="event-start-date">Starts</FieldLabel>
                 <DateField
                   id="event-start-date"
@@ -545,7 +545,7 @@ function EventForm({
                   }
                 />
               </Field>
-              <Field className="min-w-0 flex-1 gap-1.5">
+              <Field className="min-w-0 flex-1">
                 <FieldLabel htmlFor="event-end-date">Ends</FieldLabel>
                 <DateField
                   id="event-end-date"
@@ -557,7 +557,7 @@ function EventForm({
 
             {!draft.allDay && (
               <div className="flex gap-3">
-                <Field className="min-w-0 flex-1 gap-1.5">
+                <Field className="min-w-0 flex-1">
                   <FieldLabel htmlFor="event-start-time">From</FieldLabel>
                   <TimeSelect
                     id="event-start-time"
@@ -565,7 +565,7 @@ function EventForm({
                     onChange={(start) => patch({ start })}
                   />
                 </Field>
-                <Field className="min-w-0 flex-1 gap-1.5">
+                <Field className="min-w-0 flex-1">
                   <FieldLabel htmlFor="event-end-time">To</FieldLabel>
                   <TimeSelect
                     id="event-end-time"
@@ -578,7 +578,7 @@ function EventForm({
 
             {/* A place is set when the event is made; moving one keeps it. */}
             {mode === 'create' && (
-              <Field className="gap-1.5">
+              <Field>
                 <FieldLabel htmlFor="event-location">Location</FieldLabel>
                 <Input
                   id="event-location"
@@ -595,7 +595,7 @@ function EventForm({
                 {error}
               </p>
             )}
-          </form>
+          </div>
         </ScrollArea>
       </div>
 
@@ -610,7 +610,7 @@ function EventForm({
         >
           Cancel
         </Button>
-        <Button type="submit" form={EVENT_FORM_ID} disabled={saving}>
+        <Button type="button" onClick={onSave} disabled={saving}>
           {saving ? 'Saving…' : mode === 'edit' ? 'Save' : 'Add event'}
         </Button>
       </div>

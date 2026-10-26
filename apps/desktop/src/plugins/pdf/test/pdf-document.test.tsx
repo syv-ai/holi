@@ -413,14 +413,14 @@ test('the signature panel says what placing a signature shares, while it is open
   seam.shadow!.append(panel)
 
   act(() => seam.sidebarCb!({ sidebarId: 'signature-panel' }))
-  await waitFor(() => expect(seam.shadow!.querySelector('.holi-signature-note')).not.toBeNull())
-  const note = seam.shadow!.querySelector('.flex-col > .holi-signature-note')!
+  await waitFor(() => expect(seam.shadow!.querySelector('[data-signature-note]')).not.toBeNull())
+  const note = seam.shadow!.querySelector('.flex-col > [data-signature-note]')!
   expect(note.textContent).toBe(PDF_SIGNATURE_NOTE)
   expect(note.textContent!.length).toBeGreaterThan(40)
 
   panel.remove()
   act(() => seam.sidebarCb!({ sidebarId: '' }))
-  await waitFor(() => expect(seam.shadow!.querySelector('.holi-signature-note')).toBeNull())
+  await waitFor(() => expect(seam.shadow!.querySelector('[data-signature-note]')).toBeNull())
 })
 
 test('puts Signatures on the top bar', async () => {

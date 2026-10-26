@@ -176,14 +176,15 @@ export function MailShell({ className }: { className?: string }) {
         onOpenChange={keepOpen}
         className={cn(
           "relative h-full min-h-0",
-          "[--sidebar-accent:color-mix(in_oklab,var(--color-primary)_5%,transparent)]",
-          "[--sidebar-accent-foreground:var(--color-primary)]",
           className
         )}
         style={
           {
             "--sidebar-width": "440px",
             "--header-height": "50px",
+            "--sidebar-accent":
+              "color-mix(in oklab, var(--color-primary) 5%, transparent)",
+            "--sidebar-accent-foreground": "var(--color-primary)",
           } as CSSProperties
         }
       >

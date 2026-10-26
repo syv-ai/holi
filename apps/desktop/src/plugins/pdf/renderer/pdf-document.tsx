@@ -712,14 +712,13 @@ export function PdfDocument({
           aria-label="Loading PDF"
           className="flex min-h-0 flex-1 justify-center p-6"
         >
-          <span className="block aspect-[3/4] w-full max-w-xl rounded-md motion-shimmer" />
+          <span className="block aspect-3/4 w-full max-w-xl rounded-md motion-shimmer" />
         </div>
       ) : (
         <PDFViewer
           key={src}
           ref={viewerRef}
-          className={cn('min-h-0 flex-1', revealedSrc === src ? 'motion-in-fade' : 'opacity-0')}
-          style={{ height: '100%' }}
+          className={cn('h-full min-h-0 flex-1', revealedSrc === src ? 'motion-in-fade' : 'opacity-0')}
           onInit={onInit}
           onReady={onReady}
           config={{
@@ -785,7 +784,7 @@ export function PdfDocument({
         />
       )}
       {signatureColumn !== null &&
-        createPortal(<p className="holi-signature-note">{PDF_SIGNATURE_NOTE}</p>, signatureColumn)}
+        createPortal(<p data-signature-note="">{PDF_SIGNATURE_NOTE}</p>, signatureColumn)}
     </div>
   )
 }

@@ -43,7 +43,7 @@ type ClientInfo = Awaited<ReturnType<typeof googleCap.client>>
 const CREDENTIALS_URL = 'https://console.cloud.google.com/apis/credentials'
 
 /** Who the client in use is, in a sentence. */
-export function clientLabel(client: ClientInfo): string {
+function clientLabel(client: ClientInfo): string {
   if (client.source === 'own') return `Your own client, ${client.id}.`
   if (client.source === 'environment') return 'The client in HOLI_GOOGLE_CLIENT_ID.'
   return 'Holi’s client, which accepts syv.ai accounts only.'
@@ -157,11 +157,14 @@ export function OAuthClient({
 
       <Dialog open={open} onOpenChange={(next) => (next ? setOpen(true) : close())}>
         <DialogContent className="sm:max-w-lg">
-          <form
+          {/* Enter in a field saves, as a form would. */}
+          <div
             className="flex flex-col gap-6"
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (canSave) attempt({ id, secret }, saveCost !== '')
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
+                event.preventDefault()
+                if (canSave) attempt({ id, secret }, saveCost !== '')
+              }
             }}
           >
             <DialogHeader>
@@ -182,7 +185,7 @@ export function OAuthClient({
               <ExternalLinkIcon data-icon="inline-start" aria-hidden="true" />
               Make one in Google Cloud
             </Button>
-            <FieldGroup className="gap-4">
+            <FieldGroup>
               <Field>
                 <FieldLabel htmlFor="google-client-id">Client ID</FieldLabel>
                 <Input
@@ -248,12 +251,16 @@ export function OAuthClient({
                   Disconnect and switch
                 </Button>
               ) : (
-                <Button type="submit" disabled={!canSave}>
+                <Button
+                  type="button"
+                  disabled={!canSave}
+                  onClick={() => attempt({ id, secret }, saveCost !== '')}
+                >
                   Save{saveCost}
                 </Button>
               )}
             </DialogFooter>
-          </form>
+          </div>
         </DialogContent>
       </Dialog>
     </Item>

@@ -87,7 +87,7 @@ export interface GoogleCapabilityDeps {
 }
 
 /** The Google plugin's own settings in a vault, read and written by root. */
-export interface GoogleSettingsStore {
+interface GoogleSettingsStore {
   read(root: string): Promise<{ calendars: CalendarOverrides; imageSenders: string[] }>
   write(
     root: string,

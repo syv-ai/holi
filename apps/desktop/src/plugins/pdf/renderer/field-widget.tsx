@@ -30,7 +30,7 @@ const NONE = '__none__'
  * (a checkbox contributes "true"/"false"); the engine coerces to native Typst
  * values later. An unknown type can't occur (normalizeFields clamps to the six),
  * but the switch falls back to a text input for safety. Every control is a
- * primitive — no native form element survives here.
+ * stock component — no native form element survives here.
  */
 export function FieldWidget({ field, value, onChange, id, invalid }: WidgetProps) {
   const a11y = { id, 'aria-invalid': invalid === true ? true : undefined }

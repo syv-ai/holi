@@ -58,7 +58,7 @@ export interface AppManifest {
 }
 
 /** One slash command an app declares. */
-export interface AppCommandSpec {
+interface AppCommandSpec {
   /** The script, a `.js` file in the bundle, by its path there. */
   script: string
   /** Beside the name, in the slash menu. */
@@ -120,7 +120,7 @@ export const MAX_ALLOW_REASON = 200
  *  not the vault's: an app can keep it in synced records or send it anywhere.
  *  There is no `location`: Electron's geolocation needs Google's network
  *  service and does not answer on macOS, so no app is offered it. */
-export const APP_AFFORDANCES = ['mail', 'calendar'] as const
+const APP_AFFORDANCES = ['mail', 'calendar'] as const
 
 export type AppAffordance = (typeof APP_AFFORDANCES)[number]
 

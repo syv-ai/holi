@@ -125,7 +125,7 @@ const APP_MIME: Record<string, string> = {
   ttf: 'font/ttf',
 }
 
-export function appMimeFor(path: string): string {
+function appMimeFor(path: string): string {
   const ext = path.split('.').pop()?.toLowerCase() ?? ''
   return APP_MIME[ext] ?? mimeFor(path)
 }
@@ -185,7 +185,7 @@ export function injectAppHead(html: string, head: string): string {
  * header that lets one opaque origin read lets every app read every other's
  * code.
  */
-export function commandRunnerHtml(head: string, script: string): string {
+function commandRunnerHtml(head: string, script: string): string {
   const src = script.split('/').map(encodeURIComponent).join('/')
   return `<!doctype html><html><head><meta charset="utf-8">${head}<script>${COMMAND_JS}</script><script src="${src}"></script></head></html>`
 }

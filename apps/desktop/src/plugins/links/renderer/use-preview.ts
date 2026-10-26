@@ -16,7 +16,7 @@ const asked = new Map<string, Promise<LinkPreview>>()
 
 /** `url`'s preview, asked once per session; the address alone if main
  *  cannot be asked. */
-export function previewOf(remote: string | null, url: string): Promise<LinkPreview> {
+function previewOf(remote: string | null, url: string): Promise<LinkPreview> {
   const key = `${remote}\n${url}`
   const known = asked.get(key)
   if (known !== undefined) return known

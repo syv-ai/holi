@@ -31,7 +31,7 @@ type Step =
  * and the two commands it runs. "Allow and set up" consents and runs setup,
  * its output shown as it comes.
  */
-export function ConsentDialog({
+function ConsentDialog({
   row,
   store,
   onClose,

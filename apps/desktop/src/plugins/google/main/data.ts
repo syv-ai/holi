@@ -343,7 +343,7 @@ async function write<T>(send: () => Promise<T>, record: () => void): Promise<T> 
  * Keyed on the *overrides* rather than the resolved calendar ids on purpose:
  * resolving ids costs a request, and the key must be computable offline.
  */
-export function agendaKey(window: AgendaWindow, overrides: CalendarOverrides): string {
+function agendaKey(window: AgendaWindow, overrides: CalendarOverrides): string {
   const choices = Object.keys(overrides)
     .sort()
     .map((id) => `${id}=${overrides[id]! ? '1' : '0'}`)

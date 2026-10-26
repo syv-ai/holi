@@ -86,7 +86,7 @@ export function PluginSearch({
         </PopoverAnchor>
         <PopoverContent
           align="start"
-          className="w-(--radix-popover-trigger-width) p-1"
+          className="w-(--radix-popover-trigger-width)"
           // The input keeps the keyboard: arrows move through the list and
           // Enter chooses, as in the palette.
           onOpenAutoFocus={(e) => e.preventDefault()}
@@ -113,7 +113,7 @@ export function PluginSearch({
                     value={`${c.repo}/${c.path}`}
                     disabled={!installable}
                     onSelect={() => choose(c)}
-                    className="flex-col items-start gap-0.5 rounded-md text-xs data-[disabled=true]:opacity-100"
+                    className="flex-col items-start text-xs"
                   >
                     <span className="flex w-full items-baseline justify-between gap-2">
                       {/* Wraps rather than truncates: the path is how two

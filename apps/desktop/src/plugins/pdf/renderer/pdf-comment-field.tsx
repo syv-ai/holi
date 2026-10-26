@@ -45,7 +45,7 @@ export function PdfCommentField({
   return (
     <Textarea
       ref={fieldRef}
-      className="holi-comment-field"
+      data-comment-field=""
       rows={1}
       placeholder={input.placeholder}
       value={text}

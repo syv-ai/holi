@@ -34,7 +34,12 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
-import { Input } from "@/components/ui/input"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from "@/components/ui/input-group"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -96,7 +101,7 @@ function MailRow({
       className={cn(
         "relative flex cursor-pointer items-start gap-1.5 md:gap-2.5",
         "border-border/40 border-b px-1.5 py-2 md:px-3 md:py-3",
-        "focus-visible:ring-ring transition-colors focus-visible:ring-1 focus-visible:outline-none focus-visible:ring-inset",
+        "focus-visible:ring-ring motion-respond focus-visible:ring-1 focus-visible:outline-none focus-visible:ring-inset",
         isSelected
           ? "bg-accent/60 dark:bg-accent/20"
           : "hover:bg-accent/60 dark:hover:bg-accent/20"
@@ -112,13 +117,13 @@ function MailRow({
 function SenderAvatar({ name, email }: { name: string; email: string }) {
   const icon = senderIconUrl(email)
   return (
-    <Avatar className="mt-0.5 size-6 shrink-0 md:size-8">
+    <Avatar size="sm" className="mt-0.5 shrink-0">
       {icon !== null && (
         <AvatarImage
           src={icon}
           alt=""
           referrerPolicy="no-referrer"
-          className="bg-muted object-contain p-1"
+          className="bg-muted object-contain"
         />
       )}
       <AvatarFallback className="text-xs font-semibold">
@@ -279,7 +284,7 @@ function DraftItem({
     <MailRow id={draft.draftId} isSelected={false} onClick={onClick}>
       <div className="flex w-2 shrink-0" />
       {first === undefined ? (
-        <Avatar className="mt-0.5 size-6 shrink-0 md:size-8">
+        <Avatar size="sm" className="mt-0.5 shrink-0">
           <AvatarFallback className="text-xs font-semibold">
             <FilePenIcon className="size-3.5" aria-hidden="true" />
           </AvatarFallback>
@@ -348,7 +353,7 @@ function ListMessage({
   alert?: boolean
 }) {
   return (
-    <Empty role={alert ? "alert" : undefined} className="py-12">
+    <Empty role={alert ? "alert" : undefined}>
       <EmptyHeader>
         <EmptyMedia variant="icon">{icon}</EmptyMedia>
         <EmptyTitle>{title}</EmptyTitle>
@@ -608,7 +613,7 @@ export function MailList({
             </DropdownMenuContent>
           </DropdownMenu>
           {unreadCount !== null && unreadCount > 0 && (
-            <Badge className="rounded-full!" variant="outline" size="sm">
+            <Badge radius="full" variant="outline" size="sm">
               {unreadCount}
             </Badge>
           )}
@@ -624,7 +629,6 @@ export function MailList({
                 size="icon-sm"
                 aria-label="Refresh mail"
                 onClick={mail.refresh}
-                className="[&_svg]:opacity-60 [&_svg]:transition-opacity hover:[&_svg]:opacity-100"
               >
                 <RefreshCwIcon aria-hidden="true" />
               </Button>
@@ -645,7 +649,6 @@ export function MailList({
                   variant="ghost"
                   size="icon-sm"
                   aria-label={`Inbox tab: ${categoryLabel}`}
-                  className="[&_svg]:opacity-60 [&_svg]:transition-opacity hover:[&_svg]:opacity-100"
                 >
                   <FilterIcon aria-hidden="true" />
                 </Button>
@@ -704,7 +707,6 @@ export function MailList({
                 size="icon-sm"
                 aria-label="Compose new email"
                 onClick={onCompose}
-                className="[&_svg]:opacity-60 [&_svg]:transition-opacity hover:[&_svg]:opacity-100"
               >
                 <SquarePenIcon aria-hidden="true" />
               </Button>
@@ -716,12 +718,11 @@ export function MailList({
 
       {/* ── Search: Gmail's own grammar, sent on Enter ── */}
       <div className="border-border/60 border-b px-3 py-2">
-        <div className="relative">
-          <SearchIcon
-            className="text-muted-foreground/50 pointer-events-none absolute top-1/2 left-2.5 size-3 -translate-y-1/2"
-            aria-hidden="true"
-          />
-          <Input
+        <InputGroup>
+          <InputGroupAddon>
+            <SearchIcon aria-hidden="true" />
+          </InputGroupAddon>
+          <InputGroupInput
             placeholder="Search mail..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -729,21 +730,20 @@ export function MailList({
               if (e.key === "Enter") mail.search(query.trim())
               if (e.key === "Escape" && query !== "") clearSearch()
             }}
-            className="h-7 pl-7 text-xs"
             aria-label="Search mail"
           />
           {(query !== "" || mail.searching) && (
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              onClick={clearSearch}
-              aria-label="Clear search"
-              className="text-muted-foreground/50 hover:text-foreground absolute top-1/2 right-1 size-5 -translate-y-1/2"
-            >
-              <XIcon aria-hidden="true" />
-            </Button>
+            <InputGroupAddon align="inline-end">
+              <InputGroupButton
+                size="icon-xs"
+                onClick={clearSearch}
+                aria-label="Clear search"
+              >
+                <XIcon aria-hidden="true" />
+              </InputGroupButton>
+            </InputGroupAddon>
           )}
-        </div>
+        </InputGroup>
       </div>
 
       {/* Why the last write did not stick: above the list, since archive
@@ -769,23 +769,14 @@ export function MailList({
       <Tabs
         value={tab}
         onValueChange={(v) => selectTab(v as FilterTab)}
-        className="flex min-h-0 flex-1 flex-col gap-0"
+        className="min-h-0 flex-1"
       >
         {/* Tab bar row: only on the inbox, where the pills apply */}
         {filterable && (
           <div className="border-border/60 flex shrink-0 items-center overflow-x-auto border-b px-1.5 py-1.5 md:px-2">
-            <TabsList className="h-auto gap-0.5 bg-transparent p-0">
+            <TabsList>
               {TABS.map((t) => (
-                <TabsTrigger
-                  key={t.id}
-                  value={t.id}
-                  className={cn(
-                    "group/tab h-auto flex-none gap-1 px-2 py-0.75 text-xs font-normal md:gap-2 md:px-2.5",
-                    "data-active:bg-primary! data-active:text-primary-foreground! data-active:font-medium! data-active:shadow-none!",
-                    "dark:data-active:bg-primary! dark:data-active:text-primary-foreground!",
-                    "rounded-full"
-                  )}
-                >
+                <TabsTrigger key={t.id} value={t.id} className="flex-none">
                   {t.label}
                 </TabsTrigger>
               ))}

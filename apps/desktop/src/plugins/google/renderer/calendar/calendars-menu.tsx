@@ -11,6 +11,7 @@
  * Dropped from the block: New, Edit and Delete calendar. Holi does not create
  * or delete Google calendars.
  */
+import type { CSSProperties } from 'react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -45,7 +46,7 @@ export function CalendarsMenu({
         // Radix closes on select by default; keep it open for several ticks.
         onSelect={(event) => event.preventDefault()}
         onCheckedChange={(checked) => onToggle(calendar.id, checked)}
-        className="min-w-0 gap-2 pr-2 [&_[data-slot=dropdown-menu-checkbox-item-indicator]]:hidden"
+        className="min-w-0 [&_[data-slot=dropdown-menu-checkbox-item-indicator]]:hidden"
       >
         {/* Colored checkbox is the visual; the checkbox item owns the toggle
             and a11y, so this control is inert. The item's hover cascade
@@ -55,8 +56,8 @@ export function CalendarsMenu({
           checked={calendar.enabled}
           aria-hidden="true"
           tabIndex={-1}
-          className="pointer-events-none **:text-white!"
-          style={calendar.enabled ? { backgroundColor: color, borderColor: color } : undefined}
+          className="pointer-events-none data-checked:border-(color:--swatch) data-checked:bg-(color:--swatch) dark:data-checked:bg-(color:--swatch) **:text-white!"
+          style={{ '--swatch': color } as CSSProperties}
         />
         <span className="min-w-0 flex-1 truncate">{calendar.name}</span>
       </DropdownMenuCheckboxItem>
@@ -72,8 +73,8 @@ export function CalendarsMenu({
               {visible.map((calendar) => (
                 <span
                   key={calendar.id}
-                  className="ring-background size-2.5 rounded-full ring-2"
-                  style={{ backgroundColor: calendar.color ?? FALLBACK_COLOR }}
+                  className="ring-background size-2.5 rounded-full bg-(color:--swatch) ring-2"
+                  style={{ '--swatch': calendar.color ?? FALLBACK_COLOR } as CSSProperties}
                 />
               ))}
             </span>

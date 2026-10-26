@@ -96,7 +96,7 @@ const tabParams = (raw: unknown): { tab?: string } => {
 }
 
 /** One line about where a tab is now: what every verb that acts answers. */
-export function pageLine(page: PageInfo): string {
+function pageLine(page: PageInfo): string {
   const where = page.url === '' ? 'blank' : page.url
   const state = page.loading ? ' (still loading)' : ''
   const failed = page.error === null ? '' : `\nfailed to load: ${page.error.description}`

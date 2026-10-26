@@ -12,7 +12,7 @@
  * **A list and a detail pane**, because a row cannot hold an invitation: the
  * detail is mostly the description (the dial-in, the agenda, the links).
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import {
   CalendarDays,
   ChevronLeft,
@@ -482,7 +482,7 @@ export function AgendaView({
                 <DialogHeader>
                   <DialogTitle>{openEvent.title}</DialogTitle>
                 </DialogHeader>
-                <div className="max-h-[55vh] min-h-0 overflow-y-auto">
+                <div className="max-h-96 min-h-0 overflow-y-auto">
                   <EventDetail
                     event={openEvent}
                     canCreateTask={canCreateTask}
@@ -507,7 +507,8 @@ export function AgendaView({
                     <li key={eventKey(event)}>
                       <Button
                         variant="ghost"
-                        className="h-auto w-full justify-start gap-3 px-2 py-1.5 text-left font-normal"
+                        size="row"
+                        className="w-full"
                         onClick={() => {
                           setMoreDay(null)
                           setSelected(eventKey(event))
@@ -588,7 +589,7 @@ export function AgendaView({
                         <Button
                           variant="ghost"
                           aria-label={`Show ${event.title}`}
-                          className="absolute inset-0 h-full w-full rounded p-0 hover:bg-transparent"
+                          className="absolute inset-0 h-full w-full hover:bg-transparent"
                           onClick={() => setSelected(eventKey(event))}
                         />
                         <div className="pointer-events-none relative flex items-baseline gap-3 px-2 py-1.5">
@@ -702,7 +703,7 @@ function EventDetail({
               <Button
                 variant="secondary"
                 size="xs"
-                className="mr-auto gap-1"
+                className="mr-auto"
                 onClick={() => void window.holi.openExternal(event.conferenceUrl!)}
               >
                 <Video className="size-3.5" />
@@ -846,7 +847,7 @@ function CalendarPicker({
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="xs" className="gap-1">
+            <Button variant="ghost" size="xs">
               Calendars
               {off > 0 && <span className="text-muted-foreground">({calendars.length - off})</span>}
             </Button>
@@ -870,15 +871,14 @@ function CalendarPicker({
   )
 }
 
-/** A calendar's colour. An inline style because the value is Google's, not a
- *  token — the arbitrary-colour ban is about hard-coded literals in class
- *  names, and there is no token that could stand for "Jane's calendar". */
+/** A calendar's colour: Google's value, handed to the class as a custom
+ *  property. */
 function Swatch({ color }: { color: string | null }) {
   return (
     <span
       aria-hidden
-      className={`size-2.5 shrink-0 rounded-[2px] ${color === null ? 'bg-muted-foreground' : ''}`}
-      style={color === null ? undefined : { background: color }}
+      className={`size-2.5 shrink-0 rounded-xs ${color === null ? 'bg-muted-foreground' : 'bg-(color:--swatch)'}`}
+      style={{ '--swatch': color } as CSSProperties}
     />
   )
 }

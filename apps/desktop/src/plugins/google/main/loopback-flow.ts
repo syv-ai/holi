@@ -13,7 +13,7 @@
 import { challengeFor, createVerifier, randomState, type RandomBytes } from './pkce'
 
 /** Everything a connected account needs, as the exchange returns it. */
-export interface GoogleTokens {
+interface GoogleTokens {
   accessToken: string
   /** The durable half. Google returns it only when asked correctly: see the
    *  `prompt=consent` note in `startLoopbackFlow`. */
@@ -27,7 +27,7 @@ export interface GoogleTokens {
   email: string
 }
 
-export type LoopbackFlowResult =
+type LoopbackFlowResult =
   | { kind: 'granted'; tokens: GoogleTokens }
   /** The user pressed Cancel on Google's consent screen. A normal outcome. */
   | { kind: 'denied' }
@@ -270,7 +270,7 @@ function identityFrom(idToken: unknown): { sub: string; email: string } {
   return { sub: c.sub, email: typeof c.email === 'string' ? c.email : '' }
 }
 
-export class GoogleHttpError extends Error {
+class GoogleHttpError extends Error {
   status: number
   constructor(status: number, body: string) {
     super(`Google returned ${status}: ${body}`)

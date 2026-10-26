@@ -7,6 +7,7 @@
  * never invites anyone (an invitation emails them, `docs/features/google.md`)
  * and writes only to the primary calendar.
  */
+import type { CSSProperties } from 'react'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -34,8 +35,8 @@ export function CalendarDot({ color }: { color: string }) {
   return (
     <span
       aria-hidden="true"
-      className="size-2.5 shrink-0 rounded-full"
-      style={{ backgroundColor: color }}
+      className="size-2.5 shrink-0 rounded-full bg-(color:--swatch)"
+      style={{ '--swatch': color } as CSSProperties}
     />
   )
 }
@@ -104,7 +105,7 @@ export function DateField({
           {selected.toLocaleDateString(undefined, { dateStyle: 'medium' })}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-auto p-0!">
+      <PopoverContent className="w-auto">
         <Calendar
           mode="single"
           selected={selected}

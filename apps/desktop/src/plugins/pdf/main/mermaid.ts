@@ -38,7 +38,7 @@ export function commentSafeString(s: string): string {
 }
 
 /** The markdown that stands in for a fence: a centred diagram, in Typst. */
-export function diagramMarkdown(svg: string): string {
+function diagramMarkdown(svg: string): string {
   return `<!--raw-typst #align(center, image(bytes(${commentSafeString(svg)}), format: "svg", alt: "Diagram"))-->`
 }
 

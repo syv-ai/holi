@@ -467,12 +467,12 @@ export function CalendarView(): React.JSX.Element {
           renderNoEvents={renderNoEvents}
           className="min-w-0 flex-1"
         >
-          {/* The primitive's EventCalendarNav already carries px-2 py-2, so
+          {/* EventCalendarNav already carries px-2 py-2, so
                 the row only needs matching right padding. Below sm the toolbar
                 takes a full row of its own. */}
           <div className="flex flex-wrap items-center gap-x-2 pe-2">
             <EventCalendarNav className="w-full min-w-0 flex-nowrap sm:w-auto sm:flex-1" />
-            <EventCalendarToolbar className="w-full gap-2 pb-2 sm:w-auto sm:pb-0">
+            <EventCalendarToolbar className="w-full sm:w-auto">
               {/* The rail owns the calendars list at lg+, so this menu is
                     only the narrow host for it. */}
               <div className="lg:hidden">

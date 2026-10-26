@@ -131,7 +131,7 @@ function Form({
             All day
           </Label>
         </div>
-        <div className="grid grid-cols-[1fr_auto] gap-2">
+        <div className="grid grid-cols-2 gap-2">
           <Input
             type="date"
             aria-label="Starts"

@@ -26,7 +26,7 @@ function Picture({ src }: { src: string | undefined }) {
       loading="lazy"
       draggable={false}
       onError={() => setFailed(src)}
-      className="bg-muted aspect-[1.91/1] w-full rounded-md object-cover"
+      className="bg-muted aspect-video w-full rounded-md object-cover"
     />
   )
 }

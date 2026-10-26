@@ -59,7 +59,7 @@ const midnight = (day: string): Date => new Date(`${day.slice(0, 10)}T00:00:00`)
 
 /** An item's id: Google's ids are unique per calendar, not across them, so a
  *  shared invitation on two calendars would otherwise collide. */
-export const itemId = (event: Pick<GoogleEvent, 'calendarId' | 'id'>): string =>
+const itemId = (event: Pick<GoogleEvent, 'calendarId' | 'id'>): string =>
   `${event.calendarId}:${event.id}`
 
 /**
@@ -110,7 +110,7 @@ export function rangeWindow(range: { start: Date; end: Date }): { from: string; 
 }
 
 /** An event as the person set it: when it is, what it is called, where. */
-export interface EventTimes {
+interface EventTimes {
   /** Absent on a move, which keeps the title Google has. */
   title?: string
   start: Date
@@ -122,7 +122,7 @@ export interface EventTimes {
 /** The raw params `schedule` and `reschedule` read: instants, or days for an
  *  all-day event, and the CLI's own `all-day` flag (spread, so the typed
  *  client, which names the parsed `allDay`, lets it through). */
-export function eventParams(times: EventTimes): { title?: string; start: string; end: string } {
+function eventParams(times: EventTimes): { title?: string; start: string; end: string } {
   return {
     ...(times.title === undefined ? {} : { title: times.title }),
     start: times.allDay ? localDate(times.start) : times.start.toISOString(),
@@ -134,7 +134,7 @@ export function eventParams(times: EventTimes): { title?: string; start: string;
 /** The midnight after `day`, for an all-day event's exclusive end. */
 export const midnightAfter = (day: string): Date => midnight(dayAfter(day))
 
-export type CalendarStatus =
+type CalendarStatus =
   | { kind: 'loading' }
   | { kind: 'ready' }
   | { kind: 'disconnected' }

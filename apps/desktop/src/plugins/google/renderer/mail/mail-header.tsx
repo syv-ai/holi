@@ -122,7 +122,6 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
             <Button
               variant="secondary"
               size="sm"
-              className="gap-1.5"
               aria-label={
                 meeting.conferenceUrl !== null
                   ? `Join ${meeting.title}`
@@ -149,7 +148,7 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
             aria-label="Reply all"
             disabled={thread === null}
             onClick={() => commands.reply(true)}
-            className="hidden gap-1.5 sm:flex"
+            className="hidden sm:flex"
           >
             <CornerUpLeftIcon aria-hidden="true" />
             Reply all

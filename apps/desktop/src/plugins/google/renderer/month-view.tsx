@@ -8,7 +8,7 @@
  * It draws what it is given and owns no data: the agenda fetches, this lays
  * out.
  */
-import { useMemo } from 'react'
+import { useMemo, type CSSProperties } from 'react'
 import { isoWeek, localDate, monthGrid } from '@holi/shared'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/plugin-api'
@@ -70,10 +70,15 @@ export function MonthView({
   const now = Date.now()
 
   return (
-    <div role="grid" aria-label="Month" className="flex h-full min-h-0 flex-col">
+    <div
+      role="grid"
+      aria-label="Month"
+      className="flex h-full min-h-0 flex-col"
+      style={{ '--month-cols': '2rem repeat(7, minmax(0, 1fr))' } as CSSProperties}
+    >
       <div
         role="row"
-        className="grid shrink-0 grid-cols-[2rem_repeat(7,minmax(0,1fr))] border-b border-divider"
+        className="grid shrink-0 grid-cols-(--month-cols) border-b border-divider"
       >
         <span />
         {WEEKDAYS.map((name) => (
@@ -91,7 +96,7 @@ export function MonthView({
           <div
             key={week[0]!.date}
             role="row"
-            className="grid min-h-0 grid-cols-[2rem_repeat(7,minmax(0,1fr))] border-b border-divider last:border-b-0"
+            className="grid min-h-0 grid-cols-(--month-cols) border-b border-divider last:border-b-0"
           >
             <span className="px-1 pt-1.5 text-xs text-muted-foreground tabular-nums">
               {isoWeek(week[0]!.date)}
@@ -150,12 +155,13 @@ export function MonthView({
                         aria-label={`${event.title}, ${event.allDay ? 'all day' : timeOf(event.start)}${event.busy ? '' : ', free'}`}
                         data-event={event.id}
                         className={cn(
-                          'h-5 w-full min-w-0 justify-start gap-1.5 rounded-md p-0 px-1 text-left text-xs font-normal',
+                          'w-full min-w-0 justify-start text-left font-normal',
+                          event.allDay && 'bg-(color:--chip-bg)',
                           // Past, free and someone else's events mute their text;
                           // never opacity, which would stack on the muted token.
                           (past || !event.busy || !event.mine) && 'text-muted-foreground',
                         )}
-                        style={event.allDay ? { background: tint(event.color) } : undefined}
+                        style={event.allDay ? ({ '--chip-bg': tint(event.color) } as CSSProperties) : undefined}
                         onClick={(click) => {
                           click.stopPropagation()
                           onPickEvent(event)
@@ -166,9 +172,9 @@ export function MonthView({
                             aria-hidden
                             className={cn(
                               'h-3.5 w-1 shrink-0 rounded-full',
-                              event.color === null && 'bg-muted-foreground',
+                              event.color === null ? 'bg-muted-foreground' : 'bg-(color:--swatch)',
                             )}
-                            style={event.color === null ? undefined : { background: event.color }}
+                            style={event.color === null ? undefined : ({ '--swatch': event.color } as CSSProperties)}
                           />
                         )}
                         <span className="truncate">{event.title}</span>
@@ -179,7 +185,7 @@ export function MonthView({
                     <Button
                       variant="ghost"
                       size="xs"
-                      className="h-5 w-full justify-start rounded-md p-0 px-1 text-xs font-normal text-muted-foreground"
+                      className="w-full justify-start font-normal text-muted-foreground"
                       onClick={(click) => {
                         click.stopPropagation()
                         onMore(date)

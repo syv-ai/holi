@@ -89,14 +89,14 @@ export interface MailThreadSummary {
   hasInvite: boolean
 }
 
-export interface MailAttachment {
+interface MailAttachment {
   filename: string
   mimeType: string
   /** Bytes, from the part's `body.size`. */
   size: number
 }
 
-export interface MailMessage {
+interface MailMessage {
   id: string
   from: MailAddress
   to: MailAddress[]
@@ -125,7 +125,7 @@ export interface MailMessage {
 }
 
 /** What the agent sees: the same thread with the markup removed. */
-export type AgentMailMessage = Omit<MailMessage, 'html'>
+type AgentMailMessage = Omit<MailMessage, 'html'>
 
 export interface AgentMailThread {
   id: string
@@ -285,7 +285,7 @@ export function bodyHtmlOf(payload: RawPart | undefined): string | null {
  * **A filename is what makes a part a file.** That is the same rule `findPart`
  * uses in reverse to refuse an attachment as the body.
  */
-export function attachmentsOf(part: RawPart | undefined): MailAttachment[] {
+function attachmentsOf(part: RawPart | undefined): MailAttachment[] {
   if (part === undefined) return []
   const here: MailAttachment[] =
     part.filename !== undefined && part.filename !== ''
@@ -666,7 +666,7 @@ const CATEGORY_BY_LABEL: Record<string, MailCategory> = {
 }
 
 /** Gmail's query grammar uses the tab's short name, not its label id. */
-export function categoryQuery(category: MailCategory): string {
+function categoryQuery(category: MailCategory): string {
   return `category:${category}`
 }
 
@@ -682,7 +682,7 @@ function isSystemLabel(id: string): boolean {
  * mail on the user's behalf, which a one-click affordance should never do
  * silently.
  */
-export function unsubscribeUrlOf(header: string | null): string | null {
+function unsubscribeUrlOf(header: string | null): string | null {
   if (header === null) return null
   for (const match of header.matchAll(/<([^>]+)>/g)) {
     const url = match[1]!.trim()

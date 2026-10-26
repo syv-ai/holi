@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react"
+import { useState, type CSSProperties, type ReactNode } from "react"
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -153,11 +153,14 @@ function MessageBlock({
   return (
     <Collapsible asChild open={expanded} onOpenChange={setExpanded}>
       <article className="border-border/60 flex flex-col gap-3 border-b py-4 last:border-0">
-        <CollapsibleTrigger
+        <CollapsibleTrigger asChild>
+        <Button
+          variant="ghost"
+          size="row"
           aria-label={`${expanded ? "Collapse" : "Expand"} message ${position} of ${total} from ${message.from.name}`}
-          className="focus-visible:ring-ring flex w-full cursor-pointer items-center gap-2.5 rounded-md text-left outline-none focus-visible:ring-2"
+          className="w-full"
         >
-          <Avatar className="size-8 shrink-0">
+          <Avatar>
             <AvatarFallback className="text-xs font-semibold">
               {initialsOf(message.from.name, message.from.email)}
             </AvatarFallback>
@@ -192,13 +195,16 @@ function MessageBlock({
               <ChevronRightIcon className="size-3.5" aria-hidden="true" />
             )}
           </span>
+        </Button>
         </CollapsibleTrigger>
 
         {/* Only an open message builds its frame. */}
-        <CollapsibleContent className="flex flex-col gap-3 md:pl-10.5">
-          <MessageAddresses message={message} />
-          <MessageBody message={message} />
-          <Attachments attachments={message.attachments} webUrl={threadUrl} />
+        <CollapsibleContent>
+          <div className="flex flex-col gap-3 md:pl-10.5">
+            <MessageAddresses message={message} />
+            <MessageBody message={message} />
+            <Attachments attachments={message.attachments} webUrl={threadUrl} />
+          </div>
         </CollapsibleContent>
       </article>
     </Collapsible>
@@ -215,7 +221,10 @@ function MessageAddresses({ message }: { message: ThreadMessage }) {
   const shown = rows.filter((row) => row.addresses.length > 0)
   if (shown.length === 0) return null
   return (
-    <dl className="text-muted-foreground grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-xs">
+    <dl
+      className="text-muted-foreground grid grid-cols-(--meta-cols) gap-x-2 gap-y-0.5 text-xs"
+      style={{ "--meta-cols": "auto 1fr" } as CSSProperties}
+    >
       {shown.map((row) => (
         <div key={row.label} className="col-span-2 grid grid-cols-subgrid">
           <dt>{row.label}</dt>

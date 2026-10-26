@@ -11,7 +11,7 @@
 
 import { codeOf } from './google-errors'
 
-export type SendFailureAction = 'reconnect' | 'retry' | null
+type SendFailureAction = 'reconnect' | 'retry' | null
 
 export interface SendFailure {
   message: string

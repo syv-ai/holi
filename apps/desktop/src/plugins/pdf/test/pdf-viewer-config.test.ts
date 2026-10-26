@@ -287,7 +287,7 @@ describe('PDF_SIGNATURE_NOTE', () => {
 
   it('is styled from Holi tokens inside the shadow root', () => {
     expect(PDF_SIGNATURE_DIALOG_CSS).toMatch(
-      /\.holi-signature-note \{[^}]*color: var\(--muted-foreground\);[^}]*\}/,
+      /\[data-signature-note\] \{[^}]*color: var\(--muted-foreground\);[^}]*\}/,
     )
   })
 })
@@ -458,7 +458,7 @@ describe('PDF_SIDEBAR_FORM_CSS', () => {
 describe('PDF_COMMENT_FIELD_CSS', () => {
   it('grows the field with its text, first in the row, drawn in tokens', () => {
     const field = PDF_COMMENT_FIELD_CSS.split('\n').find((r) =>
-      r.startsWith('textarea.holi-comment-field {'),
+      r.startsWith('textarea[data-comment-field] {'),
     )
     expect(field).toMatch(/field-sizing: content;/)
     expect(field).toMatch(/max-height: \d+px;/)

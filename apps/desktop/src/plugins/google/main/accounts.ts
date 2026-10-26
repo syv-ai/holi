@@ -26,7 +26,7 @@ import type { VaultAccountsStore } from './vault-accounts'
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
 
 /** What the settings picker needs: enough to name an account, no tokens. */
-export interface ConnectedAccount extends GoogleAccount {
+interface ConnectedAccount extends GoogleAccount {
   sub: string
 }
 

@@ -59,7 +59,7 @@ export const CATEGORIES: { value: MailCategory | null; label: string }[] = [
 /** Mirrors `CategoryCount` in `main/google/gmail.ts`. `more` means the answer
  *  ran past one page, so it renders as `500+` rather than as a number that
  *  quietly means "at least". */
-export interface CategoryCount {
+interface CategoryCount {
   count: number
   more: boolean
 }
@@ -67,7 +67,7 @@ export interface CategoryCount {
 export type CategoryCounts = Partial<Record<MailCategory, CategoryCount | null>>
 
 /** What the trigger says. */
-export function mailboxLabelOf(view: MailboxView): string {
+function mailboxLabelOf(view: MailboxView): string {
   if (view.kind === 'sent') return 'Sent'
   if (view.kind === 'drafts') return 'Drafts'
   return CATEGORIES.find((c) => c.value === view.category)?.label ?? 'All mail'
@@ -126,7 +126,7 @@ export function MailboxPicker({
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="xs" className="gap-1" aria-label="Choose a mailbox">
+            <Button variant="ghost" size="xs" aria-label="Choose a mailbox">
               {mailboxLabelOf(view)}
               {/* The chevron makes this read as a menu, not a clickable label. */}
               <ChevronDown className="size-3.5 text-muted-foreground" />
@@ -161,7 +161,7 @@ export function MailboxPicker({
 
 /** The number beside one tab, or `''` when it is not known. A known `0` is
  *  rendered, since a blank would read as "still loading". */
-export function unreadLabel(
+function unreadLabel(
   value: MailCategory | null,
   counts: CategoryCounts | null,
   inboxUnread: number | null,

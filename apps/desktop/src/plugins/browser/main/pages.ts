@@ -54,7 +54,7 @@ const ERR_ABORTED = -3
 
 /** A shortcut pressed in a page that Holi's window should hear, as the
  *  renderer rebuilds its `KeyboardEvent`. */
-export interface PageKey {
+interface PageKey {
   key: string
   code: string
   meta: boolean

@@ -32,7 +32,7 @@ export interface PluginCommands {
   codeDir: string
 }
 
-export interface RefusedCommand {
+interface RefusedCommand {
   id: string
   name: string
   reason: string

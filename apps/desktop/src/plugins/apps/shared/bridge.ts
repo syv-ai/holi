@@ -55,10 +55,9 @@ export type AppMethod = (typeof APP_METHODS)[number]
  *  (open a tab). Every other method is a main-side capability. */
 export const RENDERER_METHODS = ['open'] as const satisfies readonly AppMethod[]
 
-export type MainAppMethod = Exclude<AppMethod, (typeof RENDERER_METHODS)[number]>
-
 /** One call, from the app's shim to the renderer. `id` is the app's own
- *  correlation token and means nothing outside the frame's pending map. */
+ *  correlation token and means nothing outside the frame's pending map.
+ *  @public the wire shape of the bridge, documented here for the shim. */
 export interface AppRequest {
   id: string
   method: AppMethod
@@ -77,9 +76,7 @@ export type AppResponse =
  * says only that something changed: the app reads it again through the
  * bridge, so every refusal still applies, and there is no second read path.
  */
-export const APP_TOPICS = ['docs', 'tasks', 'sync', 'agent', 'recents', 'history'] as const
-
-export type AppTopic = (typeof APP_TOPICS)[number]
+const APP_TOPICS = ['docs', 'tasks', 'sync', 'agent', 'recents', 'history'] as const
 
 const STORE_TOPIC = 'store:'
 

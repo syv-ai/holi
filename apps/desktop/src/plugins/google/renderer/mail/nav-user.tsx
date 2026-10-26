@@ -59,7 +59,7 @@ export function NavUser({
             email === "" ? "Google account" : `Google account ${email}`
           }
         >
-          <Avatar className="size-6">
+          <Avatar size="sm">
             <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">
               {initialsOf("", email)}
             </AvatarFallback>
@@ -81,19 +81,21 @@ export function NavUser({
         className="w-(--radix-dropdown-menu-trigger-width) min-w-64"
       >
         <DropdownMenuGroup>
-          <DropdownMenuLabel className="flex items-center gap-2.5 py-2">
-            <Avatar className="size-8">
-              <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">
-                {initialsOf("", email)}
-              </AvatarFallback>
-            </Avatar>
-            <div className="flex min-w-0 flex-col">
-              <span className="text-foreground text-sm font-semibold">
-                Google
-              </span>
-              <span className="text-muted-foreground truncate text-xs font-normal">
-                {email === "" ? "Not connected" : email}
-              </span>
+          <DropdownMenuLabel>
+            <div className="flex items-center gap-2.5">
+              <Avatar>
+                <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">
+                  {initialsOf("", email)}
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex min-w-0 flex-col">
+                <span className="text-foreground text-sm font-semibold">
+                  Google
+                </span>
+                <span className="text-muted-foreground truncate text-xs font-normal">
+                  {email === "" ? "Not connected" : email}
+                </span>
+              </div>
             </div>
           </DropdownMenuLabel>
 

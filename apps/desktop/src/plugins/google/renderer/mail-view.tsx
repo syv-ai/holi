@@ -18,7 +18,7 @@
  *
  * **The chrome is one row.** No "Mail" heading: the tab already says so.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 /**
  * `SquarePen` writes something new; `FilePen` continues something half-written.
  * `FilePen` is used for every draft marker (the row chip, the reader's continue
@@ -1306,8 +1306,8 @@ function MailToolbar({
 /**
  * The unfolded search box, with people completion on `@`.
  *
- * Enter submits. No `<form>`: the gate keeps native elements inside
- * `primitives/`.
+ * Enter submits. No `<form>`: the gate keeps native form elements inside
+ * `components/ui`.
  */
 function SearchField({
   query,
@@ -1391,7 +1391,7 @@ function SearchField({
       </PopoverAnchor>
       <PopoverContent
         align="start"
-        className="w-(--radix-popover-trigger-width) p-1"
+        className="w-(--radix-popover-trigger-width)"
         onOpenAutoFocus={(e) => e.preventDefault()}
         // Typing goes on in the field; only Escape there closes the list.
         onInteractOutside={(e) => e.preventDefault()}
@@ -1403,11 +1403,10 @@ function SearchField({
             <li key={person.email} role="presentation">
               <Button
                 variant="ghost"
+                size="row"
                 role="option"
                 aria-selected={index === highlighted}
-                className={`block h-auto w-full px-2 py-1 text-left ${
-                  index === highlighted ? 'bg-accent' : ''
-                }`}
+                className={`w-full ${index === highlighted ? 'bg-accent' : ''}`}
                 // Mouse down, not click: a click fires after the input has
                 // already lost focus, and the list would be gone by then.
                 onMouseDown={(e) => {
@@ -1415,9 +1414,11 @@ function SearchField({
                   accept(person)
                 }}
               >
-                <span className="block truncate text-sm">{person.name}</span>
-                <span className="block truncate text-xs font-normal text-muted-foreground">
-                  {person.email} · {person.count} {person.count === 1 ? 'thread' : 'threads'}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm">{person.name}</span>
+                  <span className="block truncate text-xs font-normal text-muted-foreground">
+                    {person.email} · {person.count} {person.count === 1 ? 'thread' : 'threads'}
+                  </span>
                 </span>
               </Button>
             </li>
@@ -1610,6 +1611,7 @@ function ThreadRow({
       </div>
       <Button
         variant="ghost"
+        size="row"
         onClick={(event) => {
           // Cmd/Ctrl-click selects instead of opening, as OS lists do.
           if (event.metaKey || event.ctrlKey || event.shiftKey) {
@@ -1619,7 +1621,7 @@ function ThreadRow({
           }
           onOpen()
         }}
-        className="block h-auto min-w-0 flex-1 rounded-none bg-transparent py-3 pr-3 pl-2 text-left hover:bg-transparent"
+        className="min-w-0 flex-1 bg-transparent hover:bg-transparent"
       >
         {/* Two columns: only the text column shrinks, so it truncates against
             the rail instead of pushing it off the row. */}
@@ -1748,10 +1750,11 @@ function MessageBlock({
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={shown}
         aria-label={`${shown ? 'Collapse' : 'Expand'} message ${position} of ${total} from ${message.from.name}`}
-        // `px-0`: the chevron, the addresses and the body share the subject's
-        // left edge; the hover fill bleeds nowhere it would misalign.
-        className="block h-auto w-full rounded-none px-0 py-1 text-left hover:bg-transparent dark:hover:bg-transparent"
+        // `-mx-2` cancels the button's inset: the chevron, the addresses and
+        // the body share the subject's left edge.
+        className="-mx-2 flex hover:bg-transparent dark:hover:bg-transparent"
       >
+        <span className="flex min-w-0 flex-1 flex-col">
         <span className="flex items-baseline gap-2 text-sm">
           {shown ? (
             <ChevronDown className="size-3.5 self-center text-muted-foreground" />
@@ -1775,6 +1778,7 @@ function MessageBlock({
             {message.body.slice(0, 200)}
           </span>
         )}
+        </span>
       </Button>
 
       {shown && (
@@ -1806,7 +1810,10 @@ function MessageAddresses({ message }: { message: ThreadMessage }): React.JSX.El
   ]
 
   return (
-    <dl className="mb-2 grid grid-cols-[auto_1fr] gap-x-2 text-xs text-muted-foreground">
+    <dl
+      className="mb-2 grid grid-cols-(--meta-cols) gap-x-2 text-xs text-muted-foreground"
+      style={{ '--meta-cols': 'auto 1fr' } as CSSProperties}
+    >
       {rows
         .filter((row) => row.addresses.length > 0)
         .map((row) => (
@@ -1853,8 +1860,9 @@ function AddressLink({ address }: { address: MailAddress }): React.JSX.Element {
         <Button
           variant="ghost"
           size="xs"
-          // No inset: a comma follows the name with no space before it.
-          className="h-auto px-0 py-0 text-xs font-medium"
+          // `-mx-2` cancels the inset: a comma follows the name with no space
+          // before it.
+          className="-mx-2 text-xs font-medium"
           aria-label={`About ${address.name}`}
         >
           {address.name}

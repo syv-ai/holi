@@ -34,7 +34,7 @@ export async function resolveTypstBin(opts: ResolveTypstOpts = {}): Promise<stri
 }
 
 /** `typst` on `PATH`, or null. `which` on unix, `where` on Windows. */
-export async function onPath(): Promise<string | null> {
+async function onPath(): Promise<string | null> {
   const cmd = process.platform === 'win32' ? 'where' : 'which'
   try {
     const { stdout } = await exec(cmd, ['typst'])
@@ -101,7 +101,7 @@ async function isExecutable(p: string): Promise<boolean> {
  * clear "typst is not available" error). Network + extraction are NOT unit-
  * tested (a 30 MB fetch); the pure helpers above are.
  */
-export async function ensureTypst(opts: ResolveTypstOpts = {}): Promise<string | null> {
+async function ensureTypst(opts: ResolveTypstOpts = {}): Promise<string | null> {
   const existing = await resolveTypstBin(opts)
   if (existing !== null) return existing
   if (!opts.cacheDir) return null

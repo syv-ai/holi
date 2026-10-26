@@ -18,7 +18,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from 'lucide-react'
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/reui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -207,8 +207,7 @@ export function BrowserSurface({ id, visible }: { id?: string; visible: boolean 
   const tab = { tab: id }
   const run = (call: Promise<unknown>): void => void call.catch(() => {})
 
-  const go = (event: FormEvent): void => {
-    event.preventDefault()
+  const go = (): void => {
     const url = addressFor(typed ?? page?.url ?? '')
     if (url === null) return
     setTyped(null)
@@ -218,7 +217,7 @@ export function BrowserSurface({ id, visible }: { id?: string; visible: boolean 
 
   return (
     <div className="bg-background flex h-full min-h-0 flex-col" data-browser-tab={id}>
-      <form onSubmit={go} className="flex items-center gap-1 border-b px-2 py-1.5">
+      <div className="flex items-center gap-1 border-b px-2 py-1.5">
         <IconButton
           type="button"
           label="Back"
@@ -264,6 +263,11 @@ export function BrowserSurface({ id, visible }: { id?: string; visible: boolean 
             onFocus={(e) => e.target.select()}
             onBlur={() => setTyped(null)}
             onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                go()
+                return
+              }
               if (e.key !== 'Escape') return
               setTyped(null)
               e.currentTarget.blur()
@@ -286,7 +290,7 @@ export function BrowserSurface({ id, visible }: { id?: string; visible: boolean 
             </InputGroupAddon>
           ) : null}
         </InputGroup>
-      </form>
+      </div>
       <div ref={host} className="relative min-h-0 flex-1">
         {page === undefined ? (
           <div className="flex flex-col gap-3 p-6" aria-label="Opening the page">

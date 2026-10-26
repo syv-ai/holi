@@ -174,115 +174,117 @@ export function ConnectionsSection(): React.JSX.Element {
 
   return (
     <Frame>
-      <FramePanel className="space-y-2.5">
-        <Item className="p-0">
-          <ItemMedia className="translate-y-0! self-center!">
-            <IconTile>{pluginMark('google')}</IconTile>
-          </ItemMedia>
+      <FramePanel>
+        <div className="flex flex-col gap-2.5">
+          <Item>
+            <ItemMedia className="translate-y-0! self-center!">
+              <IconTile>{pluginMark('google')}</IconTile>
+            </ItemMedia>
 
-          <ItemContent className="min-w-0">
-            <ItemTitle>Google</ItemTitle>
-            <ItemDescription className="break-words">
+            <ItemContent className="min-w-0">
+              <ItemTitle>Google</ItemTitle>
+              <ItemDescription className="break-words">
+                {connected ? (
+                  <>
+                    Mail and Calendar, as <span className="text-foreground">{account.email}</span>
+                  </>
+                ) : phase.kind === 'connecting' ? (
+                  'Waiting for your browser…'
+                ) : (
+                  'Read and triage your Gmail, read your Calendar. This vault only.'
+                )}
+              </ItemDescription>
+              {!connected && phase.kind === 'idle' && phase.error !== undefined && (
+                <p role="alert" className="text-sm text-pretty text-destructive">
+                  {phase.error}
+                </p>
+              )}
+            </ItemContent>
+
+            <ItemActions>
               {connected ? (
                 <>
-                  Mail and Calendar, as <span className="text-foreground">{account.email}</span>
-                </>
-              ) : phase.kind === 'connecting' ? (
-                'Waiting for your browser…'
-              ) : (
-                'Read and triage your Gmail, read your Calendar. This vault only.'
-              )}
-            </ItemDescription>
-            {!connected && phase.kind === 'idle' && phase.error !== undefined && (
-              <p role="alert" className="text-sm text-pretty text-destructive">
-                {phase.error}
-              </p>
-            )}
-          </ItemContent>
-
-          <ItemActions>
-            {connected ? (
-              <>
-                {needsReconsent && (
-                  <Button size="sm" disabled={busy} onClick={() => void connect()}>
-                    {phase.kind === 'connecting' ? 'Connecting…' : 'Reconnect'}
+                  {needsReconsent && (
+                    <Button size="sm" disabled={busy} onClick={() => void connect()}>
+                      {phase.kind === 'connecting' ? 'Connecting…' : 'Reconnect'}
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label="Disconnect this vault"
+                    onClick={() => void disconnect()}
+                  >
+                    Disconnect
                   </Button>
-                )}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  aria-label="Disconnect this vault"
-                  onClick={() => void disconnect()}
-                >
-                  Disconnect
+                </>
+              ) : (
+                <Button size="sm" disabled={busy} onClick={() => void connect()}>
+                  {phase.kind === 'connecting' ? 'Connecting…' : connectLabel}
                 </Button>
-              </>
-            ) : (
-              <Button size="sm" disabled={busy} onClick={() => void connect()}>
-                {phase.kind === 'connecting' ? 'Connecting…' : connectLabel}
-              </Button>
-            )}
-          </ItemActions>
-        </Item>
-
-        {connected &&
-          (needsReconsent ? (
-            <Alert variant="destructive">
-              <AlertTitle>Holi needs new permissions</AlertTitle>
-              <AlertDescription>
-                Mail still loads, but marking read, starring, archiving and contacts will not work
-                until you reconnect.
-              </AlertDescription>
-            </Alert>
-          ) : (
-            <Item variant="muted">
-              <ItemMedia variant="icon">
-                <ShieldCheckIcon />
-              </ItemMedia>
-              <ItemContent>
-                <ItemTitle>What Holi may do</ItemTitle>
-                <ItemDescription>
-                  Read your mail and calendar, and mark read, star, archive or trash a thread. It
-                  cannot delete mail permanently or change your calendar.
-                </ItemDescription>
-              </ItemContent>
-            </Item>
-          ))}
-        {connected && <ImageSenders />}
-
-        {/* Accounts connected on this machine that this vault is not using.
-            Picking one is a mapping, not a consent round trip, so it is one
-            click and deliberately not dressed up as connecting. */}
-        {others.map((other) => (
-          <Item key={other.sub} variant="muted">
-            <ItemMedia>
-              <Avatar className="size-8">
-                <AvatarFallback className="text-xs font-semibold">
-                  {initialsOf('', other.email)}
-                </AvatarFallback>
-              </Avatar>
-            </ItemMedia>
-            <ItemContent className="min-w-0">
-              <ItemTitle className="break-all">{other.email}</ItemTitle>
-              <ItemDescription>Connected on this machine</ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <Button size="sm" variant="outline" onClick={() => void linkAccount(other.sub)}>
-                Use in this vault
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setRemoving({ sub: other.sub, email: other.email })}
-              >
-                Remove from Holi
-              </Button>
+              )}
             </ItemActions>
           </Item>
-        ))}
 
-        {/* Machine-wide: the client every account here was granted to. */}
-        <OAuthClient accountCount={accounts.length} onChanged={refreshGoogle} />
+          {connected &&
+            (needsReconsent ? (
+              <Alert variant="destructive">
+                <AlertTitle>Holi needs new permissions</AlertTitle>
+                <AlertDescription>
+                  Mail still loads, but marking read, starring, archiving and contacts will not work
+                  until you reconnect.
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <Item variant="muted">
+                <ItemMedia variant="icon">
+                  <ShieldCheckIcon />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle>What Holi may do</ItemTitle>
+                  <ItemDescription>
+                    Read your mail and calendar, and mark read, star, archive or trash a thread. It
+                    cannot delete mail permanently or change your calendar.
+                  </ItemDescription>
+                </ItemContent>
+              </Item>
+            ))}
+          {connected && <ImageSenders />}
+
+          {/* Accounts connected on this machine that this vault is not using.
+              Picking one is a mapping, not a consent round trip, so it is one
+              click and deliberately not dressed up as connecting. */}
+          {others.map((other) => (
+            <Item key={other.sub} variant="muted">
+              <ItemMedia>
+                <Avatar>
+                  <AvatarFallback className="text-xs font-semibold">
+                    {initialsOf('', other.email)}
+                  </AvatarFallback>
+                </Avatar>
+              </ItemMedia>
+              <ItemContent className="min-w-0">
+                <ItemTitle className="break-all">{other.email}</ItemTitle>
+                <ItemDescription>Connected on this machine</ItemDescription>
+              </ItemContent>
+              <ItemActions>
+                <Button size="sm" variant="outline" onClick={() => void linkAccount(other.sub)}>
+                  Use in this vault
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setRemoving({ sub: other.sub, email: other.email })}
+                >
+                  Remove from Holi
+                </Button>
+              </ItemActions>
+            </Item>
+          ))}
+
+          {/* Machine-wide: the client every account here was granted to. */}
+          <OAuthClient accountCount={accounts.length} onChanged={refreshGoogle} />
+        </div>
       </FramePanel>
 
       <AlertDialog

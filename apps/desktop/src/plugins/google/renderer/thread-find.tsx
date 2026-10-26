@@ -25,13 +25,6 @@ import { mailFrameFor, useMailFrameVersion } from './mail-frames'
  *  text-only message has no frame to register. Set by [[MailView]]'s `MessageBody`. */
 export const MESSAGE_BODY_ATTR = 'data-holi-message'
 
-export interface ThreadFindHandle {
-  /** Every message in the thread, in the order they are read. */
-  messageIds: string[]
-  /** The thread's scroller, which is what actually moves. */
-  scroller: HTMLElement | null
-}
-
 /**
  * Where one message's searchable content is: HTML bodies are in a frame,
  * plain-text ones are ordinary app DOM.
@@ -114,57 +107,59 @@ export function ThreadFind({
   }
 
   return (
-    <PaneToolbar className="border-b border-divider">
-      <Search className="size-3.5 text-muted-foreground" />
-      <Input
-        ref={inputRef}
-        value={term}
-        onChange={(event) => {
-          setTerm(event.target.value)
-          setIndex(0)
-        }}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') {
-            event.preventDefault()
-            step(event.shiftKey ? -1 : 1)
-          }
-          if (event.key === 'Escape') onClose()
-        }}
-        placeholder="Find in this conversation"
-        aria-label="Find in conversation"
-      />
-      {/* Nothing until a term is typed. A live region, because the number
-          changing IS the feedback for pressing Enter; the label also tells it
-          apart from a thread's `1/2` position indicator. */}
-      {term !== '' && (
-        <span
-          role="status"
-          aria-label={marks.length === 0 ? 'No matches' : `Match ${active + 1} of ${marks.length}`}
-          className="shrink-0 text-xs text-muted-foreground tabular-nums"
+    <div className="border-b border-divider">
+      <PaneToolbar>
+        <Search className="size-3.5 text-muted-foreground" />
+        <Input
+          ref={inputRef}
+          value={term}
+          onChange={(event) => {
+            setTerm(event.target.value)
+            setIndex(0)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              step(event.shiftKey ? -1 : 1)
+            }
+            if (event.key === 'Escape') onClose()
+          }}
+          placeholder="Find in this conversation"
+          aria-label="Find in conversation"
+        />
+        {/* Nothing until a term is typed. A live region, because the number
+            changing IS the feedback for pressing Enter; the label also tells it
+            apart from a thread's `1/2` position indicator. */}
+        {term !== '' && (
+          <span
+            role="status"
+            aria-label={marks.length === 0 ? 'No matches' : `Match ${active + 1} of ${marks.length}`}
+            className="shrink-0 text-xs text-muted-foreground tabular-nums"
+          >
+            {marks.length === 0 ? 'No matches' : `${active + 1}/${marks.length}`}
+          </span>
+        )}
+        <IconButton
+          label="Previous match (⇧⏎)"
+          aria-label="Previous match"
+          disabled={marks.length === 0}
+          onClick={() => step(-1)}
         >
-          {marks.length === 0 ? 'No matches' : `${active + 1}/${marks.length}`}
-        </span>
-      )}
-      <IconButton
-        label="Previous match (⇧⏎)"
-        aria-label="Previous match"
-        disabled={marks.length === 0}
-        onClick={() => step(-1)}
-      >
-        <ChevronUp className="size-3.5" />
-      </IconButton>
-      <IconButton
-        label="Next match (⏎)"
-        aria-label="Next match"
-        disabled={marks.length === 0}
-        onClick={() => step(1)}
-      >
-        <ChevronDown className="size-3.5" />
-      </IconButton>
-      <IconButton label="Close find" onClick={onClose}>
-        <X className="size-3.5" />
-      </IconButton>
-    </PaneToolbar>
+          <ChevronUp className="size-3.5" />
+        </IconButton>
+        <IconButton
+          label="Next match (⏎)"
+          aria-label="Next match"
+          disabled={marks.length === 0}
+          onClick={() => step(1)}
+        >
+          <ChevronDown className="size-3.5" />
+        </IconButton>
+        <IconButton label="Close find" onClick={onClose}>
+          <X className="size-3.5" />
+        </IconButton>
+      </PaneToolbar>
+    </div>
   )
 }
 

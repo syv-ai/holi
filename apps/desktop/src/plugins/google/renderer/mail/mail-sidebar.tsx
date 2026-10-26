@@ -1,5 +1,6 @@
 import type { ReactNode } from "react"
 import { cn } from "@/plugin-api"
+import { Button } from "@/components/ui/button"
 
 // ── Sidebar Rail Toggle ──
 
@@ -15,18 +16,16 @@ function SidebarRailToggle({
   onToggle: () => void
 }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
+      size="icon-lg"
       aria-label={expanded ? "Collapse mail list" : "Expand mail list"}
       aria-expanded={expanded}
       onClick={onToggle}
-      style={{
-        left: expanded ? "var(--sidebar-width)" : 0,
-      }}
       className={cn(
-        "group/rail absolute top-1/2 z-30 flex h-12 w-7 -translate-y-1/2 cursor-pointer items-center pl-2 outline-none",
-        "focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-1",
-        "focus-visible:rounded-sm"
+        "group/rail absolute top-1/2 z-30 -translate-y-1/2 hover:bg-transparent dark:hover:bg-transparent",
+        expanded ? "left-(--sidebar-width)" : "left-0"
       )}
     >
       <span className="flex flex-col items-center">
@@ -34,7 +33,7 @@ function SidebarRailToggle({
           aria-hidden="true"
           className={cn(
             "bg-foreground/40 block h-2 w-0.5 rounded-t-full",
-            "origin-bottom transition-transform duration-100 ease-linear",
+            "origin-bottom motion-respond",
             expanded
               ? "group-hover/rail:bg-foreground/60 group-hover/rail:rotate-40"
               : "group-hover/rail:bg-foreground/60 group-hover/rail:-rotate-40"
@@ -44,7 +43,7 @@ function SidebarRailToggle({
           aria-hidden="true"
           className={cn(
             "bg-foreground/40 block h-2 w-0.5 rounded-b-full",
-            "origin-top transition-transform duration-100 ease-linear",
+            "origin-top motion-respond",
             expanded
               ? "group-hover/rail:bg-foreground/60 group-hover/rail:-rotate-40"
               : "group-hover/rail:bg-foreground/60 group-hover/rail:rotate-40"
@@ -56,13 +55,13 @@ function SidebarRailToggle({
         className={cn(
           "border-border bg-foreground text-background absolute left-full -ml-2 border px-2 py-0.5 text-xs font-medium whitespace-nowrap shadow-xs shadow-black/5",
           "rounded-md",
-          "pointer-events-none -translate-x-0.5 opacity-0 transition-[opacity,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]",
+          "pointer-events-none -translate-x-0.5 opacity-0 motion-respond",
           "group-hover/rail:translate-x-0 group-hover/rail:opacity-100"
         )}
       >
         {expanded ? "Collapse" : "Expand"}
       </span>
-    </button>
+    </Button>
   )
 }
 
