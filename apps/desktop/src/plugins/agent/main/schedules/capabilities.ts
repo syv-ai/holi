@@ -63,7 +63,9 @@ export const scheduleCapabilities = (deps: ScheduleCapabilitiesDeps) => ({
     params: noParams,
     run: (ctx): Promise<ScheduleSummary[]> => deps.scheduler.list(vaultOf(ctx)),
     text: (all) =>
-      all.length === 0 ? 'No schedules in .holi/schedules/.' : all.map(line).join('\n'),
+      all.length === 0
+        ? 'No schedules: a schedule is a .holi/schedules/<name>.local.md file.'
+        : all.map(line).join('\n'),
   }),
 
   'schedules.enable': cap({

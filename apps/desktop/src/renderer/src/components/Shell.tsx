@@ -29,6 +29,7 @@ import { HistoryPanel } from '@/features/history/HistoryPanel'
 import { CommentsPanel } from '@/features/comments/CommentsPanel'
 import { LinksPanel } from '@/features/links/LinksPanel'
 import { DialogHost } from './DialogHost'
+import { FindBarHost } from '@/features/editor/FindBarHost'
 import { FrontmatterFieldsHost } from '@/features/frontmatter/FrontmatterFieldsHost'
 import { PaneView } from './PaneView'
 import { DrawerShell } from '@/composites'
@@ -503,6 +504,8 @@ export function Shell() {
             widgets. Here, not in EditorPane: a widget does not know its pane,
             and one host is one subscription. */}
         <FrontmatterFieldsHost />
+        {/* Every editor's find bar, portalled into its search panel. */}
+        <FindBarHost />
       </div>
 
       {/* A config conflict outranks the quiet footer button, so a

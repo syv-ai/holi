@@ -14,9 +14,11 @@ them push access to. The same ritual, minus the greeting, is how any later vault
 - **Five acts**, named in order in the reducer's `ACTS`, which everything that walks them (next,
   back, the floor, the step dots) reads:
   1. Greeting: what a vault is, plainly, with the plugins named as optional. First-run only.
-  2. Naming: one name field, slugified live, and an owner picker listing your login and your
-     orgs, defaulting to you. A caption shows `github.com/<owner>/<slug>`. Continue creates the
-     repo: seeded, committed, pushed and tagged with the `holi-vault` topic before it returns.
+  2. Naming: one name field, slugified live, an optional "What is this vault for?" field, and an
+     owner picker listing your login and your orgs, defaulting to you. A caption shows
+     `github.com/<owner>/<slug>`. Continue creates the repo: seeded, committed, pushed and tagged
+     with the `holi-vault` topic before it returns. The answer, when given, is also the repo's
+     description on GitHub, on one line and cut at 300 characters.
   3. Plugins: "What this vault runs", a row per plugin in the build with its description and a
      switch at its own default. Turning one off says what that means in place; a plugin whose
      `requires` are off shows off, cannot be switched, and says what it needs. Only choosing
@@ -47,6 +49,13 @@ them push access to. The same ritual, minus the greeting, is how any later vault
 
 - The vault name is the repo name. The slug is what is submitted and what the app shows
   everywhere; there is no separate display name, which would diverge from the switcher.
+- A new vault gets a `README.md` in its first commit, from a plain template with no AI: the vault
+  name as its heading, the answer to "What is this vault for?" as a paragraph (left out when
+  blank), and a `## Folders` section to fill in. It is written beside the seed rather than in the
+  once folder, because the seed takes no per-vault input, and never over a README already there.
+  After that it is the vault's. The agent reads its top at every session start
+  ([agent-memory](agent-memory.md)) and Home shows it ([nav-menu](nav-menu.md)). Joining a vault
+  writes no README.
 - A team vault is an org-owned repo. There is no team concept beyond the owner picker.
 - The new vault is activated at the threshold, not at creation, so it opens after its settings
   are written rather than on the seeded defaults.
@@ -89,3 +98,5 @@ them push access to. The same ritual, minus the greeting, is how any later vault
 - `apps/desktop/src/renderer/src/state/onboarding-flow.ts`: the reducer, slugify, act gating.
 - `apps/desktop/src/renderer/src/state/vaults.ts`: `createVaultAtom`, `addVaultAtom`.
 - `apps/desktop/src/main/github/api.ts`: repos, orgs, the `holi-vault` topic.
+- `apps/desktop/src/main/vault/readme.ts`: the new vault's README template, written by
+  `vaults.create` in `router.ts`.

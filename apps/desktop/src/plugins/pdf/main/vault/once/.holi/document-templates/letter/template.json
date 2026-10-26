@@ -1,6 +1,7 @@
 {
   "name": "Letter",
   "description": "Branded syv.ai letter: letterhead, recipient, closing and signature.",
+  "language": "da",
   "fields": [
     { "key": "recipient", "label": "Recipient", "type": "text", "required": false },
     { "key": "date", "label": "Date", "type": "date", "required": false },

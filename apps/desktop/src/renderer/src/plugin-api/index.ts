@@ -51,6 +51,7 @@ export {
   activeRemoteAtom,
   historyEpochsAtom,
   loadSnapshotAtom,
+  renameNoteAtom,
   snapshotAtom,
   syncStateAtom,
 } from '@/state/vaults'
@@ -88,3 +89,5 @@ export { askPrompt } from '@/editor/askAgent'
 export { useGlobalPanelLayout } from '@/state/preferences'
 export { matchHotkey } from '@/lib/hotkey'
 export { baseEditorExtensions, plainMarkdownExtensions } from '@/editor/extensions'
+export { bodyStart } from '@/editor/frontmatter'
+export { linkChipFacet } from '@/editor/livePreview'

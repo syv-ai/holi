@@ -11,7 +11,34 @@ Todo / Doing / Done, with one swim lane per folder.
   (`todo | doing | done`, default `todo`), `due`, `priority` (`low | medium | high`), `tags`,
   `assignees`, `reminder`, `recurrence` and `order`, all optional. Unknown keys are written back verbatim. The body is the
   description, and its first heading is the title, falling back to the filename
-  (`task.fix-login.md` reads "Fix login"). There is no `title:` key.
+  (`task.fix-login.md` reads "Fix login"). There is no `title:` key. A name Holi makes is
+  the title by the shared file-name rule (`fileSlug`, as a saved link's is): lower case,
+  dashes, æ ø å written as ae oe aa, other accents dropped (`Møde med Bo` is
+  `task.moede-med-bo.md`).
+- **Private or shared.** A private task is `task.<name>.local.md`: the `.local.` marker makes it
+  a [local file](../glossary.md#local-file), so git ignores it and it never leaves this machine.
+  For the person whose machine holds it, it is a task like any other: on the board, with a
+  muted lock at the head of its card's meta line, reminding, recurring and triggering
+  schedules. On no one else's board, since the file never reaches them. A shared task is
+  `task.<name>.md`, committed and synced. **A new task is private by default**, from quick add,
+  the full create, `holi tasks create`, a vault app's `holi.tasks.create` and the using-tasks
+  skill alike, and each takes an explicit shared option (`shared: true`, `--shared`, Quick
+  add's Sharing step, the full create's Share with vault switch). Google's Link to task
+  creates private tasks too. Only the file's own name makes a task private: a task file inside
+  a `.local.` folder is no task, but a plain local file, as before. `isPrivateTask`,
+  `isBoardTaskPath`, `sharedTaskPath` and `privateTaskPath` in `shared/task-file.ts` are the
+  rule. A new task's name is free only when neither its shared nor its private file exists, so
+  either can later be renamed into the other.
+- **Sharing is a rename.** The card's ⋯ menu and its context menu offer Share with vault on a
+  private task, which renames the file to drop `.local.` at once, and Make private… on a shared
+  one, which renames it to add `.local.`. Making private asks first, in a dialog, before
+  anything moves: the task leaves every teammate's board on their next sync, git history keeps
+  the shared version, and links to it from shared notes stop resolving. Both go through the
+  rename every file takes (`notes.rename`), so open tabs follow and a commit lands on either
+  side. Sharing rewrites inbound links; making private rewrites only the links in this
+  machine's local files (`localLinksOnly`), since a teammate's notes rewritten to point at a
+  file they will never have would be a commit of dangling links for everyone. A refused rename
+  (the other name exists already) is said in a strip at the top of the board.
 - **A plugin.** Tasks is the plugin `src/plugins/tasks/`, on by default. In a vault with it off
   (`tasks: false` under `plugins` in `.holi/settings/plugins.yaml`, or this machine's `.local`
   twin), a task file is a plain note: there is no board, quick add, New Task, task chip, task
@@ -19,12 +46,14 @@ Todo / Doing / Done, with one swim lane per folder.
   buttons hide. The files stay as they are.
 - **Claimed in the snapshot.** Tasks claim `task.*.md` (`taskClaim`): main's scanner parses each
   into `snapshot.claimed.tasks`, as `items` and the `broken` ones that did not parse, and keeps
-  them out of the notes. The `normalize-md` commit transform writes a task's frontmatter in
+  them out of the notes. The claim is asked before the local-file rule, so a private task is
+  claimed while an unclaimed local markdown file (`USER.local.md`) stays a plain file, and the
+  watcher watches a local file a claim takes, so a private task reloads live. The `normalize-md` commit transform writes a task's frontmatter in
   canonical key order through the claim's `normalize`, which the editor also recognises as Holi's
   own tidy. The renderer's claim draws a link to a task as a chip with its status orb, offers open
   tasks in the `@` menu, gives a task its frontmatter rows and narrower column, marks task files in
-  the tree and the tabs, adds New Task to the explorer, and keeps task files out of the tree until
-  Show task files.
+  the tree and the tabs, adds New Task to the explorer, and keeps task files, private ones too,
+  out of the tree until Show task files.
 - **Dates are stamps**: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`, local, no timezone. The time is
   optional on `due` and `reminder`, and its absence means "that day", not midnight.
 - **Editing a task is editing its file.** A card click opens it beside the board as a preview,
@@ -74,14 +103,17 @@ Todo / Doing / Done, with one swim lane per folder.
   opens one line tall and grows when Shift+Enter starts a description. On the board it grows out of
   the dock and rises to just under the middle of the view, and the new card flies to its cell;
   anywhere else it opens centred at the top, on the palette's surface. Tab is a wizard: it swaps the
-  whole panel for the next field (lane, due, priority, tags) and cycles back to the text; Shift+Tab
+  whole panel for the next field (lane, due, priority, assignees, tags, sharing) and cycles back to
+  the text; Shift+Tab
   goes back. On a field, ↑/↓ move, and Space, → or a click picks; a single choice then moves on to
   the next field, a tag toggles and stays. Enter on a field returns to the text; Enter in the text
   adds; Shift+Enter is a new line. Escape on a field returns to the text, then closes. The bar at
   the foot is the fields as icons, centred, each opening out to show its value once set. Everything
   is created in Todo. Lane is any folder, defaulting to the active note's; typing on lane or tags
-  narrows the list or names a new one; an add closes quick add, the text clears and the lane stays.
-  ⌘⇧T is the full-create dialog, which opens the result. Both write the whole task in one create.
+  narrows the list or names a new one; Sharing is Private or Shared with vault, private until
+  picked. An add closes quick add, the text clears, the lane stays and Sharing goes back to
+  private. ⌘⇧T is the full-create dialog, with a Share with vault switch that starts off, and it
+  opens the result. Both write the whole task in one create.
   The agent writes the file.
 - **Completing** is setting status to done, from the checkbox, a drop into Done, or the status
   row; `completeTask` in `packages/shared` says what that writes. A
@@ -121,11 +153,24 @@ Todo / Doing / Done, with one swim lane per folder.
   this machine is signed in as one of them (`remindsViewer`, case-insensitive), and does not mark
   it delivered, so handing the task to this person later still fires its reminder. A task with
   no assignees reminds every member running Holi.
-- **Between machines** tasks sync like any file ([vaults and sync](vaults-sync.md)).
+- **Between machines** shared tasks sync like any file ([vaults and sync](vaults-sync.md)); a
+  private one never leaves its machine. The archive-done transform dates a task by its last
+  commit, so it never archives a private one.
+- **`holi tasks`**: `list` prints each task's status, title and path, ending a private task's
+  line with `private`; `create "<title>" [folder]` writes a private task and prints its path,
+  `--shared` a shared one; `complete <path>` completes either.
 
 ## Rules
 
 - The marker is in the filename, never frontmatter. A pasted `type: task` must not make tasks.
+- Privacy is in the filename too, the `.local.` marker, and nowhere else: a `private:` key would
+  be a file that syncs while claiming not to.
+- A new task is private unless its creator says shared. A task shared by mistake has been pushed
+  to everyone; one kept private by mistake costs a rename.
+- Make private asks before it renames, never act-then-undo: it takes the task off every
+  teammate's board, and history keeps the shared version.
+- An app may write a private task where it may write the shared one, through the tasks
+  capabilities only (`appTaskPath`). It may write no other local file.
 - Done is completion wherever the app writes it: `tasks.update` (the board's and a vault
   app's `holi.tasks.update`) and `tasks.move` apply `completeTask`, and the
   frontmatter widget writes its result into the buffer, as does the agent's
@@ -174,8 +219,8 @@ Everything is in `apps/desktop/src/plugins/tasks/`.
 - `shared/task-file.ts`, `completion.ts`, `labels.ts`, `recurrence.ts`, `reminder.ts`, `rank.ts`,
   `types.ts`: the format and all the pure rules. Dates, the calendar grid and who is one person
   (`logins.ts`) are core, in `packages/shared`.
-- `main/capabilities.ts`: `tasks.list`, `tasks.complete`, `tasks.create` (the UI and app doors,
-  which the board, the Google views and vault apps create tasks through), `tasks.update` (the
+- `main/capabilities.ts`: `tasks.list`, `tasks.complete`, `tasks.create` (the UI, app and CLI
+  doors, which the board, the Google views, vault apps and the agent create tasks through), `tasks.update` (the
   board's field edits and a vault app's), and the board's `tasks.move` and `tasks.delete`, which
   apply completion.
 - `main/reminders/`: the sweep, tick, watermark and notifications, started as the plugin's work
@@ -185,7 +230,8 @@ Everything is in `apps/desktop/src/plugins/tasks/`.
 - `renderer/state.ts`: task set, filter, drops, writes.
 - `renderer/`: the board (`BoardView`, `BoardCard`, `BoardDock`), the completion sequence
   (`use-check-sequence.ts`) and the drag (`use-board-drag.ts`), quick add (`QuickAdd`,
-  `QuickAddHost`), the full create (`CreateTask`), the claim (`claim.tsx`), its frontmatter
+  `QuickAddHost`), the full create (`CreateTask`), Make private's question (`MakePrivate`), the
+  claim (`claim.tsx`), its frontmatter
   controls (`fields.tsx`, `RecurrenceField.tsx`), `TaskIcon` and `board-order.ts`.
 - Core keeps what other features use too: `state/clock.ts` (`nowAtom`, `todayAtom`),
   `lib/date-presets.ts`, `composites/DateTimePicker.tsx`, the primitives `TaskCheck`,

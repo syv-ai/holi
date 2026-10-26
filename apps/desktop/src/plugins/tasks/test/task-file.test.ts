@@ -3,11 +3,15 @@ import {
   TaskFileError,
   assigneesInTitle,
   isAssignedTo,
+  isPrivateTask,
   isTaskFilePath,
+  privateTaskPath,
   remindsViewer,
   parseTaskFile,
   parseTaskPatch,
   serializeTaskFile,
+  sharedTaskPath,
+  taskClaim,
   taskFileName,
   taskFilePath,
   taskSlug,
@@ -37,11 +41,46 @@ describe('taskSlug', () => {
 
 describe('taskFilePath', () => {
   it('is `task.<slug>.md` inside the folder the task belongs to', () => {
-    expect(taskFilePath('projects/q2', 'Fix login')).toBe('projects/q2/task.fix-login.md')
+    expect(taskFilePath('projects/q2', 'Fix login', true)).toBe('projects/q2/task.fix-login.md')
   })
 
   it('drops the folder segment at the vault root', () => {
-    expect(taskFilePath('', 'Fix login')).toBe('task.fix-login.md')
+    expect(taskFilePath('', 'Fix login', true)).toBe('task.fix-login.md')
+  })
+
+  it('names a private task `task.<slug>.local.md`, which git keeps on this machine', () => {
+    const path = taskFilePath('projects/q2', 'Fix login', false)
+    expect(path).toBe('projects/q2/task.fix-login.local.md')
+    expect(isTaskFilePath(path)).toBe(true)
+    expect(isPrivateTask(path)).toBe(true)
+  })
+})
+
+describe('sharing a task is a rename', () => {
+  it('drops the marker to share and adds it to make private', () => {
+    expect(sharedTaskPath('ops/task.fix-login.local.md')).toBe('ops/task.fix-login.md')
+    expect(privateTaskPath('ops/task.fix-login.md')).toBe('ops/task.fix-login.local.md')
+  })
+
+  it('offers neither where a rename of the file cannot do it', () => {
+    expect(sharedTaskPath('ops/task.fix-login.md')).toBeNull()
+    expect(privateTaskPath('ops/task.fix-login.local.md')).toBeNull()
+    expect(sharedTaskPath('mine.local.d/task.a.local.md')).toBeNull()
+    expect(privateTaskPath('mine.local.d/task.a.md')).toBeNull()
+  })
+
+  it('takes a private task onto the board, but no task file in a local folder', () => {
+    expect(taskClaim.match('ops/task.a.local.md')).toBe(true)
+    expect(taskClaim.match('ops/task.a.md')).toBe(true)
+    // Only the file's own name makes a task private; a local folder is a
+    // personal space of plain files.
+    expect(isPrivateTask('mine.local.d/task.a.local.md')).toBe(false)
+    expect(taskClaim.match('mine.local.d/task.a.md')).toBe(false)
+    expect(taskClaim.match('mine.local.d/task.a.local.md')).toBe(false)
+  })
+
+  it('keeps the marker out of the fallback title', () => {
+    expect(titleFromTaskPath('task.fix-login.local.md')).toBe('Fix login')
   })
 })
 
@@ -304,7 +343,7 @@ describe('parseTaskPatch', () => {
 
 describe('taskFileName', () => {
   it('is the filename half of taskFilePath', () => {
-    expect(taskFileName('Fix login')).toBe('task.fix-login.md')
+    expect(taskFileName('Fix login', true)).toBe('task.fix-login.md')
   })
 })
 

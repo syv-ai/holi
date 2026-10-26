@@ -26,11 +26,14 @@ import {
   communityCapabilities,
   linkRunningCommands,
   listPlugins,
+  runChecks,
   unlinkWhenOff,
 } from '../main/capabilities'
 import { COMMUNITY_INFO } from '../info'
+import { createChecks } from '../main/checks'
 import { createConsentStore } from '../main/consent'
 import { listVersions } from '../main/fetch'
+import { runCheck } from '../main/setup'
 import { describeRepo } from '../main/search'
 import { createInstallStore } from '../main/store'
 import { createSupervisor, type ServerState } from '../main/supervisor'
@@ -111,6 +114,7 @@ function setup(firstPort = 3940) {
     emit: (_remote: string, name: string, payload: unknown) => events.push({ name, payload }),
     bridgeScript: () => null,
     scratch: join(userData, 'plugins', '.staging'),
+    checks: createChecks(),
     // Not this machine's PATH: what a test's commands may be called is its own.
     searchPath: () => '',
   }
@@ -592,6 +596,69 @@ describe('commands', () => {
     const [listed] = await call('community.list')
     expect(listed!.commandsNote).toMatch(/^Its commands could not be linked/)
     await expect(call('community.remove', { id: 'dash' })).resolves.not.toThrow()
+  })
+})
+
+describe('readiness check', () => {
+  test('a running plugin’s check says why it cannot work yet, and is asked again on request', async () => {
+    await makeRepo()
+    const manifest = JSON.parse(await readFile(join(repoDir, 'holi-plugin.json'), 'utf8'))
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({
+        ...manifest,
+        check: {
+          run: [
+            process.execPath,
+            '-e',
+            "process.exit(require('node:fs').existsSync(process.argv[1]) ? 0 : 1)",
+            '{vault}/switched-on',
+          ],
+          hint: 'Switch it on',
+        },
+      }),
+    )
+    const { call, deps } = setup()
+    await call('community.installFolder', { folder: repoDir })
+    // Off in the vault: not asked.
+    expect(await runChecks(vault, deps)).toBe(false)
+    await turnOn()
+    expect(await runChecks(vault, deps)).toBe(true)
+    const [row] = await call('community.list')
+    expect(row).toMatchObject({ running: true, check: { ok: false, hint: 'Switch it on' } })
+    // Asked once until asked afresh.
+    expect(await runChecks(vault, deps)).toBe(false)
+    await writeFile(join(vault, 'switched-on'), '')
+    expect((await call('community.check', { id: 'prezzi' })).check).toEqual({ ok: true })
+  })
+
+  test('an answer from before forget is dropped, and a fresh ask does not join it', async () => {
+    const answers: ((ok: boolean) => void)[] = []
+    const checks = createChecks(() => new Promise<boolean>((resolve) => answers.push(resolve)))
+    const check = { run: ['x'], hint: 'Switch it on' }
+    const stale = checks.run(vault, 'dash', check, dir)
+    expect(checks.run(vault, 'dash', check, dir)).toBe(stale)
+    checks.forget(vault, 'dash')
+    const fresh = checks.run(vault, 'dash', check, dir)
+    expect(answers).toHaveLength(2)
+    answers[0]!(true)
+    await stale
+    expect(checks.get(vault, 'dash')).toBeNull()
+    answers[1]!(false)
+    await fresh
+    expect(checks.get(vault, 'dash')).toEqual({ ok: false, hint: 'Switch it on' })
+  })
+
+  test('a check that does not finish in time fails', async () => {
+    const started = Date.now()
+    expect(
+      await runCheck({
+        argv: [process.execPath, '-e', 'setInterval(() => 0, 1000)'],
+        cwd: dir,
+        timeoutMs: 300,
+      }),
+    ).toBe(false)
+    expect(Date.now() - started).toBeLessThan(5000)
   })
 })
 

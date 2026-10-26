@@ -16,6 +16,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import { holiCompletion } from './completion'
 import { fenceLanguage } from './fence-languages'
+import { findInFile, findKeymap } from './find'
 import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
 import { askAgentTooltip, commentSeamFacet, type AskAgentSeam, type CommentSeam } from './askAgent'
@@ -89,10 +90,13 @@ export interface EditorDeps {
   frontmatterAlwaysOpen?: boolean
   /** What the file's claim adds to the editor (`ClaimEditor.extensions`). */
   claimExtensions?: Extension
+  /** What running plugins add to every note (`RendererPlugin.editorExtensions`). */
+  pluginExtensions?: Extension
 }
 
-/** What the file's claim brings: its frontmatter mode and its own layer. A
- *  compartment, so a plugin turned on or off reaches a view already open. */
+/** What the file's claim brings: its frontmatter mode and its own layer, and
+ *  what running plugins add to every note. A compartment, so a plugin turned
+ *  on or off reaches a view already open. */
 const claimLayer = new Compartment()
 
 /** The note's comment threads and the selection's Comment button. Whether a
@@ -100,12 +104,16 @@ const claimLayer = new Compartment()
  *  a compartment for the same reason. */
 const commentLayer = new Compartment()
 
-type ClaimLayer = Pick<EditorDeps, 'frontmatterAlwaysOpen' | 'claimExtensions' | 'comment'>
+type ClaimLayer = Pick<
+  EditorDeps,
+  'frontmatterAlwaysOpen' | 'claimExtensions' | 'pluginExtensions' | 'comment'
+>
 
 function claimLayerOf(deps: ClaimLayer): Extension {
   return [
     frontmatterAlwaysOpenFacet.of(deps.frontmatterAlwaysOpen === true),
     deps.claimExtensions ?? [],
+    deps.pluginExtensions ?? [],
   ]
 }
 
@@ -216,8 +224,12 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     listKindByTyping,
     // ` -> ` becomes ` → ` in the file, its own undo step.
     arrowsByTyping,
+    // ⌘F / ⌘⌥F: find and replace in this file, with the app's own bar.
+    findInFile(),
     keymap.of([
       ...completionKeymap,
+      // After completion, so Escape closes an open popup before the bar.
+      ...findKeymap,
       // ⌘D: select the word, then each press adds the next matching occurrence.
       { key: 'Mod-d', run: selectNextOccurrence, preventDefault: true },
       indentWithTab, // Tab indents the line/selection, ⇧Tab dedents
@@ -301,10 +313,12 @@ export function plainTextExtensions(path: string, readOnly = false): Extension[]
     indentUnit.of('    '),
     EditorView.lineWrapping,
     EditorState.allowMultipleSelections.of(true),
+    findInFile(),
     keymap.of([
       // First: Enter, Tab and the arrows are bound further down, and the popup
       // would appear but be unusable.
       ...completionKeymap,
+      ...findKeymap,
       { key: 'Mod-d', run: selectNextOccurrence, preventDefault: true },
       indentWithTab,
       ...historyKeymap,

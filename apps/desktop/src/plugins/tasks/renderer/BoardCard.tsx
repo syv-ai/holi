@@ -11,11 +11,12 @@
  */
 import type { Task, TaskStatus } from '../shared/types'
 import { virtualLabels } from '../shared/labels'
+import { isPrivateTask, privateTaskPath, sharedTaskPath } from '../shared/task-file'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { motion, useReducedMotion } from 'motion/react'
-import { Ellipsis } from 'lucide-react'
+import { Ellipsis, Lock } from 'lucide-react'
 import { useRef } from 'react'
-import { cn, nowAtom, openBesideAtom, shortStamp, todayAtom } from '@/plugin-api'
+import { cn, nowAtom, openBesideAtom, openDialogAtom, shortStamp, todayAtom } from '@/plugin-api'
 import {
   Button,
   ConfirmInPlace,
@@ -28,13 +29,22 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  Icon,
   IconButton,
   StrikeText,
   TaskCheck,
+  Tooltip,
   instant,
   settle,
 } from '@/primitives'
-import { deleteTaskAtom, filterAtom, setTaskStatusAtom, togglePerson } from './state'
+import { MakePrivate } from './MakePrivate'
+import {
+  deleteTaskAtom,
+  filterAtom,
+  setTaskSharedAtom,
+  setTaskStatusAtom,
+  togglePerson,
+} from './state'
 import { useCheckSequence, type Parking } from './use-check-sequence'
 import type { useBoardDrag } from './use-board-drag'
 
@@ -82,8 +92,9 @@ function FilterWord({
   )
 }
 
-/** A card's meta line: due, labels, assignees, tags. Quick add draws its preview with it;
- *  on the board, `onFilter` makes each label and tag filter by itself. */
+/** A card's meta line: whether it is private, due, labels, assignees, tags.
+ *  Quick add draws its preview with it; on the board, `onFilter` makes each
+ *  label and tag filter by itself. */
 export function TaskMeta({
   task,
   onFilter,
@@ -97,11 +108,27 @@ export function TaskMeta({
   const now = useAtomValue(nowAtom)
   const reduced = useReducedMotion() ?? false
   const labels = virtualLabels(task, now)
-  if (!task.due && labels.length === 0 && task.tags.length === 0 && task.assignees.length === 0) {
+  const privately = isPrivateTask(task.path)
+  if (
+    !privately &&
+    !task.due &&
+    labels.length === 0 &&
+    task.tags.length === 0 &&
+    task.assignees.length === 0
+  ) {
     return null
   }
   return (
     <div className="mt-1 flex h-4 items-center gap-x-2 overflow-hidden text-[11px] whitespace-nowrap text-muted-foreground">
+      {/* A quiet lock, first: the task is on this machine and no one else's
+          board. A muted glyph, no chip, so it never competes with a label. */}
+      {privately && (
+        <Tooltip content="Private: only on this machine">
+          <span role="img" aria-label="Private" data-private-task className="inline-flex">
+            <Icon icon={Lock} size="sm" tone="muted" />
+          </span>
+        </Tooltip>
+      )}
       {task.due && (
         // Keyed by the date, so a recurring task rolling forward shows the
         // new date arriving rather than a silent swap.
@@ -165,6 +192,28 @@ export function BoardCard({
       tags: f.tags.includes(word) ? f.tags.filter((t) => t !== word) : [...f.tags, word],
     }))
   const filterByPerson = (login: string) => setFilter((f) => togglePerson(f, login))
+  const setShared = useSetAtom(setTaskSharedAtom)
+  const openDialog = useSetAtom(openDialogAtom)
+  // Sharing is one rename, so it just happens. Making private asks first:
+  // it takes the task off every teammate's board, and history keeps it.
+  const shareable = sharedTaskPath(task.path) !== null
+  const privatable = privateTaskPath(task.path) !== null
+  const share = () => void setShared(task.path, true)
+  const askMakePrivate = () =>
+    openDialog({
+      id: 'plugin',
+      size: 'sm',
+      render: (close) => (
+        <MakePrivate
+          title={task.title}
+          onCancel={close}
+          onConfirm={() => {
+            close()
+            void setShared(task.path, false)
+          }}
+        />
+      ),
+    })
   const reduced = useReducedMotion() ?? false
   const flight = useRef<HTMLDivElement>(null)
   const sequence = useCheckSequence(task, today, parking, setStatus)
@@ -224,6 +273,16 @@ export function BoardCard({
             />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
+            {shareable && (
+              <DropdownMenuItem data-share-task={task.path} onSelect={share}>
+                Share with vault
+              </DropdownMenuItem>
+            )}
+            {privatable && (
+              <DropdownMenuItem data-make-private-task={task.path} onSelect={askMakePrivate}>
+                Make private…
+              </DropdownMenuItem>
+            )}
             {/* Picked, the row asks; picked again, it deletes. The menu stays
                 open between the two. */}
             <DropdownMenuItem
@@ -290,6 +349,10 @@ export function BoardCard({
             <ContextMenuItem onSelect={() => sequence.toggle()}>
               {done ? 'Reopen' : 'Complete'}
             </ContextMenuItem>
+            {shareable && <ContextMenuItem onSelect={share}>Share with vault</ContextMenuItem>}
+            {privatable && (
+              <ContextMenuItem onSelect={askMakePrivate}>Make private…</ContextMenuItem>
+            )}
             <ContextMenuSeparator />
             <ContextMenuItem variant="destructive" onSelect={() => void remove(task.path)}>
               Delete

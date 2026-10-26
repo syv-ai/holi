@@ -44,9 +44,11 @@ export function ConsentDialog({
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const log = useAtomValue(setupLogsAtom)[row.id] ?? []
-  // Which of its commands the agent did not get, once the rows are read again.
-  const commandsNote =
-    useAtomValue(rowsAtom)?.rows.find((r) => r.id === row.id)?.commandsNote ?? null
+  // Which of its commands the agent did not get, and what its readiness check
+  // said, once the rows are read again.
+  const current = useAtomValue(rowsAtom)?.rows.find((r) => r.id === row.id)
+  const commandsNote = current?.commandsNote ?? null
+  const failedCheck = current?.check?.ok === false ? current.check.hint : null
   const [step, setStep] = useState<Step>({ kind: 'ask' })
   const logEnd = useRef<HTMLDivElement>(null)
   const install = row.install
@@ -68,7 +70,17 @@ export function ConsentDialog({
         setStep({ kind: 'failed', message: 'Setup did not finish.' })
         return
       }
-      await onReady?.()
+      try {
+        await onReady?.()
+      } catch (err) {
+        // Setup did finish: only the step after it, in this vault, did not.
+        const why = err instanceof Error ? err.message : String(err)
+        setStep({
+          kind: 'failed',
+          message: `${row.name} is set up, but could not be turned on in this vault: ${why}`,
+        })
+        return
+      }
       setStep({ kind: 'done' })
     } catch (err) {
       setStep({ kind: 'failed', message: err instanceof Error ? err.message : String(err) })
@@ -147,7 +159,10 @@ export function ConsentDialog({
           <div className="grid gap-2">
             <p className="text-xs text-muted-foreground">
               {step.kind === 'setup' && 'Running setup…'}
-              {step.kind === 'done' && `${row.name} is ready.`}
+              {step.kind === 'done' &&
+                (failedCheck === null
+                  ? `${row.name} is ready.`
+                  : `${row.name} is set up, but cannot work yet. ${failedCheck}`)}
               {step.kind === 'done' && commandsNote !== null && ` ${commandsNote}`}
               {step.kind === 'failed' && step.message}
             </p>
@@ -188,12 +203,12 @@ export interface InstallFlow {
 }
 
 /** Fetch the plugin at `path` in `repo` at `version` (the newest when
- *  absent), then ask. Resolves to an error message, or null when the dialog is
- *  up. */
+ *  absent), then ask, running `onReady` with the fetched row once it is set
+ *  up. Resolves to an error message, or null when the dialog is up. */
 export async function installAndAsk(
   flow: InstallFlow,
   args: { repo: string; path: string; version?: string; id?: string },
-  onReady?: () => Promise<unknown>,
+  onReady?: (row: PluginRow) => Promise<unknown>,
 ): Promise<string | null> {
   try {
     const version =
@@ -208,7 +223,7 @@ export async function installAndAsk(
       ...(args.id === undefined ? {} : { expectId: args.id }),
     })
     await refreshRows(flow.remote, flow.store)
-    askToRun(flow, row, onReady)
+    askToRun(flow, row, onReady === undefined ? undefined : () => onReady(row))
     return null
   } catch (err) {
     return err instanceof Error ? err.message : String(err)

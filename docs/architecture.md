@@ -158,7 +158,7 @@ sends a link out of it to the browser.
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
 renderer imports its main side as types only, for `capClient`. The plugins are the agent
 ([agent-sessions](features/agent-sessions.md)), tasks ([tasks](features/tasks.md)), PDF
-([pdf](features/pdf.md)), Google
+([pdf](features/pdf.md)), links ([links](features/links.md)), Google
 ([google](features/google.md)), vault apps ([vault apps](features/vault-apps.md)) and community
 plugins ([community plugins](features/community-plugins.md)), which hosts plugins from other
 repositories as processes it runs, never as code it loads. A renderer plugin may give its claims as
@@ -242,9 +242,9 @@ stay on. There is no MCP server: the agent uses its native tools plus one small 
 that talks to main. Holi pauses sync while a turn runs and reviews a turn as the commit
 range it produced.
 
-**Scheduled agents** are files in `.holi/schedules/` that the open vault's agent plugin starts as
+**Scheduled agents** are one person's `.local.md` files in `.holi/schedules/` that the open vault's agent plugin starts as
 background sessions at their times, or when one of their triggers hears an event (a file added, a
-task due, a meeting about to start, a mail), on machines that approved their content. The events
+task due, a meeting about to start, a mail), once that person approved their content. The events
 come from the plugins that own them over `ctx.events`, and the agent's trigger router dedupes and
 batches them into runs ([scheduled-agents](features/scheduled-agents.md)).
 
@@ -268,6 +268,7 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 | [daily-notes](features/daily-notes.md)         | Idempotent daily notes and their archive                             |
 | [google](features/google.md)                   | Gmail and Calendar, per vault                                        |
 | [pdf](features/pdf.md)                         | Typst export and the PDF viewer                                      |
+| [links](features/links.md)                     | `link.*.md` files and page previews                                  |
 | [vault-apps](features/vault-apps.md)           | Agent-authored apps in their own origin                              |
 | [command-palette](features/command-palette.md) | Quick open and the one table of commands                             |
 | [onboarding](features/onboarding.md)           | First run and adding a vault                                         |

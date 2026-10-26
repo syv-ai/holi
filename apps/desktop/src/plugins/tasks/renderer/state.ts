@@ -11,7 +11,7 @@
 import type { Task, TaskStatus } from '../shared/types'
 import { allLabels, virtualLabels } from '../shared/labels'
 import { dailyNoteFilename, parseWikiLinks, toggleLogin } from '@holi/shared'
-import { isAssignedTo, snapshotTasks } from '../shared/task-file'
+import { isAssignedTo, privateTaskPath, sharedTaskPath, snapshotTasks } from '../shared/task-file'
 import { taskArea } from '../shared/types'
 import { atom } from 'jotai'
 import {
@@ -23,6 +23,7 @@ import {
   memberLoginsAtom,
   nowAtom,
   peopleList,
+  renameNoteAtom,
   sessionAtom,
   snapshotAtom,
   type Tab,
@@ -278,6 +279,8 @@ export const createTaskAtom = atom(
       title: string
       status: TaskStatus
       folder: string
+      /** Shared with the vault; private to this machine when not. */
+      shared: boolean
       description?: string
       /** Set before the task exists (quick add, full create): written with
        *  the create, one file, one write. */
@@ -361,6 +364,37 @@ export const deleteTasksAtom = atom(null, async (get, set, paths: string[]) => {
   set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), paths))
   await set(loadSnapshotAtom)
 })
+
+/** Why the last share or make-private did not happen, for the board's strip;
+ *  null when nothing failed. */
+export const sharingErrorAtom = atom<{ title: string; shared: boolean; error: string } | null>(null)
+
+/** Shares a private task with the vault, or makes a shared one private: the
+ *  file renamed to drop or add the `.local.` marker, through the rename every
+ *  file takes, so open tabs follow and a commit lands either side of it.
+ *  Sharing rewrites inbound links; making private rewrites only the links in
+ *  this machine's local files, since teammates will never have the file and
+ *  their notes keep the shared path history holds. A refused rename (the
+ *  other name already exists) is told on the board, never swallowed. A task
+ *  the rename cannot change is left alone. */
+export const setTaskSharedAtom = atom(
+  null,
+  async (get, set, path: string, shared: boolean): Promise<void> => {
+    const to = shared ? sharedTaskPath(path) : privateTaskPath(path)
+    if (to === null) return
+    const title = get(tasksAtom).get(path)?.title ?? path
+    set(sharingErrorAtom, null)
+    try {
+      await set(renameNoteAtom, { from: path, to, localLinksOnly: !shared })
+    } catch (err) {
+      set(sharingErrorAtom, {
+        title,
+        shared,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  },
+)
 
 export const deleteTaskAtom = atom(null, async (get, set, path: string) => {
   const remote = get(activeRemoteAtom)

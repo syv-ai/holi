@@ -27,7 +27,7 @@ import {
   useReducedMotion,
   type MotionValue,
 } from 'motion/react'
-import { ChevronRight, Plus } from 'lucide-react'
+import { ChevronRight, Plus, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Button,
@@ -53,6 +53,7 @@ import {
   patchTaskAtom,
   rankTasksAtom,
   ROOT_LANE,
+  sharingErrorAtom,
   tasksAtom,
 } from './state'
 import { BoardCard } from './BoardCard'
@@ -86,6 +87,24 @@ function BrokenStrip(): React.JSX.Element | null {
           <span className="font-mono">{b.path}</span>: {b.error}
         </div>
       ))}
+    </div>
+  )
+}
+
+/**
+ * A share or make-private that did not happen, said where the person is
+ * looking, until they dismiss it or the next one is tried. Usually the other
+ * name is taken already: a shared and a private task with one name.
+ */
+export function SharingErrorStrip(): React.JSX.Element | null {
+  const [failed, setFailed] = useAtom(sharingErrorAtom)
+  if (failed === null) return null
+  return (
+    <div data-sharing-error className="flex items-center gap-2 px-5 pt-3 text-xs">
+      <p className="min-w-0 flex-1 text-destructive">
+        Could not {failed.shared ? 'share' : 'make private'} {failed.title}: {failed.error}
+      </p>
+      <IconButton icon={X} label="Dismiss" quiet onClick={() => setFailed(null)} />
     </div>
   )
 }
@@ -260,6 +279,7 @@ export function BoardView(): React.JSX.Element {
   return (
     <div data-morph-stage="" className="relative flex min-h-0 flex-1 flex-col">
       <BrokenStrip />
+      <SharingErrorStrip />
       <LayoutGroup>
         <div ref={scroller} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
           {/* At least the board's height, and as tall as its tallest column:

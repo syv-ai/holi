@@ -38,6 +38,8 @@ async function buildPreview(
 ): Promise<HTMLElement | null> {
   // A claimed file: what its claim says, straight from the snapshot, no read.
   const chip = state.facet(linkChipFacet)(target)
+  // A saved link's card is its plugin's (`RendererPlugin.editorExtensions`).
+  if (chip?.url !== undefined) return null
   if (chip) {
     const title = document.createElement('div')
     title.className = 'cm-wiki-preview-title'

@@ -8,13 +8,22 @@
  * files, and nothing Holi does on an open changes them. A newer version reaches
  * a vault only through this update, which replaces a file the vault never
  * touched, 3-way merges one it did, and hands a conflict to an agent session.
+ *
+ * Telling the two apart needs the version the vault started from. This
+ * machine's seed record has it when Holi wrote the file here. A clone made
+ * elsewhere has no record, so two more sources answer: every version Holi has
+ * ever shipped, by hash (`shipped-history.json`, added to by
+ * `pnpm --filter @holi/desktop shipped-history`), and the vault's own git
+ * history, whose newest committed copy of a shipped version is the base.
  */
 import { readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { merge3, vaultRelPath } from '@holi/shared'
+import { tryGit } from '../../git'
 import { writeAtomic } from '../vault-files'
 import { runMerges, shippedFiles } from './seed'
-import { readSeedState, recordRelease, recordSeeded, untouched } from './state'
+import shippedHistory from './shipped-history.json'
+import { readSeedState, recordRelease, recordSeeded, sha256, untouched } from './state'
 import type { SeedContribution } from './types'
 
 /** What `holi skills update` did, one list per outcome, by vault path. */
@@ -54,6 +63,30 @@ export function stagedPath(rel: string, which: 'shipped' | 'base'): string {
     : `${rel}.${which}.local`
 }
 
+/** Every version of each shipped file Holi has ever shipped: vault path to
+ *  sha256 hashes. Only ever added to. */
+const SHIPPED_HISTORY: Record<string, readonly string[]> = shippedHistory
+
+/** Is `text` a version of `rel` that some release of Holi shipped? */
+export const everShipped = (rel: string, text: string): boolean =>
+  SHIPPED_HISTORY[rel]?.includes(sha256(text)) ?? false
+
+/**
+ * The base for a file this machine has no record of: the newest version the
+ * vault committed that Holi shipped, read from git plumbing. Null when there
+ * is none, or no repository to ask.
+ */
+async function baseFromGit(root: string, rel: string): Promise<string | null> {
+  const log = await tryGit(root, ['log', '--format=%H', '--', rel]).catch(() => null)
+  if (log === null || !log.ok) return null
+  for (const commit of log.stdout.split('\n').filter((line) => line !== '')) {
+    // Fails where the commit deleted the file: there is no version to read.
+    const blob = await tryGit(root, ['cat-file', 'blob', `${commit}:${rel}`]).catch(() => null)
+    if (blob?.ok && everShipped(rel, blob.stdout)) return blob.stdout
+  }
+  return null
+}
+
 async function removeStaged(root: string, rel: string): Promise<void> {
   for (const which of ['shipped', 'base'] as const) {
     await unlink(join(root, stagedPath(rel, which))).catch(() => undefined)
@@ -61,13 +94,16 @@ async function removeStaged(root: string, rel: string): Promise<void> {
 }
 
 /**
- * Per file, against the base Holi recorded when it wrote it:
+ * Per file:
  *
  *   - already the shipped text: current;
  *   - absent: added if Holi never wrote it here, left alone if the vault
  *     deleted it;
- *   - untouched since Holi wrote it: replaced;
- *   - changed, with the base's text: 3-way merged, kept when it merges clean;
+ *   - untouched since Holi wrote it, or exactly a version some release
+ *     shipped: replaced;
+ *   - changed, with a base (the recorded text, or else the newest shipped
+ *     version in the vault's git history): 3-way merged, kept when it merges
+ *     clean;
  *   - otherwise a conflict, the file left as it is and the shipped version
  *     (and the base, when there is one) staged beside it for an agent.
  *
@@ -125,11 +161,12 @@ export async function updateShipped(
         write = shipped
         report.added.push(rel)
       }
-    } else if (untouched(record, onDisk)) {
+    } else if (untouched(record, onDisk) || everShipped(rel, onDisk)) {
       write = shipped
       report.updated.push(rel)
     } else {
-      const merge = record === undefined ? null : merge3(record.text, onDisk, shipped)
+      const base = record?.text ?? (await baseFromGit(root, rel))
+      const merge = base === null ? null : merge3(base, onDisk, shipped)
       if (merge?.kind === 'merged') {
         // Only the vault's changes, on top of what it already had: nothing new
         // from Holi, so nothing to write or report.
@@ -140,9 +177,7 @@ export async function updateShipped(
         }
       } else {
         await writeAtomic(root, vaultRelPath(stagedPath(rel, 'shipped')), shipped)
-        if (record !== undefined) {
-          await writeAtomic(root, vaultRelPath(stagedPath(rel, 'base')), record.text)
-        }
+        if (base !== null) await writeAtomic(root, vaultRelPath(stagedPath(rel, 'base')), base)
         // The agent's resolution is made against this release, so it is the
         // base the next update merges from.
         await recordSeeded(root, rel, shipped)
@@ -179,10 +214,13 @@ export const changedBy = (report: UpdateReport): string[] => [
  * and those new to this vault. Asked on every open, so Holi can say an update
  * exists rather than wait to be asked (docs/features/updates.md).
  *
- * Deliberately quieter than `updateShipped`: a file that differs with no base
- * on this machine (a teammate's clone that never seeded it) is not counted,
- * because nothing says Holi changed it rather than the vault; nor is one the
- * vault deleted, or one already handed to an agent.
+ * A file that is exactly an older shipped version counts, record or not:
+ * the update replaces it. Otherwise this is deliberately quieter than
+ * `updateShipped`: a file that differs with no base on this machine (a
+ * teammate's clone that never seeded it) is not counted, because nothing says
+ * Holi changed it rather than the vault, and the vault's git history is not
+ * read on every open; nor is one the vault deleted, or one already handed to
+ * an agent.
  */
 export async function pendingShipped(
   root: string,
@@ -198,7 +236,7 @@ export async function pendingShipped(
       if (record === undefined) pending.push(rel)
       continue
     }
-    if (record === undefined || record.text === shipped) continue
+    if (!everShipped(rel, onDisk) && (record === undefined || record.text === shipped)) continue
     const handedOff =
       (await readFile(join(root, stagedPath(rel, 'shipped'))).catch(() => null)) !== null
     if (!handedOff) pending.push(rel)

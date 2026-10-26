@@ -36,6 +36,13 @@ A file named `task.<name>.md` in the folder it is about. Frontmatter carries `st
 description. The path is its identity
 and the filename prefix is what makes it a task. See [tasks](features/tasks.md).
 
+### Private task
+
+A task named `task.<name>.local.md`: a [local file](#local-file), on the board of the machine that
+holds it and no one else's. New tasks are private by default; sharing one renames it to
+`task.<name>.md`, a **shared task**, which syncs. Only the file's own name makes a task private: a
+task file inside a `.local.` folder is a plain local file. See [tasks](features/tasks.md).
+
 ### Lane
 
 A task's containing folder, derived and never stored. The board groups by it; moving a task between
@@ -113,7 +120,7 @@ socket, never through a terminal. See [agent-sessions](features/agent-sessions.m
 
 ### Schedule
 
-A file in `.holi/schedules/` whose frontmatter says when (`cron` or `at`, local time, or `on`, its
+One person's `.local.md` file in `.holi/schedules/` whose frontmatter says when (`cron` or `at`, local time, or `on`, its
 **triggers**) and what the run may do without asking, and whose body is a prompt. Holi starts it as
 a session at those times, or when one of its triggers hears an event, while the vault is open, on a machine that turned it on: **on** approves its current prompt, model
 and `allow` list, and any change to those reads **changed** until approved again. See
@@ -171,6 +178,12 @@ as cards answered with one key. See [quick-agent](features/quick-agent.md).
 The files that configure the agent rather than hold content: `AGENTS.md`, `CLAUDE.md`, `MEMORY.md`,
 `.holi/memory/`, `.holi/schedules/`, `USER.local.md`, and all of `.claude/`. Writing them changes what the agent does next, so anything
 less trusted than the user (a vault app, a hook) is kept off them.
+
+### Link file
+
+A web address saved in the vault as `link.<name>.md`: `url` in its frontmatter, what it is in its
+body, its name the page's title as a file name. The page itself is never stored; its preview is fetched live. See
+[links](features/links.md).
 
 ### Local file
 

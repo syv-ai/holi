@@ -16,7 +16,7 @@ import type { LinkChip } from '@/editor/livePreview'
 import type { MentionData } from '@/editor/mentions'
 import { trpc } from '@/lib/trpc'
 import { NO_AGENT, useAskAgentSeam } from './agent-service'
-import { claimsAtom, slashCommandsAtom } from './plugins'
+import { claimsAtom, runningPluginsAtom, slashCommandsAtom } from './plugins'
 import { activeRemoteAtom, snapshotAtom } from './vaults'
 
 /** The seams for the editor of `notePath` ('' for text with no file yet).
@@ -31,6 +31,7 @@ export function useEditorDeps(
   const snapshot = useAtomValue(snapshotAtom)
   const remote = useAtomValue(activeRemoteAtom)
   const claims = useAtomValue(claimsAtom)
+  const running = useAtomValue(runningPluginsAtom)
   const store = useStore()
 
   const vault = useMemo(() => {
@@ -77,6 +78,11 @@ export function useEditorDeps(
     [notePath, ownEditor],
   )
   const alwaysOpen = notePath !== '' && ownFrontmatter?.frontmatter?.alwaysOpen === true
+  // What running plugins add to every note: new only when one starts or stops.
+  const pluginExtensions = useMemo(
+    () => running.flatMap((p) => (p.editorExtensions === undefined ? [] : [p.editorExtensions])),
+    [running],
+  )
 
   return useMemo(
     (): Omit<EditorDeps, 'readOnly' | 'frontmatter'> => ({
@@ -108,7 +114,8 @@ export function useEditorDeps(
       notePath,
       ...(alwaysOpen ? { frontmatterAlwaysOpen: true } : {}),
       ...(claimExtensions === undefined ? {} : { claimExtensions }),
+      pluginExtensions,
     }),
-    [notePath, remote, hasAgent, alwaysOpen, claimExtensions, store],
+    [notePath, remote, hasAgent, alwaysOpen, claimExtensions, pluginExtensions, store],
   )
 }

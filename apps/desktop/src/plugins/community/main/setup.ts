@@ -1,6 +1,7 @@
 /**
- * Running a plugin's commands: its `setup` once per install, and its `serve`
- * per opened file (`supervisor.ts`). Both are argv arrays from the manifest,
+ * Running a plugin's commands: its `setup` once per install, its `check` when
+ * asked whether it can work now, and its `serve` per opened file
+ * (`supervisor.ts`). Both are argv arrays from the manifest,
  * run without a shell, in the plugin's own folder, on the PATH a GUI launch
  * lacks (`toolPath`).
  *
@@ -80,6 +81,57 @@ export async function runSetup(args: {
     child.once('close', (code) =>
       finish(code === 0, code === 0 ? undefined : `exited with ${code}`),
     )
+  })
+}
+
+/** How long a plugin's `check` may take before it counts as failed. */
+export const CHECK_TIMEOUT_MS = 10_000
+
+/**
+ * Run a plugin's `check` in `cwd`, its output ignored. Resolves true for exit
+ * code 0 within `timeoutMs`; a check still running then, or when `signal`
+ * aborts, is killed, with anything it started, and fails.
+ */
+export function runCheck(args: {
+  argv: readonly string[]
+  cwd: string
+  timeoutMs?: number
+  signal?: AbortSignal
+}): Promise<boolean> {
+  const [command, ...rest] = args.argv
+  return new Promise((resolve) => {
+    if (args.signal?.aborted) return resolve(false)
+    // Its own process group, so a kill stops what it started too.
+    const child = spawn(command!, rest, {
+      cwd: args.cwd,
+      env: pluginEnv(),
+      stdio: 'ignore',
+      detached: true,
+    })
+    let done = false
+    const finish = (ok: boolean) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      args.signal?.removeEventListener('abort', stop)
+      resolve(ok)
+    }
+    // Not exited, so not reaped: its pid is still ours, and leads its group.
+    const stop = () => {
+      const pid = child.pid
+      if (pid !== undefined && child.exitCode === null && child.signalCode === null) {
+        try {
+          process.kill(-pid, 'SIGKILL')
+        } catch {
+          child.kill('SIGKILL')
+        }
+      }
+      finish(false)
+    }
+    const timer = setTimeout(stop, args.timeoutMs ?? CHECK_TIMEOUT_MS)
+    args.signal?.addEventListener('abort', stop, { once: true })
+    child.once('error', () => finish(false))
+    child.once('exit', (code) => finish(code === 0))
   })
 }
 

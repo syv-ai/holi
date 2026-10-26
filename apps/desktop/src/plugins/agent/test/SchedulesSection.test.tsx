@@ -29,7 +29,7 @@ vi.mock('@/lib/trpc', () => ({
 }))
 
 const schedule = (over: Partial<ScheduleSummary>): ScheduleSummary => ({
-  path: '.holi/schedules/inbox.md',
+  path: '.holi/schedules/inbox.local.md',
   slug: 'inbox',
   name: 'Inbox',
   status: 'off',
@@ -62,7 +62,7 @@ test('shows the prompt a schedule that is off would approve, and switches it on'
   await waitFor(() =>
     expect(calls).toContainEqual({
       name: 'schedules.enable',
-      params: { schedule: '.holi/schedules/inbox.md', fingerprint: 'f1' },
+      params: { schedule: '.holi/schedules/inbox.local.md', fingerprint: 'f1' },
     }),
   )
 })
