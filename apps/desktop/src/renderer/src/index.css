@@ -1,9 +1,6 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
-/* The screens kept from before the fresh start (sign-in, onboarding, the
-   agents sidebar) and nothing else. Delete it when they are rebuilt. */
-@import './legacy.css';
 
 @source '../../plugins';
 
@@ -318,4 +315,267 @@
 }
 [data-platform='mac']:not([data-fullscreen]) [data-window-band='lights'] {
   padding-inline-start: 5rem;
+}
+
+/* ── Holi's own tokens ────────────────────────────────────────────────────
+ * Names that code and the vault's theme.css use beyond shadcn's set: the
+ * editor theme, the diff view, the drawer shell and the PDF viewer read them
+ * as `var(--…)`, and a vault's theme.css may override any of them. */
+:root {
+  --brand: var(--foreground);
+  --divider: var(--border);
+  --drawer-edge: transparent;
+  --selection: color-mix(in srgb, var(--foreground) 22%, transparent);
+  --shadow-popover:
+    0 0 0 1px var(--border), 0 8px 24px -6px color-mix(in srgb, black 30%, transparent);
+  --task-todo: var(--muted-foreground);
+  --task-doing: var(--color-amber-400);
+  --task-done: var(--color-emerald-500);
+  --diff-added: var(--color-green-500);
+  --diff-removed: var(--color-red-500);
+  --diff-added-foreground: var(--color-green-400);
+  --diff-removed-foreground: var(--color-red-400);
+}
+[data-theme='light'] {
+  --diff-added-foreground: var(--color-green-700);
+  --diff-removed-foreground: var(--color-red-700);
+}
+@theme inline {
+  --color-brand: var(--brand);
+  --color-divider: var(--divider);
+  --color-drawer-edge: var(--drawer-edge);
+  --color-diff-added-foreground: var(--diff-added-foreground);
+  --color-diff-removed-foreground: var(--diff-removed-foreground);
+}
+@theme {
+  --text-nav: 0.8125rem;
+  --text-nav--line-height: calc(18 / 13);
+}
+::selection {
+  background: var(--selection);
+}
+
+/* ── Icons ────────────────────────────────────────────────────────────────
+ * One size and one stroke weight for every glyph; `icon-sm` and `icon-lg` are
+ * the two the components ask for. */
+:root {
+  --icon-sm: 14px;
+  --icon-md: 16px;
+  --icon-lg: 20px;
+  --icon-stroke: 2;
+}
+@utility icon-sm {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  stroke-width: var(--icon-stroke);
+}
+@utility icon-lg {
+  width: var(--icon-lg);
+  height: var(--icon-lg);
+  stroke-width: var(--icon-stroke);
+}
+/* A file type's glyph colour, set per type by `components/reui/file-type.tsx`. */
+@utility file-type-glyph {
+  color: var(--file-type-glyph, var(--file-type-foreground));
+}
+
+/* ── Motion ───────────────────────────────────────────────────────────────
+ * The house vocabulary (docs/ui-system.md, "Motion"): new code reaches motion
+ * only through these utilities, never raw durations or curves. Transform and
+ * opacity only, except `motion-respond`'s colour and shadow changes. */
+:root {
+  --motion-stagger: 45ms;
+  --motion-slide: 400ms;
+  --ease-slide: cubic-bezier(0.65, 0, 0.35, 1);
+}
+@theme {
+  --ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-loop: cubic-bezier(0.45, 0, 0.55, 1);
+  --motion-respond: 150ms;
+  --motion-arrive: 300ms;
+  --motion-pop: 180ms;
+  --motion-leave: 190ms;
+  --motion-ack: 800ms;
+  --motion-inflight: 2400ms;
+}
+
+/* Hover, focus and press: a state changing under the pointer. */
+@utility motion-respond {
+  transition-property:
+    color, background-color, border-color, box-shadow, opacity, filter, fill, stroke,
+    text-decoration-color, outline-color, transform, translate, scale, rotate;
+  transition-duration: var(--motion-respond);
+  transition-timing-function: var(--ease-settle);
+}
+
+/* Arriving and leaving. A popup grows out of its trigger and shrinks back
+   (`origin`); anything else fades, or fades and rises a few pixels. */
+@utility motion-in-origin {
+  animation: motion-in-origin var(--motion-pop) var(--ease-settle) both;
+}
+@utility motion-out-origin {
+  animation: motion-out-origin var(--motion-pop) var(--ease-settle) both;
+}
+@utility motion-in-fade {
+  animation: motion-in-fade var(--motion-arrive) var(--ease-settle) both;
+}
+@utility motion-in-rise {
+  animation: motion-in-rise var(--motion-arrive) var(--ease-settle) both;
+}
+
+/* Acknowledging an act the user committed: one beat, once (`hooks/use-ack.ts`
+   adds the class and removes it when the animation ends). */
+@utility motion-ack-bloom {
+  animation: motion-ack-bloom var(--motion-ack) var(--ease-settle) both;
+}
+@utility motion-ack-tick {
+  animation: motion-ack-tick var(--motion-ack) var(--ease-settle) both;
+}
+@utility motion-ack-flash {
+  animation: motion-ack-flash var(--motion-ack) var(--ease-settle) both;
+}
+@utility motion-ack-nudge {
+  animation: motion-ack-nudge var(--motion-ack) var(--ease-settle) both;
+}
+
+/* Work in flight: loops until the work ends. */
+@utility motion-pulse {
+  animation: motion-pulse var(--motion-inflight) var(--ease-loop) infinite;
+}
+@utility motion-shimmer {
+  background-image: linear-gradient(
+    100deg,
+    var(--muted) 32%,
+    color-mix(in srgb, var(--foreground) 12%, var(--muted)) 50%,
+    var(--muted) 68%
+  );
+  background-size: 280% 100%;
+  animation: motion-shimmer calc(var(--motion-inflight) * 1.2) linear infinite;
+}
+@utility motion-orbit {
+  animation: motion-orbit calc(var(--motion-inflight) * 1.4) linear infinite;
+}
+
+@keyframes motion-in-origin {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+@keyframes motion-out-origin {
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+@keyframes motion-in-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes motion-in-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes motion-ack-bloom {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 45%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 12px transparent;
+  }
+}
+@keyframes motion-ack-tick {
+  from {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+}
+@keyframes motion-ack-flash {
+  from {
+    background-color: color-mix(in srgb, var(--primary) 28%, transparent);
+  }
+}
+@keyframes motion-ack-nudge {
+  15% {
+    transform: translateX(-5px);
+  }
+  30% {
+    transform: translateX(5px);
+  }
+  45% {
+    transform: translateX(-3px);
+  }
+}
+@keyframes motion-pulse {
+  0%,
+  100% {
+    opacity: 0.32;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes motion-shimmer {
+  from {
+    background-position: 180% 0;
+  }
+  to {
+    background-position: -80% 0;
+  }
+}
+@keyframes motion-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .motion-pulse,
+  .motion-shimmer,
+  .motion-orbit,
+  .motion-ack-tick,
+  .motion-ack-nudge {
+    animation: none;
+  }
+  .motion-in-origin,
+  .motion-in-fade,
+  .motion-out-origin {
+    animation-duration: 1ms;
+  }
+  .motion-in-rise {
+    animation-name: motion-in-fade;
+  }
+}
+
+/* ── Syntax colours ───────────────────────────────────────────────────────
+ * The code editor's highlight palette (`editor/theme.ts`). Light is the
+ * default; the 700 tints are chosen to read on white, the 300 tints on the dark
+ * ground. `comment` is the one mid-grey that reads on either. */
+:root {
+  --syntax-keyword: var(--color-fuchsia-700);
+  --syntax-property: var(--color-sky-700);
+  --syntax-string: var(--color-green-700);
+  --syntax-number: var(--color-violet-700);
+  --syntax-type: var(--color-blue-700);
+  --syntax-variable: var(--color-neutral-800);
+  --syntax-function: var(--color-sky-700);
+  --syntax-comment: var(--color-neutral-500);
+  --syntax-punctuation: var(--color-neutral-600);
+  --syntax-invalid: var(--color-red-600);
+}
+[data-theme='dark'] {
+  --syntax-keyword: var(--color-fuchsia-300);
+  --syntax-property: var(--color-sky-300);
+  --syntax-string: var(--color-green-300);
+  --syntax-number: var(--color-violet-300);
+  --syntax-type: var(--color-blue-300);
+  --syntax-variable: var(--color-neutral-200);
+  --syntax-function: var(--color-sky-300);
+  --syntax-comment: var(--color-neutral-500);
+  --syntax-punctuation: var(--color-neutral-400);
+  --syntax-invalid: var(--color-red-400);
 }

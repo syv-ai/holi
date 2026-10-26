@@ -54,10 +54,10 @@ design system on top of the stock one.
   same way.
 - Dark follows the `data-theme` stamp on `<html>` (`state/color-scheme.ts`); `dark:` variants key
   off it, and `color-scheme` follows so unpainted native UI does.
-- `legacy.css` (imported by `index.css`) maps the older names the carried-over screens and the
-  plugins still read: `brand`, `divider`, `drawer-edge`, `icon`, `icon-active`, `task-*`, `diff-*`,
-  `--shadow-popover`, `--shadow-dialog`, plus the `icon-*` and `motion-*` utilities below. New code
-  uses shadcn's tokens first and these only where no stock token says the same.
+- `index.css` also carries Holi's own names, in sections: `brand`, `divider`, `drawer-edge`,
+  `--selection`, `--shadow-popover`, `--task-*`, `--diff-*`, the `--syntax-*` palette, the `icon-*`
+  utilities and the `motion-*` vocabulary below. New code uses shadcn's tokens first and these
+  only where no stock token says the same.
 - Radius is one `--radius` with `sm`/`md`/`lg`/`xl` derived from it. Floating things (menus,
   popovers, tooltips, dialogs) are `bg-popover`; their shadow is the component's own.
 
@@ -86,18 +86,17 @@ Transparency choice (`state/window-glass.ts`, `data-glass`, `--glass-chrome`, `-
 
 ## Focus
 
-One treatment, app-wide: **a control recolours its own edge** (`border-input` to `border-ring`),
-and where there is no edge to recolour (a filled or ghost button, an icon button, a resize
-handle) it draws the thinnest one there is, `ring-1 ring-ring`. Nothing grows on focus, so nothing
-shifts. A field you type into shows its caret. `focus-visible:ring-0` is only for opting a
-bordered variant out of the ring. `test/focus-treatment.test.ts` is a source scan of the renderer,
-so a part pasted from shadcn upstream with its 3px halo fails before it is mounted anywhere.
+The stock components' treatment, app-wide: a control recolours its own edge (`border-input` to
+`border-ring`) and adds shadcn's soft halo, `ring-[3px] ring-ring/50`. App code uses the same pair
+rather than inventing a third; state still shows by background, not by borders or rings.
+Nothing is source-scanned for it: the stock components are installed as published, and a scan
+would only fight them.
 
 ## Icons
 
 - **Three sizes and one stroke:** `icon-sm` 14px (beside text, dense rows), `icon-md` 16px
   (toolbars, menus), `icon-lg` 20px (the mark on an `IconTile`). They are `--icon-sm|md|lg` and
-  `--icon-stroke` in `legacy.css`, applied as utilities. Size is a class, never lucide's `size`
+  `--icon-stroke` in `index.css`, applied as utilities. Size is a class, never lucide's `size`
   attribute, so no container rule overrides it. It is not a theme token: a vault re-skins colour,
   not layout.
 - **Icons are lucide-react glyphs.** An icon takes its holder's colour (`currentColor`); a bare
@@ -130,7 +129,7 @@ so a part pasted from shadcn upstream with its 3px halo fails before it is mount
     through `hooks/use-ack.ts`). Never blocks or queues; a repeat replays.
   - **F, in flight**: the only loops (`motion-pulse`, `motion-shimmer`, `motion-orbit`), bound to a
     real in-flight state.
-- **The tokens** live in `legacy.css` for now: `--ease-settle`, `--ease-loop`, `--motion-respond`
+- **The tokens** live in `index.css`'s Motion section: `--ease-settle`, `--ease-loop`, `--motion-respond`
   150ms, `-arrive` 300ms, `-pop` 180ms (a menu or tooltip growing from its trigger; it answers a
   click, so it is quicker than an arrival), `-leave` 190ms, `-ack` 800ms, `-inflight` 2400ms, and
   `--motion-stagger`, `--motion-slide`, `--ease-slide` in plain `:root`, because Tailwind
@@ -229,7 +228,7 @@ motion, header and edge through the injected stylesheet and cannot resize.
 
 ## Rules
 
-- State shows by background colour, not by borders or rings; focus is the one exception, above.
+- State shows by background colour, not by borders or rings, except focus, above.
 - Only floating things (dialogs, menus, popovers, tooltips, toasts) get `--popover` and a shadow,
   in React and CodeMirror alike, and no border of their own.
 - Tokens or nothing: no colour literal and no motion number at a call site.
@@ -259,4 +258,4 @@ motion, header and edge through the injected stylesheet and cannot resize.
   `composites/drawer-shell.tsx`.
 - `apps/desktop/src/plugins/pdf/renderer/pdf-viewer-config.ts`.
 - `packages/shared/src/theme.ts`: parse, whitelist, validate, merge.
-- `apps/desktop/test/focus-treatment.test.ts`, `test/motion.test.ts`, `test/theme-tokens.test.ts`.
+- `apps/desktop/src/renderer/src/lib/__tests__/motion.test.ts`, `editor/__tests__/syntax-tokens.test.ts`, `apps/desktop/test/theme-tokens.test.ts`.
