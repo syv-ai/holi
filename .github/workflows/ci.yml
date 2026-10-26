@@ -3,8 +3,9 @@
 # what each step enforces is .agents/skills/holi-rules/SKILL.md.
 #
 # The checks run on Linux on purpose: it is case-sensitive, so an import that only
-# resolves on macOS fails there. The tests run on macOS (see the test job). The tests fake the PTY and never launch Electron, so neither the
-# Electron binary nor a rebuilt node-pty is needed.
+# resolves on macOS fails there. The tests run on macOS (see the test job). They fake
+# the PTY and never launch Electron, so neither the Electron binary nor a rebuilt
+# node-pty is needed.
 name: CI
 
 on:

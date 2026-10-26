@@ -87,7 +87,7 @@ Plan/spec: [`agent-first.md`](agent-first.md)
 - **Basis:** aka-ai-platform turns `no-restyle` off inside its components package for the same reason.
 - **Cost if wrong:** cheap.
 
-## D12. Git hooks are installed by `prepare` only after the migration lands
+## D12. Git hooks are installed by `prepare` only after the migration lands [superseded by D21]
 
 - **Context:** hooks live in the shared `.git/hooks`, so installing them mid-migration would block the agents still moving files.
 - **Decision:** wire `prepare: simple-git-hooks` in the tooling commit but run the install last, after every check is green.
@@ -149,8 +149,8 @@ Plan/spec: [`agent-first.md`](agent-first.md)
 ## D21. A small install script writes the git hooks, not simple-git-hooks
 
 - **Context:** `simple-git-hooks` cannot install from a git worktree (it tries to create `.git/hooks`, but in a worktree `.git` is a file), so from this checkout the hooks were never installed.
-- **Decision:** `scripts/install-hooks.mjs`, run by `prepare`, writes the two guarded hooks (D19) into `git rev-parse --git-common-dir`/hooks. `HOLI_SKIP_HOOKS=1` skips them.
-- **Cost if wrong:** cheap.
+- **Decision:** `scripts/install-hooks.mjs`, run by `prepare`, writes the two guarded hooks (D19) into `git rev-parse --git-common-dir`/hooks, or into a repository-local `core.hooksPath`; a global `core.hooksPath` is left alone and the script says that git will not run the hooks here. The pre-commit hook refuses with a message in a worktree without `node_modules`. A failure to install is a warning, never a failed `pnpm install`: CI runs every check regardless. `HOLI_SKIP_HOOKS=1` skips them.
+- **Cost if wrong:** cheap. An older branch's `simple-git-hooks` run rewrites the same folder without the guards and drops `commit-msg`, until `pnpm install` runs here again.
 
 ## D22. CI tests run on macOS; the structure checks stay on Linux
 

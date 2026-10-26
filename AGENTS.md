@@ -282,8 +282,12 @@ Gotchas of a fresh checkout or worktree that no file states.
 - `.git/hooks` is shared by every worktree of this repository (the main checkout, this
   one, and any agent worktree), and `pnpm install` reinstalls the hooks through
   `prepare`. A hook therefore also runs in worktrees on older branches; that is why the
-  hook commands skip a tool the checked-out branch does not have. Do not make a hook
-  depend on a file that only this branch has without the same guard.
+  hook commands skip a tool the checked-out branch does not have, and the pre-commit
+  hook refuses with a message when the worktree has no `node_modules`. Do not make a hook
+  depend on a file that only this branch has without the same guard. `HOLI_SKIP_HOOKS=1`
+  skips both hooks. An older branch's `simple-git-hooks` run writes the same folder: it
+  drops the `commit-msg` hook and rewrites `pre-commit` without the guards, until
+  `pnpm install` runs here again.
 - A subagent worktree (`isolation: "worktree"`) is cut from the main checkout's HEAD, not
   from the branch you are on. Have it `git reset --hard <your commit>` first, and bring its
   work back with `git cherry-pick`.
