@@ -6,7 +6,7 @@
  */
 import { atom, useAtomValue } from 'jotai'
 import { LinkIcon } from 'lucide-react'
-import { snapshotAtom, trpc } from '@/plugin-api'
+import { snapshotAtom, trpc, openExternal } from '@/plugin-api'
 import type { PathClaim } from '@/plugin-api/types'
 import { isLinkFilePath, linkTitle, parseLinkFile, snapshotLinks } from '../shared/link-file'
 import { isWebUrl } from '../shared/preview'
@@ -51,7 +51,7 @@ export const LINK_PATH_CLAIM: PathClaim = {
       run: ({ remote, path }) =>
         void trpc.notes.read.query({ remote, path }).then((text) => {
           const { url } = parseLinkFile(text, path)
-          void window.holi.openExternal(url)
+          openExternal(url)
         }),
     },
   ],

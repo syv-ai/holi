@@ -52,6 +52,28 @@ repos:
               code: |
                 // x
 
+      # --- one definition per helper ---------------------------------------------
+      - id: renderer/open-external-through-helper
+        name: Leaving the app goes through openExternal
+        description: The renderer opens a URL in the system's app only through `openExternal` (lib/open-external.ts, `@/plugin-api` for plugins).
+        files: '^apps/desktop/src/(renderer/src|plugins/[^/]+/renderer)/.*\.tsx?$'
+        exclude: '^apps/desktop/src/renderer/src/lib/open-external\.ts$|(^|/)(__tests__|test)/'
+        detect:
+          regex:
+            pattern: 'window\.holi\??\.openExternal\('
+        message: '{{file}}:{{line}} calls window.holi.openExternal directly. Call `openExternal(url)` from `@/lib/open-external` (core) or `@/plugin-api` (a plugin): one helper is the one place the renderer leaves the page, so a scheme check or a log line is added once.'
+        context:
+          - '@docs/renderer.md#layers'
+        examples:
+          bad:
+            - path: apps/desktop/src/renderer/src/features/auth/sign-in.tsx
+              code: |
+                onClick={() => void window.holi.openExternal(url)}
+          good:
+            - path: apps/desktop/src/renderer/src/features/auth/sign-in.tsx
+              code: |
+                onClick={() => openExternal(url)}
+
       # --- where components may be defined --------------------------------------
       - id: renderer/components-only-in-component-folders
         name: Components are defined in components/, composites/, features/ or a plugin renderer

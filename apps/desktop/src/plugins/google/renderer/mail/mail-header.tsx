@@ -28,7 +28,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { cn } from '@/plugin-api'
+import { cn, openExternal } from '@/plugin-api'
 import type { MailState } from './use-mail'
 
 // ── App Header ──
@@ -120,9 +120,7 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
                   ? `Join ${meeting.title}`
                   : `Open ${meeting.title} in Google Calendar`
               }
-              onClick={() =>
-                void window.holi.openExternal(meeting.conferenceUrl ?? meeting.htmlLink)
-              }
+              onClick={() => openExternal(meeting.conferenceUrl ?? meeting.htmlLink)}
             >
               {meeting.conferenceUrl !== null ? (
                 <VideoIcon aria-hidden="true" />
@@ -264,17 +262,13 @@ export function AppHeader({ mail, commands }: AppHeaderProps) {
               <DropdownMenuGroup>
                 {/* Advertised by the sender; opened, never requested. */}
                 {row?.unsubscribeUrl != null && (
-                  <DropdownMenuItem
-                    onSelect={() => void window.holi.openExternal(row.unsubscribeUrl!)}
-                  >
+                  <DropdownMenuItem onSelect={() => openExternal(row.unsubscribeUrl!)}>
                     <MailMinusIcon aria-hidden="true" />
                     Open the sender’s unsubscribe page
                   </DropdownMenuItem>
                 )}
                 {(thread?.webUrl ?? row?.webUrl) !== undefined && (
-                  <DropdownMenuItem
-                    onSelect={() => void window.holi.openExternal((thread?.webUrl ?? row?.webUrl)!)}
-                  >
+                  <DropdownMenuItem onSelect={() => openExternal((thread?.webUrl ?? row?.webUrl)!)}>
                     <ExternalLinkIcon aria-hidden="true" />
                     Open in Gmail
                   </DropdownMenuItem>

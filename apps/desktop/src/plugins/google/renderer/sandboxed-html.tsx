@@ -26,7 +26,7 @@ import {
 import { sanitizeMailHtml } from './mail-html'
 import { useRemoteContent, type RemoteContentIdentity } from './mail-images'
 import { registerMailFrame } from './mail-frames'
-import { matchHotkey } from '@/plugin-api'
+import { matchHotkey, openExternal } from '@/plugin-api'
 
 interface SandboxedHtmlProps {
   /** Raw and untrusted. Sanitizing happens **here**; a caller must not pre-sanitize. */
@@ -175,7 +175,7 @@ function HtmlFrame({
       // Prevent first, decide second: an untrusted scheme must still not navigate.
       event.preventDefault()
       const href = openableLink(anchor.getAttribute('href'))
-      if (href !== null) void window.holi.openExternal(href)
+      if (href !== null) openExternal(href)
     }
     document_.addEventListener('click', onClick)
 

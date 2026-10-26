@@ -34,7 +34,7 @@ import {
   ItemTitle,
 } from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
-import { activeRemoteAtom } from '@/plugin-api'
+import { activeRemoteAtom, openExternal } from '@/plugin-api'
 import { googleCap } from './google-cap'
 
 type ClientInfo = Awaited<ReturnType<typeof googleCap.client>>
@@ -180,7 +180,7 @@ export function OAuthClient({
               variant="link"
               size="sm"
               className="self-start"
-              onClick={() => void window.holi.openExternal(CREDENTIALS_URL)}
+              onClick={() => openExternal(CREDENTIALS_URL)}
             >
               <ExternalLinkIcon data-icon="inline-start" aria-hidden="true" />
               Make one in Google Cloud

@@ -55,6 +55,7 @@ import {
   openSettingsSectionAtom,
   useGlobalPanelLayout,
   useHasCapability,
+  openExternal,
 } from '@/plugin-api'
 import { googleCap } from './google-cap'
 import { isDisconnected } from './google-errors'
@@ -630,7 +631,7 @@ export function AgendaView({
                                     variant="secondary"
                                     size="xs"
                                     aria-label={`Answer ${event.title} in Google Calendar`}
-                                    onClick={() => void window.holi.openExternal(event.htmlLink)}
+                                    onClick={() => openExternal(event.htmlLink)}
                                   >
                                     RSVP
                                   </Button>
@@ -644,7 +645,7 @@ export function AgendaView({
                               <IconButton
                                 label="Join the meeting"
                                 aria-label={`Join ${event.title}`}
-                                onClick={() => void window.holi.openExternal(event.conferenceUrl!)}
+                                onClick={() => openExternal(event.conferenceUrl!)}
                               >
                                 <Video className="size-3.5" />
                               </IconButton>
@@ -704,7 +705,7 @@ function EventDetail({
                 variant="secondary"
                 size="xs"
                 className="mr-auto"
-                onClick={() => void window.holi.openExternal(event.conferenceUrl!)}
+                onClick={() => openExternal(event.conferenceUrl!)}
               >
                 <Video className="size-3.5" />
                 Join
@@ -726,7 +727,7 @@ function EventDetail({
         <IconButton
           label="Open in Google Calendar"
           aria-label={`Open ${event.title} in Google Calendar`}
-          onClick={() => void window.holi.openExternal(event.htmlLink)}
+          onClick={() => openExternal(event.htmlLink)}
         >
           <ExternalLink className="size-3.5" />
         </IconButton>

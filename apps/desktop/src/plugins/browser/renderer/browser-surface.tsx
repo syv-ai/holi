@@ -39,7 +39,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { IconButton } from '@/composites/icon-button'
-import { activeRemoteAtom } from '@/plugin-api'
+import { activeRemoteAtom, openExternal } from '@/plugin-api'
 import { addressFor, type PageInfo } from '../shared/page'
 import { browserCap } from './browser-cap'
 import { addressAskAtom, BROWSER, pagesAtom } from './state'
@@ -281,7 +281,7 @@ export function BrowserSurface({ id, visible }: { id?: string; visible: boolean 
                   <InputGroupButton
                     size="icon-xs"
                     aria-label="Open in your browser"
-                    onClick={() => void window.holi.openExternal(page.url)}
+                    onClick={() => openExternal(page.url)}
                   >
                     <ExternalLinkIcon />
                   </InputGroupButton>

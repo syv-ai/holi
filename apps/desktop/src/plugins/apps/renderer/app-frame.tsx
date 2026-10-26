@@ -39,6 +39,7 @@ import {
   cn,
   openCommitInHistoryAtom,
   snapshotAtom,
+  openExternal,
 } from '@/plugin-api'
 import { AppWindow } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -397,7 +398,7 @@ function CommitLine({ lead, commit }: { lead: string; commit: AppCommit }): Reac
         <Button
           variant="link"
           className={link}
-          onClick={() => void window.holi.openExternal(`https://github.com/${commit.login}`)}
+          onClick={() => openExternal(`https://github.com/${commit.login}`)}
         >
           {commit.author}
         </Button>

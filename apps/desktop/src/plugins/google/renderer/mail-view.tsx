@@ -63,6 +63,7 @@ import {
   useAgentService,
   useGlobalPanelLayout,
   useHasCapability,
+  openExternal,
 } from '@/plugin-api'
 import { buildSummarizePrompt } from './summarize-prompt'
 import { Badge } from '@/components/reui/badge'
@@ -657,7 +658,7 @@ export function MailView() {
     trash: (id) => void removeThreads([id], 'trash'),
     linkToTask: (thread) => void linkToTask(thread),
     canLinkToTask,
-    openExternal: (url) => void window.holi.openExternal(url),
+    openExternal: (url) => openExternal(url),
   }
 
   // Memoised for the identity: a fresh `[]` every render would re-run `live`.
@@ -963,9 +964,7 @@ export function MailView() {
                             ? 'Join this meeting'
                             : 'Open this meeting in Google Calendar'
                         }
-                        onClick={() =>
-                          void window.holi.openExternal(meeting.conferenceUrl ?? meeting.htmlLink)
-                        }
+                        onClick={() => openExternal(meeting.conferenceUrl ?? meeting.htmlLink)}
                       >
                         {meeting.conferenceUrl !== null ? (
                           <Video className="size-3.5" />
@@ -1059,14 +1058,12 @@ export function MailView() {
                     {/* Advertised by the sender in List-Unsubscribe. Opened,
                         never requested: it is a URL a stranger chose. */}
                     {openRow?.unsubscribeUrl != null && (
-                      <DropdownMenuItem
-                        onSelect={() => void window.holi.openExternal(openRow.unsubscribeUrl!)}
-                      >
+                      <DropdownMenuItem onSelect={() => openExternal(openRow.unsubscribeUrl!)}>
                         <MailMinus className="size-4" />
                         Open the sender’s unsubscribe page
                       </DropdownMenuItem>
                     )}
-                    <DropdownMenuItem onSelect={() => void window.holi.openExternal(open.webUrl)}>
+                    <DropdownMenuItem onSelect={() => openExternal(open.webUrl)}>
                       <ExternalLink className="size-4" />
                       Open in Gmail
                     </DropdownMenuItem>
@@ -1879,7 +1876,7 @@ function AddressLink({ address }: { address: MailAddress }): React.JSX.Element {
           <Button
             variant="secondary"
             size="xs"
-            onClick={() => void window.holi.openExternal(`mailto:${address.email}`)}
+            onClick={() => openExternal(`mailto:${address.email}`)}
           >
             <Reply className="size-3.5" />
             Email
@@ -1912,11 +1909,7 @@ function Attachments({ attachments, webUrl }: { attachments: Attachment[]; webUr
           {/* The full name, which the chip truncates, and where it opens. */}
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button
-                variant="secondary"
-                size="xs"
-                onClick={() => void window.holi.openExternal(webUrl)}
-              >
+              <Button variant="secondary" size="xs" onClick={() => openExternal(webUrl)}>
                 {attachment.mimeType.startsWith('image/') ? (
                   <Paperclip className="size-3.5" />
                 ) : (

@@ -50,6 +50,7 @@ import {
   openNoteTabAtom,
   openSettingsSectionAtom,
   useHasCapability,
+  openExternal,
 } from '@/plugin-api'
 import { localDate } from '@holi/shared'
 import { addMinutes, setHours, startOfDay, subDays } from 'date-fns'
@@ -532,7 +533,7 @@ export function CalendarView(): React.JSX.Element {
           onSave={() => void saveDraft()}
           onDelete={() => void deleteDraft()}
           onCreateTask={() => void createTask()}
-          onOpenExternal={(url) => void window.holi.openExternal(url)}
+          onOpenExternal={(url) => openExternal(url)}
         />
       </div>
     </TooltipProvider>

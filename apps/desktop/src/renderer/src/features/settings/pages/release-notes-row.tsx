@@ -13,6 +13,7 @@ import { MarkdownText, openableUrl } from '@/composites/markdown-text'
 import { trpc } from '@/lib/trpc'
 import { ExternalLinkIcon } from 'lucide-react'
 import { SettingsFieldRow } from '../settings-kit'
+import { openExternal } from '@/lib/open-external'
 
 type NotesAnswer = Awaited<ReturnType<typeof trpc.updates.notes.query>>
 
@@ -82,7 +83,7 @@ export function ReleaseNotesRow({ version, title }: { version: string; title: st
               variant="link"
               size="sm"
               className="self-start"
-              onClick={() => void window.holi.openExternal(url)}
+              onClick={() => openExternal(url)}
             >
               <ExternalLinkIcon data-icon="inline-start" aria-hidden="true" />
               {answer?.kind === 'found' ? answer.notes.name : 'The release'} on GitHub

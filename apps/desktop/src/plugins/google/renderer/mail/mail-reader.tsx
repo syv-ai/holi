@@ -27,6 +27,7 @@ import type { MailAddress, MailAttachment, ThreadMessage } from '../mail-types'
 import { SandboxedHtml } from '../sandboxed-html'
 import { fileSize, initialsOf } from './data'
 import type { MailState } from './use-mail'
+import { openExternal } from '@/plugin-api'
 
 /**
  * The open thread, filling the block's content area. Every body goes through
@@ -249,7 +250,7 @@ function MessageBody({ message }: { message: ThreadMessage }) {
  */
 function Attachments({ attachments, webUrl }: { attachments: MailAttachment[]; webUrl: string }) {
   if (attachments.length === 0) return null
-  const open = () => void window.holi.openExternal(webUrl)
+  const open = () => openExternal(webUrl)
   return (
     <div className="flex flex-wrap items-center gap-2">
       {attachments.map((attachment, index) => (

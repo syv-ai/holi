@@ -10,7 +10,7 @@
 import { useState } from 'react'
 import { ArrowUpRightIcon, GlobeIcon } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
-import { cn } from '@/plugin-api'
+import { cn, openExternal } from '@/plugin-api'
 import { hostOf } from '../shared/preview'
 import { usePreview } from './use-preview'
 
@@ -84,7 +84,7 @@ export function PreviewCard({
       // Holi opens it: the window itself never navigates.
       onClick={(event) => {
         event.preventDefault()
-        void window.holi.openExternal(url)
+        openExternal(url)
       }}
       draggable={false}
       data-link-card={url}

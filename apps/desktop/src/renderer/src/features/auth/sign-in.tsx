@@ -28,6 +28,7 @@ import { RevealButton } from './reveal-button'
 import { cn } from '@/lib/cn'
 import { trpc } from '@/lib/trpc'
 import { sessionAtom } from '@/state/session'
+import { openExternal } from '@/lib/open-external'
 
 /** A layout change settling: restrained, a hint of bounce and never a wobble. */
 const settle = { type: 'spring', duration: 0.4, bounce: 0.15 } as const
@@ -218,7 +219,7 @@ export function SignIn() {
                     <Button
                       variant="link"
                       size="inline"
-                      onClick={() => void window.holi.openExternal(FINE_GRAINED_TOKEN_DOCS)}
+                      onClick={() => openExternal(FINE_GRAINED_TOKEN_DOCS)}
                     >
                       Prefer a fine-grained token?
                     </Button>
@@ -308,11 +309,7 @@ function Waiting({
           {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
         </IconButton>
       </div>
-      <Button
-        variant="link"
-        size="inline"
-        onClick={() => void window.holi.openExternal(verificationUri)}
-      >
+      <Button variant="link" size="inline" onClick={() => openExternal(verificationUri)}>
         Open {verificationUri.replace(/^https?:\/\//, '')}
       </Button>
       <div className="flex w-full items-center justify-between gap-2">

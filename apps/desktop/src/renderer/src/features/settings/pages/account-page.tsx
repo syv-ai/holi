@@ -7,6 +7,7 @@ import { sessionAtom } from '@/state/session'
 import { ExternalLinkIcon } from 'lucide-react'
 import { SettingsGroup, SettingsFieldRow } from '../settings-kit'
 import { SignOutConfirm } from './sign-out-confirm'
+import { openExternal } from '@/lib/open-external'
 
 export function AccountPage() {
   const viewer = useAtomValue(sessionAtom)
@@ -39,7 +40,7 @@ export function AccountPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => void window.holi.openExternal(`https://github.com/${viewer.login}`)}
+              onClick={() => openExternal(`https://github.com/${viewer.login}`)}
             >
               Profile
               <ExternalLinkIcon data-icon="inline-end" aria-hidden="true" />

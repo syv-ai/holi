@@ -34,7 +34,7 @@ mode, the mode's own list, and who is signed in. Everywhere else is one keystrok
   its own row, never the home) and a status the toggle adds in. What is shown is core's `agentsSelectionAtom`,
   `{owner, id}`, so a plugin's row opens its own view. With no slot's `home`, the home is the
   agent's own, which says no session is open there and offers one. In the shell the sidebar's Agents tab is the mode
-  (`sidebarSectionAtom` is `appModeAtom`), and it switches the sidebar only. **Agents opens tabs**
+  (`appModeAtom`), and it switches the sidebar only. **Agents opens tabs**
   ([tabs and split view](tabs-panes.md)): a row picked, an Inbox card or a session started is a
   session tab (in the focused member while a split is active), selected where it already is, never
   opened twice; the mode's `main` draws one tab's selection (`{selection}`), so a split can show

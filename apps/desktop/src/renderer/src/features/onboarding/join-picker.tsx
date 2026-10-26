@@ -52,6 +52,7 @@ import { sessionAtom } from '@/state/session'
 import { vaultsAtom } from '@/state/vaults'
 import { ActHeading } from './act-heading'
 import { OwnerAvatar, type Owner } from './owner-avatar'
+import { openExternal } from '@/lib/open-external'
 
 /** Where an organisation's approval of Holi is granted (Authorized OAuth Apps). */
 const GITHUB_APP_ACCESS = 'https://github.com/settings/applications'
@@ -289,7 +290,7 @@ function JoinEmpty({
       }
       action={{
         label: 'Review organisation access',
-        onClick: () => void window.holi.openExternal(GITHUB_APP_ACCESS),
+        onClick: () => openExternal(GITHUB_APP_ACCESS),
       }}
       className="h-auto"
     />

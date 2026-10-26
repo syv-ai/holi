@@ -20,6 +20,7 @@ import { activeRemoteAtom, retrySyncAtom, syncStateAtom, vaultsAtom } from '@/st
 import { ExternalLinkIcon, FolderOpenIcon, ShieldCheckIcon } from 'lucide-react'
 import { SettingsGroup, SettingsFieldRow, SettingsRowsLoading } from '../settings-kit'
 import { useVaultSettings } from '../use-vault-settings'
+import { openExternal } from '@/lib/open-external'
 
 const githubUrl = (path: string) => `https://github.com/${path}`
 
@@ -154,11 +155,7 @@ export function GeneralPage() {
           title="Repository"
           description="Where the vault lives, and who it is shared with."
         >
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void window.holi.openExternal(githubUrl(entry.remote))}
-          >
+          <Button variant="outline" size="sm" onClick={() => openExternal(githubUrl(entry.remote))}>
             {entry.remote}
             <ExternalLinkIcon data-icon="inline-end" aria-hidden="true" />
           </Button>

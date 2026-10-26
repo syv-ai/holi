@@ -2,28 +2,20 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import type { ColorScheme, WindowGlass } from '@holi/shared'
 import { Switch } from '@/components/ui/switch'
-import { colorSchemeAtom, writeColorSchemeAtom } from '@/state/color-scheme'
+import { COLOR_SCHEMES, colorSchemeAtom, writeColorSchemeAtom } from '@/state/color-scheme'
+import { isMac } from '@/lib/platform'
 import { windowGlassAtom, writeWindowGlassAtom } from '@/state/window-glass'
-import {
-  BlendIcon,
-  MonitorIcon,
-  MoonIcon,
-  SquareDashedIcon,
-  SquareIcon,
-  SunIcon,
-} from 'lucide-react'
+import { BlendIcon, SquareDashedIcon, SquareIcon } from 'lucide-react'
 import { Segmented, SettingsGroup, SettingsFieldRow, type Choice } from '../settings-kit'
 import { useVaultSettings } from '../use-vault-settings'
 
-const THEMES: readonly Choice<ColorScheme>[] = [
-  { value: 'light', label: 'Light', icon: <SunIcon aria-hidden="true" /> },
-  { value: 'dark', label: 'Dark', icon: <MoonIcon aria-hidden="true" /> },
-  {
-    value: 'system',
-    label: 'System',
-    icon: <MonitorIcon aria-hidden="true" />,
-  },
-]
+const THEMES: readonly Choice<ColorScheme>[] = COLOR_SCHEMES.map(
+  ({ value, label, icon: Glyph }) => ({
+    value,
+    label,
+    icon: <Glyph aria-hidden="true" />,
+  }),
+)
 
 const GLASSES: readonly Choice<WindowGlass>[] = [
   {
@@ -38,12 +30,6 @@ const GLASSES: readonly Choice<WindowGlass>[] = [
   },
   { value: 'solid', label: 'Solid', icon: <SquareIcon aria-hidden="true" /> },
 ]
-
-/** The window is glass only on a Mac. Read at render: `main.tsx` stamps the
- *  platform after the modules load. */
-function isMac() {
-  return document.documentElement.dataset.platform === 'mac'
-}
 
 export function AppearancePage() {
   // The same atoms the profile menu's toggles write: one setting, two doors.
@@ -67,6 +53,7 @@ export function AppearancePage() {
           onChange={(next) => void setScheme(next)}
         />
       </SettingsFieldRow>
+      {/* The window is glass only on a Mac. */}
       {isMac() ? (
         <SettingsFieldRow
           title="Transparency"
