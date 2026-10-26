@@ -129,12 +129,7 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
   // and settlement. Two agents that inspect the same revision must not both
   // pass the check before either has written and published its change.
   const docQueues = new Map<string, Promise<void>>()
-  const docCommands = new Set([
-    'docs.create',
-    'docs.update',
-    'docs.delete',
-    'docs.settle',
-  ])
+  const docCommands = new Set(['docs.create', 'docs.update', 'docs.delete', 'docs.settle'])
 
   return {
     dispatch: async ({ door, remote, name, params }) => {
