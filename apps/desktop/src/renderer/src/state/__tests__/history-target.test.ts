@@ -5,8 +5,8 @@
  */
 import { createStore } from 'jotai'
 import { describe, expect, it } from 'vitest'
-import { historyTargetPathAtom } from '../src/renderer/src/state/history'
-import { workspaceAtom, type Tab, type Workspace } from '../src/renderer/src/state/panes'
+import { historyTargetPathAtom } from '@/state/history'
+import { workspaceAtom, type Tab, type Workspace } from '@/state/panes'
 
 const ws = (tabs: Tab[], active = tabs.length - 1): Workspace => ({
   panes: [{ tabs, active }],

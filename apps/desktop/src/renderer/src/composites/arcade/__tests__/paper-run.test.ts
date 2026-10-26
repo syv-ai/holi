@@ -2,18 +2,12 @@
  * Paper run's rules. The harness (run a board for a while at a fixed frame,
  * watch what it stamps and says) follows MonoCode's arcade tests
  * (https://github.com/hardbeat920/monocode), MIT License, Copyright (c) 2026
- * Nick; see LICENSE in this folder.
+ * Nick; see license in this folder.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ArcadeSprite, GridArcade } from "../grid-arcade"
-import {
-  DEFAULT_CAST,
-  MAX_CAST,
-  TILE,
-  createPaperRun,
-  stackScore,
-} from "../paper-run"
+import type { ArcadeSprite, GridArcade } from '../grid-arcade'
+import { DEFAULT_CAST, MAX_CAST, TILE, createPaperRun, stackScore } from '../paper-run'
 
 /** A wide pane: 7px cells over roughly 1100×700, a whole number of tiles. */
 const COLS = 156
@@ -21,8 +15,8 @@ const ROWS = 100
 const FRAME_MS = 33
 
 const CAST = [
-  { id: "proposal", name: "Proposal", mascot: "captain", color: "#a5a1ff" },
-  { id: "assistant", name: "Assistant", mascot: "champion", color: "#7ee0b5" },
+  { id: 'proposal', name: 'Proposal', mascot: 'captain', color: '#a5a1ff' },
+  { id: 'assistant', name: 'Assistant', mascot: 'champion', color: '#7ee0b5' },
 ]
 
 /** A seeded `Math.random`, so a board plays the same way every run. */
@@ -38,7 +32,7 @@ function seed(start: number) {
 }
 
 beforeEach(() => {
-  vi.spyOn(Math, "random").mockImplementation(seed(7))
+  vi.spyOn(Math, 'random').mockImplementation(seed(7))
 })
 
 afterEach(() => {
@@ -55,10 +49,7 @@ function board(cast = CAST, cols = COLS, rows = ROWS) {
 function holis(arcade: GridArcade) {
   return arcade
     .sprites()
-    .filter(
-      (sprite): sprite is Extract<ArcadeSprite, { kind: "holi" }> =>
-        sprite.kind === "holi"
-    )
+    .filter((sprite): sprite is Extract<ArcadeSprite, { kind: 'holi' }> => sprite.kind === 'holi')
 }
 
 function run(arcade: GridArcade, ms: number, each?: () => void) {
@@ -68,8 +59,8 @@ function run(arcade: GridArcade, ms: number, each?: () => void) {
   }
 }
 
-describe("paper run", () => {
-  it("fades the board in instead of painting at full strength", () => {
+describe('paper run', () => {
+  it('fades the board in instead of painting at full strength', () => {
     const arcade = board()
     expect(arcade.fade()).toBe(0)
     arcade.step(FRAME_MS)
@@ -83,52 +74,43 @@ describe("paper run", () => {
     const arcade = board()
     arcade.step(FRAME_MS)
     const onBoard = holis(arcade)
-    expect(onBoard.map((sprite) => sprite.mascot)).toEqual([
-      "captain",
-      "champion",
-    ])
-    expect(onBoard.map((sprite) => sprite.color)).toEqual([
-      "#a5a1ff",
-      "#7ee0b5",
-    ])
-    expect(arcade.lead()?.name).toBe("Proposal")
+    expect(onBoard.map((sprite) => sprite.mascot)).toEqual(['captain', 'champion'])
+    expect(onBoard.map((sprite) => sprite.color)).toEqual(['#a5a1ff', '#7ee0b5'])
+    expect(arcade.lead()?.name).toBe('Proposal')
   })
 
-  it("brings the default cast when the vault has none", () => {
+  it('brings the default cast when the vault has none', () => {
     const arcade = board([])
     arcade.step(FRAME_MS)
     expect(holis(arcade).map((sprite) => sprite.mascot)).toEqual(
-      DEFAULT_CAST.map((member) => member.mascot)
+      DEFAULT_CAST.map((member) => member.mascot),
     )
   })
 
-  it("puts at most a handful on the board", () => {
+  it('puts at most a handful on the board', () => {
     const many = Array.from({ length: 9 }, (_, i) => ({
       id: `h${i}`,
       name: `H${i}`,
-      mascot: "strategist",
-      color: "#f28fb1",
+      mascot: 'strategist',
+      color: '#f28fb1',
     }))
     const arcade = board(many)
     arcade.step(FRAME_MS)
     expect(holis(arcade)).toHaveLength(MAX_CAST)
   })
 
-  it("keeps a Holi where it was when the cast changes around it", () => {
+  it('keeps a Holi where it was when the cast changes around it', () => {
     const arcade = board()
     run(arcade, 3000)
     const before = holis(arcade)[0]!
-    arcade.setCast([
-      CAST[0]!,
-      { id: "new", name: "New", mascot: "scout", color: "#f0b46a" },
-    ])
+    arcade.setCast([CAST[0]!, { id: 'new', name: 'New', mascot: 'scout', color: '#f0b46a' }])
     const after = holis(arcade)
-    expect(after.map((sprite) => sprite.mascot)).toEqual(["captain", "scout"])
+    expect(after.map((sprite) => sprite.mascot)).toEqual(['captain', 'scout'])
     expect(after[0]!.cx).toBe(before.cx)
     expect(after[0]!.cy).toBe(before.cy)
   })
 
-  it("plays itself: the Holis walk, file papers and say so", () => {
+  it('plays itself: the Holis walk, file papers and say so', () => {
     const arcade = board()
     run(arcade, 500)
     const start = holis(arcade).map((sprite) => `${sprite.cx},${sprite.cy}`)
@@ -151,19 +133,18 @@ describe("paper run", () => {
     expect(arcade.score()).toBe(0)
   })
 
-  it("never says the same thing twice running", () => {
+  it('never says the same thing twice running', () => {
     const arcade = board()
     const said: string[] = []
     run(arcade, 300_000, () => {
       const bubble = arcade.speechBubble()
-      if (bubble && bubble.text !== said[said.length - 1])
-        said.push(bubble.text)
+      if (bubble && bubble.text !== said[said.length - 1]) said.push(bubble.text)
     })
     expect(said.length).toBeGreaterThan(5)
     for (let i = 1; i < said.length; i++) expect(said[i]).not.toBe(said[i - 1])
   })
 
-  it("keeps every stamped cell inside the intensity range", () => {
+  it('keeps every stamped cell inside the intensity range', () => {
     const arcade = board()
     const stamp = new Float32Array(COLS * ROWS)
     let peak = 0
@@ -176,7 +157,7 @@ describe("paper run", () => {
     expect(peak).toBeLessThanOrEqual(1)
   })
 
-  it("puts nothing in the keep-out", () => {
+  it('puts nothing in the keep-out', () => {
     const arcade = createPaperRun()
     arcade.setCast(CAST)
     const keep = { x: 20, y: 12, w: 60, h: 40 }
@@ -193,11 +174,7 @@ describe("paper run", () => {
       for (let y = 0; y < ROWS; y++) {
         for (let x = 0; x < COLS; x++) {
           const lit = stamp[y * COLS + x]! > 0
-          const kept =
-            x >= keep.x &&
-            x < keep.x + keep.w &&
-            y >= keep.y &&
-            y < keep.y + keep.h
+          const kept = x >= keep.x && x < keep.x + keep.w && y >= keep.y && y < keep.y + keep.h
           if (lit && kept) inside++
           else if (lit) outside++
         }
@@ -207,7 +184,7 @@ describe("paper run", () => {
     expect(outside).toBeGreaterThan(0)
   })
 
-  it("survives small and awkward grids", () => {
+  it('survives small and awkward grids', () => {
     for (const [cols, rows] of [
       [8, 4],
       [33, 21],
@@ -220,12 +197,12 @@ describe("paper run", () => {
           arcade.sprites()
           arcade.speechBubble()
           arcade.stamp(new Float32Array(cols * rows), cols, rows)
-        })
+        }),
       ).not.toThrow()
     }
   })
 
-  it("stays a plain grid on a board too small to play", () => {
+  it('stays a plain grid on a board too small to play', () => {
     const arcade = board(CAST, 20, 12)
     run(arcade, 2000)
     expect(arcade.sprites()).toEqual([])
@@ -234,7 +211,7 @@ describe("paper run", () => {
     expect(Math.max(...stamp)).toBe(0)
   })
 
-  it("handles being stepped before it has a size", () => {
+  it('handles being stepped before it has a size', () => {
     const arcade = createPaperRun()
     expect(() => {
       arcade.step(FRAME_MS)
@@ -244,7 +221,7 @@ describe("paper run", () => {
     }).not.toThrow()
   })
 
-  it("reboots cleanly when the pane is resized", () => {
+  it('reboots cleanly when the pane is resized', () => {
     const arcade = board()
     for (const [cols, rows] of [
       [COLS, ROWS],
@@ -254,9 +231,7 @@ describe("paper run", () => {
     ] as const) {
       arcade.resize(cols, rows)
       run(arcade, 4000)
-      expect(() =>
-        arcade.stamp(new Float32Array(cols * rows), cols, rows)
-      ).not.toThrow()
+      expect(() => arcade.stamp(new Float32Array(cols * rows), cols, rows)).not.toThrow()
     }
   })
 })
@@ -270,14 +245,14 @@ function playerTile(arcade: GridArcade) {
   }
 }
 
-describe("paper run player control", () => {
-  it("scores 1 + 2 + … + n for a stack of n", () => {
+describe('paper run player control', () => {
+  it('scores 1 + 2 + … + n for a stack of n', () => {
     expect(stackScore(1)).toBe(1)
     expect(stackScore(3)).toBe(6)
     expect(stackScore(5)).toBe(15)
   })
 
-  it("ignores steering until someone takes control", () => {
+  it('ignores steering until someone takes control', () => {
     const arcade = board()
     expect(arcade.controlled()).toBe(false)
     arcade.steer(0, 1)
@@ -285,7 +260,7 @@ describe("paper run player control", () => {
     expect(holis(arcade).some((sprite) => sprite.player)).toBe(false)
   })
 
-  it("waits for the first key, then goes where it is steered", () => {
+  it('waits for the first key, then goes where it is steered', () => {
     const arcade = board()
     arcade.takeControl()
     expect(arcade.controlled()).toBe(true)
@@ -303,7 +278,7 @@ describe("paper run player control", () => {
     expect(moved.y).not.toBe(start.y)
   })
 
-  it("turns back on the spot rather than at the next tile", () => {
+  it('turns back on the spot rather than at the next tile', () => {
     const arcade = board()
     arcade.takeControl()
     arcade.steer(1, 0)
@@ -314,8 +289,8 @@ describe("paper run player control", () => {
     expect(me().dx).toBe(-heading)
   })
 
-  it("lets hard outrun low", () => {
-    const distanceIn = (mode: "low" | "hard") => {
+  it('lets hard outrun low', () => {
+    const distanceIn = (mode: 'low' | 'hard') => {
       const arcade = board()
       arcade.setMode(mode)
       arcade.takeControl()
@@ -325,10 +300,10 @@ describe("paper run player control", () => {
       const end = holis(arcade).find((sprite) => sprite.player)!.cx
       return Math.abs(end - start)
     }
-    expect(distanceIn("hard")).toBeGreaterThan(distanceIn("low"))
+    expect(distanceIn('hard')).toBeGreaterThan(distanceIn('low'))
   })
 
-  it("picks papers up and files them for points", () => {
+  it('picks papers up and files them for points', () => {
     const arcade = createPaperRun()
     arcade.setCast(CAST)
     arcade.resize(COLS, ROWS)
@@ -374,9 +349,7 @@ describe("paper run player control", () => {
           for (let tx = 0; tx < tileCols; tx++) {
             const lit = value(tx, ty)
             if (lit < 0.8 || lit > 0.9) continue
-            const d =
-              Math.abs(span(me.x, tx, tileCols)) +
-              Math.abs(span(me.y, ty, tileRows))
+            const d = Math.abs(span(me.x, tx, tileCols)) + Math.abs(span(me.y, ty, tileRows))
             if (d < best) {
               best = d
               target = { x: tx, y: ty }
@@ -394,7 +367,7 @@ describe("paper run player control", () => {
     expect(arcade.score()).toBeGreaterThan(0)
   })
 
-  it("hands the idle brain back when control is released", () => {
+  it('hands the idle brain back when control is released', () => {
     const arcade = board()
     arcade.takeControl()
     arcade.steer(1, 0)
@@ -410,7 +383,7 @@ describe("paper run player control", () => {
     arcade.takeControl()
     arcade.resize(COLS - 40, ROWS + 12)
     expect(arcade.controlled()).toBe(true)
-    expect(arcade.mode()).toBe("mid")
+    expect(arcade.mode()).toBe('mid')
     run(arcade, 1000)
     expect(holis(arcade).some((sprite) => sprite.player)).toBe(true)
   })

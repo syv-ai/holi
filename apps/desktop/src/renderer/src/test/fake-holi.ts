@@ -13,9 +13,9 @@
  * production where nobody can see it fail.
  */
 import type { VaultSnapshot } from '@holi/shared'
-import type { SyncState } from '../../src/main/vault/active-vault'
-import type { HeldBackFile } from '../../src/main/vault/large-files'
-import type { TrpcEnvelope, TrpcOpWire } from '../../src/renderer/src/lib/ipc-link'
+import type { SyncState } from '../../../main/vault/active-vault'
+import type { HeldBackFile } from '../../../main/vault/large-files'
+import type { TrpcEnvelope, TrpcOpWire } from '@/lib/ipc-link'
 
 export interface FakeHoli {
   /** Every op that reached the seam, in order. */

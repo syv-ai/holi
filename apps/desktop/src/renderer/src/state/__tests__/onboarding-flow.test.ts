@@ -9,7 +9,7 @@ import {
   vaultSlug,
   atFloor,
   reduce,
-} from '../src/renderer/src/state/onboarding-flow'
+} from '@/state/onboarding-flow'
 
 describe('slugify', () => {
   it('lowercases, dashes non-alnum, collapses and trims', () => {

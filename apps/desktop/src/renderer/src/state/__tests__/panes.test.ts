@@ -33,7 +33,7 @@ import {
   type FolderSurface,
   type Tab,
   type Workspace,
-} from '../src/renderer/src/state/panes'
+} from '@/state/panes'
 
 /** A vault app's tab: the surface `app`, by bundle path. */
 const app = (id: string): Tab => ({ kind: 'surface', surface: 'app', id })
@@ -44,9 +44,7 @@ const APPS: FolderSurface[] = [
 ]
 
 const paths = (w: Workspace) =>
-  w.panes[0]!.tabs.map((t) =>
-    t.kind === 'note' ? t.path : t.kind === 'surface' ? t.surface : t.kind,
-  )
+  w.panes[0]!.tabs.map((t) => (t.kind === 'note' ? t.path : t.surface))
 
 describe('openTab', () => {
   it('focuses a note that is already open instead of opening it twice', () => {

@@ -25,12 +25,12 @@ describe('every completion popup goes through holiCompletion', () => {
   // The chrome hangs off a class that only `holiCompletion` stamps, so a call
   // site that reaches for `autocompletion()` directly gets CodeMirror's look
   // and says nothing about it. That is how the old block came to be dead.
-  test.each([
-    '../src/renderer/src/editor/extensions.ts',
-    '../src/renderer/src/editor/settings-completion.ts',
-  ])('%s does not call autocompletion() directly', (file) => {
-    expect(read(file)).not.toMatch(/\bautocompletion\(/)
-  })
+  test.each(['../extensions.ts', '../settings-completion.ts'])(
+    '%s does not call autocompletion() directly',
+    (file) => {
+      expect(read(file)).not.toMatch(/\bautocompletion\(/)
+    },
+  )
 })
 
 test('the popup class is the one the chrome will look for', () => {

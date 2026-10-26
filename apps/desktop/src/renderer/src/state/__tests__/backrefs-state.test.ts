@@ -5,8 +5,8 @@
  */
 import { createStore } from 'jotai'
 import { afterEach, describe, expect, it } from 'vitest'
-import { installFakeHoli, type FakeHoli } from './helpers/fake-holi'
-import { activeRemoteAtom, backrefsFor } from '../src/renderer/src/state/vaults'
+import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
+import { activeRemoteAtom, backrefsFor } from '@/state/vaults'
 
 let holi: FakeHoli | null = null
 afterEach(() => {

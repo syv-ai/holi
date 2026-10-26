@@ -3,7 +3,7 @@
  *
  * Written for Holi on MonoCode's grid-arcade model
  * (https://github.com/hardbeat920/monocode), MIT License, Copyright (c) 2026
- * Nick; see LICENSE in this folder. The two grids, the tile lattice the movers
+ * Nick; see license in this folder. The two grids, the tile lattice the movers
  * walk with a fractional `progress`, the boot fade, the greedy idle brain, the
  * buffered steering and the speech timing follow MonoCode's snake and pac-man
  * (`snakeArcade.ts`, `pacmanArcade.ts`); the game itself is Holi's.

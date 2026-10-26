@@ -1,6 +1,6 @@
 import { THEME_TOKENS } from '@holi/shared'
 import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { arrivalIndex, MOTION_STAGGER_CAP, staggerDelay } from '@/lib/motion'
 
@@ -85,10 +85,7 @@ describe('arrivalIndex', () => {
 // three failures are all silent in a browser — an unknown animation name is
 // not an error, it simply does nothing — so they are worth catching in CI.
 describe('index.css is the one motion vocabulary', () => {
-  const css = readFileSync(
-    fileURLToPath(new URL('../src/renderer/src/index.css', import.meta.url)),
-    'utf8',
-  )
+  const css = readFileSync(join(__dirname, '../../index.css'), 'utf8')
 
   test('the size-named duration tier is gone', () => {
     expect(css).not.toMatch(/--duration-(micro|base|enter)\s*:/)
@@ -99,10 +96,10 @@ describe('index.css is the one motion vocabulary', () => {
       ...css.matchAll(/animation:\s*([A-Za-z][\w-]*)/g),
       ...css.matchAll(/--animate-[\w-]+:\s*([A-Za-z][\w-]*)/g),
     ]
-      .map((m) => m[1])
+      .map((m) => m[1]!)
       // `animation: none` in the reduced-motion block is a keyword, not a name.
       .filter((name) => !['none', 'inherit', 'initial', 'unset', 'revert'].includes(name))
-    const defined = new Set([...css.matchAll(/@keyframes\s+([A-Za-z][\w-]*)/g)].map((m) => m[1]))
+    const defined = new Set([...css.matchAll(/@keyframes\s+([A-Za-z][\w-]*)/g)].map((m) => m[1]!))
     expect(referenced.length).toBeGreaterThan(0)
     expect([...new Set(referenced)].filter((name) => !defined.has(name))).toEqual([])
   })

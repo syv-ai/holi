@@ -15,11 +15,11 @@ import {
   VAULT_SETTING_DEFAULTS,
   type VaultSnapshot,
 } from '@holi/shared'
-import { installFakeHoli, type FakeHoli } from './helpers/fake-holi'
-import { homeTargetAtom, openHomeAtom, openLandingAtom } from '../src/renderer/src/state/home'
-import { workspaceAtom } from '../src/renderer/src/state/panes'
-import { coreContributionAtom } from '../src/renderer/src/state/plugins'
-import { activeDocAtom, activeRemoteAtom, snapshotAtom } from '../src/renderer/src/state/vaults'
+import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
+import { homeTargetAtom, openHomeAtom, openLandingAtom } from '@/state/home'
+import { workspaceAtom } from '@/state/panes'
+import { coreContributionAtom } from '@/state/plugins'
+import { activeDocAtom, activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 let holi: FakeHoli | null = null
 afterEach(() => {
@@ -43,7 +43,13 @@ const snapshot: VaultSnapshot = {
     { path: '22-08-2026.md', kind: 'note', updatedAt: '2026-08-22T00:00:00Z' },
   ],
   claimed: {},
-  files: [{ path: 'retro.app/index.html' }, { path: 'retro.app/app.yaml' }],
+  files: [
+    { path: 'retro.app/index.html', updatedAt: '2026-07-21T00:00:00Z' },
+    { path: 'retro.app/app.yaml', updatedAt: '2026-07-21T00:00:00Z' },
+  ],
+  dirs: [],
+  icons: {},
+  ignored: [],
 }
 
 /** The views Home can name, as the registry would hold them. */

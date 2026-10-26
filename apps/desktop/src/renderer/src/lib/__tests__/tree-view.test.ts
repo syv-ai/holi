@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { isAppBundlePath } from '@holi/shared'
-import { folderClaims, folderDocumentAt } from '../src/renderer/src/lib/folder-documents'
-import { buildTreeData } from '../src/renderer/src/lib/tree-data'
+import { folderClaims, folderDocumentAt } from '@/lib/folder-documents'
+import { buildTreeData } from '@/lib/tree-data'
 
 import {
   canMoveInto,
@@ -10,7 +10,7 @@ import {
   rangeBetween,
   typeahead,
   visibleRows,
-} from '../src/renderer/src/lib/tree-view'
+} from '@/lib/tree-view'
 
 const apps = folderClaims([
   { match: isAppBundlePath, folder: { surface: 'app', entry: 'index.html' } },

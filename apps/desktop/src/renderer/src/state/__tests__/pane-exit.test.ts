@@ -5,25 +5,17 @@
 import { atom, createStore } from 'jotai'
 import { describe, expect, it } from 'vitest'
 
-import { installedPluginsAtom } from '../src/renderer/src/state/plugins'
-import {
-  closeActiveTabAtom,
-  closePaneAtom,
-  closeTabAtom,
-} from '../src/renderer/src/state/pane-exit'
+import { installedPluginsAtom } from '@/state/plugins'
+import { closeActiveTabAtom, closePaneAtom, closeTabAtom } from '@/state/pane-exit'
 import {
   emptyWorkspace,
   openPreview,
   splitPane,
   workspaceAtom,
   type Workspace,
-} from '../src/renderer/src/state/panes'
-import { activeRemoteAtom } from '../src/renderer/src/state/vaults'
-import {
-  applyVaultSwitchAtom,
-  leavingVaultAtom,
-  switchVaultAtom,
-} from '../src/renderer/src/state/vault-switch'
+} from '@/state/panes'
+import { activeRemoteAtom } from '@/state/vaults'
+import { applyVaultSwitchAtom, leavingVaultAtom, switchVaultAtom } from '@/state/vault-switch'
 
 /** `a.md` in the left pane, `c.md` alone in the right one, right focused. */
 function split(): Workspace {

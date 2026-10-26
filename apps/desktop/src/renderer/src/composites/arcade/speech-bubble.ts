@@ -1,7 +1,7 @@
 /**
  * Ported from MonoCode's `features/sessions/model/speechBubble.ts`
  * (https://github.com/hardbeat920/monocode), MIT License, Copyright (c) 2026
- * Nick; see LICENSE in this folder. Holi's changes: the text is 12px, the
+ * Nick; see license in this folder. Holi's changes: the text is 12px, the
  * floor of its type scale, and the outline can take the speaker's colour.
  *
  * A pixel-art speech bubble drawn straight onto the grid canvas. Every edge is

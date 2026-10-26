@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { matchHotkey, parseHotkey } from '../src/renderer/src/lib/hotkey'
+import { matchHotkey, parseHotkey } from '@/lib/hotkey'
 
 const ev = (init: Partial<KeyboardEvent>): KeyboardEvent =>
-  ({ metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, key: '', ...init }) as KeyboardEvent
+  ({
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    key: '',
+    ...init,
+  }) as KeyboardEvent
 
 describe('parseHotkey', () => {
   it('reads glyph modifiers and the trailing key', () => {

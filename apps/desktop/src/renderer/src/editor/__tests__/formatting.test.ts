@@ -1,6 +1,6 @@
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
-import { toggleInline, toggleLink } from '../src/renderer/src/editor/formatting'
+import { toggleInline, toggleLink } from '@/editor/formatting'
 
 function state(doc: string, anchor: number, head = anchor) {
   return EditorState.create({ doc, selection: EditorSelection.single(anchor, head) })

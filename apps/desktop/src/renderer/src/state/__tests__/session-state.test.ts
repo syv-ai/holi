@@ -8,8 +8,8 @@
  */
 import { createStore } from 'jotai'
 import { afterEach, describe, expect, it } from 'vitest'
-import { installFakeHoli, type FakeHoli } from './helpers/fake-holi'
-import { loadSessionAtom, sessionAtom, signOutAtom } from '../src/renderer/src/state/session'
+import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
+import { loadSessionAtom, sessionAtom, signOutAtom } from '@/state/session'
 
 let holi: FakeHoli | null = null
 afterEach(() => {

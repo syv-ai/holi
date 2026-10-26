@@ -7,7 +7,7 @@
  * file the parsers will then refuse.
  */
 import { describe, expect, it } from 'vitest'
-import { registerBuffer, saveAllBuffers } from '../src/renderer/src/lib/buffer-registry'
+import { registerBuffer, saveAllBuffers } from '@/lib/buffer-registry'
 
 describe('saveAllBuffers', () => {
   it('saves every open buffer, not just the focused one', async () => {

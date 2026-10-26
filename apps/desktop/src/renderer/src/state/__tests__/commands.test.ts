@@ -9,17 +9,12 @@
  */
 import { createStore } from 'jotai'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { installFakeHoli, type FakeHoli } from './helpers/fake-holi'
-import { parseHotkey } from '../src/renderer/src/lib/hotkey'
-import {
-  STATIC_COMMANDS,
-  commandsAtom,
-  runCommandAtom,
-  untitledPath,
-} from '../src/renderer/src/state/commands'
-import { activeRemoteAtom, vaultsAtom } from '../src/renderer/src/state/vaults'
-import { emptyWorkspace, workspaceAtom } from '../src/renderer/src/state/panes'
-import { recentsByVaultAtom } from '../src/renderer/src/state/recents'
+import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
+import { parseHotkey } from '@/lib/hotkey'
+import { STATIC_COMMANDS, commandsAtom, runCommandAtom, untitledPath } from '@/state/commands'
+import { activeRemoteAtom, vaultsAtom } from '@/state/vaults'
+import { emptyWorkspace, workspaceAtom } from '@/state/panes'
+import { recentsByVaultAtom } from '@/state/recents'
 
 let holi: FakeHoli
 beforeEach(() => {

@@ -6,7 +6,7 @@
  * dispatches it is not the place to test whether a deleted note is reported.
  */
 import { describe, expect, test } from 'vitest'
-import { resolveHome } from '../src/renderer/src/lib/home-target'
+import { resolveHome } from '@/lib/home-target'
 
 /** A vault holding one note, one other file and one app (a folder document
  *  in the surface `app`), with the board as the one view that can be Home. */

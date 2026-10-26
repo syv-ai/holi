@@ -9,10 +9,10 @@
 import { createStore } from 'jotai'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { VaultSnapshot } from '@holi/shared'
-import { installFakeHoli, type FakeHoli } from './helpers/fake-holi'
-import { registerBuffer } from '../src/renderer/src/lib/buffer-registry'
-import { activeRemoteAtom, renameNoteAtom } from '../src/renderer/src/state/vaults'
-import { emptyWorkspace, openTab, workspaceAtom } from '../src/renderer/src/state/panes'
+import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
+import { registerBuffer } from '@/lib/buffer-registry'
+import { activeRemoteAtom, renameNoteAtom } from '@/state/vaults'
+import { emptyWorkspace, openTab, workspaceAtom } from '@/state/panes'
 
 let holi: FakeHoli | null = null
 afterEach(() => {
@@ -20,7 +20,14 @@ afterEach(() => {
   holi = null
 })
 
-const emptySnapshot = (): VaultSnapshot => ({ docs: [], claimed: {}, files: [] })
+const emptySnapshot = (): VaultSnapshot => ({
+  docs: [],
+  claimed: {},
+  files: [],
+  dirs: [],
+  icons: {},
+  ignored: [],
+})
 
 describe('renameNoteAtom', () => {
   it('flushes, commits, renames, commits — and retargets the open tab', async () => {

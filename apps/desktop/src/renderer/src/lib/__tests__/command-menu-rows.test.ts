@@ -11,7 +11,7 @@ import {
   rankPlaces,
   RECENT_CAP,
   textPlaces,
-} from '../src/renderer/src/lib/command-menu-rows'
+} from '@/lib/command-menu-rows'
 
 function snapshot(over: Partial<VaultSnapshot> = {}): VaultSnapshot {
   return {
@@ -64,7 +64,7 @@ describe('rankPlaces', () => {
           kind: 'note' as const,
           updatedAt: `2026-09-${String(i + 1).padStart(2, '0')}T00:00:00Z`,
         })),
-      })
+      }),
     )
     expect(rankPlaces(many, '')).toHaveLength(RECENT_CAP)
   })

@@ -10,7 +10,7 @@ import {
   remapUnder,
   renameBasenameRange,
   withMdExtension,
-} from '../src/renderer/src/lib/tree-paths'
+} from '@/lib/tree-paths'
 
 describe('tree-paths', () => {
   it('joins, tolerating empty parent', () => {

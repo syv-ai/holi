@@ -3,15 +3,10 @@
  */
 import { atom, createStore } from 'jotai'
 import { describe, expect, it } from 'vitest'
-import { prune, touch, type RecentEntry } from '../src/renderer/src/lib/recents'
-import {
-  recentOfTab,
-  recentsAtom,
-  recentsByVaultAtom,
-  touchRecentAtom,
-} from '../src/renderer/src/state/recents'
-import { coreContributionAtom } from '../src/renderer/src/state/plugins'
-import { activeRemoteAtom, snapshotAtom } from '../src/renderer/src/state/vaults'
+import { prune, touch, type RecentEntry } from '@/lib/recents'
+import { recentOfTab, recentsAtom, recentsByVaultAtom, touchRecentAtom } from '@/state/recents'
+import { coreContributionAtom } from '@/state/plugins'
+import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { emptyVaultSnapshot } from '@holi/shared'
 
 const path = (key: string): RecentEntry => ({ kind: 'path', key })

@@ -19,10 +19,10 @@ import {
   VAULT_SETTING_DEFAULTS,
   type VaultSnapshot,
 } from '@holi/shared'
-import { installFakeHoli, type FakeHoli } from './helpers/fake-holi'
-import { workspaceAtom } from '../src/renderer/src/state/panes'
-import { activeRemoteAtom } from '../src/renderer/src/state/vaults'
-import { openTodaysDailyAtom, sweepDailyAtom } from '../src/renderer/src/state/daily'
+import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
+import { workspaceAtom } from '@/state/panes'
+import { activeRemoteAtom } from '@/state/vaults'
+import { openTodaysDailyAtom, sweepDailyAtom } from '@/state/daily'
 
 let holi: FakeHoli | null = null
 afterEach(() => {
@@ -42,6 +42,9 @@ const snap = (path: string): VaultSnapshot => ({
   docs: [{ path, kind: 'note', updatedAt: '2026-07-21T00:00:00Z' }],
   claimed: {},
   files: [],
+  dirs: [],
+  icons: {},
+  ignored: [],
 })
 
 describe('openTodaysDailyAtom', () => {

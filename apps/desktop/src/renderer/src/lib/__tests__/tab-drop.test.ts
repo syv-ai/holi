@@ -16,7 +16,7 @@ import {
   stripEdge,
   tabPayload,
   type PillBox,
-} from '../src/renderer/src/lib/tab-drop'
+} from '@/lib/tab-drop'
 
 /** Three pills, 100px each, starting at x=100 — and carrying **absolute** tab
  *  indices 4/5/6, because the strip renders a window and the leftmost visible

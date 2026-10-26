@@ -3,10 +3,17 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { Task } from '@holi/shared'
-import { rankAt, sortCell } from '../src/renderer/src/lib/board-order'
+import { rankAt, sortCell } from '@/lib/board-order'
 
 const task = (title: string, order?: number): Task =>
-  ({ path: `task.${title}.md`, title, status: 'todo', tags: [], description: '', order }) as Task
+  ({
+    path: `task.${title}.md`,
+    title,
+    status: 'todo',
+    tags: [],
+    description: '',
+    order,
+  }) as unknown as Task
 
 describe('sortCell', () => {
   it('puts a ranked card where its rank says', () => {

@@ -3,7 +3,7 @@
  *
  * Adapted from MonoCode's `features/terminal/arcade/gridArcade.ts`
  * (https://github.com/hardbeat920/monocode), MIT License, Copyright (c) 2026
- * Nick; see LICENSE in this folder. The interface and its tick model are
+ * Nick; see license in this folder. The interface and its tick model are
  * MonoCode's; the provider-logo pickup is gone, and the sprites are Holi's
  * own cast, papers and conflicts.
  *

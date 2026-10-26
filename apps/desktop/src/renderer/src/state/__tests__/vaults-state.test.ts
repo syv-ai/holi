@@ -9,7 +9,7 @@
 import { createStore } from 'jotai'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { VaultSnapshot } from '@holi/shared'
-import { installFakeHoli, type FakeHoli } from './helpers/fake-holi'
+import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
 import {
   activeRemoteAtom,
   addVaultAtom,
@@ -19,7 +19,7 @@ import {
   snapshotAtom,
   subscribeToVault,
   vaultsAtom,
-} from '../src/renderer/src/state/vaults'
+} from '@/state/vaults'
 
 let holi: FakeHoli | null = null
 let unsubscribe: (() => void) | null = null
@@ -34,6 +34,9 @@ const snapshot = (...paths: string[]): VaultSnapshot => ({
   docs: paths.map((path) => ({ path, kind: 'note' as const, updatedAt: '2026-07-22T00:00:00Z' })),
   claimed: {},
   files: [],
+  dirs: [],
+  icons: {},
+  ignored: [],
 })
 
 const entry = (remote: string) => ({

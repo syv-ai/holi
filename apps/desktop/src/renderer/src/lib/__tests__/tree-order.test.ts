@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { orderChildren, placeAmong } from '../src/renderer/src/lib/tree-order'
+import { orderChildren, placeAmong } from '@/lib/tree-order'
 
 const byName = (a: string, b: string) => a.localeCompare(b)
 

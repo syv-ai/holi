@@ -7,7 +7,7 @@
  *
  * Ported from MonoCode's `features/terminal/ui/TerminalGridBackground.tsx`
  * (https://github.com/hardbeat920/monocode), MIT License, Copyright (c) 2026
- * Nick; see LICENSE in this folder. The canvas renderer is theirs: the stamped
+ * Nick; see license in this folder. The canvas renderer is theirs: the stamped
  * cells, the cell outlines blitted from a canvas of their own, the sprites,
  * the eased speech bubble, the frame-capped loop, take-control and Escape.
  * Holi's changes: one game, so no slider; its own cast drawn as the Holis'

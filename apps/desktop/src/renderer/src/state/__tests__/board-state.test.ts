@@ -11,7 +11,7 @@ import {
   matchesFilter,
   taskCreateFolders,
   togglePerson,
-} from '../src/renderer/src/state/tasks'
+} from '@/state/tasks'
 
 const TODAY = '2026-07-14'
 

@@ -6,14 +6,9 @@ import {
   planMoveInto,
   planPaste,
   planRenameFolder,
-} from '../src/renderer/src/lib/tree-actions'
+} from '@/lib/tree-actions'
 
-const DOCS = [
-  'a.md',
-  'notes/b.md',
-  'notes/deep/c.md',
-  'other/d.md',
-]
+const DOCS = ['a.md', 'notes/b.md', 'notes/deep/c.md', 'other/d.md']
 
 describe('filesUnder', () => {
   it('fans a folder out to its files and dedups overlapping targets', () => {
