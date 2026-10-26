@@ -387,12 +387,8 @@ export async function openActiveVault(args: {
    * losing it (see the file header).
    */
   async function maybeCommit(duringPull = false, duringDelivery = false): Promise<string | null> {
-    if (
-      closed ||
-      committing ||
-      manualPause !== null ||
-      (deliveryVerifying && !duringDelivery)
-    ) return null
+    if (closed || committing || manualPause !== null || (deliveryVerifying && !duringDelivery))
+      return null
     /**
      * A commit must not run while a pull is merging: `git commit` and
      * `git merge` both take `.git/index.lock`, so an autosave landing inside a
@@ -466,7 +462,14 @@ export async function openActiveVault(args: {
     // part of the commit's: both loops run git against one index, and even a
     // `git status` refreshes (and therefore locks) it. Deferring a pull by one
     // tick costs nothing; overlapping them costs a failed command.
-    if (closed || pullInFlight || committing || manualPause !== null || conflictPaths !== null) {
+    if (
+      closed ||
+      pullInFlight ||
+      committing ||
+      deliveryVerifying ||
+      manualPause !== null ||
+      conflictPaths !== null
+    ) {
       return null
     }
     // Claimed synchronously, before the first await. Checking a guard before an
@@ -586,19 +589,20 @@ export async function openActiveVault(args: {
    * Never throws: every path is caught, so quit and vault switch can race it
    * against a timeout without risking an unhandled rejection.
    */
-  async function pushNow(): Promise<void> {
+  async function pushNow(duringDelivery = false): Promise<boolean> {
     // A reconcile owns the tree; a sticky conflict means the remote has moved
     // under us and only a reconcile clears it. Pushing into either is wrong.
     if (
       closed ||
       manualPause !== null ||
       conflictPaths !== null ||
-      deliveryVerifying ||
+      (deliveryVerifying && !duringDelivery) ||
       rejectedDeliveries.size > 0
-    ) return
+    )
+      return false
     // Single-flight against itself, the pull loop, and a commit, all of which
     // touch refs or the index. Claimed synchronously, before the first await.
-    if (pushInFlight || pullInFlight || committing) return
+    if (pushInFlight || pullInFlight || committing) return false
     pushInFlight = true
     try {
       let result = await args.repo.push()
@@ -610,11 +614,12 @@ export async function openActiveVault(args: {
         const pulled = await maybePull()
         // Anything but a clean merge (a conflict, or a declined tick) is now
         // owned by `maybePull`'s state. Do not retry or the state fights it.
-        if (pulled?.kind !== 'merged') return
+        if (pulled?.kind !== 'merged') return false
         pushInFlight = true
         result = await args.repo.push()
       }
-      if (result.kind === 'pushed' || result.kind === 'nothing-to-push') {
+      const succeeded = result.kind === 'pushed' || result.kind === 'nothing-to-push'
+      if (succeeded) {
         offline = false
         permissionDenied = false
       } else if (result.kind === 'rejected' && result.reason === 'permission') {
@@ -622,11 +627,13 @@ export async function openActiveVault(args: {
       }
       // A second non-fast-forward here (someone pushed again in the last few
       // milliseconds) is left for the next tick rather than looped on.
+      return succeeded
     } catch (err) {
       console.error('[vault] push failed:', err)
       // Mirrors `maybePull`: a lock the user's own git briefly held is contention,
       // not the network, and calling it offline sends someone to check their wifi.
       if (!isIndexLockError(err)) offline = true
+      return false
     } finally {
       pushInFlight = false
       await refreshState()
@@ -707,14 +714,21 @@ export async function openActiveVault(args: {
           await new Promise((resolve) => setTimeout(resolve, 10))
         }
       }
+      // Deliveries share the same verification guard. Wait for the current one
+      // before claiming it, so one delivery cannot release another's guard.
       if (commitTimer !== null) {
         clearTimeout(commitTimer)
         commitTimer = null
       }
-      // Claim before the first await so a due push timer (and new automatic
-      // pushes) cannot race the verification window. Join any push already
-      // underway before this delivery creates its commit.
+      // Serialize delivery verifications and claim before the first sync wait,
+      // so a due push timer and background pull cannot race the verification.
+      while (!closed && deliveryVerifying) {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      if (closed) return false
       deliveryVerifying = true
+      if (pushTimer !== null) clearTimeout(pushTimer)
+      pushTimer = null
       try {
         await waitForSync()
         if (closed) return false
@@ -724,7 +738,8 @@ export async function openActiveVault(args: {
         await waitForSync()
         if (closed) return false
         const afterCommit = await args.repo.status().catch(() => null)
-        if (afterCommit === null || blockedReason(afterCommit) !== null || manualPause !== null) return false
+        if (afterCommit === null || blockedReason(afterCommit) !== null || manualPause !== null)
+          return false
         if (!(await verify())) {
           rejectedDeliveries.add(path)
           scheduleCommit()
@@ -736,7 +751,8 @@ export async function openActiveVault(args: {
         // previously rejected path remains quarantined.
         scheduleCommit()
         schedulePush()
-        await pushNow()
+        const pushed = await pushNow(true)
+        if (!pushed) return false
         await waitForSync()
         if (closed) return false
         const latest = await args.repo.status().catch(() => null)
@@ -753,9 +769,10 @@ export async function openActiveVault(args: {
           }
         }
         const finalStatus = await args.repo.status().catch(() => null)
-        if (finalStatus === null || blockedReason(finalStatus) !== null || manualPause !== null) return false
+        if (finalStatus === null || blockedReason(finalStatus) !== null || manualPause !== null)
+          return false
         if (finalStatus.ahead > 0) {
-          await pushNow()
+          if (!(await pushNow(true))) return false
           await waitForSync()
         }
         return !closed
