@@ -57,7 +57,7 @@ PTY of its own. It asks Claude Code for one (`claude --bg [--name] [prompt]`, `-
 person starts one in the agent list. A session is keyed by its **job id** everywhere: capabilities, the turn
 bracket, turn records. The id survives `/clear`, which changes the conversation's `sessionId`.
 
-**One way to run `claude`.** `claude-cli.ts` runs every command Holi issues for a vault in the vault
+**One way to run `claude`.** `plugins/agent/main/claude/cli.ts` runs every command Holi issues for a vault in the vault
 clone, on its config directory, with one environment. The supervisor takes its environment from
 whichever `claude` process started it and hands it to every session, so every call carrying Holi's
 bin directory first on `PATH` is what keeps `holi` resolvable in all of them.
@@ -307,7 +307,7 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - Never answer an agent's own prompts or add a prompt system: a session's questions are its
   terminal's.
 - Key a session by its job id, never by the conversation's `sessionId`, which changes on `/clear`.
-- Run every `claude` for a vault through `claude-cli.ts`, so the supervisor's environment is
+- Run every `claude` for a vault through `plugins/agent/main/claude/cli.ts`, so the supervisor's environment is
   always Holi's.
 - Probe a pid before signalling it: signal the group only if it still leads its group. A reaped pid
   may already be a stranger's. Holi only ever signals its own terminal clients.

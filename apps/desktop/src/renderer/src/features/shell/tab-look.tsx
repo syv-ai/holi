@@ -1,4 +1,5 @@
 import { atom, useAtomValue } from 'jotai'
+import { DEFAULT_HOLI_COLOUR } from '@holi/shared'
 import { useCallback } from 'react'
 import {
   AppWindowIcon,
@@ -40,7 +41,7 @@ function SessionMark({ look }: { look: AgentsTabLook | undefined }) {
     return (
       <PixelPersona
         name={by.mascot}
-        color={by.color ?? '#8f8f94'}
+        color={by.color ?? DEFAULT_HOLI_COLOUR}
         status={look?.state === 'done' ? 'idle' : look?.state}
         still
         className="size-4 shrink-0"
