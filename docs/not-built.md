@@ -121,12 +121,6 @@ the editor's link chips, `@` completion, the relink transform and backrefs all m
 existing links need a one-time rewrite, and a relative link breaks when its source file moves where
 a vault-rooted `[[path]]` does not. Undesigned.
 
-**Live preview inside an unfocused table cell.** Cells read as prose (bold, code, links coloured),
-but a wiki-link is not a chip and an image is not drawn. `codemirror-markdown-tables` renders an
-unfocused cell itself from a highlighter, with no decorations, and everything live preview does
-beyond colour is a decoration. Fixing it means patching the package or owning the table widget.
-Worth it only if tables become a common place for links.
-
 **A binary with an unknown extension opens as text.** A `.ttf` shows as replacement characters and
 looks like corruption. Probably a byte sniff rather than a longer extension list.
 

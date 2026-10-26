@@ -5,68 +5,8 @@
  * the ~30 `legacy-modes` export names is a runtime `undefined`, not a type error,
  * because `StreamLanguage.define` takes anything shaped like a parser).
  */
-import { EditorState } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
-import { afterEach, describe, expect, it } from 'vitest'
-import { baseEditorExtensions } from '../extensions'
+import { describe, expect, it } from 'vitest'
 import { fenceLanguage, fenceLanguageId } from '../fence-languages'
-
-let view: EditorView | null = null
-
-/** The notes stack over a document, in a real (jsdom) view — highlighting is a
- *  render-time thing, so the assertion has to be against painted DOM. */
-function mount(doc: string): EditorView {
-  const parent = document.createElement('div')
-  document.body.appendChild(parent)
-  view = new EditorView({
-    state: EditorState.create({
-      doc,
-      extensions: baseEditorExtensions({
-        docExists: () => true,
-        taskByPath: () => null,
-        readNote: async () => null,
-        mentionData: () => ({ notes: [], tasks: [] }),
-        nav: () => ({ openNote: () => {}, openExternal: () => {} }),
-        notePath: 'note.md',
-        askAgent: {
-          targets: () => ({ sessions: [], initial: 'new' as const }),
-          onAsk: () => Promise.resolve({ ok: true }),
-        },
-      }),
-    }),
-    parent,
-  })
-  return view
-}
-
-/**
- * Coloured spans inside the fence's **body**. CodeMirror generates its own class
- * names (`ͼ…`) from the HighlightStyle, so the assertion is "there are token
- * spans", not "this token is this colour".
- *
- * The ``` fences themselves are always two spans — markdown tags its own
- * `CodeMark` as `processingInstruction`, which the highlight style now colours
- * (that is the one overlap noted in `extensions.ts`). They are not the code, so
- * they do not count.
- *
- * Nor does `.cm-cell-code`. Markdown tags a fence's body `CodeText` with the same
- * `monospace` it gives inline code, and `markdownHighlightStyle` classes that for
- * TABLE CELLS, which is the only place the class is styled. A span saying
- * "markdown thinks this is code" is not a language token, and a fence with no
- * language still has exactly one of them: its whole body.
- */
-function bodyTokenSpans(editor: EditorView): string[] {
-  return [...editor.dom.querySelectorAll('.cm-code-line span')]
-    .filter((el) => !el.classList.contains('cm-cell-code'))
-    .map((el) => el.textContent ?? '')
-    .filter((text) => !/^`+$/.test(text))
-}
-
-afterEach(() => {
-  view?.destroy()
-  view = null
-  document.body.innerHTML = ''
-})
 
 describe('fenceLanguageId', () => {
   it('takes the bare name', () => {
@@ -213,28 +153,5 @@ describe('fenceLanguage', () => {
     for (const name of names) {
       expect(fenceLanguage(name), name).not.toBeNull()
     }
-  })
-})
-
-describe('a fence in the notes editor', () => {
-  it('highlights the language the bug was reported against', () => {
-    // The reported symptom, exactly: ```python rendered as one flat grey block.
-    const editor = mount('# Note\n\n```python\ndef f(x):\n    return "hi"\n```\n')
-
-    expect(bodyTokenSpans(editor)).toContain('def')
-  })
-
-  it('still has the grey block behind the tokens', () => {
-    // The `.cm-code-line` background is what said "this is code" before, and it
-    // is not what was wrong — highlighting is added over it, not instead of it.
-    const editor = mount('```python\ndef f(): pass\n```\n')
-
-    expect(editor.dom.querySelectorAll('.cm-code-line').length).toBeGreaterThan(0)
-  })
-
-  it('leaves a fence with no language alone', () => {
-    const editor = mount('```\ndef f(x):\n    return 1\n```\n')
-
-    expect(bodyTokenSpans(editor)).toEqual([])
   })
 })

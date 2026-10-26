@@ -13,7 +13,6 @@ import {
 } from "../tab-descriptor"
 import { BOARD_TAB } from "@/components/blocks/app-shell-21/components/documents-section"
 import { NEW_TAB_PREFIX } from "@/components/blocks/app-shell-21/components/empty-view"
-import { SETTINGS_TAB } from "@/components/blocks/profile-9/components/sections"
 
 const EVERY: TabDescriptor[] = [
   { kind: "doc", path: "Notes/Plan.md" },
@@ -63,7 +62,6 @@ describe("tab keys", () => {
 
   test("the views' keys are the shell's constants", () => {
     expect(BOARD_KEY).toBe(BOARD_TAB)
-    expect(SETTINGS_KEY).toBe(SETTINGS_TAB)
     expect(tabKey({ kind: "new", n: 1 })).toBe(`${NEW_TAB_PREFIX}1`)
     expect(AGENTS_HOME_KEY).toBe("holi:agents")
     expect(sessionKey({ owner: "chat", id: "x" })).toBe("holi:session:chat:x")

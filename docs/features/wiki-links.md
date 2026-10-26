@@ -36,6 +36,4 @@ Notes link to each other with path-based `[[folder/note.md]]` links. They render
 ## Code
 
 - `packages/shared/src/wiki-links.ts`: the grammar and rewrites
-- `apps/desktop/src/renderer/src/editor/wikiLinkChips.ts`, `wikiHover.ts`, `livePreview.ts`, `links.ts`
 - `apps/desktop/src/main/vault/rename.ts`, `move.ts`, `backrefs.ts`, `hooks/relink.ts`
-- `apps/desktop/src/renderer/src/composites/DeleteConfirm.tsx`

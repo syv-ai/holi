@@ -276,22 +276,22 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 
 ## 6. The pillars
 
-| Page                                           | What it covers                                                       |
-| ---------------------------------------------- | -------------------------------------------------------------------- |
-| [editor](features/editor.md)                   | CodeMirror live preview, tables, images, external writes, completion |
-| [tabs-panes](features/tabs-panes.md)           | Panes, preview and pinned tabs, split panes, moving tabs             |
-| [frontmatter](features/frontmatter.md)         | The frontmatter block and its typed rows                             |
-| [wiki-links](features/wiki-links.md)           | Path-based links, rename, backrefs                                   |
-| [tasks](features/tasks.md)                     | `task.*.md` files, the board, recurrence and reminders               |
-| [planning](features/planning.md)               | The vault as one project: `.holi/project.md`, `.holi/statuses.yaml`  |
-| [daily-notes](features/daily-notes.md)         | Idempotent daily notes and their archive                             |
-| [google](features/google.md)                   | Gmail and Calendar, per vault                                        |
-| [pdf](features/pdf.md)                         | Typst export and the PDF viewer                                      |
-| [links](features/links.md)                     | `link.*.md` files and page previews                                  |
-| [browser](features/browser.md)                 | Web pages in a tab, and `holi browser` for the agent                 |
-| [vault-apps](features/vault-apps.md)           | Agent-authored apps in their own origin                              |
-| [command-palette](features/command-palette.md) | Quick open and the one table of commands                             |
-| [onboarding](features/onboarding.md)           | First run and adding a vault                                         |
+| Page                                           | What it covers                                                      |
+| ---------------------------------------------- | ------------------------------------------------------------------- |
+| [editor](features/editor.md)                   | Tiptap notes, CodeMirror text files, external writes, completion    |
+| [tabs-panes](features/tabs-panes.md)           | Panes, preview and pinned tabs, split panes, moving tabs            |
+| [frontmatter](features/frontmatter.md)         | The frontmatter block and its typed rows                            |
+| [wiki-links](features/wiki-links.md)           | Path-based links, rename, backrefs                                  |
+| [tasks](features/tasks.md)                     | `task.*.md` files, the board, recurrence and reminders              |
+| [planning](features/planning.md)               | The vault as one project: `.holi/project.md`, `.holi/statuses.yaml` |
+| [daily-notes](features/daily-notes.md)         | Idempotent daily notes and their archive                            |
+| [google](features/google.md)                   | Gmail and Calendar, per vault                                       |
+| [pdf](features/pdf.md)                         | Typst export and the PDF viewer                                     |
+| [links](features/links.md)                     | `link.*.md` files and page previews                                 |
+| [browser](features/browser.md)                 | Web pages in a tab, and `holi browser` for the agent                |
+| [vault-apps](features/vault-apps.md)           | Agent-authored apps in their own origin                             |
+| [command-palette](features/command-palette.md) | Quick open and the one table of commands                            |
+| [onboarding](features/onboarding.md)           | First run and adding a vault                                        |
 
 ## 7. State outside the repo
 

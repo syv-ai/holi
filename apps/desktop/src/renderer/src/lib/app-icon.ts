@@ -124,9 +124,8 @@ const SETTLE_MS = 150
 /**
  * Keep the dock's icon in the theme's colours, on macOS. Call once, from the
  * root. The theme reaches the page as the root's `data-theme` stamp
- * (`state/color-scheme.ts`) and its tokens as inline properties on the root
- * (`lib/theme-applicator.ts`), so watching the root's attributes sees every
- * change: light and dark, and a vault's own theme.
+ * (`state/color-scheme.ts`) and its tokens as inline properties on the root,
+ * so watching the root's attributes sees every change.
  */
 export function useDockIcon(): void {
   useEffect(() => {

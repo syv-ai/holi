@@ -130,8 +130,7 @@ export function readMailPalette(root: HTMLElement = document.documentElement): M
     muted: read(TOKENS.muted, FALLBACK.muted),
     border: read(TOKENS.border, FALLBACK.border),
     link: read(TOKENS.link, FALLBACK.link),
-    // The app is dark-first: `data-theme` is only stamped for light (see
-    // `state/theme.ts`), so anything else means dark.
+    // The app is dark-first: `data-theme` is only stamped for light, so anything else means dark.
     scheme: root.dataset.theme === 'light' ? 'light' : 'dark',
   }
 }
