@@ -1,59 +1,114 @@
 {
   "notes": {
     "overrides": "components/ui and components/reui are the design system itself (installed by the shadcn CLI, edited in place): they write the classes everyone else may not restyle, and stock components use arbitrary values, inline styles for measured geometry and runtime-built classes by design (data-grid, charts, sidebar). So no-restyle, no-arbitrary-values, no-inline-styles and require-static-classes are off inside them; no-raw-colors and no-unknown-classes stay on, since stock code uses tokens.",
-    "shadcn/no-restyle.contracts": "A caller places a component (margin, width, flex/grid position) and picks its variant and size props; it never restyles it. Spacing, colour, shape and type are the component's, set where it is defined in components/ui or components/reui. Need something the component does not offer? Add a variant or size to the component file there, in place, so every caller gets it.",
-    "shadcn/no-restyle.Button": "Button owns its height, padding, radius and colour: variant and size props only. size=\"icon\" and size=\"icon-sm\" are the square icon button. A caller may place it (w-full, margins) and nothing else.",
-    "shadcn/no-restyle.DialogContent": "Overlay content owns its geometry (Dialog, AlertDialog, Sheet, Popover): width, position and layering belong to the component, so a dialog is not a different width on every screen. A width the component lacks is a size variant added to components/ui/dialog.tsx (or sheet.tsx, popover.tsx), not a className at the call site.",
-    "shadcn/no-restyle.CardTitle": "CardTitle and FrameTitle are sized by the component. Colour and truncation are allowed; text size, font weight and leading are not.",
-    "shadcn/no-restyle.Badge": "Badge is coloured by what it means: variant=\"success-light\" and friends, at the default size. A caller may place it and nothing else.",
-    "shadcn/no-raw-colors.allow": "The categorical palette. AGENTS.md permits a raw palette class (bg-blue-500/15 text-blue-600 dark:text-blue-400) only for categorical identity, where the colour tells one thing from another (a tag colour, a file-type tint, a chart series), never for state, and always with its dark: pair. A class is allowed here by hue family; state uses Badge variants or Alert variants, and chrome uses semantic tokens (bg-background, text-muted-foreground). Reviewers check the dark: pair, which the linter cannot see.",
-    "shadcn/no-inline-styles.allow": "Only dynamic CSS custom properties pass: style={{ '--row-depth': depth }}, read by a class; and animationDelay, the one supported way to stagger a list (staggerDelay(i) from lib/motion.ts, never a literal: the motion rule rejects that). Anywhere geometry has to be computed at runtime (virtualised rows, drag overlays, resizable panes, the editor gutter, the graph canvas) it is a scoped override below, one path per entry, each saying why. Static values never belong in style; make them classes.",
-    "shadcn/no-unknown-classes.allow.motion": "Holi's own motion vocabulary from src/renderer/src/index.css: motion-respond (hover and press), motion-in-* and motion-out-* (arriving and leaving), motion-ack-* (acknowledging an action), motion-pulse and motion-shimmer (waiting). These are @utility rules the linter cannot classify, and they are the only way a duration or curve reaches a component.",
-    "shadcn/no-unknown-classes.allow.third-party": "Markers other libraries or stock components select on: ProseMirror and tiptap (the note editor), cm-* (CodeMirror), xterm* (the agent terminal), rdp-* (react-day-picker), cn-* (shadcn's radix-nova style hooks, defined in shadcn/tailwind.css), toaster (Sonner). They generate no utility CSS on purpose.",
-    "shadcn/no-unknown-classes.allow.own-stylesheets": "Classes of a component's own stylesheet rather than a Tailwind utility: obrit-* and onboarding-ritual are features/onboarding's ritual (onboarding-ritual.css, a one-time ceremony with its own palette and spring); pixel-persona* is composites/pixel-persona. Each goes when its stylesheet is rewritten as utilities. Add to this list only for a stylesheet that exists, never to silence a misspelling.",
-    "shadcn/require-static-classes": "A class built at runtime (`bg-${color}`) cannot be read by Tailwind or the linter. Choose between whole static class strings: a lookup table of full class names, or a cva variant."
+    "shadcn/no-restyle": "Encodes AGENTS.md's ReUI rule 1 and nothing stricter (docs/refactor/design-decisions.md D10): an installed component keeps its height, padding, radius, shadow and motion. A caller may place it (layout, margins), colour its text and set its type, which the ReUI blocks do in their published markup. Need a size or look the component lacks? Add a variant or size in its file under components/ui or components/reui so every caller gets it. Controls (Button, Input, Badge, TabsTrigger …) also keep their height: a fixed h-*/size-* on one is a size prop that is missing. Skeleton and Spinner are sized by their caller.",
+    "shadcn/no-restyle.DialogContent": "Overlay content may be given a width and placement (the shadcn idiom sm:max-w-lg), never padding, radius, shadow or motion.",
+    "shadcn/no-restyle.CardTitle": "Titles are never resized (AGENTS.md, ReUI rule 3)."
   },
   "rules": {
     "shadcn/no-restyle": [
       "error",
       {
-        "allow": ["layout"],
+        "allow": [
+          "layout",
+          "typography",
+          "color",
+          "m-*",
+          "mx-*",
+          "my-*",
+          "mt-*",
+          "mb-*",
+          "ms-*",
+          "me-*",
+          "ml-*",
+          "mr-*",
+          "-m-*",
+          "-mx-*",
+          "-my-*",
+          "-mt-*",
+          "-mb-*",
+          "-ms-*",
+          "-me-*",
+          "-ml-*",
+          "-mr-*"
+        ],
+        "message": {
+          "default": "{{component}} keeps its own padding, radius, shadow and motion (AGENTS.md, ReUI rule 1): pick variant={{variants}} or size={{sizes}}. A caller may place and size it in its layout (width, height, margins, flex/grid position), colour its text and set its type."
+        },
         "contracts": [
           {
-            "pattern": "^Button$",
-            "allow": ["layout"],
+            "pattern": "^(Button|IconButton|Input|Badge|TabsTrigger|SidebarMenuButton|Toggle|ToggleGroupItem|SelectTrigger|Avatar|Kbd)$",
+            "allow": [
+              "layout",
+              "typography",
+              "color",
+              "m-*",
+              "mx-*",
+              "my-*",
+              "mt-*",
+              "mb-*",
+              "ms-*",
+              "me-*",
+              "ml-*",
+              "mr-*",
+              "-m-*",
+              "-mx-*",
+              "-my-*",
+              "-mt-*",
+              "-mb-*",
+              "-ms-*",
+              "-me-*",
+              "-ml-*",
+              "-mr-*"
+            ],
+            "deny": [
+              "h-0.5",
+              "h-1",
+              "h-1.5",
+              "h-2",
+              "h-2.5",
+              "h-3",
+              "h-3.5",
+              "h-4",
+              "h-5",
+              "h-6",
+              "h-7",
+              "h-8",
+              "h-9",
+              "h-10",
+              "h-11",
+              "h-12",
+              "h-14",
+              "h-16",
+              "size-*",
+              "min-h-*"
+            ],
             "message": {
-              "default": "{{component}} chooses its own size and colour: variant={{variants}}, and the size prop for how big it is (size=\"icon\" for a square icon button). A caller may only place it (w-full, margins).",
-              "spacing": "{{component}} pads itself through its size prop: size={{sizes}}. A caller may only place it (w-full, margins)."
+              "default": "{{component}} keeps its own height, padding, radius, shadow and motion (AGENTS.md, ReUI rule 1): pick variant={{variants}} or size={{sizes}}. A caller may place it (width, margins, flex/grid position), colour its text and set its type."
+            }
+          },
+          {
+            "pattern": "^(Skeleton|Spinner)$",
+            "allow": ["layout", "spacing", "shape", "color"],
+            "message": {
+              "default": "{{component}} is sized by its caller; it never takes a shadow or motion."
             }
           },
           {
             "pattern": "^(Dialog|AlertDialog|Sheet|Popover)Content$",
-            "allow": [],
-            "message": "Overlay content owns its geometry: {{component}} is sized, positioned and layered by the component, never by the caller. A width or edge the component lacks is a size or side variant added in components/ui, not a className here."
+            "allow": ["layout"],
+            "deny": ["h-*", "min-h-*", "size-*"],
+            "message": {
+              "default": "{{component}} owns its padding, radius, shadow and motion. A caller may set its width and placement (sm:max-w-lg, max-h-[85vh] overflow-hidden) and nothing else."
+            }
           },
           {
             "pattern": "^(CardTitle|FrameTitle)$",
-            "allow": ["layout", "typography"],
-            "deny": [
-              "text-xs",
-              "text-sm",
-              "text-base",
-              "text-lg",
-              "text-xl",
-              "text-2xl",
-              "text-3xl",
-              "text-4xl",
-              "font-*",
-              "leading-*",
-              "tracking-*"
-            ],
-            "message": "{{component}} is sized by the component: text size, weight and leading are not the caller's. Truncation and colour are fine; for a different heading size use a different heading element or a variant in components/ui."
-          },
-          {
-            "pattern": "^Badge$",
-            "allow": ["layout"],
-            "message": "{{component}} is coloured by what it means, not by the caller: variant=\"success-light\" (or another variant) at the default size. A caller may only place it."
+            "allow": ["layout", "color"],
+            "deny": ["text-*", "font-*", "leading-*", "tracking-*"],
+            "message": {
+              "default": "{{component}} is never resized (AGENTS.md, ReUI rule 3): leave its size, weight and leading to the component."
+            }
           }
         ]
       }
@@ -83,7 +138,12 @@
       }
     ],
     "shadcn/no-arbitrary-values": "error",
-    "shadcn/no-inline-styles": ["error", { "allow": ["--*", "animationDelay"] }],
+    "shadcn/no-inline-styles": [
+      "error",
+      {
+        "allow": ["--*", "animationDelay"]
+      }
+    ],
     "shadcn/no-unknown-classes": [
       "error",
       {
