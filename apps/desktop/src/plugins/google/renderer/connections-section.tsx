@@ -28,16 +28,7 @@ import { ImageIcon, ShieldCheckIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/reui/alert'
 import { Frame, FramePanel } from '@/components/reui/frame'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { ConfirmDialog } from '@/composites/confirm-dialog'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -82,10 +73,9 @@ export function ConnectionsSection(): React.JSX.Element {
   /** The vault a connect in flight is for, so unmounting cancels it rather
    *  than leaving a listener holding a port for the life of the app. */
   const connecting = useRef<string | null>(null)
-  /** The account a "Remove from Holi" is asking about, and whether the
-   *  removal is in flight: it revokes at Google, so it is confirmed first. */
+  /** The account a "Remove from Holi" is asking about: it revokes at
+   *  Google, so it is confirmed first. */
   const [removing, setRemoving] = useState<{ sub: string; email: string } | null>(null)
-  const [removePending, setRemovePending] = useState(false)
 
   useEffect(() => {
     return () => {
@@ -141,14 +131,9 @@ export function ConnectionsSection(): React.JSX.Element {
    * account and needs a fresh consent to get back.
    */
   const removeAccount = async (sub: string) => {
-    setRemovePending(true)
-    try {
-      if (remote !== null) await googleCap.removeAccount(remote, { sub }).catch(() => undefined)
-      refreshGoogle()
-    } finally {
-      setRemovePending(false)
-      setRemoving(null)
-    }
+    if (remote !== null) await googleCap.removeAccount(remote, { sub }).catch(() => undefined)
+    refreshGoogle()
+    setRemoving(null)
   }
 
   /** Connected here, but not the one this vault uses. */
@@ -288,38 +273,22 @@ export function ConnectionsSection(): React.JSX.Element {
         </div>
       </FramePanel>
 
-      <AlertDialog
+      <ConfirmDialog
         open={removing !== null}
         onOpenChange={(open) => {
-          if (!open && !removePending) setRemoving(null)
+          if (!open) setRemoving(null)
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              Remove <span className="break-all">{removing?.email}</span> from Holi?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              Holi revokes its access at Google. Every vault using this account stops reading mail
-              and calendar.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={removePending}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={removePending}
-              onClick={(event) => {
-                // Stays open until Google has answered.
-                event.preventDefault()
-                if (removing !== null) void removeAccount(removing.sub)
-              }}
-            >
-              {removePending ? 'Removing…' : 'Remove account'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title={
+          <>
+            Remove <span className="break-all">{removing?.email}</span> from Holi?
+          </>
+        }
+        description="Holi revokes its access at Google. Every vault using this account stops reading mail and calendar."
+        confirmLabel="Remove account"
+        destructive
+        // Stays open until Google has answered.
+        onConfirm={() => (removing === null ? undefined : removeAccount(removing.sub))}
+      />
     </Frame>
   )
 }

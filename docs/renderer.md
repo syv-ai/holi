@@ -217,10 +217,25 @@ Each pair below was checked against its uses; neither half can go without a beha
 
 ### Add a plugin view
 
-1. In `src/plugins/<id>/renderer/`, kebab-case files, tests in `src/plugins/<id>/test/`.
+1. In `src/plugins/<id>/renderer/`, kebab-case files, tests in `src/plugins/<id>/test/`. Every
+   plugin has the same shape, so copying one is right:
+   - `index.ts` (`index.tsx` only if it holds JSX): the `RendererPlugin` and nothing else.
+   - `<id>-cap.ts`: the plugin's capability client, `capClient<typeof table>('<id>')` typed from
+     its own main table. State and views import it from there, never through a re-export.
+     Core calls a plugin makes (`trpc.files`, `trpc.settings`) are wrapped here too, so a view
+     never calls `trpc` itself.
+   - `state.ts`, or `state/` once it is several files: the atoms. Hooks are `use-*.ts` beside
+     the views, not in the state file.
+   - `<feature>-view.tsx` and its parts: one concern per file.
 2. Import only `@/components/ui`, `@/components/reui`, `@/composites/*`, `@/plugin-api` and
-   `@/test`; reach your main side through `capClient`, with `import type` from `../main`.
+   `@/test`; reach your main side through `capClient`, with `import type` from `../main`
+   (a lint rule rejects a value import). A call into another plugin is typed by hand with
+   `UiCapability`, from a shape in `packages/shared` (`plugin-wire.ts`), and the answering
+   plugin's test checks its own result fits that shape. What two plugins both need (the age
+   formatter, the default Holi colour) lives in `packages/shared`, the clock hook `useNow` in
+   `@/plugin-api`: plugins never import each other.
 3. Register the view on the plugin's `RendererPlugin` in `index.ts(x)`; the list is
-   `src/plugins/renderer.ts`.
+   `src/plugins/renderer.ts`. A settings section's `Component` is the component itself, not a
+   wrapper around it.
 4. A view in the sidebar, a tab, a settings section or a slash command is a slot of
    `RendererPlugin` (see `plugin-api/types.ts`, defined in `state/plugin-types.ts` so core state can read it), not a core import.
