@@ -272,8 +272,9 @@ Gotchas of a fresh checkout or worktree that no file states.
 - On macOS the disk is case-insensitive: rename `Foo.tsx` to `foo.tsx` in two `git mv`
   steps (`git mv Foo.tsx tmp && git mv tmp foo.tsx`), then check `git ls-files`. CI runs on
   Linux and fails any import whose case macOS tolerated.
-- The repo's `typescript` is version 7, which has no JavaScript API, so a codemod that
-  uses the compiler API needs TypeScript 5 from `node_modules/.pnpm/typescript@5.*`.
+- Two TypeScripts: the root's is 7, which has no JavaScript API; `apps/desktop` and
+  `packages/shared` pin 5.9 and `pnpm typecheck` runs that. A codemod that uses the compiler
+  API must run from `apps/desktop` (or take `node_modules/.pnpm/typescript@5.*`).
 - Some tests read CSS or source as text (`lib/__tests__/motion.test.ts`,
   `editor/__tests__/syntax-tokens.test.ts`, `test/theme-tokens.test.ts`). They break
   silently when a file moves; grep the tests for the old path after any move.
