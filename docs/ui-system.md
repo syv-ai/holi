@@ -161,11 +161,7 @@ One place decides how an icon looks, so every icon in the app agrees.
   main sets it on the dock (`holi:dockIcon`), so a light theme gets a light icon and a vault's
   own theme its own colours. `build/icon.svg` and `icon.png` are the same drawing in the default
   dark theme: the bundle's icon in Finder, and the dock's until the window has drawn one.
-- **Before a vault**, sign-in and the onboarding ritual stand in the light: shafts of warm light
-  falling from the top-left corner and shifting slowly (`composites/AmbientBackdrop.tsx`, drawn by
-  the `SideRays` shader), with film grain over them (`AmbientGrain`). It is the one decorative
-  loop the app allows, held still under reduced motion. The shell takes its light but not its
-  motion: there it is a still wash, because a moving light looked at all day would nag. Sign-in's GitHub button is the GitHub mark that opens into "Continue with
+- **Before a vault**, sign-in and the onboarding ritual stand on the plain page. Sign-in's GitHub button is the GitHub mark that opens into "Continue with
   GitHub" (`primitives/RevealButton.tsx`, the `reveal` spring). The ritual's acts crossfade in its
   own stylesheet (`onboarding-ritual.css`). The loading screen stays the plain page.
 - **Tokens** live in `index.css`: `--ease-settle`, `--ease-loop`, `--motion-respond` 150ms,
@@ -187,7 +183,7 @@ One place decides how an icon looks, so every icon in the app agrees.
   command palette and quick add are it, anchored near the top) and the nav menu open and close
   with `motion-in-origin`/`motion-out-origin`; nothing cascades rows in or blurs. The task board is
   ReUI's kanban, whose drag is dnd-kit's own sorting transition, left as shipped; completing a
-  card is one fade of its check (`TaskCheck`, `motion-respond`). The few JS springs still in use
+  card is one fade of its check. The few JS springs still in use
   live in `primitives/springs.ts` and nowhere else; nothing new reaches for them.
 
 ## Page baseline
@@ -439,6 +435,6 @@ DOM: they copy width, motion, header and edge through the injected stylesheet an
 - `apps/desktop/src/renderer/src/lib/motion.ts`, `lib/use-ack.ts`, `lib/use-arrivals.ts`.
 - `apps/desktop/src/renderer/src/composites/DrawerShell.tsx`, `lib/drawer.ts`.
 - `apps/desktop/src/renderer/src/composites/PaneToolbar.tsx`, `composites/EmptyState.tsx`.
-- `apps/desktop/src/renderer/src/state/theme.ts`, `lib/theme-applicator.ts`; `apps/desktop/src/plugins/pdf/renderer/pdf-viewer-config.ts`.
+- `apps/desktop/src/plugins/pdf/renderer/pdf-viewer-config.ts`.
 - `packages/shared/src/theme.ts`: parse, whitelist, validate, merge.
 - `apps/desktop/test/focus-treatment.test.ts`, `test/motion.test.ts`, `test/theme-tokens.test.ts`.

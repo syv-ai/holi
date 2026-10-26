@@ -31,9 +31,6 @@ import {
   MembersPage,
 } from "./vault-pages"
 
-/** The tab Settings is in the title band's strip. */
-export const SETTINGS_TAB = "holi:settings"
-
 export type SettingsPage = {
   id: string
   label: string

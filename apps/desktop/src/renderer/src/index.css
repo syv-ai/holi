@@ -306,25 +306,6 @@
 /* Split view keeps this ground: its views sit edge to edge on `main`, a
  * hairline between them (panes-view.tsx), as one tab does. */
 
-/* ══ ASCII wake ════════════════════════════════════════════
- * Bencho's (`components/bencho/ASCIIWake.tsx`). Its ink is Bencho's
- * `--fill-on`, else `--ink`; Holi's ink is `--foreground`, given here on the
- * component's own root so neither name leaks into the page. */
-.asc {
-  --ink: var(--foreground);
-  position: relative;
-  cursor: crosshair;
-  touch-action: none;
-  -webkit-tap-highlight-color: transparent;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.asc-canvas {
-  display: block;
-  color: var(--fill-on, var(--ink));
-}
-
 /* ── Window ───────────────────────────────────────────────────────────────
  * macOS draws its traffic lights over the page (`hiddenInset`, ending near
  * 73px), so whatever holds them keeps its first 80px clear, except in

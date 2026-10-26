@@ -1,12 +1,10 @@
 /**
  * The small pieces every row and header share: the state ("Need approval",
- * "Working…", "Done"), the lines a turn changed, how long ago, the sidebar's
- * and a session's card. After MonoCode's sidebar rows (MIT, Copyright
- * (c) 2026 Nick; see NOTICE.md).
+ * "Working…", "Done"), how long ago, and a session's card. After MonoCode's
+ * sidebar rows (MIT, Copyright (c) 2026 Nick; see NOTICE.md).
  *
  * Colour here is state, each with its `dark:` pair: amber for waiting on you,
- * green for done, and the diff's own added and removed tokens
- * (`docs/ui-system.md`, Monotone).
+ * green for done (`docs/ui-system.md`, Monotone).
  */
 import { Check, CircleAlert, GitBranch, LoaderCircle } from 'lucide-react'
 import type { ComponentProps } from 'react'
@@ -16,10 +14,10 @@ import { providerLabel } from '../state/providers'
 import { cn } from '@/plugin-api'
 import type { AgentSession } from '../state/sessions'
 
-export type RowState = 'needs-you' | 'working' | 'done' | 'idle'
+type RowState = 'needs-you' | 'working' | 'done' | 'idle'
 
 /** The state, in MonoCode's words, with its glyph. */
-export function StateLabel({
+function StateLabel({
   state,
   className,
 }: {
@@ -64,18 +62,8 @@ export function StateLabel({
   return null
 }
 
-/** `+135 −21`: what a turn changed, in lines. */
-export function Churn({ added, removed }: { added: number; removed: number }): React.JSX.Element {
-  return (
-    <span className="inline-flex shrink-0 items-center gap-1 tabular-nums">
-      <span className="text-diff-added-foreground">+{added}</span>
-      <span className="text-diff-removed-foreground">−{removed}</span>
-    </span>
-  )
-}
-
 /** "now", "10m", "2h", "1d", then a date: how long ago, as MonoCode puts it. */
-export function ago(at: number, now: number): string {
+function ago(at: number, now: number): string {
   const seconds = Math.max(0, Math.round((now - at) / 1000))
   if (seconds < 60) return 'now'
   const minutes = Math.floor(seconds / 60)

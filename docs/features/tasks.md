@@ -122,9 +122,6 @@ the [planning](planning.md) view shows every task in the vault by them.
   `nextDueCatchup`, keeping its time; the reminder shifts by the same whole-day delta, keeping its
   own time; status returns to the vault's first `unstarted` status. Otherwise it takes the
   completed status it was set to (`holi tasks complete` uses the first one).
-- **Date picker.** `DateTimePicker` edits `due`, `reminder` and a recurrence's `endDate`. Presets
-  resolve to a stamp on choosing: reminders are relative to `due` when set ("1 day before"), to now
-  otherwise ("tomorrow 09:00"). The month grid is one tab stop with arrow and PageUp/Down keys.
 - **Reminders.** While some registered vault runs tasks, closing the window leaves Holi in the
   tray, and Settings > Updates > Open at login starts it at login. Every 60s, and once at launch
   as catch-up, main sweeps every registered vault that runs tasks, open or not, and fires each
@@ -237,7 +234,5 @@ the [planning](planning.md) view shows every task in the vault by them.
 - `apps/desktop/src/renderer/src/state/tasks.ts`: task set, filter, drops, writes.
 - `apps/desktop/src/renderer/src/state/clock.ts`: `nowAtom` and `todayAtom`, the minute the overdue labels and the daily note read.
 - `apps/desktop/src/renderer/src/components/blocks/planning/`: the board, the task dialogs and
-  fields ([planning](planning.md)); `lib/board-order.ts`, `lib/date-presets.ts`,
-  `composites/DateTimePicker.tsx`, `composites/RecurrenceField.tsx`.
-- `apps/desktop/src/renderer/src/primitives/Kanban.tsx` (ReUI's kanban, on dnd-kit) and
-  `TaskCheck.tsx`.
+  fields ([planning](planning.md)); `lib/board-order.ts`.
+- `apps/desktop/src/renderer/src/components/reui/kanban.tsx`: ReUI's kanban, on dnd-kit.

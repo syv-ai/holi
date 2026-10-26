@@ -3,15 +3,6 @@ export { Checkbox } from './Checkbox'
 export { Switch } from './Switch'
 export { PillGroup, type PillOption } from './Choice'
 export {
-  Combobox,
-  ComboboxChip,
-  ComboboxChips,
-  ComboboxChipsInput,
-  ComboboxContent,
-  ComboboxItem,
-  ComboboxList,
-} from './Combobox'
-export {
   Command,
   CommandDialog,
   CommandEmpty,
@@ -22,7 +13,6 @@ export {
   CommandSeparator,
   CommandShortcut,
 } from './Command'
-export { ColorSwatch } from './ColorSwatch'
 export {
   ContextMenu,
   ContextMenuCheckboxItem,
@@ -79,18 +69,6 @@ export { Input } from './Input'
 export { Kbd } from './Kbd'
 export { Label } from './Label'
 export { instant, settle, spring } from './springs'
-export { TaskCheck } from './TaskCheck'
-export {
-  Kanban,
-  KanbanBoard,
-  KanbanColumn,
-  KanbanColumnContent,
-  KanbanColumnHandle,
-  KanbanItem,
-  KanbanItemHandle,
-  KanbanOverlay,
-  type KanbanCommitMeta,
-} from './Kanban'
 export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from './Popover'
 export { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './Resizable'
 export type { PanelImperativeHandle } from './Resizable'
@@ -108,7 +86,6 @@ export {
 } from './Select'
 export { Textarea } from './Textarea'
 export { Tooltip, TooltipProvider } from './Tooltip'
-export { Tree, TreeDragLine, TreeItem, TreeItemLabel } from './Tree'
 
 export { ChipInput, type ChipAddress, type ChipInputProps } from './ChipInput'
 export { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from './InputOTP'
