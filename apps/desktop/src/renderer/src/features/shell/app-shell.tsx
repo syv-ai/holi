@@ -1,7 +1,6 @@
 // Adapted from ReUI's app-shell-21 block (`npx shadcn@latest view @reui/app-shell-21` shows the published source).
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { cn } from '@/lib/cn'
 import { type PanelImperativeHandle } from 'react-resizable-panels'
 
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -67,7 +66,6 @@ import { TabStrip } from './tab-strip'
 import { useSidebarApps } from '../sidebar/sidebar-apps'
 import { ShortcutsDialog } from '../command-menu/shortcuts-dialog'
 import { TabView } from './tab-view'
-import { useTabLook } from './tab-look'
 import { useSessionTabs } from '../../hooks/use-session-tabs'
 import { useShellShortcuts } from './use-shell-shortcuts'
 import { useClaudeFirstRun } from '../../hooks/use-claude-first-run'
@@ -173,7 +171,6 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const running = useAtomValue(runningPluginsAtom)
   const hasAgents = running.some((plugin) => plugin.agentsMode !== undefined)
   const newAgentSession = useSetAtom(newAgentSessionAtom)
-  const look = useTabLook()
   useSettingsHotkey()
   useSessionTabs(focusedKey)
 

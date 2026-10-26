@@ -9,7 +9,6 @@
  * import anywhere on this path stops the window opening at all.
  */
 import { applyLiquidGlass, wantsLiquidGlass } from './liquid-glass'
-import { readFile, writeFile } from 'node:fs/promises'
 import { stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {

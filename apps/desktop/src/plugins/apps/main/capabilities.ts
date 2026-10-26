@@ -18,7 +18,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { appBundleOf, isAppBundlePath, vaultRelPath } from '@holi/shared'
 import { APP_MANIFEST_FILE, parseAppManifest, setManifestArchived } from '../shared/manifest'
-import { APP_LOG_LEVELS, appLogEntries, appLogSinceLoad, type AppLogLevel } from '../shared/store'
+import { APP_LOG_LEVELS, appLogEntries, appLogSinceLoad } from '../shared/store'
 import {
   cap,
   CapabilityError,

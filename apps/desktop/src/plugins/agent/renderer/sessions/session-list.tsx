@@ -29,7 +29,6 @@ import {
   PencilIcon,
   PinIcon,
   PinOffIcon,
-  PlusIcon,
   RotateCwIcon,
   SearchIcon,
   SquareIcon,
@@ -38,14 +37,7 @@ import {
   XIcon,
   ZapIcon,
 } from 'lucide-react'
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ComponentProps,
-  type KeyboardEvent,
-} from 'react'
+import { useMemo, useRef, useState, type ComponentProps, type KeyboardEvent } from 'react'
 import { Badge } from '@/components/reui/badge'
 import { Button } from '@/components/ui/button'
 import {

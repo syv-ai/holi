@@ -34,7 +34,7 @@ import {
   type WebContents,
 } from 'electron'
 import { CapabilityError } from '../../../main/plugin-api'
-import { isPageUrl, type PageError, type PageInfo, type ScrollTo } from '../shared/page'
+import { isPageUrl, type PageError, type PageInfo } from '../shared/page'
 import type { Pages, Rect } from './capabilities'
 import PAGE_SCRIPT from './page-script.js?raw'
 

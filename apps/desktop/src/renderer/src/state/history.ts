@@ -7,11 +7,8 @@
  */
 import { fileKind } from '@holi/shared'
 import { atom } from 'jotai'
-import { flushAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
-import { fileHistoryAtom } from './file-history'
 import { openSurface, workspaceAtom } from './panes'
-import { activeRemoteAtom } from './vaults'
 
 /** One commit that touched the open file: the git `Commit` shape. */
 export interface Version {
@@ -52,23 +49,6 @@ interface FileDiff {
   before: string
   after: string
 }
-
-const versionsAtom = atom<Version[]>([])
-const selectedShaAtom = atom<string | null>(null)
-/** The selected commit's diff for the focused file, or null while none is picked
- *  / still loading. */
-const diffAtom = atom<FileDiff | null>(null)
-
-// ------------------------------------------------------------------- write atoms
-
-const loadVersionsAtom = atom(null, async (get, set) => {
-  const path = get(historyTargetPathAtom)
-  if (!path) return
-  const versions = await trpc.history.list.query({ path })
-  // Focus may have moved to another file while this was in flight.
-  if (get(historyTargetPathAtom) !== path) return
-  set(versionsAtom, versions)
-})
 
 // -------------------------------------------------- the whole-vault history tab
 // Every commit in the vault, and for the selected one every file it changed

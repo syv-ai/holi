@@ -16,7 +16,6 @@
  * No Electron import: this loads under plain Node like the rest of the plugin.
  */
 import { watch, type FSWatcher } from 'node:fs'
-import { join } from 'node:path'
 import type { ProviderId } from '../provider'
 
 /** A Claude Code job id: eight hex characters, the name of its `jobs/` dir.

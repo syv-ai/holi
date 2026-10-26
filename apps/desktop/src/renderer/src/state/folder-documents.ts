@@ -4,7 +4,7 @@
  * (docs/features/tabs-panes.md). Pure, over the claims and what the vault
  * holds, so the tree, the panes, Home and the tests share one answer.
  */
-import type { FolderClaim, PathClaim, Surface } from '@/state/plugin-types'
+import type { FolderClaim, PathClaim } from '@/state/plugin-types'
 import type { Tab } from '@/lib/tab'
 
 /** The claims that make directories documents, with their claim. */

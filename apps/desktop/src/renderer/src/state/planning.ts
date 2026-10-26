@@ -13,7 +13,6 @@
  */
 import {
   DEFAULT_STATUSES,
-  EMPTY_PROJECT,
   isClosedStatus,
   parseProjectFile,
   parseStatusesFile,

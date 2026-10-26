@@ -164,7 +164,7 @@ export function browserVault(remote: string, store: PluginStore): () => void {
       }),
     )
     if (stopped) return
-    const lost = kept.filter((id, i) => reopened[i] === null)
+    const lost = kept.filter((_id, i) => reopened[i] === null)
     if (lost.length > 0) {
       store.set(
         closeSurfaceTabsAtom,

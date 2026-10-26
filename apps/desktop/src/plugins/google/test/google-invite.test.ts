@@ -18,8 +18,6 @@ import { icsUid, resolveThreadMeeting } from '../main/invite'
 
 const b64url = (s: string) => Buffer.from(s, 'utf8').toString('base64url')
 
-const CAL_LIST = 'https://www.googleapis.com/calendar/v3/users/me/calendarList'
-
 /** A minimal Teams-shaped invite. `\r\n` on purpose: ICS is a CRLF format and
  *  the folding rule is defined in terms of it. */
 function ics(lines: string[]): string {

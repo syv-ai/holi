@@ -252,12 +252,6 @@ function spansMultipleDays(
   )
 }
 
-interface PackedPosition {
-  column: number
-  columnCount: number
-  columnSpan: number
-}
-
 /**
  * Google-style overlap packing for one day's timed segments.
  * Mutates column/columnCount/columnSpan on the segments, in place.

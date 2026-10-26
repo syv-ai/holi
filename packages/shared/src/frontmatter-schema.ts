@@ -12,7 +12,6 @@
  * `Task.extra` promises. The schema adds controls; it does not take keys away.
  */
 import { isAgentSurfacePath, isHiddenPath } from './path-safety'
-import type { Recurrence } from './types'
 import { isTaskFilePath } from './task-file'
 import { DEFAULT_STATUSES } from './statuses'
 

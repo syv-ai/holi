@@ -2,15 +2,13 @@
  * Opening a surface by name, and closing the tabs of surfaces that are gone
  * (docs/features/tabs-panes.md). The registry itself is `state/plugins.ts`.
  */
-import { atom, useAtomValue, useSetAtom, type Atom } from 'jotai'
-import { useEffect } from 'react'
+import { atom, type Atom } from 'jotai'
 import { tabForPath } from '@/state/folder-documents'
 import { openHomeAtom } from './home'
 import { openTabAtom } from './shell-tabs'
 import { tabForPath as shellTabForPath, type TabDescriptor } from './tab-descriptor'
 import {
   activeTab,
-  closeSurfaceTabs,
   closeSurfaceTabsExcept,
   closeTab,
   openInNewPane,
@@ -22,7 +20,7 @@ import {
   workspaceAtom,
   type Tab,
 } from './panes'
-import { folderClaimsAtom, surfacesAtom } from './plugins'
+import { folderClaimsAtom } from './plugins'
 import { snapshotAtom } from './vaults'
 
 /**

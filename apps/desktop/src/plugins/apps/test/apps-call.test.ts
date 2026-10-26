@@ -7,7 +7,6 @@
  * hosts untrusted app code, and the process rendering untrusted code must not
  * also be the process deciding what it may read.
  */
-import { taskClaim } from '@holi/shared'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'

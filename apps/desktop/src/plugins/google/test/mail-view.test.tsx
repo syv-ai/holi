@@ -1664,7 +1664,7 @@ async function moreAction(user: ReturnType<typeof userEvent.setup>, name: string
   await user.click(await screen.findByRole('menuitem', { name }))
 }
 
-async function openRowMenu(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+async function openRowMenu(_user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
   fireEvent.contextMenu(await screen.findByRole('button', { name: /Q2 budget/ }))
   return await screen.findByRole('menu')
 }

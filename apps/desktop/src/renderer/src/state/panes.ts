@@ -313,18 +313,6 @@ export function surfaceTabIds(workspace: Workspace, surface: string): string[] {
 }
 
 /**
- * Close the tabs of surfaces that are no longer registered: their plugin was
- * turned off, by the same path as a tab whose file was deleted.
- */
-export function closeSurfaceTabs(workspace: Workspace, live: ReadonlySet<string>): Workspace {
-  const gone = (t: Tab) => t.kind === 'surface' && !live.has(t.surface)
-  // By reference when nothing goes, so a registry change that closes nothing
-  // re-renders nothing.
-  if (!workspace.panes.some((p) => p.tabs.some(gone))) return workspace
-  return closeTabsWhere(workspace, gone)
-}
-
-/**
  * Every pane with the matching tabs removed, each pane's active index following
  * the **document** rather than the position. Shared so there is one answer to
  * where the selection lands.

@@ -9,13 +9,7 @@ import {
   CommandList,
   CommandShortcut,
 } from '@/components/ui/command'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import { hotkeyLabels } from '@/lib/hotkey'
 import {

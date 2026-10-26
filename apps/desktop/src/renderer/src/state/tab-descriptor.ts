@@ -48,8 +48,6 @@ export type TabDescriptor =
    *  (`settingsSectionAtom`), not the tab's. */
   | { kind: 'settings' }
 
-type TabKind = TabDescriptor['kind']
-
 const SCHEME = 'holi:'
 const APP_SUFFIX = '.app'
 

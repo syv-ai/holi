@@ -4,7 +4,6 @@ import {
   AGENTS_HOME_KEY,
   BOARD_KEY,
   parseTabKey,
-  SETTINGS_KEY,
   sessionKey,
   tabForPath,
   tabKey,

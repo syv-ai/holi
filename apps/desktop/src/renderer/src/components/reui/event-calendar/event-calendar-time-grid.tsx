@@ -44,7 +44,6 @@ import type {
   EventCalendarDateRange,
   EventCalendarDragState,
   EventCalendarSegment,
-  EventCalendarSlotDraft,
 } from "@/components/reui/event-calendar/event-calendar-types"
 import { addDays, addMinutes, differenceInMinutes, format } from "date-fns"
 import { Slot } from "radix-ui"

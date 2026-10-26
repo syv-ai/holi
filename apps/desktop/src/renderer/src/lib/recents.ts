@@ -6,7 +6,6 @@
  * module knows only keys.
  */
 import { RECENTS_CAP, type RecentEntry } from '@holi/shared'
-import type { Tab } from '@/lib/tab'
 
 export type { RecentEntry } from '@holi/shared'
 

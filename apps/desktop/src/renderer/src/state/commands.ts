@@ -18,10 +18,8 @@
  * the focused widget already handled (`defaultPrevented`) is not a command:
  * that is how the editor's ⌘B bold beats the sidebar's ⌘B.
  */
-import { atom, useSetAtom, useStore, type Getter, type Setter } from 'jotai'
-import { useEffect } from 'react'
+import { atom, type Getter, type Setter } from 'jotai'
 import { saveAllBuffers } from '../lib/buffer-registry'
-import { matchHotkey } from '../lib/hotkey'
 import { trpc } from '../lib/trpc'
 import { openHomeAtom } from './home'
 import { openTodaysDailyAtom } from './daily'

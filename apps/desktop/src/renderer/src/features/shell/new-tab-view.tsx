@@ -8,9 +8,6 @@ import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import { BrandMark } from '@/composites/brand-mark'
 import { cn } from '@/lib/cn'
-import { hotkeyLabels } from '@/lib/hotkey'
-import { SHORTCUTS } from '@/lib/shortcuts'
-import { isMac } from '@/state/shortcuts'
 import { newAgentSessionAtom } from '@/state/agents-slots'
 import { todayAtom } from '@/state/clock'
 import { ensureTodaysDailyAtom } from '@/state/daily'
@@ -26,15 +23,6 @@ import { BOARD_TAB } from '../sidebar/documents-nav'
  * @public exported for its test
  */
 export const NEW_TAB_PREFIX = 'holi:new:'
-
-/** A shortcut's first key as it reads on this platform: `⇧⌘D`, or
- *  `Ctrl Shift D`. */
-function keysOf(id: string): string | undefined {
-  const spec = SHORTCUTS.find((row) => row.id === id)?.keys[0]
-  if (spec === undefined) return undefined
-  const mac = isMac()
-  return hotkeyLabels(spec, mac).join(mac ? '' : ' ')
-}
 
 /** "Friday 23 October", from the clock's `YYYY-MM-DD`. */
 const DAY = new Intl.DateTimeFormat(undefined, {

@@ -13,7 +13,6 @@ import { exactPath } from '@holi/shared/path-safety-node'
 import {
   commentThreads,
   isCommentableNote,
-  isAgentSurfacePath,
   sameLogin,
   vaultRelPath,
   withIcon,
@@ -46,7 +45,6 @@ import { importFiles } from './vault/import-files'
 import { exportFiles } from './vault/export-files'
 import { moveNotes } from './vault/move'
 import { getOrCreateDaily, sweepDaily } from './vault/daily'
-import { completionStatuses, readVaultStatuses } from './vault/statuses'
 import {
   BranchRefusedError,
   openRepo,

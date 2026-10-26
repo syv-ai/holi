@@ -27,9 +27,3 @@ export interface AskResult {
   ok: boolean
   message?: string
 }
-
-/** The editor's whole view of the agent: a list of names, and somewhere to send. */
-export interface AskAgentSeam {
-  targets: () => AskTargets
-  onAsk: (prompt: string, target: string | 'new') => Promise<AskResult>
-}

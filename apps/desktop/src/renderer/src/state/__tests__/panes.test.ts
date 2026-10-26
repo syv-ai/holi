@@ -19,7 +19,6 @@ import {
   retargetTab,
   retargetTabs,
   splitPane,
-  closeSurfaceTabs,
   focusPane,
   type FolderSurface,
   type Tab,
@@ -417,27 +416,6 @@ describe('one buffer per file, across panes', () => {
 
     expect(w.panes.flatMap((p) => p.tabs)).toEqual([board])
     expect(w.active).toBe(1)
-  })
-
-  it('closes the tabs of surfaces that left the registry, and only those', () => {
-    const w: Workspace = {
-      panes: [
-        {
-          tabs: [
-            { kind: 'surface', surface: 'mail' },
-            { kind: 'note', path: 'a.md' },
-          ],
-          active: 1,
-        },
-      ],
-      active: 0,
-    }
-
-    expect(closeSurfaceTabs(w, new Set(['mail']))).toBe(w)
-    expect(closeSurfaceTabs(w, new Set(['board'])).panes[0]).toEqual({
-      tabs: [{ kind: 'note', path: 'a.md' }],
-      active: 0,
-    })
   })
 })
 
