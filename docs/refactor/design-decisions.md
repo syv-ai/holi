@@ -92,3 +92,24 @@ Plan/spec: [`agent-first.md`](agent-first.md)
 - **Context:** hooks live in the shared `.git/hooks`, so installing them mid-migration would block the agents still moving files.
 - **Decision:** wire `prepare: simple-git-hooks` in the tooling commit but run the install last, after every check is green.
 - **Cost if wrong:** cheap.
+
+## D13. One `IconButton` and one `ConfirmDialog`, both composites over stock parts
+
+- **Context:** retiring `primitives/IconButton` leaves 20 icon-only buttons that each need a tooltip and an accessible name; four confirm dialogs (`DeleteConfirm`, `LeaveConfirm`, `SignOutConfirm`, a local one in the Google event sheet) each re-built the same AlertDialog.
+- **Decision:** `composites/icon-button.tsx` is stock `Button` (ghost, `icon-sm`) + stock `Tooltip`, with `label` as both; `composites/confirm-dialog.tsx` is stock `AlertDialog` with title, description, Cancel and one action. Every caller uses these.
+- **Alternatives:** inline `Tooltip > TooltipTrigger > Button` at 20 sites — the duplication the user asked to remove; keeping the primitive — a second Button look.
+- **Basis:** one definition per thing; composites build only on `components/*`.
+- **Cost if wrong:** cheap.
+
+## D14. No barrel files in the renderer; import each module by its path
+
+- **Context:** `primitives/index.ts` and `composites/index.ts` are barrels; `components/ui` and `components/reui` (the CLI's convention) have none, so the tree has two import styles.
+- **Decision:** import `@/composites/empty-state`, `@/components/ui/button` and so on; delete `composites/index.ts`. Plugin entries (`index.ts(x)`) are entry points, not barrels, and stay.
+- **Basis:** shadcn's convention; aka-ai-platform bans barrels for the same reason (one way to import a thing).
+- **Cost if wrong:** cheap.
+
+## D15. `toast()` comes from `sonner` directly; `<Toaster />` from `components/ui/sonner`
+
+- **Context:** `primitives/Sonner.tsx` re-exported both. Stock sonner (added by the CLI) brings `next-themes` for its theme lookup.
+- **Decision:** use the stock file as published; with no `ThemeProvider` mounted it follows the system scheme.
+- **Cost if wrong:** cheap; a provider can be added in `App.tsx`.
