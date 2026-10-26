@@ -119,6 +119,12 @@ describe('the capability host', () => {
     })
     const caps = createCapabilityRegistry()
     caps.register(['docs'], {
+      'docs.inspect': cap({
+        doors: ['cli'],
+        cli: { args: [], summary: 'read' },
+        params: () => ({}),
+        run: async () => 'inspected',
+      }),
       'docs.update': cap({
         doors: ['cli'],
         cli: { args: [], summary: 'test' },
@@ -143,6 +149,10 @@ describe('the capability host', () => {
     const two = call()
     await new Promise((resolve) => setTimeout(resolve, 10))
     expect(calls).toBe(1)
+    // A read-only inspection is not held behind a write's settlement.
+    expect(
+      (await h.dispatch({ door: 'cli', remote: 'o/r', name: 'docs.inspect', params: {} })).value,
+    ).toBe('inspected')
     release()
     expect((await one).value).toBe(1)
     expect((await two).value).toBe(2)

@@ -80,6 +80,8 @@ export interface ActiveVault {
   refresh(): Promise<void>
   /** Commit whatever is dirty, now — ⌘S, vault switch, quit. */
   commitNow(): Promise<string | null>
+  /** Wait for active autosave/push work, then deliver the current tree. */
+  deliverNow(): Promise<void>
   /**
    * Push local commits now, best-effort. Recovers from a non-fast-forward
    * rejection by pulling inline and retrying (a conflicting pull routes to the
@@ -675,6 +677,30 @@ export async function openActiveVault(args: {
         commitTimer = null
       }
       return maybeCommit()
+    },
+    async deliverNow() {
+      // Unlike best-effort commitNow/pushNow, settlement must not interpret a
+      // declined single-flight call as an empty commit or successful push.
+      const waitForSync = async () => {
+        while (!closed && (committing || pullInFlight || pushInFlight)) {
+          await new Promise((resolve) => setTimeout(resolve, 10))
+        }
+      }
+      await waitForSync()
+      if (closed) return
+      if (commitTimer !== null) {
+        clearTimeout(commitTimer)
+        commitTimer = null
+      }
+      await maybeCommit()
+      await waitForSync()
+      if (closed) return
+      await pushNow()
+      await waitForSync()
+      // A commit can begin while the push is in flight; it deliberately rides
+      // the next push. Drain that newly-landed commit before returning too.
+      if (!closed) await pushNow()
+      await waitForSync()
     },
     pushNow,
     onFocus() {

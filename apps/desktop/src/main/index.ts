@@ -641,7 +641,6 @@ async function main(): Promise<void> {
       active: () => host.active(),
       members,
       reports: uiReports,
-      claims: (root) => plugins.scanClaimsFor(root),
     }),
     pluginEnabled: async (plugin, root) => (await plugins.enabled(root)).has(plugin),
     claims: (root) => plugins.scanClaimsFor(root),
