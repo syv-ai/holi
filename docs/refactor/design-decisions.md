@@ -113,3 +113,22 @@ Plan/spec: [`agent-first.md`](agent-first.md)
 - **Context:** `primitives/Sonner.tsx` re-exported both. Stock sonner (added by the CLI) brings `next-themes` for its theme lookup.
 - **Decision:** use the stock file as published; with no `ThemeProvider` mounted it follows the system scheme.
 - **Cost if wrong:** cheap; a provider can be added in `App.tsx`.
+
+## D16. The restyle policy, as measured: controls keep their height, containers may be sized, skeletons are sized by their caller
+
+- **Context:** D10's first cut (global deny on every `h-*`/`size-*`) still reported 715 findings, a third of them legitimate layout (`h-full` on a ScrollArea, `size-4` on a Skeleton).
+- **Decision:** default allows placement, sizing within a layout, text colour and type; it rejects padding, radius, shadow and motion. Controls (Button, IconButton, Input, Badge, TabsTrigger, SidebarMenuButton, Toggle, SelectTrigger, Avatar, Kbd) also reject fixed heights and `size-*`. Skeleton and Spinner accept sizing and shape. Overlay content accepts width and placement only; titles are never resized. 482 findings remained and were fixed, not exempted.
+- **Basis:** AGENTS.md ReUI rules 1 and 3; shadcn's own idioms (`sm:max-w-lg` on DialogContent, sized Skeletons).
+- **Cost if wrong:** cheap; the policy is one JSON file with notes.
+
+## D17. The fix wave ran as six agents on disjoint areas, each in its own worktree
+
+- **Context:** ~800 lint findings, ~800 knip export findings and 58 rulecast findings across the renderer, plugins, main and tests.
+- **Decision:** split by folder so no two agents edit one file; the shared files (component variants in `components/ui`) are merged by hand at integration. CI does not run ahead of the merge.
+- **Cost if wrong:** cheap.
+
+## D18. CI tests run on Linux [provisional]
+
+- **Context:** the tooling draft picked ubuntu-24.04 for case-sensitive import checking; the watcher tests were tuned on macOS fsevents.
+- **Decision:** keep Linux; if the watcher suite is red there, move only the `test` job to `macos-latest`.
+- **Cost if wrong:** cheap; one line in ci.yml.
