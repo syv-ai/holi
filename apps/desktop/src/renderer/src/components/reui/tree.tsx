@@ -77,11 +77,14 @@ interface TreeItemProps<T = any> extends Omit<
   item: ItemInstance<T>
   indent?: number
   asChild?: boolean
+  /** A row that has just appeared: it rises in once. */
+  arrived?: boolean
 }
 
 function TreeItem<T = any>({
   item,
   className,
+  arrived = false,
   asChild = false,
   children,
   ...props
@@ -106,6 +109,7 @@ function TreeItem<T = any>({
     style: mergedStyle,
     className: cn(
       "z-10 ps-(--tree-padding) outline-hidden select-none not-last:pb-0.5 focus:z-20 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      arrived && "motion-in-rise",
       className
     ),
     "data-focus":
@@ -186,7 +190,7 @@ function TreeItemLabel<T = any>({
               <PlusIcon className="text-muted-foreground size-3.5" stroke="currentColor" strokeWidth="1" />
             )
           ) : (
-            <ChevronDownIcon className="text-muted-foreground size-4 in-aria-[expanded=false]:-rotate-90" />
+            <ChevronDownIcon className="text-muted-foreground motion-respond size-4 in-aria-[expanded=false]:-rotate-90" />
           ))}
         {children ||
           (typeof item.getItemName === "function" ? item.getItemName() : null)}

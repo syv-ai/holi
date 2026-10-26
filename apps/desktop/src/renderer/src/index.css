@@ -407,6 +407,26 @@
   transition-duration: var(--motion-respond);
   transition-timing-function: var(--ease-settle);
 }
+/* What slides when a drag opens a gap: position, size and fill together. */
+@utility motion-slide {
+  transition-property: left, width, translate, transform, opacity, color, background-color;
+  transition-duration: var(--motion-leave);
+  transition-timing-function: var(--ease-settle);
+}
+@utility motion-fade {
+  transition-property: opacity;
+  transition-duration: var(--motion-leave);
+  transition-timing-function: var(--ease-settle);
+}
+@utility motion-resize {
+  transition-property: flex;
+  transition-duration: var(--motion-leave);
+  transition-timing-function: linear;
+}
+/* The foot of a scrolling list fades out under its last rows. */
+@utility fade-foot {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 3rem), transparent calc(100% - 1rem));
+}
 
 /* Arriving and leaving. A popup grows out of its trigger and shrinks back
    (`origin`); anything else fades, or fades and rises a few pixels. */

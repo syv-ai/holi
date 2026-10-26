@@ -1,11 +1,5 @@
 import type { ComponentProps, ComponentType, ReactNode, SVGProps } from 'react'
 import { SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar'
-import { cn } from '@/lib/cn'
-
-/** The sidebar's one fill scale on the foreground: hover, open, open under
- *  the pointer. Every row in both sidebar tabs takes it. */
-export const SIDEBAR_ROW_FILL =
-  'hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12'
 
 /**
  * A place in a sidebar's top group (Board, Apps, Inbox, Automations): the
@@ -42,7 +36,8 @@ export function SidebarNavItem({
         aria-label={
           count > 0 && countLabel !== undefined ? `${label}, ${count} ${countLabel}` : undefined
         }
-        className={cn(SIDEBAR_ROW_FILL, className)}
+        variant="fill"
+        className={className}
       >
         <Icon aria-hidden="true" />
         <span>{label}</span>

@@ -56,8 +56,13 @@ function TabsList({
 
 function TabsTrigger({
   className,
+  variant = "default",
   ...props
-}: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
+}: React.ComponentProps<typeof TabsPrimitive.Trigger> & {
+  /** `tab` is a fixed-width, start-aligned tab that keeps room at its end
+   *  for a close control, or for a `data-tab-status` badge that takes the room. */
+  variant?: "default" | "tab"
+}) {
   return (
     <TabsPrimitive.Trigger
       data-slot="tabs-trigger"
@@ -66,6 +71,8 @@ function TabsTrigger({
         "group-data-[variant=line]/tabs-list:bg-transparent group-data-[variant=line]/tabs-list:data-active:bg-transparent dark:group-data-[variant=line]/tabs-list:data-active:border-transparent dark:group-data-[variant=line]/tabs-list:data-active:bg-transparent",
         "data-active:bg-background data-active:text-foreground dark:data-active:border-input dark:data-active:bg-input/30 dark:data-active:text-foreground",
         "after:absolute after:bg-foreground after:opacity-0 after:transition-opacity group-data-horizontal/tabs:after:inset-x-0 group-data-horizontal/tabs:after:bottom-[-5px] group-data-horizontal/tabs:after:h-0.5 group-data-vertical/tabs:after:inset-y-0 group-data-vertical/tabs:after:-right-1 group-data-vertical/tabs:after:w-0.5 group-data-[variant=line]/tabs-list:data-active:after:opacity-100",
+        variant === "tab" &&
+          "flex-none justify-start gap-2 px-3 pe-8 after:hidden has-data-[tab-status]:pe-1.5",
         className
       )}
       {...props}

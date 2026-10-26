@@ -460,11 +460,17 @@ const sidebarMenuButtonVariants = cva(
         default: "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
         outline:
           "bg-background shadow-[0_0_0_1px_var(--sidebar-border)] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-[0_0_0_1px_var(--sidebar-accent)]",
+        // Holi's sidebar rows: one fill scale on the foreground for hover,
+        // open, and open under the pointer.
+        fill: "hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12",
       },
       size: {
         default: "h-8 text-sm",
         sm: "h-7 text-xs",
         lg: "h-12 text-sm group-data-[collapsible=icon]:p-0!",
+        // A square icon button for a rail that is always narrow: the label
+        // stays for assistive tech and is hidden on screen.
+        rail: "size-8 p-2 text-sm [&>span:last-child]:sr-only",
       },
     },
     defaultVariants: {
