@@ -42,8 +42,8 @@ export interface ScanClaim extends SnapshotClaim {
 }
 
 /** Whether a path belongs to the ordinary-note surface rather than a special,
- *  personal, hidden, bundled, or plugin-owned file. Shared by scanning and the
- *  CLI note writer so both surfaces agree about eligible notes. */
+ *  personal, bundled, or plugin-owned file. The vault scanner includes hidden
+ *  Markdown such as the memory index; the CLI never permits writes there. */
 export function isMarkdownNotePath(path: string): boolean {
   return path.endsWith('.md')
 }
@@ -51,11 +51,12 @@ export function isMarkdownNotePath(path: string): boolean {
 export function isOrdinaryNotePath(
   path: string,
   claims: readonly Pick<SnapshotClaim, 'match'>[],
+  includeHidden = false,
 ): boolean {
   return (
     isMarkdownNotePath(path) &&
     !isLocalOnlyPath(path) &&
-    !path.split('/').some((part) => part.startsWith('.')) &&
+    (includeHidden || !path.split('/').some((part) => part.startsWith('.'))) &&
     appBundleOf(path) === null &&
     !claims.some((claim) => claim.match(path))
   )
@@ -142,13 +143,9 @@ export async function scanVault(
         .then((s) => s.mtime.toISOString())
         .catch(() => new Date(0).toISOString())
 
-    // Non-markdown, local-only or hidden paths are plain files, not ordinary
-    // notes. In particular hidden config is never promoted into the note graph.
-    if (
-      !path.endsWith('.md') ||
-      isLocalOnlyPath(path) ||
-      path.split('/').some((part) => part.startsWith('.'))
-    ) {
+    // Non-markdown and local-only paths are plain files. Hidden Markdown
+    // remains visible to the vault's document snapshot, but not CLI writes.
+    if (!path.endsWith('.md') || isLocalOnlyPath(path)) {
       snapshot.files.push({ path, updatedAt: await mtime() })
       continue
     }
@@ -169,7 +166,7 @@ export async function scanVault(
       continue
     }
 
-    if (!isOrdinaryNotePath(path, claims)) {
+    if (!isOrdinaryNotePath(path, claims, true)) {
       snapshot.files.push({ path, updatedAt: await mtime() })
       continue
     }

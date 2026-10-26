@@ -461,7 +461,7 @@ describe('ActiveVault — commit', () => {
     let verified = false
     const delivery = active.deliverNow(async () => {
       verified = true
-      return (await plainGit(dir, ['show', 'HEAD:settled.md'])) === 'current\n'
+      return (await plainGit(dir, ['show', 'HEAD:settled.md'])) === 'current'
     })
     await sleep(20)
     expect(verified).toBe(false)
@@ -469,7 +469,7 @@ describe('ActiveVault — commit', () => {
     await committing
     expect(await delivery).toBe(true)
     expect(verified).toBe(true)
-    expect(await plainGit(origin, ['show', 'main:settled.md'])).toBe('current\n')
+    expect(await plainGit(origin, ['show', 'main:settled.md'])).toBe('current')
   })
 
   it('deliverNow joins an in-flight push before finishing', async () => {
@@ -505,7 +505,7 @@ describe('ActiveVault — commit', () => {
     await pushing
     expect(await delivery).toBe(true)
     expect(verified).toBe(true)
-    expect(await plainGit(origin, ['show', 'main:pushed.md'])).toBe('current\n')
+    expect(await plainGit(origin, ['show', 'main:pushed.md'])).toBe('current')
   })
 
   it('commitNow() returns null and commits nothing on a clean tree', async () => {
