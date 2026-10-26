@@ -17,7 +17,7 @@ import { watchPendingSkills } from '@/state/skills'
 import { updateStatusAtom } from '@/state/updates'
 import { activeRemoteAtom } from '@/state/vaults'
 
-import { UpdatesPage } from '../pages/app-pages'
+import { UpdatesPage } from '../pages/updates-page'
 
 const run = vi.hoisted(() => vi.fn())
 const write = vi.hoisted(() => vi.fn())

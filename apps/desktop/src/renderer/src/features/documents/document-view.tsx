@@ -18,12 +18,10 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { holiLink, isHoliLinkable, isResolved, type CommentAnchor } from '@holi/shared'
-import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { holiLink, isHoliLinkable, isResolved } from '@holi/shared'
+import { useAtomValue } from 'jotai'
 import { findNext, findPrev } from 'prosemirror-search'
 import { EditorContent, useEditor } from '@tiptap/react'
-import { SparklesIcon } from 'lucide-react'
-import { toast } from 'sonner'
 
 import { DeleteTableDialog } from '@/features/documents/rich-text/delete-table-dialog'
 import { RichTextBlockActions } from '@/features/documents/rich-text/rich-text-block-actions'
@@ -43,53 +41,37 @@ import {
   RichTextTable,
   RichTextTableBubble,
 } from '@/features/documents/rich-text/rich-text-table'
-import { isMac } from '@/lib/platform'
-import { Skeleton } from '@/components/ui/skeleton'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { cn } from '@/lib/cn'
 import { TaskProperties } from '@/features/planning/task-properties'
 import { trpc } from '@/lib/trpc'
-import {
-  addThreadAtom,
-  refreshThreadsAtom,
-  replyThreadAtom,
-  resolveThreadAtom,
-  threadsLoadAtom,
-} from '@/state/comments'
 import { sawText } from '@/state/doc-changes'
-import { pendingHeadingAtom } from '@/state/open-document'
-import { useViewMemory } from '@/state/view-memory'
-import { claimsAtom, pluginSlashCommandsAtom } from '@/state/plugins'
-import { editorSelectionAtom } from '@/state/ui-report'
+import { claimsAtom } from '@/state/plugins'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 import { AgentPrompt, AgentStatus } from './agent-prompt'
-import { agentPromptKey, agentPromptPos, onEmptyLine, setAgentPrompt } from './agent-trigger'
+import { askAiSlashItem } from './ask-ai-slash'
 import { artifactPathFor, isRunLive, locksDocument, useDocumentAgent } from './document-agent'
 import { parentOf } from '@/lib/tree-paths'
 import { CommentsPanel } from './comments-panel'
-import {
-  DocumentComments,
-  placeThreads,
-  selectionAnchor,
-  selectionLines,
-  setCommentRanges,
-  type PlacedRange,
-} from './document-comments'
+import { DocumentComments } from './document-comments'
 import { createDocumentExtensions } from './document-extensions'
-import { headingAtCaret, landOnHeading } from './document-headings'
-import { DocumentFindBar, type FindRequest } from './document-find-bar'
-import { pluginSlashItem } from './plugin-slash'
+import { headingAtCaret } from './document-headings'
+import { DocumentFindBar } from './document-find-bar'
+import { resolveLink } from './resolve-link'
+import { DocumentSkeleton } from './document-skeleton'
+import { useDocumentAgentPrompt } from './use-document-agent-prompt'
+import { useDocumentComments } from './use-document-comments'
+import { useDocumentFind } from './use-document-find'
+import { useDocumentPosition } from './use-document-position'
+import { useSelectionReport } from './use-selection-report'
 import { DocumentFormatBubble } from './document-format-bubble'
 import { DocumentHeader, type SaveState } from './document-header'
-import { AGENT_MARKER, documentTitle, joinDocument, splitDocument } from './markdown'
+import { documentTitle, joinDocument, splitDocument } from './markdown'
 import { ErrorState } from '@/composites/empty-state'
 
 // How long typing has to pause before the file is written.
 const SAVE_DELAY_MS = 600
-
-// How long a selection holds still before its lines are worked out.
-const SELECTION_DELAY_MS = 250
 
 // The block drop line, as the rich-text block draws it.
 const DROP_LINE =
@@ -99,21 +81,6 @@ type Load =
   | { kind: 'loading' }
   | { kind: 'ready'; head: string; body: string; text: string }
   | { kind: 'error'; message: string }
-
-/** The vault path a `[[target]]` names: an exact path, else a markdown
- *  file whose name matches, nearest folder first. */
-function resolveLink(
-  target: string,
-  from: string,
-  docs: readonly { path: string }[],
-): string | null {
-  const wanted = target.toLowerCase().replace(/\.md$/, '')
-  const exact = docs.find((doc) => doc.path.toLowerCase().replace(/\.md$/, '') === wanted)
-  if (exact) return exact.path
-  const named = docs.filter((doc) => documentTitle(doc.path).toLowerCase() === wanted)
-  const folder = parentOf(from)
-  return named.find((doc) => parentOf(doc.path) === folder)?.path ?? named[0]?.path ?? null
-}
 
 export function DocumentView({
   path,
@@ -203,14 +170,6 @@ function DocumentEditor({
   const [deleteTableOpen, setDeleteTableOpen] = useState(false)
   const [fullWidth, setFullWidth] = useState(false)
   const [smallText, setSmallText] = useState(false)
-  /** The find bar, open while set; a new request refocuses it. */
-  const [find, setFind] = useState<FindRequest | null>(null)
-  const apple = isMac()
-  /** Whether the agent prompt is open; its line is the editor's to track
-   *  (`agentPromptKey`), and it renders into `promptBox` on that line. */
-  const [promptOpen, setPromptOpen] = useState(false)
-  /** What the ask prompt opens with: an app command's instruction. */
-  const [promptInitial, setPromptInitial] = useState('')
   const [promptBox] = useState(() => {
     const box = document.createElement('div')
     box.contentEditable = 'false'
@@ -290,130 +249,39 @@ function DocumentEditor({
 
   const editable = useRichTextSelector(editor, (current) => current?.isEditable ?? true)
 
-  // The note's comment threads: the panel, and their passages in the text.
-  const threadsLoad = useAtomValue(threadsLoadAtom)(path)
-  const refreshThreads = useSetAtom(refreshThreadsAtom)
-  const addThread = useSetAtom(addThreadAtom)
-  const replyThread = useSetAtom(replyThreadAtom)
-  const resolveThread = useSetAtom(resolveThreadAtom)
-  const [commentsOpen, setCommentsOpen] = useState(false)
-  /** The passage a new thread is being written on. */
-  const [draft, setDraft] = useState<CommentAnchor | null>(null)
-  const [activeThread, setActiveThread] = useState<string | null>(null)
-  /** Every thread whose passage was found in the text at the last placing. */
-  const [placed, setPlaced] = useState<ReadonlySet<string>>(new Set())
-  const threads = threadsLoad.state === 'ready' ? threadsLoad.threads : null
-  const commentable = threadsLoad.state !== 'unavailable'
-  const hasSelection = useRichTextSelector(editor, (current) =>
-    current ? !current.state.selection.empty : false,
-  )
+  const { promptOpen, promptInitial, closePrompt, sendPrompt, quickCommand, turnIntoArtifact } =
+    useDocumentAgentPrompt({ editor, path, agent, handlers, save })
 
-  // Read again whenever the vault is: a pull or the agent may have written
-  // the sidecar.
-  useEffect(() => {
-    void refreshThreads(path)
-  }, [refreshThreads, path, docs])
+  const comments = useDocumentComments({ editor, path, docs, head, save })
+  const {
+    threadsLoad,
+    threads,
+    commentable,
+    commentsOpen,
+    setCommentsOpen,
+    draft,
+    setDraft,
+    activeThread,
+    setActiveThread,
+    placed,
+    hasSelection,
+    placeRef,
+    showThread,
+    commentOnSelection,
+    commentWrite,
+    addThread,
+    replyThread,
+    resolveThread,
+    refreshThreads,
+  } = comments
 
-  /** Place every thread in the text again and tint the open ones; between
-   *  placings the tints follow the edits on their own. */
-  const placeRef = useRef(() => undefined as void)
-  placeRef.current = () => {
-    if (!editor || editor.isDestroyed || threads === null) return
-    const ranges: PlacedRange[] = placeThreads(editor, head.current, threads)
-    setPlaced(new Set(ranges.map((range) => range.id)))
-    const open = new Set(threads.filter((t) => !isResolved(t)).map((t) => t.id))
-    setCommentRanges(editor, {
-      ranges: ranges.filter((range) => open.has(range.id)),
-    })
-  }
-  useEffect(() => placeRef.current(), [editor, threads])
-  useEffect(() => {
-    if (editor) setCommentRanges(editor, { active: activeThread })
-  }, [editor, activeThread])
+  useSelectionReport(editor, path, head)
 
-  // The lines selected, for the agent's per-turn context: worked out once
-  // the selection holds still, since it serialises the document. A caret
-  // clears what this document reported, never another's.
-  const setEditorSelection = useSetAtom(editorSelectionAtom)
-  useEffect(() => {
-    if (!editor) return
-    let timer: number | undefined
-    const report = () => {
-      window.clearTimeout(timer)
-      timer = window.setTimeout(() => {
-        if (editor.isDestroyed) return
-        const lines = selectionLines(editor, head.current)
-        setEditorSelection((was) => {
-          if (lines === null) return was?.path === path ? null : was
-          const same =
-            was?.path === path &&
-            was.lines.startLine === lines.startLine &&
-            was.lines.endLine === lines.endLine
-          return same ? was : { path, lines }
-        })
-      }, SELECTION_DELAY_MS)
-    }
-    editor.on('selectionUpdate', report)
-    return () => {
-      editor.off('selectionUpdate', report)
-      window.clearTimeout(timer)
-    }
-  }, [editor, path, setEditorSelection])
-
-  // A tab switched back to opens where it was left: the caret and the
-  // scroll, kept as they move (`view-memory.ts`). A link to a heading
-  // lands on the heading instead.
-  const memory = useViewMemory()
   /** What the first claim on this path draws above it: a link's card. */
   const Banner = useAtomValue(claimsAtom).find(
     (claim) => claim.banner !== undefined && claim.match(path),
   )?.banner
-  const [pendingHeading, setPendingHeading] = useAtom(pendingHeadingAtom)
-  const headingWaiting = pendingHeading?.path === path
-  useEffect(() => {
-    const scroller = scrollerRef.current
-    if (!editor || editor.isDestroyed || remote === null || scroller === null) return
-    const spot = memory.get(remote, path)
-    if (spot !== undefined && !headingWaiting) {
-      const size = editor.state.doc.content.size
-      const clamp = (at: number) => Math.min(Math.max(at, 1), size - 1)
-      try {
-        editor.commands.setTextSelection({
-          from: clamp(spot.anchor),
-          to: clamp(spot.head),
-        })
-      } catch {
-        // A position the text no longer has: the caret stays at the top.
-      }
-      scroller.scrollTop = spot.scrollTop
-      // Again once the page has laid out, should it not have yet.
-      requestAnimationFrame(() => {
-        scroller.scrollTop = spot.scrollTop
-      })
-    }
-    const noteSelection = () => {
-      const { anchor, head } = editor.state.selection
-      memory.note(remote, path, { anchor, head })
-    }
-    const noteScroll = () => memory.note(remote, path, { scrollTop: scroller.scrollTop })
-    editor.on('selectionUpdate', noteSelection)
-    scroller.addEventListener('scroll', noteScroll, { passive: true })
-    return () => {
-      editor.off('selectionUpdate', noteSelection)
-      scroller.removeEventListener('scroll', noteScroll)
-    }
-    // Once per editor: a heading arriving later is the effect below's.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, remote, path, memory])
-
-  // A Holi link that named a heading lands the caret on it once the
-  // document is in the editor.
-  useEffect(() => {
-    if (!editor || editor.isDestroyed || pendingHeading?.path !== path) return
-    landOnHeading(editor, markdown(), pendingHeading.heading)
-    setPendingHeading(null)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, pendingHeading, path])
+  useDocumentPosition({ editor, remote, path, scrollerRef, markdown })
 
   const holiLinks = isHoliLinkable(path)
     ? {
@@ -426,53 +294,12 @@ function DocumentEditor({
       }
     : null
 
-  handlers.current.pressThread = (id) => {
-    setCommentsOpen(true)
-    setActiveThread(id)
-  }
+  handlers.current.pressThread = comments.pressThread
 
-  /** The panel's thread, its passage scrolled into view. */
-  function showThread(id: string) {
-    setActiveThread(id)
-    const thread = threads?.find((t) => t.id === id)
-    if (!editor || !thread) return
-    const [range] = placeThreads(editor, head.current, [thread])
-    if (!range) return
-    const { node } = editor.view.domAtPos(range.from)
-    const element = node instanceof Element ? node : node.parentElement
-    element?.scrollIntoView({ block: 'center' })
+  /** The document as it would be saved. */
+  function markdown(): string {
+    return editor ? joinDocument(head.current, editor.getMarkdown()) : lastText.current
   }
-
-  async function commentOnSelection() {
-    if (!editor || !commentable) return
-    // The anchor quotes the file, so the file has to be what is shown.
-    await save()
-    const anchor = selectionAnchor(editor, head.current)
-    if (anchor === null) {
-      toast.error('That passage can’t take a comment', {
-        description: 'Select text in the note, outside images and raw HTML.',
-      })
-      return
-    }
-    setDraft(anchor)
-    setActiveThread(null)
-    setCommentsOpen(true)
-  }
-
-  /** A comment write: said when it fails, and rejected so its text stays. */
-  async function commentWrite(what: string, run: () => Promise<unknown>) {
-    try {
-      await run()
-    } catch (err) {
-      toast.error(what, {
-        description: err instanceof Error ? err.message : String(err),
-      })
-      throw err
-    }
-  }
-
-  const markdown = () =>
-    editor ? joinDocument(head.current, editor.getMarkdown()) : lastText.current
 
   async function save(): Promise<void> {
     window.clearTimeout(saveTimer.current)
@@ -547,60 +374,6 @@ function DocumentEditor({
     return () => window.clearTimeout(timer)
   }, [agent.run, agent.dismiss])
 
-  handlers.current.trigger = (pos, instruction) => {
-    if (!editor || !agent.available || isRunLive(agent.run)) return
-    setPromptInitial(instruction ?? '')
-    setAgentPrompt(editor, pos)
-    setPromptOpen(true)
-  }
-
-  // The running plugins' slash commands (a vault app's), offered where
-  // their plugin says they may run on this note.
-  const pluginCommands = useAtomValue(pluginSlashCommandsAtom)
-  handlers.current.pluginItems = () =>
-    pluginCommands
-      .filter((command) => command.offeredIn?.(path) ?? true)
-      .map((command) =>
-        pluginSlashItem(command, path, (pos, instruction) =>
-          handlers.current.trigger(pos, instruction),
-        ),
-      )
-
-  function closePrompt() {
-    if (!editor) return
-    const pos = agentPromptPos(editor.state)
-    setAgentPrompt(editor, null)
-    setPromptOpen(false)
-    editor.commands.focus(pos ?? 'end')
-  }
-
-  async function sendPrompt(request: string) {
-    if (!editor) return
-    // The prompt's line becomes the marker the agent writes at.
-    const { state } = editor
-    const pos = agentPromptPos(state)
-    const tr = state.tr.setMeta(agentPromptKey, { pos: null })
-    const marker = state.schema.nodes.htmlBlock?.create({ html: AGENT_MARKER })
-    if (pos !== null && marker && onEmptyLineAt(state.doc, pos)) {
-      const $pos = state.doc.resolve(pos)
-      tr.replaceWith($pos.before(), $pos.after(), marker)
-    }
-    editor.view.dispatch(tr)
-    setPromptOpen(false)
-    await save()
-    await agent.start('write', request)
-  }
-
-  async function quickCommand(verb: string, passage: string) {
-    await save()
-    await agent.start('rewrite', verb, passage)
-  }
-
-  async function turnIntoArtifact() {
-    await save()
-    await agent.start('artifact', 'Make an artifact')
-  }
-
   /**
    * The whole page takes a press. Below the last line it starts a new one
    * (reusing an empty last line); beside the text it puts the caret on the
@@ -644,52 +417,7 @@ function DocumentEditor({
     setLinkOpen(true)
   }
 
-  /**
-   * ⌘F (Ctrl+F elsewhere) anywhere in this document's view opens its own find
-   * bar, so each view of a split has its own. The selection seeds the query
-   * when it is one line. With the bar open, ⌘G and ⇧⌘G step from the text
-   * too, and Escape in the text closes it.
-   */
-  function isFindKey(event: KeyboardEvent | React.KeyboardEvent) {
-    const mod = apple ? event.metaKey : event.ctrlKey
-    return mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'f'
-  }
-
-  function openFind() {
-    if (!editor) return
-    const { from, to, $from, $to } = editor.state.selection
-    const text = from < to && $from.sameParent($to) ? editor.state.doc.textBetween(from, to) : null
-    setFind((current) => ({ token: (current?.token ?? 0) + 1, text }))
-  }
-
-  /**
-   * ⌘F with focus outside every view (the sidebar after opening a document
-   * from it, or nothing at all) finds in the document in front: the only
-   * view, or a split's focused member. A view that took the key itself has
-   * already claimed it, and a dialog keeps its keys.
-   */
-  const openFindRef = useRef(openFind)
-  openFindRef.current = openFind
-  useEffect(() => {
-    if (!editor) return
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.defaultPrevented || !isFindKey(event)) return
-      const root = viewRef.current
-      const target = event.target instanceof Element ? event.target : null
-      if (!root || target?.closest("[data-pane], [role='dialog']")) return
-      const pane = root.closest('[data-pane]')
-      const inFront =
-        !pane ||
-        pane.hasAttribute('data-pane-focused') ||
-        document.querySelectorAll('[data-pane]').length === 1
-      if (!inFront) return
-      event.preventDefault()
-      openFindRef.current()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, apple])
+  const { find, setFind, apple, isFindKey, openFind } = useDocumentFind(editor, viewRef)
 
   function handleViewKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
     if (!editor || event.defaultPrevented) return
@@ -899,44 +627,5 @@ function DocumentEditor({
       </div>
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </TooltipProvider>
-  )
-}
-
-/** Whether `pos` is still on an empty top-level paragraph. */
-function onEmptyLineAt(doc: import('@tiptap/pm/model').Node, pos: number): boolean {
-  const $pos = doc.resolve(pos)
-  return $pos.depth === 1 && $pos.parent.type.name === 'paragraph' && $pos.parent.content.size === 0
-}
-
-/** "/ai": the same prompt Space opens, for those who reach for the slash. */
-function askAiSlashItem(open: (pos: number) => void): RichTextSlashItem {
-  return {
-    id: 'ask-ai',
-    group: 'AI',
-    title: 'Ask AI',
-    hint: 'Have Sonnet write or change the document',
-    keywords: ['ai', 'agent', 'write', 'sonnet', 'claude'],
-    icon: <SparklesIcon aria-hidden="true" />,
-    can: (editor) => editor.isEditable,
-    run: (editor, range) => {
-      editor.chain().focus().deleteRange(range).run()
-      if (onEmptyLine(editor)) open(editor.state.selection.from)
-    },
-  }
-}
-
-function DocumentSkeleton() {
-  return (
-    <div
-      aria-label="Opening the document"
-      className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-12 sm:px-16"
-    >
-      <Skeleton className="h-8 w-2/3" />
-      <div className="flex flex-col gap-2.5">
-        <Skeleton className="h-4 w-full" />
-        <Skeleton className="h-4 w-11/12" />
-        <Skeleton className="h-4 w-3/5" />
-      </div>
-    </div>
   )
 }

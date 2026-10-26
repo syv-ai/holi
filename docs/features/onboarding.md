@@ -122,7 +122,8 @@ them push access to. The same ritual, minus the greeting, is how any later vault
 ## Code
 
 - `apps/desktop/src/renderer/src/App.tsx`: the gate and the dry-run hook.
-- `apps/desktop/src/renderer/src/features/onboarding/onboarding-ritual.tsx`: the frame and the flow;
+- `apps/desktop/src/renderer/src/features/onboarding/onboarding-ritual.tsx`: the frame and the flow
+  (`ritual-steps.tsx` the stepper, `ritual-footer.tsx` the foot, `build-beat.ts` the build pacing);
   each act is its own component beside it (`greeting-act.tsx`, `naming-act.tsx` and `join-picker.tsx`,
   `plugins-act.tsx`, `vault-settings-act.tsx`, `threshold-act.tsx`).
 - `apps/desktop/src/renderer/src/features/onboarding/actions.ts`: what the ritual does to the world,

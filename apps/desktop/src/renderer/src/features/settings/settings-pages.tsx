@@ -21,10 +21,15 @@ import {
   UsersIcon,
 } from 'lucide-react'
 
-import { AccountPage, AppearancePage, UpdatesPage } from './pages/app-pages'
+import { AccountPage } from './pages/account-page'
+import { AppearancePage } from './pages/appearance-page'
+import { UpdatesPage } from './pages/updates-page'
 import { PluginsPage } from './pages/plugins-page'
 import { SettingsGroup } from './settings-kit'
-import { CommitsPage, EditorPage, GeneralPage, MembersPage } from './pages/vault-pages'
+import { CommitsPage } from './pages/commits-page'
+import { EditorPage } from './pages/editor-page'
+import { GeneralPage } from './pages/general-page'
+import { MembersPage } from './pages/members-page'
 
 export type SettingsPage = {
   id: string

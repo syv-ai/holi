@@ -128,5 +128,5 @@ A dev build reports updates as unsupported.
   vault's skills
 - `apps/desktop/src/main/vault/seed/update.ts` (`pendingShipped`), `seed/state.ts` (`release`),
   `seed/update-on-open.ts`, `state/skills.ts`: the skills offer, the update on open and its notice
-- `apps/desktop/src/renderer/src/features/settings/pages/app-pages.tsx`: Settings → Updates
+- `apps/desktop/src/renderer/src/features/settings/pages/updates-page.tsx`: Settings → Updates
 - `apps/desktop/electron-builder.yml`, `.github/workflows/release.yml`: packaging and release

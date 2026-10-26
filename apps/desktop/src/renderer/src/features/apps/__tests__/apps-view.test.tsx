@@ -1,5 +1,5 @@
 /**
- * The Apps page: a card per vault app on ReUI's c-card-7, with its icon,
+ * The Apps page: a card per vault app on ReUI's card, with its icon,
  * whether it is shared or personal, its folder, its name, its manifest's
  * description and Open; a skeleton while the vault loads; and the empty
  * states for no apps and for the plugin being off.

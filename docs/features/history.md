@@ -28,7 +28,7 @@ A vault's history is its git history, and the autosave commits give it fine reso
 
 ## Code
 
-- `apps/desktop/src/renderer/src/features/history/`: `history-dialog.tsx`, `commit-view.tsx`, `commit-groups.ts`, `line-diff.ts`, `code-language.ts`, `file-history-button.tsx`, `use-file-history.ts`
+- `apps/desktop/src/renderer/src/features/history/`: `history-dialog.tsx`, `commit-view.tsx`, `commit-groups.ts`, `line-diff.ts`, `code-language.ts`, `file-history-button.tsx`, `use-file-history.ts`, `commit-format.ts`
 - `apps/desktop/src/renderer/src/state/history.ts`: loading, selection, restore
 - `apps/desktop/src/renderer/src/features/history/use-file-history.ts`: `useFileHistory(path)`, the per-file lookup the history button and dialog share
 - `apps/desktop/src/main/router.ts` (`history.*`, `notes.fileHistory`): log, changed files, per-file diff, restore

@@ -7,22 +7,11 @@
 import { useEffect, useReducer, useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { claudeFirstRunAtom } from '@/state/claude-first-run'
-import { ArrowLeft, ArrowRight, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { VAULT_SETTING_DEFAULTS, resolvePlugins, type PluginSettings } from '@holi/shared'
 import { BrandMark } from '@/composites/brand-mark'
 import { ScreenArcade } from '@/composites/arcade/screen-arcade'
-import { Button } from '@/components/ui/button'
-import { Kbd } from '@/components/ui/kbd'
 import { IconButton } from '@/composites/icon-button'
-import {
-  Stepper,
-  StepperIndicator,
-  StepperItem,
-  StepperNav,
-  StepperSeparator,
-  StepperTitle,
-} from '@/components/reui/stepper'
-import { cn } from '@/lib/cn'
 import {
   actsFor,
   canAdvance,
@@ -37,10 +26,13 @@ import {
 import { installedPluginsAtom } from '@/state/plugins'
 import { sessionAtom } from '@/state/session'
 import { useRitualActions } from './actions'
+import { beat } from './build-beat'
 import { GreetingAct } from './greeting-act'
 import { JoinPicker } from './join-picker'
 import { NamingAct } from './naming-act'
 import { PluginsAct } from './plugins-act'
+import { RitualFooter, type RitualPrimary } from './ritual-footer'
+import { RitualSteps } from './ritual-steps'
 import { ThresholdAct } from './threshold-act'
 import { VaultSettingsAct } from './vault-settings-act'
 import './onboarding-ritual.css'
@@ -62,13 +54,6 @@ interface Props {
    * and the threshold after it can be seen.
    */
   dryRun?: boolean
-}
-
-/** What the footer's right-hand button does on an act, and what Enter does. */
-interface Primary {
-  label: string
-  run: () => void
-  disabled?: boolean
 }
 
 export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
@@ -186,7 +171,7 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
     void actions.open(createdRemote)
   }
 
-  const primary: Partial<Record<Act, Primary>> = {
+  const primary: Partial<Record<Act, RitualPrimary>> = {
     ...(naming && { naming: { label: 'Continue', run: advance, disabled: !slug } }),
     plugins: { label: 'Continue', run: advance },
     settings: { label: 'Create vault', run: () => void create(), disabled: s.submitting },
@@ -345,108 +330,18 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
           )}
         </div>
 
-        <footer className="obrit-foot">
-          <div className="obrit-foot-side">
-            {s.view === 'form' && s.act !== 'threshold' && (!atFloor || dismissible) && (
-              <Button variant="ghost" onClick={back}>
-                <ArrowLeft aria-hidden className="size-3.5" />
-                {atFloor ? 'Dismiss' : 'Back'}
-              </Button>
-            )}
-          </div>
-          <div className="obrit-foot-side obrit-foot-right">
-            {s.act === 'naming' && naming && !s.submitting && (
-              <span className="obrit-keyhint">
-                Press <Kbd>Enter</Kbd>
-              </span>
-            )}
-            {footPrimary !== undefined && (
-              <span className={cn('rounded-lg', s.act === 'naming' && waking && 'obrit-wake')}>
-                <Button size="lg" onClick={footPrimary.run} disabled={footPrimary.disabled}>
-                  {footPrimary.label}
-                  <ArrowRight aria-hidden className="size-3.5" />
-                </Button>
-              </span>
-            )}
-          </div>
-        </footer>
+        <RitualFooter
+          act={s.act}
+          view={s.view}
+          atFloor={atFloor}
+          dismissible={dismissible}
+          naming={naming}
+          submitting={s.submitting}
+          waking={waking}
+          primary={footPrimary}
+          onBack={back}
+        />
       </div>
-    </div>
-  )
-}
-
-/** The least time each build step holds the threshold, in ms. */
-const BUILD_BEAT = 700
-const beat = () => new Promise<void>((done) => setTimeout(done, BUILD_BEAT))
-
-/** The acts the stepper counts, and each one's name on it. */
-const STEPPED: ReadonlySet<Act> = new Set<Act>(['naming', 'plugins', 'settings'])
-const STEP_TITLES: Partial<Record<Act, string>> = {
-  naming: 'Name',
-  plugins: 'Plugins',
-  settings: 'Choices',
-}
-
-/**
- * Where the ritual is, above the act: the step count, then a numbered step
- * per act with its name, the rule between two filling as the first is done
- * (`components/reui/stepper.tsx`). It counts only the acts that ask something
- * (`STEPPED`): the greeting is the door in and the threshold is the result,
- * so on those the stepper fades out, keeping its height so the act does not
- * jump. Progress only: the acts are gated by what each one needs, so there
- * are no triggers and nothing here reads as a way to jump ahead.
- */
-function RitualSteps({
-  acts,
-  current,
-  hidden = false,
-}: {
-  acts: readonly Act[]
-  current: Act
-  hidden?: boolean
-}) {
-  const steps = acts.filter((act) => STEPPED.has(act))
-  const shown = STEPPED.has(current) && !hidden
-  // On the threshold every step is done; on the greeting none has started.
-  const at = shown ? steps.indexOf(current) + 1 : current === 'threshold' ? steps.length + 1 : 0
-  return (
-    <div className="obrit-progress" data-shown={shown || undefined} aria-hidden={!shown}>
-      <p className="text-xs text-muted-foreground tabular-nums">
-        Step {Math.min(Math.max(at, 1), steps.length)} of {steps.length}
-      </p>
-      <Stepper
-        value={at}
-        role="progressbar"
-        aria-label="Setup progress"
-        aria-valuemin={1}
-        aria-valuemax={steps.length}
-        aria-valuenow={Math.min(Math.max(at, 1), steps.length)}
-        aria-valuetext={`Step ${Math.min(Math.max(at, 1), steps.length)} of ${steps.length}: ${STEP_TITLES[current] ?? ''}`}
-        className="w-full max-w-md"
-      >
-        {/* The nav is what lays the steps in a row (`components/reui/stepper.tsx`):
-            without it they stack. */}
-        <StepperNav>
-          {steps.map((act, i) => {
-            const step = i + 1
-            return (
-              <StepperItem key={act} step={step} className="relative flex-1 flex-col!">
-                <div className="flex flex-col items-center gap-2">
-                  <StepperIndicator />
-                  <StepperTitle className="text-xs group-data-[state=inactive]/step:text-muted-foreground">
-                    {STEP_TITLES[act]}
-                  </StepperTitle>
-                </div>
-                {step < steps.length && (
-                  // From this step's dot to the next one's, filled once this
-                  // step is done.
-                  <StepperSeparator className="absolute start-(--step-line-start) top-3 m-0 w-(--step-line-width) -translate-y-1/2 group-data-[orientation=horizontal]/stepper-nav:flex-none data-[state=completed]:bg-foreground" />
-                )}
-              </StepperItem>
-            )
-          })}
-        </StepperNav>
-      </Stepper>
     </div>
   )
 }

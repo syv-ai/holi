@@ -101,3 +101,9 @@ export const AgentTrigger = Extension.create<AgentTriggerOptions>({
     ]
   },
 })
+
+/** Whether `pos` is still on an empty top-level paragraph. */
+export function onEmptyLineAt(doc: import('@tiptap/pm/model').Node, pos: number): boolean {
+  const $pos = doc.resolve(pos)
+  return $pos.depth === 1 && $pos.parent.type.name === 'paragraph' && $pos.parent.content.size === 0
+}
