@@ -1,9 +1,6 @@
 import { BRAND_MONOGRAM, BRAND_WORDMARK } from '@/lib/brand-shapes'
 import { cn } from '@/lib/cn'
 
-// The monogram's path data lives in lib/brand-shapes; the Output's channel mark reads it from here.
-export { BRAND_MONOGRAM }
-
 /**
  * Holi's mark, drawn in `currentColor` so it follows the theme: the wordmark,
  * or the "h" alone. The paths are the files' in `apps/desktop/assets/`;

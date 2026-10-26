@@ -217,8 +217,7 @@ export function SignIn() {
                     Holi requests broad repo access.{' '}
                     <Button
                       variant="link"
-                      size="xs"
-                      className="-mx-2 h-auto"
+                      size="inline"
                       onClick={() => void window.holi.openExternal(FINE_GRAINED_TOKEN_DOCS)}
                     >
                       Prefer a fine-grained token?
@@ -311,8 +310,7 @@ function Waiting({
       </div>
       <Button
         variant="link"
-        size="xs"
-        className="-mx-2 h-auto"
+        size="inline"
         onClick={() => void window.holi.openExternal(verificationUri)}
       >
         Open {verificationUri.replace(/^https?:\/\//, '')}

@@ -27,8 +27,6 @@
  */
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/cn'
-import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 /** A title to its anchor id. Lowercase, non-alphanumerics collapsed to `-`. */
 function headingId(title: string): string {

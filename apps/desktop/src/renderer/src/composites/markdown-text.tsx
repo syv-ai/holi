@@ -68,8 +68,9 @@ function InlineToken({ token }: { token: Token }): ReactNode {
           <TooltipTrigger asChild>
             <Button
               variant="link"
+              size="inline"
               onClick={() => void window.holi.openExternal(url)}
-              className="-mx-2.5 inline h-auto align-baseline font-normal whitespace-normal break-words text-foreground"
+              className="inline align-baseline break-words text-foreground"
             >
               <Inline tokens={link.tokens} />
             </Button>
