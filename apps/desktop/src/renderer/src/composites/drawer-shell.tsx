@@ -16,7 +16,8 @@
  *
  * **Resizing** is direct manipulation: the handle tracks the pointer 1:1 with
  * the transition off, writes the width straight to the element while
- * dragging, and stores it once, on release, per drawer (`drawerWidthsAtom`).
+ * dragging, and hands it over once, on release (`onWidthChange`); whoever owns the drawer
+ * remembers it.
  * Arrow keys move it by 16px for the keyboard. Every drawer shares one range
  * (`DRAWER_WIDTH`).
  *
@@ -24,25 +25,19 @@
  * a drawer lies flat on the page. The handle shows `--divider` under the
  * pointer, so the seam can be found without being drawn.
  */
-import { useAtom } from 'jotai'
 import { X } from 'lucide-react'
-import { atomWithStorage } from 'jotai/utils'
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/cn'
 import { DRAWER_WIDTH, clampDrawerWidth } from '@/lib/drawer'
 import { prefersReducedMotion } from '@/lib/motion'
 import { PanelHeader, type HeaderAction } from './panel-header'
 
-/** Each drawer's dragged width, by id. Account-wide rather than per vault: a
- *  sidebar's width is about the screen, not the notes.
- * @public exported for its test
- */
-export const drawerWidthsAtom = atomWithStorage<Record<string, number>>('holi:drawerWidths', {})
-
 const KEY_STEP = 16
 
 export function DrawerShell({
   id,
+  width: wanted = DRAWER_WIDTH.default,
+  onWidthChange,
   side,
   open,
   label,
@@ -56,8 +51,13 @@ export function DrawerShell({
   className,
   children,
 }: {
-  /** Which remembered width is this drawer's. */
+  /** Names the drawer in the DOM (`data-drawer`). */
   id: string
+  /** The drawer's width in px: the caller's remembered one, else the shared
+   *  default. Clamped to the shared range. */
+  width?: number
+  /** Called once with the new width when a drag ends or an arrow key moves it. */
+  onWidthChange?: (px: number) => void
   /** The edge it docks on and slides from. */
   side: 'left' | 'right'
   open: boolean
@@ -85,8 +85,7 @@ export function DrawerShell({
   className?: string
   children: React.ReactNode
 }): React.JSX.Element | null {
-  const [widths, setWidths] = useAtom(drawerWidthsAtom)
-  const width = clampDrawerWidth(widths[id] ?? DRAWER_WIDTH.default)
+  const width = clampDrawerWidth(wanted)
   const ref = useRef<HTMLElement>(null)
 
   // Mounted while open, and for as long as the slide out takes.
@@ -100,7 +99,7 @@ export function DrawerShell({
 
   if (!present && !keepMounted) return null
 
-  const store = (px: number) => setWidths((prev) => ({ ...prev, [id]: clampDrawerWidth(px) }))
+  const store = (px: number) => onWidthChange?.(clampDrawerWidth(px))
   // Dragging toward the content widens a drawer: rightward for the left one.
   const grow = side === 'left' ? 1 : -1
 

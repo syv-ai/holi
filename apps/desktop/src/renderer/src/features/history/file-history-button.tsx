@@ -4,7 +4,8 @@ import { HistoryIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 import { HistoryDialog } from './history-dialog'
-import { commitAge, shortSha, useFileAuthors, useFileHistory } from './use-file-history'
+import { commitAge, shortSha } from './commit-format'
+import { useFileAuthors, useFileHistory } from './use-file-history'
 
 /**
  * A file header's history, as GitHub puts it above a file: its latest

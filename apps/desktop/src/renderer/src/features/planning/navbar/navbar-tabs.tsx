@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react'
+
 import { Badge } from '@/components/reui/badge'
 
 import { Button } from '@/components/ui/button'
@@ -10,8 +12,14 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { TabsList, TabsTrigger } from '@/components/ui/tabs'
-import type { TabItem } from './data'
 import { MenuIcon } from 'lucide-react'
+
+export type TabItem = {
+  value: string
+  label: string
+  icon?: ReactNode
+  badge?: number
+}
 
 // ── Navbar tabs (line variant + optional badge; must be used inside Tabs) ──
 

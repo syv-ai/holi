@@ -2,16 +2,7 @@ import { useState } from 'react'
 import { findParentNodeClosestToPos, type Editor } from '@tiptap/react'
 import { toast } from 'sonner'
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { ConfirmDialog } from '@/composites/confirm-dialog'
 
 import { TOAST_SUCCESS_ICON } from './icons'
 
@@ -56,7 +47,6 @@ export function DeleteTableDialog({ editor, open, onOpenChange }: DeleteTableDia
 
   function deleteTable() {
     editor?.chain().focus().deleteTable().run()
-    onOpenChange(false)
     toast.success('Table deleted', {
       icon: TOAST_SUCCESS_ICON,
       description: name,
@@ -69,29 +59,25 @@ export function DeleteTableDialog({ editor, open, onOpenChange }: DeleteTableDia
   }
 
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      {/* The bar that opened it hides with the table, so focus lands in the page. */}
-      <AlertDialogContent
-        size="sm"
-        onCloseAutoFocus={(event) => {
-          event.preventDefault()
-          editor?.view.focus()
-        }}
-      >
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete Table?</AlertDialogTitle>
-          <AlertDialogDescription>
-            <span className="text-foreground font-medium">{name}</span> and every row in it leave
-            the page until you undo it.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" onClick={deleteTable}>
-            Delete Table
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ConfirmDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      size="sm"
+      title="Delete Table?"
+      description={
+        <>
+          <span className="text-foreground font-medium">{name}</span> and every row in it leave the
+          page until you undo it.
+        </>
+      }
+      confirmLabel="Delete Table"
+      destructive
+      // The bar that opened it hides with the table, so focus lands in the page.
+      onCloseAutoFocus={(event) => {
+        event.preventDefault()
+        editor?.view.focus()
+      }}
+      onConfirm={deleteTable}
+    />
   )
 }

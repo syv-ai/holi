@@ -15,16 +15,7 @@ import { isPrivateTask, type Task } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { toast } from 'sonner'
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { ConfirmDialog } from '@/composites/confirm-dialog'
 import { cn } from '@/lib/cn'
 import { todayAtom } from '@/state/clock'
 import { parentOf } from '@/lib/tree-paths'
@@ -122,24 +113,15 @@ export function TaskProperties({
         onChange={(change) => void write(change)}
         className={cn(className)}
       />
-      <AlertDialog open={asking} onOpenChange={setAsking}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Make this task private?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {task.title} will stay on this machine only. It leaves every teammate’s board the next
-              time they sync. Git history keeps the shared version, so anyone with the vault can
-              still find it there. Links to it from shared notes stop resolving.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep it shared</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void renamed(() => makePrivate(path)).catch(fail)}>
-              Make private
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={asking}
+        onOpenChange={setAsking}
+        title="Make this task private?"
+        description={`${task.title} will stay on this machine only. It leaves every teammate’s board the next time they sync. Git history keeps the shared version, so anyone with the vault can still find it there. Links to it from shared notes stop resolving.`}
+        confirmLabel="Make private"
+        cancelLabel="Keep it shared"
+        onConfirm={() => void renamed(() => makePrivate(path)).catch(fail)}
+      />
     </>
   )
 }

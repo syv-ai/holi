@@ -45,14 +45,8 @@ import {
   type Period,
 } from './commit-groups'
 import { CommitView } from './commit-view'
-import {
-  authorFor,
-  initials,
-  shortSha,
-  type FileAuthor,
-  type FileCommit,
-  type FileHistory,
-} from './use-file-history'
+import { initials, shortSha } from './commit-format'
+import { authorFor, type FileAuthor, type FileCommit, type FileHistory } from './use-file-history'
 import { EmptyState, ErrorState } from '@/composites/empty-state'
 
 const ALL_USERS = '__all__'

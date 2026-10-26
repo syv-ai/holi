@@ -4,7 +4,7 @@
  * One toolbar and one filter for the three, so switching tab keeps what the
  * person narrowed to. A tab's own controls (List and Table's group toggle,
  * Table's Display) ride in `extra`. It spans the tab as a bar of its own,
- * and `PanelBody` holds what it narrows.
+ * and `PanelBody` (`panel-body.tsx`) holds what it narrows.
  */
 import type { ReactNode } from 'react'
 import type { Priority } from '@holi/shared'
@@ -38,7 +38,6 @@ import {
   type PlanningFilter,
   type PlanningSort,
 } from '@/lib/planning'
-import { cn } from '@/lib/cn'
 
 function toggled<T>(list: readonly T[], item: T, on: boolean): T[] {
   return on ? (list.includes(item) ? [...list] : [...list, item]) : list.filter((x) => x !== item)
@@ -233,21 +232,6 @@ export function PlanningToolbar({
           New task
         </Button>
       </div>
-    </div>
-  )
-}
-
-/** What sits under the toolbar: the tab's scrolling content. `flush` runs
- *  it to the pane's edges, for a grid whose rows are the edge. */
-export function PanelBody({ children, flush = false }: { children: ReactNode; flush?: boolean }) {
-  return (
-    <div
-      className={cn(
-        'flex min-h-0 flex-1 flex-col overflow-auto',
-        !flush && 'gap-4 px-4 py-4 lg:px-6',
-      )}
-    >
-      {children}
     </div>
   )
 }

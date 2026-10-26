@@ -5,34 +5,42 @@
  */
 import { act, render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
-import { Provider, createStore } from 'jotai'
+import { useState } from 'react'
 import { expect, test, vi } from 'vitest'
 import { DRAWER_WIDTH } from '@/lib/drawer'
-import { DrawerShell, DrawerTitle, drawerWidthsAtom } from '../drawer-shell'
+import { DrawerShell, DrawerTitle } from '../drawer-shell'
 
-function drawer(
-  props: Partial<React.ComponentProps<typeof DrawerShell>> = {},
-  store = createStore(),
-) {
-  const ui = (p: Partial<React.ComponentProps<typeof DrawerShell>>) => (
-    <Provider store={store}>
-      <DrawerShell
-        id="history"
-        side="right"
-        open
-        label="History"
-        header={<DrawerTitle title="History" subtitle="notes/plan.md" />}
-        {...props}
-        {...p}
-      >
-        <p>body</p>
-      </DrawerShell>
-    </Provider>
+/** A caller that remembers the width, as the drawers' owners do. */
+function Remembering(props: Partial<React.ComponentProps<typeof DrawerShell>>) {
+  const [width, setWidth] = useState<number | undefined>(undefined)
+  return (
+    <DrawerShell
+      id="history"
+      side="right"
+      open
+      label="History"
+      header={<DrawerTitle title="History" subtitle="notes/plan.md" />}
+      width={width}
+      onWidthChange={(px) => {
+        widths.push(px)
+        setWidth(px)
+      }}
+      {...props}
+    >
+      <p>body</p>
+    </DrawerShell>
   )
-  const view = render(ui({}))
+}
+
+let widths: number[] = []
+
+function drawer(props: Partial<React.ComponentProps<typeof DrawerShell>> = {}) {
+  widths = []
+  const view = render(<Remembering {...props} />)
   return {
-    store,
-    rerender: (p: Partial<React.ComponentProps<typeof DrawerShell>>) => view.rerender(ui(p)),
+    widths: () => widths,
+    rerender: (p: Partial<React.ComponentProps<typeof DrawerShell>>) =>
+      view.rerender(<Remembering {...props} {...p} />),
   }
 }
 
@@ -87,25 +95,24 @@ test('keepMounted holds the content while hidden, inert', () => {
   expect(screen.getByText('body').closest('[inert]')).not.toBeNull()
 })
 
-test('arrow keys resize toward the content, clamped, and remember it per drawer', async () => {
-  const { store } = drawer({ id: 'nav', side: 'left' })
+test('arrow keys resize toward the content and report the clamped width', async () => {
+  const { widths } = drawer({ id: 'nav', side: 'left' })
   const handle = screen.getByRole('separator', { name: 'Resize History' })
   const user = userEvent.setup()
 
   handle.focus()
   await user.keyboard('{ArrowRight}')
-  expect(store.get(drawerWidthsAtom).nav).toBe(DRAWER_WIDTH.default + 16)
+  expect(widths().at(-1)).toBe(DRAWER_WIDTH.default + 16)
 
-  store.set(drawerWidthsAtom, { nav: DRAWER_WIDTH.max })
-  await user.keyboard('{ArrowRight}')
-  expect(store.get(drawerWidthsAtom).nav).toBe(DRAWER_WIDTH.max)
+  for (let n = 0; n < 40; n++) await user.keyboard('{ArrowRight}')
+  expect(widths().at(-1)).toBe(DRAWER_WIDTH.max)
 })
 
 test('a right-hand drawer widens leftward', async () => {
-  const { store } = drawer()
+  const { widths } = drawer()
   screen.getByRole('separator').focus()
   await userEvent.setup().keyboard('{ArrowLeft}')
-  expect(store.get(drawerWidthsAtom).history).toBe(DRAWER_WIDTH.default + 16)
+  expect(widths().at(-1)).toBe(DRAWER_WIDTH.default + 16)
 })
 
 test('a close control calls onClose', async () => {

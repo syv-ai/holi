@@ -23,7 +23,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import { useAtomValue } from 'jotai'
-import type { Repo } from '../../../../main/github/api'
+import type { Repo } from '@holi/shared'
 import { ArrowLeft, ChevronDown, Search, X } from 'lucide-react'
 import { Badge } from '@/components/reui/badge'
 import { Frame, FramePanel } from '@/components/reui/frame'
@@ -44,6 +44,7 @@ import {
   InputGroupInput,
 } from '@/components/ui/input-group'
 import { Skeleton } from '@/components/ui/skeleton'
+import { EmptyState, ErrorState } from '@/composites/empty-state'
 import { IconButton } from '@/composites/icon-button'
 import { relativeTime } from '@/lib/relative-time'
 import { trpc } from '@/lib/trpc'
@@ -187,14 +188,7 @@ export function JoinPicker({ submitting, error, onPick, onBack }: Props) {
                 </div>
               )}
               {reposError !== null && (
-                <div className="flex flex-col items-center gap-3 py-6">
-                  <p role="alert" className="text-sm text-destructive">
-                    Couldn’t load your vaults.
-                  </p>
-                  <Button variant="outline" size="sm" onClick={load}>
-                    Retry
-                  </Button>
-                </div>
+                <ErrorState title="Couldn’t load your vaults." onRetry={load} className="h-auto" />
               )}
               {repos !== null &&
                 groups.map(({ owner, repos: rows }) => (
@@ -274,37 +268,32 @@ function JoinEmpty({
 }) {
   if (filtered)
     return (
-      <div className={EMPTY}>
-        <p>No vaults match.</p>
-        <Button variant="outline" size="sm" onClick={onClear}>
-          Show all vaults
-        </Button>
-      </div>
+      <EmptyState
+        title="No vaults match."
+        action={{ label: 'Show all vaults', onClick: onClear }}
+        className="h-auto"
+      />
     )
   if (anyVault)
     return (
-      <div className={EMPTY}>
-        <p>Every vault in your accounts is already in Holi.</p>
-      </div>
+      <EmptyState title="Every vault in your accounts is already in Holi." className="h-auto" />
     )
   return (
-    <div className={EMPTY}>
-      <p>No vaults in your accounts yet.</p>
-      <p className="max-w-sm text-xs text-muted-foreground">
-        A vault is a repo with the <code className="font-mono">holi-vault</code> topic. An
-        organisation’s vaults appear once it has approved Holi on GitHub.
-      </p>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => void window.holi.openExternal(GITHUB_APP_ACCESS)}
-      >
-        Review organisation access
-      </Button>
-    </div>
+    <EmptyState
+      title="No vaults in your accounts yet."
+      description={
+        <>
+          A vault is a repo with the <code className="font-mono">holi-vault</code> topic. An
+          organisation’s vaults appear once it has approved Holi on GitHub.
+        </>
+      }
+      action={{
+        label: 'Review organisation access',
+        onClick: () => void window.holi.openExternal(GITHUB_APP_ACCESS),
+      }}
+      className="h-auto"
+    />
   )
 }
-
-const EMPTY = 'flex flex-col items-center gap-3 px-4 py-6 text-center text-sm text-pretty'
 
 const ownerOf = (repo: Repo): string => repo.remote.split('/')[0] ?? repo.remote

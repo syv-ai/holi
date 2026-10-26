@@ -18,17 +18,8 @@ import {
   type PluginInfo,
 } from '@holi/shared'
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/reui/badge'
+import { ConfirmDialog } from '@/composites/confirm-dialog'
 import { pluginMark } from '@/composites/marks'
 import { Switch } from '@/components/ui/switch'
 import { trpc } from '@/lib/trpc'
@@ -165,33 +156,23 @@ function PluginSwitches() {
         )
       })}
 
-      <AlertDialog
+      <ConfirmDialog
         open={asking !== null}
         onOpenChange={(open) => {
           if (!open) setAsking(null)
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Turn off {asking?.off.label}?</AlertDialogTitle>
-            <AlertDialogDescription>{asking?.reasons.join(' ')}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep it on</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => {
-                if (asking !== null) {
-                  void write('plugins', asking.vault, 'committed')
-                }
-                setAsking(null)
-              }}
-            >
-              Turn off
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title={`Turn off ${asking?.off.label}?`}
+        description={asking?.reasons.join(' ')}
+        confirmLabel="Turn off"
+        cancelLabel="Keep it on"
+        destructive
+        onConfirm={() => {
+          if (asking !== null) {
+            void write('plugins', asking.vault, 'committed')
+          }
+          setAsking(null)
+        }}
+      />
     </SettingsGroup>
   )
 }

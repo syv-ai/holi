@@ -257,7 +257,7 @@ function DocumentEditor({
         items: [
           ...RICH_TEXT_BASIC_SLASH_ITEMS,
           RICH_TEXT_TABLE_SLASH_ITEM,
-          ASK_AI_SLASH_ITEM((pos) => handlers.current.trigger(pos)),
+          askAiSlashItem((pos) => handlers.current.trigger(pos)),
         ],
         more: () => handlers.current.pluginItems(),
       }),
@@ -909,7 +909,7 @@ function onEmptyLineAt(doc: import('@tiptap/pm/model').Node, pos: number): boole
 }
 
 /** "/ai": the same prompt Space opens, for those who reach for the slash. */
-function ASK_AI_SLASH_ITEM(open: (pos: number) => void): RichTextSlashItem {
+function askAiSlashItem(open: (pos: number) => void): RichTextSlashItem {
   return {
     id: 'ask-ai',
     group: 'AI',

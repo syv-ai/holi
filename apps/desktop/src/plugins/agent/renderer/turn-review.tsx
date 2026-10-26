@@ -10,7 +10,8 @@
  * files the agent changed through `Bash` (a `sed`, an `mv`, a script) that a
  * `Write|Edit|MultiEdit` matcher never sees.
  */
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { atomWithStorage } from 'jotai/utils'
 import { useEffect, useState } from 'react'
 import { cn, DiffView, useAck } from '@/plugin-api'
 import {
@@ -41,8 +42,16 @@ const when = (iso: string) =>
 const basename = (path: string): string => path.slice(path.lastIndexOf('/') + 1)
 const folder = (path: string): string => path.slice(0, Math.max(0, path.lastIndexOf('/')))
 
+const DRAWER_ID = 'turn-review'
+
+/** Each drawer's dragged width, by id. Account-wide rather than per vault: a
+ *  drawer's width is about the screen, not the notes. The key is shared with
+ *  the other drawers' widths, saved before the drawer kept no record itself. */
+const drawerWidthsAtom = atomWithStorage<Record<string, number>>('holi:drawerWidths', {})
+
 export function TurnReview(): React.JSX.Element | null {
   const open = useAtomValue(turnReviewOpenAtom)
+  const [widths, setWidths] = useAtom(drawerWidthsAtom)
   const turn = useAtomValue(reviewTurnAtom)
   const files = useAtomValue(turnFilesAtom)
   const diff = useAtomValue(turnDiffAtom)
@@ -134,7 +143,9 @@ export function TurnReview(): React.JSX.Element | null {
 
   return (
     <DrawerShell
-      id="turn-review"
+      id={DRAWER_ID}
+      width={widths[DRAWER_ID]}
+      onWidthChange={(px) => setWidths((prev) => ({ ...prev, [DRAWER_ID]: px }))}
       side="right"
       open={shown}
       label="Last turn"

@@ -4,7 +4,14 @@
  * table say a task's facts the same way.
  */
 import type { ComponentProps } from 'react'
-import { isPrivateTask, type Priority, type StatusCategory, type StatusDef } from '@holi/shared'
+import {
+  isPrivateTask,
+  PROJECT_STATUSES,
+  type Priority,
+  type Project,
+  type StatusCategory,
+  type StatusDef,
+} from '@holi/shared'
 import {
   CalendarDaysIcon,
   CircleCheckIcon,
@@ -124,5 +131,21 @@ export function PrivateMark({ path }: { path: string }) {
       <LockIcon className="size-3.5" aria-hidden="true" />
       <span className="sr-only">, private</span>
     </span>
+  )
+}
+
+const PROJECT_STATUS_VARIANT = {
+  planning: 'secondary',
+  active: 'info-light',
+  'at-risk': 'warning-light',
+  'on-hold': 'secondary',
+  complete: 'success-light',
+} as const
+
+export function ProjectStatusBadge({ status }: { status: Project['status'] }) {
+  return (
+    <Badge variant={PROJECT_STATUS_VARIANT[status]}>
+      {PROJECT_STATUSES.find((s) => s.id === status)?.name ?? status}
+    </Badge>
   )
 }

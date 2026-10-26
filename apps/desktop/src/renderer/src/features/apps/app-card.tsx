@@ -1,5 +1,5 @@
 /**
- * One vault app on the Apps page, on ReUI's c-card-7 example: the inset
+ * One vault app on the Apps page, on ReUI's card pattern: the inset
  * image is the app's preview, the picture taken the last time it ran here, or its own icon on a muted
  * plate when it has none; the Trending badge says whether the app is shared
  * through the vault or personal to this machine; Featured is its folder; the

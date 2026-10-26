@@ -1,7 +1,7 @@
 /**
  * One size for every drawer in Holi: the nav, history, the last turn, and the
  * PDF viewer's sidebars. A drawer opens at `default` and is dragged between
- * `min` and `max`; each remembers its own dragged width (`DrawerShell`).
+ * `min` and `max`; each drawer's owner remembers its dragged width (`DrawerShell`).
  *
  * Not in the component: the PDF sidebars take their width from the library's
  * schema (`pdf-viewer-config.ts`), so it must reach a stylesheet string too.

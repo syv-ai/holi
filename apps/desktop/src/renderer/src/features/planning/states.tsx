@@ -6,6 +6,7 @@
 import type { ReactNode } from 'react'
 
 import { EmptyState, ErrorState } from '@/composites/empty-state'
+import { Skeleton } from '@/components/ui/skeleton'
 import type { IconGlyph } from '@/lib/icon-glyph'
 
 export function RegionError({
@@ -58,5 +59,30 @@ export function NoMatches({ search, onClear }: { search: string; onClear: () => 
       action={{ label: 'Clear filters', onClick: onClear }}
       className="h-auto bg-muted"
     />
+  )
+}
+
+/** The loading state in the shape of what is loading: board columns of cards,
+ *  or the rows of a list or table. */
+export function TasksSkeleton({ variant }: { variant: 'board' | 'rows' }) {
+  if (variant === 'rows') {
+    return (
+      <div className="flex flex-col gap-2" role="status" aria-label="Loading tasks">
+        {Array.from({ length: 6 }, (_, i) => (
+          <Skeleton key={i} className="h-9 w-full" />
+        ))}
+      </div>
+    )
+  }
+  return (
+    <div className="flex gap-3" role="status" aria-label="Loading tasks">
+      {Array.from({ length: 4 }, (_, i) => (
+        <div key={i} className="flex w-72 shrink-0 flex-col gap-2">
+          <Skeleton className="h-8 w-1/2" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+        </div>
+      ))}
+    </div>
   )
 }

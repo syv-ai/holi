@@ -104,18 +104,6 @@ function FileLoading({ label }: { label: string }) {
   )
 }
 
-function FileError({
-  title,
-  message,
-  onRetry,
-}: {
-  title: string
-  message: string
-  onRetry: () => void
-}) {
-  return <ErrorState title={title} message={message} onRetry={onRetry} />
-}
-
 /**
  * The file in CodeMirror, saving as it is typed. `text` is the file as the
  * view last knew it; a change on disk arrives through it and replaces the
@@ -360,7 +348,7 @@ function TextFileView({ path }: { path: string }) {
         actions={<FileHistoryButton path={path} />}
       />
       {load.kind === 'error' ? (
-        <FileError
+        <ErrorState
           title="This file could not be opened"
           message={load.message}
           onRetry={() => setAttempt((n) => n + 1)}

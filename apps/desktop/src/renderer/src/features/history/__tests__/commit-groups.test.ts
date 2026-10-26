@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { commitAuthors, filterCommits, groupByDay } from '../commit-groups'
-import { commitAge } from '../use-file-history'
+import { commitAge } from '../commit-format'
 import type { FileCommit } from '../use-file-history'
 
 const commit = (sha: string, date: string, author = 'Ana'): FileCommit => ({

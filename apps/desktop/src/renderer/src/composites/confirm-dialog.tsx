@@ -31,6 +31,7 @@ export function ConfirmDialog({
   destructive = false,
   size,
   children,
+  onCloseAutoFocus,
   onConfirm,
 }: {
   open: boolean
@@ -44,6 +45,8 @@ export function ConfirmDialog({
   size?: 'default' | 'sm'
   /** Under the sentence: a choice that goes with the answer, a warning. */
   children?: ReactNode
+  /** Where focus goes when it closes, for a caller whose trigger has gone. */
+  onCloseAutoFocus?: (event: Event) => void
   onConfirm: () => void | Promise<unknown>
 }): React.JSX.Element {
   const [pending, setPending] = useState(false)
@@ -76,7 +79,7 @@ export function ConfirmDialog({
 
   return (
     <AlertDialog open={open} onOpenChange={change}>
-      <AlertDialogContent size={size}>
+      <AlertDialogContent size={size} onCloseAutoFocus={onCloseAutoFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           {description !== undefined && (

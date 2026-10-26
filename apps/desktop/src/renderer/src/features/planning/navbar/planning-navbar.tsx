@@ -3,10 +3,19 @@ import type { ReactNode } from 'react'
 
 import { Tabs } from '@/components/ui/tabs'
 
-import type { TabItem } from './data'
 import { PeopleStack } from '@/composites/person-avatar'
-import { NavbarProject } from './navbar-project'
-import { NavbarTabs } from './navbar-tabs'
+import { NavbarTabs, type TabItem } from './navbar-tabs'
+
+// ── Navbar project (title + status) ──
+
+function NavbarProject({ title, status }: { title: string; status?: ReactNode }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <h1 className="truncate text-lg font-semibold tracking-tight">{title}</h1>
+      {status}
+    </div>
+  )
+}
 
 // ── Navbar (title row over a tab row, then the tab content panels) ──
 

@@ -23,7 +23,8 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 import { FileHistoryButton } from '../history/file-history-button'
-import { initials, useFileAuthors } from '../history/use-file-history'
+import { initials } from '../history/commit-format'
+import { useFileAuthors } from '../history/use-file-history'
 
 import { DocumentActions, type DocumentActionsProps } from './document-actions'
 

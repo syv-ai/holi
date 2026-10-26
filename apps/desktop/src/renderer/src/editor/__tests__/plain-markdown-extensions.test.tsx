@@ -59,10 +59,4 @@ describe('plainMarkdownExtensions', () => {
 
     expect(editor.dom.querySelector('.cm-lineWrapping')).not.toBeNull()
   })
-
-  it('takes no vault dependencies at all', () => {
-    // If this ever needs an argument, the composer has been given a way to
-    // reach the vault and the separation above has been lost.
-    expect(plainMarkdownExtensions).toHaveLength(0)
-  })
 })

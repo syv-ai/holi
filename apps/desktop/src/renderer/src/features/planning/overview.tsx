@@ -5,14 +5,7 @@
  * the task files, and git's log.
  */
 import { useEffect, useState, type ReactNode } from 'react'
-import {
-  columnFor,
-  isOverdue,
-  PROJECT_STATUSES,
-  type Project,
-  type StatusDef,
-  type Task,
-} from '@holi/shared'
+import { columnFor, isOverdue, type Project, type StatusDef, type Task } from '@holi/shared'
 import { useAtomValue } from 'jotai'
 import {
   CalendarCheckIcon,
@@ -39,23 +32,7 @@ import { ActivityTimeline } from './activity-timeline'
 import type { ActivityItem } from './activity-data'
 import { RegionEmpty, RegionError } from './states'
 import { PeopleStack, PersonAvatar } from '@/composites/person-avatar'
-import { DateBadge, PriorityBadge, StatusBadge } from './task-bits'
-
-const PROJECT_STATUS_VARIANT = {
-  planning: 'secondary',
-  active: 'info-light',
-  'at-risk': 'warning-light',
-  'on-hold': 'secondary',
-  complete: 'success-light',
-} as const
-
-export function ProjectStatusBadge({ status }: { status: Project['status'] }) {
-  return (
-    <Badge variant={PROJECT_STATUS_VARIANT[status]}>
-      {PROJECT_STATUSES.find((s) => s.id === status)?.name ?? status}
-    </Badge>
-  )
-}
+import { DateBadge, PriorityBadge, ProjectStatusBadge, StatusBadge } from './task-bits'
 
 /** A titled panel: the Overview's one container. */
 function Section({

@@ -13,11 +13,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAtomValue } from 'jotai'
 import { isTaskFilePath, MEMORY_DIR } from '@holi/shared'
-import { RefreshCwIcon, WaypointsIcon } from 'lucide-react'
+import { WaypointsIcon } from 'lucide-react'
 
-import { Alert, AlertDescription, AlertTitle } from '@/components/reui/alert'
 import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
-import { Button } from '@/components/ui/button'
+import { ErrorState } from '@/composites/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
 import { boundsOf, layoutGraph, type Point } from '@/lib/graph-layout'
@@ -354,24 +353,15 @@ export function GraphView({
 
   if (failed || scan?.ok === false) {
     return (
-      <div className="flex flex-1 items-start justify-center p-6">
-        <Alert variant="destructive" className="max-w-md">
-          <AlertTitle>
-            {failed ? 'Couldn’t lay out the graph' : 'Couldn’t read the vault’s links'}
-          </AlertTitle>
-          <AlertDescription>
-            <div className="flex flex-col items-start gap-2">
-              {failed
-                ? 'The layout stopped before it finished.'
-                : 'Holi could not walk the vault’s notes just now.'}
-              <Button variant="outline" size="sm" onClick={retry}>
-                <RefreshCwIcon data-icon="inline-start" aria-hidden="true" />
-                Retry
-              </Button>
-            </div>
-          </AlertDescription>
-        </Alert>
-      </div>
+      <ErrorState
+        title={failed ? 'Couldn’t lay out the graph' : 'Couldn’t read the vault’s links'}
+        message={
+          failed
+            ? 'The layout stopped before it finished.'
+            : 'Holi could not walk the vault’s notes just now.'
+        }
+        onRetry={retry}
+      />
     )
   }
 

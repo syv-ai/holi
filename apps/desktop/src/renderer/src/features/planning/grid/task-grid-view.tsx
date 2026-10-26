@@ -19,7 +19,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { PanelBody } from '../planning-toolbar'
+import { PanelBody } from '../panel-body'
 import { createTaskColumns, type TaskColumnsContext } from './task-columns'
 import {
   COLUMN_LABELS,
