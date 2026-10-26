@@ -17,7 +17,7 @@ import {
   type RendererPlugin,
   type Surface,
 } from '@/plugin-api'
-import { Button } from '@/primitives'
+import { Button } from '@/components/ui/button'
 import { COMMUNITY_INFO } from '../info'
 import { askToRun, installAndAsk, updatePlugin, type InstallFlow } from './install-flow'
 import { PluginFrame } from './plugin-frame'

@@ -87,7 +87,6 @@ export {
 export { Textarea } from './Textarea'
 export { Tooltip, TooltipProvider } from './Tooltip'
 
-export { ChipInput, type ChipAddress, type ChipInputProps } from './ChipInput'
 export { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from './InputOTP'
 export {
   Stepper,

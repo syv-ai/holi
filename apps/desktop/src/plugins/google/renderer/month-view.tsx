@@ -10,7 +10,7 @@
  */
 import { useMemo } from 'react'
 import { isoWeek, localDate, monthGrid } from '@holi/shared'
-import { Button } from '@/primitives'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/plugin-api'
 import { groupByDay } from './month-days'
 

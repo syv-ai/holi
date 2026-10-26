@@ -5,7 +5,17 @@
  */
 import { useState } from 'react'
 import { dayAfter, localDate } from '@holi/shared'
-import { Button, Checkbox, Dialog, Input, Label } from '@/primitives'
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 
 export interface NewEventValues {
   title: string
@@ -41,8 +51,10 @@ export function NewEventDialog({
   onCreate: (values: NewEventValues) => Promise<void>
 }): React.JSX.Element {
   return (
-    <Dialog open={day !== null} onClose={onClose} size="sm">
-      {day !== null && <Form key={day} day={day} onClose={onClose} onCreate={onCreate} />}
+    <Dialog open={day !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent aria-describedby={undefined}>
+        {day !== null && <Form key={day} day={day} onClose={onClose} onCreate={onCreate} />}
+      </DialogContent>
     </Dialog>
   )
 }
@@ -92,8 +104,10 @@ function Form({
 
   return (
     <>
-      <Dialog.Header>New event</Dialog.Header>
-      <Dialog.Body>
+      <DialogHeader>
+        <DialogTitle>New event</DialogTitle>
+      </DialogHeader>
+      <div className="flex min-w-0 flex-col gap-4">
         <Input
           autoFocus
           aria-label="Title"
@@ -162,15 +176,15 @@ function Form({
             {error}
           </p>
         )}
-      </Dialog.Body>
-      <Dialog.Footer>
+      </div>
+      <DialogFooter>
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
         <Button disabled={saving} onClick={submit}>
           {saving ? 'Adding…' : 'Add event'}
         </Button>
-      </Dialog.Footer>
+      </DialogFooter>
     </>
   )
 }

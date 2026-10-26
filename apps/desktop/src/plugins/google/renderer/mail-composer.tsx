@@ -16,7 +16,10 @@ import { useAtomValue } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { Button, ChipInput, Input, PillGroup } from '@/primitives'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { ChipInput } from './chip-input'
 import { SandboxedHtml } from './sandboxed-html'
 import { activeRemoteAtom, cn, plainMarkdownExtensions } from '@/plugin-api'
 import { composeFrom, type ComposeIntent } from './compose-intent'
@@ -462,16 +465,26 @@ export function MailComposer({
         </p>
       )}
 
-      <PillGroup
-        label="Compose view"
-        options={COMPOSE_VIEWS}
-        isOn={(which) => tab === which}
-        onPick={(which) => {
+      <ToggleGroup
+        type="single"
+        aria-label="Compose view"
+        size="sm"
+        spacing={1}
+        value={tab}
+        // Pressing the current pick reports '', which a pick never is here.
+        onValueChange={(which) => {
+          if (which !== 'edit' && which !== 'preview') return
           // Switching to preview is a natural save point.
           if (which === 'preview' && tab !== 'preview') void save()
           setTab(which)
         }}
-      />
+      >
+        {COMPOSE_VIEWS.map((view) => (
+          <ToggleGroupItem key={view.value} value={view.value}>
+            {view.label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
 
       {tab === 'edit' ? (
         <MarkdownEditor

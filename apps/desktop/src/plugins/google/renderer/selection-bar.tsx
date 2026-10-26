@@ -11,8 +11,8 @@
  * explains the rest, and the list re-reads.
  */
 import { Archive, MailOpen, Mail, Star, StarOff, Trash2, X } from 'lucide-react'
-import { IconButton } from '@/primitives'
-import { PaneToolbar } from '@/composites'
+import { IconButton } from '@/composites/icon-button'
+import { PaneToolbar } from '@/composites/pane-toolbar'
 
 export function SelectionBar({
   count,
@@ -36,31 +36,38 @@ export function SelectionBar({
       <div className="ml-auto flex shrink-0 items-center gap-1">
         {/* Both directions of both toggles, spelled out rather than derived:
             a mixed selection has no "current" state to flip. */}
-        <IconButton icon={MailOpen} label="Mark read" onClick={() => onSetRead(true)} />
-        <IconButton icon={Mail} label="Mark unread" onClick={() => onSetRead(false)} />
-        <IconButton icon={Star} label="Star" onClick={() => onSetStarred(true)} />
-        <IconButton icon={StarOff} label="Unstar" onClick={() => onSetStarred(false)} />
+        <IconButton label="Mark read" onClick={() => onSetRead(true)}>
+          <MailOpen className="size-3.5" />
+        </IconButton>
+        <IconButton label="Mark unread" onClick={() => onSetRead(false)}>
+          <Mail className="size-3.5" />
+        </IconButton>
+        <IconButton label="Star" onClick={() => onSetStarred(true)}>
+          <Star className="size-3.5" />
+        </IconButton>
+        <IconButton label="Unstar" onClick={() => onSetStarred(false)}>
+          <StarOff className="size-3.5" />
+        </IconButton>
         <IconButton
-          icon={Archive}
-          label="Archive"
-          tooltip="Archive: removes them from the inbox, keeps them in All Mail"
+          label="Archive: removes them from the inbox, keeps them in All Mail"
+          aria-label="Archive"
           onClick={onArchive}
-        />
+        >
+          <Archive className="size-3.5" />
+        </IconButton>
         {/* Trash, which Gmail keeps for 30 days. Not called Delete: Holi cannot
             delete mail permanently and will not request the scope that would
             let it. */}
         <IconButton
-          icon={Trash2}
-          label="Move to trash"
-          tooltip="Move to trash: recoverable for 30 days"
+          label="Move to trash: recoverable for 30 days"
+          aria-label="Move to trash"
           onClick={onTrash}
-        />
-        <IconButton
-          icon={X}
-          label="Clear selection"
-          tooltip="Clear selection (Esc)"
-          onClick={onClear}
-        />
+        >
+          <Trash2 className="size-3.5" />
+        </IconButton>
+        <IconButton label="Clear selection (Esc)" aria-label="Clear selection" onClick={onClear}>
+          <X className="size-3.5" />
+        </IconButton>
       </div>
     </PaneToolbar>
   )

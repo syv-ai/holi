@@ -1,10 +1,6 @@
 /**
  * The recipient field.
  *
- * A primitive because an AST selector in `eslint.config.mjs` bans a native
- * `<input>` anywhere outside `primitives/` — not because a recipient field is a
- * general-purpose control.
- *
  * Almost everything here is behaviour people expect without being able to name,
  * and notice immediately when it is missing: commas commit, backspace deletes
  * backwards, a paste of six addresses becomes six chips. The one rule with real
@@ -15,7 +11,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
-import { ChipInput, type ChipAddress } from '../ChipInput'
+import { ChipInput, type ChipAddress } from '../renderer/chip-input'
 
 /** Controlled, the way the composer uses it. */
 function Harness({

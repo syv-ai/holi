@@ -43,7 +43,7 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { toast } from '@/primitives'
+import { toast } from 'sonner'
 import {
   activeRemoteAtom,
   cn,
@@ -64,12 +64,12 @@ import {
 import { useGoogleAccount } from '../account'
 import {
   FALLBACK_COLOR,
-  messageOf,
   midnightAfter,
   toCalendarItem,
   useGoogleCalendar,
   type GoogleEventData,
 } from '../calendar-data'
+import { messageOf } from '../google-errors'
 import { TASKS_CREATE, tasksCap } from '../tasks'
 import { CalendarRail } from './calendar-rail'
 import { CalendarsMenu } from './calendars-menu'

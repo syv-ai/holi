@@ -15,8 +15,9 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Search, X } from 'lucide-react'
-import { Icon, IconButton, Input } from '@/primitives'
-import { PaneToolbar } from '@/composites'
+import { Input } from '@/components/ui/input'
+import { IconButton } from '@/composites/icon-button'
+import { PaneToolbar } from '@/composites/pane-toolbar'
 import { clearIn, findIn, setActiveMark } from './mail-find'
 import { mailFrameFor, useMailFrameVersion } from './mail-frames'
 
@@ -114,7 +115,7 @@ export function ThreadFind({
 
   return (
     <PaneToolbar className="border-b border-divider">
-      <Icon icon={Search} size="sm" tone="muted" />
+      <Search className="size-3.5 text-muted-foreground" />
       <Input
         ref={inputRef}
         value={term}
@@ -131,7 +132,6 @@ export function ThreadFind({
         }}
         placeholder="Find in this conversation"
         aria-label="Find in conversation"
-        className="h-7 text-xs"
       />
       {/* Nothing until a term is typed. A live region, because the number
           changing IS the feedback for pressing Enter; the label also tells it
@@ -146,20 +146,24 @@ export function ThreadFind({
         </span>
       )}
       <IconButton
-        icon={ChevronUp}
-        label="Previous match"
-        tooltip="Previous match (⇧⏎)"
+        label="Previous match (⇧⏎)"
+        aria-label="Previous match"
         disabled={marks.length === 0}
         onClick={() => step(-1)}
-      />
+      >
+        <ChevronUp className="size-3.5" />
+      </IconButton>
       <IconButton
-        icon={ChevronDown}
-        label="Next match"
-        tooltip="Next match (⏎)"
+        label="Next match (⏎)"
+        aria-label="Next match"
         disabled={marks.length === 0}
         onClick={() => step(1)}
-      />
-      <IconButton icon={X} label="Close find" onClick={onClose} />
+      >
+        <ChevronDown className="size-3.5" />
+      </IconButton>
+      <IconButton label="Close find" onClick={onClose}>
+        <X className="size-3.5" />
+      </IconButton>
     </PaneToolbar>
   )
 }

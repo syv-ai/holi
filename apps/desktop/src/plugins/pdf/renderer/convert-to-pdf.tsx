@@ -1,22 +1,60 @@
 import type { TemplateField } from '../shared/template-fields'
 import { useSetAtom } from 'jotai'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import { capClient, openNoteTabAtom, trpc } from '@/plugin-api'
 import type { PdfCapabilities } from '../main/capabilities'
 import { FieldWidget } from './field-widget'
-import { metaFromValues, missingRequired, parseFrontmatter, prefillValues } from '../shared/pdf-fields'
 import {
-  Button,
-  Dialog,
-  FormField,
-  Icon,
+  metaFromValues,
+  missingRequired,
+  parseFrontmatter,
+  prefillValues,
+} from '../shared/pdf-fields'
+import { Button } from '@/components/ui/button'
+import { DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Field, FieldError, FieldLabel } from '@/components/ui/field'
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/primitives'
+} from '@/components/ui/select'
+
+/**
+ * A labelled control. Vertical (the caption above) unless `horizontal`, a
+ * checkbox's row with its caption beside the control; the label points at the
+ * control by id, so pressing the caption reaches it.
+ */
+function LabelledField({
+  label,
+  horizontal = false,
+  required = false,
+  error,
+  children,
+}: {
+  label: string
+  horizontal?: boolean
+  required?: boolean
+  error?: string
+  children: (id: string) => React.ReactNode
+}): React.JSX.Element {
+  const id = useId()
+  const caption = (
+    <FieldLabel htmlFor={id}>
+      {label}
+      {required && <span className="text-destructive"> *</span>}
+    </FieldLabel>
+  )
+  return (
+    <Field orientation={horizontal ? 'horizontal' : 'vertical'}>
+      {caption}
+      {children(id)}
+      {error !== undefined && <FieldError>{error}</FieldError>}
+    </Field>
+  )
+}
 
 const pdf = capClient<PdfCapabilities>('pdf')
 
@@ -155,18 +193,22 @@ export function ConvertToPdf({
   if (renderWarnings !== null) {
     return (
       <>
-        <Dialog.Header>
-          Converted <span className="font-mono text-foreground">{name}</span>
-        </Dialog.Header>
-        <Dialog.Body>
+        <DialogHeader>
+          <DialogTitle>
+            Converted <span className="font-mono text-foreground">{name}</span>
+          </DialogTitle>
+        </DialogHeader>
+        <div className="flex min-w-0 flex-col gap-4">
           <div
             role="status"
             data-convert-warnings
             className="flex gap-2 rounded-md bg-muted px-2.5 py-2 text-xs text-foreground"
           >
-            <Icon icon={TriangleAlert} size="sm" tone="muted" className="mt-px shrink-0" />
+            <TriangleAlert className="mt-px size-3.5 shrink-0 text-muted-foreground" />
             <div className="flex min-w-0 flex-col gap-1">
-              <p className="font-medium">The PDF is made, but not everything came out as written:</p>
+              <p className="font-medium">
+                The PDF is made, but not everything came out as written:
+              </p>
               <ul className="flex list-disc flex-col gap-0.5 pl-4 break-words">
                 {renderWarnings.map((w) => (
                   <li key={w}>{w}</li>
@@ -174,23 +216,25 @@ export function ConvertToPdf({
               </ul>
             </div>
           </div>
-        </Dialog.Body>
-        <Dialog.Footer>
+        </div>
+        <DialogFooter>
           <Button size="sm" data-convert-done onClick={onClose}>
             Done
           </Button>
-        </Dialog.Footer>
+        </DialogFooter>
       </>
     )
   }
 
   return (
     <>
-      <Dialog.Header>
-        Convert <span className="font-mono text-foreground">{name}</span> to PDF
-      </Dialog.Header>
+      <DialogHeader>
+        <DialogTitle>
+          Convert <span className="font-mono text-foreground">{name}</span> to PDF
+        </DialogTitle>
+      </DialogHeader>
 
-      <Dialog.Body>
+      <div className="flex min-w-0 flex-col gap-4">
         {templates === null && error === null && (
           <div role="status" aria-label="Loading templates" className="flex flex-col gap-1">
             <span className="block h-3.5 w-16 rounded-md motion-shimmer" />
@@ -204,25 +248,27 @@ export function ConvertToPdf({
           </p>
         )}
         {templates !== null && templates.length > 0 && (
-          <FormField label="Template">
-            <Select value={slug} onValueChange={setSlug}>
-              <SelectTrigger className="w-full" data-convert-template>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {templates.map((t) => (
-                  <SelectItem key={t.slug} value={t.slug}>
-                    {t.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </FormField>
+          <LabelledField label="Template">
+            {(id) => (
+              <Select value={slug} onValueChange={setSlug}>
+                <SelectTrigger id={id} className="w-full" data-convert-template>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {templates.map((t) => (
+                    <SelectItem key={t.slug} value={t.slug}>
+                      {t.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </LabelledField>
         )}
 
         {selected !== null && selected.warnings.length > 0 && (
           <div className="flex gap-2 rounded-md bg-muted px-2.5 py-2 text-xs text-foreground">
-            <Icon icon={TriangleAlert} size="sm" tone="muted" className="mt-px shrink-0" />
+            <TriangleAlert className="mt-px size-3.5 shrink-0 text-muted-foreground" />
             <div className="flex min-w-0 flex-col gap-1">
               <p className="font-medium">
                 This template&rsquo;s manifest had problems, so Holi used safe defaults:
@@ -260,18 +306,18 @@ export function ConvertToPdf({
             // A checkbox reads as one row, its label beside the box; every
             // other control takes its caption above.
             return f.type === 'checkbox' ? (
-              <FormField key={f.key} label={f.label} orientation="horizontal">
+              <LabelledField key={f.key} label={f.label} horizontal>
                 {(id) => widget(id)}
-              </FormField>
+              </LabelledField>
             ) : (
-              <FormField
+              <LabelledField
                 key={f.key}
                 label={f.label}
                 required={f.required}
                 error={invalid ? `${f.label} is required.` : undefined}
               >
-                {widget()}
-              </FormField>
+                {(id) => widget(id)}
+              </LabelledField>
             )
           })}
 
@@ -280,9 +326,9 @@ export function ConvertToPdf({
             {error}
           </p>
         )}
-      </Dialog.Body>
+      </div>
 
-      <Dialog.Footer>
+      <DialogFooter>
         <Button variant="ghost" size="sm" onClick={onClose}>
           Cancel
         </Button>
@@ -294,7 +340,7 @@ export function ConvertToPdf({
         >
           {busy ? 'Converting…' : 'Convert'}
         </Button>
-      </Dialog.Footer>
+      </DialogFooter>
     </>
   )
 }

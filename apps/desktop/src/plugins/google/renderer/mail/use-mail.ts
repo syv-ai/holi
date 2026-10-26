@@ -12,7 +12,8 @@ import { useAtomValue } from "jotai"
 import { toast } from "sonner"
 import { activeRemoteAtom } from "@/plugin-api"
 import { googleCap } from "../account"
-import type { ThreadMessage } from "../mail-types"
+import { explainWriteFailure, isDisconnected, messageOf } from "../google-errors"
+import type { MailAddress, ThreadMessage } from "../mail-types"
 import type { MailFolder } from "./data"
 
 /** Gmail's own shapes, as the capabilities return them. */
@@ -32,7 +33,7 @@ export type MailCategory = NonNullable<
 export type ThreadMeeting = NonNullable<
   Awaited<ReturnType<typeof googleCap.meeting>>
 >
-export type MailAddress = ThreadSummary["from"]
+export type { MailAddress }
 
 export type ListState =
   | { kind: "loading" }
@@ -50,53 +51,6 @@ export type ReaderState =
   | { kind: "loading"; id: string }
   | { kind: "ready"; thread: Thread }
   | { kind: "error"; id: string; message: string }
-
-const NOT_CONNECTED =
-  /not connected|connect Google|no longer valid|not configured/i
-const NEEDS_SCOPE =
-  "Holi needs new Google permissions for this. Reconnect Google in settings."
-const NOT_CONNECTED_MESSAGE =
-  "Google isn’t connected. Connect it in vault settings."
-const RATE_LIMITED = "Google is rate limiting. Try again in a moment."
-
-/** The refusal code main put on the error, where tRPC's callers look. */
-export function codeOf(err: unknown): string | null {
-  const data = (err as { data?: { code?: unknown } } | null)?.data
-  return typeof data?.code === "string" ? data.code : null
-}
-
-function messageOf(err: unknown, fallback: string): string {
-  return err instanceof Error && err.message !== "" ? err.message : fallback
-}
-
-/** Why a write did not stick, in terms the person can act on: the code
- *  first, Google's prose only as the fallback. */
-export function explainWriteFailure(err: unknown): string {
-  switch (codeOf(err)) {
-    case "FORBIDDEN":
-      return NEEDS_SCOPE
-    case "UNAUTHORIZED":
-    case "PRECONDITION_FAILED":
-      return NOT_CONNECTED_MESSAGE
-    case "TOO_MANY_REQUESTS":
-    case "RATE_LIMITED":
-      return RATE_LIMITED
-  }
-  const message = err instanceof Error ? err.message : ""
-  if (/permission|scope|insufficient/i.test(message)) return NEEDS_SCOPE
-  if (NOT_CONNECTED.test(message)) return NOT_CONNECTED_MESSAGE
-  if (/rate limit/i.test(message)) return RATE_LIMITED
-  return message === "" ? "That didn’t stick. Try again." : message
-}
-
-function isDisconnected(err: unknown): boolean {
-  const code = codeOf(err)
-  return (
-    code === "UNAUTHORIZED" ||
-    code === "PRECONDITION_FAILED" ||
-    NOT_CONNECTED.test(messageOf(err, ""))
-  )
-}
 
 /**
  * The message a reply answers: the last one the account did not send, else

@@ -56,7 +56,7 @@ import '@fontsource/pacifico/400.css'
 import { formatCommentThreads, pdfAskHeader } from '../shared/pdf-comments'
 import { AskAgentPopover } from '@/composites/ask-agent-popover'
 import { FileWarning } from 'lucide-react'
-import { EmptyState } from '@/composites'
+import { EmptyState } from '@/composites/empty-state'
 import {
   ASK_AGENT_PDF,
   ASK_AGENT_THREAD,

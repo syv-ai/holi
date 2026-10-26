@@ -7,9 +7,10 @@
  */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useEffect, useState } from 'react'
-import { SettingsHeading, SettingsList, SettingsNote, SettingsRow } from '@/composites'
+import { SettingsHeading, SettingsList, SettingsNote, SettingsRow } from '@/composites/settings-ui'
 import { openDialogAtom, trpc } from '@/plugin-api'
-import { Button, Switch } from '@/primitives'
+import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { askToRun, installAndAsk, updatePlugin, type InstallFlow } from './install-flow'
 import { PluginSearch } from './plugin-search'
 import {

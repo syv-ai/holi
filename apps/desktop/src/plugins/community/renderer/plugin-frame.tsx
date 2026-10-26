@@ -11,7 +11,7 @@ import { useAtomValue } from 'jotai'
 import { useEffect, useState } from 'react'
 import { pluginServerOrigin } from '@holi/shared'
 import { activeRemoteAtom, cn } from '@/plugin-api'
-import { Button } from '@/primitives'
+import { Button } from '@/components/ui/button'
 import { communityCap, rowsAtom, servingRow, serversAtom, type ServerState } from './state'
 
 type Phase =

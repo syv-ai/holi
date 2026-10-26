@@ -16,7 +16,7 @@ import {
   type RailItem,
   type Surface,
 } from '@/plugin-api'
-import { IconButton } from '@/primitives'
+import { IconButton } from '@/composites/icon-button'
 import { AppFrame } from './app-frame'
 import { AppIcon } from './app-icon'
 import { appInstancesAtom, appOpensAtom, archiveAppAtom, archivedAppsAtom } from './apps'
@@ -40,18 +40,20 @@ function AppHeaderActions({ id }: { id?: string }): React.JSX.Element | null {
   return (
     <>
       <IconButton
-        icon={RotateCw}
         label="Reload this app"
         className="ml-1"
         onClick={() => setReloads((n) => ({ ...n, [id]: (n[id] ?? 0) + 1 }))}
-      />
+      >
+        <RotateCw className="size-3.5" />
+      </IconButton>
       <IconButton
-        icon={Logs}
         label={hasLog ? 'Open this app’s log' : 'No log yet'}
         className="ml-1"
         disabled={!hasLog}
         onClick={() => openPath(log, 'pane')}
-      />
+      >
+        <Logs className="size-3.5" />
+      </IconButton>
     </>
   )
 }

@@ -8,7 +8,8 @@ import { useAtomValue } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
 import { releaseTag } from '@holi/shared'
 import { activeRemoteAtom, cn, type PluginStore } from '@/plugin-api'
-import { Button, Dialog } from '@/primitives'
+import { Button } from '@/components/ui/button'
+import { DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
   communityCap,
   refreshRows,
@@ -93,10 +94,12 @@ export function ConsentDialog({
 
   return (
     <>
-      <Dialog.Header>
-        {step.kind === 'ask' ? `Run ${row.name} on this machine?` : `Setting up ${row.name}`}
-      </Dialog.Header>
-      <Dialog.Body>
+      <DialogHeader>
+        <DialogTitle>
+          {step.kind === 'ask' ? `Run ${row.name} on this machine?` : `Setting up ${row.name}`}
+        </DialogTitle>
+      </DialogHeader>
+      <div className="flex min-w-0 flex-col gap-4">
         {step.kind === 'ask' ? (
           <div className="grid gap-3 text-sm text-pretty text-muted-foreground">
             <p>
@@ -184,8 +187,8 @@ export function ConsentDialog({
             )}
           </div>
         )}
-      </Dialog.Body>
-      <Dialog.Footer>
+      </div>
+      <DialogFooter>
         {step.kind === 'ask' ? (
           <>
             <Button variant="ghost" size="sm" onClick={onClose}>
@@ -200,7 +203,7 @@ export function ConsentDialog({
             {step.kind === 'failed' ? 'Close' : 'Done'}
           </Button>
         )}
-      </Dialog.Footer>
+      </DialogFooter>
     </>
   )
 }

@@ -18,7 +18,7 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
-} from '@/primitives'
+} from '@/components/ui/context-menu'
 
 /** What a thread can have done to it. Named as a bundle because the row menu
  *  and the selection bar both want the same set. */

@@ -1,14 +1,14 @@
 import type { TemplateField } from '../shared/template-fields'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
 import {
-  Checkbox,
-  Input,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Textarea,
-} from '@/primitives'
+} from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 
 export interface WidgetProps {
   field: TemplateField

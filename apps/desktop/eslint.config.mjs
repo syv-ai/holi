@@ -431,6 +431,10 @@ export default [
       'src/plugins/google/renderer/oauth-client.tsx',
       'src/plugins/links/renderer/**/*.{ts,tsx}',
       'src/plugins/browser/renderer/**/*.{ts,tsx}',
+      'src/plugins/google/renderer/**/*.{ts,tsx}',
+      'src/plugins/pdf/renderer/**/*.{ts,tsx}',
+      'src/plugins/community/renderer/**/*.{ts,tsx}',
+      'src/plugins/apps/renderer/**/*.{ts,tsx}',
     ],
     rules: {
       'no-restricted-syntax': 'off',

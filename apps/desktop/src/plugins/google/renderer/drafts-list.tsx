@@ -9,8 +9,8 @@
 import { useAtomValue } from 'jotai'
 import { useEffect, useState } from 'react'
 import { FilePen } from 'lucide-react'
-import { Button, Icon } from '@/primitives'
-import { EmptyState, LoadingRows } from '@/composites'
+import { Button } from '@/components/ui/button'
+import { EmptyState, LoadingRows } from '@/composites/empty-state'
 import { googleCap } from './account'
 import { activeRemoteAtom } from '@/plugin-api'
 import type { MailAddress } from './mail-types'
@@ -105,7 +105,7 @@ export function DraftsList({
             {/* The second lines start where the recipient does: the icon's
                 14px plus the row's `gap-2`. */}
             <span className="flex items-baseline gap-2">
-              <Icon icon={FilePen} size="sm" tone="muted" className="self-center" />
+              <FilePen className="size-3.5 self-center text-muted-foreground" />
               <span className="min-w-0 flex-1 truncate text-sm">{recipients(draft.to)}</span>
               <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                 {shortDate(draft.date)}

@@ -41,8 +41,9 @@ import {
   snapshotAtom,
 } from '@/plugin-api'
 import { AppWindow } from 'lucide-react'
-import { EmptyState } from '@/composites'
-import { Button, Dialog } from '@/primitives'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { EmptyState } from '@/composites/empty-state'
 import { appPushSignaturesAtom, storeSignatures } from './app-push'
 import {
   frameIsUnobscured,
@@ -196,9 +197,6 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
     }
   }, [remote, path, exists, reloads, recheck])
 
-  // The pane the approval is asked in.
-  const [pane, setPane] = useState<HTMLDivElement | null>(null)
-
   // Which document the frame holds: the fade-in waits for this one's load.
   const documentKey = `${path}\n${reloads}\n${mode}`
   const [loaded, setLoaded] = useState<string | null>(null)
@@ -239,7 +237,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   const reads = (ask?.affordances ?? []).map((a) => AFFORDANCE_TEXT[a]).join(' and ')
 
   return (
-    <div ref={setPane} className="relative flex h-full min-h-0 flex-col">
+    <div className="relative flex h-full min-h-0 flex-col">
       {ask !== null && (
         // The app as its markup and styles draw it, blurred behind the question:
         // what is being approved, seen. No scripts (`sandbox=""`), so nothing
@@ -255,11 +253,25 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
       {ask !== null && (
         // Asked in the app's own pane, where the app would be: the question is
         // about this app, and the rest of Holi stays usable meanwhile.
-        <Dialog open onClose={() => decide(false)} size="sm" closable={false} within={pane}>
-          <Dialog.Header>
-            {name} wants permission to read {reads}
-          </Dialog.Header>
-          <Dialog.Body>
+        // Not a modal: it is a card in the pane, so a click elsewhere in Holi
+        // is not an answer, and only its buttons or Escape close it.
+        <Card
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby="app-approval-title"
+          tabIndex={-1}
+          ref={(card) => card?.focus()}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') decide(false)
+          }}
+          className="absolute top-1/2 left-1/2 z-20 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 outline-none"
+        >
+          <CardHeader>
+            <CardTitle id="app-approval-title">
+              {name} wants permission to read {reads}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex min-w-0 flex-col gap-4">
             <div className="grid gap-3 text-sm text-pretty text-muted-foreground">
               <p>
                 {name} can store what it reads, and what it stores may sync to others in this vault
@@ -269,16 +281,16 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
               <p>Holi asks again in 30 days, or sooner if the app changes.</p>
             </div>
             <WrittenBy authorship={authorship} />
-          </Dialog.Body>
-          <Dialog.Footer>
+          </CardContent>
+          <CardFooter className="justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={() => decide(false)}>
               Not now
             </Button>
             <Button size="sm" onClick={() => decide(true)}>
               Allow for 30 days
             </Button>
-          </Dialog.Footer>
-        </Dialog>
+          </CardFooter>
+        </Card>
       )}
       {gateOpen && (
         <iframe

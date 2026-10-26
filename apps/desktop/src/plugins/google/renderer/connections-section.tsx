@@ -48,7 +48,8 @@ import {
   ItemMedia,
   ItemTitle,
 } from '@/components/ui/item'
-import { IconTile, pluginMark } from '@/composites'
+import { IconTile } from '@/composites/icon-tile'
+import { pluginMark } from '@/composites/marks'
 import { activeRemoteAtom } from '@/plugin-api'
 import { googleCap, useGoogleAccount } from './account'
 import { initialsOf } from './mail/data'

@@ -15,16 +15,15 @@
  * not a zero, because they have no unread state at all.
  */
 import { ChevronDown } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import {
-  Button,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  Icon,
-  Tooltip,
-} from '@/primitives'
+} from '@/components/ui/dropdown-menu'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 /** Mirrors `main/google/gmail.ts`. */
 export type MailCategory = 'primary' | 'social' | 'promotions' | 'updates' | 'forums'
@@ -124,14 +123,17 @@ export function MailboxPicker({
     <DropdownMenu onOpenChange={(open) => open && onOpen()}>
       {/* Short on purpose. The "tabs only apply if your inbox uses them"
           caveat lives in the empty-state message for a tab. */}
-      <Tooltip content="Choose a mailbox">
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="xs" className="gap-1" aria-label="Choose a mailbox">
-            {mailboxLabelOf(view)}
-            {/* The chevron makes this read as a menu, not a clickable label. */}
-            <Icon icon={ChevronDown} size="sm" tone="muted" />
-          </Button>
-        </DropdownMenuTrigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="xs" className="gap-1" aria-label="Choose a mailbox">
+              {mailboxLabelOf(view)}
+              {/* The chevron makes this read as a menu, not a clickable label. */}
+              <ChevronDown className="size-3.5 text-muted-foreground" />
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Choose a mailbox</TooltipContent>
       </Tooltip>
       <DropdownMenuContent align="start">
         {entries.map((entry, index) => (

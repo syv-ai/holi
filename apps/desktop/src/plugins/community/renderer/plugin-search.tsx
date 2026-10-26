@@ -7,15 +7,8 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/plugin-api'
-import {
-  Command,
-  CommandInput,
-  CommandItem,
-  CommandList,
-  Popover,
-  PopoverAnchor,
-  PopoverContent,
-} from '@/primitives'
+import { Command, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import type { Candidate } from '../main/search'
 import { communityCap } from './state'
 

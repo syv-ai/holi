@@ -26,24 +26,28 @@ import {
   Video,
 } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { EmptyState, LoadingRows, PaneToolbar } from '@/composites'
+import { Button } from '@/components/ui/button'
 import {
-  Button,
   Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  Icon,
-  IconButton,
-  PillGroup,
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-  Tooltip,
-} from '@/primitives'
+} from '@/components/ui/dropdown-menu'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { EmptyState, LoadingRows } from '@/composites/empty-state'
+import { IconButton } from '@/composites/icon-button'
+import { PaneToolbar } from '@/composites/pane-toolbar'
 import { SandboxedHtml } from './sandboxed-html'
 import {
   activeRemoteAtom,
@@ -53,6 +57,7 @@ import {
   useHasCapability,
 } from '@/plugin-api'
 import { googleCap } from './account'
+import { isDisconnected } from './google-errors'
 import { TASKS_CREATE, tasksCap } from './tasks'
 import { MonthView } from './month-view'
 import { NewEventDialog, type NewEventValues } from './new-event-dialog'
@@ -137,12 +142,6 @@ function agendaWindow(): { from: string; to: string } {
   const end = new Date(start)
   end.setDate(end.getDate() + DAYS_AHEAD)
   return { from: start.toISOString(), to: end.toISOString() }
-}
-
-/** tRPC's verdict, as `ipcLink` rebuilt it onto `err.data.code`. */
-function codeOf(error: unknown): string | null {
-  const data = (error as { data?: { code?: unknown } } | null)?.data
-  return typeof data?.code === 'string' ? data.code : null
 }
 
 /** `2026-08-04` for a timed instant or an all-day date, in local time. */
@@ -301,14 +300,7 @@ export function AgendaView({
         const message = err instanceof Error ? err.message : 'Could not load your agenda.'
         // A missing/expired connection is not an error to apologise for — it is
         // a state with an obvious next action, so it gets its own surface.
-        const code = codeOf(err)
-        setState(
-          code === 'UNAUTHORIZED' ||
-            code === 'PRECONDITION_FAILED' ||
-            /not connected|connect Google|no longer valid|not configured/i.test(message)
-            ? { kind: 'disconnected' }
-            : { kind: 'error', message },
-        )
+        setState(isDisconnected(err) ? { kind: 'disconnected' } : { kind: 'error', message })
       })
   }, [remote, view, year, month])
 
@@ -409,13 +401,21 @@ export function AgendaView({
    */
   const toolbar = (
     <PaneToolbar>
-      <PillGroup
-        label="Agenda view"
-        options={VIEW_OPTIONS}
-        isOn={(choice) => choice === view}
-        onPick={setView}
-        className="flex-nowrap"
-      />
+      <ToggleGroup
+        type="single"
+        aria-label="Agenda view"
+        size="sm"
+        spacing={1}
+        value={view}
+        // Pressing the current pick reports '', which a pick never is here.
+        onValueChange={(next) => next !== '' && setView(next as View)}
+      >
+        {VIEW_OPTIONS.map((option) => (
+          <ToggleGroupItem key={option.value} value={option.value}>
+            {option.label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
       {view === 'month' && (
         <h2 className="ml-2 truncate text-sm font-medium tabular-nums" aria-live="polite">
           {new Date(year, month - 1, 1).toLocaleDateString(undefined, {
@@ -428,10 +428,11 @@ export function AgendaView({
         {view === 'month' && (
           <>
             <IconButton
-              icon={ChevronLeft}
               label="Previous month"
               onClick={() => setCursor(shiftMonth(year, month, -1))}
-            />
+            >
+              <ChevronLeft className="size-3.5" />
+            </IconButton>
             <Button
               variant="secondary"
               size="xs"
@@ -442,15 +443,15 @@ export function AgendaView({
             >
               Today
             </Button>
-            <IconButton
-              icon={ChevronRight}
-              label="Next month"
-              onClick={() => setCursor(shiftMonth(year, month, 1))}
-            />
+            <IconButton label="Next month" onClick={() => setCursor(shiftMonth(year, month, 1))}>
+              <ChevronRight className="size-3.5" />
+            </IconButton>
           </>
         )}
         <CalendarPicker calendars={calendars} onToggle={toggleCalendar} />
-        <IconButton icon={RefreshCw} label="Refresh agenda" tooltip="Refresh" onClick={load} />
+        <IconButton label="Refresh" aria-label="Refresh agenda" onClick={load}>
+          <RefreshCw className="size-3.5" />
+        </IconButton>
       </div>
     </PaneToolbar>
   )
@@ -474,11 +475,13 @@ export function AgendaView({
 
         <NewEventDialog day={newDay} onClose={() => setNewDay(null)} onCreate={createEvent} />
 
-        <Dialog open={openEvent !== null} onClose={() => setSelected(null)} size="md">
-          {openEvent !== null && (
-            <>
-              <Dialog.Header>{openEvent.title}</Dialog.Header>
-              <Dialog.Body>
+        <Dialog open={openEvent !== null} onOpenChange={(open) => !open && setSelected(null)}>
+          <DialogContent className="sm:max-w-md" aria-describedby={undefined}>
+            {openEvent !== null && (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{openEvent.title}</DialogTitle>
+                </DialogHeader>
                 <div className="max-h-[55vh] min-h-0 overflow-y-auto">
                   <EventDetail
                     event={openEvent}
@@ -487,16 +490,18 @@ export function AgendaView({
                     onCreateTask={() => void createTask(openEvent)}
                   />
                 </div>
-              </Dialog.Body>
-            </>
-          )}
+              </>
+            )}
+          </DialogContent>
         </Dialog>
 
-        <Dialog open={moreDay !== null} onClose={() => setMoreDay(null)} size="sm">
-          {moreDay !== null && (
-            <>
-              <Dialog.Header>{dayLabel(moreDay)}</Dialog.Header>
-              <Dialog.Body>
+        <Dialog open={moreDay !== null} onOpenChange={(open) => !open && setMoreDay(null)}>
+          <DialogContent aria-describedby={undefined}>
+            {moreDay !== null && (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{dayLabel(moreDay)}</DialogTitle>
+                </DialogHeader>
                 <ul className="flex flex-col gap-1">
                   {dayEvents.map((event) => (
                     <li key={eventKey(event)}>
@@ -517,19 +522,19 @@ export function AgendaView({
                     </li>
                   ))}
                 </ul>
-              </Dialog.Body>
-              <Dialog.Footer>
-                <Button
-                  onClick={() => {
-                    setNewDay(moreDay)
-                    setMoreDay(null)
-                  }}
-                >
-                  New event
-                </Button>
-              </Dialog.Footer>
-            </>
-          )}
+                <DialogFooter>
+                  <Button
+                    onClick={() => {
+                      setNewDay(moreDay)
+                      setMoreDay(null)
+                    }}
+                  >
+                    New event
+                  </Button>
+                </DialogFooter>
+              </>
+            )}
+          </DialogContent>
         </Dialog>
       </div>
     )
@@ -618,24 +623,30 @@ export function AgendaView({
                               select it. */}
                           <span className="pointer-events-auto flex shrink-0 items-center gap-1">
                             {event.myResponse === 'needsAction' && (
-                              <Tooltip content="Answer this invitation in Google Calendar">
-                                <Button
-                                  variant="secondary"
-                                  size="xs"
-                                  aria-label={`Answer ${event.title} in Google Calendar`}
-                                  onClick={() => void window.holi.openExternal(event.htmlLink)}
-                                >
-                                  RSVP
-                                </Button>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="secondary"
+                                    size="xs"
+                                    aria-label={`Answer ${event.title} in Google Calendar`}
+                                    onClick={() => void window.holi.openExternal(event.htmlLink)}
+                                  >
+                                    RSVP
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom">
+                                  Answer this invitation in Google Calendar
+                                </TooltipContent>
                               </Tooltip>
                             )}
                             {event.conferenceUrl !== null && (
                               <IconButton
-                                icon={Video}
-                                label={`Join ${event.title}`}
-                                tooltip="Join the meeting"
+                                label="Join the meeting"
+                                aria-label={`Join ${event.title}`}
                                 onClick={() => void window.holi.openExternal(event.conferenceUrl!)}
-                              />
+                              >
+                                <Video className="size-3.5" />
+                              </IconButton>
                             )}
                           </span>
                         </div>
@@ -686,31 +697,38 @@ function EventDetail({
     <div className="flex h-full min-h-0 flex-col">
       <PaneToolbar className="justify-end">
         {event.conferenceUrl !== null && (
-          <Tooltip content="Join the meeting">
-            <Button
-              variant="secondary"
-              size="xs"
-              className="mr-auto gap-1"
-              onClick={() => void window.holi.openExternal(event.conferenceUrl!)}
-            >
-              <Icon icon={Video} size="sm" />
-              Join
-            </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="secondary"
+                size="xs"
+                className="mr-auto gap-1"
+                onClick={() => void window.holi.openExternal(event.conferenceUrl!)}
+              >
+                <Video className="size-3.5" />
+                Join
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Join the meeting</TooltipContent>
           </Tooltip>
         )}
         {canCreateTask && (
-          <Tooltip content="Make a task linking this event">
-            <Button variant="secondary" size="xs" disabled={creating} onClick={onCreateTask}>
-              {creating ? 'Creating…' : 'Task'}
-            </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="secondary" size="xs" disabled={creating} onClick={onCreateTask}>
+                {creating ? 'Creating…' : 'Task'}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Make a task linking this event</TooltipContent>
           </Tooltip>
         )}
         <IconButton
-          icon={ExternalLink}
-          label={`Open ${event.title} in Google Calendar`}
-          tooltip="Open in Google Calendar"
+          label="Open in Google Calendar"
+          aria-label={`Open ${event.title} in Google Calendar`}
           onClick={() => void window.holi.openExternal(event.htmlLink)}
-        />
+        >
+          <ExternalLink className="size-3.5" />
+        </IconButton>
       </PaneToolbar>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
@@ -726,27 +744,31 @@ function EventDetail({
             {!event.mine && <span className="text-muted-foreground"> · Subscribed</span>}
           </Fact>
           {KIND_LABELS[event.kind] !== undefined && (
-            <Fact icon={<Icon icon={CalendarDays} size="sm" tone="muted" />}>
+            <Fact icon={<CalendarDays className="size-3.5 text-muted-foreground" />}>
               {sentence(KIND_LABELS[event.kind]!)}
             </Fact>
           )}
           {event.recurring && (
-            <Fact icon={<Icon icon={Repeat} size="sm" tone="muted" />}>Repeats</Fact>
+            <Fact icon={<Repeat className="size-3.5 text-muted-foreground" />}>Repeats</Fact>
           )}
           {/* On the row this is only a dimming; here it is said in words. */}
           {!event.busy && (
-            <Fact icon={<Icon icon={CalendarDays} size="sm" tone="muted" />}>
+            <Fact icon={<CalendarDays className="size-3.5 text-muted-foreground" />}>
               Free: doesn’t block time
             </Fact>
           )}
           {event.location !== undefined && event.location !== '' && (
-            <Fact icon={<Icon icon={MapPin} size="sm" tone="muted" />}>{event.location}</Fact>
+            <Fact icon={<MapPin className="size-3.5 text-muted-foreground" />}>
+              {event.location}
+            </Fact>
           )}
           {event.organizer !== null && (
-            <Fact icon={<Icon icon={User} size="sm" tone="muted" />}>{event.organizer}</Fact>
+            <Fact icon={<User className="size-3.5 text-muted-foreground" />}>
+              {event.organizer}
+            </Fact>
           )}
           {event.attendeeCount > 1 && (
-            <Fact icon={<Icon icon={Users} size="sm" tone="muted" />}>
+            <Fact icon={<Users className="size-3.5 text-muted-foreground" />}>
               {event.attendeeCount} people
             </Fact>
           )}
@@ -821,13 +843,16 @@ function CalendarPicker({
 
   return (
     <DropdownMenu>
-      <Tooltip content="Which calendars this agenda shows">
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="xs" className="gap-1">
-            Calendars
-            {off > 0 && <span className="text-muted-foreground">({calendars.length - off})</span>}
-          </Button>
-        </DropdownMenuTrigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="xs" className="gap-1">
+              Calendars
+              {off > 0 && <span className="text-muted-foreground">({calendars.length - off})</span>}
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Which calendars this agenda shows</TooltipContent>
       </Tooltip>
       <DropdownMenuContent align="end" className="max-w-72">
         <DropdownMenuLabel>Your calendars</DropdownMenuLabel>

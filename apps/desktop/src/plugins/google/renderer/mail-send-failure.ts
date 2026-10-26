@@ -9,6 +9,8 @@
  * regexes are the fallback for an error without one.
  */
 
+import { codeOf } from './google-errors'
+
 export type SendFailureAction = 'reconnect' | 'retry' | null
 
 export interface SendFailure {
@@ -16,12 +18,6 @@ export interface SendFailure {
   /** `reconnect` routes to vault settings; `retry` re-offers the same call;
    *  `null` means the only sane move is back to the composer, text intact. */
   action: SendFailureAction
-}
-
-/** tRPC's verdict, as `ipcLink` rebuilt it onto `err.data.code`. */
-function codeOf(error: unknown): string | null {
-  const data = (error as { data?: { code?: unknown } } | null)?.data
-  return typeof data?.code === 'string' ? data.code : null
 }
 
 const RECONNECT: SendFailure = {

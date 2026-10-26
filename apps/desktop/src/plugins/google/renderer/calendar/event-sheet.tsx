@@ -14,19 +14,9 @@
  * the primary calendar, and the calls it writes through carry a title, times
  * and, on creation, a place.
  */
+import { useState } from 'react'
 import { Badge } from '@/components/reui/badge'
 import { cn } from '@/plugin-api'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
@@ -34,6 +24,8 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { ConfirmDialog } from '@/composites/confirm-dialog'
+import { IconButton } from '@/composites/icon-button'
 import {
   CalendarIcon,
   ClipboardListIcon,
@@ -249,16 +241,9 @@ export function EventSheet({
 /** Header close button, shared by view + form. */
 function CloseButton({ onClose }: { onClose: () => void }) {
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon-sm"
-      className="-me-1 shrink-0"
-      onClick={onClose}
-    >
+    <IconButton type="button" label="Close" className="-me-1 shrink-0" onClick={onClose}>
       <XIcon className="size-4" aria-hidden="true" />
-      <span className="sr-only">Close</span>
-    </Button>
+    </IconButton>
   )
 }
 
@@ -423,14 +408,7 @@ function EventView({
 
       {/* Actions */}
       <div className="bg-muted flex shrink-0 items-center gap-2 border-t px-5 py-3">
-        {editable && (
-          <DeleteConfirm onDelete={onDelete}>
-            <Button type="button" variant="outline">
-              <Trash2Icon className="size-4" aria-hidden="true" />
-              Delete
-            </Button>
-          </DeleteConfirm>
-        )}
+        {editable && <DeleteEventButton onDelete={onDelete} />}
         {!editable && data !== undefined && (
           <p className="text-muted-foreground min-w-0 text-xs">
             {data.attendeeCount > 0
@@ -623,14 +601,7 @@ function EventForm({
 
       {/* Actions */}
       <div className="bg-muted flex shrink-0 items-center gap-2 border-t px-5 py-3">
-        {mode === 'edit' && (
-          <DeleteConfirm onDelete={onDelete}>
-            <Button type="button" variant="outline" className="me-auto">
-              <Trash2Icon className="size-4" aria-hidden="true" />
-              Delete
-            </Button>
-          </DeleteConfirm>
-        )}
+        {mode === 'edit' && <DeleteEventButton onDelete={onDelete} className="me-auto" />}
         <Button
           type="button"
           variant="outline"
@@ -647,31 +618,24 @@ function EventForm({
   )
 }
 
-/** Delete confirmation dialog wrapping a trigger button. */
-function DeleteConfirm({
-  onDelete,
-  children,
-}: {
-  onDelete: () => void
-  children: React.ReactNode
-}) {
+/** The Delete button, which asks before it deletes. */
+function DeleteEventButton({ onDelete, className }: { onDelete: () => void; className?: string }) {
+  const [open, setOpen] = useState(false)
   return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>{children}</AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete event?</AlertDialogTitle>
-          <AlertDialogDescription>
-            It moves to the bin in Google Calendar, where it can be restored.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" onClick={onDelete}>
-            Delete
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <>
+      <Button type="button" variant="outline" className={className} onClick={() => setOpen(true)}>
+        <Trash2Icon className="size-4" aria-hidden="true" />
+        Delete
+      </Button>
+      <ConfirmDialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Delete event?"
+        description="It moves to the bin in Google Calendar, where it can be restored."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={onDelete}
+      />
+    </>
   )
 }

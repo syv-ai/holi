@@ -13,7 +13,7 @@ import { getDefaultStore } from 'jotai'
 import { resetMailImagesForTests } from '../renderer/mail-images'
 import { resetMailFramesForTests } from '../renderer/mail-frames'
 import { activeRemoteAtom } from '@/plugin-api'
-import { Dialog } from '@/primitives'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
 
 const threadMock = vi.fn()
 const readMock = vi.fn()
@@ -2243,8 +2243,8 @@ test('new message opens the compose dialog rather than an inline composer', asyn
     render: (close: () => void) => React.ReactNode
   }
   render(
-    <Dialog open onClose={() => {}}>
-      {content(() => {})}
+    <Dialog open>
+      <DialogContent>{content(() => {})}</DialogContent>
     </Dialog>,
   )
   // Named by its visible title, and the body field by its own label.

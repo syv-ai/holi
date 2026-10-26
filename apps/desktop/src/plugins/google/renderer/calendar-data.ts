@@ -13,6 +13,7 @@ import { dayAfter, localDate } from '@holi/shared'
 import type { CalendarEvent as CalendarItem } from '@/components/reui/event-calendar/event-calendar-types'
 import type { CalendarChoice, CalendarEvent as GoogleEvent } from '../main/calendar'
 import { googleCap } from './account'
+import { isDisconnected, messageOf } from './google-errors'
 
 export type { CalendarChoice, GoogleEvent }
 
@@ -132,25 +133,6 @@ export function eventParams(times: EventTimes): { title?: string; start: string;
 
 /** The midnight after `day`, for an all-day event's exclusive end. */
 export const midnightAfter = (day: string): Date => midnight(dayAfter(day))
-
-/** tRPC's verdict, as `ipcLink` rebuilt it onto `err.data.code`. */
-function codeOf(error: unknown): string | null {
-  const data = (error as { data?: { code?: unknown } } | null)?.data
-  return typeof data?.code === 'string' ? data.code : null
-}
-
-const isDisconnected = (error: unknown): boolean => {
-  const code = codeOf(error)
-  const message = error instanceof Error ? error.message : ''
-  return (
-    code === 'UNAUTHORIZED' ||
-    code === 'PRECONDITION_FAILED' ||
-    /not connected|connect Google|no longer valid|not configured/i.test(message)
-  )
-}
-
-export const messageOf = (error: unknown, fallback: string): string =>
-  error instanceof Error && error.message !== '' ? error.message : fallback
 
 export type CalendarStatus =
   | { kind: 'loading' }

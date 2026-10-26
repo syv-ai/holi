@@ -6,7 +6,7 @@ import { render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
-import { Dialog } from '@/primitives'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { ConvertToPdf } from '../renderer/convert-to-pdf'
 
 const run = vi.hoisted(() => vi.fn())
@@ -41,8 +41,10 @@ function setup() {
   const onClose = vi.fn()
   render(
     <Provider store={createStore()}>
-      <Dialog open onClose={onClose}>
-        <ConvertToPdf remote="syv/vault" path="offers/offer.md" onClose={onClose} />
+      <Dialog open onOpenChange={(open) => !open && onClose()}>
+        <DialogContent>
+          <ConvertToPdf remote="syv/vault" path="offers/offer.md" onClose={onClose} />
+        </DialogContent>
       </Dialog>
     </Provider>,
   )

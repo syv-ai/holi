@@ -13,7 +13,7 @@ import { useEffect, useState } from 'react'
 import { MailComposer } from './mail-composer'
 import { googleCap } from './account'
 import { activeRemoteAtom } from '@/plugin-api'
-import { Dialog } from '@/primitives'
+import { DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { MailAddress } from './mail-types'
 
 export function ComposeMailDialog({
@@ -44,8 +44,10 @@ export function ComposeMailDialog({
   // The header is the dialog's accessible name as well as its visible title.
   return (
     <>
-      <Dialog.Header>New message</Dialog.Header>
-      <Dialog.Body>
+      <DialogHeader>
+        <DialogTitle>New message</DialogTitle>
+      </DialogHeader>
+      <div className="flex min-w-0 flex-col gap-4">
         <MailComposer
           intent={{ kind: 'new' }}
           draftId={draftId}
@@ -56,7 +58,7 @@ export function ComposeMailDialog({
           onClose={onClose}
           bare
         />
-      </Dialog.Body>
+      </div>
     </>
   )
 }

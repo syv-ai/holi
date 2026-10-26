@@ -1,22 +1,16 @@
 /**
  * A recipient field: committed addresses as chips, plus somewhere to type.
  *
- * A primitive because it needs a native `<input>`, which the lint gate allows
- * only in `primitives/`, not because it is generic.
- *
  * A typo is refused where it was made: an unmailable address never becomes a
  * chip, so the send path checks recipients for presence, never shape.
  */
 import * as React from 'react'
 import { X } from 'lucide-react'
-import { cn } from '@/lib/cn'
-import { IconButton } from './IconButton'
+import { cn } from '@/plugin-api'
+import { Button } from '@/components/ui/button'
+import type { MailAddress as ChipAddress } from './mail-types'
 
-/** One address: a name, `''` when there is none, and the address itself. */
-export interface ChipAddress {
-  name: string
-  email: string
-}
+export type { ChipAddress }
 
 export interface ChipInputProps {
   value: ChipAddress[]
@@ -160,20 +154,21 @@ export function ChipInput({
           className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs"
         >
           <span data-testid="chip-name">{address.name}</span>
-          {/* The address for screen readers. Not `title=` (banned), nor the
-              Tooltip primitive, which would force every consumer to supply a
+          {/* The address for screen readers. Not `title=` (banned), nor a
+              Tooltip, which would force every consumer to supply a
               TooltipProvider. */}
           {address.name !== address.email && <span className="sr-only">{address.email}</span>}
           {/* No tooltip, for the same reason; boxed to the chip's line
               height so it never makes the chip taller than its name. */}
-          <IconButton
-            icon={X}
-            label={`Remove ${address.name}`}
-            tooltip={false}
-            shape="round"
-            className="size-4"
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`Remove ${address.name}`}
+            className="size-4 rounded-full"
             onClick={() => onChange(value.filter((a) => a.email !== address.email))}
-          />
+          >
+            <X className="size-3" />
+          </Button>
         </span>
       ))}
 

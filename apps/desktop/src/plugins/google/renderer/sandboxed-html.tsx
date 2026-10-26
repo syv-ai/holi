@@ -15,7 +15,7 @@
  */
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ImageOff } from 'lucide-react'
-import { Button, Icon } from '@/primitives'
+import { Button } from '@/components/ui/button'
 import {
   canvasFor,
   mailFrameDocument,
@@ -82,7 +82,7 @@ export function SandboxedHtml({
     <>
       {sanitized.blockedRemoteCount > 0 && (
         <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-secondary px-2 py-1 text-xs text-muted-foreground">
-          <Icon icon={ImageOff} size="sm" />
+          <ImageOff className="size-3.5" />
           <span className="min-w-0 flex-1">
             Images blocked — loading them tells the sender you opened this.
           </span>
