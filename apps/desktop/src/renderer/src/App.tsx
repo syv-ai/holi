@@ -1,10 +1,10 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useWindowGlass } from '@/state/window-glass'
 import { useEffect, useState } from 'react'
-import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
-import { SignIn } from './features/auth/SignIn'
-import { Shell } from './components/Shell'
-import { Splash } from './components/Splash'
+import { OnboardingRitual } from '@/features/onboarding/onboarding-ritual'
+import { SignIn } from './features/auth/sign-in'
+import { VaultHost } from './features/shell/vault-host'
+import { Splash } from './features/shell/splash'
 import { useDockIcon } from './lib/app-icon'
 import { useColorScheme } from './state/color-scheme'
 import { useEditorFont } from './state/editor-font'
@@ -46,10 +46,10 @@ export function App() {
   if (dryRunOnboarding) {
     return (
       <>
-        <Shell />
+        <VaultHost />
         <OnboardingRitual mode="first-run" dryRun onDismiss={() => setDryRunOnboarding(false)} />
       </>
     )
   }
-  return <Shell />
+  return <VaultHost />
 }

@@ -8,7 +8,7 @@
  * packaged bundle and the dock before the window has drawn one.
  */
 import { useEffect } from 'react'
-import { BRAND_MONOGRAM } from '@/composites/BrandMark'
+import { BRAND_MONOGRAM } from '@/composites/brand-mark'
 
 /** The macOS icon grid: a 1024 canvas, the squircle 824 inset by 100. */
 export const ICON_SIZE = 1024

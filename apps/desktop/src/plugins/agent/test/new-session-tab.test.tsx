@@ -21,7 +21,7 @@ vi.mock('../renderer/agent-cap', () => ({
 // The shell's side, reached as modules (a dynamic import: a plugin's code
 // imports core only through @/plugin-api).
 type Settable<T> = WritableAtom<T, [T], void>
-const { useSessionTabs } = await import('@/components/blocks/app-shell-21/components/use-session-tabs')
+const { useSessionTabs } = await import('@/hooks/use-session-tabs')
 const { newAgentSessionAtom } = (await import('@/state/agents-slots')) as unknown as {
   newAgentSessionAtom: WritableAtom<null, [beside?: boolean], boolean>
 }

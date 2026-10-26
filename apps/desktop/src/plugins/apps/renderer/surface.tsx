@@ -17,8 +17,8 @@ import {
   type Surface,
 } from '@/plugin-api'
 import { IconButton } from '@/primitives'
-import { AppFrame } from './AppFrame'
-import { AppIcon } from './AppIcon'
+import { AppFrame } from './app-frame'
+import { AppIcon } from './app-icon'
 import { appInstancesAtom, appOpensAtom, archiveAppAtom, archivedAppsAtom } from './apps'
 import { previewVersionsAtom, refreshPreviewAtom } from './app-previews'
 import { appsCap } from './apps-cap'

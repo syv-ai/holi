@@ -15,7 +15,6 @@ export default defineConfig({
           name: 'node',
           include: [
             'test/**/*.test.ts',
-            'src/plugins/*.test.ts',
             'src/plugins/*/test/**/*.test.ts',
           ],
           environment: 'node',
@@ -79,6 +78,7 @@ export default defineConfig({
             'src/renderer/**/*.test.tsx',
             'src/renderer/**/*.test.ts',
             'src/plugins/**/*.test.tsx',
+            'test/**/*.test.tsx',
           ],
           environment: 'jsdom',
           setupFiles: ['test/setup.dom.ts'],

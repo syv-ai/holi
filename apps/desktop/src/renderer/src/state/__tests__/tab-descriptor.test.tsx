@@ -11,8 +11,8 @@ import {
   tabPath,
   type TabDescriptor,
 } from "../tab-descriptor"
-import { BOARD_TAB } from "@/components/blocks/app-shell-21/components/documents-section"
-import { NEW_TAB_PREFIX } from "@/components/blocks/app-shell-21/components/empty-view"
+import { BOARD_TAB } from "@/features/sidebar/documents-section"
+import { NEW_TAB_PREFIX } from "@/features/shell/new-tab-view"
 
 const EVERY: TabDescriptor[] = [
   { kind: "doc", path: "Notes/Plan.md" },

@@ -51,7 +51,7 @@ import {
 } from 'lucide-react'
 import type { GoogleEventData } from '../calendar-data'
 import { descriptionHtml } from '../event-description'
-import { SandboxedHtml } from '../SandboxedHtml'
+import { SandboxedHtml } from '../sandboxed-html'
 import { dayMonth, longDay, timeOf } from './calendar-format'
 import { CalendarDot, DateField, TimeSelect } from './event-fields'
 

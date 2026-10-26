@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/tooltip"
 import { messageStamp } from "../mail-stamp"
 import type { MailAddress, MailAttachment, ThreadMessage } from "../mail-types"
-import { SandboxedHtml } from "../SandboxedHtml"
+import { SandboxedHtml } from "../sandboxed-html"
 import { fileSize, initialsOf } from "./data"
 import type { MailState } from "./use-mail"
 

@@ -7,11 +7,11 @@ import { Cable, CalendarDays, Mail } from 'lucide-react'
 import { usePluginSetting, type RendererPlugin } from '@/plugin-api'
 import { GOOGLE_INFO } from '../info'
 import { googleConnectedAtom } from './account'
-import { AgendaView } from './AgendaView'
-import { ConnectionsSection } from './ConnectionsSection'
-import { MailView } from './MailView'
-import { CalendarView } from './calendar/CalendarView'
-import { MailShell } from './mail/app-shell'
+import { AgendaView } from './agenda-view'
+import { ConnectionsSection } from './connections-section'
+import { MailView } from './mail-view'
+import { CalendarView } from './calendar/calendar-view'
+import { MailShell } from './mail/mail-shell'
 
 /** The Agenda tab, opened on the view this machine's `agendaView` asks for. */
 function AgendaSurface(): React.JSX.Element {

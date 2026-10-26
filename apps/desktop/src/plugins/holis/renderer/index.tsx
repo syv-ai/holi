@@ -8,11 +8,11 @@
 import { HOLIS_INFO } from '../info'
 import type { RendererPlugin } from '@/plugin-api'
 import { holiMenuEntriesAtom, runHoliMenuEntryAtom } from './command-menu'
-import { DocumentHoliActions } from './DocumentHoliActions'
-import { HoliDialogs } from './HoliDialogs'
-import { HoliPage } from './HoliPage'
-import { HolisInbox } from './HolisInbox'
-import { HolisSection } from './HolisSection'
+import { DocumentHoliActions } from './document-holi-actions'
+import { HoliDialogs } from './holi-dialogs'
+import { HoliView } from './holi-view'
+import { HolisInbox } from './holis-inbox'
+import { HolisSection } from './holis-section'
 import {
   holiEvents,
   holiSessionItemsAtom,
@@ -30,7 +30,7 @@ export const holisRenderer: RendererPlugin = {
     // After Automations, before the sessions.
     order: 20,
     sidebar: HolisSection,
-    main: HoliPage,
+    main: HoliView,
     inbox: HolisInbox,
     status: holisStatusAtom,
     // Its runs, in the agent's one session list.

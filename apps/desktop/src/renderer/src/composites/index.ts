@@ -1,12 +1,12 @@
-export { BRAND_MONOGRAM, BRAND_WORDMARK, BrandMark, type BrandMarkShape } from './BrandMark'
-export { Churn } from './Churn'
-export { DiffView } from './DiffView'
+export { BRAND_MONOGRAM, BRAND_WORDMARK, BrandMark, type BrandMarkShape } from './brand-mark'
+export { Churn } from './churn'
+export { DiffView } from './diff-view'
 // Moved to `@/primitives`; kept for callers not yet pointed there (`features/tasks/CreateTask.tsx`).
-export { PanelHeader, type HeaderAction } from './PanelHeader'
-export { PaneToolbar } from './PaneToolbar'
-export { ViewHeader, ViewHeaderTitle } from './ViewHeader'
-export { EmptyState, LoadingRows } from './EmptyState'
-export { DrawerShell, DrawerTitle } from './DrawerShell'
+export { PanelHeader, type HeaderAction } from './panel-header'
+export { PaneToolbar } from './pane-toolbar'
+export { ViewHeader, ViewHeaderTitle } from './view-header'
+export { EmptyState, LoadingRows } from './empty-state'
+export { DrawerShell, DrawerTitle } from './drawer-shell'
 export {
   ExternalLink,
   SettingsField,
@@ -18,10 +18,10 @@ export {
   headingId,
 } from './settings-ui'
 export { AgentMark, OpenAIMark, pluginMark } from './marks'
-export { SettingCard } from './SettingCard'
-export { SectionLabel } from './SectionLabel'
-export { PixelPersona, type MascotStatus } from './pixel-persona/PixelPersona'
-export { IconTile } from './IconTile'
-export { OptionCard } from './OptionCard'
-export { SIDEBAR_ROW_FILL, SidebarNavItem } from './SidebarNavItem'
-export { MarkdownText, openableUrl } from './MarkdownText'
+export { SettingCard } from './setting-card'
+export { SectionLabel } from './section-label'
+export { PixelPersona, type MascotStatus } from './pixel-persona/pixel-persona'
+export { IconTile } from './icon-tile'
+export { OptionCard } from './option-card'
+export { SIDEBAR_ROW_FILL, SidebarNavItem } from './sidebar-nav-item'
+export { MarkdownText, openableUrl } from './markdown-text'

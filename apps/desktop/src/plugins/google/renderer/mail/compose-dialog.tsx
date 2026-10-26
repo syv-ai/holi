@@ -5,7 +5,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { MailComposer } from "../MailComposer"
+import { MailComposer } from "../mail-composer"
 import type { MailAddress } from "./use-mail"
 
 export interface ComposeRequest {

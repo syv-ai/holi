@@ -5,7 +5,7 @@
  */
 import { atom, useAtomValue, useStore } from 'jotai'
 import { useMemo } from 'react'
-import type { AskAgentSeam } from '@/editor/askAgent'
+import type { AskAgentSeam } from '@/editor/ask-agent'
 import type { AgentRunFile, AgentService, AgentSessionRow, AskResult } from '@/plugin-api/types'
 import { agentSourceAtom } from './plugins'
 

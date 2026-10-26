@@ -3,7 +3,7 @@ import { createStore, Provider } from 'jotai'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { ShortcutsDialog } from '@/components/blocks/app-shell-21/components/shortcuts-dialog'
+import { ShortcutsDialog } from '@/features/command-menu/shortcuts-dialog'
 import { hotkeyLabels, matchShortcutKey } from '@/lib/hotkey'
 import {
   liveShortcuts,

@@ -13,12 +13,12 @@ import { atom } from 'jotai'
 import { Astroid } from 'lucide-react'
 import { appModeAtom, type Command, type RendererPlugin, type SurfaceTabLook } from '@/plugin-api'
 import { AGENT_INFO } from '../info'
-import { AgentSurface } from './AgentSurface'
+import { AgentSurface } from './agent-surface'
 import { agentIndicator } from './lib/notices'
 import { AGENT_SERVICE } from './service'
-import { SessionActions } from './SessionActions'
-import { AgentsMain } from './agents/AgentsMain'
-import { AgentsSidebar } from './agents/AgentsSidebar'
+import { SessionActions } from './session-actions'
+import { AgentsView } from './agents/agents-view'
+import { AgentsSidebar } from './agents/agents-sidebar'
 import { agentsStatusAtom } from './state/agents-status'
 import { inboxEvents, inboxVault } from './state/inbox'
 import { newSessionAtom, sessionListVault, sessionTabLookAtom } from './state/session-list'
@@ -35,8 +35,8 @@ import { openSessionAtom, showAgentsAtom } from './state/send'
 import { agentMenuEntriesAtom, runAgentMenuEntryAtom } from './state/command-menu'
 import { loadProvidersAtom, pickedProviderAtom, providersAtom } from './state/providers'
 import { startConversationViewAtom } from './state/session-view'
-import { TurnReview } from './TurnReview'
-import { AgentStatusItem } from './sessions/AgentStatusItem'
+import { TurnReview } from './turn-review'
+import { AgentStatusItem } from './sessions/agent-status-item'
 
 /**
  * Each terminal's tab, in Holi's names so a tab and its sidebar row agree. A
@@ -108,7 +108,7 @@ export const agentRenderer: RendererPlugin = {
   ],
   agentsMode: {
     sidebar: AgentsSidebar,
-    main: AgentsMain,
+    main: AgentsView,
     status: agentsStatusAtom,
     tabLook: sessionTabLookAtom,
     newSession: newSessionAtom,

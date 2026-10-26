@@ -5,8 +5,8 @@
  */
 import type { RendererPlugin } from '@/plugin-api'
 import { AUTOMATIONS_INFO } from '../info'
-import { AutomationsNav } from './AutomationsNav'
-import { AutomationsView } from './AutomationsView'
+import { AutomationsSection } from './automations-section'
+import { AutomationsView } from './automations-view'
 import { automationMenuEntriesAtom, runAutomationMenuEntryAtom } from './command-menu'
 import {
   automationEvents,
@@ -21,7 +21,7 @@ export const automationsRenderer: RendererPlugin = {
   events: automationEvents,
   agentsSlot: {
     order: 10,
-    nav: AutomationsNav,
+    nav: AutomationsSection,
     main: AutomationsView,
     // Its runs, in the agent's one session list.
     sessions: {

@@ -7,7 +7,7 @@
 import { GlobeIcon } from 'lucide-react'
 import type { RendererPlugin } from '@/plugin-api'
 import { BROWSER_INFO } from '../info'
-import { BrowserSurface } from './BrowserSurface'
+import { BrowserSurface } from './browser-surface'
 import {
   BROWSER_COMMANDS,
   BROWSER_SURFACE,

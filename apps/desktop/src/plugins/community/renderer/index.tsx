@@ -20,8 +20,8 @@ import {
 import { Button } from '@/primitives'
 import { COMMUNITY_INFO } from '../info'
 import { askToRun, installAndAsk, updatePlugin, type InstallFlow } from './install-flow'
-import { PluginFrame } from './PluginFrame'
-import { PluginsSettings } from './PluginsSettings'
+import { PluginFrame } from './plugin-frame'
+import { PluginsSettings } from './plugins-settings'
 import {
   communityCap,
   followRows,
