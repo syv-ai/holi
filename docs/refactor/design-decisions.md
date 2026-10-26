@@ -145,3 +145,9 @@ Plan/spec: [`agent-first.md`](agent-first.md)
 - **Decision:** one `chore:` commit runs Prettier over every file it covers (vendored `components/ui`, `components/reui`, the lockfile and patches stay ignored), recorded in `.git-blame-ignore-revs`. AGENTS.md drops the "do not run format" warning.
 - **Alternatives:** keep checking only changed files on a dirty tree — every touched file drags in unrelated reformatting, which is what made agents skip the hook.
 - **Cost if wrong:** moderate; a large formatting diff makes merging `main` noisier once. `git blame` skips it.
+
+## D21. A small install script writes the git hooks, not simple-git-hooks
+
+- **Context:** `simple-git-hooks` cannot install from a git worktree (it tries to create `.git/hooks`, but in a worktree `.git` is a file), so from this checkout the hooks were never installed.
+- **Decision:** `scripts/install-hooks.mjs`, run by `prepare`, writes the two guarded hooks (D19) into `git rev-parse --git-common-dir`/hooks. `HOLI_SKIP_HOOKS=1` skips them.
+- **Cost if wrong:** cheap.

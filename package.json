@@ -16,11 +16,7 @@
     "rulecast:install": "rulecast install",
     "check:commit-msg": "node scripts/check-commit-msg.mjs",
     "format": "prettier --write .",
-    "prepare": "simple-git-hooks"
-  },
-  "simple-git-hooks": {
-    "pre-commit": "pnpm exec lint-staged && { test ! -f .rulecast-config.yaml || pnpm exec rulecast run; }",
-    "commit-msg": "test ! -f scripts/check-commit-msg.mjs || node scripts/check-commit-msg.mjs \"$1\""
+    "prepare": "node scripts/install-hooks.mjs"
   },
   "lint-staged": {
     "apps/desktop/src/{renderer/src,plugins}/**/*.{ts,tsx}": "pnpm --filter @holi/desktop exec eslint --max-warnings 0",
@@ -42,7 +38,6 @@
     "knip": "6.43.0",
     "lint-staged": "^17.3.0",
     "prettier": "^3.9.5",
-    "simple-git-hooks": "^2.13.1",
     "typescript": "^7.0.2"
   }
 }

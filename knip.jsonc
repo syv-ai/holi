@@ -13,6 +13,9 @@
     ".": {
       "entry": ["scripts/*.mjs"],
       "project": ["scripts/**/*.mjs"],
+      // Run by the pre-commit hook that scripts/install-hooks.mjs writes, as a string
+      // knip cannot follow.
+      "ignoreDependencies": ["lint-staged"],
     },
     "apps/desktop": {
       "entry": [
