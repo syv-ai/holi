@@ -4,7 +4,7 @@ Every note is a `.md` file, edited in ReUI's rich-text editor (Tiptap) on the do
 
 ## The documents tab
 
-The fresh shell opens a `.md` file in ReUI's rich-text editor (`rich-text-editor-2`, Tiptap) rather than CodeMirror: `components/blocks/document-view/`. The file is still the source of truth.
+A `.md` file opens in ReUI's rich-text editor (`rich-text-editor-2`, Tiptap) rather than CodeMirror: `features/documents/`, the editor itself in `features/documents/rich-text/`. The file is still the source of truth.
 
 - **Markdown in, markdown out.** Only the body passes through the editor. The frontmatter block is kept byte for byte and put back on save (`markdown.ts`), since the editor neither shows nor understands it. The body round-trips through `@tiptap/markdown` and each extension's own rules, plus three the block lacks (`document-extensions.ts`): `[[wiki links]]` as chips written back as typed (otherwise the serializer escapes the brackets), images whose path stays as written and loads through `holi-vault://`, and raw HTML blocks kept verbatim. Text alignment is left out: markdown cannot say it. A file's formatting is normalised the first time it is edited here (a table's divider row padded to its columns), never on open alone.
 - **Saving and outside changes.** Typing saves after a pause. A change on disk (a pull, the agent) is read back in unless local edits are still pending, which win.
@@ -19,22 +19,19 @@ The fresh shell opens a `.md` file in ReUI's rich-text editor (`rich-text-editor
 
 **Two CodeMirror stacks** (`editor/extensions.ts`). `plainTextExtensions` opens a text file that is not a note (`.json`, `.csv`, `.env`) with highlighting and a validity check for known formats, no markdown layers. `plainMarkdownExtensions` is markdown editing with no vault layer, for text that leaves the vault (the mail composer, through the plugin api): GFM tables and fence highlighting, but no wiki-link chips and no `@` completion, which would paste vault paths into an email.
 
-**Files that are not notes.** A file that is not a note opens in the file viewer (`file-view.tsx`): a plugin's claimed view first (a PDF in the viewer, [pdf.md](pdf.md)), an image in its own tab, other known binaries in a typed placeholder, and any other text (css, yaml, json, `.vue`, `.gitignore`, `.env`) as code, editable on arrival like a note: the plain editor dressed as ReUI's code block (`code-look.ts`: the block's own Shiki highlighter and GitHub themes, so Vue and Svelte colour too, its 13px mono on 24px lines, the numbers muted in its gutter, no soft wrap), autosaved shortly after the last keystroke and held while json or yaml does not parse. ⌘F opens the same find bar a document has (`find-bar/find-bar.tsx`), over the code: match case, whole word, regular expressions, a count, ⌘G and ⇧⌘G, and a replace row; CodeMirror's own search steps and replaces (`file-view/code-find.ts`), its panel never opened.
+**Files that are not notes.** A file that is not a note opens in the file viewer (`features/files/file-view.tsx`): a plugin's claimed view first (a PDF in the viewer, [pdf.md](pdf.md)), an image in its own tab, other known binaries in a typed placeholder, and any other text (css, yaml, json, `.vue`, `.gitignore`, `.env`) as code, editable on arrival like a note: the plain editor dressed as ReUI's code block (`code-look.ts`: the block's own Shiki highlighter and GitHub themes, so Vue and Svelte colour too, its 13px mono on 24px lines, the numbers muted in its gutter, no soft wrap), autosaved shortly after the last keystroke and held while json or yaml does not parse. ⌘F opens the same find bar a document has (`composites/find-bar.tsx`), over the code: match case, whole word, regular expressions, a count, ⌘G and ⇧⌘G, and a replace row; CodeMirror's own search steps and replaces (`features/files/code-find.ts`), its panel never opened.
 
-**History.** A document's header and a code file's carry the same history (`file-history/`): the latest commit, `4a14110 · 2 hours ago`, and History, a dialog after GitHub's commits page. Its commits are grouped by day on a timeline and filtered by author and by time; each row copies its SHA, opens what it changed in the file, or shows the file as it left it, all in ReUI's code block (`lineDiff` against the commit's parent; Shiki with the grammar `code-language.ts` picks, plain past 300 KB). The code block's grammars are written out one per line in `code-block-highlight.tsx`, each its own lazy chunk; a new language is a new line there. Binaries stay out of the link graph.
+**History.** A document's header and a code file's carry the same history (`features/history/`): the latest commit, `4a14110 · 2 hours ago`, and History, a dialog after GitHub's commits page. Its commits are grouped by day on a timeline and filtered by author and by time; each row copies its SHA, opens what it changed in the file, or shows the file as it left it, all in ReUI's code block (`lineDiff` against the commit's parent; Shiki with the grammar `code-language.ts` picks, plain past 300 KB). The code block's grammars are written out one per line in `code-block-highlight.tsx`, each its own lazy chunk; a new language is a new line there. Binaries stay out of the link graph.
 
-**Ask the agent.** The message is your instruction, then `[From <path>, lines 12-18]` and the passage quoted with `> ` (`askPrompt` in `editor/askAgent.ts`, which the plugin api re-exports).
+**Ask the agent.** The message is your instruction, then `[From <path>, lines 12-18]` and the passage quoted with `> ` (`askPrompt` in `editor/ask-agent.ts`, which the plugin api re-exports).
 
 **Saving.** Written after 600 ms of quiet and on blur, flushed on tab close, vault switch and quit. ⌘S saves every buffer, commits and pushes. Invalid frontmatter YAML holds the save; a flush writes anyway.
 
-**External writes.** `base` is the text last loaded or saved. `decideReload`: disk equal to base is nothing; a clean buffer reloads; a dirty one takes `merge3`; an overlap raises the conflict banner (Keep mine, Use the file on disk, Dismiss). Disk equal to `normalizeText(base)` is the pre-commit tidy: base catches up and the buffer is kept, clean or not. The commit lands seconds after autosave, while someone who stopped to think is still looking at the line, so taking the tidied bytes would pull a just-typed space out from under the caret. A markdown buffer that differs from base only by the tidy has nothing new, so it is not written back (`hasNewText`). The tidy itself keeps the one space after a bare list marker or `#`, since without it the line would stop being an item or a heading. A reload is a minimal diff with `addToHistory: false`, so the caret stays and ⌘Z unwinds only your keystrokes.
+**External writes.** In a document, a change on disk (a pull, the agent) is read back in unless local edits are still pending, which win (`document-view.tsx`). A file edited while a tab is not shown is compared with the pre-commit tidy (`normalizeText`, `state/doc-changes.ts`) so the tidy alone is not reported as a change. **Not built:** the 3-way reload that merged a dirty buffer with the file (`merge3`, a conflict banner with Keep mine and Use the file on disk, a reload that is no undo step); `merge3` stays in `packages/shared` and the agent's turn review uses it. See [not-built](../not-built.md).
 
 ## Rules
 
-- Advance `base` before the write lands. Content comparison, not path/mtime or pausing the watcher, is what stops a save echoing back as a foreign edit.
-- Only normalization counts as our own write. It is idempotent; a `relink` rewrite carries real content and must merge.
-- `merge3` reports an overlap, never picks a side. The report is what routes to the banner.
-- A reload is never an undo step, or ⌘Z restores stale text and autosave clobbers the other writer.
+- Only normalization counts as our own write. It is idempotent; a `relink` rewrite carries real content.
 - Completion chrome is scoped by the `cm-holi-completion` class to outrank CodeMirror, holds no hex, and keeps `icons` on (the table menu styles off it).
 
 ## Rejected
@@ -44,8 +41,8 @@ The fresh shell opens a `.md` file in ReUI's rich-text editor (`rich-text-editor
 
 ## Code
 
-- `apps/desktop/src/renderer/src/components/blocks/document-view/`: the documents tab: `document-view.tsx`, `markdown.ts`, `document-extensions.ts`, `document-find.ts`, `document-find-bar.tsx`, `multi-cursor.ts`, `document-agent.ts`, `document-header.tsx`
-- `apps/desktop/src/renderer/src/editor/`: `extensions.ts` (the two stacks), `completion.ts`, `settings-completion.ts`, `languages.ts`, `fence-languages.ts`, `formatting.ts`, `askAgent.ts`, `theme.ts`
-- `apps/desktop/src/renderer/src/lib/editor-reload.ts`, `apply-reload.ts`
+- `apps/desktop/src/renderer/src/features/documents/`: the documents tab: `document-view.tsx`, `markdown.ts`, `document-extensions.ts`, `document-find.ts`, `document-find-bar.tsx`, `multi-cursor.ts`, `document-agent.ts`, `document-header.tsx`; `rich-text/`: the Tiptap editor, its bubble bar, slash menu and block gutter
+- `apps/desktop/src/renderer/src/editor/`: `extensions.ts` (the two stacks), `completion.ts`, `settings-completion.ts`, `languages.ts`, `fence-languages.ts`, `formatting.ts`, `ask-agent.ts`, `theme.ts`
+- `apps/desktop/src/renderer/src/state/doc-changes.ts`: what changed on disk while a tab was not shown
 - `packages/shared/src/merge3.ts`, `normalize-md.ts`, `file-kind.ts`, `image-ref.ts`
-- `apps/desktop/src/renderer/src/components/blocks/file-view/file-view.tsx`: every file that is not a note or an app
+- `apps/desktop/src/renderer/src/features/files/file-view.tsx`: every file that is not a note or an app

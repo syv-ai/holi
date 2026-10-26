@@ -13,7 +13,7 @@ mode, the mode's own list, and who is signed in. Everywhere else is one keystrok
 - **The window's band** is the sidebar's top row: on macOS the traffic lights, then the sidebar's
   toggle beside them, the rest of the row a handle to drag the window by. Fullscreen hides the
   lights, and main says so (`window:fullscreen`), so the toggle moves to the band's start.
-- **Mode toggle** (`features/nav/ModeToggle.tsx`): Documents and Agents as two wide `Tabs`
+- **Mode toggle** (`features/sidebar/app-sidebar.tsx`): Documents and Agents as two wide `Tabs`
   segments, the active one raised in place, with no thumb travelling between them: it is pressed
   all day, and a switch that moves is one that lags. Arrow keys move it. The Agents segment wears a Holi's pixel face (idle it bobs, working it hops, waiting on
   you it gets an idea) and reports the
@@ -57,8 +57,7 @@ mode, the mode's own list, and who is signed in. Everywhere else is one keystrok
     colour when one is late). Under the pointer or focus the count gives way to a **+** that opens
     the board and starts a task in Todo; it is its own control beside the row, not inside it.
   - **Pinned** is absent until something is pinned. A row's context menu in the tree pins or
-    unpins it (Pin to Sidebar). Pins are per vault and machine-local (`state/pins.ts`, local
-    storage): what one person keeps at hand is not a decision about the vault. A pin whose path
+    unpins it (Pin to Sidebar). Pins are per vault and machine-local (local storage): what one person keeps at hand is not a decision about the vault. A pin whose path
     has gone is hidden, not removed, so an undone rename brings it back.
   - **Files** is the [file tree](file-tree.md) under a band with two controls: "+" makes a note,
     and "⋯" holds the rest (New folder, New task, what an app makes, the task-files and
@@ -77,7 +76,7 @@ mode, the mode's own list, and who is signed in. Everywhere else is one keystrok
 - **Settings in front:** the sidebar's body becomes Back and Settings' sections (see
   [settings](settings.md)).
 
-**The toggle sits beside the window's lights** (`features/nav/NavRail.tsx`, `SidebarToggle`), where
+**The toggle sits beside the window's lights** (`features/shell/title-bar.tsx`), where
 the window's own controls already are, and ⌘B does the same. Hidden, the sidebar collapses to a
 80px **rail** rather than to nothing: the lights and the toggle at its top, the two modes, Home, the
 board and Search as icons with tooltips (a mode button switches the mode without opening the
@@ -95,3 +94,11 @@ over the content panel. The sidebar's edge still resizes it by dragging, and the
 - The content flush beside the sidebar on one hairline: sidebar and page read as one surface. A
   panel floating on the ground tells them apart at a glance, as the knowledge bases this follows
   do.
+
+**Not built in the fresh sidebar:** the Pinned group and Pin to Sidebar, the 80px icon rail the sidebar collapses to (hidden, it goes to nothing and the toggle in the title band brings it back), and folder colours and counts in the Files group ([not-built](../not-built.md)).
+
+## Code
+
+- `apps/desktop/src/renderer/src/features/sidebar/`: `app-sidebar.tsx` (the sidebar and its modes), `vault-switcher.tsx`, `documents-section.tsx` (Files, the tree), `sidebar-apps.tsx` (a plugin's sidebar apps), `account-menu.tsx` (the profile).
+- `apps/desktop/src/renderer/src/features/shell/title-bar.tsx`, `app-shell.tsx`: the window's band, the toggle and the content panel.
+- `apps/desktop/src/renderer/src/composites/sidebar-nav-item.tsx`, `section-label.tsx`: the shared row and label.

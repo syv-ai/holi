@@ -75,7 +75,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   and a request `AppFrame` hears); with none open, the icon shows until the app next runs.
   An app that never ran on this machine keeps the icon: nothing renders apps offscreen to
   fill in previews (see Rejected). It reads the registry's `app` surface, not the plugin, so it is
-  there only while the plugin is on (`components/blocks/apps-view/`). The claim's Finish this app
+  there only while the plugin is on (`features/apps/`). The claim's Finish this app
   is on the tree's row menu of a draft, and the Files menu's New app scaffolds a bundle and opens
   it as the app: in the folder the menu was opened on (a file row's folder), at the root from
   the empty space or the Apps page. The scaffold's page takes the theme's `--background` and
@@ -84,7 +84,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   like a note (see [tabs and panes](tabs-panes.md)). The bundle is a folder document: the app's
   claim (`renderer/surface.tsx` in the plugin) says a
   `.app` folder with its `index.html` is one, finished once `app.yaml` is there. The tab draws
-  the app under a header (`apps-view/vault-app-tab.tsx`): its name and folder, Edit source,
+  the app under a header (`features/apps/vault-app-tab.tsx`): its name and folder, Edit source,
   which opens `index.html` in the pane beside it, and the surface's own header actions, Reload
   (which remounts the frame) and the log. If the bundle disappears under an open tab (a teammate's pull), the tab stays as a
   tombstone (the shared empty state) saying the app was deleted, with Close tab. Deleting from a menu removes the files and closes the tab
@@ -170,7 +170,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   would need a CORS header, and a header one opaque origin passes, every app passes, letting each
   read every other's code.
   The document editor lists them after its own blocks, grouped under each app's name
-  (`RendererPlugin.slashCommands`, asked on every query, `document-view/plugin-slash.tsx`). The
+  (`RendererPlugin.slashCommands`, asked on every query, `features/documents/plugin-slash.tsx`). The
   typed `/query` goes first; `text` is empty there, since typing `/` over a selection replaces it,
   and `line` is the caret's paragraph without the query. A text answer is written at the caret as
   markdown, kept on the line when it is one paragraph; `{ agent }` opens the ask prompt with the
@@ -431,10 +431,10 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   `apps/desktop/src/main/bridge/server.ts`: `/cli`.
 - `apps/desktop/src/main/index.ts`: scheme registration, every plugin's included.
 - `apps/desktop/src/main/bridge/cli.ts`: the `holi` CLI.
-- `apps/desktop/src/plugins/app-methods.test.ts`: every bridge method is answered by an app-door
+- `apps/desktop/test/app-methods.test.ts`: every bridge method is answered by an app-door
   capability in this build.
 - `apps/desktop/src/renderer/src/state/ui-report.ts`: the one report of focus and recents to main.
-- `apps/desktop/src/renderer/src/features/explorer/FileTree.tsx`, `RowMenu.tsx`: the folder
+- `apps/desktop/src/renderer/src/features/sidebar/documents-section.tsx`: the folder
   document row an app is.
 - `packages/shared/src/app-bundle.ts` (`isAppBundlePath`, `appBundleOf`, `appSuffix`) and
   `packages/shared/src/app-store.ts` (where records and the log live, the record format and the

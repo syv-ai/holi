@@ -326,6 +326,6 @@ repeats inside one session.
   the task, calendar and mail sources
 - `apps/desktop/src/plugins/agent/main/host/capabilities.ts` (`agent.launch`, `agent.watched`),
   `main/host/sessions.ts` (`launch`, a session with no terminal, and what it publishes)
-- `apps/desktop/src/plugins/automations/renderer/`: `AutomationsView.tsx`, `AutomationEditor.tsx`,
-  `HoliPicker.tsx`, `AutomationsNav.tsx`
+- `apps/desktop/src/plugins/automations/renderer/`: `automations-view.tsx`, `automation-editor.tsx`,
+  `holi-picker.tsx`, `automations-section.tsx`
 - `apps/desktop/src/plugins/automations/main/vault/shipped/.claude/skills/scheduled-agents/`

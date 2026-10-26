@@ -39,4 +39,4 @@ Holi signs in with GitHub and nothing else. There is no Holi server, session, us
 - `apps/desktop/src/main/github/api.ts`: the REST calls and refusal classification.
 - `apps/desktop/src/main/git.ts`: askpass, `classifyPushFailure`.
 - `apps/desktop/src/main/router.ts`: `auth`, `github`, `vaults.unpushed`, `vaults.deleteClones`.
-- `apps/desktop/src/renderer/src/features/auth/SignIn.tsx`; members panel in `features/settings/VaultSection.tsx`.
+- `apps/desktop/src/renderer/src/features/auth/sign-in.tsx`; members panel in `features/settings/pages/vault-pages.tsx`.

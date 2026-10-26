@@ -48,7 +48,7 @@ view in front the files sidebar folds to its rail, and leaving it gives the side
 
 ## The strip
 
-The strip (`site-header.tsx`) rides in the title band always, split or not. A tab is a 224px
+The strip (`features/shell/tab-strip.tsx`) rides in the title band always, split or not. A tab is a 224px
 pill: its mark, its title, × on hover. A split is one wider pill holding each member's mark and
 title side by side, a hairline between them, truncating evenly; with the split active the focused
 member's title has the full weight and the others are muted. Clicking the pill selects the split;
@@ -124,7 +124,7 @@ focused member inside a split and the tab otherwise ([keyboard shortcuts](keyboa
 Next/previous tab and ⌘1–9 go over strip entries, a split counting as one.
 
 **motion-panels** (MIT, Valerii Strilets; `components/ui/motion-panels.tsx` is its shadcn item)
-lays the views out in `panes-view.tsx`. Its group holds one panel that fills and sized panels around
+lays the views out in `features/shell/split-view.tsx`. Its group holds one panel that fills and sized panels around
 it, so the layout follows the count: one view fills; two are filling then sized;
 three are sized, filling, sized; four are sized, filling, sized, sized. A sized member is a percentage of the area and follows a
 window resize; drag, the arrow keys (Shift for bigger steps), Home and End resize it, and a double
@@ -183,8 +183,8 @@ opens at them.
 
 ## The arcade
 
-After MonoCode's grid arcade (MIT, see `components/monocode/arcade/LICENSE`). Behind
-the fresh shell's empty view (`empty-view.tsx`, a New tab) lies a dot grid where the vault's
+After MonoCode's grid arcade (MIT, see `composites/arcade/LICENSE`). Behind
+the fresh shell's empty view (`features/shell/new-tab-view.tsx`, a New tab) lies a dot grid where the vault's
 Holis play Paper run by themselves: papers (documents and tasks) land on the board, each Holi
 picks them up into a stack that trails behind it and files them in the outbox, saying so in a
 speech bubble in its own voice, and merge conflicts wander about and scatter a stack they touch.
@@ -256,10 +256,9 @@ play ranked live. Sign-in and adding a vault run the same board as background on
 
 - `apps/desktop/src/renderer/src/state/tab-descriptor.ts`, `shell-workspace.ts`, `shell-tabs.ts`,
   `alt-open.ts`
-- `apps/desktop/src/renderer/src/components/blocks/app-shell-21/components/app-shell.tsx`,
-  `site-header.tsx`, `panes-view.tsx`, `use-tab-drag.ts`, `tab-view.tsx`,
-  `tab-look.tsx`, `use-session-tabs.ts`, `use-shell-shortcuts.ts`
+- `apps/desktop/src/renderer/src/features/shell/`: `app-shell.tsx` (ReUI's `app-shell-21`),
+  `tab-strip.tsx`, `split-view.tsx`, `use-tab-drag.ts`, `tab-view.tsx`, `tab-look.tsx`,
+  `use-shell-shortcuts.ts`, `new-tab-view.tsx`; `hooks/use-session-tabs.ts`
 - `apps/desktop/src/renderer/src/components/ui/motion-panels.tsx`
 - `apps/desktop/src/main/menu.ts`: ⌘W and ⌘⇧W
-- `state/panes.ts` and `state/surfaces.ts` are the earlier shell's workspace; the fresh shell does
-  not render them, so their atoms (`openNoteTabAtom`, `openSurfaceAtom`) open nothing on screen.
+- `state/panes.ts` and `state/surfaces.ts` are the earlier shell's workspace and are only half retired: the fresh shell does not render `state/panes.ts`, so `openNoteTabAtom` (re-exported by `@/plugin-api`) and the plugin-facing `surfaceTabIdsAtom` open or list nothing on screen, while `state/surfaces.ts` now also calls `openTabAtom`. Which of them a plugin may rely on is a product question in [findings](../refactor/findings.md).

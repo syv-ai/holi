@@ -206,6 +206,6 @@ plugin the vault pins, whether the vault turns it on, and the commands it gives 
   `pluginServerOrigin`, `PLUGIN_COMMANDS_DIR`.
 - `apps/desktop/src/plugins/community/main/`: the install store, fetch, the topic search, setup,
   consent, the readiness checks (`checks.ts`), the supervisor, the agent's commands (`commands.ts`) and the `community.*` capabilities.
-- `apps/desktop/src/plugins/community/renderer/`: the tab (`PluginFrame`), the settings section, the
+- `apps/desktop/src/plugins/community/renderer/`: the tab (`PluginFrame`, `plugin-frame.tsx`), the settings section, the
   consent dialog and the vault notice.
 - `apps/desktop/src/main/window-guard.ts`: `originFrameExit`.

@@ -25,5 +25,5 @@ The vault as a picture: every note a dot, every [wiki-link](wiki-links.md) betwe
 
 - `apps/desktop/src/main/vault/backrefs.ts`: `buildLinkGraph`, `GRAPH_NODE_CAP`
 - `apps/desktop/src/main/router.ts`: `notes.graph`
-- `apps/desktop/src/renderer/src/components/blocks/graph-view/graph-view.tsx`: the tab
+- `apps/desktop/src/renderer/src/features/graph/graph-view.tsx`: the tab
 - `apps/desktop/src/renderer/src/lib/graph-layout.ts`, `graph-layout.worker.ts`: the layout

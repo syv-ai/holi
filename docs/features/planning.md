@@ -93,6 +93,8 @@ complete`), `lead` (a GitHub login), `start` and `due` (stamps, as on a task) an
 - `apps/desktop/src/renderer/src/state/planning.ts`: the files, loaded once; the view's tab,
   filter and sort.
 - `apps/desktop/src/renderer/src/lib/planning.ts`: filtering, sorting, grouping, progress.
-- `apps/desktop/src/renderer/src/components/blocks/planning/`: the view, the Overview, the toolbar,
-  the dialogs, the task field chips; built on ReUI's `navbar-1`, `stats-9`, `timeline-4`,
-  `kanban-board-4`, `kanban-board-6` and `data-grid-grouping-1`, under `components/blocks/`.
+- `apps/desktop/src/renderer/src/features/planning/`: the view (`planning-view.tsx`), the Overview
+  (`overview.tsx`, `overview-stats.tsx`, `activity-timeline.tsx`), the toolbar, the dialogs and the
+  task field chips (`task-fields.tsx`); `board/` (ReUI's `kanban-board-4`), `grid/` (ReUI's
+  `data-grid-grouping-1`) and `navbar/` (ReUI's `navbar-1`) are folders of it, each entry file
+  carrying its `// ReUI block: @reui/<name>` line.

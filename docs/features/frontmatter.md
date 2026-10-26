@@ -1,10 +1,12 @@
 # Frontmatter
 
-A markdown file's YAML frontmatter is drawn as one block at the top of the editor: a summary bar that opens into typed rows (or the raw YAML), so metadata is editable without typing YAML and without a markdown editor touching it.
+A markdown file's YAML frontmatter is meant to be drawn as one block at the top of the editor: a summary bar that opens into typed rows (or the raw YAML), so metadata is editable without typing YAML and without a markdown editor touching it.
 
-## How it works
+**Not built.** The block, its typed rows and the raw YAML fallback are not in the renderer today. The rich-text editor neither shows nor understands frontmatter: it keeps the block byte for byte and puts it back on save (`features/documents/markdown.ts`), and the document header shows name, folder, save state and history instead ([editor](editor.md)). What survives is the schema that says what each key is (`frontmatterSchema` in `packages/shared`). The design below is what a rebuild on the rich-text editor would honour; it is listed in [not-built](../not-built.md).
 
-**One widget, a few faces** (`editor/frontmatter.ts`). The frontmatter region is always replaced by an atomic block decoration. Collapsed, it is the **header**: a chevron and "1.8K chars · Last updated DD/MM/YY, name · v.14". Open, the same header (chevron down) sits over the fields. The chevron dispatches `toggleFrontmatter`. The char count is the body's (`bodyStart`), shown in K/M rounded down. The name is the last commit's git author, linked to `github.com/<name>`. `v.N` is how many commits touched the file (`notes.fileHistory`) and opens the history sidebar, focusing its own editor first. The line truncates rather than wraps. It keeps its space but stays invisible until the last-commit lookup has answered, then fades in whole; drawn earlier it would show the count alone and grow the rest. A failed lookup counts as an answer. The lookup runs again whenever a commit takes the file (main's `vault:committed` push names the paths; a merged pull names none, meaning any), so a file opened before its first autosave commit fills in its date, name and version when that lands. The lookup is `fileHistoryAtom(path)` (`state/file-history.ts`), shared with the history drawer, so both ask once and agree.
+## The design
+
+**One widget, a few faces.** The frontmatter region is always replaced by an atomic block. Collapsed, it is the **header**: a chevron and "1.8K chars · Last updated DD/MM/YY, name · v.14". Open, the same header (chevron down) sits over the fields. The chevron dispatches `toggleFrontmatter`. The char count is the body's (`bodyStart`), shown in K/M rounded down. The name is the last commit's git author, linked to `github.com/<name>`. `v.N` is how many commits touched the file (`notes.fileHistory`) and opens the history sidebar, focusing its own editor first. The line truncates rather than wraps. It keeps its space but stays invisible until the last-commit lookup has answered, then fades in whole; drawn earlier it would show the count alone and grow the rest. A failed lookup counts as an answer. The lookup runs again whenever a commit takes the file (main's `vault:committed` push names the paths; a merged pull names none, meaning any), so a file opened before its first autosave commit fills in its date, name and version when that lands. The lookup is `fileHistoryAtom(path)` (`state/file-history.ts`), shared with the history drawer, so both ask once and agree.
 
 **What starts open.** Notes start collapsed. Files under `.claude/` start revealed, and so does a file whose claim keeps its block always open (a task's), because there the frontmatter is the point (a skill's `name` and `description`, a task's status and due). A task's block has no collapsed state and no chevron.
 
@@ -16,7 +18,7 @@ A markdown file's YAML frontmatter is drawn as one block at the top of the edito
 
 **A new note is empty.** The file tree's `+` creates it with no frontmatter, and nothing adds a block on commit: a note gets one when a value is first given, however it arrived. An empty block (`---` then `---`) reads as an empty mapping and draws as rows.
 
-**Look and motion.** The block sits on the text's own edge, as wide as the text, so the summary line, the title under it and the body share one left edge; the open fields keep the properties' 24rem. It has `0.5rem` above and `1rem` beneath it. Opening animates from the old height to `auto`. Values carry no edge and no fill, in either theme and under the pointer (the primitives' `field` variant); the row tints under the pointer instead.
+**Look and motion.** The block sits on the text's own edge, as wide as the text, so the summary line, the title under it and the body share one left edge; the open fields keep the properties' 24rem. It has `0.5rem` above and `1rem` beneath it. Opening animates from the old height to `auto`. Values carry no edge and no fill, in either theme and under the pointer (a field with no edge); the row tints under the pointer instead.
 
 ## Rules
 
@@ -39,7 +41,6 @@ A markdown file's YAML frontmatter is drawn as one block at the top of the edito
 
 ## Code
 
-- `apps/desktop/src/renderer/src/features/frontmatter/`: `FrontmatterFields.tsx` (kind to control), one file per control, `FrontmatterFieldsHost.tsx` (mounted by the Shell)
-- `apps/desktop/src/renderer/src/primitives/Field.tsx` (`FormField`, horizontal): the domain-agnostic rows
-- `apps/desktop/src/renderer/src/primitives/Field.tsx`, `Combobox.tsx`, `field-look.ts`
-- `packages/shared/src/frontmatter-schema.ts`, `yaml-document.ts`
+- `packages/shared/src/frontmatter-schema.ts`, `yaml-document.ts`: the schema per file kind and the YAML document.
+- `apps/desktop/src/renderer/src/features/documents/markdown.ts`: the frontmatter kept byte for byte around the body.
+- `apps/desktop/src/renderer/src/features/documents/document-header.tsx`: what the header shows instead.

@@ -67,8 +67,8 @@ goes to the views, and runs the shell's actions with the same handlers their key
 
 ## Code
 
-- `apps/desktop/src/renderer/src/components/blocks/app-shell-21/components/command-menu.tsx`: the
-  menu.
+- `apps/desktop/src/renderer/src/features/command-menu/command-menu.tsx`: the
+  menu; `shortcuts-dialog.tsx`: the shortcuts dialog.
 - `apps/desktop/src/renderer/src/lib/command-menu-rows.ts`: rows and ranking
   (`apps/desktop/test/command-menu-rows.test.ts`).
 - `apps/desktop/src/renderer/src/state/shortcuts.ts`: `runShortcutAtom`.

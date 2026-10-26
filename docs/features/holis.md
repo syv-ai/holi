@@ -232,11 +232,11 @@ lands in the Inbox.
 - `apps/desktop/src/plugins/holis/main/holis.ts`: approvals, sends, runs, reports, the system
   prompt, `create`/`update`/`remove`, and `context` for automations; `memory.ts`: the memory
   commands and the page's hash-checked saves; `capabilities.ts`: `holis.*`
-- `apps/desktop/src/plugins/holis/renderer/`: `HolisSection.tsx` (the sidebar section and Meet
-  Holis), `wizard/` (the new-Holi wizard, after ReUI's `onboarding-2`), `HoliPage.tsx`,
-  `HoliFeed.tsx`, `HoliSettings.tsx`, `HolisInbox.tsx`,
-  `DocumentHoliActions.tsx`, `ApproveHoliDialog.tsx`; `state.ts`
+- `apps/desktop/src/plugins/holis/renderer/`: `holis-section.tsx` (the sidebar section and Meet
+  Holis), `wizard/` (the new-Holi wizard, after ReUI's `onboarding-2`), `holi-view.tsx`,
+  `holi-feed.tsx`, `holi-settings-dialog.tsx`, `holis-inbox.tsx`,
+  `document-holi-actions.tsx`, `approve-holi-dialog.tsx`; `state.ts`
 - `apps/desktop/src/renderer/src/composites/pixel-persona/`: the personas (`personas.ts`) and
-  `PixelPersona`; the names and the old-name mapping are `@holi/shared`'s `holi.ts`
-- `apps/desktop/src/renderer/src/components/PaneHeader.tsx`: the Agent split button and its slot
+  `PixelPersona` (`pixel-persona.tsx`); the names and the old-name mapping are `@holi/shared`'s `holi.ts`
+- `apps/desktop/src/renderer/src/features/documents/document-actions.tsx`: the document's ⋯ menu and the `documentActions` slot a plugin fills (the Holis' Agent menu)
 - `apps/desktop/src/plugins/holis/main/vault/shipped/.claude/skills/holis/`

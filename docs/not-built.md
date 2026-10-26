@@ -154,6 +154,32 @@ in the editor. See [links](features/links.md).
 **The rest of the browser.** Open in Holi for a saved link, toasts drawn over a page, and find in
 page. See [browser](features/browser.md).
 
+**The frontmatter block.** The summary bar and typed rows above a note, and the raw YAML fallback
+([frontmatter](features/frontmatter.md)). The rich-text editor keeps the block byte for byte and does
+not show it; the schema per file kind (`frontmatterSchema`) is built.
+
+**The Home library.** The tabs and table of recent files, notes, tasks and activity, and the nav
+menu that listed the places that are not files ([home](features/home.md),
+[nav-menu](features/nav-menu.md)). The `home` setting resolves, and an empty pane shows the New tab.
+
+**Vault history and Restore.** The right-hand file drawer, the vault history tab and restoring an
+old version ([history](features/history.md)). A file's history opens as a dialog.
+
+**The rest of the sidebar and the tree.** The Pinned group, the collapsed icon rail, a folder's
+colour and file count, and the emoji icon map on a row and its tab
+([sidebar](features/sidebar.md), [file-tree](features/file-tree.md)).
+
+**The rest of wiki-link chips.** A task's status orb and title, the missing-file tint, an image
+target drawn inline and the hover preview card ([wiki-links](features/wiki-links.md)).
+
+**Merging an outside write into a dirty note.** A change on disk is read back unless local edits are
+pending, which win; the 3-way merge, the conflict banner and an undo-neutral reload are not built
+for notes ([editor](features/editor.md)).
+
+**A vault's theme on screen.** `.holi/settings/theme.css` is seeded, parsed and written, but the
+renderer runs on shadcn's neutral theme and the settings have no Appearance page
+([ui-system](ui-system.md#per-vault-theming)).
+
 **The rest.** The repo's size in the vault picker and the sync panel
 ([vaults-sync](features/vaults-sync.md)).
 

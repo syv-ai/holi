@@ -2,8 +2,7 @@
 
 The nav's items: the places that are not files, each with its state (`useNavItems`). The sidebar
 shows Home from them ([sidebar](sidebar.md)); the rest are reached from the
-[command palette](command-palette.md). `NavMenu`, a dropdown menu of them, is not mounted in the
-shell. They are the surfaces that are not files: Home, Search, the vault's apps, the board,
+[command palette](command-palette.md). `NavMenu`, a dropdown menu of them, and `useNavItems` are not in the renderer today (the code is gone, see [not-built](../not-built.md)); the sidebar and ⌘K reach the same places. They are the surfaces that are not files: Home, Search, the vault's apps, the board,
 settings, and, once Google is connected, email and the agenda.
 
 ## How it works
@@ -49,9 +48,8 @@ settings, and, once Google is connected, email and the agenda.
 
 ## Rules
 
-- `features/nav/NavMenu` builds the items from shared state only (the rail's items with their
-  badges, the workspace, the palette); `useNavItems` is what the sidebar reads, so
-  the two can never disagree about where you can go. The item type is `features/nav/nav-item.ts`.
+- The items are built from shared state only (the rail's items with their badges, the workspace,
+  the palette), so the sidebar and the menu can never disagree about where you can go.
 - **An item can carry a panel** instead of an action or children (Sync, Update): it gets `close`
   to close its menu when its work is done.
 - Home is a destination, not "close everything": a tab of its own, so it can become a dashboard
@@ -68,8 +66,6 @@ settings, and, once Google is connected, email and the agenda.
 
 ## Where it lives
 
-- `apps/desktop/src/renderer/src/features/nav/NavMenu.tsx`: the items and the menu;
-  `nav-item.ts`, the item type.
-- `apps/desktop/src/renderer/src/components/core-surfaces.tsx` (whose Home surface picks Home's
-  folder document or `HomeView`), `features/home/HomeView.tsx` (the recents, or why Home is not there).
-- `apps/desktop/src/renderer/src/components/Shell.tsx`: the sidebar and rail placement.
+- `apps/desktop/src/renderer/src/state/plugins.ts`: the rail items plugins contribute (`railAtom`), the surfaces they open.
+- `apps/desktop/src/renderer/src/state/home.ts`, `lib/home-target.ts`: Home, where the vault's `home` setting says.
+- `apps/desktop/src/renderer/src/features/sidebar/app-sidebar.tsx`: where the destinations are today.

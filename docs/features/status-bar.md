@@ -209,12 +209,12 @@ keys back rather than typing them. See [keyboard shortcuts](keyboard-shortcuts.m
   `sync.fetchBranches`, `sync.branchNameValid`, `sync.switchBranch`, `activity`, `terminal`),
   `src/preload/index.ts` (`activity`, `terminal` pushes)
 - `apps/desktop/src/plugins/agent/main/host/session-log.ts`: the agent's lines
-- `apps/desktop/src/renderer/src/components/blocks/app-shell-21/components/status-bar.tsx`,
-  `branch-picker.tsx`, `bottom-panel.tsx`, `panel-terminal.tsx`, `terminal-context-chips.tsx`,
-  `log-table.tsx`, `log-detail.tsx`, `log-search.tsx`, `panel-output.tsx`, `output-search.tsx`,
-  `output-columns.tsx`, `output-filters.tsx`, `panel-logs.tsx`, `logs-columns.tsx`,
-  `channel-mark.tsx`
+- `apps/desktop/src/renderer/src/features/status-bar/`: `status-bar.tsx`, `branch-picker.tsx`
+- `apps/desktop/src/renderer/src/features/bottom-panel/`: `bottom-panel.tsx`, `panel-terminal.tsx`,
+  `terminal-context-chips.tsx`, `log-table.tsx`, `log-detail.tsx`, `log-search.tsx`,
+  `panel-output.tsx`, `output-search.tsx`, `output-columns.tsx`, `output-filters.tsx`,
+  `panel-logs.tsx`, `logs-columns.tsx`, `channel-mark.tsx`
 - `apps/desktop/src/renderer/src/lib/terminal-theme.ts`
 - `apps/desktop/src/renderer/src/state/activity.ts`, `app-logs.ts`, `bottom-panel.ts`,
   `panel-terminals.ts`
-- `apps/desktop/src/plugins/agent/renderer/sessions/AgentStatusItem.tsx`
+- `apps/desktop/src/plugins/agent/renderer/sessions/agent-status-item.tsx`

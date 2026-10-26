@@ -8,7 +8,7 @@ The sidebar explorer shows the vault as the folders and files on disk. It reads 
 
 **Folders are real.** A folder row comes from `snapshot.dirs`, which lists every directory holding a file, so a folder whose contents are all filtered out still shows. New Folder writes a `.gitkeep` so the empty folder persists and syncs; a keep-file is a folder signal and never shown as a leaf. A folder still being named exists only in client state.
 
-**The look.** The app's one tree (`primitives/Tree.tsx`, ReUI's `tree` from its `c-tree-1` example; see [ui-system](../ui-system.md#trees)). Every row is the same size at every level: a folder's chevron, an icon and the name, with a flat indent per level and nothing drawn between levels. The open file is bold. Nothing moves except a row's hover fill: a folder opens and closes at once, the chevron turns without a transition, and rows that appear (a pull, a new file) are simply there. It replaced a tree with connector rails, a brand-lit path to the open file, a brand bar sliding between roots, folders sliding open and rows fading in, which was too much motion for the thing you look at most.
+**The look.** The app's one tree (`components/reui/tree.tsx`, ReUI's `tree`, here driven by headless-tree in `features/sidebar/documents-section.tsx`; see [ui-system](../ui-system.md#page-baseline)). Every row is the same size at every level: a folder's chevron, an icon and the name, with a flat indent per level and nothing drawn between levels. The open file is bold. Nothing moves except a row's hover fill: a folder opens and closes at once, the chevron turns without a transition, and rows that appear (a pull, a new file) are simply there. It replaced a tree with connector rails, a brand-lit path to the open file, a brand bar sliding between roots, folders sliding open and rows fading in, which was too much motion for the thing you look at most.
 
 - A folder leads with its chevron and a folder glyph (open or closed). A file has no chevron, and its icon sits in the folder glyph's column, so a root file lines up with the root folders: its type glyph, a note's included (no `.md` in its name), a task's status, or the vault icon map's emoji, which also replaces a folder's glyph.
 - `expansion` is `single` by default: opening a folder closes the other branches, so one path is open. `multi` lets folders stay open. The open file's branch always opens.
@@ -75,6 +75,8 @@ than removed, so an undone rename finds its place again.
 
 **Icons.** A file's type glyph is coloured by extension; git's own files show the Git mark. Any row (note, folder, binary) can instead carry one emoji from the vault's icon map: `.holi/settings/icons.yaml`, committed, under a per-key `.holi/settings/icons.local.yaml`. Set it with Edit Icon; an empty field removes the entry. Keys are normalized vault paths, written back sorted; a key outside the vault is dropped. The value must be exactly one emoji (either variation-selector spelling, or a lone pictograph) and anything else is ignored. The note's tab shows the same icon. The Icons settings section lists every entry and marks those whose path is gone.
 
+**Not built:** the icon map is not applied in the fresh sidebar (no Edit Icon, no emoji on a row or a tab) and folders take no colour; the Icons paragraph above and the Colours paragraph below describe the design ([not-built](../not-built.md)).
+
 **Colours and counts.** A folder can be given a colour from its row menu (Colour, eight categorical hues and No colour). Its glyph takes the hue with a light fill of it, so a person finds their folders at a glance, as a knowledge base's coloured folders do. Colours are per vault and machine-local (`state/folder-colours.ts`, local storage, keyed by remote), as pins are: how one person marks their folders is not a decision about the vault. A colour names a path, so a renamed folder loses it until it is coloured again, and an undone rename brings it back. An emoji from the icon map still wins over the glyph. Every folder also shows, at its row's end, how many files it holds at any depth, of those the tree shows.
 
 ## Rules
@@ -101,14 +103,11 @@ than removed, so an undone rename finds its place again.
 
 ## Code
 
-- `apps/desktop/src/renderer/src/features/explorer/FileTree.tsx`: the tree, its state, keys and drops
-- `apps/desktop/src/renderer/src/primitives/Tree.tsx`: the tree's look (ReUI `tree`), shared with the settings rail and History
+- `apps/desktop/src/renderer/src/features/sidebar/documents-section.tsx`: the tree, its state, keys, row menu and drops
+- `apps/desktop/src/renderer/src/components/reui/tree.tsx`: the tree's look (ReUI `tree`), shared with the settings rail and History
 - `apps/desktop/src/renderer/src/lib/tree-view.ts`: visible rows, ranges, typeahead, move validity, where a new item goes
-- `apps/desktop/src/renderer/src/features/explorer/RowMenu.tsx`, `ExplorerHeader.tsx`: the row menu; the toolbar
-- `apps/desktop/src/renderer/src/features/explorer/useTreeProjection.ts`, `lib/tree-data.ts`: snapshot to tree data, filters
-- `apps/desktop/src/renderer/src/features/explorer/useExplorerActions.ts`, `lib/tree-actions.ts`: clipboard, delete preview, planned moves
-- `apps/desktop/src/renderer/src/composites/file-icons.tsx`, `features/explorer/EditIcon.tsx`: glyphs and the icon dialog
-- `apps/desktop/src/renderer/src/state/folder-colours.ts`, `lib/folder-colour.ts`: folder colours and their classes
+- `apps/desktop/src/renderer/src/lib/tree-data.ts`, `tree-actions.ts`, `tree-order.ts`, `tree-paths.ts` and `state/tree-order.ts`: snapshot to tree data, clipboard, delete preview, planned moves, your own order
+- `apps/desktop/src/renderer/src/state/reveal-in-files.ts`: asking the tree to show a path
 - `packages/shared/src/path-safety.ts`: `isHiddenPath`, `isLocalOnlyPath`, `isKeepFile`
 - `packages/shared/src/icon-map.ts`: icon map parsing and validation
 - `apps/desktop/src/main/vault/vault-store.ts`, `vault-files.ts`, `git-ignored.ts`: scan, non-content rules, ignored paths

@@ -118,12 +118,12 @@ screen.
   the drags (to a view's edge, onto a view, a header to the tabs) as gesture rows: a row with no
   keys and a `gesture`, listed while the row it names in `liveWith` is.
 - **⌘T is free.** The menu binds only ⌘W and ⌘⇧W, and the earlier shell's ⌘T (quick-add task in
-  `state/commands.ts`) is not mounted by the fresh shell.
+  `state/commands.ts`) is not mounted by the fresh shell; `plugin-api/types.ts` still declares `Command` and `RendererPlugin.commands`, which nothing reads.
 - **No clashes** with the menu's accelerators (Edit's ⌘Z ⌘X ⌘C ⌘V ⌘A, View's ⌘R ⌘0 ⌘+ ⌘-
   ⌥⌘I ⌃⌘F, Window's ⌘M, ⌘⇧W, ⌘H, ⌘Q) or macOS's own (⌘Tab, ⌘Space, ⌘\`). A test pins ids and
   keys unique.
 - The table is separate from `state/commands.ts`, the earlier shell's command table, whose rows run
-  pane and workspace atoms the fresh shell does not have. Both match keys with `lib/hotkey.ts`.
+  pane and workspace atoms the fresh shell does not have, and which no view mounts. Both match keys with `lib/hotkey.ts`.
 
 ## Rejected
 

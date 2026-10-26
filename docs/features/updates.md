@@ -35,7 +35,7 @@ keeps Holi open and the update ready.
 **Where you meet it.** The account menu (the avatar at the sidebar's foot) gains an **Updates**
 group only when there is something to do, and the avatar a dot in the brand colour while it does:
 **Restart to update** when an update is ready, try again when a download failed, the skills offer,
-and what the update on open did (`nav-user.tsx`). It stays until acted on; a toast would be missed. Settings →
+and what the update on open did (`features/sidebar/account-menu.tsx`). It stays until acted on; a toast would be missed. Settings →
 **Updates** shows the running version, where the updater has got to, **Check now**, and **Update
 automatically**, which turns the background checks off (stored in `userData/updates.json`). A
 person's own check ignores the cooldown and the preference. **Dev prereleases** opts this app into
@@ -124,9 +124,9 @@ A dev build reports updates as unsupported.
 - `apps/desktop/src/main/updates/`: the state machine, the `electron-updater` wiring and the
   release notes
 - `apps/desktop/src/renderer/src/state/updates.ts`: the status mirror and its actions
-- `apps/desktop/src/renderer/src/features/nav/UpdateItem.tsx`: the nav item, for the app and the
+- `apps/desktop/src/renderer/src/features/sidebar/account-menu.tsx`: the update mark on the avatar, for the app and the
   vault's skills
 - `apps/desktop/src/main/vault/seed/update.ts` (`pendingShipped`), `seed/state.ts` (`release`),
   `seed/update-on-open.ts`, `state/skills.ts`: the skills offer, the update on open and its notice
-- `apps/desktop/src/renderer/src/features/settings/UpdatesSection.tsx`: Settings → Updates
+- `apps/desktop/src/renderer/src/features/settings/pages/app-pages.tsx`: Settings → Updates
 - `apps/desktop/electron-builder.yml`, `.github/workflows/release.yml`: packaging and release

@@ -4,6 +4,8 @@ What a vault opens on, unless its `home` setting names something else
 ([settings](settings.md)): the vault's library, after Notion's. One centred column: the vault's
 name as the page's title, a row of tabs with search and New note at its end, and one plain table.
 
+**Not built.** The library described under How it works (its tabs, table and Activity) has no view in the renderer today: `state/home.ts` still resolves the `home` setting, and the New tab below is what an empty pane shows ([not-built](../not-built.md)).
+
 ## How it works
 
 - **Tabs.** Recent (every file, newest change first), Notes (markdown that is not a task), Tasks
@@ -31,7 +33,7 @@ name as the page's title, a row of tabs with search and New note at its end, and
   table stays and the error with Retry sits above it. Activity never clamps a commit's subject.
 - With Home set to the recents, an empty list says "Nothing opened yet" and offers New note.
 
-**The New tab** (`empty-view.tsx`, also an empty pane's) is kept to where you are and what to
+**The New tab** (`features/shell/new-tab-view.tsx`, also an empty pane's) is kept to where you are and what to
 start: the vault, the day and its open tasks (the word _tasks_ opens the board), the wordmark, and
 three cards, New document (⌘N), Today's note (⇧⌘D) and New agent session (⇧⌘N; only while the
 agent runs, and it starts one in the default agent as ⌘N does on the Agents side), each showing its
@@ -40,3 +42,9 @@ documents, README or search: the sidebar and ⌘K have those.
 
 There is no folder view: a folder is expanded in the tree, and a folder that is a document (an
 app) opens as itself.
+
+## Code
+
+- `apps/desktop/src/renderer/src/features/shell/new-tab-view.tsx`: the New tab.
+- `apps/desktop/src/renderer/src/state/home.ts`, `lib/home-target.ts`: resolving and opening Home.
+- `apps/desktop/src/renderer/src/composites/arcade/`: the arcade behind the New tab.

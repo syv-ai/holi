@@ -122,14 +122,14 @@ them push access to. The same ritual, minus the greeting, is how any later vault
 ## Code
 
 - `apps/desktop/src/renderer/src/App.tsx`: the gate and the dry-run hook.
-- `apps/desktop/src/renderer/src/features/onboarding/OnboardingRitual.tsx`: the frame and the flow;
-  each act is its own component beside it (`GreetingAct`, `NamingAct` and `JoinPicker`,
-  `PluginsAct`, `VaultSettingsAct`, `ThresholdAct`).
+- `apps/desktop/src/renderer/src/features/onboarding/onboarding-ritual.tsx`: the frame and the flow;
+  each act is its own component beside it (`greeting-act.tsx`, `naming-act.tsx` and `join-picker.tsx`,
+  `plugins-act.tsx`, `vault-settings-act.tsx`, `threshold-act.tsx`).
 - `apps/desktop/src/renderer/src/features/onboarding/actions.ts`: what the ritual does to the world,
   real or dry.
-- `PluginsAct.tsx`: act 3, from the installed plugins' `PluginInfo`, each with its mark from
+- `plugins-act.tsx`: act 3, from the installed plugins' `PluginInfo`, each with its mark from
   `composites/marks.tsx`.
-- `VaultSettingsAct.tsx`: act 4, the descriptors
+- `vault-settings-act.tsx`: act 4, the descriptors
   asked at birth with the kept plugins' transforms.
 - `apps/desktop/src/renderer/src/state/onboarding-flow.ts`: the reducer, slugify, act gating.
 - `apps/desktop/src/renderer/src/state/vaults.ts`: `createVaultAtom`, `addVaultAtom`.

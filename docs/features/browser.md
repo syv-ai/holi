@@ -8,7 +8,7 @@ this machine is signed in to in it.
 ## How it works
 
 **A page is main's.** Each tab is an Electron `WebContentsView`, which main lays over the tab's area of
-Holi's window (`main/pages.ts`). The tab (`BrowserSurface.tsx`) says where that area is, every frame
+Holi's window (`main/pages.ts`). The tab (`browser-surface.tsx`) says where that area is, every frame
 it moves (`place`, a plugin message rather than a capability, since it is sent so often). A tab that is
 hidden or unmounted takes its page out of the window, and the page keeps running, so the agent can
 work in a tab nobody is looking at. The surface is kept mounted (`Surface.keepMounted`).

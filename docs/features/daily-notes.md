@@ -53,4 +53,4 @@ vault opens and filed into `journal/` once the day is over. Whether a vault does
 - `apps/desktop/src/renderer/src/state/daily.ts`: `ensureTodaysDailyAtom`,
   `openTodaysDailyAtom`, `sweepDailyAtom`, `todayDailyPathAtom`.
 - `apps/desktop/src/renderer/src/state/home.ts` and `lib/home-target.ts`: opening Home.
-- `apps/desktop/src/renderer/src/components/Shell.tsx`: the open, Home, sweep effect.
+- `apps/desktop/src/renderer/src/features/shell/vault-host.tsx`: the open, Home, sweep effect.

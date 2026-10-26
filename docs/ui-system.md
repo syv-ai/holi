@@ -58,22 +58,31 @@ design system on top of the stock one.
   plugins still read: `brand`, `divider`, `drawer-edge`, `icon`, `icon-active`, `task-*`, `diff-*`,
   `--shadow-popover`, `--shadow-dialog`, plus the `icon-*` and `motion-*` utilities below. New code
   uses shadcn's tokens first and these only where no stock token says the same.
-- **Type** is set a step under Tailwind's defaults, the size desktop tools use (`index.css`):
-  `text-xs` 11px, `text-sm` 13px, `text-base` 14px, `text-lg` 16px, and `text-nav` 13px on an
-  18px line for chrome rows. **`text-sm` is body, `text-xs` is meta, and nothing is smaller.**
-  Geist and Geist Mono (`@fontsource-variable`, loaded in `main.tsx`), antialiased. A number that
-  counts or aligns is `tabular-nums`; a path, a slug or a code is Geist Mono.
 - Radius is one `--radius` with `sm`/`md`/`lg`/`xl` derived from it. Floating things (menus,
   popovers, tooltips, dialogs) are `bg-popover`; their shadow is the component's own.
-- **Hue identifies, it does not decorate:** a brand mark, a file type, a task status, the
-  destructive red. State is a `Badge` variant (`success-light`, `destructive-light`) or an `Alert`
-  variant. A raw palette class is for categorical identity only (a tag or folder colour) and always
-  carries its `dark:` pair. Never coloured text on a tinted background of the same hue.
-- **On macOS the window is glass** (`main/liquid-glass.ts`): the root, body and shadcn's sidebar
-  wrapper paint no ground, and the sidebar and title band tint themselves by the vault's
-  Transparency choice (`state/window-glass.ts`, `data-glass`, `--glass-chrome`, `--glass-view` in
-  `index.css`). A new full-screen ground that should carry that tint once marks itself
-  `data-glass-ground`.
+
+### Type
+
+**Type** is set a step under Tailwind's defaults, the size desktop tools use (`index.css`):
+`text-xs` 11px, `text-sm` 13px, `text-base` 14px, `text-lg` 16px, and `text-nav` 13px on an
+18px line for chrome rows. **`text-sm` is body, `text-xs` is meta, and nothing is smaller.**
+Geist and Geist Mono (`@fontsource-variable`, loaded in `main.tsx`), antialiased. A number that
+counts or aligns is `tabular-nums`; a path, a slug or a code is Geist Mono.
+
+### Colour
+
+The palette is shadcn's neutral ramp, monotone: the brand is the grey ramp itself. **Hue identifies, it does not decorate:** a brand mark, a file type, a task status, the
+destructive red. State is a `Badge` variant (`success-light`, `destructive-light`) or an `Alert`
+variant. A raw palette class is for categorical identity only (a tag or folder colour) and always
+carries its `dark:` pair. Never coloured text on a tinted background of the same hue.
+
+### Window
+
+**On macOS the window is glass** (`main/liquid-glass.ts`): the root, body and shadcn's sidebar
+wrapper paint no ground, and the sidebar and title band tint themselves by the vault's
+Transparency choice (`state/window-glass.ts`, `data-glass`, `--glass-chrome`, `--glass-view` in
+`index.css`). A new full-screen ground that should carry that tint once marks itself
+`data-glass-ground`.
 
 ## Focus
 
@@ -173,10 +182,6 @@ ritual's shape (`features/onboarding/`, `features/auth/sign-in.tsx`).
   - a tree: `components/reui/tree.tsx` over `@headless-tree/react`, calm (hover colour only, a
     folder opens at once). The file tree, the settings rail and History share it
     ([file-tree](features/file-tree.md)).
-- **Every region that loads has all three states, in the region, not as an overlay:** loading
-  (`Skeleton` rows the height of the real rows, `role="status"`), empty (`composites/empty-state`:
-  a muted icon, one sentence, at most one action, saying why it is empty), and error (inline,
-  where the data would be, `role="alert"`, with Retry; the user's place is kept).
 - **Doing the work last.** A flow that changes the world (creates a repo, writes files, sends
   something) collects every answer first and acts once, at the end, behind a button that names the
   act ("Create vault", not "Continue"). The act runs on a screen of its own that lists its real
@@ -187,6 +192,10 @@ ritual's shape (`features/onboarding/`, `features/auth/sign-in.tsx`).
 - **A toast** is `toast()` from `sonner`, shown by the one `<Toaster />`
   (`components/ui/sonner`) the vault host mounts; never a hand-rolled status box. A dialog is
   `Dialog` or `AlertDialog`; a confirmation is `composites/confirm-dialog`.
+
+### States
+
+Every region that loads has all three, in the region, not as an overlay: loading (`Skeleton` rows the height of the real rows, `role="status"`), empty (`composites/empty-state`: a muted icon, one sentence, at most one action, saying why it is empty), and error (inline, where the data would be, `role="alert"`, with Retry; the user's place is kept).
 
 ## Drawers
 

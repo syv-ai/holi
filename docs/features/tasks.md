@@ -52,7 +52,7 @@ the [planning](planning.md) view shows every task in the vault by them.
   view a private task's card and row carry a muted lock (`PrivateMark`), and an open task's
   Sharing chip does both: Shared with vault renames at once, Private asks first, in a dialog that
   says it leaves every teammate's board, that git history keeps the shared version and that
-  links from shared notes stop resolving (`planning/task-properties.tsx`).
+  links from shared notes stop resolving (`features/planning/task-properties.tsx`).
 - **A plugin.** Tasks' main side is the plugin `src/plugins/tasks/`, on by default. In a vault
   with it off (`tasks: false` under `plugins` in `.holi/settings/plugins.yaml`, or this machine's
   `.local` twin), the task capabilities and reminders are gone and `holi tasks` answers "no such
@@ -68,7 +68,7 @@ the [planning](planning.md) view shows every task in the vault by them.
   optional on `due` and `reminder`, and its absence means "that day", not midnight.
 - **Editing a task is editing its file.** A card's title opens it as a tab, its fields drawn as a
   row of chips above the body ([planning](planning.md)), each change a write to the file.
-- **Board.** ReUI's kanban (`primitives/Kanban.tsx`): Todo, Doing and Done are three column
+- **Board.** ReUI's kanban (`components/reui/kanban.tsx`; the board is `features/planning/board/kanban-board.tsx`): Todo, Doing and Done are three column
   surfaces (`bg-muted`, rounded, full height, `gap-4` apart in `p-4`), each headed by its name, a
   count `Badge` and a + that opens quick add creating in that column. Inside a column the cards
   are grouped by lane: the vault root first (unlabelled), then folders alphabetically, each
@@ -233,6 +233,6 @@ the [planning](planning.md) view shows every task in the vault by them.
 - `apps/desktop/src/main/tray.ts`: the tray, core's.
 - `apps/desktop/src/renderer/src/state/tasks.ts`: task set, filter, drops, writes.
 - `apps/desktop/src/renderer/src/state/clock.ts`: `nowAtom` and `todayAtom`, the minute the overdue labels and the daily note read.
-- `apps/desktop/src/renderer/src/components/blocks/planning/`: the board, the task dialogs and
+- `apps/desktop/src/renderer/src/features/planning/`: the board, the task dialogs and
   fields ([planning](planning.md)); `lib/board-order.ts`.
 - `apps/desktop/src/renderer/src/components/reui/kanban.tsx`: ReUI's kanban, on dnd-kit.

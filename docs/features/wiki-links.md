@@ -6,7 +6,7 @@ Notes link to each other with path-based `[[folder/note.md]]` links. They render
 
 **Grammar.** `packages/shared/src/wiki-links.ts` is the only parser: `[[path]]` or `[[path|Label]]`, where the path is vault-relative and `/`-separated. `parseWikiLinks(text)` returns each match with `target`, `label` and exact `start`/`end` offsets. `wikiLinkRegex()` returns a fresh `RegExp` per call. `formatWikiLink`, `rewriteWikiLinks`, `rewriteWikiLinksMulti` and `wikiLinksToText` (for PDF export) are built on the same parser. There is one link grammar: a link to a task is a link to its `task.<name>.md` file.
 
-**Rendering.** Live preview replaces each link with a `WikiLinkChip` unless the selection touches it. A target that resolves to a task draws a status orb and the task's title (struck through when done). A note chip shows its label, or its path without a trailing `.md` (`wikiLinkChipText`), tinted when the file does not exist. An image target (`[[logo.png]]`) renders the image inline instead. A chip opens its target on mousedown. Hovering shows a preview card: a task's orb, title and due, a note's title and first lines (read fresh on each hover), or "doesn't exist yet".
+**Rendering.** The rich-text editor draws each `[[link]]` as an inline chip (`features/documents/wiki-link.ts`), written back exactly as typed, which opens its target when pressed. **Not built:** the status orb and title for a task target, the missing-file tint, the inline image for an image target and the hover preview card; the chip is a plain underlined link today ([not-built](../not-built.md)).
 
 **Authoring.** Typing `@` completes over notes and open tasks and inserts a `[[path]]` link (see [editor.md](editor.md)). The agent writes the same syntax with its native tools.
 
@@ -37,3 +37,4 @@ Notes link to each other with path-based `[[folder/note.md]]` links. They render
 
 - `packages/shared/src/wiki-links.ts`: the grammar and rewrites
 - `apps/desktop/src/main/vault/rename.ts`, `move.ts`, `backrefs.ts`, `hooks/relink.ts`
+- `apps/desktop/src/renderer/src/features/documents/wiki-link.ts`, `document-extensions.ts`: the chip in the editor

@@ -84,7 +84,7 @@ with the terminal id as its id. The agent is `agent` (`src/plugins/agent/`), a p
 written to the plugin contract and built in, so no vault turns it off
 ([architecture](../architecture.md), Plugins), and its renderer side (`renderer/index.tsx`) registers its tab (with `tabs`, so the strip,
 the palette and the recents read each terminal's label and status dot), its nav item (which runs
-`agent.show`), its commands (`agent.show` on ⌘J, `agent.new`), its rows, orbs and turn review, the
+`agent.show`), its commands (`agent.show` on ⌘J, `agent.new`), its rows and turn review, the
 palette's session rows, the leave question, and the agent service every "Ask" goes through
 (`useAgentService`). Its main side starts with the vault and attaches to it (`activate`), and its disposer stops the vault's sessions and terminals. The
 renderer reaches it through the `agent.*` capabilities (sessions, terminals, open, start, send,
@@ -187,7 +187,7 @@ counts what needs you and what works, sessions and Holis and what other plugins 
 mode.
 
 **The session view.** A session opened in the Agents mode is its terminal, in a window of the
-view's own (`agents/AgentsMain.tsx`): a background session's is a `claude attach` that closes
+view's own (`agents/agents-view.tsx`): a background session's is a `claude attach` that closes
 with the view, a session Holi runs is shown in its own terminal, which stays. **The terminal is the
 whole view**, with nothing drawn over or beside it: the agent's own TUI is the interface, and its
 name, state and model are on the sidebar row and the tab, its Stop, Restart and Review last turn
@@ -199,7 +199,7 @@ pane, and only a path the vault has is one (`renderer/lib/terminal-links.ts`).
 ⌘T on the Agents side and the command menu's **New session** start one in this machine's default
 agent, waiting for the first message, and bring its tab forward (the mode's `newSession`). There
 is no page in between: the terminal is where the first message goes. Hovering the Sessions + (or
-↓ on it) opens a menu of the other ways in (`sessions/NewSessionButton.tsx`): a session in each
+↓ on it) opens a menu of the other ways in (`sessions/new-session-button.tsx`): a session in each
 agent, one not on this machine listed but off, and **Resume a … conversation** for an agent Holi
 runs itself. A start that fails says why in a toast. The command menu's **Ask the agent** and an
 app card's **Ask about this app** start a session the same way (the agent's slot `start`), the
@@ -377,11 +377,11 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - `apps/desktop/src/main/bridge/env-file.ts`, `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/hooks/turn-signal.mjs`,
   `apps/desktop/src/plugins/agent/main/claude/seed.ts` (`STATUS_LINE`): how sessions find Holi
 - `apps/desktop/src/plugins/agent/main/host/turn-coordinator.ts`, `turn-log.ts`: working set and turn records
-- `apps/desktop/src/plugins/agent/renderer/`: rows, orbs, terminal (`terminal.css`), turn chip and review; `index.tsx`: the
+- `apps/desktop/src/plugins/agent/renderer/`: rows, terminal (`terminal.css`), turn chip and review; `index.tsx`: the
   plugin's renderer side; `service.ts`: the agent service
-- `apps/desktop/src/plugins/agent/renderer/agents/AgentsMain.tsx`, `sessions/NewSessionButton.tsx`: the
+- `apps/desktop/src/plugins/agent/renderer/agents/agents-view.tsx`, `sessions/new-session-button.tsx`: the
   session view and the Sessions + with its menu;
   `state/providers.ts`: the agents and the default
 - `apps/desktop/src/plugins/agent/renderer/state/sessions.ts`, `send.ts`, `turns.ts`: the lists, what you do, and turn review
-- `apps/desktop/src/plugins/agent/renderer/state/session-list.ts`, `sessions/SessionList.tsx`: the one session list, its
+- `apps/desktop/src/plugins/agent/renderer/state/session-list.ts`, `sessions/session-list.tsx`: the one session list, its
   states, filter and groups
