@@ -286,7 +286,7 @@ function CardStatus({
         <Spinner
           aria-hidden="true"
           role="presentation"
-          className="size-3 motion-reduce:animate-none"
+          className="size-3"
         />
         Working
       </span>
@@ -407,8 +407,9 @@ export function SessionCard({
     .filter(Boolean)
     .join(" · ")
   return (
-    <button
+    <Button
       {...props}
+      variant="ghost"
       type="button"
       data-session-card={item.key}
       data-session-state={state}
@@ -418,32 +419,40 @@ export function SessionCard({
       onClick={onOpen}
       onFocus={onFocus}
       className={cn(
-        "flex w-full min-w-0 flex-col gap-0.5 rounded-lg border border-transparent px-2 py-1.5 text-start transition-colors outline-none",
+        "h-auto w-full min-w-0 justify-start text-start font-normal whitespace-normal",
         // The sidebar's one fill scale, as the rows above and in Documents.
-        "hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring/50",
-        state === "needs-you" && "border-dashed border-border",
-        current && "bg-foreground/10 hover:bg-foreground/12",
-        className
+        "hover:bg-foreground/5",
+        current && "bg-foreground/10 hover:bg-foreground/12"
       )}
     >
-      <span className="flex min-w-0 items-center gap-2">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-              {item.title}
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="right">{item.title}</TooltipContent>
-        </Tooltip>
-        <span className="flex shrink-0 items-center">
-          <CardStatus row={row} now={now} />
+      <span
+        className={cn(
+          "flex w-full min-w-0 flex-col gap-0.5 rounded-lg border px-1 py-1.5",
+          state === "needs-you"
+            ? "border-dashed border-border"
+            : "border-transparent",
+          className
+        )}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                {item.title}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="right">{item.title}</TooltipContent>
+          </Tooltip>
+          <span className="flex shrink-0 items-center">
+            <CardStatus row={row} now={now} />
+          </span>
+        </span>
+        <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <CardMark row={row} />
+          <span className="min-w-0 truncate">{meta}</span>
         </span>
       </span>
-      <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-        <CardMark row={row} />
-        <span className="min-w-0 truncate">{meta}</span>
-      </span>
-    </button>
+    </Button>
   )
 }
 
@@ -692,10 +701,6 @@ function useRowActions(
   return joinGroups([place, own, running, keep])
 }
 
-/** A card's buttons, shown on hover or focus, and while a menu is open. */
-const REVEAL =
-  "opacity-0 transition-opacity duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] group-focus-within/card:opacity-100 group-hover/card:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 motion-reduce:transition-none"
-
 /** A card with its menus: right-click, and ⋯ on hover or focus; and, for an
  *  open one, its × beside the ⋯. */
 function CardWithMenu({
@@ -751,14 +756,14 @@ function CardWithMenu({
           <ContextMenuActions actions={actions} />
         </ContextMenuContent>
       </ContextMenu>
-      <div className="absolute end-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
+      {/* Shown on hover or focus, and while a menu is open. */}
+      <div className="absolute end-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 motion-respond focus-within:opacity-100 group-focus-within/card:opacity-100 group-hover/card:opacity-100 has-data-[state=open]:opacity-100">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
               size="icon-xs"
               aria-label={`More actions for ${row.item.title}`}
-              className={REVEAL}
             >
               <EllipsisIcon aria-hidden="true" />
             </Button>
@@ -776,7 +781,6 @@ function CardWithMenu({
             variant="ghost"
             size="icon-xs"
             aria-label={`Close ${row.item.title}`}
-            className={REVEAL}
             onClick={onClose}
           >
             <XIcon aria-hidden="true" />
@@ -838,15 +842,12 @@ function DeleteDialog({
   onClose: () => void
 }): React.JSX.Element {
   const remove = useSetAtom(deleteSessionRowAtom)
+  // A failure rejects, so the dialog stays open and shows it inline.
   const confirm = async () => {
     if (row === null) return
-    try {
-      const res = (await remove(row.item.key)) as
-        { ok: true } | { ok: false; message: string } | undefined
-      if (res !== undefined && !res.ok) toast.error(res.message)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
-    }
+    const res = (await remove(row.item.key)) as
+      { ok: true } | { ok: false; message: string } | undefined
+    if (res !== undefined && !res.ok) throw new Error(res.message)
   }
   return (
     <ConfirmDialog
@@ -858,7 +859,7 @@ function DeleteDialog({
       description="Holi forgets this conversation on this machine: its row and Holi’s copy of the transcript. Claude Code’s own transcript stays where Claude Code keeps it."
       confirmLabel="Delete"
       destructive
-      onConfirm={() => void confirm()}
+      onConfirm={confirm}
     />
   )
 }
@@ -1073,7 +1074,7 @@ export function SessionList(): React.JSX.Element {
       ) : status === "loading" && all.length === 0 ? (
         <LoadingCards />
       ) : rows.length === 0 ? (
-        <Empty className="gap-3 p-4">
+        <Empty>
           <EmptyHeader>
             <EmptyTitle className="text-sm">No active sessions</EmptyTitle>
             <EmptyDescription className="text-xs">
@@ -1081,7 +1082,7 @@ export function SessionList(): React.JSX.Element {
               are in History.
             </EmptyDescription>
           </EmptyHeader>
-          <EmptyContent className="flex-row justify-center gap-2">
+          <EmptyContent className="flex-row justify-center">
             <Button variant="outline" size="sm" onClick={() => void create()}>
               <MessageSquarePlusIcon aria-hidden="true" />
               New session
@@ -1144,7 +1145,7 @@ export function SessionHistory(): React.JSX.Element {
       ) : status === "loading" && rows.length === 0 ? (
         <LoadingCards />
       ) : !listed ? (
-        <Empty className="gap-3 p-4">
+        <Empty>
           <EmptyHeader>
             <EmptyTitle className="text-sm">No conversations yet</EmptyTitle>
             <EmptyDescription className="text-xs">
