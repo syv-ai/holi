@@ -250,7 +250,7 @@ motion, header and edge through the injected stylesheet and cannot resize.
 
 ## Code
 
-- `apps/desktop/src/renderer/src/index.css` and `legacy.css`: tokens, the `icon-*` and `motion-*`
+- `apps/desktop/src/renderer/src/index.css`: tokens, the `icon-*` and `motion-*`
   utilities, glass and window rules.
 - `apps/desktop/eslint.config.mjs`, `apps/desktop/design-system.lint.json`: the gate.
 - `apps/desktop/src/renderer/src/components/ui/`, `components/reui/`, `composites/`.

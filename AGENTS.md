@@ -87,16 +87,19 @@ is not in CI does not exist. When one fails, read its id in the output and look 
 the rule forbids, the fix, and how to change a rule. Run `pnpm rulecast:install` once per
 clone so rulecast findings reach Claude Code while it edits.
 
-Do not run the repository-wide `pnpm format` for a scoped change: the existing
-tree is not globally Prettier-clean, so it rewrites unrelated files. Format or
-check only the files you touched.
+The tree is Prettier-clean, so `pnpm format` only touches what you changed; the
+pre-commit hook and CI check it. `.prettierignore` keeps out the stock
+`components/ui` and `components/reui` files (upstream's style), the vault seed folders
+(`vault/once/`, `vault/shipped/`: written into vaults byte for byte, and shipped files are
+matched by content hash) and the ReUI installer's `.agents/skills/reui/`. The one
+formatting commit is listed in `.git-blame-ignore-revs`.
 
 `pnpm test` runs both workspace test scripts. The desktop Node project matches
 `apps/desktop/test/**/*.test.ts` and `src/plugins/*/test/**/*.test.ts`; the jsdom
 project matches renderer tests (`src/renderer/**/*.test.ts(x)`) and plugin
 component tests (`src/plugins/**/*.test.tsx`). Where a new test goes is in
-[`docs/renderer.md`](docs/renderer.md#tests); some renderer state tests still sit in
-`apps/desktop/test/` and are a known exception, not a model. The Node project has
+[`docs/renderer.md`](docs/renderer.md#tests), and rulecast rejects a renderer test in
+`apps/desktop/test/`. The Node project has
 `fileParallelism: false` intentionally: watcher and git tests must run one
 file at a time. Do not “fix” flakes by parallelising that project or merely
 increasing event waits. Shared-package tests run from its own Vitest script.
@@ -270,9 +273,33 @@ Gotchas of a fresh checkout or worktree that no file states.
   Linux and fails any import whose case macOS tolerated.
 - The repo's `typescript` is version 7, which has no JavaScript API, so a codemod that
   uses the compiler API needs TypeScript 5 from `node_modules/.pnpm/typescript@5.*`.
-- Some tests read CSS or source as text (`focus-treatment`, `motion`, `theme-tokens`,
-  `syntax-tokens`). They break silently when a file moves; grep `apps/desktop/test` for the
-  old path after any move.
+- Some tests read CSS or source as text (`lib/__tests__/motion.test.ts`,
+  `editor/__tests__/syntax-tokens.test.ts`, `test/theme-tokens.test.ts`). They break
+  silently when a file moves; grep the tests for the old path after any move.
+- `.git/hooks` is shared by every worktree of this repository (the main checkout, this
+  one, and any agent worktree), and `pnpm install` reinstalls the hooks through
+  `prepare`. A hook therefore also runs in worktrees on older branches; that is why the
+  hook commands skip a tool the checked-out branch does not have. Do not make a hook
+  depend on a file that only this branch has without the same guard.
+- A subagent worktree (`isolation: "worktree"`) is cut from the main checkout's HEAD, not
+  from the branch you are on. Have it `git reset --hard <your commit>` first, and bring its
+  work back with `git cherry-pick`.
+- Holi edits the stock files in place, and `shadcn add` would overwrite those edits if
+  you let it. Added on purpose: `Button` variants `text`, `dashed` and sizes `row`,
+  `inline`; `DialogContent`, `PopoverContent`, `HoverCardContent` variant `flush`;
+  `SidebarMenuButton` variant `fill` and size `rail`; `Avatar` `shape="square"`;
+  `TabsTrigger` variant `tab`; `Toggle` size `icon`; `ResizableHandle` variant `primary`
+  and `ResizablePanelGroup` `animateFirst`; `PanelSeparator` variant `line`;
+  `motion-reduce` on `Skeleton` and `Spinner`; the scroll fade on `CommandList`; ReUI
+  `KanbanBoard` variant `row`, `FramePanel` `flush`, `TreeItem` `arrived`, the data grid's
+  `tableLayout.edgeInset`. `git log -p -- apps/desktop/src/renderer/src/components` shows
+  each. Need a look a stock component lacks? Add a variant there, never a className at
+  the call site (`@shadcn/lint`'s `no-restyle`).
+- knip treats an export tagged `/** @public */` as used. That tag marks the plugin seam
+  (`plugin-api`) and exports kept for a test; anything else unused is deleted, not tagged.
+- Known defects found during the agent-first refactor, still open: the dialog registry
+  (`state/dialogs.ts`) has no host, so dialogs opened through it never show; plugin
+  `commands` and `palette` never reach ⌘K. See `docs/refactor/findings.md`.
 - To check UI in the running app, start `pnpm dev:debug` (remote debugging port 9333) and
   drive the window with `node apps/desktop/cdp.mjs '<js expression>'`;
   `apps/desktop/scripts/seed-demo.mjs` seeds demo data. The app needs a signed-in GitHub

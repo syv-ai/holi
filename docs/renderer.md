@@ -99,9 +99,7 @@ Cancel and one action) and **EmptyState** (`composites/empty-state`). A local `*
 
 No colocated `*.test.ts`, no loose `src/plugins/*.test.ts`.
 
-**Known exception.** About 46 tests of renderer state and pure renderer logic (atoms, `lib/`
-helpers) still sit in `apps/desktop/test/` and run in the node project, next to the main tests.
-Move one to `__tests__/` beside its code when you touch it; do not add new ones there.
+rulecast refuses a renderer test under `apps/desktop/test/` (`tests/renderer-behaviour-in-node-suite`).
 
 The node project runs one file at a time on purpose (`fileParallelism: false`, a 20 s timeout):
 watcher and git tests contend for the file system. Do not parallelise it or widen waits to cure a
@@ -129,8 +127,7 @@ the summary:
   groups, `gap-6` to `gap-8` between sections.
 - **Type**: `text-sm` body, `text-xs` meta, nothing smaller. Never resize `CardTitle` or
   `FrameTitle`. No native `title=` tooltip; use `Tooltip`.
-- **Motion** goes through the utilities in `index.css` (today defined in `legacy.css`, which
-  `index.css` imports): `motion-respond` for hover, `motion-in-*` and `motion-out-*` for arriving
+- **Motion** goes through the utilities in `index.css`: `motion-respond` for hover, `motion-in-*` and `motion-out-*` for arriving
   and leaving, `motion-ack-*` once for a committed act, `motion-pulse` and `motion-shimmer` while
   waiting. Transform and opacity only; never `transition-all`, never a stagger on 20+ rows, one
   entrance per view. No `duration-[…]`, `ease-[…]` or `delay-[…]` at a call site. This overrides the
