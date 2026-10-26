@@ -562,9 +562,7 @@ describe('ActiveVault — commit', () => {
     }
     await writeFile(join(dir, 'delivery.md'), 'verified first commit\n')
     let verifications = 0
-    expect(
-      await active.deliverNow('delivery.md', async () => ++verifications === 1),
-    ).toBe(false)
+    expect(await active.deliverNow('delivery.md', async () => ++verifications === 1)).toBe(false)
     expect(verifications).toBe(2)
     await sleep(250)
     expect(await plainGit(origin, ['show', 'main:delivery.md'])).toBe('verified first commit')
