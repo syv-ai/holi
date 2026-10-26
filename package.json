@@ -9,15 +9,22 @@
     "dev:debug": "pnpm --filter @holi/desktop dev:debug",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "lint": "pnpm --filter @holi/desktop exec eslint \"src/renderer/src/**/*.{ts,tsx}\" \"src/plugins/**/*.{ts,tsx}\"",
-    "lint:gate": "GATE_LEVEL=error pnpm --filter @holi/desktop exec eslint \"src/renderer/src/**/*.{ts,tsx}\" \"src/plugins/**/*.{ts,tsx}\"",
-    "format": "prettier --write ."
+    "lint": "pnpm --filter @holi/desktop lint",
+    "knip": "knip",
+    "knip:production": "knip --production",
+    "rulecast": "rulecast run --all-files",
+    "rulecast:install": "rulecast install",
+    "check:commit-msg": "node scripts/check-commit-msg.mjs",
+    "format": "prettier --write .",
+    "prepare": "simple-git-hooks"
   },
   "simple-git-hooks": {
-    "pre-commit": "pnpm exec lint-staged"
+    "pre-commit": "pnpm exec lint-staged && pnpm exec rulecast run",
+    "commit-msg": "node scripts/check-commit-msg.mjs \"$1\""
   },
   "lint-staged": {
-    "apps/desktop/src/{renderer/src,plugins}/**/*.{ts,tsx}": "pnpm --filter @holi/desktop exec eslint"
+    "apps/desktop/src/{renderer/src,plugins}/**/*.{ts,tsx}": "pnpm --filter @holi/desktop exec eslint --max-warnings 0",
+    "*.{ts,tsx,js,mjs,cjs,json,jsonc,md,css,yml,yaml}": "prettier --check"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -30,7 +37,9 @@
     }
   },
   "devDependencies": {
+    "@syv-ai/rulecast": "0.6.0",
     "@types/node": "^26.1.1",
+    "knip": "6.43.0",
     "lint-staged": "^17.3.0",
     "prettier": "^3.9.5",
     "simple-git-hooks": "^2.13.1",

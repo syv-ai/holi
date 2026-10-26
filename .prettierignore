@@ -1,0 +1,10 @@
+# Installed by the shadcn CLI (double quotes, semicolons) and edited in place; its
+# style is upstream's, so `prettier --check` on a staged file must not fail on it.
+apps/desktop/src/renderer/src/components/ui/
+apps/desktop/src/renderer/src/components/reui/
+
+pnpm-lock.yaml
+patches/
+out/
+dist/
+release/

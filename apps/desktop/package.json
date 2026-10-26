@@ -13,7 +13,8 @@
     "test": "vitest run",
     "rebuild:natives": "electron-rebuild -f -w node-pty",
     "shipped-history": "node scripts/shipped-history.mjs",
-    "package:mac": "electron-vite build && electron-builder --mac --publish never"
+    "package:mac": "electron-vite build && electron-builder --mac --publish never",
+    "lint": "eslint --max-warnings 0 \"src/renderer/src/**/*.{ts,tsx}\" \"src/plugins/**/*.{ts,tsx}\""
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -116,6 +117,7 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.0",
+    "@shadcn/lint": "0.2.3",
     "@tailwindcss/vite": "^4.3.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
