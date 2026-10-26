@@ -48,7 +48,7 @@ import {
   ItemMedia,
   ItemTitle,
 } from '@/components/ui/item'
-import { IconTile } from '@/composites/icon-tile'
+import { IconTile } from '@/components/reui/icon-tile'
 import { pluginMark } from '@/composites/marks'
 import { activeRemoteAtom } from '@/plugin-api'
 import { googleCap, useGoogleAccount } from './account'
