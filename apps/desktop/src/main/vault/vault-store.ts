@@ -19,6 +19,7 @@
  */
 import { readFile, stat } from 'node:fs/promises'
 import {
+  appBundleOf,
   isKeepFile,
   isLocalOnlyPath,
   ICONS_FILE,
@@ -38,6 +39,19 @@ export type { VaultSnapshot } from '@holi/shared'
 /** A claim, and the plugin whose `snapshot.claimed` entry it fills. */
 export interface ScanClaim extends SnapshotClaim {
   plugin: string
+}
+
+/** Whether a path belongs to the ordinary-note surface rather than a special,
+ *  personal, hidden, bundled, or plugin-owned file. Shared by scanning and the
+ *  CLI note writer so both surfaces agree about eligible notes. */
+export function isOrdinaryNotePath(path: string, claims: readonly ScanClaim[]): boolean {
+  return (
+    path.endsWith('.md') &&
+    !isLocalOnlyPath(path) &&
+    !path.split('/').some((part) => part.startsWith('.')) &&
+    appBundleOf(path) === null &&
+    !claims.some((claim) => claim.match(path))
+  )
 }
 
 /**
@@ -121,12 +135,13 @@ export async function scanVault(
         .then((s) => s.mtime.toISOString())
         .catch(() => new Date(0).toISOString())
 
-    // Non-markdown OR local-only: a plain file entry. No read, no parse — it is
-    // not a note, so it stays out of `docs` and the link-aware ops
-    // (backrefs/rename/mentions) never see it. Local-only markdown (USER.local.md,
-    // CLAUDE.local.md) is content the tree shows but the note graph must not
-    // absorb: it is personal config, not a linkable note.
-    if (!path.endsWith('.md') || isLocalOnlyPath(path)) {
+    // Non-markdown, local-only or hidden paths are plain files, not ordinary
+    // notes. In particular hidden config is never promoted into the note graph.
+    if (
+      !path.endsWith('.md') ||
+      isLocalOnlyPath(path) ||
+      path.split('/').some((part) => part.startsWith('.'))
+    ) {
       snapshot.files.push({ path, updatedAt: await mtime() })
       continue
     }
@@ -147,6 +162,10 @@ export async function scanVault(
       continue
     }
 
+    if (!isOrdinaryNotePath(path, claims)) {
+      snapshot.files.push({ path, updatedAt: await mtime() })
+      continue
+    }
     snapshot.docs.push({ path, kind: isDaily(text) ? 'daily' : 'note', updatedAt: await mtime() })
   }
 

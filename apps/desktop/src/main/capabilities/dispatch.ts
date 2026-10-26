@@ -130,7 +130,6 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
   // pass the check before either has written and published its change.
   const docQueues = new Map<string, Promise<void>>()
   const docCommands = new Set([
-    'docs.inspect',
     'docs.create',
     'docs.update',
     'docs.delete',

@@ -13,8 +13,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Collaborator, LineRange, RecentEntry } from '@holi/shared'
-import { tryGit } from '../git'
-import { openRepo, type GitRepo } from '../git'
+import { openRepo, tryGit, type GitRepo } from '../git'
 import type { MembersCache } from '../github/members-cache'
 import type { SyncState } from '../vault/active-vault'
 import type { ScanClaim } from '../vault/vault-store'
@@ -28,8 +27,6 @@ export interface CoreServices {
   /** The repo's collaborators, cached for a few minutes. Rejects on a GitHub error. */
   members(): Promise<Collaborator[]>
   repo(): GitRepo
-  /** Whether a running plugin claims this path, including before the file exists. */
-  claimed(path: string): Promise<boolean>
   /** Commit/push a CLI note mutation only when this clone is the open vault. */
   settle(
     path: string,
@@ -51,11 +48,14 @@ export interface CoreServicesDeps {
     syncState(): SyncState
     commitNow(): Promise<string | null>
     pushNow(): Promise<void>
+    deliverNow?(): Promise<void>
     heldBack(): { path: string }[]
   } | null
   members: MembersCache
   reports: UiReports
-  claims(root: string): Promise<readonly ScanClaim[]>
+  /** Retained for compatibility with existing dependency fixtures; note claims
+   *  are enforced by the shared scanner predicate in vault capabilities. */
+  claims?: (root: string) => Promise<readonly ScanClaim[]>
 }
 
 /**
@@ -99,7 +99,6 @@ export function createCoreServices(
     recents: () => deps.reports.get(remote).recents,
     members: () => deps.members.get(remote),
     repo: () => openRepo(root),
-    claimed: async (path) => (await deps.claims(root)).some((claim) => claim.match(path)),
     settle: async (path, expectedRevision) => {
       const active = deps.active()
       if (active?.remote !== remote || active.root !== root) {
@@ -119,9 +118,16 @@ export function createCoreServices(
       }
       let commitSha: string | null = null
       try {
-        const newCommitSha = await active.commitNow()
+        if (active.deliverNow !== undefined) {
+          await active.deliverNow()
+        } else {
+          // Compatibility for isolated service fakes; the real active vault
+          // uses deliverNow to wait for its single-flight sync operations.
+          await active.commitNow()
+          await active.pushNow()
+        }
         const initialHead = await tryGit(root, ['rev-parse', 'HEAD'])
-        commitSha = newCommitSha ?? (initialHead.ok ? initialHead.stdout.trim() : '')
+        commitSha = initialHead.ok ? initialHead.stdout.trim() : ''
         if (!commitSha) {
           return { commitSha: null, pushed: false, phase: 'commit', reason: 'no-commit' }
         }
@@ -174,7 +180,6 @@ export function createCoreServices(
             revision: committedRevision,
           }
         }
-        await active.pushNow()
         const head = await tryGit(root, ['rev-parse', 'HEAD'])
         // Holi pushes to origin's default branch, or the current branch when
         // the remote is empty. A first push has no @{upstream} to inspect.

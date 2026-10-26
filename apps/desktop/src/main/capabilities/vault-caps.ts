@@ -7,12 +7,10 @@
  */
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, readFile, writeFile, unlink, mkdir, open, readdir } from 'node:fs/promises'
+import { lstat, readFile, writeFile, unlink, mkdir, open, readdir, rename } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
-  appBundleOf,
   isAppBundlePath,
-  isLocalOnlyPath,
   syncLabel,
   type RecentEntry,
   type SyncState,
@@ -21,6 +19,7 @@ import {
 } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
 import { tryGit } from '../git'
+import { isOrdinaryNotePath } from '../vault/vault-store'
 import { writeScreenshot } from '../screenshot-files'
 import { readVaultSettings } from '../vault/settings'
 import { withFileLock, writeAtomic } from '../vault/vault-files'
@@ -114,14 +113,8 @@ const revision = (bytes: Buffer): string => createHash('sha256').update(bytes).d
 
 async function writePath(ctx: CapabilityContext, path: string): Promise<string> {
   const rel = readablePath(path)
-  if (
-    !rel.endsWith('.md') ||
-    appBundleOf(rel) !== null ||
-    isLocalOnlyPath(rel) ||
-    rel.split('/').some((part) => part.startsWith('.')) ||
-    // A file a plugin claims, such as a task, is that plugin's to write.
-    (await ctx.claims()).some((claim) => claim.match(rel))
-  ) {
+  // A file a plugin claims, such as a task, is that plugin's to write.
+  if (!isOrdinaryNotePath(rel, await ctx.claims())) {
     throw new CapabilityError('FORBIDDEN', path)
   }
   return rel
@@ -223,16 +216,6 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     run: async (ctx, { path, body }) => {
       requireOpen(ctx)
       const rel = await writePath(ctx, path)
-      const snapshot = await ctx.snapshot()
-      if (
-        (await ctx.core.claimed(rel)) ||
-        Object.values(snapshot.claimed).some(
-          (set) =>
-            set.items.some((item) => item.path === rel) ||
-            set.broken.some((item) => item.path === rel),
-        )
-      )
-        throw new CapabilityError('FORBIDDEN', path)
       const abs = await writableAbs(ctx, rel)
       const bytes = Buffer.from(body!, 'utf8')
       if (bytes.length > MAX_NOTE_BYTES)
@@ -272,9 +255,10 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       const temporary = `${abs}.holi-${process.pid}-${Date.now()}.local.tmp`
       try {
         const initial = await readFromStart(handle)
-        if (revision(initial) !== expected) throw new CapabilityError('CONFLICT', 'Stale revision')
-        const current = await readFromStart(handle)
-        if (revision(current) !== expected || (await exactPath(ctx.root, rel)) !== abs) {
+        if (
+          revision(initial) !== expected ||
+          (await exactPath(ctx.root, rel)) !== abs
+        ) {
           throw new CapabilityError('CONFLICT', 'Stale revision')
         }
         const tempHandle = await open(
@@ -294,7 +278,6 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
         ) {
           throw new CapabilityError('CONFLICT', 'Stale revision')
         }
-        const { rename } = await import('node:fs/promises')
         await rename(temporary, abs)
       } finally {
         await handle.close()
@@ -320,9 +303,10 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       const handle = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW)
       try {
         const existing = await readFromStart(handle)
-        if (revision(existing) !== expected) throw new CapabilityError('CONFLICT', 'Stale revision')
-        const current = await readFromStart(handle)
-        if (revision(current) !== expected || (await exactPath(ctx.root, rel)) !== abs) {
+        if (
+          revision(existing) !== expected ||
+          (await exactPath(ctx.root, rel)) !== abs
+        ) {
           throw new CapabilityError('CONFLICT', 'Stale revision')
         }
       } finally {
