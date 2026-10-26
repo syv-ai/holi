@@ -1,0 +1,205 @@
+# Repository structure, enforced where an agent can read the finding while it edits.
+# ESLint owns what is inside a file (layers, native elements, motion, colour);
+# this file owns where files live and what they are called.
+#
+# Every message says what is wrong, the fix, and why. Registry of all rules and
+# how to add one: .agents/skills/holi-rules/SKILL.md. Run: `pnpm rulecast`.
+# Agent hooks: `pnpm rulecast:install` (writes .claude/settings.json, see the skill).
+exclude: '(^|/)(node_modules|out|dist|release)/'
+repos:
+  - repo: local
+    rules:
+      # --- names ---------------------------------------------------------------
+      - id: renderer/kebab-case-names
+        name: Renderer files and folders are kebab-case
+        description: Every file and folder under the renderer and a plugin's renderer is kebab-case, as shadcn and ReUI name theirs.
+        files: '^apps/desktop/src/(renderer/src|plugins/[^/]+/renderer)/.*([A-Z]|(?<!_)_(?!_))'
+        # App.tsx is the one composition root with a conventional name.
+        exclude: '^apps/desktop/src/renderer/src/App\.tsx$'
+        detect:
+          path: {}
+        message: "{{file}} is not kebab-case. Rename the file and any folder above it to lowercase words joined by hyphens (delete-confirm.tsx, use-file-history.ts), keep the exported component PascalCase, and fix the imports; on macOS rename in two steps (`git mv Foo.tsx tmp && git mv tmp foo.tsx`) because the filesystem ignores case. One naming style is what lets an agent guess a file's path."
+        context:
+          - '@docs/renderer.md#names'
+        examples:
+          bad:
+            - path: apps/desktop/src/renderer/src/composites/DeleteConfirm.tsx
+              code: |
+                // x
+            - path: apps/desktop/src/renderer/src/features/history/useFileHistory.ts
+              code: |
+                // x
+            - path: apps/desktop/src/plugins/holis/renderer/holi_wizard.tsx
+              code: |
+                // x
+
+      # --- retired folders -----------------------------------------------------
+      - id: renderer/retired-folders
+        name: primitives/ and components/blocks/ no longer exist
+        files: '^apps/desktop/src/renderer/src/(primitives|components/blocks)/'
+        detect:
+          path: {}
+        refuse_write: true
+        message: '{{file}} is in a retired folder. primitives/ was replaced by the stock components in components/ui and components/reui, and ReUI blocks live in the feature they became (features/<feature>/, with `// ReUI block: @reui/<name>` on the first line). Put the file there, or use the component that already exists, so there is one design system and one place for each screen.'
+        context:
+          - '@docs/renderer.md#layers'
+        examples:
+          bad:
+            - path: apps/desktop/src/renderer/src/primitives/button.tsx
+              code: |
+                // x
+            - path: apps/desktop/src/renderer/src/components/blocks/profile-9/page.tsx
+              code: |
+                // x
+
+      # --- where components may be defined --------------------------------------
+      - id: renderer/components-only-in-component-folders
+        name: Components are defined in components/, composites/, features/ or a plugin renderer
+        description: A PascalCase exported component in editor/, state/, lib/, hooks/ or plugin-api/ is misplaced.
+        files: '^apps/desktop/src/renderer/src/(editor|state|lib|hooks|plugin-api)/'
+        exclude: '(^|/)(__tests__|__mocks__)/|\.test\.tsx?$'
+        types_or: [ts, tsx]
+        detect:
+          regex:
+            pattern: 'export\s+(?:default\s+)?(?:async\s+)?function\s+(?<name>[A-Z][A-Za-z0-9]*)\b|export\s+const\s+(?<constname>[A-Z][A-Z0-9]*[a-z][A-Za-z0-9]*)\s*(?::[^=\n]+)?=\s*(?:\(|<|memo\(|forwardRef\(|React\.)'
+        message: '{{file}}:{{line}} defines the component {{name}}{{constname}} outside a component folder. Move it to composites/ if it is reusable and built only from components/*, or to features/<feature>/ if it belongs to one screen; editor/, state/, lib/, hooks/ and plugin-api/ hold extensions, atoms, pure helpers, hooks and the plugin seam, so a reader finds every component in three places.'
+        examples:
+          good:
+            - path: apps/desktop/src/renderer/src/lib/format.ts
+              code: |
+                export function formatBytes(n: number): string {
+                  return String(n)
+                }
+                export const MAX_ROWS = 100
+            - path: apps/desktop/src/renderer/src/hooks/use-thing.ts
+              code: |
+                export function useThing() {
+                  return 1
+                }
+          bad:
+            - path: apps/desktop/src/renderer/src/lib/widget.tsx
+              code: |
+                export function Widget() {
+                  return <div />
+                }
+              expect: { lines: [1] }
+            - path: apps/desktop/src/renderer/src/state/thing.ts
+              code: |
+                export const Thing = (props: Props) => null
+              expect: { lines: [1] }
+
+      - id: renderer/no-jsx-below-composites
+        name: lib/, state/ and hooks/ hold no JSX
+        files: '^apps/desktop/src/renderer/src/(lib|state|hooks)/.*\.tsx$'
+        exclude: '(^|/)(__tests__|__mocks__)/|\.test\.tsx$'
+        detect:
+          path: {}
+        message: '{{file}} is a .tsx file in a folder that holds no JSX. Move the markup to composites/ or features/<feature>/ and keep only the logic here as a .ts file, so lib/, state/ and hooks/ stay importable from anywhere without pulling in components.'
+        context:
+          - '@docs/renderer.md#layers'
+        examples:
+          bad:
+            - path: apps/desktop/src/renderer/src/lib/widget.tsx
+              code: |
+                // x
+            - path: apps/desktop/src/renderer/src/hooks/use-thing.tsx
+              code: |
+                // x
+
+      # --- where tests live ----------------------------------------------------
+      - id: tests/renderer-colocated
+        name: Renderer tests live in __tests__/ beside the code
+        files: '^apps/desktop/src/renderer/src/(?!.*/__tests__/).*\.test\.tsx?$'
+        detect:
+          path: {}
+        message: '{{file}} is a test next to the code it tests. Move it into a `__tests__/` folder in the same directory (and import the code with `@/`), so a source folder is not half tests and an agent knows where a renderer test goes.'
+        context:
+          - '@docs/renderer.md#tests'
+        examples:
+          bad:
+            - path: apps/desktop/src/renderer/src/lib/tree-order.test.ts
+              code: |
+                // x
+            - path: apps/desktop/src/renderer/src/features/history/history-view.test.tsx
+              code: |
+                // x
+
+      - id: tests/plugin-location
+        name: A plugin's tests live in src/plugins/<id>/test/
+        files: '^apps/desktop/src/plugins/(?:[^/]+\.test\.tsx?$|[^/]+/(?!test/).*\.test\.tsx?$)'
+        detect:
+          path: {}
+        message: "{{file}} is a plugin test outside src/plugins/<id>/test/. Move it to the owning plugin's test/ folder (a test of core's plugin registry goes to apps/desktop/test/), so a plugin's tests travel with the plugin and there is no loose src/plugins/*.test.ts."
+        context:
+          - '@docs/renderer.md#tests'
+        examples:
+          bad:
+            - path: apps/desktop/src/plugins/lists.test.tsx
+              code: |
+                // x
+            - path: apps/desktop/src/plugins/tasks/renderer/board.test.tsx
+              code: |
+                // x
+
+      - id: tests/main-location
+        name: Main, preload and shared tests live in apps/desktop/test/
+        files: '^apps/desktop/src/(main|preload)/.*\.test\.tsx?$'
+        detect:
+          path: {}
+        message: '{{file}} is a main or preload test next to its source. Move it to apps/desktop/test/, so the node suite (serialised, git and watcher tests) is one folder vitest can find.'
+        context:
+          - '@docs/renderer.md#tests'
+        examples:
+          bad:
+            - path: apps/desktop/src/main/git.test.ts
+              code: |
+                // x
+
+      - id: tests/renderer-behaviour-in-node-suite
+        name: Renderer behaviour is tested beside the renderer, not in apps/desktop/test/
+        files: '^apps/desktop/test/.*\.test\.tsx?$'
+        detect:
+          regex:
+            pattern: "from '(?:(?:\\.\\./)+src/renderer/src/|@/)(?<what>(?:state|lib|editor|composites|features|components|hooks)[^']*)'"
+        message: '{{file}}:{{line}} tests renderer code ({{what}}) from apps/desktop/test/. Move the test into `__tests__/` beside that code in src/renderer/src and import it with `@/`, so it runs in the jsdom project and moves with the code it covers.'
+        context:
+          - '@docs/renderer.md#tests'
+        examples:
+          good:
+            - path: apps/desktop/test/vault-store.test.ts
+              code: |
+                import { openVault } from '../src/main/vault/active-vault'
+          bad:
+            - path: apps/desktop/test/tree-order.test.ts
+              code: |
+                import { orderTree } from '../src/renderer/src/lib/tree-order'
+              expect: { lines: [1] }
+            - path: apps/desktop/test/panes.test.ts
+              code: |
+                import { panesAtom } from '@/state/panes'
+              expect: { lines: [1] }
+
+      # --- guidance when a file is first touched ---------------------------------
+      - id: docs/renderer-conventions
+        name: Renderer conventions when editing the renderer
+        files: '^apps/desktop/src/(renderer/src|plugins/[^/]+/renderer)/'
+        exclude: '(^|/)(__tests__|__mocks__)/|\.test\.tsx?$'
+        stages: [touch]
+        context:
+          - '@docs/renderer.md'
+
+      - id: docs/main-architecture
+        name: Architecture when editing main or preload
+        files: '^apps/desktop/src/(main|preload)/|^apps/desktop/src/plugins/[^/]+/main/'
+        exclude: '\.test\.tsx?$'
+        stages: [touch]
+        context:
+          - '@docs/architecture.md'
+
+      - id: docs/vault-seeds
+        name: Seeded vault files are frozen once written
+        description: A once file reaches new vaults only; a shipped file reaches existing vaults only on `holi skills update`.
+        files: '(^|/)vault/(once|shipped)/'
+        stages: [touch]
+        context:
+          - '@AGENTS.md#local-files-generated-files-and-vault-seeds'
