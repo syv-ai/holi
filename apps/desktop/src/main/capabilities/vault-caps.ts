@@ -249,32 +249,42 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       const bytes = Buffer.from(body!, 'utf8')
       if (bytes.length > MAX_NOTE_BYTES)
         throw new CapabilityError('BAD_REQUEST', 'Note is too large')
-      const handle = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW)
-      const temporary = `${abs}.holi-${process.pid}-${Date.now()}.local.tmp`
-      try {
-        const initial = await readFromStart(handle)
-        if (revision(initial) !== expected || (await exactPath(ctx.root, rel)) !== abs) {
-          throw new CapabilityError('CONFLICT', 'Stale revision')
+      await withFileLock(abs, async () => {
+        const temporary = `${abs}.holi-${process.pid}-${Date.now()}.local.tmp`
+        const checkCurrent = async () => {
+          if ((await exactPath(ctx.root, rel)) !== abs) {
+            throw new CapabilityError('CONFLICT', 'Stale revision')
+          }
+          const handle = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW)
+          try {
+            if (revision(await readFromStart(handle)) !== expected) {
+              throw new CapabilityError('CONFLICT', 'Stale revision')
+            }
+          } finally {
+            await handle.close()
+          }
         }
-        const tempHandle = await open(
-          temporary,
-          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
-          0o600,
-        )
         try {
-          await tempHandle.writeFile(bytes)
-          await tempHandle.sync()
+          await checkCurrent()
+          const tempHandle = await open(
+            temporary,
+            constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+            0o600,
+          )
+          try {
+            await tempHandle.writeFile(bytes)
+            await tempHandle.sync()
+          } finally {
+            await tempHandle.close()
+          }
+          // Recheck immediately before replacement; the editor uses this same
+          // per-file lock, and the canonical path check rejects symlink swaps.
+          await checkCurrent()
+          await rename(temporary, abs)
         } finally {
-          await tempHandle.close()
+          await unlink(temporary).catch(() => {})
         }
-        if ((await exactPath(ctx.root, rel)) !== abs) {
-          throw new CapabilityError('CONFLICT', 'Stale revision')
-        }
-        await rename(temporary, abs)
-      } finally {
-        await handle.close()
-        await unlink(temporary).catch(() => {})
-      }
+      })
       const expectedRevision = revision(bytes)
       return receipt(rel, expectedRevision, await ctx.core.settle(rel, expectedRevision))
     },
@@ -290,16 +300,24 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       requireOpen(ctx)
       const rel = await writePath(ctx, path)
       const abs = await writableAbs(ctx, rel)
-      const handle = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW)
-      try {
-        const existing = await readFromStart(handle)
-        if (revision(existing) !== expected || (await exactPath(ctx.root, rel)) !== abs) {
+      await withFileLock(abs, async () => {
+        if ((await exactPath(ctx.root, rel)) !== abs) {
           throw new CapabilityError('CONFLICT', 'Stale revision')
         }
-      } finally {
-        await handle.close()
-      }
-      await unlink(abs)
+        const handle = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW)
+        try {
+          if (revision(await readFromStart(handle)) !== expected) {
+            throw new CapabilityError('CONFLICT', 'Stale revision')
+          }
+        } finally {
+          await handle.close()
+        }
+        // Revalidate the path immediately before unlink, under the editor lock.
+        if ((await exactPath(ctx.root, rel)) !== abs) {
+          throw new CapabilityError('CONFLICT', 'Stale revision')
+        }
+        await unlink(abs)
+      })
       return receipt(rel, null, await ctx.core.settle(rel, null))
     },
   }),
