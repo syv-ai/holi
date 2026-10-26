@@ -11,7 +11,7 @@ import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/cn"
 import { memberLoginsAtom } from "@/state/members"
-import { PersonAvatar } from "../planning/task-bits"
+import { PersonAvatar } from "@/composites/person-avatar"
 
 /** The `@word` the caret is at the end of, or null. */
 function mentionAt(

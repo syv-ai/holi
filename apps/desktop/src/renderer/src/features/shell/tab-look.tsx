@@ -11,7 +11,8 @@ import {
   ZapIcon,
 } from "lucide-react"
 
-import { AgentMark, PixelPersona } from "@/composites"
+import { AgentMark } from "@/composites/marks"
+import { PixelPersona } from "@/composites/pixel-persona/pixel-persona"
 import type { AgentsTabLook } from "@/plugin-api"
 import { changedDocsAtom } from "@/state/doc-changes"
 import { runningPluginsAtom, surfacesAtom } from "@/state/plugins"

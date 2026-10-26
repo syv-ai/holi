@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button"
 import { SheetTrigger } from "@/components/ui/sheet"
-import { ReuiMark } from "./reui-mark"
+import { BrandMark } from "@/composites/brand-mark"
 import { MenuIcon, SearchIcon, PlusIcon } from "lucide-react"
 
 /** Below md the thread sidebar lives in a sheet, so this bar repeats its header
@@ -20,9 +20,9 @@ export function MobileHeader({
           <MenuIcon aria-hidden="true" />
         </Button>
       </SheetTrigger>
-      <ReuiMark />
+      <BrandMark variant="monogram" className="h-5" />
       <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
-        ReUI Chat
+        Holi
       </span>
       <Button
         variant="ghost"

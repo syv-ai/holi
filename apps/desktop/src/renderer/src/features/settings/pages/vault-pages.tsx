@@ -20,18 +20,11 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
-} from "@/components/ui/empty"
 import { Progress } from "@/components/ui/progress"
 import { Switch } from "@/components/ui/switch"
 import { trpc } from "@/lib/trpc"
 import { useAgentService } from "@/state/agent-service"
-import { AgentMark } from "@/composites"
+import { AgentMark } from "@/composites/marks"
 import { claudeFirstRunAtom } from "@/state/claude-first-run"
 import { useRepoSize } from "@/state/repo-usage"
 import { settingDescriptorsAtom } from "@/state/plugins"
@@ -52,6 +45,7 @@ import {
   type Choice,
 } from "../settings-kit"
 import { useVaultSettings } from "../use-vault-settings"
+import { EmptyState } from "@/composites/empty-state"
 
 const githubUrl = (path: string) => `https://github.com/${path}`
 
@@ -356,15 +350,13 @@ export function MembersPage() {
             </Badge>
           </SettingsRow>
           {state.collaborators.length === 0 ? (
-            <Empty className="py-6">
-              <EmptyHeader>
-                <EmptyTitle>Only you, so far</EmptyTitle>
-                <EmptyDescription>
-                  Invite people on GitHub and they can clone this vault in Holi.
-                </EmptyDescription>
-              </EmptyHeader>
-              <EmptyContent>{manage}</EmptyContent>
-            </Empty>
+            <EmptyState
+              title="Only you, so far"
+              description="Invite people on GitHub and they can clone this vault in Holi."
+              className="h-auto py-6"
+            >
+              {manage}
+            </EmptyState>
           ) : (
             state.collaborators.map((person) => (
               <SettingsRow

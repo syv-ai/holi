@@ -44,7 +44,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/cn"
-import type { IconGlyph } from "@/primitives"
+import type { IconGlyph } from "@/lib/icon-glyph"
 import { shellWorkspaceAtom } from "@/state/shell-tabs"
 import {
   activeSplit,

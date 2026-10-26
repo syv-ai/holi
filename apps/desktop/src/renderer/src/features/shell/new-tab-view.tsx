@@ -16,7 +16,7 @@ import {
   ItemTitle,
 } from "@/components/ui/item"
 import { Kbd } from "@/components/ui/kbd"
-import { BrandMark } from "@/composites"
+import { BrandMark } from "@/composites/brand-mark"
 import { cn } from "@/lib/cn"
 import { hotkeyLabels } from "@/lib/hotkey"
 import { SHORTCUTS } from "@/lib/shortcuts"

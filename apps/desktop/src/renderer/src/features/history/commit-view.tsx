@@ -6,20 +6,12 @@ import {
   CodeBlockContent,
   CodeBlockCopyButton,
 } from "@/components/reui/code-block/code-block"
-import { Button } from "@/components/ui/button"
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
 import { trpc } from "@/lib/trpc"
 
 import { codeLanguage } from "./code-language"
 import { lineDiff, type LineDiff } from "./line-diff"
+import { ErrorState } from "@/composites/empty-state"
 
 /** Past this, a version shows as plain text rather than tokenizing a
  *  generated file or a lockfile line by line. */
@@ -81,20 +73,11 @@ export function CommitView({
   }
   if (load.kind === "error") {
     return (
-      <Empty>
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <FileWarningIcon />
-          </EmptyMedia>
-          <EmptyTitle>This commit could not be read</EmptyTitle>
-          <EmptyDescription>{load.message}</EmptyDescription>
-        </EmptyHeader>
-        <EmptyContent>
-          <Button variant="outline" size="sm" onClick={() => setAttempt((n) => n + 1)}>
-            Retry
-          </Button>
-        </EmptyContent>
-      </Empty>
+      <ErrorState
+        title="This commit could not be read"
+        message={load.message}
+        onRetry={() => setAttempt((n) => n + 1)}
+      />
     )
   }
 

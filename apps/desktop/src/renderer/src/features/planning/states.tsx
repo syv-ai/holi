@@ -13,15 +13,9 @@ import {
   AlertTitle,
 } from "@/components/reui/alert"
 import { Button } from "@/components/ui/button"
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
+import { EmptyState } from "@/composites/empty-state"
 import { cn } from "@/lib/cn"
+import type { IconGlyph } from "@/lib/icon-glyph"
 
 export function RegionError({
   title,
@@ -46,9 +40,8 @@ export function RegionError({
   )
 }
 
-/** ReUI's empty states: inside a panel it stands bare (c-empty-12); as a
- *  whole tab's content it takes the dashed outline (c-empty-4), so the
- *  empty page still has an edge. */
+/** A panel's empty state stands bare; as a whole tab's content it takes the
+ *  dashed outline, so the empty page still has an edge. */
 export function RegionEmpty({
   icon,
   title,
@@ -56,26 +49,26 @@ export function RegionEmpty({
   action,
   outlined = false,
 }: {
-  icon: ReactNode
+  icon: IconGlyph
   title: string
   description: string
   action?: ReactNode
   outlined?: boolean
 }) {
   return (
-    <Empty className={cn(outlined && "border")}>
-      <EmptyHeader>
-        <EmptyMedia variant="icon">{icon}</EmptyMedia>
-        <EmptyTitle>{title}</EmptyTitle>
-        <EmptyDescription>{description}</EmptyDescription>
-      </EmptyHeader>
-      {action != null ? <EmptyContent>{action}</EmptyContent> : null}
-    </Empty>
+    <EmptyState
+      icon={icon}
+      title={title}
+      description={description}
+      className={cn("h-auto", outlined && "border")}
+    >
+      {action}
+    </EmptyState>
   )
 }
 
-/** Search and filters left nothing to show (c-empty-2): says so, and is the
- *  one way back out. */
+/** Search and filters left nothing to show: says so, and is the one way back
+ *  out. */
 export function NoMatches({
   search,
   onClear,
@@ -85,20 +78,15 @@ export function NoMatches({
 }) {
   const query = search.trim()
   return (
-    <Empty className="bg-muted">
-      <EmptyHeader>
-        <EmptyTitle>No matching tasks</EmptyTitle>
-        <EmptyDescription>
-          {query !== ""
-            ? `Nothing matches “${query}” with the filters you picked.`
-            : "No task matches the filters you picked."}
-        </EmptyDescription>
-      </EmptyHeader>
-      <EmptyContent>
-        <Button variant="outline" size="sm" onClick={onClear}>
-          Clear filters
-        </Button>
-      </EmptyContent>
-    </Empty>
+    <EmptyState
+      title="No matching tasks"
+      description={
+        query !== ""
+          ? `Nothing matches “${query}” with the filters you picked.`
+          : "No task matches the filters you picked."
+      }
+      action={{ label: "Clear filters", onClick: onClear }}
+      className="h-auto bg-muted"
+    />
   )
 }

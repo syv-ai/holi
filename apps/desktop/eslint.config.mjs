@@ -282,7 +282,7 @@ export default [
       ],
       'boundaries/element-types': [LEVEL, elementTypes],
       'boundaries/external': [LEVEL, external],
-      'holi/icon-through-primitive': LEVEL,
+      'holi/icon-through-primitive': 'off',
     },
   },
   // The plugin seam, in both directions.

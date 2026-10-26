@@ -10,8 +10,7 @@ import {
   TimelineTitle,
 } from "@/components/reui/timeline"
 
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { initials } from "@/lib/planning"
+import { PersonAvatar } from "@/composites/person-avatar"
 import type { ActivityItem } from "./activity-data"
 
 export function ActivityTimeline({
@@ -35,11 +34,7 @@ export function ActivityTimeline({
             <TimelineHeader className="flex min-w-0 items-start justify-between gap-2.5">
               <TimelineSeparator className="bg-border group-data-[orientation=vertical]/timeline:top-1 group-data-[orientation=vertical]/timeline:-left-7 group-data-[orientation=vertical]/timeline:h-[calc(100%-2.25rem)] group-data-[orientation=vertical]/timeline:translate-y-6" />
               <TimelineIndicator className="bg-background flex size-6 items-center justify-center overflow-hidden rounded-full border-none group-data-[orientation=vertical]/timeline:-top-0.5 group-data-[orientation=vertical]/timeline:-left-7">
-                <Avatar className="size-6">
-                  <AvatarFallback className="text-xs font-medium">
-                    {initials(item.actor)}
-                  </AvatarFallback>
-                </Avatar>
+                <PersonAvatar login={item.actor} image={false} className="size-6" />
               </TimelineIndicator>
 
               <TimelineTitle className="min-w-0 text-sm leading-5">

@@ -16,7 +16,8 @@ import type { ReactNode } from 'react'
 import { SiClaude } from '@icons-pack/react-simple-icons'
 import { Blocks, Plug, Puzzle, SquareTerminal } from 'lucide-react'
 import { cn } from '@/lib/cn'
-import { FileType, Icon, type IconGlyph, type IconSize } from '@/primitives'
+import { FileType } from '@/components/reui/file-type'
+import type { IconGlyph } from '@/lib/icon-glyph'
 
 /** Google's four-colour G. simple-icons draws it in one colour, which reads as
  *  a generic G; the four are the mark. */
@@ -67,24 +68,30 @@ export function AgentMark({
   className,
 }: {
   agent: string | undefined
-  size?: IconSize
+  size?: 'sm' | 'lg'
   className?: string
 }) {
   const mark: { glyph: IconGlyph; className?: string } = AGENT_MARKS[agent ?? 'claude'] ?? {
     glyph: SquareTerminal,
   }
-  return <Icon icon={mark.glyph} size={size} className={cn(mark.className, className)} />
+  const Glyph = mark.glyph
+  return (
+    <Glyph
+      aria-hidden
+      className={cn('shrink-0', size === 'lg' ? 'size-5' : 'size-3.5', mark.className, className)}
+    />
+  )
 }
 
 const PLUGIN_MARKS: Record<string, () => ReactNode> = {
-  agent: () => <Icon icon={SiClaude} size="lg" className="text-orange-500 dark:text-orange-400" />,
+  agent: () => <SiClaude aria-hidden className="size-5 text-orange-500 dark:text-orange-400" />,
   pdf: () => <FileType type="pdf" size="xs" />,
-  google: () => <Icon icon={GoogleG} size="lg" />,
-  apps: () => <Icon icon={Blocks} size="lg" />,
-  community: () => <Icon icon={Puzzle} size="lg" />,
+  google: () => <GoogleG className="size-5" />,
+  apps: () => <Blocks aria-hidden className="size-5" />,
+  community: () => <Puzzle aria-hidden className="size-5" />,
 }
 
 /** The mark for a plugin, by id. */
 export function pluginMark(id: string): ReactNode {
-  return (PLUGIN_MARKS[id] ?? (() => <Icon icon={Plug} size="lg" />))()
+  return (PLUGIN_MARKS[id] ?? (() => <Plug aria-hidden className="size-5" />))()
 }

@@ -1,6 +1,7 @@
 /** The first-run greeting: what Holi is, before anything is asked. */
 import { ArrowRight } from 'lucide-react'
-import { Button, Icon, Kbd } from '@/primitives'
+import { Button } from '@/components/ui/button'
+import { Kbd } from '@/components/ui/kbd'
 
 export function GreetingAct({ onBegin }: { onBegin: () => void }) {
   return (
@@ -14,7 +15,7 @@ export function GreetingAct({ onBegin }: { onBegin: () => void }) {
       <div className="obrit-cta-row">
         <Button size="lg" onClick={onBegin}>
           Begin
-          <Icon icon={ArrowRight} size="sm" />
+          <ArrowRight aria-hidden className="size-3.5" />
         </Button>
       </div>
       <div className="obrit-keyhint">

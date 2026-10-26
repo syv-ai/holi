@@ -1,6 +1,8 @@
 import { atom } from 'jotai'
 import type { ReactNode } from 'react'
-import type { DialogSize } from '@/primitives'
+
+/** How wide a plugin's dialog asks to be; the host maps it to the stock dialog's width. */
+export type DialogSize = 'sm' | 'md' | 'lg' | 'full' | 'bare'
 
 /**
  * The dialog registry, as a discriminated union (`docs/ui-system.md`). A dialog

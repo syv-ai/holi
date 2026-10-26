@@ -37,8 +37,12 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { installedPluginsAtom } from '@/state/plugins'
-import { SettingCard } from '@/composites'
-import { Badge, Frame, Icon, Label, PillGroup, Switch } from '@/primitives'
+import { SettingCard } from '@/composites/setting-card'
+import { Badge } from '@/components/reui/badge'
+import { Frame } from '@/components/reui/frame'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 
 interface Props {
   /** The answers so far, keyed by descriptor. A missing key falls back to the
@@ -73,7 +77,8 @@ function Row({
 }) {
   const { key, label, explanation, control } = descriptor
   const value = settings[key] ?? descriptor.default
-  const mark = <Icon icon={MARKS[key] ?? SlidersHorizontal} size="lg" />
+  const Mark = MARKS[key] ?? SlidersHorizontal
+  const mark = <Mark aria-hidden className="size-5" />
 
   if (control.kind === 'toggle')
     return (
@@ -100,16 +105,25 @@ function Row({
     const options = availableOptions(descriptor, settings)
     return (
       <SettingCard mark={mark} title={label} description={explanation} data-setting={key}>
-        <PillGroup
-          label={label}
-          options={options.map((o, i) => ({ value: String(i), label: o.label }))}
-          isOn={(i) => same(options[Number(i)]?.value, value)}
-          onPick={(i) => {
+        <ToggleGroup
+          type="single"
+          size="sm"
+          spacing={1}
+          aria-label={label}
+          value={String(options.findIndex((o) => same(o.value, value)))}
+          onValueChange={(i) => {
+            // Pressing the picked pill again deselects it; a choice always stays.
             const option = options[Number(i)]
-            if (option !== undefined) onChange(key, option.value)
+            if (i !== '' && option !== undefined) onChange(key, option.value)
           }}
-          className="self-start"
-        />
+          className="flex-wrap self-start"
+        >
+          {options.map((o, i) => (
+            <ToggleGroupItem key={i} value={String(i)}>
+              {o.label}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
       </SettingCard>
     )
   }

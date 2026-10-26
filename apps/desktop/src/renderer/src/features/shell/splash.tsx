@@ -1,4 +1,4 @@
-import { BrandMark } from '@/composites'
+import { BrandMark } from '@/composites/brand-mark'
 
 /**
  * What the window shows while the app finds out where it stands: reading the

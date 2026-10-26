@@ -27,7 +27,8 @@
  */
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/cn'
-import { Button, Tooltip } from '@/primitives'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 /** A title to its anchor id. Lowercase, non-alphanumerics collapsed to `-`. */
 export function headingId(title: string): string {
@@ -186,7 +187,8 @@ export function ExternalLink({
   children: ReactNode
 }): React.JSX.Element {
   return (
-    <Tooltip content={url}>
+    <Tooltip>
+      <TooltipTrigger asChild>
       <Button
         variant="link"
         onClick={onOpen}
@@ -197,6 +199,8 @@ export function ExternalLink({
       >
         {children}
       </Button>
+    </TooltipTrigger>
+    <TooltipContent>{url}</TooltipContent>
     </Tooltip>
   )
 }

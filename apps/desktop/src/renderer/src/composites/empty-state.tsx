@@ -1,20 +1,33 @@
 import type { ReactNode } from 'react'
-import { Button, Icon, type IconGlyph } from '@/primitives'
+import { Button } from '@/components/ui/button'
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
+import type { IconGlyph } from '@/lib/icon-glyph'
 
 /**
- * What a pane shows when it has nothing to show: empty, disconnected, failed,
- * or "pick something". One look everywhere (docs/ui-system.md, States): an
- * optional muted icon (on a lit plate, unless it is an error), one sentence, an optional muted line under it, and at
- * most one action, centred in the region it stands in for. An error passes
- * `role="alert"` and a Retry action; the reasons a region is empty are told
- * apart by the sentence, not by a second layout.
+ * What a region shows when it has nothing to show: empty, disconnected,
+ * failed, or "pick something". The one vocabulary for it (docs/ui-system.md,
+ * States), built on the stock `Empty`: an optional icon, one sentence, an
+ * optional muted line under it, and at most one action, centred in the region
+ * it stands in for. An error passes `role="alert"` (or is an `ErrorState`)
+ * and a Retry action; the reasons a region is empty are told apart by the
+ * sentence, not by a second layout. `children` is for an action that is not a
+ * plain button (a menu, a link).
  */
 export function EmptyState({
-  icon,
+  icon: Glyph,
   title,
   description,
   action,
+  children,
   role,
   className,
 }: {
@@ -25,55 +38,70 @@ export function EmptyState({
   description?: ReactNode
   /** The one thing to do about it. */
   action?: { label: string; onClick: () => void; icon?: IconGlyph }
+  /** A custom action, under the text. */
+  children?: ReactNode
   role?: 'status' | 'alert'
   className?: string
 }): React.JSX.Element {
+  const ActionGlyph = action?.icon
   return (
-    <div
-      data-slot="empty-state"
-      role={role}
-      className={cn(
-        'flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center',
-        className,
-      )}
-    >
-      {icon &&
-        (role === 'alert' ? (
-          <Icon icon={icon} size="lg" tone="muted" />
-        ) : (
-          // An empty view stands in the light of the screens before a vault:
-          // its icon on a small plate lit from the top-left (index.css). Not an
-          // error's: light on a failure would read as good news.
-          <span data-slot="empty-plate" className="grid size-12 place-items-center rounded-xl">
-            <Icon icon={icon} size="lg" tone="muted" />
-          </span>
-        ))}
-      <div className="flex max-w-sm flex-col gap-0.5">
-        <p className="text-sm font-medium text-pretty">{title}</p>
-        {description && (
-          <p className="text-xs text-pretty break-words text-muted-foreground">{description}</p>
+    <Empty data-slot="empty-state" role={role} className={cn('h-full min-h-0', className)}>
+      <EmptyHeader>
+        {Glyph && (
+          <EmptyMedia variant="icon">
+            <Glyph aria-hidden />
+          </EmptyMedia>
         )}
-      </div>
-      {action && (
-        <Button variant="secondary" size="sm" onClick={action.onClick}>
-          {action.icon && <Icon icon={action.icon} size="sm" />}
-          {action.label}
-        </Button>
+        <EmptyTitle>{title}</EmptyTitle>
+        {description && (
+          <EmptyDescription className="text-xs text-pretty break-words">
+            {description}
+          </EmptyDescription>
+        )}
+      </EmptyHeader>
+      {(action || children) && (
+        <EmptyContent>
+          {action && (
+            <Button variant="secondary" size="sm" onClick={action.onClick}>
+              {ActionGlyph && <ActionGlyph aria-hidden />}
+              {action.label}
+            </Button>
+          )}
+          {children}
+        </EmptyContent>
       )}
-    </div>
+    </Empty>
+  )
+}
+
+/** A region that failed to load: the reason, in the error's own words, and Retry. */
+export function ErrorState({
+  title,
+  message,
+  onRetry,
+  className,
+}: {
+  title: ReactNode
+  message?: ReactNode
+  onRetry: () => void
+  className?: string
+}): React.JSX.Element {
+  return (
+    <EmptyState
+      role="alert"
+      title={title}
+      description={message}
+      action={{ label: 'Retry', onClick: onRetry }}
+      className={className}
+    />
   )
 }
 
 /**
  * A region's loading state: skeleton rows the height of the real rows, so the
  * layout does not jump when the data lands. Three rows is enough; `lines` is
- * how many text lines a real row carries. The bars are the house
- * `motion-shimmer` (an in-flight loop that stops under reduced motion), as the
- * editor's and Home's loaders are, not the `Skeleton` primitive: its
- * `animate-pulse` wins over the shimmer and ignores reduced motion.
+ * how many text lines a real row carries.
  */
-const BAR = 'block rounded-md motion-shimmer'
-
 export function LoadingRows({
   label,
   rows = 3,
@@ -90,9 +118,9 @@ export function LoadingRows({
     <div role="status" aria-label={label} className={cn('flex flex-col', className)}>
       {Array.from({ length: rows }, (_, row) => (
         <div key={row} className="flex flex-col gap-2 border-b border-divider px-4 py-3">
-          <span className={cn(BAR, 'h-3.5 w-2/5')} />
-          {lines > 1 && <span className={cn(BAR, 'h-3.5 w-4/5')} />}
-          {lines > 2 && <span className={cn(BAR, 'h-3 w-3/5')} />}
+          <Skeleton className="h-3.5 w-2/5" />
+          {lines > 1 && <Skeleton className="h-3.5 w-4/5" />}
+          {lines > 2 && <Skeleton className="h-3 w-3/5" />}
         </div>
       ))}
     </div>

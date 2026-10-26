@@ -27,14 +27,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -61,6 +53,7 @@ import {
   type FileCommit,
   type FileHistory,
 } from "./use-file-history"
+import { EmptyState, ErrorState } from "@/composites/empty-state"
 
 const ALL_USERS = "__all__"
 
@@ -215,35 +208,20 @@ function CommitList({
   }
   if (history.kind === "error") {
     return (
-      <Empty>
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <HistoryIcon />
-          </EmptyMedia>
-          <EmptyTitle>The history could not be read</EmptyTitle>
-          <EmptyDescription>{history.message}</EmptyDescription>
-        </EmptyHeader>
-        <EmptyContent>
-          <Button variant="outline" size="sm" onClick={onRetry}>
-            Retry
-          </Button>
-        </EmptyContent>
-      </Empty>
+      <ErrorState
+        title="The history could not be read"
+        message={history.message}
+        onRetry={onRetry}
+      />
     )
   }
   if (history.commits.length === 0) {
     return (
-      <Empty>
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <HistoryIcon />
-          </EmptyMedia>
-          <EmptyTitle>No commits yet</EmptyTitle>
-          <EmptyDescription>
-            This file has not been committed. Its history starts once it syncs.
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
+      <EmptyState
+        icon={HistoryIcon}
+        title="No commits yet"
+        description="This file has not been committed. Its history starts once it syncs."
+      />
     )
   }
 
@@ -287,24 +265,17 @@ function CommitList({
 
       <div className="max-h-[min(65vh,44rem)] overflow-y-auto">
         {days.length === 0 ? (
-          <Empty>
-            <EmptyHeader>
-              <EmptyTitle>No commits match</EmptyTitle>
-              <EmptyDescription>Try another author or a longer time.</EmptyDescription>
-            </EmptyHeader>
-            <EmptyContent>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  onAuthor(null)
-                  onPeriod("all")
-                }}
-              >
-                Show all commits
-              </Button>
-            </EmptyContent>
-          </Empty>
+          <EmptyState
+            title="No commits match"
+            description="Try another author or a longer time."
+            action={{
+              label: "Show all commits",
+              onClick: () => {
+                onAuthor(null)
+                onPeriod("all")
+              },
+            }}
+          />
         ) : (
           <ol className="flex flex-col gap-3">
             {days.map((day) => (

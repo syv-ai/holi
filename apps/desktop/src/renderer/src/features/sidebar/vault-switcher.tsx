@@ -16,7 +16,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Item, ItemMedia } from "@/components/ui/item"
-import { BrandMark } from "@/composites"
+import { BrandMark } from "@/composites/brand-mark"
 import {
   SidebarMenu,
   SidebarMenuButton,

@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
-import { FramePanel, IconTile, Label } from '@/primitives'
+import { FramePanel } from '@/components/reui/frame'
+import { IconTile } from '@/components/reui/icon-tile'
+import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/cn'
 
 /**

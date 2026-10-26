@@ -12,7 +12,9 @@
 import { useState } from 'react'
 import { useAtomValue } from 'jotai'
 import { ArrowRight, Check, LoaderCircle } from 'lucide-react'
-import { Button, Icon, Kbd, Tooltip } from '@/primitives'
+import { Button } from '@/components/ui/button'
+import { Kbd } from '@/components/ui/kbd'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { STATIC_COMMANDS, type Command } from '@/state/commands'
 import { installedPluginsAtom } from '@/state/plugins'
 
@@ -82,9 +84,9 @@ export function ThresholdAct({
               <li key={label} className="obrit-build-step" data-state={state}>
                 <span className="obrit-build-mark" aria-hidden="true">
                   {state === 'done' ? (
-                    <Icon icon={Check} size="sm" />
+                    <Check aria-hidden className="size-3.5" />
                   ) : state === 'now' ? (
-                    <Icon icon={LoaderCircle} size="sm" className="motion-orbit" />
+                    <LoaderCircle aria-hidden className="size-3.5 motion-orbit" />
                   ) : null}
                 </span>
                 <span>{label}</span>
@@ -108,18 +110,21 @@ export function ThresholdAct({
       </p>
 
       {remote !== null && (
-        <Tooltip content="Copy the repo URL">
-          <Button variant="outline" className="obrit-repo-url" onClick={copy}>
-            <span className="obrit-repo-url-text">github.com/{remote}</span>
-            <span className="obrit-repo-url-copy">{copied ? 'Copied' : 'Copy'}</span>
-          </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="outline" className="obrit-repo-url" onClick={copy}>
+              <span className="obrit-repo-url-text">github.com/{remote}</span>
+              <span className="obrit-repo-url-copy">{copied ? 'Copied' : 'Copy'}</span>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Copy the repo URL</TooltipContent>
         </Tooltip>
       )}
 
       <div className="obrit-cta-row">
         <Button size="lg" onClick={onOpen}>
           Open vault
-          <Icon icon={ArrowRight} size="sm" />
+          <ArrowRight aria-hidden className="size-3.5" />
         </Button>
       </div>
 

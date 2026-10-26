@@ -1,13 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AskResult, AskTargets } from '@/editor/ask-agent'
-import {
-  Popover,
-  PopoverAnchor,
-  PopoverContent,
-  Textarea,
-  ToggleGroup,
-  ToggleGroupItem,
-} from '@/primitives'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { Textarea } from '@/components/ui/textarea'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 
 /** What a new session is called in the picker, as in the note popover. */
 const NEW_SESSION = 'New session'

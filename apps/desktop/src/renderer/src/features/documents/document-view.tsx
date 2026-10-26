@@ -49,15 +49,6 @@ import {
   RichTextTableBubble,
 } from "@/features/documents/rich-text/rich-text-table"
 import { useIsApplePlatform } from "@/features/documents/rich-text/rich-text-toolbar"
-import { Button } from "@/components/ui/button"
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { cn } from "@/lib/cn"
@@ -107,6 +98,7 @@ import {
   joinDocument,
   splitDocument,
 } from "./markdown"
+import { ErrorState } from "@/composites/empty-state"
 
 // How long typing has to pause before the file is written.
 const SAVE_DELAY_MS = 600
@@ -189,22 +181,11 @@ export function DocumentView({
   if (load.kind === "loading") return <DocumentSkeleton />
   if (load.kind === "error" || remote === null)
     return (
-      <Empty className="h-full">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <FileWarningIcon />
-          </EmptyMedia>
-          <EmptyTitle>Couldn’t open {documentTitle(path)}</EmptyTitle>
-          <EmptyDescription>
-            {load.kind === "error" ? load.message : "No vault is open."}
-          </EmptyDescription>
-        </EmptyHeader>
-        <EmptyContent>
-          <Button variant="outline" onClick={() => setAttempt((n) => n + 1)}>
-            Retry
-          </Button>
-        </EmptyContent>
-      </Empty>
+      <ErrorState
+        title={`Couldn’t open ${documentTitle(path)}`}
+        message={load.kind === "error" ? load.message : "No vault is open."}
+        onRetry={() => setAttempt((n) => n + 1)}
+      />
     )
 
   return (

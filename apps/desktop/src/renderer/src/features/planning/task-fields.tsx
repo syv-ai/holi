@@ -58,7 +58,8 @@ import { PRIORITIES, shortDate } from "@/lib/planning"
 import { memberLoginsAtom } from "@/state/members"
 import { taskTagsAtom, tasksAtom } from "@/state/tasks"
 import { snapshotAtom } from "@/state/vaults"
-import { PeopleStack, StatusIcon } from "./task-bits"
+import { PeopleStack } from "@/composites/person-avatar"
+import { StatusIcon } from "./task-bits"
 
 /** What the row edits. `folder` is vault-relative, `""` the vault root. */
 export interface TaskFieldValues {

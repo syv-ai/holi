@@ -13,17 +13,16 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useAtomValue } from 'jotai'
 import { ChevronsUpDown, CornerDownRight, Lock } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import {
-  Button,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
-  Icon,
-  Input,
-} from '@/primitives'
+} from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 import { trpc } from '@/lib/trpc'
 import { DEFAULT_VAULT_NAME } from '@/state/onboarding-flow'
 import { OwnerAvatar, type Owner } from './owner-avatar'
@@ -73,8 +72,9 @@ export function NamingAct({ name, owner, slug, error, active, onName, onOwner, o
         <div className="obrit-eyebrow">Name your vault</div>
         <Input
           ref={nameRef}
-          variant="display"
-          className="obrit-vault-input"
+          // The vault name, set as large as the heading it stands in for: no box,
+          // display tracking, tight leading for one short line.
+          className="obrit-vault-input h-auto border-0 bg-transparent p-0 text-center text-7xl leading-[1.1] font-semibold tracking-[-0.03em] shadow-none placeholder:text-muted-foreground/50 focus-visible:ring-0 md:text-7xl dark:bg-transparent"
           // The size follows the length, so a long name shrinks to fit the
           // column instead of scrolling inside the field (index.css cannot
           // count characters; `--name-len` hands it the count).
@@ -103,7 +103,7 @@ export function NamingAct({ name, owner, slug, error, active, onName, onOwner, o
             {slug}
           </span>
           <span className="obrit-path-private">
-            <Icon icon={Lock} size="sm" />
+            <Lock aria-hidden className="size-3.5" />
             Private
           </span>
         </div>
@@ -111,7 +111,7 @@ export function NamingAct({ name, owner, slug, error, active, onName, onOwner, o
 
       <div className="obrit-name-actions">
         <Button variant="ghost" onClick={onJoin}>
-          <Icon icon={CornerDownRight} size="sm" tone="muted" />
+          <CornerDownRight aria-hidden className="size-3.5 text-muted-foreground" />
           Join vaults in your accounts
         </Button>
         {error && <div className="obrit-error">{error}</div>}
@@ -139,7 +139,7 @@ function OwnerSwitcher({
           <span className="sr-only">Owner: </span>
           <OwnerAvatar owner={current ?? { login: owner, kind: 'personal' }} />
           <span className="truncate">{owner || 'owner'}</span>
-          <Icon icon={ChevronsUpDown} size="sm" tone="muted" />
+          <ChevronsUpDown aria-hidden className="size-3.5 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-60">

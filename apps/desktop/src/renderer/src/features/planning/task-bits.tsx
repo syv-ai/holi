@@ -24,15 +24,8 @@ import {
 } from "lucide-react"
 
 import { Badge } from "@/components/reui/badge"
-import {
-  Avatar,
-  AvatarFallback,
-  AvatarGroup,
-  AvatarGroupCount,
-  AvatarImage,
-} from "@/components/ui/avatar"
 import { cn } from "@/lib/cn"
-import { avatarUrl, initials, priorityName, shortDate } from "@/lib/planning"
+import { priorityName, shortDate } from "@/lib/planning"
 
 /** A status's mark, by what it means: its shape says the category even
  *  without its colour. Unsized, so a menu item or badge sizes it; elsewhere
@@ -130,46 +123,6 @@ export function EstimateBadge({ estimate }: { estimate: string }) {
       />
       <span className="tabular-nums">{estimate}</span>
     </Badge>
-  )
-}
-
-export function PersonAvatar({
-  login,
-  size = "sm",
-  className,
-}: {
-  login: string
-  size?: "sm" | "default"
-  className?: string
-}) {
-  return (
-    <Avatar size={size} className={className}>
-      <AvatarImage src={avatarUrl(login)} alt={login} />
-      <AvatarFallback>{initials(login)}</AvatarFallback>
-    </Avatar>
-  )
-}
-
-/** Up to `max` faces, then a count. */
-export function PeopleStack({
-  logins,
-  max = 3,
-}: {
-  logins: readonly string[]
-  max?: number
-}) {
-  if (logins.length === 0) return null
-  const shown = logins.slice(0, max)
-  const rest = logins.length - shown.length
-  return (
-    <AvatarGroup aria-label={logins.join(", ")}>
-      {shown.map((login) => (
-        <PersonAvatar key={login} login={login} />
-      ))}
-      {rest > 0 ? (
-        <AvatarGroupCount className="tabular-nums">+{rest}</AvatarGroupCount>
-      ) : null}
-    </AvatarGroup>
   )
 }
 

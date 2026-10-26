@@ -9,7 +9,7 @@
 import type { ReactNode } from "react"
 
 import { cn } from "@/lib/cn"
-import { IconTile } from "@/composites"
+import { IconTile } from "@/components/reui/icon-tile"
 import {
   Field,
   FieldContent,

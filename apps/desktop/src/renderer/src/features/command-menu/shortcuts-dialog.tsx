@@ -1,7 +1,6 @@
 import { Fragment, useMemo, useRef, useState } from "react"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 
-import { Button } from "@/components/ui/button"
 import {
   Command,
   CommandGroup,
@@ -17,13 +16,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
-} from "@/components/ui/empty"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { hotkeyLabels } from "@/lib/hotkey"
 import {
@@ -38,6 +30,7 @@ import {
   runShortcutAtom,
   shortcutsDialogOpenAtom,
 } from "@/state/shortcuts"
+import { EmptyState } from "@/composites/empty-state"
 
 /** The live table, grouped, filtered by label, group or key name. */
 export function shortcutSections(
@@ -204,26 +197,18 @@ export function ShortcutsDialog() {
             ))}
           </CommandList>
           {sections.length === 0 ? (
-            <Empty className="border-0 py-10">
-              <EmptyHeader>
-                <EmptyTitle>No shortcuts found</EmptyTitle>
-                <EmptyDescription>
-                  Try an action, a section or a key name.
-                </EmptyDescription>
-              </EmptyHeader>
-              <EmptyContent>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setQuery("")
-                    searchRef.current?.focus()
-                  }}
-                >
-                  Clear search
-                </Button>
-              </EmptyContent>
-            </Empty>
+            <EmptyState
+              title="No shortcuts found"
+              description="Try an action, a section or a key name."
+              action={{
+                label: "Clear search",
+                onClick: () => {
+                  setQuery("")
+                  searchRef.current?.focus()
+                },
+              }}
+              className="h-auto border-0 py-10"
+            />
           ) : null}
         </Command>
       </DialogContent>

@@ -19,23 +19,25 @@ import { useSetAtom } from 'jotai'
 import { Check, Copy } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
-import { BrandMark } from '@/composites'
+import { BrandMark } from '@/composites/brand-mark'
 import { ScreenArcade } from '@/composites/arcade/screen-arcade'
+import { Button } from '@/components/ui/button'
 import {
-  Button,
-  Icon,
-  IconButton,
   InputOTP,
   InputOTPGroup,
   InputOTPSeparator,
   InputOTPSlot,
-  instant,
-  RevealButton,
-  settle,
-} from '@/primitives'
+} from '@/components/ui/input-otp'
+import { IconButton } from '@/composites/icon-button'
+import { RevealButton } from './reveal-button'
 import { cn } from '@/lib/cn'
 import { trpc } from '@/lib/trpc'
 import { sessionAtom } from '@/state/session'
+
+/** A layout change settling: restrained, a hint of bounce and never a wobble. */
+const settle = { type: 'spring', duration: 0.4, bounce: 0.15 } as const
+/** What reduced motion swaps in: the change, without the travel. */
+const instant = { duration: 0 } as const
 
 type Phase =
   | { kind: 'idle' }
@@ -301,13 +303,9 @@ function Waiting({
             </div>
           ))}
         </InputOTP>
-        <IconButton
-          icon={copied ? Check : Copy}
-          label="Copy code"
-          tooltip={copied ? 'Copied' : 'Copy code'}
-          size="md"
-          onClick={onCopy}
-        />
+        <IconButton label="Copy code" tooltip={copied ? 'Copied' : 'Copy code'} onClick={onCopy}>
+          {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+        </IconButton>
       </div>
       <Button
         variant="link"

@@ -25,9 +25,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { useAtomValue } from 'jotai'
 import type { Repo } from '../../../../main/github/api'
 import { ArrowLeft, ChevronDown, Search, X } from 'lucide-react'
+import { Badge } from '@/components/reui/badge'
+import { Frame, FramePanel } from '@/components/reui/frame'
+import { Button } from '@/components/ui/button'
 import {
-  Badge,
-  Button,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuLabel,
@@ -35,16 +36,15 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  Frame,
-  FramePanel,
-  Icon,
-  IconButton,
+} from '@/components/ui/dropdown-menu'
+import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
-  Skeleton,
-} from '@/primitives'
+} from '@/components/ui/input-group'
+import { Skeleton } from '@/components/ui/skeleton'
+import { IconButton } from '@/composites/icon-button'
 import { relativeTime } from '@/lib/relative-time'
 import { trpc } from '@/lib/trpc'
 import { sessionAtom } from '@/state/session'
@@ -127,7 +127,7 @@ export function JoinPicker({ submitting, error, onPick, onBack }: Props) {
         <FramePanel className="flex flex-col gap-2">
           <InputGroup>
             <InputGroupAddon align="inline-start">
-              <Icon icon={Search} size="sm" tone="muted" />
+              <Search aria-hidden className="size-3.5 text-muted-foreground" />
             </InputGroupAddon>
             <InputGroupInput
               autoFocus
@@ -140,7 +140,9 @@ export function JoinPicker({ submitting, error, onPick, onBack }: Props) {
             />
             <InputGroupAddon align="inline-end" className="gap-1">
               {search.length > 0 && (
-                <IconButton icon={X} label="Clear search" onClick={() => setSearch('')} />
+                <IconButton label="Clear search" onClick={() => setSearch('')}>
+                  <X className="size-4" />
+                </IconButton>
               )}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -153,7 +155,7 @@ export function JoinPicker({ submitting, error, onPick, onBack }: Props) {
                         <span className="max-w-32 truncate">{account}</span>
                       </>
                     )}
-                    <Icon icon={ChevronDown} size="sm" tone="muted" />
+                    <ChevronDown aria-hidden className="size-3.5 text-muted-foreground" />
                   </InputGroupButton>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
@@ -242,7 +244,7 @@ export function JoinPicker({ submitting, error, onPick, onBack }: Props) {
         </FramePanel>
       </Frame>
       <Button variant="ghost" onClick={onBack}>
-        <Icon icon={ArrowLeft} size="sm" />
+        <ArrowLeft aria-hidden className="size-3.5" />
         Back
       </Button>
       {error && (

@@ -30,7 +30,7 @@ import {
   FilesSection,
 } from "./documents-section"
 import { AccountMenu } from "./account-menu"
-import { ReuiMark } from "../shell/reui-mark"
+import { BrandMark } from "@/composites/brand-mark"
 import { VaultSwitcher } from "./vault-switcher"
 import { SidebarAppItem, useSidebarApps } from "./sidebar-apps"
 import {
@@ -167,7 +167,7 @@ export function AppSidebar({
       {isMobile ? (
         <SidebarHeader className="gap-2">
           <div className="flex items-center gap-2 px-1 pt-1">
-            <ReuiMark />
+            <BrandMark variant="monogram" className="h-5" />
             <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
               Holi
             </span>

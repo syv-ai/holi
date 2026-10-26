@@ -29,7 +29,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/reui/badge"
-import { pluginMark } from "@/composites"
+import { pluginMark } from "@/composites/marks"
 import { Switch } from "@/components/ui/switch"
 import { trpc } from "@/lib/trpc"
 import type { SettingsSection } from "@/plugin-api/types"

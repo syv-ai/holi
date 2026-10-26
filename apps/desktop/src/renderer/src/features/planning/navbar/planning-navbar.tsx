@@ -4,7 +4,7 @@ import type { ReactNode } from "react"
 import { Tabs } from "@/components/ui/tabs"
 
 import type { TabItem } from "./data"
-import { NavbarCollaborators } from "./navbar-collaborators"
+import { PeopleStack } from "@/composites/person-avatar"
 import { NavbarProject } from "./navbar-project"
 import { NavbarTabs } from "./navbar-tabs"
 
@@ -45,7 +45,7 @@ export function Navbar({
         <div className="flex min-h-8 items-center justify-between gap-2">
           <NavbarProject title={title} status={status} />
           <div className="flex shrink-0 items-center gap-2">
-            <NavbarCollaborators people={people} />
+            <PeopleStack logins={people} max={4} />
             {actions}
           </div>
         </div>

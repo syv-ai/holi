@@ -11,6 +11,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
  */
 export function IconButton({
   label,
+  tooltip,
   tooltipSide,
   children,
   variant = 'ghost',
@@ -19,6 +20,8 @@ export function IconButton({
 }: ComponentProps<typeof Button> & {
   /** Accessible name and tooltip text. */
   label: string
+  /** Tooltip content when it says more than the label (a label and its shortcut). */
+  tooltip?: ReactNode
   tooltipSide?: ComponentProps<typeof TooltipContent>['side']
   /** The lucide glyph. */
   children: ReactNode
@@ -30,7 +33,7 @@ export function IconButton({
           {children}
         </Button>
       </TooltipTrigger>
-      <TooltipContent side={tooltipSide}>{label}</TooltipContent>
+      <TooltipContent side={tooltipSide}>{tooltip ?? label}</TooltipContent>
     </Tooltip>
   )
 }

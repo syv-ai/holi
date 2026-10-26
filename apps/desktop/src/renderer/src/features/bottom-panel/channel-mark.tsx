@@ -1,7 +1,7 @@
 import { SiClaude, SiGit, SiGithub } from "@icons-pack/react-simple-icons"
 import { PuzzleIcon } from "lucide-react"
 
-import { BRAND_MONOGRAM } from "@/composites"
+import { BRAND_MONOGRAM } from "@/composites/brand-mark"
 import { cn } from "@/lib/cn"
 import { channelLabel, type ActivityChannel } from "@/state/activity"
 

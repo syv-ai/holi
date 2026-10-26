@@ -20,8 +20,9 @@ import {
 } from '@holi/shared'
 import { useAtomValue } from 'jotai'
 import { installedPluginsAtom } from '@/state/plugins'
-import { OptionCard, pluginMark } from '@/composites'
-import { Badge } from '@/primitives'
+import { OptionCard } from '@/composites/option-card'
+import { pluginMark } from '@/composites/marks'
+import { Badge } from '@/components/reui/badge'
 
 interface Props {
   plugins: PluginSettings

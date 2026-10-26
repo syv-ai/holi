@@ -12,7 +12,7 @@
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
 import { AppShell } from '@/features/shell/app-shell'
-import { Toaster } from '@/primitives'
+import { Toaster } from '@/components/ui/sonner'
 import { OnboardingRitual } from '@/features/onboarding/onboarding-ritual'
 import { leaveReasonsAtom } from '@/state/plugins'
 import { activeModeAtom } from '../../state/color-scheme'

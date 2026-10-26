@@ -9,20 +9,19 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { claudeFirstRunAtom } from '@/state/claude-first-run'
 import { ArrowLeft, ArrowRight, X } from 'lucide-react'
 import { VAULT_SETTING_DEFAULTS, resolvePlugins, type PluginSettings } from '@holi/shared'
-import { BrandMark } from '@/composites'
+import { BrandMark } from '@/composites/brand-mark'
 import { ScreenArcade } from '@/composites/arcade/screen-arcade'
+import { Button } from '@/components/ui/button'
+import { Kbd } from '@/components/ui/kbd'
+import { IconButton } from '@/composites/icon-button'
 import {
-  Button,
-  Icon,
-  IconButton,
-  Kbd,
   Stepper,
   StepperIndicator,
   StepperItem,
   StepperNav,
   StepperSeparator,
   StepperTitle,
-} from '@/primitives'
+} from '@/components/reui/stepper'
 import { cn } from '@/lib/cn'
 import {
   actsFor,
@@ -257,14 +256,9 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
           <BrandMark />
           <div className="obrit-head-right">
             {dismissible && (
-              <IconButton
-                icon={X}
-                label="Dismiss"
-                tooltip="Dismiss (Esc)"
-                size="md"
-                shape="round"
-                onClick={onDismiss}
-              />
+              <IconButton label="Dismiss" tooltip="Dismiss (Esc)" onClick={onDismiss}>
+                <X className="size-4" />
+              </IconButton>
             )}
           </div>
         </header>
@@ -355,7 +349,7 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
           <div className="obrit-foot-side">
             {s.view === 'form' && s.act !== 'threshold' && (!atFloor || dismissible) && (
               <Button variant="ghost" onClick={back}>
-                <Icon icon={ArrowLeft} size="sm" />
+                <ArrowLeft aria-hidden className="size-3.5" />
                 {atFloor ? 'Dismiss' : 'Back'}
               </Button>
             )}
@@ -374,7 +368,7 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
                 disabled={footPrimary.disabled}
               >
                 {footPrimary.label}
-                <Icon icon={ArrowRight} size="sm" />
+                <ArrowRight aria-hidden className="size-3.5" />
               </Button>
             )}
           </div>

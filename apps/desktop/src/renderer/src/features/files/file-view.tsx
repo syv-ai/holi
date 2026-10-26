@@ -21,16 +21,7 @@ import { EditorView, highlightActiveLineGutter, lineNumbers } from "@codemirror/
 import { useAtomValue, useSetAtom } from "jotai"
 import { FileTextIcon, FileWarningIcon } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
 import { ViewHeader, ViewHeaderTitle } from "@/composites/view-header"
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
 import { plainTextExtensions } from "@/editor/extensions"
 import { syntaxValid } from "@/editor/languages"
@@ -47,6 +38,7 @@ import type { FindCount, FindRequest } from "../../composites/find-bar"
 import { codeFind, codeFindCount } from "./code-find"
 import { CodeFindBar } from "./code-find-bar"
 import { codeLook } from "./code-look"
+import { EmptyState, ErrorState } from "@/composites/empty-state"
 
 function nameOf(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1)
@@ -136,20 +128,7 @@ function FileError({
   onRetry: () => void
 }) {
   return (
-    <Empty>
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <FileWarningIcon />
-        </EmptyMedia>
-        <EmptyTitle>{title}</EmptyTitle>
-        <EmptyDescription>{message}</EmptyDescription>
-      </EmptyHeader>
-      <EmptyContent>
-        <Button variant="outline" size="sm" onClick={onRetry}>
-          Retry
-        </Button>
-      </EmptyContent>
-    </Empty>
+    <ErrorState title={title} message={message} onRetry={onRetry} />
   )
 }
 
@@ -460,19 +439,15 @@ function UnviewableFile({ path }: { path: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <FileHeader path={path} />
-      <Empty>
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <FileTextIcon />
-          </EmptyMedia>
-          <EmptyTitle>{nameOf(path)}</EmptyTitle>
-          <EmptyDescription>
-            {kind === "pdf"
-              ? "Turn on the PDF plugin in Settings to read PDFs here."
-              : "Holi can't show this kind of document yet. It stays in the vault and syncs."}
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
+      <EmptyState
+        icon={FileTextIcon}
+        title={nameOf(path)}
+        description={
+          kind === "pdf"
+            ? "Turn on the PDF plugin in Settings to read PDFs here."
+            : "Holi can't show this kind of document yet. It stays in the vault and syncs."
+        }
+      />
     </div>
   )
 }

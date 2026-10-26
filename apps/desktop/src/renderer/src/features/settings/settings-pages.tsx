@@ -7,7 +7,7 @@
 import { atom } from "jotai"
 import type { ComponentType } from "react"
 
-import type { IconGlyph } from "@/primitives"
+import type { IconGlyph } from "@/lib/icon-glyph"
 import { runningPluginsAtom } from "@/state/plugins"
 import {
   CableIcon,

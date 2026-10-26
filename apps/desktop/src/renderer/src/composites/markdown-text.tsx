@@ -11,7 +11,8 @@
  */
 import { Lexer, type Token, type Tokens } from 'marked'
 import { useMemo, type ReactNode } from 'react'
-import { Button, Tooltip } from '@/primitives'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 /** A link target the browser may be handed: http(s) and nothing else. */
 export function openableUrl(href: string): string | null {
@@ -62,7 +63,8 @@ function InlineToken({ token }: { token: Token }): ReactNode {
       const url = openableUrl(link.href)
       if (url === null) return <Inline tokens={link.tokens} />
       return (
-        <Tooltip content={url}>
+        <Tooltip>
+          <TooltipTrigger asChild>
           <Button
             variant="link"
             onClick={() => void window.holi.openExternal(url)}
@@ -70,6 +72,8 @@ function InlineToken({ token }: { token: Token }): ReactNode {
           >
             <Inline tokens={link.tokens} />
           </Button>
+        </TooltipTrigger>
+        <TooltipContent>{url}</TooltipContent>
         </Tooltip>
       )
     }

@@ -49,10 +49,9 @@ import { OverviewStats } from "./overview-stats"
 import { ActivityTimeline } from "./activity-timeline"
 import type { ActivityItem } from "./activity-data"
 import { RegionEmpty, RegionError } from "./states"
+import { PeopleStack, PersonAvatar } from "@/composites/person-avatar"
 import {
   DateBadge,
-  PeopleStack,
-  PersonAvatar,
   PriorityBadge,
   StatusBadge,
 } from "./task-bits"
@@ -228,7 +227,7 @@ export function Overview({
             <LinesSkeleton />
           ) : soon.length === 0 ? (
             <RegionEmpty
-              icon={<CalendarCheckIcon />}
+              icon={CalendarCheckIcon}
               title="Nothing scheduled"
               description="Open tasks with a due date show up here, soonest first."
               action={

@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
-import { Checkbox, Label } from '@/primitives'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/cn'
-import { IconTile } from './icon-tile'
+import { IconTile } from '@/components/reui/icon-tile'
 
 /**
  * One option among several, as a card you tick (after ReUI's `settings-1`):

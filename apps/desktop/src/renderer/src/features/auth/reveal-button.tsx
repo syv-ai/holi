@@ -45,8 +45,10 @@ import {
 } from 'motion/react'
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/cn'
-import { Icon, type IconGlyph } from './Icon'
-import { reveal } from './springs'
+import type { IconGlyph } from '@/lib/icon-glyph'
+
+/** A firm spring with the faintest settle, so the pill arrives rather than stops. */
+const reveal = { stiffness: 420, damping: 30 } as const
 
 /** The closed object, a circle, so the width IS the height. */
 const SHUT = 40
@@ -68,7 +70,7 @@ export type RevealButtonProps = Omit<HTMLMotionProps<'button'>, 'children'> & {
 }
 
 export function RevealButton({
-  icon,
+  icon: Glyph,
   label,
   open: held = false,
   className,
@@ -140,7 +142,7 @@ export function RevealButton({
         className="absolute top-1/2 flex -translate-y-1/2"
         style={{ insetInlineStart: INSET }}
       >
-        <Icon icon={icon} />
+        <Glyph aria-hidden className="size-4 shrink-0" />
       </span>
       <motion.span
         ref={text}

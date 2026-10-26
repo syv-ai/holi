@@ -29,16 +29,9 @@ import {
 } from "@tanstack/react-table"
 import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/cn"
+import { EmptyState, ErrorState } from "@/composites/empty-state"
 
 /**
  * The bottom panel's log grid, shared by the Output and the Logs tab
@@ -108,39 +101,20 @@ export function LogLoadError({
   onRetry: () => void
 }) {
   return (
-    <Empty role="alert" className="min-h-0 flex-1 gap-3 p-4">
-      <EmptyHeader>
-        <EmptyTitle className="text-sm">{title}</EmptyTitle>
-        <EmptyDescription className="text-xs">{description}</EmptyDescription>
-      </EmptyHeader>
-      <EmptyContent>
-        <Button type="button" variant="outline" size="sm" onClick={onRetry}>
-          Retry
-        </Button>
-      </EmptyContent>
-    </Empty>
+    <ErrorState title={title} message={description} onRetry={onRetry} />
   )
 }
 
 /** A search or filters that leave nothing. */
 export function NoMatchingLines({ onClear }: { onClear: () => void }) {
   return (
-    <Empty className="py-6">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <SearchXIcon aria-hidden />
-        </EmptyMedia>
-        <EmptyTitle className="text-sm">No matching lines</EmptyTitle>
-        <EmptyDescription className="text-xs">
-          Nothing in the log matches this search and these filters.
-        </EmptyDescription>
-      </EmptyHeader>
-      <EmptyContent>
-        <Button type="button" variant="outline" size="sm" onClick={onClear}>
-          Clear filters
-        </Button>
-      </EmptyContent>
-    </Empty>
+    <EmptyState
+      icon={SearchXIcon}
+      title="No matching lines"
+      description="Nothing in the log matches this search and these filters."
+      action={{ label: "Clear filters", onClick: onClear }}
+      className="h-auto py-6"
+    />
   )
 }
 

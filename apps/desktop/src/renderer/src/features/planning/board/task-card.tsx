@@ -9,13 +9,12 @@ import type { ComponentProps } from "react"
 import type { Priority, Task } from "@holi/shared"
 import { ClockIcon } from "lucide-react"
 
-import { Badge } from "@/components/reui/badge"
 import { KanbanItem, KanbanItemHandle } from "@/components/reui/kanban"
 import { cn } from "@/lib/cn"
-import { PrivateMark } from "../task-bits"
-import { avatarUrl, daysUntil, initials, shortDate } from "@/lib/planning"
+import { PersonAvatar } from "@/composites/person-avatar"
+import { PriorityBadge, PrivateMark } from "../task-bits"
+import { daysUntil, shortDate } from "@/lib/planning"
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
   Item,
   ItemActions,
@@ -27,20 +26,6 @@ import {
 } from "@/components/ui/item"
 
 type DueState = "normal" | "watch" | "risk" | "cleared"
-
-const PRIORITY_LABEL: Record<Priority, string> = {
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  urgent: "Urgent",
-}
-
-const PRIORITY_DOT_CLASSNAME: Record<Priority, string> = {
-  low: "bg-muted-foreground",
-  medium: "bg-sky-500",
-  high: "bg-amber-500",
-  urgent: "bg-red-500",
-}
 
 const DUE_STATE_CLASSNAME: Record<DueState, string> = {
   normal:
@@ -88,21 +73,6 @@ function dueState(task: Task, context: CardContext, isDone: boolean) {
   return days !== null && days <= 2 ? "watch" : "normal"
 }
 
-function PriorityBadge({ priority }: { priority: Priority }) {
-  return (
-    <Badge variant="outline" size="sm">
-      <span
-        className={cn(
-          "size-1.5 shrink-0 rounded-full",
-          PRIORITY_DOT_CLASSNAME[priority]
-        )}
-        aria-hidden="true"
-      />
-      {PRIORITY_LABEL[priority]}
-    </Badge>
-  )
-}
-
 function DueChip({
   due,
   state,
@@ -145,12 +115,7 @@ function AssigneeLine({ logins }: { logins: readonly string[] }) {
       className="flex min-w-0 items-center gap-1.5"
       aria-label={logins.join(", ")}
     >
-      <Avatar className="size-5">
-        <AvatarImage src={avatarUrl(login)} alt="" />
-        <AvatarFallback className="text-[0.5625rem] font-semibold">
-          {initials(login)}
-        </AvatarFallback>
-      </Avatar>
+      <PersonAvatar login={login} alt="" className="size-5" />
       <div className="min-w-0 truncate text-xs font-medium" aria-hidden="true">
         {login}
         {rest > 0 ? (

@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react'
-import { IconButton, Kbd, type IconGlyph } from '@/primitives'
+import { Kbd } from '@/components/ui/kbd'
+import { IconButton } from './icon-button'
+import type { IconGlyph } from '@/lib/icon-glyph'
 import { cn } from '@/lib/cn'
 import { matchHotkey } from '@/lib/hotkey'
 
@@ -35,6 +37,7 @@ export function PanelHeader({
   children,
   actions,
   close,
+  extra,
   className,
 }: {
   children: React.ReactNode
@@ -42,6 +45,8 @@ export function PanelHeader({
   actions?: HeaderAction[]
   /** The trailing control (rendered last); typically a close/hide. */
   close?: HeaderAction
+  /** Free-form controls ahead of the data ones (a panel's per-tab tools). */
+  extra?: React.ReactNode
   className?: string
 }): React.JSX.Element {
   const controls = [...(actions ?? []), ...(close ? [close] : [])].filter((a) => !a.hidden)
@@ -76,10 +81,10 @@ export function PanelHeader({
       {children}
       {controls.length > 0 && (
         <div className="ml-auto flex items-center gap-1">
+          {extra}
           {controls.map((a, i) => (
             <IconButton
               key={i}
-              icon={a.icon}
               label={a.label}
               tooltip={
                 a.hotkey ? (
@@ -90,7 +95,9 @@ export function PanelHeader({
                 ) : undefined
               }
               onClick={a.onSelect}
-            />
+            >
+              <a.icon className="size-4" />
+            </IconButton>
           ))}
         </div>
       )}

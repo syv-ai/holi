@@ -17,11 +17,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ArrowRightIcon, ChevronRightIcon } from "lucide-react"
+import { PeopleStack } from "@/composites/person-avatar"
 import { InlineAdd } from "../inline-add"
 import {
   DateBadge,
   EstimateBadge,
-  PeopleStack,
   PriorityBadge,
   PrivateMark,
   StatusBadge,

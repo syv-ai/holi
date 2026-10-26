@@ -4,13 +4,6 @@ import { TerminalSquareIcon } from "lucide-react"
 
 import { createFilterQuery } from "@/components/reui/filters/filters-query"
 import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
-import {
   appLogEntriesAtom,
   appLogLoadAtom,
   appLogQueryAtom,
@@ -26,6 +19,7 @@ import {
   NoMatchingLines,
 } from "./log-table"
 import { LOGS_COLUMNS, logsDetail, logsFilterFields } from "./logs-columns"
+import { EmptyState } from "@/composites/empty-state"
 
 /**
  * The bottom panel's Logs (docs/features/status-bar.md): everything Holi
@@ -58,18 +52,11 @@ export function PanelLogs({ onRetry }: { onRetry: () => void }) {
 
   if (all.length === 0) {
     return (
-      <Empty className="min-h-0 flex-1 gap-3 p-4">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <TerminalSquareIcon aria-hidden />
-          </EmptyMedia>
-          <EmptyTitle className="text-sm">Nothing printed yet</EmptyTitle>
-          <EmptyDescription className="text-xs">
-            Every line main and the window print to their consoles streams here
-            as it is written.
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
+      <EmptyState
+        icon={TerminalSquareIcon}
+        title="Nothing printed yet"
+        description="Every line main and the window print to their consoles streams here as it is written."
+      />
     )
   }
 

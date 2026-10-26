@@ -6,7 +6,8 @@
 import type { Atom, createStore, WritableAtom } from 'jotai'
 import type { ComponentType } from 'react'
 import type { PluginInfo, VaultSnapshot } from '@holi/shared'
-import type { IconGlyph } from '@/primitives'
+export type { IconGlyph } from '@/lib/icon-glyph'
+import type { IconGlyph } from '@/lib/icon-glyph'
 import type { Command } from '@/state/commands'
 import type { PluginDialog } from '@/state/dialogs'
 
@@ -601,7 +602,7 @@ export interface RendererPlugin {
   /**
    * What it offers to do with the open document, as rows of the Agent
    * button's menu in a pane's header (`DropdownMenuItem`s and the like from
-   * `@/primitives`). Core draws the menu and knows nothing of the rows.
+   * `@/components/ui/dropdown-menu`). Core draws the menu and knows nothing of the rows.
    */
   documentActions?: ComponentType<{ path: string }>
   /** Shown in the sidebar, under the file tree. */

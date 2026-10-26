@@ -30,7 +30,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Switch } from "@/components/ui/switch"
-import { MarkdownText, openableUrl } from "@/composites"
+import { MarkdownText, openableUrl } from "@/composites/markdown-text"
 import { trpc } from "@/lib/trpc"
 import { colorSchemeAtom, writeColorSchemeAtom } from "@/state/color-scheme"
 import { sessionAtom, signOutAtom } from "@/state/session"

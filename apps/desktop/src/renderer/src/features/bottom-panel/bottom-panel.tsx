@@ -18,14 +18,6 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { Button } from "@/components/ui/button"
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
-} from "@/components/ui/empty"
 import {
   Select,
   SelectContent,
@@ -34,11 +26,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
+import { IconButton } from "@/composites/icon-button"
+import { PanelHeader } from "@/composites/panel-header"
 import { cn } from "@/lib/cn"
 import {
   activityEntriesAtom,
@@ -82,6 +71,7 @@ import { PanelLogs, LogsSearch } from "./panel-logs"
 import { PanelOutput } from "./panel-output"
 import { OutputSearch } from "./output-search"
 import { PanelTerminal } from "./panel-terminal"
+import { EmptyState, ErrorState } from "@/composites/empty-state"
 
 /**
  * The bottom panel (docs/features/status-bar.md), VS Code's Panel: under every
@@ -219,7 +209,7 @@ export function BottomPanel({ onRetryOutput }: { onRetryOutput: () => void }) {
           className="bg-border hover:bg-ring focus-visible:bg-ring data-resizing:bg-ring relative z-10 h-px shrink-0 cursor-row-resize outline-hidden transition-colors after:absolute after:inset-x-0 after:-inset-y-1 after:content-['']"
         />
       )}
-      <PanelHeader
+      <BottomPanelHeader
         tab={panel.tab}
         onTab={(tab) => setPanel((p) => ({ ...p, tab }))}
         maximized={panel.maximized}
@@ -254,39 +244,7 @@ export function BottomPanel({ onRetryOutput }: { onRetryOutput: () => void }) {
   )
 }
 
-/** A compact icon button with its tooltip. */
-function HeaderButton({
-  label,
-  onClick,
-  disabled,
-  children,
-}: {
-  label: string
-  onClick: () => void
-  disabled?: boolean
-  children: React.ReactNode
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={label}
-          disabled={disabled}
-          onClick={onClick}
-          className="text-muted-foreground"
-        >
-          {children}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent side="top">{label}</TooltipContent>
-    </Tooltip>
-  )
-}
-
-function PanelHeader({
+function BottomPanelHeader({
   tab,
   onTab,
   maximized,
@@ -300,7 +258,29 @@ function PanelHeader({
   onClose: () => void
 }) {
   return (
-    <div className="flex h-9 shrink-0 items-center gap-2 border-b ps-2 pe-1.5">
+    <PanelHeader
+      className="h-9 ps-2 pe-1.5"
+      extra={
+        <>
+          {tab === "terminal" ? (
+            <TerminalControls />
+          ) : tab === "output" ? (
+            <OutputControls />
+          ) : (
+            <LogsControls />
+          )}
+          <div className="bg-border mx-1 h-4 w-px" aria-hidden />
+        </>
+      }
+      actions={[
+        {
+          icon: maximized ? Minimize2Icon : Maximize2Icon,
+          label: maximized ? "Restore panel size" : "Maximize panel",
+          onSelect: onMaximize,
+        },
+      ]}
+      close={{ icon: XIcon, label: "Close panel", onSelect: onClose }}
+    >
       <Tabs value={tab} onValueChange={(v) => onTab(v as PanelTab)}>
         <TabsList variant="line">
           <TabsTrigger value="terminal" className="text-xs">
@@ -314,31 +294,7 @@ function PanelHeader({
           </TabsTrigger>
         </TabsList>
       </Tabs>
-      <div className="flex-1" />
-      <div className="flex items-center gap-1">
-        {tab === "terminal" ? (
-          <TerminalControls />
-        ) : tab === "output" ? (
-          <OutputControls />
-        ) : (
-          <LogsControls />
-        )}
-        <div className="bg-border mx-1 h-4 w-px" aria-hidden />
-        <HeaderButton
-          label={maximized ? "Restore panel size" : "Maximize panel"}
-          onClick={onMaximize}
-        >
-          {maximized ? (
-            <Minimize2Icon aria-hidden className="size-3.5" />
-          ) : (
-            <Maximize2Icon aria-hidden className="size-3.5" />
-          )}
-        </HeaderButton>
-        <HeaderButton label="Close panel" onClick={onClose}>
-          <XIcon aria-hidden className="size-3.5" />
-        </HeaderButton>
-      </div>
-    </div>
+    </PanelHeader>
   )
 }
 
@@ -364,14 +320,14 @@ function TerminalControls() {
           </SelectContent>
         </Select>
       ) : null}
-      <HeaderButton
+      <IconButton size="icon-xs"
         label="New terminal"
         disabled={remote === null}
         onClick={() => void create()}
       >
         <PlusIcon aria-hidden className="size-3.5" />
-      </HeaderButton>
-      <HeaderButton
+      </IconButton>
+      <IconButton size="icon-xs"
         label="Kill terminal"
         disabled={active === null}
         onClick={() => {
@@ -379,7 +335,7 @@ function TerminalControls() {
         }}
       >
         <Trash2Icon aria-hidden className="size-3.5" />
-      </HeaderButton>
+      </IconButton>
     </>
   )
 }
@@ -393,7 +349,7 @@ function OutputControls() {
   return (
     <>
       <OutputSearch />
-      <HeaderButton
+      <IconButton size="icon-xs"
         label="Copy output"
         disabled={shown.length === 0}
         onClick={() => {
@@ -404,14 +360,14 @@ function OutputControls() {
         }}
       >
         <CopyIcon aria-hidden className="size-3.5" />
-      </HeaderButton>
-      <HeaderButton
+      </IconButton>
+      <IconButton size="icon-xs"
         label="Clear output"
         disabled={entries.length === 0}
         onClick={() => void clear()}
       >
         <EraserIcon aria-hidden className="size-3.5" />
-      </HeaderButton>
+      </IconButton>
     </>
   )
 }
@@ -425,7 +381,7 @@ function LogsControls() {
   return (
     <>
       <LogsSearch />
-      <HeaderButton
+      <IconButton size="icon-xs"
         label="Copy logs"
         disabled={shown.length === 0}
         onClick={() => {
@@ -436,14 +392,14 @@ function LogsControls() {
         }}
       >
         <CopyIcon aria-hidden className="size-3.5" />
-      </HeaderButton>
-      <HeaderButton
+      </IconButton>
+      <IconButton size="icon-xs"
         label="Clear logs"
         disabled={entries.length === 0}
         onClick={() => void clear()}
       >
         <EraserIcon aria-hidden className="size-3.5" />
-      </HeaderButton>
+      </IconButton>
     </>
   )
 }
@@ -482,33 +438,16 @@ function TerminalTab({ visible }: { visible: boolean }) {
         />
       ))}
       {terminals.length > 0 ? null : remote === null ? (
-        <Empty className="min-h-0 flex-1 gap-3 p-4">
-          <EmptyHeader>
-            <EmptyTitle className="text-sm">No vault is open</EmptyTitle>
-            <EmptyDescription className="text-xs">
-              A terminal starts in the open vault&apos;s folder.
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
+        <EmptyState
+          title="No vault is open"
+          description="A terminal starts in the open vault's folder."
+        />
       ) : error !== null ? (
-        <Empty role="alert" className="min-h-0 flex-1 gap-3 p-4">
-          <EmptyHeader>
-            <EmptyTitle className="text-sm">
-              The terminal did not start
-            </EmptyTitle>
-            <EmptyDescription className="text-xs">{error}</EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void create()}
-            >
-              Retry
-            </Button>
-          </EmptyContent>
-        </Empty>
+        <ErrorState
+          title="The terminal did not start"
+          message={error}
+          onRetry={() => void create()}
+        />
       ) : (
         <div role="status" className="text-muted-foreground px-4 py-3 text-xs">
           Starting a shell…

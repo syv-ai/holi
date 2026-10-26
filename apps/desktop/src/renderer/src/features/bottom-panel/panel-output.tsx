@@ -4,13 +4,6 @@ import { ScrollTextIcon } from "lucide-react"
 
 import { createFilterQuery } from "@/components/reui/filters/filters-query"
 import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
-import {
   activityEntriesAtom,
   activityLoadAtom,
   activityQueryAtom,
@@ -27,6 +20,7 @@ import {
   LogTable,
   NoMatchingLines,
 } from "./log-table"
+import { EmptyState } from "@/composites/empty-state"
 
 /**
  * The bottom panel's Output (docs/features/status-bar.md): what Holi did in
@@ -81,20 +75,11 @@ export function PanelOutput({
 
   if (all.length === 0) {
     return (
-      <Empty className="min-h-0 flex-1 gap-3 p-4">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <ScrollTextIcon aria-hidden />
-          </EmptyMedia>
-          <EmptyTitle className="text-sm">
-            Nothing has happened in the background yet
-          </EmptyTitle>
-          <EmptyDescription className="text-xs">
-            Commits, pulls, pushes and sync changes appear here as Holi makes
-            them. Edit a document and its autosave lands in a few seconds.
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
+      <EmptyState
+        icon={ScrollTextIcon}
+        title="Nothing has happened in the background yet"
+        description="Commits, pulls, pushes and sync changes appear here as Holi makes them. Edit a document and its autosave lands in a few seconds."
+      />
     )
   }
 

@@ -30,22 +30,15 @@ import {
 } from "@/components/reui/alert"
 import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
 import { Item, ItemContent, ItemFooter, ItemHeader } from "@/components/ui/item"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/cn"
 import type { ThreadsLoad } from "@/state/comments"
-import { PersonAvatar } from "../planning/task-bits"
+import { PersonAvatar } from "@/composites/person-avatar"
 import { CommentField } from "./comment-field"
+import { EmptyState } from "@/composites/empty-state"
 
 type Shown = "open" | "resolved"
 
@@ -322,37 +315,29 @@ export function CommentsPanel({
               </AlertAction>
             </Alert>
           ) : list.length === 0 && draft === null ? (
-            <Empty>
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <MessagesSquareIcon />
-                </EmptyMedia>
-                <EmptyTitle>
-                  {shown === "open"
-                    ? "No open comments"
-                    : "Nothing resolved yet"}
-                </EmptyTitle>
-                <EmptyDescription>
-                  Select text in the note to comment on it.
-                </EmptyDescription>
-              </EmptyHeader>
+            <EmptyState
+              icon={MessagesSquareIcon}
+              title={
+                shown === "open" ? "No open comments" : "Nothing resolved yet"
+              }
+              description="Select text in the note to comment on it."
+              className="h-auto"
+            >
               {shown === "open" ? (
-                <EmptyContent>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={onCommentSelection === null}
-                    onClick={() => onCommentSelection?.()}
-                  >
-                    <MessageSquarePlusIcon
-                      data-icon="inline-start"
-                      aria-hidden="true"
-                    />
-                    Comment on selection
-                  </Button>
-                </EmptyContent>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={onCommentSelection === null}
+                  onClick={() => onCommentSelection?.()}
+                >
+                  <MessageSquarePlusIcon
+                    data-icon="inline-start"
+                    aria-hidden="true"
+                  />
+                  Comment on selection
+                </Button>
               ) : null}
-            </Empty>
+            </EmptyState>
           ) : (
             list.map((thread) => (
               <Thread

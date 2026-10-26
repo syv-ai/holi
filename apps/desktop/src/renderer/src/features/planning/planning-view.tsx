@@ -329,7 +329,7 @@ export function PlanningView({
   const noTasksYet = (
     <RegionEmpty
       outlined
-      icon={<ListTodoIcon />}
+      icon={ListTodoIcon}
       title="No tasks yet"
       description="A task is a task.<name>.md file anywhere in the vault. Add the first one here."
       action={
