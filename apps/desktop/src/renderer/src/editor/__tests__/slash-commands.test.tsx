@@ -6,11 +6,32 @@
 import { CompletionContext, type Completion } from '@codemirror/autocomplete'
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { slashCommandsWith, type SlashResult } from '../slash'
 
 let view: EditorView | null = null
-afterEach(() => view?.destroy())
+let rangeRectsDescriptor: PropertyDescriptor | undefined
+
+beforeEach(() => {
+  // jsdom does not implement Range geometry, which CodeMirror's completion
+  // measurement callback asks for after applying an asynchronous result.
+  rangeRectsDescriptor = Object.getOwnPropertyDescriptor(Range.prototype, 'getClientRects')
+  Object.defineProperty(Range.prototype, 'getClientRects', {
+    configurable: true,
+    value: () => [],
+  })
+})
+
+afterEach(() => {
+  view?.destroy()
+  view = null
+  document.body.innerHTML = ''
+  if (rangeRectsDescriptor) {
+    Object.defineProperty(Range.prototype, 'getClientRects', rangeRectsDescriptor)
+  } else {
+    delete (Range.prototype as Partial<Range>).getClientRects
+  }
+})
 
 /** `doc` with the caret at its end and `/up` typed over the selection `from..to`,
  *  then the command picked; `answer` settles what the command answers. */
@@ -20,12 +41,15 @@ async function pick(doc: string, from: number, to: number) {
     () => [{ name: 'up', run: () => new Promise<SlashResult>((r) => (answer = r)) }],
     'a.md',
   )
+  const parent = document.createElement('div')
+  document.body.appendChild(parent)
   view = new EditorView({
     state: EditorState.create({
       doc,
       extensions: [extension],
       selection: { anchor: from, head: to },
     }),
+    parent,
   })
   view.dispatch({
     changes: { from, to, insert: '/up' },

@@ -95,6 +95,8 @@ export interface Capability<P = unknown, R = unknown> {
   cliValue?(result: R): R
   /** The CLI's readable form of a result. Absent: pretty JSON. */
   text?(result: R): string
+  /** Whether the CLI operation completed successfully; false preserves its receipt with failure status. */
+  cliSucceeded?(result: R): boolean
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -123,6 +125,7 @@ export interface CapabilityResult {
 export interface CliCommand {
   name: string
   cli: CliSpec
+  succeeded?(result: unknown): boolean
 }
 
 export interface CapabilityRegistry {
@@ -211,7 +214,9 @@ export function createCapabilityRegistry(): CapabilityRegistry {
 
     commands: () =>
       [...entries]
-        .flatMap(([name, entry]) => (entry.cli === undefined ? [] : [{ name, cli: entry.cli }]))
+        .flatMap(([name, entry]) =>
+          entry.cli === undefined ? [] : [{ name, cli: entry.cli, succeeded: entry.cliSucceeded }],
+        )
         .sort((a, b) => a.name.localeCompare(b.name)),
 
     async run(name, door, ctx, rawParams, admit) {

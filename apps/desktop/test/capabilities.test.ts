@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   mkdir,
   mkdtemp,
@@ -27,6 +29,7 @@ import { googleCapabilities, GOOGLE_NAMESPACES } from '../src/plugins/google/mai
 import { taskCapabilities, TASKS_NAMESPACES } from '../src/plugins/tasks/main/capabilities'
 import { parseTaskFile, taskClaim } from '../src/plugins/tasks/shared/task-file'
 import { MEMBERS_TTL_MS, createMembersCache } from '../src/main/github/members-cache'
+import { withFileLock } from '../src/main/vault/vault-files'
 
 const registry = createCapabilityRegistry()
 /** What `docs.open` asked to show, by vault path. */
@@ -109,6 +112,53 @@ describe('the capability host', () => {
     expect(await host(() => false).names('o/r', 'ui')).toEqual(['core.ping'])
   })
 
+  it('serializes CLI note mutations and their settlement', async () => {
+    let calls = 0
+    let release!: () => void
+    const first = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const caps = createCapabilityRegistry()
+    caps.register(['docs'], {
+      'docs.inspect': cap({
+        doors: ['cli'],
+        cli: { args: [], summary: 'read' },
+        params: () => ({}),
+        run: async () => 'inspected',
+      }),
+      'docs.update': cap({
+        doors: ['cli'],
+        cli: { args: [], summary: 'test' },
+        params: () => ({}),
+        run: async () => {
+          calls++
+          if (calls === 1) await first
+          return calls
+        },
+      }),
+    })
+    const h = createCapabilityHost({
+      registry: caps,
+      rootFor: async () => '/vault',
+      active: () => null,
+      core: noCoreServices,
+      pluginEnabled: async () => true,
+      claims: async () => [],
+    })
+    const call = () => h.dispatch({ door: 'cli', remote: 'o/r', name: 'docs.update', params: {} })
+    const one = call()
+    const two = call()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(calls).toBe(1)
+    // A read-only inspection is not held behind a write's settlement.
+    expect(
+      (await h.dispatch({ door: 'cli', remote: 'o/r', name: 'docs.inspect', params: {} })).value,
+    ).toBe('inspected')
+    release()
+    expect((await one).value).toBe(1)
+    expect((await two).value).toBe(2)
+  })
+
   it('opens the app door once', () => {
     const h = host(() => true)
     h.openAppDoor({ admit: async () => {} })
@@ -177,6 +227,7 @@ function ctx(core: Partial<CoreServices>, bundle: string | null = 'A.app'): Capa
     snapshot: async () => ({
       ...emptyVaultSnapshot(),
       files: written.map((path) => ({ path, updatedAt: '' })),
+      docs: written.filter((path) => path.endsWith('.md')).map((path) => ({ path, updatedAt: '' })),
       dirs: written.filter((p) => p.includes('/')).map((p) => p.slice(0, p.lastIndexOf('/'))),
     }),
     // The tasks plugin runs: a note write to a task file asks its claim.
@@ -320,6 +371,201 @@ describe('vault.history', () => {
         runCapability('vault.history', 'app', ctx({ repo }), { path: '.claude/settings.json' }),
       ),
     ).toMatchObject({ code: 'FORBIDDEN' })
+  })
+})
+
+describe('docs CLI writes', () => {
+  const cliCtx = () => ctx({ syncState: () => ({ kind: 'up-to-date' }) }, null)
+
+  beforeEach(() => {
+    execFileSync('git', ['init', '-q', root])
+  })
+
+  it('creates and updates ordinary notes with exact-byte revisions', async () => {
+    const created = await runCapability('docs.create', 'cli', cliCtx(), {
+      path: 'with space.md',
+      body: '# First\n',
+    })
+    expect(created.writes).toBe(true)
+    expect(created.value).toMatchObject({
+      path: 'with space.md',
+      revision: createHash('sha256').update('# First\n').digest('hex'),
+      commitSha: null,
+      pushed: false,
+      phase: 'commit',
+      reason: 'vault-not-open',
+    })
+    await put('with space.md', '# First\n')
+    const inspected = await runCapability('docs.inspect', 'cli', cliCtx(), {
+      path: 'with space.md',
+    })
+    const revision = (inspected.value as { revision: string }).revision
+    const updated = await runCapability('docs.update', 'cli', cliCtx(), {
+      path: 'with space.md',
+      revision,
+      body: '# Second\n',
+    })
+    expect(updated.writes).toBe(true)
+    expect(await readText(join(root, 'with space.md'), 'utf8')).toBe('# Second\n')
+    await expect(
+      runCapability('docs.delete', 'cli', cliCtx(), {
+        path: 'with space.md',
+        revision,
+      }),
+    ).rejects.toThrow(/Stale revision/)
+  })
+
+  it('inspects, updates, and deletes ordinary notes before the watcher lists them', async () => {
+    await writeFile(join(root, 'unscanned.md'), 'first')
+    const inspected = await runCapability('docs.inspect', 'cli', cliCtx(), {
+      path: 'unscanned.md',
+    })
+    const revision = (inspected.value as { revision: string }).revision
+    await runCapability('docs.update', 'cli', cliCtx(), {
+      path: 'unscanned.md',
+      revision,
+      body: 'second',
+    })
+    expect(await readText(join(root, 'unscanned.md'), 'utf8')).toBe('second')
+    await runCapability('docs.delete', 'cli', cliCtx(), {
+      path: 'unscanned.md',
+      revision: createHash('sha256').update('second').digest('hex'),
+    })
+    await expect(readText(join(root, 'unscanned.md'), 'utf8')).rejects.toThrow()
+  })
+
+  it('rechecks update and delete revisions after a competing editor save', async () => {
+    for (const operation of ['docs.update', 'docs.delete'] as const) {
+      const path = `${operation.split('.')[1]}.md`
+      await writeFile(join(root, path), 'base')
+      let entered!: () => void
+      let release!: () => void
+      const locked = new Promise<void>((resolve) => (entered = resolve))
+      const gate = new Promise<void>((resolve) => (release = resolve))
+      const editorSave = withFileLock(join(root, path), async () => {
+        entered()
+        await gate
+        await writeFile(join(root, path), 'editor save')
+      })
+      await locked
+      const mutation = runCapability('docs.' + operation.split('.')[1], 'cli', cliCtx(), {
+        path,
+        revision: createHash('sha256').update('base').digest('hex'),
+        ...(operation === 'docs.update' ? { body: 'CLI update' } : {}),
+      })
+      release()
+      await editorSave
+      await expect(mutation).rejects.toThrow(/Stale revision/)
+      expect(await readText(join(root, path), 'utf8')).toBe('editor save')
+    }
+  })
+
+  it('refuses ignored and plugin-claimed notes even before the watcher lists them', async () => {
+    await writeFile(join(root, '.gitignore'), 'ignored.md\n')
+    await writeFile(join(root, 'ignored.md'), 'ignored')
+    await writeFile(join(root, 'task.rent.md'), 'claimed')
+    for (const path of ['ignored.md', 'task.rent.md']) {
+      await expect(runCapability('docs.inspect', 'cli', cliCtx(), { path })).rejects.toThrow()
+      await expect(
+        runCapability('docs.update', 'cli', cliCtx(), {
+          path,
+          revision: createHash('sha256')
+            .update(path === 'ignored.md' ? 'ignored' : 'claimed')
+            .digest('hex'),
+          body: 'bad',
+        }),
+      ).rejects.toThrow()
+      await expect(
+        runCapability('docs.delete', 'cli', cliCtx(), {
+          path,
+          revision: createHash('sha256')
+            .update(path === 'ignored.md' ? 'ignored' : 'claimed')
+            .digest('hex'),
+        }),
+      ).rejects.toThrow()
+    }
+  })
+
+  it('creates nested notes, and refuses a symlink target and case aliases', async () => {
+    const nested = await runCapability('docs.create', 'cli', cliCtx(), {
+      path: 'nested/deep/note.md',
+      body: 'nested',
+    })
+    expect(nested.value).toMatchObject({ path: 'nested/deep/note.md' })
+    await writeFile(join(root, 'outside.md'), 'outside')
+    await symlink(join(root, 'outside.md'), join(root, 'linked.md'))
+    written.push('linked.md')
+    await expect(
+      runCapability('docs.update', 'cli', cliCtx(), {
+        path: 'linked.md',
+        revision: createHash('sha256').update('outside').digest('hex'),
+        body: 'bad',
+      }),
+    ).rejects.toThrow()
+    await put('.holi/memory/x.md', 'secret')
+    await expect(
+      runCapability('docs.create', 'cli', cliCtx(), {
+        path: '.HOLI/memory/new.md',
+        body: 'bad',
+      }),
+    ).rejects.toThrow()
+  })
+
+  it('offers retry settlement only to the CLI and requires an explicit absent marker', async () => {
+    await put('retry.md', 'retry body')
+    const revision = createHash('sha256').update('retry body').digest('hex')
+    const result = await runCapability('docs.settle', 'cli', cliCtx(), {
+      path: 'retry.md',
+      revision,
+    })
+    expect(result.value).toMatchObject({ pushed: false, phase: 'commit', reason: 'vault-not-open' })
+    await expect(
+      runCapability('docs.settle', 'app', ctx({}), { path: 'retry.md', revision }),
+    ).rejects.toThrow(/no such method/)
+    await expect(
+      runCapability('docs.settle', 'cli', cliCtx(), { path: 'gone.md' }),
+    ).rejects.toThrow()
+    expect(
+      (await runCapability('docs.settle', 'cli', cliCtx(), { path: 'gone.md', absent: 'true' }))
+        .value,
+    ).toMatchObject({ revision: null, pushed: false })
+    await expect(
+      runCapability('docs.settle', 'cli', ctx({ syncState: () => null }, null), {
+        path: 'gone.md',
+        absent: 'true',
+      }),
+    ).rejects.toThrow(/vault-not-open/)
+  })
+
+  it('keeps writes CLI-only and refuses task and non-Markdown paths', async () => {
+    await expect(
+      runCapability('docs.create', 'app', ctx({}), {
+        path: 'note.md',
+        body: 'x',
+      }),
+    ).rejects.toThrow(/no such method/)
+    for (const path of [
+      'task.rent.md',
+      'note.txt',
+      'A.app/note.md',
+      '.holi/memory/note.md',
+      '.holi/settings/note.md',
+    ]) {
+      await expect(
+        runCapability('docs.create', 'cli', cliCtx(), {
+          path,
+          body: 'x',
+        }),
+      ).rejects.toThrow()
+    }
+    await expect(
+      runCapability(
+        'docs.create',
+        'cli',
+        ctx({ syncState: () => ({ kind: 'up-to-date' }) }, null),
+        { path: 'task.claimed.md', body: 'x' },
+      ),
+    ).rejects.toThrow()
   })
 })
 

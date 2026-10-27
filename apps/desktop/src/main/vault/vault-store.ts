@@ -19,6 +19,7 @@
  */
 import { readFile, stat } from 'node:fs/promises'
 import {
+  appBundleOf,
   isKeepFile,
   isLocalOnlyPath,
   ICONS_FILE,
@@ -38,6 +39,27 @@ export type { VaultSnapshot } from '@holi/shared'
 /** A claim, and the plugin whose `snapshot.claimed` entry it fills. */
 export interface ScanClaim extends SnapshotClaim {
   plugin: string
+}
+
+/** Whether a path belongs to the ordinary-note surface rather than a special,
+ *  personal, bundled, or plugin-owned file. The vault scanner includes hidden
+ *  Markdown such as the memory index; the CLI never permits writes there. */
+export function isMarkdownNotePath(path: string): boolean {
+  return path.endsWith('.md')
+}
+
+export function isOrdinaryNotePath(
+  path: string,
+  claims: readonly Pick<SnapshotClaim, 'match'>[],
+  includeHidden = false,
+): boolean {
+  return (
+    isMarkdownNotePath(path) &&
+    !isLocalOnlyPath(path) &&
+    (includeHidden || !path.split('/').some((part) => part.startsWith('.'))) &&
+    appBundleOf(path) === null &&
+    !claims.some((claim) => claim.match(path))
+  )
 }
 
 /**
@@ -121,16 +143,14 @@ export async function scanVault(
         .then((s) => s.mtime.toISOString())
         .catch(() => new Date(0).toISOString())
 
-    // A claim is asked first, so a local file a plugin claims is still its: a
-    // private task (`task.<name>.local.md`) is a task on this machine's board,
-    // and git keeps it off everyone else's.
+    // Ask claims before treating local-only Markdown as a plain file. A plugin
+    // may own private content (for example, a local task) even though it is not
+    // part of the ordinary note graph.
     const claim = path.endsWith('.md') ? claims.find((c) => c.match(path)) : undefined
 
-    // Non-markdown OR unclaimed local-only: a plain file entry. No read, no
-    // parse: it is not a note, so it stays out of `docs` and the link-aware ops
-    // (backrefs/rename/mentions) never see it. Local-only markdown (USER.local.md,
-    // CLAUDE.local.md) is content the tree shows but the note graph must not
-    // absorb: it is personal config, not a linkable note.
+    // Non-markdown and unclaimed local-only paths are plain files. Hidden
+    // Markdown remains visible to the vault snapshot, but not CLI writes or the
+    // link-aware note graph.
     if (claim === undefined && (!path.endsWith('.md') || isLocalOnlyPath(path))) {
       snapshot.files.push({ path, updatedAt: await mtime() })
       continue
@@ -151,6 +171,10 @@ export async function scanVault(
       continue
     }
 
+    if (!isOrdinaryNotePath(path, claims, true)) {
+      snapshot.files.push({ path, updatedAt: await mtime() })
+      continue
+    }
     snapshot.docs.push({ path, kind: isDaily(text) ? 'daily' : 'note', updatedAt: await mtime() })
   }
 

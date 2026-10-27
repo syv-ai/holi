@@ -437,6 +437,191 @@ describe('ActiveVault — commit', () => {
     expect(committed).toHaveLength(1)
   })
 
+  it('deliverNow joins a commit already in flight before verifying and pushing', async () => {
+    const { active, dir, origin } = await vault({
+      commitQuietMs: 60_000,
+      pushQuietMs: 60_000,
+      healIntervalMs: 60_000,
+      pullIntervalMs: 60_000,
+    })
+    const repo = active.repo
+    const commit = repo.commitAll.bind(repo)
+    let started!: () => void
+    let release!: () => void
+    const entered = new Promise<void>((resolve) => (started = resolve))
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    repo.commitAll = async (...args) => {
+      started()
+      await gate
+      return commit(...args)
+    }
+    await writeFile(join(dir, 'settled.md'), 'current\n')
+    const committing = active.commitNow()
+    await entered
+    let verified = false
+    const delivery = active.deliverNow('settled.md', async () => {
+      verified = true
+      return (await plainGit(dir, ['show', 'HEAD:settled.md'])) === 'current'
+    })
+    await sleep(20)
+    expect(verified).toBe(false)
+    release()
+    await committing
+    expect(await delivery).toBe(true)
+    expect(verified).toBe(true)
+    expect(await plainGit(origin, ['show', 'main:settled.md'])).toBe('current')
+  })
+
+  it('keeps a hook-rejected CLI commit from auto-pushing until a verified retry', async () => {
+    const { active, dir, origin } = await vault({
+      commitQuietMs: 60_000,
+      pushQuietMs: 80,
+      healIntervalMs: 60_000,
+      pullIntervalMs: 60_000,
+    })
+    await plainGit(dir, ['config', 'filter.strip.clean', "sed '/REJECTED/d'"])
+    await writeFile(join(dir, '.git', 'info', 'attributes'), 'note.md filter=strip\n')
+    const rejected = 'wanted\nREJECTED\n'
+    await writeFile(join(dir, 'note.md'), rejected)
+    const rejectedDelivery = await active.deliverNow(
+      'note.md',
+      async () => (await plainGit(dir, ['show', 'HEAD:note.md'])) === rejected.trimEnd(),
+    )
+    expect(rejectedDelivery).toBe(false)
+    await sleep(250)
+    expect(await plainGit(origin, ['rev-parse', 'refs/heads/main'])).not.toBe(
+      await plainGit(dir, ['rev-parse', 'HEAD']),
+    )
+    expect(await plainGit(origin, ['cat-file', '-e', 'main:note.md']).catch(() => '')).toBe('')
+
+    // The path reservation survives close/reopen; open-time auto-push must not
+    // publish the outstanding rejected commit.
+    await active.close()
+    const reopened = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: {
+        commitQuietMs: 60_000,
+        pushQuietMs: 60_000,
+        healIntervalMs: 60_000,
+        pullIntervalMs: 60_000,
+      },
+    })
+    open.push(reopened)
+    await sleep(100)
+    expect(await plainGit(origin, ['cat-file', '-e', 'main:note.md']).catch(() => '')).toBe('')
+
+    // Verifying another note must not release note.md's quarantine. Both
+    // commits remain local until the rejected path itself is corrected.
+    await writeFile(join(dir, 'other.md'), 'unrelated\n')
+    expect(
+      await reopened.deliverNow(
+        'other.md',
+        async () => (await plainGit(dir, ['show', 'HEAD:other.md'])) === 'unrelated',
+      ),
+    ).toBe(false)
+    await sleep(250)
+    expect(await plainGit(origin, ['cat-file', '-e', 'main:other.md']).catch(() => '')).toBe('')
+    expect(await plainGit(origin, ['cat-file', '-e', 'main:note.md']).catch(() => '')).toBe('')
+
+    const corrected = 'wanted\ncorrected\n'
+    await writeFile(join(dir, 'note.md'), corrected)
+    expect(
+      await reopened.deliverNow(
+        'note.md',
+        async () => (await plainGit(dir, ['show', 'HEAD:note.md'])) === corrected.trimEnd(),
+      ),
+    ).toBe(true)
+    await waitFor(
+      'the corrected note to reach origin',
+      async () =>
+        (await plainGit(origin, ['show', 'main:note.md']).catch(() => '')) === corrected.trimEnd(),
+    )
+  })
+
+  it('keeps a rejected follow-up commit quarantined after the first push', async () => {
+    const { active, dir, origin } = await vault({
+      commitQuietMs: 60_000,
+      pushQuietMs: 60_000,
+      healIntervalMs: 60_000,
+      pullIntervalMs: 60_000,
+    })
+    const repo = active.repo
+    const push = repo.push.bind(repo)
+    let injected = false
+    repo.push = async () => {
+      const result = await push()
+      if (!injected) {
+        injected = true
+        await writeFile(join(dir, 'delivery.md'), 'rejected follow-up\n')
+      }
+      return result
+    }
+    await writeFile(join(dir, 'delivery.md'), 'verified first commit\n')
+    let verifications = 0
+    expect(await active.deliverNow('delivery.md', async () => ++verifications === 1)).toBe(false)
+    expect(verifications).toBe(2)
+    await sleep(250)
+    expect(await plainGit(origin, ['show', 'main:delivery.md'])).toBe('verified first commit')
+
+    await active.close()
+    const reopened = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: {
+        commitQuietMs: 60_000,
+        pushQuietMs: 60_000,
+        healIntervalMs: 60_000,
+        pullIntervalMs: 60_000,
+      },
+    })
+    open.push(reopened)
+    await sleep(150)
+    expect(await plainGit(origin, ['show', 'main:delivery.md'])).toBe('verified first commit')
+  })
+
+  it('deliverNow joins an in-flight push before finishing', async () => {
+    const { active, dir, origin } = await vault({
+      commitQuietMs: 60_000,
+      pushQuietMs: 60_000,
+      healIntervalMs: 60_000,
+      pullIntervalMs: 60_000,
+    })
+    const repo = active.repo
+    const push = repo.push.bind(repo)
+    let started!: () => void
+    let release!: () => void
+    const entered = new Promise<void>((resolve) => (started = resolve))
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    repo.push = async () => {
+      started()
+      await gate
+      return push()
+    }
+    await writeFile(join(dir, 'pushed.md'), 'current\n')
+    await active.commitNow()
+    const pushing = active.pushNow()
+    await entered
+    let verified = false
+    const delivery = active.deliverNow('pushed.md', async () => {
+      verified = true
+      return true
+    })
+    await sleep(20)
+    expect(verified).toBe(false)
+    release()
+    await pushing
+    expect(await delivery).toBe(true)
+    expect(verified).toBe(true)
+    expect(await plainGit(origin, ['show', 'main:pushed.md'])).toBe('current')
+  })
+
   it('commitNow() returns null and commits nothing on a clean tree', async () => {
     const { active, dir } = await vault(quick)
     const before = await count(dir)
