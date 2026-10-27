@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path'
 import {
   app,
   BrowserWindow,
+  desktopCapturer,
   dialog,
   ipcMain,
   nativeImage,
@@ -108,6 +109,10 @@ protocol.registerSchemesAsPrivileged(
 )
 const FRAME_SCHEMES = frameSchemes(SCHEMES)
 
+// A screen share's system audio on macOS (`getDisplayMedia` with
+// `audio: 'loopback'` below): Chromium's Core Audio tap, behind a feature flag.
+// Switches are read at startup, so this is set at module top level too.
+app.commandLine.appendSwitch('enable-features', 'MacCatapLoopbackAudioForScreenShare')
 /** A path main asks the renderer to show in a tab (`vault:open`). */
 interface OpenRequest {
   remote: string
@@ -397,6 +402,28 @@ async function main(): Promise<void> {
    */
   electronSession.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => {
     callback(permission !== 'geolocation')
+  })
+  /**
+   * `getDisplayMedia`, which Electron refuses unless a handler answers it. The
+   * asker is Holi's own document, recording for a vault app granted
+   * `recording` (`apps/renderer/recorder.ts`): an app's frame has an opaque
+   * origin, which Chromium refuses capture to before this is reached. So only a
+   * top-level document is answered. It shares the main screen, with the
+   * system's sound when audio was asked for.
+   */
+  electronSession.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    // No streams is how Electron is told no: `{}` throws when video was asked
+    // for. The typings do not say so.
+    const refuse = (): void => (callback as unknown as (streams: null) => void)(null)
+    if (request.frame === null || request.frame.parent !== null) return refuse()
+    desktopCapturer
+      .getSources({ types: ['screen'] })
+      .then(([screen]) => {
+        if (screen === undefined) return refuse()
+        callback({ video: screen, ...(request.audioRequested ? { audio: 'loopback' } : {}) })
+      })
+      // On macOS: Holi has not been allowed Screen & System Audio Recording.
+      .catch(refuse)
   })
   // Settings' member list reads the same cache as an app and the agent.
   const members = createMembersCache((remote) => session.api.collaborators(remote))

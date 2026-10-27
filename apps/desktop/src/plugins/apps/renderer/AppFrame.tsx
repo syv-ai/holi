@@ -28,8 +28,8 @@
  * to approve that (`dangerously-allow`; the approval is kept in main).
  */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { type AppPush, type AppResponse } from '../shared/bridge'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { type AppMethod, type AppPush, type AppResponse } from '../shared/bridge'
 import { appHost, appName } from '../shared/bundle'
 import { type AppAffordance } from '../shared/manifest'
 import {
@@ -45,11 +45,14 @@ import { appPushSignaturesAtom, storeSignatures } from './app-push'
 import { appOpensAtom, appPathsAtom } from './apps'
 import { appsCap } from './apps-cap'
 import { hostBridgeMessage } from './bridge-host'
+import { startRecording, type Recording } from './recorder'
 
-/** What each affordance reads, for the approval dialog. */
+/** What each affordance lets the app do, for the approval dialog. */
 const AFFORDANCE_TEXT: Record<AppAffordance, string> = {
-  mail: 'your mail',
-  calendar: 'your calendar',
+  mail: 'read your mail',
+  calendar: 'read your calendar',
+  recording: 'record your microphone and a screen share with its sound',
+  network: 'send requests to the sites its app.yaml lists',
 }
 
 /** The topics this frame is told about: the vault's, and its own collections'. */
@@ -74,6 +77,57 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   const frameRef = useRef<HTMLIFrameElement>(null)
   const exists = appPaths.includes(path)
   const name = appName(path)
+  // What main says is approved for this code (the gate below keeps it), read
+  // when the app calls.
+  const grantedRef = useRef<ReadonlySet<AppAffordance>>(new Set())
+  // The app's recording, while one runs. Let go with the document that asked.
+  const recordingRef = useRef<Recording | null>(null)
+  // While recording, the loudness goes to the frame about 20 times a second,
+  // so an app can draw a live waveform. A number only, never any audio.
+  const levelTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  const stopLevels = (): void => {
+    if (levelTimer.current !== null) clearInterval(levelTimer.current)
+    levelTimer.current = null
+  }
+  useEffect(
+    () => () => {
+      stopLevels()
+      recordingRef.current?.discard()
+      recordingRef.current = null
+    },
+    [path, reloads],
+  )
+
+  // Recording is the call only this frame answers: the microphone and the
+  // screen share are this process's, and the levels go to this frame. A slash
+  // command's hidden frame has no recording (`bridge-host.ts` refuses it).
+  const record = useCallback(
+    async (method: AppMethod, params: unknown): Promise<unknown> => {
+      if (!grantedRef.current.has('recording')) {
+        throw new Error('recording is not allowed: add "dangerously-allow: [recording]" to app.yaml')
+      }
+      if (method === 'record.start') {
+        if (recordingRef.current !== null) throw new Error('already recording')
+        const recording = await startRecording(params)
+        recordingRef.current = recording
+        stopLevels()
+        levelTimer.current = setInterval(() => {
+          const target = frameRef.current?.contentWindow
+          const level: AppPush = { push: 'record:level', value: recording.level() }
+          const spectrum: AppPush = { push: 'record:spectrum', value: recording.spectrum(32) }
+          target?.postMessage(level, '*')
+          target?.postMessage(spectrum, '*')
+        }, 50)
+        return { ok: true }
+      }
+      const recording = recordingRef.current
+      if (recording === null) throw new Error('not recording')
+      recordingRef.current = null
+      stopLevels()
+      return await recording.stop()
+    },
+    [],
+  )
 
   useEffect(() => {
     const onMessage = (event: MessageEvent): void => {
@@ -84,11 +138,13 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
         remote,
         bundle: path,
         reply: (response: AppResponse) => frame.contentWindow?.postMessage(response, '*'),
+        own: (method, params) =>
+          method === 'record.start' || method === 'record.stop' ? record(method, params) : null,
       })
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [store, remote, path])
+  }, [store, remote, path, record])
 
   // Push: post a topic whenever its signature changes, never on mount (the
   // app reads what it needs when it starts). Sent to whatever document the
@@ -118,6 +174,9 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   // The app's own words for why it asks, from its manifest.
   const [reasons, setReasons] = useState<Partial<Record<AppAffordance, string>>>({})
   const [gateOpen, setGateOpen] = useState(false)
+  // What is approved for this code: `holi.record` asks it.
+  const [granted, setGranted] = useState<ReadonlySet<AppAffordance>>(new Set())
+  grantedRef.current = granted
   // Bumped when an approval comes back refused because the code changed while
   // the dialog was up: the new code is asked about, not waved through.
   const [recheck, setRecheck] = useState(0)
@@ -125,11 +184,13 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
     if (remote === null || !exists) return
     let live = true
     setGateOpen(false)
+    setGranted(new Set())
     appsCap
       .grants(remote, { bundle: path })
       .then((status) => {
         if (!live) return
         const ungranted = status.affordances.filter((s) => !s.granted).map((s) => s.affordance)
+        setGranted(new Set(status.affordances.filter((s) => s.granted).map((s) => s.affordance)))
         setAsk(ungranted.length > 0 ? { affordances: ungranted, codeHash: status.codeHash } : null)
         setAuthorship({ added: status.added ?? null, last: status.lastChange ?? null })
         setReasons(status.reasons ?? {})
@@ -172,6 +233,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
           setRecheck((n) => n + 1)
           return
         }
+        setGranted((before) => new Set([...before, ...shown.affordances]))
         setGateOpen(true)
       },
       (e: unknown) => {
@@ -194,7 +256,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
     )
   }
 
-  const reads = (ask?.affordances ?? []).map((a) => AFFORDANCE_TEXT[a]).join(' and ')
+  const asks = (ask?.affordances ?? []).map((a) => AFFORDANCE_TEXT[a]).join(' and ')
 
   return (
     <div
@@ -222,7 +284,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
         // about this app, and the rest of Holi stays usable meanwhile.
         <Dialog open onClose={() => decide(false)} size="sm" closable={false} within={pane}>
           <Dialog.Header>
-            {name} wants permission to read {reads}
+            {name} wants permission to {asks}
           </Dialog.Header>
           <Dialog.Body>
             <div className="grid gap-3 text-xs leading-relaxed text-muted-foreground">

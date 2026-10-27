@@ -68,6 +68,10 @@ export async function answerCall(
 ): Promise<unknown> {
   if (remote === null) throw new Error('no vault is open')
   if (method === 'open') return openTarget(store, params)
+  // Answered only by an app's own tab (`AppFrame`), which holds the recording.
+  if (method === 'record.start' || method === 'record.stop') {
+    throw new Error("recording runs only in the app's own tab")
+  }
   return await appsCap.call(remote, { bundle, method, params })
 }
 
@@ -83,6 +87,9 @@ export function hostBridgeMessage(
     remote: string | null
     bundle: string
     reply: (response: AppResponse) => void
+    /** A call this frame answers itself, or null to answer it as any frame
+     *  would. */
+    own?: (method: AppMethod, params: unknown) => Promise<unknown> | null
   },
 ): boolean {
   const { store, remote, bundle, reply } = ctx
@@ -114,7 +121,9 @@ export function hostBridgeMessage(
     reply({ id, ok: false, error: `no such method: ${String(msg.method)}` })
     return true
   }
-  answerCall(store, remote, bundle, msg.method, msg.params).then(
+  const answer =
+    ctx.own?.(msg.method, msg.params) ?? answerCall(store, remote, bundle, msg.method, msg.params)
+  answer.then(
     (value) => reply({ id, ok: true, value }),
     (err: unknown) => {
       const code = refusalCodeOf(err)
