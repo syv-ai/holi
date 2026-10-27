@@ -47,6 +47,13 @@ export interface AppManifest {
    */
   env?: string[]
   /**
+   * The hosts `holi.fetch` may reach (`network`), exactly: `api.example.com`
+   * does not cover `example.com` or `x.api.example.com`. Keyed `hosts` in the
+   * YAML. Anything that is not a plain hostname is dropped, and so are IP
+   * addresses and `localhost`.
+   */
+  hosts?: string[]
+  /**
    * The slash commands it adds to the notes editor, by name (what follows the
    * `/`): each a script in the bundle, run in a hidden frame of the app's own
    * origin when picked (docs/features/vault-apps.md).
@@ -110,14 +117,38 @@ function parseEnv(raw: unknown): string[] | undefined {
   return names.length > 0 ? [...new Set(names)] : undefined
 }
 
+/** A plain hostname: letters, digits, dots and dashes, no port or path. */
+const HOST = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/
+
+/** A name, not an address (no top-level domain is all digits), and not this
+ *  machine: `holi.fetch` refuses both (`main/net.ts`), so they are dropped here
+ *  too. */
+const isReachableName = (host: string): boolean =>
+  HOST.test(host) &&
+  !/(^|\.)\d+$/.test(host) &&
+  host !== 'localhost' &&
+  !host.endsWith('.localhost')
+
+function parseHosts(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const hosts = raw
+    .filter((h): h is string => typeof h === 'string')
+    .map((h) => h.trim().toLowerCase())
+    .filter(isReachableName)
+  return hosts.length > 0 ? [...new Set(hosts)] : undefined
+}
+
 /** The longest reason the approval dialog shows: a sentence, not a pitch. */
 export const MAX_ALLOW_REASON = 200
 
 /** The reads an app must opt into, because what they return is one person's,
  *  not the vault's: an app can keep it in synced records or send it anywhere.
  *  There is no `location`: Electron's geolocation needs Google's network
- *  service and does not answer on macOS, so no app is offered it. */
-export const APP_AFFORDANCES = ['mail', 'calendar'] as const
+ *  service and does not answer on macOS, so no app is offered it.
+ *  `recording` is the microphone and the computer's sound, recorded by Holi
+ *  for the app (`holi.record`). `network` is `holi.fetch` to the hosts the
+ *  manifest lists, and no others. */
+export const APP_AFFORDANCES = ['mail', 'calendar', 'recording', 'network'] as const
 
 export type AppAffordance = (typeof APP_AFFORDANCES)[number]
 
@@ -204,6 +235,8 @@ export function parseAppManifest(yaml: string): AppManifest | null {
   Object.assign(manifest, parseAffordances((raw as Record<string, unknown>)['dangerously-allow']))
   const env = parseEnv((raw as Record<string, unknown>).env)
   if (env !== undefined) manifest.env = env
+  const hosts = parseHosts((raw as Record<string, unknown>).hosts)
+  if (hosts !== undefined) manifest.hosts = hosts
   const commands = parseCommands((raw as Record<string, unknown>).commands)
   if (commands !== undefined) manifest.commands = commands
   return manifest
@@ -227,7 +260,7 @@ export function appManifestText(description?: string): string {
     '#     schema: { type: object, required: [title], properties: { title: { type: string } } }',
     'collections:',
     '',
-    `# One person\u2019s data this app reads, approved by each person before it runs:`,
+    `# One person\u2019s data this app reads, or recording, approved by each person before it runs:`,
     `# any of ${APP_AFFORDANCES.join(', ')}. As a map, each with a reason the approval shows:`,
     '#   { calendar: To show your next meeting }',
     'dangerously-allow:',
@@ -235,6 +268,9 @@ export function appManifestText(description?: string): string {
     '# The secrets holi.env(name) may read, by name, from the vault\u2019s .env:',
     '#   [OPENAI_API_KEY]',
     'env:',
+    '# With network: the exact hosts holi.fetch may reach, as a list:',
+    '#   [api.example.com]',
+    'hosts:',
     '',
     '# The slash commands it adds to notes, each a script that calls holi.command(fn):',
     '#   uppercase: { script: commands/uppercase.js, description: Uppercase the selection }',

@@ -1,13 +1,16 @@
 /**
- * Which apps this person has let read their Google data, on this machine.
+ * Which apps this person has let read their Google data, record, or reach the
+ * network, on this machine.
  *
  * An app opts in with `dangerously-allow: [mail]` in its `app.yaml`, the way
  * Claude Code opts into `--dangerously-skip-permissions`. The flag alone is not
  * enough for a shared app: mail and calendar are one person's, not the vault's,
  * and an app can keep what it reads in records that sync to every member, or
- * send it over the network. So each person approves it once, in a dialog Holi
- * shows before the app loads, and the approval is kept **here, in main**,
- * because the renderer is the process running the app's code.
+ * send it over the network; what it records is one person's too, and with
+ * `network` it can send anything it can read to the hosts it lists. So each
+ * person approves it once, in a dialog Holi shows before the app loads, and
+ * the approval is kept **here, in main**, because the renderer is the process
+ * running the app's code.
  *
  * An approval lapses after `GRANT_TTL_MS`, and as soon as the app's code
  * changes (any file but `data/`), whoever changed it: approving a teammate's
@@ -269,13 +272,13 @@ export function admitApps(grants: AppGrants): Admit {
     if (status === undefined) {
       throw new CapabilityError(
         'FORBIDDEN',
-        `add "dangerously-allow: [${affordance}]" to ${bundle}/app.yaml to read ${affordance}`,
+        `add "dangerously-allow: [${affordance}]" to ${bundle}/app.yaml to use ${affordance}`,
       )
     }
     if (!status.granted) {
       throw new CapabilityError(
         'FORBIDDEN',
-        `reading ${affordance} is not approved on this machine`,
+        `${affordance} is not approved for this app on this machine`,
       )
     }
   }
