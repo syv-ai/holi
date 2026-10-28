@@ -16,8 +16,8 @@
  *   - The snapshot push carries **no path**. Everything downstream re-derives
  *     from it, so an over-eager push is free and a missed one self-heals.
  */
-import { emptyVaultSnapshot, syncLabel } from '@holi/shared'
-import { stat } from 'node:fs/promises'
+import { emptyVaultSnapshot, syncLabel, vaultRelPath } from '@holi/shared'
+import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { SyncState, VaultSnapshot } from '@holi/shared'
 import type { BranchList, GitDeps, GitRepo, PullResult, RepoStatus } from '../git'
@@ -29,6 +29,30 @@ import { readMaxCommittedFileBytes } from './vault-settings'
 import type { VaultRegistry } from './registry'
 import { scanVault, type ScanClaim } from './vault-store'
 import { watchVault, type VaultWatcher } from './watcher'
+import { writeAtomic } from './vault-files'
+
+const DELIVERY_RESERVATIONS_FILE = '.holi/state/delivery-reservations.local.json'
+
+async function readDeliveryReservations(root: string): Promise<Set<string>> {
+  let text: string
+  try {
+    text = await readFile(join(root, DELIVERY_RESERVATIONS_FILE), 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Set()
+    throw error
+  }
+  const parsed: unknown = JSON.parse(text)
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    !('paths' in parsed) ||
+    !Array.isArray(parsed.paths) ||
+    !parsed.paths.every((path) => typeof path === 'string' && path.length > 0)
+  ) {
+    throw new Error('Malformed CLI delivery reservations')
+  }
+  return new Set(parsed.paths)
+}
 
 // The sync indicator's vocabulary lives in shared, beside the words for it
 // (`sync-state.ts`), so the nav and the agent's `holi sync status` agree.
@@ -81,6 +105,8 @@ export interface ActiveVault {
   refresh(): Promise<void>
   /** Commit whatever is dirty, now — ⌘S, vault switch, quit. */
   commitNow(): Promise<string | null>
+  /** Drain commits, verify their content, then push and wait for in-flight work. */
+  deliverNow(path: string, verify: () => Promise<boolean>): Promise<boolean>
   /**
    * Push local commits now, best-effort. Recovers from a non-fast-forward
    * rejection by pulling inline and retrying (a conflicting pull routes to the
@@ -249,6 +275,17 @@ export async function openActiveVault(args: {
       ...(detail === undefined ? {} : { detail }),
     })
   }
+  // Read quarantine before any open-time push can be armed. Invalid state is a
+  // hard open failure: treating it as empty could publish an unverified note.
+  const rejectedDeliveries = await readDeliveryReservations(root)
+  let reservationWriteFailed = false
+  async function persistReservations(): Promise<void> {
+    await writeAtomic(
+      root,
+      vaultRelPath(DELIVERY_RESERVATIONS_FILE),
+      JSON.stringify({ paths: [...rejectedDeliveries].sort() }),
+    )
+  }
   // The size cap is a synced setting the settings pane edits while the vault is
   // open, so every commit re-reads it (`currentCap`).
   let maxCommittedFileBytes = await readMaxCommittedFileBytes(root)
@@ -308,8 +345,12 @@ export async function openActiveVault(args: {
   let pushInFlight = false
   /** The running push, and the one follow-up push a request that arrived
    *  meanwhile is waiting on. Requests coalesce into that single follow-up. */
-  let pushRun: Promise<void> | null = null
-  let pushFollowUp: Promise<void> | null = null
+  let pushRun: Promise<boolean> | null = null
+  let pushFollowUp: Promise<boolean> | null = null
+  // A CLI delivery owns verification between committing and deciding whether
+  // that commit is eligible to leave. A failed check quarantines pushes until
+  // that path passes a later verification.
+  let deliveryVerifying = false
   let lastFocusPull = 0
   /** The last network attempt failed. A flag rather than a state, so the
    *  `finally` that clears `syncing` cannot overwrite it. */
@@ -481,8 +522,9 @@ export async function openActiveVault(args: {
    * watcher, so a dropped event delays a commit by one heal tick instead of
    * losing it (see the file header).
    */
-  async function maybeCommit(duringPull = false): Promise<string | null> {
-    if (closed || committing || manualPause !== null) return null
+  async function maybeCommit(duringPull = false, duringDelivery = false): Promise<string | null> {
+    if (closed || committing || manualPause !== null || (deliveryVerifying && !duringDelivery))
+      return null
     /**
      * A commit must not run while a pull is merging: `git commit` and
      * `git merge` both take `.git/index.lock`, so an autosave landing inside a
@@ -566,7 +608,14 @@ export async function openActiveVault(args: {
     // part of the commit's: both loops run git against one index, and even a
     // `git status` refreshes (and therefore locks) it. Deferring a pull by one
     // tick costs nothing; overlapping them costs a failed command.
-    if (closed || pullInFlight || committing || manualPause !== null || conflictPaths !== null) {
+    if (
+      closed ||
+      pullInFlight ||
+      committing ||
+      deliveryVerifying ||
+      manualPause !== null ||
+      conflictPaths !== null
+    ) {
       return null
     }
     // Claimed synchronously, before the first await. Checking a guard before an
@@ -682,7 +731,7 @@ export async function openActiveVault(args: {
    *  landed commit, so continuous typing pushes a handful of times rather than
    *  once per idle debounce. */
   function schedulePush(): void {
-    if (closed) return
+    if (closed || deliveryVerifying || reservationWriteFailed || rejectedDeliveries.size > 0) return
     if (pushTimer !== null) clearTimeout(pushTimer)
     pushTimer = setTimeout(() => {
       pushTimer = null
@@ -710,18 +759,27 @@ export async function openActiveVault(args: {
    * Never throws: every path is caught, so quit and vault switch can race it
    * against a timeout without risking an unhandled rejection.
    */
-  function pushNow(): Promise<void> {
+  function pushNow(duringDelivery = false): Promise<boolean> {
     // A reconcile owns the tree; a sticky conflict means the remote has moved
     // under us and only a reconcile clears it. Pushing into either is wrong.
-    if (closed || manualPause !== null || conflictPaths !== null) return Promise.resolve()
+    if (
+      closed ||
+      manualPause !== null ||
+      conflictPaths !== null ||
+      (deliveryVerifying && !duringDelivery) ||
+      reservationWriteFailed ||
+      rejectedDeliveries.size > 0
+    )
+      return Promise.resolve(false)
     // Single-flight against itself, the pull loop, and a commit, all of which
     // touch refs or the index. Claimed synchronously, before the first await.
-    if (pullInFlight || committing) return Promise.resolve()
+    if (pullInFlight || committing) return Promise.resolve(false)
     if (pushInFlight) {
-      // `pushRun` never rejects, so the follow-up cannot either.
+      // `pushRun` never rejects, so the follow-up cannot either. It re-checks
+      // the gates above when it runs, so a quarantine set meanwhile still holds.
       pushFollowUp ??= pushRun!.then(() => {
         pushFollowUp = null
-        return pushNow()
+        return pushNow(duringDelivery)
       })
       return pushFollowUp
     }
@@ -732,7 +790,7 @@ export async function openActiveVault(args: {
     return pushRun
   }
 
-  async function runPush(): Promise<void> {
+  async function runPush(): Promise<boolean> {
     try {
       let result = await args.repo.push()
       if (result.kind === 'rejected' && result.reason === 'non-fast-forward') {
@@ -744,11 +802,12 @@ export async function openActiveVault(args: {
         const pulled = await maybePull()
         // Anything but a clean merge (a conflict, or a declined tick) is now
         // owned by `maybePull`'s state. Do not retry or the state fights it.
-        if (pulled?.kind !== 'merged') return
+        if (pulled?.kind !== 'merged') return false
         pushInFlight = true
         result = await args.repo.push()
       }
-      if (result.kind === 'pushed' || result.kind === 'nothing-to-push') {
+      const succeeded = result.kind === 'pushed' || result.kind === 'nothing-to-push'
+      if (succeeded) {
         offline = false
         permissionDenied = false
         noteSynced()
@@ -768,6 +827,7 @@ export async function openActiveVault(args: {
       }
       // A second non-fast-forward here (someone pushed again in the last few
       // milliseconds) is left for the next tick rather than looped on.
+      return succeeded
     } catch (err) {
       console.error('[vault] push failed:', err)
       const text = errorText(err)
@@ -776,6 +836,7 @@ export async function openActiveVault(args: {
       // Mirrors `maybePull`: a lock the user's own git briefly held is contention,
       // not the network, and calling it offline sends someone to check their wifi.
       if (!isIndexLockError(err)) offline = true
+      return false
     } finally {
       pushInFlight = false
       await refreshState()
@@ -940,7 +1001,114 @@ export async function openActiveVault(args: {
       }
       return maybeCommit()
     },
-    pushNow,
+    async deliverNow(path, verify) {
+      const waitForSync = async () => {
+        while (!closed && (committing || pullInFlight || pushInFlight)) {
+          await new Promise((resolve) => setTimeout(resolve, 10))
+        }
+      }
+      // Deliveries share the same verification guard. Wait for the current one
+      // before claiming it, so one delivery cannot release another's guard.
+      if (commitTimer !== null) {
+        clearTimeout(commitTimer)
+        commitTimer = null
+      }
+      // Serialize delivery verifications and claim before the first sync wait,
+      // so a due push timer and background pull cannot race the verification.
+      while (!closed && deliveryVerifying) {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      if (closed) return false
+      deliveryVerifying = true
+      // Reserve before committing or verifying. If the process dies at any
+      // point in delivery, openActiveVault restores this path's push block.
+      rejectedDeliveries.add(path)
+      try {
+        try {
+          await persistReservations()
+        } catch (error) {
+          reservationWriteFailed = true
+          console.error('[vault] delivery reservation write failed:', error)
+          return false
+        }
+        if (pushTimer !== null) clearTimeout(pushTimer)
+        pushTimer = null
+        await waitForSync()
+        if (closed) return false
+        const status = await args.repo.status().catch(() => null)
+        if (status === null || blockedReason(status) !== null || manualPause !== null) return false
+        await maybeCommit(false, true)
+        await waitForSync()
+        if (closed) return false
+        const afterCommit = await args.repo.status().catch(() => null)
+        if (afterCommit === null || blockedReason(afterCommit) !== null || manualPause !== null)
+          return false
+        if (!(await verify())) {
+          scheduleCommit()
+          return false
+        }
+        rejectedDeliveries.delete(path)
+        try {
+          await persistReservations()
+        } catch (error) {
+          rejectedDeliveries.add(path)
+          reservationWriteFailed = true
+          console.error('[vault] delivery reservation clear failed:', error)
+          return false
+        }
+        // A watcher tick that fired during verification may have declined to
+        // commit. Resume unrelated edits; no automatic push may run while any
+        // previously rejected path remains quarantined.
+        scheduleCommit()
+        schedulePush()
+        const pushed = await pushNow(true)
+        if (!pushed) return false
+        await waitForSync()
+        if (closed) return false
+        const latest = await args.repo.status().catch(() => null)
+        if (latest === null || blockedReason(latest) !== null || manualPause !== null) return false
+        if (latest.dirty) {
+          // Quarantine before the follow-up commit: if its verification rejects,
+          // no timer or reopened vault may publish that commit.
+          rejectedDeliveries.add(path)
+          try {
+            await persistReservations()
+          } catch (error) {
+            reservationWriteFailed = true
+            console.error('[vault] delivery reservation write failed:', error)
+            return false
+          }
+          if ((await maybeCommit(false, true)) !== null) {
+            await waitForSync()
+            if (closed || !(await verify())) return false
+            rejectedDeliveries.delete(path)
+            try {
+              await persistReservations()
+            } catch (error) {
+              rejectedDeliveries.add(path)
+              reservationWriteFailed = true
+              console.error('[vault] delivery reservation clear failed:', error)
+              return false
+            }
+            schedulePush()
+          }
+        }
+        const finalStatus = await args.repo.status().catch(() => null)
+        if (finalStatus === null || blockedReason(finalStatus) !== null || manualPause !== null)
+          return false
+        if (finalStatus.ahead > 0) {
+          if (!(await pushNow(true))) return false
+          await waitForSync()
+        }
+        return !closed
+      } finally {
+        deliveryVerifying = false
+        if (rejectedDeliveries.size === 0) schedulePush()
+      }
+    },
+    async pushNow() {
+      await pushNow()
+    },
     onFocus() {
       // A fetch is already running, so this focus needs neither a pull nor a
       // throttle window of its own. Checked before stamping, or a focus that
