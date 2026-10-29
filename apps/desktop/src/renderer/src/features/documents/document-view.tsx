@@ -18,7 +18,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { holiLink, isHoliLinkable, isResolved } from '@holi/shared'
+import { differsBeyondTidy, holiLink, isHoliLinkable, isResolved } from '@holi/shared'
 import { useAtomValue } from 'jotai'
 import { findNext, findPrev } from 'prosemirror-search'
 import { EditorContent, useEditor } from '@tiptap/react'
@@ -51,6 +51,7 @@ import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 import { AgentPrompt, AgentStatus } from './agent-prompt'
 import { askAiSlashItem } from './ask-ai-slash'
+import { applyReload } from './apply-reload'
 import { artifactPathFor, isRunLive, locksDocument, useDocumentAgent } from './document-agent'
 import { parentOf } from '@/lib/tree-paths'
 import { CommentsPanel } from './comments-panel'
@@ -306,7 +307,9 @@ function DocumentEditor({
     saveTimer.current = undefined
     if (!editor || editor.isDestroyed) return
     const text = markdown()
-    if (text === lastText.current) {
+    // Differing only by what the commit tidies away is nothing to save:
+    // writing it would just be tidied again.
+    if (!differsBeyondTidy(lastText.current, text, path)) {
       setSaveState('saved')
       return
     }
@@ -341,14 +344,18 @@ function DocumentEditor({
       .query({ remote, path })
       .then((text) => {
         if (!live || editor.isDestroyed || text === lastText.current) return
+        // The commit's tidy (`normalize-md`) rewrote what was saved: nothing
+        // new, so the buffer stays, and with it a space just typed under the
+        // caret. The next save compares against the tidied file.
+        if (!differsBeyondTidy(lastText.current, text, path)) {
+          lastText.current = text
+          return
+        }
         if (saveTimer.current !== undefined && !locked) return
         const next = splitDocument(text)
         head.current = next.head
         lastText.current = text
-        editor.commands.setContent(next.body, {
-          contentType: 'markdown',
-          emitUpdate: false,
-        })
+        applyReload(editor, next.body)
         placeRef.current()
       })
       .catch(() => undefined)
