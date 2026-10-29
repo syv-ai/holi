@@ -140,7 +140,10 @@ export function MemoryList(): React.JSX.Element {
     <div className="flex flex-col gap-6">
       {types.map((type) => (
         <section key={type} aria-label={type} className="flex flex-col gap-2">
-          <h2 className="text-xs font-medium text-muted-foreground">{type}</h2>
+          <h2 className="text-xs font-medium text-muted-foreground">
+            {/* Sentence case, as the Inbox's headings: types are written lowercase. */}
+            {type.charAt(0).toUpperCase() + type.slice(1)}
+          </h2>
           <ul className="flex flex-col gap-1">
             {(byType.get(type) ?? [])
               .sort((a, b) => a.title.localeCompare(b.title))
