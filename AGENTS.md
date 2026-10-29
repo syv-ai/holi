@@ -117,7 +117,8 @@ A commit message is a single subject line, `type: subject`, with type one of `fe
 does (`feat: an inbox tab for messages that need you`). No body and no attribution trailers of any kind (no
 `Co-Authored-By`, no session links, no “Generated with” line), in commits, PR titles and
 bodies, and tags. The `commit-msg` hook (`scripts/check-commit-msg.mjs`, installed by
-`pnpm install` through `prepare`) and CI enforce it.
+`pnpm install` through `prepare`) and CI enforce it. A squash merge makes the PR title main's
+commit, so CI checks the PR title by the same rule.
 
 ## Renderer
 
