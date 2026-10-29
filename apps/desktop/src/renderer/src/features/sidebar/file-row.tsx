@@ -37,7 +37,10 @@ export function displayName(item: ItemInstance<TreeItemData>): string {
 }
 
 /** Folders keep their folder glyph; every file, an app bundle included,
- *  shows ReUI's file-type icon for its kind. */
+ *  shows ReUI's file-type icon for its kind. A folder document (a deck, an
+ *  app) shows its kind's glyph rather than a label: at row size a label is
+ *  a coloured band too small to read, and a deck's red one passed for a
+ *  PDF's orange. */
 export function FileGlyph({ item }: { item: ItemInstance<TreeItemData> }) {
   const data = item.getItemData()
   if (item.isFolder() && !data?.isDocument) {
@@ -51,6 +54,7 @@ export function FileGlyph({ item }: { item: ItemInstance<TreeItemData> }) {
     <FileType
       type={getFileType(item.getItemName())}
       size="mini"
+      glyph={data?.isDocument === true}
       aria-hidden="true"
       className="shrink-0"
     />
