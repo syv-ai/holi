@@ -88,6 +88,14 @@ jobs:
           if [ "${{ github.ref }}" != "refs/heads/main" ]; then EXCLUDE="^origin/main"; fi
           node scripts/check-commit-msg.mjs --range "${{ steps.range.outputs.base }}..${{ steps.range.outputs.head }}" $EXCLUDE
 
+      - name: Pull request title
+        # A squash merge makes the PR title main's commit message, so it is held to the
+        # same rule before the merge, when it can still be changed.
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: node scripts/check-commit-msg.mjs --message "$TITLE"
+
   test:
     name: Test
     # macOS on purpose: the tests encode the filesystem Holi ships on (macOS and
