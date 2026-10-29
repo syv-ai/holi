@@ -468,7 +468,18 @@ export function FilesSection({
       }),
       on: {
         openBeside: (path) => openTab(tabForPath(path), { beside: true }),
-        copyLink: (path) => void copyLink(path),
+        reveal: (path) => {
+          const absolute = absolutePath(path)
+          if (absolute !== null) void window.holi.openPath(absolute)
+        },
+        copyPath: (path, form) => {
+          const text = form === 'relative' ? path : absolutePath(path)
+          if (text !== null) void copyText(text, 'Path copied', path)
+        },
+        copyLink: (path) => {
+          if (files.remote !== null)
+            void copyText(holiLink({ remote: files.remote, path }), 'Holi link copied', path)
+        },
         rename: (path) => {
           renameNext.current = path
         },
@@ -480,13 +491,17 @@ export function FilesSection({
     })
   }
 
-  /** Put `path`'s Holi link on the clipboard, for a teammate to click. */
-  async function copyLink(path: string) {
-    const remote = files.remote
-    if (remote === null) return
+  /** `path` on this machine: the vault's clone joined with it. */
+  function absolutePath(path: string): string | null {
+    const root = vaults.find((vault) => vault.remote === files.remote)?.path
+    return root === undefined ? null : `${root}/${path}`
+  }
+
+  /** Put `text` on the clipboard: a path, or a Holi link for a teammate to click. */
+  async function copyText(text: string, done: string, path: string) {
     try {
-      await navigator.clipboard.writeText(holiLink({ remote, path }))
-      toast.success('Holi link copied', { description: basename(path) })
+      await navigator.clipboard.writeText(text)
+      toast.success(done, { description: basename(path) })
     } catch {
       toast.error('Copy failed', {
         description: 'The clipboard could not be written.',

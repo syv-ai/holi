@@ -4,7 +4,9 @@ import { isHoliLinkable } from '@holi/shared'
 import {
   ArrowDownIcon,
   ArrowUpIcon,
+  ClipboardCopyIcon,
   FolderInputIcon,
+  FolderOpenIcon,
   FolderPlusIcon,
   LinkIcon,
   ListChecksIcon,
@@ -42,6 +44,8 @@ export function rowActions({
   pluginActions: MenuAction[]
   on: {
     openBeside: (id: string) => void
+    reveal: (id: string) => void
+    copyPath: (id: string, form: 'relative' | 'absolute') => void
     copyLink: (id: string) => void
     rename: (id: string) => void
     shift: (id: string, by: -1 | 1) => void
@@ -75,19 +79,38 @@ export function rowActions({
             icon: <SquareSplitHorizontalIcon aria-hidden="true" />,
             run: () => on.openBeside(id),
           },
-          ...(linkable
-            ? ([
-                {
-                  kind: 'item',
-                  label: 'Copy Holi link',
-                  icon: <LinkIcon aria-hidden="true" />,
-                  run: () => on.copyLink(id),
-                },
-              ] satisfies MenuAction[])
-            : []),
           { kind: 'separator' },
         ] satisfies MenuAction[])
       : []),
+    {
+      kind: 'item',
+      label: 'Open in Finder',
+      icon: <FolderOpenIcon aria-hidden="true" />,
+      run: () => on.reveal(id),
+    },
+    {
+      kind: 'item',
+      label: 'Copy relative path',
+      icon: <ClipboardCopyIcon aria-hidden="true" />,
+      run: () => on.copyPath(id, 'relative'),
+    },
+    {
+      kind: 'item',
+      label: 'Copy absolute path',
+      icon: <ClipboardCopyIcon aria-hidden="true" />,
+      run: () => on.copyPath(id, 'absolute'),
+    },
+    ...(linkable
+      ? ([
+          {
+            kind: 'item',
+            label: 'Copy Holi link',
+            icon: <LinkIcon aria-hidden="true" />,
+            run: () => on.copyLink(id),
+          },
+        ] satisfies MenuAction[])
+      : []),
+    { kind: 'separator' },
     {
       kind: 'item',
       label: 'Rename',
