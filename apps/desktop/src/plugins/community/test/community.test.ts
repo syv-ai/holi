@@ -721,7 +721,9 @@ describe('serving', () => {
       call('community.acquire', { path: 'decks/slides.md' }),
     ])
     expect(a.port).not.toBe(b.port)
-    expect(await (await fetch(`http://127.0.0.1:${b.port}/`)).text()).not.toContain('q4')
+    // `q4` as a folder, not two letters: the vault sits under a random temp
+    // directory whose name can hold them.
+    expect(await (await fetch(`http://127.0.0.1:${b.port}/`)).text()).not.toMatch(/[\\/]q4[\\/]/)
     await call('community.release', { lease: a.lease })
     await call('community.release', { lease: b.lease })
   })
