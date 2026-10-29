@@ -13,3 +13,16 @@ export function stampPlatform(): void {
 export function isMac(): boolean {
   return document.documentElement.dataset.platform === 'mac'
 }
+
+/** Whether this is Windows, whose paths take `\` and whose file manager is
+ *  Explorer. Read off the user agent, as `stampPlatform` reads a Mac. */
+export function isWindows(): boolean {
+  return navigator.userAgent.includes('Windows')
+}
+
+/** What the system's file manager is called, for "Open in …". */
+export function fileManagerName(): string {
+  if (isMac()) return 'Finder'
+  if (isWindows()) return 'Explorer'
+  return 'file manager'
+}

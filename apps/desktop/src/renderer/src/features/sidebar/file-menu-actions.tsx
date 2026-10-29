@@ -17,6 +17,7 @@ import {
 
 import type { MenuAction } from '@/composites/menu-actions'
 import type { TreeItemData } from '@/lib/tree-data'
+import { fileManagerName } from '@/lib/platform'
 import { parentOf } from '@/lib/tree-paths'
 import type { ActiveDialog } from '@/state/dialogs'
 import type { ClaimCreate, PathClaim } from '@/state/plugin-types'
@@ -84,7 +85,7 @@ export function rowActions({
       : []),
     {
       kind: 'item',
-      label: 'Open in Finder',
+      label: `Open in ${fileManagerName()}`,
       icon: <FolderOpenIcon aria-hidden="true" />,
       run: () => on.reveal(id),
     },

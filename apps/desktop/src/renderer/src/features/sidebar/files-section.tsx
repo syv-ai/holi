@@ -43,6 +43,7 @@ import { buildTreeData, ROOT_ID, type TreeItemData } from '@/lib/tree-data'
 import { planMoveInto, planRenameFolder, type Move } from '@/lib/tree-actions'
 import { basename, joinPath, parentOf } from '@/lib/tree-paths'
 import { canMoveInto } from '@/lib/tree-view'
+import { isWindows } from '@/lib/platform'
 import { useTabDrag } from '@/features/shell/use-tab-drag'
 import { openDialogAtom } from '@/state/dialogs'
 import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
@@ -491,10 +492,12 @@ export function FilesSection({
     })
   }
 
-  /** `path` on this machine: the vault's clone joined with it. */
+  /** `path` on this machine: the vault's clone joined with it, in the
+   *  platform's own separators (a vault path is always `/`). */
   function absolutePath(path: string): string | null {
     const root = vaults.find((vault) => vault.remote === files.remote)?.path
-    return root === undefined ? null : `${root}/${path}`
+    if (root === undefined) return null
+    return isWindows() ? `${root}\\${path.replaceAll('/', '\\')}` : `${root}/${path}`
   }
 
   /** Put `text` on the clipboard: a path, or a Holi link for a teammate to click. */
