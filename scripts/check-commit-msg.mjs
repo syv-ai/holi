@@ -57,10 +57,15 @@ function main(argv) {
   if (argv[0] === '--range') {
     const range = argv[1]
     if (!range) throw new Error('--range needs <base>..<head>')
+    // Revisions after the range narrow it further: CI passes `^origin/main`, so a
+    // merge from main is not judged by commits main made under its own rules.
+    const exclude = argv.slice(2)
     // %x00 separates commits, %H the hash; the body follows after a blank line.
-    const out = execFileSync('git', ['log', '--no-merges', '--format=%H%x01%B%x00', range], {
-      encoding: 'utf8',
-    })
+    const out = execFileSync(
+      'git',
+      ['log', '--no-merges', '--format=%H%x01%B%x00', range, ...exclude],
+      { encoding: 'utf8' },
+    )
     messages = out
       .split('\0')
       .map((c) => c.trim())
@@ -75,7 +80,7 @@ function main(argv) {
     messages = [{ label: 'commit message', text: readFileSync(argv[0], 'utf8') }]
   } else {
     throw new Error(
-      'usage: check-commit-msg.mjs <message-file> | --range <a..b> | --message <text>',
+      'usage: check-commit-msg.mjs <message-file> | --range <a..b> [<rev>...] | --message <text>',
     )
   }
 

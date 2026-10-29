@@ -81,7 +81,12 @@ jobs:
             | xargs --no-run-if-empty pnpm exec prettier --check --ignore-unknown --no-error-on-unmatched-pattern
 
       - name: Commit messages
-        run: node scripts/check-commit-msg.mjs --range "${{ steps.range.outputs.base }}..${{ steps.range.outputs.head }}"
+        # Off main, commits main already has are main's: a merge from it brings them in
+        # without making them this branch's to answer for. On main, nothing is excluded.
+        run: |
+          EXCLUDE=""
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then EXCLUDE="^origin/main"; fi
+          node scripts/check-commit-msg.mjs --range "${{ steps.range.outputs.base }}..${{ steps.range.outputs.head }}" $EXCLUDE
 
   test:
     name: Test
