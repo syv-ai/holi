@@ -17,6 +17,26 @@ const CLAIMED: readonly FieldSpec[] = [
 ]
 
 describe('frontmatterSchema', () => {
+  test('a task file gets the task vocabulary', () => {
+    const schema = frontmatterSchema('projects/task.fix-login.md')!
+    expect(schema.map((f) => f.key)).toEqual([
+      'status',
+      'priority',
+      'start',
+      'due',
+      'estimate',
+      'reminder',
+      'recurrence',
+      'tags',
+      'assignees',
+      'order',
+    ])
+    expect(schema.find((f) => f.key === 'status')!.kind).toEqual({
+      kind: 'enum',
+      options: ['backlog', 'todo', 'doing', 'review', 'done'],
+    })
+  })
+
   test("a claimed file gets its claim's fields", () => {
     expect(frontmatterSchema('projects/thing.md', CLAIMED)).toBe(CLAIMED)
   })

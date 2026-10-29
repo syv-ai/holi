@@ -81,8 +81,9 @@ describe('sanitizeMailHtml — embedding and exfiltration', () => {
   })
 
   it('removes <base>, which would silently retarget every relative link', () => {
-    expect(parse(sanitizeMailHtml('<base href="https://evil.test/">').html).querySelector('base'))
-      .toBeNull()
+    expect(
+      parse(sanitizeMailHtml('<base href="https://evil.test/">').html).querySelector('base'),
+    ).toBeNull()
   })
 })
 
@@ -258,8 +259,11 @@ describe('sanitizeMailHtml — links', () => {
   })
 
   it('keeps a mailto: link', () => {
-    expect(parse(sanitizeMailHtml('<a href="mailto:a@b.c">mail</a>').html).querySelector('a')
-      ?.getAttribute('href')).toBe('mailto:a@b.c')
+    expect(
+      parse(sanitizeMailHtml('<a href="mailto:a@b.c">mail</a>').html)
+        .querySelector('a')
+        ?.getAttribute('href'),
+    ).toBe('mailto:a@b.c')
   })
 })
 

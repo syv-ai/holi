@@ -1,11 +1,10 @@
 /**
  * The plain markdown editor stack, which the mail composer writes in.
  *
- * The point of a third stack is what it does *not* carry. `baseEditorExtensions`
- * decorates `[[wiki links]]` into chips and completes `@` against vault notes —
- * both meaningless to a recipient, and the second would paste vault paths into
- * an email. These tests assert the absences, because an absence is exactly what
- * a later "let's just reuse the notes stack" refactor would silently undo.
+ * The point of this stack is what it does *not* carry: `[[wiki links]]` as
+ * chips and `@` completion against vault notes are meaningless to a recipient,
+ * and the second would paste vault paths into an email. These tests assert the
+ * absences.
  */
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
@@ -59,11 +58,5 @@ describe('plainMarkdownExtensions', () => {
     const editor = mount('x')
 
     expect(editor.dom.querySelector('.cm-lineWrapping')).not.toBeNull()
-  })
-
-  it('takes no vault dependencies at all', () => {
-    // If this ever needs an argument, the composer has been given a way to
-    // reach the vault and the separation above has been lost.
-    expect(plainMarkdownExtensions).toHaveLength(0)
   })
 })

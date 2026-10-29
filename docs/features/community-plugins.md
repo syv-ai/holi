@@ -49,7 +49,7 @@ findable. The settings field searches GitHub's repositories with that topic as y
 within `owner/`), anyone's and the private ones the person can read, and reads each hit for its
 root manifest or else its top-level folders' (at most 20), then each plugin's newest release: one row
 per plugin, an installable one showing its name and version, anything else why it cannot be
-installed (no release yet, an invalid manifest). An exact `owner/repo` is read even when search
+installed (no release yet, an invalid manifest), wrapped in full rather than cut off, since it is the reason. An exact `owner/repo` is read even when search
 does not find it, so a plugin without the topic still installs by name. A local folder, used in
 place, is for developing a plugin.
 
@@ -106,7 +106,7 @@ Holi learns it at its next start. The consent dialog lists the commands; a call 
 for permission like any other command, until the person allows it.
 
 **Nothing runs before consent.** A fetched release waits until the person allows that commit, in a
-dialog naming the repository, version, commit, both commands and the commands it gives the agent. Consent is per `(id, commit)` in
+dialog naming the repository, version, commit, both commands and the commands it gives the agent, in body text, as the vault-app consent is. Consent is per `(id, commit)` in
 `userData/plugin-consent.json`, with no expiry; a different commit asks again. Then setup runs once,
 its output streamed into the dialog and kept in `setup.log`. A folder install asks nothing: it is
 the person's own checkout.
@@ -206,6 +206,6 @@ plugin the vault pins, whether the vault turns it on, and the commands it gives 
   `pluginServerOrigin`, `PLUGIN_COMMANDS_DIR`.
 - `apps/desktop/src/plugins/community/main/`: the install store, fetch, the topic search, setup,
   consent, the readiness checks (`checks.ts`), the supervisor, the agent's commands (`commands.ts`) and the `community.*` capabilities.
-- `apps/desktop/src/plugins/community/renderer/`: the tab (`PluginFrame`), the settings section, the
+- `apps/desktop/src/plugins/community/renderer/`: the tab (`PluginFrame`, `plugin-frame.tsx`), the settings section, the
   consent dialog and the vault notice.
 - `apps/desktop/src/main/window-guard.ts`: `originFrameExit`.

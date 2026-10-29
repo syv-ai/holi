@@ -16,7 +16,7 @@
  */
 import { atom, getDefaultStore, useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect } from 'react'
-import { googleCap } from './account'
+import { googleCap } from './google-cap'
 import { activeRemoteAtom } from '@/plugin-api'
 
 /** Message keys unblocked this session. A `ReadonlySet` replaced wholesale, so
@@ -125,6 +125,7 @@ export function useRemoteContent(identity: RemoteContentIdentity): RemoteContent
  * These atoms are module state on jotai's default store, shared across every
  * test in a file. `alwaysAllowedSenders` goes back to `undefined`, not an empty
  * set, so a test sees the same first render the app does.
+ * @public exported for its test
  */
 export function resetMailImagesForTests(): void {
   const store = getDefaultStore()

@@ -35,6 +35,7 @@ import { appBaseTokens, paletteFor } from './tokens'
  *
  * A bare host means the entry document, the same way a web server resolves `/`
  * to `index.html`.
+ * @public exported for its test
  */
 export function parseAppUrl(
   url: string,
@@ -70,6 +71,7 @@ export function parseAppUrl(
  * rejects the residue — an absolute path, an empty one, or a surviving `..`.
  * The root it joins under is the app's own bundle, which is the difference
  * that matters.
+ * @public exported for its test
  */
 export function appFileAbsPath(vaultRoot: string, bundle: string, rel: string): string | null {
   if (!isAppBundlePath(bundle)) return null
@@ -91,6 +93,7 @@ export function appFileAbsPath(vaultRoot: string, bundle: string, rel: string): 
  * reached through a symlink, nothing opened by a case alias. The lexical checks
  * above hold for the name; a committed `lib -> ../../.holi/memory` would otherwise
  * serve whatever the link points at, in the vault or out of it.
+ * @public exported for its test
  */
 export async function servableAppFile(
   vaultRoot: string,
@@ -125,7 +128,7 @@ const APP_MIME: Record<string, string> = {
   ttf: 'font/ttf',
 }
 
-export function appMimeFor(path: string): string {
+function appMimeFor(path: string): string {
   const ext = path.split('.').pop()?.toLowerCase() ?? ''
   return APP_MIME[ext] ?? mimeFor(path)
 }
@@ -148,6 +151,7 @@ function cssSafe(value: string): string {
  * The theme arrives this way rather than through a `holi.theme()` call because
  * it is **ambient**: an app styles with `var(--primary)` and inherits a vault's
  * palette without knowing there is such a thing as a theme.
+ * @public exported for its test
  */
 export function appHeadHtml(block: ThemeBlock, mode: ThemeMode): string {
   // Base first, the vault's overrides second, so the later declaration wins. A
@@ -168,6 +172,7 @@ export function appHeadHtml(block: ThemeBlock, mode: ThemeMode): string {
  * Only ever applied to the entry document. Every other file an app ships is
  * served byte-for-byte — an injected script in someone's `.js` would be a
  * genuinely confusing thing to debug.
+ * @public exported for its test
  */
 export function injectAppHead(html: string, head: string): string {
   const open = /<head[^>]*>/i.exec(html)
@@ -185,7 +190,7 @@ export function injectAppHead(html: string, head: string): string {
  * header that lets one opaque origin read lets every app read every other's
  * code.
  */
-export function commandRunnerHtml(head: string, script: string): string {
+function commandRunnerHtml(head: string, script: string): string {
   const src = script.split('/').map(encodeURIComponent).join('/')
   return `<!doctype html><html><head><meta charset="utf-8">${head}<script>${COMMAND_JS}</script><script src="${src}"></script></head></html>`
 }

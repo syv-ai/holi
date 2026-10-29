@@ -90,8 +90,21 @@ const onMenuCommand = pushChannel<string>('menu:command')
 /** Updating Holi itself: the updater's whole status, on every change. */
 const onUpdateStatus = pushChannel<unknown>('updates:status')
 
-/** A plugin's own window (`page-windows.ts`): what main tells its page. */
-const onPageEvent = pushChannel<{ name: string; payload: unknown }>('page:event')
+/** A line of the activity log (the bottom panel's Output), as it is written. */
+const onActivityEntry = pushChannel<unknown>('activity:entry')
+/** A line of the application log (the bottom panel's Logs), as it is kept. */
+const onLogEntry = pushChannel<unknown>('logs:entry')
+
+/** The bottom panel's shells: their output and their exit. Keystrokes and
+ *  sizes go back over tRPC, each naming the vault and the terminal. */
+const onTerminalData = pushChannel<unknown>('terminal:data')
+const onTerminalExit = pushChannel<unknown>('terminal:exit')
+/** Where a shell is and the git work there, for the panel's context chips. */
+const onTerminalContext = pushChannel<unknown>('terminal:context')
+
+/** The window went in or out of fullscreen. macOS hides the traffic lights
+ *  there, so the band the sidebar keeps for them can go. */
+const onFullScreen = pushChannel<boolean>('window:fullscreen')
 
 /** The ONE seam between renderer and main (architecture §3). */
 contextBridge.exposeInMainWorld('holi', {
@@ -125,11 +138,19 @@ contextBridge.exposeInMainWorld('holi', {
   updates: {
     onStatus: onUpdateStatus,
   },
-  /** A plugin's own window, such as the quick panel: one channel each way,
-   *  heard by main only from the window that sent it. */
-  page: {
-    on: onPageEvent,
-    send: (name: string, payload: unknown) => ipcRenderer.send('page:message', { name, payload }),
+  window: {
+    onFullScreen,
+  },
+  activity: {
+    onEntry: onActivityEntry,
+  },
+  logs: {
+    onEntry: onLogEntry,
+  },
+  terminal: {
+    onData: onTerminalData,
+    onExit: onTerminalExit,
+    onContext: onTerminalContext,
   },
   openExternal: (url: string) => ipcRenderer.invoke('holi:openExternal', url),
   openPath: (path: string) => ipcRenderer.invoke('holi:openPath', path),
@@ -144,6 +165,11 @@ contextBridge.exposeInMainWorld('holi', {
   /** Hand these files to the OS as a drag. Fire-and-forget: a drag cannot wait
    *  for a round trip. */
   startDrag: (paths: string[]) => ipcRenderer.send('holi:startDrag', paths),
+  setAppearance: (scheme: 'light' | 'dark' | 'system') =>
+    ipcRenderer.send('holi:appearance', scheme),
+  /** The dock's icon, drawn by the window in the theme's colours: a PNG data
+   *  URL (`lib/app-icon.ts`). */
+  setDockIcon: (pngDataUrl: string) => ipcRenderer.send('holi:dockIcon', pngDataUrl),
   showSaveDialog: (input: {
     remote: string
     path: string

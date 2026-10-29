@@ -270,11 +270,19 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
     }
   })
 
-  it('keeps appearance machine-local and everything else in the vault', () => {
-    // A teammate's committed choice flipping your app to light mode is exactly
-    // the failure the `.local` layer exists to prevent.
+  it('keeps appearance, the arcade, the Space-to-ask key and the agent machine-local, everything else in the vault', () => {
+    // A teammate's committed choice flipping your app to light mode, taking
+    // your Space key, or starting your sessions in an agent this machine does
+    // not have, is exactly the failure the `.local` layer exists to prevent.
     const local = VAULT_SETTING_DESCRIPTORS.filter((d) => d.target === 'local').map((d) => d.key)
-    expect(local).toEqual(['colorScheme'])
+    expect(local).toEqual([
+      'colorScheme',
+      'windowGlass',
+      'gridArcade',
+      'foldSidebarForApps',
+      'spaceAsksAgent',
+      'agentProvider',
+    ])
   })
 
   it('names no key twice', () => {

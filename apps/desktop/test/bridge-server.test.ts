@@ -48,7 +48,7 @@ async function rig(cli?: BridgeServerDeps['cli']) {
   const ends: string[] = []
   const server = createBridgeServer({ cli, log: () => {} })
   registerAgentRoutes(server, {
-    onJobTurn: (remote, job, active) => (active ? starts : ends).push(`${remote}:${job}`),
+    onTurn: (remote, job, active) => (active ? starts : ends).push(`${remote}:${job}`),
     log: () => {},
   })
   servers.push(server)
@@ -143,7 +143,7 @@ describe('createBridgeServer', () => {
     const seen: unknown[] = []
     const server = createBridgeServer({ log: () => {} })
     registerAgentRoutes(server, {
-      onJobTurn: () => {},
+      onTurn: () => {},
       onStatus: (remote, job, status) => seen.push([remote, job, status]),
       log: () => {},
     })

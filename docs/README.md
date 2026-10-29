@@ -5,13 +5,15 @@ other rather than repeating each other.
 
 ## Foundation
 
-| Page                            | What it is                                                                  |
-| ------------------------------- | --------------------------------------------------------------------------- |
-| [vision](vision.md)             | What Holi is, its principles, and what comes after v1                       |
-| [architecture](architecture.md) | A map of the system: processes, the vault, the agent, security              |
-| [ui-system](ui-system.md)       | The renderer's component layers, tokens, focus, motion, drawers and theming |
-| [glossary](glossary.md)         | Canonical terms; when a word is ambiguous, this wins                        |
-| [not-built](not-built.md)       | Designed and wanted, but absent                                             |
+| Page                                | What it is                                                                                                                     |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| [vision](vision.md)                 | What Holi is, its principles, and what comes after v1                                                                          |
+| [architecture](architecture.md)     | A map of the system: processes, the vault, the agent, security                                                                 |
+| [renderer](renderer.md)             | The renderer's layers, names, test locations and the rules that enforce them                                                   |
+| [ui-system](ui-system.md)           | The renderer's design rules: stock components, tokens, focus, motion, drawers, theming                                         |
+| [glossary](glossary.md)             | Canonical terms; when a word is ambiguous, this wins                                                                           |
+| [not-built](not-built.md)           | Designed and wanted, but absent                                                                                                |
+| [refactor](refactor/agent-first.md) | The agent-first renderer refactor: plan, [decisions](refactor/design-decisions.md) and [review findings](refactor/findings.md) |
 
 ## Features
 
@@ -22,7 +24,7 @@ other rather than repeating each other.
 | [settings](features/settings.md)                   | `.holi/settings/app.yaml`, its schema, the settings tab                  |
 | [file-tree](features/file-tree.md)                 | The tree, folders, hidden and local files, icons                         |
 | [auth](features/auth.md)                           | GitHub sign-in, the token, collaborators, access                         |
-| [editor](features/editor.md)                       | CodeMirror live preview, tables, images, external writes, completion     |
+| [editor](features/editor.md)                       | Tiptap notes, CodeMirror text files, external writes, completion         |
 | [note-comments](features/note-comments.md)         | Comment threads on a note's passages, the panel, mentions, the agent     |
 | [tabs-panes](features/tabs-panes.md)               | Panes, preview and pinned tabs, moving tabs                              |
 | [frontmatter](features/frontmatter.md)             | The frontmatter block, typed rows, schemas                               |
@@ -30,20 +32,26 @@ other rather than repeating each other.
 | [holi-links](features/holi-links.md)               | `holi://` links that open a note or heading from chat or email           |
 | [graph](features/graph.md)                         | The vault's notes and links as a graph                                   |
 | [tasks](features/tasks.md)                         | Task files, the board, dates, recurrence, reminders                      |
+| [planning](features/planning.md)                   | The vault as one project: Overview, Board, List and Table                |
 | [daily-notes](features/daily-notes.md)             | Idempotent daily notes and their archive                                 |
-| [agent-sessions](features/agent-sessions.md)       | Claude Code background sessions, agent tabs, turn review, reconcile      |
+| [agent-sessions](features/agent-sessions.md)       | Background sessions, the Agents view, turn review, reconcile             |
 | [agent-config](features/agent-config.md)           | Config layering, the per-vault silo, seeded files, tools, permissions    |
 | [agent-memory](features/agent-memory.md)           | `.holi/memory/`, expiring memory, the session overview, the memory lint  |
 | [scheduled-agents](features/scheduled-agents.md)   | Prompts Holi runs as agent sessions on a schedule or on a trigger        |
+| [holis](features/holis.md)                         | Agents that belong to the vault, sent a document from its Agent menu     |
 | [agent-inbox](features/agent-inbox.md)             | `holi agent notify`, the inbox, needs-you notifications, the work log    |
-| [quick-agent](features/quick-agent.md)             | The global keys, the quick panel and its dock, question cards            |
 | [google](features/google.md)                       | Gmail and Calendar per vault                                             |
 | [pdf](features/pdf.md)                             | Typst export, templates, the PDF viewer                                  |
 | [links](features/links.md)                         | Web addresses saved as link files, and the page previews                 |
+| [browser](features/browser.md)                     | Web pages in a tab, which the agent drives with `holi browser`           |
 | [vault-apps](features/vault-apps.md)               | Agent-written apps in their own origin, their records, slash commands    |
 | [community-plugins](features/community-plugins.md) | Plugins from other repositories, run as their own processes              |
-| [command-palette](features/command-palette.md)     | Quick open and the one table of commands                                 |
-| [nav-menu](features/nav-menu.md)                   | The morphing menu at the sidebar's foot, and Home                        |
+| [command-palette](features/command-palette.md)     | ⌘K: documents, views and the shell's actions                             |
+| [shortcuts](features/keyboard-shortcuts.md)        | The shell's keyboard shortcuts, their table and their dialog             |
+| [nav-menu](features/nav-menu.md)                   | The nav's items, their menu, and Home                                    |
+| [sidebar](features/sidebar.md)                     | The sidebar, its two modes, the seam and the profile                     |
+| [status-bar](features/status-bar.md)               | The status bar, the bottom panel, its Terminal and Output                |
+| [home](features/home.md)                           | Home: the vault's library (recent, notes, tasks, activity)               |
 | [onboarding](features/onboarding.md)               | First run, creating or joining a vault                                   |
 | [updates](features/updates.md)                     | Releases from CI, stable and dev channels, updating skills in a vault    |
 

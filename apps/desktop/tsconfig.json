@@ -4,6 +4,7 @@
     "jsx": "react-jsx",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "baseUrl": ".",
+    // The `@` alias: electron.vite.config.ts and vitest.config.ts repeat it and must agree.
     "paths": { "@/*": ["src/renderer/src/*"] }
   },
   "include": ["src", "electron.vite.config.ts"]

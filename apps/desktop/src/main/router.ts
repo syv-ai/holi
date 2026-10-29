@@ -13,7 +13,6 @@ import { exactPath } from '@holi/shared/path-safety-node'
 import {
   commentThreads,
   isCommentableNote,
-  isAgentSurfacePath,
   sameLogin,
   vaultRelPath,
   withIcon,
@@ -40,17 +39,28 @@ import { createCapabilityRegistry } from './capabilities/registry'
 import { noCoreServices, type UiReport } from './capabilities/services'
 import { buildLinkGraph, scanBackrefs, scanBackrefsMany, scanLinks } from './vault/backrefs'
 import { fileHistory, type FileHistory } from './vault/file-facts'
+import { fileCards, type FileCard } from './vault/file-cards'
 import { copyNotes } from './vault/copy'
 import { importFiles } from './vault/import-files'
 import { exportFiles } from './vault/export-files'
 import { moveNotes } from './vault/move'
 import { getOrCreateDaily, sweepDaily } from './vault/daily'
-import { openRepo, remoteUrl, type Commit } from './git'
-import { GitHubApiError, type Repo } from './github/api'
+import {
+  BranchRefusedError,
+  openRepo,
+  remoteUrl,
+  validBranchName,
+  type BranchList,
+  type Commit,
+} from './git'
+import { GitHubApiError, type Contributor, type Repo } from './github/api'
 import type { DeviceFlow } from './github/device-flow'
 import { createMembersCache, type MembersCache } from './github/members-cache'
 import type { GitHubSession } from './github/session'
-import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
+import type { ActiveVault, SyncInfo, SyncState, VaultHost } from './vault/active-vault'
+import type { ActivityEntry, ActivityLog } from './activity/log'
+import type { AppLog, AppLogEntry } from './logs/app-log'
+import type { TerminalInfo, TerminalOpened, Terminals } from './terminal/terminals'
 import { ensureClone } from './vault/clone'
 import {
   absPathFor,
@@ -215,6 +225,15 @@ export interface RouterDeps {
   /** Whether Holi opens at login, this machine's login item. Optional: absent,
    *  as in tests, it reads as off and cannot be set. */
   loginItem?: { get(): boolean; set(open: boolean): void }
+  /** The activity log the bottom panel's Output shows (`activity/log.ts`).
+   *  Optional: absent, as in tests, it reads as empty. */
+  activity?: Pick<ActivityLog, 'entries' | 'clear'>
+  /** Everything Holi prints, for the bottom panel's Logs (`logs/app-log.ts`).
+   *  Optional: absent, as in tests, it reads as empty. */
+  logs?: Pick<AppLog, 'entries' | 'clear'>
+  /** The bottom panel's shells (`terminal/terminals.ts`). Optional: absent,
+   *  a terminal cannot be opened. */
+  terminals?: Terminals
 }
 
 /** Whether a clone carries the `.holi/vault` marker — i.e. it is a Holi vault
@@ -360,6 +379,10 @@ function deleteManyInput(raw: unknown): { remote: string; paths: string[]; folde
     folders: folders === undefined ? [] : stringList(raw, 'folders'),
   }
 }
+
+/** Home's feed: this many commits, and this many of each one's files. */
+const ACTIVITY_LIMIT = 12
+const ACTIVITY_FILES = 5
 
 export function createRouter(deps: RouterDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
@@ -690,6 +713,28 @@ export function createRouter(deps: RouterDeps) {
       }),
     ),
 
+    /**
+     * Who has written a file, for the document header. GitHub's answer where
+     * it has one (accounts and avatars); offline, signed out, or for commits
+     * not pushed yet, the local log's author names.
+     */
+    fileContributors: t.procedure
+      .input(fields({ remote: 'string', path: 'string' }))
+      .query(async ({ input }): Promise<Contributor[]> => {
+        const remote = safeRemote(input.remote)
+        const path = safe(input.path)
+        try {
+          const found = await gh(() => deps.session.api.fileContributors(remote, path))
+          if (found.length > 0) return found
+        } catch {
+          // Fall through to the local history.
+        }
+        const commits = await activeOrThrow()
+          .repo.log({ path })
+          .catch(() => [])
+        const names = [...new Set(commits.map((commit) => commit.author))]
+        return names.map((name) => ({ login: null, name, avatarUrl: null }))
+      }),
     /** What the vault's repo weighs on GitHub, for its usage reading. */
     repoSize: t.procedure.input(fields({ remote: 'string' })).query(({ input }) =>
       gh(async () => ({
@@ -1040,6 +1085,18 @@ export function createRouter(deps: RouterDeps) {
         )
       }),
 
+    /** The finder's facts about each of a folder's files (`file-cards.ts`):
+     *  size, last commit, and a note's summary. Against the active vault's
+     *  repo, which is the only one the finder shows. */
+    fileCards: t.procedure.input(pathsInput).query(async ({ input }): Promise<FileCard[]> => {
+      const root = await rootFor(input.remote)
+      const repo = activeOrThrow().repo
+      return fileCards(root, input.paths.map(safe), async (path) => {
+        const [last] = await repo.log({ path, limit: 1 })
+        return last === undefined ? null : { date: last.date, author: last.author }
+      })
+    }),
+
     /** The file's last commit, first commit and commit count. Null when the
      *  file has no history yet. Resolved against the active vault's repo, since
      *  the editor only shows the active vault. The log is never limited: the
@@ -1276,6 +1333,80 @@ export function createRouter(deps: RouterDeps) {
     /** The push channel carries changes; this is the initial read. */
     state: t.procedure.query((): SyncState => activeOrThrow().syncState()),
 
+    /**
+     * What the status bar shows beside the state: the branch, whether the
+     * tree has uncommitted changes, ahead and behind, and when the remote
+     * last answered. Read live (one `git status`), on the bar's own schedule.
+     */
+    info: t.procedure.query(
+      async (): Promise<
+        | (SyncInfo & {
+            remote: string
+            branch: string
+            dirty: boolean
+            ahead: number
+            behind: number
+          })
+        | null
+      > => {
+        const active = deps.host.active()
+        if (active === null) return null
+        const status = await active.repo.status().catch(() => null)
+        if (status === null) return null
+        return {
+          remote: active.remote,
+          branch: status.branch,
+          dirty: status.dirty,
+          ahead: status.ahead,
+          behind: status.behind,
+          ...active.syncInfo(),
+        }
+      },
+    ),
+
+    /** The status bar's sync item: commit, pull and push now. */
+    now: t.procedure.mutation(async () => {
+      await activeOrThrow().syncNow()
+      return { ok: true as const }
+    }),
+
+    /** The status bar's branch picker: local and remote branches, as the
+     *  clone knows them. `fetchBranches` brings the remote side up to date. */
+    branches: t.procedure.query((): Promise<BranchList> => activeOrThrow().branches()),
+
+    /** Fetch for the picker as it opens; debounced in the vault. */
+    fetchBranches: t.procedure.mutation(async () => {
+      await activeOrThrow().fetchBranches()
+      return { ok: true as const }
+    }),
+
+    /** Is this a name `git check-ref-format --branch` accepts as written?
+     *  Asked as the person types a new branch's name. */
+    branchNameValid: t.procedure
+      .input(fields({ name: 'string' }))
+      .query(async ({ input }): Promise<boolean> =>
+        validBranchName(activeOrThrow().root, input.name),
+      ),
+
+    /**
+     * Switch the vault to a branch, or create one at HEAD (`create`). A
+     * refusal (a conflict, a pause, an uncommittable file, a bad name) comes
+     * back as PRECONDITION_FAILED carrying the words to show.
+     */
+    switchBranch: t.procedure
+      .input(fields({ name: 'string', create: 'boolean?' }))
+      .mutation(async ({ input }) => {
+        try {
+          await activeOrThrow().switchBranch(input.name, { create: input.create === true })
+        } catch (err) {
+          if (err instanceof BranchRefusedError) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: err.message })
+          }
+          throw err
+        }
+        return { ok: true as const }
+      }),
+
     /** ⌘S: a real commit point rather than a placebo. */
     commitNow: t.procedure.mutation(() => activeOrThrow().commitNow()),
 
@@ -1392,6 +1523,22 @@ export function createRouter(deps: RouterDeps) {
     /** The whole vault's commit log, newest-first — the broad history dialog. */
     log: t.procedure.query((): Promise<Commit[]> =>
       activeOrThrow().repo.log({ limit: HISTORY_LIMIT }),
+    ),
+
+    /** What changed lately, for Home's feed: the newest commits, each with
+     *  the paths it touched (at most `ACTIVITY_FILES` of them, and how many in
+     *  all). Read from git on asking, never kept. */
+    activity: t.procedure.query(
+      async (): Promise<{ commit: Commit; files: string[]; total: number }[]> => {
+        const repo = activeOrThrow().repo
+        const commits = await repo.log({ limit: ACTIVITY_LIMIT })
+        return Promise.all(
+          commits.map(async (commit) => {
+            const files = await repo.changedFiles(commit.sha).catch(() => [])
+            return { commit, files: files.slice(0, ACTIVITY_FILES), total: files.length }
+          }),
+        )
+      },
     ),
 
     /** The paths one commit changed — the file list beside a commit's diff. */
@@ -1721,8 +1868,92 @@ export function createRouter(deps: RouterDeps) {
       }),
   })
 
-  /** This machine's app: whether it opens at login, so reminders and sync
-   *  are there from the start. The one place this is asked. */
+  /** The bottom panel's Output: what Holi did in the background. The push
+   *  channel (`activity:entry`) carries each new line; this is the first read. */
+  const activity = t.router({
+    entries: t.procedure.query((): ActivityEntry[] => deps.activity?.entries() ?? []),
+    /** Clear it in main too, so a reload does not bring the lines back. */
+    clear: t.procedure.mutation(() => {
+      deps.activity?.clear()
+      return { ok: true as const }
+    }),
+  })
+
+  /** The bottom panel's Logs: main's console and the window's, raw. The push
+   *  channel (`logs:entry`) carries each new line; this is the first read. */
+  const logs = t.router({
+    entries: t.procedure.query((): AppLogEntry[] => deps.logs?.entries() ?? []),
+    clear: t.procedure.mutation(() => {
+      deps.logs?.clear()
+      return { ok: true as const }
+    }),
+  })
+
+  /**
+   * The bottom panel's shells (docs/features/status-bar.md): a login shell in
+   * a PTY in the open vault's clone. Each call names the vault, and one about
+   * any vault but the open one is refused or dropped; output arrives on the
+   * `terminal:data` push.
+   */
+  const terminalInput = (raw: unknown) => fields({ remote: 'string', id: 'string' })(raw)
+  const sizeOf = (raw: unknown): { cols: number; rows: number } => {
+    const { cols, rows } = (raw ?? {}) as Record<string, unknown>
+    const ok = (n: unknown): n is number =>
+      typeof n === 'number' && Number.isInteger(n) && n > 0 && n < 10_000
+    if (!ok(cols) || !ok(rows)) throw new Error('cols and rows must be positive integers')
+    return { cols, rows }
+  }
+  const terminalsOrThrow = (): Terminals => {
+    if (deps.terminals === undefined) throw new TRPCError({ code: 'PRECONDITION_FAILED' })
+    return deps.terminals
+  }
+  const terminal = t.router({
+    list: t.procedure
+      .input(fields({ remote: 'string' }))
+      .query(({ input }): TerminalInfo[] => deps.terminals?.list(input.remote) ?? []),
+    create: t.procedure
+      .input((raw: unknown) => ({ ...fields({ remote: 'string' })(raw), ...sizeOf(raw) }))
+      .mutation(({ input }): TerminalOpened => {
+        const active = deps.host.active()
+        if (active === null || active.remote !== input.remote) {
+          return { ok: false, message: 'That vault is not open.' }
+        }
+        return terminalsOrThrow().create({
+          remote: active.remote,
+          root: active.root,
+          cols: input.cols,
+          rows: input.rows,
+        })
+      }),
+    /** What it printed so far, for an xterm built after the output. */
+    replay: t.procedure
+      .input(terminalInput)
+      .query(({ input }): string => deps.terminals?.replay(input.remote, input.id) ?? ''),
+    write: t.procedure
+      .input((raw: unknown) => {
+        const base = terminalInput(raw)
+        const data = (raw as Record<string, unknown>).data
+        if (typeof data !== 'string' || data.length > 1_000_000) throw new Error('bad data')
+        return { ...base, data }
+      })
+      .mutation(({ input }) => {
+        deps.terminals?.write(input.remote, input.id, input.data)
+        return { ok: true as const }
+      }),
+    resize: t.procedure
+      .input((raw: unknown) => ({ ...terminalInput(raw), ...sizeOf(raw) }))
+      .mutation(({ input }) => {
+        deps.terminals?.resize(input.remote, input.id, input.cols, input.rows)
+        return { ok: true as const }
+      }),
+    kill: t.procedure.input(terminalInput).mutation(async ({ input }) => {
+      await deps.terminals?.kill(input.remote, input.id)
+      return { ok: true as const }
+    }),
+  })
+
+  /** This machine's app: whether it opens at login, so the reminders and
+   *  sync are there from the start. */
   const app = t.router({
     loginItem: t.procedure.query((): { openAtLogin: boolean } => ({
       openAtLogin: deps.loginItem?.get() ?? false,
@@ -1750,6 +1981,9 @@ export function createRouter(deps: RouterDeps) {
     cap,
     updates,
     app,
+    activity,
+    logs,
+    terminal,
   })
 }
 

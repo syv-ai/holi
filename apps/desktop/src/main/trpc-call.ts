@@ -19,8 +19,7 @@ export interface TrpcOp {
 }
 
 export type TrpcEnvelope =
-  | { ok: true; data: unknown }
-  | { ok: false; message: string; code?: string }
+  { ok: true; data: unknown } | { ok: false; message: string; code?: string }
 
 type Caller = Record<string, unknown>
 

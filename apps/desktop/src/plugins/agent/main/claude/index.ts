@@ -1,15 +1,22 @@
 /**
- * Claude Code as the agent's provider (`../provider.ts`): its CLI, its
- * session listing, its per-vault config directory, the terminal command, its
- * hook routes and its seed.
+ * Claude Code as a provider (`../provider.ts`): every capability. Its
+ * sessions are background sessions its supervisor runs, its hooks report
+ * turns and its status line the context and model.
  *
  * No `electron` import: the caller hands in the colour mode it reads from
  * `nativeTheme`, so this loads under plain Node in the tests.
  */
-import type { AgentProvider } from '../provider'
-import { createClaudeCli, terminalCommand } from './cli'
+import type { BackgroundProvider } from '../provider'
+import { createClaudeCli, NOT_INSTALLED, resolveClaudeBin, terminalCommand } from './cli'
 import { resolveVaultAgentConfig, SIGN_IN_NOTICE, takeFirstSpawn } from './config-dir'
-import { isLive, parseListing, readContextPercent, summarise, watchConfigDir } from './listing'
+import {
+  isLive,
+  parseListing,
+  readContextPercent,
+  readModelName,
+  summarise,
+  watchConfigDir,
+} from './listing'
 import { postToSession } from './messaging'
 import { registerAgentRoutes } from './routes'
 import { claudeSeed } from './seed'
@@ -23,14 +30,12 @@ export interface ClaudeProviderDeps {
   systemPrefersDark(): boolean
 }
 
-export function claudeProvider(deps: ClaudeProviderDeps): AgentProvider {
+export function claudeProvider(deps: ClaudeProviderDeps): BackgroundProvider {
   return {
-    cli: createClaudeCli(),
-    parseListing,
-    isLive,
-    summarise,
-    readContextPercent,
-    watch: watchConfigDir,
+    id: 'claude',
+    label: 'Claude Code',
+    notInstalled: NOT_INSTALLED,
+    installed: () => resolveClaudeBin() !== null,
     // Per vault open, not per launch: the open vault moves, and the theme
     // stamped into its directory tracks a setting the user can flip while
     // the app runs. Static paths every session needs ride in the settings
@@ -43,11 +48,21 @@ export function claudeProvider(deps: ClaudeProviderDeps): AgentProvider {
         systemPrefersDark: deps.systemPrefersDark(),
         env: { HOLI_BIN: deps.holiBin() },
       }),
-    takeFirstSpawn,
-    signInNotice: SIGN_IN_NOTICE,
-    terminal: (target, attach) => terminalCommand(target, attach),
-    message: postToSession,
-    routes: registerAgentRoutes,
+    terminal: (target, opts = {}) =>
+      terminalCommand(target, opts.attach, undefined, opts.fork, opts.login),
+    firstSpawn: { take: takeFirstSpawn, notice: SIGN_IN_NOTICE },
     seed: claudeSeed,
+    capabilities: {
+      background: {
+        cli: createClaudeCli(),
+        parseListing,
+        isLive,
+        summarise,
+        watch: watchConfigDir,
+        message: postToSession,
+      },
+      turns: { routes: registerAgentRoutes },
+      status: { contextPercent: readContextPercent, model: readModelName },
+    },
   }
 }

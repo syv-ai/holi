@@ -8,6 +8,7 @@
  * `electron-vite` resolves imports without typechecking, so an unresolvable
  * import anywhere on this path stops the window opening at all.
  */
+import { applyLiquidGlass, wantsLiquidGlass } from './liquid-glass'
 import { stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
@@ -25,7 +26,6 @@ import {
 import { HOLI_LINK_SCHEME, holiLinkInArgv, parseHoliLink } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
 import { requestFlush, type FlushChannel } from './flush'
-import { rendererWindow } from './renderer-window'
 import { captureTab } from './tab-capture'
 import { vaultScheme } from './vault/asset-protocol'
 import { createSession } from './github/electron'
@@ -60,6 +60,11 @@ import { createReleaseNotes } from './updates/release-notes'
 import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
 import { registerIpc } from './ipc'
+import { createActivityLog } from './activity/log'
+import { captureConsole, createAppLog, rendererLevel, type AppLogEntry } from './logs/app-log'
+import { createTerminals } from './terminal/terminals'
+import { pathToFileURL } from 'node:url'
+import { guardNavigation } from './window-guard'
 import { createRouter } from './router'
 import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
@@ -71,7 +76,6 @@ import { createUpdater, type Updater } from './updates/updater'
 import { installAppMenu } from './menu'
 import { createBridgeEnv } from './bridge/env-file'
 import { createBridgeServer } from './bridge/server'
-import { createPageWindows } from './page-windows'
 
 // The plugins this build has: the one place main imports them.
 install(MAIN_PLUGINS)
@@ -96,8 +100,6 @@ let tray: Tray | null = null
 /** Why Holi stays open with its window closed: what each plugin working in
  *  the background says. Empty, closing the last window quits, as in any app. */
 let inBackground: readonly string[] = []
-/** Set once the window helpers exist (`main()`); a plugin asks only later. */
-let showMainWindow: () => Promise<void> = () => Promise.resolve()
 
 // Every scheme this build serves, core's then each plugin's: vault assets,
 // and whatever plugins add (vault apps' `holi-app:`). Electron takes them only before
@@ -147,6 +149,13 @@ app.on('open-url', (event, url) => {
 // A second launch must not happen at all: one Holi process owns every vault,
 // so excluding a second app excludes a second writer on every clone, without a
 // per-clone lockfile's stale-lock handling. Must be claimed BEFORE `whenReady`.
+// Everything Holi prints, for the bottom panel's Logs
+// (docs/features/status-bar.md). Listening from the first line main prints,
+// so a launch's own lines are kept before there is a window to send them to.
+let pushLog: (entry: AppLogEntry) => void = () => {}
+const appLog = createAppLog({ onEntry: (entry) => pushLog(entry) })
+captureConsole(appLog)
+
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
@@ -163,11 +172,72 @@ function bringForward(win: BrowserWindow): void {
 }
 
 function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
-  const win = rendererWindow({ width: 1200, height: 800, show }, FRAME_SCHEMES, FRAME_ORIGINS)
+  const liquid = wantsLiquidGlass()
+  const win = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    show,
+    // No title bar on macOS: the traffic lights sit in the sidebar's top band
+    // and the tab strip is the window's handle (docs/ui-system.md, Window).
+    // The lights' centre is the tab strip's (36px tall).
+    // On macOS the window is glass (after MonoCode's): transparent, with the
+    // system's blur of what is behind it, which the shell's ground tints
+    // (index.css, Window). Elsewhere the ground is opaque.
+    // On macOS 26 and later the glass is the system's liquid glass instead
+    // (`liquid-glass.ts`), which wants a transparent window and no vibrancy.
+    ...(process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: { x: 14, y: 12 },
+          backgroundColor: '#00000000',
+          ...(liquid
+            ? { transparent: true }
+            : { vibrancy: 'under-window' as const, visualEffectState: 'active' as const }),
+        }
+      : {}),
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
   mainWindow = win
+  if (liquid) applyLiquidGlass(win)
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
   })
+  // The window's console joins main's in the Logs tab.
+  win.webContents.on('console-message', (details) =>
+    appLog.write({
+      source: 'renderer',
+      level: rendererLevel(details.level),
+      text: details.message,
+    }),
+  )
+  // Fullscreen hides the traffic lights, so the sidebar's band for them goes.
+  const sendFullScreen = () => win.webContents.send('window:fullscreen', win.isFullScreen())
+  win.on('enter-full-screen', sendFullScreen)
+  win.on('leave-full-screen', sendFullScreen)
+  win.webContents.on('did-finish-load', sendFullScreen)
+
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+  if (devUrl) {
+    void win.loadURL(devUrl)
+  } else {
+    void win.loadFile(join(__dirname, '../renderer/index.html'))
+  }
+  // After the load, so the guard knows what "the app" is. A drop the renderer
+  // does not claim is a navigation, and Electron answers a navigation with a
+  // window — see window-guard.ts.
+  guardNavigation(
+    win,
+    devUrl ?? pathToFileURL(join(__dirname, '../renderer/index.html')).href,
+    (url) => {
+      void shell.openExternal(url)
+    },
+    FRAME_SCHEMES,
+    FRAME_ORIGINS,
+  )
   // A reload is a new page, which has not landed its vault yet.
   win.webContents.on('did-navigate', () => {
     if (openTarget === win.webContents) openTarget = null
@@ -202,6 +272,19 @@ async function main(): Promise<void> {
 
   const send = (channel: string, payload: unknown) => mainWindow?.webContents.send(channel, payload)
 
+  // What Holi does in the background, for the bottom panel's Output
+  // (docs/features/status-bar.md). Kept from launch, so it holds what
+  // happened before the panel was ever opened.
+  const activity = createActivityLog({ onEntry: (entry) => send('activity:entry', entry) })
+  pushLog = (entry) => send('logs:entry', entry)
+  activity.write({ channel: 'app', message: `Holi ${app.getVersion()} started` })
+  // The bottom panel's shells. `binDir` is read lazily: the `holi` command is
+  // installed below, long before anyone opens a terminal.
+  const terminals = createTerminals({
+    send: (event) => send(`terminal:${event.kind}`, event),
+    binDir: () => binDir,
+  })
+
   const bridgeEnv = createBridgeEnv()
   /** remote → the undo of what the open vault's env file carries. */
   const vaultEnv = new Map<string, () => void>()
@@ -223,10 +306,6 @@ async function main(): Promise<void> {
     }
     return () => undo.forEach((u) => u())
   }
-
-  // Plugins' own windows (the agent's quick panel): core makes each one, the
-  // plugin places and shows it.
-  const pages = createPageWindows({ frameSchemes: FRAME_SCHEMES, frameOrigins: FRAME_ORIGINS })
 
   /** Plugin events, both ways, over the one window. */
   const eventsDeps: PluginEventsDeps = {
@@ -257,19 +336,20 @@ async function main(): Promise<void> {
     // The bridge and the `holi` command exist before any vault can open.
     route: (path, route) => bridge.route(path, route),
     binDir: () => binDir,
-    windows: {
-      openPage: (plugin, options) => pages.open(plugin, options),
-      // Read lazily: the window helpers are declared further down.
-      showMain: () => showMainWindow(),
-    },
     githubToken: () => session.token(),
     frameOrigin: (origin) => {
       FRAME_ORIGINS.add(origin)
       return () => void FRAME_ORIGINS.delete(origin)
     },
+    // One plugin's main side calling another's, at the UI door its renderer
+    // would use. `capabilityHost` is built below, before any vault opens.
+    call: async (remote, name, params) =>
+      (await capabilityHost.dispatch({ door: 'ui', remote, name, params })).value,
+    activity: activity.write,
     // A plugin's notification is the reminders' kind, kept off a Holi that
     // has focus. A click brings the window forward before the plugin acts.
     focused: () => BrowserWindow.getFocusedWindow() !== null,
+    window: () => (mainWindow === null || mainWindow.isDestroyed() ? null : mainWindow),
     notify: ({ title, body, onClick }) => {
       if (BrowserWindow.getFocusedWindow() !== null) return false
       showNotification({
@@ -352,6 +432,7 @@ async function main(): Promise<void> {
     // every commit tick and once at open, so a vault switch resets it.
     onHeldBack: (files) => send('vault:heldback', files),
     onCommitted: (paths) => send('vault:committed', paths),
+    activity: activity.write,
     // A merge (a pull, or a reconcile landing) is the only way a teammate's
     // comment arrives, so it is where a mention of the person signed in is
     // found and handed to the plugins
@@ -369,8 +450,12 @@ async function main(): Promise<void> {
         .catch((err) => console.error('[comments] mentions after pull:', err))
     },
     // What plugins run in the vault stops here, the only place that still
-    // holds the vault they ran in.
-    onLeave: () => plugins.stop(),
+    // holds the vault they ran in. The panel's shells were started in its
+    // clone too, and stop with it.
+    onLeave: async () => {
+      await terminals.closeAll().catch((err) => console.error('[terminal] close failed:', err))
+      await plugins.stop()
+    },
   })
 
   // Serve every scheme. A plugin's answers 404 while the open vault has it off.
@@ -653,8 +738,38 @@ async function main(): Promise<void> {
 
   // Updating Holi itself. Installing is a quit, so it runs the quit's confirm
   // and teardown first and then lets the updater's own quit through.
+  /** The update's state as the log last heard it, so a check that finds
+   *  nothing every few hours is not a line each time. */
+  let loggedUpdate = ''
   const updater: Updater = createUpdater({
-    send: (status) => send('updates:status', status),
+    send: (status) => {
+      send('updates:status', status)
+      const line =
+        status.lastError !== null
+          ? `error:${status.lastError}`
+          : status.state === 'available' || status.state === 'ready'
+            ? `${status.state}:${status.availableVersion ?? ''}`
+            : ''
+      if (line !== '' && line !== loggedUpdate) {
+        activity.write(
+          status.lastError !== null
+            ? {
+                channel: 'app',
+                level: 'warn',
+                message: 'Update check failed',
+                detail: status.lastError,
+              }
+            : {
+                channel: 'app',
+                message:
+                  status.state === 'ready'
+                    ? `Holi ${status.availableVersion ?? ''} is ready to install`
+                    : `Holi ${status.availableVersion ?? ''} is available`,
+              },
+        )
+      }
+      loggedUpdate = line
+    },
     beforeInstall: async () => {
       if (quitting || confirmingQuit) return false
       confirmingQuit = true
@@ -669,6 +784,9 @@ async function main(): Promise<void> {
 
   const router = createRouter({
     updates: updater,
+    activity,
+    logs: appLog,
+    terminals,
     releaseNotes: createReleaseNotes({ fetch: (url, init) => net.fetch(url, init) }),
     loginItem: {
       get: () => app.getLoginItemSettings().openAtLogin,
@@ -757,21 +875,8 @@ async function main(): Promise<void> {
     return fresh
   }
 
-  /**
-   * The main window forward, from somewhere that is not Holi (the quick
-   * panel). Holi may not be the active app, so it asks to be. A window made
-   * here resolves once its page has loaded, so what is sent next is heard.
-   */
-  showMainWindow = async (): Promise<void> => {
-    if (process.platform === 'darwin') app.focus({ steal: true })
-    const fresh = openWindow()
-    if (fresh === null) return
-    await new Promise<void>((resolve) => fresh.webContents.once('did-finish-load', () => resolve()))
-  }
-
   // The dock: the main window, opened if it was closed and brought out if a
-  // launch at login left it out of sight, whatever other windows of Holi's (a
-  // quick panel) are open.
+  // launch at login left it out of sight.
   app.on('activate', () => {
     if (mainWindow === null || mainWindow.isDestroyed() || !mainWindow.isVisible()) openWindow()
   })
@@ -850,6 +955,7 @@ async function main(): Promise<void> {
         // before we flush and commit: nothing a session was mid-writing
         // should race the teardown.
         await plugins.stop().catch((err) => console.error('[quit] plugins stop failed:', err))
+        await terminals.closeAll().catch((err) => console.error('[quit] terminals failed:', err))
         await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
         // A flush point is a flush THEN a commit, and only the renderer can do
         // the first half: the editor's newest words are not on disk until it

@@ -1,6 +1,6 @@
 import { atom } from 'jotai'
 import type { PublicViewer } from '../../../main/router'
-import { trpc } from '../lib/trpc'
+import { trpc } from '@/lib/trpc'
 
 /**
  * Who is signed in: `null` = signed out, `undefined` = not yet asked.

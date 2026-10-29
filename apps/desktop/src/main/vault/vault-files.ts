@@ -20,7 +20,7 @@ import {
   type VaultRelPath,
 } from '@holi/shared'
 
-export const TMP_MARKER = '.holi-tmp-'
+const TMP_MARKER = '.holi-tmp-'
 const JUNK = new Set(OS_JUNK_FILES)
 
 export function absPathFor(root: string, rel: VaultRelPath): string {
@@ -57,6 +57,7 @@ export function isNonContentPath(rel: string): boolean {
  * (`isWatchIgnoredPath`). A change to `.holi/state/context.local.json`
  * (rewritten every agent turn) must not storm the rescan loop. The snapshot uses `isNonContentPath` instead, so those files
  * still appear in the tree — refreshed on the periodic heal rather than live.
+ * @public exported for its test
  */
 export function isIgnoredPath(rel: string): boolean {
   return isNonContentPath(rel) || isLocalOnlyPath(rel)

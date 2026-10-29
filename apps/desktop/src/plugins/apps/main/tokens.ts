@@ -28,7 +28,10 @@ export function appBaseTokens(mode: ThemeMode): ThemeBlock {
   return holiTheme()[mode]
 }
 
-/** The tokens with no base value in `mode`: empty, and the test keeps it that way. */
+/**
+ * The tokens with no base value in `mode`: empty, and the test keeps it that way.
+ * @public exported for its test
+ */
 export function missingBaseTokens(mode: ThemeMode): string[] {
   const base = appBaseTokens(mode)
   return THEME_TOKENS.filter((token) => !(token in base))

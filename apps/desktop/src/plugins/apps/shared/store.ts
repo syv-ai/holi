@@ -11,11 +11,12 @@
 import { DATA_DIR, formatRecord } from '@holi/shared'
 
 /** How long a log entry is kept, and the most the file holds. */
-export const APP_LOG_TTL_MS = 24 * 60 * 60 * 1000
+const APP_LOG_TTL_MS = 24 * 60 * 60 * 1000
+/** @public exported for its test */
 export const APP_LOG_MAX_ENTRIES = 500
 /** The most of those that may be `info` (the console's log and info): a
  *  chatty app's own output never pushes its errors out. */
-export const APP_LOG_MAX_INFO = 200
+const APP_LOG_MAX_INFO = 200
 /** One entry's text past this is cut: a log line, not a dump. */
 export const APP_LOG_MAX_TEXT = 4000
 
@@ -49,8 +50,10 @@ export function appLogEntries(log: string | null): string[] {
  *  when no load is in it. */
 export function appLogSinceLoad(log: string | null): string[] {
   const entries = appLogEntries(log)
-  const last = entries.findLastIndex((e) => levelOf(e) === 'load')
-  return last < 0 ? entries : entries.slice(last)
+  for (let at = entries.length - 1; at >= 0; at--) {
+    if (levelOf(entries[at]!) === 'load') return entries.slice(at)
+  }
+  return entries
 }
 
 /**

@@ -1,21 +1,36 @@
 /**
- * The line between the agent host and the coding agent it runs
- * (docs/features/agent-sessions.md).
+ * The line between the agent host and the coding agents it runs
+ * (docs/features/agent-sessions.md, Providers).
  *
  * The host owns the PTYs and terminal mirror, the turn coordinator, turn
- * review and the session surface. The provider is everything that is one
- * agent's own: its CLI verbs, its session listing, its per-vault config
- * directory, the command a terminal runs, its hook routes and what it seeds.
+ * review and the session surface. A provider is everything that is one
+ * agent's own: the command a terminal runs, its per-vault directory, what it
+ * seeds, and whichever **capabilities** its CLI and hooks allow.
  *
- * Exactly what the host calls today, in Claude Code's shapes. Claude Code is
- * the one provider (`claude/`), so the types stay its own until a second
- * provider is written and shows which parts are really shared.
+ * **The core is enough to run it in a tab.** A provider with no capabilities
+ * still gets sessions: Holi runs the CLI in a PTY of its own, and the session
+ * lives as long as that process (`host/pty-sessions.ts`). Its turns are read
+ * off the terminal stream (`host/pty-signals.ts`) unless its hooks say.
+ *
+ * The capabilities are what the UI may offer for a session, never assumed:
+ *
+ * - `background`: sessions its own supervisor runs, which outlive any
+ *   terminal and can run with nobody watching. Claude Code's `--bg`. Holis
+ *   and automations need it, since their runs start with no terminal.
+ * - `turns`: hook routes that report a turn's start and end.
+ * - `status`: how full a session's context is, and its model.
  */
+import { AGENT_PROVIDER_IDS, type AgentProviderId } from '@holi/shared'
 import type { BridgeRoute, SeedContribution } from '../../../main/plugin-api'
 import type { ClaudeCli, VaultCliTarget } from './claude/cli'
-import type { ClaudeRow, SessionSummary } from './claude/listing'
+import type { ClaudeRow, SessionSummary, StatusReading } from './claude/listing'
 import type { SessionChannel } from './claude/messaging'
-import type { AgentRoutesDeps } from './claude/routes'
+
+/** Which agent a session runs: the vault setting's own list. */
+export type ProviderId = AgentProviderId
+
+export const isProviderId = (value: unknown): value is ProviderId =>
+  typeof value === 'string' && (AGENT_PROVIDER_IDS as readonly string[]).includes(value)
 
 /** A vault the provider is asked about. */
 export interface VaultRef {
@@ -30,12 +45,54 @@ export interface TerminalCommand {
   env: Record<string, string>
 }
 
+/**
+ * What a terminal is opened on. Each provider reads the fields it has.
+ * @public exported for its test
+ */
+export interface TerminalOpts {
+  /** A background session to attach to (`background` only). */
+  attach?: string
+  /** A copy of a conversation, by the provider's id for it. */
+  fork?: string
+  /** The provider's own sign-in. */
+  login?: boolean
+  /** A conversation to pick up: its id, or `'pick'` for the provider's own
+   *  picker. */
+  resume?: string
+  /** The session's first message. */
+  prompt?: string
+  /** Holi's id for a session it runs itself, which its hooks name. */
+  session?: string
+}
+
 /** Where the provider's hook routes are served (the bridge). */
 export interface RouteServer {
   route(path: string, route: BridgeRoute): () => void
 }
 
-export interface AgentProvider {
+/** What a provider's hooks report, by the session id they carry: a
+ *  background job id, or the id Holi gave a session it runs. */
+export interface TurnRouteDeps {
+  /** A turn began or ended. At an end, `pending` is how much the session
+   *  said was still in flight, 0 meaning done; null when it does not say. */
+  onTurn(remote: string, id: string, active: boolean, pending: number | null): void
+  /** A status report (`status` reads it). */
+  onStatus?(remote: string, id: string, status: unknown): void
+  /** What the session said about itself at a turn's end: its first ask,
+   *  which names it, and the provider's id for the conversation. */
+  onConversation?(
+    remote: string,
+    id: string,
+    about: { name?: string; conversationId?: string },
+  ): void
+  /** The session said where it takes messages: its inbox socket and token
+   *  (`background`'s `message`). */
+  onChannel?(remote: string, id: string, channel: SessionChannel): void
+  log?: (msg: string) => void
+}
+
+/** Sessions the provider's own supervisor runs (Claude Code's `--bg`). */
+interface BackgroundCapability {
   /** The provider's CLI verbs, each run for one vault. */
   cli: ClaudeCli
   /** The vault's sessions out of the CLI's listing. */
@@ -43,28 +100,56 @@ export interface AgentProvider {
   /** Is the session's process alive? */
   isLive(row: ClaudeRow): boolean
   /** What a live session is doing, for the renderer. */
-  summarise(row: ClaudeRow, working: ReadonlySet<string>, contextPercent?: number): SessionSummary
-  /** How full a session's context is, from its status report. */
-  readContextPercent(status: unknown): number | null
+  summarise(
+    row: ClaudeRow,
+    working: ReadonlySet<string>,
+    reading?: StatusReading,
+  ): Omit<SessionSummary, 'provider'>
   /** Call `onChange` when the config directory's session state moves.
    *  Returns the stop. */
   watch(configDir: string, onChange: () => void, log: (msg: string) => void): () => void
-  /** Provision the vault's config directory. Null leaves the vault without
-   *  an assistant. */
-  configure(vault: VaultRef): Promise<{ dir: string } | null>
-  /** True the first time Holi opens a terminal on this config directory,
-   *  consumed on read. */
-  takeFirstSpawn(configDir: string): Promise<boolean>
-  /** Printed into that first terminal: the directory needs its own sign-in. */
-  signInNotice: string
-  /** What a terminal on the list (no `attach`) or on one session runs. Null
-   *  when the agent is not installed on this machine. */
-  terminal(target: VaultCliTarget, attach?: string): TerminalCommand | null
   /** Add a message to a running session's conversation through the channel
    *  its hooks reported. Throws a `CapabilityError` when it is not taken. */
   message(channel: SessionChannel, text: string): Promise<void>
-  /** Serve the hook routes that report turns and status. Returns the undo. */
-  routes(server: RouteServer, deps: AgentRoutesDeps): () => void
-  /** What the provider writes into a vault. */
-  seed: SeedContribution
 }
+
+interface ProviderCapabilities {
+  background?: BackgroundCapability
+  /** Serve the hook routes that report turns. Returns the undo. */
+  turns?: { routes(server: RouteServer, deps: TurnRouteDeps): () => void }
+  status?: {
+    /** How full a session's context is, from its status report. */
+    contextPercent(status: unknown): number | null
+    /** The model a session runs on, from its status report. */
+    model(status: unknown): string | null
+  }
+}
+
+export interface AgentProvider {
+  id: ProviderId
+  /** Its name, as a person says it. */
+  label: string
+  /** Why a terminal could not open: the CLI is not on this machine. */
+  notInstalled: string
+  /** Whether its CLI is on this machine now. */
+  installed(): boolean
+  /** Provision the vault's directory for it. Null leaves the vault without
+   *  this provider. */
+  configure(vault: VaultRef): Promise<{ dir: string } | null>
+  /** What a terminal runs. Null when the agent is not installed. */
+  terminal(target: VaultCliTarget, opts?: TerminalOpts): TerminalCommand | null
+  /** A directory that needs its own sign-in: true the first time Holi opens
+   *  a terminal on it (consumed on read), and what that terminal prints. */
+  firstSpawn?: { take(configDir: string): Promise<boolean>; notice: string }
+  /** What the provider writes into a vault. */
+  seed?: SeedContribution
+  capabilities: ProviderCapabilities
+}
+
+/** A provider whose sessions its own supervisor runs. */
+export type BackgroundProvider = AgentProvider & {
+  capabilities: ProviderCapabilities & { background: BackgroundCapability }
+}
+
+export const hasBackground = (p: AgentProvider): p is BackgroundProvider =>
+  p.capabilities.background !== undefined

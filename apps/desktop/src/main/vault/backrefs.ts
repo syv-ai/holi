@@ -19,7 +19,7 @@ const isNote = (path: string): boolean => path.endsWith('.md')
  *  paths `skip` names and any file that cannot be read. The one walk every
  *  scan here makes; `paths` is the vault's file list when the caller already
  *  has it. */
-export async function* markdownFiles(
+async function* markdownFiles(
   root: string,
   skip: (path: string) => boolean = () => false,
   paths?: readonly string[],
@@ -142,7 +142,7 @@ export async function scanLinks(
 /** The most notes the graph view draws. A force layout over more is slow to
  *  settle and unreadable as a picture; past it, the best-connected notes are
  *  kept, since an orphan says the least. */
-export const GRAPH_NODE_CAP = 1500
+const GRAPH_NODE_CAP = 1500
 
 /** The vault's notes and the resolved links between them, undirected. */
 export interface LinkGraph {

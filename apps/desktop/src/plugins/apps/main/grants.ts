@@ -37,14 +37,15 @@ import {
 } from '../shared/manifest'
 import { CapabilityError, jsonFileStore, runGit, type Admit } from '../../../main/plugin-api'
 
+/** @public exported for its test */
 export const GRANT_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
-export interface AffordanceStatus {
+interface AffordanceStatus {
   affordance: AppAffordance
   granted: boolean
 }
 
-export interface GrantStatus {
+interface GrantStatus {
   /** The code the answer is about, to send back with an approval. */
   codeHash: string
   /** One entry per affordance the app's manifest declares. */
@@ -83,6 +84,7 @@ type GrantFile = Record<string, GrantRecord>
  * order. Each entry is framed by JSON, so no file's bytes can pass for the
  * boundary between two entries. `data/` and the log are left out because they
  * change every time the app is used, and the approval is of the code.
+ * @public exported for its test
  */
 export async function bundleCodeHash(root: string, bundle: string): Promise<string> {
   const hash = createHash('sha256')
@@ -183,7 +185,7 @@ export async function manifestOf(root: string, bundle: string): Promise<AppManif
 }
 
 /** The affordances the bundle's manifest declares; none when it has no manifest. */
-export async function declaredAffordances(root: string, bundle: string): Promise<AppAffordance[]> {
+async function declaredAffordances(root: string, bundle: string): Promise<AppAffordance[]> {
   return (await manifestOf(root, bundle))?.dangerouslyAllow ?? []
 }
 

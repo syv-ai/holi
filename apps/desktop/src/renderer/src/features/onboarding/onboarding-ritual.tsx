@@ -1,0 +1,347 @@
+/**
+ * The onboarding ritual: the frame and the flow, with each act its own
+ * component. The acts are `ACTS` in the reducer; this file shows the one that
+ * is current, crossfades between them, and owns the keys and the footer, which
+ * both run the current act's primary action.
+ */
+import { useEffect, useReducer, useState } from 'react'
+import { useAtomValue, useSetAtom } from 'jotai'
+import { claudeFirstRunAtom } from '@/state/claude-first-run'
+import { X } from 'lucide-react'
+import { VAULT_SETTING_DEFAULTS, resolvePlugins, type PluginSettings } from '@holi/shared'
+import { BrandMark } from '@/composites/brand-mark'
+import { ScreenArcade } from '@/composites/arcade/screen-arcade'
+import { IconButton } from '@/composites/icon-button'
+import {
+  actsFor,
+  canAdvance,
+  initialState,
+  reduce,
+  slugify,
+  vaultSlug,
+  startingAct,
+  type Act,
+  type Mode,
+} from '@/state/onboarding-flow'
+import { installedPluginsAtom } from '@/state/plugins'
+import { sessionAtom } from '@/state/session'
+import { useRitualActions } from './actions'
+import { beat } from './build-beat'
+import { GreetingAct } from './greeting-act'
+import { JoinPicker } from './join-picker'
+import { NamingAct } from './naming-act'
+import { PluginsAct } from './plugins-act'
+import { RitualFooter, type RitualPrimary } from './ritual-footer'
+import { RitualSteps } from './ritual-steps'
+import { ThresholdAct } from './threshold-act'
+import { VaultSettingsAct } from './vault-settings-act'
+import './onboarding-ritual.css'
+
+type ActState = 'idle' | 'active' | 'exiting'
+
+interface Props {
+  /** `first-run` plays every act from the greeting; `add-vault` skips the
+   *  greeting and starts at naming. */
+  mode: Mode
+  /** Only provided in `add-vault` mode. The × button + Esc-at-the-floor call
+   *  this to dismiss the overlay. Absent in `first-run`: nowhere to dismiss to. */
+  onDismiss?: () => void
+  /**
+   * Walk the whole ritual against nothing (Developer → Test onboarding).
+   *
+   * **Creates nothing and writes nothing**: the ritual runs on the dry set of
+   * actions (`actions.ts`), whose create fakes its own success so the build
+   * and the threshold after it can be seen.
+   */
+  dryRun?: boolean
+}
+
+export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
+  const session = useAtomValue(sessionAtom)
+  const installed = useAtomValue(installedPluginsAtom)
+  const actions = useRitualActions(dryRun, onDismiss)
+
+  const [s, dispatch] = useReducer(reduce, undefined, () =>
+    initialState(mode, session?.login ?? ''),
+  )
+
+  // Purely visual crossfade bookkeeping: which act is fading out. Kept out of
+  // the reducer, which owns the logical flow.
+  const [exitingAct, setExitingAct] = useState<Act | null>(null)
+  // The one-time awakening of "create vault", the first time a valid name
+  // appears.
+  const [wokenOnce, setWokenOnce] = useState(false)
+  const [waking, setWaking] = useState(false)
+  /** The `owner/repo` of the vault just created. */
+  const [createdRemote, setCreatedRemote] = useState<string | null>(null)
+  /** How far the build on the threshold has got: the repo, then the answers. */
+  const [built, setBuilt] = useState(0)
+
+  const slug = vaultSlug(s.name)
+  /** Only a name the user typed wakes "Create vault"; the default is there from the start. */
+  const typed = slugify(s.name)
+  const naming = s.act === 'naming' && s.view === 'form'
+  const plugins =
+    (s.settings.plugins as PluginSettings | undefined) ?? VAULT_SETTING_DEFAULTS.plugins
+  const { running } = resolvePlugins(
+    plugins,
+    installed.map((p) => p.info),
+  )
+
+  useEffect(() => {
+    if (!naming || !typed || wokenOnce) return
+    setWokenOnce(true)
+    setWaking(true)
+    const t = setTimeout(() => setWaking(false), 1200)
+    return () => clearTimeout(t)
+  }, [naming, typed, wokenOnce])
+
+  const runExit = (from: Act) => {
+    setExitingAct(from)
+    setTimeout(() => setExitingAct((cur) => (cur === from ? null : cur)), 500)
+  }
+
+  const advance = () => {
+    if (!canAdvance(s)) return
+    runExit(s.act)
+    dispatch({ type: 'advance' })
+  }
+
+  const back = () => {
+    // The threshold is terminal: the vault exists (or is being made), so only
+    // "Open vault" forward.
+    if (s.act === 'threshold') return
+    if (s.view === 'join') {
+      dispatch({ type: 'toForm' })
+      return
+    }
+    if (s.act !== startingAct(mode)) {
+      runExit(s.act)
+      dispatch({ type: 'back', mode })
+      return
+    }
+    onDismiss?.()
+  }
+
+  /** Errors stay where they happened, with the message shown. */
+  const failInPlace = (err: unknown) =>
+    dispatch({ type: 'failInPlace', error: err instanceof Error ? err.message : String(err) })
+
+  /**
+   * The one place the world changes: the repo, then the answers in it, while
+   * the threshold shows each step land. Each step holds the screen for at
+   * least `BUILD_BEAT`, so a fast network still reads as something being
+   * made rather than a flash of a checklist. A repo that could not be made
+   * goes back to naming with the reason; answers that could not be written
+   * are not fatal (the seed already holds every default), as before.
+   */
+  const create = async () => {
+    if (s.submitting) return
+    runExit(s.act)
+    dispatch({ type: 'advance' })
+    dispatch({ type: 'submitStart' })
+    setBuilt(0)
+    let remote: string
+    try {
+      ;[remote] = await Promise.all([actions.create({ name: slug, owner: s.owner }), beat()])
+    } catch (err) {
+      runExit('threshold')
+      dispatch({ type: 'createFailed', error: err instanceof Error ? err.message : String(err) })
+      return
+    }
+    setCreatedRemote(remote)
+    setBuilt(1)
+    await Promise.all([actions.saveAnswers(remote, s.settings), beat()])
+    setBuilt(2)
+    await beat()
+    dispatch({ type: 'created' })
+  }
+
+  const join = (remote: string) => {
+    dispatch({ type: 'submitStart' })
+    // Success unmounts the ritual through the App gate.
+    actions.join(remote).catch(failInPlace)
+  }
+
+  const requestFirstRun = useSetAtom(claudeFirstRunAtom)
+  // A new vault has never run Claude Code: the shell opens it once, so its
+  // trust prompt and login come now rather than as a refused agent later.
+  const open = () => {
+    if (createdRemote !== null) requestFirstRun(createdRemote)
+    void actions.open(createdRemote)
+  }
+
+  const primary: Partial<Record<Act, RitualPrimary>> = {
+    ...(naming && { naming: { label: 'Continue', run: advance, disabled: !slug } }),
+    plugins: { label: 'Continue', run: advance },
+    settings: { label: 'Create vault', run: () => void create(), disabled: s.submitting },
+  }
+
+  // Space begins from the greeting; Enter runs the act's primary action (or
+  // opens the vault from the threshold); Esc walks back and finally dismisses.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const inField = e.target instanceof HTMLInputElement
+      // A key aimed at a control or an open menu is that control's: Enter on
+      // the owner switcher opens it (and must not create the vault), Escape in
+      // its menu closes the menu (and must not walk back an act).
+      const target = e.target instanceof Element ? e.target : null
+      if (target?.closest('[role="menu"], [role="listbox"]')) return
+      if (e.key !== 'Escape' && target?.closest('button, [role="switch"], [role="radio"]')) return
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        back()
+      } else if (e.key === ' ' && !inField && s.act === 'greeting') {
+        e.preventDefault()
+        advance()
+      } else if (e.key === 'Enter' && (!inField || s.act === 'naming')) {
+        const act = primary[s.act]
+        if (s.act === 'threshold') {
+          if (s.submitting) return
+          open()
+        } else if (s.act === 'greeting') advance()
+        else if (act !== undefined && !act.disabled) act.run()
+        else return
+        e.preventDefault()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s, mode, slug, createdRemote])
+
+  const acts = actsFor(mode)
+  const stateOf = (act: Act): ActState =>
+    act === s.act ? 'active' : act === exitingAct ? 'exiting' : 'idle'
+  const dismissible = mode === 'add-vault' && onDismiss != null
+  const footPrimary = primary[s.act]
+  const atFloor = s.act === startingAct(mode)
+
+  const section = (act: Act, className: string, children: React.ReactNode) => (
+    // Every act stays mounted for the crossfade, so the ones not on screen are
+    // `inert`: invisible is not enough, or Tab reaches their buttons and the
+    // greeting's Begin, pressed from naming, would skip creating the vault.
+    <section
+      className={`obrit-act ${className}`}
+      data-act={act}
+      data-state={stateOf(act)}
+      inert={stateOf(act) !== 'active'}
+    >
+      <div className="obrit-act-inner" data-arcade-keepout="">
+        {children}
+      </div>
+    </section>
+  )
+
+  return (
+    <div className="onboarding-ritual" role="dialog" aria-modal="true" data-glass-ground="">
+      <ScreenArcade />
+      <div className="obrit-frame">
+        <header className="obrit-head app-drag">
+          <BrandMark />
+          <div className="obrit-head-right">
+            {dismissible && (
+              <IconButton label="Dismiss" tooltip="Dismiss (Esc)" onClick={onDismiss}>
+                <X className="size-4" />
+              </IconButton>
+            )}
+          </div>
+        </header>
+
+        {/* Joining clones a vault that already has its plugins and choices, so
+            there are no steps to count while the join list is up. */}
+        <RitualSteps acts={acts} current={s.act} hidden={s.view === 'join'} />
+
+        <div className="obrit-stage">
+          {mode === 'first-run' &&
+            section('greeting', 'obrit-greeting', <GreetingAct onBegin={advance} />)}
+
+          {section(
+            'naming',
+            'obrit-name',
+            s.view === 'form' ? (
+              <NamingAct
+                name={s.name}
+                owner={s.owner}
+                slug={slug}
+                error={s.error}
+                active={naming}
+                onName={(name) => dispatch({ type: 'setName', name })}
+                onOwner={(owner) => dispatch({ type: 'setOwner', owner })}
+                onJoin={() => dispatch({ type: 'toJoin' })}
+              />
+            ) : (
+              <JoinPicker
+                submitting={s.submitting}
+                error={s.error}
+                onPick={join}
+                onBack={() => dispatch({ type: 'toForm' })}
+              />
+            ),
+          )}
+
+          {section(
+            'plugins',
+            'obrit-settings-act',
+            <>
+              <div className="obrit-eyebrow">WHAT THIS VAULT RUNS</div>
+              <p className="obrit-lede">
+                Notes, tasks and sync are always there. These come on top.
+              </p>
+              <PluginsAct
+                plugins={plugins}
+                onChange={(info, on) =>
+                  dispatch({ type: 'setPlugin', id: info.id, on, byDefault: info.default })
+                }
+              />
+              <p className="obrit-settings-where">
+                Everyone who clones this vault gets the same plugins. Any of them can be turned off
+                on one machine, in Settings.
+              </p>
+            </>,
+          )}
+
+          {section(
+            'settings',
+            'obrit-settings-act',
+            <>
+              <div className="obrit-eyebrow">A FEW CHOICES</div>
+              <p className="obrit-lede">All of them have sensible answers already.</p>
+              <VaultSettingsAct
+                settings={s.settings}
+                onChange={(key, value) => dispatch({ type: 'setSetting', key, value })}
+              />
+            </>,
+          )}
+
+          {section(
+            'threshold',
+            'obrit-threshold',
+            <ThresholdAct
+              slug={slug}
+              owner={s.owner}
+              remote={createdRemote}
+              running={running}
+              building={s.submitting}
+              built={built}
+              error={s.error}
+              onOpen={open}
+            />,
+          )}
+        </div>
+
+        <RitualFooter
+          act={s.act}
+          view={s.view}
+          atFloor={atFloor}
+          dismissible={dismissible}
+          naming={naming}
+          submitting={s.submitting}
+          waking={waking}
+          primary={footPrimary}
+          onBack={back}
+        />
+      </div>
+    </div>
+  )
+}

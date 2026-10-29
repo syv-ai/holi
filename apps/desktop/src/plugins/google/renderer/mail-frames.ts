@@ -67,7 +67,9 @@ export function useMailFrameVersion(): number {
 }
 
 /** Back to an empty registry, for a test: this is module state the whole suite
- *  shares. */
+ *  shares.
+ * @public exported for its test
+ */
 export function resetMailFramesForTests(): void {
   frames.clear()
   announce()

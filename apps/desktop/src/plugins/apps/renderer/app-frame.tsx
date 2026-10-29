@@ -1,0 +1,417 @@
+/**
+ * A vault app, running.
+ *
+ * The frame is `sandbox="allow-scripts allow-popups"` and deliberately **not**
+ * `allow-same-origin`: the app's origin is opaque, so it has no cookies, no
+ * `localStorage` (it throws), no reach into this document, and no way to fetch
+ * `holi-vault://`. Its one route to the vault is `postMessage` to us, and this
+ * component is what answers.
+ *
+ * Two rules make that answer safe, and both are about identity:
+ *
+ *  - **The source, never the origin.** `event.origin` is the literal string
+ *    `"null"` for an opaque origin, so it identifies nothing. `event.source ===
+ *    contentWindow` is what says the message came from the frame we mounted.
+ *  - **The app never names itself.** Every call goes out with the bundle this
+ *    component was mounted with and the vault the user has open. An app that put
+ *    an id in its message would be ignored: otherwise one app could address
+ *    another's directory by asking nicely.
+ *
+ * What it may ask for at all is decided in main (`apps.call`, which reaches
+ * only the capability registry's app door), not here: the process rendering
+ * untrusted code must not be the process deciding what that code may read.
+ * This side only forwards, after refusing a name that is not a bridge method.
+ *
+ * It also **tells** the frame when something it can read has changed (a push:
+ * a topic name and nothing else, so the app reads it again through main), and
+ * before mounting an app that opts into reading Google data it asks the person
+ * to approve that (`dangerously-allow`; the approval is kept in main).
+ */
+import { useAtomValue, useSetAtom, useStore } from 'jotai'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { type AppPush, type AppResponse } from '../shared/bridge'
+import { appHost, appName } from '../shared/bundle'
+import { type AppAffordance } from '../shared/manifest'
+import {
+  activeModeAtom,
+  activeRemoteAtom,
+  closeSurfaceTabAtom,
+  cn,
+  openCommitInHistoryAtom,
+  snapshotAtom,
+  openExternal,
+} from '@/plugin-api'
+import { AppWindow } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { EmptyState } from '@/composites/empty-state'
+import { appPushSignaturesAtom, storeSignatures } from './app-push'
+import {
+  frameIsUnobscured,
+  PREVIEW_SETTLE_MS,
+  previewRequestsAtom,
+  previewTakenAtom,
+} from './app-previews'
+import { appOpensAtom, appPathsAtom } from './apps'
+import { appsCap } from './apps-cap'
+import { hostBridgeMessage } from './bridge-host'
+
+/** What each affordance reads, for the approval dialog. */
+const AFFORDANCE_TEXT: Record<AppAffordance, string> = {
+  mail: 'your mail',
+  calendar: 'your calendar',
+}
+
+/** The topics this frame is told about: the vault's, and its own collections'. */
+function useTopicSignatures(bundle: string): Record<string, string> {
+  const vault = useAtomValue(appPushSignaturesAtom)
+  const snapshot = useAtomValue(snapshotAtom)
+  return useMemo(
+    () => ({ ...vault, ...storeSignatures(snapshot, bundle) }),
+    [vault, snapshot, bundle],
+  )
+}
+
+/**
+ * Take the app's picture for its card once its document has loaded and had
+ * a moment to draw, while the browser is idle, and again whenever Refresh
+ * preview asks; only while the frame is unobscured (`frameIsUnobscured`).
+ * One picture per load: the app's later changes are its own business.
+ */
+function usePreviewCapture(
+  frameRef: React.RefObject<HTMLIFrameElement | null>,
+  path: string,
+  loaded: string | null,
+): void {
+  const remote = useAtomValue(activeRemoteAtom)
+  const request = useAtomValue(previewRequestsAtom)[path] ?? 0
+  const taken = useSetAtom(previewTakenAtom)
+  useEffect(() => {
+    if (loaded === null || remote === null) return
+    let live = true
+    let idle: number | null = null
+    const take = (): void => {
+      const frame = frameRef.current
+      if (!live || frame === null || !frameIsUnobscured(frame)) return
+      const r = frame.getBoundingClientRect()
+      // 2px in from each edge, so a pane's separator beside it is not kept.
+      const rect = { x: r.left + 2, y: r.top + 2, width: r.width - 4, height: r.height - 4 }
+      appsCap.capturePreview(remote, { bundle: path, rect }).then(
+        (res) => live && res.saved && taken(path),
+        (e: unknown) => console.warn('[apps] preview:', e),
+      )
+    }
+    const timer = window.setTimeout(() => {
+      idle =
+        typeof window.requestIdleCallback === 'function'
+          ? window.requestIdleCallback(take, { timeout: 1_000 })
+          : null
+      if (idle === null) take()
+    }, PREVIEW_SETTLE_MS)
+    return () => {
+      live = false
+      window.clearTimeout(timer)
+      if (idle !== null) window.cancelIdleCallback(idle)
+    }
+  }, [frameRef, path, loaded, remote, request, taken])
+}
+
+export function AppFrame({ path }: { path: string }): React.JSX.Element {
+  const appPaths = useAtomValue(appPathsAtom)
+  const remote = useAtomValue(activeRemoteAtom)
+  const mode = useAtomValue(activeModeAtom)
+  const closeTab = useSetAtom(closeSurfaceTabAtom)
+  // Read when an app calls, not on every render: the registry and the
+  // snapshot change far more often than an app opens anything.
+  const store = useStore()
+  const reloads = useAtomValue(appOpensAtom)[path] ?? 0
+  const frameRef = useRef<HTMLIFrameElement>(null)
+  const exists = appPaths.includes(path)
+  const name = appName(path)
+
+  // Every message from the frame we mounted is answered as any frame of
+  // this app's code is (`bridge-host.ts`), with the bundle it was mounted
+  // with and the vault open now.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent): void => {
+      const frame = frameRef.current
+      if (frame === null || event.source !== frame.contentWindow) return
+      hostBridgeMessage(event.data, {
+        store,
+        remote,
+        bundle: path,
+        reply: (response: AppResponse) => frame.contentWindow?.postMessage(response, '*'),
+      })
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [store, remote, path])
+
+  // Push: post a topic whenever its signature changes, never on mount (the
+  // app reads what it needs when it starts). Sent to whatever document the
+  // frame holds now; a reload simply starts listening again.
+  const signatures = useTopicSignatures(path)
+  const lastSignatures = useRef(signatures)
+  useEffect(() => {
+    const previous = lastSignatures.current
+    lastSignatures.current = signatures
+    const target = frameRef.current?.contentWindow
+    if (target == null) return
+    const topics = new Set([...Object.keys(previous), ...Object.keys(signatures)])
+    for (const topic of topics) {
+      if (previous[topic] !== signatures[topic]) {
+        const push: AppPush = { push: topic }
+        target.postMessage(push, '*')
+      }
+    }
+  }, [signatures])
+
+  // The approval gate, asked again on every open and reload, since what was
+  // approved lapses with time or with a change to the app's code.
+  const [ask, setAsk] = useState<{ affordances: AppAffordance[]; codeHash: string } | null>(null)
+  // Who added the code being approved and who last changed it, so the person
+  // can place it.
+  const [authorship, setAuthorship] = useState<Authorship>({ added: null, last: null })
+  // The app's own words for why it asks, from its manifest.
+  const [reasons, setReasons] = useState<Partial<Record<AppAffordance, string>>>({})
+  const [gateOpen, setGateOpen] = useState(false)
+  // Bumped when an approval comes back refused because the code changed while
+  // the dialog was up: the new code is asked about, not waved through.
+  const [recheck, setRecheck] = useState(0)
+  useEffect(() => {
+    if (remote === null || !exists) return
+    let live = true
+    setGateOpen(false)
+    appsCap
+      .grants(remote, { bundle: path })
+      .then((status) => {
+        if (!live) return
+        const ungranted = status.affordances.filter((s) => !s.granted).map((s) => s.affordance)
+        setAsk(ungranted.length > 0 ? { affordances: ungranted, codeHash: status.codeHash } : null)
+        setAuthorship({ added: status.added ?? null, last: status.lastChange ?? null })
+        setReasons(status.reasons ?? {})
+        setGateOpen(ungranted.length === 0)
+      })
+      .catch(() => live && setGateOpen(true))
+    return () => {
+      live = false
+    }
+  }, [remote, path, exists, reloads, recheck])
+
+  // Which document the frame holds: the fade-in waits for this one's load.
+  const documentKey = `${path}\n${reloads}\n${mode}`
+  const [loaded, setLoaded] = useState<string | null>(null)
+  usePreviewCapture(frameRef, path, gateOpen && loaded === documentKey ? loaded : null)
+
+  const decide = (allow: boolean): void => {
+    const shown = ask
+    setAsk(null)
+    if (!allow || remote === null || shown === null) {
+      setGateOpen(true)
+      return
+    }
+    appsCap.grant(remote, { bundle: path, ...shown }).then(
+      (recorded) => {
+        if (!recorded) {
+          setRecheck((n) => n + 1)
+          return
+        }
+        setGateOpen(true)
+      },
+      (e: unknown) => {
+        console.warn('[apps] grant failed:', e)
+        setGateOpen(true)
+      },
+    )
+  }
+
+  if (!exists) {
+    return (
+      <EmptyState
+        icon={AppWindow}
+        title={`${name} was deleted.`}
+        action={{ label: 'Close tab', onClick: () => closeTab('app', path) }}
+      />
+    )
+  }
+
+  const reads = (ask?.affordances ?? []).map((a) => AFFORDANCE_TEXT[a]).join(' and ')
+
+  return (
+    <div className="relative flex h-full min-h-0 flex-col">
+      {ask !== null && (
+        // The app as its markup and styles draw it, blurred behind the question:
+        // what is being approved, seen. No scripts (`sandbox=""`), so nothing
+        // of it runs before the answer, and it takes no pointer or focus.
+        <iframe
+          src={`holi-app://${appHost(path)}/index.html?mode=${mode}`}
+          sandbox=""
+          aria-hidden="true"
+          tabIndex={-1}
+          className="pointer-events-none absolute inset-0 size-full border-0 opacity-60 blur-sm"
+        />
+      )}
+      {ask !== null && (
+        // Asked in the app's own pane, where the app would be: the question is
+        // about this app, and the rest of Holi stays usable meanwhile.
+        // Not a modal: it is a card in the pane, so a click elsewhere in Holi
+        // is not an answer, and only its buttons or Escape close it.
+        <Card
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby="app-approval-title"
+          tabIndex={-1}
+          ref={(card) => card?.focus()}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') decide(false)
+          }}
+          className="absolute top-1/2 left-1/2 z-20 w-11/12 max-w-md -translate-x-1/2 -translate-y-1/2"
+        >
+          <CardHeader>
+            <CardTitle id="app-approval-title">
+              {name} wants permission to read {reads}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex min-w-0 flex-col gap-4">
+              <div className="grid gap-3 text-sm text-pretty text-muted-foreground">
+                <p>
+                  {name} can store what it reads, and what it stores may sync to others in this
+                  vault or leave this machine. Allow it only if you trust who wrote it.
+                </p>
+                <AppsWords asked={ask.affordances} reasons={reasons} />
+                <p>Holi asks again in 30 days, or sooner if the app changes.</p>
+              </div>
+              <WrittenBy authorship={authorship} />
+            </div>
+          </CardContent>
+          <CardFooter className="justify-end">
+            <div className="flex gap-2">
+              <Button variant="ghost" size="sm" onClick={() => decide(false)}>
+                Not now
+              </Button>
+              <Button size="sm" onClick={() => decide(true)}>
+                Allow for 30 days
+              </Button>
+            </div>
+          </CardFooter>
+        </Card>
+      )}
+      {gateOpen && (
+        <iframe
+          // Remounting is the reload: an app holds nothing across one (its origin
+          // is opaque, so there is no storage to keep), so a fresh document IS the
+          // fresh start, and it is the only way a frame sheds what it has loaded.
+          // The pane header's reload button and the agent's `holi apps open` both
+          // bump the count (`appOpensAtom`).
+          key={reloads}
+          ref={frameRef}
+          // The mode in force goes in the URL, since main themes the document and
+          // cannot see the renderer. A mode change reloads the frame.
+          src={`holi-app://${appHost(path)}/index.html?mode=${mode}`}
+          // The frame's accessible name. `title` is the usual attribute for an
+          // iframe and is the one the gate bans (it is a browser tooltip on every
+          // other element), so the label goes on aria-label.
+          aria-label={name}
+          // Never `allow-same-origin`: it would let the app remove its own
+          // sandbox and give it a real origin, which is the isolation this whole
+          // feature rests on. `allow-popups` only lets a `target=_blank` link
+          // reach main, which opens it in the browser and makes no window.
+          sandbox="allow-scripts allow-popups"
+          // Hidden until its document has loaded, then faded in: a frame paints
+          // whatever it has as it goes, and an app half-styled for a frame or
+          // two reads as a glitch. A reload or a mode change starts it over.
+          onLoad={() => setLoaded(documentKey)}
+          className={cn(
+            'min-h-0 flex-1 border-0',
+            loaded === documentKey ? 'motion-in-fade' : 'opacity-0',
+          )}
+        />
+      )}
+    </div>
+  )
+}
+
+/**
+ * Why the app asks, in its own words (`dangerously-allow` as a map): quoted
+ * and attributed, so it reads as the app's claim rather than Holi's. Plain
+ * text, capped by the parser. Nothing when the app gave no reason.
+ */
+function AppsWords({
+  asked,
+  reasons,
+}: {
+  asked: readonly AppAffordance[]
+  reasons: Partial<Record<AppAffordance, string>>
+}): React.JSX.Element | null {
+  const said = asked.flatMap((a) => (reasons[a] === undefined ? [] : [[a, reasons[a]!] as const]))
+  if (said.length === 0) return null
+  return (
+    <figure className="grid gap-1">
+      <figcaption>In the developer&rsquo;s words:</figcaption>
+      {said.map(([affordance, reason]) => (
+        <blockquote key={affordance} className="pt-1.5 italic text-foreground">
+          &ldquo;{reason}&rdquo;
+        </blockquote>
+      ))}
+    </figure>
+  )
+}
+
+type AppCommit = { sha: string; author: string; date: string; login: string | null }
+type Authorship = { added: AppCommit | null; last: AppCommit | null }
+
+const day = (iso: string) =>
+  new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+
+/** Who wrote the code being approved: the commit that added it and the last
+ *  one to change it, from main. The name opens their GitHub profile when main
+ *  could tell their login; the hash opens the commit in History. A personal
+ *  app never committed was written on this machine. */
+function WrittenBy({ authorship }: { authorship: Authorship }): React.JSX.Element {
+  const { added, last } = authorship
+  return (
+    <div className="grid gap-1.5 rounded-xl bg-muted/60 px-4 py-3 text-xs text-muted-foreground">
+      {added == null ? (
+        <span>Not committed yet: written on this machine.</span>
+      ) : (
+        <>
+          <CommitLine lead="Added by" commit={added} />
+          {last != null && last.sha !== added.sha && (
+            <CommitLine lead="Last changed by" commit={last} />
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function CommitLine({ lead, commit }: { lead: string; commit: AppCommit }): React.JSX.Element {
+  const openCommit = useSetAtom(openCommitInHistoryAtom)
+  const link = '-mx-2 text-xs text-foreground'
+  return (
+    <span className="min-w-0">
+      {lead}{' '}
+      {commit.login === null ? (
+        <span className="text-foreground">{commit.author}</span>
+      ) : (
+        <Button
+          variant="link"
+          className={link}
+          onClick={() => openExternal(`https://github.com/${commit.login}`)}
+        >
+          {commit.author}
+        </Button>
+      )}{' '}
+      in{' '}
+      <Button
+        variant="link"
+        className={cn(link, 'font-mono')}
+        onClick={() => openCommit(commit.sha)}
+      >
+        {commit.sha.slice(0, 7)}
+      </Button>
+      , {day(commit.date)}
+    </span>
+  )
+}

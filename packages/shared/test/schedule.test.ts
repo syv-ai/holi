@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
+  cronOfTrigger,
   describeScheduleWhen,
   dueRun,
   isScheduleFilePath,
   nextRun,
   parseScheduleFile,
   scheduleApprovalText,
+  scheduleFileText,
   scheduleSlug,
+  triggerOfCron,
   type ScheduleDef,
 } from '../src/schedule'
 
@@ -128,5 +131,62 @@ describe('dueRun and nextRun', () => {
     expect(dueRun(once, at(2026, 10, 9, 15), at(2026, 10, 9, 16))).toBeNull()
     expect(nextRun(once, at(2026, 10, 9, 16))).toBeNull()
     expect(nextRun(every30, at(2026, 10, 8, 10, 1))).toEqual(at(2026, 10, 8, 10, 30))
+  })
+})
+
+describe('automations', () => {
+  const read = (text: string) => {
+    const res = parseScheduleFile(text, '.holi/schedules/a.md')
+    if (!res.ok) throw new Error(res.error)
+    return res.def
+  }
+
+  it('reads several triggers, the Holi and the catch-up window', () => {
+    const def = read(
+      "---\ncron:\n  - '0 9 * * 1-5'\n  - '0 16 * * 5'\nholi: assistant\ncatch-up: 2h\n---\nDo it.\n",
+    )
+    expect(def).toMatchObject({ holi: 'assistant', catchUpMinutes: 120 })
+    expect(describeScheduleWhen(def.when!)).toBe('Weekdays at 09:00 · Fridays at 16:00')
+    // Friday 10:00: the next is Friday 16:00, the earlier of the two.
+    expect(nextRun(def.when!, new Date(2026, 9, 23, 10, 0))).toEqual(new Date(2026, 9, 23, 16, 0))
+    expect(parseScheduleFile("---\ncron: '0 9 * * *'\ncatch-up: soon\n---\nx\n", 'x').ok).toBe(
+      false,
+    )
+  })
+
+  it('approves which Holi carries it out', () => {
+    const a = read("---\ncron: '0 9 * * *'\nholi: one\n---\nDo it.\n")
+    const b = read("---\ncron: '0 9 * * *'\nholi: two\n---\nDo it.\n")
+    expect(scheduleApprovalText(a)).not.toBe(scheduleApprovalText(b))
+  })
+
+  it('says a cron as a sentence and back', () => {
+    for (const cron of ['15 * * * *', '0 9 * * *', '0 11 * * 1-5', '30 8 * * 1']) {
+      expect(cronOfTrigger(triggerOfCron(cron))).toBe(cron)
+    }
+    expect(triggerOfCron('0 11 * * 1-5')).toEqual({ kind: 'weekdays', time: '11:00' })
+    expect(triggerOfCron('*/30 7-18 * * 1-5')).toEqual({
+      kind: 'custom',
+      cron: '*/30 7-18 * * 1-5',
+    })
+  })
+
+  it('writes a file it reads back, keeping what a person wrote', () => {
+    const fresh = scheduleFileText({
+      name: 'Digest',
+      crons: ['0 9 * * 1-5'],
+      holi: 'assistant',
+      catchUpMinutes: 720,
+      prompt: 'Summarise.',
+    })
+    expect(read(fresh)).toMatchObject({ name: 'Digest', holi: 'assistant', catchUpMinutes: 720 })
+    const edited = scheduleFileText(
+      { name: 'Digest', crons: ['0 9 * * 1-5', '0 16 * * 5'], prompt: 'New prompt.' },
+      "---\n# mine\nname: Old\ncron: '0 9 * * *'\nholi: assistant\nretries: 2\n---\nOld prompt.\n",
+    )
+    expect(edited).toContain('# mine')
+    expect(edited).toContain('retries: 2')
+    expect(edited).not.toContain('holi:')
+    expect(read(edited).prompt).toBe('New prompt.')
   })
 })

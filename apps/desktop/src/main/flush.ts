@@ -20,7 +20,7 @@ export interface FlushChannel {
  * way out. A renderer that has not answered in a second is not slow, it is
  * gone, and the caller is a quit.
  */
-export const FLUSH_TIMEOUT_MS = 1_000
+const FLUSH_TIMEOUT_MS = 1_000
 
 export async function requestFlush(
   channel: FlushChannel,

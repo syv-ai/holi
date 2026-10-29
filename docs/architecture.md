@@ -8,7 +8,7 @@ Holi is one desktop app. There is no server, no database and no hosted service.
 
 ```
 ┌──────────────────────── apps/desktop (Electron) ────────────────────────┐
-│  Renderer (React, Jotai, CodeMirror)       Main (Node)                  │
+│  Renderer (React, Jotai, Tiptap)           Main (Node)                  │
 │  editor · board · drawers · views          vault store (walk, watcher)  │
 │              │                             sync engine (commit, pull,   │
 │              │  tRPC over IPC                push, reconcile)           │
@@ -35,20 +35,28 @@ Electron. `@holi/shared/path-safety-node` is the one Node-only entrypoint.
 
 ## 2. Build only what Claude Code does not do
 
-The agent is Claude Code, unmodified. Holi adds no adapter layer and no prompt-building, and fixes
-forward when a Claude Code release changes something. The one exception is a person's own choice:
-the [quick agent](features/quick-agent.md)'s panel instructions, a setting that is off until turned
-on. Users are developers: the raw terminal is the interface, git is a tool they already know, and
-Claude Code is already installed and signed in. With the vault being plain files in a git repo, the
-agent needs no Holi-specific operations at all.
+The agent is a coding agent's own CLI, unmodified: Claude Code or Codex, one **provider** each
+([agent-sessions](features/agent-sessions.md), Providers). Holi adds no adapter layer and no
+prompt-building, and fixes forward when a release changes something. The terminal is the
+interface, whichever agent runs in it: Holi draws around it (the session list, the tab, links to
+vault files) and never re-draws it, which is what lets any agent with a
+CLI be a session. A provider's core is the command it runs; what else it offers (a supervisor
+that runs sessions unwatched, hooks that report turns, a context reading) are capabilities the UI
+reads rather than assumes. With the vault being plain files in a git repo, the agent needs no
+Holi-specific operations at all. Holi once drew Claude Code as a conversation on its structured
+channel; it was retired because it bound the session UI to one agent's protocol.
 
 ## 3. Processes and the IPC seam
 
 - **Main** owns everything with side effects: the filesystem, git, GitHub and Google calls, the
-  vault store and watcher, sync, reminders, Typst and the Claude PTYs. It holds every credential.
+  vault store and watcher, sync, reminders, Typst, the Claude PTYs, the bottom panel's shells
+  (`main/terminal/`) and the activity log (`main/activity/`). It holds every credential.
 - **Preload** is a narrow `contextBridge` adapter over `ipcRenderer`.
 - **Renderer** is the React UI. It runs with `contextIsolation` and without Node, and never sees a
   token. It reaches main through a typed tRPC router (`src/main/router.ts`).
+  Its layers (stock shadcn and ReUI in `components/`, `composites/`, `features/`, `state/`,
+  `lib/`) and the direction imports may go are [renderer](renderer.md); notes are Tiptap
+  (`features/documents/rich-text`), code files and plain markdown CodeMirror (`editor/`).
 
 Across the seam a document is named by its vault-relative path, validated with `vaultRelPath`,
 never by an absolute path or a generated id. A binary the renderer draws itself (a PDF) crosses as
@@ -91,12 +99,14 @@ Optional parts of Holi are plugins: first-party modules in the build, under
 `apps/desktop/src/plugins/<id>/`, listed once per process in `src/plugins/main.ts` and
 `src/plugins/renderer.ts`. Only the composition roots (`src/main/index.ts`, the renderer's
 `main.tsx`) import those lists. A plugin reaches core through one module per process,
-`src/main/plugin-api.ts` and `@/plugin-api`, plus the renderer's primitives and composites; ESLint
-holds the renderer side and plugin code to that, and `test/plugin-boundary.test.ts` holds main.
+`src/main/plugin-api.ts` and `@/plugin-api`, plus the renderer's `components/ui`
+and `composites/`; ESLint holds the renderer side and plugin code to that, and
+`test/plugin-boundary.test.ts` holds main.
 A plugin's renderer reaches its main side only through capabilities that open the `ui` door: the
 `cap.run` mutation, called through `capClient<typeof table>(namespace)`, which offers just those
 verbs with their types read from the table (params cross as JSON, results by structured clone).
-Plugins call each other the same way, each typing only the slice it calls; before offering such a
+Plugins call each other the same way, each typing only the slice it calls, and a plugin's main
+side reaches another's through `ctx.call(name, params)`, the same UI-door call its renderer makes; before offering such a
 call, a plugin asks `useHasCapability(name)`, backed by the `cap.names` query (the UI door's names
 whose owner the vault runs), so a button for another plugin's verb hides while that plugin is off.
 Tasks' `tasks.create` is one: the board and the Google views create tasks through it.
@@ -107,6 +117,16 @@ The dependency runs one way: the plugin underneath knows nothing of what require
 on this machine, or needing one that is off), and every reader in both processes asks it. Both
 processes check their list with `checkPluginCatalogue` at boot, which refuses a missing or circular
 requirement.
+A part of Holi may be written to the plugin contract without being optional: `PluginInfo.builtIn`.
+The agent is built in. The resolver runs a built-in part in every vault whatever the
+plugins files say, the settings tab and the onboarding act do not list it, a write refuses to pin
+it, and the writer leaves its id out of the `plugins` block, so a pin an older Holi wrote
+(`agent: false`) is ignored at once and gone at the file's next write, as is a retired part's
+(`chat`, `RETIRED_PLUGINS`). They stay under
+`src/plugins/` rather than moving into core: the contract is what keeps core free of Claude Code,
+and what lets Holis, automations and the rest build on the agent (`requires`, `ctx.hear`, its
+`.claude/` seed) without core knowing them. A built-in part may require only other built-in parts,
+which `checkPluginCatalogue` checks.
 A plugin that only adds to another says so in `PluginInfo.addsTo`: Google, PDF and vault apps add
 skills, hooks and settings fragments to the agent. Unlike `requires`, it runs without the other;
 what it adds waits until that one runs, and the resolver says what each running plugin is adding
@@ -132,13 +152,6 @@ registered beside core's own, `settingsSections` to the settings tab
 ([editor](features/editor.md)). It marks paths in the tree and the tabs (`pathMarks`: a glyph, a
 strike, a badge) and lays `overlays` over the panes (a drawer, quick add), each deciding whether
 it shows. Its dialogs open as `{id: 'plugin', render}`.
-A plugin may have windows of its own: `ctx.openPage` makes one showing a page of its renderer side
-(`RendererPlugin.pages`), loaded as `?page=<plugin>/<page>`, which boots only that page, with no
-vault subscription and no flush answer. Core makes the window (preload, isolation, navigation
-guard), from the same helper as the main window (`main/renderer-window.ts`); the plugin places,
-shows and closes it (core closes any left open when the plugin stops), and talks to its page over the window's own channel (`page:event`,
-`page:message`), so the plugin's events stay the main window's. `ctx.showMainWindow` brings the main
-window forward. The agent's quick panel and its dock are two such windows.
 Main tells a plugin's renderer something through events: `ctx.emit(remote, name, payload)` sends
 `{remote, name, payload}` on the plugin's one channel, `plugin:<id>`, read by one preload member,
 `window.holi.plugin.on(id, cb)`. Main sends only about a vault that runs the plugin, so the renderer
@@ -155,18 +168,21 @@ is ready, so every scheme in the build (vault apps' `holi-app:`) is registered a
 core's `holi-vault:`, and a plugin's handler answers 404 while the open vault has the plugin off. A scheme
 marked `frame` serves framed pages: the window guard lets such a frame move within its scheme and
 sends a link out of it to the browser.
-A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
-renderer imports its main side as types only, for `capClient`. The plugins are the agent
-([agent-sessions](features/agent-sessions.md)), tasks ([tasks](features/tasks.md)), PDF
-([pdf](features/pdf.md)), links ([links](features/links.md)), Google
+A plugin's own code sits in `main/`, `renderer/` and `test/` under its folder, and `shared/` where
+it has rules of its own (apps, browser, links, pdf); its renderer imports its main side as types
+only, for `capClient`, and its tests live in its own `test/`. The built-in part is the agent
+([agent-sessions](features/agent-sessions.md)). The optional plugins are tasks
+([tasks](features/tasks.md)), automations and Holis, built on the agent, PDF
+([pdf](features/pdf.md)), links ([links](features/links.md)), the browser
+([browser](features/browser.md)), Google
 ([google](features/google.md)), vault apps ([vault apps](features/vault-apps.md)) and community
 plugins ([community plugins](features/community-plugins.md)), which hosts plugins from other
 repositories as processes it runs, never as code it loads. A renderer plugin may give its claims as
 an atom, for claims that follow what main tells it, and a plugin may register a frame origin with
 the window guard (`ctx.frameOrigin`).
 A seed contribution can own a path prefix (`owns`): the agent owns `.claude/`. Another plugin seeds
-there only by declaring it adds to the agent, which `install` checks at boot, and its files and
-fragments there are left out while the agent is off and seeded once when it turns on.
+there only by declaring it adds to the agent, which `install` checks at boot. The agent is built
+in, so what is added there is seeded whenever the adding plugin runs.
 The app door, through which a vault app's frame calls capabilities, is core's, and the apps plugin
 is its one opener (`ctx.openAppDoor`), supplying the consent check for entries with an
 `appGrant`; with apps off, no entry is reachable through it.
@@ -227,7 +243,7 @@ See [vaults-sync](features/vaults-sync.md), [history](features/history.md),
 
 ## 5. The agent
 
-The agent is a plugin (`src/plugins/agent/`): a host (`main/host/`: PTYs, terminal mirror, turn
+The agent is a built-in part written to the plugin contract (`src/plugins/agent/`): a host (`main/host/`: PTYs, terminal mirror, turn
 coordinator, turn review) and a provider (`main/claude/`: Claude Code's CLI, session listing,
 config directory, hook routes and seed), with the line between them in `main/provider.ts`.
 Every session is a Claude Code background session: the vault's supervisor runs it, its job
@@ -242,36 +258,45 @@ stay on. There is no MCP server: the agent uses its native tools plus one small 
 that talks to main. Holi pauses sync while a turn runs and reviews a turn as the commit
 range it produced.
 
-**Scheduled agents** are one person's `.local.md` files in `.holi/schedules/` that the open vault's agent plugin starts as
-background sessions at their times, or when one of their triggers hears an event (a file added, a
-task due, a meeting about to start, a mail), once that person approved their content. The events
-come from the plugins that own them over `ctx.events`, and the agent's trigger router dedupes and
-batches them into runs ([scheduled-agents](features/scheduled-agents.md)).
+**Automations** (scheduled agents) are one person's `.local.md` files in `.holi/schedules/` that
+the `automations` plugin starts as background sessions at their times, or when one of their triggers
+hears an event (a file added, a task due, a meeting about to start, a mail), once that person
+approved their content. The events come from the plugins that own them over `ctx.events`, and the
+plugin's trigger router dedupes and batches them into runs
+([scheduled-agents](features/scheduled-agents.md)). **Holis** are agents that belong to the vault,
+folders in `.holi/holis/` with a soul and a memory, that a person sends a document to from its Agent
+menu or that carry out an automation, once this machine approved what they say. Both are plugins
+built on the agent: they start sessions through `agent.launch` (`ctx.call`), hear its session list
+and turn ends through `ctx.hear` (what a plugin's main side `publish`es, heard only by the plugins
+that require it), and fill the Agents view and the Agent menu from slots core knows nothing of
+([holis](features/holis.md)).
 
 **The inbox** is how the agent asks for attention while nobody is watching: `holi agent notify`
 adds an entry and, by quiet rules, a banner, and every run leaves a line in the day's work log
 ([agent-inbox](features/agent-inbox.md)).
 
 See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-config.md),
-[agent-memory](features/agent-memory.md), [scheduled-agents](features/scheduled-agents.md) and
-[agent-inbox](features/agent-inbox.md).
+[agent-memory](features/agent-memory.md), [scheduled-agents](features/scheduled-agents.md),
+[holis](features/holis.md) and [agent-inbox](features/agent-inbox.md).
 
 ## 6. The pillars
 
-| Page                                           | What it covers                                                       |
-| ---------------------------------------------- | -------------------------------------------------------------------- |
-| [editor](features/editor.md)                   | CodeMirror live preview, tables, images, external writes, completion |
-| [tabs-panes](features/tabs-panes.md)           | Panes, preview and pinned tabs, split panes, moving tabs             |
-| [frontmatter](features/frontmatter.md)         | The frontmatter block and its typed rows                             |
-| [wiki-links](features/wiki-links.md)           | Path-based links, rename, backrefs                                   |
-| [tasks](features/tasks.md)                     | `task.*.md` files, the board, recurrence and reminders               |
-| [daily-notes](features/daily-notes.md)         | Idempotent daily notes and their archive                             |
-| [google](features/google.md)                   | Gmail and Calendar, per vault                                        |
-| [pdf](features/pdf.md)                         | Typst export and the PDF viewer                                      |
-| [links](features/links.md)                     | `link.*.md` files and page previews                                  |
-| [vault-apps](features/vault-apps.md)           | Agent-authored apps in their own origin                              |
-| [command-palette](features/command-palette.md) | Quick open and the one table of commands                             |
-| [onboarding](features/onboarding.md)           | First run and adding a vault                                         |
+| Page                                           | What it covers                                                      |
+| ---------------------------------------------- | ------------------------------------------------------------------- |
+| [editor](features/editor.md)                   | Tiptap notes, CodeMirror text files, external writes, completion    |
+| [tabs-panes](features/tabs-panes.md)           | Panes, preview and pinned tabs, split panes, moving tabs            |
+| [frontmatter](features/frontmatter.md)         | The frontmatter block and its typed rows                            |
+| [wiki-links](features/wiki-links.md)           | Path-based links, rename, backrefs                                  |
+| [tasks](features/tasks.md)                     | `task.*.md` files, the board, recurrence and reminders              |
+| [planning](features/planning.md)               | The vault as one project: `.holi/project.md`, `.holi/statuses.yaml` |
+| [daily-notes](features/daily-notes.md)         | Idempotent daily notes and their archive                            |
+| [google](features/google.md)                   | Gmail and Calendar, per vault                                       |
+| [pdf](features/pdf.md)                         | Typst export and the PDF viewer                                     |
+| [links](features/links.md)                     | `link.*.md` files and page previews                                 |
+| [browser](features/browser.md)                 | Web pages in a tab, and `holi browser` for the agent                |
+| [vault-apps](features/vault-apps.md)           | Agent-authored apps in their own origin                             |
+| [command-palette](features/command-palette.md) | Quick open and the one table of commands                            |
+| [onboarding](features/onboarding.md)           | First run and adding a vault                                        |
 
 ## 7. State outside the repo
 
@@ -313,3 +338,8 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 (`apps/desktop/electron-builder.yml`); CI publishes a signed, notarized build as a GitHub release
 whenever the version changes, and the installed app updates itself from there
 ([updates](features/updates.md)). There is no Docker, database or compose file.
+
+Every structural rule is a tool, and `.github/workflows/ci.yml` runs them all on each push and
+pull request: `pnpm typecheck`, `pnpm lint` (layers, styling, motion, the plugin seam), `pnpm knip`,
+`pnpm rulecast` (names and folders), `pnpm test` and the commit-message check. A rule that is not in
+CI does not exist; [renderer](renderer.md#rules) lists who owns which.

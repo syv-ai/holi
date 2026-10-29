@@ -17,6 +17,34 @@ it.
 
 **A cap on concurrent sessions.** A vault can run any number.
 
+**Shared automations in the cloud.** An automation is one person's and runs on their machine. Work
+that should run once for everyone, with every laptop shut, would be Claude Code's scheduled cloud
+runs against the vault's GitHub repository, its outcome read from its commit. Claude Code drives
+those from its `/schedule` skill against claude.ai, which Holi has no interface to yet
+([scheduled-agents](features/scheduled-agents.md)).
+
+**More ways to send a Holi work.** Only a document, from its Agent menu, today. Each further trigger
+would start the same session under the same per-machine approval:
+
+- **the selection's lines** with the document, which the pane header's slot does not carry yet;
+- **a Claude Code hook**, a session handing work to a Holi, as `holi holis send <holi> <path>`
+  behind a seeded `ask` rule, the person answering in the tab it opens;
+- **the CLI with a prompt** (`holi holis ask <holi> "…"`) and the same as an **MCP tool** for other
+  agents, returning the run's id, its report read in Holi;
+- **a connection**, such as a new mail matching a filter, offered as a notification the person
+  accepts rather than a run that starts unattended.
+
+**A Holi from another vault.** A file here that only names another of the person's vaults and a
+Holi in it (`from: owner/repo#id`), read from that vault each time, its approval still this
+vault's.
+
+**Holis and automations on another agent.** Their runs need a provider with `background`, which
+only Claude Code has. `codex exec` runs a prompt unwatched and fires `notify`, so Codex could carry
+a run once a run in a Holi-owned process, which ends when Holi quits, is acceptable
+([agent-sessions](features/agent-sessions.md), Providers).
+
+**More providers.** opencode and pi, each as its core and whatever its hooks allow.
+
 **The rest of the inbox.** A banner clicked while Holi had no window open opens Holi, but not the
 entry: the renderer is not listening yet when the click lands, so the entry waits in the inbox. A
 needs-you entry stays after the session is answered, until dismissed. A session that outlives a
@@ -93,12 +121,6 @@ the editor's link chips, `@` completion, the relink transform and backrefs all m
 existing links need a one-time rewrite, and a relative link breaks when its source file moves where
 a vault-rooted `[[path]]` does not. Undesigned.
 
-**Live preview inside an unfocused table cell.** Cells read as prose (bold, code, links coloured),
-but a wiki-link is not a chip and an image is not drawn. `codemirror-markdown-tables` renders an
-unfocused cell itself from a highlighter, with no decorations, and everything live preview does
-beyond colour is a decoration. Fixing it means patching the package or owning the table widget.
-Worth it only if tables become a common place for links.
-
 **A binary with an unknown extension opens as text.** A `.ttf` shows as replacement characters and
 looks like corruption. Probably a byte sniff rather than a longer extension list.
 
@@ -117,6 +139,50 @@ dialog says to add it first), a copy action in the editor itself (there is no ed
 the palette has it), and telling apart two headings with the same words, which GitHub does with a
 `-1` suffix and a link does not. See [holi-links](features/holi-links.md).
 
+## On the current shell
+
+Main's half of each of these is built and documented on its page; the screens that used it were
+drawn on the previous shell and are not rebuilt yet.
+
+**The links drawer.** `notes.links` (`scanLinks`) answers a note's links in both directions, but
+nothing shows them: there is no "Links to" and "Linked from" beside a note. See
+[wiki-links](features/wiki-links.md).
+
+**The rest of saved links.** The card over a web address written in a note, and a link file's chip
+in the editor. See [links](features/links.md).
+
+**The rest of the browser.** Open in Holi for a saved link, toasts drawn over a page, and find in
+page. See [browser](features/browser.md).
+
+**The frontmatter block.** The summary bar and typed rows above a note, and the raw YAML fallback
+([frontmatter](features/frontmatter.md)). The rich-text editor keeps the block byte for byte and does
+not show it; the schema per file kind (`frontmatterSchema`) is built.
+
+**The Home library.** The tabs and table of recent files, notes, tasks and activity, and the nav
+menu that listed the places that are not files ([home](features/home.md),
+[nav-menu](features/nav-menu.md)). The `home` setting resolves, and an empty pane shows the New tab.
+
+**Vault history and Restore.** The right-hand file drawer, the vault history tab and restoring an
+old version ([history](features/history.md)). A file's history opens as a dialog.
+
+**The rest of the sidebar and the tree.** The Pinned group, the collapsed icon rail, a folder's
+colour and file count, and the emoji icon map on a row and its tab
+([sidebar](features/sidebar.md), [file-tree](features/file-tree.md)).
+
+**The rest of wiki-link chips.** A task's status orb and title, the missing-file tint, an image
+target drawn inline and the hover preview card ([wiki-links](features/wiki-links.md)).
+
+**Merging an outside write into a dirty note.** A change on disk is read back unless local edits are
+pending, which win; the 3-way merge, the conflict banner and an undo-neutral reload are not built
+for notes ([editor](features/editor.md)).
+
+**A vault's theme on screen.** `.holi/settings/theme.css` is seeded, parsed and written, but the
+renderer runs on shadcn's neutral theme and the settings have no Appearance page
+([ui-system](ui-system.md#per-vault-theming)).
+
+**The rest.** The repo's size in the vault picker and the sync panel
+([vaults-sync](features/vaults-sync.md)).
+
 ## Sync
 
 **Git LFS setup.** The large-file hook's message mentions LFS; nothing configures it.
@@ -128,7 +194,7 @@ during a reconcile; the lock covers note tabs only.
 
 **A time-grouped board view** ("Today / This week / Later"), as an option, never a mode to configure.
 
-**A renumber pass** for exhausted ranks. `needsRenumber` exists in the tasks plugin's `shared/rank.ts`;
+**A renumber pass** for exhausted ranks. `needsRenumber` exists in the shared package's `rank.ts`;
 nothing calls it.
 
 **Mail and calendar chips on a board card**, for the Gmail and Calendar links in a task's body.

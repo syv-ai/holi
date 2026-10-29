@@ -25,6 +25,7 @@ export type CloneOutcome = { kind: 'cloned' } | { kind: 'adopted' }
  * The clone path is taken by something this cannot claim. Carries what it found
  * so the message can name it — "that folder is a clone of someone/else" is
  * actionable, "that folder is in use" is not.
+ * @public exported for its test
  */
 export class ClonePathInUse extends Error {
   constructor(
@@ -49,7 +50,7 @@ export class ClonePathInUse extends Error {
  * all, and treating "cannot compare" as "does not match" would refuse a clone
  * that is legitimately ours.
  */
-export function githubRemoteOf(url: string): string | null {
+function githubRemoteOf(url: string): string | null {
   const match =
     /^https:\/\/github\.com\/([^/]+)\/(.+?)(?:\.git)?$/.exec(url) ??
     /^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/.exec(url)

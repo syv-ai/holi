@@ -1,141 +1,78 @@
 /**
  * A note's comment threads in the renderer (docs/features/note-comments.md).
  *
- * Each open note's editor loads its threads (`refreshThreadsAtom`) when it
- * opens and whenever the vault changes, since a pull or the agent may have
- * written the sidecar; the editor marks the passages and reports where each
- * thread is now (`threadLinesAtom`). The comments drawer shows the focused
- * note's (`commentsTargetPathAtom`).
+ * The document view loads its note's threads when it opens and again
+ * whenever the vault is read again, since a pull or the agent may have
+ * written the sidecar. Writes go through `comments.*`, signed by the person
+ * signed in, then read the threads again. A note the router says takes no
+ * comments (a file a plugin owns, the agent's instructions) is `unavailable`,
+ * and shows no comments at all.
  */
-import { isCommentableNote, type CommentAnchor, type CommentThread } from '@holi/shared'
-import { atom, type SetStateAction, type WritableAtom } from 'jotai'
-import { trpc } from '../lib/trpc'
-import { historyTargetPathAtom } from './history'
-import { owningClaimsAtom } from './plugins'
-import { drawerOpenAtom } from './right-drawer'
+import type { CommentAnchor, CommentThread } from '@holi/shared'
+import { atom } from 'jotai'
+import { trpc } from '@/lib/trpc'
 import { activeRemoteAtom } from './vaults'
 
-/**
- * State that belongs to the vault it was set in: read in another vault it is
- * `initial` again, so a note at the same path in the next vault never shows
- * the last one's threads: nothing carries from one vault to the next.
- */
-function vaultScoped<T>(initial: T): WritableAtom<T, [SetStateAction<T>], void> {
-  const held = atom<{ remote: string | null; value: T }>({ remote: null, value: initial })
-  const read = atom((get) => {
-    const { remote, value } = get(held)
-    return remote === get(activeRemoteAtom) ? value : initial
-  })
-  return atom(
-    (get) => get(read),
-    (get, set, next: SetStateAction<T>) => {
-      const value = typeof next === 'function' ? (next as (prev: T) => T)(get(read)) : next
-      set(held, { remote: get(activeRemoteAtom), value })
-    },
-  )
+export type ThreadsLoad =
+  | { state: 'loading' }
+  | { state: 'ready'; threads: CommentThread[] }
+  | { state: 'error'; message: string }
+  | { state: 'unavailable' }
+
+/** Every loaded note's threads, by vault and path, so a note at the same
+ *  path in another vault never shows this one's. */
+const loadsAtom = atom<Record<string, ThreadsLoad>>({})
+
+const keyOf = (remote: string, path: string) => `${remote}\n${path}`
+
+function message(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }
 
-export const commentsOpenAtom = drawerOpenAtom('comments')
-
-/** The note the drawer is about: the focused note, as History's, when it
- *  takes comments (`isCommentableNote`, with the claims that own files). */
-export const commentsTargetPathAtom = atom<string | null>((get) => {
-  const path = get(historyTargetPathAtom)
-  return path === null || !isCommentableNote(path, get(owningClaimsAtom)) ? null : path
-})
-
-/** Open or close the drawer, in place of whichever right-hand drawer was
- *  open (`right-drawer.ts`). */
-export const toggleCommentsAtom = atom(null, (get, set, open?: boolean) => {
-  set(commentsOpenAtom, open ?? !get(commentsOpenAtom))
-})
-
-/** Every loaded note's threads, by path. */
-export const threadsByPathAtom = vaultScoped<Record<string, CommentThread[]>>({})
-
-/** Where each of a note's threads is in its open buffer: a 1-based line, or
- *  null while detached. By path, then thread id. */
-export const threadLinesAtom = vaultScoped<Record<string, Record<string, number | null>>>({})
-
-/** A thread being written: the passage the selection was on. */
-export interface CommentDraft {
-  path: string
-  anchor: CommentAnchor
+/** The router's refusal of a file that takes no comments. */
+function isRefusal(err: unknown): boolean {
+  return /takes no comments/.test(message(err))
 }
 
-export const commentDraftAtom = vaultScoped<CommentDraft | null>(null)
-
-/** The thread the drawer is on, which the editor marks and scrolls to.
- *  `seq` makes a second click on the same thread scroll again. */
-export const activeThreadAtom = vaultScoped<{ path: string; id: string; seq: number } | null>(null)
-
-export const focusThreadAtom = atom(null, (get, set, target: { path: string; id: string }) => {
-  set(activeThreadAtom, { ...target, seq: (get(activeThreadAtom)?.seq ?? 0) + 1 })
-})
-
-/**
- * The focused note editor's "comment on what is selected": true when there
- * was a selection to comment on. Registered by whichever note editor last
- * took focus, so the palette, which takes focus itself, still reaches it.
- */
-let selectionCommenter: (() => boolean) | null = null
-
-/** Make `fn` the one; the release forgets it, unless another took over. */
-export function claimSelectionCommenter(fn: () => boolean): () => void {
-  selectionCommenter = fn
-  return () => {
-    if (selectionCommenter === fn) selectionCommenter = null
-  }
-}
-
-/** Comment on the focused note's selection; with none, open the drawer. */
-export const commentOnSelectionAtom = atom(null, (_get, set) => {
-  if (selectionCommenter?.() !== true) set(toggleCommentsAtom, true)
+export const threadsLoadAtom = atom((get) => {
+  const loads = get(loadsAtom)
+  const remote = get(activeRemoteAtom)
+  return (path: string): ThreadsLoad =>
+    remote === null ? { state: 'loading' } : (loads[keyOf(remote, path)] ?? { state: 'loading' })
 })
 
 /** Read `path`'s threads again. Unchanged threads leave the atom alone, so
- *  the editor does not place every thread again after each save. */
+ *  the editor does not place them again after each save. */
 export const refreshThreadsAtom = atom(null, async (get, set, path: string) => {
   const remote = get(activeRemoteAtom)
   if (remote === null) return
-  const threads = await trpc.comments.list.query({ remote, path }).catch((err: unknown) => {
-    console.error('[comments]', err)
-    return null
-  })
-  if (threads === null || get(activeRemoteAtom) !== remote) return
-  const was = get(threadsByPathAtom)[path]
-  if (was !== undefined && JSON.stringify(was) === JSON.stringify(threads)) return
-  set(threadsByPathAtom, (prev) => ({ ...prev, [path]: threads }))
+  const key = keyOf(remote, path)
+  let next: ThreadsLoad
+  try {
+    next = { state: 'ready', threads: await trpc.comments.list.query({ remote, path }) }
+  } catch (err) {
+    const was = get(loadsAtom)[key]
+    // A failed re-read keeps what was shown; only a first read shows the error.
+    if (was?.state === 'ready' && !isRefusal(err)) return
+    next = isRefusal(err) ? { state: 'unavailable' } : { state: 'error', message: message(err) }
+  }
+  const was = get(loadsAtom)[key]
+  if (was !== undefined && JSON.stringify(was) === JSON.stringify(next)) return
+  set(loadsAtom, (prev) => ({ ...prev, [key]: next }))
 })
 
-/** The focused note's threads, for the drawer. */
-export const targetThreadsAtom = atom<CommentThread[]>((get) => {
-  const path = get(commentsTargetPathAtom)
-  return path === null ? [] : (get(threadsByPathAtom)[path] ?? [])
-})
+export const addThreadAtom = atom(
+  null,
+  async (get, set, args: { path: string; anchor: CommentAnchor; body: string }) => {
+    const remote = get(activeRemoteAtom)
+    if (remote === null) return null
+    const { thread } = await trpc.comments.add.mutate({ remote, ...args })
+    await set(refreshThreadsAtom, args.path)
+    return thread
+  },
+)
 
-/** Start a thread on a passage: the drawer opens on its composer. */
-export const draftCommentAtom = atom(null, (_get, set, draft: CommentDraft) => {
-  set(commentDraftAtom, draft)
-  set(toggleCommentsAtom, true)
-})
-
-export const addCommentAtom = atom(null, async (get, set, body: string) => {
-  const draft = get(commentDraftAtom)
-  const remote = get(activeRemoteAtom)
-  if (draft === null || remote === null) return
-  const { thread } = await trpc.comments.add.mutate({
-    remote,
-    path: draft.path,
-    anchor: draft.anchor,
-    body,
-  })
-  set(commentDraftAtom, null)
-  await set(refreshThreadsAtom, draft.path)
-  set(focusThreadAtom, { path: draft.path, id: thread })
-})
-
-export const replyCommentAtom = atom(
+export const replyThreadAtom = atom(
   null,
   async (get, set, args: { path: string; thread: string; body: string }) => {
     const remote = get(activeRemoteAtom)
@@ -145,6 +82,7 @@ export const replyCommentAtom = atom(
   },
 )
 
+/** Resolve, or reopen with `resolved: false`. */
 export const resolveThreadAtom = atom(
   null,
   async (get, set, args: { path: string; thread: string; resolved: boolean }) => {

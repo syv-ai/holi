@@ -15,7 +15,6 @@ import {
   splitFrontmatter,
   type ClaimedFiles,
   type ClaimedItem,
-  type FieldSpec,
   type SnapshotClaim,
   type VaultSnapshot,
 } from '@holi/shared'
@@ -23,10 +22,10 @@ import { hostOf, isWebUrl } from './preview'
 
 /** The filename marker, as tasks have `task.`: the name says what the file
  *  is, so no copied frontmatter can make a note into a link. */
-export const LINK_PREFIX = 'link.'
+const LINK_PREFIX = 'link.'
 
 /** The plugin's id, and the key of its files in `snapshot.claimed`. */
-export const LINKS_CLAIM = 'links'
+const LINKS_CLAIM = 'links'
 
 /** A link file as the vault holds it. */
 export interface LinkItem extends ClaimedItem {
@@ -57,7 +56,7 @@ const NAME_MAX = 80
 /** A title as a link's name, by the shared file-name rule (`fileSlug`): lower
  *  case, dashes, æ ø å written out, so `Q3 strategy deck` is
  *  `q3-strategy-deck`. */
-export function linkName(title: string): string {
+function linkName(title: string): string {
   return fileSlug(title, { max: NAME_MAX, fallback: 'link' })
 }
 
@@ -104,12 +103,6 @@ export function parseLinkFile(text: string, path: string): LinkItem {
     : []
   return { path, url, tags }
 }
-
-/** Its frontmatter rows: the address, and a note's tags. */
-export const LINK_FIELDS: readonly FieldSpec[] = [
-  { key: 'url', kind: { kind: 'text' }, required: true },
-  { key: 'tags', kind: { kind: 'list' } },
-]
 
 export const linkClaim: SnapshotClaim = {
   match: isLinkFilePath,

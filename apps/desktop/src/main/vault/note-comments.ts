@@ -37,7 +37,7 @@ import type { TransformResult } from './hooks/relink'
 import { absPathFor, listFiles, moveDocFile, withFileLock, writeAtomic } from './vault-files'
 
 /** A thread's or a comment's id: short, random, unique within a note. */
-export const commentId = (): string => randomBytes(4).toString('hex')
+const commentId = (): string => randomBytes(4).toString('hex')
 
 /** Thrown for a sidecar that is there but cannot be read: writing over it
  *  would lose what it holds. */
@@ -89,6 +89,7 @@ async function readStored(
  * write: one that changed since the first read gets the change merged into
  * it (`mergeCommentsText`, the merge driver's own rule) rather than written
  * over, so a teammate's comment that landed meanwhile stays.
+ * @public exported for its test
  */
 export function changeNoteComments(
   root: string,
@@ -124,7 +125,7 @@ export interface CommentAuthor {
 }
 
 /** The longest comment Holi takes: a review, not a document. */
-export const MAX_COMMENT_LENGTH = 10_000
+const MAX_COMMENT_LENGTH = 10_000
 
 /** A comment body, trimmed, or the reason it is refused. */
 export function commentBody(raw: string): string | { refused: string } {

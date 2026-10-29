@@ -42,7 +42,7 @@ export interface SeedContribution {
   merge?: Record<string, MergeFile>
 }
 
-export type MergeFile = (
+type MergeFile = (
   existing: string | null,
   fragments: readonly unknown[],
   has: (rel: string) => Promise<boolean>,

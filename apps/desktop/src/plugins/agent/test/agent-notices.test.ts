@@ -1,25 +1,19 @@
-import { CircleAlert, Hand, MessageCircleQuestionMark } from 'lucide-react'
 import { describe, expect, it } from 'vitest'
-import {
-  agentIndicator,
-  contextColour,
-  needsYouIcon,
-  sessionsWorthAsking,
-} from '../renderer/lib/notices'
+import { agentIndicator, contextColour, sessionsWorthAsking } from '../renderer/lib/notices'
 
 describe('agentIndicator', () => {
   const idle = { state: 'idle' as const }
 
   it('is green while a session is live and nothing is happening', () => {
     const live = agentIndicator(idle)
-    expect(live.dot).toContain('bg-agent-done')
+    expect(live.dot).toContain('bg-emerald-600')
     expect(live.state).toBe('running')
   })
 
-  it('pulses amber while a turn is open', () => {
+  it('pulses while a turn is open, keeping amber for needs you', () => {
     const working = agentIndicator({ state: 'working' })
     expect(working.dot).toContain('motion-pulse')
-    expect(working.dot).toContain('bg-agent-working')
+    expect(working.dot).not.toContain('amber')
     expect(working.state).toBe('working…')
   })
 
@@ -29,6 +23,8 @@ describe('agentIndicator', () => {
     const waiting = agentIndicator({ state: 'needs-you', waitingFor: 'permission prompt' })
     expect(waiting.state).toBe('needs you')
     expect(waiting.title).toContain('permission prompt')
+    // A steady amber dot with its light pair: nothing breathes.
+    expect(waiting.dot).toBe('bg-amber-600 dark:bg-amber-400')
   })
 
   it('still says needs you when the listing gives no reason', () => {
@@ -76,18 +72,5 @@ describe('contextColour', () => {
     expect(contextColour(80)).toContain('var(--fill-full) 51%')
     expect(contextColour(99)).toContain('var(--fill-full) 100%')
     expect(contextColour(100)).toContain('var(--fill-full) 100%')
-  })
-})
-
-describe('needsYouIcon', () => {
-  it('maps the reasons Claude Code reports', () => {
-    expect(needsYouIcon('permission prompt')).toBe(Hand)
-    expect(needsYouIcon('input needed')).toBe(MessageCircleQuestionMark)
-  })
-
-  it('falls back to a generic icon for free text or no reason', () => {
-    expect(needsYouIcon('Tea or coffee?')).toBe(CircleAlert)
-    expect(needsYouIcon('toString')).toBe(CircleAlert)
-    expect(needsYouIcon(undefined)).toBe(CircleAlert)
   })
 })

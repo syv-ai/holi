@@ -14,9 +14,8 @@ import { trpc } from '@/lib/trpc'
 import { activeRemoteAtom, addVaultAtom, createVaultAtom, loadVaultsAtom } from '@/state/vaults'
 
 export interface RitualActions {
-  /** Create, seed, commit and push the repo, with a README from `purpose`;
-   *  resolves to its `owner/name`. */
-  create(input: { name: string; owner: string; purpose: string }): Promise<string>
+  /** Create, seed, commit and push the repo; resolves to its `owner/name`. */
+  create(input: { name: string; owner: string }): Promise<string>
   /** Clone a vault a teammate has given you access to, and open it. */
   join(remote: string): Promise<void>
   /** Merge the plugins and settings answers over the new vault's seed. */
@@ -31,7 +30,7 @@ export interface RitualActions {
  * away from their default. The act keeps the resolved shape (`vault` and
  * `localOff`), which is what a read returns and a write refuses.
  */
-export function answersPatch(answers: Record<string, unknown>) {
+function answersPatch(answers: Record<string, unknown>) {
   const plugins = answers.plugins as PluginSettings | undefined
   return splitAnswersByTarget(
     plugins === undefined ? answers : { ...answers, plugins: plugins.vault },
@@ -76,7 +75,7 @@ export function useRitualActions(dryRun: boolean, onDone?: () => void): RitualAc
       }
     },
     open: async (remote) => {
-      // **Activate here, not at creation.** Activating makes the Shell land the
+      // **Activate here, not at creation.** Activating makes the app shell land the
       // vault and read its settings; at the naming act it would read the
       // seeded defaults before the answers were written.
       if (remote !== null) setActiveRemote(remote)

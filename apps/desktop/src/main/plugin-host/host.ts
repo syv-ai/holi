@@ -21,6 +21,7 @@ import {
   type VaultEvent,
   type VaultSnapshot,
 } from '@holi/shared'
+import type { BrowserWindow } from 'electron'
 import type { AppDoor, AppDoorOpener } from '../capabilities/dispatch'
 import type { CapabilityRegistry } from '../capabilities/registry'
 import type {
@@ -31,8 +32,6 @@ import type {
   MainPlugin,
   NoteMention,
   Notice,
-  PageWindow,
-  PageWindowOptions,
   PluginCtx,
   QuitQuestion,
   UiReport,
@@ -44,8 +43,12 @@ import { pluginEvents, type PluginEventsDeps } from './events'
 import { ensureSeeded, withoutOwned } from '../vault/seed/seed'
 import type { SeedContribution, SeedResult } from '../vault/seed/types'
 import { readVaultSettings } from '../vault/settings'
+import type { ActivityWrite } from '../activity/log'
 
-/** The open vault, as far as a plugin's `PluginCtx` drives it. */
+/**
+ * The open vault, as far as a plugin's `PluginCtx` drives it.
+ * @public exported for its test
+ */
 export type OpenVault = LiveVault &
   Pick<ActiveVault, 'pause' | 'resume' | 'commitNow'> & {
     repo: Pick<ActiveVault['repo'], 'head'>
@@ -72,12 +75,6 @@ export interface PluginHostDeps {
   route(path: string, route: BridgeRoute): () => void
   /** Where the `holi` command lives. */
   binDir(): string
-  /** Windows beyond the main one. Absent in the tests: a plugin asking for
-   *  one there is told it cannot have one. */
-  windows?: {
-    openPage(plugin: string, options: PageWindowOptions): PageWindow
-    showMain(): Promise<void>
-  }
   /** The signed-in GitHub token, or null. */
   githubToken(): string | null
   /** Confine frames on `origin` to it (`window-guard.ts`). Returns the undo. */
@@ -87,7 +84,16 @@ export interface PluginHostDeps {
   notify(notice: Notice): boolean
   /** Whether a Holi window has focus. */
   focused(): boolean
+  /** Holi's window, or null with none open. Absent, as in most tests, it is
+   *  null. */
+  window?: () => BrowserWindow | null
   readSettings?: (root: string) => Promise<ResolvedVaultSettings>
+  /** One capability call at the UI door in the vault `remote`, for
+   *  `ctx.call`. Absent, a call is refused. */
+  call?: (remote: string, name: string, params: unknown) => Promise<unknown>
+  /** The activity log (`activity/log.ts`), for `ctx.log` and for a plugin
+   *  that would not start. Absent, as in most tests, lines are dropped. */
+  activity?: ActivityWrite
   /**
    * Plugins' work across vaults (`MainPlugin.background`): the vaults this
    * machine has registered, what a background context offers beyond them,
@@ -176,6 +182,9 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
    *  change landing while Holi leaves it must not restart anything. */
   let parked: string | null = null
   const reportListeners = new Set<{ remote: string; cb: (report: UiReport) => void }>()
+  /** What one plugin's main side tells the plugins that require it
+   *  (`publish`/`hear`), by `<from>/<name>`. */
+  const heard = new Map<string, Set<(payload: unknown) => void>>()
   const mentionListeners = new Set<{ remote: string; cb: (mention: NoteMention) => void }>()
   const snapshotListeners = new Set<{ remote: string; cb: (s: VaultSnapshot) => void }>()
   /** The open vault's latest scan, which a plugin hears at once when it
@@ -397,15 +406,6 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       binDir: deps.binDir,
       githubToken: deps.githubToken,
       frameOrigin: (origin) => keep(deps.frameOrigin(origin)),
-      openPage: (options) => {
-        if (deps.windows === undefined) throw new Error('this host opens no windows')
-        const page = deps.windows.openPage(id, options)
-        keep(() => {
-          if (!page.window.isDestroyed()) page.window.destroy()
-        })
-        return page
-      },
-      showMainWindow: () => deps.windows?.showMain() ?? Promise.resolve(),
       pauseSync: (reason) => keep(pauseSync(remote, reason)),
       commitNow: async () => open().commitNow(),
       head: async () => open().repo.head(),
@@ -414,6 +414,40 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         reportListeners.add(entry)
         return keep(() => void reportListeners.delete(entry))
       },
+      call: async (name, params) => {
+        if (deps.call === undefined) throw new Error(`no capability calls here: ${name}`)
+        return deps.call(remote, name, params)
+      },
+      log: (level, message, detail) =>
+        deps.activity?.({
+          // The agent's lines are a channel of their own; every other
+          // plugin's share one.
+          channel: id === 'agent' ? 'agent' : 'plugins',
+          level,
+          message: id === 'agent' ? message : `${plugin.info.label}: ${message}`,
+          remote,
+          ...(detail === undefined ? {} : { detail }),
+        }),
+      publish: (name, payload) => {
+        for (const handler of heard.get(`${id}/${name}`) ?? []) {
+          try {
+            handler(payload)
+          } catch (err) {
+            console.error(`[plugins] ${id} ${name}:`, err)
+          }
+        }
+      },
+      hear: (from, name, handler) => {
+        // Only what it builds on: a plugin's news is for those that require it.
+        if (!(plugin.info.requires ?? []).includes(from)) {
+          throw new Error(`${id} hears ${from}, which it does not require`)
+        }
+        const key = `${from}/${name}`
+        const set = heard.get(key) ?? new Set()
+        heard.set(key, set)
+        set.add(handler)
+        return keep(() => void set.delete(handler))
+      },
       onMention: (cb) => {
         const entry = { remote, cb }
         mentionListeners.add(entry)
@@ -421,6 +455,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       },
       notify: deps.notify,
       focused: deps.focused,
+      window: () => deps.window?.() ?? null,
       onSnapshot: (cb) => {
         const entry = { remote, cb }
         snapshotListeners.add(entry)
@@ -454,6 +489,13 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     } catch (err) {
       console.error(`[plugins] ${id} did not start:`, err)
       failed.set(id, err instanceof Error ? err.message : String(err))
+      deps.activity?.({
+        channel: 'plugins',
+        level: 'error',
+        message: `${plugin.info.label} did not start`,
+        detail: err instanceof Error ? err.message : String(err),
+        remote,
+      })
       undoAll(id, undos)
       return null
     }

@@ -1,0 +1,83 @@
+# Build a preview of a branch for colleagues to try: a signed, notarized mac
+# dmg and an unsigned Windows installer, kept as workflow artifacts. Nothing is
+# published, so the updater never sees a preview.
+name: Preview
+
+on:
+  push:
+    branches: [feat/fresh-frontend]
+  workflow_dispatch:
+
+concurrency:
+  group: preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm --filter @holi/desktop build
+
+      - name: Package, sign and notarize
+        working-directory: apps/desktop
+        run: pnpm exec electron-builder --mac dmg --arm64 --publish never
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Holi-preview-mac-arm64
+          path: apps/desktop/release/*.dmg
+          if-no-files-found: error
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm --filter @holi/desktop build
+
+      # Unsigned: SmartScreen warns on first launch ("More info" → "Run anyway").
+      - name: Package
+        working-directory: apps/desktop
+        run: pnpm exec electron-builder --win nsis --x64 --publish never --config.win.artifactName='${productName}-${version}-${os}-${arch}.${ext}'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Holi-preview-windows-x64
+          path: apps/desktop/release/*.exe
+          if-no-files-found: error

@@ -27,7 +27,7 @@ import { SCREENSHOT_DIR } from '../src/main/screenshot-files'
 import type { GoogleAccountsManager } from '../src/plugins/google/main/accounts'
 import { googleCapabilities, GOOGLE_NAMESPACES } from '../src/plugins/google/main/capabilities'
 import { taskCapabilities, TASKS_NAMESPACES } from '../src/plugins/tasks/main/capabilities'
-import { parseTaskFile, taskClaim } from '../src/plugins/tasks/shared/task-file'
+import { parseTaskFile, taskClaim } from '@holi/shared'
 import { MEMBERS_TTL_MS, createMembersCache } from '../src/main/github/members-cache'
 import { withFileLock } from '../src/main/vault/vault-files'
 
@@ -846,7 +846,8 @@ describe('tasks.update', () => {
 
   it("refuses what the board's field edit refuses, and the task's text", async () => {
     await put('task.rent.md', task)
-    for (const patch of [{ status: 'finished' }, { colour: 'red' }, { description: '# Rent' }]) {
+    // Not a status: any word is one, kept as written (docs/features/tasks.md).
+    for (const patch of [{ colour: 'red' }, { description: '# Rent' }]) {
       expect(
         await refusal(
           runCapability('tasks.update', 'app', ctx({}), { path: 'task.rent.md', patch }),

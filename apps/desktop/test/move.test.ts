@@ -121,9 +121,7 @@ describe('moveNotes', () => {
       'ref.md': 'see [[notes/logo.svg]]',
     })
 
-    const { rewritten } = await moveNotes(root, [
-      { from: 'notes/logo.svg', to: 'assets/logo.svg' },
-    ])
+    const { rewritten } = await moveNotes(root, [{ from: 'notes/logo.svg', to: 'assets/logo.svg' }])
 
     expect(await read(root, 'ref.md')).toBe('see [[assets/logo.svg]]')
     expect(rewritten).toEqual([{ path: 'ref.md', count: 1 }])

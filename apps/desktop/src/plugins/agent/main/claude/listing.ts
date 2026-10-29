@@ -16,7 +16,7 @@
  * No Electron import: this loads under plain Node like the rest of the plugin.
  */
 import { watch, type FSWatcher } from 'node:fs'
-import { join } from 'node:path'
+import type { ProviderId } from '../provider'
 
 /** A Claude Code job id: eight hex characters, the name of its `jobs/` dir.
  *  Never a flag, so it is safe as `claude attach`'s argument. */
@@ -25,7 +25,7 @@ export const JOB_ID = /^[0-9a-f]{8}$/
 /** Claude Code's live statuses. `waiting` is the one Holi shows as needs-you;
  *  `shell` is a shell command running, which is working. */
 const STATUSES = ['busy', 'waiting', 'idle', 'shell'] as const
-export type ClaudeStatus = (typeof STATUSES)[number]
+type ClaudeStatus = (typeof STATUSES)[number]
 
 export interface ClaudeRow {
   /** The short job id: the key. */
@@ -43,6 +43,8 @@ export interface ClaudeRow {
   /** `working | blocked | done | failed | stopped`. Kept as text: Holi reads
    *  `status` for what a live session is doing. */
   state?: string
+  /** When it started, epoch ms. */
+  startedAt?: number
 }
 
 /** What the renderer is told a session is doing. */
@@ -50,6 +52,8 @@ export type SessionState = 'needs-you' | 'working' | 'idle'
 
 export interface SessionSummary {
   id: string
+  /** Which agent runs it (`provider.ts`). */
+  provider: ProviderId
   /** Claude Code's name, else 'New session'. */
   name: string
   state: SessionState
@@ -58,6 +62,20 @@ export interface SessionSummary {
   /** How much of its context window is used, 0 to 100, from its status line.
    *  Absent until Claude Code has said, and again after a `/clear`. */
   contextPercent?: number
+  /** The model it runs on, in Claude Code's words (`Opus 5.5`), from its
+   *  status line. Absent until Claude Code has said. */
+  model?: string
+  /** When it started, epoch ms, from the listing. */
+  startedAt?: number
+  /** Claude Code's conversation id (its transcript's name), once it has
+   *  said: what a read-only view of the conversation reads. */
+  conversationId?: string
+}
+
+/** What a session's status line says: its context use and its model. */
+export interface StatusReading {
+  contextPercent?: number
+  model?: string
 }
 
 const NEW_SESSION = 'New session'
@@ -89,6 +107,9 @@ function toRow(value: unknown, vaultRoot: string): ClaudeRow | null {
     ...(isStatus(r['status']) ? { status: r['status'] } : {}),
     ...(typeof r['waitingFor'] === 'string' ? { waitingFor: r['waitingFor'] } : {}),
     ...(typeof r['state'] === 'string' ? { state: r['state'] } : {}),
+    ...(typeof r['startedAt'] === 'number' && Number.isFinite(r['startedAt'])
+      ? { startedAt: r['startedAt'] }
+      : {}),
   }
 }
 
@@ -123,8 +144,8 @@ export function isLive(row: ClaudeRow): boolean {
 export function summarise(
   row: ClaudeRow,
   working: ReadonlySet<string>,
-  contextPercent?: number,
-): SessionSummary {
+  reading: StatusReading = {},
+): Omit<SessionSummary, 'provider'> {
   let state: SessionState = 'idle'
   if (row.status === 'waiting') state = 'needs-you'
   else if (row.status === 'busy' || row.status === 'shell' || working.has(row.id)) state = 'working'
@@ -136,7 +157,10 @@ export function summarise(
     ...(state === 'needs-you' && row.waitingFor !== undefined
       ? { waitingFor: row.waitingFor }
       : {}),
-    ...(contextPercent === undefined ? {} : { contextPercent }),
+    ...(reading.contextPercent === undefined ? {} : { contextPercent: reading.contextPercent }),
+    ...(reading.model === undefined ? {} : { model: reading.model }),
+    ...(row.startedAt === undefined ? {} : { startedAt: row.startedAt }),
+    ...(row.sessionId === undefined ? {} : { conversationId: row.sessionId }),
   }
 }
 
@@ -157,8 +181,17 @@ export function readContextPercent(status: unknown): number | null {
     : null
 }
 
+/** The model's name from the same JSON (`model.display_name`), or null. */
+export function readModelName(status: unknown): string | null {
+  if (status === null || typeof status !== 'object') return null
+  const model = (status as Record<string, unknown>)['model']
+  if (model === null || typeof model !== 'object') return null
+  const name = (model as Record<string, unknown>)['display_name']
+  return typeof name === 'string' && name.trim() !== '' ? name.trim().slice(0, 40) : null
+}
+
 /** The directories Claude Code keeps session state in, under the config dir. */
-export const WATCHED_DIRS = ['sessions', 'jobs'] as const
+const WATCHED_DIRS = ['sessions', 'jobs'] as const
 
 /** Bursts are normal: rows carry heartbeat fields that move on their own. */
 const WATCH_DEBOUNCE_MS = 150

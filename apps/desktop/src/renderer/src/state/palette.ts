@@ -13,7 +13,7 @@ import { atom } from 'jotai'
  */
 export type PaletteMode = 'open' | 'commands' | 'tabs'
 
-export interface PaletteState {
+interface PaletteState {
   open: boolean
   /** What the list is over: everything (`open`, and `commands` once the query
    *  starts with `>`), or the open tabs. */
@@ -28,9 +28,9 @@ export interface PaletteState {
 
 const CLOSED: PaletteState = { open: false, mode: 'open', query: '', step: 0, stepDirection: 1 }
 
-export const paletteAtom = atom<PaletteState>(CLOSED)
+const paletteAtom = atom<PaletteState>(CLOSED)
 
-export const COMMAND_PREFIX = '>'
+const COMMAND_PREFIX = '>'
 
 /**
  * ⌘P and ⌘⇧P. Closed: open in the mode asked for. Already open: ⌘⇧P switches
@@ -53,19 +53,4 @@ export const openPaletteAtom = atom(null, (get, set, mode: PaletteMode): void =>
     return
   }
   set(paletteAtom, { ...state, step: state.step + 1, stepDirection: 1 })
-})
-
-/** ⇧⌃⇥: the switcher's selection moves up instead. */
-export const stepPaletteBackAtom = atom(null, (get, set): void => {
-  const state = get(paletteAtom)
-  if (state.open) set(paletteAtom, { ...state, step: state.step + 1, stepDirection: -1 })
-})
-
-export const setPaletteQueryAtom = atom(null, (get, set, query: string): void => {
-  set(paletteAtom, { ...get(paletteAtom), query })
-})
-
-export const closePaletteAtom = atom(null, (get, set): void => {
-  const state = get(paletteAtom)
-  if (state.open) set(paletteAtom, { ...state, open: false })
 })

@@ -8,7 +8,9 @@
  * different: re-authenticate, authorize the token for the org, wait for the
  * rate limit, or accept that this repo is not yours.
  */
-import { isRemote, sameLogin, type Collaborator } from '@holi/shared'
+import { isRemote, sameLogin, type Collaborator, type Repo } from '@holi/shared'
+
+export type { Repo }
 
 /**
  * The GitHub repo topic that marks a repo as a Holi vault.
@@ -17,6 +19,7 @@ import { isRemote, sameLogin, type Collaborator } from '@holi/shared'
  * topic rides back in the repos listing for free, so the "join a vault" picker
  * can show only real vaults without a per-repo probe, and `vaults.add` can
  * refuse to seed a code repo. The on-disk twin of this flag is `.holi/vault`.
+ * @public exported for its test
  */
 export const HOLI_VAULT_TOPIC = 'holi-vault'
 
@@ -28,33 +31,12 @@ export interface Viewer {
   avatarUrl?: string
 }
 
-export interface Repo {
-  /** `owner/repo`: the same identity `VaultEntry` and `cloneRepo` speak. */
-  remote: string
-  private: boolean
-  /**
-   * Surfaced because a vault silently becoming public is the highest-severity
-   * thing that can happen to it. `internal` is a third state, not a synonym
-   * for either.
-   */
-  visibility: 'public' | 'private' | 'internal'
-  /** ISO. The picker's sort key. */
-  pushedAt: string
-  defaultBranch: string
-  /** GitHub's `size`, in KiB: what the repo weighs on GitHub (`repoUsagePercent`). */
-  sizeKb: number
-  /**
-   * `permissions.push`. A repo you cannot push to would become a vault that
-   * cannot publish, so the picker offers it visibly disabled rather than
-   * letting someone discover it at their first Publish.
-   */
-  canPush: boolean
-  /** `permissions.admin`: the level GitHub asks for before it deletes the repo,
-   *  so it decides whether Holi offers Delete at all. */
-  canAdmin: boolean
-  owner: { login: string; kind: 'user' | 'org' }
-  /** Carries the `holi-vault` topic. Drives the "join a vault" filter. */
-  isVault: boolean
+/** Someone who committed to a file: their GitHub account where the commit
+ *  is linked to one. */
+export interface Contributor {
+  login: string | null
+  name: string
+  avatarUrl: string | null
 }
 
 /** An organization the viewer belongs to: an owner "New vault" can offer. */
@@ -243,6 +225,36 @@ export class GitHubApi {
       method: 'PUT',
       body: JSON.stringify({ names: [HOLI_VAULT_TOPIC] }),
     })
+  }
+
+  /**
+   * Who has committed to `path`, most recent first, once each: the GitHub
+   * account a commit is linked to, else its git author name. One page of
+   * commits (100), which is the header's need: faces, not a census.
+   */
+  async fileContributors(remote: string, path: string): Promise<Contributor[]> {
+    const res = await this.#send(
+      `${this.#base}/repos/${assertRemote(remote)}/commits?path=${encodeURIComponent(path)}&per_page=100`,
+    )
+    const page = (await res.json()) as unknown
+    if (!Array.isArray(page)) return []
+    const seen = new Set<string>()
+    const out: Contributor[] = []
+    for (const raw of page as Record<string, unknown>[]) {
+      const account = raw.author as Record<string, unknown> | null
+      const commit = raw.commit as { author?: { name?: string } } | undefined
+      const login = typeof account?.login === 'string' ? account.login : null
+      const name = commit?.author?.name ?? login ?? ''
+      const key = (login ?? name).toLowerCase()
+      if (key === '' || seen.has(key)) continue
+      seen.add(key)
+      out.push({
+        login,
+        name,
+        avatarUrl: typeof account?.avatar_url === 'string' ? account.avatar_url : null,
+      })
+    }
+    return out
   }
 
   async #request(url: string, init?: RequestInit): Promise<Record<string, unknown>> {

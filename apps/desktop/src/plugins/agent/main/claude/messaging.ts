@@ -38,7 +38,7 @@ export interface SessionChannel {
 const TIMEOUT_MS = 5_000
 
 /** The bytes one message is: the auth line, then the user line. */
-export function messageLines(channel: SessionChannel, text: string): string {
+function messageLines(channel: SessionChannel, text: string): string {
   return (
     JSON.stringify({ type: 'auth', token: channel.token }) +
     '\n' +

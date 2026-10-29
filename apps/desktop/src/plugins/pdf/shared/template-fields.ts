@@ -108,7 +108,13 @@ export function parseFields(raw: unknown): ParsedFields {
     // A string default is kept as-is, except a `date` default that is not
     // "today"/""/a real YYYY-MM-DD: that would throw at render, so drop + warn.
     let def: string | undefined = typeof g.default === 'string' ? g.default : undefined
-    if (type === 'date' && def !== undefined && def !== 'today' && def !== '' && !isRealISODate(def)) {
+    if (
+      type === 'date' &&
+      def !== undefined &&
+      def !== 'today' &&
+      def !== '' &&
+      !isRealISODate(def)
+    ) {
       warnings.push(
         `field "${key}": default "${def}" is not a valid date (use YYYY-MM-DD or "today"), ignoring it`,
       )

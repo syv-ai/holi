@@ -1,5 +1,5 @@
 import { SETTINGS_FILE } from '@holi/shared'
-import { taskClaim } from '../src/plugins/tasks/shared/task-file'
+import { taskClaim } from '@holi/shared'
 /**
  * The open vault: what it sees, when it commits, and when it syncs.
  *
@@ -653,19 +653,17 @@ describe('ActiveVault — commit', () => {
     expect((await active.repo.status()).dirty).toBe(false)
   })
 
-  it('refuses to commit on a branch that is not the default one', async () => {
-    // The vault stays open and readable — only sync stops.
+  it('commits on a branch that is not the default one: sync follows the branch', async () => {
+    // Sync follows the checked-out branch (docs/features/vaults-sync.md), so a
+    // branch is an ordinary place to work, not a reason to pause.
     const { active, dir } = await vault(quick)
     await plainGit(dir, ['checkout', '-b', 'spike/idea'])
     const before = await count(dir)
 
     await writeFile(join(dir, 'on-a-branch.md'), 'x\n', 'utf8')
-    await waitFor('sync to report itself paused', () => active.syncState().kind === 'paused')
-
-    expect(await count(dir)).toBe(before)
-    // Still open, still readable: the branch rule constrains sync, not open.
-    expect(await readFile(join(dir, 'README.md'), 'utf8')).toBe('# Vault\n')
-    expect(active.snapshot().docs.length).toBeGreaterThan(0)
+    await waitFor('the autosave on the branch', async () => (await count(dir)) === before + 1)
+    expect(await plainGit(dir, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe('spike/idea')
+    expect(active.syncState().kind).not.toBe('paused')
   })
 
   it('refuses to commit mid-merge', async () => {
@@ -840,6 +838,69 @@ describe('ActiveVault — sync', () => {
       return log.includes('mine.md')
     })
     await waitFor('the vault to settle up-to-date', () => active.syncState().kind === 'up-to-date')
+  })
+
+  it('an explicit push requested while another push is in flight follows it', async () => {
+    // The open-drain push can still be running when ⌘S asks for a push. That
+    // request must not be dropped: it resolves only once a second push has
+    // carried the commit that landed after the first one started.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const real = openRepo(dir)
+    let pushes = 0
+    let running = 0
+    let overlapped = false
+    let started!: () => void
+    const firstStarted = new Promise<void>((r) => (started = r))
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: {
+        ...real,
+        push: async () => {
+          const n = ++pushes
+          running++
+          if (running > 1) overlapped = true
+          try {
+            const result = await real.push()
+            if (n === 1) {
+              started()
+              await gate
+            }
+            return result
+          } finally {
+            running--
+          }
+        },
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      // Neither timer may do the work: the explicit request has to.
+      timings: {
+        commitQuietMs: 60_000,
+        pushQuietMs: 60_000,
+        pullIntervalMs: 60_000,
+        healIntervalMs: 60_000,
+      },
+    })
+    open.push(active)
+    await firstStarted
+
+    await writeFile(join(dir, 'late.md'), 'late\n', 'utf8')
+    await plainGit(dir, ['add', 'late.md'])
+    await plainGit(dir, ['commit', '-m', 'late'])
+
+    const explicit = active.pushNow()
+    const second = active.pushNow()
+    release()
+    await Promise.all([explicit, second])
+
+    expect(await plainGit(origin, ['log', 'main', '--format=%s'])).toContain('late')
+    expect(pushes).toBe(2)
+    expect(overlapped).toBe(false)
   })
 
   it('shows offline with the waiting count when a push cannot reach the remote', async () => {
@@ -1106,20 +1167,11 @@ describe('ActiveVault — sync', () => {
     expect(active.syncState().kind).toBe('conflict')
   })
 
-  it('reports the pause, not the conflict, when a conflicted vault goes off-branch', async () => {
-    // Found by running the app. Both facts are true at once and only one state
-    // can be shown; the pause is the one that costs something to miss, because
-    // it means autosave is off and edits are piling up uncommitted while the
-    // indicator implies they are safe. The conflict is still there — and shown
-    // again — the moment the branch comes back.
-    // Auto-pull stays OFF and the conflict is established with an explicit
-    // pushNow(), whose non-fast-forward recovery pulls and hits exactly the same
-    // conflict path. Racing an 80 ms pull interval against the test's own git
-    // guarantees index.lock collisions — the vault's `git merge` and the test's
-    // `git checkout` cannot both hold the index — and that contention is the
-    // subject of a different finding, not of this test.
+  it('keeps the conflict banner when someone checks out another branch by hand', async () => {
+    // The banner is sticky: a teammate's change is still waiting on main, and
+    // a checkout in the terminal does not deal with it. The picker refuses to
+    // switch here; this is the terminal's way round it.
     // BOTH background loops are off and every step is driven explicitly.
-    // commitNow() forces the fresh status read this test is about.
     const { active, dir, teammate } = await withTeammate({
       pullIntervalMs: 60_000,
       healIntervalMs: 60_000,
@@ -1132,11 +1184,6 @@ describe('ActiveVault — sync', () => {
     expect(active.syncState().kind).toBe('conflict')
 
     await plainGit(dir, ['checkout', '-b', 'spike/idea'])
-    await active.commitNow()
-    expect(active.syncState().kind).toBe('paused')
-    expect((active.syncState() as { reason: string }).reason).toContain('spike/idea')
-
-    await plainGit(dir, ['checkout', 'main'])
     await active.commitNow()
     expect(active.syncState().kind).toBe('conflict')
   })
@@ -1385,22 +1432,15 @@ describe('ActiveVault — sync', () => {
     expect(await readFile(join(dir, 'late.md'), 'utf8').catch(() => null)).toBeNull()
   })
 
-  it('does not pull a vault opened on a branch that is not the default one', async () => {
-    // The branch is switched BEFORE the vault opens, which is the state the
-    // branch rule actually describes (another branch on open).
-    //
-    // Switching *while* a pull is already in flight is a different and much
-    // narrower thing: the pull is authorised against a status read moments
-    // earlier, so a checkout landing inside that window merges onto the new
-    // branch. In production that needs a branch switch inside roughly a second
-    // of a three-minute interval, and `git.ts` merges rather than resets, so
-    // the cost is a merge commit somewhere unexpected and not lost work.
-    // Asserting the no-merge property here would be asserting the absence of
-    // that race, which is not what this requirement is about.
+  it('pulls the checked-out branch, not the default one', async () => {
+    // The branch is switched BEFORE the vault opens. A teammate's push to main
+    // does not reach a vault on spike/idea; their push to spike/idea does.
     const origin = await makeRemote()
-    const dir = await makeClone(origin)
     const teammate = await makeClone(origin, 'teammate')
-    await plainGit(dir, ['checkout', '-b', 'spike/idea'])
+    await plainGit(teammate, ['checkout', '-b', 'spike/idea'])
+    await plainGit(teammate, ['push', '-u', 'origin', 'spike/idea'])
+    const dir = await makeClone(origin)
+    await plainGit(dir, ['switch', '--track', 'origin/spike/idea'])
     await sleep(QUIESCE)
 
     const active = await openActiveVault({
@@ -1412,25 +1452,29 @@ describe('ActiveVault — sync', () => {
       timings: { pullIntervalMs: 80, healIntervalMs: 60_000 },
     })
     open.push(active)
-    await theyPublish(teammate, 'theirs.md', 'theirs\n')
+    await plainGit(teammate, ['checkout', 'main'])
+    await theyPublish(teammate, 'on-main.md', 'main\n')
+    await plainGit(teammate, ['checkout', 'spike/idea'])
+    await writeFile(join(teammate, 'on-spike.md'), 'spike\n', 'utf8')
+    await plainGit(teammate, ['add', '-A'])
+    await plainGit(teammate, ['commit', '-m', 'spike'])
+    await plainGit(teammate, ['push', 'origin', 'spike/idea'])
 
-    await waitFor('sync to report itself paused', () => active.syncState().kind === 'paused')
-    await sleep(400)
-    expect(await readFile(join(dir, 'theirs.md'), 'utf8').catch(() => null)).toBeNull()
+    await waitFor(
+      'the branch’s note to arrive',
+      async () => (await readFile(join(dir, 'on-spike.md'), 'utf8').catch(() => null)) !== null,
+    )
+    expect(await readFile(join(dir, 'on-main.md'), 'utf8').catch(() => null)).toBeNull()
   })
 
-  it('pauses when the branch changes under an open vault, and resumes on the way back', async () => {
-    // The branch refusal is derived fresh from `git status` rather
-    // than latched, so it clears itself when the user switches back instead of
-    // needing anyone to notice.
+  it('does not pause when the branch changes under an open vault', async () => {
+    // A checkout in the terminal is followed, not refused: the state is
+    // derived fresh from `git status` and the branch is not part of it.
     const { active, dir } = await withTeammate({ pullIntervalMs: 60_000, healIntervalMs: 80 })
 
     await userGit(dir, ['checkout', '-b', 'spike/idea'])
-    await waitFor('the pause', () => active.syncState().kind === 'paused')
-    expect((active.syncState() as { reason: string }).reason).toContain('spike/idea')
-
-    await userGit(dir, ['checkout', 'main'])
-    await waitFor('sync to resume by itself', () => active.syncState().kind !== 'paused')
+    await sleep(SETTLE)
+    expect(active.syncState().kind).not.toBe('paused')
   })
 
   it('survives overlapping pull ticks', async () => {

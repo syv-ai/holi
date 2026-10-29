@@ -85,7 +85,7 @@ export async function runSetup(args: {
 }
 
 /** How long a plugin's `check` may take before it counts as failed. */
-export const CHECK_TIMEOUT_MS = 10_000
+const CHECK_TIMEOUT_MS = 10_000
 
 /**
  * Run a plugin's `check` in `cwd`, its output ignored. Resolves true for exit

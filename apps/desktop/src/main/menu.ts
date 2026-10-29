@@ -17,14 +17,14 @@
 import { app, Menu, type BrowserWindow, type MenuItemConstructorOptions } from 'electron'
 
 /** Main → renderer: open the ritual in dry-run mode. */
-export const TEST_ONBOARDING_CHANNEL = 'dev:test-onboarding'
+const TEST_ONBOARDING_CHANNEL = 'dev:test-onboarding'
 
 /**
  * Main → renderer: a menu item ran, carrying the id of a row in the renderer's
  * command table (`state/commands.ts`). The renderer decides what the id
  * means (which tab ⌘W closes, say) because main has no notion of panes.
  */
-export const MENU_COMMAND_CHANNEL = 'menu:command'
+const MENU_COMMAND_CHANNEL = 'menu:command'
 
 function fileMenu(getWindow: () => BrowserWindow | null): MenuItemConstructorOptions {
   const isMac = process.platform === 'darwin'

@@ -20,6 +20,7 @@ const ENV_FILES = ['.env', '.env.local'] as const
  * skipped, an optional `export `, a value in single or double quotes kept as
  * is (a double-quoted `\n` is a newline), an unquoted one trimmed and cut at
  * ` #`.
+ * @public exported for its test
  */
 export function parseDotenv(text: string): Record<string, string> {
   const out: Record<string, string> = {}
@@ -40,7 +41,7 @@ export function parseDotenv(text: string): Record<string, string> {
 }
 
 /** The vault's secrets, `.env.local` over `.env`. */
-export async function readVaultEnv(root: string): Promise<Record<string, string>> {
+async function readVaultEnv(root: string): Promise<Record<string, string>> {
   const merged: Record<string, string> = {}
   for (const file of ENV_FILES) {
     const text = await readFile(join(root, file), 'utf8').catch(() => null)

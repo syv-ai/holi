@@ -11,7 +11,7 @@
  * No `electron` value import (types only): plugins load under plain Node in
  * the tests.
  */
-import type { Privileges } from 'electron'
+import type { BrowserWindow, Privileges } from 'electron'
 import type {
   CommentMention,
   PluginInfo,
@@ -25,9 +25,7 @@ import type { SeedContribution } from './vault/seed/types'
 import type { Route } from './bridge/server'
 import type { UiReport } from './capabilities/services'
 import type { Transform } from './vault/hooks/runner'
-import type { PageWindow, PageWindowOptions } from './page-windows'
-
-export type { PageWindow, PageWindowOptions } from './page-windows'
+import type { ActivityLevel } from './activity/log'
 
 /** Undoes what an activation started, when the plugin stops: turned off,
  *  the vault left, or Holi quitting. */
@@ -111,15 +109,6 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   route(path: string, route: BridgeRoute): () => void
   /** The directory holding the `holi` command, for a process a plugin starts. */
   binDir(): string
-  /**
-   * A window of the plugin's own, showing one of its renderer side's pages
-   * (`RendererPlugin.pages`), such as the agent's quick panel. Core makes it;
-   * the plugin sizes, places, shows and closes it. Every one is closed when the plugin stops.
-   */
-  openPage(options: PageWindowOptions): PageWindow
-  /** Bring the main window forward, opening it if it was closed. Resolves
-   *  once its page has loaded, so an event sent after it is heard. */
-  showMainWindow(): Promise<void>
   /** The signed-in GitHub token, or null: for a plugin that fetches from a
    *  repository the person can read, as vault clones do. */
   githubToken(): string | null
@@ -143,6 +132,31 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   /** Hear what the renderer reports the person is looking at in this vault. */
   onReport(cb: (report: UiReport) => void): () => void
   /**
+   * Call a capability in this vault at the UI door, as this plugin's
+   * renderer would: how one plugin's main side reaches another's, which it
+   * requires. Refused like any call while that plugin is off. Resolves to the
+   * entry's value.
+   */
+  call(name: string, params: unknown): Promise<unknown>
+  /**
+   * Write a line to the activity log, the bottom panel's Output
+   * (docs/features/status-bar.md): something this plugin did in the
+   * background that someone may want to read later. State changes, not
+   * ticks, and never a credential (the log scrubs what it can).
+   */
+  log(level: ActivityLevel, message: string, detail?: string): void
+  /**
+   * Tell the main side of every plugin that requires this one something about
+   * the open vault, as it happens: the agent's session list, a turn ending.
+   * Nobody hearing it is not an error.
+   */
+  publish(name: string, payload: unknown): void
+  /**
+   * Hear what the main side of `from`, a plugin this one requires, publishes.
+   * Throws for a plugin it does not require. Returns the undo.
+   */
+  hear(from: string, name: string, handler: (payload: unknown) => void): () => void
+  /**
    * Hear about a comment a pull brought into this vault that mentions the
    * person signed in, written by someone else (docs/features/note-comments.md).
    * Only on a pull: there is no server to say so sooner. Returns the undo.
@@ -157,6 +171,9 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   notify(notice: Notice): boolean
   /** Whether a Holi window has focus now. */
   focused(): boolean
+  /** Holi's window, or null while none is open: for a plugin that draws
+   *  into it from main (the browser's pages). */
+  window(): BrowserWindow | null
   /** Hear each scan of this vault, the latest one first, at once. Returns
    *  the undo. */
   onSnapshot(cb: (snapshot: VaultSnapshot) => void): () => void
@@ -300,6 +317,14 @@ export { seedFolder } from './vault/seed/folder'
 export { jsonFileStore, type JsonFileStore } from './json-file-store'
 export { nodeFallbackDir, resolveBin, toolPath } from './bin'
 export { defaultProbePid, type PidState } from './process-group'
+export { writeScreenshot } from './screenshot-files'
+export {
+  defaultSpawnPty,
+  type PtyProcess,
+  type SpawnPty,
+  type SpawnPtyOptions,
+} from './terminal/pty'
+export type { ActivityChannel, ActivityLevel } from './activity/log'
 export { remoteUrl, runGit, type RangeFile } from './git'
 export { gitignoreWith } from './vault/seed/core'
 export {
@@ -310,6 +335,8 @@ export {
   writeAtomic,
 } from './vault/vault-files'
 export { moveNotes } from './vault/move'
+// The vault's own task statuses, which decide what completes a task.
+export { completionStatuses, readVaultStatuses } from './vault/statuses'
 export { renameNote } from './vault/rename'
 export { holiTheme, readVaultTheme } from './vault/theme'
 export { readVaultSettings, writePluginSettings } from './vault/settings'

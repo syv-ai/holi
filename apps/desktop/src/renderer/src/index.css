@@ -1,177 +1,224 @@
 @import 'tailwindcss';
-/* The themeable tokens (shadcn's semantic vocabulary plus chrome) are Holi's
-   theme file, imported from the vault seed so a fresh vault and the look
-   outside a vault are one text. They are written on Tailwind's palette, and the
-   reasons behind them live here, since the file's comments are regenerated:
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
 
-   - `--primary` is the brand as a FILL, under `--primary-foreground`; `--brand`
-     is the brand as TEXT. A fill dark enough to carry near-white text is too
-     dark to be text on near-black (about 3:1). Use `text-brand`, never
-     `text-primary`. Light inverts it: the text arm goes down a step.
-   - `--accent` is shadcn's subtle neutral hover surface, not a brand colour.
-   - Light surfaces are not a mirror of the dark ramp: perceptual distance is
-     smaller at the light end, so they sit a step deeper to stay visible.
-   - `--divider` is the hairline between pieces of CHROME (pane splits, panel
-     rules), `--border` the edge of an OBJECT. Mixed from the two, so it follows
-     a re-theme. `--drawer-edge` is transparent: a drawer lies flat on the page.
-   - `--selection` follows the brand: `--primary` in light, `--brand` in dark,
-     where the fill-dark primary at 30% vanished on near-black.
-   - Dark `--destructive` is red-400 under red-950 text: it is text as often as
-     it is a fill (menu items, errors), and red-900 could not be read as text.
-   - `--shadow-popover` is heavier than Tailwind's md because overlays have no
-     border; a dialog sits over a scrim, so `--shadow-dialog` stays light.
-     Light's popover shadow is softer, where the dark weight reads as smudge.
-   - The editor's link and task-orb colours have no light arm; a chip's tint is
-     mixed from its colour. Inline code is told apart by colour alone. A
-     comment banner is mixed toward the text, since `--popover` sat too close to
-     the page.
-   - Every derived token is stated in both blocks: a `var()` resolves where it
-     is declared, so a light block that left it out would inherit dark's. */
-@import '../../main/vault/seed/vault/once/.holi/settings/theme.css';
-
-/* Plugins' renderer code lives outside this tree (src/plugins/), so Tailwind
-   is told to scan it for class names too. */
 @source '../../plugins';
 
-/* Dark mode follows the `data-theme` root stamp, not prefers-color-scheme or
-   shadcn's `.dark`. */
-@custom-variant dark (&:where([data-theme='dark'] *));
+/* Dark follows the `data-theme` stamp on <html> (`state/color-scheme.ts`). */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
-/* Holi is dark-first: :root shares the dark values; [data-theme='light']
-   overrides. */
-:root,
+/* shadcn's neutral theme, as published. */
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
 [data-theme='dark'] {
-  /* So everything we do not paint ourselves (native controls, the canvas)
-     comes up dark instead of the light default. */
-  color-scheme: dark;
-
-  /* A note's and a task's running text: a touch under the foreground, which is
-     glaring at length on near-black. Mixed, so a vault theme's colours carry it. */
-  --prose: color-mix(in srgb, var(--foreground) 88%, var(--background));
-
-  /* Code-editor syntax colours. Tokens, so they follow the theme: 300 tints
-     that glow on near-black wash out on white, hence the light arm below. */
-  --syntax-keyword: var(--color-fuchsia-300);
-  --syntax-property: var(--color-sky-300);
-  --syntax-string: var(--color-green-300);
-  /* Violet, not amber: a theme file is mostly numbers, and amber read as a
-     wall of yellow. */
-  --syntax-number: var(--color-violet-300);
-  --syntax-type: var(--color-blue-300);
-  --syntax-variable: var(--color-neutral-200);
-  --syntax-function: var(--color-sky-300);
-  --syntax-comment: var(--color-neutral-500);
-  --syntax-punctuation: var(--color-neutral-400);
-  --syntax-invalid: var(--color-red-400);
-
-  /* ── File-type tokens ───────────────────────────────────────────────
-   * The type colour of a file glyph in the tree, tabs and palette
-   * (`composites/file-icons.tsx`), so a `.json` reads yellow and a `.ts` sky
-   * at a glance. A curated, dark-friendly palette, not each brand's own hex:
-   * several (JSON black, TOML brown) would vanish on the dark UI. No light arm,
-   * like `--task-*`. */
-  --file-blue: #6b9fff;
-  --file-sky: #4fc3f7;
-  --file-teal: #26a69a;
-  --file-yellow: #f5c542;
-  --file-orange: #ff8a65;
-  --file-red: #ef5350;
-  --file-pink: #e57399;
-  --file-purple: #b388ff;
-  --file-green: #66bb6a;
-  --file-tan: #cfa06a;
-  --file-grey: #b0bec5;
-
-  /* ── Diff tokens ─────────────────────────────────────────────────
-   * The two hues every part of a diff derives from, so `DiffView` need not
-   * know the mode (`@codemirror/merge` hardcodes `&light`/`&dark` hexes).
-   *
-   * Mid-ramp 500s and no light arm: every use is a translucent wash or a 3px
-   * stripe, which reads on near-black and near-white alike.
-   *
-   * Not in the theme whitelist, like `--syntax-*`: red removed, green added is
-   * close to a convention. */
-  --diff-added: var(--color-green-500);
-  --diff-removed: var(--color-red-500);
-  /* The same hues as TEXT, for a churn count (`+40 −3`). Separate tokens with a
-     light arm: green-500 as text on white is about 2.2:1. Same split as
-     `--primary` and `--brand`. */
-  --diff-added-foreground: var(--color-green-400);
-  --diff-removed-foreground: var(--color-red-400);
-
-  /* The two ends of a percent-full reading (a session's context, a repo's
-     size), as TEXT: amber where it starts to matter (60%), full red at 99%.
-     The reading mixes between them (`fillColour`). Not in the theme
-     whitelist, like `--diff-*`. */
-  --fill-warm: var(--color-amber-400);
-  --fill-full: var(--color-red-500);
-
-  /* A memory's dot in the graph view, told apart from notes and tasks by hue
-     alone. Not in the theme whitelist, like `--diff-*`. */
-  --graph-memory: var(--color-violet-400);
-
-  /* ── Rendered-table tokens (per-vault themeable) ───────────────────
-   * `codemirror-markdown-tables` paints from its own `--tbl-theme-*`
-   * properties and picks light or dark from `EditorView.darkTheme`, which Holi
-   * never sets, so it would paint its light hexes in both modes.
-   *
-   * Custom properties here rather than a `TableTheme` argument, which bakes
-   * values at build time and cuts out per-vault themes. The package's defaults
-   * are `:where()` (specificity 0), so plain `:root` wins. Every value is
-   * derived, so one definition covers both modes.
-   *
-   * A cell edge is `--border`: a cell is an object. Hover and drag mix toward
-   * `--foreground`, not black as the package does, so they show on dark too.
-   * Even/odd rows already default to the row background. */
-  /* A step off the page toward the text, so a table reads as an object in
-     either mode, and the header a step further. Not `--muted`: dark-first,
-     `--muted` equals `--border`, so the header swallowed its own cell borders. */
-  --tbl-theme-row-background: color-mix(in srgb, var(--foreground) 4%, var(--background));
-  --tbl-theme-header-row-background: color-mix(in srgb, var(--foreground) 8%, var(--background));
-  --tbl-theme-border-color: var(--border);
-  /* Also the handles' grips, which at a quarter of the way were lost on dark. */
-  --tbl-theme-border-hover-color: color-mix(in srgb, var(--border), var(--foreground) 50%);
-  --tbl-theme-border-active-color: color-mix(in srgb, var(--border), var(--foreground) 75%);
-  --tbl-theme-outline-color: var(--ring);
-  --tbl-theme-text-color: var(--foreground);
-  --tbl-theme-menu-background: var(--popover);
-  --tbl-theme-menu-text-color: var(--popover-foreground);
-  --tbl-theme-menu-border-color: var(--border);
-  --tbl-theme-menu-hover-background: var(--accent);
-  --tbl-theme-menu-hover-text-color: var(--accent-foreground);
-  /* Select-all tints like a text selection; blurred, a neutral reads as "was
-     selected". */
-  --tbl-theme-select-all-focus-overlay: var(--selection);
-  --tbl-theme-select-all-blur-overlay: color-mix(in srgb, var(--muted-foreground) 22%, transparent);
-}
-[data-theme='light'] {
-  color-scheme: light;
-
-  --prose: var(--foreground);
-
-  /* Same hues at the 600/700 end: on white the job is contrast, not glow. */
-  --syntax-keyword: var(--color-fuchsia-700);
-  --syntax-property: var(--color-sky-700);
-  --syntax-string: var(--color-green-700);
-  --syntax-number: var(--color-violet-700);
-  --syntax-type: var(--color-blue-700);
-  --syntax-variable: var(--color-neutral-800);
-  --syntax-function: var(--color-sky-700);
-  --syntax-comment: var(--color-neutral-500);
-  --syntax-punctuation: var(--color-neutral-600);
-  --syntax-invalid: var(--color-red-600);
-
-  /* Text, so a light arm; the diff tints deliberately have none. */
-  --diff-added-foreground: var(--color-green-700);
-  --diff-removed-foreground: var(--color-red-700);
-  --fill-warm: var(--color-amber-600);
-  --fill-full: var(--color-red-600);
-  --graph-memory: var(--color-violet-600);
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
 }
 
-/* Expose the semantics as utilities. @theme inline so the generated utility holds
-   the pointer (var(--background)…), letting the per-theme override re-cascade. */
+/* ReUI's status colours (Badge, Alert). */
+:root {
+  --destructive-foreground: var(--color-red-800);
+  --success: var(--color-emerald-500);
+  --success-foreground: var(--color-emerald-900);
+  --info: var(--color-violet-500);
+  --info-foreground: var(--color-violet-900);
+  --focus: var(--color-blue-500);
+  --focus-foreground: var(--color-blue-900);
+  --warning: var(--color-yellow-500);
+  --warning-foreground: var(--color-yellow-900);
+  --invert: var(--color-zinc-900);
+  --invert-foreground: var(--color-zinc-50);
+}
+[data-theme='dark'] {
+  --destructive-foreground: var(--color-red-600);
+  --success-foreground: var(--color-emerald-600);
+  --info-foreground: var(--color-violet-600);
+  --focus-foreground: var(--color-blue-600);
+  --warning-foreground: var(--color-yellow-600);
+  --invert: var(--color-zinc-700);
+}
+
+/* The bottom panel's terminal (`lib/terminal-theme.ts`): the 16 ANSI colours,
+   tuned against the panel's own ground. On white the normal colours hold 4.5:1
+   or better and the bright ones are a step darker, not lighter, so they stay
+   legible; on the dark ground every colour but black clears 4:1. Its ground
+   is the panel's (no colour of its own), its text the view's. */
+:root {
+  --terminal-black: var(--color-zinc-800);
+  --terminal-red: var(--color-red-600);
+  --terminal-green: var(--color-green-700);
+  --terminal-yellow: var(--color-yellow-700);
+  --terminal-blue: var(--color-blue-600);
+  --terminal-magenta: var(--color-purple-600);
+  --terminal-cyan: var(--color-cyan-700);
+  --terminal-white: var(--color-zinc-600);
+  --terminal-bright-black: var(--color-zinc-500);
+  --terminal-bright-red: var(--color-red-700);
+  --terminal-bright-green: var(--color-green-800);
+  --terminal-bright-yellow: var(--color-yellow-800);
+  --terminal-bright-blue: var(--color-blue-700);
+  --terminal-bright-magenta: var(--color-purple-700);
+  --terminal-bright-cyan: var(--color-cyan-800);
+  --terminal-bright-white: var(--color-zinc-400);
+  --terminal-selection: color-mix(in oklab, var(--foreground) 16%, transparent);
+}
+[data-theme='dark'] {
+  --terminal-black: var(--color-zinc-600);
+  --terminal-red: var(--color-red-400);
+  --terminal-green: var(--color-green-400);
+  --terminal-yellow: var(--color-yellow-400);
+  --terminal-blue: var(--color-blue-400);
+  --terminal-magenta: var(--color-purple-400);
+  --terminal-cyan: var(--color-cyan-400);
+  --terminal-white: var(--color-zinc-300);
+  --terminal-bright-black: var(--color-zinc-500);
+  --terminal-bright-red: var(--color-red-300);
+  --terminal-bright-green: var(--color-green-300);
+  --terminal-bright-yellow: var(--color-yellow-300);
+  --terminal-bright-blue: var(--color-blue-300);
+  --terminal-bright-magenta: var(--color-purple-300);
+  --terminal-bright-cyan: var(--color-cyan-300);
+  --terminal-bright-white: var(--color-zinc-50);
+  --terminal-selection: color-mix(in oklab, var(--foreground) 22%, transparent);
+}
+
+/* The document editor's find and ⌘D marks (`document-view/document-find.ts`,
+   `multi-cursor.ts`), and a code file's find (`file-view/code-find.ts`). Every match is a quiet tint, the one the selection is
+   on a stronger one, so the current match reads with the editor blurred and
+   focus in the find bar. An extra ⌘D selection wears the blurred selection's
+   tint (primary at 15%), and an extra caret is the text colour. */
+:root {
+  --find-match: color-mix(in oklab, var(--warning) 22%, transparent);
+  --find-match-current: color-mix(in oklab, var(--warning) 55%, transparent);
+  --extra-selection: color-mix(in oklab, var(--primary) 15%, transparent);
+}
+[data-theme='dark'] {
+  --find-match-current: color-mix(in oklab, var(--warning) 45%, transparent);
+}
+.cm-editor .cm-searchMatch {
+  background-color: var(--find-match);
+}
+.cm-editor .cm-searchMatch-selected {
+  background-color: var(--find-match-current);
+}
+.tiptap .ProseMirror-search-match {
+  background-color: var(--find-match);
+}
+.tiptap .ProseMirror-active-search-match {
+  background-color: var(--find-match-current);
+}
+/* Comment threads' passages (`document-view/document-comments.ts`): an open
+   thread's passage is a quiet primary tint over a line, the thread the panel
+   is on a stronger one. Primary, so a passage never reads as a find match. */
+:root {
+  --comment-mark: color-mix(in oklab, var(--primary) 10%, transparent);
+  --comment-mark-line: color-mix(in oklab, var(--primary) 45%, transparent);
+  --comment-mark-active: color-mix(in oklab, var(--primary) 24%, transparent);
+}
+.tiptap .holi-comment {
+  background-color: var(--comment-mark);
+  border-bottom: 2px solid var(--comment-mark-line);
+  cursor: pointer;
+}
+.tiptap .holi-comment-active {
+  background-color: var(--comment-mark-active);
+}
+.tiptap .rich-text-extra-selection {
+  background-color: var(--extra-selection);
+}
+.tiptap .rich-text-extra-caret {
+  position: relative;
+}
+.tiptap .rich-text-extra-caret::after {
+  content: '';
+  position: absolute;
+  inset-block: 0.15em;
+  inset-inline-start: -0.5px;
+  border-inline-start: 1px solid var(--foreground);
+  pointer-events: none;
+}
+
+/* The generated content of two note parts (`rich-text-content.tsx`,
+   `rich-text-table.tsx`): the empty block's placeholder text, and the layer
+   that tints a selected table cell. Their looks stay in the utility classes. */
+.tiptap .is-empty::before {
+  content: attr(data-placeholder);
+}
+.tiptap .selectedCell::after {
+  content: '';
+}
+
+/* Type a step under Tailwind's defaults, the size desktop tools set their
+   chrome in (13px body, 11px meta): the type shrinks, the spacing does not. */
+@theme {
+  --text-xs: 0.6875rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.375rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+}
+
 @theme inline {
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -180,7 +227,6 @@
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
-  --color-brand: var(--brand);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
@@ -190,98 +236,147 @@
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
-  --color-divider: var(--divider);
-  --color-drawer-edge: var(--drawer-edge);
-  /* The diff hues as text utilities. The tints are not exposed: only
-     `DiffView` paints with them. */
-  --color-diff-added-foreground: var(--diff-added-foreground);
-  --color-diff-removed-foreground: var(--diff-removed-foreground);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  /* An icon's colour by role (`primitives/Icon.tsx`, `IconButton.tsx`): muted at
-     rest, the foreground under the pointer and while pressed or current. */
-  --color-icon: var(--muted-foreground);
-  --color-icon-active: var(--foreground);
-  /* Signal colours for a glyph (`<Icon className="text-file-sky">`): a task's
-     status and a file's type. */
-  --color-task-todo: var(--task-todo);
-  --color-task-doing: var(--task-doing);
-  --color-task-done: var(--task-done);
-  --color-agent-working: var(--agent-working);
-  --color-agent-needs-you: var(--agent-needs-you);
-  --color-agent-done: var(--agent-done);
-  --color-agent-failed: var(--agent-failed);
-  --color-file-blue: var(--file-blue);
-  --color-file-sky: var(--file-sky);
-  --color-file-teal: var(--file-teal);
-  --color-file-yellow: var(--file-yellow);
-  --color-file-orange: var(--file-orange);
-  --color-file-red: var(--file-red);
-  --color-file-pink: var(--file-pink);
-  --color-file-purple: var(--file-purple);
-  --color-file-green: var(--file-green);
-  --color-file-tan: var(--file-tan);
-  --color-file-grey: var(--file-grey);
-  --color-graph-memory: var(--graph-memory);
-
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-focus: var(--focus);
+  --color-focus-foreground: var(--focus-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-invert: var(--invert);
+  --color-invert-foreground: var(--invert-foreground);
 }
 
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+}
+
+/* ── Glass (macOS) ────────────────────────────────────────────────────────
+ * The window is the system's glass (liquid glass on macOS 26, vibrancy
+ * before: `main/liquid-glass.ts`), so nothing between it and the page may
+ * paint a ground: not the root, and not shadcn's sidebar wrapper, whose
+ * `bg-background` otherwise hides the glass entirely. The chrome (sidebar and
+ * title band) and the view then lay their own colour over it, as much as the
+ * vault's Transparency asks (`state/window-glass.ts`, `data-glass`). */
+[data-platform='mac'] :is(html, body, #root),
+[data-platform='mac'] [data-slot='sidebar-wrapper'] {
+  background: transparent;
+}
+/* Frosted, the default, until the vault's own choice is stamped. */
+[data-platform='mac'] {
+  --glass-chrome: 70%;
+  --glass-view: 80%;
+}
+[data-platform='mac'][data-glass='clear'] {
+  --glass-chrome: 25%;
+  --glass-view: 0%;
+}
+[data-platform='mac'][data-glass='solid'] {
+  --glass-chrome: 100%;
+  --glass-view: 100%;
+}
+[data-platform='mac'] [data-slot='sidebar'],
+[data-platform='mac'] [data-slot='app-chrome'] {
+  background: color-mix(in oklab, var(--sidebar) var(--glass-chrome), transparent);
+}
+/* The sidebar's divider sits between the chrome and the view, on neither's
+   ground: with only the translucent --border it is a window onto the desktop,
+   and whatever is behind Holi tints the line. It lays the chrome's ground
+   under its line, so it is exactly as clear as the sidebar beside it.
+   Hovered or dragged, its primary fill is opaque already. */
+[data-platform='mac']
+  [data-shell-divider]:not(:hover, [data-separator='hover'], [data-separator='active']),
+[data-platform='mac']
+  [data-shell-divider]:not(:hover, [data-separator='hover'], [data-separator='active'])
+  > div {
+  background:
+    linear-gradient(var(--border), var(--border)),
+    color-mix(in oklab, var(--sidebar) var(--glass-chrome), transparent);
+}
+/* A screen that is its own glass ground (sign-in, adding a vault) carries
+   the tint once; a <main> inside it must not stack a second. */
+[data-platform='mac'] main:not([data-glass-ground] *),
+[data-platform='mac'] [data-glass-ground] {
+  background: color-mix(in oklab, var(--background) var(--glass-view), transparent);
+}
+/* Split view keeps this ground: its views sit edge to edge on `main`, a
+ * hairline between them (split-view.tsx), as one tab does. */
+
+/* ── Window ───────────────────────────────────────────────────────────────
+ * macOS draws its traffic lights over the page (`hiddenInset`, ending near
+ * 73px), so whatever holds them keeps its first 80px clear, except in
+ * fullscreen. A handle drags the window; what you click in one opts out. */
+.app-drag {
+  -webkit-app-region: drag;
+}
+.app-drag :is(button, a, input, [role='button'], [role='tab']) {
+  -webkit-app-region: no-drag;
+}
+[data-platform='mac']:not([data-fullscreen]) [data-window-band='lights'] {
+  padding-inline-start: 5rem;
+}
+
+/* ── Holi's own tokens ────────────────────────────────────────────────────
+ * Names that code and the vault's theme.css use beyond shadcn's set: the
+ * editor theme, the diff view, the drawer shell and the PDF viewer read them
+ * as `var(--…)`, and a vault's theme.css may override any of them. */
+:root {
+  --brand: var(--foreground);
+  --divider: var(--border);
+  --drawer-edge: transparent;
+  --selection: color-mix(in srgb, var(--foreground) 22%, transparent);
+  --shadow-popover:
+    0 0 0 1px var(--border), 0 8px 24px -6px color-mix(in srgb, black 30%, transparent);
+  --task-todo: var(--muted-foreground);
+  --task-doing: var(--color-amber-400);
+  --task-done: var(--color-emerald-500);
+  --diff-added: var(--color-green-500);
+  --diff-removed: var(--color-red-500);
+  --diff-added-foreground: var(--color-green-400);
+  --diff-removed-foreground: var(--color-red-400);
+}
+[data-theme='light'] {
+  --diff-added-foreground: var(--color-green-700);
+  --diff-removed-foreground: var(--color-red-700);
+}
+@theme inline {
+  --color-brand: var(--brand);
+  --color-divider: var(--divider);
+  --color-drawer-edge: var(--drawer-edge);
+  --color-diff-added-foreground: var(--diff-added-foreground);
+  --color-diff-removed-foreground: var(--diff-removed-foreground);
+}
 @theme {
-  /* ── Motion tier ─────────────────────────────────────────────────────
-   * The app's ONE motion vocabulary, named for what each is FOR. Every
-   * animation names which of four behaviours it is:
-   *
-   *   R  respond      it notices you. Under your pointer or caret, nowhere else.
-   *                   Always a TRANSITION, never an animation, so it reverses
-   *                   the moment you leave and can never be in your way.
-   *   A  arrive       it has weight. Something enters or leaves the layout, from
-   *                   the direction it belongs to. Leaving is faster than
-   *                   arriving, because a thing on its way out is in your way.
-   *   K  acknowledge  it answers back. One beat, once, for an act you committed.
-   *   F  in flight    it breathes. The ONLY looping motion, and bound to a real
-   *                   in-flight state, so when the state ends the motion ends.
-   *
-   * Anything that cannot name one of the four does not animate.
-   *
-   * No overshoot: weight comes from direction and easing. The one spring lives
-   * in `features/onboarding/onboarding-ritual.css`, a one-time ceremony.
-   *
-   * Every duration scales off the 300ms arrive. Re-pacing the app is an edit
-   * to this block only. See docs/ui-system.md. */
-  --ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
-  /* Symmetric, for F only. A loop eased like an entrance reads as a stutter. */
-  --ease-loop: cubic-bezier(0.45, 0, 0.55, 1);
-
-  --motion-respond: 150ms;
-  --motion-arrive: 300ms;
-  --motion-leave: 190ms;
-  --motion-ack: 800ms;
-  --motion-inflight: 2400ms;
-  /* --motion-stagger is NOT here. See the :root block below. */
+  --text-nav: 0.8125rem;
+  --text-nav--line-height: calc(18 / 13);
+}
+::selection {
+  background: var(--selection);
 }
 
-/* Motion tokens NOT in `@theme`: a plain `:root` rule always emits.
- *
- * Tailwind v4 tree-shakes `@theme` variables the CSS does not reference. The
- * stagger's only consumer is a runtime `calc()` string in `lib/motion.ts`, and
- * in `@theme` it silently resolved to nothing. Any motion token consumed only
- * from JavaScript or a string belongs here. `test/motion.test.ts` guards it.
- *
- * Slide is A (arrive/leave) for a panel moving its whole width. Over that
- * distance `--ease-settle` front-loads and then crawls, so a slide is eased in
- * and out, slower, and the same both ways. */
-/* ── Icons ─────────────────────────────────────────────────────────────
- * Two sizes and one stroke, and nothing else: 14px beside text and in dense
- * controls, 16px in toolbars, menus and the dock. Plain `:root`, because the
- * editor's and the PDF viewer's DOM icons read them from CSS-in-JS too. Size
- * is not a theme token: a vault re-skins colour, never layout. */
+/* ── Icons ────────────────────────────────────────────────────────────────
+ * One size and one stroke weight for every glyph; `icon-sm` and `icon-lg` are
+ * the two the components ask for. */
 :root {
   --icon-sm: 14px;
   --icon-md: 16px;
+  --icon-lg: 20px;
   --icon-stroke: 2;
 }
 @utility icon-sm {
@@ -289,49 +384,37 @@
   height: var(--icon-sm);
   stroke-width: var(--icon-stroke);
 }
-@utility icon-md {
-  width: var(--icon-md);
-  height: var(--icon-md);
+@utility icon-lg {
+  width: var(--icon-lg);
+  height: var(--icon-lg);
   stroke-width: var(--icon-stroke);
 }
+/* A file type's glyph colour, set per type by `components/ui/file-type.tsx`. */
+@utility file-type-glyph {
+  color: var(--file-type-glyph, var(--file-type-foreground));
+}
 
+/* ── Motion ───────────────────────────────────────────────────────────────
+ * The house vocabulary (docs/ui-system.md, "Motion"): new code reaches motion
+ * only through these utilities, never raw durations or curves. Transform and
+ * opacity only, except `motion-respond`'s colour and shadow changes. */
 :root {
   --motion-stagger: 45ms;
   --motion-slide: 400ms;
   --ease-slide: cubic-bezier(0.65, 0, 0.35, 1);
 }
+@theme {
+  --ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-loop: cubic-bezier(0.45, 0, 0.55, 1);
+  --motion-respond: 150ms;
+  --motion-arrive: 300ms;
+  --motion-pop: 180ms;
+  --motion-leave: 190ms;
+  --motion-ack: 800ms;
+  --motion-inflight: 2400ms;
+}
 
-/* ════ The four behaviours, as utilities ═══════════════════════════════
- *
- * These are the ONLY way a component gets motion. The renderer lint gate
- * rejects `duration-[…]`, `ease-[…]`, `animate-[…]`, `transition-all` and a
- * literal transition/animation in a style object, so a number written at a
- * call site is an error rather than a matter of taste. `features/onboarding/`
- * is the one exemption: it owns its ceremony.
- *
- * What stays STILL is as load-bearing as what moves, and is not expressible
- * here, so it is stated: prose, headings and code inside a document never
- * move; direct manipulation (a resize handle, a dragged tab or card, a
- * scroll) tracks the pointer 1:1 and is never eased, so motion applies to
- * the RELEASE and not the drag; nothing is ever on the critical path of an
- * action, so a dialog takes typing the instant it starts arriving; and
- * inside CodeMirror it is PAINT ONLY, never width, height, font-size or
- * margin, because that pegs CM's measure loop (docs/features/editor.md).
- */
-
-/* ── R · respond ──────────────────────────────────────────────────────
- * A transition, never an animation, so leaving reverses it.
- * The property list is paint plus movement ON PURPOSE: a row that steps aside
- * on hover does it with a transform, never with padding or margin, so it runs
- * on the compositor and cannot reflow its siblings.
- *
- * `translate`, `scale` and `rotate` are not redundant with `transform`:
- * Tailwind v4 emits its transform utilities as those independent properties,
- * so a list naming only `transform` would let them snap.
- *
- * The keyframes below use `transform` on purpose: it composes with an
- * element's own `translate-*` (a dialog centred with `-translate-x-1/2` can
- * still arrive), where `translate` would override it. */
+/* Hover, focus and press: a state changing under the pointer. */
 @utility motion-respond {
   transition-property:
     color, background-color, border-color, box-shadow, opacity, filter, fill, stroke,
@@ -339,246 +422,44 @@
   transition-duration: var(--motion-respond);
   transition-timing-function: var(--ease-settle);
 }
+/* What slides when a drag opens a gap: position, size and fill together. */
+@utility motion-slide {
+  transition-property: left, width, translate, transform, opacity, color, background-color;
+  transition-duration: var(--motion-leave);
+  transition-timing-function: var(--ease-settle);
+}
+@utility motion-fade {
+  transition-property: opacity;
+  transition-duration: var(--motion-leave);
+  transition-timing-function: var(--ease-settle);
+}
+@utility motion-resize {
+  transition-property: flex;
+  transition-duration: var(--motion-leave);
+  transition-timing-function: linear;
+}
+/* The foot of a scrolling list fades out under its last rows. */
+@utility fade-foot {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 3rem), transparent calc(100% - 1rem));
+}
 
-/* ── A · arrive and leave ─────────────────────────────────────────────
- * ANIMATIONS, not transitions, and that is load-bearing: Radix's `Presence`
- * keeps an exiting node mounted by waiting for `animationend`. An exit
- * written as a transition unmounts immediately and is never seen.
- *
- * Direction is mandatory — a thing arrives from where it belongs — and the
- * travel is deliberately short (0.75rem). A panel that genuinely slides its
- * full width is a bespoke case, not this.
- *
- * `-origin` scales from `transform-origin`, for menus that should grow out
- * of their trigger; pair it with Radix's `origin-(--radix-*-transform-origin)`.
- * It goes 0.96 → 1 and never above 1: no overshoot. */
-@utility motion-in-right {
-  animation: motion-in-right var(--motion-arrive) var(--ease-settle) both;
-}
-@utility motion-in-left {
-  animation: motion-in-left var(--motion-arrive) var(--ease-settle) both;
-}
-@utility motion-in-top {
-  animation: motion-in-top var(--motion-arrive) var(--ease-settle) both;
-}
-@utility motion-in-bottom {
-  animation: motion-in-bottom var(--motion-arrive) var(--ease-settle) both;
-}
+/* Arriving and leaving. A popup grows out of its trigger and shrinks back
+   (`origin`); anything else fades, or fades and rises a few pixels. */
 @utility motion-in-origin {
-  animation: motion-in-origin var(--motion-arrive) var(--ease-settle) both;
+  animation: motion-in-origin var(--motion-pop) var(--ease-settle) both;
+}
+@utility motion-out-origin {
+  animation: motion-out-origin var(--motion-pop) var(--ease-settle) both;
 }
 @utility motion-in-fade {
   animation: motion-in-fade var(--motion-arrive) var(--ease-settle) both;
 }
-@utility motion-out-right {
-  animation: motion-out-right var(--motion-leave) var(--ease-settle) both;
-}
-@utility motion-out-left {
-  animation: motion-out-left var(--motion-leave) var(--ease-settle) both;
-}
-@utility motion-out-top {
-  animation: motion-out-top var(--motion-leave) var(--ease-settle) both;
-}
-@utility motion-out-bottom {
-  animation: motion-out-bottom var(--motion-leave) var(--ease-settle) both;
-}
-@utility motion-out-origin {
-  animation: motion-out-origin var(--motion-leave) var(--ease-settle) both;
-}
-@utility motion-out-fade {
-  animation: motion-out-fade var(--motion-leave) var(--ease-settle) both;
-}
-/* A drawer (`composites/DrawerShell.tsx`) pushes: its column's width runs
- * 0 → --drawer-w and back at the slide pace, the same both ways. A TRANSITION,
- * so a press mid-slide reverses from where it is. Off while the handle is
- * dragged: direct manipulation is never eased. Width is the one layout
- * property animated anywhere; the editor beside it reflowing during the slide
- * is the accepted cost of pushing rather than covering. */
-[data-slot='drawer'] {
-  width: var(--drawer-w);
-  transition: width var(--motion-slide) var(--ease-slide);
-}
-[data-slot='drawer'][data-state='closed'] {
-  /* 0, or the rail's width for a drawer that closes to one (the nav). */
-  width: var(--drawer-closed-w, 0);
-}
-[data-slot='drawer'][data-resizing] {
-  transition: none;
-}
-/* A drawer's rail (the nav's, while hidden) follows the slide: it fades in
- * over the LAST respond-length of a close, as the drawer arrives at the
- * rail's width, and out straight away when an open starts, so the drawer
- * slides in from it rather than under it. */
-[data-drawer-rail] {
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--motion-respond) var(--ease-settle);
-}
-[data-slot='drawer'][data-state='closed'] [data-drawer-rail] {
-  opacity: 1;
-  pointer-events: auto;
-  transition-delay: calc(var(--motion-slide) - var(--motion-respond));
-}
-@starting-style {
-  [data-slot='drawer'][data-appear] {
-    width: 0;
-  }
-}
-/* A tree folder discloses its contents (A): the row track runs 0fr → 1fr, the
- * height of whatever is inside without measuring it. A TRANSITION, like the
- * drawer, so a second click mid-way reverses from where it is; the component
- * unmounts the contents on the closing `transitionend`. */
-[data-slot='disclose'] {
-  display: grid;
-  grid-template-rows: 1fr;
-  opacity: 1;
-  transition:
-    grid-template-rows var(--motion-arrive) var(--ease-settle),
-    opacity var(--motion-arrive) var(--ease-settle);
-}
-[data-slot='disclose'][data-state='closed'] {
-  grid-template-rows: 0fr;
-  opacity: 0;
-  transition-duration: var(--motion-leave);
-}
-[data-slot='disclose'] > * {
-  min-height: 0;
-  overflow: hidden;
-}
-@starting-style {
-  [data-slot='disclose'][data-state='open'] {
-    grid-template-rows: 0fr;
-    opacity: 0;
-  }
+@utility motion-in-rise {
+  animation: motion-in-rise var(--motion-arrive) var(--ease-settle) both;
 }
 
-@keyframes motion-in-right {
-  from {
-    opacity: 0;
-    transform: translateX(0.75rem);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-@keyframes motion-in-left {
-  from {
-    opacity: 0;
-    transform: translateX(-0.75rem);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-@keyframes motion-in-top {
-  from {
-    opacity: 0;
-    transform: translateY(-0.75rem);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-@keyframes motion-in-bottom {
-  from {
-    opacity: 0;
-    transform: translateY(0.75rem);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-@keyframes motion-in-origin {
-  from {
-    opacity: 0;
-    transform: scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-@keyframes motion-in-fade {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-@keyframes motion-out-right {
-  from {
-    opacity: 1;
-    transform: none;
-  }
-  to {
-    opacity: 0;
-    transform: translateX(0.75rem);
-  }
-}
-@keyframes motion-out-left {
-  from {
-    opacity: 1;
-    transform: none;
-  }
-  to {
-    opacity: 0;
-    transform: translateX(-0.75rem);
-  }
-}
-@keyframes motion-out-top {
-  from {
-    opacity: 1;
-    transform: none;
-  }
-  to {
-    opacity: 0;
-    transform: translateY(-0.75rem);
-  }
-}
-@keyframes motion-out-bottom {
-  from {
-    opacity: 1;
-    transform: none;
-  }
-  to {
-    opacity: 0;
-    transform: translateY(0.75rem);
-  }
-}
-@keyframes motion-out-origin {
-  from {
-    opacity: 1;
-    transform: none;
-  }
-  to {
-    opacity: 0;
-    transform: scale(0.96);
-  }
-}
-@keyframes motion-out-fade {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
-  }
-}
-
-/* ── K · acknowledge ──────────────────────────────────────────────────
- * One beat, once, for a discrete act the reader committed. Applied and
- * cleaned up by `lib/use-ack.ts`, which also handles the replay-on-retrigger
- * that a bare class toggle cannot do.
- *
- * The split matters for reduced motion below: `bloom` and `flash` PAINT and
- * survive it; `tick` and `nudge` MOVE and do not.
- *
- * color-mix, never `hsl(var(--primary) / a)`: `--primary` holds a full colour,
- * so hsl() around it is invalid and the ring silently never draws. */
+/* Acknowledging an act the user committed: one beat, once (`hooks/use-ack.ts`
+   adds the class and removes it when the animation ends). */
 @utility motion-ack-bloom {
   animation: motion-ack-bloom var(--motion-ack) var(--ease-settle) both;
 }
@@ -592,65 +473,7 @@
   animation: motion-ack-nudge var(--motion-ack) var(--ease-settle) both;
 }
 
-@keyframes motion-ack-bloom {
-  from {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 45%, transparent);
-  }
-  to {
-    box-shadow: 0 0 0 12px transparent;
-  }
-}
-@keyframes motion-ack-tick {
-  from {
-    opacity: 0;
-    transform: scale(0.72);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-@keyframes motion-ack-flash {
-  from {
-    background-color: color-mix(in srgb, var(--primary) 28%, transparent);
-  }
-  to {
-    background-color: transparent;
-  }
-}
-@keyframes motion-ack-nudge {
-  0%,
-  100% {
-    transform: none;
-  }
-  15% {
-    transform: translateX(-5px);
-  }
-  30% {
-    transform: translateX(5px);
-  }
-  45% {
-    transform: translateX(-3px);
-  }
-  60% {
-    transform: translateX(2px);
-  }
-  75% {
-    transform: translateX(-1px);
-  }
-}
-
-/* ── F · in flight ────────────────────────────────────────────────────
- * The only looping motion in the app, and every use must be bound to a real
- * in-flight state so that when the state ends the motion ends. Nothing here
- * may loop decoratively; that is the rule that stops this from nagging.
- *
- * `pulse` eases with `--ease-loop` because a loop eased like an entrance
- * reads as a stutter. `shimmer` and `orbit` are LINEAR on purpose: an eased
- * spinner looks broken rather than considered.
- *
- * `orbit` supplies rotation only — the caller supplies the ring (or the icon),
- * which is what lets it replace `animate-spin` on a lucide glyph unchanged. */
+/* Work in flight: loops until the work ends. */
 @utility motion-pulse {
   animation: motion-pulse var(--motion-inflight) var(--ease-loop) infinite;
 }
@@ -668,6 +491,59 @@
   animation: motion-orbit calc(var(--motion-inflight) * 1.4) linear infinite;
 }
 
+@keyframes motion-in-origin {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+@keyframes motion-out-origin {
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+@keyframes motion-in-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes motion-in-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes motion-ack-bloom {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 45%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 12px transparent;
+  }
+}
+@keyframes motion-ack-tick {
+  from {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+}
+@keyframes motion-ack-flash {
+  from {
+    background-color: color-mix(in srgb, var(--primary) 28%, transparent);
+  }
+}
+@keyframes motion-ack-nudge {
+  15% {
+    transform: translateX(-5px);
+  }
+  30% {
+    transform: translateX(5px);
+  }
+  45% {
+    transform: translateX(-3px);
+  }
+}
 @keyframes motion-pulse {
   0%,
   100% {
@@ -692,21 +568,6 @@
     transform: rotate(360deg);
   }
 }
-
-/* ── Reduced motion ───────────────────────────────────────────────────
- * Reduce, not remove, because that is what the setting is actually for: the
- * problem is vestibular, not aesthetic, and blanking colour and opacity makes
- * the app worse for someone who did not ask for that.
- *
- *   F  stops dead        — a loop is exactly what the setting suppresses
- *   A  becomes instant   — travel is the vestibular half
- *   K  paint survives    — bloom and flash stay, tick and nudge do not
- *   R  survives          — it is paint plus a compositor transform
- *
- * Kept physically beside the definitions. Split apart, this drifts.
- * Classes are listed rather than matched with `[class*=…]`, so adding a
- * utility above without deciding what it does here is visible rather than
- * silently swept up. The JS half is `lib/motion.ts` + `lib/use-reduced-motion.ts`. */
 @media (prefers-reduced-motion: reduce) {
   .motion-pulse,
   .motion-shimmer,
@@ -715,151 +576,41 @@
   .motion-ack-nudge {
     animation: none;
   }
-  .motion-in-right,
-  .motion-in-left,
-  .motion-in-top,
-  .motion-in-bottom,
   .motion-in-origin,
   .motion-in-fade,
-  .motion-out-right,
-  .motion-out-left,
-  .motion-out-top,
-  .motion-out-bottom,
-  .motion-out-origin,
-  .motion-out-fade {
+  .motion-out-origin {
     animation-duration: 1ms;
   }
-  [data-slot='drawer'],
-  [data-slot='disclose'],
-  [data-drawer-rail],
-  [data-slot='drawer'][data-state='closed'] [data-drawer-rail] {
-    transition-duration: 1ms;
-    transition-delay: 0ms;
+  .motion-in-rise {
+    animation-name: motion-in-fade;
   }
 }
 
-/**
- * Scrollbars, app-wide.
- *
- * The paint is global: a bare `::-webkit-scrollbar` rule reaches every
- * scroller, including ones we cannot name (CodeMirror, xterm, Radix menus).
- *
- * The gutter cannot be. `scrollbar-gutter: stable` stops content reflowing
- * when a scrollbar appears, but styled scrollbars are not overlays, so a
- * blanket rule would also inset every `overflow: hidden` box by 10px. It is
- * keyed to the utilities that make a vertical scroller instead.
- * `overflow-x-auto` is absent: it would reserve a vertical bar that never
- * comes. So is a table cell's editor, a `.cm-scroller` the table plugin
- * makes `overflow: hidden`: the lane widened the cell as it took focus, and
- * the centred table shifted with it.
- *
- * `::-webkit-scrollbar`, not `scrollbar-color`: setting the latter makes
- * Chromium ignore these pseudo-elements, and thumb hover is what buys the fade.
- */
-:where(
-  .overflow-auto,
-  .overflow-y-auto,
-  .overflow-scroll,
-  .overflow-y-scroll,
-  .cm-scroller:not(.tbl-cell-editor *)
-) {
-  scrollbar-gutter: stable;
+/* ── Syntax colours ───────────────────────────────────────────────────────
+ * The code editor's highlight palette (`editor/theme.ts`). Light is the
+ * default; the 700 tints are chosen to read on white, the 300 tints on the dark
+ * ground. `comment` is the one mid-grey that reads on either. */
+:root {
+  --syntax-keyword: var(--color-fuchsia-700);
+  --syntax-property: var(--color-sky-700);
+  --syntax-string: var(--color-green-700);
+  --syntax-number: var(--color-violet-700);
+  --syntax-type: var(--color-blue-700);
+  --syntax-variable: var(--color-neutral-800);
+  --syntax-function: var(--color-sky-700);
+  --syntax-comment: var(--color-neutral-500);
+  --syntax-punctuation: var(--color-neutral-600);
+  --syntax-invalid: var(--color-red-600);
 }
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+[data-theme='dark'] {
+  --syntax-keyword: var(--color-fuchsia-300);
+  --syntax-property: var(--color-sky-300);
+  --syntax-string: var(--color-green-300);
+  --syntax-number: var(--color-violet-300);
+  --syntax-type: var(--color-blue-300);
+  --syntax-variable: var(--color-neutral-200);
+  --syntax-function: var(--color-sky-300);
+  --syntax-comment: var(--color-neutral-500);
+  --syntax-punctuation: var(--color-neutral-400);
+  --syntax-invalid: var(--color-red-400);
 }
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: transparent;
-  border-radius: 9999px;
-  /* Inset the thumb from the gutter edge without changing the reserved width. */
-  border: 3px solid transparent;
-  background-clip: content-box;
-  transition: background-color 150ms ease;
-}
-/* A scroller whose thumb never fades: where the length of a list is part of
-   what it tells you, as in the command palette. */
-.scrollbar-always::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  background-clip: content-box;
-}
-/* Not while a surface is still morphing to its size (`data-morphing`, the
-   palette's shell): a thumb sized for a box mid-spring jumps as it grows. The
-   gutter stays, so nothing reflows when the thumb appears. */
-[data-morphing] ::-webkit-scrollbar-thumb,
-[data-morphing] :hover::-webkit-scrollbar-thumb {
-  background: transparent;
-}
-:hover::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  background-clip: content-box;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
-  background-clip: content-box;
-}
-::-webkit-scrollbar-corner {
-  background: transparent;
-}
-
-/**
- * The plate an image is viewed on.
- *
- * A transparent PNG with black ink is invisible on a dark background. The
- * checkerboard is every image tool's convention and says the transparency is
- * in the file.
- *
- * Light in both themes: it is paper, not chrome, and a dark plate would hide
- * the dark ink it exists to reveal. Applied to the `<img>` itself, so it
- * covers only the image's footprint.
- */
-.holi-image-plate {
-  --plate: #ffffff;
-  --plate-alt: #e2e2e2;
-  background-color: var(--plate);
-  background-image:
-    linear-gradient(
-      45deg,
-      var(--plate-alt) 25%,
-      transparent 25%,
-      transparent 75%,
-      var(--plate-alt) 75%
-    ),
-    linear-gradient(
-      45deg,
-      var(--plate-alt) 25%,
-      transparent 25%,
-      transparent 75%,
-      var(--plate-alt) 75%
-    );
-  background-size: 16px 16px;
-  background-position:
-    0 0,
-    8px 8px;
-}
-
-/**
- * Themeable elevation. Tailwind v4 bakes shadow geometry into `shadow-md/lg`
- * at build time (only the shadow *colour* is a runtime var), so those utilities
- * can't follow a per-vault token. These plain classes consume the token through
- * var(), which is what makes elevation themeable; the overlay/dialog primitives
- * use them in place of `shadow-*`. Unlayered (after `@import`) so they win over
- * any residual utility for the same property. */
-.shadow-popover {
-  box-shadow: var(--shadow-popover);
-}
-
-.shadow-dialog {
-  box-shadow: var(--shadow-dialog);
-}
-
-/* App-wide selection tint (the onboarding ritual keeps its own, scoped). */
-::selection {
-  background: var(--selection);
-}
-
-/* A mail message's styling is in the Google plugin's `mail-frame.ts`: it renders in a
-   sandboxed frame the app's cascade deliberately cannot reach. */

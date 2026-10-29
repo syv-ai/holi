@@ -89,14 +89,14 @@ export interface MailThreadSummary {
   hasInvite: boolean
 }
 
-export interface MailAttachment {
+interface MailAttachment {
   filename: string
   mimeType: string
   /** Bytes, from the part's `body.size`. */
   size: number
 }
 
-export interface MailMessage {
+interface MailMessage {
   id: string
   from: MailAddress
   to: MailAddress[]
@@ -125,7 +125,7 @@ export interface MailMessage {
 }
 
 /** What the agent sees: the same thread with the markup removed. */
-export type AgentMailMessage = Omit<MailMessage, 'html'>
+type AgentMailMessage = Omit<MailMessage, 'html'>
 
 export interface AgentMailThread {
   id: string
@@ -178,6 +178,7 @@ interface RawThread {
  * RFC-822 message id resolves against whichever account actually holds the
  * message, which is what makes the link survive in a file that outlives the
  * session that wrote it.
+ * @public exported for its test
  */
 export function messageUrl(rfc822MessageId: string | null, threadId: string): string {
   if (rfc822MessageId === null || rfc822MessageId === '') {
@@ -245,6 +246,7 @@ function decodeBody(data: string | undefined): string {
  *
  * Prefers `text/plain`; falls back to converting `text/html`. Attachments are
  * skipped: a part with a filename is a file, not the message.
+ * @public exported for its test
  */
 export function bodyTextOf(payload: RawPart | undefined, { trim = true } = {}): string {
   const plain = findPart(payload, 'text/plain')
@@ -267,6 +269,7 @@ export function bodyTextOf(payload: RawPart | undefined, { trim = true } = {}): 
  * Verbatim on purpose. Trimming or pre-stripping here would give the renderer's
  * sanitizer a subtly different input from the one it is tested against, and
  * would invite the belief that main already made this safe. It did not.
+ * @public exported for its test
  */
 export function bodyHtmlOf(payload: RawPart | undefined): string | null {
   // `findPart` matches the payload itself, so a single-part HTML message needs
@@ -285,7 +288,7 @@ export function bodyHtmlOf(payload: RawPart | undefined): string | null {
  * **A filename is what makes a part a file.** That is the same rule `findPart`
  * uses in reverse to refuse an attachment as the body.
  */
-export function attachmentsOf(part: RawPart | undefined): MailAttachment[] {
+function attachmentsOf(part: RawPart | undefined): MailAttachment[] {
   if (part === undefined) return []
   const here: MailAttachment[] =
     part.filename !== undefined && part.filename !== ''
@@ -318,6 +321,7 @@ function findPart(part: RawPart | undefined, mimeType: string): RawPart | null {
  * **This is a formatter, not a sanitizer**, and the distinction matters: safety
  * comes from the result being rendered into a text node, never as markup. If
  * this function let something through, nothing would execute it.
+ * @public exported for its test
  */
 export function htmlToText(html: string): string {
   return (
@@ -464,7 +468,7 @@ export async function fetchMailCounts(api: GoogleApi): Promise<MailCounts | null
  * Past the page, the answer becomes "500+" rather than a number that quietly
  * means "at least".
  */
-export interface CategoryCount {
+interface CategoryCount {
   count: number
   /** There is at least one more page — render `500+`, not `500`. */
   more: boolean
@@ -473,6 +477,7 @@ export interface CategoryCount {
 /** Gmail's maximum for `threads.list`. */
 const COUNT_PAGE_SIZE = '500'
 
+/** @public exported for its test */
 export async function fetchCategoryUnread(
   api: GoogleApi,
   category: MailCategory,
@@ -666,7 +671,7 @@ const CATEGORY_BY_LABEL: Record<string, MailCategory> = {
 }
 
 /** Gmail's query grammar uses the tab's short name, not its label id. */
-export function categoryQuery(category: MailCategory): string {
+function categoryQuery(category: MailCategory): string {
   return `category:${category}`
 }
 
@@ -682,7 +687,7 @@ function isSystemLabel(id: string): boolean {
  * mail on the user's behalf, which a one-click affordance should never do
  * silently.
  */
-export function unsubscribeUrlOf(header: string | null): string | null {
+function unsubscribeUrlOf(header: string | null): string | null {
   if (header === null) return null
   for (const match of header.matchAll(/<([^>]+)>/g)) {
     const url = match[1]!.trim()
@@ -885,6 +890,17 @@ export async function archiveThread(api: GoogleApi, id: string): Promise<void> {
  */
 export async function trashThread(api: GoogleApi, id: string): Promise<void> {
   await api.post(`${BASE}/threads/${encodeURIComponent(id)}/trash`, {})
+}
+
+/** Undo for archive: `INBOX` back on. The view's Undo, nothing else. */
+export async function unarchiveThread(api: GoogleApi, id: string): Promise<void> {
+  await modifyThread(api, id, { add: ['INBOX'] })
+}
+
+/** Undo for trash, through `/untrash` for the same reason trash has its own
+ *  endpoint: a label change on `TRASH` is answered 200 and ignored. */
+export async function untrashThread(api: GoogleApi, id: string): Promise<void> {
+  await api.post(`${BASE}/threads/${encodeURIComponent(id)}/untrash`, {})
 }
 
 /** The one shape every label write shares, so the URL and the body exist once.
@@ -1246,6 +1262,7 @@ export async function listSendAs(api: GoogleApi): Promise<string[]> {
  * MIME needs standard base64. The mistake produces a file that opens as
  * garbage, visible only to the recipient. The filename and type come from the
  * caller because the wire answer carries neither.
+ * @public exported for its test
  */
 export async function fetchAttachment(
   api: GoogleApi,

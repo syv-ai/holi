@@ -14,14 +14,14 @@ import { isPluginPath, parsePluginManifest, type PluginManifest } from '@holi/sh
 import { jsonFileStore } from '../../../main/plugin-api'
 
 /** Where an install's code came from. */
-export type InstallSource =
+type InstallSource =
   /** `path` is where in `repo` the plugin is, `isPluginPath`. */
   | { kind: 'release'; repo: string; path: string; tag: string; commit: string }
   /** A folder the person works on: used in place, never fetched or pinned. */
   | { kind: 'dev'; folder: string }
 
 /** How the manifest's `setup` went for this install. */
-export type SetupState = 'none' | 'ok' | 'failed'
+type SetupState = 'none' | 'ok' | 'failed'
 
 export interface Install {
   id: string

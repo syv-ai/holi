@@ -1,0 +1,121 @@
+# Every check the repository relies on, on every push and pull request. A rule that
+# is not in this file does not exist (docs/refactor/agent-first.md). The registry of
+# what each step enforces is .agents/skills/holi-rules/SKILL.md.
+#
+# The checks run on Linux on purpose: it is case-sensitive, so an import that only
+# resolves on macOS fails there. The tests run on macOS (see the test job). They fake
+# the PTY and never launch Electron, so neither the Electron binary nor a rebuilt
+# node-pty is needed.
+name: CI
+
+on:
+  push:
+    branches: [main, feat/fresh-frontend, 'refac/**']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # `pnpm install` would otherwise download ~100 MB of Electron that no check runs.
+  ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
+jobs:
+  checks:
+    name: Typecheck, lint, structure
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # rulecast --from-ref and the commit-message range need the merge base.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint (layers, styling, motion, plugin seam)
+        run: pnpm lint
+
+      - name: Dead code and dependencies (knip)
+        run: |
+          pnpm knip
+          pnpm knip:production
+
+      - name: Which commits does this run cover?
+        id: range
+        run: |
+          BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            BASE="$(git merge-base origin/main HEAD)"
+          fi
+          HEAD="${{ github.event.pull_request.head.sha || github.sha }}"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "head=$HEAD" >> "$GITHUB_OUTPUT"
+
+      - name: Repository structure (rulecast)
+        run: |
+          pnpm exec rulecast validate
+          pnpm exec rulecast test
+          pnpm exec rulecast doctor --ci --from-ref "${{ steps.range.outputs.base }}"
+          pnpm exec rulecast run --from-ref "${{ steps.range.outputs.base }}" --to-ref "${{ steps.range.outputs.head }}"
+
+      - name: Format (files changed in this range)
+        run: |
+          git diff --name-only --diff-filter=ACMR "${{ steps.range.outputs.base }}" "${{ steps.range.outputs.head }}" \
+            | xargs --no-run-if-empty pnpm exec prettier --check --ignore-unknown --no-error-on-unmatched-pattern
+
+      - name: Commit messages
+        # Off main, commits main already has are main's: a merge from it brings them in
+        # without making them this branch's to answer for. On main, nothing is excluded.
+        run: |
+          EXCLUDE=""
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then EXCLUDE="^origin/main"; fi
+          node scripts/check-commit-msg.mjs --range "${{ steps.range.outputs.base }}..${{ steps.range.outputs.head }}" $EXCLUDE
+
+  test:
+    name: Test
+    # macOS on purpose: the tests encode the filesystem Holi ships on (macOS and
+    # Windows are case-insensitive; path-safety's exact-case check needs that), and
+    # the vault watcher tests were tuned on fsevents. The checks job above stays on
+    # Linux, where a wrongly cased import fails.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The node suite creates real repositories and commits in them.
+      - name: Git identity for the tests
+        run: |
+          git config --global user.name "Holi CI"
+          git config --global user.email "ci@holi.invalid"
+          git config --global init.defaultBranch main
+
+      - name: Test
+        run: pnpm test

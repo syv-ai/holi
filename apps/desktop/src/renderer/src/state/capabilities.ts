@@ -9,7 +9,7 @@
  */
 import { atom, useAtomValue } from 'jotai'
 import { loadable } from 'jotai/utils'
-import { trpc } from '../lib/trpc'
+import { trpc } from '@/lib/trpc'
 import { enabledPluginsAtom } from './plugins'
 import { activeRemoteAtom } from './vaults'
 

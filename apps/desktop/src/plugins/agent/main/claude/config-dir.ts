@@ -22,7 +22,10 @@ import { join } from 'node:path'
 import { resolveColorMode } from '@holi/shared'
 import { readVaultSettings } from '../../../../main/plugin-api'
 
-/** Under `userData/`, beside `vaults.json`, `google-cache.db` and the rest. */
+/**
+ * Under `userData/`, beside `vaults.json`, `google-cache.db` and the rest.
+ * @public exported for its test
+ */
 export const AGENT_CONFIG_DIR_NAME = 'agent-config'
 
 const SETTINGS = 'settings.json'
@@ -39,6 +42,7 @@ const SPAWNED_MARKER = '.holi-spawned'
  * every character outside `[A-Za-z0-9]` becomes a dash. That alone is **not injective** (`syv/better-holi` and `syv-better/holi` collide),
  * and two vaults sharing one directory is the plugin leak this exists to close,
  * so eight hex of a hash of the *remote* rides along.
+ * @public exported for its test
  */
 export function agentConfigSlug(remote: string): string {
   const readable = remote
@@ -51,10 +55,10 @@ export function agentConfigSlug(remote: string): string {
 }
 
 /** What Holi resolved the app's colour mode to (the renderer's `activeModeAtom`). */
-export type AgentTheme = 'dark' | 'light'
+type AgentTheme = 'dark' | 'light'
 
 /** What a spawn stamps into the config directory's `settings.json`. */
-export interface ConfigDirStamp {
+interface ConfigDirStamp {
   theme?: AgentTheme
   /**
    * Variables every session on this directory gets, through Claude Code's own
@@ -138,6 +142,7 @@ function settingsWithRequired(existing: string | null, stamp: ConfigDirStamp = {
  *
  * `projects/`, `sessions/` and `.claude.json` are deliberately NOT created:
  * Claude Code owns those, and pre-creating them would guess at its schema.
+ * @public exported for its test
  */
 export async function ensureAgentConfigDir(
   userDataDir: string,

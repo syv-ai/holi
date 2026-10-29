@@ -16,6 +16,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsFragment } from '../src/main/vault/seed/types'
 import { claudeSeed, agentSettings } from '../src/plugins/agent/main/claude/seed'
 import { appsSeed } from '../src/plugins/apps/main/seed'
+import { automationsSeed } from '../src/plugins/automations/main/seed'
+import { holisSeed } from '../src/plugins/holis/main/seed'
 import { googleSeed } from '../src/plugins/google/main/seed'
 import { pdfSeed } from '../src/plugins/pdf/main/seed'
 import { tasksSeed } from '../src/plugins/tasks/main/seed'
@@ -164,11 +166,15 @@ describe('the seed tables', () => {
       '.claude/skills/memory/lint.mjs',
       '.claude/skills/note-comments/SKILL.md',
       '.claude/skills/notify/SKILL.md',
-      '.claude/skills/scheduled-agents/SKILL.md',
       '.claude/skills/show-the-user/SKILL.md',
       '.claude/skills/theme/SKILL.md',
     ])
     expect(keys(claudeSeed.merge!)).toEqual(['.claude/settings.json'])
+  })
+
+  it('Holis and automations ship their own skills', () => {
+    expect(keys(holisSeed.shipped)).toEqual(['.claude/skills/holis/SKILL.md'])
+    expect(keys(automationsSeed.shipped)).toEqual(['.claude/skills/scheduled-agents/SKILL.md'])
   })
 
   it("tasks ships its skill and the deny rules for Claude Code's own todo tools, and nothing once", () => {
@@ -720,11 +726,11 @@ describe('mergedSettings', () => {
     expect(after.hooks.UserPromptSubmit[0].hooks[0].command).toBe('mine')
     expect(after.permissions.allow).toEqual([
       'Bash(ls:*)',
-      'Bash(holi schedules list:*)',
       'Bash(node .claude/skills/memory/lint.mjs:*)',
       'Bash(holi agent notify:*)',
       'Bash(holi agent log:*)',
       'Bash(holi comments list:*)',
+      'Bash(holi schedules list:*)',
       'Bash(holi pdf comments:*)',
       'Bash(holi pdf typst:*)',
       'Bash(holi apps:*)',
@@ -743,11 +749,11 @@ describe('mergedSettings', () => {
     delete before.permissions.allow
     const after = parse(mergedSettings(JSON.stringify(before)))
     expect(after.permissions.allow).toEqual([
-      'Bash(holi schedules list:*)',
       'Bash(node .claude/skills/memory/lint.mjs:*)',
       'Bash(holi agent notify:*)',
       'Bash(holi agent log:*)',
       'Bash(holi comments list:*)',
+      'Bash(holi schedules list:*)',
       'Bash(holi pdf comments:*)',
       'Bash(holi pdf typst:*)',
       'Bash(holi apps:*)',

@@ -68,9 +68,11 @@ absent — do not write `due:` with nothing after it and do not write `null`.
 
 | field | what it holds |
 |-------|---------------|
-| `status` | `todo`, `doing` or `done` — nothing else |
+| `status` | an `id` from `.holi/statuses.yaml`; without that file `backlog`, `todo`, `doing`, `review` or `done` |
+| `start` | when work on it begins, as a **stamp** |
 | `due` | when it is due, as a **stamp** (below) |
-| `priority` | `high`, `medium` or `low` |
+| `priority` | `urgent`, `high`, `medium` or `low` |
+| `estimate` | how much work it is: a number and `m`, `h`, `d` or `w` (`30m`, `2d`) |
 | `tags` | a list of strings, your own vocabulary |
 | `assignees` | who it is for: a list of the vault's members by **GitHub username**, without the `@` |
 | `reminder` | when to notify, as a **stamp** — a moment, not an offset |

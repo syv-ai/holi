@@ -34,7 +34,9 @@ describe('assetAbsPath', () => {
   })
 
   it('decodes percent-encoded spaces in a legitimate name', () => {
-    expect(assetAbsPath(ROOT, 'holi-vault://vault/my%20image.png')).toBe(`${ROOT}${sep}my image.png`)
+    expect(assetAbsPath(ROOT, 'holi-vault://vault/my%20image.png')).toBe(
+      `${ROOT}${sep}my image.png`,
+    )
   })
 })
 

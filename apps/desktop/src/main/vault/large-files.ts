@@ -15,7 +15,9 @@ import { shellReadBridgeEnv } from '../bridge/env-file'
 
 /** The default cap when `.holi/settings/app.yaml` sets no `maxCommittedFileBytes`.
  *  10 MB: notes-vault assets (images, PDFs) sit well under; this catches videos,
- *  datasets, exported binaries. (GitHub warns at 50 / blocks at 100 MB.) */
+ *  datasets, exported binaries. (GitHub warns at 50 / blocks at 100 MB.)
+ * @public exported for its test
+ */
 export const DEFAULT_MAX_COMMITTED_FILE_BYTES = VAULT_SETTING_DEFAULTS.maxCommittedFileBytes
 
 export interface HeldBackFile {

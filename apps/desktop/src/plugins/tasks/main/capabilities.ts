@@ -8,7 +8,7 @@
  */
 import { readFile } from 'node:fs/promises'
 import { isAbsolute, relative } from 'node:path'
-import { completeTask } from '../shared/completion'
+import { completeTask, isClosedStatus } from '@holi/shared'
 import {
   isPrivateTask,
   isTaskFilePath,
@@ -20,12 +20,14 @@ import {
   taskFilePath,
   type TaskPatch,
   taskSlug,
-} from '../shared/task-file'
+} from '@holi/shared'
 import { setFirstHeading, type VaultRelPath, vaultRelPath } from '@holi/shared'
-import { type Task } from '../shared/types'
+import { type Task } from '@holi/shared'
 import {
   absPathFor,
   cap,
+  completionStatuses,
+  readVaultStatuses,
   type CapabilityContext,
   CapabilityError,
   flagParam,
@@ -69,7 +71,16 @@ export interface CreateTaskInput {
 }
 
 /** What a create may set besides title, status, folder and body. */
-const CREATE_FIELDS = ['due', 'priority', 'tags', 'assignees', 'reminder', 'recurrence']
+const CREATE_FIELDS = [
+  'start',
+  'due',
+  'priority',
+  'estimate',
+  'tags',
+  'assignees',
+  'reminder',
+  'recurrence',
+]
 
 /** A field edit, read by the module that owns the format. */
 function patchOf(raw: unknown): TaskPatch {
@@ -187,15 +198,23 @@ export interface MoveTaskInput {
 export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
   /**
    * A patch applied to a task. **Done is completion**, wherever it comes from
-   * (a field edit, a drop into Done, the card's checkbox, an app): on a
-   * recurring task it is the next occurrence, not the end of the series
-   * (`completeTask`). The merge SPREADS rather than testing for undefined: a
-   * key present-and-undefined is how `parseTaskPatch` spells "clear this
-   * field".
+   * (a field edit, a drop into a completed column, the card's checkbox, an
+   * app): on a recurring task it is the next occurrence, not the end of the
+   * series (`completeTask`). Done is any status the vault's
+   * `.holi/statuses.yaml` files under `completed`, and only a patch that
+   * names a status completes, so re-ranking a finished card does not roll it
+   * forward. The merge SPREADS rather than testing for undefined: a key
+   * present-and-undefined is how `parseTaskPatch` spells "clear this field".
    */
-  const patched = (task: Task, patch: TaskPatch): Task => {
+  const patched = async (root: string, task: Task, patch: TaskPatch): Promise<Task> => {
     const next = { ...task, ...patch }
-    return patch.status === 'done' ? { ...next, ...completeTask(next, deps.today()) } : next
+    if (patch.status === undefined) return next
+    const statuses = await readVaultStatuses(root)
+    if (!isClosedStatus(statuses, patch.status)) return next
+    return {
+      ...next,
+      ...completeTask(next, deps.today(), completionStatuses(statuses, patch.status)),
+    }
   }
 
   return {
@@ -349,7 +368,7 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
           abs = absPathFor(ctx.root, rel)
         }
         return withFileLock(abs, async () => {
-          const next = patched(await readTask(ctx.root, rel), patch)
+          const next = await patched(ctx.root, await readTask(ctx.root, rel), patch)
           await writeAtomic(ctx.root, rel, serializeTaskFile(next))
           return next
         })
@@ -410,7 +429,11 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
           // Under the file's lock, as `tasks.update` writes: a field change
           // made meanwhile is read here rather than written over.
           await withFileLock(absPathFor(ctx.root, from), async () => {
-            const next = patched(await readTask(ctx.root, from), patchOf(fieldPatch))
+            const next = await patched(
+              ctx.root,
+              await readTask(ctx.root, from),
+              patchOf(fieldPatch),
+            )
             await writeAtomic(ctx.root, from, serializeTaskFile(next))
           })
         }

@@ -77,6 +77,7 @@ const FALLBACK = PAPER
  * Read from the raw HTML, so unblocking images cannot change a message's
  * colour. It also sees `<style>` blocks the sanitizer strips, erring towards
  * paper.
+ * @public exported for its test
  */
 export function bringsOwnDesign(html: string): boolean {
   return (
@@ -118,6 +119,7 @@ function safeStylesheet(css: string): string {
   return css.replace(/<\//g, '')
 }
 
+/** @public exported for its test */
 export function readMailPalette(root: HTMLElement = document.documentElement): MailPalette {
   const computed = getComputedStyle(root)
   const read = (token: string, fallback: string): string => {
@@ -130,8 +132,7 @@ export function readMailPalette(root: HTMLElement = document.documentElement): M
     muted: read(TOKENS.muted, FALLBACK.muted),
     border: read(TOKENS.border, FALLBACK.border),
     link: read(TOKENS.link, FALLBACK.link),
-    // The app is dark-first: `data-theme` is only stamped for light (see
-    // `state/theme.ts`), so anything else means dark.
+    // The app is dark-first: `data-theme` is only stamped for light, so anything else means dark.
     scheme: root.dataset.theme === 'light' ? 'light' : 'dark',
   }
 }

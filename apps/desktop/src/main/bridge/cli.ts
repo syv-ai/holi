@@ -51,7 +51,7 @@ const OPTION_NAME = /^[a-zA-Z][a-zA-Z0-9_-]*$/
 const argName = (arg: string): string => arg.replace(/\?$/, '')
 
 /** One command's line: `holi store put <bundle> <collection> <value> [<id>]`. */
-export function commandLine({ name, cli }: CliCommand): string {
+function commandLine({ name, cli }: CliCommand): string {
   const words = [`holi ${name.replace('.', ' ')}`]
   for (const arg of cli.args) {
     words.push(arg.endsWith('?') ? `[<${argName(arg)}>]` : `<${arg}>`)
@@ -61,7 +61,7 @@ export function commandLine({ name, cli }: CliCommand): string {
 }
 
 /** Every command and its summary, for bare `holi`. */
-export function usageText(commands: readonly CliCommand[]): string {
+function usageText(commands: readonly CliCommand[]): string {
   return [
     'usage: holi <namespace> <verb> [arguments] [--json]',
     '',

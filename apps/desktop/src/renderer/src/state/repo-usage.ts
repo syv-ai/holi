@@ -13,13 +13,15 @@ import { trpc } from '@/lib/trpc'
 const FRESH_MS = 10 * 60_000
 
 const sizesAtom = atom<Record<string, number>>({})
-/** When each remote was last asked, so a reopened menu does not ask again. */
-const askedAt = new Map<string, number>()
+/** When each remote was last asked, so a reopened menu does not ask again.
+ *  Kept with the sizes, in the store, so a fresh store asks afresh. */
+const askedAtAtom = atom(() => new Map<string, number>())
 
 /** The repo's size in KiB, or null until GitHub has answered. */
 export function useRepoSize(remote: string | null): number | null {
   const sizes = useAtomValue(sizesAtom)
   const setSizes = useSetAtom(sizesAtom)
+  const askedAt = useAtomValue(askedAtAtom)
   useEffect(() => {
     if (remote === null) return
     const at = askedAt.get(remote)
@@ -32,6 +34,6 @@ export function useRepoSize(remote: string | null): number | null {
         askedAt.delete(remote)
         console.warn('[repo-usage] no size:', err)
       })
-  }, [remote, setSizes])
+  }, [remote, setSizes, askedAt])
   return remote === null ? null : (sizes[remote] ?? null)
 }

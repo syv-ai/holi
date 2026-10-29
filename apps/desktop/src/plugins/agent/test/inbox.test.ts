@@ -123,6 +123,7 @@ describe('createInbox', () => {
 
 const session = (id: string, state: SessionSummary['state']): SessionSummary => ({
   id,
+  provider: 'claude',
   name: `Session ${id}`,
   state,
 })

@@ -1,6 +1,6 @@
 import { render as rtlRender, type RenderOptions } from '@testing-library/react'
 import type { ReactElement, ReactNode } from 'react'
-import { TooltipProvider } from '@/primitives'
+import { TooltipProvider } from '@/components/ui/tooltip'
 
 /**
  * The app mounts a single TooltipProvider at its root (main.tsx); component tests

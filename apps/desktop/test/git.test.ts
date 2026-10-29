@@ -337,7 +337,14 @@ describe('pull', () => {
 
   /** A task's frontmatter, with one field swapped. */
   const taskFile = (over: Partial<Record<string, string>> = {}) => {
-    const f = { title: 'A', status: 'todo', due: '2026-08-01', tags: '[x]', priority: 'low', ...over }
+    const f = {
+      title: 'A',
+      status: 'todo',
+      due: '2026-08-01',
+      tags: '[x]',
+      priority: 'low',
+      ...over,
+    }
     return `---\ntitle: ${f.title}\nstatus: ${f.status}\ndue: ${f.due}\ntags: ${f.tags}\npriority: ${f.priority}\n---\n`
   }
 
@@ -464,7 +471,7 @@ describe('push', () => {
     const dir = await makeClone(remote)
     await commitFile(dir, 'ours.md', 'ours\n')
 
-    expect(await openRepo(dir).push()).toEqual({ kind: 'pushed', commits: 1 })
+    expect(await openRepo(dir).push()).toEqual({ kind: 'pushed', commits: 1, branch: 'main' })
     // The remote really moved: a fresh clone sees the file.
     const check = await makeClone(remote, 'check')
     expect(await readFile(join(check, 'ours.md'), 'utf8')).toBe('ours\n')
@@ -487,7 +494,7 @@ describe('push', () => {
     const dir = await makeClone(bare)
     await commitFile(dir, 'seed.md', 'seed\n')
 
-    expect(await openRepo(dir).push()).toEqual({ kind: 'pushed', commits: 1 })
+    expect(await openRepo(dir).push()).toEqual({ kind: 'pushed', commits: 1, branch: 'main' })
     // The remote really received it — a fresh clone sees the seed.
     const check = await makeClone(bare, 'check')
     expect(await readFile(join(check, 'seed.md'), 'utf8')).toBe('seed\n')
@@ -545,7 +552,10 @@ describe('classifyPushFailure', () => {
 
   it('reads a revoked or expired token as permission, not as a network failure', () => {
     expect(
-      classifyPushFailure('', "remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/syv-ai/1brain.git/'\n"),
+      classifyPushFailure(
+        '',
+        "remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/syv-ai/1brain.git/'\n",
+      ),
     ).toBe('permission')
   })
 
@@ -567,7 +577,9 @@ describe('classifyPushFailure', () => {
         'error: remote unpack failed: unable to create temporary object directory\n',
       ),
     ).toBeNull()
-    expect(classifyPushFailure('', 'fatal: unable to access: Could not resolve host: github.com\n')).toBeNull()
+    expect(
+      classifyPushFailure('', 'fatal: unable to access: Could not resolve host: github.com\n'),
+    ).toBeNull()
   })
 })
 

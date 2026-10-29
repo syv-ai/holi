@@ -310,6 +310,7 @@ describe('CLI note settlement with a real local origin', () => {
     const result = await core(REMOTE, root).settle('first.md', digest('first'))
     expect(result).toMatchObject({ pushed: true, phase: 'complete' })
     expect(await plainGit(origin, ['rev-parse', 'refs/heads/main'])).toBe(result.commitSha)
-    await expect(plainGit(root, ['rev-parse', '@{upstream}'])).rejects.toThrow()
+    // The push that published the branch also made it the upstream (`git.ts`).
+    expect(await plainGit(root, ['rev-parse', '--abbrev-ref', '@{upstream}'])).toBe('origin/main')
   })
 })

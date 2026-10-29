@@ -53,6 +53,8 @@ export interface CapabilityContext {
 /**
  * How an entry reads as a `holi <namespace> <verb>` command: required at the
  * CLI door, where the bridge resolves argv against it (`bridge/cli.ts`).
+ *
+ * @public Plugins write these through `plugin-api.ts`.
  */
 export interface CliSpec {
   /** Positional params, in order. A trailing `?` marks an optional one, and
@@ -100,6 +102,7 @@ export interface Capability<P = unknown, R = unknown> {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+/** @public exported for its test */
 export type AnyCapability = Capability<any, any>
 
 /** One owner's entries, by full name. */

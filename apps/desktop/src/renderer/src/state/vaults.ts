@@ -9,17 +9,15 @@ import {
 } from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
 import type { HeldBackFile } from '../../../main/vault/large-files'
-import type { RendererPlugin } from '@/plugin-api/types'
-import { flushAllBuffers } from '../lib/buffer-registry'
-import { settledRect } from '../lib/settled-rect'
-import { trpc } from '../lib/trpc'
-import { closeTabsForPaths, retargetTab, retargetTabs, tabKey, workspaceAtom } from './panes'
-// Cycles (`plugins` and `arrival` read `activeRemoteAtom`, `surfaces` reads
-// `snapshotAtom`), safe because neither module reads the other's atoms until a
-// store does.
+import type { RendererPlugin } from '@/state/plugin-types'
+import { flushAllBuffers } from '@/lib/buffer-registry'
+import { trpc } from '@/lib/trpc'
+import { closeTabsForPaths, retargetTab, retargetTabs, workspaceAtom } from './panes'
+// A cycle (`plugins` reads `activeRemoteAtom`), safe because neither module
+// reads the other's atoms until a store does.
 import { folderSurfacesAtom } from './plugins'
-import { quietOpenAtom, requestArrivalAtom } from './arrival'
-import { tabForPathAtom } from './surfaces'
+import { openDocumentAtom } from './open-document'
+import { settledRect } from '@/lib/settled-rect'
 
 type JotaiStore = ReturnType<typeof createStore>
 
@@ -41,13 +39,10 @@ export const activeRemoteAtom = atom<string | null>(null)
  */
 export const showHiddenByVaultAtom = atomWithStorage<Record<string, boolean>>('holi:showHidden', {})
 
-/** Per vault, the hideable claims (`PathClaim.hideable`) whose files the tree
- *  shows, by `hideable.id`; the rest are hidden, as their plugin asks. Purely a view
- *  filter: the files are scanned and claimed either way. */
-export const shownClaimsByVaultAtom = atomWithStorage<Record<string, string[]>>(
-  'holi:shownClaims',
-  {},
-)
+/** Per-vault "show task files in the tree" flag, off by default: the board owns
+ * tasks. Purely a view filter; task files are always scanned into
+ * `snapshot.claimed.tasks`. */
+export const showTasksByVaultAtom = atomWithStorage<Record<string, boolean>>('holi:showTasks', {})
 
 const EMPTY_SNAPSHOT: VaultSnapshot = emptyVaultSnapshot()
 
@@ -64,6 +59,10 @@ const EMPTY_SNAPSHOT: VaultSnapshot = emptyVaultSnapshot()
  */
 export const snapshotAtom = atom<VaultSnapshot>(EMPTY_SNAPSHOT)
 
+/** False until the open vault's first snapshot arrives: an empty vault and a
+ *  loading one look alike otherwise. */
+export const snapshotLoadedAtom = atom((get) => get(snapshotAtom) !== EMPTY_SNAPSHOT)
+
 /** The doc open in the editor. */
 export const activeDocAtom = atom<DocMeta | null>(null)
 
@@ -78,7 +77,7 @@ export const syncStateAtom = atom<SyncState>({ kind: 'up-to-date' })
 
 /** Files the large-file gate held out of the last commit: the callout's source.
  *  Pushed from main every commit tick (empty clears it, incl. on a vault switch). */
-export const heldBackAtom = atom<HeldBackFile[]>([])
+const heldBackAtom = atom<HeldBackFile[]>([])
 
 /**
  * How often each file's history has moved since launch: `all` counts merged
@@ -92,7 +91,10 @@ export interface HistoryEpochs {
 
 export const historyEpochsAtom = atom<HistoryEpochs>({ all: 0, byPath: {} })
 
-/** Bumps the epochs for one `onCommitted` push. */
+/**
+ * Bumps the epochs for one `onCommitted` push.
+ * @public exported for its test
+ */
 export function bumpHistoryEpochs(epochs: HistoryEpochs, paths: string[] | null): HistoryEpochs {
   if (paths === null) return { ...epochs, all: epochs.all + 1 }
   const byPath = { ...epochs.byPath }
@@ -169,7 +171,7 @@ export const addVaultAtom = atom(null, async (_get, set, remote: string) => {
  */
 export const createVaultAtom = atom(
   null,
-  async (_get, set, input: { name: string; owner: string; purpose?: string }): Promise<string> => {
+  async (_get, _set, input: { name: string; owner: string }): Promise<string> => {
     await trpc.vaults.create.mutate(input)
     return `${input.owner}/${input.name}`
   },
@@ -198,20 +200,25 @@ export function subscribeToVault(
   const offCommitted = window.holi.vault.onCommitted((paths) =>
     store.set(historyEpochsAtom, (e) => bumpHistoryEpochs(e, paths)),
   )
-  // Main asks for a path in a tab (a clicked reminder, `holi docs open`, a
-  // Holi link). Cross-vault, the switch runs here, not in main, so
-  // `activeRemoteAtom` stays truthful (`state/arrival.ts`).
-  const offOpen = window.holi.vault.onOpen((arrival) => store.set(requestArrivalAtom, arrival))
-  // Main asks where a path's tab is drawn, for `holi docs screenshot`. It
-  // opened the tab first, over `onOpen`, which arrives before this.
-  const offLocate = window.holi.vault.onLocate(({ id, path }) => {
-    const answer = (a: Parameters<typeof window.holi.vault.located>[0]): void => {
-      if (store.get(quietOpenAtom) === path) store.set(quietOpenAtom, null)
-      window.holi.vault.located(a)
+  // Main asks for a path in a tab: a clicked reminder's task, `holi docs open`,
+  // a Holi link. Cross-vault, the switch runs here, not in main, so
+  // `activeRemoteAtom` stays truthful; the path opens once the new vault's
+  // snapshot is in (`openVaultAtom` sets it before this resolves). A link's
+  // heading is where the document's view puts the caret.
+  const offReminder = window.holi.vault.onOpen(({ remote, path, heading }) => {
+    if (remote && remote !== store.get(activeRemoteAtom)) {
+      void store.set(openVaultAtom, remote).then(() => store.set(openDocumentAtom, path, heading))
+    } else {
+      store.set(openDocumentAtom, path, heading)
     }
-    settledRect(tabKey(store.get(tabForPathAtom)(path))).then(
-      (rect) => answer({ id, rect }),
-      (err: unknown) => answer({ id, error: (err as Error).message }),
+  })
+  // Main asks where a path's tab is drawn, for `holi docs screenshot`. It
+  // opened the tab first, over `onOpen`, which arrives before this; a file's
+  // tab is keyed by its path.
+  const offLocate = window.holi.vault.onLocate(({ id, path }) => {
+    settledRect(path).then(
+      (rect) => window.holi.vault.located({ id, rect }),
+      (err: unknown) => window.holi.vault.located({ id, error: (err as Error).message }),
     )
   })
   const tables = plugins.flatMap((p) =>
@@ -227,7 +234,7 @@ export function subscribeToVault(
     offSync()
     offHeldBack()
     offCommitted()
-    offOpen()
+    offReminder()
     offLocate()
     offEvents.forEach((off) => off())
   }
@@ -254,17 +261,6 @@ export const createFolderAtom = atom(null, async (get, set, path: string) => {
   await set(loadSnapshotAtom)
 })
 
-/** What links to `path`: the delete-preview fetch. Empty, and no call, when
- * nothing is open. */
-export const backrefsFor = atom(
-  null,
-  async (get, _set, path: string): Promise<{ path: string; count: number }[]> => {
-    const remote = get(activeRemoteAtom)
-    if (!remote) return []
-    return trpc.notes.backrefs.query({ remote, path })
-  },
-)
-
 /**
  * "Try again" on a sticky conflict: main clears it, commits and pulls. A
  * conflict that is still real latches again, so the banner comes back.
@@ -274,13 +270,23 @@ export const retrySyncAtom = atom(null, async () => {
 })
 
 /**
- * "Abandon": takes the merge back out of the tree. The conflict is still a
- * conflict, so the banner comes back. The agent's session stays where it is, and
- * whatever it wrote into the working tree goes with the merge.
+ * Switch the vault to a branch, or create one at HEAD (the status bar's branch
+ * picker, `docs/features/status-bar.md`).
+ *
+ * The buffers go to disk first, so the settle commit main makes before the
+ * switch carries the newest words onto the branch they were typed on. Main
+ * refuses, in words, whatever would lose work; the rejection is the caller's to
+ * show. Afterwards the snapshot is read again at once rather than waiting for
+ * the watcher, and open editors reload from the new tree as after a pull.
  */
-export const abandonReconcileAtom = atom(null, async () => {
-  await trpc.sync.abandon.mutate()
-})
+export const switchBranchAtom = atom(
+  null,
+  async (_get, set, { name, create = false }: { name: string; create?: boolean }) => {
+    await flushAllBuffers()
+    await trpc.sync.switchBranch.mutate({ name, create })
+    await set(loadSnapshotAtom)
+  },
+)
 
 /**
  * Rename a note: move the file, rewrite inbound links, follow the open tab.
@@ -289,14 +295,23 @@ export const abandonReconcileAtom = atom(null, async () => {
  * restore point *before* the multi-file edit, so every step after is
  * recoverable (there is no transaction, `docs/features/wiki-links.md`). Then the
  * rename, then a second commit so it lands as one commit on safe ground.
- * `localLinksOnly` rewrites only links in local files (`renameNote`).
  */
 export const renameNoteAtom = atom(
   null,
   async (
     get,
     set,
-    { from, to, localLinksOnly }: { from: string; to: string; localLinksOnly?: boolean },
+    {
+      from,
+      to,
+      localLinksOnly,
+    }: {
+      from: string
+      to: string
+      /** Rewrite only the links in this machine's local files: a task made
+       *  private, whose shared notes must not be committed pointing at it. */
+      localLinksOnly?: boolean
+    },
   ) => {
     const remote = get(activeRemoteAtom)
     if (!remote) return
@@ -349,24 +364,6 @@ export const moveNotesAtom = atom(
 )
 
 /**
- * Batch copy (Duplicate, Copy+Paste). No link rewrite and no tab retarget, but
- * the same commit-pair ordering, and the flush ensures a copy of a note being
- * edited includes the latest keystrokes.
- */
-export const copyNotesAtom = atom(
-  null,
-  async (get, set, { copies }: { copies: { from: string; to: string }[] }) => {
-    const remote = get(activeRemoteAtom)
-    if (!remote || copies.length === 0) return
-    await flushAllBuffers()
-    await trpc.sync.commitNow.mutate()
-    await trpc.notes.copy.mutate({ remote, copies })
-    await set(loadSnapshotAtom)
-    await trpc.sync.commitNow.mutate()
-  },
-)
-
-/**
  * A drop from Finder (`docs/features/file-tree.md`).
  *
  * A name the vault already uses is refused rather than overwritten, per file
@@ -390,30 +387,6 @@ export const importFilesAtom = atom(
 )
 
 /**
- * Vault content out to a folder on disk.
- *
- * Returns what LANDED as well as what failed: a move deletes only the targets
- * whose copy actually succeeded. No snapshot reload, since nothing in the vault
- * changed; a move reloads when its delete runs.
- */
-export const exportFilesAtom = atom(
-  null,
-  async (
-    get,
-    _set,
-    paths: string[],
-    dest: string,
-  ): Promise<{
-    landed: { from: string; to: string }[]
-    failed: { name: string; reason: string }[]
-  }> => {
-    const remote = get(activeRemoteAtom)
-    if (!remote || paths.length === 0) return { landed: [], failed: [] }
-    return trpc.notes.exportFiles.mutate({ remote, paths, dest })
-  },
-)
-
-/**
  * Batch delete (file, folder, multi-selection). Clears the editor if the open
  * note is among them and closes every deleted tab. One commit-pair, like the
  * others. `folders` are what a folder delete was aimed at, pruned once their
@@ -432,16 +405,5 @@ export const deleteManyAtom = atom(
     set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), paths, get(folderSurfacesAtom)))
     await set(loadSnapshotAtom)
     await trpc.sync.commitNow.mutate()
-  },
-)
-
-/** What links into a set: the folder / multi-selection delete preview. Empty,
- *  and no call, for an empty set. */
-export const backrefsForMany = atom(
-  null,
-  async (get, _set, paths: string[]): Promise<{ path: string; count: number }[]> => {
-    const remote = get(activeRemoteAtom)
-    if (!remote || paths.length === 0) return []
-    return trpc.notes.backrefsMany.query({ remote, paths })
   },
 )

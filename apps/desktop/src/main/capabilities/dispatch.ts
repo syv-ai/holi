@@ -41,7 +41,7 @@ export interface CapabilityHostDeps {
 }
 
 /** A call through the UI or the CLI door. */
-export interface CapabilityCall {
+interface CapabilityCall {
   door: Exclude<Door, 'app'>
   remote: string
   name: string

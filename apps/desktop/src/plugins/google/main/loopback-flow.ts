@@ -13,7 +13,7 @@
 import { challengeFor, createVerifier, randomState, type RandomBytes } from './pkce'
 
 /** Everything a connected account needs, as the exchange returns it. */
-export interface GoogleTokens {
+interface GoogleTokens {
   accessToken: string
   /** The durable half. Google returns it only when asked correctly: see the
    *  `prompt=consent` note in `startLoopbackFlow`. */
@@ -27,7 +27,7 @@ export interface GoogleTokens {
   email: string
 }
 
-export type LoopbackFlowResult =
+type LoopbackFlowResult =
   | { kind: 'granted'; tokens: GoogleTokens }
   /** The user pressed Cancel on Google's consent screen. A normal outcome. */
   | { kind: 'denied' }
@@ -156,7 +156,10 @@ export async function startLoopbackFlow(deps: LoopbackFlowDeps): Promise<Loopbac
     if (cancelled) return { kind: 'cancelled' }
 
     const timeout = new Promise<LoopbackFlowResult>((resolve) => {
-      const timer = setTimer(() => resolve({ kind: 'timeout' }), deps.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+      const timer = setTimer(
+        () => resolve({ kind: 'timeout' }),
+        deps.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      )
       stops.push(() => timer.cancel())
     })
     const abandoned = new Promise<LoopbackFlowResult>((resolve) => {
@@ -179,7 +182,9 @@ export async function startLoopbackFlow(deps: LoopbackFlowDeps): Promise<Loopbac
     // CSRF the parameter exists to prevent.
     if (query.state !== state) {
       finish(undefined)
-      throw new Error('Google returned a mismatched state parameter — the sign-in was not completed')
+      throw new Error(
+        'Google returned a mismatched state parameter — the sign-in was not completed',
+      )
     }
 
     if (query.error !== undefined) {
@@ -224,7 +229,9 @@ export async function startLoopbackFlow(deps: LoopbackFlowDeps): Promise<Loopbac
         refreshToken,
         expiresAt: now() + Number(body.expires_in) * 1000,
         // Google returns one space-separated string, not an array.
-        scopes: String(body.scope ?? '').split(' ').filter(Boolean),
+        scopes: String(body.scope ?? '')
+          .split(' ')
+          .filter(Boolean),
         sub,
         email,
       },
@@ -270,7 +277,7 @@ function identityFrom(idToken: unknown): { sub: string; email: string } {
   return { sub: c.sub, email: typeof c.email === 'string' ? c.email : '' }
 }
 
-export class GoogleHttpError extends Error {
+class GoogleHttpError extends Error {
   status: number
   constructor(status: number, body: string) {
     super(`Google returned ${status}: ${body}`)

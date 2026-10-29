@@ -36,6 +36,4 @@ export function install(plugins: readonly MainPlugin[]): void {
   installed = plugins
 }
 
-export const installedPlugins = (): readonly MainPlugin[] => installed
-
 export const installedInfos = (): PluginInfo[] => installed.map((p) => p.info)

@@ -9,7 +9,7 @@
  * clones the sweep just scanned. A vault whose scan throws (a stale registry
  * entry, a missing clone) is skipped, never a stall.
  */
-import { snapshotTasks } from '../../shared/task-file'
+import { snapshotTasks } from '@holi/shared'
 import type { AppCtx, Disposer } from '../../../../main/plugin-api'
 import { createNotifier } from './notify'
 import { createDeliveredLog, createReminderRuntime } from './runtime'

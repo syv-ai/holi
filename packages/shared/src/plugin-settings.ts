@@ -17,7 +17,7 @@
  * Pure and browser-safe.
  */
 import { parse as parseYaml } from 'yaml'
-import { isPluginId, type PluginInfo, type PluginSettings } from './plugins'
+import { isBuiltInPlugin, isPluginId, type PluginInfo, type PluginSettings } from './plugins'
 import type { SettingTarget, VaultSettingOption } from './vault-settings'
 
 export const PLUGINS_FILE = '.holi/settings/plugins.yaml'
@@ -143,6 +143,14 @@ function pluginBlock(
   return out
 }
 
+/** A `plugins` block without the built-in parts' ids. */
+function withoutBuiltIn(
+  block: Record<string, boolean>,
+  known: readonly PluginInfo[],
+): Record<string, boolean> {
+  return Object.fromEntries(Object.entries(block).filter(([id]) => !isBuiltInPlugin(id, known)))
+}
+
 /**
  * Resolve the two plugins files. Either text may be `null` (file absent).
  * Never throws; every known plugin's every setting is answered.
@@ -158,9 +166,13 @@ export function resolvePluginSettings(
 
   // The committed file's answers are the vault's; the local file contributes
   // only its `false`s, since only the vault turns a plugin on.
-  const vault = pluginBlock(committed, warnings, 'dropped') ?? {}
+  // A built-in part's pin is an older Holi's, and means nothing: dropped
+  // quietly, and from the file at its next write.
+  const vault = withoutBuiltIn(pluginBlock(committed, warnings, 'dropped') ?? {}, known)
   const localOff: string[] = []
-  for (const [id, on] of Object.entries(pluginBlock(local, warnings, 'dropped') ?? {})) {
+  for (const [id, on] of Object.entries(
+    withoutBuiltIn(pluginBlock(local, warnings, 'dropped') ?? {}, known),
+  )) {
     if (on) {
       warnings.push(
         `dropped "plugins.${id}" in ${PLUGINS_LOCAL_FILE}: this machine can only turn a plugin off`,
@@ -213,7 +225,13 @@ export function parsePluginSettingsPatch(
   const patch: Record<string, unknown> = {}
   const warnings: string[] = []
 
-  const plugins = pluginBlock(raw, warnings, 'refused')
+  const block = pluginBlock(raw, warnings, 'refused')
+  const plugins = block === null ? null : withoutBuiltIn(block, known)
+  for (const id of Object.keys(block ?? {})) {
+    if (plugins !== null && !(id in plugins)) {
+      warnings.push(`refused "plugins.${id}": it is part of Holi, not a plugin to turn off`)
+    }
+  }
   if (plugins !== null && Object.keys(plugins).length > 0) patch.plugins = plugins
 
   for (const info of known) {
@@ -289,6 +307,13 @@ export function checkPluginCatalogue(known: readonly PluginInfo[]): void {
   for (const p of known) {
     const missing = (p.requires ?? []).filter((id) => !byId.has(id))
     if (missing.length > 0) throw new Error(`plugin ${p.id} requires ${missing.join(', ')}`)
+    // A part that always runs cannot stand on one that may not.
+    const optional = p.builtIn
+      ? (p.requires ?? []).filter((id) => byId.get(id)?.builtIn !== true)
+      : []
+    if (optional.length > 0) {
+      throw new Error(`built-in ${p.id} requires the optional ${optional.join(', ')}`)
+    }
     const absent = (p.addsTo ?? []).filter((id) => !byId.has(id) || id === p.id)
     if (absent.length > 0) throw new Error(`plugin ${p.id} adds to ${absent.join(', ')}`)
   }

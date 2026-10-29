@@ -5,8 +5,8 @@
 import { fileKind } from '@holi/shared'
 import type { RendererPlugin } from '@/plugin-api'
 import { PDF_INFO } from '../info'
-import { ConvertToPdf } from './ConvertToPdf'
-import { PdfViewer } from './PdfViewer'
+import { ConvertToPdf } from './convert-to-pdf'
+import { PdfViewer } from './pdf-viewer'
 
 export const pdfRenderer: RendererPlugin = {
   info: PDF_INFO,

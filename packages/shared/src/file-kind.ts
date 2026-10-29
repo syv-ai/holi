@@ -9,7 +9,21 @@
 export type FileKind = 'markdown' | 'text' | 'image' | 'pdf' | 'doc'
 
 const IMAGE = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'svg'])
-const DOC = new Set(['doc', 'docx', 'odt', 'rtf', 'xls', 'xlsx', 'ods', 'ppt', 'pptx', 'odp', 'pages', 'numbers', 'key'])
+const DOC = new Set([
+  'doc',
+  'docx',
+  'odt',
+  'rtf',
+  'xls',
+  'xlsx',
+  'ods',
+  'ppt',
+  'pptx',
+  'odp',
+  'pages',
+  'numbers',
+  'key',
+])
 
 export function fileKind(path: string): FileKind {
   const base = path.slice(path.lastIndexOf('/') + 1)

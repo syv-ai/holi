@@ -43,6 +43,7 @@ describe('parseListing', () => {
         pid: 4242,
         status: 'busy',
         state: 'working',
+        startedAt: LIVE.startedAt,
       },
     ])
   })
@@ -151,7 +152,7 @@ describe('claude-cli', () => {
     }
   })
 
-  it('starts a scheduled run with its model and rules, a plain option ending the rules', async () => {
+  it('starts a scheduled run or a Holi with its model, rules and who it is, a plain option ending the rules', async () => {
     const calls: string[][] = []
     const cli = createClaudeCli({
       resolveBin: () => '/c',
@@ -166,6 +167,7 @@ describe('claude-cli', () => {
       prompt: 'Check mail.',
       model: 'sonnet',
       allow: ['Bash(holi google search:*)', 'Edit'],
+      appendSystemPrompt: 'You are the Holi Proposal.',
     })
     // `--allowedTools` is variadic: each rule its own `=` argument, and the
     // name after them, so the prompt is never read as one more rule.
@@ -175,6 +177,8 @@ describe('claude-cli', () => {
         '--bg',
         '--model',
         'sonnet',
+        '--append-system-prompt',
+        'You are the Holi Proposal.',
         '--allowedTools=Bash(holi google search:*)',
         '--allowedTools=Edit',
         '--name',

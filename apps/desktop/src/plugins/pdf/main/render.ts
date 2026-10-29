@@ -19,6 +19,7 @@ const exec = promisify(execFile)
  * `plain` ships none and a vault not yet re-seeded has no `_brand` at all, so
  * this is guarded on existence — a missing dir would make typst error rather
  * than fall back to its defaults.
+ * @public exported for its test
  */
 export function fontPathArgs(templateDir: string): string[] {
   const fontsDir = join(templateDir, '..', '_brand', 'fonts')

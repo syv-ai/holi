@@ -28,6 +28,7 @@ export function mimeFor(path: string): string {
  * parser normalizes raw `../` (clamped to the host root), and `vaultRelPath`
  * rejects any residual `..` / absolute / empty path — the same boundary
  * `notes.read` enforces. `root` is the ACTIVE vault's root.
+ * @public exported for its test
  */
 export function assetAbsPath(root: string, requestUrl: string): string | null {
   let rel: string

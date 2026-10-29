@@ -22,8 +22,8 @@ import {
   type AgentTarget,
   type AgentTerminal,
 } from './sessions'
-import { pendingOpenAtom } from './questions'
-import { activeRemoteAtom, openSurfaceAtom, type PluginStore } from '@/plugin-api'
+import { activeRemoteAtom, openSurfaceAtom } from '@/plugin-api'
+import { newSessionProviderAtom } from './providers'
 
 /** What an action answers: done, or why not, in words the caller can print. */
 export type AgentResult = { ok: true } | { ok: false; message: string }
@@ -92,6 +92,23 @@ export const openOverviewAtom = atom(null, async (get, set): Promise<AgentResult
 })
 
 /**
+ * A conversation in a terminal of its own, by Claude Code's id for it:
+ * `claude --resume <id> --fork-session`, a copy, so it never fights the
+ * session's own process for the conversation.
+ */
+export const openConversationTerminalAtom = atom(
+  null,
+  async (get, set, conversationId: string): Promise<AgentResult> => {
+    const res = await inVault(get, (remote) =>
+      agentCap.open(remote, { fork: conversationId, ...geometry(get) }),
+    )
+    if (!res.ok) return res
+    land(set, res.terminalId)
+    return { ok: true }
+  },
+)
+
+/**
  * One session, from a sidebar row, an orb or the palette: a window whose title
  * names it (any tab, the list's included, may have attached it since), else the
  * window Holi opened for it, else a new `claude attach` window. An unnamed
@@ -140,13 +157,22 @@ export const startSessionAtom = atom(
  * half-typed draft. A `'new'` target starts a session named from the ask's
  * first line.
  *
+ * A `'new'` session runs the machine's default agent (`agentProvider`).
+ *
  * A target that ended between being picked and being sent to is **refused**,
  * not silently dropped, so the caller can keep the text.
  */
 export const sendToAgentAtom = atom(
   null,
   async (get, set, args: { text: string; target: AgentTarget }): Promise<AgentResult> => {
-    const res = await inVault(get, (remote) => agentCap.send(remote, { ...args, ...geometry(get) }))
+    const res = await inVault(get, (remote) =>
+      agentCap.send(remote, {
+        ...args,
+        // A new session runs the machine's default agent.
+        ...(args.target === 'new' ? { provider: get(newSessionProviderAtom) } : {}),
+        ...geometry(get),
+      }),
+    )
     if (!res.ok) return res
     land(set, res.terminalId)
     return { ok: true }
@@ -176,20 +202,3 @@ export const duplicateSessionAtom = atom(
     return { ok: true }
   },
 )
-
-/**
- * While `remote` is the open vault: open the session the quick panel asked
- * for (its ⏎ on a finished agent), now or as soon as it asks. A main window
- * opened for it hears the request before its vault is open, so the request
- * waits here rather than in the event.
- */
-export function followPendingOpen(remote: string, store: PluginStore): () => void {
-  const openPending = (): void => {
-    const pending = store.get(pendingOpenAtom)
-    if (pending === null || pending.remote !== remote) return
-    store.set(pendingOpenAtom, null)
-    void store.set(openSessionAtom, pending.id)
-  }
-  openPending()
-  return store.sub(pendingOpenAtom, openPending)
-}

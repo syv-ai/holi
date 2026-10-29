@@ -29,18 +29,65 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   the name without `.app`, and Duplicate makes `Budget copy.app`. A drop on the row lands beside
   it, not among its files. A personal app's row shows like any other, dimmed as a
   local file. See [file tree](file-tree.md).
-- **Launchers.** The tree's app row, the [nav menu](nav-menu.md)'s Apps drill-down (every
-  finished app, most recently opened first, in the sidebar and on the rail; absent when there are none), and the
-  [command palette](command-palette.md), which lists them with their folder. There is no separate
-  Apps section. Its Finish this app is on the tree's app row, and its Edit Source gave way to the
-  row's Show App Files, which expands the bundle so `index.html` opens like any file.
+- **Launchers.** The tree's app row, and **Apps** under Search in the sidebar (and on the rail):
+  a page of every finished app, most recently opened first, each on a card (ReUI's c-card-7):
+  the app's icon on a plate, whether it is shared through the vault or personal (`.local.app`),
+  its folder, its name, its manifest's `description` (read through the surface's `describe`, so
+  again whenever the app's files change, with a Retry when it cannot be read) and Open. Card
+  skeletons show while the vault loads, and an empty state when there are none. The plate shows
+  the app's **preview** once it has one (below), and the icon until then.
+- **A card's menu.** Right-click a card, or press the menu key (or Shift+F10) with its Open
+  focused: **Open**; **Open beside**, in split view, as ⌥-click does (`openTab` with `beside`);
+  **Ask about this app**, a new session beside it with the app as its context (shown only while an
+  agent can start one, `AgentsSlot.start`; see [agent sessions](agent-sessions.md)); **Reveal in Files**,
+  which brings the Vault sidebar forward and selects the bundle's row
+  (`state/reveal-in-files.ts`); **Copy path**, the vault-relative bundle path; **Refresh
+  preview**; then **Archive**. The keyboard reaches it through the menu key rather than a ⋯ on
+  the card, so c-card-7 keeps its composition.
+- **Archive** is `archived: true` in the app's `app.yaml`, written by main (`apps.archive`, UI
+  door) with every other line and comment of the file kept; Unarchive removes the key. An
+  archived app leaves the surface's `instances`, so the Apps grid, the nav menu's Apps group, ⌘K
+  and the Home picker no longer list it, and the Apps page lists it under an **Archived** toggle
+  in its header, where its menu says Unarchive. It is still a finished app: the tree shows its
+  row, a path or `holi apps open` opens it, and nothing is moved or deleted. The toast ("Budget
+  archived") offers **Undo** and stays until dismissed, as Mail's archive does, because undo
+  beats a confirmation for a removal this easy to reverse. The write is an ordinary edit of a
+  synced file, so autosave commits it and teammates see the app archived too: it is the vault's
+  launcher list being tidied, not one person's view. Holi had no archive for documents to reuse
+  (a task's `archive-done` moves the file); a move would change the app's path, which is its identity, its tab key and the key
+  its approvals and records are kept under, and a machine-local flag would not sync, so the
+  smallest consistent choice is the manifest key the launchers already read.
+- **Previews.** When an app has loaded in a tab and had a moment to draw (1.5 s, then the
+  browser's next idle moment), `AppFrame` asks main to keep a picture of it
+  (`apps.capturePreview` with the frame's rect): main cuts the window's pixels to that rect with
+  `webContents.capturePage`, scales them to at most 720 px wide and keeps a JPEG. A picture is
+  taken once per load, and only while the frame is unobscured: the page visible, and the frame
+  the topmost element at its centre and 16 px inside each corner, so a menu or a dialog over it
+  is never kept. Previews are machine-local, under `userData/app-previews/`, one JPEG and one
+  JSON per app named by a hash of the vault's remote and the bundle path (`previews.ts`), never
+  in the vault. The JSON holds the bundle's stamp when the picture was taken: the newest mtime
+  of its files, `data/` and the log aside, as the approval hash leaves them out, and `app.yaml` too, which says what
+  the app is (its description, Archive) rather than how it looks. `apps.preview`
+  serves it as a `data:` URL only while that stamp holds, so a change to the app's code shows
+  the icon until it runs again, and a change to its records does not. The card shows a
+  skeleton while it asks, the picture with `object-cover` from its top left (where an app starts), or the icon. **Refresh preview**
+  lets the picture go and asks any frame showing the app to take it again (`apps.forgetPreview`
+  and a request `AppFrame` hears); with none open, the icon shows until the app next runs.
+  An app that never ran on this machine keeps the icon: nothing renders apps offscreen to
+  fill in previews (see Rejected). It reads the registry's `app` surface, not the plugin, so it is
+  there only while the plugin is on (`features/apps/`). The claim's Finish this app
+  is on the tree's row menu of a draft, and the Files menu's New app scaffolds a bundle and opens
+  it as the app: in the folder the menu was opened on (a file row's folder), at the root from
+  the empty space or the Apps page. The scaffold's page takes the theme's `--background` and
+  `--foreground`, so it reads in either mode.
 - **Tabs.** An app is the surface `app` with its bundle path as the tab's id, deduped across panes
   like a note (see [tabs and panes](tabs-panes.md)). The bundle is a folder document: the app's
   claim (`renderer/surface.tsx` in the plugin) says a
-  `.app` folder with its `index.html` is one, finished once `app.yaml` is there. Reload is the
-  surface's pane-header action, beside the other per-file buttons, that remounts the
-  frame. If the bundle disappears under an open tab (a teammate's pull), the tab stays as a
-  tombstone saying the app was deleted. Deleting from a menu removes the files and closes the tab
+  `.app` folder with its `index.html` is one, finished once `app.yaml` is there. The tab draws
+  the app under a header (`features/apps/vault-app-tab.tsx`): its name and folder, Edit source,
+  which opens `index.html` in the pane beside it, and the surface's own header actions, Reload
+  (which remounts the frame) and the log. If the bundle disappears under an open tab (a teammate's pull), the tab stays as a
+  tombstone (the shared empty state) saying the app was deleted, with Close tab. Deleting from a menu removes the files and closes the tab
   instead. A move of the bundle carries its tab along, like a note's.
 - **Serving.** `holi-app://<host>/<path>` is served by a protocol handler rooted at that app's own
   bundle. The host is the bundle path's UTF-8 bytes in hex, split into DNS-sized labels, then a
@@ -122,12 +169,20 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   classic, not a module: the frame's origin is opaque, so a module's fetch is cross-origin and
   would need a CORS header, and a header one opaque origin passes, every app passes, letting each
   read every other's code.
+  The document editor lists them after its own blocks, grouped under each app's name
+  (`RendererPlugin.slashCommands`, asked on every query, `features/documents/plugin-slash.tsx`). The
+  typed `/query` goes first; `text` is empty there, since typing `/` over a selection replaces it,
+  and `line` is the caret's paragraph without the query. A text answer is written at the caret as
+  markdown, kept on the line when it is one paragraph; `{ agent }` opens the ask prompt with the
+  instruction written in, for the person to send or change. A failure also raises a toast that
+  names the command and points at its app's log. The tab's frame and a command's frame answer the
+  bridge through one module (`renderer/bridge-host.ts`).
 - **One person's data is opt-in, twice.** `google.agenda` and `google.search` read the Google
   account of whoever has the app open, not the vault's; an app can keep what it reads in records
   that sync to every member, or send it over the network. So the app declares
   `dangerously-allow: [mail, calendar]` in `app.yaml`, or as a map giving each one a reason
   (`{ calendar: To show your next meeting }`, plain text, at most 200 characters) that the dialog
-  quotes as the developer's explanation (without the flag the call fails and names it), and each person approves the app in a dialog before its frame loads. The approval is
+  quotes "in the developer's words" (without the flag the call fails and names it), and each person approves the app in a dialog before its frame loads. The dialog is a security consent and reads as one: in body text, it says plainly that the app can store what it reads and that what it stores may sync to others or leave the machine, and to allow it only if you trust who wrote it. The approval is
   kept in main (`userData/app-grants.json`), never the renderer, which is the process running the
   app. It lapses after 30 days and whenever the app's code (anything but `data/`) changes, whoever
   changed it: approving a teammate's app approves that code, not what it becomes after a pull. A
@@ -177,7 +232,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   (`main/capabilities/`, see [architecture](../architecture.md)); the apps feature registers
   `store.*` and `apps.*` (`src/plugins/apps/main/capabilities.ts`). Each entry has its params, its refusals, and the doors
   it opens to: the app's bridge, the agent's `holi` CLI (`/cli` on the bridge server), and Holi's
-  own UI, which reaches `apps.call`, `apps.grants`, `apps.grant`, `apps.log` and `apps.init`. An app sees
+  own UI, which reaches `apps.call`, `apps.grants`, `apps.grant`, `apps.log`, `apps.init`, `apps.describe`, `apps.archived`, `apps.archive` and the preview calls. An app sees
   exactly what the agent can inspect from the terminal, written once. At the app door the bundle
   is the frame's, and a `bundle` param is ignored; at the CLI door the agent names it. One
   capability host (`capabilities/dispatch.ts`) runs a call for every door: the clone, the open
@@ -327,6 +382,13 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - A Deno or Bun sidecar for backends: Electron's `utilityProcess` already ships Node.
 - A CSP with `connect-src 'none'`: rules out any app that calls an API.
 - Note-embedded app widgets: keeps the editor lean.
+- Rendering an app offscreen to fill in a missing preview: an app's frame needs `AppFrame` to
+  answer its bridge, so a hidden window would either show a broken page or need a second
+  answerer; it would run code nobody opened, an app's load may write records that sync, and an
+  app that needs approval must not run before the person approves it. An app that never ran
+  here keeps its icon.
+- Archiving by moving the bundle under `archive/`, as `archive-done` does for tasks: the path is
+  the app's identity, so its tab, approvals and links would all have to follow.
 - Slash commands as their own kind of file (`.holi/commands/`), or as `.claude/commands/`: a
   command is code arriving with a pull like an app is, so it is part of an app, under the app's
   origin, bridge, approvals, check hook and log, rather than a second sandbox with its own rules.
@@ -350,20 +412,18 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   (`grants.ts`), and its seed: the vault-apps skill and the `vault-app-check.mjs` hook under
   `main/vault/shipped/.claude/`. It opens the app door once it starts, and with it off a vault
   serves no app, while what the vault holds (records, `.local.app`) is still core's. Its
-  `renderer/` holds `AppFrame` with the approval dialog, the bridge's answering
-  (`bridge-host.ts`), the slash commands' list and hidden frame (`commands.ts`), the push
-  signatures (`app-push.ts`), the app lists and reload counts (`apps.ts`), and the surface, claim,
-  rail item and pane-header actions (`surface.tsx`); its `open` event is the agent's
-  `holi apps open`. Its `shared/` holds the bridge vocabulary (`bridge.ts`: `APP_METHODS`, the
-  topics), the manifest (`manifest.ts`), a command's answer and its check (`commands.ts`), an
-  app's name and `holi-app:` host (`bundle.ts`), and the store's schema subset, ids and log
-  (`store.ts`).
-- `apps/desktop/src/renderer/src/editor/slash.ts`: the slash menu, and the `SlashCommand` seam a
-  plugin adds commands through.
+  `renderer/` holds `AppFrame` with the approval dialog, the push signatures (`app-push.ts`),
+  the app lists and reload counts (`apps.ts`), and the surface, claim, rail item and pane-header
+  actions (`surface.tsx`); its `open` event is the agent's `holi apps open`. Its `shared/` holds
+  the bridge vocabulary (`bridge.ts`: `APP_METHODS`, the topics), the manifest (`manifest.ts`),
+  a command's answer and its check (`commands.ts`), an app's name and `holi-app:` host
+  (`bundle.ts`), and the store's schema subset, ids and log (`store.ts`). Its `main/previews.ts`
+  keeps the previews; `renderer/app-previews.ts` takes them and `renderer/apps.ts` holds the
+  archived list.
 - `apps/desktop/src/main/capabilities/`: the registry, its dispatch and services, the read and
   write fences (`fences.ts`) and core's entries, among them `docs.write`, with note rendering
   (`render-note.ts`).
-- `apps/desktop/src/main/vault/task-capabilities.ts`: the task entries an app reaches.
+- `apps/desktop/src/plugins/tasks/main/capabilities.ts`: the task entries an app reaches.
 - `apps/desktop/src/main/vault/search.ts`: the vault search behind `holi.search`, shared with
   Holi's own search.
 - `apps/desktop/src/main/vault/merge-drivers.ts`: the record merge driver's install;
@@ -371,10 +431,10 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   `apps/desktop/src/main/bridge/server.ts`: `/cli`.
 - `apps/desktop/src/main/index.ts`: scheme registration, every plugin's included.
 - `apps/desktop/src/main/bridge/cli.ts`: the `holi` CLI.
-- `apps/desktop/src/plugins/app-methods.test.ts`: every bridge method is answered by an app-door
+- `apps/desktop/test/app-methods.test.ts`: every bridge method is answered by an app-door
   capability in this build.
 - `apps/desktop/src/renderer/src/state/ui-report.ts`: the one report of focus and recents to main.
-- `apps/desktop/src/renderer/src/features/explorer/FileTree.tsx`, `RowMenu.tsx`: the folder
+- `apps/desktop/src/renderer/src/features/sidebar/files-section.tsx`: the folder
   document row an app is.
 - `packages/shared/src/app-bundle.ts` (`isAppBundlePath`, `appBundleOf`, `appSuffix`) and
   `packages/shared/src/app-store.ts` (where records and the log live, the record format and the

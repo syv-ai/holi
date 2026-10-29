@@ -23,14 +23,14 @@ import { TokenStore, type StoredAuth } from './token-store'
  *     curl -s -X POST https://github.com/login/device/code \
  *       -H "Accept: application/json" -d "client_id=$CLIENT_ID&scope=repo"
  */
-export const CLIENT_ID = 'Ov23liwgXQvw5gAGwqAL'
+const CLIENT_ID = 'Ov23liwgXQvw5gAGwqAL'
 
 /**
  * `repo` for the vault, `read:user` for the identity in the UI, and `read:org`
  * for exactly one feature: offering an organization as the owner when creating
  * a new vault. A scope nobody can trace to a feature is a scope to drop.
  */
-export const SCOPES = ['repo', 'read:user', 'read:org']
+const SCOPES = ['repo', 'read:user', 'read:org']
 
 export interface SessionDeps {
   store: TokenStore

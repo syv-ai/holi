@@ -23,7 +23,9 @@ const MAX_BYTES = 1_000_000
 const MAX_REDIRECTS = 5
 
 /** The preview `html`, fetched from `url`, says it has. Relative addresses
- *  resolve against `url`, the address the page came from after redirects. */
+ *  resolve against `url`, the address the page came from after redirects.
+ * @public exported for its test
+ */
 export function parseHead(html: string, url: string): Omit<LinkPreview, 'url'> {
   const meta = new Map<string, string>()
   let title = ''

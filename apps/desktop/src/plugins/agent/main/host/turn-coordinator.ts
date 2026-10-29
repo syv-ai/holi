@@ -37,6 +37,9 @@ export interface TurnCoordinatorDeps {
   /** Records what a turn changed, as a commit range. Keyed by vault ROOT.
    *  Absent means no recording rather than a broken one. */
   turnLogFor?: (vaultRoot: string) => TurnLog
+  /** How long to wait before asking again for a settle commit that answered
+   *  null. Default 1000. */
+  settleRetryMs?: number
   /** Where a turn that ends while another session's is still running ended: a
    *  sha `git diff` can take, or null when git fails. Absent, such a turn waits
    *  for the settle commit like the rest. */
@@ -167,7 +170,16 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
     // fire on its own would make the end sha race a 3-second timer that the
     // safety-cap path does not respect; `commitNow` returns null on a clean
     // tree, which is the ordinary outcome of a turn that only read.
-    const end = (await vault.commitNow()) ?? (await vault.head())
+    //
+    // Resuming the vault starts a commit of its own (its retry), which can be
+    // the one holding the tree when this asks: `commitNow` then answers null
+    // with the turn's work still landing. So a null is asked again once that
+    // commit has had a moment, and only then read as "nothing to commit".
+    let end = await vault.commitNow()
+    if (end === null) {
+      await new Promise((r) => setTimeout(r, deps.settleRetryMs ?? 1_000))
+      end = (await vault.commitNow()) ?? (await vault.head())
+    }
     if (end === null) return
     const at = new Date().toISOString()
     // One `end` for all of them: that sha IS what "they shared a settle commit"

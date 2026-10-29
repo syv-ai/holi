@@ -22,7 +22,7 @@ export const WORK_LOG_KEEP_DAYS = 30
 export const workLogPath = (at: Date): string => `${WORK_LOG_DIR}/${localDate(at)}.local.md`
 
 /** One line: the local time, then `text` on one line. */
-export function workLogLine(at: Date, text: string): string {
+function workLogLine(at: Date, text: string): string {
   const pad = (n: number): string => String(n).padStart(2, '0')
   return `- ${pad(at.getHours())}:${pad(at.getMinutes())} ${text.replace(/\s*\n\s*/g, ' ').trim()}\n`
 }

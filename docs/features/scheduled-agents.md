@@ -1,22 +1,29 @@
-# Scheduled agents
+# Automations
 
-A scheduled agent is a prompt Holi runs as an agent session at set times or when something happens,
-on this machine, while the vault is open: check the inbox every half hour and draft replies, file a
-task for what needs the user, start a tilbud from a customer's mail, read a file dropped in
-`inbox/`. The definition is a file in the vault; whether it runs is this machine's choice; each run
-is an ordinary [agent session](agent-sessions.md).
+An automation (a scheduled agent) is a prompt Holi runs as an agent session at set times or when
+something happens, on this machine, while the vault is open: check the inbox every half hour and
+draft replies, file a task for what needs the user, start a tilbud from a customer's mail, read a
+file dropped in `inbox/`. The definition is a file in the vault; whether it runs is this machine's
+choice; each run is an ordinary [agent session](agent-sessions.md), carried out by Claude Code as
+it is or by one of the vault's [Holis](holis.md), with its soul and memory. Automations are the
+plugin `automations` (`src/plugins/automations/`, on by default), built on the agent: it starts
+each run through `agent.launch` and hears the agent's session list and turn ends through the
+main-side plugin channel (`ctx.hear`). Until the feature is finished, the renderer shows
+Automations as a locked **In progress** row and keeps them out of ⌘K (`AUTOMATIONS_READY` in
+`info.ts`); automations already switched on still run.
 
 ## How it works
 
 **A schedule is one local file**, `.holi/schedules/<name>.local.md`. It is one person's: it reads
 their mail with their Google account and writes in their name, so it never syncs, nobody else sees
-it in Settings, and nobody else can edit or break it. A committed `.holi/schedules/<name>.md` is not
-a schedule and never runs: Settings lists it as invalid with the rename that makes it one. Its frontmatter says when and with what, and its body is the prompt:
+it in their Automations view, and nobody else can edit or break it. A committed `.holi/schedules/<name>.md` is not
+a schedule and never runs: the Automations view lists it as invalid with the rename that makes it one. Its frontmatter says when and with what, and its body is the prompt:
 
 ```markdown
 ---
 name: Inbox triage
 cron: '*/30 7-18 * * 1-5'
+holi: assistant
 model: sonnet
 allow:
   - Bash(holi google search:*)
@@ -30,26 +37,33 @@ Look through my unread mail since the previous run…
 ```
 
 `cron` is five fields in **this machine's local time**, the clock its person reads (with the usual
-`@daily`-style macros); `at` instead names one local minute (`"2026-10-09T15:00"`). `model` is
-Claude Code's `--model`. `allow` is Claude Code permission rules the run may use without asking,
+`@daily`-style macros); `at` instead names one local minute (`"2026-10-09T15:00"`). A list of crons is several triggers,
+and the run comes at whichever is first. `holi` names the Holi that carries it out: the run gets
+that Holi's soul and memory through `--append-system-prompt`, its model when the file names none,
+and its `allow` rules beside the file's (`holis.context`). `catch-up` is how late a missed moment
+may still run (`none`, `30m`, `2h`, `12h`); a later one is recorded as skipped. `model` is Claude
+Code's `--model`. `allow` is Claude Code permission rules the run may use without asking,
 passed as `--allowedTools`; every other permission prompt still asks, and an `ask` rule (sending
 mail, `curl`) still asks whatever `allow` says. Nothing runs more often than every 5 minutes: a
 `* * * * *` typo would otherwise start a session a minute. `on` lists the events that start a run,
 instead of or as well as a time (see Triggers). The grammar and its parser are in `packages/shared`
-(`cron.ts`, `schedule.ts`, `triggers.ts`), so the settings tab reads a file the way main runs it.
+(`cron.ts`, `schedule.ts`, `triggers.ts`), so the Automations editor reads a file the way main runs it.
 
 **Running is approved per machine, and the approval is of the content.** The agent can write
 the file, so a schedule runs only once the person turned it on. Turning it on records a
 fingerprint of what it approves: the prompt (in its commit-tidied form), the model, the `allow`
-list and the `on` triggers. A file whose fingerprint no longer matches reads **changed** and does
-not run until it is turned on again, so neither another session nor a run of the schedule itself,
-which may edit files, can change the schedule's prompt, model, `allow` or triggers without the person's yes.
-A trigger is in it because it decides who can start a run: anyone who can send the person a mail,
+list, the `on` triggers, which Holi carries it out and what approving that Holi approves (its
+soul, model and rules). A change to that Holi's soul reads **changed** here too; a Holi that is
+gone, does not parse, or whose plugin is off makes the automation **invalid**, and it does not
+run. A file whose fingerprint no longer matches reads **changed** and does not run until it is
+turned on again, so neither another session nor a run of the schedule itself, which may edit
+files, can change the schedule's prompt, model, `allow` or triggers without the person's yes. A
+trigger is in it because it decides who can start a run: anyone who can send the person a mail,
 or drop a file in the vault. The time is not in the fingerprint, so moving a run grants nothing;
-nor is the `name`, which labels the run's session and the settings row and is never in what the
-run reads. The approvals and the run log live in `userData/schedules.json`, keyed by remote and
-path, not in the clone: the agent can write anything in the clone, and an approval it could write
-would be none.
+nor is the `name`, which labels the run's session and the automation's card and is never in what
+the run reads. The approvals and the run log live in `userData/schedules.json`, keyed by remote
+and path, not in the clone: the agent can write anything in the clone, and an approval it could
+write would be none.
 
 **What a run reads is not its prompt.** Its first turn is the approved prompt and one line of
 Holi's, and nothing a mail or an invite says is spliced into it: the run fetches that itself, with
@@ -77,18 +91,29 @@ teaches the file, the prompt (self-contained, results left in the vault as tasks
 summary at the end) and the CLI. `holi schedules list` is allowed and `holi schedules run`, for a
 schedule that is already on, is a seeded `ask` rule. Turning one on is no command at all: the
 `schedules.enable` capability opens only the UI door. An `ask` rule matches a command's text, which
-a small script gets around, and an approval the agent could give itself would be none. **Settings →
-Schedules** lists each schedule with its status (`on`, `off`, `changed`, `invalid` and why), when it
-runs and its next run, what it may do without asking, its last run, a link to its file and to its
-live run, a **Runs here** switch and **Run now**. While a schedule is off or changed, its row shows
-the prompt the switch would approve, so nobody approves text behind a link. The switch approves
-exactly that text: it sends back the fingerprint the row showed, and a file that changed since is
-refused as "changed since you looked" and shown again.
+a small script gets around, and an approval the agent could give itself would be none. **The Automations view** (the Agents mode's top group, after MonoCode's) is the list beside the
+editor. A card shows the trigger, the name, who carries it out, the last run and its state. The
+editor is the name with Cancel or Reset, **Run now** and **Create** or **Save**; the **Active**
+switch and the Holi picker (Claude, or a Holi, searchable); **Triggers**, each a sentence ("Every
+weekday at [11:00]") with this machine's offset and the next run, and **Add trigger** (a cron no
+sentence says stays as written); **Instructions**, the prompt with its model and what it may do
+without asking under it; **Advanced**, the catch-up window; and **Run history**. Writing it
+(`schedules.save`, the UI door) approves nothing; Active sends the fingerprint of what was just
+written or shown, so it approves exactly that. A Holi's page lists the automations it carries out
+as its **Habits**. Nobody approves text behind a link: the editor shows the prompt the switch
+approves, and a file that changed since it was shown is refused as "changed since you looked".
+The editor's Triggers hold the file's `on:` events beside its times, each a sentence too ("When a
+file is [added] in [inbox/**]", "[30 min before] each calendar event", "When a task is [due]",
+"When new mail matches [from:@acme.com]"), and **Add trigger** offers them under On an event. They
+go to `schedules.save` with the times and are read there the way the file is (`triggerYaml`, then
+`parseTriggers`), so the editor refuses what main would, such as a glob outside the vault, before
+it saves. A run events started reads **Event** in Run history, with what started it.
 
 **One check every half minute**, while the vault is open, plus one five seconds after it opens. A
 check runs a schedule when its first moment after the last run (or after it was turned on) has
 passed. Missed moments collapse into that one run: a laptop that slept, or a Holi that was closed,
-through six half-hours runs once when it is back. A one-off runs once and then has nothing due.
+through six half-hours runs once when it is back, unless the latest of them is older than its
+`catch-up` window, when it is recorded as skipped and nothing runs. A one-off runs once and then has nothing due.
 Schedules run only for the open vault: a closed vault's `bridge.local.env` is gone, so a session in
 it could not reach `holi`.
 
@@ -109,7 +134,7 @@ session idle, looking every 2 s for 30 s, since the hook fires a moment before C
 settles, and stops it (`claude stop`): it leaves the sidebar and its conversation stays in the
 agents list. A run waiting on the person (a permission prompt) is not done either. A run someone
 has a window on was taken over: it is left open, recorded as such, and not asked about again. The
-run's record gets `finishedAt` (and `kept` when left open), which the settings section shows, and
+run's record gets `finishedAt` (and `kept` when left open), which the Run history shows, and
 the day's work log gets a line naming the schedule and how it ended, as it does for a run that
 fails to start ([agent-inbox](agent-inbox.md)), so a run that notified nobody still shows. A
 vault whose `turn-signal.mjs` predates `pending` (it reaches a vault through Update skills) sends
@@ -144,12 +169,12 @@ on:
   - mail: 'from:@acme.com' # a new mail, not yours, in a thread the query finds
 ```
 
-**Each source is a plugin's, and they meet in the agent's trigger router.** The plugins started in
+**Each source is a plugin's, and they meet in the automations plugin's trigger router.** The plugins started in
 the vault tell each other `VaultEvent`s over `ctx.events`
 ([architecture](../architecture.md#plugins)); none imports another. At every check the scheduler
 says what the approved schedules listen for (`interest`), and a source does only that work:
 
-- **`file`** is the agent plugin's own, read off the vault's scans (`ctx.onSnapshot`): a note or
+- **`file`** is the automations plugin's own, read off the vault's scans (`ctx.onSnapshot`): a note or
   file whose path is new is added, one whose mtime moved is changed. Files under `.holi/` and
   `.claude/` are never file events: a run writes there (memory, settings, its own schedule) as a
   matter of course. Nor are `.local.` files and secret files such as `.env`, which are this
@@ -186,7 +211,7 @@ says what the approved schedules listen for (`interest`), and a source does only
   sends does not start the next run. The first look after a start is the baseline.
 
 Google polls only while some approved schedule listens for mail or the calendar, and only the open
-vault's account. The agent tells its interest every check and says it is gone when it leaves the
+vault's account. The automations plugin tells its interest every check and says it is gone when it leaves the
 vault; interest not told again for three minutes counts as gone too, so polling never outlives the
 schedules that wanted it. A source that stops tells an empty list, and the router ignores a timed
 source's list not told again for 12 minutes, so a moment never fires from a list nobody keeps.
@@ -264,7 +289,7 @@ repeats inside one session.
   `AGENTS.md`, memory and skills would give way to a model's judgement
   ([Claude Code permission modes](https://code.claude.com/docs/en/permission-modes)).
 - **`holi schedules enable` behind an `ask` rule**: the rule matches the command's text, so a
-  script that calls the bridge gets around it. Turning on is the Settings switch's alone.
+  script that calls the bridge gets around it. Turning on is the editor's Active switch's alone.
 - **GitHub Actions**, for runs like these. Every vault is a GitHub repository, so a scheduled
   workflow would run with every laptop shut, exactly once, its history beside the vault. But it runs
   on a fresh checkout on GitHub's machine, away from Holi: no machine-local files, no bridge and so
@@ -291,15 +316,18 @@ repeats inside one session.
 ## Code
 
 - `packages/shared/src/cron.ts`: the cron grammar, the next moment, the shortest gap, words
-- `packages/shared/src/schedule.ts`: the file, its approval text, `dueRun`, `nextRun`
+- `packages/shared/src/schedule.ts`: the file, its triggers, its approval text, `dueRun`,
+  `nextRun`, the editor's trigger sentences and `scheduleFileText`
 - `packages/shared/src/triggers.ts`: `on:`, `VaultEvent`, what a trigger hears
-- `apps/desktop/src/plugins/agent/main/schedules/router.ts`: dedupe, batches, moments, file events
+- `apps/desktop/src/plugins/automations/main/scheduler.ts`: the check, approvals, the Holi, runs,
+  `save` and `remove`; `router.ts`: dedupe, batches, moments, file events; `capabilities.ts`:
+  `schedules.list|save|remove|enable|disable|run`, all but `list`, `disable` and `run` at the UI
+  door only; `index.ts`: the agent through `ctx.call` and `ctx.hear`, the file source through
+  `ctx.onSnapshot`
 - `apps/desktop/src/plugins/tasks/main/triggers.ts`, `apps/desktop/src/plugins/google/main/triggers.ts`:
   the task, calendar and mail sources
-- `apps/desktop/src/plugins/agent/main/schedules/scheduler.ts`: the check, approvals, runs
-- `apps/desktop/src/plugins/agent/main/schedules/capabilities.ts`:
-  `schedules.list|enable|disable|run`, `enable` at the UI door only
-- `apps/desktop/src/plugins/agent/main/claude/cli.ts` (`startBg`'s `model` and `allow`),
-  `main/host/sessions.ts` (`launch`, a session with no terminal)
-- `apps/desktop/src/plugins/agent/renderer/SchedulesSection.tsx`: the settings section
-- `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/skills/scheduled-agents/`
+- `apps/desktop/src/plugins/agent/main/host/capabilities.ts` (`agent.launch`, `agent.watched`),
+  `main/host/sessions.ts` (`launch`, a session with no terminal, and what it publishes)
+- `apps/desktop/src/plugins/automations/renderer/`: `automations-view.tsx`, `automation-editor.tsx`,
+  `holi-picker.tsx`, `automations-section.tsx`
+- `apps/desktop/src/plugins/automations/main/vault/shipped/.claude/skills/scheduled-agents/`

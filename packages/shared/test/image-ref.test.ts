@@ -22,7 +22,10 @@ describe('resolveImageRef (markdown ![](target))', () => {
 
   it('resolves ./ and ../ against the note folder', () => {
     expect(resolveImageRef('a/note.md', './img.png')).toEqual({ kind: 'vault', path: 'a/img.png' })
-    expect(resolveImageRef('a/b/note.md', '../img.png')).toEqual({ kind: 'vault', path: 'a/img.png' })
+    expect(resolveImageRef('a/b/note.md', '../img.png')).toEqual({
+      kind: 'vault',
+      path: 'a/img.png',
+    })
   })
 
   it('treats a leading slash as vault-root-absolute (GitHub semantics)', () => {
@@ -33,7 +36,10 @@ describe('resolveImageRef (markdown ![](target))', () => {
   })
 
   it('resolves a nested relative target', () => {
-    expect(resolveImageRef('a/note.md', 'sub/img.png')).toEqual({ kind: 'vault', path: 'a/sub/img.png' })
+    expect(resolveImageRef('a/note.md', 'sub/img.png')).toEqual({
+      kind: 'vault',
+      path: 'a/sub/img.png',
+    })
   })
 
   it('clamps ".." that would escape the vault root', () => {

@@ -1,17 +1,41 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 160 160">
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Holi's app icon in the default dark theme: the same drawing as
+       src/renderer/src/lib/app-icon.ts, which redraws it in the theme in force. -->
   <defs>
-    <linearGradient id="navy" x2="1" y2="1"><stop stop-color="#1e517f"/><stop offset="1" stop-color="#102a52"/></linearGradient>
+    <clipPath id="squircle"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+    <filter id="ink-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+    <radialGradient id="glow" cx="830" cy="900" r="700" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e5e5e5" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#e5e5e5" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="frost" x1="0" y1="100" x2="0" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.14"/>
+      <stop offset="0.55" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0.22"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="300" cy="180" r="620" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rim" x1="0" y1="100" x2="0" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.28"/>
+      <stop offset="0.5" stop-color="#fff" stop-opacity="0.05"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
   </defs>
-  <g transform="translate(11.333333 11.333333) scale(0.8583333333)">
-    <rect x="5" y="5" width="150" height="150" rx="36" fill="url(#navy)"/>
-    <path d="M80 48c-12-8-29-12-50-8v73c20-4 38 0 50 9Z" fill="#d4f0ff"/>
-    <path d="M80 48c12-8 29-12 50-8v73c-20-4-38 0-50 9Z" fill="#fff"/>
-    <path d="M80 48v74" stroke="#4ba8df" stroke-width="6"/>
-    <g transform="translate(-2 -5)">
-      <path d="M41 58h9v9h-9zm0 19h9v9h-9zm0 19h9v9h-9z" fill="none" stroke="#3e92c3" stroke-width="2.5" stroke-linejoin="round"/>
-      <path d="m42 61 3 3 6-8" fill="none" stroke="#2178ae" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M56 63Q64 60 73 64M56 82Q64 79 73 83M56 101Q64 98 73 102" fill="none" stroke="#69a7ca" stroke-width="3.5" stroke-linecap="round"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#171717" filter="url(#shadow)"/>
+  <g clip-path="url(#squircle)">
+    <rect width="1024" height="1024" fill="url(#glow)"/>
+    <rect width="1024" height="1024" fill="url(#frost)"/>
+    <rect width="1024" height="1024" fill="url(#sheen)"/>
+    <g filter="url(#ink-shadow)">
+      <path transform="translate(347.92 314.24) scale(1.75481)" fill="#fafafa" d="M38 165.883C38 172.575 43.4253 178 50.1172 178C56.704 177.999 62.0635 172.743 62.2295 166.196L62.2334 165.884V114.4C62.2334 106.682 63.8971 99.2614 67.1846 92.2168L67.1992 92.1855L67.2139 92.1533C70.4451 85.3835 74.8348 79.3829 80.3398 74.1836L80.4229 74.1055L80.5078 74.0293C86.1658 68.9831 92.6909 64.9805 100.01 61.9932L100.075 61.9668L100.141 61.9414C107.655 59.0278 115.642 57.5996 124.033 57.5996C132.162 57.5997 139.912 58.9401 147.22 61.6729L147.926 61.9414L147.991 61.9668L148.057 61.9932C155.376 64.9806 161.901 68.983 167.559 74.0293C173.253 79.1078 177.758 85.0733 181.021 91.8867L181.34 92.5527C184.594 99.4495 186.233 106.76 186.233 114.4V216H148.233V115.6C148.233 113.046 147.745 110.671 146.771 108.404L146.569 107.952C145.436 105.497 143.823 103.294 141.651 101.32C139.661 99.5231 137.212 98.0247 134.196 96.8809C131.345 95.7992 128.054 95.2002 124.233 95.2002C120.602 95.2002 117.291 95.7811 114.244 96.8906C111.273 98.0209 108.751 99.5107 106.609 101.33C104.728 103.152 103.243 105.192 102.122 107.479L101.897 107.952C100.789 110.354 100.233 112.876 100.233 115.6V216H0V0H38V165.883Z"/>
     </g>
-    <path d="M92 62Q105 58 119 61M92 75Q103 71 115 74M92 88Q105 84 119 87M92 101Q103 97 115 100" fill="none" stroke="#84b6d2" stroke-width="3.5" stroke-linecap="round"/>
   </g>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="url(#rim)" stroke-width="3"/>
 </svg>

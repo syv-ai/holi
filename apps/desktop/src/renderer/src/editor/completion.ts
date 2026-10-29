@@ -5,7 +5,7 @@
  */
 import { autocompletion, type Completion, type CompletionSource } from '@codemirror/autocomplete'
 import type { Extension } from '@codemirror/state'
-import { createElement, type IconNode } from 'lucide'
+import { createElement } from 'lucide'
 import { GLYPHS } from './completion-icons'
 
 /**
@@ -22,30 +22,38 @@ export const OPTION_CLASS = 'cm-holi-option'
 
 /** Our sources name their glyph in `type`, which CodeMirror accepts as any
  *  string. The prefix is what tells our rows from a library's. */
-export const HOLI_TYPE_PREFIX = 'holi-'
+const HOLI_TYPE_PREFIX = 'holi-'
 
 /** A `Completion` with the two extra fields our renderers read. CodeMirror
- *  ignores both and carries them through untouched. */
+ *  ignores both and carries them through untouched.
+ * @public exported for its test
+ */
 export interface HoliCompletion extends Completion {
   /** Trailing text: a task's due date. */
   meta?: string
   /** Drawn instead of the type glyph, for a note whose vault gave it one. */
   emoji?: string
-  /** Drawn instead of the type glyph, for what a claim offers (a task), in
-   *  `color` when given: a status colour is information, so it survives the
-   *  row's selection. */
-  glyph?: IconNode
-  color?: string
 }
 
+/** A slash menu block row: an icon tile and a two-line body (`theme.ts`). */
+export const BLOCK_OPTION_CLASS = 'cm-holi-block'
+/** The slash menu's "No matching blocks" row. */
+export const EMPTY_OPTION_CLASS = 'cm-holi-empty'
+
+/** @public exported for its test */
 export function holiOptionClass(completion: Completion): string {
-  return (completion.type?.startsWith(HOLI_TYPE_PREFIX) ?? false) ? OPTION_CLASS : ''
+  const type = completion.type ?? ''
+  if (!type.startsWith(HOLI_TYPE_PREFIX)) return ''
+  if (type.startsWith('holi-block-')) return `${OPTION_CLASS} ${BLOCK_OPTION_CLASS}`
+  if (type === 'holi-empty') return `${OPTION_CLASS} ${EMPTY_OPTION_CLASS}`
+  return OPTION_CLASS
 }
 
 /**
  * The row's left glyph: the note's emoji, else the glyph its `type` names.
  * `null` for rows we do not author, leaving CodeMirror's icon (the table menu
  * needs it).
+ * @public exported for its test
  */
 export function holiIcon(completion: Completion): Node | null {
   const { emoji } = completion as HoliCompletion
@@ -55,18 +63,19 @@ export function holiIcon(completion: Completion): Node | null {
     span.textContent = emoji
     return span
   }
-  const own = completion as HoliCompletion
-  const glyph = own.glyph ?? (completion.type === undefined ? undefined : GLYPHS[completion.type])
+  const glyph = completion.type === undefined ? undefined : GLYPHS[completion.type]
   if (glyph === undefined) return null
-  const el = createElement(glyph, {
+  // The type rides on the element so the chrome can colour a task by status.
+  return createElement(glyph, {
     class: `cm-holi-icon cm-holi-icon-${completion.type}`,
     'aria-hidden': 'true',
   })
-  if (own.color !== undefined) el.style.color = own.color
-  return el
 }
 
-/** The trailing meta text, when there is one. */
+/**
+ * The trailing meta text, when there is one.
+ * @public exported for its test
+ */
 export function holiMeta(completion: Completion): Node | null {
   const { meta } = completion as HoliCompletion
   if (meta === undefined || meta === '') return null
@@ -80,6 +89,7 @@ export function holiMeta(completion: Completion): Node | null {
  * The `↵` on the selected row. Rendered on every row and revealed by CSS:
  * CodeMirror moves the selection by toggling `aria-selected` without
  * re-rendering rows.
+ * @public exported for its test
  */
 export function holiEnterHint(completion: Completion): Node | null {
   if (holiOptionClass(completion) === '') return null

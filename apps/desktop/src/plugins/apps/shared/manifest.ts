@@ -13,7 +13,7 @@
  * app, because an app that silently does not appear is the worst failure. Only
  * text that is not a mapping at all (a list, a number, a bare scalar) is refused.
  */
-import { parse as parseYaml } from 'yaml'
+import { isMap as isYamlMap, parse as parseYaml, parseDocument } from 'yaml'
 import { isAppPrivatePath, vaultRelPath } from '@holi/shared'
 import { isRecordId, type CollectionSchema } from './store'
 
@@ -46,6 +46,9 @@ export interface AppManifest {
    * `holi.env` gives it from the vault's `.env` (docs/features/vault-apps.md).
    */
   env?: string[]
+  /** Set aside: the launchers leave it out and list it under Archived. It
+   *  is still a finished app that opens by its path; only `true` counts. */
+  archived?: boolean
   /**
    * The slash commands it adds to the notes editor, by name (what follows the
    * `/`): each a script in the bundle, run in a hidden frame of the app's own
@@ -55,7 +58,7 @@ export interface AppManifest {
 }
 
 /** One slash command an app declares. */
-export interface AppCommandSpec {
+interface AppCommandSpec {
   /** The script, a `.js` file in the bundle, by its path there. */
   script: string
   /** Beside the name, in the slash menu. */
@@ -110,14 +113,17 @@ function parseEnv(raw: unknown): string[] | undefined {
   return names.length > 0 ? [...new Set(names)] : undefined
 }
 
-/** The longest reason the approval dialog shows: a sentence, not a pitch. */
+/**
+ * The longest reason the approval dialog shows: a sentence, not a pitch.
+ * @public exported for its test
+ */
 export const MAX_ALLOW_REASON = 200
 
 /** The reads an app must opt into, because what they return is one person's,
  *  not the vault's: an app can keep it in synced records or send it anywhere.
  *  There is no `location`: Electron's geolocation needs Google's network
  *  service and does not answer on macOS, so no app is offered it. */
-export const APP_AFFORDANCES = ['mail', 'calendar'] as const
+const APP_AFFORDANCES = ['mail', 'calendar'] as const
 
 export type AppAffordance = (typeof APP_AFFORDANCES)[number]
 
@@ -204,6 +210,7 @@ export function parseAppManifest(yaml: string): AppManifest | null {
   Object.assign(manifest, parseAffordances((raw as Record<string, unknown>)['dangerously-allow']))
   const env = parseEnv((raw as Record<string, unknown>).env)
   if (env !== undefined) manifest.env = env
+  if ((raw as Record<string, unknown>).archived === true) manifest.archived = true
   const commands = parseCommands((raw as Record<string, unknown>).commands)
   if (commands !== undefined) manifest.commands = commands
   return manifest
@@ -247,4 +254,24 @@ export function appManifestText(description?: string): string {
  *  means the same thing — the author wrote a manifest and left it blank. */
 function isCommentOnly(yaml: string): boolean {
   return yaml.split('\n').every((line) => line.trim() === '' || line.trim().startsWith('#'))
+}
+
+/**
+ * The manifest's text with `archived: true` set, or the key gone, and every
+ * other line as it was, comments included: the file is the person's (or the
+ * agent's), so only the one key changes. Null when the text is not a mapping
+ * this can edit (a list, or YAML that does not parse), which is refused
+ * rather than overwritten.
+ */
+export function setManifestArchived(yaml: string, archived: boolean): string | null {
+  if (yaml.trim() === '' || isCommentOnly(yaml)) {
+    if (!archived) return yaml
+    const lead = yaml === '' || yaml.endsWith('\n') ? yaml : `${yaml}\n`
+    return `${lead}archived: true\n`
+  }
+  const doc = parseDocument(yaml)
+  if (doc.errors.length > 0 || !isYamlMap(doc.contents)) return null
+  if (archived) doc.set('archived', true)
+  else doc.delete('archived')
+  return doc.toString()
 }

@@ -87,7 +87,7 @@ export interface GoogleCapabilityDeps {
 }
 
 /** The Google plugin's own settings in a vault, read and written by root. */
-export interface GoogleSettingsStore {
+interface GoogleSettingsStore {
   read(root: string): Promise<{ calendars: CalendarOverrides; imageSenders: string[] }>
   write(
     root: string,
@@ -645,6 +645,31 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
     }),
 
+    /**
+     * The view's Undo after an archive or a trash. UI only: an agent that
+     * wants a thread back in the inbox has no "undo" to mean, and the CLI's
+     * surface stays the writes it was granted.
+     */
+    'google.unarchive': cap({
+      doors: ['ui'],
+      params: idParams,
+      run: async (ctx, { id }) => {
+        const data = await dataOf(ctx.remote)
+        await google(() => data.unarchive(id))
+        return ok
+      },
+    }),
+
+    'google.untrash': cap({
+      doors: ['ui'],
+      params: idParams,
+      run: async (ctx, { id }) => {
+        const data = await dataOf(ctx.remote)
+        await google(() => data.untrash(id))
+        return ok
+      },
+    }),
+
     /** The composer's drafts list and one draft's body, straight from Google:
      *  `readDraft` is the one call that answers "is this ours?". */
     'google.drafts': cap({
@@ -792,9 +817,11 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       run: async (ctx, event) => google(() => createEvent(apiOf(ctx.remote), event)),
     }),
 
-    /** Move or retitle an event; refused when anyone is invited. */
+    /** Move or retitle an event; refused when anyone is invited. The
+     *  calendar view moves and edits the person's own events through it too.
+     *  Read back flat, with the names the caller sent, as `schedule`'s are. */
     'google.reschedule': cap({
-      doors: ['cli'],
+      doors: ['ui', 'cli'],
       cli: {
         args: ['id'],
         flags: ['all-day'],
@@ -802,18 +829,18 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
       params: (raw) => {
         const p = paramsObject(raw)
-        return { id: stringParam(p, 'id'), patch: eventFields(p) }
+        return { id: stringParam(p, 'id'), ...eventFields(p) }
       },
-      run: async (ctx, { id, patch }) => {
+      run: async (ctx, { id, ...patch }) => {
         await google(() => updateEvent(apiOf(ctx.remote), id, patch))
         return ok
       },
     }),
 
     /** Delete an event; refused when anyone is invited, since it would email
-     *  them a cancellation. */
+     *  them a cancellation. The calendar view's Delete is this call. */
     'google.unschedule': cap({
-      doors: ['cli'],
+      doors: ['ui', 'cli'],
       cli: { args: ['id'], summary: 'delete an event nobody else is invited to' },
       params: idParams,
       run: async (ctx, { id }) => {

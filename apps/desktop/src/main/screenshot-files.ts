@@ -15,6 +15,7 @@ import { chmod, lstat, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+/** @public exported for its test */
 export const SCREENSHOT_DIR = join(tmpdir(), 'holi-screenshots')
 
 const KEEP = 20

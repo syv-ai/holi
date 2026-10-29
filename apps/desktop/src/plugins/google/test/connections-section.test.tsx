@@ -1,0 +1,196 @@
+/**
+ * A vault's Google account is its own.
+ *
+ * An account connected on this machine is not an account *this vault uses*.
+ * Reusing the first as the second is a mapping and no consent, and unlinking a
+ * vault is not the same act as removing an account.
+ */
+import { render as rtlRender, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { Provider, createStore } from 'jotai'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ConnectionsSection } from '../renderer/connections-section'
+import { activeRemoteAtom } from '@/plugin-api'
+
+/** A fresh jotai store per test: the google atoms are module level, so one
+ *  case's answer would otherwise still be held when the next one renders. */
+const render = () => {
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv-ai/vault')
+  return rtlRender(
+    <Provider store={store}>
+      <ConnectionsSection />
+    </Provider>,
+  )
+}
+
+const status = vi.fn()
+const accounts = vi.fn()
+const linkAccount = vi.fn()
+const removeAccount = vi.fn()
+const disconnectVault = vi.fn()
+const client = vi.fn()
+const setClient = vi.fn()
+
+/** Google's capabilities, by name, through the UI door. */
+const google: Record<string, (params: unknown) => unknown> = {
+  'google.status': () => status(),
+  'google.accounts': () => accounts(),
+  'google.useAccount': (p) => linkAccount(p),
+  'google.removeAccount': (p) => removeAccount(p),
+  'google.disconnectVault': () => disconnectVault(),
+  'google.imageSenders': async () => [],
+  'google.client': () => client(),
+  'google.setClient': (p) => setClient(p),
+}
+
+vi.mock('@/lib/trpc', () => ({
+  trpc: {
+    cap: {
+      run: {
+        mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
+          const verb = google[name]
+          if (verb === undefined) throw new Error(`unexpected ${name}`)
+          return verb(paramsJson === undefined ? undefined : JSON.parse(paramsJson))
+        },
+      },
+    },
+  },
+}))
+
+const ADA = { sub: 'sub-1', email: 'ada@syv.ai' }
+const WORK = { sub: 'sub-2', email: 'work@syv.ai' }
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  status.mockResolvedValue({ account: null, missingScopes: [] })
+  accounts.mockResolvedValue({ accounts: [ADA, WORK], current: null })
+  // Resolved, not bare: the component chains `.catch` on every mutation, and an
+  // undefined return there is an unhandled rejection that still lets the
+  // assertion pass.
+  linkAccount.mockResolvedValue({ ok: true })
+  removeAccount.mockResolvedValue({ ok: true })
+  disconnectVault.mockResolvedValue({ ok: true })
+  client.mockResolvedValue({ id: 'holi.apps.googleusercontent.com', source: 'shipped' })
+  setClient.mockResolvedValue({ ok: true })
+})
+
+describe('ConnectionsSection', () => {
+  it('offers the accounts already connected here to a vault with none', async () => {
+    render()
+
+    expect(await screen.findByText('ada@syv.ai')).toBeInTheDocument()
+    expect(screen.getByText('work@syv.ai')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Use in this vault' })).toHaveLength(2)
+  })
+
+  it('says plainly "Connect" when there is no account on this machine to differ from', async () => {
+    // The label follows the machine list, not this vault's link: offering a
+    // "different" account to a first-run user names one they do not have.
+    accounts.mockResolvedValue({ accounts: [], current: null })
+    render()
+
+    expect(await screen.findByRole('button', { name: 'Connect' })).toBeInTheDocument()
+  })
+
+  it('offers a different account only when this machine already has one', async () => {
+    // Accounts exist and this vault uses none: the rows above are the offer, and
+    // this button is the escape hatch from them.
+    render()
+
+    expect(
+      await screen.findByRole('button', { name: 'Connect a different account…' }),
+    ).toBeInTheDocument()
+  })
+
+  it('reuses an account with one click and no consent round trip', async () => {
+    render()
+    await screen.findByText('ada@syv.ai')
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Use in this vault' })[0]!)
+
+    await waitFor(() => expect(linkAccount).toHaveBeenCalledWith({ sub: 'sub-1' }))
+  })
+
+  it('does not offer the account this vault is already using', async () => {
+    accounts.mockResolvedValue({ accounts: [ADA, WORK], current: 'sub-1' })
+    status.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
+    render()
+
+    expect(await screen.findByText('work@syv.ai')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Use in this vault' })).toHaveLength(1)
+  })
+
+  it('unlinks the vault rather than revoking the account', async () => {
+    // The two are different acts and the panel must not conflate them: another
+    // vault may be using this account.
+    accounts.mockResolvedValue({ accounts: [ADA], current: 'sub-1' })
+    status.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
+    render()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Disconnect this vault' }))
+
+    await waitFor(() => expect(disconnectVault).toHaveBeenCalled())
+    expect(removeAccount).not.toHaveBeenCalled()
+  })
+
+  it('removes an account by name when that is what was asked for', async () => {
+    render()
+    await screen.findByText('ada@syv.ai')
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Remove from Holi' })[0]!)
+    // It revokes at Google for every vault, so it asks first.
+    expect(removeAccount).not.toHaveBeenCalled()
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove account' }))
+
+    await waitFor(() => expect(removeAccount).toHaveBeenCalledWith({ sub: 'sub-1' }))
+  })
+
+  it('cancelling the remove confirm revokes nothing', async () => {
+    render()
+    await screen.findByText('ada@syv.ai')
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Remove from Holi' })[0]!)
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove account' })).toBeNull())
+    expect(removeAccount).not.toHaveBeenCalled()
+  })
+})
+
+describe('the OAuth client', () => {
+  it('names the client in use, and a new one asks before it disconnects the accounts', async () => {
+    const user = userEvent.setup()
+    render()
+    expect(
+      await screen.findByText(/Holi’s client, which accepts syv.ai accounts only/),
+    ).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Use your own client…' }))
+    await user.type(screen.getByLabelText('Client ID'), 'mine.apps.googleusercontent.com')
+    await user.type(screen.getByLabelText('Client secret'), 's3cret')
+    await user.click(screen.getByRole('button', { name: 'Save and disconnect 2 accounts' }))
+    // Asked once more: nothing saved yet.
+    expect(await screen.findByText('This disconnects 2 accounts')).toBeTruthy()
+    expect(setClient).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Disconnect and switch' }))
+    await waitFor(() =>
+      expect(setClient).toHaveBeenCalledWith({
+        id: 'mine.apps.googleusercontent.com',
+        secret: 's3cret',
+      }),
+    )
+  })
+
+  it('says a refusal in the form, and keeps what was typed', async () => {
+    const user = userEvent.setup()
+    accounts.mockResolvedValue({ accounts: [], current: null })
+    setClient.mockRejectedValue(new Error('a client id ends in .apps.googleusercontent.com'))
+    render()
+    await user.click(await screen.findByRole('button', { name: 'Use your own client…' }))
+    await user.type(screen.getByLabelText('Client ID'), 'nope')
+    await user.type(screen.getByLabelText('Client secret'), 'x')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText(/a client id ends in/)).toBeTruthy()
+    expect((screen.getByLabelText('Client ID') as HTMLInputElement).value).toBe('nope')
+  })
+})

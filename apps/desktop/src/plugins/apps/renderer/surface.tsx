@@ -16,10 +16,11 @@ import {
   type RailItem,
   type Surface,
 } from '@/plugin-api'
-import { IconButton } from '@/primitives'
-import { AppFrame } from './AppFrame'
-import { AppIcon } from './AppIcon'
-import { appInstancesAtom, appOpensAtom } from './apps'
+import { IconButton } from '@/composites/icon-button'
+import { AppFrame } from './app-frame'
+import { AppIcon } from './app-icon'
+import { appInstancesAtom, appOpensAtom, archiveAppAtom, archivedAppsAtom } from './apps'
+import { previewVersionsAtom, refreshPreviewAtom } from './app-previews'
 import { appsCap } from './apps-cap'
 
 /** What makes a bundle an app at all: its entry document. */
@@ -39,18 +40,20 @@ function AppHeaderActions({ id }: { id?: string }): React.JSX.Element | null {
   return (
     <>
       <IconButton
-        icon={RotateCw}
-        label="reload this app"
+        label="Reload this app"
         className="ml-1"
         onClick={() => setReloads((n) => ({ ...n, [id]: (n[id] ?? 0) + 1 }))}
-      />
+      >
+        <RotateCw className="size-3.5" />
+      </IconButton>
       <IconButton
-        icon={Logs}
-        label={hasLog ? "open this app's log" : 'no log yet'}
+        label={hasLog ? 'Open this app’s log' : 'No log yet'}
         className="ml-1"
         disabled={!hasLog}
         onClick={() => openPath(log, 'pane')}
-      />
+      >
+        <Logs className="size-3.5" />
+      </IconButton>
     </>
   )
 }
@@ -66,6 +69,15 @@ export const APP_SURFACE: Surface = {
   icon: AppIcon,
   render: AppSurface,
   instances: appInstancesAtom,
+  // The manifest's `description`, which is there for the launchers.
+  describe: (remote, id) => appsCap.describe(remote, { bundle: id }).then((r) => r.description),
+  // The picture `AppFrame` took the last time the app ran here.
+  preview: (remote, id) => appsCap.preview(remote, { bundle: id }).then((r) => r.dataUrl),
+  previewVersions: previewVersionsAtom,
+  refreshPreview: refreshPreviewAtom,
+  // `archived: true` in the manifest: out of the launchers, never deleted.
+  archived: archivedAppsAtom,
+  archive: archiveAppAtom,
   headerActions: AppHeaderActions,
 }
 
@@ -98,9 +110,9 @@ export const APP_CLAIM: PathClaim = {
   // `holi apps init`'s scaffold. Opening its entry expands the bundle.
   create: {
     id: 'app',
-    label: 'New App',
+    label: 'New app',
     icon: AppWindow,
-    placeholder: 'app name',
+    placeholder: 'App name',
     run: async ({ remote, parent, name }) => {
       const file = name.endsWith(APP_SUFFIX) ? name : `${name}${APP_SUFFIX}`
       const bundle = parent === '' ? file : `${parent}/${file}`

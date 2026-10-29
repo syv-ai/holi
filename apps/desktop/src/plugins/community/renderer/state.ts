@@ -10,13 +10,12 @@
  */
 import { atom } from 'jotai'
 import { communityPluginsSignature, servedFile } from '@holi/shared'
-import { capClient, snapshotAtom, type PluginStore } from '@/plugin-api'
-import type { communityCapabilities, PluginRow } from '../main/capabilities'
+import { snapshotAtom, type PluginStore } from '@/plugin-api'
+import { communityCap } from './community-cap'
+import type { PluginRow } from '../main/capabilities'
 import type { ServerState } from '../main/supervisor'
 
 export type { PluginRow, ServerState }
-
-export const communityCap = capClient<ReturnType<typeof communityCapabilities>>('community')
 
 /** The open vault's rows, with the vault they were read for. */
 export const rowsAtom = atom<{ remote: string; rows: readonly PluginRow[] } | null>(null)

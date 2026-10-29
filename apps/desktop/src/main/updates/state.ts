@@ -3,7 +3,7 @@
  * Keep a found or downloading update when checks overlap.
  */
 
-export type UpdateState = 'idle' | 'checking' | 'available' | 'downloading' | 'ready'
+type UpdateState = 'idle' | 'checking' | 'available' | 'downloading' | 'ready'
 
 /** Everything the renderer knows about updating Holi, pushed whole on change. */
 export type UpdateChannel = 'stable' | 'dev'
@@ -36,10 +36,15 @@ export type UpdateEvent =
   | { type: 'downloaded' }
   | { type: 'error'; message: string }
 
-/** Background checks no closer together than this. */
+/**
+ * Background checks no closer together than this.
+ * @public exported for its test
+ */
 export const CHECK_COOLDOWN_MS = 5 * 60 * 1000
 /** A check with no answer for this long is dead, so it cannot block "Check
- *  now" forever. */
+ *  now" forever.
+ * @public exported for its test
+ */
 export const CHECK_STALE_MS = 60 * 1000
 
 export function initialStatus(input: {

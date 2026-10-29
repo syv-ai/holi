@@ -1,37 +1,28 @@
 /**
- * Link files as a path claim (docs/features/links.md): New Link in the
- * explorer and a web address dropped on it, the card on their rows in the
- * tree, how a wiki-link to one is drawn (⌘-click goes to the page), what `@`
- * offers of them, their frontmatter rows, the card at the top of their tab,
- * Open in Browser in their row menu, and how the tree and the tabs mark them.
+ * Link files as a path claim (docs/features/links.md): New Link in the files
+ * list and a web address dropped on it from a browser, the card on their
+ * rows in the tree and at the top of their tab, and Open in Browser in their
+ * row menu.
  */
 import { atom, useAtomValue } from 'jotai'
-import { Link as LinkGlyph } from 'lucide'
-import { Link } from 'lucide-react'
-import { type LinkChip, type PathClaim, type PathMark, snapshotAtom, trpc } from '@/plugin-api'
-import { Icon } from '@/primitives'
-import {
-  isLinkFilePath,
-  LINK_FIELDS,
-  linkTitle,
-  parseLinkFile,
-  snapshotLinks,
-} from '../shared/link-file'
-import { hostOf, isWebUrl } from '../shared/preview'
-import { linkHeader } from './header'
-import { PreviewCard } from './PreviewCard'
-import { UrlField } from './UrlField'
-import { linksCap } from './use-preview'
+import { LinkIcon } from 'lucide-react'
+import { snapshotAtom, trpc, openExternal } from '@/plugin-api'
+import type { PathClaim } from '@/plugin-api/types'
+import { isLinkFilePath, linkTitle, parseLinkFile, snapshotLinks } from '../shared/link-file'
+import { isWebUrl } from '../shared/preview'
+import { PreviewCard } from './preview-card'
+import { linksCap } from './links-cap'
 
 /** The vault's link files, by path. */
 const linksAtom = atom(
   (get) => new Map(snapshotLinks(get(snapshotAtom)).items.map((l) => [l.path, l])),
 )
 
-/** A saved link's row in the tree: its page's card, under its own name. */
-function LinkRowCard({ path }: { path: string }): React.JSX.Element | null {
+/** A saved link's page, or nothing for a file that names none. */
+function LinkCard({ path, floating }: { path: string; floating: boolean }) {
   const link = useAtomValue(linksAtom).get(path)
-  return link === undefined ? null : <PreviewCard url={link.url} title={linkTitle(path)} floating />
+  if (link === undefined) return null
+  return <PreviewCard url={link.url} title={linkTitle(path)} floating={floating} />
 }
 
 export const LINK_PATH_CLAIM: PathClaim = {
@@ -39,17 +30,19 @@ export const LINK_PATH_CLAIM: PathClaim = {
   create: {
     id: 'link',
     label: 'New Link',
-    icon: Link,
-    placeholder: 'paste a web address',
+    icon: LinkIcon,
+    placeholder: 'Paste a web address',
+    asksName: true,
     // A link dragged in from a browser is saved where it lands.
     fromUrl: true,
     run: async ({ remote, parent, name }) => {
       const url = name.trim()
-      if (!isWebUrl(url)) throw new Error("That isn't a web address")
+      if (!isWebUrl(url)) throw new Error('That isn’t a web address: it starts with https://.')
       return (await linksCap.create(remote, { url, folder: parent })).path
     },
   },
-  hover: LinkRowCard,
+  hover: ({ path }) => <LinkCard path={path} floating />,
+  banner: ({ path }) => <LinkCard path={path} floating={false} />,
   rowMenu: [
     {
       label: 'Open in Browser',
@@ -58,43 +51,8 @@ export const LINK_PATH_CLAIM: PathClaim = {
       run: ({ remote, path }) =>
         void trpc.notes.read.query({ remote, path }).then((text) => {
           const { url } = parseLinkFile(text, path)
-          void window.holi.openExternal(url)
+          openExternal(url)
         }),
     },
   ],
-  graph: { label: 'Link', fill: 'fill-brand' },
-  editor: {
-    chips: (snapshot) =>
-      new Map(
-        snapshotLinks(snapshot).items.map((l): [string, LinkChip] => [
-          l.path,
-          { title: linkTitle(l.path), meta: hostOf(l.url), url: l.url },
-        ]),
-      ),
-    mentions: (snapshot) => ({
-      name: 'Links',
-      items: snapshotLinks(snapshot).items.map((l) => ({
-        path: l.path,
-        label: linkTitle(l.path),
-        glyph: LinkGlyph,
-        meta: hostOf(l.url),
-      })),
-    }),
-    extensions: (path) => linkHeader(path),
-  },
-  // The address in full, wrapping, where a one-line field would cut it off.
-  frontmatter: { fields: LINK_FIELDS, controls: { url: UrlField }, alwaysOpen: true },
 }
-
-/** A file type's colour, as the tree gives every other file its own. Drawn a
- *  little under the icon size: the chain runs corner to corner, so at full
- *  size it reads larger than the file shapes around it. */
-const LINK_MARK: PathMark = {
-  glyph: <Icon icon={Link} size="sm" className="scale-[0.86] text-file-sky" />,
-}
-
-/** Every link file's glyph, in the tree and the tabs. */
-export const linkMarksAtom = atom(
-  (get): ReadonlyMap<string, PathMark> =>
-    new Map([...get(linksAtom).keys()].map((path) => [path, LINK_MARK])),
-)

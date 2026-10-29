@@ -4,12 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import {
-  parseTaskFile,
-  privateTaskPath,
-  sharedTaskPath,
-  taskClaim,
-} from '../src/plugins/tasks/shared/task-file'
+import { parseTaskFile, privateTaskPath, sharedTaskPath, taskClaim } from '@holi/shared'
 import { SETTINGS_FILE, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
@@ -795,9 +790,50 @@ describe('tasks.update', () => {
       tasksCall(caller, 'update', {
         remote: REMOTE,
         path: 'task.review.md',
-        patch: { status: 'blocked' },
+        patch: { priority: 'critical' },
       }),
-    ).rejects.toThrow(/status must be one of/)
+    ).rejects.toThrow(/priority must be one of/)
+  })
+
+  it("completes into the vault's own completed status and reopens into its first unstarted one", async () => {
+    const statuses = [
+      'statuses:',
+      '  - { id: next, name: Next, category: unstarted }',
+      '  - { id: qa, name: QA, category: review }',
+      '  - { id: shipped, name: Shipped, category: completed }',
+      '',
+    ].join('\n')
+    const { caller } = await rig({
+      '.holi/statuses.yaml': statuses,
+      'task.ship.md': '---\nstatus: next\n---\n',
+      'task.standup.md': [
+        '---',
+        'status: qa',
+        'due: 2026-07-20',
+        'recurrence: { frequency: weekly, interval: 1 }',
+        '---',
+      ].join('\n'),
+    })
+    const ship = await tasksCall(caller, 'update', {
+      remote: REMOTE,
+      path: 'task.ship.md',
+      patch: { status: 'shipped' },
+    })
+    expect(ship.status).toBe('shipped')
+    const standup = await tasksCall(caller, 'update', {
+      remote: REMOTE,
+      path: 'task.standup.md',
+      patch: { status: 'shipped' },
+    })
+    expect(standup.status).toBe('next')
+    expect(standup.due).toBe('2026-07-27')
+    // A word the vault does not list is kept as it is, open.
+    const qa = await tasksCall(caller, 'update', {
+      remote: REMOTE,
+      path: 'task.ship.md',
+      patch: { status: 'blocked' },
+    })
+    expect(qa.status).toBe('blocked')
   })
 
   it('reports a missing task rather than creating one', async () => {
@@ -964,7 +1000,7 @@ describe('tasks.create with fields', () => {
   it('refuses a field the board could not read back', async () => {
     const { caller } = await rig({})
     await expect(
-      createTask(caller, { remote: REMOTE, title: 'Bad', extra: { priority: 'urgent' } }),
+      createTask(caller, { remote: REMOTE, title: 'Bad', extra: { priority: 'critical' } }),
     ).rejects.toThrow()
   })
 })
@@ -1709,17 +1745,6 @@ describe('sync', () => {
     await caller.notes.create({ remote: 'syv-ai/notes', path: 'ship.md', text: '# Ship\n' })
     await caller.sync.commitNow()
     expect(await caller.sync.pushNow()).toEqual({ ok: true })
-
-    // Wait until dest's commits are all on origin (nothing ahead) before cloning
-    // the checker — the explicit pushNow can no-op if the seed's open-drain push
-    // is still in flight, and the coalescer's retry lands a beat later.
-    for (let i = 0; i < 200; i++) {
-      const ahead = await plainGit(dest, ['rev-list', '--count', 'origin/main..HEAD']).catch(
-        () => '1',
-      )
-      if (ahead === '0') break
-      await new Promise((r) => setTimeout(r, 20))
-    }
 
     const check = await makeClone(origin, 'check')
     expect(await readFile(join(check, 'ship.md'), 'utf8')).toBe('# Ship\n')

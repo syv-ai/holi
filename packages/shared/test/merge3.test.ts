@@ -59,12 +59,24 @@ describe('lineHunks', () => {
     // The property that matters, stated once instead of asserted shape by
     // shape: hunks are a complete description of the edit.
     const cases: [string[], string[]][] = [
-      [['a', 'b', 'c'], ['a', 'B', 'c']],
-      [['a', 'b', 'c'], ['c', 'b', 'a']],
+      [
+        ['a', 'b', 'c'],
+        ['a', 'B', 'c'],
+      ],
+      [
+        ['a', 'b', 'c'],
+        ['c', 'b', 'a'],
+      ],
       [[], ['x']],
       [['x'], []],
-      [['a', 'a', 'a'], ['a', 'a', 'a', 'a']],
-      [['# Title', '', 'Body.'], ['# Title', '', 'Intro.', '', 'Body.']],
+      [
+        ['a', 'a', 'a'],
+        ['a', 'a', 'a', 'a'],
+      ],
+      [
+        ['# Title', '', 'Body.'],
+        ['# Title', '', 'Intro.', '', 'Body.'],
+      ],
     ]
 
     for (const [base, other] of cases) {
@@ -182,7 +194,11 @@ describe('merge3 — conflict', () => {
   const BASE = T('one', 'two', 'three', 'four', 'five')
 
   it('conflicts when both sides changed the same line', () => {
-    const result = merge3(BASE, T('one', 'MINE', 'three', 'four', 'five'), T('one', 'THEIRS', 'three', 'four', 'five'))
+    const result = merge3(
+      BASE,
+      T('one', 'MINE', 'three', 'four', 'five'),
+      T('one', 'THEIRS', 'three', 'four', 'five'),
+    )
 
     expect(result.kind).toBe('conflict')
     // No text, at all. The caller must not be able to write a resolved buffer
@@ -305,11 +321,41 @@ describe('merge3 — conflict', () => {
 describe('merge3 — the scenarios this exists for', () => {
   it("a pull lands a teammate's new section while you type in another", () => {
     const base = T('# Roadmap', '', '## Q2', '', 'Ship the editor.', '', '## Q3', '', 'TBD.')
-    const mine = T('# Roadmap', '', '## Q2', '', 'Ship the editor and the board.', '', '## Q3', '', 'TBD.')
-    const theirs = T('# Roadmap', '', '## Q2', '', 'Ship the editor.', '', '## Q3', '', 'Hiring, then infra.')
+    const mine = T(
+      '# Roadmap',
+      '',
+      '## Q2',
+      '',
+      'Ship the editor and the board.',
+      '',
+      '## Q3',
+      '',
+      'TBD.',
+    )
+    const theirs = T(
+      '# Roadmap',
+      '',
+      '## Q2',
+      '',
+      'Ship the editor.',
+      '',
+      '## Q3',
+      '',
+      'Hiring, then infra.',
+    )
 
     expect(merged(base, mine, theirs)).toBe(
-      T('# Roadmap', '', '## Q2', '', 'Ship the editor and the board.', '', '## Q3', '', 'Hiring, then infra.'),
+      T(
+        '# Roadmap',
+        '',
+        '## Q2',
+        '',
+        'Ship the editor and the board.',
+        '',
+        '## Q3',
+        '',
+        'Hiring, then infra.',
+      ),
     )
   })
 
@@ -337,9 +383,33 @@ describe('merge3 — the scenarios this exists for', () => {
   })
 
   it('a task file gains a different frontmatter field on each side', () => {
-    const base = T('---', 'title: Review', 'status: todo', 'due: 2026-07-20', '---', '', 'The body.')
-    const mine = T('---', 'title: Review', 'status: doing', 'due: 2026-07-20', '---', '', 'The body.')
-    const theirs = T('---', 'title: Review', 'status: todo', 'due: 2026-09-09', '---', '', 'The body.')
+    const base = T(
+      '---',
+      'title: Review',
+      'status: todo',
+      'due: 2026-07-20',
+      '---',
+      '',
+      'The body.',
+    )
+    const mine = T(
+      '---',
+      'title: Review',
+      'status: doing',
+      'due: 2026-07-20',
+      '---',
+      '',
+      'The body.',
+    )
+    const theirs = T(
+      '---',
+      'title: Review',
+      'status: todo',
+      'due: 2026-09-09',
+      '---',
+      '',
+      'The body.',
+    )
 
     // Adjacent lines, different fields — and it MERGES.
     //

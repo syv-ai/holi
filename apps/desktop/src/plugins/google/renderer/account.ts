@@ -14,17 +14,14 @@
  */
 import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { unwrap } from 'jotai/utils'
-import { activeRemoteAtom, capClient } from '@/plugin-api'
-import type { GoogleCapabilities } from '../main/capabilities'
+import { activeRemoteAtom } from '@/plugin-api'
+import { googleCap } from './google-cap'
 import type { GoogleAccount } from '../main/session'
 
 export type { GoogleAccount }
 
-/** Google's capabilities at the UI door, each call naming the vault it is for. */
-export const googleCap = capClient<GoogleCapabilities>('google')
-
 /** An account connected on this machine, as the picker needs it. */
-export interface ConnectedGoogleAccount {
+interface ConnectedGoogleAccount {
   sub: string
   email: string
 }
@@ -49,7 +46,10 @@ interface Connection {
 
 const refreshNonceAtom = atom(0)
 
-/** Ask main again: after a connect, a disconnect or a change of account. */
+/**
+ * Ask main again: after a connect, a disconnect or a change of account.
+ * @public exported for its test
+ */
 export const refreshGoogleAtom = atom(null, (_get, set) => set(refreshNonceAtom, (n) => n + 1))
 
 const connectionAtom = atom(async (get): Promise<Connection> => {
@@ -94,7 +94,7 @@ const currentConnectionAtom = atom((get): Connection | undefined => {
 })
 
 /** `undefined`: not asked yet. `null`: asked, nothing connected. */
-export const googleAccountAtom = atom(
+const googleAccountAtom = atom(
   (get): GoogleAccount | null | undefined => get(currentConnectionAtom)?.account,
 )
 

@@ -1,30 +1,35 @@
 /**
- * A scheduled agent's definition: one `.local.md` file in `.holi/schedules/`
- * whose frontmatter says when and with what, and whose body is the prompt
- * (docs/features/scheduled-agents.md).
+ * An automation's definition (a scheduled agent): one `.local.md` file in
+ * `.holi/schedules/` whose frontmatter says when and with what, and whose body
+ * is the prompt (docs/features/scheduled-agents.md).
  *
  * ```markdown
  * ---
  * name: Inbox triage
  * cron: "*\/30 7-18 * * 1-5"
+ * holi: assistant
  * model: sonnet
  * allow:
  *   - Bash(holi google search:*)
  *   - Bash(holi google read:*)
+ * catch-up: 2h
  * ---
  * Look through my unread mail since the previous run…
  * ```
  *
- * `cron` (repeating) or `at` (once, a local `YYYY-MM-DDTHH:MM`), never both;
- * and/or `on`, the events that start a run (`triggers.ts`).
+ * `cron` (repeating; one expression, or a list of them, each a trigger) or
+ * `at` (once, a local `YYYY-MM-DDTHH:MM`), never both; and/or `on`, the
+ * events that start a run (`triggers.ts`). `holi` names the Holi that carries
+ * it out, whose soul, memory, model and rules a run gets.
  * `allow` is Claude Code permission rules the run may use without asking;
- * every other permission prompt still asks. Times are this machine's local
- * time.
+ * every other permission prompt still asks. `catch-up` is how late a missed
+ * moment may still run (`none`, `30m`, `2h`…); absent, it always does. Times
+ * are this machine's local time.
  *
  * Pure and browser-safe: the renderer shows what main runs from the same
  * reading.
  */
-import { parse as parseYaml } from 'yaml'
+import { Document, parse as parseYaml, parseDocument } from 'yaml'
 import {
   CronError,
   describeCron,
@@ -37,7 +42,7 @@ import { parseDateTime } from './dates'
 import { splitFrontmatter } from './frontmatter'
 import { normalizeText } from './normalize-md'
 import { SCHEDULES_SURFACE_DIR } from './path-safety'
-import { describeTriggers, parseTriggers, type Trigger } from './triggers'
+import { describeTriggers, parseTriggers, triggerYaml, type Trigger } from './triggers'
 
 /** Where schedule files live. Root-anchored, one level: a schedule is a file
  *  directly inside. */
@@ -48,7 +53,8 @@ export const SCHEDULES_DIR = SCHEDULES_SURFACE_DIR
 export const MIN_SCHEDULE_GAP_MINUTES = 5
 
 export type ScheduleWhen =
-  | { kind: 'cron'; cron: Cron }
+  /** Each cron is one trigger; the schedule runs at the first that comes. */
+  | { kind: 'cron'; crons: Cron[] }
   /** `stamp` as written; `local` the same minute as a local `Date`. */
   | { kind: 'at'; stamp: string; local: Date }
 
@@ -58,8 +64,13 @@ export interface ScheduleDef {
   when?: ScheduleWhen
   /** The events that start a run, besides `when`. */
   on: Trigger[]
+  /** The id of the Holi that carries it out. */
+  holi?: string
   /** A Claude Code model alias or id, for `--model`. */
   model?: string
+  /** How late a missed moment may still run, in minutes: 0 never. Absent, a
+   *  missed moment always runs, once. */
+  catchUpMinutes?: number
   /** Claude Code permission rules, each one `--allowedTools` value. */
   allow: string[]
   prompt: string
@@ -86,6 +97,25 @@ export function scheduleSlug(path: string): string {
 
 /** A model name fit for argv: no spaces, no flags. */
 const MODEL_RE = /^[A-Za-z0-9][\w.:[\]-]*$/
+
+/** A Holi's id, as `holi.ts` names its files. */
+const HOLI_ID_RE = /^[a-z0-9][a-z0-9-]{0,47}$/
+
+/** `none`, `30m` or `12h` in minutes; null for anything else. Up to 30 days. */
+export function catchUpOf(text: string): number | null {
+  const t = text.trim().toLowerCase()
+  if (t === 'none' || t === '0') return 0
+  const m = /^(\d{1,5})\s*([mh])$/.exec(t)
+  if (m === null) return null
+  const minutes = Number(m[1]) * (m[2] === 'h' ? 60 : 1)
+  return minutes <= 43_200 ? minutes : null
+}
+
+/** Minutes as `catch-up` writes them. */
+export function catchUpText(minutes: number): string {
+  if (minutes === 0) return 'none'
+  return minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`
+}
 
 /** A local `YYYY-MM-DDTHH:MM` as the `Date` of that wall-clock minute. */
 function localStamp(stamp: string): Date | null {
@@ -139,21 +169,27 @@ export function parseScheduleFile(text: string, path: string): ScheduleParse {
   }
   let when: ScheduleWhen | undefined
   if (cronText !== undefined) {
-    if (typeof cronText !== 'string') return { ok: false, error: '`cron` must be quoted text' }
-    let cron: Cron
-    try {
-      cron = parseCron(cronText)
-    } catch (err) {
-      if (err instanceof CronError) return { ok: false, error: `cron: ${err.message}` }
-      throw err
-    }
-    if (shortestGapMinutes(cron) < MIN_SCHEDULE_GAP_MINUTES) {
-      return {
-        ok: false,
-        error: `cron: runs more often than every ${MIN_SCHEDULE_GAP_MINUTES} minutes`,
+    const texts = Array.isArray(cronText) ? cronText : [cronText]
+    if (texts.length === 0) return { ok: false, error: '`cron` names no time' }
+    const crons: Cron[] = []
+    for (const text of texts) {
+      if (typeof text !== 'string') return { ok: false, error: '`cron` must be quoted text' }
+      let cron: Cron
+      try {
+        cron = parseCron(text)
+      } catch (err) {
+        if (err instanceof CronError) return { ok: false, error: `cron: ${err.message}` }
+        throw err
       }
+      if (shortestGapMinutes(cron) < MIN_SCHEDULE_GAP_MINUTES) {
+        return {
+          ok: false,
+          error: `cron: runs more often than every ${MIN_SCHEDULE_GAP_MINUTES} minutes`,
+        }
+      }
+      crons.push(cron)
     }
-    when = { kind: 'cron', cron }
+    when = { kind: 'cron', crons }
   } else if (atText !== undefined) {
     // YAML reads an unquoted timestamp as a Date; the stamp is wall-clock
     // text, so only the quoted form is unambiguous.
@@ -169,6 +205,21 @@ export function parseScheduleFile(text: string, path: string): ScheduleParse {
   if (!on.ok) return on
   if (when === undefined && on.triggers.length === 0) {
     return { ok: false, error: 'it needs a `cron`, an `at` or an `on`' }
+  }
+
+  const rawHoli = f['holi']
+  if (rawHoli !== undefined && (typeof rawHoli !== 'string' || !HOLI_ID_RE.test(rawHoli))) {
+    return { ok: false, error: '`holi` is the id of a Holi, like `assistant`' }
+  }
+
+  const rawCatchUp = f['catch-up']
+  let catchUpMinutes: number | undefined
+  if (rawCatchUp !== undefined) {
+    const minutes = typeof rawCatchUp === 'string' ? catchUpOf(rawCatchUp) : null
+    if (minutes === null) {
+      return { ok: false, error: '`catch-up` is `none` or a time like `30m` or `12h`' }
+    }
+    catchUpMinutes = minutes
   }
 
   const rawModel = f['model']
@@ -194,7 +245,9 @@ export function parseScheduleFile(text: string, path: string): ScheduleParse {
       name,
       ...(when === undefined ? {} : { when }),
       on: on.triggers,
+      ...(typeof rawHoli === 'string' ? { holi: rawHoli } : {}),
       ...(typeof rawModel === 'string' ? { model: rawModel } : {}),
+      ...(catchUpMinutes === undefined ? {} : { catchUpMinutes }),
       allow,
       prompt: body,
     },
@@ -215,17 +268,34 @@ export function parseScheduleFile(text: string, path: string): ScheduleParse {
  */
 export function scheduleApprovalText(def: ScheduleDef): string {
   const prompt = normalizeText(def.prompt, '', []).trim()
+  // Which Holi carries it out is approved too; what that Holi is (its soul,
+  // model and rules) the caller adds, read from the Holi's own files. Each
+  // key that came later is written only when it is set, so a schedule without
+  // it keeps the fingerprint it was approved with.
   return JSON.stringify({
     prompt,
     model: def.model ?? null,
     allow: def.allow,
-    on: def.on,
+    ...(def.holi === undefined ? {} : { holi: def.holi }),
+    ...(def.on.length === 0 ? {} : { on: def.on }),
   })
 }
 
 /** When it runs, in words. */
 export function describeScheduleWhen(when: ScheduleWhen): string {
-  return when.kind === 'cron' ? describeCron(when.cron) : `Once, at ${when.stamp.replace('T', ' ')}`
+  return when.kind === 'cron'
+    ? when.crons.map(describeCron).join(' · ')
+    : `Once, at ${when.stamp.replace('T', ' ')}`
+}
+
+/** The first moment after `after` any of the crons names. */
+function nextOfCrons(crons: readonly Cron[], after: Date): Date | null {
+  let best: Date | null = null
+  for (const cron of crons) {
+    const next = nextCronTime(cron, after)
+    if (next !== null && (best === null || next.getTime() < best.getTime())) best = next
+  }
+  return best
 }
 
 /** When it runs and what starts it, in words. */
@@ -251,7 +321,7 @@ export function dueRun(when: ScheduleWhen, since: Date, now: Date): Date | null 
       ? when.local.getTime() > since.getTime()
         ? when.local
         : null
-      : nextCronTime(when.cron, since)
+      : nextOfCrons(when.crons, since)
   return next !== null && next.getTime() <= now.getTime() ? next : null
 }
 
@@ -259,5 +329,101 @@ export function dueRun(when: ScheduleWhen, since: Date, now: Date): Date | null 
  *  in the past). */
 export function nextRun(when: ScheduleWhen, now: Date): Date | null {
   if (when.kind === 'at') return when.local.getTime() > now.getTime() ? when.local : null
-  return nextCronTime(when.cron, now)
+  return nextOfCrons(when.crons, now)
+}
+
+/**
+ * One trigger as the automation editor says it: a sentence with a pill or
+ * two, after MonoCode's. A cron no sentence says stays `custom`, shown as
+ * written.
+ */
+export type ScheduleTrigger =
+  | { kind: 'hourly'; minute: number }
+  | { kind: 'daily'; time: string }
+  | { kind: 'weekdays'; time: string }
+  | { kind: 'weekly'; day: number; time: string }
+  | { kind: 'custom'; cron: string }
+
+const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/
+
+/** A cron as a trigger sentence, or `custom`. */
+export function triggerOfCron(source: string): ScheduleTrigger {
+  const parts = source.trim().split(/\s+/)
+  const custom: ScheduleTrigger = { kind: 'custom', cron: source.trim() }
+  if (parts.length !== 5) return custom
+  const [min, hour, dom, mon, dow] = parts as [string, string, string, string, string]
+  if (!/^\d{1,2}$/.test(min) || Number(min) > 59 || dom !== '*' || mon !== '*') return custom
+  const minute = Number(min)
+  if (hour === '*' && dow === '*') return { kind: 'hourly', minute }
+  if (!/^\d{1,2}$/.test(hour) || Number(hour) > 23) return custom
+  const time = `${hour.padStart(2, '0')}:${min.padStart(2, '0')}`
+  if (dow === '*') return { kind: 'daily', time }
+  if (dow === '1-5') return { kind: 'weekdays', time }
+  if (/^[0-6]$/.test(dow)) return { kind: 'weekly', day: Number(dow), time }
+  return custom
+}
+
+/** A trigger sentence as the cron the file keeps. */
+export function cronOfTrigger(trigger: ScheduleTrigger): string {
+  if (trigger.kind === 'custom') return trigger.cron.trim()
+  if (trigger.kind === 'hourly') return `${trigger.minute} * * * *`
+  const m = TIME_RE.exec(trigger.time)
+  const [h, min] = m === null ? [9, 0] : [Number(m[1]), Number(m[2])]
+  const dow =
+    trigger.kind === 'daily' ? '*' : trigger.kind === 'weekdays' ? '1-5' : String(trigger.day)
+  return `${min} ${h} * * ${dow}`
+}
+
+/** What the automation editor writes. */
+export interface ScheduleDraft {
+  name: string
+  /** One cron per trigger. */
+  crons: string[]
+  holi?: string
+  model?: string
+  allow?: string[]
+  catchUpMinutes?: number
+  prompt: string
+  /** The `on:` list, which the editor shows and edits. Absent keeps the
+   *  file's as written; empty removes it. */
+  on?: Trigger[]
+}
+
+/**
+ * A schedule file's text from the editor: a new file, or `text` with only the
+ * keys the editor owns changed, so a person's comments and keys it does not
+ * know stay. The body is the prompt.
+ */
+export function scheduleFileText(draft: ScheduleDraft, text?: string): string {
+  let yaml = ''
+  if (text !== undefined) {
+    try {
+      yaml = splitFrontmatter(text).yaml ?? ''
+    } catch {
+      yaml = ''
+    }
+  }
+  // An empty frontmatter parses to no map; a fresh one takes the keys.
+  const doc = yaml.trim() === '' ? new Document({}) : parseDocument(yaml)
+  const set = (key: string, value: unknown): void => {
+    if (value === undefined) doc.delete(key)
+    else doc.set(key, value)
+  }
+  set('name', draft.name.trim())
+  // No cron is a schedule only its `on:` events start, which the editor keeps.
+  set(
+    'cron',
+    draft.crons.length === 0 ? undefined : draft.crons.length === 1 ? draft.crons[0] : draft.crons,
+  )
+  doc.delete('at')
+  set('holi', draft.holi?.trim() || undefined)
+  set('model', draft.model?.trim() || undefined)
+  set('allow', draft.allow !== undefined && draft.allow.length > 0 ? draft.allow : undefined)
+  set(
+    'catch-up',
+    draft.catchUpMinutes === undefined ? undefined : catchUpText(draft.catchUpMinutes),
+  )
+  if (draft.on !== undefined)
+    set('on', draft.on.length === 0 ? undefined : draft.on.map(triggerYaml))
+  return `---\n${doc.toString({ lineWidth: 0 })}---\n\n${draft.prompt.trim()}\n`
 }

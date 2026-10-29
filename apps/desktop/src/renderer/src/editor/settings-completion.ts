@@ -126,5 +126,8 @@ export function settingsCompletion(path: string): Extension[] {
   return [holiCompletion([source(target)])]
 }
 
-/** The source alone, for tests. */
+/**
+ * The source alone, for tests.
+ * @public exported for its test
+ */
 export const settingsCompletionSource = source

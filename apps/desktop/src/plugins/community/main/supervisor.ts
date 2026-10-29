@@ -18,7 +18,7 @@ import { defaultProbePid, type PidState } from '../../../main/plugin-api'
 import { splitLines } from './setup'
 
 /** Prezzi's own launcher starts here, above the servers people keep running. */
-export const FIRST_PORT = 3040
+const FIRST_PORT = 3040
 const LOG_LINES = 200
 
 export type ServerState =
@@ -27,7 +27,7 @@ export type ServerState =
   | { state: 'failed'; log: string[]; message: string }
   | { state: 'exited'; log: string[]; message: string }
 
-export interface ServeSpec {
+interface ServeSpec {
   /** The command for `port`, already expanded. */
   argv(port: number): string[]
   cwd: string
@@ -91,7 +91,7 @@ function canListen(port: number): Promise<boolean> {
 }
 
 /** A port nobody is on, from `from` up, skipping `taken`. */
-export async function findFreePort(taken: ReadonlySet<number>, from = FIRST_PORT): Promise<number> {
+async function findFreePort(taken: ReadonlySet<number>, from = FIRST_PORT): Promise<number> {
   for (let port = from; port < from + 500; port++) {
     if (taken.has(port)) continue
     if ((await canConnect(port, '127.0.0.1')) || (await canConnect(port, '::1'))) continue

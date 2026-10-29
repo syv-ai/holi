@@ -7,7 +7,9 @@
  */
 
 import { atom } from 'jotai'
-import type { PaneDropZone } from '@/lib/tab-drop'
+import type { SurfaceTab, Tab } from '@/lib/tab'
+
+export type { Tab }
 
 /**
  * A directory that is one document, as the panes need it: the surface its
@@ -27,38 +29,7 @@ export const openNoteTabAtom = atom(null, (_get, set, path: string) => {
   set(workspaceAtom, (w) => openPreview(w, path))
 })
 
-/** Open a note beside the active pane — the board's card click (`openBeside`). */
-export const openBesideAtom = atom(null, (_get, set, path: string) => {
-  set(workspaceAtom, (w) => openBeside(w, w.active, path))
-})
-
-/** A tab onto a surface from the registry (`state/plugins.ts`): Home, the
- *  board, settings, a plugin's view, a vault app. `id` names which one, for a
- *  surface that is one tab per thing (an app's is its bundle's path); without
- *  it there is one of the surface, ever. */
-export interface SurfaceTab {
-  kind: 'surface'
-  surface: string
-  id?: string
-}
-
-/**
- * A tab is either a note, by path, or a surface (one per thing when it has an
- * id, such as an app or an agent terminal).
- *
- * The `preview` flag is VS Code's two-state model: a preview tab (italic) is the
- * single one that a single-click *replaces* rather than adding to, so browsing a
- * vault costs one tab. Absent or false means pinned.
- */
-export type Tab = { kind: 'note'; path: string; preview?: boolean } | SurfaceTab
-
-/** A tab's stable identity, for React keys, the tab strip's pill map and the
- *  `data-tab` on the pane body showing it. */
-export function tabKey(tab: Tab): string {
-  return tab.kind === 'note' ? `note:${tab.path}` : `surface:${tab.surface}:${tab.id ?? ''}`
-}
-
-export interface Pane {
+interface Pane {
   tabs: Tab[]
   /** Index into `tabs`. `-1` when the pane is empty, which is the empty-editor
    *  state rather than a pane that should disappear. */
@@ -181,19 +152,6 @@ export function closeTab(workspace: Workspace, index: number): Workspace {
 }
 
 /**
- * Would closing this tab take its pane with it?
- *
- * Derived by RUNNING `closeTab` rather than restating its rule, so the answer
- * cannot drift from what the close is about to do.
- *
- * The shell has to know BEFORE it closes: a pane that is going needs to play its
- * exit first, and React unmounts it the instant state says it is gone.
- */
-export function closingTabRemovesPane(workspace: Workspace, index: number): boolean {
-  return closeTab(workspace, index).panes.length < workspace.panes.length
-}
-
-/**
  * Single-click open: reuse the one preview tab.
  *
  * If the note is already open, just focus it: clicking it again does not change
@@ -231,12 +189,6 @@ export function openPinned(workspace: Workspace, path: string): Workspace {
   }))
 }
 
-/** Promote a tab to pinned — the double-click-a-tab and edit-a-preview rules.
- *  No-op if the index is out of range or the tab is not a preview note. */
-export function pinTab(workspace: Workspace, index: number): Workspace {
-  return pinTabIn(workspace, workspace.active, index)
-}
-
 /** `pinTab` against a named pane: `openPinned` may find the note open in a pane
  *  that is not the active one. */
 function pinTabIn(workspace: Workspace, paneIndex: number, index: number): Workspace {
@@ -252,13 +204,6 @@ function pinTabIn(workspace: Workspace, paneIndex: number, index: number): Works
       }
     }),
   }
-}
-
-/** Pin whatever is active — the "editing promotes a preview tab" rule, so you
- *  can never lose your place by clicking away from something you typed in. */
-export function pinActive(workspace: Workspace): Workspace {
-  const pane = workspace.panes[workspace.active]
-  return pane === undefined ? workspace : pinTab(workspace, pane.active)
 }
 
 /**
@@ -368,18 +313,6 @@ export function surfaceTabIds(workspace: Workspace, surface: string): string[] {
 }
 
 /**
- * Close the tabs of surfaces that are no longer registered: their plugin was
- * turned off, by the same path as a tab whose file was deleted.
- */
-export function closeSurfaceTabs(workspace: Workspace, live: ReadonlySet<string>): Workspace {
-  const gone = (t: Tab) => t.kind === 'surface' && !live.has(t.surface)
-  // By reference when nothing goes, so a registry change that closes nothing
-  // re-renders nothing.
-  if (!workspace.panes.some((p) => p.tabs.some(gone))) return workspace
-  return closeTabsWhere(workspace, gone)
-}
-
-/**
  * Every pane with the matching tabs removed, each pane's active index following
  * the **document** rather than the position. Shared so there is one answer to
  * where the selection lands.
@@ -466,38 +399,9 @@ export function openInNewPane(workspace: Workspace, tab: Tab): Workspace {
 }
 
 /**
- * Open a note **beside** the pane it was asked from, as a preview.
- *
- * The board's card click. Unlike `openInNewPane`, which always makes a pane,
- * this reuses the pane to the right if there is one and splits only when there
- * is not, so clicking five cards does not leave five panes.
- *
- * Preview rather than pinned, as with the file tree's single click: browsing the
- * board costs one tab, and the first edit pins it. Already open anywhere? Focus
- * it there (`findTab`).
- */
-export function openBeside(workspace: Workspace, from: number, path: string): Workspace {
-  const existing = findTab(workspace, { kind: 'note', path })
-  if (existing !== null) return focusExisting(workspace, existing)
-
-  const at = from + 1
-  if (at < workspace.panes.length) {
-    const focused = { ...workspace, active: at }
-    return openPreview(focused, path)
-  }
-  return {
-    panes: [
-      ...workspace.panes.slice(0, at),
-      { tabs: [{ kind: 'note', path, preview: true }], active: 0 },
-      ...workspace.panes.slice(at),
-    ],
-    active: at,
-  }
-}
-
-/**
  * Close a whole pane. **The last one never goes** (see `closeTab`). Focus lands
  * on the left-hand neighbour, unless the closed one was leftmost.
+ * @public exported for its test
  */
 export function closePane(workspace: Workspace, index: number): Workspace {
   if (workspace.panes.length <= 1 || index < 0 || index >= workspace.panes.length) return workspace
@@ -505,167 +409,4 @@ export function closePane(workspace: Workspace, index: number): Workspace {
   const active =
     workspace.active > index ? workspace.active - 1 : Math.min(workspace.active, panes.length - 1)
   return { panes, active }
-}
-
-/** The pane the editor is showing, or null when the workspace is somehow empty. */
-export function activePane(workspace: Workspace): Pane | null {
-  return workspace.panes[workspace.active] ?? null
-}
-
-/* ────────────────────────────────────────────────────────────────────────────
- * Moving a tab
- *
- * Relocating a tab keeps exactly one buffer per path (`findTab`), so a move is
- * always remove, then insert; never copy.
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * A tab as it should land after a drag: pinned.
- *
- * Dragging is intent, the way editing is (`pinActive`). Otherwise the next
- * single-click in the tree would make `openPreview` replace the tab you just
- * positioned. The `preview` key is dropped rather than set false, matching
- * `pinTabIn`.
- */
-function dragged(tab: Tab): Tab {
-  return tab.kind === 'note' && tab.preview ? { kind: 'note', path: tab.path } : tab
-}
-
-/**
- * Move a tab to `dest`: one function for a reorder *and* a cross-pane move.
- *
- * The caller passes the tab's **identity**, not its location, so a drag never
- * carries indices that could go stale between `dragstart` and `drop`.
- *
- * `dest.index` is read against the destination pane's tabs **as they are now**
- * ("insert before whatever sits there"), so a rightward move within one pane
- * must decrement after the removal or it lands one place short.
- *
- * **A reorder rearranges; it does not navigate.** Within a pane the active tab
- * follows the *document*. A cross-pane move shows what you dropped and focuses
- * that pane, because that is where you are now looking.
- */
-export function moveTab(
-  workspace: Workspace,
-  tab: Tab,
-  dest: { pane: number; index: number },
-): Workspace {
-  const found = findTab(workspace, tab)
-  const destPane = workspace.panes[dest.pane]
-  if (found === null || destPane === undefined) return workspace
-
-  const source = workspace.panes[found.pane]!
-  const samePane = found.pane === dest.pane
-  // Both of these describe the same gap in the strip, so neither moves anything.
-  // Returned by reference so React bails instead of re-rendering every pane for
-  // a drag that went nowhere.
-  if (samePane && (dest.index === found.tab || dest.index === found.tab + 1)) return workspace
-
-  const moved = dragged(source.tabs[found.tab]!)
-  // Held as the document rather than a number: the only form that survives a removal.
-  const wasActive = source.tabs[source.active]
-  const removed = withoutTabAt(source, found.tab)
-
-  const target = samePane && dest.index > found.tab ? dest.index - 1 : dest.index
-  const into = samePane ? removed.tabs : destPane.tabs
-  const at = Math.max(0, Math.min(target, into.length))
-  const insert = (tabs: Tab[]) => [...tabs.slice(0, at), moved, ...tabs.slice(at)]
-
-  if (samePane) {
-    const tabs = insert(removed.tabs)
-    const active =
-      source.active === found.tab || wasActive === undefined ? at : tabs.indexOf(wasActive)
-    return {
-      panes: workspace.panes.map((pane, p) => (p === found.pane ? { tabs, active } : pane)),
-      active: dest.pane,
-    }
-  }
-
-  const panes = workspace.panes.map((pane, p) =>
-    p === found.pane
-      ? removed
-      : p === dest.pane
-        ? { tabs: insert(destPane.tabs), active: at }
-        : pane,
-  )
-
-  // An emptied source pane goes (`closeTab`'s rule). It can never be the *last*
-  // pane: emptying one requires a different pane to move into.
-  if (removed.tabs.length === 0) {
-    return {
-      panes: panes.filter((_, p) => p !== found.pane),
-      active: dest.pane > found.pane ? dest.pane - 1 : dest.pane,
-    }
-  }
-  return { panes, active: dest.pane }
-}
-
-/**
- * Move a tab into a brand-new pane, inserted at `at`: the edge-drop.
- *
- * `at` is an index into `panes` (`0..panes.length`), read against the array as
- * it is now: dropping on pane `i`'s left edge is `i`, its right edge `i + 1`.
- *
- * **One drop is a no-op, and only one.** A pane's *only* tab dropped on that
- * pane's *own* edge would rebuild an identical column in the same place. That
- * same sole tab dropped on a *different* pane's edge is an ordinary move.
- */
-export function moveTabToNewPane(workspace: Workspace, tab: Tab, at: number): Workspace {
-  const found = findTab(workspace, tab)
-  if (found === null) return workspace
-
-  const source = workspace.panes[found.pane]!
-  const sole = source.tabs.length === 1
-  if (sole && (at === found.pane || at === found.pane + 1)) return workspace
-
-  const moved = dragged(source.tabs[found.tab]!)
-  const removed = withoutTabAt(source, found.tab)
-  let panes: Pane[] = workspace.panes.map((pane, p) => (p === found.pane ? removed : pane))
-  let index = at
-
-  if (removed.tabs.length === 0) {
-    // Removed unconditionally, unlike `closeTab`: a pane is being *added* in the
-    // same operation, so "last pane never goes" would only leave an empty column.
-    panes = panes.filter((_, p) => p !== found.pane)
-    if (index > found.pane) index -= 1
-  }
-
-  index = Math.max(0, Math.min(index, panes.length))
-  return {
-    panes: [...panes.slice(0, index), { tabs: [moved], active: 0 }, ...panes.slice(index)],
-    active: index,
-  }
-}
-
-/** Where a tab currently lives, by pane, or -1. */
-function paneOfTab(workspace: Workspace, tab: Tab): number {
-  return findTab(workspace, tab)?.pane ?? -1
-}
-
-/**
- * Which zones of pane `index` would actually *do* something with `tab`.
- *
- * **It asks the moves rather than restating their rules.** Both return the
- * workspace **by reference** when they would change nothing, so this cannot
- * drift from what a drop does. A hand-written rule misses that pane 1's left
- * edge and pane 0's right edge are *the same gap*: a sole tab dragged out of
- * pane 0 has three inert edges, not two.
- *
- * The middle is decided here rather than derived: the pane a drag came **from**
- * never offers it. Every split gesture crosses the body on the way to an edge,
- * and the strip already expresses that move.
- */
-export function dropZones(workspace: Workspace, tab: Tab, index: number): PaneDropZone[] {
-  const pane = workspace.panes[index]
-  if (pane === undefined) return []
-  const zones: PaneDropZone[] = []
-  if (moveTabToNewPane(workspace, tab, index) !== workspace) zones.push('before')
-  if (
-    paneOfTab(workspace, tab) !== index &&
-    moveTab(workspace, tab, { pane: index, index: pane.tabs.length }) !== workspace
-  ) {
-    zones.push('into')
-  }
-  if (moveTabToNewPane(workspace, tab, index + 1) !== workspace) zones.push('after')
-  return zones
 }

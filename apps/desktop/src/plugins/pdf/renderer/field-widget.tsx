@@ -1,0 +1,106 @@
+import type { TemplateField } from '../shared/template-fields'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
+
+export interface WidgetProps {
+  field: TemplateField
+  value: string
+  onChange: (value: string) => void
+  /** The id its `FormField` label points at, so pressing the label works. */
+  id?: string
+  /** A required field left empty: marked for assistive tech and the field look. */
+  invalid?: boolean
+}
+
+// Radix Select forbids an empty-string value, so a blank selection rides this
+// sentinel (mapped back to '' on change) — the '—' choice means "unset". Kept
+// distinctive so it can't collide with a real template option value.
+const NONE = '__none__'
+
+/**
+ * The type → widget registry for the Convert block. Each control is string-valued
+ * (a checkbox contributes "true"/"false"); the engine coerces to native Typst
+ * values later. An unknown type can't occur (normalizeFields clamps to the six),
+ * but the switch falls back to a text input for safety. Every control is a
+ * stock component — no native form element survives here.
+ */
+export function FieldWidget({ field, value, onChange, id, invalid }: WidgetProps) {
+  const a11y = { id, 'aria-invalid': invalid === true ? true : undefined }
+  switch (field.type) {
+    case 'textarea':
+      return (
+        <Textarea
+          data-convert-field={field.key}
+          {...a11y}
+          rows={4}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )
+    case 'date':
+      return (
+        <Input
+          data-convert-field={field.key}
+          {...a11y}
+          type="date"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )
+    case 'number':
+      return (
+        <Input
+          data-convert-field={field.key}
+          {...a11y}
+          type="number"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )
+    case 'select':
+      return (
+        <Select
+          value={value === '' ? NONE : value}
+          onValueChange={(v) => onChange(v === NONE ? '' : v)}
+        >
+          <SelectTrigger className="w-full" data-convert-field={field.key} {...a11y}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NONE}>—</SelectItem>
+            {(field.options ?? []).map((o) => (
+              <SelectItem key={o} value={o}>
+                {o}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )
+    case 'checkbox':
+      return (
+        <Checkbox
+          data-convert-field={field.key}
+          {...a11y}
+          checked={value === 'true'}
+          onCheckedChange={(c) => onChange(c === true ? 'true' : 'false')}
+        />
+      )
+    default:
+      return (
+        <Input
+          data-convert-field={field.key}
+          {...a11y}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )
+  }
+}

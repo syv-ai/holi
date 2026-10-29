@@ -6,7 +6,8 @@
  * sent from `index.ts`.
  */
 import type { AnyRouter } from '@trpc/server'
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, shell } from 'electron'
+import { isDockIconPng } from './dock-icon'
 import { basename, dirname, join } from 'node:path'
 import { vaultRelPath } from '@holi/shared'
 import { callProcedure, toEnvelope, type TrpcEnvelope, type TrpcOp } from './trpc-call'
@@ -59,6 +60,25 @@ export function registerIpc(deps: {
    * promise round trip is one the drag may not survive. The icon is prebuilt for
    * the same reason: `getFileIcon` is async.
    */
+  // The window's appearance follows the app's colour scheme, not only the
+  // system's: the glass behind the window (macOS vibrancy, `index.ts`) is
+  // drawn light or dark from it, as are native menus and scrollbars. The
+  // scheme, never the resolved mode, so "system" keeps following the OS.
+  ipcMain.on('holi:appearance', (_event, scheme: unknown) => {
+    if (scheme === 'light' || scheme === 'dark' || scheme === 'system') {
+      nativeTheme.themeSource = scheme
+    }
+  })
+
+  // The dock's icon follows the theme: the window draws it in the theme's
+  // colours (`renderer/src/lib/app-icon.ts`) and sends it as a PNG. Only a PNG
+  // data URL of a sane size is taken; anything else leaves the icon as it is.
+  ipcMain.on('holi:dockIcon', (_event, pngDataUrl: unknown) => {
+    if (!app.dock || !isDockIconPng(pngDataUrl)) return
+    const image = nativeImage.createFromDataURL(pngDataUrl)
+    if (!image.isEmpty()) app.dock.setIcon(image)
+  })
+
   ipcMain.on('holi:startDrag', (event, paths: string[]) => {
     if (paths.length === 0) return
     event.sender.startDrag({ files: paths, file: paths[0]!, icon: DRAG_ICON })
