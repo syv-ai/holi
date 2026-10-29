@@ -15,6 +15,7 @@
  * Every function returns the same workspace when it changes nothing, so a
  * caller (a drop target asking whether to take a drop) can tell a no-op.
  */
+import type { FolderSurface } from './panes'
 import { parseTabKey, tabForPath, tabKey } from './tab-descriptor'
 
 /** Up to four views in a split: a session beside a document beside the
@@ -697,17 +698,44 @@ export function setShares(ws: ShellWorkspace, splitId: string, shares: number[])
 // ------------------------------------------------------------------ files
 
 /** A moved document's tab follows it to its new path: as a tab, inside a
- *  split, in front, and in Reopen. */
+ *  split, in front, and in Reopen. So does a folder document's (a vault app,
+ *  a plugin's deck): the moves name files, so it follows its entry file, and
+ *  only to a directory its claim still matches. A file dragged out of an
+ *  expanded folder document is not the document moving (`panes.ts`, the same
+ *  rule). */
 export function retargetTabs(
   ws: ShellWorkspace,
   moves: readonly { from: string; to: string }[],
+  folders: readonly FolderSurface[] = [],
 ): ShellWorkspace {
   const to = new Map(moves.map((m) => [tabKey(tabForPath(m.from)), tabKey(tabForPath(m.to))]))
-  const move = (key: string) => to.get(key) ?? key
-  const inClosed = ws.closed.some((c) =>
-    typeof c === 'string' ? to.has(c) : c.views.some((v) => to.has(v)),
-  )
-  if (!allTabs(ws).some((k) => to.has(k)) && !inClosed) return ws
+  const paths = new Map(moves.map((m) => [m.from, m.to]))
+  /** Where the folder document at `path`, opened in `surface`, went. */
+  const folderTo = (surface: string, path: string): string | null => {
+    const folder = folders.find((f) => f.surface === surface)
+    if (folder === undefined) return null
+    const dest = paths.get(`${path}/${folder.entry}`)
+    if (dest === undefined || !dest.endsWith(`/${folder.entry}`)) return null
+    const moved = dest.slice(0, -folder.entry.length - 1)
+    return folder.match(moved) ? moved : null
+  }
+  const move = (key: string): string => {
+    const moved = to.get(key)
+    if (moved !== undefined) return moved
+    const tab = parseTabKey(key)
+    if (tab?.kind === 'vault-app') {
+      const path = folderTo('app', tab.path)
+      return path === null ? key : tabKey({ ...tab, path })
+    }
+    if (tab?.kind === 'surface' && tab.id !== undefined) {
+      const id = folderTo(tab.surface, tab.id)
+      return id === null ? key : tabKey({ ...tab, id })
+    }
+    return key
+  }
+  const has = (key: string) => move(key) !== key
+  const inClosed = ws.closed.some((c) => (typeof c === 'string' ? has(c) : c.views.some(has)))
+  if (!allTabs(ws).some(has) && !inClosed) return ws
   return {
     ...ws,
     entries: ws.entries.map((e) =>

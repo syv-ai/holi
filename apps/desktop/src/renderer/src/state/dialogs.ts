@@ -2,12 +2,14 @@ import { atom } from 'jotai'
 import type { ReactNode } from 'react'
 
 /** How wide a plugin's dialog asks to be; the host maps it to the stock dialog's width. */
-type DialogSize = 'sm' | 'md' | 'lg' | 'full' | 'bare'
+export type DialogSize = 'sm' | 'md' | 'lg' | 'full' | 'bare'
 
 /**
  * The dialogs that can be asked for, as a discriminated union: `id` names the
  * dialog and `size` the width it asks for. `openDialogAtom` records the ask in
- * `activeDialogAtom`; nothing reads that atom yet, so no host draws these.
+ * `activeDialogAtom`, and the shell's `DialogHost` draws it. It draws a
+ * plugin's dialog; the core entries have no component in this shell yet, so
+ * asking for one still shows nothing.
  *
  * `closable` rides alongside the union: it means the same thing for every
  * dialog, and an entry sets it only to opt OUT, when its own footer already
@@ -47,6 +49,14 @@ type RemoveVaultIntent = 'leave' | 'delete' | 'forget'
 
 /** Null when nothing is open. */
 const activeDialogAtom = atom<ActiveDialog | null>(null)
+
+/** The dialog asked for, for the host to draw. */
+export const shownDialogAtom = atom((get) => get(activeDialogAtom))
+
+/** Close whatever dialog is open. */
+export const closeDialogAtom = atom(null, (_get, set) => {
+  set(activeDialogAtom, null)
+})
 
 export const openDialogAtom = atom(null, (_get, set, dialog: ActiveDialog) => {
   set(activeDialogAtom, dialog)

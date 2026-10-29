@@ -47,7 +47,8 @@ import { useTabDrag } from '@/features/shell/use-tab-drag'
 import { openDialogAtom } from '@/state/dialogs'
 import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
 import { closeTabsWhere } from '@/state/shell-workspace'
-import { tabForPath, tabPath } from '@/state/tab-descriptor'
+import { parseTabKey, tabKey, tabPath } from '@/state/tab-descriptor'
+import { shellTabForPathAtom } from '@/state/surfaces'
 import { claimsAtom, folderClaimsAtom } from '@/state/plugins'
 import { createTaskAtom } from '@/state/tasks'
 import { setTreeOrderAtom, treeOrderAtom } from '@/state/tree-order'
@@ -94,6 +95,9 @@ export function FilesSection({
   const snapshot = useAtomValue(snapshotAtom)
   const openDialog = useSetAtom(openDialogAtom)
   const openTab = useSetAtom(openTabAtom)
+  /** The tab a row opens as: a plugin's folder document (a deck) is its
+   *  surface, so the row, its drag and its highlight all go by that. */
+  const tabForPath = useAtomValue(shellTabForPathAtom)
   /** What plugins make from the New menu, with the folder document each
    *  one's entry belongs to: a new app opens as the app, not its `index.html`. */
   const creates = claims.flatMap((claim) =>
@@ -459,7 +463,11 @@ export function FilesSection({
       )
       setWorkspace((ws) =>
         closeTabsWhere(ws, (key) => {
-          const path = tabPath(key)
+          const tab = parseTabKey(key)
+          // A folder document's tab (a deck) holds its path as the surface's id.
+          const folderDoc =
+            tab?.kind === 'surface' && folderClaims.some((c) => c.folder.surface === tab.surface)
+          const path = tabPath(key) ?? (folderDoc ? (tab.id ?? null) : null)
           return path !== null && inside(path)
         }),
       )
@@ -620,7 +628,9 @@ export function FilesSection({
                     <TreeItem
                       key={item.getId()}
                       item={item}
-                      aria-current={item.getId() === activeId ? 'page' : undefined}
+                      aria-current={
+                        tabKey(tabForPath(item.getId())) === activeId ? 'page' : undefined
+                      }
                       onContextMenu={() => setMenuTarget(item.getId())}
                       {...tabDrag(item.isFolder() ? null : tabForPath(item.getId()), {
                         alongside: true,
@@ -637,7 +647,7 @@ export function FilesSection({
                       <TreeItemLabel
                         className={cn(
                           'hover:bg-foreground/5 bg-transparent',
-                          item.getId() === activeId && 'bg-foreground/10',
+                          tabKey(tabForPath(item.getId())) === activeId && 'bg-foreground/10',
                         )}
                       >
                         <RowHover card={hoverOf(item.getId())} path={item.getId()}>

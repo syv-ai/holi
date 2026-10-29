@@ -18,7 +18,7 @@ import { SettingsNav } from '@/features/settings/settings-nav'
 import { useSettingsHotkey } from '@/features/settings/use-settings-hotkey'
 import { newAgentSessionAtom } from '@/state/agents-slots'
 import { appModeAtom } from '@/state/app-mode'
-import { runningPluginsAtom } from '@/state/plugins'
+import { folderSurfacesAtom, runningPluginsAtom } from '@/state/plugins'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 // Split tabs (docs/features/tabs-panes.md): one strip, a split being one
 // entry of it.
@@ -41,7 +41,8 @@ import {
   stepMember,
 } from '@/state/shell-workspace'
 import { openingBeside } from '@/state/alt-open'
-import { AGENTS_HOME_KEY, parseTabKey, tabForPath, tabKey, tabPath } from '@/state/tab-descriptor'
+import { AGENTS_HOME_KEY, parseTabKey, tabKey, tabPath } from '@/state/tab-descriptor'
+import { shellTabForPathAtom } from '@/state/surfaces'
 import { activeRemoteAtom } from '@/state/vaults'
 import type { Move } from '@/lib/tree-actions'
 import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
@@ -57,6 +58,7 @@ import { StatusBar } from '@/features/status-bar/status-bar'
 import { AppSidebar } from '@/features/sidebar/app-sidebar'
 import { useSidebarApps } from '@/features/sidebar/sidebar-apps'
 import { useNewDocument } from '@/features/sidebar/use-files'
+import { DialogHost } from './dialog-host'
 import { MobileHeader } from './mobile-header'
 import { readShares, writeShares } from './split-shares'
 import { SplitView, type MemberSlot } from './split-view'
@@ -73,16 +75,18 @@ import { useShellShortcuts } from './use-shell-shortcuts'
  *  view. No tab key reads this way (`holi:` keys name a known kind). */
 const NO_TAB = 'holi:none'
 
-/** The key a sidebar row, a search hit or a plugin's request opens: a view's
- *  own key (the board), or a vault path's tab. */
-function keyFor(id: string): string {
-  return parseTabKey(id)?.kind === 'doc' || id.endsWith('.app') ? tabKey(tabForPath(id)) : id
-}
 export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const isMobile = useIsMobile()
   /** The tab strip and its splits, this vault's (`state/shell-tabs.ts`). */
   const [ws, setWs] = useAtom(shellWorkspaceAtom)
   const remote = useAtomValue(activeRemoteAtom)
+  const tabForPath = useAtomValue(shellTabForPathAtom)
+  const folders = useAtomValue(folderSurfacesAtom)
+  /** The key a sidebar row, a search hit or a plugin's request opens: a view's
+   *  own key (the board), or a vault path's tab, which a plugin's folder
+   *  document (a deck) opens as its surface. */
+  const keyFor = (id: string): string =>
+    parseTabKey(id)?.kind === 'doc' || id.endsWith('.app') ? tabKey(tabForPath(id)) : id
   /** Split tabs: the active split, when the active entry is one. */
   const split = activeSplit(ws)
   /** The view in front (the active tab, or the split's focused member):
@@ -175,7 +179,8 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
    *  active split's focused member (`openTab`). */
   function openTabKey(id: string) {
     const key = keyFor(id)
-    if (parseTabKey(key)?.kind === 'doc' || key.endsWith('.app')) {
+    // A vault path, whatever tab it opens as (a deck is a surface tab).
+    if (parseTabKey(id)?.kind === 'doc' || id.endsWith('.app')) {
       setSection('documents')
     }
     // ⌥-click (or ⌥↩) opens it beside what is in front.
@@ -186,7 +191,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
 
   /** A moved file's tab follows it to its new path, splits included. */
   function retargetTabs(moves: Move[]) {
-    setWs((w) => retargetTabsIn(w, moves))
+    setWs((w) => retargetTabsIn(w, moves, folders))
   }
 
   /** Split tabs: a sized member of the active split was resized; it takes
@@ -489,6 +494,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
         onAddVault={onAddVault}
       />
       <ShortcutsDialog />
+      <DialogHost />
     </SidebarProvider>
   )
 }

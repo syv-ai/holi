@@ -52,11 +52,15 @@ function DialogContent({
   children,
   showCloseButton = true,
   variant = "default",
+  size = "default",
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
   /** `flush` drops the padding and gap, for content that draws its own edges. */
   variant?: "default" | "flush"
+  /** The width from `sm` up, for a dialog whose width is chosen at runtime
+   *  (a plugin's, by the size it asked for). */
+  size?: "default" | "md" | "lg" | "3xl" | "6xl"
 }) {
   return (
     <DialogPortal>
@@ -66,6 +70,10 @@ function DialogContent({
         className={cn(
           "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           variant === "flush" && "gap-0 p-0",
+          size === "md" && "sm:max-w-md",
+          size === "lg" && "sm:max-w-lg",
+          size === "3xl" && "sm:max-w-3xl",
+          size === "6xl" && "sm:max-w-6xl",
           className
         )}
         {...props}

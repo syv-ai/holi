@@ -61,8 +61,8 @@ export function AppSidebar({
    *  back by a fade. */
   const [switched, setSwitched] = useState(false)
   const { isMobile } = useSidebar()
-  const AgentsSidebar = useAtomValue(runningPluginsAtom).find((plugin) => plugin.agentsMode)
-    ?.agentsMode?.sidebar
+  const running = useAtomValue(runningPluginsAtom)
+  const AgentsSidebar = running.find((plugin) => plugin.agentsMode)?.agentsMode?.sidebar
 
   if (collapsed) {
     // Same SidebarMenuButton as the expanded nav, so hover, active and the
@@ -199,6 +199,11 @@ export function AppSidebar({
             <div className="flex min-h-0 flex-1 flex-col gap-2">
               <DocumentsNav activeId={activeId} onOpenSearch={onOpenSearch} onOpen={onOpen} />
               <FilesSection activeId={activeId} onOpen={onOpen} onMoved={onMoved} />
+              {/* What plugins say under the tree: a community plugin this
+                  vault uses that this machine cannot run yet. */}
+              {running.map(({ info, sidebarSection: Section }) =>
+                Section === undefined ? null : <Section key={info.id} />,
+              )}
             </div>
           ) : null}
 

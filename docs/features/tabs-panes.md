@@ -9,15 +9,23 @@ split staying in the strip as its own entry.
 ## How it works
 
 **A tab is a typed descriptor** (`state/tab-descriptor.ts`): `doc {path}`, `vault-app {path}`,
-`board`, `new {n}`, `agents-home`, `session {owner, id}`, `app {id}` or `settings`. The shell
+`board`, `new {n}`, `agents-home`, `session {owner, id}`, `app {id}`, `surface {surface, id}` or
+`settings`. The shell
 keeps it as one stable string key, so tab lists are plain arrays and a key can sit in a DOM
 attribute. A document's key is its vault path as it is, so a path is its own tab id across the
 tree, the shell and an open request; a vault app is its bundle's path (the `.app` suffix says
 which). Every other view is `holi:<kind>` with its parts: `holi:board`, `holi:new:3`,
 `holi:agents`, `holi:settings`, `holi:app:mail`, `holi:session:<owner>:<id>` (the id may hold
-colons). A document whose path would read as one of those (it starts with `holi:`, or ends in
+colons), `holi:surface:<surface>[:<id>]`. A document whose path would read as one of those (it starts with `holi:`, or ends in
 `.app`) is `holi:doc:<path>`, so every descriptor survives the trip. Settings is one tab, ever: its
 section is the nav's own state (`settingsSectionAtom`).
+
+**A vault path opens as the tab its claims say** (`shellTabForPathAtom` in `state/surfaces.ts`):
+a directory a plugin's folder claim makes one document, such as a community plugin's deck, is
+`surface {surface, id: path}`; a vault app stays `vault-app`, which draws its header around the
+`app` surface; anything else is a `doc`. The tree, ⌘K and a plugin's open request all go through
+it. A folder document's tab follows its entry file when the folder moves, and only to a
+directory its claim still matches, and closes when the folder is deleted.
 
 **The workspace** (`state/shell-workspace.ts`) is pure functions over `{entries, active, closed,
 seq}`. An entry is a single view (its tab key) or a split `{id, views, shares, focused}`: two or

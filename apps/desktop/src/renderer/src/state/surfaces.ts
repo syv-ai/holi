@@ -112,6 +112,20 @@ export const tabForPathAtom = atom((get): ((path: string) => Tab) => {
   return (path) => tabForPath(claims, path, (p) => paths.has(p))
 })
 
+/** The shell tab a vault path opens as: a plugin's folder document (a
+ *  community plugin's deck) as its surface, a vault app as its app, anything
+ *  else as the document. A vault app keeps its own tab kind, which draws its
+ *  header around the surface. */
+export const shellTabForPathAtom = atom((get): ((path: string) => TabDescriptor) => {
+  const toTab = get(tabForPathAtom)
+  return (path) => {
+    const tab = toTab(path)
+    return tab.kind === 'surface' && tab.surface !== 'app' && tab.id !== undefined
+      ? { kind: 'surface', surface: tab.surface, id: tab.id }
+      : shellTabForPath(path)
+  }
+})
+
 /**
  * Open a vault path by any gesture: a single click's `preview`, a double
  * click's `pinned`, or `pane`, beside the active one. A folder document opens
@@ -122,7 +136,7 @@ export const openPathAtom = atom(
   (get, set, path: string, how: 'preview' | 'pinned' | 'pane' = 'pinned'): void => {
     const tab = get(tabForPathAtom)(path)
     // The shell's tabs, as for a surface; `pane` is beside the focused one.
-    set(openTabAtom, shellTabForPath(path), { beside: how === 'pane' })
+    set(openTabAtom, get(shellTabForPathAtom)(path), { beside: how === 'pane' })
     set(workspaceAtom, (w) =>
       how === 'pane'
         ? openInNewPane(w, tab)

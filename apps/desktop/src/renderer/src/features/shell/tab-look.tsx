@@ -86,11 +86,13 @@ export function useTabLook(): (key: string) => HeaderTab {
         case 'apps':
           return { id: key, title: 'Apps', icon: LayoutGridIcon }
         case 'surface': {
-          const label = surfaces.get(tab.surface)?.label
+          const surface = surfaces.get(tab.surface)
+          const label = surface?.label
           return {
             id: key,
             title: typeof label === 'function' ? label(tab.id ?? '') : (label ?? tab.surface),
-            icon: AppWindowIcon,
+            // Its own icon: a plugin's deck shows the plugin's.
+            icon: surface?.icon ?? AppWindowIcon,
           }
         }
         case 'new':

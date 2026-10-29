@@ -294,6 +294,7 @@ Gotchas of a fresh checkout or worktree that no file states.
 - Holi edits the stock files in place, and `shadcn add` would overwrite those edits if
   you let it. Added on purpose: `Button` variants `text`, `dashed` and sizes `row`,
   `inline`; `DialogContent`, `PopoverContent`, `HoverCardContent` variant `flush`;
+  `DialogContent` `size` (the width of a dialog chosen at runtime);
   `SidebarMenuButton` variant `fill` and size `rail`; `Avatar` `shape="square"`;
   `TabsTrigger` variant `tab`; `Toggle` size `icon`; `ResizableHandle` variant `primary`
   and `ResizablePanelGroup` `animateFirst`; `PanelSeparator` variant `line`;
@@ -304,9 +305,8 @@ Gotchas of a fresh checkout or worktree that no file states.
   the call site (`@shadcn/lint`'s `no-restyle`).
 - knip treats an export tagged `/** @public */` as used. That tag marks the plugin seam
   (`plugin-api`) and exports kept for a test; anything else unused is deleted, not tagged.
-- Known defects found during the agent-first refactor, still open: the dialog registry
-  (`state/dialogs.ts`) has no host, so dialogs opened through it never show; plugin
-  `commands` and `palette` never reach ⌘K. See `docs/refactor/findings.md`.
+- Known defect found during the agent-first refactor, still open: plugin `commands` and
+  `palette` never reach ⌘K. See `docs/refactor/findings.md`.
 - To check UI in the running app, start `pnpm dev:debug` (remote debugging port 9333) and
   drive the window with `node apps/desktop/cdp.mjs '<js expression>'`;
   `apps/desktop/scripts/seed-demo.mjs` seeds demo data. The app needs a signed-in GitHub

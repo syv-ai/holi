@@ -34,7 +34,7 @@ import {
   type ShellSplit,
   type ShellWorkspace,
 } from '../shell-workspace'
-import { AGENTS_HOME_KEY, parseTabKey, sessionKey } from '../tab-descriptor'
+import { AGENTS_HOME_KEY, parseTabKey, sessionKey, tabKey } from '../tab-descriptor'
 
 const A = 'Notes/A.md'
 const B = 'Notes/B.md'
@@ -371,6 +371,44 @@ describe('files', () => {
   test("a single active tab's move keeps it active", () => {
     const ws = retargetTabs(withTabs(A), [{ from: A, to: B }])
     expect(ws.active).toBe(B)
+  })
+
+  describe('a folder document', () => {
+    const DECKS = [
+      { surface: 'plugin-document', entry: 'slides.md', match: (p: string) => p.endsWith('.deck') },
+    ]
+    const APPS = [{ surface: 'app', entry: 'index.html', match: (p: string) => p.endsWith('.app') }]
+    const deck = (path: string) => tabKey({ kind: 'surface', surface: 'plugin-document', id: path })
+
+    test('follows its entry file when the folder is renamed or moved', () => {
+      const ws = retargetTabs(
+        withTabs(deck('talk.deck'), A),
+        [
+          { from: 'talk.deck/slides.md', to: 'Old/keynote.deck/slides.md' },
+          { from: 'talk.deck/img/a.png', to: 'Old/keynote.deck/img/a.png' },
+        ],
+        DECKS,
+      )
+      expect(strip(ws)).toEqual([deck('Old/keynote.deck'), A])
+    })
+
+    test('stays put when a file is dragged out of it, or its entry leaves the kind', () => {
+      const ws = withTabs(deck('talk.deck'))
+      expect(retargetTabs(ws, [{ from: 'talk.deck/img/a.png', to: 'a.png' }], DECKS)).toBe(ws)
+      expect(retargetTabs(ws, [{ from: 'talk.deck/slides.md', to: 'slides.md' }], DECKS)).toBe(ws)
+      expect(retargetTabs(ws, [{ from: 'talk.deck/slides.md', to: 'talk/slides.md' }], DECKS)).toBe(
+        ws,
+      )
+    })
+
+    test("a vault app's tab follows its bundle the same way", () => {
+      const ws = retargetTabs(
+        withTabs('retro.app'),
+        [{ from: 'retro.app/index.html', to: 'Team/retro.app/index.html' }],
+        APPS,
+      )
+      expect(strip(ws)).toEqual(['Team/retro.app'])
+    })
   })
 
   test('gone views close wherever they are, not offered to Reopen', () => {
