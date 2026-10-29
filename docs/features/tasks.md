@@ -110,8 +110,7 @@ the [planning](planning.md) view shows every task in the vault by them.
   goes back. On a field, ↑/↓ move, and Space, → or a click picks; a single choice then moves on to
   the next field, a tag toggles and stays. Enter on a field returns to the text; Enter in the text
   adds; Shift+Enter is a new line. Escape on a field returns to the text, then closes. The bar at
-  the foot is the fields as icons, centred, each showing its value once set. It creates in Todo, or
-  in the column whose + opened it. Lane is any folder, defaulting to the active note's; typing on lane or tags
+  the foot is the fields as icons, centred, each showing its value once set. It creates in Todo. Lane is any folder, defaulting to the active note's; typing on lane or tags
   narrows the list or names a new one; an add closes quick add, the text clears and the lane stays.
   ⌘⇧T is the full-create dialog, which opens the result. Both write the whole task in one create.
   The agent writes the file.

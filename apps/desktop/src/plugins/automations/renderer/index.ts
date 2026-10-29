@@ -4,7 +4,7 @@
  * (the agent's slot).
  */
 import type { RendererPlugin } from '@/plugin-api'
-import { AUTOMATIONS_INFO } from '../info'
+import { AUTOMATIONS_INFO, AUTOMATIONS_READY } from '../info'
 import { AutomationsSection } from './automations-section'
 import { AutomationsView } from './automations-view'
 import { automationMenuEntriesAtom, runAutomationMenuEntryAtom } from './command-menu'
@@ -31,5 +31,7 @@ export const automationsRenderer: RendererPlugin = {
     },
   },
   vault: automationsVault,
-  commandMenu: { entries: automationMenuEntriesAtom, run: runAutomationMenuEntryAtom },
+  ...(AUTOMATIONS_READY
+    ? { commandMenu: { entries: automationMenuEntriesAtom, run: runAutomationMenuEntryAtom } }
+    : {}),
 }

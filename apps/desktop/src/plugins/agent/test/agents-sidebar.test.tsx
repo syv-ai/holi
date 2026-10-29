@@ -5,7 +5,7 @@
  * you first; History with every one, by day, under the search; and the status
  * the mode toggle reports.
  */
-import { render, screen, within } from '@/test/render'
+import { act, render, screen, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore, type PrimitiveAtom } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
@@ -13,7 +13,7 @@ import { activeRemoteAtom, agentsSelectionAtom, type AgentsSessionItem } from '@
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { AgentsSidebar } from '../renderer/agents/agents-sidebar'
 import { agentsStatusAtom, inboxCountAtom } from '../renderer/state/agents-status'
-import { agentsViewAtom } from '../renderer/state/agents-view'
+import { agentsViewAtom, showHistoryAtom } from '../renderer/state/agents-view'
 import { SessionHistory } from '../renderer/sessions/session-list'
 import { SessionSearch } from '../renderer/sessions/session-filters'
 import {
@@ -163,10 +163,10 @@ function setup({
       <SidebarProvider>
         <AgentsSidebar />
         {history && (
-          <>
+          <div data-agents-history="">
             <SessionSearch />
             <SessionHistory />
-          </>
+          </div>
         )}
       </SidebarProvider>
     </Provider>,
@@ -189,7 +189,7 @@ const groupsOf = (region: 'Sessions' | 'History') =>
 
 test('the Inbox and History, the slots in order, then the sessions', () => {
   setup()
-  expect(screen.queryByLabelText('Search conversations')).toBeNull()
+  expect(screen.queryByLabelText('Search conversations, or start one')).toBeNull()
   expect(screen.getByRole('button', { name: /^Inbox(, \d+ need you)?$/ })).toBeTruthy()
   expect(screen.getByRole('button', { name: 'History' })).toBeTruthy()
   expect(screen.getByText('Automations row')).toBeTruthy()
@@ -283,11 +283,40 @@ test('opening a done row marks it read, and selects what it stands for', async (
 
 test('search narrows History by title', async () => {
   setup({ history: true })
-  await userEvent.type(screen.getByLabelText('Search conversations'), 'weekly')
+  await userEvent.type(screen.getByLabelText('Search conversations, or start one'), 'weekly')
   expect(cardKeys('History')).toEqual(['fake:c2'])
-  await userEvent.clear(screen.getByLabelText('Search conversations'))
-  await userEvent.type(screen.getByLabelText('Search conversations'), 'zzz')
+  await userEvent.clear(screen.getByLabelText('Search conversations, or start one'))
+  await userEvent.type(screen.getByLabelText('Search conversations, or start one'), 'zzz')
   expect(screen.getByText('No conversations match.')).toBeTruthy()
+})
+
+test('⌘J brings History forward with its field focused', () => {
+  const store = setup({ history: true })
+  act(() => store.set(showHistoryAtom))
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'history' })
+  expect(document.activeElement).toBe(screen.getByLabelText('Search conversations, or start one'))
+})
+
+test('Enter in the History field starts a session with what was typed', async () => {
+  setup({ history: true })
+  agentCap.start.mockClear()
+  const field = screen.getByLabelText('Search conversations, or start one')
+  await userEvent.type(field, 'tidy the inbox{Enter}')
+  expect(agentCap.start).toHaveBeenCalledWith(
+    'o/notes',
+    expect.objectContaining({ prompt: 'tidy the inbox', name: 'tidy the inbox' }),
+  )
+  expect((field as HTMLInputElement).value).toBe('')
+})
+
+test('arrows go from the History field into the sessions and back', async () => {
+  setup({ history: true })
+  const field = screen.getByLabelText('Search conversations, or start one')
+  await userEvent.click(field)
+  await userEvent.keyboard('{ArrowDown}')
+  expect(document.activeElement).toBe(cards('History')[0])
+  await userEvent.keyboard('{ArrowUp}')
+  expect(document.activeElement).toBe(field)
 })
 
 test('the filter menu keeps a state, and shows archived on request', async () => {

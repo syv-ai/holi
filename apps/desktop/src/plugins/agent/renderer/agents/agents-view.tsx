@@ -135,7 +135,7 @@ function HistoryView(): React.JSX.Element {
       <Bar>
         <span className="font-medium">History</span>
       </Bar>
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto" data-agents-history="">
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-6 py-6">
           <SessionSearch />
           <SessionHistory />

@@ -122,6 +122,7 @@ const FILE_TYPE_EXTENSIONS = {
   pptx: { category: "presentation", color: "text-red-600" },
   odp: { category: "presentation", color: "text-red-600" },
   key: { category: "presentation", color: "text-blue-600" },
+  deck: { category: "presentation", color: "text-red-600" },
   // Images
   png: { category: "image", color: YELLOW },
   jpg: { category: "image", color: "text-violet-600" },

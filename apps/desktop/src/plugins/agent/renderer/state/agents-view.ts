@@ -8,7 +8,7 @@
  * 'session:<job id>'}` is the agent's public name for one.
  */
 import { atom } from 'jotai'
-import { agentsSelectionAtom } from '@/plugin-api'
+import { agentsSelectionAtom, appModeAtom } from '@/plugin-api'
 
 /** The agent's plugin id: the owner of its own rows. */
 const AGENT_OWNER = 'agent'
@@ -54,3 +54,14 @@ export const agentsViewAtom = atom(
 /** A terminal the Agents view already has for a session (a New session's own
  *  window), so its view shows that one rather than opening another. */
 export const viewTerminalsAtom = atom<Record<string, string>>({})
+
+/** Asks the History's field for focus: ⌘J counts up, the field follows. */
+export const historyFocusAtom = atom(0)
+
+/** ⌘J (the mode's `overview`): the History in front, its field focused, to
+ *  find a session or type a new one's first prompt. */
+export const showHistoryAtom = atom(null, (_get, set) => {
+  set(appModeAtom, 'agents')
+  set(agentsViewAtom, { kind: 'history' })
+  set(historyFocusAtom, (n) => n + 1)
+})

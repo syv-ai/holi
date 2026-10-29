@@ -9,7 +9,7 @@ goes to the views, and runs the shell's actions with the same handlers their key
 - **Untyped**, it shows three groups:
   - **Recent:** the vault's six newest paths by modified time.
   - **Go to:** Board, Apps (while the vault apps plugin runs), Today's note, what plugins add
-    (the Inbox, Automations), the Documents and Agents sidebars, Mail and Calendar (while they are
+    (the Inbox, Automations), the Vault and Agents sidebars, Mail and Calendar (while they are
     listed), and Settings.
   - **Actions:** the shell's live actions (Terminal and Output among them), then New task, New
     session, New app, what plugins add (New automation, New Holi, How Holis work), Sync now, Add

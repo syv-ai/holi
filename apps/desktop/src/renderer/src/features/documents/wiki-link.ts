@@ -3,12 +3,23 @@
  * as it was read. Without it the markdown serializer escapes the brackets
  * (`\[\[Target\]\]`) and every link in a document breaks on its first save.
  *
+ * Typed or pasted, `[[…]]` becomes a chip as its `]]` lands; left as text,
+ * it would be saved escaped and stop being a link.
+ *
  * Pressing a chip asks `onOpen` (set by the document view) to open the
  * target; resolving the name to a path is the view's business.
  */
-import { mergeAttributes, Node } from '@tiptap/react'
+import { InputRule, mergeAttributes, Node, PasteRule } from '@tiptap/react'
 
 const WIKI_LINK = /^\[\[([^[\]\n|]+)(?:\|([^[\]\n]+))?\]\]/
+const TYPED = /\[\[([^[\]\n|]+)(?:\|([^[\]\n]+))?\]\]$/
+const PASTED = /\[\[([^[\]\n|]+)(?:\|([^[\]\n]+))?\]\]/g
+
+/** A chip's attributes from a `[[target|label]]` match. */
+const attrsOf = (match: RegExpMatchArray) => ({
+  target: match[1]!.trim(),
+  label: match[2]?.trim() ?? null,
+})
 
 export interface WikiLinkOptions {
   onOpen: (target: string) => void
@@ -45,6 +56,29 @@ export const WikiLink = Node.create<WikiLinkOptions>({
           'text-primary cursor-pointer rounded-sm underline decoration-current/30 underline-offset-2 hover:decoration-current',
       }),
       node.attrs.label ?? node.attrs.target,
+    ]
+  },
+
+  // The whole match, brackets and all, becomes the chip.
+  addInputRules() {
+    return [
+      new InputRule({
+        find: TYPED,
+        handler: ({ state, range, match }) => {
+          state.tr.replaceWith(range.from, range.to, this.type.create(attrsOf(match)))
+        },
+      }),
+    ]
+  },
+
+  addPasteRules() {
+    return [
+      new PasteRule({
+        find: PASTED,
+        handler: ({ state, range, match }) => {
+          state.tr.replaceWith(range.from, range.to, this.type.create(attrsOf(match)))
+        },
+      }),
     ]
   },
 

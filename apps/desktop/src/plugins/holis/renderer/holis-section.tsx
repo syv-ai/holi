@@ -7,7 +7,7 @@
  * wizard (`wizard/holi-wizard.tsx`).
  */
 import { useAtomValue, useSetAtom } from 'jotai'
-import { CircleHelp, Ellipsis, Plus } from 'lucide-react'
+import { CircleHelp, Ellipsis, Plus, Smile } from 'lucide-react'
 import { appModeAtom, cn, openPathAtom, useTabDrag } from '@/plugin-api'
 import { DEFAULT_HOLI_COLOUR, HOLI_COLOURS, HOLI_MASCOTS } from '@holi/shared'
 import { HoliDialogs } from './holi-dialogs'
@@ -33,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { IconButton } from '@/composites/icon-button'
+import { SidebarNavItem } from '@/composites/sidebar-nav-item'
 import { Skeleton } from '@/components/ui/skeleton'
 
 /** The chrome row (`docs/ui-system.md`, Rules): one fill scale on the
@@ -219,4 +220,10 @@ export function HolisSection(): React.JSX.Element {
       <HoliDialogs />
     </section>
   )
+}
+
+/** Until Holis are finished (`HOLIS_READY`): their place in the top group,
+ *  locked, as In progress. */
+export function HolisInProgress(): React.JSX.Element {
+  return <SidebarNavItem icon={Smile} label="Holis" inProgress />
 }

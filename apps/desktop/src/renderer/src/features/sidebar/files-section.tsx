@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
   dragAndDropFeature,
@@ -130,21 +130,30 @@ export function FilesSection({
   /** Set by a menu's Rename; the field opens once the menu has closed, so
    *  the menu handing focus back does not take it from the field. */
   const renameNext = useRef<string | null>(null)
+  /** A row just made from a New item: its name field opens as soon as the
+   *  tree has it, so typing names it. */
+  const [naming, setNaming] = useState<string | null>(null)
   /** Rows that just landed (made, moved, renamed, dropped in): they fade in
    *  once, so the eye finds where they went. */
   const [arrived, setArrived] = useState<ReadonlySet<string>>(new Set())
   const markArrived = (paths: string[]) => setArrived((current) => new Set([...current, ...paths]))
 
-  const data = useMemo(
-    () =>
-      buildTreeData(
-        files.paths,
-        files.dirs,
-        (folder, has) => folderDocumentAt(folderClaims, folder, has) !== null,
-        order,
-      ),
-    [files.paths, files.dirs, folderClaims, order],
-  )
+  // A plugin's folder document (a deck) opens as its surface, and its chevron
+  // shows the files inside; an app's bundle is one document and only opens.
+  const { data, browsable } = useMemo(() => {
+    const browsable = new Set<string>()
+    const data = buildTreeData(
+      files.paths,
+      files.dirs,
+      (folder, has) => {
+        const doc = folderDocumentAt(folderClaims, folder, has)
+        if (doc !== null && doc.folder.surface !== 'app') browsable.add(folder)
+        return doc !== null
+      },
+      order,
+    )
+    return { data, browsable }
+  }, [files.paths, files.dirs, folderClaims, order])
 
   const folderOf = (item: ItemInstance<TreeItemData>) =>
     item.getId() === ROOT_ID ? '' : item.getId()
@@ -251,9 +260,11 @@ export function FilesSection({
     rootItemId: ROOT_ID,
     indent: INDENT,
     getItemName: (item) => item.getItemData()?.name ?? '',
-    // An app's bundle is one document: it opens rather than expands.
+    // An app's bundle is one document: it opens rather than expands. A deck
+    // expands too, from its chevron (`onLabelClick`).
     isItemFolder: (item) =>
-      item.getItemData()?.isFolder === true && item.getItemData()?.isDocument !== true,
+      item.getItemData()?.isFolder === true &&
+      (item.getItemData()?.isDocument !== true || browsable.has(item.getId())),
     dataLoader: {
       getItem: (id) =>
         data[id] ?? {
@@ -265,7 +276,7 @@ export function FilesSection({
       getChildren: (id) => data[id]?.children ?? [],
     },
     onPrimaryAction: (item) => {
-      if (!item.isFolder()) onOpen(item.getId())
+      if (!item.isFolder() || browsable.has(item.getId())) onOpen(item.getId())
     },
     canRename: (item) => item.getId() !== ROOT_ID,
     onRename: (item, value) =>
@@ -326,6 +337,36 @@ export function FilesSection({
     { catchUp: true },
   )
 
+  // A row just made: once the snapshot has it, select it, scroll it into view
+  // and open its name field.
+  const namingFrame = useRef(0)
+  useEffect(() => () => cancelAnimationFrame(namingFrame.current), [])
+  useEffect(() => {
+    if (naming === null || data[naming] === undefined) return
+    setNaming(null)
+    namingFrame.current = requestAnimationFrame(() => {
+      const item = tree.getItemInstance(naming)
+      tree.setSelectedItems([naming])
+      item.setFocused()
+      void item.scrollTo({ block: 'nearest' })
+      item.startRenaming()
+    })
+  }, [data, naming, tree])
+
+  /** A deck's row: its chevron expands it, the rest opens it, where the
+   *  tree's own press would do both. */
+  function onLabelClick(item: ItemInstance<TreeItemData>, event: MouseEvent<HTMLElement>) {
+    if (!browsable.has(item.getId()) || event.shiftKey || event.metaKey || event.ctrlKey) return
+    event.stopPropagation()
+    tree.setSelectedItems([item.getId()])
+    item.setFocused()
+    const chevron = event.currentTarget.querySelector('svg')?.getBoundingClientRect()
+    if (chevron !== undefined && event.clientX <= chevron.right) {
+      if (item.isExpanded()) item.collapse()
+      else item.expand()
+    } else onOpen(item.getId())
+  }
+
   // The tree's own F2 renames its focused row; this one renames the selected
   // row from anywhere else, while the sidebar is open to show the field.
   const { open: sidebarOpen } = useSidebar()
@@ -343,15 +384,16 @@ export function FilesSection({
   /** Make what a New menu item makes, named `name` in `parent`, and open
    *  it: a folder document as itself, not its entry file. Throws the
    *  plugin's refusal. */
-  async function made(create: FileCreate, parent: string, name: string) {
-    if (files.remote === null) return
+  async function made(create: FileCreate, parent: string, name: string): Promise<string | null> {
+    if (files.remote === null) return null
     const path = await create.run({ remote: files.remote, parent, name })
-    if (!path) return
+    if (!path) return null
     const suffix = create.entry === undefined ? null : `/${create.entry}`
     const opened = suffix !== null && path.endsWith(suffix) ? path.slice(0, -suffix.length) : path
     reveal(parent)
     markArrived([opened])
     onOpen(opened)
+    return opened
   }
 
   /** The web address a browser's drag carries, if that is all it carries. */
@@ -368,7 +410,7 @@ export function FilesSection({
   /** A web address dropped from a browser, saved as a link in `parent`. */
   function dropUrl(url: string, parent: string) {
     if (urlCreate === undefined) return
-    void attempt('save the link', () => made(urlCreate, parent, url))
+    void attempt('save the link', () => made(urlCreate, parent, url).then(() => undefined))
   }
 
   /** Finder drops on the empty space below the rows land at the root, and a
@@ -479,7 +521,7 @@ export function FilesSection({
   function newParent(target: string | null): string {
     if (target === null || target === ROOT_ID) return ''
     const item = tree.getItemInstance(target)
-    return item.isFolder() ? target : parentOf(target)
+    return item.isFolder() && !browsable.has(target) ? target : parentOf(target)
   }
 
   /** Shows what was just made inside `parent`, which may be collapsed. */
@@ -501,6 +543,7 @@ export function FilesSection({
             await createFolder(name)
             reveal(parent)
             markArrived([name])
+            setNaming(name)
           }),
         newTask: () =>
           void attempt('create the task', async () => {
@@ -514,13 +557,15 @@ export function FilesSection({
         make: (create) =>
           create.asksName === true
             ? setAsking({ create, parent })
-            : void attempt(`make the ${create.label.toLowerCase()}`, () =>
-                made(
+            : void attempt(`make the ${create.label.toLowerCase()}`, async () => {
+                const path = await made(
                   create,
                   parent,
                   freeName(files.taken, parent, 'Untitled', '.app').replace(/\.app$/, ''),
-                ),
-              ),
+                )
+                // Made as Untitled: its name field opens, so typing names it.
+                if (path !== null) setNaming(path)
+              }),
         toggleTasks: files.toggleTasks,
         toggleHidden: files.toggleHidden,
         collapseAll: () => tree.collapseAll(),
@@ -632,9 +677,14 @@ export function FilesSection({
                         tabKey(tabForPath(item.getId())) === activeId ? 'page' : undefined
                       }
                       onContextMenu={() => setMenuTarget(item.getId())}
-                      {...tabDrag(item.isFolder() ? null : tabForPath(item.getId()), {
-                        alongside: true,
-                      })}
+                      {...tabDrag(
+                        item.isFolder() && !browsable.has(item.getId())
+                          ? null
+                          : tabForPath(item.getId()),
+                        {
+                          alongside: true,
+                        },
+                      )}
                       onAnimationEnd={() =>
                         setArrived((current) => {
                           const next = new Set(current)
@@ -645,6 +695,7 @@ export function FilesSection({
                       arrived={arrived.has(item.getId())}
                     >
                       <TreeItemLabel
+                        onClick={(event) => onLabelClick(item, event)}
                         className={cn(
                           'hover:bg-foreground/5 bg-transparent',
                           tabKey(tabForPath(item.getId())) === activeId && 'bg-foreground/10',
@@ -664,7 +715,9 @@ export function FilesSection({
                                   const dot = value.lastIndexOf('.')
                                   event.currentTarget.setSelectionRange(
                                     0,
-                                    item.isFolder() || dot <= 0 ? value.length : dot,
+                                    (item.isFolder() && !browsable.has(item.getId())) || dot <= 0
+                                      ? value.length
+                                      : dot,
                                   )
                                 }}
                                 onClick={(event) => event.stopPropagation()}
@@ -714,7 +767,9 @@ export function FilesSection({
         asking={asking}
         onClose={() => setAsking(null)}
         onMake={(name) =>
-          asking === null ? Promise.resolve() : made(asking.create, asking.parent, name)
+          asking === null
+            ? Promise.resolve()
+            : made(asking.create, asking.parent, name).then(() => undefined)
         }
       />
     </SidebarGroup>

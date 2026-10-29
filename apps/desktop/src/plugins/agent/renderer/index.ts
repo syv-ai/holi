@@ -20,6 +20,7 @@ import { SessionActions } from './session-actions'
 import { AgentsView } from './agents/agents-view'
 import { AgentsSidebar } from './agents/agents-sidebar'
 import { agentsStatusAtom } from './state/agents-status'
+import { showHistoryAtom } from './state/agents-view'
 import { inboxEvents, inboxVault } from './state/inbox'
 import { newSessionAtom, sessionListVault, sessionTabLookAtom } from './state/session-list'
 import {
@@ -61,10 +62,10 @@ const COMMANDS: readonly Command[] = [
   // sessions are started and picked up.
   {
     id: 'agent.show',
-    label: 'Go to the agents',
+    label: 'Agent sessions',
     hotkey: '⌘J',
     firstKey: 3,
-    run: (_get, set) => set(appModeAtom, 'agents'),
+    run: (_get, set) => set(showHistoryAtom),
   },
   // ⌘N is core's: the shell sends it here on the Agents side (`newSession`).
   {
@@ -112,6 +113,7 @@ export const agentRenderer: RendererPlugin = {
     status: agentsStatusAtom,
     tabLook: sessionTabLookAtom,
     newSession: newSessionAtom,
+    overview: showHistoryAtom,
   },
   drawers: [TurnReview],
   statusItems: [{ id: 'sessions', side: 'right', order: 10, Component: AgentStatusItem }],

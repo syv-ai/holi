@@ -430,6 +430,8 @@ export interface AgentsMode {
    *  session. `beside` opens it in split view. Absent, those open the mode's
    *  home. */
   newSession?: WritableAtom<null, [beside?: boolean], unknown>
+  /** ⌘J: the sessions at a glance, ready to pick one or start one. */
+  overview?: WritableAtom<null, [], unknown>
 }
 
 /** A session tab as the strip draws it: its title, the state its dot shows,

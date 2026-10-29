@@ -38,8 +38,7 @@ complete`), `lead` (a GitHub login), `start` and `due` (stamps, as on a task) an
   first. Autosave commits say only `Update <path>`, so every entry reads "changed"; it reads
   more once commits say more. **Edit project** opens one form over the whole file; saving writes
   it whole and autosave commits it.
-- **Board.** One column per status, each a Frame (ReUI's `kanban-board-4`) with a + that opens New
-  task in that status; the board fills the pane and scrolls inside it, so its horizontal bar holds
+- **Board.** One column per status, each a Frame (ReUI's `kanban-board-4`); the board fills the pane and scrolls inside it, so its horizontal bar holds
   the pane's foot. A card is `kanban-board-6`'s ticket: tags and priority, the title, start and
   estimate, the first assignee, and the due date as a chip, tinted as overdue, due within two days
   or done. Its title opens the task as a tab. Dragging between columns writes `status` through the same task write
@@ -48,7 +47,8 @@ complete`), `lead` (a GitHub login), `start` and `due` (stamps, as on a task) an
   sort but Manual the column orders itself, so a drop there writes only the status. A task whose
   status the vault does not list shows in a column (`columnFor`) and its file keeps its word
   until someone moves it. Each column ends in **Add task**, a one-line title field that creates
-  in that status and stays open for the next.
+  in that status and stays open for the next; it is the column's only add, so its header carries
+  no + of its own.
 - **List** is the tasks grouped by status under collapsible group rows, with Task, Status,
   Assignee, Priority, Due and Tags, and an Add task line in each group. **Table** is the same
   groups under a header with every field, Start and Estimate included, and Display switches

@@ -8,7 +8,9 @@ choice; each run is an ordinary [agent session](agent-sessions.md), carried out 
 it is or by one of the vault's [Holis](holis.md), with its soul and memory. Automations are the
 plugin `automations` (`src/plugins/automations/`, on by default), built on the agent: it starts
 each run through `agent.launch` and hears the agent's session list and turn ends through the
-main-side plugin channel (`ctx.hear`).
+main-side plugin channel (`ctx.hear`). Until the feature is finished, the renderer shows
+Automations as a locked **In progress** row and keeps them out of ⌘K (`AUTOMATIONS_READY` in
+`info.ts`); automations already switched on still run.
 
 ## How it works
 

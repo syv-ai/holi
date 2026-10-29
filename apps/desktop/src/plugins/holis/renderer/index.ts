@@ -5,14 +5,14 @@
  * agent only through core (`agentSessionRowsAtom`, `showAgentSessionAtom`, the
  * run atoms).
  */
-import { HOLIS_INFO } from '../info'
+import { HOLIS_INFO, HOLIS_READY } from '../info'
 import type { RendererPlugin } from '@/plugin-api'
 import { holiMenuEntriesAtom, runHoliMenuEntryAtom } from './command-menu'
 import { DocumentHoliActions } from './document-holi-actions'
 import { HoliDialogs } from './holi-dialogs'
 import { HoliView } from './holi-view'
 import { HolisInbox } from './holis-inbox'
-import { HolisSection } from './holis-section'
+import { HolisInProgress, HolisSection } from './holis-section'
 import {
   holiEvents,
   holiSessionItemsAtom,
@@ -29,7 +29,7 @@ export const holisRenderer: RendererPlugin = {
   agentsSlot: {
     // After Automations, before the sessions.
     order: 20,
-    sidebar: HolisSection,
+    ...(HOLIS_READY ? { sidebar: HolisSection } : { nav: HolisInProgress }),
     main: HoliView,
     inbox: HolisInbox,
     status: holisStatusAtom,
@@ -42,9 +42,11 @@ export const holisRenderer: RendererPlugin = {
   },
   drawers: [HoliDialogs],
   // Send to Holi, in a document's Agent menu.
-  documentActions: DocumentHoliActions,
+  ...(HOLIS_READY ? { documentActions: DocumentHoliActions } : {}),
   vault: holisVault,
   // Its Holis play the empty view's arcade.
   arcadeCast: holisArcadeCastAtom,
-  commandMenu: { entries: holiMenuEntriesAtom, run: runHoliMenuEntryAtom },
+  ...(HOLIS_READY
+    ? { commandMenu: { entries: holiMenuEntriesAtom, run: runHoliMenuEntryAtom } }
+    : {}),
 }

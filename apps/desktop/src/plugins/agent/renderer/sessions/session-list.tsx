@@ -102,6 +102,13 @@ function SessionCards({
     if (cards.length === 0) return
     e.preventDefault()
     const at = cards.findIndex((c) => c === document.activeElement)
+    // Up from the first card goes back to the History's field (⌘J's).
+    if (at === 0 && e.key === 'ArrowUp') {
+      const field = listRef.current
+        ?.closest('[data-agents-history]')
+        ?.querySelector<HTMLElement>('[data-session-launcher]')
+      if (field) return field.focus()
+    }
     const next =
       e.key === 'Home'
         ? 0

@@ -223,7 +223,6 @@ export function PlanningView({
                 {...board}
                 context={{ today, isOverdue: overdue, onOpenTask }}
                 onAddTask={addTask}
-                onNewTask={openNewTask}
               />
             )}
           </PanelBody>

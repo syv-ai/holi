@@ -3,7 +3,7 @@ import { useMemo } from 'react'
 import { toast } from 'sonner'
 
 import type { SidebarApp } from '@/plugin-api'
-import { newAgentSessionAtom } from '@/state/agents-slots'
+import { newAgentSessionAtom, showAgentsOverviewAtom } from '@/state/agents-slots'
 import { ensureTodaysDailyAtom } from '@/state/daily'
 import { runningPluginsAtom } from '@/state/plugins'
 import { useShortcutHandlers } from '@/hooks/use-shortcuts'
@@ -53,6 +53,7 @@ export function useShellShortcuts(shell: ShellActions): void {
   const setDialogOpen = useSetAtom(shortcutsDialogOpenAtom)
   const [section, setSection] = useAtom(appModeAtom)
   const newAgentSession = useSetAtom(newAgentSessionAtom)
+  const showAgentsOverview = useSetAtom(showAgentsOverviewAtom)
   const ensureDaily = useSetAtom(ensureTodaysDailyAtom)
   const hasAgents = useAtomValue(runningPluginsAtom).some(
     (plugin) => plugin.agentsMode !== undefined,
@@ -106,6 +107,11 @@ export function useShellShortcuts(shell: ShellActions): void {
     'sidebar.toggle': toggleSidebar,
     'sidebar.documents': () => showSection('documents'),
     'sidebar.agents': hasAgents ? () => showSection('agents') : undefined,
+    'agents.overview': hasAgents
+      ? () => {
+          if (showAgentsOverview()) shell.showFiles()
+        }
+      : undefined,
     'board.open': () => shell.open(BOARD_KEY),
     'tab.next': () => stepTab(1),
     'tab.previous': () => stepTab(-1),

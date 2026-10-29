@@ -182,7 +182,7 @@ export function AppSidebar({
             }}
           >
             <TabsList className="bg-foreground/5 grid w-full grid-cols-2">
-              <TabsTrigger value="documents">Documents</TabsTrigger>
+              <TabsTrigger value="documents">Vault</TabsTrigger>
               <TabsTrigger value="agents">Agents</TabsTrigger>
             </TabsList>
           </Tabs>

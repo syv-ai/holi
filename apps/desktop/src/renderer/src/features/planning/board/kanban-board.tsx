@@ -6,7 +6,6 @@
  */
 import { type ComponentProps } from 'react'
 import type { StatusDef, Task } from '@holi/shared'
-import { PlusIcon } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Frame, FrameHeader, FrameTitle } from '@/components/ui/frame'
@@ -19,7 +18,6 @@ import {
   type KanbanCommitMeta,
 } from '@/components/ui/kanban'
 
-import { Button } from '@/components/ui/button'
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
 import { InlineAdd } from '../inline-add'
 import { StatusIcon } from '../task-bits'
@@ -33,28 +31,15 @@ interface StatusColumnProps extends Omit<
   tasks: Task[]
   context: CardContext
   onAddTask: (status: string, title: string) => Promise<void>
-  onNewTask: (status: string) => void
 }
 
-function StatusColumn({
-  status,
-  tasks,
-  context,
-  onAddTask,
-  onNewTask,
-  ...props
-}: StatusColumnProps) {
+function StatusColumn({ status, tasks, context, onAddTask, ...props }: StatusColumnProps) {
   const isDone = status.category === 'completed'
   const addLabel = `Add task to ${status.name}`
 
   return (
     <KanbanColumn value={status.id} data-column={status.id} className="w-72 shrink-0" {...props}>
-      <Frame
-        spacing="sm"
-        className="group/column"
-        role="region"
-        aria-label={`${status.name} tasks`}
-      >
+      <Frame spacing="sm" role="region" aria-label={`${status.name} tasks`}>
         <FrameHeader>
           <div className="flex min-h-10 items-center gap-2">
             <StatusIcon status={status} className="size-4" />
@@ -67,19 +52,6 @@ function StatusColumn({
                   {tasks.length}
                 </Badge>
               </div>
-            </div>
-
-            <div className="motion-respond pointer-events-none opacity-0 group-focus-within/column:pointer-events-auto group-focus-within/column:opacity-100 group-hover/column:pointer-events-auto group-hover/column:opacity-100">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`New task in ${status.name}`}
-                onClick={() => onNewTask(status.id)}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <PlusIcon aria-hidden="true" />
-              </Button>
             </div>
           </div>
         </FrameHeader>
@@ -109,8 +81,6 @@ export interface KanbanBoardProps {
   onDragCancel: () => void
   context: CardContext
   onAddTask: (status: string, title: string) => Promise<void>
-  /** The column's +: the New task dialog, opening in that status. */
-  onNewTask: (status: string) => void
 }
 
 export function KanbanBoard({
@@ -122,7 +92,6 @@ export function KanbanBoard({
   onDragCancel,
   context,
   onAddTask,
-  onNewTask,
 }: KanbanBoardProps) {
   const find = (path: string) => {
     for (const [column, tasks] of Object.entries(value)) {
@@ -154,7 +123,6 @@ export function KanbanBoard({
               tasks={value[status.id] ?? []}
               context={context}
               onAddTask={onAddTask}
-              onNewTask={onNewTask}
             />
           ))}
         </KanbanBoardPrimitive>

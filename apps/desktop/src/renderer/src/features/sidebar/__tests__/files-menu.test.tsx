@@ -2,6 +2,9 @@
  * The Files menu's New items make things where the menu was opened: a
  * folder row's menu makes them in that folder, the empty space's at the root.
  * Its Delete asks first, then deletes a file, or a folder with what is in it.
+ * What a New item made opens its name field once the vault has it, and a
+ * plugin's folder document (a deck) opens from its row and expands from its
+ * chevron.
  */
 import { Provider, createStore } from 'jotai'
 import { expect, test, vi } from 'vitest'
@@ -46,6 +49,11 @@ function mount() {
         title: 'brief',
         updatedAt: '2026-10-23T10:00:00Z',
       },
+      {
+        path: 'talk.deck/slides.md',
+        title: 'slides',
+        updatedAt: '2026-10-23T10:00:00Z',
+      },
     ] as never,
   })
   const run = vi.fn(
@@ -71,6 +79,10 @@ function mount() {
           placeholder: 'App name',
           run,
         },
+      },
+      {
+        match: (p: string) => p.endsWith('.deck'),
+        folder: { surface: 'deck-view', entry: 'slides.md' },
       },
       {
         match: (p: string) => p.startsWith('link.'),
@@ -222,4 +234,32 @@ test('a web address dropped from a browser is saved as a link', async () => {
       name: 'https://example.com/page',
     }),
   )
+})
+
+test('a made app opens its name field once the vault has it', async () => {
+  const { store } = mount()
+  fireEvent.contextMenu(await screen.findByText('kunder'))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'New app' }))
+  const snapshot = store.get(snapshotAtom)!
+  store.set(snapshotAtom, {
+    ...snapshot,
+    docs: [
+      ...snapshot.docs,
+      { path: 'kunder/Untitled.app/index.html', title: 'index', updatedAt: '2026-10-23T10:00:00Z' },
+    ] as never,
+  })
+  expect(await screen.findByLabelText('Rename Untitled.app')).toBeTruthy()
+})
+
+test("a deck's row opens it, and its chevron shows the files inside", async () => {
+  const { onOpen } = mount()
+  const row = (await screen.findByText('talk')).closest('[data-slot=tree-item-label]')!
+  // The chevron is the label's first glyph; jsdom lays everything at 0.
+  fireEvent.click(row, { clientX: 40 })
+  expect(onOpen).toHaveBeenCalledWith('talk.deck')
+  expect(screen.queryByText('slides')).toBeNull()
+  onOpen.mockClear()
+  fireEvent.click(row, { clientX: 0 })
+  expect(await screen.findByText('slides')).toBeTruthy()
+  expect(onOpen).not.toHaveBeenCalled()
 })

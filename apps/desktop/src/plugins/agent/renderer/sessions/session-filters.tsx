@@ -2,7 +2,8 @@
  * The History's search field and its filter menu (docs/features/agent-sessions.md,
  * The Agents view), over the state in `../state/session-list`.
  */
-import { useAtom } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { useEffect, useRef } from 'react'
 import { ListFilterIcon, SearchIcon } from 'lucide-react'
 import {
   DropdownMenu,
@@ -30,6 +31,8 @@ import {
   type SessionFilter,
   type SessionSource,
 } from '../state/session-list'
+import { historyFocusAtom } from '../state/agents-view'
+import { startViewSessionAtom } from '../state/session-view'
 
 const STATE_FILTERS: readonly {
   value: SessionFilter['states'][number]
@@ -46,11 +49,20 @@ const SOURCES: readonly { value: SessionSource; label: string }[] = [
   { value: 'agents', label: 'Holis and automations' },
 ]
 
-/** MonoCode's search field with its filter button, as a ReUI input group. */
+/** MonoCode's search field with its filter button, as a ReUI input group.
+ *  It is the History's launcher too (⌘J focuses it): typing narrows the
+ *  sessions, ↓ goes into them, and Enter starts a new session with what was
+ *  typed as its first prompt. */
 export function SessionSearch(): React.JSX.Element {
   const [query, setQuery] = useAtom(sessionQueryAtom)
   const [filter, setFilter] = useAtom(sessionFilterAtom)
   const active = filterActive(filter)
+  const start = useSetAtom(startViewSessionAtom)
+  const focusAsked = useAtomValue(historyFocusAtom)
+  const field = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (focusAsked > 0) field.current?.focus()
+  }, [focusAsked])
   const toggleState = (value: SessionFilter['states'][number]) =>
     setFilter((f) => ({
       ...f,
@@ -62,17 +74,33 @@ export function SessionSearch(): React.JSX.Element {
         <SearchIcon aria-hidden="true" />
       </InputGroupAddon>
       <InputGroupInput
+        ref={field}
         type="search"
-        placeholder="Search conversations…"
-        aria-label="Search conversations"
+        placeholder="Search, or type a prompt and press Enter…"
+        aria-label="Search conversations, or start one"
         spellCheck={false}
         autoComplete="off"
+        data-session-launcher=""
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Escape' && query !== '') {
             e.preventDefault()
             setQuery('')
+          } else if (e.key === 'ArrowDown') {
+            // Into the list, where the cards' own arrows take over.
+            const card = e.currentTarget
+              .closest('[data-agents-history]')
+              ?.querySelector<HTMLElement>('[data-session-card]')
+            if (card) {
+              e.preventDefault()
+              card.focus()
+            }
+          } else if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+            e.preventDefault()
+            const prompt = query.trim()
+            setQuery('')
+            void start(prompt === '' ? {} : { prompt })
           }
         }}
       />

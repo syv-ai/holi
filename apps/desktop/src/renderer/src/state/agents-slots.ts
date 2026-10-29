@@ -57,3 +57,12 @@ export const newAgentSessionAtom = atom(null, (get, set, beside?: boolean): bool
   void set(start, beside)
   return true
 })
+
+/** Show the Agents mode's sessions overview (`overview`, ⌘J). False when the
+ *  mode has none. */
+export const showAgentsOverviewAtom = atom(null, (get, set): boolean => {
+  const show = get(runningPluginsAtom).find((p) => p.agentsMode !== undefined)?.agentsMode?.overview
+  if (show === undefined) return false
+  set(show)
+  return true
+})

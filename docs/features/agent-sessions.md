@@ -114,7 +114,9 @@ report that asked for you); empty, it says what lands there and offers a new ses
 of its own and never the home: a tab with nothing selected says no session is open there, and
 offers one.
 Under it **History**, then the places plugins add (Automations), then their sections
-([Holis](holis.md)), then **Sessions** with its **+** (⌘N).
+([Holis](holis.md)), then **Sessions** with its **+** (⌘N). Automations and Holis are not
+finished, so for now each is a locked row marked **In progress** (`AUTOMATIONS_READY`,
+`HOLIS_READY` in their `info.ts`), and ⌘K leaves them out.
 
 **Sessions are the open ones, as tabs are open documents; History is every one.** The rows are
 the agent's live sessions, of every provider; the background sessions the listing still has but
@@ -130,7 +132,10 @@ from History, the command menu or the Inbox, puts it back. Which rows are open i
 (`holi.agents.sessions.open`), counted from when it started keeping track, so conversations from
 before then wait in History. Sessions has no day groups: what needs you, what is pinned, then the
 most recent. **History**, in the main view, has every row by day (Needs you, Pinned, Today,
-Yesterday, Earlier) under **Search conversations…** and its filter menu. A plugin's row that is an agent session (its job id)
+Yesterday, Earlier) under its search field and filter menu. **⌘J** (the mode's `overview`)
+brings History forward with that field focused, as the place to pick up or start work: typing
+narrows the rows, ↓ goes into them (↑ from the first comes back), Enter on a card opens it, and
+Enter in the field starts a session in the default agent with what was typed as its first prompt. A plugin's row that is an agent session (its job id)
 and the live session with that id are one row: the session gives it its state and model, the
 plugin its title and who ran it. A card is two lines: the title, in full on hover, with the age on
 the right; then, quieter, a mark (a Holi's face, or an automation's bolt, when one ran it, else the
@@ -154,7 +159,7 @@ and `remove`; a Holi's or an automation's run backs none, and nor does a live se
 lists itself, so their cards offer none. **Mark as read** / **Mark as unread** is this machine's read state
 (`holi.agents.sessions.seen`): an unread mark is done until the row is opened. **Copy session ID**
 copies Claude Code's id for it, a conversation's (what `--resume` takes) or a run's job id.
-**Open in terminal** opens it in an agent tab of the Documents mode: a live background run with
+**Open in terminal** opens it in an agent tab of the Vault mode: a live background run with
 `claude attach`, or a conversation by its id as a copy (`claude --resume <id> --fork-session`). Sessions empty says **No active sessions** and offers a new
 session and History. Any session
 offers **Review last turn**, the turn review on what its last turn changed. A live session keeps

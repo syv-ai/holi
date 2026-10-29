@@ -111,7 +111,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   },
   {
     id: 'sidebar.documents',
-    label: 'Show documents',
+    label: 'Show vault',
     group: 'Navigation',
     keys: ['⇧⌘E'],
     whileTyping: true,
@@ -122,6 +122,15 @@ export const SHORTCUTS: readonly Shortcut[] = [
     group: 'Navigation',
     keys: ['⇧⌘A'],
     whileTyping: true,
+  },
+  // From a session's terminal too: it is how you leave one for another.
+  {
+    id: 'agents.overview',
+    label: 'Agent sessions',
+    group: 'Navigation',
+    keys: ['⌘J'],
+    whileTyping: true,
+    inTerminal: true,
   },
   {
     id: 'board.open',

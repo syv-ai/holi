@@ -40,7 +40,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   focused: **Open**; **Open beside**, in split view, as ⌥-click does (`openTab` with `beside`);
   **Ask about this app**, a new session beside it with the app as its context (shown only while an
   agent can start one, `AgentsSlot.start`; see [agent sessions](agent-sessions.md)); **Reveal in Files**,
-  which brings the Documents sidebar forward and selects the bundle's row
+  which brings the Vault sidebar forward and selects the bundle's row
   (`state/reveal-in-files.ts`); **Copy path**, the vault-relative bundle path; **Refresh
   preview**; then **Archive**. The keyboard reaches it through the menu key rather than a ⋯ on
   the card, so c-card-7 keeps its composition.

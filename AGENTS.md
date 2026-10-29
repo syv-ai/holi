@@ -294,7 +294,8 @@ Gotchas of a fresh checkout or worktree that no file states.
 - Holi edits the stock files in place, and `shadcn add` would overwrite those edits if
   you let it. Added on purpose: `Button` variants `text`, `dashed` and sizes `row`,
   `inline`; `DialogContent`, `PopoverContent`, `HoverCardContent` variant `flush`;
-  `DialogContent` `size` (the width of a dialog chosen at runtime);
+  `DialogContent` `size` (the width of a dialog chosen at runtime); `FileType`'s `deck`
+  extension (a community plugin's presentation);
   `SidebarMenuButton` variant `fill` and size `rail`; `Avatar` `shape="square"`;
   `TabsTrigger` variant `tab`; `Toggle` size `icon`; `ResizableHandle` variant `primary`
   and `ResizablePanelGroup` `animateFirst`; `PanelSeparator` variant `line`;

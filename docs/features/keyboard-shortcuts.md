@@ -49,8 +49,9 @@ command list: `?`, ↓ to a row, ↩ runs it, so a person who forgot a key can s
 | ---------- | ----------------------------- | ------------ | ------------------------- |
 | Navigation | Search                        | ⌘K           | Ctrl K                    |
 | Navigation | Toggle sidebar                | ⌘B           | Ctrl B                    |
-| Navigation | Show documents                | ⇧⌘E          | Ctrl Shift E              |
+| Navigation | Show vault                    | ⇧⌘E          | Ctrl Shift E              |
 | Navigation | Show agents                   | ⇧⌘A          | Ctrl Shift A              |
+| Navigation | Agent sessions                | ⌘J           | Ctrl J                    |
 | Navigation | Open board                    | ⇧⌘B          | Ctrl Shift B              |
 | Tabs       | Next tab / previous tab       | ⌃Tab / ⌃⇧Tab | Ctrl Tab / Ctrl Shift Tab |
 | Tabs       | Go to tab 1 to 8, or the last | ⌘1 to ⌘9     | Ctrl 1 to Ctrl 9          |
@@ -94,7 +95,7 @@ screen.
   sidebar would toggle twice.
 - **⌘B in an app only opens the sidebar.** With Mail or Calendar in front, ⌘B shows or hides the
   files sidebar as it does anywhere, and the app stays in front, so there is nothing to confirm.
-- **⌘N is the side's own new.** On the Documents side a document; on the Agents side a session in
+- **⌘N is the side's own new.** On the Vault side a document; on the Agents side a session in
   the default agent (the mode's `newSession`). One binding, so the two never fire together.
 - **Behind a dialog** only the dialog toggles fire (⌘K, ⌘/, `?`): ⌘N must not make a document
   behind a modal.

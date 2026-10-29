@@ -1,7 +1,7 @@
 # Sidebar
 
 The sidebar sits on the window's own ground, and the content floats beside it as one rounded panel
-(the content panel). It has two modes, **Documents** and **Agents**, and stays deliberately small: the vault, the
+(the content panel). It has two modes, **Vault** and **Agents**, and stays deliberately small: the vault, the
 mode, the mode's own list, and who is signed in. Everywhere else is one keystroke away in the
 [command menu](command-palette.md) (⌘K).
 
@@ -13,14 +13,14 @@ mode, the mode's own list, and who is signed in. Everywhere else is one keystrok
 - **The window's band** is the sidebar's top row: on macOS the traffic lights, then the sidebar's
   toggle beside them, the rest of the row a handle to drag the window by. Fullscreen hides the
   lights, and main says so (`window:fullscreen`), so the toggle moves to the band's start.
-- **Mode toggle** (`features/sidebar/app-sidebar.tsx`): Documents and Agents as two wide `Tabs`
+- **Mode toggle** (`features/sidebar/app-sidebar.tsx`): Vault and Agents as two wide `Tabs`
   segments, the active one raised in place, with no thumb travelling between them: it is pressed
   all day, and a switch that moves is one that lags. Arrow keys move it. The Agents segment wears a Holi's pixel face (idle it bobs, working it hops, waiting on
   you it gets an idea) and reports the
   agents from either mode: an amber count while something needs you (`motion-pulse`), a turning
   ring (`motion-orbit`) and a count while
   agents work, both in its accessible name. The mode is `appModeAtom`, remembered across launches;
-  opening anything into the panes (a note from the palette, a link, Settings) brings Documents
+  opening anything into the panes (a note from the palette, a link, Settings) brings Vault
   back, since the panes are where it opens.
 - **The Agents side is a plugin's.** `RendererPlugin.agentsMode` gives a sidebar, a main view and a
   status atom. In Agents mode the sidebar body is its sidebar, and its view covers the panes, which
@@ -28,7 +28,8 @@ mode, the mode's own list, and who is signed in. Everywhere else is one keystrok
   ([agent sessions](agent-sessions.md)); with no plugin providing it there is one mode and no
   toggle. **Other plugins add to it without the agent knowing them**: `RendererPlugin.agentsSlot`
   gives a row for the top group beside the Inbox (`nav`: [Automations](scheduled-agents.md)), a
-  section (`sidebar`: [Holis](holis.md)) placed by its `order` (the sessions are at 100; a slot with
+  section (`sidebar`: [Holis](holis.md); both locked as **In progress** rows until they are
+  finished, see [agent sessions](agent-sessions.md)) placed by its `order` (the sessions are at 100; a slot with
   none comes after them), rows in the Inbox (`inbox`), a main view for its rows, the
   mode's main view while nothing is selected (`home`, the first running slot's wins; the Inbox is
   its own row, never the home) and a status the toggle adds in. What is shown is core's `agentsSelectionAtom`,
@@ -46,7 +47,7 @@ mode, the mode's own list, and who is signed in. Everywhere else is one keystrok
   done) and its mark (a Holi's face, an automation's bolt, else the agent's). The mode's views paint no ground of
   their own: on macOS the window is glass and `<main>` tints it as the vault's Transparency asks,
   so only controls, cards, menus and overlays inside them carry a background.
-- **Documents** is a search field and two destinations, then what you pinned, then the files:
+- **Vault** is a search field and two destinations, then what you pinned, then the files:
   - **Search** is a field at the top (a grey fill, as every text field is) that opens the
     [command menu](command-palette.md) (⌘K): files, notes and actions. It is a press, not a
     field that filters here, so there is one search and not two.

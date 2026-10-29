@@ -10,6 +10,9 @@ do not cover.
 
 Holis are the plugin `holis` (`src/plugins/holis/`, on by default), built on the agent: it runs
 every Holi through the agent's `agent.launch` and reaches the agent's sessions only through core.
+Until the feature is finished, the Agents sidebar shows a locked **Holis** row marked **In
+progress** in place of their section, and ⌘K and a document's Agent menu leave them out
+(`HOLIS_READY` in `info.ts`).
 
 ## How it works
 

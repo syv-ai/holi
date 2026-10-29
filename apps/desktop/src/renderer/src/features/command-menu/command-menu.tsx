@@ -156,7 +156,7 @@ const SHORTCUT_PLACES: readonly {
   label: string
   icon: MenuIcon
 }[] = [
-  { id: 'sidebar.documents', label: 'Documents sidebar', icon: FolderTreeIcon },
+  { id: 'sidebar.documents', label: 'Vault sidebar', icon: FolderTreeIcon },
   { id: 'sidebar.agents', label: 'Agents sidebar', icon: AstroidIcon },
   { id: 'app.mail', label: 'Mail', icon: MailIcon },
   { id: 'app.calendar', label: 'Calendar', icon: CalendarIcon },
