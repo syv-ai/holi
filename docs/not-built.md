@@ -39,9 +39,9 @@ Holi in it (`from: owner/repo#id`), read from that vault each time, its approval
 vault's.
 
 **Holis and automations on another agent.** Their runs need a provider with `background`, which
-only Claude Code has. `codex exec` runs a prompt unwatched and fires `notify`, so Codex could carry
-a run once a run in a Holi-owned process, which ends when Holi quits, is acceptable
-([agent-sessions](features/agent-sessions.md), Providers).
+only Claude Code has. Codex now runs unattended jobs (`codex exec`, in a scratch folder that ends
+when Holi quits; [agent-sessions](features/agent-sessions.md), Jobs), but a Holi's or an
+automation's run reads and writes the vault itself and outlives a quit, which a job does not.
 
 **More providers.** opencode and pi, each as its core and whatever its hooks allow.
 
