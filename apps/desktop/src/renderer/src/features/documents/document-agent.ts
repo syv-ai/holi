@@ -15,6 +15,7 @@
  * path, so a run outlives its tab being switched away.
  */
 import { atom, useAtomValue, useSetAtom } from 'jotai'
+import type { AgentProviderId } from '@holi/shared'
 import { useCallback, useEffect, useRef } from 'react'
 
 import { parentOf } from '@/lib/tree-paths'
@@ -40,7 +41,7 @@ export interface AgentRun {
   status: AgentRunStatus
   /** Set once the session was seen working, so its idle means done. */
   seenWorking: boolean
-  provider: 'claude' | 'pi'
+  provider: AgentProviderId
   message?: string
 }
 
@@ -177,13 +178,15 @@ export function useDocumentAgent(path: string) {
       update({ status: 'failed', message: row.error ?? 'Pi could not finish the run.' })
     } else if (row.outcome === 'aborted') {
       update({ status: 'stopped' })
+    } else if (run.provider === 'pi' && row.outcome === 'completed') {
+      update({ status: 'done' })
     } else if (row.state === 'working') {
       if (run.status !== 'working' || !run.seenWorking)
         update({ status: 'working', seenWorking: true })
     } else if (row.state === 'needs-you') {
       if (run.status !== 'needs-you') update({ status: 'needs-you' })
-    } else if (run.seenWorking) {
-      if (run.provider !== 'pi' || row.outcome === 'completed') update({ status: 'done' })
+    } else if (run.seenWorking && run.provider !== 'pi') {
+      update({ status: 'done' })
     }
     // `update` writes the same atom this reads; the run and rows are the deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps

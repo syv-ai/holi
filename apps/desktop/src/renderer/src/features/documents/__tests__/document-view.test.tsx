@@ -100,15 +100,15 @@ const sessions = (
   agentService as unknown as {
     __sessions: ReturnType<
       typeof atom<
-          {
-            id: string
-            name: string
-            state: 'needs-you' | 'working' | 'idle'
-            outcome?: 'completed' | 'failed' | 'aborted'
-            error?: string
-          }[]
-        >
+        {
+          id: string
+          name: string
+          state: 'needs-you' | 'working' | 'idle'
+          outcome?: 'completed' | 'failed' | 'aborted'
+          error?: string
+        }[]
       >
+    >
   }
 ).__sessions
 
@@ -245,6 +245,27 @@ test('Pi waits for resolved vault settings before launching', async () => {
   )
   await waitFor(() => expect(cap).toHaveBeenCalled())
   expect(JSON.parse(cap.mock.calls[0]![0].paramsJson).provider).toBe('pi')
+})
+
+test('Pi completes when its result arrives before the working snapshot', async () => {
+  const user = userEvent.setup()
+  store.set(vaultSettingsAtom, {
+    remote: 'syv/vault',
+    settings: { ...VAULT_SETTING_DEFAULTS, agentProvider: 'pi', warnings: [] },
+  })
+  open('')
+  const box = await editorBox()
+  box.focus()
+  fireEvent.keyDown(box, { key: ' ', code: 'Space' })
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Write it{Enter}',
+  )
+  await waitFor(() => expect(cap).toHaveBeenCalled())
+  act(() =>
+    store.set(sessions, [{ id: 'abc12345', name: '', state: 'idle', outcome: 'completed' }]),
+  )
+  await waitFor(() => expect(box).toHaveAttribute('contenteditable', 'true'))
 })
 
 test('a disappeared Pi session is a failure, not a completed run', async () => {
