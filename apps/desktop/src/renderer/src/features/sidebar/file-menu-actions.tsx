@@ -4,10 +4,11 @@ import { isHoliLinkable } from '@holi/shared'
 import {
   ArrowDownIcon,
   ArrowUpIcon,
-  ClipboardCopyIcon,
+  FileSymlinkIcon,
   FolderInputIcon,
   FolderOpenIcon,
   FolderPlusIcon,
+  HardDriveIcon,
   LinkIcon,
   ListChecksIcon,
   PencilIcon,
@@ -92,13 +93,15 @@ export function rowActions({
     {
       kind: 'item',
       label: 'Copy relative path',
-      icon: <ClipboardCopyIcon aria-hidden="true" />,
+      icon: <FileSymlinkIcon aria-hidden="true" />,
+      shortcut: '⌥⇧⌘C',
       run: () => on.copyPath(id, 'relative'),
     },
     {
       kind: 'item',
       label: 'Copy absolute path',
-      icon: <ClipboardCopyIcon aria-hidden="true" />,
+      icon: <HardDriveIcon aria-hidden="true" />,
+      shortcut: '⌥⌘C',
       run: () => on.copyPath(id, 'absolute'),
     },
     ...(linkable

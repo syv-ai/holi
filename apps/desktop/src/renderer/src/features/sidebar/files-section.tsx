@@ -371,8 +371,21 @@ export function FilesSection({
   // The tree's own F2 renames its focused row; this one renames the selected
   // row from anywhere else, while the sidebar is open to show the field.
   const { open: sidebarOpen } = useSidebar()
+  /** What a key acts on: the focused row while the tree has focus, else the
+   *  row selected in it. */
+  const keyedRow = (): string | null => {
+    const inTree = tree.getElement()?.contains(document.activeElement) === true
+    const id = (inTree ? tree.getFocusedItem() : tree.getSelectedItems()[0])?.getId()
+    return id === undefined || id === ROOT_ID ? null : id
+  }
+  const copyKeyed = (form: 'relative' | 'absolute') => () => {
+    const id = keyedRow()
+    if (id !== null) copyPath(id, form)
+  }
   useShortcutHandlers({
     'files.collapseAll': () => tree.collapseAll(),
+    'files.copyPath': sidebarOpen ? copyKeyed('absolute') : undefined,
+    'files.copyRelativePath': sidebarOpen ? copyKeyed('relative') : undefined,
     'files.rename': sidebarOpen
       ? () => {
           if (tree.getElement()?.contains(document.activeElement)) return
@@ -440,6 +453,15 @@ export function FilesSection({
     })
   }
 
+  /** Put a row's path on the clipboard: as the vault has it, or main's
+   *  absolute one. */
+  function copyPath(path: string, form: 'relative' | 'absolute') {
+    const remote = files.remote
+    if (form === 'relative') void copyText(path, 'Path copied', path)
+    else if (remote !== null)
+      void copyText(trpc.files.absolutePath.query({ remote, path }), 'Path copied', path)
+  }
+
   /** Swap a row with its neighbour, as the folder's hand-made order. */
   function shift(id: string, by: -1 | 1) {
     const parent = tree.getItemInstance(id).getParent()
@@ -476,12 +498,7 @@ export function FilesSection({
               await trpc.files.reveal.mutate({ remote, path })
             })
         },
-        copyPath: (path, form) => {
-          const remote = files.remote
-          if (form === 'relative') void copyText(path, 'Path copied', path)
-          else if (remote !== null)
-            void copyText(trpc.files.absolutePath.query({ remote, path }), 'Path copied', path)
-        },
+        copyPath,
         copyLink: (path) => {
           if (files.remote !== null)
             void copyText(holiLink({ remote: files.remote, path }), 'Holi link copied', path)

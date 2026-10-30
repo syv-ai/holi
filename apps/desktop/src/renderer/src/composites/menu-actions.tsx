@@ -18,6 +18,8 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu'
+import { hotkeyLabels } from '@/lib/hotkey'
+import { isMac } from '@/lib/platform'
 
 /**
  * A menu written once and drawn twice: as the tree's right-click menu and as
@@ -74,7 +76,9 @@ export function ContextMenuActions({ actions }: { actions: MenuAction[] }) {
           >
             {action.icon}
             {action.label}
-            {action.shortcut ? <ContextMenuShortcut>{action.shortcut}</ContextMenuShortcut> : null}
+            {action.shortcut ? (
+              <ContextMenuShortcut>{keyText(action.shortcut)}</ContextMenuShortcut>
+            ) : null}
           </ContextMenuItem>
         )
     }
@@ -119,10 +123,16 @@ export function DropdownMenuActions({ actions }: { actions: MenuAction[] }) {
             {action.icon}
             {action.label}
             {action.shortcut ? (
-              <DropdownMenuShortcut>{action.shortcut}</DropdownMenuShortcut>
+              <DropdownMenuShortcut>{keyText(action.shortcut)}</DropdownMenuShortcut>
             ) : null}
           </DropdownMenuItem>
         )
     }
   })
+}
+
+/** A key spec as it reads on this platform: `⌥⌘C`, or `Ctrl Alt C`. */
+function keyText(spec: string): string {
+  const mac = isMac()
+  return hotkeyLabels(spec, mac).join(mac ? '' : ' ')
 }

@@ -324,6 +324,19 @@ export const SHORTCUTS: readonly Shortcut[] = [
     group: 'Files',
     keys: ['F2'],
   },
+  // VS Code's keys, on the focused row, or the selected one from elsewhere.
+  {
+    id: 'files.copyPath',
+    label: 'Copy absolute path',
+    group: 'Files',
+    keys: ['⌥⌘C'],
+  },
+  {
+    id: 'files.copyRelativePath',
+    label: 'Copy relative path',
+    group: 'Files',
+    keys: ['⌥⇧⌘C'],
+  },
   {
     id: 'files.collapseAll',
     label: 'Collapse all folders',
