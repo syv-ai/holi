@@ -299,6 +299,9 @@ export interface AgentSessionRow {
   id: string
   name: string
   state: 'needs-you' | 'working' | 'idle'
+  /** Result of a managed background run, when it has settled. */
+  outcome?: 'completed' | 'failed' | 'aborted'
+  error?: string
   /** Only for 'needs-you': why, e.g. 'permission prompt'. */
   waitingFor?: string
   /** The model, in the agent's words (`Opus 5.5`), once it has said. */

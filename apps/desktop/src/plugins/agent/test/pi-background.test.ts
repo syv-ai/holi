@@ -62,6 +62,12 @@ describe('Pi background runs', () => {
     }
     await launch.run(ctx, launch.params({ name: 'default', prompt: 'go' }))
     await launch.run(ctx, launch.params({ name: 'pi', prompt: 'go', provider: 'pi' }))
+    await expect(
+      launch.run(ctx, launch.params({ name: 'codex', prompt: 'go', provider: 'codex' })),
+    ).resolves.toMatchObject({
+      ok: false,
+      message: 'Codex cannot run unattended jobs in Holi yet.',
+    })
     expect(calls).toEqual(['claude', 'pi'])
   })
   it('refuses TUI attach, restart, and duplicate for managed Pi sessions', async () => {
@@ -190,6 +196,27 @@ describe('Pi background runs', () => {
     await active.leave()
     expect(brackets).toEqual(['begin', 'forget'])
     expect(active.sessions()).toEqual([])
+  })
+
+  it('keeps failed runs visible as failures, not approval prompts', async () => {
+    const rpc = fake()
+    const manager = createPiBackground({
+      bin: () => '/usr/bin/pi',
+      spawn: () => rpc.child,
+      bracket: () => {},
+      changed: () => {},
+    })
+    manager.setVault('owner/vault', '/vault')
+    const started = await manager.launch({ name: 'Broken', prompt: 'do work' })
+    expect(started.ok).toBe(true)
+    rpc.stdout.write(
+      '{"type":"message_end","message":{"role":"assistant","stopReason":"error","errorMessage":"provider unavailable"}}\n{"type":"agent_settled","aborted":false}\n',
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(manager.sessions()).toMatchObject([
+      { state: 'idle', outcome: 'failed', error: 'provider unavailable' },
+    ])
+    await manager.leave()
   })
 
   it('rejects launches without a vault or installed Pi and isolates jobs on leave', async () => {

@@ -1,7 +1,7 @@
 /**
- * A document's agent runs: a background Claude Code session on Sonnet 5.5,
- * started through the agent plugin's `agent.launch` capability, with no
- * terminal and permission to touch only the files the run is about.
+ * A document's agent runs through the configured background provider via
+ * `agent.launch`. Claude Code pre-approves only the named file tools; Pi runs
+ * with the user's normal permissions, so the file instruction is not a boundary.
  *
  * Three kinds. **write**: the person pressed Space on an empty line and asked
  * for something; a marker line in the file says where. **rewrite**: a quick
@@ -20,6 +20,7 @@ import { useCallback, useEffect } from 'react'
 import { parentOf } from '@/lib/tree-paths'
 import { trpc } from '@/lib/trpc'
 import { useAgentService } from '@/state/agent-service'
+import type { AgentSessionRow } from '@/state/plugin-types'
 import { agentProviderSettingAtom } from '@/state/settings'
 import { activeRemoteAtom } from '@/state/vaults'
 
@@ -163,7 +164,11 @@ export function useDocumentAgent(path: string) {
       if (run.seenWorking) update({ status: 'done' })
       return
     }
-    if (row.state === 'working') {
+    if (row.outcome === 'failed') {
+      update({ status: 'failed', message: row.error ?? 'Pi could not finish the run.' })
+    } else if (row.outcome === 'aborted') {
+      update({ status: 'stopped' })
+    } else if (row.state === 'working') {
       if (run.status !== 'working' || !run.seenWorking)
         update({ status: 'working', seenWorking: true })
     } else if (row.state === 'needs-you') {
@@ -235,6 +240,4 @@ export function useDocumentAgent(path: string) {
   return { run, start, stop, dismiss, available: service !== null }
 }
 
-const EMPTY_SESSIONS = atom(
-  [] as readonly { id: string; state: 'needs-you' | 'working' | 'idle' }[],
-)
+const EMPTY_SESSIONS = atom<readonly AgentSessionRow[]>([])

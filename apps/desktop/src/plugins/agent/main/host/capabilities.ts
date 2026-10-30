@@ -321,6 +321,9 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
             ...(args.appendSystemPrompt === undefined ? {} : { system: args.appendSystemPrompt }),
           })
         }
+        if (provider === 'codex') {
+          return { ok: false as const, message: 'Codex cannot run unattended jobs in Holi yet.' }
+        }
         return deps.sessions.launch(args)
       },
     }),

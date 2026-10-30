@@ -147,6 +147,17 @@ describe('PiRpcRun', () => {
     await expect(aborted).resolves.toMatchObject({ status: 'aborted' })
   })
 
+  it('does not call a failed model response a completed run', async () => {
+    const process = fake()
+    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => process.child })
+    const result = run.prompt('go')
+    process.stdout.write(
+      '{"type":"message_end","message":{"role":"assistant","stopReason":"error","errorMessage":"provider unavailable"}}\n',
+    )
+    process.stdout.write('{"type":"agent_settled","aborted":false}\n')
+    await expect(result).resolves.toMatchObject({ status: 'failed', error: 'provider unavailable' })
+  })
+
   it('cancels and kills the managed child', async () => {
     const fakeProcess = fake()
     const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => fakeProcess.child })

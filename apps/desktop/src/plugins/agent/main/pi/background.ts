@@ -9,9 +9,10 @@ interface PiJob {
   startedAt: number
   run: PiRpcRun
   state: SessionSummary['state']
+  outcome?: SessionSummary['outcome']
+  error?: string
   model?: string
   busy: boolean
-  modelRequested?: string
 }
 
 export interface PiBackgroundDeps {
@@ -27,13 +28,15 @@ export function createPiBackground(deps: PiBackgroundDeps) {
   let root: string | null = null
   const jobs = new Map<string, PiJob>()
   const sessions = (): SessionSummary[] =>
-    [...jobs.values()].map(({ id, name, state, startedAt, model }) => ({
+    [...jobs.values()].map(({ id, name, state, startedAt, model, outcome, error }) => ({
       id,
       provider: 'pi',
       name,
       state,
       startedAt,
       ...(model === undefined ? {} : { model }),
+      ...(outcome === undefined ? {} : { outcome }),
+      ...(error === undefined ? {} : { error }),
     }))
 
   async function launch(args: { name: string; prompt: string; model?: string; system?: string }) {
@@ -64,7 +67,6 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       run,
       state: 'working',
       busy: false,
-      ...(args.model === undefined ? {} : { modelRequested: args.model }),
     }
     jobs.set(id, job)
     deps.bracket(id, 'begin')
@@ -76,18 +78,21 @@ export function createPiBackground(deps: PiBackgroundDeps) {
   async function runTurn(job: PiJob, prompt: string): Promise<void> {
     job.busy = true
     job.state = 'working'
+    job.outcome = undefined
+    job.error = undefined
     deps.changed()
     let result: PiRunResult
     try {
       result = await job.run.prompt(prompt)
-      job.modelRequested = undefined
     } catch (error) {
       result = { status: 'failed', output: '', error: String(error) }
     }
     if (jobs.get(job.id) !== job) return
     job.busy = false
     job.model = typeof result.model === 'string' ? result.model : job.model
-    job.state = result.status === 'completed' ? 'idle' : 'needs-you'
+    job.state = 'idle'
+    job.outcome = result.status
+    job.error = result.error
     // Only a successful completion produces the turn-end event that automations
     // hear. Aborts and failures release sync without masquerading as completion.
     deps.bracket(job.id, result.status === 'completed' ? 'end' : 'forget')
@@ -106,7 +111,8 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     },
     async message(id: string, text: string) {
       const job = jobs.get(id)
-      if (!job || job.remote !== remote) throw new Error(`no running Pi session ${id}`)
+      if (!job || job.remote !== remote || job.outcome === 'failed' || job.outcome === 'aborted')
+        throw new Error(`no running Pi session ${id}`)
       if (job.busy) job.run.followUp(text)
       else {
         deps.bracket(job.id, 'begin')
@@ -120,6 +126,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       if (job.busy) job.run.cancel()
       else job.run.close()
       job.state = 'idle'
+      job.outcome = 'aborted'
       deps.changed()
       return { ok: true as const }
     },

@@ -57,6 +57,10 @@ export interface SessionSummary {
   /** Claude Code's name, else 'New session'. */
   name: string
   state: SessionState
+  /** Holi-managed run result. An idle run is not necessarily a successful one. */
+  outcome?: 'completed' | 'failed' | 'aborted'
+  /** A failed managed run's error, when known. */
+  error?: string
   /** Present only for 'needs-you', when Claude Code says why. */
   waitingFor?: string
   /** How much of its context window is used, 0 to 100, from its status line.

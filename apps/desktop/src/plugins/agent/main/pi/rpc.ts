@@ -1,7 +1,7 @@
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { Readable, Writable } from 'node:stream'
 
-type PiRunStatus = 'working' | 'completed' | 'failed' | 'aborted'
+type PiRunStatus = 'completed' | 'failed' | 'aborted'
 export interface PiRunResult {
   status: PiRunStatus
   output: string
@@ -50,6 +50,7 @@ export class PiRpcRun {
   private closed = false
   private model?: unknown
   private usage?: unknown
+  private lastError?: string
   private phase: 'prompt' | 'setting-model' | 'idle' = 'idle'
   private readonly commands = new Map<string, string>()
 
@@ -98,6 +99,7 @@ export class PiRpcRun {
     if (this.closed || this.active) return Promise.reject(new Error('Pi RPC run is not idle'))
     this.settled = false
     this.active = true
+    this.lastError = undefined
     this.phase = this.configuredModel === undefined || this.modelSet ? 'prompt' : 'setting-model'
     this.resultPromise = new Promise((resolve) => {
       this.completion = resolve
@@ -239,12 +241,21 @@ export class PiRpcRun {
       if (message?.role === 'assistant') {
         this.model = message.model ?? this.model
         this.usage = message.usage ?? this.usage
+        if (message.stopReason === 'error') {
+          this.lastError =
+            typeof message.errorMessage === 'string'
+              ? message.errorMessage
+              : 'Pi reported a model error.'
+        } else if (message.stopReason === 'stop' || message.stopReason === 'toolUse') {
+          this.lastError = undefined
+        }
       }
     }
     if (record.type === 'agent_settled') {
       this.finish({
-        status: record.aborted === true ? 'aborted' : 'completed',
+        status: record.aborted === true ? 'aborted' : this.lastError ? 'failed' : 'completed',
         output: this.output,
+        ...(this.lastError === undefined ? {} : { error: this.lastError }),
         model: this.model,
         usage: this.usage,
       })

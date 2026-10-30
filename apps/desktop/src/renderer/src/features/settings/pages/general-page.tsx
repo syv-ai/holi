@@ -18,7 +18,7 @@ import { AgentMark } from '@/composites/marks'
 import { claudeFirstRunAtom } from '@/state/claude-first-run'
 import { useRepoSize } from '@/state/repo-usage'
 import { activeRemoteAtom, retrySyncAtom, syncStateAtom, vaultsAtom } from '@/state/vaults'
-import { ExternalLinkIcon, FolderOpenIcon, ShieldCheckIcon } from 'lucide-react'
+import { ExternalLinkIcon, FolderOpenIcon, ShieldCheckIcon, TriangleAlertIcon } from 'lucide-react'
 import { SettingsGroup, SettingsFieldRow, SettingsRowsLoading } from '../settings-kit'
 import { useVaultSettings } from '../use-vault-settings'
 import { openExternal } from '@/lib/open-external'
@@ -72,7 +72,7 @@ function AgentsCard() {
         <>
           {current === 'pi' && (
             <Alert variant="warning">
-              <ShieldCheckIcon />
+              <TriangleAlertIcon />
               <AlertTitle>Pi runs unattended with your account permissions</AlertTitle>
               <AlertDescription>
                 Automatic Pi jobs have no per-tool approval. They can read other vaults and

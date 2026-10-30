@@ -42,6 +42,9 @@ export interface AgentSession {
    *  writes itself), else 'New session'. */
   name: string
   state: SessionState
+  /** Result of a Holi-managed background run after it settles. */
+  outcome?: 'completed' | 'failed' | 'aborted'
+  error?: string
   /** Only for 'needs-you': why, e.g. 'permission prompt'. */
   waitingFor?: string
   /** How much of its context window is used, 0 to 100, from its status line.
