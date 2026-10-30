@@ -18,7 +18,6 @@ export interface PiBackgroundDeps {
   bin(): string | null
   bracket(id: string, edge: 'begin' | 'end' | 'forget'): void
   changed(): void
-  settled(id: string): void
   spawn?: ConstructorParameters<typeof PiRpcRun>[0]['spawn']
 }
 
@@ -37,7 +36,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       ...(model === undefined ? {} : { model }),
     }))
 
-  async function launch(args: { name: string; prompt: string; model?: string }) {
+  async function launch(args: { name: string; prompt: string; model?: string; system?: string }) {
     if (root === null || remote === null)
       return { ok: false as const, message: 'No vault is open.' }
     const bin = deps.bin()
@@ -50,6 +49,8 @@ export function createPiBackground(deps: PiBackgroundDeps) {
         bin,
         cwd: root,
         env: process.env,
+        ...(args.model === undefined ? {} : { model: args.model }),
+        ...(args.system === undefined ? {} : { system: args.system }),
         ...(deps.spawn ? { spawn: deps.spawn } : {}),
       })
     } catch (error) {
@@ -78,7 +79,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     deps.changed()
     let result: PiRunResult
     try {
-      result = await job.run.prompt(prompt, job.modelRequested)
+      result = await job.run.prompt(prompt)
       job.modelRequested = undefined
     } catch (error) {
       result = { status: 'failed', output: '', error: String(error) }
@@ -86,14 +87,12 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     if (jobs.get(job.id) !== job) return
     job.busy = false
     job.model = typeof result.model === 'string' ? result.model : job.model
-    job.state =
-      result.status === 'completed' ? 'idle' : result.status === 'aborted' ? 'idle' : 'needs-you'
-    // A settled run is observable as a completed turn regardless of whether Pi
-    // completed, failed, or was cancelled; callers must not infer success from an ack.
-    deps.bracket(job.id, 'end')
-    deps.settled(job.id)
+    job.state = result.status === 'completed' ? 'idle' : 'needs-you'
+    // Only a successful completion produces the turn-end event that automations
+    // hear. Aborts and failures release sync without masquerading as completion.
+    deps.bracket(job.id, result.status === 'completed' ? 'end' : 'forget')
     deps.changed()
-    if (result.status === 'failed') job.run.close()
+    if (result.status !== 'completed') job.run.close()
   }
 
   return {
@@ -102,7 +101,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       root = nextRoot
     },
     sessions,
-    async launch(args: { name: string; prompt: string; model?: string }) {
+    async launch(args: { name: string; prompt: string; model?: string; system?: string }) {
       return launch(args)
     },
     async message(id: string, text: string) {

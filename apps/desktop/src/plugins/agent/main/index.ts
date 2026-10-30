@@ -55,9 +55,10 @@ export const agentMain: MainPlugin = {
     // background sessions Claude Code's supervisor runs, then the ones Holi
     // runs itself.
     let background: SessionSummary[] = []
+    let piSessions: SessionSummary[] = []
     let own: SessionSummary[] = []
     const pushSessions = (): void => {
-      const all = [...background, ...own]
+      const all = [...background, ...piSessions, ...own]
       ctx.emit(ctx.remote, 'sessions', all)
       ctx.publish('sessions', all)
       sessionLog.sessions(all)
@@ -86,10 +87,9 @@ export const agentMain: MainPlugin = {
     const piBackground = createPiBackground({
       bin: () => resolveBin('pi'),
       bracket: (id, edge) => started.bracket(id, edge),
-      changed: () => pushSessions(),
-      settled: (id) => {
-        ctx.publish('turn-end', { id, pending: null })
-        sessionLog.turnEnd(id)
+      changed: () => {
+        piSessions = piBackground.sessions()
+        pushSessions()
       },
     })
     piBackground.setVault(ctx.remote, ctx.root)
@@ -172,9 +172,11 @@ export const agentMain: MainPlugin = {
     // is working or waiting on you: that turn is cut short. Idle sessions
     // stop without a question; their conversations stay in the agents list.
     ctx.guardQuit(() => {
-      const busy = [...started.sessions(), ...ptySessions.sessions()].filter(
-        (s) => s.state !== 'idle',
-      )
+      const busy = [
+        ...started.sessions(),
+        ...piBackground.sessions(),
+        ...ptySessions.sessions(),
+      ].filter((s) => s.state !== 'idle')
       if (busy.length === 0) return null
       const one = busy.length === 1
       return {

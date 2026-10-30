@@ -105,6 +105,48 @@ describe('PiRpcRun', () => {
     await expect(next).resolves.toMatchObject({ status: 'completed' })
   })
 
+  it('sets models with provider and modelId, waits for the acknowledgement, and appends system text', async () => {
+    const fakeProcess = fake()
+    let args: string[] = []
+    const run = new PiRpcRun({
+      bin: 'pi',
+      cwd: '/v',
+      model: 'anthropic/claude-sonnet',
+      system: 'Follow these rules',
+      spawn: (_bin, argv) => {
+        args = argv
+        return fakeProcess.child
+      },
+    })
+    const result = run.prompt('go')
+    expect(args).toEqual(['--mode', 'rpc', '--append-system-prompt', 'Follow these rules'])
+    expect(fakeProcess.commands).toMatchObject([
+      { type: 'set_model', provider: 'anthropic', modelId: 'claude-sonnet' },
+    ])
+    fakeProcess.stdout.write(
+      `{"type":"response","id":"${fakeProcess.commands[0]!.id}","command":"set_model","success":true}\n`,
+    )
+    expect(fakeProcess.commands.at(-1)).toMatchObject({ type: 'prompt', message: 'go' })
+    fakeProcess.stdout.write('{"type":"agent_settled","aborted":false}\n')
+    await expect(result).resolves.toMatchObject({ status: 'completed' })
+  })
+
+  it('fails and kills the process when Pi rejects a command or aborts a turn', async () => {
+    const failedProcess = fake()
+    const failedRun = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => failedProcess.child })
+    const failed = failedRun.prompt('go')
+    failedProcess.stdout.write(
+      `{"type":"response","id":"${failedProcess.commands[0]!.id}","command":"prompt","success":false,"error":"bad prompt"}\n`,
+    )
+    await expect(failed).resolves.toMatchObject({ status: 'failed', error: 'bad prompt' })
+
+    const abortedProcess = fake()
+    const abortedRun = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => abortedProcess.child })
+    const aborted = abortedRun.prompt('go')
+    abortedProcess.stdout.write('{"type":"agent_settled","aborted":true}\n')
+    await expect(aborted).resolves.toMatchObject({ status: 'aborted' })
+  })
+
   it('cancels and kills the managed child', async () => {
     const fakeProcess = fake()
     const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => fakeProcess.child })
