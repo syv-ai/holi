@@ -762,9 +762,11 @@ export function HoliArcade({
 }
 
 /**
- * MonoCode's `[ take control · pac-man ▌ ]`, as a Button: shown while the
+ * MonoCode's `[ take control · pac-man ]`, as a Button: shown while the
  * pointer is over the board's free ground (`show`) or the button has the
  * keyboard's focus, and in the content's flow, so it never sits on a row.
+ * It carries no cursor block and no Enter hint: the game starts when the
+ * button is activated, not on Enter anywhere on the page.
  */
 export const ArcadeTakeControl = forwardRef<
   HTMLButtonElement,
@@ -787,12 +789,6 @@ export const ArcadeTakeControl = forwardRef<
         className="font-mono"
       >
         Take control · Paper run
-        {/* The cursor block blinks only where motion is welcome. */}
-        <span
-          aria-hidden="true"
-          className="inline-block h-3 w-1.5 bg-current motion-safe:animate-pulse"
-        />
-        <Kbd>↵</Kbd>
       </Button>
     </div>
   )
