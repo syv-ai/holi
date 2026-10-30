@@ -18,7 +18,11 @@ own. On Codex it is a job in the vault: `allow` must be reads and folder writes
 the send with the rule named, never running it on Claude Code instead. `model` is Claude Code's and
 is left out. Its sandbox has no network, so its `holi holis` commands cannot reach Holi: the run
 works and its turns are recorded, but it does not report or keep its memory
-([not built](../not-built.md)).
+([not built](../not-built.md)). Any other `holi` command in its `allow` refuses the send.
+**A Holi on Codex can read anything on the disk**: its sandbox bounds what it writes, its allowed
+folders, not what it reads, and what it writes is synced and pushed like any edit. A note from
+someone untrusted that it reads can steer it, and what it writes then reaches everyone the vault
+syncs with. This is a known risk of unattended Codex runs: give a Holi only the folders it needs.
 Until the feature is finished, the Agents sidebar shows a locked **Holis** row marked **In
 progress** in place of their section, and ⌘K and a document's Agent menu leave them out
 (`HOLIS_READY` in `info.ts`).

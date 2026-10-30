@@ -47,9 +47,15 @@ vault's.
 - **Duplicate** of a Codex session, until Holi knows a CLI verb that copies a conversation.
 - **Holi's own commands in a Codex run**: `holi holis report` and the memory commands reach Holi
   over the bridge, which the run's sandbox, having no network, cannot. A Holi run on Codex works
-  and its turns are recorded, but it cannot report or keep its memory.
+  and its turns are recorded, but it cannot report or keep its memory. Any other `Bash(holi …)`
+  rule refuses the run.
 - **Tokens of an interactive Codex session**: its `notify` payload carries none, so only a job's
   row counts them.
+- **The model of an interactive Codex session**: nothing Codex reports to Holi names it, so its row
+  says Codex, not the model.
+- **A document's AI Rewrite and Write on Codex**: they still start a Claude Code background
+  session through `agent.launch` (`document-agent.ts`), whatever this machine's default agent is.
+  Only Create vault app runs on the default agent.
 
 **More providers.** opencode and pi, each as its core and whatever its hooks allow.
 

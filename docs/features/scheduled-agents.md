@@ -120,10 +120,18 @@ it could not reach `holi`.
 **On Codex** (this machine's `agentProvider`), a run is a job in the vault instead
 ([agent-sessions](agent-sessions.md), Jobs): `codex exec` in a sandbox with no network whose
 writable folders are the schedule's `allow` write rules (`Edit(inbox/**)`), refused with the rule
-named when one is anything else, a command or a web tool, rather than run on Claude Code. It never
-asks anyone: a step outside its sandbox fails. Its turn ends when Codex says `turn.completed`, and
-closes the run as a `Stop` does below. A `model` is Claude Code's and is left out. The rest of this
-section is Claude Code's.
+named when one is anything else, a command (a `holi` one too, such as `Bash(holi google read:*)`:
+the sandbox has no network to reach Holi) or a web tool, rather than run on Claude Code. It never
+asks anyone: a step outside its sandbox fails. Its turn ends when Codex says `turn.completed` or
+fails, and closes the run as a `Stop` does below; a turn that failed records the run as failed,
+with Codex's reason, in Run history and the work log. A `model` is Claude Code's and is left out.
+The rest of this section is Claude Code's.
+
+**An automation on Codex can read anything on the disk.** Its sandbox bounds what it writes, the
+schedule's folders, not what it reads, and what it writes is synced and pushed like any edit. A
+note from someone untrusted that the run reads can steer it, and what it writes then reaches
+everyone the vault syncs with. This is a known risk of unattended Codex runs: give it only the
+folders it needs.
 
 **A run is a background session** started with `claude --bg`, no terminal, named `<name> · HH:MM`.
 Its first turn is one line Holi adds (the schedule's path, the time, the previous run's time, so a

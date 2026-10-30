@@ -40,8 +40,9 @@ is brought back with.
 Enter typed outside a paste begins a turn, five seconds without output ends one (a TUI at work
 redraws its spinner every second), and a bell or an OSC 9 / OSC 777 notification during a turn is
 a question for the person, which the next keystroke answers. Codex runs with
-`-c tui.notifications=["approval-requested","agent-turn-complete"]`, so an approval it waits on is
-such a notification and its row shows needs-you. Only those signals are read, never the text. Coarser than a hook by design: right for a status dot and the sync pause, not for
+`-c tui.notifications=["approval-requested"]`, so an approval it waits on is such a notification
+and its row shows needs-you. A turn's end is not one: the `notify` hook reports it, and as a
+notification it would read as a question at the end of every turn. Only those signals are read, never the text. Coarser than a hook by design: right for a status dot and the sync pause, not for
 chaining work on. Its turns go through the same turn bracket as a background session's, so sync
 pauses and the turn is recorded.
 
@@ -50,7 +51,8 @@ that run and writes nothing into `~/.codex`, whose sign-in and config stay the p
 is one inline shell command, like Claude Code's status line: Codex runs it at each turn's end with
 the turn's JSON, and it posts that to the bridge's `/codex/turn-end` with the session's id, which
 the PTY's environment carries (`HOLI_AGENT_SESSION`). Holi takes the session's name from its first
-ask and its thread id for Resume. Codex reads the vault's `AGENTS.md` itself. Its own hooks
+ask and its thread id for Resume, taken only when it is a UUID, since it goes on Codex's command
+line (`codex resume -- <id>`). Codex reads the vault's `AGENTS.md` itself. Its own hooks
 (`UserPromptSubmit` and the rest) would give a turn's start too, but each must first be trusted in
 `/hooks`, so Holi does not use them. **Resume a Codex conversation**, in the menu on the
 Sessions +, opens `codex resume`, Codex's own picker.
@@ -80,15 +82,23 @@ on `provider` or else this machine's `agentProvider`, and one of two bounds.
   `jobs` provider runs it in the clone only when every rule is something its sandbox can enforce
   (`vaultSandbox`): a read (`Read`, `Grep`, `Glob`, `LS`, which the sandbox allows anyway), or a
   write tool on a folder (`Edit(tilbud/**)`), never a file, the whole vault, or a folder whose
-  name starts with a dot (`.holi/`, `.claude/`). Holi's own commands (`Bash(holi …)`) are left
-  out, since they reach Holi over the bridge and the sandbox has no network. Any other rule, a
-  command or a web tool, refuses the run with that rule named, never widening it and never
+  name starts with a dot (`.holi/`, `.claude/`) or a home path (`~/…`). The memory and report
+  rules the Holis plugin adds to every Holi's run (`Bash(holi holis remember:*)` and the rest) are
+  left out, since they reach Holi over the bridge and the sandbox has no network. Any other rule,
+  another Holi command, any command or a web tool, refuses the run with that rule named, never widening it and never
   running it on Claude Code instead. Codex then runs with `-C` the first writable folder,
   `sandbox_workspace_write.writable_roots` the rest (read-only with none), and the prompt says
   where the vault is, since every path in it is the vault's. Nothing is copied: the writable
   folders are its bound. Its turns go through the vault's turn bracket, so sync pauses and each
   turn is recorded under the job's id. A Holi's `model` is Claude Code's and is not passed to
   another agent.
+
+**What a Codex job can reach is a known risk of unattended runs.** Its sandbox bounds what it
+writes, not what it reads: a job can read anything on this machine's disk that the person can,
+and writes only its allowed folders. What it writes in the vault is synced and pushed like any
+edit. So a note from someone untrusted, in a folder it reads, can steer what it does and what it
+writes, and through a pushed edit what others read. Give a Holi or an automation on Codex only the
+folders it needs, and run nothing on notes you do not trust.
 
 Codex's job is `codex exec --json --skip-git-repo-check -C <folder> --sandbox workspace-write`
 with `approval_policy="never"`, no network and web search off, on a Codex folder of the job's own
@@ -103,11 +113,12 @@ runs or its writes are copied back, then idle with its `outcome` and `message` f
 and its `tokens` (input and output, summed over its turns) when Codex reported them: a count,
 never a share of a context window, shown beside the model on its row. It has no terminal, so
 Open, Restart and Duplicate are refused in words. **A message** (`agent.message`) to a job in the
-vault is its next turn on the same thread, `codex exec resume <thread> --json` with the same
-sandbox: queued while a turn runs and sent when it ends (Codex takes nothing mid-turn from Holi),
+vault is its next turn on the same thread, `codex exec <options> resume -- <thread> <prompt>`
+with the same sandbox, every option before `resume` as `codex exec`'s usage line has it (`-C` and
+`--sandbox` are options of `codex exec`, not of `resume`; the thread is only ever a UUID): queued while a turn runs and sent when it ends (Codex takes nothing mid-turn from Holi),
 at once when it is idle. A job in a scratch folder ends with its one turn and takes none. Stop,
 leaving the vault and quitting (whose question counts a running job) stop its process group and
-drop what was queued, a Stop during the copy back stops it there and the job fails, and a scratch
+drop what was queued (a message while it stops is refused, and no turn starts after), a Stop during the copy back stops it there and the job fails, and a scratch
 folder is deleted. Beside the scratch folders is `<id>.pid`, the running turn's pid and the folder
 it runs in; one a crash left behind is killed at the next start, when that pid still leads a group
 whose command names that folder. A provider with neither capability is refused, never run on
