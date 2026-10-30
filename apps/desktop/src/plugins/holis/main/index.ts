@@ -1,7 +1,7 @@
 /**
  * The Holis plugin's main side (docs/features/holis.md): the vault's Holis,
  * their approvals and runs, and the commands their runs keep their memory
- * with. A send runs through the agent (`agent.launch`), which it requires.
+ * with. A send runs through the agent (`agent.job`), which it requires.
  *
  * Electron loads inside `activate`, so the plugin stays importable under
  * plain Node in the tests.
@@ -40,7 +40,9 @@ export const holisMain: MainPlugin = {
     // where the agent cannot approve its own (`holis.ts`).
     const holis = createHolis({
       store: jsonFileStore(join(ctx.userData, 'holis.json'), parseHolisFile),
-      launch: async (args) => (await ctx.call('agent.launch', args)) as Launched,
+      // On this machine's agent: Claude Code's background session, or a job in
+      // the vault for one that runs unwatched without a supervisor.
+      launch: async (args) => (await ctx.call('agent.job', args)) as Launched,
       emit: ctx.emit,
       needsYou: notify,
     })

@@ -22,6 +22,14 @@
  * copied back as each turn ends, before the turn's bracket closes, and
  * once more when it exits.
  *
+ * **A closed session stays reopenable.** One that ended with its conversation
+ * known (the provider's hook said), and was not fenced, is kept on this
+ * machine, outside the vault (`past`): History lists it, and opening it
+ * starts the provider on that conversation again (`codex resume <id>`) under
+ * the same id. A live session
+ * is never restarted or copied: Codex's CLI has no verb Holi could back
+ * either with.
+ *
  * One per vault activation: the agent starts in a vault, and these sessions
  * end when it stops there.
  *
@@ -42,6 +50,50 @@ const NEW_SESSION = 'New session'
 /** The longest name a session takes from its first ask. */
 const NAME_MAX = 80
 
+/** The most closed sessions kept per vault. */
+const PAST_MAX = 50
+
+/** Where this machine keeps the vault's closed sessions. */
+interface PastSessions {
+  read(): Promise<SessionSummary[]>
+  write(list: SessionSummary[]): Promise<void>
+}
+
+/** Kept in memory: what a test, or a host with nowhere to write, gets. */
+const memoryPast = (): PastSessions => {
+  let list: SessionSummary[] = []
+  return {
+    read: async () => list,
+    write: async (next) => {
+      list = next
+    },
+  }
+}
+
+/**
+ * The closed sessions in a file of every vault's, by remote: only what reads
+ * as one, so a hand edit gone wrong costs its own rows.
+ * @public exported for its test
+ */
+export function parsePastFile(raw: unknown): Record<string, SessionSummary[]> {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out: Record<string, SessionSummary[]> = {}
+  for (const [remote, list] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(list)) continue
+    out[remote] = list.filter(
+      (s): s is SessionSummary =>
+        s !== null &&
+        typeof s === 'object' &&
+        typeof (s as SessionSummary).id === 'string' &&
+        PTY_SESSION_ID.test((s as SessionSummary).id) &&
+        typeof (s as SessionSummary).provider === 'string' &&
+        typeof (s as SessionSummary).name === 'string' &&
+        typeof (s as SessionSummary).conversationId === 'string',
+    )
+  }
+  return out
+}
+
 export interface PtySessionsDeps {
   vault: VaultRef
   providers: readonly AgentProvider[]
@@ -52,6 +104,10 @@ export interface PtySessionsDeps {
   binDir(): string | null
   /** The list changed. */
   onChange(list: SessionSummary[]): void
+  /** Where closed sessions are kept; in memory when absent. */
+  past?: PastSessions
+  /** The closed list changed. */
+  onPast?(list: SessionSummary[]): void
   idleMs?: number
   log?: (msg: string) => void
 }
@@ -81,6 +137,11 @@ export interface PtySessions {
     provider: ProviderId,
     args: Geometry & { name?: string; prompt?: string; resume?: string; fence?: Fence },
   ): Promise<StartResult>
+  /** The closed sessions History can reopen, newest first. */
+  past(): Promise<SessionSummary[]>
+  hasPast(id: string): Promise<boolean>
+  /** A closed session started again on its conversation, under its id. */
+  reopen(id: string, size: Geometry): Promise<StartResult>
   /** Put text in a session's input, unsent. */
   send(id: string, text: string): OpenResult
   stop(id: string): Promise<ActionResult>
@@ -118,6 +179,18 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   const log = deps.log ?? ((msg: string) => console.log(`[agent-pty] ${msg}`))
   const sessions = new Map<string, Session>()
   const configured = new Map<ProviderId, Promise<{ dir: string } | null>>()
+  const pastStore = deps.past ?? memoryPast()
+  /** One change to the closed list at a time. */
+  let pastQueue: Promise<unknown> = Promise.resolve()
+  const changePast = (change: (list: SessionSummary[]) => SessionSummary[]): Promise<void> => {
+    const next = pastQueue.then(async () => {
+      const list = change(await pastStore.read())
+      await pastStore.write(list)
+      deps.onPast?.(list)
+    })
+    pastQueue = next.catch((err: unknown) => log(`closed sessions: ${String(err)}`))
+    return pastQueue as Promise<void>
+  }
   let lastPushed = ''
 
   const stateOf = (s: Session): SessionState =>
@@ -168,116 +241,164 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
 
   const gone = { ok: false as const, message: 'That session has ended.' }
 
+  async function startSession(
+    providerId: ProviderId,
+    {
+      name,
+      prompt,
+      resume,
+      fence,
+      cols,
+      rows,
+      id: given,
+    }: Geometry & { name?: string; prompt?: string; resume?: string; fence?: Fence; id?: string },
+  ): Promise<StartResult> {
+    const provider = deps.providers.find((p) => p.id === providerId)
+    if (provider === undefined) {
+      return { ok: false, message: `${providerId} is not an agent Holi knows.` }
+    }
+    const config = await configure(provider)
+    if (config === null) {
+      return { ok: false, message: `${provider.label} could not be set up for this vault.` }
+    }
+    const id = given ?? `p${randomBytes(6).toString('hex')}`
+    if (fence !== undefined && provider.capabilities.fenced !== true) {
+      return { ok: false, message: `${provider.label} cannot run fenced to a folder.` }
+    }
+    const target = {
+      root: deps.vault.root,
+      configDir: config.dir,
+      // Holi's commands reach the vault: a fenced session has none.
+      binDir: fence === undefined ? deps.binDir() : null,
+    }
+    // Filled in once the terminal exists; its callbacks only run after.
+    let session: Session | null = null
+    const signals = createTurnSignals({
+      ...(deps.idleMs === undefined ? {} : { idleMs: deps.idleMs }),
+      onBegin: () => {
+        deps.bracket(id, 'begin')
+        push()
+      },
+      onEnd: () => {
+        const close = (): void => {
+          deps.bracket(id, 'end')
+          push()
+        }
+        // What a fenced turn wrote is in the vault before its turn closes.
+        if (fence === undefined) close()
+        else void fence.turnEnded().finally(close)
+      },
+      onAttention: () => {
+        if (session === null || !signals.inTurn) return
+        session.attention = true
+        push()
+      },
+    })
+    let command: ReturnType<AgentProvider['terminal']>
+    try {
+      command = provider.terminal(target, {
+        session: id,
+        ...(fence === undefined ? {} : { fence: { dir: fence.dir, state: fence.state } }),
+        ...(prompt === undefined ? {} : { prompt }),
+        ...(resume === undefined ? {} : { resume }),
+      })
+    } catch (err) {
+      signals.dispose()
+      return { ok: false, message: (err as Error).message }
+    }
+    const opened = deps.terminals.open({
+      remote: deps.vault.remote,
+      cwd: fence?.dir ?? deps.vault.root,
+      command,
+      notInstalled: provider.notInstalled,
+      attach: id,
+      ...(cols === undefined ? {} : { cols }),
+      ...(rows === undefined ? {} : { rows }),
+      onInput: (data) => {
+        const s = session
+        if (s === null) return
+        // Anything typed answers what was asked, and the turn goes on.
+        if (s.attention) {
+          s.attention = false
+          s.signals.begin()
+          push()
+        }
+        s.signals.input(data)
+      },
+      onOutput: (data) => session?.signals.output(data),
+      onExit: () => {
+        fence?.exited()
+        const s = session
+        if (s === null || sessions.get(id) !== s) return
+        if (s.signals.inTurn) deps.bracket(id, 'forget')
+        s.signals.dispose()
+        sessions.delete(id)
+        push()
+        // Its conversation can be picked up again from History. A fenced
+        // one is not: reopened, it would run in the vault, unfenced.
+        if (s.conversationId !== undefined && fence === undefined) {
+          const closed: SessionSummary = {
+            id,
+            provider: s.provider,
+            name: nameFor(s),
+            state: 'idle',
+            startedAt: s.startedAt,
+            conversationId: s.conversationId,
+          }
+          void changePast((list) => [closed, ...list.filter((p) => p.id !== id)].slice(0, PAST_MAX))
+        }
+      },
+    })
+    if (!opened.ok) {
+      signals.dispose()
+      return opened
+    }
+    session = {
+      id,
+      provider: provider.id,
+      name:
+        (name === undefined ? null : nameOf(name)) ??
+        (prompt === undefined ? null : nameOf(prompt)),
+      startedAt: Date.now(),
+      terminalId: opened.id,
+      ...(resume === undefined || resume === 'pick' ? {} : { conversationId: resume }),
+      attention: false,
+      signals,
+    }
+    sessions.set(id, session)
+    // A session started on a prompt is in its first turn already.
+    if (prompt !== undefined && prompt.trim() !== '') signals.begin()
+    push()
+    return { ok: true, sessionId: id, terminalId: opened.id }
+  }
+
   const api: PtySessions = {
     sessions: summaries,
     has: (id) => sessions.has(id),
     ownsTerminal: (terminalId) => [...sessions.values()].some((s) => s.terminalId === terminalId),
     terminalOf: (id) => sessions.get(id)?.terminalId ?? null,
 
-    async start(providerId, { name, prompt, resume, fence, cols, rows }) {
-      const provider = deps.providers.find((p) => p.id === providerId)
-      if (provider === undefined) {
-        return { ok: false, message: `${providerId} is not an agent Holi knows.` }
-      }
-      const config = await configure(provider)
-      if (config === null) {
-        return { ok: false, message: `${provider.label} could not be set up for this vault.` }
-      }
-      const id = `p${randomBytes(6).toString('hex')}`
-      if (fence !== undefined && provider.capabilities.fenced !== true) {
-        return { ok: false, message: `${provider.label} cannot run fenced to a folder.` }
-      }
-      const target = {
-        root: deps.vault.root,
-        configDir: config.dir,
-        // Holi's commands reach the vault: a fenced session has none.
-        binDir: fence === undefined ? deps.binDir() : null,
-      }
-      // Filled in once the terminal exists; its callbacks only run after.
-      let session: Session | null = null
-      const signals = createTurnSignals({
-        ...(deps.idleMs === undefined ? {} : { idleMs: deps.idleMs }),
-        onBegin: () => {
-          deps.bracket(id, 'begin')
-          push()
-        },
-        onEnd: () => {
-          const close = (): void => {
-            deps.bracket(id, 'end')
-            push()
-          }
-          // What a fenced turn wrote is in the vault before its turn closes.
-          if (fence === undefined) close()
-          else void fence.turnEnded().finally(close)
-        },
-        onAttention: () => {
-          if (session === null || !signals.inTurn) return
-          session.attention = true
-          push()
-        },
-      })
-      let command: ReturnType<AgentProvider['terminal']>
-      try {
-        command = provider.terminal(target, {
-          session: id,
-          ...(fence === undefined ? {} : { fence: { dir: fence.dir, state: fence.state } }),
-          ...(prompt === undefined ? {} : { prompt }),
-          ...(resume === undefined ? {} : { resume }),
-        })
-      } catch (err) {
-        signals.dispose()
-        return { ok: false, message: (err as Error).message }
-      }
-      const opened = deps.terminals.open({
-        remote: deps.vault.remote,
-        cwd: fence?.dir ?? deps.vault.root,
-        command,
-        notInstalled: provider.notInstalled,
-        attach: id,
-        ...(cols === undefined ? {} : { cols }),
-        ...(rows === undefined ? {} : { rows }),
-        onInput: (data) => {
-          const s = session
-          if (s === null) return
-          // Anything typed answers what was asked, and the turn goes on.
-          if (s.attention) {
-            s.attention = false
-            s.signals.begin()
-            push()
-          }
-          s.signals.input(data)
-        },
-        onOutput: (data) => session?.signals.output(data),
-        onExit: () => {
-          fence?.exited()
-          const s = session
-          if (s === null || sessions.get(id) !== s) return
-          if (s.signals.inTurn) deps.bracket(id, 'forget')
-          s.signals.dispose()
-          sessions.delete(id)
-          push()
-        },
-      })
-      if (!opened.ok) {
-        signals.dispose()
-        return opened
-      }
-      session = {
+    start: (providerId, args) => startSession(providerId, args),
+
+    past: async () => {
+      await pastQueue
+      return pastStore.read()
+    },
+
+    hasPast: async (id) => (await api.past()).some((s) => s.id === id),
+
+    async reopen(id, size) {
+      if (sessions.has(id)) return { ok: false, message: 'That session is open already.' }
+      const was = (await api.past()).find((s) => s.id === id)
+      if (was === undefined || was.conversationId === undefined) return gone
+      const res = await startSession(was.provider, {
+        ...size,
+        name: was.name,
+        resume: was.conversationId,
         id,
-        provider: provider.id,
-        name:
-          (name === undefined ? null : nameOf(name)) ??
-          (prompt === undefined ? null : nameOf(prompt)),
-        startedAt: Date.now(),
-        terminalId: opened.id,
-        attention: false,
-        signals,
-      }
-      sessions.set(id, session)
-      // A session started on a prompt is in its first turn already.
-      if (prompt !== undefined && prompt.trim() !== '') signals.begin()
-      push()
-      return { ok: true, sessionId: id, terminalId: opened.id }
+      })
+      if (res.ok) await changePast((list) => list.filter((s) => s.id !== id))
+      return res
     },
 
     send(id, text) {

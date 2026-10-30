@@ -19,9 +19,11 @@
  *   and automations need it, since their runs start with no terminal.
  * - `turns`: hook routes that report a turn's start and end.
  * - `status`: how full a session's context is, and its model.
- * - `jobs`: a prompt run once with nobody watching, in a scratch folder Holi
- *   owns, its output read as events (`host/jobs.ts`). Codex's `codex exec`.
- *   What the job may write is copied back into the vault when it succeeds.
+ * - `jobs`: a prompt run with nobody watching, sandboxed by the agent's own
+ *   rules, its output read as events (`host/jobs.ts`). Codex's `codex exec`.
+ *   Either in a scratch folder Holi owns, what it may write copied back when
+ *   it succeeds, or in the vault with only named folders writable (a Holi's
+ *   or an automation's run), and resumed for a follow-up.
  * - `fenced`: a session Holi runs whose terminal can be fenced to a folder
  *   of Holi's (`TerminalOpts.fence`): its cwd, its writes sandboxed there.
  *   What it may write is copied back at each turn's end (`host/fenced.ts`).
@@ -128,21 +130,33 @@ interface BackgroundCapability {
 export type JobEvent =
   | { kind: 'thread'; id: string }
   | { kind: 'turn-started' }
-  | { kind: 'turn-completed' }
+  /** `tokens`: what the turn used, input and output, when it says. */
+  | { kind: 'turn-completed'; tokens?: number }
   | { kind: 'turn-failed'; message: string }
   | { kind: 'error'; message: string }
 
-/** A prompt run once, unwatched, in a folder of Holi's (`host/jobs.ts`). */
+/** How one turn of a job runs (`host/jobs.ts`). */
+export interface JobRun {
+  /** Where it runs, and the one folder it may write unless `readOnly`. */
+  cwd: string
+  prompt: string
+  model?: string
+  /** Other folders it may write, absolute. */
+  writable?: readonly string[]
+  /** It may write nothing at all. */
+  readOnly?: boolean
+  /** The agent's thread to add this turn to: a follow-up. */
+  resume?: string
+  /** A folder of Holi's outside what it may write, for the agent's own
+   *  state (its own home, say), which goes with the job. */
+  state: string
+}
+
+/** A prompt run unwatched, sandboxed by the agent (`host/jobs.ts`). */
 interface JobsCapability {
-  /** What runs the job in `cwd`, with `state` a folder of Holi's outside it
-   *  for the agent's own (its own home, say). Null when the agent is not
-   *  installed. Throws with a sentence when it cannot run. */
-  command(args: {
-    cwd: string
-    prompt: string
-    model?: string
-    state: string
-  }): TerminalCommand | null
+  /** What runs one turn of the job. Null when the agent is not installed.
+   *  Throws with a sentence when it cannot run. */
+  command(run: JobRun): TerminalCommand | null
   /** One line of the job's standard output, or null when it says nothing
    *  the host reads. Another program's output: never throws. */
   event(line: string): JobEvent | null

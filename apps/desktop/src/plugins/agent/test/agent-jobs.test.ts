@@ -4,7 +4,7 @@
  * its scope copied back. Codex is not on the test machine, so its process is
  * a small node script that prints the JSONL `codex exec --json` does.
  */
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -18,10 +18,11 @@ import {
   inWriteScope,
   JOB_SESSION_ID,
   takenMessage,
+  vaultSandbox,
   type JobScope,
 } from '../main/host/jobs'
 import type { SessionSummary } from '../main/claude/listing'
-import type { AgentProvider, JobsProvider } from '../main/provider'
+import type { AgentProvider, JobRun, JobsProvider } from '../main/provider'
 
 const dirs: string[] = []
 afterEach(async () => {
@@ -410,7 +411,7 @@ describe('the Codex job command', () => {
     )
     expect(fenceArgs('/s')).toContain('approval_policy="on-request"')
     expect(fenceArgs('/s')).toContain('sandbox_workspace_write.network_access=false')
-    expect(cmd?.args.slice(2)).toEqual([...fenceArgs('/s'), '--', '--help'])
+    expect(cmd?.args.slice(4)).toEqual([...fenceArgs('/s'), '--', '--help'])
     expect(codex.capabilities.fenced).toBe(true)
     // Its own Codex folder: signed in, without the person's MCP server.
     expect(cmd?.env.CODEX_HOME).toBe(join(state, 'codex-home'))
@@ -491,6 +492,7 @@ describe('agent.job', () => {
       terminals: {} as never,
       liveRemote: () => 'syv/vault',
       commitNow: async () => null,
+      defaultProvider: async () => 'claude' as const,
     })
     const ctx = { remote: 'syv/vault', root: '/v' } as unknown as CapabilityContext
     const entry = caps['agent.job']
@@ -559,6 +561,276 @@ describe('agent.job', () => {
   })
 })
 
+describe('a job in the vault', () => {
+  /** A provider whose turns are `node <script>`, the first and each
+   *  follow-up its own, with what each was asked kept. */
+  function turns(first: string, next: string) {
+    const runs: JobRun[] = []
+    const provider: JobsProvider = {
+      ...scripted(first),
+      capabilities: {
+        jobs: {
+          command: (run) => {
+            runs.push(run)
+            return {
+              bin: process.execPath,
+              args: [run.resume === undefined ? first : next],
+              env: { PATH: process.env.PATH ?? '' },
+            }
+          },
+          event: readJobEvent,
+        },
+      },
+    }
+    return { provider, runs }
+  }
+
+  const WRITES = [
+    "const fs = require('node:fs')",
+    event({ type: 'thread.started', thread_id: 'th-9' }),
+    event({ type: 'turn.started' }),
+    "fs.writeFileSync('Q4.md', 'proposal')",
+    // A turn long enough for a follow-up to arrive while it runs.
+    'setTimeout(() => {',
+    event({
+      type: 'turn.completed',
+      usage: { input_tokens: 1200, cached_input_tokens: 1000, output_tokens: 300 },
+    }),
+    '}, 300)',
+  ].join('\n')
+  const FOLLOW = [
+    event({ type: 'turn.started' }),
+    event({ type: 'turn.completed', usage: { input_tokens: 400, output_tokens: 100 } }),
+  ].join('\n')
+
+  async function vaultRig() {
+    const root = await temp('holi-job-vault-')
+    const userData = await temp('holi-job-data-')
+    const first = join(userData, 'first.js')
+    const next = join(userData, 'next.js')
+    await writeFile(first, WRITES)
+    await writeFile(next, FOLLOW)
+    const edges: string[] = []
+    const jobs = createJobs({
+      vault: { remote: 'syv/vault', root },
+      scratchRoot: join(userData, 'agent-jobs'),
+      onChange: () => {},
+      bracket: (id, edge) => edges.push(`${edge}:${id}`),
+      killGraceMs: 200,
+      log: () => {},
+    })
+    return { root, jobs, edges, ...turns(first, next) }
+  }
+
+  it('writes only the folders its rules name, through the turn bracket, and counts tokens', async () => {
+    const { root, jobs, edges, provider, runs } = await vaultRig()
+    const started = await jobs.start({
+      provider,
+      name: 'Proposal · Q4',
+      prompt: 'Work on kunder/Q4.md.',
+      system: 'You are Proposal.',
+      model: 'gpt-5',
+      allow: [
+        'Edit(tilbud/**)',
+        'Write(./arkiv/**)',
+        'Read(kunder/**)',
+        'Bash(holi holis report:*)',
+      ],
+    })
+    if (!started.ok) throw new Error(started.message)
+    const id = started.sessionId
+    const real = await realpath(root)
+    expect(runs[0]).toMatchObject({
+      cwd: join(real, 'tilbud'),
+      writable: [join(real, 'arkiv')],
+      readOnly: false,
+      model: 'gpt-5',
+    })
+    expect(runs[0]!.prompt).toBe(
+      `You are Proposal.\n\nThe vault is ${root}. Every vault path named here is relative to it.\n\nWork on kunder/Q4.md.`,
+    )
+    expect(edges).toEqual([`begin:${id}`])
+
+    // A follow-up while the turn runs waits for it, then resumes the thread.
+    jobs.message(id, 'Make it shorter.')
+    await vi.waitFor(() => expect(runs).toHaveLength(2), { timeout: 5_000 })
+    expect(runs[1]).toMatchObject({ resume: 'th-9', prompt: 'Make it shorter.' })
+    // The follow-up runs on the same state folder, where its thread is.
+    expect(runs[1]!.state).toBe(runs[0]!.state)
+    const row = await vi.waitFor(
+      () => {
+        const r = jobs.sessions().find((s) => s.id === id)
+        if (r?.outcome === undefined || edges.length < 4) throw new Error('still running')
+        return r
+      },
+      { timeout: 5_000 },
+    )
+    expect(row).toMatchObject({ state: 'idle', outcome: 'done', model: 'gpt-5', tokens: 2000 })
+    expect(edges).toEqual([`begin:${id}`, `end:${id}`, `begin:${id}`, `end:${id}`])
+    expect(await readFile(join(root, 'tilbud/Q4.md'), 'utf8')).toBe('proposal')
+  })
+
+  it('is read-only with no folder to write', async () => {
+    const { root, jobs, provider, runs } = await vaultRig()
+    const started = await jobs.start({ provider, name: 'x', prompt: 'go', allow: ['Read'] })
+    expect(started.ok).toBe(true)
+    expect(runs[0]).toMatchObject({ cwd: root, writable: [], readOnly: true })
+    await jobs.leave()
+  })
+
+  it('is refused, never widened, when a rule is not a folder its sandbox can allow', async () => {
+    const { jobs, provider, runs } = await vaultRig()
+    for (const rule of [
+      'Bash(git push:*)',
+      'WebFetch',
+      'Edit(notes/Plan.md)',
+      'Edit(.holi/**)',
+      'Edit',
+    ]) {
+      const res = await jobs.start({ provider, name: 'x', prompt: 'go', allow: [rule] })
+      expect(res.ok).toBe(false)
+      expect((res as { message: string }).message).toContain(rule)
+    }
+    expect(runs).toEqual([])
+    expect(jobs.sessions()).toEqual([])
+  })
+
+  it('reads rules as sandbox folders', () => {
+    expect(vaultSandbox(['Edit(a/**)', 'MultiEdit(./a/**)', 'Write(b/c/**)', 'Grep'])).toEqual({
+      ok: true,
+      write: ['a', 'b/c'],
+    })
+    expect(vaultSandbox(['Edit(**)']).ok).toBe(false)
+    expect(vaultSandbox(['Edit(a/*.md)']).ok).toBe(false)
+    expect(vaultSandbox(['Edit(../out/**)']).ok).toBe(false)
+  })
+
+  it('takes no follow-up in a scratch folder', async () => {
+    const { jobs, provider } = await rig(HANG)
+    const started = await jobs.start({ provider, name: 'x', prompt: 'go', scope: SCOPE })
+    const id = (started as { sessionId: string }).sessionId
+    expect(() => jobs.message(id, 'more')).toThrow(/scratch folder/)
+    await jobs.leave()
+  })
+})
+
+describe('the Codex job command in the vault', () => {
+  it('writes only its folders, with no web search, and resumes a thread with the prompt last', () => {
+    expect(jobArgs({ cwd: '/v/a', prompt: 'more', writable: ['/v/b'], resume: 'th-9' })).toEqual([
+      'exec',
+      '--json',
+      '--skip-git-repo-check',
+      '-C',
+      '/v/a',
+      '--sandbox',
+      'workspace-write',
+      '-c',
+      'approval_policy="never"',
+      '-c',
+      'sandbox_workspace_write.network_access=false',
+      '-c',
+      'sandbox_workspace_write.writable_roots=["/v/b"]',
+      '-c',
+      'web_search="disabled"',
+      '-c',
+      'tools.web_search=false',
+      'resume',
+      'th-9',
+      '--',
+      'more',
+    ])
+    expect(jobArgs({ cwd: '/v', prompt: 'p', readOnly: true })).toEqual([
+      'exec',
+      '--json',
+      '--skip-git-repo-check',
+      '-C',
+      '/v',
+      '--sandbox',
+      'read-only',
+      '-c',
+      'approval_policy="never"',
+      '-c',
+      'web_search="disabled"',
+      '-c',
+      'tools.web_search=false',
+      '--',
+      'p',
+    ])
+  })
+
+  it('counts what a turn used', () => {
+    expect(
+      readJobEvent('{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}'),
+    ).toEqual({ kind: 'turn-completed', tokens: 15 })
+  })
+})
+
+describe('agent.job in the vault', () => {
+  const claude = {
+    id: 'claude',
+    label: 'Claude Code',
+    capabilities: { background: {} },
+  } as unknown as AgentProvider
+  const codex = {
+    id: 'codex',
+    label: 'Codex',
+    capabilities: { jobs: {} },
+  } as unknown as AgentProvider
+
+  function table(fallback: 'claude' | 'codex') {
+    const launch = vi.fn(async () => ({ ok: true as const, sessionId: 'abcd1234' }))
+    const start = vi.fn(async () => ({ ok: true as const, sessionId: 'j0123456789ab' }))
+    const caps = agentCapabilities({
+      sessions: { launch } as never,
+      own: {} as never,
+      jobs: { start } as never,
+      fenced: {} as never,
+      providers: [claude, codex],
+      terminals: {} as never,
+      liveRemote: () => 'syv/vault',
+      commitNow: async () => null,
+      defaultProvider: async () => fallback,
+    })
+    const ctx = { remote: 'syv/vault', root: '/v' } as unknown as CapabilityContext
+    const entry = caps['agent.job']
+    return { run: (p: unknown) => entry.run(ctx, entry.params(p)), launch, start }
+  }
+
+  const RUN = {
+    name: 'Proposal · Q4',
+    prompt: 'Work on kunder/Q4.md.',
+    system: 'You are Proposal.',
+    model: 'sonnet',
+    allow: ['Edit(tilbud/**)'],
+  }
+
+  it("runs on this machine's agent: Claude Code as a background session with its rules", async () => {
+    const { run, launch, start } = table('claude')
+    expect(await run(RUN)).toEqual({ ok: true, sessionId: 'abcd1234' })
+    expect(start).not.toHaveBeenCalled()
+    expect(launch).toHaveBeenCalledWith({
+      name: 'Proposal · Q4',
+      prompt: 'Work on kunder/Q4.md.',
+      model: 'sonnet',
+      allow: ['Edit(tilbud/**)'],
+      appendSystemPrompt: 'You are Proposal.',
+    })
+  })
+
+  it('runs on Codex as a vault job on its own model, never on Claude Code', async () => {
+    const { run, launch, start } = table('codex')
+    expect(await run(RUN)).toEqual({ ok: true, sessionId: 'j0123456789ab' })
+    expect(launch).not.toHaveBeenCalled()
+    expect(start).toHaveBeenCalledWith({
+      provider: codex,
+      name: 'Proposal · Q4',
+      prompt: 'Work on kunder/Q4.md.',
+      allow: ['Edit(tilbud/**)'],
+      system: 'You are Proposal.',
+    })
+  })
+})
+
 describe('agent.scoped', () => {
   const claude = {
     id: 'claude',
@@ -592,6 +864,7 @@ describe('agent.scoped', () => {
       terminals: {} as never,
       liveRemote: () => 'syv/vault',
       commitNow: async () => null,
+      defaultProvider: async () => 'claude',
     })
     const ctx = { remote: 'syv/vault', root: '/v' } as unknown as CapabilityContext
     const entry = caps['agent.scoped']
