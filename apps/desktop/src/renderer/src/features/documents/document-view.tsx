@@ -8,7 +8,8 @@
  *
  * The agent is part of the page: Space on an empty line asks it to write
  * there, the format bubble's Ask AI rewrites a selection, and the menu's
- * Turn into an Artifact makes a vault app of the document. While a run edits
+ * Create vault app makes a vault app of the document beside it, and opens it
+ * when it is done if the document is still in front. While a run edits
  * the document the page is locked (nothing in it can be pressed) and the
  * status pill at its foot says what it is doing and offers Stop.
  *
@@ -20,7 +21,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
 import { differsBeyondTidy, holiLink, isHoliLinkable, isResolved } from '@holi/shared'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { findNext, findPrev } from 'prosemirror-search'
 import { EditorContent, useEditor } from '@tiptap/react'
 
@@ -49,12 +50,15 @@ import { trpc } from '@/lib/trpc'
 import { sawText } from '@/state/doc-changes'
 import { canStartConversationAtom, startConversationAtom } from '@/state/agents-slots'
 import { claimsAtom } from '@/state/plugins'
+import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { focusedTab } from '@/state/shell-workspace'
+import { tabPath } from '@/state/tab-descriptor'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 import { AgentPrompt, AgentStatus } from './agent-prompt'
 import { askAiSlashItem } from './ask-ai-slash'
 import { applyReload } from './apply-reload'
-import { artifactPathFor, isRunLive, locksDocument, useDocumentAgent } from './document-agent'
+import { isRunLive, locksDocument, useDocumentAgent } from './document-agent'
 import { parentOf } from '@/lib/tree-paths'
 import { CommentsPanel } from './comments-panel'
 import { DocumentComments } from './document-comments'
@@ -167,6 +171,7 @@ function DocumentEditor({
   onMoved?: (from: string, to: string) => void
 }) {
   const agent = useDocumentAgent(path)
+  const store = useStore()
   const locked = locksDocument(agent.run)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [linkOpen, setLinkOpen] = useState(false)
@@ -252,7 +257,7 @@ function DocumentEditor({
 
   const editable = useRichTextSelector(editor, (current) => current?.isEditable ?? true)
 
-  const { promptOpen, promptInitial, closePrompt, sendPrompt, quickCommand, turnIntoArtifact } =
+  const { promptOpen, promptInitial, closePrompt, sendPrompt, quickCommand, createVaultApp } =
     useDocumentAgentPrompt({ editor, path, agent, handlers, save })
 
   const comments = useDocumentComments({ editor, path, docs, head, save })
@@ -378,14 +383,24 @@ function DocumentEditor({
     editor.setEditable(!locked)
   }, [editor, locked])
 
-  // A finished edit clears its pill on its own; an artifact waits to be
-  // opened or dismissed.
+  // A finished edit clears its pill on its own. A finished vault app opens
+  // when the document is still the tab in front and was never left while it
+  // ran; otherwise it waits on the pill's Open.
   useEffect(() => {
     const run = agent.run
-    if (!run || run.status !== 'done' || run.kind === 'artifact') return
+    if (!run || run.status !== 'done') return
+    if (run.kind === 'vault-app') {
+      if (run.away || run.appPath === undefined) return
+      if (tabPath(focusedTab(store.get(shellWorkspaceAtom))) !== path) return
+      agent.dismiss()
+      onOpen(run.appPath)
+      return
+    }
     const timer = window.setTimeout(agent.dismiss, 1500)
     return () => window.clearTimeout(timer)
-  }, [agent.run, agent.dismiss])
+    // `onOpen` is the shell's, new each render; the run is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent.run, agent.dismiss, path, store])
 
   /**
    * The whole page takes a press. Below the last line it starts a new one
@@ -489,7 +504,7 @@ function DocumentEditor({
             smallText={smallText}
             onFullWidthChange={setFullWidth}
             onSmallTextChange={setSmallText}
-            onTurnIntoArtifact={canAsk ? () => void turnIntoArtifact() : null}
+            onCreateVaultApp={canAsk ? () => void createVaultApp() : null}
             holiLinks={holiLinks}
             comments={
               commentable
@@ -645,9 +660,10 @@ function DocumentEditor({
                 run={agent.run}
                 onStop={() => void agent.stop()}
                 onDismiss={agent.dismiss}
-                onOpenArtifact={() => {
+                onOpenApp={() => {
+                  const app = agent.run?.appPath
                   agent.dismiss()
-                  onOpen(artifactPathFor(path))
+                  if (app !== undefined) onOpen(app)
                 }}
               />
             </div>

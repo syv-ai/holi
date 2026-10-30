@@ -4,6 +4,9 @@ A vault app is a small web app the vault agent writes on request (a dashboard, a
 explorer) as a `<name>.app` folder anywhere in the vault, usually beside the notes it is about. It
 syncs with the vault like any other content, shows in the file tree as one row, and opens inside
 Holi as a tab, where it can read the vault's documents and tasks through a narrow bridge.
+A note's menu has **Create vault app**, which has this machine's agent, Claude Code or Codex,
+make `<note>.app` from the whole note beside it, leaving the note as it was
+([editor](editor.md)).
 
 ## How it works
 

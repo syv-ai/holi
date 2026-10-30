@@ -2,7 +2,7 @@
  * The document's menu, after the rich-text block's page actions: page layout
  * (full width, small text), a Holi link to the document or to the heading the
  * caret is under (docs/features/holi-links.md), export (Markdown, HTML) and
- * Turn into an artifact. A copy confirms in place on its item; only a failure
+ * Create vault app. A copy confirms in place on its item; only a failure
  * toasts.
  */
 import { useEffect, useRef, useState } from 'react'
@@ -46,7 +46,7 @@ export interface DocumentActionsProps {
   onFullWidthChange: (fullWidth: boolean) => void
   onSmallTextChange: (smallText: boolean) => void
   /** Null while an agent run is already going, or there is no agent. */
-  onTurnIntoArtifact: (() => void) | null
+  onCreateVaultApp: (() => void) | null
   /** The document's Holi links; null for a file a teammate could not open
    *  (a local file). `heading` is null above the first heading. */
   holiLinks?: { file: () => string; heading: () => string | null } | null
@@ -59,7 +59,7 @@ export function DocumentActions({
   smallText,
   onFullWidthChange,
   onSmallTextChange,
-  onTurnIntoArtifact,
+  onCreateVaultApp,
   holiLinks = null,
 }: DocumentActionsProps) {
   const [copied, setCopied] = useState<CopyFormat | null>(null)
@@ -175,12 +175,9 @@ export function DocumentActions({
           </DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem
-          disabled={onTurnIntoArtifact === null}
-          onClick={() => onTurnIntoArtifact?.()}
-        >
+        <DropdownMenuItem disabled={onCreateVaultApp === null} onClick={() => onCreateVaultApp?.()}>
           <SparklesIcon aria-hidden="true" />
-          Turn into an Artifact
+          Create vault app
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
