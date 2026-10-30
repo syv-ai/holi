@@ -352,13 +352,23 @@ test("Ask AI's own instruction rewrites only the passage selected when it opened
   await waitFor(() => expect(prompt).toHaveFocus())
   // The selection is kept while the prompt has focus.
   expect(selected()).toBe('Ship the beta')
+  // The selection moves while the prompt is open; the instruction is still
+  // for the passage it opened over.
+  let keep = -1
+  editor.state.doc.descendants((node, pos) => {
+    if (keep === -1 && node.isText && node.text!.startsWith('Keep this line')) keep = pos
+  })
+  act(() => {
+    editor.commands.setTextSelection({ from: keep, to: keep + 'Keep this line'.length })
+  })
+  expect(selected()).toBe('Keep this line')
   await user.type(prompt, 'Translate it into Danish{Enter}')
 
   await waitFor(() =>
     expect(cap).toHaveBeenCalledWith(expect.objectContaining({ name: 'agent.launch' })),
   )
   const launch = JSON.parse(cap.mock.calls[0]![0].paramsJson)
-  expect(launch.prompt).toContain('Ship the beta')
+  expect(launch.prompt).toContain('<passage>\nShip the beta\n</passage>')
   expect(launch.prompt).not.toContain('Keep this line')
   expect(launch.prompt).toContain('Translate it into Danish')
   expect(launch.prompt).toContain('change nothing else in the document')

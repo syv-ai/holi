@@ -105,6 +105,12 @@ export function DocumentFormatBubble({
   const [customPassage, setCustomPassage] = useState<string | null>(null)
   /** Set as the menu closes into the prompt, so it leaves focus to the prompt. */
   const openingCustomRef = useRef(false)
+  /** Set when the prompt closes because the person clicked elsewhere, so
+   *  focus stays where they clicked rather than going back to the text. */
+  const dismissedOutsideRef = useRef(false)
+  // With no agent to ask the prompt is gone, so its passage must not keep
+  // the bubble held open.
+  if (onQuickCommand === null && customPassage !== null) setCustomPassage(null)
   const holdOpen = linkOpen || customPassage !== null
   const holdOpenRef = useRef(holdOpen)
 
@@ -221,11 +227,20 @@ export function DocumentFormatBubble({
               </DropdownMenu>
               <PopoverContent
                 align="start"
+                side="top"
+                variant="flush"
                 aria-label="Custom instruction"
+                onOpenAutoFocus={() => {
+                  dismissedOutsideRef.current = false
+                }}
+                onInteractOutside={() => {
+                  dismissedOutsideRef.current = true
+                }}
                 onCloseAutoFocus={(event) => {
-                  // Back to the text, the passage still selected.
                   event.preventDefault()
-                  editor.view.focus()
+                  // Back to the text, the passage still selected, unless the
+                  // person clicked somewhere else.
+                  if (!dismissedOutsideRef.current) editor.view.focus()
                 }}
               >
                 {/* Mounts per open, so the field always starts empty. */}
