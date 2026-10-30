@@ -36,6 +36,7 @@ export interface PiChild {
 export class PiRpcRun {
   private readonly child: PiChild
   private readonly configuredModel?: { provider: string; modelId: string }
+  private modelSet = false
   private pending = ''
   private output = ''
   private parseErrors = 0
@@ -97,15 +98,15 @@ export class PiRpcRun {
     if (this.closed || this.active) return Promise.reject(new Error('Pi RPC run is not idle'))
     this.settled = false
     this.active = true
-    this.phase = this.configuredModel === undefined ? 'prompt' : 'setting-model'
+    this.phase = this.configuredModel === undefined || this.modelSet ? 'prompt' : 'setting-model'
     this.resultPromise = new Promise((resolve) => {
       this.completion = resolve
     })
     try {
-      if (this.configuredModel) {
+      if (this.configuredModel && !this.modelSet) {
+        this.pendingPrompt = message
         this.send({ type: 'set_model', ...this.configuredModel })
       } else this.sendPrompt(message)
-      this.pendingPrompt = this.configuredModel === undefined ? undefined : message
     } catch (error) {
       this.fail(String(error))
     }
@@ -205,6 +206,7 @@ export class PiRpcRun {
         return
       }
       if (command === 'set_model') {
+        this.modelSet = true
         if (this.phase === 'setting-model' && this.pendingPrompt !== undefined) {
           const prompt = this.pendingPrompt
           this.pendingPrompt = undefined

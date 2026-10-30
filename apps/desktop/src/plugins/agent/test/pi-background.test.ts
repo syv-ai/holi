@@ -66,10 +66,12 @@ describe('Pi background runs', () => {
   })
   it('refuses TUI attach, restart, and duplicate for managed Pi sessions', async () => {
     const pi = {
-      sessions: () => [{ id: 'pi123456', provider: 'pi', name: 'run', state: 'working' }],
-      launch: async () => ({ ok: true, sessionId: 'pi123456' }),
+      sessions: () => [
+        { id: 'pi123456', provider: 'pi' as const, name: 'run', state: 'working' as const },
+      ],
+      launch: async () => ({ ok: true as const, sessionId: 'pi123456' }),
       message: async () => {},
-      stop: async () => ({ ok: true }),
+      stop: async () => ({ ok: true as const }),
     }
     const table = agentCapabilities({
       sessions: {
@@ -156,7 +158,7 @@ describe('Pi background runs', () => {
     expect(rpc.commands.at(-1)).toMatchObject({ type: 'prompt', message: 'Follow up' })
     await expect(manager.stop(id)).resolves.toMatchObject({ ok: true })
     await manager.leave()
-    expect(brackets).toEqual(['begin', 'end', 'begin', 'end'])
+    expect(brackets).toEqual(['begin', 'end', 'begin', 'forget'])
     expect(manager.sessions()).toEqual([])
   })
 
