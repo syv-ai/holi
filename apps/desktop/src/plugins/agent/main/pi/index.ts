@@ -74,7 +74,7 @@ const NO_BOUNDARY =
 const SANDBOX_EXEC = '/usr/bin/sandbox-exec'
 
 /** `HOLI_PI_BIN` when set and runnable, else `pi` on `PATH`. */
-function resolvePiBin(env: NodeJS.ProcessEnv = process.env): string | null {
+export function resolvePiBin(env: NodeJS.ProcessEnv = process.env): string | null {
   const override = env.HOLI_PI_BIN
   return override !== undefined && override !== '' && executable(override)
     ? override

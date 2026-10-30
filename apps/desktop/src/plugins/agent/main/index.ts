@@ -16,9 +16,14 @@ import { join } from 'node:path'
 import { jsonFileStore, readVaultSettings, type MainPlugin } from '../../../main/plugin-api'
 import { AGENT_INFO } from '../info'
 import { claudeProvider } from './claude'
+import { resolveClaudeBin } from './claude/cli'
 import { claudeSeed } from './claude/seed'
-import { codexProvider } from './codex'
-import { piProvider } from './pi'
+import { codexProvider, resolveCodexBin } from './codex'
+import { harnessCapabilities } from './harness/capabilities'
+import { parseHarnessFile } from './harness/record'
+import { createHarnessRegistry, presetBin, withPreset } from './harness/registry'
+import { installSignalCommand, registerSignalRoute } from './harness/signal'
+import { piProvider, resolvePiBin } from './pi'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { createPtySessions, parsePastFile, PTY_SESSION_ID } from './host/pty-sessions'
 import { createFencedSessions } from './host/fenced'
@@ -42,12 +47,41 @@ export const agentMain: MainPlugin = {
   seed: claudeSeed,
   async activate(ctx) {
     const { nativeTheme } = await import('electron')
-    const claude = claudeProvider({
-      userData: ctx.userData,
-      holiBin: () => join(ctx.binDir(), 'holi'),
-      systemPrefersDark: () => nativeTheme.shouldUseDarkColors,
+    // This machine's agents: the built-in three, each reading its preset as
+    // it runs, and the ones a person added in Settings
+    // (docs/features/agent-sessions.md, Harnesses).
+    const harnesses = await createHarnessRegistry({
+      store: jsonFileStore(join(ctx.userData, 'agent-harnesses.json'), parseHarnessFile),
+      builtIns: {
+        claude: (current) =>
+          withPreset(
+            claudeProvider({
+              userData: ctx.userData,
+              holiBin: () => join(ctx.binDir(), 'holi'),
+              systemPrefersDark: () => nativeTheme.shouldUseDarkColors,
+              resolveBin: presetBin('claude', current, () => resolveClaudeBin()),
+            }),
+            current,
+          ),
+        codex: (current) =>
+          withPreset(
+            codexProvider({ resolveBin: presetBin('codex', current, () => resolveCodexBin()) }),
+            current,
+          ),
+        pi: (current) =>
+          withPreset(
+            piProvider({ resolveBin: presetBin('pi', current, () => resolvePiBin()) }),
+            current,
+          ),
+      },
     })
-    const providers = [claude, codexProvider(), piProvider()]
+    const providers = (): ReturnType<typeof harnesses.providers> => harnesses.providers()
+    const claude = providers().find(hasBackground)!
+    // `holi-signal`, the hook command a harness a person added reports
+    // its turns with.
+    await installSignalCommand(ctx.binDir()).catch((err: unknown) =>
+      console.error('[agent] holi-signal:', err),
+    )
     const terminals = createAgentTerminals({ emit: ctx.emit })
     const sessionLog = createSessionLog(ctx.log)
     const liveRemote = (): string | null => ctx.active()?.remote ?? null
@@ -104,7 +138,7 @@ export const agentMain: MainPlugin = {
           await pastFile.update((all) => ({ ...all, [ctx.remote]: list }))
         },
       },
-      providers: providers.filter((p) => !hasBackground(p)),
+      providers: () => providers().filter((p) => !hasBackground(p)),
       terminals,
       // Its turns pause sync and are recorded like a background session's.
       bracket: (id, edge) => started.bracket(id, edge),
@@ -162,6 +196,11 @@ export const agentMain: MainPlugin = {
         defaultProvider: async () => (await readVaultSettings(ctx.root)).agentProvider,
       }),
       ...inboxCapabilities({ inbox, liveRemote }),
+      ...harnessCapabilities({
+        registry: harnesses,
+        root: () => (liveRemote() === ctx.remote ? ctx.root : null),
+        changed: () => ctx.emit(ctx.remote, 'providers', null),
+      }),
     })
     const unwatchNeedsYou = watchNeedsYou({
       sessions: started,
@@ -189,8 +228,9 @@ export const agentMain: MainPlugin = {
       }
     })
     // Each provider's hooks, by the session id they carry: a session Holi
-    // runs, or a background job.
-    for (const p of providers) {
+    // runs, or a background job. The built-in ones are fixed, so their
+    // routes are served once.
+    for (const p of providers().filter((x) => x.custom !== true)) {
       p.capabilities.turns?.routes(ctx, {
         onTurn: (remote, id, active, pending) => {
           if (!PTY_SESSION_ID.test(id)) return started.noteTurn(remote, id, active, pending)
@@ -206,6 +246,20 @@ export const agentMain: MainPlugin = {
         onChannel: (remote, id, channel) => started.noteChannel(remote, id, channel),
       })
     }
+    // `holi-signal`, from a session of a harness whose turns its hooks
+    // report (`signals: holi-hook`).
+    const unsignal = registerSignalRoute(ctx, {
+      onSignal: (remote, id, signal) => {
+        if (remote !== ctx.remote) return
+        const provider = ptySessions.providerOf(id)
+        if (provider === null || harnesses.get(provider)?.signals !== 'holi-hook') return
+        if (signal.kind === 'status') return ptySessions.noteStatus(id, signal)
+        if (signal.conversationId !== undefined) {
+          ptySessions.noteConversation(id, { conversationId: signal.conversationId })
+        }
+        ptySessions.noteTurn(id, false)
+      },
+    })
     // Quitting stops the vault's sessions, so it asks first when one of them
     // is working or waiting on you: that turn is cut short. Idle sessions
     // stop without a question; their conversations stay in the agents list.
@@ -248,6 +302,7 @@ export const agentMain: MainPlugin = {
     // opened; the ones Holi runs end with it.
     return async () => {
       clearInterval(sweepTimer)
+      unsignal()
       await sweeping
       unreport()
       unmention()

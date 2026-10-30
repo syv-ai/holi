@@ -29,17 +29,18 @@
  *   of Holi's (`TerminalOpts.fence`): its cwd, its writes sandboxed there.
  *   What it may write is copied back at each turn's end (`host/fenced.ts`).
  */
-import { AGENT_PROVIDER_IDS, type AgentProviderId } from '@holi/shared'
+import { isAgentId, type AgentProviderId } from '@holi/shared'
 import type { BridgeRoute, SeedContribution } from '../../../main/plugin-api'
 import type { ClaudeCli, VaultCliTarget } from './claude/cli'
 import type { ClaudeRow, SessionSummary, StatusReading } from './claude/listing'
 import type { SessionChannel } from './claude/messaging'
 
-/** Which agent a session runs: the vault setting's own list. */
+/** Which agent a session runs: one of this machine's harnesses, by its id
+ *  (`harness/registry.ts`). The shape is checked here; whether it names one,
+ *  against the registry. */
 export type ProviderId = AgentProviderId
 
-export const isProviderId = (value: unknown): value is ProviderId =>
-  typeof value === 'string' && (AGENT_PROVIDER_IDS as readonly string[]).includes(value)
+export const isProviderId = (value: unknown): value is ProviderId => isAgentId(value)
 
 /** A vault the provider is asked about. */
 export interface VaultRef {
@@ -220,6 +221,15 @@ export interface AgentProvider {
    *  `--session-id`): a session is reopenable from its start, and a copy of
    *  one is a `fork` of it. */
   namesConversation?: boolean
+  /** Why a terminal cannot open on `opts`, in words, or null when it can:
+   *  a harness a person added that was given no way to start on a message
+   *  or to pick up a conversation. Absent: it takes every option. */
+  refuses?(opts: TerminalOpts): string | null
+  /** Why it runs nothing unattended, when it has neither `background` nor
+   *  `jobs`: said instead of running the work on another agent. */
+  unattended?: string
+  /** It is a harness a person added (`harness/`), not a built-in agent. */
+  custom?: boolean
   capabilities: ProviderCapabilities
 }
 
