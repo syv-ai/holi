@@ -43,7 +43,7 @@ import { buildTreeData, ROOT_ID, type TreeItemData } from '@/lib/tree-data'
 import { planMoveInto, planRenameFolder, type Move } from '@/lib/tree-actions'
 import { basename, joinPath, parentOf } from '@/lib/tree-paths'
 import { canMoveInto } from '@/lib/tree-view'
-import { isWindows } from '@/lib/platform'
+import { trpc } from '@/lib/trpc'
 import { useTabDrag } from '@/features/shell/use-tab-drag'
 import { openDialogAtom } from '@/state/dialogs'
 import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
@@ -470,12 +470,17 @@ export function FilesSection({
       on: {
         openBeside: (path) => openTab(tabForPath(path), { beside: true }),
         reveal: (path) => {
-          const absolute = absolutePath(path)
-          if (absolute !== null) void window.holi.openPath(absolute)
+          const remote = files.remote
+          if (remote !== null)
+            void attempt(`show “${basename(path)}”`, async () => {
+              await trpc.files.reveal.mutate({ remote, path })
+            })
         },
         copyPath: (path, form) => {
-          const text = form === 'relative' ? path : absolutePath(path)
-          if (text !== null) void copyText(text, 'Path copied', path)
+          const remote = files.remote
+          if (form === 'relative') void copyText(path, 'Path copied', path)
+          else if (remote !== null)
+            void copyText(trpc.files.absolutePath.query({ remote, path }), 'Path copied', path)
         },
         copyLink: (path) => {
           if (files.remote !== null)
@@ -492,18 +497,11 @@ export function FilesSection({
     })
   }
 
-  /** `path` on this machine: the vault's clone joined with it, in the
-   *  platform's own separators (a vault path is always `/`). */
-  function absolutePath(path: string): string | null {
-    const root = vaults.find((vault) => vault.remote === files.remote)?.path
-    if (root === undefined) return null
-    return isWindows() ? `${root}\\${path.replaceAll('/', '\\')}` : `${root}/${path}`
-  }
-
-  /** Put `text` on the clipboard: a path, or a Holi link for a teammate to click. */
-  async function copyText(text: string, done: string, path: string) {
+  /** Put `text` on the clipboard: a path (an absolute one is main's to build,
+   *  in the platform's separators), or a Holi link for a teammate to click. */
+  async function copyText(text: string | Promise<string>, done: string, path: string) {
     try {
-      await navigator.clipboard.writeText(text)
+      await navigator.clipboard.writeText(await text)
       toast.success(done, { description: basename(path) })
     } catch {
       toast.error('Copy failed', {
