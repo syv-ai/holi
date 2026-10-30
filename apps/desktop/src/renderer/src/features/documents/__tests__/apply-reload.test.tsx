@@ -81,3 +81,30 @@ test('a caret inside the replaced range stays at its start, not past it', () => 
   expect(ed.getMarkdown()).toBe('Alpha hello\n\nBeta gamma')
   expect(where(ed)).toEqual({ text: 'Alpha hello', offset: 11 })
 })
+
+test('in a document ending in a list, a block deleted above keeps the caret', () => {
+  const ed = open('One\n\nTwo\n\n- a\n- b\n')
+  caretIn(ed, 'Two', 2)
+  applyReload(ed, 'Two\n\n- a\n- b\n')
+  expect(where(ed)).toEqual({ text: 'Two', offset: 2 })
+})
+
+test('the same body ending in a list is no transaction at all', () => {
+  const ed = open('Alpha\n\n- a\n- b\n')
+  // Any transaction lets the trailing-node rule add its empty paragraph.
+  caretIn(ed, 'Alpha', 1)
+  let transactions = 0
+  ed.on('transaction', () => transactions++)
+  applyReload(ed, 'Alpha\n\n- a\n- b\n')
+  expect(transactions).toBe(0)
+})
+
+test('a selection whose head is in the changed range stays a selection', () => {
+  const ed = open('Alpha beta\n\nGamma\n')
+  caretIn(ed, 'Alpha beta', 0)
+  const from = ed.state.selection.from
+  ed.commands.setTextSelection({ from, to: from + 8 })
+  applyReload(ed, 'Alpha bxta\n\nGamma\n')
+  expect(ed.state.selection.from).toBe(from)
+  expect(ed.state.selection.to).toBeGreaterThan(from)
+})

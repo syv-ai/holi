@@ -352,9 +352,11 @@ function DocumentEditor({
         }
         if (saveTimer.current !== undefined && !locked) return
         const next = splitDocument(text)
+        // The refs follow only once the buffer took the file: a reload that
+        // throws leaves both on what the buffer still holds.
+        applyReload(editor, next.body)
         head.current = next.head
         lastText.current = text
-        applyReload(editor, next.body)
         placeRef.current()
       })
       .catch(() => undefined)
