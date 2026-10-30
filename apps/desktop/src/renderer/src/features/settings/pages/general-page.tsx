@@ -72,7 +72,7 @@ function AgentsCard() {
   const [warned, setWarned] = useAtom(piWarnedAtom)
   const [askPi, setAskPi] = useState(false)
   const makeDefault = (id: AgentProviderId): void => {
-    // The default is what Holis, automations and Create vault app run on:
+    // The default is what Holis, automations and a document's write and rewrite run on:
     // Pi there runs every tool without asking, which is said once.
     if (id === 'pi' && remote !== null && warned[remote] !== true) {
       setAskPi(true)
@@ -109,7 +109,7 @@ function AgentsCard() {
         open={askPi}
         onOpenChange={setAskPi}
         title="Run unattended work on Pi?"
-        description="Holis, automations and Create vault app will run on Pi with nobody watching. Pi asks before no tool: each run edits the files it may touch without asking you. Holi keeps it to those files, and runs it only on macOS."
+        description="Holis, automations and a document's Ask AI and rewrites will run on Pi with nobody watching. Pi asks before no tool: each run edits the files it may touch without asking you. Holi keeps it to those files, and runs it only on macOS."
         confirmLabel="Make Pi the default"
         onConfirm={async () => {
           if (remote !== null) setWarned((all) => ({ ...all, [remote]: true }))

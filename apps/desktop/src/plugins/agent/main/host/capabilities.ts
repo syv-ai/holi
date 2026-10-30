@@ -205,13 +205,16 @@ function scopeParam(raw: Record<string, unknown>): JobScope {
 }
 
 /** A job's scope as Claude Code's permission rules: what a background
- *  session started for it is allowed without asking.
+ *  session started for it is allowed without asking, each rule once (a
+ *  document's own run reads and writes the same file).
  * @public exported for its test
  */
 export function scopeRules(scope: JobScope): string[] {
   return [
-    ...scope.read.map((p) => `Read(./${p})`),
-    ...scope.write.flatMap((p) => [`Read(./${p})`, `Edit(./${p})`, `Write(./${p})`]),
+    ...new Set([
+      ...scope.read.map((p) => `Read(./${p})`),
+      ...scope.write.flatMap((p) => [`Read(./${p})`, `Edit(./${p})`, `Write(./${p})`]),
+    ]),
   ]
 }
 

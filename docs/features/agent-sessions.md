@@ -87,7 +87,9 @@ on `provider` or else this machine's `agentProvider`, and one of two bounds.
   surface, or an `AGENTS.md`/`CLAUDE.md` at any depth), each checked as a vault path and read with
   no symlink followed, any `app.yaml` last. What it left out the job's message names. More than
   200 files or 20 MB copies nothing and fails. A failure copies nothing. The scratch folder is
-  deleted either way. A fenced session (below) copies back the same way at each turn's end.
+  deleted either way. A fenced session (below) copies back the same way at each turn's end. A
+  document's write and rewrite ([editor](editor.md)) are its callers: each reads and writes back
+  the one document.
 - **`allow`**: Claude Code permission rules, for a run that works in the vault itself (a Holi's or
   an automation's). A `background` provider runs it as `agent.launch` would, with those rules. A
   `jobs` provider runs it in the clone only when every rule is something its sandbox can enforce
@@ -196,9 +198,10 @@ session (`--session <id>` from the job's session folder): queued while a turn ru
 Stop sends `abort` and closes the input, then signals the process group if it has not exited.
 
 **Choosing Pi for unattended work** asks once per vault on this machine: Make default on Pi in
-Settings → General says that Holis and automations will run on Pi, which asks before no tool,
-before it is made the default. Pi has neither `background` nor `fenced`, so Create vault app,
-a watched session (`agent.scoped`), is refused on it with the reason.
+Settings → General says that Holis, automations and a document's write and rewrite will run on
+Pi, which asks before no tool, before it is made the default. Pi has neither `background` nor
+`fenced`, so Create vault app, a watched session (`agent.scoped`), is refused on it with the
+reason.
 
 **Which agent a new session runs** is this machine's `agentProvider` (`app.local.yaml`; the
 **Agents** card in Settings → General, a row per agent with **Make default**): which agent is installed and signed in is the machine's, not the

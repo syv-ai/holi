@@ -53,12 +53,9 @@ vault's.
   row counts them.
 - **The model of an interactive Codex session**: nothing Codex reports to Holi names it, so its row
   says Codex, not the model.
-- **A document's AI Rewrite and Write on Codex**: they still start a Claude Code background
-  session through `agent.launch` (`document-agent.ts`), whatever this machine's default agent is.
-  Only Create vault app runs on the default agent.
 
-**More of Pi.** Pi runs sessions in its own TUI and Holis, automations and Create vault app as
-sandboxed RPC jobs ([agent-sessions](features/agent-sessions.md), Pi), but not yet:
+**More of Pi.** Pi runs sessions in its own TUI and Holis, automations and a document's agent
+runs as sandboxed RPC jobs ([agent-sessions](features/agent-sessions.md), Pi), but not yet:
 
 - **Jobs off macOS**: a job runs only under `sandbox-exec`. Linux would need a boundary of its
   own (bubblewrap, a container), and until then a Pi job there is refused.
@@ -70,10 +67,6 @@ sandboxed RPC jobs ([agent-sessions](features/agent-sessions.md), Pi), but not y
   memory.
 - **Context use and cost**: `get_session_stats` reports both; only a job's tokens are shown, as
   for Codex. An interactive session shows neither: Holi reads only its terminal.
-- **Select-and-ask and rewrites on Pi**: the document's own runs stay on Claude Code (Sonnet), as
-  they do for Codex.
-- **Its sign-in kept apart**: a job may read and write Pi's `auth.json`, since a token refresh
-  writes it. A job's tools could read it too.
 
 **More providers.** opencode, as its core and whatever its hooks allow.
 
