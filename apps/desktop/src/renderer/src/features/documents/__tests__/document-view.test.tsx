@@ -2,15 +2,18 @@
  * A document in the rich-text editor against a mocked vault: it opens with
  * its frontmatter kept aside, ⌘B is always the editor's, and Space on an
  * empty line asks Sonnet to write there: the marker is saved, the run locks
- * the page until its session is done, and Stop ends it.
+ * the page until its session is done, and Stop ends it. Ask AI's Start chat
+ * opens a conversation about the selected passage beside the document.
  */
 import { emptyVaultSnapshot, normalizeText } from '@holi/shared'
 import userEvent from '@testing-library/user-event'
 import { atom, createStore, Provider } from 'jotai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
-import { act, fireEvent, render, screen, waitFor } from '@/test/render'
+import { act, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import * as agentService from '@/state/agent-service'
+import { installedPluginsAtom } from '@/state/plugins'
+import type { ConversationStart } from '@/state/plugin-types'
 import { pendingHeadingAtom } from '@/state/open-document'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
@@ -315,4 +318,152 @@ test('a change on disk keeps the caret in its place, and is not undoable', async
   })
   expect(editor.state.doc.textContent).toContain('Beta gamma')
   expect(write).not.toHaveBeenCalled()
+})
+
+/** Select `words` in the editor and wait for the format bubble's Ask AI. */
+async function selectForAskAi(words: string) {
+  const box = await editorBox()
+  const editor = (box as HTMLElement & { editor: import('@tiptap/react').Editor }).editor
+  let from = -1
+  editor.state.doc.descendants((node, pos) => {
+    if (from === -1 && node.isText && node.text!.includes(words)) {
+      from = pos + node.text!.indexOf(words)
+    }
+  })
+  act(() => {
+    editor
+      .chain()
+      .focus()
+      .setTextSelection({ from, to: from + words.length })
+      .run()
+  })
+  const selected = () =>
+    editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to)
+  return { editor, selected, askAi: await screen.findByRole('button', { name: 'Ask AI' }) }
+}
+
+test("Ask AI's own instruction rewrites only the passage selected when it opened", async () => {
+  const user = userEvent.setup()
+  open('# Plan\n\nShip the beta on Friday.\n\nKeep this line.\n')
+  const { editor, selected, askAi } = await selectForAskAi('Ship the beta')
+  await user.click(askAi)
+  // The presets are still there, beside the custom entry.
+  expect(await screen.findByRole('menuitem', { name: 'Improve writing' })).toBeInTheDocument()
+  await user.click(screen.getByRole('menuitem', { name: 'Custom instruction…' }))
+
+  const prompt = await screen.findByRole('textbox', { name: 'What should the agent do?' })
+  await waitFor(() => expect(prompt).toHaveFocus())
+  // The selection is kept while the prompt has focus.
+  expect(selected()).toBe('Ship the beta')
+  // The selection moves while the prompt is open; the instruction is still
+  // for the passage it opened over.
+  let keep = -1
+  editor.state.doc.descendants((node, pos) => {
+    if (keep === -1 && node.isText && node.text!.startsWith('Keep this line')) keep = pos
+  })
+  act(() => {
+    editor.commands.setTextSelection({ from: keep, to: keep + 'Keep this line'.length })
+  })
+  expect(selected()).toBe('Keep this line')
+  await user.type(prompt, 'Translate it into Danish{Enter}')
+
+  await waitFor(() =>
+    expect(cap).toHaveBeenCalledWith(expect.objectContaining({ name: 'agent.launch' })),
+  )
+  const launch = JSON.parse(cap.mock.calls[0]![0].paramsJson)
+  expect(launch.prompt).toContain('<passage>\nShip the beta\n</passage>')
+  expect(launch.prompt).not.toContain('Keep this line')
+  expect(launch.prompt).toContain('Translate it into Danish')
+  expect(launch.prompt).toContain('change nothing else in the document')
+  expect(launch.allow).toEqual([
+    'Read(./notes/Plan.md)',
+    'Edit(./notes/Plan.md)',
+    'Write(./notes/Plan.md)',
+  ])
+  // The page is locked while it runs.
+  await waitFor(() => expect(editor.isEditable).toBe(false))
+})
+
+test("cancelling Ask AI's own instruction starts nothing and keeps the selection", async () => {
+  const user = userEvent.setup()
+  open('# Plan\n\nShip the beta on Friday.\n')
+  const { editor, selected, askAi } = await selectForAskAi('Ship the beta')
+  const before = editor.getMarkdown()
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Custom instruction…' }))
+  const prompt = await screen.findByRole('textbox', { name: 'What should the agent do?' })
+  await waitFor(() => expect(prompt).toHaveFocus())
+  // An empty instruction is not sent.
+  await user.keyboard('{Enter}')
+  expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+  await user.type(prompt, 'Make it formal{Escape}')
+
+  await waitFor(() =>
+    expect(screen.queryByRole('textbox', { name: 'What should the agent do?' })).toBeNull(),
+  )
+  expect(cap).not.toHaveBeenCalled()
+  expect(editor.getMarkdown()).toBe(before)
+  expect(selected()).toBe('Ship the beta')
+})
+
+test("Ask AI's rewrite commands read as one group, and Start chat comes after them", async () => {
+  const user = userEvent.setup()
+  store.set(installedPluginsAtom, [
+    {
+      info: { id: 'agent-stand-in', label: 'Agent', default: true },
+      agentsSlot: { start: atom(null, () => Promise.resolve({ ok: true as const })) },
+    },
+  ] as never)
+  open('# Plan\n\nShip the beta on Friday.\n')
+  const { askAi } = await selectForAskAi('Ship the beta')
+  await user.click(askAi)
+  const menu = await screen.findByRole('menu')
+  // The custom instruction is a rewrite too: inside the group, under its label.
+  const rewrite = within(menu).getByRole('group')
+  expect(within(rewrite).getByText('Rewrite the selection')).toBeInTheDocument()
+  expect(within(rewrite).getByRole('menuitem', { name: 'Custom instruction…' })).toBeInTheDocument()
+  const rows = [...menu.querySelectorAll('[role="menuitem"], [role="separator"]')].map((el) =>
+    el.getAttribute('role') === 'separator' ? '---' : el.textContent,
+  )
+  expect(rows).toEqual([
+    'Improve writing',
+    'Fix spelling and grammar',
+    'Simplify',
+    'Make shorter',
+    'Custom instruction…',
+    '---',
+    'Start chat',
+  ])
+})
+
+test('Start chat opens a new session beside the document, the passage as its context', async () => {
+  const user = userEvent.setup()
+  const started: ConversationStart[] = []
+  store.set(installedPluginsAtom, [
+    {
+      info: { id: 'agent-stand-in', label: 'Agent', default: true },
+      agentsSlot: {
+        start: atom(null, (_get, _set, args: ConversationStart) => {
+          started.push(args)
+          return Promise.resolve({ ok: true as const })
+        }),
+      },
+    },
+  ] as never)
+  open('# Plan\n\nShip the beta on Friday.\n\nKeep this line.\n')
+  const { editor, askAi } = await selectForAskAi('Ship the beta')
+  const before = editor.getMarkdown()
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Start chat' }))
+
+  await waitFor(() => expect(started).toHaveLength(1))
+  expect(started[0]).toEqual({
+    text: '',
+    context: [{ kind: 'passage', path: PATH, text: 'Ship the beta' }],
+    beside: true,
+  })
+  // A chat changes nothing: no rewrite run, and the page stays editable.
+  expect(cap).not.toHaveBeenCalled()
+  expect(editor.isEditable).toBe(true)
+  expect(editor.getMarkdown()).toBe(before)
 })

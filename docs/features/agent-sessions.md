@@ -207,9 +207,10 @@ is no page in between: the terminal is where the first message goes. Hovering th
 ↓ on it) opens a menu of the other ways in (`sessions/new-session-button.tsx`): a session in each
 agent, one not on this machine listed but off, and **Resume a … conversation** for an agent Holi
 runs itself. A start that fails says why in a toast. The command menu's **Ask the agent** and an
-app card's **Ask about this app** start a session the same way (the agent's slot `start`), the
-ask as its first turn and an app named ahead of it by its folder; with only an app, its line goes
-in unsent for the person to finish.
+app card's **Ask about this app** and a document's Ask AI **Start chat** start a session the same
+way (the agent's slot `start`), the ask as its first turn and an app named ahead of it by its
+folder, or a selected passage quoted with its document's path; with only an app or a passage, its
+lines go in unsent for the person to finish.
 
 **Stop, restart, duplicate.** A row's **Stop** runs `claude stop <id>`. An idle session stops at
 once; one mid-turn or waiting on you asks first. Its context menu adds **Restart** (`claude

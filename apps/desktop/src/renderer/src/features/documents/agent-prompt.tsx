@@ -1,6 +1,6 @@
 /**
  * The agent's two surfaces in a document: the prompt that opens on an empty
- * line (Space), and the status pill that says what a run is doing, with Stop.
+ * line (Space) or over a selection, and the status pill that says what a run is doing, with Stop.
  */
 import { useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -22,16 +22,22 @@ import { activeRemoteAtom } from '@/state/vaults'
 
 import type { AgentRun } from './document-agent'
 
-/** Where the person types what the agent should write, on the line they
- *  opened it from. Enter sends, Shift+Enter breaks the line, Escape closes. */
+/** Where the person types what the agent should do: on the line they opened
+ *  it from, or for a selection from the format bubble's Ask AI. Enter sends,
+ *  Shift+Enter breaks the line, Escape closes. */
 export function AgentPrompt({
   initial = '',
+  heading = 'Ask Sonnet to write or change this document',
+  placeholder = 'Draft an introduction, turn the list into a table…',
   onSubmit,
   onCancel,
 }: {
   /** Written in already, for the person to send or change: an app
    *  command's instruction. */
   initial?: string
+  /** What the prompt is for, above the field. */
+  heading?: string
+  placeholder?: string
   onSubmit: (request: string) => void
   onCancel: () => void
 }) {
@@ -47,7 +53,7 @@ export function AgentPrompt({
       <InputGroupAddon align="block-start">
         <InputGroupText className="text-primary">
           <SparklesIcon aria-hidden="true" />
-          Ask Sonnet to write or change this document
+          {heading}
         </InputGroupText>
       </InputGroupAddon>
       <InputGroupTextarea
@@ -55,7 +61,7 @@ export function AgentPrompt({
         rows={1}
         value={text}
         aria-label="What should the agent do?"
-        placeholder="Draft an introduction, turn the list into a table…"
+        placeholder={placeholder}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === 'Escape') {

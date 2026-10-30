@@ -18,8 +18,9 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { toast } from 'sonner'
 import { differsBeyondTidy, holiLink, isHoliLinkable, isResolved } from '@holi/shared'
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useSetAtom } from 'jotai'
 import { findNext, findPrev } from 'prosemirror-search'
 import { EditorContent, useEditor } from '@tiptap/react'
 
@@ -46,6 +47,7 @@ import { cn } from '@/lib/cn'
 import { TaskProperties } from '@/features/planning/task-properties'
 import { trpc } from '@/lib/trpc'
 import { sawText } from '@/state/doc-changes'
+import { canStartConversationAtom, startConversationAtom } from '@/state/agents-slots'
 import { claimsAtom } from '@/state/plugins'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
@@ -451,6 +453,19 @@ function DocumentEditor({
   }
 
   const canAsk = agent.available && !isRunLive(agent.run)
+  const canStartChat = useAtomValue(canStartConversationAtom)
+  const startConversation = useSetAtom(startConversationAtom)
+
+  /** A new agent session beside the document, the passage in its input as
+   *  context, for the person to ask about it. */
+  async function startChat(passage: string) {
+    const res = await startConversation({
+      text: '',
+      context: [{ kind: 'passage', path, text: passage }],
+      beside: true,
+    })
+    if (!res.ok) toast.error(`Couldn't start the chat. ${res.message}`)
+  }
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -550,8 +565,11 @@ function DocumentEditor({
                       linkOpen={linkOpen}
                       onLinkOpenChange={setLinkOpen}
                       onQuickCommand={
-                        canAsk ? (verb, passage) => void quickCommand(verb, passage) : null
+                        canAsk
+                          ? (instruction, passage) => void quickCommand(instruction, passage)
+                          : null
                       }
+                      onStartChat={canStartChat ? (passage) => void startChat(passage) : null}
                       onComment={commentable ? () => void commentOnSelection() : null}
                     />
                     <RichTextLinkBubble editor={editor} onEdit={openLinkEditor} />

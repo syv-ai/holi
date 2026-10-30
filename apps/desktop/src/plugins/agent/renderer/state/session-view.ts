@@ -20,11 +20,22 @@ import { agentGeometryAtom } from './sessions'
 import { respawnSessionAtom, type AgentResult } from './send'
 import { toast } from 'sonner'
 
-/** The line an ask opens with for each app it is about: the agent reads the
- *  app's folder itself, in the clone, with its own permissions.
+/** What an ask opens with for each thing it is about. An app is named by its
+ *  folder, which the agent reads itself, in the clone, with its own
+ *  permissions; a passage is quoted, as context for the conversation rather
+ *  than something to change.
  * @public exported for its test
  */
 export function contextLine(item: ConversationContext): string {
+  if (item.kind === 'passage') {
+    return [
+      `This is about a passage I selected in ${item.path}. It is context for our conversation, not a request to change the document:`,
+      '',
+      '<passage>',
+      item.text,
+      '</passage>',
+    ].join('\n')
+  }
   return `This is about the vault app "${item.name}", the folder ${item.path} (its page is index.html, its manifest app.yaml).`
 }
 
