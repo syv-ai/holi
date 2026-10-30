@@ -28,14 +28,17 @@ export interface ClaudeProviderDeps {
   holiBin(): string
   /** The OS asks for dark: what a vault's `system` colour scheme means. */
   systemPrefersDark(): boolean
+  /** Which `claude` runs: its preset's (`../harness/registry.ts`). */
+  resolveBin?: () => string | null
 }
 
 export function claudeProvider(deps: ClaudeProviderDeps): BackgroundProvider {
+  const resolveBin = deps.resolveBin ?? (() => resolveClaudeBin())
   return {
     id: 'claude',
     label: 'Claude Code',
     notInstalled: NOT_INSTALLED,
-    installed: () => resolveClaudeBin() !== null,
+    installed: () => resolveBin() !== null,
     // Per vault open, not per launch: the open vault moves, and the theme
     // stamped into its directory tracks a setting the user can flip while
     // the app runs. Static paths every session needs ride in the settings
@@ -49,12 +52,12 @@ export function claudeProvider(deps: ClaudeProviderDeps): BackgroundProvider {
         env: { HOLI_BIN: deps.holiBin() },
       }),
     terminal: (target, opts = {}) =>
-      terminalCommand(target, opts.attach, undefined, opts.fork, opts.login),
+      terminalCommand(target, opts.attach, resolveBin, opts.fork, opts.login),
     firstSpawn: { take: takeFirstSpawn, notice: SIGN_IN_NOTICE },
     seed: claudeSeed,
     capabilities: {
       background: {
-        cli: createClaudeCli(),
+        cli: createClaudeCli({ resolveBin }),
         parseListing,
         isLive,
         summarise,

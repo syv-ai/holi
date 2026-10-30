@@ -68,7 +68,13 @@ runs as sandboxed RPC jobs ([agent-sessions](features/agent-sessions.md), Pi), b
 - **Context use and cost**: `get_session_stats` reports both; only a job's tokens are shown, as
   for Codex. An interactive session shows neither: Holi reads only its terminal.
 
-**More providers.** opencode, as its core and whatever its hooks allow.
+**More providers.** opencode, as its core and whatever its hooks allow. Any CLI can be added as a
+harness today, but only as a basic terminal agent: a harness a person adds has no way to declare
+background sessions, jobs or a sandbox, so Holis, automations and Create vault app never run on one,
+and its Duplicate is not offered. Its `holi-signal` reports a turn's end and status, not a turn's
+start (the terminal gives that) nor a question for the person. Test runs only a saved harness, not
+the form's draft. Resume by id works only for CLIs whose conversation ids are UUIDs, since that is
+all `holi-signal --conversation` takes.
 
 **The rest of the inbox.** A banner clicked while Holi had no window open opens Holi, but not the
 entry: the renderer is not listening yet when the click lands, so the entry waits in the inbox. A

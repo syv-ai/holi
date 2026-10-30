@@ -39,7 +39,7 @@ it('runs whatever a stale plugins.yaml pins for it', async () => {
       own: {} as never,
       jobs: {} as never,
       fenced: {} as never,
-      providers: [],
+      providers: () => [],
       terminals: { list: () => [] } as never,
       liveRemote: () => 'o/r',
       commitNow: async () => null,

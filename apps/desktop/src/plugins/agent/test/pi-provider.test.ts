@@ -259,6 +259,18 @@ describe('a Pi job', () => {
     })
   })
 
+  it("keeps what Pi's preset sets past its allowlist, but not the job's own folders", async () => {
+    const { script, state, node, run, env } = await machine()
+    const { command } = jobCommand(script, run, {
+      env,
+      node,
+      preset: { MY_KEY: 'k', TMPDIR: '/elsewhere' },
+    })
+    expect(command.env.MY_KEY).toBe('k')
+    expect(command.env.TMPDIR).toBe(join(state, 'tmp'))
+    expect(command.env.PI_CODING_AGENT_DIR).toBe(join(state, 'pi-agent'))
+  })
+
   it('does not run when it cannot tell which provider runs it', async () => {
     const { agent, script, node, run, env } = await machine()
     await rm(join(agent, 'settings.json'))

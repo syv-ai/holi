@@ -74,7 +74,7 @@ const NO_BOUNDARY =
 const SANDBOX_EXEC = '/usr/bin/sandbox-exec'
 
 /** `HOLI_PI_BIN` when set and runnable, else `pi` on `PATH`. */
-function resolvePiBin(env: NodeJS.ProcessEnv = process.env): string | null {
+export function resolvePiBin(env: NodeJS.ProcessEnv = process.env): string | null {
   const override = env.HOLI_PI_BIN
   return override !== undefined && override !== '' && executable(override)
     ? override
@@ -277,13 +277,18 @@ const NETWORK_VARS = [
 /**
  * A job's environment: where home is, a `PATH` of the runtime and the
  * system's tools, the language, a temporary folder in the job's own, Pi's
- * folder for the job, the model keys and the way to the network. Nothing
- * else of Holi's or the person's.
+ * folder for the job, the model keys, the way to the network, and `keep`: the
+ * names Pi's preset sets, on purpose. Nothing else of Holi's or the person's.
  * @public exported for its test
  */
 export function jobEnv(
   base: NodeJS.ProcessEnv,
-  { runtimeBin, state, agentDir }: { runtimeBin: string | null; state: string; agentDir: string },
+  {
+    runtimeBin,
+    state,
+    agentDir,
+    keep = [],
+  }: { runtimeBin: string | null; state: string; agentDir: string; keep?: readonly string[] },
 ): Record<string, string> {
   const env: Record<string, string> = {
     HOME: base.HOME ?? homedir(),
@@ -292,7 +297,9 @@ export function jobEnv(
     TMPDIR: join(state, 'tmp'),
     PI_CODING_AGENT_DIR: agentDir,
   }
-  for (const key of [...KEY_VARS, ...NETWORK_VARS]) {
+  for (const key of [...KEY_VARS, ...NETWORK_VARS, ...keep]) {
+    // The job's own temporary folder and Pi folder are its sandbox's to name.
+    if (key === 'TMPDIR' || key === 'PI_CODING_AGENT_DIR') continue
     const value = base[key]
     if (value !== undefined && value !== '') env[key] = value
   }
@@ -632,10 +639,17 @@ export function jobCommand(
   pi: string,
   run: JobRun,
   {
-    env: base = process.env,
-    node = resolveBin('node', base),
-  }: { env?: NodeJS.ProcessEnv; node?: string | null } = {},
+    env: outer = process.env,
+    preset = {},
+    node = resolveBin('node', outer),
+  }: {
+    env?: NodeJS.ProcessEnv
+    /** What Pi's preset sets, kept in the job over the allowlist. */
+    preset?: Record<string, string>
+    node?: string | null
+  } = {},
 ): { command: TerminalCommand; signIn: SignIn } {
+  const base: NodeJS.ProcessEnv = { ...outer, ...preset }
   const { runtime, script } = piProgram(pi, base, node)
   const home = real(base.HOME ?? homedir())
   const personDir = real(personAgentDir(base))
@@ -673,6 +687,7 @@ export function jobCommand(
         runtimeBin: runtime === null ? null : dirname(runtime),
         state,
         agentDir,
+        keep: Object.keys(preset),
       }),
     },
     signIn,
@@ -681,6 +696,9 @@ export function jobCommand(
 
 export interface PiProviderDeps {
   resolveBin?: () => string | null
+  /** The environment its preset sets, which its jobs keep too: the person
+   *  set it on purpose. */
+  env?: () => Record<string, string>
   /** The platform jobs run on: `darwin` alone has the boundary. */
   platform?: NodeJS.Platform
 }
@@ -697,7 +715,7 @@ export function piProvider(deps: PiProviderDeps = {}): AgentProvider {
     installed: () => bin() !== null,
     namesConversation: true,
     // Pi keeps its own home; Holi has nothing to provision in it.
-    configure: async () => ({ dir: personAgentDir(process.env) }),
+    configure: async () => ({ dir: personAgentDir({ ...process.env, ...deps.env?.() }) }),
     terminal(target, opts = {}) {
       const path = bin()
       if (path === null) return null
@@ -713,7 +731,7 @@ export function piProvider(deps: PiProviderDeps = {}): AgentProvider {
         command(run) {
           const path = bin()
           if (path === null) return null
-          const { command, signIn } = jobCommand(path, run)
+          const { command, signIn } = jobCommand(path, run, { preset: deps.env?.() ?? {} })
           signIns.set(run.state, signIn)
           return command
         },

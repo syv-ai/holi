@@ -25,7 +25,7 @@ import { SessionTerminal } from '../session-terminal'
 import { inboxCountAtom } from '../state/agents-status'
 import { inboxAtom } from '../state/inbox'
 import { agentsViewAtom, agentsViewOf, viewTerminalsAtom } from '../state/agents-view'
-import { newSessionProviderAtom, providerLabel } from '../state/providers'
+import { newSessionProviderAtom, providerLabel, providersAtom } from '../state/providers'
 import { newSessionAtom, sessionRowsAtom } from '../state/session-list'
 import { SessionCard } from '../sessions/session-card'
 import { SessionSearch } from '../sessions/session-filters'
@@ -116,12 +116,13 @@ function InboxView(): React.JSX.Element {
 function HomeView(): React.JSX.Element {
   const create = useSetAtom(newSessionAtom)
   const provider = useAtomValue(newSessionProviderAtom)
+  const providers = useAtomValue(providersAtom)
   const setView = useSetAtom(agentsViewAtom)
   return (
     <IconStackEmpty
       icon={TerminalSquare}
       title="No session here"
-      description={`Start one and it opens in its terminal, in ${providerLabel(provider)}. Hover the sidebar's + for the other agents.`}
+      description={`Start one and it opens in its terminal, in ${providerLabel(providers, provider)}. Hover the sidebar's + for the other agents.`}
       action={{ label: 'New session', icon: SquarePen, onClick: () => void create() }}
       secondary={{ label: 'History', onClick: () => setView({ kind: 'history' }) }}
     />

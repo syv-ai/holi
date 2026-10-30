@@ -56,7 +56,7 @@ const NOT_INSTALLED =
   'Codex CLI not found on PATH. Install it (https://developers.openai.com/codex/cli) and restart Holi.'
 
 /** `HOLI_CODEX_BIN` when set, else `codex` on `PATH`. */
-function resolveCodexBin(env: NodeJS.ProcessEnv = process.env): string | null {
+export function resolveCodexBin(env: NodeJS.ProcessEnv = process.env): string | null {
   const override = env.HOLI_CODEX_BIN
   if (override) {
     try {
@@ -293,6 +293,9 @@ export function readJobEvent(line: string): JobEvent | null {
 
 export interface CodexProviderDeps {
   resolveBin?: () => string | null
+  /** The environment its preset sets, which its jobs get too: the person
+   *  set it on purpose (a key, a config folder). */
+  env?: () => Record<string, string>
 }
 
 export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
@@ -348,7 +351,7 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
           // nothing of Holi's, only the folders its sandbox lets it write.
           // Its sandbox can still read the disk; what a scratch job hands the
           // vault is what Holi copies back.
-          const env = buildAgentEnv(process.env)
+          const env = { ...buildAgentEnv(process.env), ...deps.env?.() }
           delete env[SESSION_ENV]
           return { bin: path, args: jobArgs(run), env }
         },

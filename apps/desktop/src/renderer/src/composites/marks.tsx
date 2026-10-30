@@ -55,7 +55,8 @@ function OpenAIMark({ className }: { className?: string }) {
 
 /** Each coding agent's glyph and colour (`agentProvider`): Claude's orange,
  *  OpenAI's mark and Pi's π in the text colour, as each is drawn on both
- *  grounds. An agent with no entry gets a terminal. */
+ *  grounds. An agent with no entry, one a person added in Settings, gets a
+ *  terminal. */
 const AGENT_MARKS: Record<string, { glyph: IconGlyph; className?: string }> = {
   claude: { glyph: SiClaude, className: 'text-orange-500 dark:text-orange-400' },
   codex: { glyph: OpenAIMark, className: 'text-foreground' },

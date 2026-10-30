@@ -134,11 +134,19 @@ export type EditorFont = 'mono' | 'sans' | 'serif'
 
 export const EDITOR_FONTS: readonly EditorFont[] = ['mono', 'sans', 'serif']
 
-/** Which coding agent a new session runs (docs/features/agent-sessions.md,
- *  Providers). */
-export type AgentProviderId = 'claude' | 'codex' | 'pi'
+/**
+ * Which coding agent a new session runs (docs/features/agent-sessions.md,
+ * Harnesses): one of this machine's agent harnesses, by its id. The built-in
+ * ones are `claude`, `codex` and `pi`; a person adds others in Settings, so
+ * whether an id names one is the agent's to check, on this machine.
+ */
+export type AgentProviderId = string
 
-export const AGENT_PROVIDER_IDS: readonly AgentProviderId[] = ['claude', 'codex', 'pi']
+/** What an agent harness's id looks like: a short lowercase slug. */
+export const AGENT_ID = /^[a-z][a-z0-9-]{1,31}$/
+
+export const isAgentId = (value: unknown): value is AgentProviderId =>
+  typeof value === 'string' && AGENT_ID.test(value)
 
 /**
  * What each name means, and the only place it means anything.
@@ -465,6 +473,11 @@ export type SettingType =
    * be Home and the vault's apps to the options.
    */
   | { kind: 'home'; options: readonly VaultSettingOption[] }
+  /**
+   * An agent harness's id (`AGENT_ID`): one of `options`, the built-in ones,
+   * or one this machine added, which the agent checks against its harnesses.
+   */
+  | { kind: 'agent'; options: readonly VaultSettingOption[] }
 
 /**
  * One setting, declared once.
@@ -711,7 +724,7 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     explanation:
       'The coding agent a new session starts in, and that Holis, automations and Create vault app run on.',
     type: {
-      kind: 'enum',
+      kind: 'agent',
       options: [
         { value: 'claude', label: 'Claude Code' },
         { value: 'codex', label: 'Codex' },
@@ -815,6 +828,7 @@ function controlFor(type: SettingType): VaultSettingControl {
     case 'flags':
       return { kind: 'group', toggles: type.flags }
     case 'home':
+    case 'agent':
       return { kind: 'choice', options: type.options, openEnded: true }
     // enum and number are both "pick one of these", and differ only in
     // what ELSE is legal, which is the validator's business, not the control's.
@@ -861,6 +875,10 @@ function readValue(
         ? { ok: false, expected: "recents, daily, a view's name, or a path in the vault" }
         : { ok: true, value: home }
     }
+    case 'agent':
+      return isAgentId(value)
+        ? { ok: true, value }
+        : { ok: false, expected: "an agent's id: lowercase letters, digits and dashes" }
   }
 }
 
