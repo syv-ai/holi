@@ -196,6 +196,39 @@ describe('Pi background runs', () => {
     expect(manager.sessions()).toEqual([])
   })
 
+  it('uses the sanitized environment for managed RPC Pi', async () => {
+    const previousManifest = process.env.PI_WORKTREE_SESSION_MANIFEST
+    const previousModel = process.env.PI_MODEL
+    process.env.PI_WORKTREE_SESSION_MANIFEST = '/tmp/parent-manifest.json'
+    process.env.PI_MODEL = 'parent-model'
+    const rpc = fake()
+    let childEnv: NodeJS.ProcessEnv | undefined
+    const manager = createPiBackground({
+      bin: () => '/usr/bin/pi',
+      binDir: () => '/holi/bin',
+      spawn: (_bin, _args, options) => {
+        childEnv = options.env
+        return rpc.child
+      },
+      bracket: () => {},
+      changed: () => {},
+    })
+    try {
+      manager.setVault('owner/vault', '/vault')
+      await manager.launch({ name: 'x', prompt: 'x' })
+      expect(childEnv?.PI_WORKTREE_SESSION_MANIFEST).toBeUndefined()
+      expect(childEnv?.PI_MODEL).toBeUndefined()
+      expect(childEnv?.PI_CODING_AGENT_DIR).toBe(process.env.PI_CODING_AGENT_DIR)
+      expect(childEnv?.PATH).toContain('/holi/bin/fallback')
+      await manager.leave()
+    } finally {
+      if (previousManifest === undefined) delete process.env.PI_WORKTREE_SESSION_MANIFEST
+      else process.env.PI_WORKTREE_SESSION_MANIFEST = previousManifest
+      if (previousModel === undefined) delete process.env.PI_MODEL
+      else process.env.PI_MODEL = previousModel
+    }
+  })
+
   it('reports process startup failures and aborts live jobs when the vault leaves', async () => {
     const startupFailure = createPiBackground({
       bin: () => '/usr/bin/pi',

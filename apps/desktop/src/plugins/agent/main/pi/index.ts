@@ -5,7 +5,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { resolveBin } from '../../../../main/plugin-api'
-import { buildAgentEnv } from '../claude/cli'
+import { buildPiEnv } from './env'
 import type { AgentProvider } from '../provider'
 
 export const NOT_INSTALLED =
@@ -34,7 +34,7 @@ export function piProvider(deps: PiProviderDeps = {}): AgentProvider {
             ? ['--resume']
             : ['--session', opts.resume]
       if (opts.prompt !== undefined && opts.prompt.trim() !== '') args.push('--', opts.prompt)
-      const env = buildAgentEnv(process.env, { binDir: target.binDir })
+      const env = buildPiEnv(process.env, { binDir: target.binDir })
       return { bin: path, args, env }
     },
     capabilities: {},

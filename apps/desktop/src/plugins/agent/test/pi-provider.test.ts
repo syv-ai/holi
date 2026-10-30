@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { NOT_INSTALLED, piProvider } from '../main/pi'
+import { buildPiEnv } from '../main/pi/env'
 
 const TARGET = { root: '/vault', configDir: '/home/ada/.pi', binDir: '/holi/bin' }
 
@@ -23,6 +24,52 @@ describe('the Pi provider', () => {
       'Review this vault',
     ])
     expect(pi.terminal(TARGET, { prompt: '--help' })?.args).toEqual(['--', '--help'])
+  })
+
+  it('strips inherited Pi session state but preserves user config and Holi PATH', () => {
+    const env = buildPiEnv(
+      {
+        PATH: '/usr/bin',
+        PI_CODING_AGENT_DIR: '/home/ada/.pi-custom',
+        PI_SESSION_ID: 'parent-session',
+        PI_SESSION_FILE: '/tmp/parent.jsonl',
+        PI_PROVIDER: 'parent-provider',
+        PI_MODEL: 'parent-model',
+        PI_REASONING_LEVEL: 'high',
+        PI_WORKTREE_SESSION_MANIFEST: '/tmp/parent-manifest.json',
+        PI_SESSION_CONTINUATION: '1',
+        USER_MODEL_CONFIG: 'keep-me',
+      },
+      { binDir: '/holi/bin' },
+    )
+    expect(env).toMatchObject({
+      PI_CODING_AGENT_DIR: '/home/ada/.pi-custom',
+      USER_MODEL_CONFIG: 'keep-me',
+    })
+    expect(env.PATH).toContain('/holi/bin/fallback')
+    for (const key of [
+      'PI_SESSION_ID',
+      'PI_SESSION_FILE',
+      'PI_PROVIDER',
+      'PI_MODEL',
+      'PI_REASONING_LEVEL',
+      'PI_WORKTREE_SESSION_MANIFEST',
+      'PI_SESSION_CONTINUATION',
+    ])
+      expect(env[key]).toBeUndefined()
+  })
+
+  it('uses the sanitized environment for interactive Pi', () => {
+    const previous = process.env.PI_WORKTREE_SESSION_MANIFEST
+    process.env.PI_WORKTREE_SESSION_MANIFEST = '/tmp/parent-manifest.json'
+    try {
+      expect(
+        piProvider({ resolveBin: () => '/usr/local/bin/pi' }).terminal(TARGET)?.env,
+      ).not.toHaveProperty('PI_WORKTREE_SESSION_MANIFEST')
+    } finally {
+      if (previous === undefined) delete process.env.PI_WORKTREE_SESSION_MANIFEST
+      else process.env.PI_WORKTREE_SESSION_MANIFEST = previous
+    }
   })
 
   it('reports when the stock CLI is unavailable', () => {
