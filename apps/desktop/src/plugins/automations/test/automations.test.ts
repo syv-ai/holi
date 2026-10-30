@@ -34,6 +34,7 @@ let clock: Date
 let launched: {
   name: string
   prompt: string
+  provider: 'claude' | 'codex' | 'pi'
   model?: string
   allow?: readonly string[]
   system?: string
@@ -44,6 +45,7 @@ let live: SessionSummary[]
 let stopped: string[]
 let watched: Set<string>
 let launchFails: string | null
+let selectedProvider: 'claude' | 'codex' | 'pi'
 /** What the scheduler hears a turn end through. */
 let turnEnd: ((id: string, pending: number | null) => void) | null
 let scheduler: Scheduler
@@ -58,6 +60,7 @@ const vault = () => ({ remote: REMOTE, root })
 function make(): Scheduler {
   const deps: SchedulerDeps = {
     store: jsonFileStore(join(data, 'schedules.json'), parseSchedulesFile),
+    provider: async () => selectedProvider,
     sessions: {
       async launch(args) {
         if (launchFails !== null) return { ok: false, message: launchFails }
@@ -112,6 +115,7 @@ beforeEach(async () => {
   stopped = []
   watched = new Set()
   launchFails = null
+  selectedProvider = 'claude'
   turnEnd = null
   emitted = []
   lastTurn = null
@@ -147,6 +151,7 @@ describe('approval', () => {
     expect(launched).toEqual([
       {
         name: 'Inbox · 10:30',
+        provider: 'claude',
         model: 'sonnet',
         allow: ['Edit'],
         prompt:
@@ -155,6 +160,30 @@ describe('approval', () => {
     ])
     // Another vault with the same file has approved nothing.
     expect((await scheduler.list({ remote: 'someone/else', root }))[0]!.status).toBe('off')
+  })
+
+  it('selects Pi without forwarding Claude allow patterns or a default model', async () => {
+    selectedProvider = 'pi'
+    await writeSchedule('inbox.local.md', 'name: Inbox\ncron: "*/30 * * * *"')
+    await scheduler.enable(vault(), 'inbox')
+    await scheduler.run(vault(), 'inbox')
+
+    expect(launched[0]).toMatchObject({ provider: 'pi', name: 'Inbox · 10:01' })
+    expect(launched[0]!.model).toBeUndefined()
+    expect(launched[0]!.allow).toBeUndefined()
+  })
+
+  it('records a Pi capability failure without falling back to another provider', async () => {
+    selectedProvider = 'pi'
+    launchFails = 'Pi does not support background sessions.'
+    await writeSchedule('inbox.local.md', 'name: Inbox\ncron: "*/30 * * * *"')
+    await scheduler.enable(vault(), 'inbox')
+    await scheduler.run(vault(), 'inbox')
+
+    const failed = (await scheduler.list(vault()))[0]!.runs[0]!
+    expect(failed.outcome).toBe('failed')
+    expect(failed.message).toBe('Pi does not support background sessions.')
+    expect(launched).toEqual([])
   })
 
   it('waits to be approved again after a change to the prompt, the model or the allow list', async () => {

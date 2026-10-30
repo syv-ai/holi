@@ -32,6 +32,7 @@
 import { createHash } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { AgentProviderId } from '@holi/shared'
 import {
   editHoliText,
   HOLI_COLOURS,
@@ -191,9 +192,11 @@ export interface NeedsYou {
 export interface HolisDeps {
   store: JsonFileStore<HolisFile>
   /** A background session through the agent (`agent.launch`). */
+  provider(root: string): Promise<AgentProviderId>
   launch(args: {
     name: string
     prompt: string
+    provider: AgentProviderId
     model?: string
     allow?: readonly string[]
     system?: string
@@ -503,11 +506,15 @@ export function createHolis(deps: HolisDeps): Holis {
       sending.add(entry.path)
       try {
         const base = path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/, '')
+        const provider = await deps.provider(vault.root)
         const res = await deps.launch({
           name: `${def.name} · ${base}`,
           prompt: sendPrompt(path),
+          provider,
           ...(def.model === undefined ? {} : { model: def.model }),
-          allow: [...def.allow, ...memoryRules(), REPORT_RULE],
+          ...(provider === 'claude'
+            ? { allow: [...def.allow, ...memoryRules(), REPORT_RULE] }
+            : {}),
           system: await systemFor(vault, entry, true),
         })
         if (!res.ok) throw new CapabilityError('UNAVAILABLE', res.message)

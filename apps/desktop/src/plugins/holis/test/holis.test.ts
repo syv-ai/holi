@@ -30,6 +30,7 @@ const REMOTE = 'syv-ai/notes'
 let root: string
 let data: string
 let launched: Parameters<HolisDeps['launch']>[0][]
+let selectedProvider: 'claude' | 'codex' | 'pi'
 let emitted: string[]
 let asked: NeedsYou[]
 let holis: Holis
@@ -57,10 +58,12 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'holi-holis-'))
   data = await mkdtemp(join(tmpdir(), 'holi-holis-data-'))
   launched = []
+  selectedProvider = 'claude'
   emitted = []
   asked = []
   holis = createHolis({
     store: jsonFileStore(join(data, 'holis.json'), parseHolisFile),
+    provider: async () => selectedProvider,
     async launch(args) {
       launched.push(args)
       return { ok: true, sessionId: `job${launched.length}` }
@@ -140,6 +143,7 @@ describe('sending a document', () => {
     expect(run).toMatchObject({
       name: 'Proposal · nordlys',
       prompt: 'Work on kunder/nordlys.md.',
+      provider: 'claude',
       model: 'sonnet',
     })
     expect(run.allow).toEqual(
@@ -159,6 +163,20 @@ describe('sending a document', () => {
       { jobId: 'job1', at: today.toISOString(), path: 'kunder/nordlys.md' },
     ])
     expect(emitted).toContain('holis')
+  })
+
+  it('selects Pi, keeps the Holi system prompt, and does not send Claude allow rules', async () => {
+    selectedProvider = 'pi'
+    await writeHoli({ yaml: PROPOSAL.replace('model: sonnet\n', ''), soul: SOUL })
+    const [p] = await holis.list(vault())
+    await holis.approve(vault(), 'proposal', p!.fingerprint!)
+
+    await holis.send(vault(), 'proposal', 'kunder/nordlys.md')
+
+    expect(launched[0]).toMatchObject({ provider: 'pi', name: 'Proposal · nordlys' })
+    expect(launched[0]!.model).toBeUndefined()
+    expect(launched[0]!.allow).toBeUndefined()
+    expect(launched[0]!.system).toContain('Write a proposal laid out as Templates/proposal.typ.')
   })
 
   it('takes only the documents it accepts', async () => {
