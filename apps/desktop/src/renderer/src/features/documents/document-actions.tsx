@@ -2,7 +2,9 @@
  * The document's menu, after the rich-text block's page actions: page layout
  * (full width, small text), a Holi link to the document or to the heading the
  * caret is under (docs/features/holi-links.md), export (Markdown, HTML) and
- * Create vault app. A copy confirms in place on its item; only a failure
+ * Create vault app. Copy Holi link and Create vault app are the actions a
+ * note's row menu in the file tree has too, drawn from one definition
+ * (`NOTE_ACTIONS`). A copy confirms in place on its item; only a failure
  * toasts.
  */
 import { useEffect, useRef, useState } from 'react'
@@ -13,9 +15,7 @@ import {
   CodeIcon,
   FileTextIcon,
   HashIcon,
-  LinkIcon,
   MoreHorizontalIcon,
-  SparklesIcon,
   TypeIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -31,6 +31,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { NOTE_ACTIONS } from '@/state/document-runs'
+
+const { copyLink: COPY_LINK, createVaultApp: CREATE_VAULT_APP } = NOTE_ACTIONS
 
 type CopyFormat = 'markdown' | 'html' | 'link' | 'heading-link'
 
@@ -108,7 +111,7 @@ export function DocumentActions({
             onSelect={(event) => event.preventDefault()}
           >
             <ArrowLeftRightIcon aria-hidden="true" />
-            Full Width
+            Full width
           </DropdownMenuCheckboxItem>
           <DropdownMenuCheckboxItem
             checked={smallText}
@@ -116,7 +119,7 @@ export function DocumentActions({
             onSelect={(event) => event.preventDefault()}
           >
             <TypeIcon aria-hidden="true" />
-            Small Text
+            Small text
           </DropdownMenuCheckboxItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
@@ -131,9 +134,9 @@ export function DocumentActions({
                 {copied === 'link' ? (
                   <CheckIcon aria-hidden="true" />
                 ) : (
-                  <LinkIcon aria-hidden="true" />
+                  <COPY_LINK.icon aria-hidden="true" />
                 )}
-                {copied === 'link' ? 'Copied' : 'Copy Holi Link'}
+                {copied === 'link' ? 'Copied' : COPY_LINK.label}
               </DropdownMenuItem>
               <DropdownMenuItem
                 onSelect={(event) => event.preventDefault()}
@@ -145,7 +148,7 @@ export function DocumentActions({
                 ) : (
                   <HashIcon aria-hidden="true" />
                 )}
-                {copied === 'heading-link' ? 'Copied' : 'Copy Link to Heading'}
+                {copied === 'heading-link' ? 'Copied' : 'Copy link to heading'}
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
@@ -177,8 +180,8 @@ export function DocumentActions({
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem disabled={onCreateVaultApp === null} onClick={() => onCreateVaultApp?.()}>
-          <SparklesIcon aria-hidden="true" />
-          Create vault app
+          <CREATE_VAULT_APP.icon aria-hidden="true" />
+          {CREATE_VAULT_APP.label}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
