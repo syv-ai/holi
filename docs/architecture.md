@@ -35,7 +35,7 @@ Electron. `@holi/shared/path-safety-node` is the one Node-only entrypoint.
 
 ## 2. Build only what Claude Code does not do
 
-The agent is a coding agent's own CLI, unmodified: Claude Code or Codex, one **provider** each
+The agent is a coding agent's own CLI, unmodified: Claude Code, Codex or Pi, one **provider** each
 ([agent-sessions](features/agent-sessions.md), Providers). Holi adds no adapter layer and no
 prompt-building, and fixes forward when a release changes something. The terminal is the
 interface, whichever agent runs in it: Holi draws around it (the session list, the tab, links to

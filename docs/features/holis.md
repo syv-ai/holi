@@ -6,17 +6,17 @@ customer note into a PDF proposal laid out as the vault's template; Assistant ca
 digest every weekday. A person sends a Holi work from the menu beside a document's **Agent** button,
 or gives it **habits**: [automations](scheduled-agents.md) it carries out on a clock. Either way the
 run is this machine's agent in the vault, under the Holi's soul and rules: Claude Code, asking the
-person what its rules do not cover, or Codex in a sandbox its rules must fit
+person what its rules do not cover, or Codex or Pi in a sandbox its rules must fit
 ([agent-sessions](agent-sessions.md), Jobs).
 
 Holis are the plugin `holis` (`src/plugins/holis/`, on by default), built on the agent: it runs
 every Holi through the agent's `agent.job` and reaches the agent's sessions only through core.
 
-**On Codex.** A run goes to this machine's agent (`agentProvider`); a Holi has no agent of its
-own. On Codex it is a job in the vault: `allow` must be reads and folder writes
-(`Edit(tilbud/**)`), which become the folders Codex's sandbox may write, and anything else refuses
+**On Codex or Pi.** A run goes to this machine's agent (`agentProvider`); a Holi has no agent of
+its own. On Codex or Pi it is a job in the vault: `allow` must be reads and folder writes
+(`Edit(tilbud/**)`), which become the folders the sandbox may write, and anything else refuses
 the send with the rule named, never running it on Claude Code instead. `model` is Claude Code's and
-is left out. Its sandbox has no network, so its `holi holis` commands cannot reach Holi: the run
+is left out. Neither run has a shell that reaches Holi, so its `holi holis` commands cannot: the run
 works and its turns are recorded, but it does not report or keep its memory
 ([not built](../not-built.md)). Any other `holi` command in its `allow` refuses the send.
 **A Holi runs on Codex only once this machine allows it** for the vault (Settings → General →
