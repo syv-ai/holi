@@ -158,7 +158,21 @@ test('an app is scaffolded beside the focused file, and its index.html opens', a
       remote: REMOTE,
       parent: '',
       name: 'Budget',
+      agent: null,
     }),
   )
   await waitFor(() => expect(open.preview).toHaveBeenCalledWith('Budget.app/index.html'))
+})
+
+test('a kind the agent makes is not offered while no plugin provides an agent', async () => {
+  tree()
+  store.set(coreContributionAtom, {
+    ...WITH_FOLDER_DOCUMENTS,
+    claims: WITH_FOLDER_DOCUMENTS.claims.map((c) =>
+      c.create ? { ...c, create: { ...c.create, agent: true as const } } : c,
+    ),
+  })
+  await userEvent.click(screen.getByRole('button', { name: 'File options' }))
+  expect(screen.getByRole('menuitem', { name: 'New task' })).toBeInTheDocument()
+  expect(screen.queryByRole('menuitem', { name: 'New App' })).toBeNull()
 })

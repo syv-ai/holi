@@ -183,8 +183,8 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
   }),
 
   /** Scaffold a bundle, or finish one by writing its manifest: the agent's
-   *  `holi apps init`, the explorer's New App and the tree's "Finish this
-   *  app". Never overwrites, so it is safe to run twice. */
+   *  `holi apps init` and the tree's "Finish this app". Never overwrites, so
+   *  it is safe to run twice. */
   'apps.init': cap({
     doors: ['ui', 'cli'],
     cli: { args: ['path'], summary: 'scaffold <path>, a folder ending in .app' },

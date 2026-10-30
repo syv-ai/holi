@@ -4,7 +4,8 @@
  */
 import { emptyVaultSnapshot } from '@holi/shared'
 import { expect, test, vi } from 'vitest'
-import { APP_CLAIM } from '../renderer/surface'
+import { atom } from 'jotai'
+import { APP_CLAIM, newAppPrompt } from '../renderer/surface'
 
 const init = vi.hoisted(() => vi.fn(async (_remote: string, _p: unknown) => ({ created: [] })))
 vi.mock('../renderer/apps-cap', () => ({ appsCap: { init } }))
@@ -21,12 +22,26 @@ test('offers Finish this app only to a bundle with an entry and no manifest', ()
   expect(finish.when!('A.app', snapshot('A.app/app.yaml'))).toBe(false)
 })
 
-test('New App scaffolds the bundle through apps.init and opens its entry', async () => {
+test('New app hands what it is for to a new agent session, and opens nothing itself', async () => {
   const run = APP_CLAIM.create!.run
-  expect(await run({ remote: 'o/r', parent: 'Finance', name: 'Budget' })).toBe(
-    'Finance/Budget.app/index.html',
+  const start = vi.fn(async (_args: { name?: string; prompt: string }) => ({ ok: true as const }))
+  const agent = {
+    name: 'Claude',
+    sessions: atom([]),
+    targets: atom({ sessions: [], default: 'new' }),
+    ask: vi.fn(),
+    start,
+  }
+  expect(APP_CLAIM.create!.agent).toBe(true)
+  expect(await run({ remote: 'o/r', parent: 'Finance', name: 'a burndown', agent })).toBeNull()
+  expect(start).toHaveBeenCalledWith({
+    name: 'a burndown',
+    prompt: newAppPrompt('Finance', 'a burndown'),
+  })
+  expect(newAppPrompt('Finance', 'a burndown')).toMatch(
+    /^Build a vault app in `Finance\/`: a burndown/,
   )
-  expect(init).toHaveBeenCalledWith('o/r', { path: 'Finance/Budget.app' })
-  init.mockRejectedValueOnce(new Error('not an app'))
-  expect(await run({ remote: 'o/r', parent: '', name: 'x' })).toBeNull()
+  expect(newAppPrompt('', 'x')).toMatch(/^Build a vault app at the root of this vault: x/)
+  expect(init).not.toHaveBeenCalled()
+  expect(await run({ remote: 'o/r', parent: '', name: 'x', agent: null })).toBeNull()
 })

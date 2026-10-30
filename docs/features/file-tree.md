@@ -23,7 +23,7 @@ The sidebar explorer shows the vault as the folders and files on disk. It reads 
 **Toolbar.** The tree's top-right holds the [nav menu](nav-menu.md)'s morphing menu, anchored at
 that corner and opening downward: icons on the sidebar's own background, so rows scrolled under
 them do not show through, while the tree is hovered or the menu has focus, kept
-while it is open. **+** unfolds into New Task, New File, New Folder and what enabled claims make (`create`: New App); Collapse All, Show
+while it is open. **+** unfolds into New Task, New File, New Folder and what enabled claims make (`create`: New app…, while an agent plugin is on); Collapse All, Show
 task files and Show hidden files are shortcuts, the two filters pressed while on. Every item has a
 shortcut, so there is no More. In a sidebar too narrow for the open menu, it grows rightward over
 the editor rather than past the window's edge.
@@ -32,9 +32,10 @@ the editor rather than past the window's edge.
   its first row, right after a focused file or app in its folder, and at the root when nothing is
   focused. The name field appears there as a row at that level.
 - **A task** is named by its title; main names the file and it opens pinned, as ⌘⇧T's does, whether
-  or not the tree shows task files. **An app** is `holi apps init`'s scaffold (`index.html` and an
-  `app.yaml`, never overwriting), and its `index.html` opens, which expands the bundle. A typed
-  `.app` is not doubled.
+  or not the tree shows task files. **An app** is the agent's to write: the field asks what the app
+  should do, and that, with the folder it goes in, is the first turn of a new agent session, which
+  comes forward. The agent names the app and opens it once it is finished; the tree opens nothing.
+  A claim's `create` marked `agent` is offered only while a plugin provides an agent.
 
 **Row menu.** Open in a New Pane, New File, New Folder, Rename (F2), Edit Icon, Delete (⌫), Cut, Copy, Paste, Duplicate, Copy to Folder, Move to Folder, Convert to PDF (markdown only), Copy Path, Copy Relative Path, Reveal in Finder. A folder document's row leads with Open and Open in a New Pane (not while it is a draft), and Show or Hide App Files, named by its surface. A claim adds its own items, each shown when its `when` holds (Finish this app on an unfinished app). A multi-selection gets only the batch actions: delete, clipboard, duplicate and the two out-of-vault ones.
 

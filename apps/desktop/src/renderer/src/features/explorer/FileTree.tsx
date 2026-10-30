@@ -49,6 +49,7 @@ import {
   TreeItemLabel,
 } from '@/primitives'
 import { todayDailyPathAtom } from '@/state/daily'
+import { useAgentService } from '@/state/agent-service'
 import { claimsAtom, folderClaimsAtom, surfacesAtom } from '@/state/plugins'
 import { revealRequestAtom } from '@/state/reveal'
 import { createTaskAtom, todayLinkCountAtom } from '@/state/tasks'
@@ -174,9 +175,17 @@ export function FileTree({
   const actions = useExplorerActions(projection.docPaths)
   const folderClaims = useAtomValue(folderClaimsAtom)
   const surfaces = useAtomValue(surfacesAtom)
-  /** What enabled claims add to the New menu (an app). */
+  /** What enabled claims add to the New menu (an app, which the agent
+   *  writes, so only while there is one). */
   const claims = useAtomValue(claimsAtom)
-  const creates = useMemo(() => claims.flatMap((c) => (c.create ? [c.create] : [])), [claims])
+  const agent = useAgentService()
+  const creates = useMemo(
+    () =>
+      claims.flatMap((c) =>
+        c.create && (c.create.agent !== true || agent !== null) ? [c.create] : [],
+      ),
+    [claims, agent],
+  )
   const present = useMemo(() => new Set(projection.docPaths), [projection.docPaths])
   /** The folder at `id` as a document (an app), or null. */
   const documentAt = (id: string) => folderDocumentAt(folderClaims, id, (p) => present.has(p))
@@ -368,7 +377,7 @@ export function FileTree({
         // A claim's own kind (an app). It opens what it made, once the
         // snapshot holds it.
         if (activeRemote === null) return
-        void kind.run({ remote: activeRemote, parent, name }).then(async (path) => {
+        void kind.run({ remote: activeRemote, parent, name, agent }).then(async (path) => {
           await loadSnapshot()
           if (path !== null) onOpenPreview(path)
         })

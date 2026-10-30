@@ -145,6 +145,10 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   never asks a driver about that), is an ordinary conflict for reconcile. The driver is a sh shim
   that posts the three versions to Holi (`/merge/record`), and fails to a conflict when Holi does
   not answer.
+- **A person asks; the agent writes.** The tree's **+** → New app… asks what the app should do and
+  starts an agent session with that and the folder as its first turn. There is no scaffold for a
+  person: an empty `index.html` is a page nobody knows how to fill. Without an agent plugin the
+  item is absent; a `.app` folder made by hand or in an editor is still an app.
 - **The authoring loop.** A seeded skill (`.claude/skills/vault-apps/SKILL.md`) documents the
   contract. The `holi` CLI gives the agent `holi apps open <path>` and `holi apps init <path>`
   (never overwrites). A `PostToolUse` hook (`vault-app-check.mjs`) reports, on every write inside
