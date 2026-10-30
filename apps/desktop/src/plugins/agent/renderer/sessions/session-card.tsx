@@ -149,7 +149,7 @@ export function SessionCard({
   const label = [item.title, stateWords(row), by].filter(Boolean).join(', ')
   const meta = [
     item.by === undefined ? undefined : item.by.name,
-    modelLabel(item.model),
+    modelLabel(item.model, item.agent),
     item.location,
   ]
     .filter(Boolean)

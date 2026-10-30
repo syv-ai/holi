@@ -45,8 +45,9 @@ export interface SessionRow {
 // ------------------------------------------------------------------ pure
 
 /** `claude-opus-5-5` or `opus` as a person says it: `Opus 5.5`, `Opus`. */
-export function modelLabel(model: string | undefined): string {
-  if (model === undefined || model.trim() === '') return 'Claude'
+export function modelLabel(model: string | undefined, agent?: AgentsSessionItem['agent']): string {
+  if (model === undefined || model.trim() === '')
+    return agent === 'pi' ? 'Pi' : agent === 'codex' ? 'Codex' : 'Claude'
   const m = /^(?:claude-)?(opus|sonnet|haiku)(?:-(\d+)(?:-(\d{1,2}))?)?(?:-\d{8})?(\[1m\])?$/i.exec(
     model.trim(),
   )
@@ -238,7 +239,7 @@ export function rowMatches(row: SessionRow, query: string, filter: SessionFilter
   }
   const q = query.trim().toLowerCase()
   if (q === '') return true
-  return [item.title, item.by?.name, item.location, modelLabel(item.model)].some(
+  return [item.title, item.by?.name, item.location, modelLabel(item.model, item.agent)].some(
     (text) => text !== undefined && text.toLowerCase().includes(q),
   )
 }

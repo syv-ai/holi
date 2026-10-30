@@ -32,6 +32,9 @@ const seen = (since = 0, map: Record<string, number> = {}) => ({ since, seen: ma
 
 test('model names read as a person says them', () => {
   expect(modelLabel(undefined)).toBe('Claude')
+  expect(modelLabel(undefined, 'pi')).toBe('Pi')
+  expect(modelLabel(undefined, 'codex')).toBe('Codex')
+  expect(modelLabel('gpt-6-sol', 'pi')).toBe('gpt-6-sol')
   expect(modelLabel('opus')).toBe('Opus')
   expect(modelLabel('claude-opus-5-5')).toBe('Opus 5.5')
   expect(modelLabel('claude-sonnet-4-5-20250929')).toBe('Sonnet 4.5')
@@ -149,6 +152,8 @@ test('search reads the title, who ran it, where and the model', () => {
   for (const q of ['inbox', 'SCOUT', 'kickoff', 'opus'])
     expect(rowMatches(r, q, NO_FILTER)).toBe(true)
   expect(rowMatches(r, 'nothing', NO_FILTER)).toBe(false)
+  expect(rowMatches(row({ agent: 'pi' }), 'pi', NO_FILTER)).toBe(true)
+  expect(rowMatches(row({ agent: 'pi' }), 'claude', NO_FILTER)).toBe(false)
 })
 
 test('the filter keeps states, who started it, and archived on request', () => {
