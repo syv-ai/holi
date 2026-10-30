@@ -43,6 +43,7 @@ import { buildTreeData, ROOT_ID, type TreeItemData } from '@/lib/tree-data'
 import { planMoveInto, planRenameFolder, type Move } from '@/lib/tree-actions'
 import { basename, joinPath, parentOf } from '@/lib/tree-paths'
 import { canMoveInto } from '@/lib/tree-view'
+import { trpc } from '@/lib/trpc'
 import { useTabDrag } from '@/features/shell/use-tab-drag'
 import { openDialogAtom } from '@/state/dialogs'
 import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
@@ -370,8 +371,21 @@ export function FilesSection({
   // The tree's own F2 renames its focused row; this one renames the selected
   // row from anywhere else, while the sidebar is open to show the field.
   const { open: sidebarOpen } = useSidebar()
+  /** What a key acts on: the focused row while the tree has focus, else the
+   *  row selected in it. */
+  const keyedRow = (): string | null => {
+    const inTree = tree.getElement()?.contains(document.activeElement) === true
+    const id = (inTree ? tree.getFocusedItem() : tree.getSelectedItems()[0])?.getId()
+    return id === undefined || id === ROOT_ID ? null : id
+  }
+  const copyKeyed = (form: 'relative' | 'absolute') => () => {
+    const id = keyedRow()
+    if (id !== null) copyPath(id, form)
+  }
   useShortcutHandlers({
     'files.collapseAll': () => tree.collapseAll(),
+    'files.copyPath': sidebarOpen ? copyKeyed('absolute') : undefined,
+    'files.copyRelativePath': sidebarOpen ? copyKeyed('relative') : undefined,
     'files.rename': sidebarOpen
       ? () => {
           if (tree.getElement()?.contains(document.activeElement)) return
@@ -439,6 +453,15 @@ export function FilesSection({
     })
   }
 
+  /** Put a row's path on the clipboard: as the vault has it, or main's
+   *  absolute one. */
+  function copyPath(path: string, form: 'relative' | 'absolute') {
+    const remote = files.remote
+    if (form === 'relative') void copyText(path, 'Path copied', path)
+    else if (remote !== null)
+      void copyText(trpc.files.absolutePath.query({ remote, path }), 'Path copied', path)
+  }
+
   /** Swap a row with its neighbour, as the folder's hand-made order. */
   function shift(id: string, by: -1 | 1) {
     const parent = tree.getItemInstance(id).getParent()
@@ -468,7 +491,18 @@ export function FilesSection({
       }),
       on: {
         openBeside: (path) => openTab(tabForPath(path), { beside: true }),
-        copyLink: (path) => void copyLink(path),
+        reveal: (path) => {
+          const remote = files.remote
+          if (remote !== null)
+            void attempt(`show “${basename(path)}”`, async () => {
+              await trpc.files.reveal.mutate({ remote, path })
+            })
+        },
+        copyPath,
+        copyLink: (path) => {
+          if (files.remote !== null)
+            void copyText(holiLink({ remote: files.remote, path }), 'Holi link copied', path)
+        },
         rename: (path) => {
           renameNext.current = path
         },
@@ -480,13 +514,12 @@ export function FilesSection({
     })
   }
 
-  /** Put `path`'s Holi link on the clipboard, for a teammate to click. */
-  async function copyLink(path: string) {
-    const remote = files.remote
-    if (remote === null) return
+  /** Put `text` on the clipboard: a path (an absolute one is main's to build,
+   *  in the platform's separators), or a Holi link for a teammate to click. */
+  async function copyText(text: string | Promise<string>, done: string, path: string) {
     try {
-      await navigator.clipboard.writeText(holiLink({ remote, path }))
-      toast.success('Holi link copied', { description: basename(path) })
+      await navigator.clipboard.writeText(await text)
+      toast.success(done, { description: basename(path) })
     } catch {
       toast.error('Copy failed', {
         description: 'The clipboard could not be written.',

@@ -2,7 +2,7 @@ import { parse as parseYaml } from 'yaml'
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { parseTaskFile, privateTaskPath, sharedTaskPath, taskClaim } from '@holi/shared'
 import { SETTINGS_FILE, VAULT_SETTING_DEFAULTS } from '@holi/shared'
@@ -98,6 +98,7 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   })
   hosts.push(host)
   const trashItem = vi.fn(async () => {})
+  const showItemInFolder = vi.fn()
   // Core's capabilities and the tasks', for `cap.run`.
   const capabilities = createCapabilityRegistry()
   capabilities.register(
@@ -134,10 +135,11 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     vaultRoot: join(base, 'Holi'),
     openExternal: async () => {},
     trashItem,
+    showItemInFolder,
     now: () => '2026-07-21T12:00:00Z',
     today: () => TODAY,
   }).createCaller({})
-  return { caller, root, registry, host, session, base, trashItem, capabilities }
+  return { caller, root, registry, host, session, base, trashItem, showItemInFolder, capabilities }
 }
 
 describe('settings', () => {
@@ -343,6 +345,20 @@ describe('files', () => {
     const { caller } = await rig()
     await expect(caller.files.read({ remote: REMOTE, path: '../etc/passwd' })).rejects.toThrow()
     await expect(caller.files.read({ remote: REMOTE, path: 'ghost.pdf' })).rejects.toThrow(/ghost/)
+  })
+
+  it('reveals and resolves only a path inside the vault, in the platform separators', async () => {
+    const { caller, root, showItemInFolder } = await rig()
+    await writeFile(join(root, 'case.pdf'), PDF)
+    await caller.files.reveal({ remote: REMOTE, path: 'case.pdf' })
+    const abs = await caller.files.absolutePath({ remote: REMOTE, path: 'case.pdf' })
+    expect(showItemInFolder).toHaveBeenCalledWith(abs)
+    expect(abs.endsWith(`${sep}case.pdf`)).toBe(true)
+    await expect(caller.files.reveal({ remote: REMOTE, path: '../etc/passwd' })).rejects.toThrow()
+    await expect(
+      caller.files.absolutePath({ remote: REMOTE, path: '../etc/passwd' }),
+    ).rejects.toThrow()
+    expect(showItemInFolder).toHaveBeenCalledTimes(1)
   })
 
   it('writes bytes atomically and reports the mtime the scanner will see', async () => {
@@ -1289,6 +1305,7 @@ async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
     vaultRoot: join(base, 'Holi'),
     openExternal,
     trashItem: async () => {},
+    showItemInFolder: () => {},
   }).createCaller({})
   return { caller, session, store, openExternal }
 }

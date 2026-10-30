@@ -9,7 +9,7 @@
 import { readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
-import { exactPath } from '@holi/shared/path-safety-node'
+import { exactPath, resolveRelative } from '@holi/shared/path-safety-node'
 import {
   commentThreads,
   isCommentableNote,
@@ -188,6 +188,12 @@ export interface RouterDeps {
    * destructive account action should be undoable.
    */
   trashItem: (path: string) => Promise<void>
+  /**
+   * Show a file in the system's file manager (Electron's
+   * `shell.showItemInFolder`), injected for the same reason as `openExternal`.
+   * Handed only a path `files.reveal` resolved inside the vault.
+   */
+  showItemInFolder: (path: string) => void
   /** The vault's own `.pre-commit-config.yaml`: its status here, and this
    *  person's allowance (`vault/hooks/pre-commit.ts`). Absent in tests that do
    *  not reach it. */
@@ -521,6 +527,18 @@ export function createRouter(deps: RouterDeps) {
     try {
       return vaultRelPath(path)
     } catch (err) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message })
+    }
+  }
+
+  /** `path` on this machine: canonicalised, proven inside the vault, in the
+   * platform's own separators. Only main builds one; the renderer asks. */
+  async function onDisk(remote: string, path: string): Promise<string> {
+    const root = await rootFor(remote)
+    try {
+      return await resolveRelative(root, safe(path))
+    } catch (err) {
+      if (err instanceof TRPCError) throw err
       throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message })
     }
   }
@@ -1025,6 +1043,20 @@ export function createRouter(deps: RouterDeps) {
    * structured clone carries verbatim.
    */
   const files = t.router({
+    /** Where a vault file lives on this machine, for the row menu's Copy
+     *  absolute path. */
+    absolutePath: t.procedure
+      .input(fields({ remote: 'string', path: 'string' }))
+      .query(({ input }): Promise<string> => onDisk(input.remote, input.path)),
+
+    /** Show a vault file in Finder, Explorer or the file manager. */
+    reveal: t.procedure
+      .input(fields({ remote: 'string', path: 'string' }))
+      .mutation(async ({ input }) => {
+        deps.showItemInFolder(await onDisk(input.remote, input.path))
+        return { ok: true as const }
+      }),
+
     read: t.procedure
       .input(fields({ remote: 'string', path: 'string' }))
       .query(async ({ input }): Promise<Uint8Array> => {

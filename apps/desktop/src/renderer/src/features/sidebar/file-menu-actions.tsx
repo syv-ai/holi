@@ -4,8 +4,11 @@ import { isHoliLinkable } from '@holi/shared'
 import {
   ArrowDownIcon,
   ArrowUpIcon,
+  FileSymlinkIcon,
   FolderInputIcon,
+  FolderOpenIcon,
   FolderPlusIcon,
+  HardDriveIcon,
   LinkIcon,
   ListChecksIcon,
   PencilIcon,
@@ -15,6 +18,7 @@ import {
 
 import type { MenuAction } from '@/composites/menu-actions'
 import type { TreeItemData } from '@/lib/tree-data'
+import { fileManagerName } from '@/lib/platform'
 import { parentOf } from '@/lib/tree-paths'
 import type { ActiveDialog } from '@/state/dialogs'
 import type { ClaimCreate, PathClaim } from '@/state/plugin-types'
@@ -42,6 +46,8 @@ export function rowActions({
   pluginActions: MenuAction[]
   on: {
     openBeside: (id: string) => void
+    reveal: (id: string) => void
+    copyPath: (id: string, form: 'relative' | 'absolute') => void
     copyLink: (id: string) => void
     rename: (id: string) => void
     shift: (id: string, by: -1 | 1) => void
@@ -75,19 +81,40 @@ export function rowActions({
             icon: <SquareSplitHorizontalIcon aria-hidden="true" />,
             run: () => on.openBeside(id),
           },
-          ...(linkable
-            ? ([
-                {
-                  kind: 'item',
-                  label: 'Copy Holi link',
-                  icon: <LinkIcon aria-hidden="true" />,
-                  run: () => on.copyLink(id),
-                },
-              ] satisfies MenuAction[])
-            : []),
           { kind: 'separator' },
         ] satisfies MenuAction[])
       : []),
+    {
+      kind: 'item',
+      label: `Open in ${fileManagerName()}`,
+      icon: <FolderOpenIcon aria-hidden="true" />,
+      run: () => on.reveal(id),
+    },
+    {
+      kind: 'item',
+      label: 'Copy relative path',
+      icon: <FileSymlinkIcon aria-hidden="true" />,
+      shortcut: '⌥⇧⌘C',
+      run: () => on.copyPath(id, 'relative'),
+    },
+    {
+      kind: 'item',
+      label: 'Copy absolute path',
+      icon: <HardDriveIcon aria-hidden="true" />,
+      shortcut: '⌥⌘C',
+      run: () => on.copyPath(id, 'absolute'),
+    },
+    ...(linkable
+      ? ([
+          {
+            kind: 'item',
+            label: 'Copy Holi link',
+            icon: <LinkIcon aria-hidden="true" />,
+            run: () => on.copyLink(id),
+          },
+        ] satisfies MenuAction[])
+      : []),
+    { kind: 'separator' },
     {
       kind: 'item',
       label: 'Rename',
