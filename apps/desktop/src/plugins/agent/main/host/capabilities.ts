@@ -66,6 +66,8 @@ export interface ProviderSummary {
   background: boolean
   /** It can run a job: one prompt, unwatched, in a folder of Holi's. */
   jobs: boolean
+  /** A live session of it can be copied (Pi's `--fork`). */
+  copies: boolean
 }
 
 export const AGENT_NAMESPACES = ['agent'] as const
@@ -95,6 +97,7 @@ export interface AgentCapabilitiesDeps {
     | 'has'
     | 'hasPast'
     | 'reopen'
+    | 'duplicate'
     | 'ownsTerminal'
     | 'terminalOf'
     | 'start'
@@ -202,13 +205,16 @@ function scopeParam(raw: Record<string, unknown>): JobScope {
 }
 
 /** A job's scope as Claude Code's permission rules: what a background
- *  session started for it is allowed without asking.
+ *  session started for it is allowed without asking, each rule once (a
+ *  document's own run reads and writes the same file).
  * @public exported for its test
  */
 export function scopeRules(scope: JobScope): string[] {
   return [
-    ...scope.read.map((p) => `Read(./${p})`),
-    ...scope.write.flatMap((p) => [`Read(./${p})`, `Edit(./${p})`, `Write(./${p})`]),
+    ...new Set([
+      ...scope.read.map((p) => `Read(./${p})`),
+      ...scope.write.flatMap((p) => [`Read(./${p})`, `Edit(./${p})`, `Write(./${p})`]),
+    ]),
   ]
 }
 
@@ -234,10 +240,10 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
     ok: false as const,
     message: 'A job runs with no terminal: what it did shows where it was started.',
   }
-  const ownOnly = (verb: string) => ({
+  const notRestarted = {
     ok: false as const,
-    message: `Only a Claude Code session can be ${verb} from Holi.`,
-  })
+    message: 'Only a Claude Code session can be restarted from Holi.',
+  }
 
   return {
     'agent.sessions': cap({
@@ -277,6 +283,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
           installed: p.installed(),
           background: hasBackground(p),
           jobs: hasJobs(p),
+          copies: hasBackground(p) || p.namesConversation === true,
         })),
     }),
 
@@ -620,7 +627,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       run: async (ctx, { id }): Promise<ActionResult> => {
         if (!live(ctx)) return notOpen
         if (deps.jobs.has(id)) return jobOnly
-        if (deps.own.has(id)) return ownOnly('restarted')
+        if (deps.own.has(id)) return notRestarted
         if (await deps.own.hasPast(id)) {
           const res = await deps.own.reopen(id, {})
           return res.ok ? { ok: true } : res
@@ -629,7 +636,9 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
     }),
 
-    /** A background copy of the conversation, and a terminal on it. */
+    /** A background copy of the conversation, and a terminal on it; for a
+     *  session Holi runs, a new one forked from its conversation, when its
+     *  provider names conversations by Holi's id (Pi). */
     'agent.duplicate': cap({
       doors: ['ui'],
       params: (raw) => {
@@ -639,7 +648,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       run: async (ctx, { id, ...size }): Promise<StartResult> => {
         if (!live(ctx)) return notOpen
         if (deps.jobs.has(id)) return jobOnly
-        return deps.own.has(id) ? ownOnly('copied') : deps.sessions.duplicate(id, size)
+        return deps.own.has(id) ? deps.own.duplicate(id, size) : deps.sessions.duplicate(id, size)
       },
     }),
 

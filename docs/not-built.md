@@ -53,11 +53,22 @@ vault's.
   row counts them.
 - **The model of an interactive Codex session**: nothing Codex reports to Holi names it, so its row
   says Codex, not the model.
-- **A document's AI Rewrite and Write on Codex**: they still start a Claude Code background
-  session through `agent.launch` (`document-agent.ts`), whatever this machine's default agent is.
-  Only Create vault app runs on the default agent.
 
-**More providers.** opencode and pi, each as its core and whatever its hooks allow.
+**More of Pi.** Pi runs sessions in its own TUI and Holis, automations and a document's agent
+runs as sandboxed RPC jobs ([agent-sessions](features/agent-sessions.md), Pi), but not yet:
+
+- **Jobs off macOS**: a job runs only under `sandbox-exec`. Linux would need a boundary of its
+  own (bubblewrap, a container), and until then a Pi job there is refused.
+- **A shell in a job**: no job scope asks for one today, so a Pi job never gets `bash`. One that
+  did would also reach the network, which the profile allows for Pi's model calls.
+- **Steering a running job**: Pi's RPC takes `steer` and `follow_up` mid-run, but a job's process
+  ends with its turn, so a follow-up waits and resumes the session in a new process.
+- **Holi's own commands in a Pi run**, as for Codex: no shell, so no `holi holis report` and no
+  memory.
+- **Context use and cost**: `get_session_stats` reports both; only a job's tokens are shown, as
+  for Codex. An interactive session shows neither: Holi reads only its terminal.
+
+**More providers.** opencode, as its core and whatever its hooks allow.
 
 **The rest of the inbox.** A banner clicked while Holi had no window open opens Holi, but not the
 entry: the renderer is not listening yet when the click lands, so the entry waits in the inbox. A

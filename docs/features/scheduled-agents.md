@@ -125,7 +125,8 @@ the sandbox has no network to reach Holi) or a web tool, rather than run on Clau
 asks anyone: a step outside its sandbox fails. Its turn ends when Codex says `turn.completed` or
 fails, and closes the run as a `Stop` does below; a turn that failed records the run as failed,
 with Codex's reason, in Run history and the work log. A `model` is Claude Code's and is left out.
-The rest of this section is Claude Code's.
+**On Pi** it is the same kind of job, Pi in RPC mode under `sandbox-exec` on macOS, refused
+elsewhere; its turn ends at Pi's `agent_settled`. The rest of this section is Claude Code's.
 
 **An automation on Codex can read anything on the disk.** Its sandbox bounds what it writes, the
 schedule's folders, not what it reads, and what it writes is synced and pushed like any edit. A
