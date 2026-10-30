@@ -63,6 +63,8 @@ export interface TerminalOpts {
   prompt?: string
   /** Holi's id for a session it runs itself, which its hooks name. */
   session?: string
+  /** Holi's stable conversation id for providers that can reopen a session. */
+  conversation?: string
 }
 
 /** Where the provider's hook routes are served (the bridge). */
@@ -136,6 +138,8 @@ export interface AgentProvider {
   /** Provision the vault's directory for it. Null leaves the vault without
    *  this provider. */
   configure(vault: VaultRef): Promise<{ dir: string } | null>
+  /** Whether Holi can name new conversations and reopen them by that id. */
+  namesConversation?: boolean
   /** What a terminal runs. Null when the agent is not installed. */
   terminal(target: VaultCliTarget, opts?: TerminalOpts): TerminalCommand | null
   /** A directory that needs its own sign-in: true the first time Holi opens

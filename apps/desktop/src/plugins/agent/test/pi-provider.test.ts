@@ -15,10 +15,13 @@ describe('the Pi provider', () => {
   it('uses Pi’s interactive resume picker and accepts a first prompt', () => {
     const pi = piProvider({ resolveBin: () => '/usr/local/bin/pi' })
     expect(pi.terminal(TARGET, { resume: 'pick' })?.args).toEqual(['--resume'])
-    expect(pi.terminal(TARGET, { resume: 'session-123' })?.args).toEqual([
-      '--session',
-      'session-123',
+    const id = '018f1234-5678-7abc-8def-0123456789ab'
+    expect(pi.terminal(TARGET, { resume: id })?.args).toEqual(['--session-id', id])
+    expect(pi.terminal(TARGET, { conversation: id })?.args).toEqual(['--session-id', id])
+    expect(pi.terminal(TARGET, { fork: id, conversation: '018f1234-5678-7abc-8def-0123456789ac' })?.args).toEqual([
+      '--fork', id, '--session-id', '018f1234-5678-7abc-8def-0123456789ac',
     ])
+    expect(pi.terminal(TARGET, { resume: 'not-a-session' })?.args).toEqual([])
     expect(pi.terminal(TARGET, { prompt: 'Review this vault' })?.args).toEqual([
       '--',
       'Review this vault',

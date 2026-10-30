@@ -22,7 +22,7 @@
  *
  * NOTE: no `electron` import, so this loads under vitest.
  */
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import type { SessionState, SessionSummary } from '../claude/listing'
 import type { AgentProvider, ProviderId, VaultRef } from '../provider'
 import { createTurnSignals, type TurnSignals } from './pty-signals'
@@ -168,6 +168,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         return { ok: false, message: `${provider.label} could not be set up for this vault.` }
       }
       const id = `p${randomBytes(6).toString('hex')}`
+      const conversationId = provider.namesConversation ? randomUUID() : undefined
       const target = { root: deps.vault.root, configDir: config.dir, binDir: deps.binDir() }
       // Filled in once the terminal exists; its callbacks only run after.
       let session: Session | null = null
@@ -194,6 +195,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
           session: id,
           ...(prompt === undefined ? {} : { prompt }),
           ...(resume === undefined ? {} : { resume }),
+          ...(conversationId === undefined ? {} : { conversation: conversationId }),
         }),
         notInstalled: provider.notInstalled,
         attach: id,
@@ -232,6 +234,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
           (prompt === undefined ? null : nameOf(prompt)),
         startedAt: Date.now(),
         terminalId: opened.id,
+        ...(conversationId === undefined ? {} : { conversationId }),
         attention: false,
         signals,
       }
