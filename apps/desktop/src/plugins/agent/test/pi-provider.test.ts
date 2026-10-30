@@ -37,7 +37,8 @@ describe('the Pi provider', () => {
         PI_MODEL: 'parent-model',
         PI_REASONING_LEVEL: 'high',
         PI_WORKTREE_SESSION_MANIFEST: '/tmp/parent-manifest.json',
-        PI_SESSION_CONTINUATION: '1',
+        PI_WORKTREE_BRANCH_CONTINUATION: '1',
+        PI_WORKTREE_CLEANUP_CONTINUATION: '1',
         USER_MODEL_CONFIG: 'keep-me',
       },
       { binDir: '/holi/bin' },
@@ -54,7 +55,8 @@ describe('the Pi provider', () => {
       'PI_MODEL',
       'PI_REASONING_LEVEL',
       'PI_WORKTREE_SESSION_MANIFEST',
-      'PI_SESSION_CONTINUATION',
+      'PI_WORKTREE_BRANCH_CONTINUATION',
+      'PI_WORKTREE_CLEANUP_CONTINUATION',
     ])
       expect(env[key]).toBeUndefined()
   })
