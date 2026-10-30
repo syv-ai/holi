@@ -12,6 +12,7 @@
  * Electron loads inside `activate`, so the plugin stays importable under
  * plain Node in the tests.
  */
+import { copyFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { jsonFileStore, readVaultSettings, type MainPlugin } from '../../../main/plugin-api'
 import { AGENT_INFO } from '../info'
@@ -20,8 +21,8 @@ import { resolveClaudeBin } from './claude/cli'
 import { claudeSeed } from './claude/seed'
 import { codexProvider, resolveCodexBin } from './codex'
 import { harnessCapabilities } from './harness/capabilities'
-import { parseHarnessFile } from './harness/record'
-import { createHarnessRegistry, presetBin, withPreset } from './harness/registry'
+import { isIntegration, parseHarnessFile } from './harness/record'
+import { createHarnessRegistry, withPreset } from './harness/registry'
 import { installSignalCommand, registerSignalRoute } from './harness/signal'
 import { piProvider, resolvePiBin } from './pi'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
@@ -50,29 +51,34 @@ export const agentMain: MainPlugin = {
     // This machine's agents: the built-in three, each reading its preset as
     // it runs, and the ones a person added in Settings
     // (docs/features/agent-sessions.md, Harnesses).
+    const harnessFile = join(ctx.userData, 'agent-harnesses.json')
     const harnesses = await createHarnessRegistry({
-      store: jsonFileStore(join(ctx.userData, 'agent-harnesses.json'), parseHarnessFile),
+      store: jsonFileStore(harnessFile, parseHarnessFile),
+      // What Holi could not read in the file is kept beside it before a write.
+      keepBad: () =>
+        copyFile(harnessFile, `${harnessFile}.bad`).catch((err: NodeJS.ErrnoException) => {
+          if (err.code !== 'ENOENT') throw err
+        }),
+      bins: {
+        claude: () => resolveClaudeBin(),
+        codex: () => resolveCodexBin(),
+        pi: () => resolvePiBin(),
+      },
       builtIns: {
-        claude: (current) =>
+        claude: (current, bin) =>
           withPreset(
             claudeProvider({
               userData: ctx.userData,
               holiBin: () => join(ctx.binDir(), 'holi'),
               systemPrefersDark: () => nativeTheme.shouldUseDarkColors,
-              resolveBin: presetBin('claude', current, () => resolveClaudeBin()),
+              resolveBin: bin,
             }),
             current,
           ),
-        codex: (current) =>
-          withPreset(
-            codexProvider({ resolveBin: presetBin('codex', current, () => resolveCodexBin()) }),
-            current,
-          ),
-        pi: (current) =>
-          withPreset(
-            piProvider({ resolveBin: presetBin('pi', current, () => resolvePiBin()) }),
-            current,
-          ),
+        codex: (current, bin) =>
+          withPreset(codexProvider({ resolveBin: bin, env: () => current().env ?? {} }), current),
+        pi: (current, bin) =>
+          withPreset(piProvider({ resolveBin: bin, env: () => current().env ?? {} }), current),
       },
     })
     const providers = (): ReturnType<typeof harnesses.providers> => harnesses.providers()
@@ -198,6 +204,7 @@ export const agentMain: MainPlugin = {
       ...inboxCapabilities({ inbox, liveRemote }),
       ...harnessCapabilities({
         registry: harnesses,
+        file: harnessFile,
         root: () => (liveRemote() === ctx.remote ? ctx.root : null),
         changed: () => ctx.emit(ctx.remote, 'providers', null),
       }),
@@ -246,13 +253,14 @@ export const agentMain: MainPlugin = {
         onChannel: (remote, id, channel) => started.noteChannel(remote, id, channel),
       })
     }
-    // `holi-signal`, from a session of a harness whose turns its hooks
-    // report (`signals: holi-hook`).
+    // `holi-signal`, from a session of a harness a person added: whichever
+    // of them wired it into their CLI's hooks. The built-in agents report
+    // through their own hooks.
     const unsignal = registerSignalRoute(ctx, {
       onSignal: (remote, id, signal) => {
         if (remote !== ctx.remote) return
         const provider = ptySessions.providerOf(id)
-        if (provider === null || harnesses.get(provider)?.signals !== 'holi-hook') return
+        if (provider === null || isIntegration(provider)) return
         if (signal.kind === 'status') return ptySessions.noteStatus(id, signal)
         if (signal.conversationId !== undefined) {
           ptySessions.noteConversation(id, { conversationId: signal.conversationId })

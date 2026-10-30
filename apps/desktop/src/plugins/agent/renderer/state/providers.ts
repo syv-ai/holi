@@ -20,14 +20,8 @@ interface AgentProviderInfo {
   jobs: boolean
   /** A live session of it can be copied. */
   copies: boolean
-  /** A harness a person added. */
-  custom: boolean
-  /** It can start on a first message. */
-  prompts: boolean
   /** It has a picker of its earlier conversations. */
   resumePicker: boolean
-  /** Why it runs nothing unattended, or null when it can. */
-  unattended: string | null
 }
 
 export type ProvidersState =
