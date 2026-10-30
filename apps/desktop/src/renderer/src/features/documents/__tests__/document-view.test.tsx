@@ -67,6 +67,13 @@ vi.mock('@/lib/trpc', () => ({
         query: () => Promise.resolve([{ login: 'ada', name: 'Ada', avatarUrl: null }]),
       },
     },
+    settings: {
+      read: {
+        query: vi.fn(() =>
+          Promise.resolve({ ...VAULT_SETTING_DEFAULTS, agentProvider: 'claude', warnings: [] }),
+        ),
+      },
+    },
     cap: { run: { mutate: (input: unknown) => cap(input) } },
   },
 }))
@@ -74,7 +81,13 @@ vi.mock('@/lib/trpc', () => ({
 vi.mock('@/state/agent-service', async () => {
   const { atom: makeAtom } = await import('jotai')
   const sessions = makeAtom<
-    { id: string; name: string; state: 'needs-you' | 'working' | 'idle' }[]
+    {
+      id: string
+      name: string
+      state: 'needs-you' | 'working' | 'idle'
+      outcome?: 'completed' | 'failed' | 'aborted'
+      error?: string
+    }[]
   >([])
   return {
     __sessions: sessions,
@@ -86,8 +99,16 @@ vi.mock('@/state/agent-service', async () => {
 const sessions = (
   agentService as unknown as {
     __sessions: ReturnType<
-      typeof atom<{ id: string; name: string; state: 'needs-you' | 'working' | 'idle' }[]>
-    >
+      typeof atom<
+          {
+            id: string
+            name: string
+            state: 'needs-you' | 'working' | 'idle'
+            outcome?: 'completed' | 'failed' | 'aborted'
+            error?: string
+          }[]
+        >
+      >
   }
 ).__sessions
 
@@ -203,6 +224,47 @@ test('Pi uses the local default without an editor warning or Claude-only launch 
   expect(launch.provider).toBe('pi')
   expect(launch).not.toHaveProperty('model')
   expect(launch).not.toHaveProperty('allow')
+})
+
+test('Pi waits for resolved vault settings before launching', async () => {
+  const user = userEvent.setup()
+  store.set(vaultSettingsAtom, null)
+  const { trpc } = await import('@/lib/trpc')
+  vi.mocked(trpc.settings.read.query).mockResolvedValueOnce({
+    ...VAULT_SETTING_DEFAULTS,
+    agentProvider: 'pi',
+    warnings: [],
+  })
+  open('')
+  const box = await editorBox()
+  box.focus()
+  fireEvent.keyDown(box, { key: ' ', code: 'Space' })
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Write it{Enter}',
+  )
+  await waitFor(() => expect(cap).toHaveBeenCalled())
+  expect(JSON.parse(cap.mock.calls[0]![0].paramsJson).provider).toBe('pi')
+})
+
+test('a disappeared Pi session is a failure, not a completed run', async () => {
+  const user = userEvent.setup()
+  store.set(vaultSettingsAtom, {
+    remote: 'syv/vault',
+    settings: { ...VAULT_SETTING_DEFAULTS, agentProvider: 'pi', warnings: [] },
+  })
+  open('')
+  const box = await editorBox()
+  box.focus()
+  fireEvent.keyDown(box, { key: ' ', code: 'Space' })
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Write it{Enter}',
+  )
+  await waitFor(() => expect(cap).toHaveBeenCalled())
+  act(() => store.set(sessions, [{ id: 'abc12345', name: '', state: 'working' }]))
+  act(() => store.set(sessions, []))
+  expect(await screen.findByText('The Pi session disappeared before it completed.')).toBeVisible()
 })
 
 test('a failed document run keeps its failure status', async () => {

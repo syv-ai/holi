@@ -15,13 +15,13 @@
  * path, so a run outlives its tab being switched away.
  */
 import { atom, useAtomValue, useSetAtom } from 'jotai'
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 
 import { parentOf } from '@/lib/tree-paths'
 import { trpc } from '@/lib/trpc'
 import { useAgentService } from '@/state/agent-service'
 import type { AgentSessionRow } from '@/state/plugin-types'
-import { agentProviderSettingAtom } from '@/state/settings'
+import { loadVaultSettingsAtom } from '@/state/settings'
 import { activeRemoteAtom } from '@/state/vaults'
 
 import { AGENT_MARKER } from './markdown'
@@ -40,6 +40,7 @@ export interface AgentRun {
   status: AgentRunStatus
   /** Set once the session was seen working, so its idle means done. */
   seenWorking: boolean
+  provider: 'claude' | 'pi'
   message?: string
 }
 
@@ -143,7 +144,9 @@ async function clearMarker(remote: string, path: string): Promise<void> {
  */
 export function useDocumentAgent(path: string) {
   const remote = useAtomValue(activeRemoteAtom)
-  const provider = useAtomValue(agentProviderSettingAtom)
+  const loadSettings = useSetAtom(loadVaultSettingsAtom)
+  const remoteRef = useRef(remote)
+  remoteRef.current = remote
   const runs = useAtomValue(runsAtom)
   const setRuns = useSetAtom(runsAtom)
   const service = useAgentService()
@@ -161,7 +164,13 @@ export function useDocumentAgent(path: string) {
     if (!run || !isRunLive(run) || run.sessionId === null) return
     const row = sessions.find((session) => session.id === run.sessionId)
     if (row === undefined) {
-      if (run.seenWorking) update({ status: 'done' })
+      if (run.seenWorking) {
+        update(
+          run.provider === 'pi'
+            ? { status: 'failed', message: 'The Pi session disappeared before it completed.' }
+            : { status: 'done' },
+        )
+      }
       return
     }
     if (row.outcome === 'failed') {
@@ -174,7 +183,7 @@ export function useDocumentAgent(path: string) {
     } else if (row.state === 'needs-you') {
       if (run.status !== 'needs-you') update({ status: 'needs-you' })
     } else if (run.seenWorking) {
-      update({ status: 'done' })
+      if (run.provider !== 'pi' || row.outcome === 'completed') update({ status: 'done' })
     }
     // `update` writes the same atom this reads; the run and rows are the deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -196,11 +205,26 @@ export function useDocumentAgent(path: string) {
           : request
     setRuns((all) => ({
       ...all,
-      [path]: { kind, label, sessionId: null, status: 'starting', seenWorking: false },
+      [path]: {
+        kind,
+        label,
+        sessionId: null,
+        status: 'starting',
+        seenWorking: false,
+        provider: 'claude',
+      },
     }))
     const { prompt, allow } = promptFor(kind, path, request, passage)
     const name = path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/i, '')
     try {
+      const settings = await loadSettings()
+      if (settings === null) throw new Error('No vault is open.')
+      if (remoteRef.current !== remote) {
+        update({ status: 'stopped', message: 'The active vault changed before the agent started.' })
+        return
+      }
+      const provider = settings.agentProvider
+      update({ provider })
       const result = await capability<
         { ok: true; sessionId: string } | { ok: false; message: string }
       >(remote, 'agent.launch', {
