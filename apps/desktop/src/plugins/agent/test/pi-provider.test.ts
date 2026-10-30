@@ -7,19 +7,25 @@ describe('the Pi provider', () => {
   it("launches stock Pi with the user's environment and no prompt by default", () => {
     const pi = piProvider({ resolveBin: () => '/usr/local/bin/pi' })
     const cmd = pi.terminal(TARGET)
-    expect(cmd).toEqual({ bin: '/usr/local/bin/pi', args: [], env: process.env })
+    expect(cmd).toEqual({
+      bin: '/usr/local/bin/pi',
+      args: [],
+      env: expect.objectContaining({ PATH: process.env.PATH }),
+    })
   })
 
   it('uses Pi’s interactive resume picker and accepts a first prompt', () => {
     const pi = piProvider({ resolveBin: () => '/usr/local/bin/pi' })
     expect(pi.terminal(TARGET, { resume: 'pick' })?.args).toEqual(['--resume'])
     expect(pi.terminal(TARGET, { resume: 'session-123' })?.args).toEqual([
-      '--resume',
+      '--session',
       'session-123',
     ])
     expect(pi.terminal(TARGET, { prompt: 'Review this vault' })?.args).toEqual([
+      '--',
       'Review this vault',
     ])
+    expect(pi.terminal(TARGET, { prompt: '--help' })?.args).toEqual(['--', '--help'])
   })
 
   it('reports when the stock CLI is unavailable', () => {

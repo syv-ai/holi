@@ -4,7 +4,7 @@
  */
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { resolveBin } from '../../../../main/bin'
+import { resolveBin } from '../../../../main/plugin-api'
 import type { AgentProvider } from '../provider'
 
 export const NOT_INSTALLED =
@@ -29,9 +29,16 @@ export function piProvider(deps: PiProviderDeps = {}): AgentProvider {
       const args =
         opts.resume === undefined
           ? []
-          : ['--resume', ...(opts.resume === 'pick' ? [] : [opts.resume])]
-      if (opts.prompt !== undefined && opts.prompt.trim() !== '') args.push(opts.prompt)
-      return { bin: path, args, env: { ...process.env } }
+          : opts.resume === 'pick'
+            ? ['--resume']
+            : ['--session', opts.resume]
+      if (opts.prompt !== undefined && opts.prompt.trim() !== '') args.push('--', opts.prompt)
+      const env = Object.fromEntries(
+        Object.entries(process.env).filter(
+          (entry): entry is [string, string] => entry[1] !== undefined,
+        ),
+      )
+      return { bin: path, args, env }
     },
     capabilities: {},
   }
