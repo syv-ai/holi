@@ -22,7 +22,7 @@ describe('the Codex provider', () => {
     expect(cmd?.bin).toBe('/usr/local/bin/codex')
     // An approval prompt prints OSC 9, which the terminal reads as needs-you.
     expect(cmd?.args).toEqual(['-c', notifyOverride(), '-c', NOTIFICATIONS_OVERRIDE])
-    expect(NOTIFICATIONS_OVERRIDE).toContain('"approval-requested"')
+    expect(NOTIFICATIONS_OVERRIDE).toBe('tui.notifications=["approval-requested"]')
     expect(cmd?.env[SESSION_ENV]).toBe('p0123456789ab')
     expect(cmd?.env.PATH?.startsWith('/holi/bin:')).toBe(true)
   })
@@ -30,12 +30,13 @@ describe('the Codex provider', () => {
   it('puts a first ask after --, and picks up a conversation', () => {
     expect(codex.terminal(TARGET, { prompt: 'resume' })?.args.slice(4)).toEqual(['--', 'resume'])
     expect(codex.terminal(TARGET, { resume: 'pick' })?.args.slice(4)).toEqual(['resume'])
-    expect(codex.terminal(TARGET, { resume: 'th-1', prompt: 'go on' })?.args.slice(4)).toEqual([
-      'resume',
-      'th-1',
-      '--',
-      'go on',
-    ])
+    expect(
+      codex
+        .terminal(TARGET, { resume: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51', prompt: 'go on' })
+        ?.args.slice(4),
+    ).toEqual(['resume', '--', '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51', 'go on'])
+    // Only ever a UUID, never a flag.
+    expect(() => codex.terminal(TARGET, { resume: '--yolo' })).toThrow()
   })
 
   it('has no terminal without the CLI', () => {
@@ -64,14 +65,15 @@ describe('the Codex turn report', () => {
       readTurn(
         JSON.stringify({
           type: 'agent-turn-complete',
-          'thread-id': '0199-abc',
+          'thread-id': '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51',
           'input-messages': ['Tidy the inbox', 'and more'],
           'last-assistant-message': 'Done.',
         }),
       ),
-    ).toEqual({ name: 'Tidy the inbox', conversationId: '0199-abc' })
+    ).toEqual({ name: 'Tidy the inbox', conversationId: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51' })
     expect(readTurn('not json')).toEqual({})
     expect(readTurn(JSON.stringify({ 'thread-id': 'bad id with spaces' }))).toEqual({})
+    expect(readTurn(JSON.stringify({ 'thread-id': '--yolo' }))).toEqual({})
   })
 
   it('ends the turn of the session it names, and only a Holi id', async () => {
