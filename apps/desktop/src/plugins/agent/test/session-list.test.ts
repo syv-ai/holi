@@ -13,6 +13,7 @@ import {
   NO_FILTER,
   rowMatches,
   rowState,
+  tokensLabel,
   type SessionRow,
 } from '../renderer/state/session-list'
 import type { AgentSession } from '../renderer/state/sessions'
@@ -36,6 +37,26 @@ test('model names read as a person says them', () => {
   expect(modelLabel('claude-opus-5-5')).toBe('Opus 5.5')
   expect(modelLabel('claude-sonnet-4-5-20250929')).toBe('Sonnet 4.5')
   expect(modelLabel('Opus 5.5')).toBe('Opus 5.5')
+})
+
+test('a token count reads as a count, never a share', () => {
+  expect(tokensLabel(undefined)).toBeUndefined()
+  expect(tokensLabel(850)).toBe('850 tokens')
+  expect(tokensLabel(12_400)).toBe('12.4k tokens')
+  expect(tokensLabel(2_000)).toBe('2k tokens')
+  expect(tokensLabel(250_400)).toBe('250k tokens')
+})
+
+test('a live session carries what its tokens were into its row', () => {
+  const live: AgentSession = {
+    id: 'j0123456789ab',
+    provider: 'codex',
+    name: 'Proposal',
+    state: 'idle',
+    tokens: 2_000,
+  }
+  expect(mergeSessionItems([item({ jobId: live.id })], [live])[0]).toMatchObject({ tokens: 2_000 })
+  expect(mergeSessionItems([], [live])[0]).toMatchObject({ agent: 'codex', tokens: 2_000 })
 })
 
 test('working and needs you are the session own; a finished turn is done until opened', () => {

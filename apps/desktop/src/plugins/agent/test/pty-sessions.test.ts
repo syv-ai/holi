@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createPtySessions, nameOf, PTY_SESSION_ID } from '../main/host/pty-sessions'
+import { createPtySessions, nameOf, parsePastFile, PTY_SESSION_ID } from '../main/host/pty-sessions'
 import type { OpenArgs } from '../main/host/terminals'
 import type { AgentProvider, TerminalOpts } from '../main/provider'
 
@@ -131,11 +131,14 @@ describe('sessions Holi runs', () => {
     const t = setup()
     const res = await t.sessions.start('codex', {})
     if (!res.ok) throw new Error(res.message)
-    t.sessions.noteConversation(res.sessionId, { name: 'Plan the week', conversationId: 'th-1' })
+    t.sessions.noteConversation(res.sessionId, {
+      name: 'Plan the week',
+      conversationId: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51',
+    })
     t.sessions.noteConversation(res.sessionId, { name: 'Something else' })
     expect(t.sessions.sessions()[0]).toMatchObject({
       name: 'Plan the week',
-      conversationId: 'th-1',
+      conversationId: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51',
     })
   })
 
@@ -207,5 +210,89 @@ describe('sessions Holi runs', () => {
       message: 'Codex cannot run fenced to a folder.',
     })
     expect(t.opened).toEqual([])
+  })
+
+  it('keeps a closed session with its conversation, and reopens it under its id', async () => {
+    const t = setup()
+    const res = await t.sessions.start('codex', { prompt: 'Plan the week' })
+    if (!res.ok) throw new Error(res.message)
+    // Never said its conversation: nothing to pick up again.
+    const bare = await t.sessions.start('codex', {})
+    if (!bare.ok) throw new Error(bare.message)
+    t.sessions.noteConversation(res.sessionId, {
+      conversationId: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51',
+    })
+    await t.sessions.stop(res.sessionId)
+    await t.sessions.stop(bare.sessionId)
+
+    expect(await t.sessions.past()).toEqual([
+      expect.objectContaining({
+        id: res.sessionId,
+        provider: 'codex',
+        name: 'Plan the week',
+        state: 'idle',
+        conversationId: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51',
+      }),
+    ])
+    expect(await t.sessions.hasPast(bare.sessionId)).toBe(false)
+
+    const again = await t.sessions.reopen(res.sessionId, { cols: 90 })
+    expect(again).toMatchObject({ ok: true, sessionId: res.sessionId })
+    expect(t.asked.at(-1)).toMatchObject({
+      session: res.sessionId,
+      resume: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51',
+    })
+    expect(t.sessions.sessions()[0]).toMatchObject({
+      id: res.sessionId,
+      conversationId: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51',
+    })
+    expect(await t.sessions.past()).toEqual([])
+    expect((await t.sessions.reopen(res.sessionId, {})).ok).toBe(false)
+  })
+
+  it('reopens a closed session once, however often it is asked at once', async () => {
+    const t = setup()
+    const res = await t.sessions.start('codex', {})
+    if (!res.ok) throw new Error(res.message)
+    t.sessions.noteConversation(res.sessionId, {
+      conversationId: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51',
+    })
+    await t.sessions.stop(res.sessionId)
+    const [a, b] = await Promise.all([
+      t.sessions.reopen(res.sessionId, {}),
+      t.sessions.reopen(res.sessionId, {}),
+    ])
+    expect([a.ok, b.ok].sort()).toEqual([false, true])
+    expect(t.opened).toHaveLength(2)
+  })
+
+  it('reads only what is a closed session from its file', () => {
+    expect(
+      parsePastFile({
+        'syv/vault': [
+          {
+            id: 'p0123456789ab',
+            provider: 'codex',
+            name: 'x',
+            state: 'idle',
+            conversationId: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51',
+          },
+          { id: 'abcd1234', provider: 'claude', name: 'y', state: 'idle', conversationId: 'th' },
+          { id: 'p0123456789ac', provider: 'codex', name: 'z', state: 'idle' },
+          // A flag on Codex's command line is no conversation.
+          {
+            id: 'p0123456789ad',
+            provider: 'codex',
+            name: 'w',
+            state: 'idle',
+            conversationId: '--yolo',
+          },
+        ],
+        broken: 'no',
+      }),
+    ).toEqual({
+      'syv/vault': [expect.objectContaining({ id: 'p0123456789ab' })],
+    })
+    expect(parsePastFile(null)).toEqual({})
   })
 })

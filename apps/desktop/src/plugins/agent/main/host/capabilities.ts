@@ -28,6 +28,7 @@ import { merge3, vaultRelPath, type VaultRelPath } from '@holi/shared'
 import {
   cap,
   CapabilityError,
+  flagParam,
   noParams,
   optionalStringParam,
   paramsObject,
@@ -52,6 +53,7 @@ import {
   type ProviderId,
 } from '../provider'
 import type { FencedSessions } from './fenced'
+import { unattendedRefusal, type UnattendedStore } from './unattended'
 import type { JobResult, Jobs, JobScope } from './jobs'
 import { openTurnLog, type TurnRecord } from './turn-log'
 import type { PtySessions } from './pty-sessions'
@@ -90,12 +92,27 @@ export interface AgentCapabilitiesDeps {
   /** The sessions Holi runs itself. */
   own: Pick<
     PtySessions,
-    'sessions' | 'has' | 'ownsTerminal' | 'terminalOf' | 'start' | 'send' | 'stop'
+    | 'sessions'
+    | 'past'
+    | 'has'
+    | 'hasPast'
+    | 'reopen'
+    | 'ownsTerminal'
+    | 'terminalOf'
+    | 'start'
+    | 'send'
+    | 'stop'
   >
   /** The jobs Holi runs for a provider with `jobs`. */
-  jobs: Pick<Jobs, 'sessions' | 'has' | 'start' | 'stop'>
+  jobs: Pick<Jobs, 'sessions' | 'has' | 'start' | 'message' | 'stop'>
   /** Sessions Holi runs fenced to a folder, for a provider with `fenced`. */
   fenced: Pick<FencedSessions, 'start'>
+  /** This machine's agent for the vault (`agentProvider`): what a job runs
+   *  on when its caller does not say. */
+  defaultProvider(): Promise<ProviderId>
+  /** Which vaults this machine lets an agent whose jobs read the whole disk
+   *  run unattended in (`unattended.ts`). */
+  unattended: UnattendedStore
   /** Every provider, the background one first. */
   providers: readonly AgentProvider[]
   terminals: Pick<AgentTerminals, 'list' | 'attach' | 'close'>
@@ -250,7 +267,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       run: async (ctx): Promise<SessionSummary[]> => {
         if (!live(ctx)) return []
         await deps.sessions.ensure()
-        return deps.sessions.past()
+        return [...deps.sessions.past(), ...(await deps.own.past())]
       },
     }),
 
@@ -266,6 +283,38 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
           background: hasBackground(p),
           jobs: hasJobs(p),
         })),
+    }),
+
+    /**
+     * Whether `provider` may run unattended in this vault on this machine:
+     * always, for an agent whose jobs do not read the whole disk; for one that
+     * does (Codex), once someone here allowed it (`unattended.ts`).
+     */
+    'agent.unattended': cap({
+      doors: ['ui'],
+      params: (raw) => ({ provider: providerParam(paramsObject(raw)) ?? 'claude' }),
+      run: async (ctx, { provider: id }): Promise<boolean> => {
+        const provider = deps.providers.find((p) => p.id === id)
+        if (provider === undefined || !hasJobs(provider)) return true
+        if (provider.capabilities.jobs.readsAnywhere !== true) return true
+        return deps.unattended.allowed(ctx.remote, id)
+      },
+    }),
+
+    /** Let `provider` run unattended in this vault on this machine, or stop
+     *  letting it. The UI door alone: Settings asks the person first. */
+    'agent.allowUnattended': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const provider = providerParam(p)
+        if (provider === undefined) throw new CapabilityError('BAD_REQUEST', 'provider is required')
+        return { provider, on: flagParam(p, 'on') }
+      },
+      run: async (ctx, { provider, on }): Promise<{ ok: true }> => {
+        await deps.unattended.set(ctx.remote, provider, on)
+        return { ok: true }
+      },
     }),
 
     'agent.terminals': cap({
@@ -372,13 +421,16 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
     }),
 
     /**
-     * One prompt run with nobody watching, by `provider` (the background one
-     * when omitted), touching only its `scope`: the files it reads and the
-     * paths (or `folder/**`) it writes. A provider with `background` runs it
-     * as a background session allowed exactly that scope; one with `jobs`
-     * runs it in a folder of Holi's and copies back what it wrote
-     * (`jobs.ts`). Any other is refused, never run on another agent. The UI
-     * door alone, as `agent.launch`.
+     * One prompt run with nobody watching, by `provider` (this machine's
+     * agent when omitted), touching either its `scope` (the files it reads
+     * and the paths, or `folder/**`, it writes) or the vault under `allow`,
+     * Claude Code permission rules (a Holi's or an automation's run). A
+     * provider with `background` runs it as a background session allowed
+     * exactly that; one with `jobs` runs it sandboxed (`jobs.ts`), in a folder
+     * of Holi's whose writes are copied back, or in the vault with only the
+     * folders `allow` names writable, refused when a rule is not one. Any
+     * other provider is refused, never run on another agent. The UI door
+     * alone, as `agent.launch`.
      */
     'agent.job': cap({
       doors: ['ui'],
@@ -387,32 +439,56 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         const model = optionalStringParam(p, 'model')
         const system = optionalStringParam(p, 'system')
         const provider = providerParam(p)
+        const allow = p['allow']
+        if (allow !== undefined && p['scope'] !== undefined) {
+          throw new CapabilityError('BAD_REQUEST', 'a job has a scope or allow, not both')
+        }
+        if (
+          allow !== undefined &&
+          (!Array.isArray(allow) || allow.some((r) => typeof r !== 'string'))
+        ) {
+          throw new CapabilityError('BAD_REQUEST', 'allow must be a list of rules')
+        }
         return {
           name: stringParam(p, 'name'),
           prompt: stringParam(p, 'prompt'),
-          scope: scopeParam(p),
+          where: (allow === undefined
+            ? { scope: scopeParam(p) }
+            : { allow: allow as readonly string[] }) as
+            { scope: JobScope } | { allow: readonly string[] },
           ...(model === undefined ? {} : { model }),
           ...(system === undefined ? {} : { system }),
           ...(provider === undefined ? {} : { provider }),
         }
       },
-      run: async (ctx, { provider: id, scope, system, ...args }): Promise<JobResult> => {
+      run: async (ctx, { provider: id, where, system, model, ...args }): Promise<JobResult> => {
         if (!live(ctx)) return notOpen
-        const provider =
-          id === undefined ? deps.providers[0] : deps.providers.find((p) => p.id === id)
+        const wanted = id ?? (await deps.defaultProvider())
+        const provider = deps.providers.find((p) => p.id === wanted)
         if (provider === undefined) return { ok: false, message: 'No agent can run this.' }
         if (hasBackground(provider)) {
           return deps.sessions.launch({
             ...args,
-            allow: scopeRules(scope),
+            ...(model === undefined ? {} : { model }),
+            allow: 'scope' in where ? scopeRules(where.scope) : [...where.allow],
             ...(system === undefined ? {} : { appendSystemPrompt: system }),
           })
         }
         if (hasJobs(provider)) {
+          // Its jobs can read the whole disk: only once this machine said so.
+          if (
+            provider.capabilities.jobs.readsAnywhere === true &&
+            !(await deps.unattended.allowed(ctx.remote, provider.id))
+          ) {
+            return { ok: false, message: unattendedRefusal(provider.label) }
+          }
           return deps.jobs.start({
             provider,
             ...args,
-            scope,
+            // A run in the vault names a model for Claude Code (a Holi's
+            // `model`): another agent runs on its own default.
+            ...(model === undefined || !('scope' in where) ? {} : { model }),
+            ...where,
             ...(system === undefined ? {} : { system }),
           })
         }
@@ -524,7 +600,9 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
      * socket (`claude/messaging.ts`): it starts a turn when the session is
      * idle, and is read after the tool call in flight when it is working.
      * Nothing is typed into a terminal, so a person's half-written prompt is
-     * left alone. Sent once, never retried.
+     * left alone. Sent once, never retried. A job in the vault (`jobs.ts`)
+     * takes it as its next turn on the agent's thread, queued while a turn
+     * runs: it cannot be read mid-turn.
      */
     'agent.message': cap({
       doors: ['ui', 'cli'],
@@ -548,10 +626,18 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
       run: async (ctx, { session, text }): Promise<{ ok: true }> => {
         if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', VAULT_NOT_OPEN)
-        // A session Holi runs itself has no inbox: messaging is Claude Code's
-        // background capability, and typing into its terminal is not this.
-        if (deps.own.has(session) || deps.jobs.has(session)) {
-          throw new CapabilityError('UNAVAILABLE', 'Only a Claude Code session takes messages.')
+        // A job takes it as its next turn, queued while one runs.
+        if (deps.jobs.has(session)) {
+          deps.jobs.message(session, text)
+          return { ok: true }
+        }
+        // A session Holi runs in a terminal has no inbox, and typing into
+        // the person's terminal is not this.
+        if (deps.own.has(session)) {
+          throw new CapabilityError(
+            'UNAVAILABLE',
+            'This session takes messages in its terminal only.',
+          )
         }
         await deps.sessions.message(session, text)
         return { ok: true }
@@ -569,14 +655,21 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
     }),
 
-    /** A fresh process for the same conversation (`claude respawn`). */
+    /** A fresh process for the same conversation (`claude respawn`), or a
+     *  closed session Holi ran brought back on its conversation (`codex
+     *  resume`) under the same id. A live one of those is not restarted. */
     'agent.respawn': cap({
       doors: ['ui'],
       params: idParams,
       run: async (ctx, { id }): Promise<ActionResult> => {
         if (!live(ctx)) return notOpen
         if (deps.jobs.has(id)) return jobOnly
-        return deps.own.has(id) ? ownOnly('restarted') : deps.sessions.respawn(id)
+        if (deps.own.has(id)) return ownOnly('restarted')
+        if (await deps.own.hasPast(id)) {
+          const res = await deps.own.reopen(id, {})
+          return res.ok ? { ok: true } : res
+        }
+        return deps.sessions.respawn(id)
       },
     }),
 

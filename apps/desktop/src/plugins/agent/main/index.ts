@@ -13,15 +13,16 @@
  * plain Node in the tests.
  */
 import { join } from 'node:path'
-import { jsonFileStore, type MainPlugin } from '../../../main/plugin-api'
+import { jsonFileStore, readVaultSettings, type MainPlugin } from '../../../main/plugin-api'
 import { AGENT_INFO } from '../info'
 import { claudeProvider } from './claude'
 import { claudeSeed } from './claude/seed'
 import { codexProvider } from './codex'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
-import { createPtySessions, PTY_SESSION_ID } from './host/pty-sessions'
+import { createPtySessions, parsePastFile, PTY_SESSION_ID } from './host/pty-sessions'
 import { createFencedSessions } from './host/fenced'
 import { createJobs } from './host/jobs'
+import { createUnattendedStore } from './host/unattended'
 import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
 import { openTurnLog } from './host/turn-log'
@@ -57,6 +58,11 @@ export const agentMain: MainPlugin = {
     let background: SessionSummary[] = []
     let own: SessionSummary[] = []
     let jobRows: SessionSummary[] = []
+    // History likewise: the background sessions stopped, then the closed
+    // ones Holi ran.
+    let backgroundPast: SessionSummary[] = []
+    let ownPast: SessionSummary[] = []
+    const pushPast = (): void => ctx.emit(ctx.remote, 'history', [...backgroundPast, ...ownPast])
     const pushSessions = (): void => {
       const all = [...background, ...own, ...jobRows]
       ctx.emit(ctx.remote, 'sessions', all)
@@ -66,6 +72,10 @@ export const agentMain: MainPlugin = {
 
     const started = createAgentSessions({
       emit: (remote, name, payload) => {
+        if (name === 'history' && remote === ctx.remote) {
+          backgroundPast = payload as SessionSummary[]
+          return pushPast()
+        }
         if (name !== 'sessions') return ctx.emit(remote, name, payload)
         background = payload as SessionSummary[]
         pushSessions()
@@ -84,8 +94,18 @@ export const agentMain: MainPlugin = {
       turnLogFor: openTurnLog,
       snapshot: worktreeEnd,
     })
+    // The closed sessions Holi ran, kept on this machine for History.
+    const pastFile = jsonFileStore(join(ctx.userData, 'agent-sessions.json'), parsePastFile)
+    // Which vaults this machine lets Codex run unattended in.
+    const unattended = createUnattendedStore(join(ctx.userData, 'agent-unattended.json'))
     const ptySessions = createPtySessions({
       vault: { remote: ctx.remote, root: ctx.root },
+      past: {
+        read: async () => (await pastFile.read())[ctx.remote] ?? [],
+        write: async (list) => {
+          await pastFile.update((all) => ({ ...all, [ctx.remote]: list }))
+        },
+      },
       providers: providers.filter((p) => !hasBackground(p)),
       terminals,
       // Its turns pause sync and are recorded like a background session's.
@@ -95,12 +115,21 @@ export const agentMain: MainPlugin = {
         own = list
         pushSessions()
       },
+      onPast: (list) => {
+        ownPast = list
+        pushPast()
+      },
     })
-    // Prompts run unwatched by a provider without a supervisor, each in a
-    // scratch folder of its own.
+    void ptySessions.past().then((list) => {
+      ownPast = list
+    })
+    // Prompts run unwatched by a provider without a supervisor: in a scratch
+    // folder of their own, or in the vault, whose turns pause sync and are
+    // recorded like a session's.
     const jobs = createJobs({
       vault: { remote: ctx.remote, root: ctx.root },
       scratchRoot: join(ctx.userData, 'agent-jobs'),
+      bracket: (id, edge) => started.bracket(id, edge),
       onChange: (list) => {
         jobRows = list
         pushSessions()
@@ -132,6 +161,8 @@ export const agentMain: MainPlugin = {
         terminals,
         liveRemote,
         commitNow: () => ctx.commitNow(),
+        defaultProvider: async () => (await readVaultSettings(ctx.root)).agentProvider,
+        unattended,
       }),
       ...inboxCapabilities({ inbox, liveRemote }),
     })
@@ -224,6 +255,9 @@ export const agentMain: MainPlugin = {
       unreport()
       unmention()
       unwatchNeedsYou()
+      // A fenced session still starting opens nothing now, or is one the
+      // sessions' leave ends.
+      await fenced.closing().catch((err) => console.error('[agent] fenced sessions:', err))
       await ptySessions.leave().catch((err) => console.error('[agent] pty sessions:', err))
       await fenced.leave().catch((err) => console.error('[agent] fenced sessions:', err))
       await jobs.leave().catch((err) => console.error('[agent] jobs:', err))

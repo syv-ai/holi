@@ -56,6 +56,14 @@ export function modelLabel(model: string | undefined): string {
   return `${family}${version}`
 }
 
+/** A token count as a person reads it: `850 tokens`, `12.4k tokens`. */
+export function tokensLabel(tokens: number | undefined): string | undefined {
+  if (tokens === undefined || tokens <= 0) return undefined
+  if (tokens < 1000) return `${tokens} tokens`
+  const k = tokens / 1000
+  return k < 100 ? `${k.toFixed(1).replace(/\.0$/, '')}k tokens` : `${Math.round(k)}k tokens`
+}
+
 /** The agent's own live session as a row. */
 function liveItem(s: AgentSession): AgentsSessionItem {
   return {
@@ -66,6 +74,7 @@ function liveItem(s: AgentSession): AgentsSessionItem {
     agent: s.provider,
     updatedAt: s.startedAt ?? 0,
     ...(s.model === undefined ? {} : { model: s.model }),
+    ...(s.tokens === undefined ? {} : { tokens: s.tokens }),
     ...(s.waitingFor === undefined ? {} : { waitingFor: s.waitingFor }),
   }
 }
@@ -103,6 +112,7 @@ export function mergeSessionItems(
           agent: s.provider,
           updatedAt: Math.max(item.updatedAt, s.startedAt ?? 0),
           ...((s.model ?? item.model) === undefined ? {} : { model: s.model ?? item.model }),
+          ...(s.tokens === undefined ? {} : { tokens: s.tokens }),
           ...(s.waitingFor === undefined ? {} : { waitingFor: s.waitingFor }),
         })
         continue
