@@ -59,6 +59,7 @@ function OpenAIMark({ className }: { className?: string }) {
 const AGENT_MARKS: Record<string, { glyph: IconGlyph; className?: string }> = {
   claude: { glyph: SiClaude, className: 'text-orange-500 dark:text-orange-400' },
   codex: { glyph: OpenAIMark, className: 'text-foreground' },
+  pi: { glyph: SquareTerminal },
 }
 
 /** The mark of the agent a session runs, at a row's or a tab's size. */
