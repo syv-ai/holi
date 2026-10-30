@@ -31,6 +31,7 @@ import type { AgentTerminals } from './terminals'
 
 /** Holi's id for a session it runs: never a conversation id or job id. */
 export const PTY_SESSION_ID = /^p[0-9a-f]{12}$/
+/** @public */
 export const CONVERSATION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const PAST_MAX = 50

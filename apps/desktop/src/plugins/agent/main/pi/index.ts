@@ -8,6 +8,7 @@ import { resolveBin } from '../../../../main/plugin-api'
 import { buildPiEnv } from './env'
 import type { AgentProvider } from '../provider'
 
+/** @public */
 export const NOT_INSTALLED =
   'Pi is not installed. Install it with `npm install -g @mariozechner/pi-coding-agent`.'
 
