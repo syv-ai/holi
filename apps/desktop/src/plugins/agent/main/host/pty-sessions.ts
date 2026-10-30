@@ -56,7 +56,7 @@ export interface PtySessionsDeps {
   log?: (msg: string) => void
 }
 
-/** A session fenced to a folder of Holi's (`fenced.ts`). */
+/** A session fenced to a folder of Holi's (`fenced.ts`). @public: kept for its test. */
 export interface Fence {
   dir: string
   /** A turn ended: copy back what it wrote. */
