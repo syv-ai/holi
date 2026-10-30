@@ -24,7 +24,7 @@ export function piProvider(deps: PiProviderDeps = {}): AgentProvider {
     installed: () => bin() !== null,
     // Pi owns its normal user config; no per-vault copy or config isolation.
     configure: async () => ({ dir: process.env.PI_CODING_AGENT_DIR ?? join(homedir(), '.pi') }),
-    terminal: (_target, opts = {}) => {
+    terminal: (target, opts = {}) => {
       const path = bin()
       if (path === null) return null
       const args =
@@ -34,7 +34,7 @@ export function piProvider(deps: PiProviderDeps = {}): AgentProvider {
             ? ['--resume']
             : ['--session', opts.resume]
       if (opts.prompt !== undefined && opts.prompt.trim() !== '') args.push('--', opts.prompt)
-      const env = buildAgentEnv(process.env)
+      const env = buildAgentEnv(process.env, { binDir: target.binDir })
       return { bin: path, args, env }
     },
     capabilities: {},

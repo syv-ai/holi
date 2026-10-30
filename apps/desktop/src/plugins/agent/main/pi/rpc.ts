@@ -17,6 +17,10 @@ export interface PiRpcOptions {
   system?: string
   maxOutputBytes?: number
   maxLineBytes?: number
+  onStats?: (stats: {
+    usage?: { input?: number; output?: number; total?: number; cost?: number }
+    contextPercent?: number
+  }) => void
   spawn?: (
     bin: string,
     args: string[],
@@ -24,6 +28,7 @@ export interface PiRpcOptions {
   ) => PiChild
 }
 export interface PiChild {
+  pid?: number
   stdin: Writable
   stdout: Readable
   stderr: Readable
@@ -35,6 +40,7 @@ export interface PiChild {
 /** One stock Pi RPC process per managed run; messages are JSON records, never shell text. */
 export class PiRpcRun {
   private readonly child: PiChild
+  private readonly onStats?: PiRpcOptions['onStats']
   private readonly processGroup: boolean
   private exited = false
   private killTimer?: ReturnType<typeof setTimeout>
@@ -60,6 +66,7 @@ export class PiRpcRun {
   constructor(options: PiRpcOptions) {
     this.maxOutputBytes = options.maxOutputBytes ?? 1024 * 1024
     this.maxLineBytes = options.maxLineBytes ?? 1024 * 1024
+    this.onStats = options.onStats
     if (options.model !== undefined) {
       const slash = options.model.indexOf('/')
       if (slash <= 0 || slash === options.model.length - 1) {
@@ -73,7 +80,11 @@ export class PiRpcRun {
     this.processGroup = options.spawn === undefined && process.platform !== 'win32'
     const spawn =
       options.spawn ??
-      ((bin, args, opts) => nodeSpawn(bin, args, { ...opts, detached: this.processGroup }) as ChildProcessWithoutNullStreams)
+      ((bin, args, opts) =>
+        nodeSpawn(bin, args, {
+          ...opts,
+          detached: this.processGroup,
+        }) as ChildProcessWithoutNullStreams)
     const args = ['--mode', 'rpc']
     if (options.system !== undefined) args.push('--append-system-prompt', options.system)
     this.child = spawn(options.bin, args, {
@@ -218,6 +229,24 @@ export class PiRpcRun {
       const id = typeof record.id === 'string' ? record.id : undefined
       const command = id === undefined ? undefined : this.commands.get(id)
       if (id !== undefined) this.commands.delete(id)
+      if (command === 'get_session_stats') {
+        if (record.success === true && record.data && typeof record.data === 'object') {
+          const data = record.data as Record<string, unknown>
+          const tokens = data.tokens as Record<string, unknown> | undefined
+          const context = data.contextUsage as Record<string, unknown> | undefined
+          const usage = {
+            ...(typeof tokens?.input === 'number' ? { input: tokens.input } : {}),
+            ...(typeof tokens?.output === 'number' ? { output: tokens.output } : {}),
+            ...(typeof tokens?.total === 'number' ? { total: tokens.total } : {}),
+            ...(typeof data.cost === 'number' ? { cost: data.cost } : {}),
+          }
+          this.onStats?.({
+            ...(Object.keys(usage).length ? { usage } : {}),
+            ...(typeof context?.percent === 'number' ? { contextPercent: context.percent } : {}),
+          })
+        }
+        return
+      }
       if (record.success === false) {
         this.fail(String(record.error ?? `Pi rejected ${command ?? 'command'}`))
         return
@@ -267,6 +296,13 @@ export class PiRpcRun {
       }
     }
     if (record.type === 'agent_settled') {
+      if (!this.closed) {
+        try {
+          this.send({ type: 'get_session_stats' })
+        } catch {
+          // Usage is optional; completion never waits on a stats request.
+        }
+      }
       this.finish({
         status: record.aborted === true ? 'aborted' : this.lastError ? 'failed' : 'completed',
         output: this.output,

@@ -50,8 +50,10 @@ export interface AgentSession {
   /** How much of its context window is used, 0 to 100, from its status line.
    *  Absent before its first message and after a `/clear`. */
   contextPercent?: number
-  /** Its model in Claude Code's words (`Opus 5.5`), once its status line ran. */
+  /** Its model in the provider's words, when reported. */
   model?: string
+  /** Pi RPC's reported token and cost totals. */
+  usage?: { input?: number; output?: number; total?: number; cost?: number }
   /** When it started, epoch ms. */
   startedAt?: number
   /** Claude Code's conversation id, once it has said. */

@@ -7,11 +7,8 @@ describe('the Pi provider', () => {
   it("launches stock Pi with the user's environment and no prompt by default", () => {
     const pi = piProvider({ resolveBin: () => '/usr/local/bin/pi' })
     const cmd = pi.terminal(TARGET)
-    expect(cmd).toEqual({
-      bin: '/usr/local/bin/pi',
-      args: [],
-      env: expect.objectContaining({ PATH: process.env.PATH }),
-    })
+    expect(cmd).toMatchObject({ bin: '/usr/local/bin/pi', args: [] })
+    expect(cmd?.env.PATH).toContain('/holi/bin/fallback')
   })
 
   it('uses Pi’s interactive resume picker and accepts a first prompt', () => {

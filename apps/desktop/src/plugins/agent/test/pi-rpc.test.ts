@@ -1,5 +1,5 @@
 import { PassThrough } from 'node:stream'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { PiRpcRun, type PiChild } from '../main/pi/rpc'
 
 function fake() {
@@ -63,7 +63,12 @@ describe('PiRpcRun', () => {
       model: 'm',
       usage: { totalTokens: 4 },
     })
-    expect(fakeProcess.commands.map((c) => c.type)).toEqual(['prompt', 'prompt', 'prompt'])
+    expect(fakeProcess.commands.map((c) => c.type)).toEqual([
+      'prompt',
+      'prompt',
+      'prompt',
+      'get_session_stats',
+    ])
     expect(fakeProcess.commands[1]).toMatchObject({ streamingBehavior: 'steer' })
     expect(fakeProcess.commands[2]).toMatchObject({ streamingBehavior: 'followUp' })
   })
@@ -156,6 +161,35 @@ describe('PiRpcRun', () => {
     )
     process.stdout.write('{"type":"agent_settled","aborted":false}\n')
     await expect(result).resolves.toMatchObject({ status: 'failed', error: 'provider unavailable' })
+  })
+
+  it('reports context only from Pi session stats', async () => {
+    const process = fake()
+    const onStats = vi.fn()
+    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => process.child, onStats })
+    const result = run.prompt('go')
+    process.stdout.write('{"type":"agent_settled","aborted":false}\n')
+    await expect(result).resolves.toMatchObject({ status: 'completed' })
+    const request = process.commands.at(-1)
+    expect(request?.type).toBe('get_session_stats')
+    process.stdout.write(
+      JSON.stringify({
+        id: request?.id,
+        type: 'response',
+        command: 'get_session_stats',
+        success: true,
+        data: {
+          tokens: { input: 12, output: 8, total: 20 },
+          cost: 0.04,
+          contextUsage: { percent: 13 },
+        },
+      }) + '\n',
+    )
+    expect(onStats).toHaveBeenCalledWith({
+      usage: { input: 12, output: 8, total: 20, cost: 0.04 },
+      contextPercent: 13,
+    })
+    run.close()
   })
 
   it('cancels and kills the managed child', async () => {

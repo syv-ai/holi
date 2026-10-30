@@ -86,6 +86,7 @@ export const agentMain: MainPlugin = {
     })
     const piBackground = createPiBackground({
       bin: () => resolveBin('pi'),
+      binDir: ctx.binDir,
       bracket: (id, edge) => started.bracket(id, edge),
       changed: () => {
         piSessions = piBackground.sessions()
