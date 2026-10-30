@@ -176,13 +176,13 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     s.attention ? 'needs-you' : s.signals.inTurn ? 'working' : 'idle'
 
   /** A session's name: what Holi was told, else the title its program set. */
-  const nameFor = (s: Session): string => {
+  const nameFor = (s: Session, lastTitle?: string): string => {
     if (s.name !== null) return s.name
-    const title =
-      deps.terminals
-        .list()
-        .find((t) => t.id === s.terminalId)
-        ?.title.trim() ?? ''
+    const title = (
+      lastTitle ??
+      deps.terminals.list().find((t) => t.id === s.terminalId)?.title ??
+      ''
+    ).trim()
     return title === '' ? NEW_SESSION : title
   }
 
@@ -246,7 +246,11 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
           resume: past.conversationId,
           sessionId: past.id,
         })
-        if (result.ok) await changePast((rows) => rows.filter((p) => p.id !== id))
+        // A process can exit before start() returns. Its onExit has already
+        // queued the closed row; do not remove that newer history entry.
+        if (result.ok && sessions.has(id)) {
+          await changePast((rows) => rows.filter((p) => p.id !== id))
+        }
         return result
       } finally {
         reopening.delete(id)
@@ -342,7 +346,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
           s.signals.input(data)
         },
         onOutput: (data) => session?.signals.output(data),
-        onExit: () => {
+        onExit: (lastTitle) => {
           const s = session
           if (s === null || sessions.get(id) !== s) return
           if (s.signals.inTurn) deps.bracket(id, 'forget')
@@ -353,7 +357,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
             const closed: SessionSummary = {
               id: s.id,
               provider: s.provider,
-              name: nameFor(s),
+              name: nameFor(s, lastTitle),
               state: 'idle',
               startedAt: s.startedAt,
               conversationId: s.conversationId,

@@ -247,6 +247,41 @@ describe('sessions Holi runs', () => {
     expect(reopened.sessions.sessions()[0]?.id).toBe(started.sessionId)
   })
 
+  it('keeps a quickly exited reopened conversation in History', async () => {
+    let history: import('../main/claude/listing').SessionSummary[] = []
+    const store = {
+      read: async () => history,
+      write: async (rows: typeof history) => {
+        history = rows
+      },
+    }
+    const first = setup('pi', store)
+    const started = await first.sessions.start('pi', { name: 'Original' })
+    if (!started.ok) throw new Error(started.message)
+    first.opened[0]!.onExit?.()
+    await first.sessions.past()
+
+    const reopened = setup('pi', store)
+    const opening = reopened.sessions.reopen(started.sessionId, {})
+    for (let i = 0; i < 10 && reopened.opened.length === 0; i++) await Promise.resolve()
+    expect(reopened.opened).toHaveLength(1)
+    reopened.opened[0]!.onExit?.()
+    expect(await opening).toMatchObject({ ok: true })
+    expect(await reopened.sessions.past()).toEqual([
+      expect.objectContaining({ id: started.sessionId, name: 'Original' }),
+    ])
+  })
+
+  it('keeps an unnamed session’s last terminal title in History', async () => {
+    const t = setup('pi')
+    const started = await t.sessions.start('pi', {})
+    if (!started.ok) throw new Error(started.message)
+    t.opened[0]!.onExit?.('Pi plan')
+    expect(await t.sessions.past()).toEqual([
+      expect.objectContaining({ id: started.sessionId, name: 'Pi plan' }),
+    ])
+  })
+
   it('forks a live Pi conversation under a new UUID and does not persist native picker sessions', async () => {
     const t = setup('pi')
     const original = await t.sessions.start('pi', {})

@@ -59,8 +59,8 @@ export interface OpenArgs {
   onInput?(data: string): void
   /** What the program printed. */
   onOutput?(data: string): void
-  /** Its process ended, by itself or closed. */
-  onExit?(): void
+  /** Its process ended, by itself or closed. The last title survives terminal removal. */
+  onExit?(title?: string): void
   cols?: number
   rows?: number
   /** Written into the record before the program's first byte (the sign-in
@@ -108,7 +108,7 @@ interface Terminal {
   runtime: AgentRuntime
   mirror: TerminalMirror
   onInput: ((data: string) => void) | undefined
-  onExit: (() => void) | undefined
+  onExit: ((title?: string) => void) | undefined
   /** False until a renderer has taken its state: output goes to the record only. */
   attached: boolean
   /** True once its TUI has printed and settled; pastes wait until then. */
@@ -212,7 +212,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
         mirror.dispose()
         deps.emit(remote, 'pty-exit', { id, code: e.exitCode })
         pushList(remote)
-        onExit?.()
+        onExit?.(t.title)
       })
       try {
         runtime.start({
@@ -278,7 +278,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
         t.mirror.dispose()
         deps.emit(t.remote, 'pty-exit', { id, code: -1 })
         pushList(t.remote)
-        t.onExit?.()
+        t.onExit?.(t.title)
       }
     },
 
