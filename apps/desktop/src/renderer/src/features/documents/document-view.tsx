@@ -42,12 +42,14 @@ import {
   RichTextTableBubble,
 } from '@/features/documents/rich-text/rich-text-table'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { cn } from '@/lib/cn'
 import { TaskProperties } from '@/features/planning/task-properties'
 import { trpc } from '@/lib/trpc'
 import { sawText } from '@/state/doc-changes'
 import { claimsAtom } from '@/state/plugins'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { agentProviderSettingAtom } from '@/state/settings'
 
 import { AgentPrompt, AgentStatus } from './agent-prompt'
 import { askAiSlashItem } from './ask-ai-slash'
@@ -164,6 +166,7 @@ function DocumentEditor({
   onMoved?: (from: string, to: string) => void
 }) {
   const agent = useDocumentAgent(path)
+  const provider = useAtomValue(agentProviderSettingAtom)
   const locked = locksDocument(agent.run)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [linkOpen, setLinkOpen] = useState(false)
@@ -510,6 +513,16 @@ function DocumentEditor({
                 )}
               />
               <div ref={pageRef} className={cn('relative min-h-full', DROP_LINE)}>
+                {provider === 'pi' && (
+                  <Alert variant="warning">
+                    <AlertTitle>Pi document runs are not sandboxed</AlertTitle>
+                    <AlertDescription>
+                      Pi runs with your account permissions, without per-tool approval. It can read
+                      other vaults and credentials, and its instruction to change only this document
+                      is not enforced. Change the default agent in Settings → General.
+                    </AlertDescription>
+                  </Alert>
+                )}
                 {editor ? (
                   <EditorContent
                     editor={editor}

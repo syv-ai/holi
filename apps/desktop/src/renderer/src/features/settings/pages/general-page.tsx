@@ -11,6 +11,7 @@ import {
 } from '@holi/shared'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Progress } from '@/components/ui/progress'
 import { useAgentService } from '@/state/agent-service'
 import { AgentMark } from '@/composites/marks'
@@ -68,26 +69,39 @@ function AgentsCard() {
       {resolved === null ? (
         <SettingsRowsLoading rows={2} label="Reading the settings" />
       ) : (
-        AGENTS.map((agent) => (
-          <SettingsFieldRow
-            key={agent.id}
-            title={agent.label}
-            description={agent.description}
-            mark={<AgentMark agent={agent.id} size="lg" />}
-          >
-            {agent.id === current ? (
-              <Badge variant="success-light">Default</Badge>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void write('agentProvider', agent.id, 'local')}
-              >
-                Make default
-              </Button>
-            )}
-          </SettingsFieldRow>
-        ))
+        <>
+          {current === 'pi' && (
+            <Alert variant="warning">
+              <ShieldCheckIcon />
+              <AlertTitle>Pi runs unattended with your account permissions</AlertTitle>
+              <AlertDescription>
+                Automatic Pi jobs have no per-tool approval. They can read other vaults and
+                credentials, and the document instruction to change only one file is not enforced.
+                Choose Claude Code above to remove this warning and change the default.
+              </AlertDescription>
+            </Alert>
+          )}
+          {AGENTS.map((agent) => (
+            <SettingsFieldRow
+              key={agent.id}
+              title={agent.label}
+              description={agent.description}
+              mark={<AgentMark agent={agent.id} size="lg" />}
+            >
+              {agent.id === current ? (
+                <Badge variant="success-light">Default</Badge>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void write('agentProvider', agent.id, 'local')}
+                >
+                  Make default
+                </Button>
+              )}
+            </SettingsFieldRow>
+          ))}
+        </>
       )}
     </SettingsGroup>
   )

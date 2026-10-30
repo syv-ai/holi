@@ -20,6 +20,7 @@ import { useCallback, useEffect } from 'react'
 import { parentOf } from '@/lib/tree-paths'
 import { trpc } from '@/lib/trpc'
 import { useAgentService } from '@/state/agent-service'
+import { agentProviderSettingAtom } from '@/state/settings'
 import { activeRemoteAtom } from '@/state/vaults'
 
 import { AGENT_MARKER } from './markdown'
@@ -141,6 +142,7 @@ async function clearMarker(remote: string, path: string): Promise<void> {
  */
 export function useDocumentAgent(path: string) {
   const remote = useAtomValue(activeRemoteAtom)
+  const provider = useAtomValue(agentProviderSettingAtom)
   const runs = useAtomValue(runsAtom)
   const setRuns = useSetAtom(runsAtom)
   const service = useAgentService()
@@ -199,8 +201,8 @@ export function useDocumentAgent(path: string) {
       >(remote, 'agent.launch', {
         name: kind === 'artifact' ? `${name}: artifact` : `${name}: ${label}`,
         prompt,
-        model: AGENT_MODEL,
-        allow,
+        provider,
+        ...(provider === 'claude' ? { model: AGENT_MODEL, allow } : {}),
         system: SYSTEM,
       })
       if (result.ok) update({ sessionId: result.sessionId })
