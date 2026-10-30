@@ -50,7 +50,8 @@ const LISTED_RUNS = 5
 export const automationSessionItemsAtom = atom((get): AgentsSessionItem[] =>
   get(automationsAtom).flatMap((s) =>
     s.runs
-      .filter((r) => r.outcome === 'started' && r.jobId !== undefined)
+      // Every run that started a session, a failed one too.
+      .filter((r) => r.jobId !== undefined)
       .slice(0, LISTED_RUNS)
       .map((r): AgentsSessionItem => {
         const ended = r.finishedAt === undefined ? undefined : Date.parse(r.finishedAt)
