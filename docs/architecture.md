@@ -266,7 +266,8 @@ plugin's trigger router dedupes and batches them into runs
 ([scheduled-agents](features/scheduled-agents.md)). **Holis** are agents that belong to the vault,
 folders in `.holi/holis/` with a soul and a memory, that a person sends a document to from its Agent
 menu or that carry out an automation, once this machine approved what they say. Both are plugins
-built on the agent: they start sessions through `agent.launch` (`ctx.call`), hear its session list
+built on the agent: they start runs through `agent.job` (`ctx.call`) on this machine's default
+agent, Claude Code (a background session) or Codex (a job in the vault), hear its session list
 and turn ends through `ctx.hear` (what a plugin's main side `publish`es, heard only by the plugins
 that require it), and fill the Agents view and the Agent menu from slots core knows nothing of
 ([holis](features/holis.md)).
