@@ -13,12 +13,13 @@
  * plain Node in the tests.
  */
 import { join } from 'node:path'
-import { jsonFileStore, type MainPlugin } from '../../../main/plugin-api'
+import { jsonFileStore, resolveBin, type MainPlugin } from '../../../main/plugin-api'
 import { AGENT_INFO } from '../info'
 import { claudeProvider } from './claude'
 import { claudeSeed } from './claude/seed'
 import { codexProvider } from './codex'
 import { piProvider } from './pi'
+import { createPiBackground } from './pi/background'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { createPtySessions, PTY_SESSION_ID } from './host/pty-sessions'
 import { createAgentSessions } from './host/sessions'
@@ -82,6 +83,16 @@ export const agentMain: MainPlugin = {
       turnLogFor: openTurnLog,
       snapshot: worktreeEnd,
     })
+    const piBackground = createPiBackground({
+      bin: () => resolveBin('pi'),
+      bracket: (id, edge) => started.bracket(id, edge),
+      changed: () => pushSessions(),
+      settled: (id) => {
+        ctx.publish('turn-end', { id, pending: null })
+        sessionLog.turnEnd(id)
+      },
+    })
+    piBackground.setVault(ctx.remote, ctx.root)
     const ptySessions = createPtySessions({
       vault: { remote: ctx.remote, root: ctx.root },
       providers: providers.filter((p) => !hasBackground(p)),
@@ -110,6 +121,7 @@ export const agentMain: MainPlugin = {
         terminals,
         liveRemote,
         commitNow: () => ctx.commitNow(),
+        pi: piBackground,
       }),
       ...inboxCapabilities({ inbox, liveRemote }),
     })
@@ -203,6 +215,7 @@ export const agentMain: MainPlugin = {
       unmention()
       unwatchNeedsYou()
       await ptySessions.leave().catch((err) => console.error('[agent] pty sessions:', err))
+      await piBackground.leave().catch((err) => console.error('[agent] Pi sessions:', err))
       await started.leave().catch((err) => console.error('[agent] leave failed:', err))
       await terminals.closeAll().catch((err) => console.error('[agent] terminals:', err))
     }

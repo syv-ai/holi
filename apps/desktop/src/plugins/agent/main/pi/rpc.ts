@@ -43,6 +43,7 @@ export class PiRpcRun {
   private readonly maxLineBytes: number
   private completion?: (result: PiRunResult) => void
   private resultPromise?: Promise<PiRunResult>
+  private closed = false
   private model?: unknown
   private usage?: unknown
 
@@ -74,13 +75,19 @@ export class PiRpcRun {
     })
   }
 
-  prompt(message: string): Promise<PiRunResult> {
-    if (this.settled || this.active) return Promise.reject(new Error('Pi RPC run is not idle'))
+  prompt(message: string, model?: string): Promise<PiRunResult> {
+    if (this.closed || this.active) return Promise.reject(new Error('Pi RPC run is not idle'))
+    this.settled = false
     this.active = true
     this.resultPromise = new Promise((resolve) => {
       this.completion = resolve
     })
-    this.send({ type: 'prompt', message })
+    try {
+      if (model !== undefined) this.send({ type: 'set_model', model })
+      this.send({ type: 'prompt', message })
+    } catch (error) {
+      this.finish({ status: 'failed', output: this.output, error: String(error) })
+    }
     return this.resultPromise
   }
 
@@ -97,19 +104,21 @@ export class PiRpcRun {
   }
 
   cancel(): void {
-    if (this.settled) return
+    if (this.closed) return
     try {
       this.send({ type: 'abort' })
     } catch {
       /* process may already be closing */
     }
+    this.closed = true
     this.finish({ status: 'aborted', output: this.output })
     this.child.kill('SIGTERM')
   }
 
   close(): void {
-    if (this.settled) return
-    this.finish({ status: 'aborted', output: this.output })
+    if (this.closed) return
+    this.closed = true
+    if (this.active) this.finish({ status: 'aborted', output: this.output })
     this.child.kill('SIGTERM')
   }
 
@@ -159,18 +168,12 @@ export class PiRpcRun {
   }
 
   private onRecord(record: Record<string, unknown>): void {
-    if (record.type === 'response' && record.command === 'prompt') {
-      if (record.success === false) {
-        this.finish({
-          status: 'failed',
-          output: this.output,
-          error: String(record.error ?? 'Pi rejected prompt'),
-        })
-      } else if (
-        (record.data as { disposition?: unknown } | undefined)?.disposition === 'handled'
-      ) {
-        this.finish({ status: 'completed', output: this.output })
-      }
+    if (record.type === 'response' && record.command === 'prompt' && record.success === false) {
+      this.finish({
+        status: 'failed',
+        output: this.output,
+        error: String(record.error ?? 'Pi rejected prompt'),
+      })
     }
     if (record.type === 'agent_start') this.active = true
     if (record.type === 'message_update') {
@@ -203,11 +206,13 @@ export class PiRpcRun {
   private finish(result: PiRunResult): void {
     if (this.settled) return
     this.settled = true
-    this.completion?.({
+    this.active = false
+    const completion = this.completion
+    this.completion = undefined
+    completion?.({
       ...result,
       model: result.model ?? this.model,
       usage: result.usage ?? this.usage,
     })
-    this.child.kill('SIGTERM')
   }
 }
