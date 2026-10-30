@@ -7,7 +7,7 @@
  * plain Node in the tests.
  */
 import { join } from 'node:path'
-import { jsonFileStore, type MainPlugin } from '../../../main/plugin-api'
+import { jsonFileStore, readVaultSettings, type MainPlugin } from '../../../main/plugin-api'
 import { HOLIS_INFO } from '../info'
 import { holisSeed } from './seed'
 import { holiCapabilities, HOLI_NAMESPACES } from './capabilities'
@@ -40,7 +40,13 @@ export const holisMain: MainPlugin = {
     // where the agent cannot approve its own (`holis.ts`).
     const holis = createHolis({
       store: jsonFileStore(join(ctx.userData, 'holis.json'), parseHolisFile),
-      launch: async (args) => (await ctx.call('agent.launch', args)) as Launched,
+      provider: async (root) => (await readVaultSettings(root)).agentProvider,
+      launch: async ({ provider, allow, ...args }) =>
+        (await ctx.call('agent.launch', {
+          ...args,
+          provider,
+          ...(provider === 'claude' && allow !== undefined ? { allow } : {}),
+        })) as Launched,
       emit: ctx.emit,
       needsYou: notify,
     })

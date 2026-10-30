@@ -59,6 +59,7 @@
 import { createHash } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { AgentProviderId } from '@holi/shared'
 import {
   describeSchedule,
   dueRun,
@@ -255,10 +256,12 @@ interface SchedulerVault {
 export interface SchedulerDeps {
   store: JsonFileStore<SchedulesFile>
   /** The open vault's sessions, through the agent. */
+  provider(root: string): Promise<AgentProviderId>
   sessions: {
     launch(args: {
       name: string
       prompt: string
+      provider: AgentProviderId
       model?: string
       allow?: readonly string[]
       system?: string
@@ -587,6 +590,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // The Holi that carries it out, read as the run starts: its memory now.
       const holi = entry.holi !== undefined && 'system' in entry.holi ? entry.holi : undefined
       const model = def.model ?? holi?.model
+      const provider = await deps.provider(vault.root)
       const res = await deps.sessions.launch({
         name: `${def.name} · ${clock(at)}`,
         prompt: runPrompt(
@@ -596,8 +600,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           previous === undefined ? null : new Date(previous.at),
           cause,
         ),
+        provider,
         ...(model === undefined ? {} : { model }),
-        allow: [...new Set([...def.allow, ...(holi?.allow ?? [])])],
+        ...(provider === 'claude'
+          ? { allow: [...new Set([...def.allow, ...(holi?.allow ?? [])])] }
+          : {}),
         ...(holi === undefined ? {} : { system: holi.system }),
       })
       record = res.ok
