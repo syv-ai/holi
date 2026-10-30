@@ -516,13 +516,11 @@ export interface AgentsSessionsSource {
   close?: WritableAtom<null, [key: string], unknown>
 }
 
-/** Something a conversation is about besides its words: a vault app, by its
- *  bundle path, which the agent reads itself (`AgentsSlot.start`). */
-export interface ConversationContext {
-  kind: 'app'
-  path: string
-  name: string
-}
+/** Something a conversation is about besides its words (`AgentsSlot.start`):
+ *  a vault app, by its bundle path, which the agent reads itself; or a passage
+ *  selected in a document, quoted with the document's path. */
+export type ConversationContext =
+  { kind: 'app'; path: string; name: string } | { kind: 'passage'; path: string; text: string }
 
 /** How a conversation starts (`AgentsSlot.start`). */
 export interface ConversationStart {

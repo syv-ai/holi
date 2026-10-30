@@ -2,15 +2,18 @@
  * A document in the rich-text editor against a mocked vault: it opens with
  * its frontmatter kept aside, ⌘B is always the editor's, and Space on an
  * empty line asks Sonnet to write there: the marker is saved, the run locks
- * the page until its session is done, and Stop ends it.
+ * the page until its session is done, and Stop ends it. Ask AI's Start chat
+ * opens a conversation about the selected passage beside the document.
  */
 import { emptyVaultSnapshot, normalizeText } from '@holi/shared'
 import userEvent from '@testing-library/user-event'
 import { atom, createStore, Provider } from 'jotai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
-import { act, fireEvent, render, screen, waitFor } from '@/test/render'
+import { act, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import * as agentService from '@/state/agent-service'
+import { installedPluginsAtom } from '@/state/plugins'
+import type { ConversationStart } from '@/state/plugin-types'
 import { pendingHeadingAtom } from '@/state/open-document'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
@@ -401,4 +404,66 @@ test("cancelling Ask AI's own instruction starts nothing and keeps the selection
   expect(cap).not.toHaveBeenCalled()
   expect(editor.getMarkdown()).toBe(before)
   expect(selected()).toBe('Ship the beta')
+})
+
+test("Ask AI's rewrite commands read as one group, and Start chat comes after them", async () => {
+  const user = userEvent.setup()
+  store.set(installedPluginsAtom, [
+    {
+      info: { id: 'agent-stand-in', label: 'Agent', default: true },
+      agentsSlot: { start: atom(null, () => Promise.resolve({ ok: true as const })) },
+    },
+  ] as never)
+  open('# Plan\n\nShip the beta on Friday.\n')
+  const { askAi } = await selectForAskAi('Ship the beta')
+  await user.click(askAi)
+  const menu = await screen.findByRole('menu')
+  // The custom instruction is a rewrite too: inside the group, under its label.
+  const rewrite = within(menu).getByRole('group')
+  expect(within(rewrite).getByText('Rewrite the selection')).toBeInTheDocument()
+  expect(within(rewrite).getByRole('menuitem', { name: 'Custom instruction…' })).toBeInTheDocument()
+  const rows = [...menu.querySelectorAll('[role="menuitem"], [role="separator"]')].map((el) =>
+    el.getAttribute('role') === 'separator' ? '---' : el.textContent,
+  )
+  expect(rows).toEqual([
+    'Improve writing',
+    'Fix spelling and grammar',
+    'Simplify',
+    'Make shorter',
+    'Custom instruction…',
+    '---',
+    'Start chat',
+  ])
+})
+
+test('Start chat opens a new session beside the document, the passage as its context', async () => {
+  const user = userEvent.setup()
+  const started: ConversationStart[] = []
+  store.set(installedPluginsAtom, [
+    {
+      info: { id: 'agent-stand-in', label: 'Agent', default: true },
+      agentsSlot: {
+        start: atom(null, (_get, _set, args: ConversationStart) => {
+          started.push(args)
+          return Promise.resolve({ ok: true as const })
+        }),
+      },
+    },
+  ] as never)
+  open('# Plan\n\nShip the beta on Friday.\n\nKeep this line.\n')
+  const { editor, askAi } = await selectForAskAi('Ship the beta')
+  const before = editor.getMarkdown()
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Start chat' }))
+
+  await waitFor(() => expect(started).toHaveLength(1))
+  expect(started[0]).toEqual({
+    text: '',
+    context: [{ kind: 'passage', path: PATH, text: 'Ship the beta' }],
+    beside: true,
+  })
+  // A chat changes nothing: no rewrite run, and the page stays editable.
+  expect(cap).not.toHaveBeenCalled()
+  expect(editor.isEditable).toBe(true)
+  expect(editor.getMarkdown()).toBe(before)
 })
