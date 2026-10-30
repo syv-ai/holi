@@ -18,6 +18,7 @@ import { AGENT_INFO } from '../info'
 import { claudeProvider } from './claude'
 import { claudeSeed } from './claude/seed'
 import { codexProvider } from './codex'
+import { piProvider } from './pi'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { createPtySessions, PTY_SESSION_ID } from './host/pty-sessions'
 import { createAgentSessions } from './host/sessions'
@@ -44,7 +45,7 @@ export const agentMain: MainPlugin = {
       holiBin: () => join(ctx.binDir(), 'holi'),
       systemPrefersDark: () => nativeTheme.shouldUseDarkColors,
     })
-    const providers = [claude, codexProvider()]
+    const providers = [claude, codexProvider(), piProvider()]
     const terminals = createAgentTerminals({ emit: ctx.emit })
     const sessionLog = createSessionLog(ctx.log)
     const liveRemote = (): string | null => ctx.active()?.remote ?? null
