@@ -1,6 +1,30 @@
 import { randomUUID } from 'node:crypto'
+import { buildAgentEnv } from '../claude/cli'
 import type { SessionSummary } from '../claude/listing'
 import { PiRpcRun, type PiRunResult } from './rpc'
+
+function summarizeUsage(raw: unknown): SessionSummary['usage'] | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const usage = raw as Record<string, unknown>
+  const cost = usage.cost as Record<string, unknown> | undefined
+  const result = {
+    ...(typeof usage.input === 'number' ? { input: usage.input } : {}),
+    ...(typeof usage.output === 'number' ? { output: usage.output } : {}),
+    ...(typeof usage.input === 'number' && typeof usage.output === 'number'
+      ? { total: usage.input + usage.output }
+      : {}),
+    ...(typeof cost?.total === 'number' ? { cost: cost.total } : {}),
+  }
+  return Object.keys(result).length ? result : undefined
+}
+
+function reportedContextPercent(raw: unknown): number | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const usage = raw as Record<string, unknown>
+  if (typeof usage.contextUsed !== 'number' || typeof usage.contextWindow !== 'number' || usage.contextWindow <= 0)
+    return undefined
+  return Math.round((usage.contextUsed / usage.contextWindow) * 100)
+}
 
 interface PiJob {
   id: string
@@ -12,6 +36,8 @@ interface PiJob {
   outcome?: SessionSummary['outcome']
   error?: string
   model?: string
+  usage?: SessionSummary['usage']
+  contextPercent?: number
   busy: boolean
 }
 
@@ -28,13 +54,15 @@ export function createPiBackground(deps: PiBackgroundDeps) {
   let root: string | null = null
   const jobs = new Map<string, PiJob>()
   const sessions = (): SessionSummary[] =>
-    [...jobs.values()].map(({ id, name, state, startedAt, model, outcome, error }) => ({
+    [...jobs.values()].map(({ id, name, state, startedAt, model, usage, contextPercent, outcome, error }) => ({
       id,
       provider: 'pi',
       name,
       state,
       startedAt,
       ...(model === undefined ? {} : { model }),
+      ...(usage === undefined ? {} : { usage }),
+      ...(contextPercent === undefined ? {} : { contextPercent }),
       ...(outcome === undefined ? {} : { outcome }),
       ...(error === undefined ? {} : { error }),
     }))
@@ -51,7 +79,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       run = new PiRpcRun({
         bin,
         cwd: root,
-        env: process.env,
+        env: buildAgentEnv(process.env),
         ...(args.model === undefined ? {} : { model: args.model }),
         ...(args.system === undefined ? {} : { system: args.system }),
         ...(deps.spawn ? { spawn: deps.spawn } : {}),
@@ -90,6 +118,8 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     if (jobs.get(job.id) !== job) return
     job.busy = false
     job.model = typeof result.model === 'string' ? result.model : job.model
+    job.usage = summarizeUsage(result.usage)
+    job.contextPercent = reportedContextPercent(result.usage)
     job.state = 'idle'
     job.outcome = result.status
     job.error = result.error
