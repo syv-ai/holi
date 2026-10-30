@@ -10,8 +10,14 @@
  * As each turn ends, and once more when its process exits, what it wrote
  * inside its write scope is copied back by the jobs' own copy
  * (`jobs.ts`, `copyBack`: the vault's shared content only, no symlink
- * followed, `app.yaml` last, nothing past the caps). The folder goes when
- * the process exits, and every folder when the agent leaves the vault.
+ * followed, `app.yaml` last, nothing past the caps). A new folder it makes
+ * (`folder/**`) must not be in the vault when it starts, and is never
+ * written over: a copy into one that holds anything this session did not
+ * write there is refused (`jobs.ts`). Beside the folder is the agent's own
+ * state folder (`<id>.agent/`, its own Codex home), outside what it may
+ * write; once the process exits the provider takes back what it keeps of
+ * the person's there (`AgentProvider.release`). Both go when the process
+ * exits, and every folder when the agent leaves the vault.
  *
  * NOTE: no `electron` import, so this loads under vitest.
  */
@@ -20,7 +26,7 @@ import { copyFile, mkdir, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { exactPath } from '@holi/shared/path-safety-node'
 import type { AgentProvider, VaultRef } from '../provider'
-import type { JobScope, Jobs } from './jobs'
+import { takenDestination, takenMessage, type JobScope, type Jobs } from './jobs'
 import type { PtySessions } from './pty-sessions'
 import type { Geometry, StartResult } from './sessions'
 
@@ -58,10 +64,17 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
   return {
     async start({ provider, name, prompt, system, scope, cols, rows }) {
       await swept
-      const dir = join(deps.scratchRoot, randomBytes(6).toString('hex'))
-      const drop = (): Promise<void> =>
-        rm(dir, { recursive: true, force: true }).catch(() => undefined)
+      const taken = await takenDestination(deps.vault.root, scope.write)
+      if (taken !== null) return { ok: false, message: takenMessage(taken) }
+      const id = randomBytes(6).toString('hex')
+      const dir = join(deps.scratchRoot, id)
+      const state = join(deps.scratchRoot, `${id}.agent`)
+      const drop = async (): Promise<void> => {
+        await rm(dir, { recursive: true, force: true }).catch(() => undefined)
+        await rm(state, { recursive: true, force: true }).catch(() => undefined)
+      }
       await mkdir(dir, { recursive: true })
+      await mkdir(state, { recursive: true, mode: 0o700 })
       for (const path of scope.read) {
         const abs = await exactPath(deps.vault.root, path)
         const copied =
@@ -78,12 +91,14 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
         }
       }
 
-      // One copy at a time: a turn's end and the exit never overlap.
+      // One copy at a time: a turn's end and the exit never overlap. What
+      // it wrote into its new folders, which no copy writes over otherwise.
+      const made = new Set<string>()
       let chain = Promise.resolve()
       const copy = (): Promise<void> => {
         const next = chain.then(async () => {
           try {
-            const { written, skipped } = await deps.copyBack(dir, scope.write)
+            const { written, skipped } = await deps.copyBack(dir, scope.write, made)
             log(`${name}: ${written} file(s) copied back, ${skipped.length} left out`)
           } catch (err) {
             log(`${name}: ${(err as Error).message}`)
@@ -102,8 +117,12 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
         ...(rows === undefined ? {} : { rows }),
         fence: {
           dir,
+          state,
           turnEnded: copy,
-          exited: () => void copy().finally(drop),
+          exited: () =>
+            void copy()
+              .then(() => provider.release?.(state))
+              .finally(drop),
         },
       })
       if (!started.ok) await drop()

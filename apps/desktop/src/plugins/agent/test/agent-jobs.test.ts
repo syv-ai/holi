@@ -13,7 +13,13 @@ import { codexProvider, fenceArgs, jobArgs, readJobEvent } from '../main/codex'
 import { createFencedSessions } from '../main/host/fenced'
 import type { Fence } from '../main/host/pty-sessions'
 import { agentCapabilities, scopeRules } from '../main/host/capabilities'
-import { createJobs, inWriteScope, JOB_SESSION_ID, type JobScope } from '../main/host/jobs'
+import {
+  createJobs,
+  inWriteScope,
+  JOB_SESSION_ID,
+  takenMessage,
+  type JobScope,
+} from '../main/host/jobs'
 import type { SessionSummary } from '../main/claude/listing'
 import type { AgentProvider, JobsProvider } from '../main/provider'
 
@@ -33,6 +39,25 @@ const exists = (path: string) =>
     () => true,
     () => false,
   )
+
+/** The person's own Codex folder: signed in, a model chosen, and an MCP
+ *  server a run must not get. */
+const PERSON_CONFIG = [
+  'model = "gpt-5.5"',
+  '',
+  '[mcp_servers.synthetic]',
+  'command = "echo"',
+  'enabled = true',
+  '',
+].join('\n')
+const PERSON_AUTH = JSON.stringify({ tokens: { access_token: 'old', refresh_token: 'r' } })
+
+async function personHome(): Promise<string> {
+  const home = await temp('holi-codex-home-')
+  await writeFile(join(home, 'config.toml'), PERSON_CONFIG)
+  await writeFile(join(home, 'auth.json'), PERSON_AUTH)
+  return home
+}
 
 const event = (o: unknown) => `console.log(${JSON.stringify(JSON.stringify(o))})`
 
@@ -239,6 +264,33 @@ describe('a job', () => {
     expect(await exists(join(r.root, 'notes/Plan.app/app.yaml'))).toBe(false)
   })
 
+  it('does not start where what it makes is already in the vault', async () => {
+    const { root, jobs, provider } = await rig(SUCCESS)
+    await mkdir(join(root, 'notes/Plan.app'), { recursive: true })
+    await writeFile(join(root, 'notes/Plan.app/app.yaml'), 'description: Theirs\n')
+    expect(await jobs.start({ provider, name: 'x', prompt: 'go', scope: SCOPE })).toEqual({
+      ok: false,
+      message: takenMessage('notes/Plan.app'),
+    })
+  })
+
+  it('never writes over an app that lands in the vault while it works', async () => {
+    const { root, jobs, provider, ended } = await rig(
+      ['setTimeout(() => {', WRITES(1, 1), '}, 300)'].join('\n'),
+    )
+    const started = await jobs.start({ provider, name: 'x', prompt: 'go', scope: SCOPE })
+    // Sync brings the same app in meanwhile.
+    await mkdir(join(root, 'notes/Plan.app'), { recursive: true })
+    await writeFile(join(root, 'notes/Plan.app/app.yaml'), 'description: Theirs\n')
+    const row = await ended((started as { sessionId: string }).sessionId)
+    expect(row.outcome).toBe('failed')
+    expect(row.message).toMatch(/notes\/Plan\.app: something else put it in the vault/)
+    expect(await readFile(join(root, 'notes/Plan.app/app.yaml'), 'utf8')).toBe(
+      'description: Theirs\n',
+    )
+    expect(await exists(join(root, 'notes/Plan.app/f0.txt'))).toBe(false)
+  })
+
   it('leaves the list a while after it ends', async () => {
     const { jobs, provider, ended } = await rig(CRASH, { keepMs: 50 })
     const started = await jobs.start({ provider, name: 'x', prompt: 'go', scope: SCOPE })
@@ -274,14 +326,21 @@ describe('a job', () => {
     await writeFile(
       check,
       [
-        `require('node:fs').writeFileSync(${JSON.stringify(argv)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd() }))`,
+        "const fs = require('node:fs')",
+        `fs.writeFileSync(${JSON.stringify(argv)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), home: process.env.CODEX_HOME, config: fs.readFileSync(process.env.CODEX_HOME + '/config.toml', 'utf8') }))`,
+        // Codex refreshes its sign-in in the folder it was given.
+        `fs.writeFileSync(process.env.CODEX_HOME + '/auth.json', ${JSON.stringify(JSON.stringify({ tokens: { access_token: 'new', refresh_token: 'r' } }))})`,
         `require(${JSON.stringify(join(userData, 'fake-codex.js'))})`,
       ].join('\n'),
     )
     const bin = join(userData, 'codex')
     await writeFile(bin, `#!/bin/sh\nexec "${process.execPath}" "${check}" "$@"\n`)
     await chmod(bin, 0o755)
-    const codex = codexProvider({ resolveBin: () => bin }) as JobsProvider
+    const person = await personHome()
+    const codex = codexProvider({
+      resolveBin: () => bin,
+      env: { PATH: process.env.PATH ?? '', CODEX_HOME: person },
+    }) as JobsProvider
     const started = await jobs.start({
       provider: codex,
       name: 'x',
@@ -290,10 +349,25 @@ describe('a job', () => {
     })
     const row = await ended((started as { sessionId: string }).sessionId)
     expect(row.outcome).toBe('done')
-    const seen = JSON.parse(await readFile(argv, 'utf8')) as { args: string[]; cwd: string }
+    const seen = JSON.parse(await readFile(argv, 'utf8')) as {
+      args: string[]
+      cwd: string
+      home: string
+      config: string
+    }
     const scratch = seen.args[seen.args.indexOf('-C') + 1]!
     expect(seen.args).toEqual(jobArgs({ cwd: scratch, prompt: 'Make it' }))
     expect(scratch.startsWith(join(userData, 'agent-jobs'))).toBe(true)
+    // Codex ran on a folder of the job's own, outside what it may write,
+    // with none of the person's MCP servers.
+    expect(seen.home).toBe(`${scratch}.agent/codex-home`)
+    expect(seen.config).toContain('model = "gpt-5.5"')
+    expect(seen.config).not.toContain('mcp_servers')
+    // The sign-in it refreshed went back to the person's.
+    expect(JSON.parse(await readFile(join(person, 'auth.json'), 'utf8'))).toMatchObject({
+      tokens: { access_token: 'new' },
+    })
+    expect(await readFile(join(person, 'config.toml'), 'utf8')).toBe(PERSON_CONFIG)
     expect(await readFile(join(root, 'notes/Plan.app/app.yaml'), 'utf8')).toContain('The plan')
   })
 })
@@ -313,8 +387,6 @@ describe('the Codex job command', () => {
       '-c',
       'sandbox_workspace_write.network_access=false',
       '-c',
-      'mcp_servers={}',
-      '-c',
       'web_search="disabled"',
       '-c',
       'tools.web_search=false',
@@ -325,24 +397,45 @@ describe('the Codex job command', () => {
     ])
   })
 
-  it('fences a session to its folder with the same tools off, asking in its terminal', () => {
-    const codex = codexProvider({ resolveBin: () => '/usr/local/bin/codex' })
+  it('fences a session to its folder with the same tools off, asking in its terminal', async () => {
+    const person = await personHome()
+    const state = await temp('holi-fenced-state-')
+    const codex = codexProvider({
+      resolveBin: () => '/usr/local/bin/codex',
+      env: { PATH: '/usr/bin', CODEX_HOME: person },
+    })
     const cmd = codex.terminal(
       { root: '/v', configDir: '/c', binDir: null },
-      { session: 'p0123456789ab', fence: '/s', prompt: '--help' },
+      { session: 'p0123456789ab', fence: { dir: '/s', state }, prompt: '--help' },
     )
     expect(fenceArgs('/s')).toContain('approval_policy="on-request"')
     expect(fenceArgs('/s')).toContain('sandbox_workspace_write.network_access=false')
-    expect(fenceArgs('/s')).toContain('mcp_servers={}')
     expect(cmd?.args.slice(2)).toEqual([...fenceArgs('/s'), '--', '--help'])
     expect(codex.capabilities.fenced).toBe(true)
+    // Its own Codex folder: signed in, without the person's MCP server.
+    expect(cmd?.env.CODEX_HOME).toBe(join(state, 'codex-home'))
+    const config = await readFile(join(state, 'codex-home/config.toml'), 'utf8')
+    expect(config).toContain('model = "gpt-5.5"')
+    expect(config).not.toContain('mcp_servers')
+    expect(await readFile(join(state, 'codex-home/auth.json'), 'utf8')).toBe(PERSON_AUTH)
   })
 
-  it('carries no Holi commands on its PATH', () => {
-    const codex = codexProvider({ resolveBin: () => '/usr/local/bin/codex' }) as JobsProvider
-    const cmd = codex.capabilities.jobs.command({ cwd: '/s', prompt: 'p' })
+  it('carries no Holi commands on its PATH, and runs on a Codex folder of its own', async () => {
+    const person = await personHome()
+    const state = await temp('holi-job-state-')
+    const codex = codexProvider({
+      resolveBin: () => '/usr/local/bin/codex',
+      env: { PATH: '/usr/bin', CODEX_HOME: person },
+    }) as JobsProvider
+    const cmd = codex.capabilities.jobs.command({ cwd: '/s', prompt: 'p', state })
     expect(cmd?.env.PATH?.split(':')).not.toContain('/holi/bin')
     expect(cmd?.env.HOLI_AGENT_SESSION).toBeUndefined()
+    expect(cmd?.env.CODEX_HOME).toBe(join(state, 'codex-home'))
+    expect(await readFile(join(state, 'codex-home/config.toml'), 'utf8')).not.toContain(
+      'mcp_servers',
+    )
+    // The person's folder is untouched.
+    expect(await readFile(join(person, 'config.toml'), 'utf8')).toBe(PERSON_CONFIG)
   })
 
   it('reads the events it needs and nothing else', () => {
@@ -557,7 +650,7 @@ describe('agent.scoped', () => {
 })
 
 describe('a fenced session', () => {
-  async function fencedRig() {
+  async function fencedRig(release?: (state: string) => Promise<void>) {
     const root = await temp('holi-fenced-vault-')
     const userData = await temp('holi-fenced-data-')
     await mkdir(join(root, 'notes'), { recursive: true })
@@ -583,14 +676,19 @@ describe('a fenced session', () => {
       log: () => {},
     })
     const res = await fenced.start({
-      provider: { id: 'codex', label: 'Codex', capabilities: { fenced: true } } as never,
+      provider: {
+        id: 'codex',
+        label: 'Codex',
+        capabilities: { fenced: true },
+        ...(release === undefined ? {} : { release }),
+      } as never,
       name: 'Plan: vault app',
       prompt: 'Make it',
       system: 'Make the app.',
       scope: SCOPE,
     })
     if (fence === undefined) throw new Error('no fence')
-    return { root, res, own, fence, fenced }
+    return { root, userData, res, own, fence, fenced }
   }
 
   it('starts in a folder holding what it reads, and copies back what it wrote as a turn ends', async () => {
@@ -616,6 +714,45 @@ describe('a fenced session', () => {
     fence.exited()
     await vi.waitFor(() => expect(exists(join(fence.dir, 'notes/Plan.md'))).resolves.toBe(false))
     expect(await readFile(join(root, 'notes/Plan.app/index.html'), 'utf8')).toBe('<h1>Shipped</h1>')
+  })
+
+  it('never writes over an app that lands in the vault meanwhile', async () => {
+    const { root, fence } = await fencedRig()
+    await mkdir(join(fence.dir, 'notes/Plan.app'), { recursive: true })
+    await writeFile(join(fence.dir, 'notes/Plan.app/index.html'), '<h1>Ship it</h1>')
+    await writeFile(join(fence.dir, 'notes/Plan.app/app.yaml'), 'description: The plan\n')
+    await mkdir(join(root, 'notes/Plan.app'), { recursive: true })
+    await writeFile(join(root, 'notes/Plan.app/app.yaml'), 'description: Theirs\n')
+    await fence.turnEnded()
+    expect(await readFile(join(root, 'notes/Plan.app/app.yaml'), 'utf8')).toBe(
+      'description: Theirs\n',
+    )
+    expect(await exists(join(root, 'notes/Plan.app/index.html'))).toBe(false)
+  })
+
+  it('does not start where what it makes is already in the vault', async () => {
+    const { root, fenced, own } = await fencedRig()
+    await mkdir(join(root, 'notes/Plan.app'), { recursive: true })
+    own.start.mockClear()
+    expect(
+      await fenced.start({
+        provider: { id: 'codex' } as never,
+        name: 'x',
+        prompt: 'x',
+        scope: SCOPE,
+      }),
+    ).toEqual({ ok: false, message: takenMessage('notes/Plan.app') })
+    expect(own.start).not.toHaveBeenCalled()
+  })
+
+  it('gives the agent a state folder of its own, released and gone when it exits', async () => {
+    const release = vi.fn(async () => {})
+    const { fence } = await fencedRig(release)
+    expect(fence.state).toBe(`${fence.dir}.agent`)
+    expect((await readdir(fence.state)).length).toBe(0)
+    fence.exited()
+    await vi.waitFor(() => expect(release).toHaveBeenCalledWith(fence.state))
+    await vi.waitFor(() => expect(readdir(fence.state)).rejects.toThrow())
   })
 
   it('says why when its session does not start', async () => {
