@@ -35,6 +35,9 @@ export interface PiChild {
 /** One stock Pi RPC process per managed run; messages are JSON records, never shell text. */
 export class PiRpcRun {
   private readonly child: PiChild
+  private readonly processGroup: boolean
+  private exited = false
+  private killTimer?: ReturnType<typeof setTimeout>
   private readonly configuredModel?: { provider: string; modelId: string }
   private modelSet = false
   private pending = ''
@@ -67,9 +70,10 @@ export class PiRpcRun {
         modelId: options.model.slice(slash + 1),
       }
     }
+    this.processGroup = options.spawn === undefined && process.platform !== 'win32'
     const spawn =
       options.spawn ??
-      ((bin, args, opts) => nodeSpawn(bin, args, opts) as ChildProcessWithoutNullStreams)
+      ((bin, args, opts) => nodeSpawn(bin, args, { ...opts, detached: this.processGroup }) as ChildProcessWithoutNullStreams)
     const args = ['--mode', 'rpc']
     if (options.system !== undefined) args.push('--append-system-prompt', options.system)
     this.child = spawn(options.bin, args, {
@@ -86,6 +90,8 @@ export class PiRpcRun {
       this.kill()
     })
     this.child.once('exit', (code, signal) => {
+      this.exited = true
+      if (this.killTimer) clearTimeout(this.killTimer)
       if (!this.settled)
         this.finish({
           status: 'failed',
@@ -149,10 +155,19 @@ export class PiRpcRun {
   }
 
   private kill(): void {
-    try {
-      this.child.kill('SIGTERM')
-    } catch {
-      /* already exited */
+    const signal = (name: NodeJS.Signals) => {
+      if (this.exited) return
+      try {
+        if (this.processGroup && this.child.pid !== undefined) process.kill(-this.child.pid, name)
+        else this.child.kill(name)
+      } catch {
+        /* process or its group already exited */
+      }
+    }
+    signal('SIGTERM')
+    if (!this.killTimer && !this.exited) {
+      this.killTimer = setTimeout(() => signal('SIGKILL'), 1500)
+      this.killTimer.unref()
     }
   }
 

@@ -335,9 +335,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       params: idParams,
       run: async (ctx, { id }): Promise<boolean> =>
         live(ctx) &&
-        (deps.own.has(id) ||
-          deps.pi?.sessions().some((session) => session.id === id) === true ||
-          deps.sessions.watched(id)),
+        (deps.own.has(id) || deps.sessions.watched(id)),
     }),
 
     /** Put text in a session's input, unsent: a live one by id, or `'new'`,
