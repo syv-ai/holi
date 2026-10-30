@@ -1,8 +1,9 @@
 /**
  * The rich-text block's format bubble for a document: block type, marks,
  * highlight and link over a selection, without alignment (markdown cannot
- * keep it), and an Ask AI menu of quick commands, or the person's own
- * instruction, that hand the selected passage to the document agent.
+ * keep it), and an Ask AI menu: quick commands, or the person's own
+ * instruction, that hand the selected passage to the document agent to
+ * rewrite, and Start chat, a new agent session about the passage.
  */
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import type { EditorState } from '@tiptap/pm/state'
@@ -10,6 +11,7 @@ import { isTextSelection, type Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import {
   ChevronDownIcon,
+  MessageCircleIcon,
   MessageSquarePlusIcon,
   MinimizeIcon,
   PencilLineIcon,
@@ -88,6 +90,8 @@ interface DocumentFormatBubbleProps {
   onLinkOpenChange: (open: boolean) => void
   /** Null when there is no agent to ask. */
   onQuickCommand: ((instruction: string, passage: string) => void) | null
+  /** Start a conversation about the passage; null when none can start. */
+  onStartChat?: ((passage: string) => void) | null
   /** Start a comment thread on the selection; null when the note takes none. */
   onComment?: (() => void) | null
 }
@@ -97,6 +101,7 @@ export function DocumentFormatBubble({
   linkOpen,
   onLinkOpenChange,
   onQuickCommand,
+  onStartChat = null,
   onComment = null,
 }: DocumentFormatBubbleProps) {
   const state = useRichTextState(editor)
@@ -144,6 +149,11 @@ export function DocumentFormatBubble({
   const runCommand = (instruction: string) => {
     const passage = selectedPassage()
     if (passage !== '') onQuickCommand?.(instruction, passage)
+  }
+
+  const startChat = () => {
+    const passage = selectedPassage()
+    if (passage !== '') onStartChat?.(passage)
   }
 
   const openCustom = () => {
@@ -217,12 +227,20 @@ export function DocumentFormatBubble({
                         {command.label}
                       </DropdownMenuItem>
                     ))}
+                    <DropdownMenuItem onClick={openCustom}>
+                      <PencilLineIcon aria-hidden="true" />
+                      Custom instruction…
+                    </DropdownMenuItem>
                   </DropdownMenuGroup>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={openCustom}>
-                    <PencilLineIcon aria-hidden="true" />
-                    Custom instruction…
-                  </DropdownMenuItem>
+                  {onStartChat ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={startChat}>
+                        <MessageCircleIcon aria-hidden="true" />
+                        Start chat
+                      </DropdownMenuItem>
+                    </>
+                  ) : null}
                 </DropdownMenuContent>
               </DropdownMenu>
               <PopoverContent
