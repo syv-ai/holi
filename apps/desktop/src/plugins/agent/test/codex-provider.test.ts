@@ -4,6 +4,7 @@ import {
   codexProvider,
   NOTIFY_SCRIPT,
   notifyOverride,
+  NOTIFICATIONS_OVERRIDE,
   readTurn,
   registerCodexRoutes,
   SESSION_ENV,
@@ -16,18 +17,20 @@ const SIGNAL = new AbortController().signal
 describe('the Codex provider', () => {
   const codex = codexProvider({ resolveBin: () => '/usr/local/bin/codex' })
 
-  it('runs Codex with its hook, and the session named to it', () => {
+  it('runs Codex with its hook, its notifications on, and the session named to it', () => {
     const cmd = codex.terminal(TARGET, { session: 'p0123456789ab' })
     expect(cmd?.bin).toBe('/usr/local/bin/codex')
-    expect(cmd?.args).toEqual(['-c', notifyOverride()])
+    // An approval prompt prints OSC 9, which the terminal reads as needs-you.
+    expect(cmd?.args).toEqual(['-c', notifyOverride(), '-c', NOTIFICATIONS_OVERRIDE])
+    expect(NOTIFICATIONS_OVERRIDE).toContain('"approval-requested"')
     expect(cmd?.env[SESSION_ENV]).toBe('p0123456789ab')
     expect(cmd?.env.PATH?.startsWith('/holi/bin:')).toBe(true)
   })
 
   it('puts a first ask after --, and picks up a conversation', () => {
-    expect(codex.terminal(TARGET, { prompt: 'resume' })?.args.slice(2)).toEqual(['--', 'resume'])
-    expect(codex.terminal(TARGET, { resume: 'pick' })?.args.slice(2)).toEqual(['resume'])
-    expect(codex.terminal(TARGET, { resume: 'th-1', prompt: 'go on' })?.args.slice(2)).toEqual([
+    expect(codex.terminal(TARGET, { prompt: 'resume' })?.args.slice(4)).toEqual(['--', 'resume'])
+    expect(codex.terminal(TARGET, { resume: 'pick' })?.args.slice(4)).toEqual(['resume'])
+    expect(codex.terminal(TARGET, { resume: 'th-1', prompt: 'go on' })?.args.slice(4)).toEqual([
       'resume',
       'th-1',
       '--',
