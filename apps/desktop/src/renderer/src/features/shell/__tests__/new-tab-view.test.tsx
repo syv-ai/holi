@@ -72,7 +72,8 @@ function content() {
 
 test("the take-control pill shows over the board's free ground, or on focus", () => {
   mount()
-  const pill = screen.getByRole('button', { name: /take control/i })
+  // The whole name: no cursor block or Enter hint rides along.
+  const pill = screen.getByRole('button', { name: 'Take control · Paper run' })
   expect(pill.dataset.show).toBe('false')
   fireEvent.pointerMove(pill.parentElement!)
   expect(pill.dataset.show).toBe('true')
