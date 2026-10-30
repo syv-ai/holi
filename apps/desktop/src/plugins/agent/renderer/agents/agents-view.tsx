@@ -183,7 +183,7 @@ function PiRunView({ session }: { session: AgentSession }): React.JSX.Element {
       <Frame className="mx-auto w-full max-w-2xl self-start">
         <FrameHeader>
           <FrameTitle>{session.name}</FrameTitle>
-          <FrameDescription>
+          <FrameDescription role="status">
             Pi background run ·{' '}
             {session.state === 'working' ? 'Working' : (session.outcome ?? 'Idle')}
           </FrameDescription>
@@ -218,7 +218,11 @@ function PiRunView({ session }: { session: AgentSession }): React.JSX.Element {
                   if (event.key === 'Enter') void send()
                 }}
               />
-              <Button disabled={sending || text.trim() === ''} onClick={() => void send()}>
+              <Button
+                type="button"
+                disabled={sending || text.trim() === ''}
+                onClick={() => void send()}
+              >
                 Send
               </Button>
             </div>

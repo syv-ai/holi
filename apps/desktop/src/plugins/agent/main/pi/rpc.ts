@@ -44,6 +44,8 @@ export class PiRpcRun {
   private readonly processGroup: boolean
   private exited = false
   private killTimer?: ReturnType<typeof setTimeout>
+  private statsTimer?: ReturnType<typeof setTimeout>
+  private statsPending?: PiRunResult
   private readonly configuredModel?: { provider: string; modelId: string }
   private modelSet = false
   private pending = ''
@@ -102,7 +104,9 @@ export class PiRpcRun {
     })
     this.child.once('exit', (code, signal) => {
       this.exited = true
-      if (this.killTimer) clearTimeout(this.killTimer)
+      // Pi can exit while a tool it started still holds the process group.
+      // Keep the escalation timer for the entire group, not just its leader.
+      if (this.killTimer && !this.processGroup) clearTimeout(this.killTimer)
       if (!this.settled)
         this.finish({
           status: 'failed',
@@ -167,17 +171,20 @@ export class PiRpcRun {
 
   private kill(): void {
     const signal = (name: NodeJS.Signals) => {
-      if (this.exited) return
+      if (this.exited && !this.processGroup) return
       try {
         if (this.processGroup && this.child.pid !== undefined) process.kill(-this.child.pid, name)
-        else this.child.kill(name)
+        else if (!this.exited) this.child.kill(name)
       } catch {
         /* process or its group already exited */
       }
     }
     signal('SIGTERM')
-    if (!this.killTimer && !this.exited) {
-      this.killTimer = setTimeout(() => signal('SIGKILL'), 1500)
+    if (!this.killTimer && (!this.exited || this.processGroup)) {
+      this.killTimer = setTimeout(() => {
+        this.killTimer = undefined
+        signal('SIGKILL')
+      }, 1500)
       this.killTimer.unref()
     }
   }
@@ -186,10 +193,11 @@ export class PiRpcRun {
     if (!this.active || this.settled) throw new Error('Pi RPC run is not active')
   }
 
-  private send(command: Record<string, unknown>): void {
+  private send(command: Record<string, unknown>): string {
     const id = `holi-${++this.requestId}`
     this.commands.set(id, String(command.type))
     this.child.stdin.write(`${JSON.stringify({ id, ...command })}\n`)
+    return id
   }
 
   private sendPrompt(message: string): void {
@@ -245,6 +253,7 @@ export class PiRpcRun {
             ...(typeof context?.percent === 'number' ? { contextPercent: context.percent } : {}),
           })
         }
+        if (this.statsPending) this.finish(this.statsPending)
         return
       }
       if (record.success === false) {
@@ -296,20 +305,28 @@ export class PiRpcRun {
       }
     }
     if (record.type === 'agent_settled') {
-      if (!this.closed) {
-        try {
-          this.send({ type: 'get_session_stats' })
-        } catch {
-          // Usage is optional; completion never waits on a stats request.
-        }
-      }
-      this.finish({
+      if (this.settled || this.statsPending) return
+      const result: PiRunResult = {
         status: record.aborted === true ? 'aborted' : this.lastError ? 'failed' : 'completed',
         output: this.output,
         ...(this.lastError === undefined ? {} : { error: this.lastError }),
         model: this.model,
         usage: this.usage,
-      })
+      }
+      if (!this.closed && this.onStats) {
+        try {
+          this.statsPending = result
+          const id = this.send({ type: 'get_session_stats' })
+          this.statsTimer = setTimeout(() => {
+            this.commands.delete(id)
+            this.finish(result)
+          }, 1000)
+          return
+        } catch {
+          // Completion does not depend on optional usage data.
+        }
+      }
+      this.finish(result)
     }
   }
 
@@ -326,6 +343,9 @@ export class PiRpcRun {
 
   private finish(result: PiRunResult): void {
     if (this.settled) return
+    if (this.statsTimer) clearTimeout(this.statsTimer)
+    this.statsTimer = undefined
+    this.statsPending = undefined
     this.settled = true
     this.active = false
     this.phase = 'idle'

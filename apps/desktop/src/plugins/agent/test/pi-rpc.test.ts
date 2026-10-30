@@ -63,12 +63,7 @@ describe('PiRpcRun', () => {
       model: 'm',
       usage: { totalTokens: 4 },
     })
-    expect(fakeProcess.commands.map((c) => c.type)).toEqual([
-      'prompt',
-      'prompt',
-      'prompt',
-      'get_session_stats',
-    ])
+    expect(fakeProcess.commands.map((c) => c.type)).toEqual(['prompt', 'prompt', 'prompt'])
     expect(fakeProcess.commands[1]).toMatchObject({ streamingBehavior: 'steer' })
     expect(fakeProcess.commands[2]).toMatchObject({ streamingBehavior: 'followUp' })
   })
@@ -169,7 +164,12 @@ describe('PiRpcRun', () => {
     const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => process.child, onStats })
     const result = run.prompt('go')
     process.stdout.write('{"type":"agent_settled","aborted":false}\n')
-    await expect(result).resolves.toMatchObject({ status: 'completed' })
+    let completed = false
+    void result.then(() => {
+      completed = true
+    })
+    await Promise.resolve()
+    expect(completed).toBe(false)
     const request = process.commands.at(-1)
     expect(request?.type).toBe('get_session_stats')
     process.stdout.write(
@@ -185,6 +185,7 @@ describe('PiRpcRun', () => {
         },
       }) + '\n',
     )
+    await expect(result).resolves.toMatchObject({ status: 'completed' })
     expect(onStats).toHaveBeenCalledWith({
       usage: { input: 12, output: 8, total: 20, cost: 0.04 },
       contextPercent: 13,

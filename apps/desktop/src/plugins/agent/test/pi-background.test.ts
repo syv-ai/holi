@@ -11,7 +11,28 @@ function fake() {
   const stderr = new PassThrough()
   const commands: Record<string, unknown>[] = []
   stdin.on('data', (data: Buffer) => {
-    for (const line of data.toString().trim().split('\n')) if (line) commands.push(JSON.parse(line))
+    for (const line of data.toString().trim().split('\n')) {
+      if (!line) continue
+      const command = JSON.parse(line) as { type: string; id: string }
+      commands.push(command)
+      if (command.type === 'get_session_stats') {
+        queueMicrotask(() =>
+          stdout.write(
+            JSON.stringify({
+              id: command.id,
+              type: 'response',
+              command: 'get_session_stats',
+              success: true,
+              data: {
+                tokens: { input: 12, output: 8, total: 20 },
+                cost: 0.04,
+                contextUsage: { percent: 13 },
+              },
+            }) + '\n',
+          ),
+        )
+      }
+    }
   })
   const child: PiChild = {
     stdin,
@@ -159,7 +180,14 @@ describe('Pi background runs', () => {
     expect(rpc.commands.at(-1)).toMatchObject({ type: 'prompt', message: 'Review this' })
     rpc.stdout.write('{"type":"agent_settled","aborted":false}\n')
     await new Promise((resolve) => setImmediate(resolve))
-    expect(manager.sessions()).toMatchObject([{ id, state: 'idle' }])
+    expect(manager.sessions()).toMatchObject([
+      {
+        id,
+        state: 'idle',
+        usage: { input: 12, output: 8, total: 20, cost: 0.04 },
+        contextPercent: 13,
+      },
+    ])
     await manager.message(id, 'Follow up')
     expect(rpc.commands.at(-1)).toMatchObject({ type: 'prompt', message: 'Follow up' })
     await expect(manager.stop(id)).resolves.toMatchObject({ ok: true })

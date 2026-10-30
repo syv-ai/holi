@@ -29,6 +29,7 @@ interface PiJob {
   usage?: SessionSummary['usage']
   contextPercent?: number
   busy: boolean
+  statsUpdated: boolean
 }
 
 export interface PiBackgroundDeps {
@@ -76,7 +77,10 @@ export function createPiBackground(deps: PiBackgroundDeps) {
         onStats: (stats) => {
           const job = jobs.get(id)
           if (!job || job.remote !== remote) return
-          if (stats.usage !== undefined) job.usage = stats.usage
+          if (stats.usage !== undefined) {
+            job.usage = stats.usage
+            job.statsUpdated = true
+          }
           if (stats.contextPercent !== undefined) job.contextPercent = stats.contextPercent
           deps.changed()
         },
@@ -95,6 +99,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       run,
       state: 'working',
       busy: false,
+      statsUpdated: false,
     }
     jobs.set(id, job)
     deps.bracket(id, 'begin')
@@ -104,6 +109,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
   }
 
   async function runTurn(job: PiJob, prompt: string): Promise<void> {
+    job.statsUpdated = false
     job.busy = true
     job.state = 'working'
     job.outcome = undefined
@@ -118,7 +124,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     if (jobs.get(job.id) !== job) return
     job.busy = false
     job.model = typeof result.model === 'string' ? result.model : job.model
-    job.usage = summarizeUsage(result.usage)
+    if (!job.statsUpdated) job.usage = summarizeUsage(result.usage) ?? job.usage
     job.state = 'idle'
     job.outcome = result.status
     job.error = result.error
