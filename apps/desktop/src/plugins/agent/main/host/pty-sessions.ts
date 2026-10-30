@@ -45,6 +45,14 @@ import type { AgentTerminals } from './terminals'
 /** Holi's id for a session it runs: never a background job id (eight hex). */
 export const PTY_SESSION_ID = /^p[0-9a-f]{12}$/
 
+/**
+ * A conversation an agent can pick up again: a UUID, as Codex names its
+ * threads. It goes on the agent's command line (`codex resume <id>`), so
+ * nothing else is taken from a hook or the file it is kept in, least of all
+ * something that reads as a flag.
+ */
+export const CONVERSATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 const NEW_SESSION = 'New session'
 
 /** The longest name a session takes from its first ask. */
@@ -88,7 +96,8 @@ export function parsePastFile(raw: unknown): Record<string, SessionSummary[]> {
         PTY_SESSION_ID.test((s as SessionSummary).id) &&
         typeof (s as SessionSummary).provider === 'string' &&
         typeof (s as SessionSummary).name === 'string' &&
-        typeof (s as SessionSummary).conversationId === 'string',
+        typeof (s as SessionSummary).conversationId === 'string' &&
+        CONVERSATION_ID.test((s as { conversationId: string }).conversationId),
     )
   }
   return out
@@ -240,6 +249,8 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   }
 
   const gone = { ok: false as const, message: 'That session has ended.' }
+  /** Closed sessions being opened again right now, by id. */
+  const reopening = new Set<string>()
 
   async function startSession(
     providerId: ProviderId,
@@ -256,6 +267,9 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     const provider = deps.providers.find((p) => p.id === providerId)
     if (provider === undefined) {
       return { ok: false, message: `${providerId} is not an agent Holi knows.` }
+    }
+    if (resume !== undefined && resume !== 'pick' && !CONVERSATION_ID.test(resume)) {
+      return { ok: false, message: 'That is not a conversation Holi can pick up.' }
     }
     const config = await configure(provider)
     if (config === null) {
@@ -388,17 +402,28 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     hasPast: async (id) => (await api.past()).some((s) => s.id === id),
 
     async reopen(id, size) {
-      if (sessions.has(id)) return { ok: false, message: 'That session is open already.' }
-      const was = (await api.past()).find((s) => s.id === id)
-      if (was === undefined || was.conversationId === undefined) return gone
-      const res = await startSession(was.provider, {
-        ...size,
-        name: was.name,
-        resume: was.conversationId,
-        id,
-      })
-      if (res.ok) await changePast((list) => list.filter((s) => s.id !== id))
-      return res
+      // A second open while the first is still starting would run the
+      // conversation twice under one id.
+      if (sessions.has(id) || reopening.has(id)) {
+        return { ok: false, message: 'That session is open already.' }
+      }
+      reopening.add(id)
+      try {
+        const was = (await api.past()).find((s) => s.id === id)
+        if (was?.conversationId === undefined || !CONVERSATION_ID.test(was.conversationId)) {
+          return gone
+        }
+        const res = await startSession(was.provider, {
+          ...size,
+          name: was.name,
+          resume: was.conversationId,
+          id,
+        })
+        if (res.ok) await changePast((list) => list.filter((s) => s.id !== id))
+        return res
+      } finally {
+        reopening.delete(id)
+      }
     },
 
     send(id, text) {

@@ -15,8 +15,8 @@
  * environment carries to Codex and on to its hook). The turn's start comes
  * from the terminal (`../host/pty-signals.ts`).
  *
- * **Interactive sessions** also get `tui.notifications` for approvals and
- * turn ends, which Codex prints as OSC 9 desktop notifications: the terminal
+ * **Interactive sessions** also get `tui.notifications` for approvals, which
+ * Codex prints as OSC 9 desktop notifications: the terminal
  * stream reads one during a turn as a question for the person
  * (`../host/pty-signals.ts`), so an approval prompt shows as needs-you.
  *
@@ -27,8 +27,8 @@
  * fails rather than waiting on a person nobody is. The sandbox keeps its
  * writes to the folders it may write; it can still read the disk, so what
  * bounds a scratch job is what Holi copies back. Its JSONL events say how
- * the run went, and `codex exec resume <thread>` is a follow-up turn on the
- * same thread.
+ * the run went, and `codex exec … resume -- <thread>` is a follow-up turn on
+ * the same thread.
  *
  * **A fenced session** (`TerminalOpts.fence`) is the TUI in a scratch folder
  * Holi made (`../host/fenced.ts`), under the same sandbox and with the same
@@ -49,7 +49,7 @@ import { accessSync, constants } from 'node:fs'
 import { resolveBin, shellReadBridgeEnv } from '../../../../main/plugin-api'
 import { buildAgentEnv } from '../claude/cli'
 import { personCodexHome, prepareCodexHome, releaseCodexHome } from './home'
-import { PTY_SESSION_ID } from '../host/pty-sessions'
+import { CONVERSATION_ID, PTY_SESSION_ID } from '../host/pty-sessions'
 import type { AgentProvider, JobEvent, JobRun, RouteServer, TurnRouteDeps } from '../provider'
 
 /**
@@ -112,7 +112,7 @@ export function readTurn(body: string): { name?: string; conversationId?: string
   const thread = r['thread-id']
   return {
     ...(typeof first === 'string' && first.trim() !== '' ? { name: first } : {}),
-    ...(typeof thread === 'string' && /^[\w-]{1,80}$/.test(thread)
+    ...(typeof thread === 'string' && CONVERSATION_ID.test(thread)
       ? { conversationId: thread }
       : {}),
   }
@@ -136,18 +136,33 @@ export function registerCodexRoutes(server: RouteServer, deps: TurnRouteDeps): (
   })
 }
 
-/** The `-c` override that turns on the TUI's desktop notifications for an
- * approval it waits on and a turn's end: OSC 9 in the terminal stream.
+/** The `-c` override that turns on the TUI's desktop notification for an
+ * approval it waits on: OSC 9 in the terminal stream. Not a turn's end, which
+ * the `notify` hook reports already, and which would read as a question.
  * @public exported for its test
  */
-export const NOTIFICATIONS_OVERRIDE =
-  'tui.notifications=["approval-requested","agent-turn-complete"]'
+export const NOTIFICATIONS_OVERRIDE = 'tui.notifications=["approval-requested"]'
+
+/** The conversation to pick up, checked again where it goes on the command
+ *  line: never anything but a UUID, so never a flag. */
+function conversation(id: string): string {
+  if (!CONVERSATION_ID.test(id)) throw new Error('Not a Codex conversation id.')
+  return id
+}
 
 /**
  * What runs one turn of a job: `codex exec` in `cwd`, never asking, with no
  * network, writing `cwd` and `writable` alone (nothing when `readOnly`). A
- * `resume` is a follow-up on that thread. Every option before `resume` and
- * `--`, so the prompt is only ever the prompt.
+ * `resume` is a follow-up on that thread.
+ *
+ * Every option goes before `resume`, as the usage line of `codex exec` has it
+ * (`codex exec [OPTIONS] <COMMAND> [ARGS]`, codex-rs/exec/src/cli.rs in
+ * openai/codex): `-C` and `--sandbox` are options of `codex exec` itself, not
+ * global ones, so after `resume` they would not parse, and `codex exec resume`
+ * builds its thread's sandbox, approval policy and folder from them
+ * (`thread_resume_params_from_config`, codex-rs/exec/src/lib.rs). `-c`,
+ * `--json`, `-m` and `--skip-git-repo-check` are global and would parse on
+ * either side. Then `--`, so the thread and the prompt are only ever those.
  *
  * An unattended run must have no tools outside the sandbox: it runs on a
  * Codex folder with no MCP servers (`home.ts`), and web search is off, under
@@ -183,8 +198,7 @@ export function jobArgs({
     '-c',
     'tools.web_search=false',
     ...(model === undefined ? [] : ['-m', model]),
-    ...(resume === undefined ? [] : ['resume', resume]),
-    '--',
+    ...(resume === undefined ? ['--'] : ['resume', '--', conversation(resume)]),
     prompt,
   ]
 }
@@ -257,7 +271,7 @@ export function readJobEvent(line: string): JobEvent | null {
   switch (r['type']) {
     case 'thread.started': {
       const id = r['thread_id']
-      return typeof id === 'string' && /^[\w-]{1,80}$/.test(id) ? { kind: 'thread', id } : null
+      return typeof id === 'string' && CONVERSATION_ID.test(id) ? { kind: 'thread', id } : null
     }
     case 'turn.started':
       return { kind: 'turn-started' }
@@ -299,6 +313,7 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
       // A fenced session runs on a Codex folder of its own, without the
       // person's MCP servers.
       if (opts.fence !== undefined) env.CODEX_HOME = prepareCodexHome(opts.fence.state, base)
+      const asked = opts.prompt === undefined || opts.prompt.trim() === '' ? undefined : opts.prompt
       return {
         bin: path,
         args: [
@@ -307,12 +322,20 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
           '-c',
           NOTIFICATIONS_OVERRIDE,
           ...(opts.fence === undefined ? [] : fenceArgs(opts.fence.dir)),
+          // The conversation and the first ask after `--`, so neither is
+          // ever read as a flag, and an ask that reads `resume` is the ask.
           ...(opts.resume === undefined
-            ? []
-            : ['resume', ...(opts.resume === 'pick' ? [] : [opts.resume])]),
-          // After `--`, so an ask that starts with `-` or reads `resume` is
-          // still the ask.
-          ...(opts.prompt === undefined || opts.prompt.trim() === '' ? [] : ['--', opts.prompt]),
+            ? asked === undefined
+              ? []
+              : ['--', asked]
+            : opts.resume === 'pick'
+              ? ['resume']
+              : [
+                  'resume',
+                  '--',
+                  conversation(opts.resume),
+                  ...(asked === undefined ? [] : [asked]),
+                ]),
         ],
         env,
       }
