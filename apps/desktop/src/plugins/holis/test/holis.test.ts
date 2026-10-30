@@ -165,6 +165,22 @@ describe('sending a document', () => {
     expect(emitted).toContain('holis')
   })
 
+  it('selects Pi, uses its configured default for Claude aliases, and accepts explicit model ids', async () => {
+    selectedProvider = 'pi'
+    await writeHoli({ yaml: PROPOSAL, soul: SOUL })
+    const [initial] = await holis.list(vault())
+    await holis.approve(vault(), 'proposal', initial!.fingerprint!)
+    await holis.send(vault(), 'proposal', 'kunder/a.md')
+    expect(launched[0]!.model).toBeUndefined()
+
+    await writeHoli({ yaml: PROPOSAL.replace('sonnet', 'anthropic/claude-sonnet'), soul: SOUL })
+    const [changed] = await holis.list(vault())
+    await holis.approve(vault(), 'proposal', changed!.fingerprint!)
+    await holis.send(vault(), 'proposal', 'kunder/b.md')
+    expect(launched[1]).toMatchObject({ model: 'anthropic/claude-sonnet', provider: 'pi' })
+    expect(launched[1]!.allow).toBeUndefined()
+  })
+
   it('selects Pi, keeps the Holi system prompt, and does not send Claude allow rules', async () => {
     selectedProvider = 'pi'
     await writeHoli({ yaml: PROPOSAL.replace('model: sonnet\n', ''), soul: SOUL })

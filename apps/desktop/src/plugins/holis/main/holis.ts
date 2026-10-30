@@ -507,11 +507,14 @@ export function createHolis(deps: HolisDeps): Holis {
       try {
         const base = path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/, '')
         const provider = await deps.provider(vault.root)
+        // Legacy Holi model aliases are Claude-specific; Pi accepts explicit
+        // provider/model-id values and otherwise uses its configured default.
+        const model = provider === 'pi' && !def.model?.includes('/') ? undefined : def.model
         const res = await deps.launch({
           name: `${def.name} · ${base}`,
           prompt: sendPrompt(path),
           provider,
-          ...(def.model === undefined ? {} : { model: def.model }),
+          ...(model === undefined ? {} : { model }),
           ...(provider === 'claude'
             ? { allow: [...def.allow, ...memoryRules(), REPORT_RULE] }
             : {}),
