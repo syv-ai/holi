@@ -90,10 +90,10 @@ export function useDocumentAgentPrompt({
     await agent.start('rewrite', instruction, passage)
   }
 
-  async function turnIntoArtifact() {
+  async function createVaultApp() {
     await save()
-    await agent.start('artifact', 'Make an artifact')
+    await agent.start('vault-app', 'Creating a vault app')
   }
 
-  return { promptOpen, promptInitial, closePrompt, sendPrompt, quickCommand, turnIntoArtifact }
+  return { promptOpen, promptInitial, closePrompt, sendPrompt, quickCommand, createVaultApp }
 }

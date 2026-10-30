@@ -95,7 +95,7 @@ export function AgentPrompt({
 const WORKING: Record<AgentRun['kind'], string> = {
   write: 'Writing',
   rewrite: 'Rewriting',
-  artifact: 'Making the artifact',
+  'vault-app': 'Creating the vault app',
 }
 
 /** What a run is doing, at the foot of the document. Stop ends it; a run
@@ -104,12 +104,12 @@ export function AgentStatus({
   run,
   onStop,
   onDismiss,
-  onOpenArtifact,
+  onOpenApp,
 }: {
   run: AgentRun
   onStop: () => void
   onDismiss: () => void
-  onOpenArtifact: () => void
+  onOpenApp: () => void
 }) {
   const showSession = useSetAtom(showAgentSessionAtom)
   const remote = useAtomValue(activeRemoteAtom)
@@ -121,7 +121,7 @@ export function AgentStatus({
 
   const text =
     run.status === 'starting'
-      ? 'Starting Sonnet…'
+      ? `Starting ${run.agent}…`
       : run.status === 'working'
         ? `${WORKING[run.kind]}…`
         : run.status === 'needs-you'
@@ -130,8 +130,8 @@ export function AgentStatus({
             ? (run.message ?? 'The agent could not run.')
             : run.status === 'stopped'
               ? 'Stopped'
-              : run.kind === 'artifact'
-                ? 'The artifact is ready'
+              : run.kind === 'vault-app'
+                ? 'The vault app is ready'
                 : 'Done'
 
   return (
@@ -147,7 +147,7 @@ export function AgentStatus({
       )}
       <span className="min-w-0 truncate">
         {text}
-        {live && run.kind !== 'artifact' ? (
+        {live && run.kind !== 'vault-app' ? (
           <span className="text-muted-foreground"> · {run.label}</span>
         ) : null}
       </span>
@@ -179,8 +179,8 @@ export function AgentStatus({
               Trust in Claude Code
             </Button>
           ) : null}
-          {run.kind === 'artifact' && run.status === 'done' ? (
-            <Button variant="secondary" size="xs" onClick={onOpenArtifact}>
+          {run.kind === 'vault-app' && run.status === 'done' ? (
+            <Button variant="secondary" size="xs" onClick={onOpenApp}>
               Open
             </Button>
           ) : null}
