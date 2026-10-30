@@ -4,10 +4,10 @@ An automation (a scheduled agent) is a prompt Holi runs as an agent session at s
 something happens, on this machine, while the vault is open: check the inbox every half hour and
 draft replies, file a task for what needs the user, start a tilbud from a customer's mail, read a
 file dropped in `inbox/`. The definition is a file in the vault; whether it runs is this machine's
-choice; each run is an ordinary [agent session](agent-sessions.md), carried out by Claude Code as
-it is or by one of the vault's [Holis](holis.md), with its soul and memory. Automations are the
-plugin `automations` (`src/plugins/automations/`, on by default), built on the agent: it starts
-each run through `agent.launch` and hears the agent's session list and turn ends through the
+choice; each run is an ordinary [agent session](agent-sessions.md), carried out by this machine's
+agent as it is or by one of the vault's [Holis](holis.md), with its soul and memory. Automations
+are the plugin `automations` (`src/plugins/automations/`, on by default), built on the agent: it
+starts each run through `agent.job` and hears the agent's session list and turn ends through the
 main-side plugin channel (`ctx.hear`). Until the feature is finished, the renderer shows
 Automations as a locked **In progress** row and keeps them out of ⌘K (`AUTOMATIONS_READY` in
 `info.ts`); automations already switched on still run.
@@ -116,6 +116,14 @@ through six half-hours runs once when it is back, unless the latest of them is o
 `catch-up` window, when it is recorded as skipped and nothing runs. A one-off runs once and then has nothing due.
 Schedules run only for the open vault: a closed vault's `bridge.local.env` is gone, so a session in
 it could not reach `holi`.
+
+**On Codex** (this machine's `agentProvider`), a run is a job in the vault instead
+([agent-sessions](agent-sessions.md), Jobs): `codex exec` in a sandbox with no network whose
+writable folders are the schedule's `allow` write rules (`Edit(inbox/**)`), refused with the rule
+named when one is anything else, a command or a web tool, rather than run on Claude Code. It never
+asks anyone: a step outside its sandbox fails. Its turn ends when Codex says `turn.completed`, and
+closes the run as a `Stop` does below. A `model` is Claude Code's and is left out. The rest of this
+section is Claude Code's.
 
 **A run is a background session** started with `claude --bg`, no terminal, named `<name> · HH:MM`.
 Its first turn is one line Holi adds (the schedule's path, the time, the previous run's time, so a
@@ -326,7 +334,7 @@ repeats inside one session.
   `ctx.onSnapshot`
 - `apps/desktop/src/plugins/tasks/main/triggers.ts`, `apps/desktop/src/plugins/google/main/triggers.ts`:
   the task, calendar and mail sources
-- `apps/desktop/src/plugins/agent/main/host/capabilities.ts` (`agent.launch`, `agent.watched`),
+- `apps/desktop/src/plugins/agent/main/host/capabilities.ts` (`agent.job`, `agent.watched`),
   `main/host/sessions.ts` (`launch`, a session with no terminal, and what it publishes)
 - `apps/desktop/src/plugins/automations/renderer/`: `automations-view.tsx`, `automation-editor.tsx`,
   `holi-picker.tsx`, `automations-section.tsx`

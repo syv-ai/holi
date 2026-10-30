@@ -43,6 +43,7 @@ it('runs whatever a stale plugins.yaml pins for it', async () => {
       terminals: { list: () => [] } as never,
       liveRemote: () => 'o/r',
       commitNow: async () => null,
+      defaultProvider: async () => 'claude' as const,
     }),
     'agent',
   )

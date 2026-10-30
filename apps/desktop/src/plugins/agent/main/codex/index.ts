@@ -15,13 +15,20 @@
  * environment carries to Codex and on to its hook). The turn's start comes
  * from the terminal (`../host/pty-signals.ts`).
  *
- * **Jobs** are `codex exec --json` in a scratch folder Holi made
- * (`../host/jobs.ts`): the workspace-write sandbox with no network, no MCP
+ * **Interactive sessions** also get `tui.notifications` for approvals and
+ * turn ends, which Codex prints as OSC 9 desktop notifications: the terminal
+ * stream reads one during a turn as a question for the person
+ * (`../host/pty-signals.ts`), so an approval prompt shows as needs-you.
+ *
+ * **Jobs** are `codex exec --json` (`../host/jobs.ts`), in a scratch folder
+ * Holi made or in the vault with named folders writable: the workspace-write
+ * sandbox with no network (read-only when nothing may be written), no MCP
  * servers and no web search, and an approval policy of never, so a step the
  * sandbox refuses fails rather than waiting on a person nobody is. The
- * sandbox keeps its writes to the folder; it can still read the disk, so
- * what bounds a job is what Holi copies back. Its JSONL events say how the
- * run went.
+ * sandbox keeps its writes to the folders it may write; it can still read the
+ * disk, so what bounds a scratch job is what Holi copies back. Its JSONL
+ * events say how the run went, and `codex exec resume <thread>` is a
+ * follow-up turn on the same thread.
  *
  * **A fenced session** (`TerminalOpts.fence`) is the TUI in a scratch folder
  * Holi made (`../host/fenced.ts`), under the same sandbox and with the same
@@ -37,7 +44,7 @@ import { join } from 'node:path'
 import { resolveBin, shellReadBridgeEnv } from '../../../../main/plugin-api'
 import { buildAgentEnv } from '../claude/cli'
 import { PTY_SESSION_ID } from '../host/pty-sessions'
-import type { AgentProvider, JobEvent, RouteServer, TurnRouteDeps } from '../provider'
+import type { AgentProvider, JobEvent, JobRun, RouteServer, TurnRouteDeps } from '../provider'
 
 /**
  * The variable that names the session to its hook.
@@ -123,10 +130,18 @@ export function registerCodexRoutes(server: RouteServer, deps: TurnRouteDeps): (
   })
 }
 
+/** The `-c` override that turns on the TUI's desktop notifications for an
+ * approval it waits on and a turn's end: OSC 9 in the terminal stream.
+ * @public exported for its test
+ */
+export const NOTIFICATIONS_OVERRIDE =
+  'tui.notifications=["approval-requested","agent-turn-complete"]'
+
 /**
- * What runs a job: `codex exec` in `cwd`, its writes sandboxed to it, with no
- * network and never asking. Every option before `--`, so the prompt is only
- * ever the prompt.
+ * What runs one turn of a job: `codex exec` in `cwd`, never asking, with no
+ * network, writing `cwd` and `writable` alone (nothing when `readOnly`). A
+ * `resume` is a follow-up on that thread. Every option before `resume` and
+ * `--`, so the prompt is only ever the prompt.
  *
  * The person's `config.toml` must not hand an unattended run tools outside
  * the sandbox, so the MCP servers are emptied and web search is off, under
@@ -139,11 +154,10 @@ export function jobArgs({
   cwd,
   prompt,
   model,
-}: {
-  cwd: string
-  prompt: string
-  model?: string
-}): string[] {
+  writable = [],
+  readOnly = false,
+  resume,
+}: JobRun): string[] {
   return [
     'exec',
     '--json',
@@ -151,11 +165,14 @@ export function jobArgs({
     '-C',
     cwd,
     '--sandbox',
-    'workspace-write',
+    readOnly ? 'read-only' : 'workspace-write',
     '-c',
     'approval_policy="never"',
-    '-c',
-    'sandbox_workspace_write.network_access=false',
+    ...(readOnly ? [] : ['-c', 'sandbox_workspace_write.network_access=false']),
+    // A TOML array, whose strings JSON's quoting writes correctly.
+    ...(readOnly || writable.length === 0
+      ? []
+      : ['-c', `sandbox_workspace_write.writable_roots=${JSON.stringify(writable)}`]),
     '-c',
     'mcp_servers={}',
     '-c',
@@ -163,6 +180,7 @@ export function jobArgs({
     '-c',
     'tools.web_search=false',
     ...(model === undefined ? [] : ['-m', model]),
+    ...(resume === undefined ? [] : ['resume', resume]),
     '--',
     prompt,
   ]
@@ -206,9 +224,23 @@ function messageOf(r: Record<string, unknown>): string {
   return text.trim() === '' ? 'Codex reported an error.' : text.trim()
 }
 
+/** What a turn used: its input and output tokens (the cached input is part
+ *  of the input). Null when it does not say. */
+function tokensOf(r: Record<string, unknown>): number | null {
+  const usage = r['usage']
+  if (usage === null || typeof usage !== 'object') return null
+  const u = usage as Record<string, unknown>
+  const count = (key: string): number => {
+    const n = u[key]
+    return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : 0
+  }
+  const total = count('input_tokens') + count('output_tokens')
+  return total > 0 ? total : null
+}
+
 /**
- * One line of `codex exec --json`: the thread, a turn's start and end, and
- * errors. Anything else (items, usage) is nothing to the host.
+ * One line of `codex exec --json`: the thread, a turn's start and end with
+ * what it used, and errors. Anything else (items) is nothing to the host.
  * @public exported for its test
  */
 export function readJobEvent(line: string): JobEvent | null {
@@ -227,8 +259,10 @@ export function readJobEvent(line: string): JobEvent | null {
     }
     case 'turn.started':
       return { kind: 'turn-started' }
-    case 'turn.completed':
-      return { kind: 'turn-completed' }
+    case 'turn.completed': {
+      const tokens = tokensOf(r)
+      return tokens === null ? { kind: 'turn-completed' } : { kind: 'turn-completed', tokens }
+    }
     case 'turn.failed':
       return { kind: 'turn-failed', message: messageOf(r) }
     case 'error':
@@ -262,6 +296,8 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
         args: [
           '-c',
           notifyOverride(),
+          '-c',
+          NOTIFICATIONS_OVERRIDE,
           ...(opts.fence === undefined ? [] : fenceArgs(opts.fence)),
           ...(opts.resume === undefined
             ? []
@@ -277,20 +313,16 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
       turns: { routes: registerCodexRoutes },
       fenced: true,
       jobs: {
-        command({ cwd, prompt, model }) {
+        command(run) {
           const path = bin()
           if (path === null) return null
-          // No Holi commands on its PATH and no session id: a job writes
-          // nothing of the vault but the folder it runs in. Its sandbox can
-          // still read the disk; what reaches the vault is what Holi copies
-          // back.
+          // No Holi commands on its PATH and no session id: a job reaches
+          // nothing of Holi's, only the folders its sandbox lets it write.
+          // Its sandbox can still read the disk; what a scratch job hands the
+          // vault is what Holi copies back.
           const env = buildAgentEnv(process.env)
           delete env[SESSION_ENV]
-          return {
-            bin: path,
-            args: jobArgs({ cwd, prompt, ...(model === undefined ? {} : { model }) }),
-            env,
-          }
+          return { bin: path, args: jobArgs(run), env }
         },
         event: readJobEvent,
       },

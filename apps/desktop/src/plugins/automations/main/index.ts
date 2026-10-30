@@ -1,7 +1,7 @@
 /**
  * The automations plugin's main side (docs/features/scheduled-agents.md):
- * the open vault's automations, checked every half minute, each run a
- * background session through the agent, which it requires. An automation a
+ * the open vault's automations, checked every half minute, each run on this
+ * machine's agent through the agent (`agent.job`), which it requires. An automation a
  * Holi carries out gets that Holi from the Holis plugin (`holis.context`).
  *
  * It hears the agent's session list and turn ends (`ctx.hear`), which is how
@@ -37,7 +37,7 @@ export const automationsMain: MainPlugin = {
       store: jsonFileStore(join(ctx.userData, 'schedules.json'), parseSchedulesFile),
       sessions: {
         launch: async (args) =>
-          (await ctx.call('agent.launch', args)) as
+          (await ctx.call('agent.job', args)) as
             { ok: true; sessionId: string } | { ok: false; message: string },
         sessions: () => live,
         stop: async (id) => (await ctx.call('agent.stop', { id })) as Result,
