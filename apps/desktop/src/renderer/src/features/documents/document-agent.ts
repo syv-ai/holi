@@ -1,7 +1,7 @@
 /**
- * A document's agent runs: a background Claude Code session on Sonnet 5.5,
- * started through the agent plugin's `agent.launch` capability, with no
- * terminal and permission to touch only the files the run is about.
+ * A document's agent runs through the configured background provider via
+ * `agent.launch`. Claude Code pre-approves only the named file tools; Pi runs
+ * with the user's normal permissions, so the file instruction is not a boundary.
  *
  * Three kinds. **write**: the person pressed Space on an empty line and asked
  * for something; a marker line in the file says where. **rewrite**: a quick
@@ -15,11 +15,14 @@
  * path, so a run outlives its tab being switched away.
  */
 import { atom, useAtomValue, useSetAtom } from 'jotai'
-import { useCallback, useEffect } from 'react'
+import type { AgentProviderId } from '@holi/shared'
+import { useCallback, useEffect, useRef } from 'react'
 
 import { parentOf } from '@/lib/tree-paths'
 import { trpc } from '@/lib/trpc'
 import { useAgentService } from '@/state/agent-service'
+import type { AgentSessionRow } from '@/state/plugin-types'
+import { loadVaultSettingsAtom } from '@/state/settings'
 import { activeRemoteAtom } from '@/state/vaults'
 
 import { AGENT_MARKER } from './markdown'
@@ -38,6 +41,7 @@ export interface AgentRun {
   status: AgentRunStatus
   /** Set once the session was seen working, so its idle means done. */
   seenWorking: boolean
+  provider: AgentProviderId
   message?: string
 }
 
@@ -141,6 +145,9 @@ async function clearMarker(remote: string, path: string): Promise<void> {
  */
 export function useDocumentAgent(path: string) {
   const remote = useAtomValue(activeRemoteAtom)
+  const loadSettings = useSetAtom(loadVaultSettingsAtom)
+  const remoteRef = useRef(remote)
+  remoteRef.current = remote
   const runs = useAtomValue(runsAtom)
   const setRuns = useSetAtom(runsAtom)
   const service = useAgentService()
@@ -158,15 +165,27 @@ export function useDocumentAgent(path: string) {
     if (!run || !isRunLive(run) || run.sessionId === null) return
     const row = sessions.find((session) => session.id === run.sessionId)
     if (row === undefined) {
-      if (run.seenWorking) update({ status: 'done' })
+      if (run.seenWorking) {
+        update(
+          run.provider === 'pi'
+            ? { status: 'failed', message: 'The Pi session disappeared before it completed.' }
+            : { status: 'done' },
+        )
+      }
       return
     }
-    if (row.state === 'working') {
+    if (row.outcome === 'failed') {
+      update({ status: 'failed', message: row.error ?? 'Pi could not finish the run.' })
+    } else if (row.outcome === 'aborted') {
+      update({ status: 'stopped' })
+    } else if (run.provider === 'pi' && row.outcome === 'completed') {
+      update({ status: 'done' })
+    } else if (row.state === 'working') {
       if (run.status !== 'working' || !run.seenWorking)
         update({ status: 'working', seenWorking: true })
     } else if (row.state === 'needs-you') {
       if (run.status !== 'needs-you') update({ status: 'needs-you' })
-    } else if (run.seenWorking) {
+    } else if (run.seenWorking && run.provider !== 'pi') {
       update({ status: 'done' })
     }
     // `update` writes the same atom this reads; the run and rows are the deps.
@@ -189,18 +208,33 @@ export function useDocumentAgent(path: string) {
           : request
     setRuns((all) => ({
       ...all,
-      [path]: { kind, label, sessionId: null, status: 'starting', seenWorking: false },
+      [path]: {
+        kind,
+        label,
+        sessionId: null,
+        status: 'starting',
+        seenWorking: false,
+        provider: 'claude',
+      },
     }))
     const { prompt, allow } = promptFor(kind, path, request, passage)
     const name = path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/i, '')
     try {
+      const settings = await loadSettings()
+      if (settings === null) throw new Error('No vault is open.')
+      if (remoteRef.current !== remote) {
+        update({ status: 'stopped', message: 'The active vault changed before the agent started.' })
+        return
+      }
+      const provider = settings.agentProvider
+      update({ provider })
       const result = await capability<
         { ok: true; sessionId: string } | { ok: false; message: string }
       >(remote, 'agent.launch', {
         name: kind === 'artifact' ? `${name}: artifact` : `${name}: ${label}`,
         prompt,
-        model: AGENT_MODEL,
-        allow,
+        provider,
+        ...(provider === 'claude' ? { model: AGENT_MODEL, allow } : {}),
         system: SYSTEM,
       })
       if (result.ok) update({ sessionId: result.sessionId })
@@ -233,6 +267,4 @@ export function useDocumentAgent(path: string) {
   return { run, start, stop, dismiss, available: service !== null }
 }
 
-const EMPTY_SESSIONS = atom(
-  [] as readonly { id: string; state: 'needs-you' | 'working' | 'idle' }[],
-)
+const EMPTY_SESSIONS = atom<readonly AgentSessionRow[]>([])

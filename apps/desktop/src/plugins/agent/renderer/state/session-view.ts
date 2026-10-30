@@ -16,7 +16,7 @@ import {
 import { agentCap } from '../agent-cap'
 import { agentsViewAtom, viewTerminalsAtom } from './agents-view'
 import { newSessionProviderAtom, providerLabel } from './providers'
-import { agentGeometryAtom } from './sessions'
+import { agentGeometryAtom, agentHistoryAtom } from './sessions'
 import { respawnSessionAtom, type AgentResult } from './send'
 import { toast } from 'sonner'
 
@@ -111,8 +111,11 @@ export const startConversationViewAtom = atom(
  *  first, its conversation intact. */
 export const showSessionAtom = atom(
   null,
-  async (_get, set, args: { session: string; live: boolean }): Promise<AgentResult> => {
-    if (!args.live) {
+  async (get, set, args: { session: string; live: boolean }): Promise<AgentResult> => {
+    const ownPast = get(agentHistoryAtom).some(
+      (row) => row.id === args.session && /^p[0-9a-f]{12}$/.test(row.id),
+    )
+    if (!args.live && !ownPast) {
       const res = await set(respawnSessionAtom, args.session)
       if (!res.ok) return res
     }

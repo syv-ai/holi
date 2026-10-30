@@ -136,6 +136,18 @@ describe('agent terminals', () => {
     expect(sent).toContainEqual(['pty-data', { id, data: 'after' }])
   })
 
+  it('passes the final title to a session after removing its terminal', async () => {
+    const { terminals, spawns } = setup()
+    const onExit = vi.fn()
+    terminals.open({ ...on('1234abcd'), onExit })
+    spawns[0]!.pty.emit('\x1b]0;Pi plan\x07')
+    await vi.waitFor(() => expect(terminals.list()[0]?.title).toBe('Pi plan'))
+
+    spawns[0]!.pty.exit()
+    expect(terminals.list()).toEqual([])
+    expect(onExit).toHaveBeenCalledWith('Pi plan')
+  })
+
   it('drops a terminal whose client exits, and says so', () => {
     const { terminals, spawns, sent } = setup()
     const res = terminals.open(on('1234abcd'))

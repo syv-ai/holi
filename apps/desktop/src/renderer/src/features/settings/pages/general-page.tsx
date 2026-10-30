@@ -48,6 +48,11 @@ const AGENTS: readonly {
     description:
       "OpenAI's agent, signed in as on the command line. Its sessions run while Holi is open.",
   },
+  {
+    id: 'pi',
+    label: 'Pi',
+    description: "Pi's interactive coding agent, using your normal Pi configuration and sign-in.",
+  },
 ]
 
 /** Which agent a new session starts in, on this machine: a row per agent,
@@ -68,7 +73,7 @@ function AgentsCard() {
             key={agent.id}
             title={agent.label}
             description={agent.description}
-            mark={<AgentMark agent={agent.id} size="lg" />}
+            mark={<AgentMark agent={agent.id} size="lg" brandClaude />}
           >
             {agent.id === current ? (
               <Badge variant="success-light">Default</Badge>

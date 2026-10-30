@@ -48,4 +48,4 @@ export const newSessionProviderAtom = atom(
 
 /** An agent's name, as a person says it. */
 export const providerLabel = (id: AgentProviderId): string =>
-  id === 'codex' ? 'Codex' : 'Claude Code'
+  id === 'codex' ? 'Codex' : id === 'pi' ? 'Pi' : 'Claude Code'

@@ -57,14 +57,19 @@ export interface SessionSummary {
   /** Claude Code's name, else 'New session'. */
   name: string
   state: SessionState
+  /** Holi-managed run result. An idle run is not necessarily a successful one. */
+  outcome?: 'completed' | 'failed' | 'aborted'
+  /** A failed managed run's error, when known. */
+  error?: string
   /** Present only for 'needs-you', when Claude Code says why. */
   waitingFor?: string
   /** How much of its context window is used, 0 to 100, from its status line.
    *  Absent until Claude Code has said, and again after a `/clear`. */
   contextPercent?: number
-  /** The model it runs on, in Claude Code's words (`Opus 5.5`), from its
-   *  status line. Absent until Claude Code has said. */
+  /** The model it runs on, in the provider's words. */
   model?: string
+  /** Pi usage reported by its RPC API; missing fields remain absent. */
+  usage?: { input?: number; output?: number; total?: number; cost?: number }
   /** When it started, epoch ms, from the listing. */
   startedAt?: number
   /** Claude Code's conversation id (its transcript's name), once it has

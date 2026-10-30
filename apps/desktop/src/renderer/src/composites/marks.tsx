@@ -14,7 +14,7 @@
  */
 import type { ReactNode } from 'react'
 import { SiClaude } from '@icons-pack/react-simple-icons'
-import { Blocks, Plug, Puzzle, SquareTerminal } from 'lucide-react'
+import { Astroid, Blocks, Plug, Puzzle, SquareTerminal } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { FileType } from '@/components/ui/file-type'
 import type { IconGlyph } from '@/lib/icon-glyph'
@@ -53,12 +53,28 @@ function OpenAIMark({ className }: { className?: string }) {
   )
 }
 
-/** Each coding agent's glyph and colour (`agentProvider`): Claude's orange,
- *  OpenAI's mark in the text colour, as it is drawn on both grounds. An
- *  agent with no entry gets a terminal. */
+/** The coding agents' marks (`agentProvider`): Pi and Codex keep their own;
+ *  Claude and unknown agents use a terminal outside General Settings. */
 const AGENT_MARKS: Record<string, { glyph: IconGlyph; className?: string }> = {
-  claude: { glyph: SiClaude, className: 'text-orange-500 dark:text-orange-400' },
   codex: { glyph: OpenAIMark, className: 'text-foreground' },
+  pi: { glyph: PiMark },
+}
+
+const CLAUDE_SETTINGS_MARK = {
+  glyph: SiClaude,
+  className: 'text-orange-500 dark:text-orange-400',
+}
+
+/** Pi's 4x4 staircase mark, drawn in the current foreground colour. */
+function PiMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M0 0h6v6H0zm6 0h6v6H6zm6 0h6v6h-6zM0 6h6v6H0zm12 0h6v6h-6zM0 12h6v6H0zm6 0h6v6H6zm12 0h6v6h-6zM0 18h6v6H0zm18 0h6v6h-6z"
+      />
+    </svg>
+  )
 }
 
 /** The mark of the agent a session runs, at a row's or a tab's size. */
@@ -66,14 +82,18 @@ export function AgentMark({
   agent,
   size = 'sm',
   className,
+  brandClaude = false,
 }: {
   agent: string | undefined
   size?: 'sm' | 'lg'
   className?: string
+  /** Only the Claude Code choice in General Settings uses its brand mark. */
+  brandClaude?: boolean
 }) {
-  const mark: { glyph: IconGlyph; className?: string } = AGENT_MARKS[agent ?? 'claude'] ?? {
-    glyph: SquareTerminal,
-  }
+  const mark: { glyph: IconGlyph; className?: string } =
+    agent === 'claude' && brandClaude
+      ? CLAUDE_SETTINGS_MARK
+      : (AGENT_MARKS[agent ?? ''] ?? { glyph: SquareTerminal })
   const Glyph = mark.glyph
   return (
     <Glyph
@@ -84,7 +104,7 @@ export function AgentMark({
 }
 
 const PLUGIN_MARKS: Record<string, () => ReactNode> = {
-  agent: () => <SiClaude aria-hidden className="size-5 text-orange-500 dark:text-orange-400" />,
+  agent: () => <Astroid aria-hidden className="size-5" />,
   pdf: () => <FileType type="pdf" size="xs" />,
   google: () => <GoogleG className="size-5" />,
   apps: () => <Blocks aria-hidden className="size-5" />,

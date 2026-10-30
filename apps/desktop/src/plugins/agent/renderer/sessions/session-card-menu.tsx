@@ -43,7 +43,6 @@ import {
 import { Input } from '@/components/ui/input'
 import { ConfirmDialog } from '@/composites/confirm-dialog'
 import { openTabAtom } from '@/plugin-api'
-import { providersAtom } from '../state/providers'
 import {
   duplicateSessionAtom,
   openConversationTerminalAtom,
@@ -146,16 +145,17 @@ function useRowActions(
   const markUnread = useSetAtom(markSessionUnreadAtom)
   const openTab = useSetAtom(openTabAtom)
   const reviewTurn = useSetAtom(reviewSessionTurnAtom)
-  const providers = useAtomValue(providersAtom)
   const { item, state } = row
   const can = abilities.get(keyOwner(item.key))
   const jobId = item.jobId
-  const isLive = jobId !== undefined && live.some((s) => s.id === jobId)
-  // Restart and Duplicate are a background session's: an agent Holi runs
-  // itself has neither.
-  const background =
-    providers.kind !== 'ready' ||
-    providers.providers.find((p) => p.id === (item.agent ?? 'claude'))?.background !== false
+  const liveSession = live.find((s) => s.id === jobId)
+  const isLive = liveSession !== undefined
+  // Claude's supervised sessions have a terminal to attach and restart.
+  // A Pi RPC job has neither; Pi's separate native PTY session does.
+  const background = liveSession?.provider === 'claude'
+  const nativePi =
+    (liveSession?.provider ?? item.agent) === 'pi' && /^p[0-9a-f]{12}$/.test(jobId ?? '')
+  const piRpc = (liveSession?.provider ?? item.agent) === 'pi' && jobId?.length === 8
   const sessionId = item.sessionId ?? jobId
   const icon = (Glyph: typeof PinIcon) => <Glyph aria-hidden="true" />
 
@@ -176,17 +176,24 @@ function useRowActions(
             },
           },
         ]
-  // Claude Code's own TUI on it: a copy of the conversation by its id, or a
-  // live background run itself.
+  // A Pi PTY has its own terminal; reopening a stopped one uses Holi's id.
+  // Claude's conversation id instead opens a separate Claude terminal.
   const conversationId = item.sessionId
-  if (conversationId !== undefined) {
+  if (nativePi && jobId !== undefined) {
+    place.push({
+      kind: 'item',
+      label: 'Open in terminal',
+      icon: icon(SquareTerminalIcon),
+      run: () => void attach(jobId),
+    })
+  } else if (!piRpc && conversationId !== undefined) {
     place.push({
       kind: 'item',
       label: 'Open in terminal',
       icon: icon(SquareTerminalIcon),
       run: () => void openFork(conversationId),
     })
-  } else if (isLive) {
+  } else if (isLive && jobId !== undefined && !piRpc) {
     place.push({
       kind: 'item',
       label: 'Open in terminal',
@@ -260,22 +267,22 @@ function useRowActions(
         }),
     })
   }
-  if (isLive) {
+  if (isLive && jobId !== undefined) {
     if (background) {
-      running.push(
-        {
-          kind: 'item',
-          label: 'Restart',
-          icon: icon(RotateCwIcon),
-          run: () => void respawn(jobId),
-        },
-        {
-          kind: 'item',
-          label: 'Duplicate',
-          icon: icon(CopyPlusIcon),
-          run: () => void duplicate(jobId),
-        },
-      )
+      running.push({
+        kind: 'item',
+        label: 'Restart',
+        icon: icon(RotateCwIcon),
+        run: () => void respawn(jobId),
+      })
+    }
+    if (background || nativePi) {
+      running.push({
+        kind: 'item',
+        label: 'Duplicate',
+        icon: icon(CopyPlusIcon),
+        run: () => void duplicate(jobId),
+      })
     }
     running.push({
       kind: 'item',

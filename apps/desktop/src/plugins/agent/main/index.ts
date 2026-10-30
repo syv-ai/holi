@@ -13,13 +13,15 @@
  * plain Node in the tests.
  */
 import { join } from 'node:path'
-import { jsonFileStore, type MainPlugin } from '../../../main/plugin-api'
+import { jsonFileStore, resolveBin, type MainPlugin } from '../../../main/plugin-api'
 import { AGENT_INFO } from '../info'
 import { claudeProvider } from './claude'
 import { claudeSeed } from './claude/seed'
 import { codexProvider } from './codex'
+import { piProvider } from './pi'
+import { createPiBackground } from './pi/background'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
-import { createPtySessions, PTY_SESSION_ID } from './host/pty-sessions'
+import { createPtySessions, parsePastFile, PTY_SESSION_ID } from './host/pty-sessions'
 import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
 import { openTurnLog } from './host/turn-log'
@@ -44,7 +46,7 @@ export const agentMain: MainPlugin = {
       holiBin: () => join(ctx.binDir(), 'holi'),
       systemPrefersDark: () => nativeTheme.shouldUseDarkColors,
     })
-    const providers = [claude, codexProvider()]
+    const providers = [claude, codexProvider(), piProvider()]
     const terminals = createAgentTerminals({ emit: ctx.emit })
     const sessionLog = createSessionLog(ctx.log)
     const liveRemote = (): string | null => ctx.active()?.remote ?? null
@@ -53,9 +55,15 @@ export const agentMain: MainPlugin = {
     // background sessions Claude Code's supervisor runs, then the ones Holi
     // runs itself.
     let background: SessionSummary[] = []
+    let backgroundPast: SessionSummary[] = []
+    let piSessions: SessionSummary[] = []
     let own: SessionSummary[] = []
+    let ownPast: SessionSummary[] = []
+    const pushHistory = (): void => {
+      ctx.emit(ctx.remote, 'history', [...backgroundPast, ...ownPast])
+    }
     const pushSessions = (): void => {
-      const all = [...background, ...own]
+      const all = [...background, ...piSessions, ...own]
       ctx.emit(ctx.remote, 'sessions', all)
       ctx.publish('sessions', all)
       sessionLog.sessions(all)
@@ -63,6 +71,11 @@ export const agentMain: MainPlugin = {
 
     const started = createAgentSessions({
       emit: (remote, name, payload) => {
+        if (name === 'history' && remote === ctx.remote) {
+          backgroundPast = payload as SessionSummary[]
+          pushHistory()
+          return
+        }
         if (name !== 'sessions') return ctx.emit(remote, name, payload)
         background = payload as SessionSummary[]
         pushSessions()
@@ -81,8 +94,25 @@ export const agentMain: MainPlugin = {
       turnLogFor: openTurnLog,
       snapshot: worktreeEnd,
     })
+    const piBackground = createPiBackground({
+      bin: () => resolveBin('pi'),
+      binDir: ctx.binDir,
+      bracket: (id, edge) => started.bracket(id, edge),
+      changed: () => {
+        piSessions = piBackground.sessions()
+        pushSessions()
+      },
+    })
+    piBackground.setVault(ctx.remote, ctx.root)
+    const ptyHistory = jsonFileStore(join(ctx.userData, 'agent-pty-history.json'), parsePastFile)
     const ptySessions = createPtySessions({
       vault: { remote: ctx.remote, root: ctx.root },
+      past: {
+        read: async () => (await ptyHistory.read())[ctx.remote] ?? [],
+        write: async (list) => {
+          await ptyHistory.update((all) => ({ ...all, [ctx.remote]: list }))
+        },
+      },
       providers: providers.filter((p) => !hasBackground(p)),
       terminals,
       // Its turns pause sync and are recorded like a background session's.
@@ -92,6 +122,14 @@ export const agentMain: MainPlugin = {
         own = list
         pushSessions()
       },
+      onPast: (list) => {
+        ownPast = list
+        void pushHistory()
+      },
+    })
+    void ptySessions.past().then((list) => {
+      ownPast = list
+      pushHistory()
     })
     // What the agent and Holi want the person to see: an entry in the
     // vault's inbox, and a banner while Holi is out of sight.
@@ -109,6 +147,7 @@ export const agentMain: MainPlugin = {
         terminals,
         liveRemote,
         commitNow: () => ctx.commitNow(),
+        pi: piBackground,
       }),
       ...inboxCapabilities({ inbox, liveRemote }),
     })
@@ -159,9 +198,11 @@ export const agentMain: MainPlugin = {
     // is working or waiting on you: that turn is cut short. Idle sessions
     // stop without a question; their conversations stay in the agents list.
     ctx.guardQuit(() => {
-      const busy = [...started.sessions(), ...ptySessions.sessions()].filter(
-        (s) => s.state !== 'idle',
-      )
+      const busy = [
+        ...started.sessions(),
+        ...piBackground.sessions(),
+        ...ptySessions.sessions(),
+      ].filter((s) => s.state !== 'idle')
       if (busy.length === 0) return null
       const one = busy.length === 1
       return {
@@ -202,6 +243,7 @@ export const agentMain: MainPlugin = {
       unmention()
       unwatchNeedsYou()
       await ptySessions.leave().catch((err) => console.error('[agent] pty sessions:', err))
+      await piBackground.leave().catch((err) => console.error('[agent] Pi sessions:', err))
       await started.leave().catch((err) => console.error('[agent] leave failed:', err))
       await terminals.closeAll().catch((err) => console.error('[agent] terminals:', err))
     }

@@ -110,7 +110,9 @@ export function useTabLook(): (key: string) => HeaderTab {
           return {
             id: key,
             title: look?.title ?? 'Session',
-            mark: <SessionMark look={look} />,
+            ...(look?.icon === undefined
+              ? { mark: <SessionMark look={look} /> }
+              : { icon: look.icon }),
             ...(look === undefined || look.state === 'idle' ? {} : { status: look.state }),
           }
         }

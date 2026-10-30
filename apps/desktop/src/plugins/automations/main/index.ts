@@ -10,7 +10,7 @@
  * an `on:`.
  */
 import { join } from 'node:path'
-import { jsonFileStore, type MainPlugin } from '../../../main/plugin-api'
+import { jsonFileStore, readVaultSettings, type MainPlugin } from '../../../main/plugin-api'
 import { AUTOMATIONS_INFO } from '../info'
 import { automationsSeed } from './seed'
 import { scheduleCapabilities, SCHEDULE_NAMESPACES } from './capabilities'
@@ -29,16 +29,22 @@ export const automationsMain: MainPlugin = {
   async activate(ctx) {
     let live: SessionSummary[] = []
     ctx.hear('agent', 'sessions', (list) => {
-      if (Array.isArray(list)) live = list as SessionSummary[]
+      if (!Array.isArray(list)) return
+      live = list as SessionSummary[]
+      scheduler.sessionsChanged(live)
     })
     // Which automations this machine runs, and what they did: outside the
     // vault, where the agent cannot approve its own (`scheduler.ts`).
     const scheduler = createScheduler({
       store: jsonFileStore(join(ctx.userData, 'schedules.json'), parseSchedulesFile),
+      provider: async (root) => (await readVaultSettings(root)).agentProvider,
       sessions: {
-        launch: async (args) =>
-          (await ctx.call('agent.launch', args)) as
-            { ok: true; sessionId: string } | { ok: false; message: string },
+        launch: async ({ provider, allow, ...args }) =>
+          (await ctx.call('agent.launch', {
+            ...args,
+            provider,
+            ...(provider === 'claude' && allow !== undefined ? { allow } : {}),
+          })) as { ok: true; sessionId: string } | { ok: false; message: string },
         sessions: () => live,
         stop: async (id) => (await ctx.call('agent.stop', { id })) as Result,
         watched: async (id) => (await ctx.call('agent.watched', { id })) === true,

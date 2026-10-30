@@ -19,6 +19,17 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { Inbox, SquarePen, TerminalSquare } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { IconStackEmpty } from '@/components/ui/icon-stack-empty'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import {
+  Frame,
+  FrameDescription,
+  FrameFooter,
+  FrameHeader,
+  FramePanel,
+  FrameTitle,
+} from '@/components/ui/frame'
+import { Input } from '@/components/ui/input'
 import { activeRemoteAtom, agentsSlotsAtom, useNow } from '@/plugin-api'
 import { agentCap } from '../agent-cap'
 import { SessionTerminal } from '../session-terminal'
@@ -30,7 +41,7 @@ import { newSessionAtom, sessionRowsAtom } from '../state/session-list'
 import { SessionCard } from '../sessions/session-card'
 import { SessionSearch } from '../sessions/session-filters'
 import { SessionHistory } from '../sessions/session-list'
-import { agentGeometryAtom, agentSessionsAtom } from '../state/sessions'
+import { agentGeometryAtom, agentSessionsAtom, type AgentSession } from '../state/sessions'
 import { InboxEntries } from './inbox-entries'
 import { Skeleton } from '@/components/ui/skeleton'
 
@@ -142,6 +153,89 @@ function HistoryView(): React.JSX.Element {
         </div>
       </div>
     </>
+  )
+}
+
+/** A managed Pi RPC process is not the person's native Pi TUI. Show only
+ * status Pi reported, with follow-ups sent to this specific process. */
+function PiRunView({ session }: { session: AgentSession }): React.JSX.Element {
+  const remote = useAtomValue(activeRemoteAtom)
+  const [text, setText] = useState('')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const send = async () => {
+    if (remote === null || sending || text.trim() === '') return
+    setSending(true)
+    setError(null)
+    try {
+      await agentCap.message(remote, { session: session.id, text: text.trim() })
+      setText('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSending(false)
+    }
+  }
+  const usage = session.usage
+  const canMessage = session.outcome !== 'failed' && session.outcome !== 'aborted'
+  return (
+    <div className="flex min-h-0 flex-1 overflow-y-auto p-6">
+      <Frame className="mx-auto w-full max-w-2xl self-start">
+        <FrameHeader>
+          <FrameTitle>{session.name}</FrameTitle>
+          <FrameDescription role="status">
+            Pi background run ·{' '}
+            {session.state === 'working' ? 'Working' : (session.outcome ?? 'Idle')}
+          </FrameDescription>
+        </FrameHeader>
+        <FramePanel>
+          <div className="flex flex-col gap-3 text-sm">
+            {session.model && <p>Model: {session.model}</p>}
+            {usage?.total !== undefined && <p>Tokens: {usage.total.toLocaleString()}</p>}
+            {usage?.cost !== undefined && <p>Cost: ${usage.cost.toFixed(4)}</p>}
+            {session.contextPercent !== undefined && <p>Context: {session.contextPercent}%</p>}
+            {session.outcome === 'failed' && (
+              <Alert variant="destructive">
+                <AlertTitle>Pi run failed</AlertTitle>
+                <AlertDescription>
+                  {session.error ?? 'Pi could not finish this run.'}
+                </AlertDescription>
+              </Alert>
+            )}
+            {session.outcome === 'aborted' && <p>Run stopped.</p>}
+            {session.state === 'working' && !session.model && <Skeleton className="h-4 w-1/2" />}
+          </div>
+        </FramePanel>
+        {canMessage && (
+          <FrameFooter>
+            <div className="flex w-full gap-2">
+              <Input
+                aria-label="Follow up with Pi"
+                placeholder="Follow up with Pi"
+                value={text}
+                onChange={(event) => setText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void send()
+                }}
+              />
+              <Button
+                type="button"
+                disabled={sending || text.trim() === ''}
+                onClick={() => void send()}
+              >
+                Send
+              </Button>
+            </div>
+          </FrameFooter>
+        )}
+        {error && (
+          <Alert variant="destructive">
+            <AlertTitle>Could not send</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+      </Frame>
+    </div>
   )
 }
 
@@ -265,7 +359,11 @@ export function AgentsView({
     // `main` tints it as the vault's Transparency asks (index.css, Glass).
     <div className="flex min-h-0 flex-1 flex-col" data-agents-main={view.kind}>
       {view.kind === 'session' && !missing ? (
-        <SessionView key={view.id} id={view.id} />
+        sessions.find((s) => s.id === view.id)?.provider === 'pi' && view.id.length === 8 ? (
+          <PiRunView key={view.id} session={sessions.find((s) => s.id === view.id)!} />
+        ) : (
+          <SessionView key={view.id} id={view.id} />
+        )
       ) : view.kind === 'slot' && slot?.main !== undefined ? (
         <slot.main key={view.id} id={view.id} />
       ) : view.kind === 'inbox' ? (

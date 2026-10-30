@@ -15,6 +15,7 @@
  * user looks at them", MonoCode's `sessionDone.ts`).
  */
 import { atom } from 'jotai'
+import { HistoryIcon, InboxIcon } from 'lucide-react'
 import { atomWithStorage } from 'jotai/utils'
 import {
   agentsSelectionAtom,
@@ -45,8 +46,9 @@ export interface SessionRow {
 // ------------------------------------------------------------------ pure
 
 /** `claude-opus-5-5` or `opus` as a person says it: `Opus 5.5`, `Opus`. */
-export function modelLabel(model: string | undefined): string {
-  if (model === undefined || model.trim() === '') return 'Claude'
+export function modelLabel(model: string | undefined, agent?: AgentsSessionItem['agent']): string {
+  if (model === undefined || model.trim() === '')
+    return agent === 'pi' ? 'Pi' : agent === 'codex' ? 'Codex' : 'Claude'
   const m = /^(?:claude-)?(opus|sonnet|haiku)(?:-(\d+)(?:-(\d{1,2}))?)?(?:-\d{8})?(\[1m\])?$/i.exec(
     model.trim(),
   )
@@ -238,7 +240,7 @@ export function rowMatches(row: SessionRow, query: string, filter: SessionFilter
   }
   const q = query.trim().toLowerCase()
   if (q === '') return true
-  return [item.title, item.by?.name, item.location, modelLabel(item.model)].some(
+  return [item.title, item.by?.name, item.location, modelLabel(item.model, item.agent)].some(
     (text) => text !== undefined && text.toLowerCase().includes(q),
   )
 }
@@ -392,8 +394,8 @@ export const sessionTabLookAtom = atom((get) => {
   const rows = get(sessionRowsAtom)
   return (selection: { owner: string; id: string }): AgentsTabLook | undefined => {
     const view = agentsViewOf(selection)
-    if (view.kind === 'inbox') return { title: 'Inbox', state: 'idle' }
-    if (view.kind === 'history') return { title: 'History', state: 'idle' }
+    if (view.kind === 'inbox') return { title: 'Inbox', state: 'idle', icon: InboxIcon }
+    if (view.kind === 'history') return { title: 'History', state: 'idle', icon: HistoryIcon }
     const jobId = view.kind === 'session' ? view.id : null
     const row = rows.find((r) => isCurrent(r.item, selection, jobId))
     if (row === undefined) return undefined

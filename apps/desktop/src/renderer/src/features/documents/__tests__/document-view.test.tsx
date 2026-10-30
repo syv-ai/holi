@@ -4,7 +4,7 @@
  * empty line asks Sonnet to write there: the marker is saved, the run locks
  * the page until its session is done, and Stop ends it.
  */
-import { emptyVaultSnapshot, normalizeText } from '@holi/shared'
+import { emptyVaultSnapshot, normalizeText, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import userEvent from '@testing-library/user-event'
 import { atom, createStore, Provider } from 'jotai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -13,6 +13,7 @@ import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import * as agentService from '@/state/agent-service'
 import { pendingHeadingAtom } from '@/state/open-document'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { vaultSettingsAtom } from '@/state/settings'
 
 import { DocumentView } from '../document-view'
 
@@ -66,6 +67,13 @@ vi.mock('@/lib/trpc', () => ({
         query: () => Promise.resolve([{ login: 'ada', name: 'Ada', avatarUrl: null }]),
       },
     },
+    settings: {
+      read: {
+        query: vi.fn(() =>
+          Promise.resolve({ ...VAULT_SETTING_DEFAULTS, agentProvider: 'claude', warnings: [] }),
+        ),
+      },
+    },
     cap: { run: { mutate: (input: unknown) => cap(input) } },
   },
 }))
@@ -73,7 +81,13 @@ vi.mock('@/lib/trpc', () => ({
 vi.mock('@/state/agent-service', async () => {
   const { atom: makeAtom } = await import('jotai')
   const sessions = makeAtom<
-    { id: string; name: string; state: 'needs-you' | 'working' | 'idle' }[]
+    {
+      id: string
+      name: string
+      state: 'needs-you' | 'working' | 'idle'
+      outcome?: 'completed' | 'failed' | 'aborted'
+      error?: string
+    }[]
   >([])
   return {
     __sessions: sessions,
@@ -85,7 +99,15 @@ vi.mock('@/state/agent-service', async () => {
 const sessions = (
   agentService as unknown as {
     __sessions: ReturnType<
-      typeof atom<{ id: string; name: string; state: 'needs-you' | 'working' | 'idle' }[]>
+      typeof atom<
+        {
+          id: string
+          name: string
+          state: 'needs-you' | 'working' | 'idle'
+          outcome?: 'completed' | 'failed' | 'aborted'
+          error?: string
+        }[]
+      >
     >
   }
 ).__sessions
@@ -102,6 +124,10 @@ beforeEach(() => {
   )
   store = createStore()
   store.set(activeRemoteAtom, 'syv/vault')
+  store.set(vaultSettingsAtom, {
+    remote: 'syv/vault',
+    settings: { ...VAULT_SETTING_DEFAULTS, agentProvider: 'claude', warnings: [] },
+  })
   store.set(snapshotAtom, {
     ...emptyVaultSnapshot(),
     docs: [{ path: PATH, kind: 'note', updatedAt: '2026-10-23T10:00:00Z' }],
@@ -161,9 +187,10 @@ test('Space on an empty line asks Sonnet, locks the page, and unlocks when done'
     ),
   )
   const launch = JSON.parse(cap.mock.calls[0]![0].paramsJson)
+  expect(launch.provider).toBe('claude')
   expect(launch.model).toBe('claude-sonnet-5-5')
-  expect(launch.prompt).toContain('Write an introduction')
   expect(launch.allow).toContain('Edit(./notes/Plan.md)')
+  expect(launch.prompt).toContain('Write an introduction')
   // The marker was saved where the person asked, under the kept frontmatter.
   expect(files.get(PATH)).toBe('---\ntitle: Plan\n---\n\n<!-- holi:agent -->\n')
 
@@ -175,6 +202,104 @@ test('Space on an empty line asks Sonnet, locks the page, and unlocks when done'
 
   act(() => store.set(sessions, [{ id: 'abc12345', name: '', state: 'idle' }]))
   await waitFor(() => expect(box).toHaveAttribute('contenteditable', 'true'))
+})
+
+test('Pi uses the local default without an editor warning or Claude-only launch options', async () => {
+  const user = userEvent.setup()
+  store.set(vaultSettingsAtom, {
+    remote: 'syv/vault',
+    settings: { ...VAULT_SETTING_DEFAULTS, agentProvider: 'pi', warnings: [] },
+  })
+  open('')
+  const box = await editorBox()
+  expect(screen.queryByText('Pi document runs are not sandboxed')).not.toBeInTheDocument()
+  box.focus()
+  fireEvent.keyDown(box, { key: ' ', code: 'Space' })
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Write it{Enter}',
+  )
+  await waitFor(() => expect(cap).toHaveBeenCalled())
+  const launch = JSON.parse(cap.mock.calls[0]![0].paramsJson)
+  expect(launch.provider).toBe('pi')
+  expect(launch).not.toHaveProperty('model')
+  expect(launch).not.toHaveProperty('allow')
+})
+
+test('Pi waits for resolved vault settings before launching', async () => {
+  const user = userEvent.setup()
+  store.set(vaultSettingsAtom, null)
+  const { trpc } = await import('@/lib/trpc')
+  vi.mocked(trpc.settings.read.query).mockResolvedValueOnce({
+    ...VAULT_SETTING_DEFAULTS,
+    agentProvider: 'pi',
+    warnings: [],
+  })
+  open('')
+  const box = await editorBox()
+  box.focus()
+  fireEvent.keyDown(box, { key: ' ', code: 'Space' })
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Write it{Enter}',
+  )
+  await waitFor(() => expect(cap).toHaveBeenCalled())
+  expect(JSON.parse(cap.mock.calls[0]![0].paramsJson).provider).toBe('pi')
+})
+
+test('Pi completes when its result arrives before the working snapshot', async () => {
+  const user = userEvent.setup()
+  store.set(vaultSettingsAtom, {
+    remote: 'syv/vault',
+    settings: { ...VAULT_SETTING_DEFAULTS, agentProvider: 'pi', warnings: [] },
+  })
+  open('')
+  const box = await editorBox()
+  box.focus()
+  fireEvent.keyDown(box, { key: ' ', code: 'Space' })
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Write it{Enter}',
+  )
+  await waitFor(() => expect(cap).toHaveBeenCalled())
+  act(() =>
+    store.set(sessions, [{ id: 'abc12345', name: '', state: 'idle', outcome: 'completed' }]),
+  )
+  await waitFor(() => expect(box).toHaveAttribute('contenteditable', 'true'))
+})
+
+test('a disappeared Pi session is a failure, not a completed run', async () => {
+  const user = userEvent.setup()
+  store.set(vaultSettingsAtom, {
+    remote: 'syv/vault',
+    settings: { ...VAULT_SETTING_DEFAULTS, agentProvider: 'pi', warnings: [] },
+  })
+  open('')
+  const box = await editorBox()
+  box.focus()
+  fireEvent.keyDown(box, { key: ' ', code: 'Space' })
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Write it{Enter}',
+  )
+  await waitFor(() => expect(cap).toHaveBeenCalled())
+  act(() => store.set(sessions, [{ id: 'abc12345', name: '', state: 'working' }]))
+  act(() => store.set(sessions, []))
+  expect(await screen.findByText('The Pi session disappeared before it completed.')).toBeVisible()
+})
+
+test('a failed document run keeps its failure status', async () => {
+  cap.mockImplementationOnce(() => Promise.resolve({ ok: false, message: 'Pi unavailable' }))
+  const user = userEvent.setup()
+  open('')
+  const box = await editorBox()
+  box.focus()
+  fireEvent.keyDown(box, { key: ' ', code: 'Space' })
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Write it{Enter}',
+  )
+  expect(await screen.findByText('Pi unavailable')).toBeVisible()
 })
 
 test('Stop ends the run', async () => {
