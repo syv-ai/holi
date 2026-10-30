@@ -14,7 +14,7 @@
  */
 import type { ReactNode } from 'react'
 import { SiClaude } from '@icons-pack/react-simple-icons'
-import { Blocks, Plug, Puzzle, SquareTerminal } from 'lucide-react'
+import { Blocks, Pi, Plug, Puzzle, SquareTerminal } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { FileType } from '@/components/ui/file-type'
 import type { IconGlyph } from '@/lib/icon-glyph'
@@ -54,11 +54,12 @@ function OpenAIMark({ className }: { className?: string }) {
 }
 
 /** Each coding agent's glyph and colour (`agentProvider`): Claude's orange,
- *  OpenAI's mark in the text colour, as it is drawn on both grounds. An
- *  agent with no entry gets a terminal. */
+ *  OpenAI's mark and Pi's π in the text colour, as each is drawn on both
+ *  grounds. An agent with no entry gets a terminal. */
 const AGENT_MARKS: Record<string, { glyph: IconGlyph; className?: string }> = {
   claude: { glyph: SiClaude, className: 'text-orange-500 dark:text-orange-400' },
   codex: { glyph: OpenAIMark, className: 'text-foreground' },
+  pi: { glyph: Pi, className: 'text-foreground' },
 }
 
 /** The mark of the agent a session runs, at a row's or a tab's size. */

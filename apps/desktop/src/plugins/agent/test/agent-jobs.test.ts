@@ -346,7 +346,7 @@ describe('the Codex job command', () => {
 
   it('carries no Holi commands on its PATH', () => {
     const codex = codexProvider({ resolveBin: () => '/usr/local/bin/codex' }) as JobsProvider
-    const cmd = codex.capabilities.jobs.command({ cwd: '/s', prompt: 'p' })
+    const cmd = codex.capabilities.jobs.command({ cwd: '/s', prompt: 'p', state: '/s.agent' })
     expect(cmd?.env.PATH?.split(':')).not.toContain('/holi/bin')
     expect(cmd?.env.HOLI_AGENT_SESSION).toBeUndefined()
   })

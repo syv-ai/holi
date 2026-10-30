@@ -151,11 +151,14 @@ function useRowActions(
   const can = abilities.get(keyOwner(item.key))
   const jobId = item.jobId
   const isLive = jobId !== undefined && live.some((s) => s.id === jobId)
-  // Restart and Duplicate are a background session's: an agent Holi runs
-  // itself has neither.
-  const background =
-    providers.kind !== 'ready' ||
-    providers.providers.find((p) => p.id === (item.agent ?? 'claude'))?.background !== false
+  // Restart is a background session's: an agent Holi runs itself has none,
+  // and Duplicate only where its agent can copy a live conversation (Pi).
+  const agent =
+    providers.kind === 'ready'
+      ? providers.providers.find((p) => p.id === (item.agent ?? 'claude'))
+      : undefined
+  const background = providers.kind !== 'ready' || agent?.background !== false
+  const copies = background || agent?.copies === true
   const sessionId = item.sessionId ?? jobId
   const icon = (Glyph: typeof PinIcon) => <Glyph aria-hidden="true" />
 
@@ -262,20 +265,20 @@ function useRowActions(
   }
   if (isLive) {
     if (background) {
-      running.push(
-        {
-          kind: 'item',
-          label: 'Restart',
-          icon: icon(RotateCwIcon),
-          run: () => void respawn(jobId),
-        },
-        {
-          kind: 'item',
-          label: 'Duplicate',
-          icon: icon(CopyPlusIcon),
-          run: () => void duplicate(jobId),
-        },
-      )
+      running.push({
+        kind: 'item',
+        label: 'Restart',
+        icon: icon(RotateCwIcon),
+        run: () => void respawn(jobId),
+      })
+    }
+    if (copies) {
+      running.push({
+        kind: 'item',
+        label: 'Duplicate',
+        icon: icon(CopyPlusIcon),
+        run: () => void duplicate(jobId),
+      })
     }
     running.push({
       kind: 'item',

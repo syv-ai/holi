@@ -136,9 +136,9 @@ export const EDITOR_FONTS: readonly EditorFont[] = ['mono', 'sans', 'serif']
 
 /** Which coding agent a new session runs (docs/features/agent-sessions.md,
  *  Providers). */
-export type AgentProviderId = 'claude' | 'codex'
+export type AgentProviderId = 'claude' | 'codex' | 'pi'
 
-export const AGENT_PROVIDER_IDS: readonly AgentProviderId[] = ['claude', 'codex']
+export const AGENT_PROVIDER_IDS: readonly AgentProviderId[] = ['claude', 'codex', 'pi']
 
 /**
  * What each name means, and the only place it means anything.
@@ -709,12 +709,13 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     key: 'agentProvider',
     label: 'New sessions run',
     explanation:
-      'The coding agent a new session starts in. Holis and automations always run Claude Code.',
+      'The coding agent a new session starts in, and that Holis, automations and Create vault app run on.',
     type: {
       kind: 'enum',
       options: [
         { value: 'claude', label: 'Claude Code' },
         { value: 'codex', label: 'Codex' },
+        { value: 'pi', label: 'Pi' },
       ],
     },
     default: 'claude' as AgentProviderId,

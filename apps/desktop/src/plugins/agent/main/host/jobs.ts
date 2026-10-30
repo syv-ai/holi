@@ -1,9 +1,10 @@
 /**
  * Jobs: a prompt run with nobody watching, for a provider with no supervisor
- * of its own but a way to run unattended (`jobs`, Codex's `codex exec`).
- * docs/features/agent-sessions.md, Jobs.
+ * of its own but a way to run unattended (`jobs`: Codex's `codex exec`,
+ * Pi's RPC mode). docs/features/agent-sessions.md, Jobs.
  *
- * **Two places a job runs**, each sandboxed by the agent's own rules:
+ * **Two places a job runs**, each sandboxed by the agent's own rules or, for
+ * an agent with none (Pi), by the process's (`../pi/sandbox.ts`):
  *
  * - **A scratch folder** (`scope`, a document's agent): Holi makes one of its
  *   own (`<userData>/agent-jobs/<id>/`), copies in the files the job may
@@ -26,6 +27,12 @@
  *   is read-only. Its turns go through the vault's turn bracket, so sync
  *   pauses and each turn is recorded under the job's id, like a session's.
  *   Nothing is copied: the sandbox's writable folders are what bounds it.
+ *
+ * Either way the agent gets a folder of its own for its state
+ * (`<id>.agent/`, its saved session and a temporary folder), kept for a vault
+ * job's follow-ups and deleted with the job. An agent driven over its input
+ * (`input`) is sent its turn there, and its input is closed once the run
+ * settles, which ends it; a Stop asks it to abort first.
  *
  * Either way, what a turn's process left running in its group is killed when
  * it exits. Beside the scratch folders is `<id>.pid`, the running turn's pid
@@ -93,16 +100,22 @@ type JobSpec = JobSpecBase & ({ scope: JobScope } | { allow: readonly string[] }
 
 export type JobResult = { ok: true; sessionId: string } | { ok: false; message: string }
 
-/** How a job's process starts. Tests run small scripts through it. */
+/** How a job's process starts: `input` when Holi writes to it. Tests run
+ *  small scripts through it. */
 type SpawnJob = (
   bin: string,
   args: string[],
-  opts: { cwd: string; env: Record<string, string> },
+  opts: { cwd: string; env: Record<string, string>; input?: boolean },
 ) => ChildProcess
 
 /** Its own group, so a stop reaches what it started too. */
-const defaultSpawnJob: SpawnJob = (bin, args, { cwd, env }) =>
-  spawn(bin, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+const defaultSpawnJob: SpawnJob = (bin, args, { cwd, env, input = false }) =>
+  spawn(bin, args, {
+    cwd,
+    env,
+    detached: true,
+    stdio: [input ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+  })
 
 export interface JobsDeps {
   vault: VaultRef
@@ -158,6 +171,8 @@ interface Job {
   model?: string
   /** The scratch folder, or null for a job in the vault. */
   dir: string | null
+  /** The agent's own state (`JobRun.state`): gone with the job. */
+  state: string
   place: VaultPlace | null
   child: ChildProcess | null
   /** A turn is under way: running, or its writes being copied back. */
@@ -217,6 +232,7 @@ const HOLI_RUN_RULES = new Set(
  */
 export function vaultSandbox(
   allow: readonly string[],
+  agent = 'the agent',
 ): { ok: true; write: string[] } | { ok: false; message: string } {
   const write: string[] = []
   for (const raw of allow) {
@@ -235,7 +251,7 @@ export function vaultSandbox(
     if (!WRITE_TOOLS.has(tool)) {
       return {
         ok: false,
-        message: `\`${rule}\` is not a folder Codex's sandbox can allow, so this run did not start. Its sandbox allows reads and writes to named folders only.`,
+        message: `\`${rule}\` is not a folder ${agent}'s sandbox can allow, so this run did not start. Its sandbox allows reads and writes to named folders only.`,
       }
     }
     const path = (arg ?? '').replace(/^\.\//, '')
@@ -250,7 +266,7 @@ export function vaultSandbox(
     if (rel === null || rel.split('/').some((segment) => segment.startsWith('.'))) {
       return {
         ok: false,
-        message: `\`${rule}\` does not name a folder Codex's sandbox can make writable, so this run did not start. Name one, as \`Edit(tilbud/**)\`.`,
+        message: `\`${rule}\` does not name a folder ${agent}'s sandbox can make writable, so this run did not start. Name one, as \`Edit(tilbud/**)\`.`,
       }
     }
     if (!write.includes(rel)) write.push(rel)
@@ -382,6 +398,19 @@ export function createJobs(deps: JobsDeps): Jobs {
     job.stopped ??= why
     job.queue = []
     if (job.child === null) return
+    // An agent driven over its input is asked first, and given the grace to
+    // end its run and exit before it is signalled.
+    const abort = job.provider.capabilities.jobs.input?.abort
+    const stdin = job.child.stdin
+    if (abort !== undefined && stdin !== null && stdin.writable) {
+      stdin.write(`${abort}\n`)
+      stdin.end()
+      const exited = await Promise.race([
+        job.exited.then(() => true),
+        new Promise<boolean>((r) => setTimeout(() => r(false), killGraceMs)),
+      ])
+      if (exited || job.child === null) return
+    }
     signal(job, 'SIGTERM')
     const timer = setTimeout(() => signal(job, 'SIGKILL'), killGraceMs)
     await Promise.race([job.exited, new Promise((r) => setTimeout(r, killGraceMs + 5_000))])
@@ -464,6 +493,9 @@ export function createJobs(deps: JobsDeps): Jobs {
 
   const pidFile = (id: string): string => join(deps.scratchRoot, `${id}.pid`)
 
+  const dropState = (job: Job): void =>
+    void rm(job.state, { recursive: true, force: true }).catch(() => undefined)
+
   /** The job's turn ended: its outcome stands until a follow-up starts
    *  another, and it leaves the list a while after the last. */
   function finish(job: Job, outcome: 'done' | 'failed', message?: string): void {
@@ -472,12 +504,17 @@ export function createJobs(deps: JobsDeps): Jobs {
     else job.message = message
     job.child = null
     job.busy = false
-    if (job.dir !== null) void rm(job.dir, { recursive: true, force: true }).catch(() => undefined)
+    // A scratch job takes no follow-up, so its agent's state goes too.
+    if (job.dir !== null) {
+      void rm(job.dir, { recursive: true, force: true }).catch(() => undefined)
+      dropState(job)
+    }
     void rm(pidFile(job.id), { force: true }).catch(() => undefined)
     clearTimeout(job.dropTimer)
     job.dropTimer = setTimeout(() => {
       if (jobs.get(job.id) === job) {
         jobs.delete(job.id)
+        dropState(job)
         push()
       }
     }, keepMs)
@@ -505,9 +542,14 @@ export function createJobs(deps: JobsDeps): Jobs {
       }
     }
     if (command === null) return { ok: false, message: job.provider.notInstalled }
+    const input = job.provider.capabilities.jobs.input
     let child: ChildProcess
     try {
-      child = spawnJob(command.bin, command.args, { cwd: run.cwd, env: command.env })
+      child = spawnJob(command.bin, command.args, {
+        cwd: run.cwd,
+        env: command.env,
+        ...(input === undefined ? {} : { input: true }),
+      })
     } catch (err) {
       return {
         ok: false,
@@ -530,25 +572,63 @@ export function createJobs(deps: JobsDeps): Jobs {
     if (job.place !== null) deps.bracket?.(id, 'begin')
 
     let completed = false
+    let aborted = false
     let failure: string | null = null
     let error: string | null = null
     let stderr = ''
+    // An agent driven over its input ends when its input closes.
+    const endInput = (): void => {
+      if (child.stdin !== null && child.stdin.writable) child.stdin.end()
+    }
+    const addTokens = (tokens: number | undefined): void => {
+      if (tokens === undefined) return
+      job.tokens += tokens
+      push()
+    }
     if (child.stdout !== null) {
       createInterface({ input: child.stdout }).on('line', (line) => {
         const event = provider.capabilities.jobs.event(line)
         if (event === null) return
-        if (event.kind === 'thread') {
-          job.thread ??= event.id
-          log(`${id}: thread ${event.id}`)
-        } else if (event.kind === 'turn-completed') {
-          completed = true
-          if (event.tokens !== undefined) {
-            job.tokens += event.tokens
-            push()
-          }
-        } else if (event.kind === 'turn-failed') failure = event.message
-        else if (event.kind === 'error') error = event.message
+        switch (event.kind) {
+          case 'thread':
+            job.thread ??= event.id
+            if (job.model === undefined && event.model !== undefined) {
+              job.model = event.model
+              push()
+            }
+            log(`${id}: thread ${event.id}`)
+            return
+          case 'turn-completed':
+            completed = true
+            addTokens(event.tokens)
+            return
+          case 'reply':
+            // The last reply says how the turn went: a retry that worked
+            // clears the error before it.
+            failure = event.error ?? null
+            addTokens(event.tokens)
+            return
+          case 'settled':
+            completed = !event.aborted
+            aborted = event.aborted
+            endInput()
+            return
+          case 'turn-failed':
+            failure = event.message
+            return
+          case 'error':
+            error = event.message
+            endInput()
+            return
+          case 'turn-started':
+            return
+        }
       })
+    }
+    // A pipe the process closed early must not take Holi down with it.
+    child.stdin?.on('error', () => undefined)
+    if (input !== undefined && child.stdin !== null) {
+      for (const line of input.start(run)) child.stdin.write(`${line}\n`)
     }
     child.stderr?.on('data', (chunk: Buffer) => {
       stderr = (stderr + chunk.toString('utf8')).slice(-4_000)
@@ -600,6 +680,7 @@ export function createJobs(deps: JobsDeps): Jobs {
         why =
           failure ??
           error ??
+          (aborted ? `${provider.label} stopped the run.` : null) ??
           (sig !== null
             ? `${provider.label} was stopped (${sig}).`
             : `${provider.label} exited with code ${code ?? '?'}${lastLine(stderr) === '' ? '.' : `: ${lastLine(stderr)}`}`)
@@ -637,6 +718,8 @@ export function createJobs(deps: JobsDeps): Jobs {
         writable: place.writable,
         readOnly: place.readOnly,
         resume: job.thread,
+        state: job.state,
+        vault: deps.vault.root,
         ...(job.model === undefined ? {} : { model: job.model }),
       },
       [],
@@ -699,6 +782,7 @@ export function createJobs(deps: JobsDeps): Jobs {
         startedAt: Date.now(),
         ...(model === undefined ? {} : { model }),
         dir: null,
+        state: join(deps.scratchRoot, `${id}.agent`),
         place: null,
         child: null,
         busy: false,
@@ -707,13 +791,17 @@ export function createJobs(deps: JobsDeps): Jobs {
         exited: Promise.resolve(),
       }
 
+      const unavailable = provider.capabilities.jobs.unavailable?.() ?? null
+      if (unavailable !== null) return { ok: false, message: unavailable }
       await swept
       if ('allow' in spec) {
-        const sandbox = vaultSandbox(spec.allow)
+        const sandbox = vaultSandbox(spec.allow, provider.label)
         if (!sandbox.ok) return sandbox
         const place = await placeIn(sandbox.write)
         if (typeof place === 'string') return { ok: false, message: place }
         job.place = place
+        // The agent's own state, and a temporary folder inside it.
+        await mkdir(join(job.state, 'tmp'), { recursive: true })
         // The agent runs in a folder of the vault, or reads it all: every
         // path it is given is the vault's.
         const where = `The vault is ${deps.vault.root}. Every vault path named here is relative to it.`
@@ -725,12 +813,15 @@ export function createJobs(deps: JobsDeps): Jobs {
             prompt: [system, where, prompt].filter((p) => p !== undefined).join('\n\n'),
             writable: place.writable,
             readOnly: place.readOnly,
+            state: job.state,
+            vault: deps.vault.root,
             ...(model === undefined ? {} : { model }),
           },
           [],
         )
         if (!started.ok) {
           jobs.delete(id)
+          dropState(job)
           return started
         }
         return { ok: true, sessionId: id }
@@ -740,10 +831,12 @@ export function createJobs(deps: JobsDeps): Jobs {
       const dir = join(deps.scratchRoot, id)
       const fail = async (message: string): Promise<JobResult> => {
         await rm(dir, { recursive: true, force: true }).catch(() => undefined)
+        await rm(job.state, { recursive: true, force: true }).catch(() => undefined)
         await rm(pidFile(id), { force: true }).catch(() => undefined)
         return { ok: false, message }
       }
       await mkdir(dir, { recursive: true })
+      await mkdir(join(job.state, 'tmp'), { recursive: true })
       for (const path of scope.read) {
         const abs = await exactPath(deps.vault.root, path)
         if (abs === null) return fail(`Holi could not read ${path}.`)
@@ -761,6 +854,7 @@ export function createJobs(deps: JobsDeps): Jobs {
         {
           cwd: dir,
           prompt: system === undefined ? prompt : `${system}\n\n${prompt}`,
+          state: job.state,
           ...(model === undefined ? {} : { model }),
         },
         scope.write,
@@ -806,6 +900,7 @@ export function createJobs(deps: JobsDeps): Jobs {
       else {
         clearTimeout(job.dropTimer)
         jobs.delete(id)
+        dropState(job)
         push()
       }
       return { ok: true }
