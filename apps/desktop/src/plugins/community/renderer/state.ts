@@ -23,7 +23,9 @@ export const rowsAtom = atom<{ remote: string; rows: readonly PluginRow[] } | nu
 
 /**
  * The plugins whose vault notice this machine dismissed, as ids by vault.
- * By id, not by pin, so a newer version the vault pins stays dismissed. Kept
+ * By id, not by pin, so a newer version the vault pins stays dismissed while
+ * the plugin has not run here; once it is ready here the vault notice drops
+ * its dismissal, so a later pin it cannot run yet shows again. Kept
  * in `localStorage` as the tree's other per-vault view choices are: it hides a
  * line on this machine, and the vault's files, which its members share, are
  * left alone. Settings still lists the plugin and installs it.

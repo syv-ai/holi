@@ -5,7 +5,7 @@
  * so under the file tree.
  */
 import { atom, useAtomValue, useSetAtom, useStore } from 'jotai'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Puzzle, X } from 'lucide-react'
 import { isPluginFolder, opensPath } from '@holi/shared'
 import {
@@ -128,11 +128,23 @@ function WaitingNotice(): React.JSX.Element | null {
   const notWorking = useAtomValue(notWorkingAtom)
   const updatable = useAtomValue(updatableAtom)
   const remote = useAtomValue(activeRemoteAtom)
+  const read = useAtomValue(rowsAtom)
   const store = useStore()
   const openDialog = useSetAtom(openDialogAtom)
   const setDismissed = useSetAtom(dismissedNoticesAtom)
   const [error, setError] = useState<string | null>(null)
   const [checking, setChecking] = useState<string | null>(null)
+  // A plugin ready in the vault owes no dismissal: drop it, so a later pin
+  // this machine cannot run yet raises its line again.
+  useEffect(() => {
+    if (read === null) return
+    const ready = (id: string) => read.rows.some((r) => r.id === id && r.status === 'ready')
+    setDismissed((all) =>
+      all[read.remote]?.some(ready)
+        ? { ...all, [read.remote]: all[read.remote]!.filter((id) => !ready(id)) }
+        : all,
+    )
+  }, [read, setDismissed])
   if (
     (waiting.length === 0 && notWorking.length === 0 && updatable.length === 0) ||
     remote === null
@@ -156,8 +168,12 @@ function WaitingNotice(): React.JSX.Element | null {
       )
     else askToRun(flow, row)
   }
-  const dismiss = (row: PluginRow) =>
-    setDismissed((all) => ({ ...all, [remote]: [...(all[remote] ?? []), row.id] }))
+  // Under the rows' vault, the key `waitingAtom` reads: the active remote can
+  // run ahead of them for a moment after a vault switch.
+  const dismiss = (row: PluginRow) => {
+    if (read === null) return
+    setDismissed((all) => ({ ...all, [read.remote]: [...(all[read.remote] ?? []), row.id] }))
+  }
   const checkAgain = async (row: PluginRow) => {
     setError(null)
     setChecking(row.id)
