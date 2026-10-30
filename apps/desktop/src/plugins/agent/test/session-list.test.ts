@@ -4,6 +4,8 @@
  * search and filter, the groups.
  */
 import { expect, test, vi } from 'vitest'
+import { createStore } from 'jotai'
+import { HistoryIcon } from 'lucide-react'
 import type { AgentsSessionItem } from '@/plugin-api'
 import {
   groupRows,
@@ -13,6 +15,7 @@ import {
   NO_FILTER,
   rowMatches,
   rowState,
+  sessionTabLookAtom,
   type SessionRow,
 } from '../renderer/state/session-list'
 import type { AgentSession } from '../renderer/state/sessions'
@@ -29,6 +32,14 @@ const item = (over: Partial<AgentsSessionItem> = {}): AgentsSessionItem => ({
 })
 
 const seen = (since = 0, map: Record<string, number> = {}) => ({ since, seen: map })
+
+test('History has a generic tab icon instead of a provider mark', () => {
+  const look = createStore().get(sessionTabLookAtom)
+  expect(look({ owner: 'agent', id: 'history' })).toMatchObject({
+    title: 'History',
+    icon: HistoryIcon,
+  })
+})
 
 test('model names read as a person says them', () => {
   expect(modelLabel(undefined)).toBe('Claude')

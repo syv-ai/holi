@@ -15,6 +15,7 @@
  * user looks at them", MonoCode's `sessionDone.ts`).
  */
 import { atom } from 'jotai'
+import { HistoryIcon } from 'lucide-react'
 import { atomWithStorage } from 'jotai/utils'
 import {
   agentsSelectionAtom,
@@ -394,7 +395,7 @@ export const sessionTabLookAtom = atom((get) => {
   return (selection: { owner: string; id: string }): AgentsTabLook | undefined => {
     const view = agentsViewOf(selection)
     if (view.kind === 'inbox') return { title: 'Inbox', state: 'idle' }
-    if (view.kind === 'history') return { title: 'History', state: 'idle' }
+    if (view.kind === 'history') return { title: 'History', state: 'idle', icon: HistoryIcon }
     const jobId = view.kind === 'session' ? view.id : null
     const row = rows.find((r) => isCurrent(r.item, selection, jobId))
     if (row === undefined) return undefined

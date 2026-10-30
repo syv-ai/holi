@@ -442,6 +442,8 @@ export interface AgentsMode {
 export interface AgentsTabLook {
   title: string
   state: 'needs-you' | 'working' | 'done' | 'idle'
+  /** A view's own glyph, instead of a session's agent mark. */
+  icon?: IconGlyph
   by?: AgentsSessionItem['by']
   /** The coding agent that runs it, for its mark. */
   agent?: string
