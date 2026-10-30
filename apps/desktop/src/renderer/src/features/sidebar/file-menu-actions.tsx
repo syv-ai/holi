@@ -6,7 +6,6 @@ import {
   ArrowUpIcon,
   FolderInputIcon,
   FolderPlusIcon,
-  LinkIcon,
   ListChecksIcon,
   PencilIcon,
   SquareSplitHorizontalIcon,
@@ -17,6 +16,7 @@ import type { MenuAction } from '@/composites/menu-actions'
 import type { TreeItemData } from '@/lib/tree-data'
 import { parentOf } from '@/lib/tree-paths'
 import type { ActiveDialog } from '@/state/dialogs'
+import { NOTE_ACTIONS } from '@/state/document-runs'
 import type { ClaimCreate, PathClaim } from '@/state/plugin-types'
 
 /** What a New menu item makes: the plugin's claim, and the folder document
@@ -31,6 +31,7 @@ export function rowActions({
   item,
   dirs,
   remote,
+  vaultApp,
   pluginActions,
   on,
 }: {
@@ -38,6 +39,9 @@ export function rowActions({
   /** Every folder in the vault, for Move to. */
   dirs: readonly string[]
   remote: string | null
+  /** Whether Create vault app runs on this row now (`vaultAppOfferAtom`):
+   *  offered on every markdown note, enabled when it can. */
+  vaultApp: (id: string) => boolean
   /** What plugin claims add (`pluginRowActions`). */
   pluginActions: MenuAction[]
   on: {
@@ -47,6 +51,7 @@ export function rowActions({
     shift: (id: string, by: -1 | 1) => void
     moveTo: (id: string, dest: string) => void
     remove: (id: string) => void
+    createVaultApp: (id: string) => void
   }
 }): MenuAction[] {
   const id = item.getId()
@@ -66,6 +71,9 @@ export function rowActions({
   // A Holi link opens a file on a teammate's machine, so a local file has
   // none (docs/features/holi-links.md).
   const linkable = openable && remote !== null && isHoliLinkable(id)
+  // What the document's own menu has too (`NOTE_ACTIONS`), in its order.
+  const { copyLink, createVaultApp } = NOTE_ACTIONS
+  const note = openable && /\.md$/i.test(id)
   return [
     ...(openable
       ? ([
@@ -79,13 +87,25 @@ export function rowActions({
             ? ([
                 {
                   kind: 'item',
-                  label: 'Copy Holi link',
-                  icon: <LinkIcon aria-hidden="true" />,
+                  label: copyLink.label,
+                  icon: <copyLink.icon aria-hidden="true" />,
                   run: () => on.copyLink(id),
                 },
               ] satisfies MenuAction[])
             : []),
           { kind: 'separator' },
+          ...(note
+            ? ([
+                {
+                  kind: 'item',
+                  label: createVaultApp.label,
+                  icon: <createVaultApp.icon aria-hidden="true" />,
+                  disabled: !vaultApp(id),
+                  run: () => on.createVaultApp(id),
+                },
+                { kind: 'separator' },
+              ] satisfies MenuAction[])
+            : []),
         ] satisfies MenuAction[])
       : []),
     {

@@ -18,9 +18,8 @@ import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
 import { showAgentSessionAtom } from '@/state/agent-service'
 import { claudeFirstRunAtom } from '@/state/claude-first-run'
+import type { AgentRun } from '@/state/document-runs'
 import { activeRemoteAtom } from '@/state/vaults'
-
-import type { AgentRun } from './document-agent'
 
 /** Where the person types what the agent should do: on the line they opened
  *  it from, or for a selection from the format bubble's Ask AI. Enter sends,
@@ -99,7 +98,8 @@ const WORKING: Record<AgentRun['kind'], string> = {
 }
 
 /** What a run is doing, at the foot of the document. Stop ends it; a run
- *  waiting on a permission can be opened in Agents. */
+ *  waiting on a permission, and a vault app's at any time, can be opened in
+ *  Agents. */
 export function AgentStatus({
   run,
   onStop,
@@ -151,13 +151,16 @@ export function AgentStatus({
           <span className="text-muted-foreground"> · {run.label}</span>
         ) : null}
       </span>
-      {run.status === 'needs-you' && run.sessionId !== null ? (
+      {/* A vault app's session is there to be watched and added to. */}
+      {live &&
+      run.sessionId !== null &&
+      (run.status === 'needs-you' || run.kind === 'vault-app') ? (
         <Button
           variant="ghost"
           size="xs"
           onClick={() => void showSession({ session: run.sessionId!, live: true })}
         >
-          Open
+          {run.kind === 'vault-app' ? 'Open session' : 'Open'}
         </Button>
       ) : null}
       {live ? (

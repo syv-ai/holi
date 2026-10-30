@@ -18,6 +18,7 @@ its per-vault directory, what it seeds. **Its core is enough to run it in a tab*
 | `turns`      | hook routes that report a turn's start and end                                   | `UserPromptSubmit`, `Stop` | turn ends, from `notify` |
 | `status`     | how full the context is, and the model                                           | the status line            | no                       |
 | `jobs`       | one prompt run unwatched in a scratch folder of Holi's, its result copied back   | no (`background` serves)   | `codex exec --json`      |
+| `fenced`     | a session in its terminal fenced to a scratch folder, its writes copied back     | no (`background` serves)   | its TUI, sandboxed       |
 
 **Two kinds of session, one list.** A background provider's sessions are its supervisor's, keyed
 by its job id (the rest of this page). Any other provider's are **sessions Holi runs itself**
@@ -70,8 +71,24 @@ leaving the vault and quitting (whose question counts a running job) stop its pr
 Stop during the copy back stops it there and the job fails, and its scratch folder is deleted.
 Beside each folder is `<id>.pid`; one a crash left behind is killed at the next start, when that
 pid still leads a group whose command names the folder. A provider with neither is refused, never
-run on another agent. The document menu's **Create vault app** ([editor](editor.md)) is its
-caller.
+run on another agent. It is for a plugin built on the agent, whose run nobody watches; what a
+person starts and may want to follow is a fenced session (below).
+
+**Fenced sessions** (`host/fenced.ts`) are the watched counterpart, through `agent.scoped` (UI
+door only), with the same parameters as `agent.job` (and a terminal's size): a session in the one
+list whose first turn is the prompt, which opens in its terminal, where the person watches it,
+answers its approvals and adds to it. A `background` provider runs it as a background session
+allowed exactly the scope, as a job. A `fenced` provider runs it as a session Holi runs, but in
+`<userData>/agent-fenced/<id>/`, the readable files copied in at their vault paths, with no Holi
+commands on its `PATH` and the system text put before the prompt. Codex's is its TUI with
+`-C <scratch> --sandbox workspace-write`, `approval_policy="on-request"` (its interactive
+approvals, asked in its terminal, whatever `config.toml` says), no network, no MCP servers and web
+search off. As each turn ends (`notify`, or the terminal going quiet) and once more when its
+process exits, what it wrote is copied back by the jobs' copy (the write scope, the vault's shared
+content, no symlink followed, `app.yaml` last, the same caps), before the turn's bracket closes so
+the turn review shows it. The folder is deleted when the process exits, and every folder when the
+agent leaves the vault or starts. A provider with neither is refused, never run on another agent.
+The document menu's and the file tree's **Create vault app** ([editor](editor.md)) is its caller.
 
 **Which agent a new session runs** is this machine's `agentProvider` (`app.local.yaml`; the
 **Agents** card in Settings → General, a row per agent with **Make default**): which agent is installed and signed in is the machine's, not the
@@ -129,6 +146,7 @@ plugin that requires it ([architecture](../architecture.md), Plugins); it offers
 capabilities any such plugin calls, from its renderer or, through `ctx.call`, from its main side:
 `agent.launch` (a background session whose first turn is a prompt, with no terminal),
 `agent.job` (a prompt run unwatched on any provider that can, within a scope; Jobs above),
+`agent.scoped` (the same, as a session the person can watch; Fenced sessions above),
 `agent.providers` (the agents a session can run, and which are installed), and the session verbs.
 Holis and automations are such callers. The turn bracket's outside driver is the agent's own
 sessions Holi runs: the listing never names their ids, so its reconcile forgets only the turns of
@@ -401,6 +419,7 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - `apps/desktop/src/plugins/agent/main/host/pty-sessions.ts`, `pty-signals.ts`: the sessions Holi runs itself, and
   their turns read off the terminal
 - `apps/desktop/src/plugins/agent/main/host/jobs.ts`: jobs, their scratch folders, events and copy back
+- `apps/desktop/src/plugins/agent/main/host/fenced.ts`: fenced sessions, their folders and copies back
 - `apps/desktop/src/plugins/agent/main/claude/`: Claude Code as the provider: `cli.ts` (every `claude` command, one
   environment, the binary), `listing.ts` (the listing, state rules, the watch), `routes.ts` (the
   turn, session and status-line routes), `messaging.ts` (the inbox socket writer)

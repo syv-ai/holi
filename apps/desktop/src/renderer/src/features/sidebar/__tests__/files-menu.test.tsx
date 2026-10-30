@@ -4,23 +4,30 @@
  * Its Delete asks first, then deletes a file, or a folder with what is in it.
  * What a New item made opens its name field once the vault has it, and a
  * plugin's folder document (a deck) opens from its row and expands from its
- * chevron.
+ * chevron. A note's menu has Create vault app, as the document's own does.
  */
 import { Provider, createStore } from 'jotai'
 import { expect, test, vi } from 'vitest'
-import { emptyVaultSnapshot } from '@holi/shared'
+import { emptyVaultSnapshot, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { fireEvent, render, screen, waitFor } from '@/test/render'
-import { coreContributionAtom } from '@/state/plugins'
+import { coreContributionAtom, installedPluginsAtom } from '@/state/plugins'
+import { vaultSettingsAtom } from '@/state/settings'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { FilesSection } from '../files-section'
 
 const deleteMany = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
+const capRun = vi.hoisted(() =>
+  vi.fn(async ({ name }: { name: string; paramsJson: string }) =>
+    name === 'agent.providers' ? [] : { ok: true, sessionId: 'abc12345' },
+  ),
+)
 vi.mock('@/lib/trpc', () => ({
   trpc: {
     sync: { commitNow: { mutate: async () => undefined } },
     notes: { deleteMany: { mutate: deleteMany } },
+    cap: { run: { mutate: capRun } },
     vaults: {
       snapshot: {
         query: async () => (await import('@holi/shared')).emptyVaultSnapshot(),
@@ -262,4 +269,44 @@ test("a deck's row opens it, and its chevron shows the files inside", async () =
   fireEvent.click(row, { clientX: 0 })
   expect(await screen.findByText('slides')).toBeTruthy()
   expect(onOpen).not.toHaveBeenCalled()
+})
+
+test("a note's menu creates a vault app from it once the agent can, and opens the note", async () => {
+  const { store, onOpen } = mount()
+  fireEvent.click(await screen.findByText('kunder'))
+  fireEvent.contextMenu(await screen.findByText('brief'))
+  // This machine's agent is not read yet: offered, not enabled.
+  expect(await screen.findByRole('menuitem', { name: 'Create vault app' })).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  )
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+
+  store.set(installedPluginsAtom, [
+    { info: { id: 'stand-in', label: 'Stand-in', default: true }, agent: { name: 'Helper' } },
+  ] as never)
+  store.set(vaultSettingsAtom, {
+    remote: 'mara/notes',
+    settings: { ...VAULT_SETTING_DEFAULTS, agentProvider: 'codex', warnings: [] },
+  })
+  fireEvent.contextMenu(await screen.findByText('brief'))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Create vault app' }))
+  expect(onOpen).toHaveBeenCalledWith('kunder/brief.md')
+  await waitFor(() =>
+    expect(capRun).toHaveBeenCalledWith(expect.objectContaining({ name: 'agent.scoped' })),
+  )
+  const params = JSON.parse(
+    capRun.mock.calls.find(([c]) => c.name === 'agent.scoped')![0].paramsJson,
+  )
+  expect(params).toMatchObject({
+    provider: 'codex',
+    scope: { read: ['kunder/brief.md'], write: ['kunder/brief.app/**'] },
+  })
+})
+
+test("a folder's menu has no Create vault app", async () => {
+  mount()
+  fireEvent.contextMenu(await screen.findByText('kunder'))
+  await screen.findByRole('menuitem', { name: 'New app' })
+  expect(screen.queryByRole('menuitem', { name: 'Create vault app' })).toBeNull()
 })
