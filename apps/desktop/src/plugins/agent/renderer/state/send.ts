@@ -202,7 +202,7 @@ export const duplicateSessionAtom = atom(
     set(viewTerminalsAtom, (terminals) => ({ ...terminals, [res.sessionId]: res.terminalId }))
     set(appModeAtom, 'agents')
     set(agentsViewAtom, { kind: 'session', id: res.sessionId })
-    land(set, res.terminalId)
+    focusSessionTerminal(res.terminalId)
     return { ok: true }
   },
 )

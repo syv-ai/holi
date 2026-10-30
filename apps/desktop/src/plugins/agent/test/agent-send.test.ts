@@ -203,10 +203,26 @@ test('duplicate opens the copy in its provider-marked session tab', async () => 
 
   await store.set(duplicateSessionAtom, 'aaaaaaaa')
 
-  expect(shown(store)).toBe('copied')
+  expect(shown(store)).toBeNull()
+  expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(0)
   expect(store.get(appModeAtom)).toBe('agents')
   expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: copiedId })
   expect(store.get(viewTerminalsAtom)[copiedId]).toBe('copied')
+})
+
+test('a failed duplicate leaves the current session view alone', async () => {
+  duplicate.mockResolvedValueOnce({ ok: false, message: 'That session cannot be duplicated.' })
+  const store = storeWith([session({ id: 'aaaaaaaa', provider: 'pi' })])
+  store.set(appModeAtom, 'agents')
+  store.set(agentsViewAtom, { kind: 'session', id: 'aaaaaaaa' })
+
+  expect(await store.set(duplicateSessionAtom, 'aaaaaaaa')).toEqual({
+    ok: false,
+    message: 'That session cannot be duplicated.',
+  })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'aaaaaaaa' })
+  expect(store.get(viewTerminalsAtom)).toEqual({})
+  expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(0)
 })
 
 test('an ask may go to any live session not waiting on a question of its own', () => {
