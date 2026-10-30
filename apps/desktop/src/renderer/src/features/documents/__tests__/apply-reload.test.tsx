@@ -70,3 +70,14 @@ test('the same body is no transaction at all', () => {
   applyReload(ed, 'Alpha\n\nBeta\n')
   expect(transactions).toBe(0)
 })
+
+test('a caret inside the replaced range stays at its start, not past it', () => {
+  const ed = open('Alpha\n\nBeta\n')
+  caretIn(ed, 'Alpha', 5)
+  ed.commands.insertContent(' hello ')
+  // The tidy took the trailing space off the file and a word arrived below,
+  // so the replaced range runs from that space into the last paragraph.
+  applyReload(ed, 'Alpha hello\n\nBeta gamma\n')
+  expect(ed.getMarkdown()).toBe('Alpha hello\n\nBeta gamma')
+  expect(where(ed)).toEqual({ text: 'Alpha hello', offset: 11 })
+})

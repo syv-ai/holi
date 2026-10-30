@@ -228,9 +228,6 @@ test('a document switched away from and back to keeps its caret', async () => {
   const text = '# Plan\n\nIntro\n\n## Next steps\n\nShip it.\n'
   const first = open(text)
   const box = await editorBox()
-  type WithEditor = HTMLElement & {
-    editor: import('@tiptap/react').Editor
-  }
   const editor = (box as WithEditor).editor
   let at = -1
   editor.state.doc.descendants((node, pos) => {

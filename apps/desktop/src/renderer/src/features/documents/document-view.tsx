@@ -278,10 +278,9 @@ function DocumentEditor({
 
   useSelectionReport(editor, path, head)
 
+  const claims = useAtomValue(claimsAtom)
   /** What the first claim on this path draws above it: a link's card. */
-  const Banner = useAtomValue(claimsAtom).find(
-    (claim) => claim.banner !== undefined && claim.match(path),
-  )?.banner
+  const Banner = claims.find((claim) => claim.banner !== undefined && claim.match(path))?.banner
   useDocumentPosition({ editor, remote, path, scrollerRef, markdown })
 
   const holiLinks = isHoliLinkable(path)
@@ -309,7 +308,7 @@ function DocumentEditor({
     const text = markdown()
     // Differing only by what the commit tidies away is nothing to save:
     // writing it would just be tidied again.
-    if (!differsBeyondTidy(lastText.current, text, path)) {
+    if (!differsBeyondTidy(lastText.current, text, path, claims)) {
       setSaveState('saved')
       return
     }
@@ -347,7 +346,7 @@ function DocumentEditor({
         // The commit's tidy (`normalize-md`) rewrote what was saved: nothing
         // new, so the buffer stays, and with it a space just typed under the
         // caret. The next save compares against the tidied file.
-        if (!differsBeyondTidy(lastText.current, text, path)) {
+        if (!differsBeyondTidy(lastText.current, text, path, claims)) {
           lastText.current = text
           return
         }
