@@ -19,7 +19,10 @@ export function applyReload(editor: Editor, body: string): void {
   // `createDocumentExtensions` always includes `DocumentMarkdown`.
   const manager = editor.markdown!
   const current = editor.state.doc
-  const next = withTrailingParagraph(editor, editor.schema.nodeFromJSON(manager.parse(body)))
+  const next = withEmptyEnd(
+    current,
+    withTrailingParagraph(editor, editor.schema.nodeFromJSON(manager.parse(body))),
+  )
 
   const start = current.content.findDiffStart(next.content)
   if (start === null) return
@@ -70,4 +73,31 @@ function withTrailingParagraph(editor: Editor, doc: Node): Node {
   const paragraph = editor.schema.nodes.paragraph!
   if (doc.lastChild?.type === paragraph) return doc
   return doc.copy(doc.content.addToEnd(paragraph.create()))
+}
+
+/**
+ * Empty paragraphs at the end of the buffer (Enter after the last line, a
+ * click below it) cannot be in the file, whose final newlines the tidy
+ * collapses; without them the two documents always differ at the end, and any
+ * outside edit would move a caret anywhere below it to the edit's start. The
+ * file's document gets as many as the buffer has beyond its own.
+ */
+function withEmptyEnd(current: Node, next: Node): Node {
+  const missing = emptyEnd(current) - emptyEnd(next)
+  if (missing <= 0) return next
+  const paragraph = current.lastChild!.type
+  let content = next.content
+  for (let i = 0; i < missing; i++) content = content.addToEnd(paragraph.create())
+  return next.copy(content)
+}
+
+/** How many empty paragraphs a document ends in. */
+function emptyEnd(doc: Node): number {
+  let count = 0
+  while (count < doc.childCount) {
+    const child = doc.child(doc.childCount - 1 - count)
+    if (child.type.name !== 'paragraph' || child.content.size > 0) break
+    count++
+  }
+  return count
 }

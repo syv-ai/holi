@@ -108,3 +108,15 @@ test('a selection whose head is in the changed range stays a selection', () => {
   expect(ed.state.selection.from).toBe(from)
   expect(ed.state.selection.to).toBeGreaterThan(from)
 })
+
+test('an empty paragraph the file cannot hold keeps an edit above off the caret', () => {
+  const ed = open('# Title\n\nIntro\n\nP2\n\nP3\n\nLast\n')
+  caretIn(ed, 'Last', 4)
+  ed.commands.enter()
+  caretIn(ed, 'P3', 1)
+  // The tidy collapses the file's final newlines, so the empty paragraph
+  // Enter left at the end is in the buffer only.
+  applyReload(ed, '# Title\n\nIntro edited\n\nP2\n\nP3\n\nLast\n')
+  expect(where(ed)).toEqual({ text: 'P3', offset: 1 })
+  expect(ed.state.doc.lastChild?.content.size).toBe(0)
+})
