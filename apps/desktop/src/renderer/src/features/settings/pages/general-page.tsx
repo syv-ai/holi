@@ -1,6 +1,7 @@
 /** General: what the vault is and where it lives, its agents and its repo's size. */
-import { useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useState } from 'react'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { atomWithStorage } from 'jotai/utils'
 import {
   formatRepoSize,
   REPO_SIZE_LIMIT_KB,
@@ -50,6 +51,12 @@ const AGENTS: readonly {
     label: 'Codex',
     description:
       "OpenAI's agent, signed in as on the command line. Its sessions run while Holi is open.",
+  },
+  {
+    id: 'pi',
+    label: 'Pi',
+    description:
+      'The open-source agent, on your own Pi models and sign-in. Its sessions run while Holi is open; its unattended runs need macOS.',
   },
 ]
 
@@ -119,6 +126,9 @@ function CodexUnattendedRow({ remote }: { remote: string }) {
     </SettingsFieldRow>
   )
 }
+/** The vaults, by remote, where this machine was told that Pi runs its
+ *  tools without asking. Asked once per vault, on this machine. */
+const piWarnedAtom = atomWithStorage<Record<string, true>>('holi:piUnattendedWarned', {})
 
 /** Which agent a new session starts in, on this machine: a row per agent,
  *  the default marked and the others a click from being it, and whether
@@ -128,13 +138,24 @@ function AgentsCard() {
   const agent = useAgentService()
   const { resolved, write } = useVaultSettings()
   const current = resolved?.agentProvider ?? VAULT_SETTING_DEFAULTS.agentProvider
+  const [warned, setWarned] = useAtom(piWarnedAtom)
+  const [askPi, setAskPi] = useState(false)
+  const makeDefault = (id: AgentProviderId): void => {
+    // The default is what Holis, automations and Create vault app run on:
+    // Pi there runs every tool without asking, which is said once.
+    if (id === 'pi' && remote !== null && warned[remote] !== true) {
+      setAskPi(true)
+      return
+    }
+    void write('agentProvider', id, 'local')
+  }
   return (
     <SettingsGroup
       title="Agents"
       description="A new session starts in the default one, on this machine. Hover the Sessions + to start another."
     >
       {resolved === null ? (
-        <SettingsRowsLoading rows={2} label="Reading the settings" />
+        <SettingsRowsLoading rows={3} label="Reading the settings" />
       ) : (
         AGENTS.map((agent) => (
           <SettingsFieldRow
@@ -146,11 +167,7 @@ function AgentsCard() {
             {agent.id === current ? (
               <Badge variant="success-light">Default</Badge>
             ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void write('agentProvider', agent.id, 'local')}
-              >
+              <Button variant="outline" size="sm" onClick={() => makeDefault(agent.id)}>
                 Make default
               </Button>
             )}
@@ -160,6 +177,17 @@ function AgentsCard() {
       {resolved !== null && remote !== null && agent !== null ? (
         <CodexUnattendedRow key={remote} remote={remote} />
       ) : null}
+      <ConfirmDialog
+        open={askPi}
+        onOpenChange={setAskPi}
+        title="Run unattended work on Pi?"
+        description="Holis, automations and Create vault app will run on Pi with nobody watching. Pi asks before no tool: each run edits the files it may touch without asking you. Holi keeps it to those files, and runs it only on macOS."
+        confirmLabel="Make Pi the default"
+        onConfirm={async () => {
+          if (remote !== null) setWarned((all) => ({ ...all, [remote]: true }))
+          await write('agentProvider', 'pi', 'local')
+        }}
+      />
     </SettingsGroup>
   )
 }

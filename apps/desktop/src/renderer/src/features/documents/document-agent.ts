@@ -11,7 +11,8 @@
  * edit the document, so it is locked while they run. **vault-app**: Create
  * vault app (`startVaultAppAtom`), a vault app made from the document beside
  * it, which leaves the document alone, as a session the person can open,
- * watch and add to.
+ * watch and add to. An agent that can run it neither in the background nor
+ * fenced (Pi) is refused with the reason.
  *
  * A run's state is read off the agent's session rows: working, waiting on
  * the person (a permission prompt it was not pre-allowed), or done once the

@@ -20,7 +20,8 @@
  * - `turns`: hook routes that report a turn's start and end.
  * - `status`: how full a session's context is, and its model.
  * - `jobs`: a prompt run with nobody watching, sandboxed by the agent's own
- *   rules, its output read as events (`host/jobs.ts`). Codex's `codex exec`.
+ *   rules or by the process's (`pi/sandbox.ts`), its output read as events
+ *   (`host/jobs.ts`). Codex's `codex exec`, Pi's RPC mode.
  *   Either in a scratch folder Holi owns, what it may write copied back when
  *   it succeeds, or in the vault with only named folders writable (a Holi's
  *   or an automation's run), and resumed for a follow-up.
@@ -60,6 +61,9 @@ export interface TerminalCommand {
 export interface TerminalOpts {
   /** A background session to attach to (`background` only). */
   attach?: string
+  /** A new conversation's id, a UUID Holi chose, for a provider that takes
+   *  one (`namesConversation`). */
+  conversation?: string
   /** A copy of a conversation, by the provider's id for it. */
   fork?: string
   /** The provider's own sign-in. */
@@ -128,10 +132,17 @@ interface BackgroundCapability {
 
 /** What a job's output said, one line of it at a time. */
 export type JobEvent =
-  | { kind: 'thread'; id: string }
+  /** The agent's thread, and the model it runs on when it says. */
+  | { kind: 'thread'; id: string; model?: string }
   | { kind: 'turn-started' }
   /** `tokens`: what the turn used, input and output, when it says. */
   | { kind: 'turn-completed'; tokens?: number }
+  /** One reply of the agent's within the turn: what it used, and why it
+   *  failed when it did. The turn's last reply says how the turn went. */
+  | { kind: 'reply'; tokens?: number; error?: string }
+  /** The run is over and the agent will not go on by itself: an agent that
+   *  takes its input on stdin (`JobsCapability.input`) is then told to end. */
+  | { kind: 'settled'; aborted: boolean }
   | { kind: 'turn-failed'; message: string }
   | { kind: 'error'; message: string }
 
@@ -147,9 +158,12 @@ export interface JobRun {
   readOnly?: boolean
   /** The agent's thread to add this turn to: a follow-up. */
   resume?: string
-  /** A folder of Holi's outside what it may write, for the agent's own
-   *  state (its own home, say), which goes with the job. */
+  /** A folder of Holi's for the agent's own state (its saved session, its
+   *  own home), which it may write and which goes with the job. */
   state: string
+  /** The vault, for a job that runs in it: readable, but for what in it is
+   *  not the vault's shared content. */
+  vault?: string
 }
 
 /** A prompt run unwatched, sandboxed by the agent (`host/jobs.ts`). */
@@ -164,6 +178,12 @@ interface JobsCapability {
   /** One line of the job's standard output, or null when it says nothing
    *  the host reads. Another program's output: never throws. */
   event(line: string): JobEvent | null
+  /** Why no job can run on this machine at all, or null when one can. */
+  unavailable?(): string | null
+  /** An agent driven over its standard input (Pi's RPC mode): the lines
+   *  that start a turn, and the one that asks it to stop. Its input is closed
+   *  once the run settles or a command fails, which ends the process. */
+  input?: { start(run: JobRun): string[]; abort: string }
 }
 
 interface ProviderCapabilities {
@@ -203,6 +223,10 @@ export interface AgentProvider {
    *  session's) has exited: take back what the agent keeps of the person's,
    *  such as a sign-in it refreshed there. Never throws. */
   release?(state: string): Promise<void>
+  /** It takes an id Holi chose, a UUID, as its conversation's own (Pi's
+   *  `--session-id`): a session is reopenable from its start, and a copy of
+   *  one is a `fork` of it. */
+  namesConversation?: boolean
   capabilities: ProviderCapabilities
 }
 

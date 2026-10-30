@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createPtySessions, nameOf, parsePastFile, PTY_SESSION_ID } from '../main/host/pty-sessions'
+import {
+  CONVERSATION_ID,
+  createPtySessions,
+  nameOf,
+  parsePastFile,
+  PTY_SESSION_ID,
+} from '../main/host/pty-sessions'
 import type { OpenArgs } from '../main/host/terminals'
 import type { AgentProvider, TerminalOpts } from '../main/provider'
 
@@ -9,7 +15,7 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-function setup(capabilities: AgentProvider['capabilities'] = {}) {
+function setup(extra: Partial<AgentProvider> = {}) {
   vi.useFakeTimers()
   const asked: TerminalOpts[] = []
   const provider: AgentProvider = {
@@ -23,7 +29,8 @@ function setup(capabilities: AgentProvider['capabilities'] = {}) {
       asked.push(opts)
       return { bin: '/bin/codex', args: [], env: {} }
     },
-    capabilities,
+    capabilities: {},
+    ...extra,
   }
   const opened: OpenArgs[] = []
   const closed: string[] = []
@@ -168,7 +175,7 @@ describe('sessions Holi runs', () => {
   })
 
   it('runs a fenced one in its folder, copying back before its turn closes', async () => {
-    const t = setup({ fenced: true })
+    const t = setup({ capabilities: { fenced: true } })
     let copied!: () => void
     const fence = {
       dir: '/scratch/abc',
@@ -264,6 +271,45 @@ describe('sessions Holi runs', () => {
     ])
     expect([a.ok, b.ok].sort()).toEqual([false, true])
     expect(t.opened).toHaveLength(2)
+  })
+
+  it('names a conversation by its id when the agent takes it, and copies a live one', async () => {
+    const t = setup({ id: 'pi', label: 'Pi', namesConversation: true })
+    const res = await t.sessions.start('pi', { prompt: 'Plan the week' })
+    if (!res.ok) throw new Error(res.message)
+    // Known from the start, a UUID Holi chose: no hook has to say.
+    const conversation = t.asked[0]?.conversation
+    expect(conversation).toMatch(CONVERSATION_ID)
+    expect(t.sessions.sessions()[0]).toMatchObject({ conversationId: conversation })
+
+    const copy = await t.sessions.duplicate(res.sessionId, { cols: 80 })
+    if (!copy.ok) throw new Error(copy.message)
+    expect(copy.sessionId).not.toBe(res.sessionId)
+    const copied = t.asked.at(-1)
+    expect(copied).toMatchObject({ session: copy.sessionId, fork: conversation })
+    expect(copied?.conversation).toMatch(CONVERSATION_ID)
+    expect(copied?.conversation).not.toBe(conversation)
+    expect(t.sessions.sessions().find((s) => s.id === copy.sessionId)).toMatchObject({
+      conversationId: copied?.conversation,
+      name: 'Plan the week',
+    })
+
+    await t.sessions.stop(res.sessionId)
+    expect(await t.sessions.hasPast(res.sessionId)).toBe(true)
+    const again = await t.sessions.reopen(res.sessionId, {})
+    expect(again).toMatchObject({ ok: true, sessionId: res.sessionId })
+    expect(t.asked.at(-1)).toMatchObject({ session: res.sessionId, resume: conversation })
+    expect(t.asked.at(-1)?.conversation).toBeUndefined()
+  })
+
+  it('copies no session of an agent that does not name its conversations', async () => {
+    const t = setup()
+    const res = await t.sessions.start('codex', {})
+    if (!res.ok) throw new Error(res.message)
+    expect(await t.sessions.duplicate(res.sessionId, {})).toEqual({
+      ok: false,
+      message: 'A Codex session cannot be copied.',
+    })
   })
 
   it('reads only what is a closed session from its file', () => {

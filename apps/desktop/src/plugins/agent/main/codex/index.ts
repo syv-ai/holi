@@ -177,7 +177,7 @@ export function jobArgs({
   writable = [],
   readOnly = false,
   resume,
-}: Omit<JobRun, 'state'>): string[] {
+}: Omit<JobRun, 'state' | 'vault'>): string[] {
   return [
     'exec',
     '--json',

@@ -25,17 +25,19 @@
  * **A closed session stays reopenable.** One that ended with its conversation
  * known (the provider's hook said), and was not fenced, is kept on this
  * machine, outside the vault (`past`): History lists it, and opening it
- * starts the provider on that conversation again (`codex resume <id>`) under
- * the same id. A live session
- * is never restarted or copied: Codex's CLI has no verb Holi could back
- * either with.
+ * starts the provider on that conversation again (`codex resume <id>`,
+ * `pi --session-id <id>`) under the same id. A provider that takes a UUID
+ * Holi chose as its conversation's id (`namesConversation`, Pi) knows it from
+ * the start, and a live session of it can be copied: a new session forked
+ * from that conversation (`duplicate`). A live session is never restarted: no
+ * CLI here has a verb Holi could back that with.
  *
  * One per vault activation: the agent starts in a vault, and these sessions
  * end when it stops there.
  *
  * NOTE: no `electron` import, so this loads under vitest.
  */
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import type { SessionState, SessionSummary } from '../claude/listing'
 import type { AgentProvider, ProviderId, VaultRef } from '../provider'
 import { createTurnSignals, type TurnSignals } from './pty-signals'
@@ -151,6 +153,9 @@ export interface PtySessions {
   hasPast(id: string): Promise<boolean>
   /** A closed session started again on its conversation, under its id. */
   reopen(id: string, size: Geometry): Promise<StartResult>
+  /** A new session on a copy of a live one's conversation, for a provider
+   *  that names its conversations by Holi's id. */
+  duplicate(id: string, size: Geometry): Promise<StartResult>
   /** Put text in a session's input, unsent. */
   send(id: string, text: string): OpenResult
   stop(id: string): Promise<ActionResult>
@@ -259,10 +264,18 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       prompt,
       resume,
       fence,
+      fork,
       cols,
       rows,
       id: given,
-    }: Geometry & { name?: string; prompt?: string; resume?: string; fence?: Fence; id?: string },
+    }: Geometry & {
+      name?: string
+      prompt?: string
+      resume?: string
+      fence?: Fence
+      fork?: string
+      id?: string
+    },
   ): Promise<StartResult> {
     const provider = deps.providers.find((p) => p.id === providerId)
     if (provider === undefined) {
@@ -270,6 +283,9 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     }
     if (resume !== undefined && resume !== 'pick' && !CONVERSATION_ID.test(resume)) {
       return { ok: false, message: 'That is not a conversation Holi can pick up.' }
+    }
+    if (fork !== undefined && !CONVERSATION_ID.test(fork)) {
+      return { ok: false, message: 'That is not a conversation Holi can copy.' }
     }
     const config = await configure(provider)
     if (config === null) {
@@ -279,6 +295,10 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     if (fence !== undefined && provider.capabilities.fenced !== true) {
       return { ok: false, message: `${provider.label} cannot run fenced to a folder.` }
     }
+    // A provider that takes Holi's name for a new conversation gets a UUID,
+    // the shape every conversation id Holi keeps has.
+    const conversation =
+      resume === undefined && provider.namesConversation === true ? randomUUID() : undefined
     const target = {
       root: deps.vault.root,
       configDir: config.dir,
@@ -313,8 +333,10 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       command = provider.terminal(target, {
         session: id,
         ...(fence === undefined ? {} : { fence: { dir: fence.dir, state: fence.state } }),
+        ...(conversation === undefined ? {} : { conversation }),
         ...(prompt === undefined ? {} : { prompt }),
         ...(resume === undefined ? {} : { resume }),
+        ...(fork === undefined ? {} : { fork }),
       })
     } catch (err) {
       signals.dispose()
@@ -375,7 +397,13 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         (prompt === undefined ? null : nameOf(prompt)),
       startedAt: Date.now(),
       terminalId: opened.id,
-      ...(resume === undefined || resume === 'pick' ? {} : { conversationId: resume }),
+      // A provider's own picker leaves the conversation unknown; one that
+      // takes Holi's name for it has it from the start.
+      ...(resume !== undefined && resume !== 'pick'
+        ? { conversationId: resume }
+        : conversation === undefined
+          ? {}
+          : { conversationId: conversation }),
       attention: false,
       signals,
     }
@@ -424,6 +452,19 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       } finally {
         reopening.delete(id)
       }
+    },
+
+    async duplicate(id, size) {
+      const s = sessions.get(id)
+      if (s === undefined) return gone
+      const provider = deps.providers.find((p) => p.id === s.provider)
+      if (provider?.namesConversation !== true || s.conversationId === undefined) {
+        return {
+          ok: false,
+          message: `A ${provider?.label ?? s.provider} session cannot be copied.`,
+        }
+      }
+      return startSession(s.provider, { ...size, name: nameFor(s), fork: s.conversationId })
     },
 
     send(id, text) {
