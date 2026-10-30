@@ -1,7 +1,8 @@
 /**
  * The vault notice under the file tree: a plugin the vault uses that this
  * machine cannot run can be dismissed, for that vault and plugin only, and it
- * stays dismissed across a restart and a newer pin.
+ * stays dismissed across a restart and a newer pin, until the plugin is ready
+ * there.
  */
 import { render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
@@ -13,12 +14,17 @@ import { rowsAtom, type PluginRow } from '../renderer/state'
 
 const Notice = communityRenderer.sidebarSection!
 
-const row = (id: string, name: string, version = '0.1.0'): PluginRow => ({
+const row = (
+  id: string,
+  name: string,
+  version = '0.1.0',
+  status: PluginRow['status'] = 'not-installed',
+): PluginRow => ({
   id,
   name,
   description: '',
   opens: [],
-  status: 'not-installed',
+  status,
   on: true,
   running: false,
   pin: { repo: `syv-ai/${id}`, path: '', version, commit: 'abc' },
@@ -59,5 +65,17 @@ test('a dismissed notice stays gone for that vault and plugin only', async () =>
   again.unmount()
 
   open('ada/other', [row('dash', 'Dash')])
+  expect(screen.getByText('Dash')).toBeInTheDocument()
+})
+
+test('a plugin ready in the vault drops its dismissal, so a later pin shows again', async () => {
+  const first = open('ada/notes', [row('dash', 'Dash')])
+  await userEvent.click(screen.getByRole('button', { name: 'Dismiss Dash' }))
+  first.unmount()
+
+  // Installed after all, through Settings: the vault reads it ready.
+  open('ada/notes', [row('dash', 'Dash', '0.1.0', 'ready')]).unmount()
+
+  open('ada/notes', [row('dash', 'Dash', '0.2.0', 'pin-differs')])
   expect(screen.getByText('Dash')).toBeInTheDocument()
 })
