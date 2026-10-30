@@ -6,8 +6,10 @@
  *
  * The icon is the app icon's tile, the "h" on its grey squircle as Cmd+Tab
  * shows it, so the menu bar and the dock read as one app. It is
- * `build/icon.svg` rasterised once, cropped to the tile, at 18 and 36 px (an
- * 18 pt menu bar icon at @1x and @2x), and read in with `?inline`, so it
+ * `build/icon.svg` rasterised once without its drop shadow: the tile at 16 pt,
+ * centred in an 18 pt transparent canvas, at 18 and 36 px (@1x and @2x).
+ * Regenerate both from `apps/desktop` with
+ * `pnpm exec electron scripts/tray-icon.mjs`. They are read in with `?inline`, so it
  * resolves identically in `electron-vite dev` and a packaged build with no
  * `resources` wiring. It is in colour, so it is not a template image: macOS
  * would flatten it to a monochrome silhouette. The tile carries its own
