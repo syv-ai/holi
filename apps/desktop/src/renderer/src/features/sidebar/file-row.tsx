@@ -4,6 +4,7 @@ import { FolderIcon, FolderOpenIcon } from 'lucide-react'
 
 import { FileType, getFileType } from '@/components/ui/file-type'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
+import { FolderDocumentMark } from '@/composites/marks'
 import type { TreeItemData } from '@/lib/tree-data'
 
 /** A row in a hover card when its claim draws one; the row alone otherwise. */
@@ -36,11 +37,12 @@ export function displayName(item: ItemInstance<TreeItemData>): string {
   return dot > 0 ? name.slice(0, dot) : name
 }
 
-/** Folders keep their folder glyph; every file, an app bundle included,
- *  shows ReUI's file-type icon for its kind. */
+/** Folders keep their folder glyph; every file shows ReUI's file-type icon
+ *  for its kind, and a folder document (a deck, an app) its kind's glyph. */
 export function FileGlyph({ item }: { item: ItemInstance<TreeItemData> }) {
   const data = item.getItemData()
-  if (item.isFolder() && !data?.isDocument) {
+  if (data?.isDocument === true) return <FolderDocumentMark name={item.getItemName()} />
+  if (item.isFolder()) {
     return item.isExpanded() ? (
       <FolderOpenIcon className="text-muted-foreground size-4" aria-hidden="true" />
     ) : (
