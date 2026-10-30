@@ -59,7 +59,19 @@ function OpenAIMark({ className }: { className?: string }) {
 const AGENT_MARKS: Record<string, { glyph: IconGlyph; className?: string }> = {
   claude: { glyph: SiClaude, className: 'text-orange-500 dark:text-orange-400' },
   codex: { glyph: OpenAIMark, className: 'text-foreground' },
-  pi: { glyph: SquareTerminal },
+  pi: { glyph: PiMark },
+}
+
+/** Pi's 4x4 staircase mark, drawn in the current foreground colour. */
+function PiMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M0 0h6v6H0zm6 0h6v6H6zm6 0h6v6h-6zM0 6h6v6H0zm12 0h6v6h-6zM0 12h6v6H0zm6 0h6v6H6zm12 0h6v6h-6zM0 18h6v6H0zm18 0h6v6h-6z"
+      />
+    </svg>
+  )
 }
 
 /** The mark of the agent a session runs, at a row's or a tab's size. */

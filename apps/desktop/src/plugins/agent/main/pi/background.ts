@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { buildAgentEnv } from '../claude/cli'
+import { buildPiEnv } from './env'
 import type { SessionSummary } from '../claude/listing'
 import { PiRpcRun, type PiRunResult } from './rpc'
 
@@ -73,7 +73,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       run = new PiRpcRun({
         bin,
         cwd: root,
-        env: buildAgentEnv(process.env, { binDir: deps.binDir?.() }),
+        env: buildPiEnv(process.env, { binDir: deps.binDir?.() }),
         onStats: (stats) => {
           const job = jobs.get(id)
           if (!job || job.remote !== remote) return
