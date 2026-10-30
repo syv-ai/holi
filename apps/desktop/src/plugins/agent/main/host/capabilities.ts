@@ -83,6 +83,13 @@ export interface AgentCapabilitiesDeps {
   liveRemote(): string | null
   /** Commit the open vault now. */
   commitNow(): Promise<unknown>
+  /** Pi's per-job RPC supervisor; unlike Claude it is managed by Holi. */
+  pi?: {
+    sessions(): SessionSummary[]
+    launch(args: { name: string; prompt: string; model?: string }): Promise<unknown>
+    message(id: string, text: string): Promise<void>
+    stop(id: string): Promise<ActionResult>
+  }
 }
 
 const notOpen = { ok: false as const, message: VAULT_NOT_OPEN }
@@ -160,7 +167,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         // Asked as the renderer mounts, and the vault may only just have
         // opened: finish attaching to it first.
         await deps.sessions.ensure()
-        return [...deps.sessions.sessions(), ...deps.own.sessions()]
+        return [...deps.sessions.sessions(), ...(deps.pi?.sessions() ?? []), ...deps.own.sessions()]
       },
       text: (sessions) => sessions.map((s) => `${s.state}\t${s.name}`).join('\n'),
     }),
@@ -186,7 +193,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
           id: p.id,
           label: p.label,
           installed: p.installed(),
-          background: hasBackground(p),
+          background: p.id === 'pi' || hasBackground(p),
         })),
     }),
 
@@ -274,6 +281,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         const p = paramsObject(raw)
         const model = optionalStringParam(p, 'model')
         const system = optionalStringParam(p, 'system')
+        const provider = providerParam(p)
         const allow = p['allow']
         if (
           allow !== undefined &&
@@ -284,12 +292,25 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         return {
           name: stringParam(p, 'name'),
           prompt: stringParam(p, 'prompt'),
+          ...(provider === undefined ? {} : { provider }),
           ...(model === undefined ? {} : { model }),
           ...(allow === undefined ? {} : { allow: allow as string[] }),
           ...(system === undefined ? {} : { appendSystemPrompt: system }),
         }
       },
-      run: async (ctx, args) => (live(ctx) ? deps.sessions.launch(args) : notOpen),
+      run: async (ctx, { provider = 'claude', ...args }) => {
+        if (!live(ctx)) return notOpen
+        if (provider === 'pi') {
+          if (!deps.pi)
+            return { ok: false as const, message: 'Pi background runs are unavailable.' }
+          return deps.pi.launch({
+            name: args.name,
+            prompt: args.prompt,
+            ...(args.model === undefined ? {} : { model: args.model }),
+          })
+        }
+        return deps.sessions.launch(args)
+      },
     }),
 
     /** Whether Holi has a terminal open on the session: someone may be
@@ -366,7 +387,11 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         if (deps.own.has(session)) {
           throw new CapabilityError('UNAVAILABLE', 'Only a Claude Code session takes messages.')
         }
-        await deps.sessions.message(session, text)
+        if (deps.pi?.sessions().some((item) => item.id === session)) {
+          await deps.pi.message(session, text)
+        } else {
+          await deps.sessions.message(session, text)
+        }
         return { ok: true }
       },
       text: () => 'sent',
@@ -377,7 +402,11 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       params: idParams,
       run: async (ctx, { id }): Promise<ActionResult> => {
         if (!live(ctx)) return notOpen
-        return deps.own.has(id) ? deps.own.stop(id) : deps.sessions.stop(id)
+        return deps.own.has(id)
+          ? deps.own.stop(id)
+          : deps.pi?.sessions().some((item) => item.id === id)
+            ? deps.pi.stop(id)
+            : deps.sessions.stop(id)
       },
     }),
 

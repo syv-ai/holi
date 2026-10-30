@@ -85,14 +85,24 @@ describe('PiRpcRun', () => {
     await expect(result).resolves.toMatchObject({ status: 'failed', output: 'lon' })
   })
 
-  it('finishes when a Pi command handles the prompt without starting a run', async () => {
+  it('waits for settlement after a command acknowledgement and reuses the RPC process', async () => {
     const fakeProcess = fake()
     const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => fakeProcess.child })
     const result = run.prompt('/handled')
     fakeProcess.stdout.write(
       '{"type":"response","command":"prompt","success":true,"data":{"disposition":"handled"}}\n',
     )
+    let resolved = false
+    void result.then(() => {
+      resolved = true
+    })
+    await Promise.resolve()
+    expect(resolved).toBe(false)
+    fakeProcess.stdout.write('{"type":"agent_settled","aborted":false}\n')
     await expect(result).resolves.toMatchObject({ status: 'completed' })
+    const next = run.prompt('again')
+    fakeProcess.stdout.write('{"type":"agent_settled","aborted":false}\n')
+    await expect(next).resolves.toMatchObject({ status: 'completed' })
   })
 
   it('cancels and kills the managed child', async () => {
