@@ -1,0 +1,633 @@
+/**
+ * Jobs (`host/jobs.ts`) and `agent.job`: a prompt run unwatched by a provider
+ * without a supervisor, in a scratch folder, with only what it wrote inside
+ * its scope copied back. Codex is not on the test machine, so its process is
+ * a small node script that prints the JSONL `codex exec --json` does.
+ */
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { CapabilityContext } from '../../../main/capabilities/registry'
+import { codexProvider, fenceArgs, jobArgs, readJobEvent } from '../main/codex'
+import { createFencedSessions } from '../main/host/fenced'
+import type { Fence } from '../main/host/pty-sessions'
+import { agentCapabilities, scopeRules } from '../main/host/capabilities'
+import { createJobs, inWriteScope, JOB_SESSION_ID, type JobScope } from '../main/host/jobs'
+import type { SessionSummary } from '../main/claude/listing'
+import type { AgentProvider, JobsProvider } from '../main/provider'
+
+const dirs: string[] = []
+afterEach(async () => {
+  await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
+})
+
+const temp = async (prefix: string): Promise<string> => {
+  const dir = await mkdtemp(join(tmpdir(), prefix))
+  dirs.push(dir)
+  return dir
+}
+
+const exists = (path: string) =>
+  readFile(path).then(
+    () => true,
+    () => false,
+  )
+
+const event = (o: unknown) => `console.log(${JSON.stringify(JSON.stringify(o))})`
+
+/** What a successful run does: reads the note it was given, writes an app
+ *  beside it, and some things it may not. */
+const SUCCESS = [
+  "const fs = require('node:fs')",
+  event({ type: 'thread.started', thread_id: 'th-1' }),
+  event({ type: 'turn.started' }),
+  "const note = fs.readFileSync('notes/Plan.md', 'utf8')",
+  "fs.mkdirSync('notes/Plan.app', { recursive: true })",
+  "fs.writeFileSync('notes/Plan.app/index.html', '<h1>' + note.trim() + '</h1>')",
+  "fs.writeFileSync('notes/Plan.app/app.yaml', 'description: The plan\\n')",
+  // Outside the scope: neither may reach the vault.
+  "fs.writeFileSync('notes/Plan.md', 'rewritten')",
+  "fs.writeFileSync('stray.txt', 'no')",
+  // A link could point anywhere: never followed back.
+  "fs.symlinkSync('/etc/hosts', 'notes/Plan.app/hosts')",
+  // In scope, but not the vault's shared content: never copied back.
+  "fs.writeFileSync('notes/Plan.app/.hidden', 'no')",
+  "fs.writeFileSync('notes/Plan.app/me.local.md', 'no')",
+  "fs.writeFileSync('notes/Plan.app/.env', 'TOKEN=no')",
+  "fs.mkdirSync('notes/Plan.app/sub', { recursive: true })",
+  "fs.writeFileSync('notes/Plan.app/sub/AGENTS.md', 'no')",
+  "fs.writeFileSync('notes/Plan.app/claude.md', 'no')",
+  event({ type: 'turn.completed', usage: {} }),
+].join('\n')
+
+const FAILED = [
+  "require('node:fs').mkdirSync('notes/Plan.app', { recursive: true })",
+  "require('node:fs').writeFileSync('notes/Plan.app/index.html', 'half')",
+  event({ type: 'turn.started' }),
+  event({ type: 'turn.failed', error: { message: 'The model refused.' } }),
+].join('\n')
+
+const CRASH = "console.error('boom: no sign-in'); process.exit(3)"
+
+const HANG = [event({ type: 'turn.started' }), 'setInterval(() => {}, 1000)'].join('\n')
+
+const SCOPE: JobScope = { read: ['notes/Plan.md'], write: ['notes/Plan.app/**'] }
+
+/** A successful run that writes `count` files of `size` bytes in scope. */
+const WRITES = (count: number, size: number) =>
+  [
+    "const fs = require('node:fs')",
+    event({ type: 'turn.started' }),
+    "fs.mkdirSync('notes/Plan.app', { recursive: true })",
+    `for (let i = 0; i < ${count}; i++) fs.writeFileSync('notes/Plan.app/f' + i + '.txt', Buffer.alloc(${size}, 97))`,
+    "fs.writeFileSync('notes/Plan.app/app.yaml', 'description: x\\n')",
+    event({ type: 'turn.completed' }),
+  ].join('\n')
+
+/** A provider whose job is `node <script>`, read as Codex's events. */
+function scripted(script: string): JobsProvider {
+  return {
+    id: 'codex',
+    label: 'Codex',
+    notInstalled: 'Codex is not installed.',
+    installed: () => true,
+    configure: async () => ({ dir: '/nowhere' }),
+    terminal: () => null,
+    capabilities: {
+      jobs: {
+        command: () => ({
+          bin: process.execPath,
+          args: [script],
+          env: { PATH: process.env.PATH ?? '' },
+        }),
+        event: readJobEvent,
+      },
+    },
+  }
+}
+
+async function rig(
+  body: string,
+  opts: { keepMs?: number; afterWrite?: (rel: string) => Promise<void> | void } = {},
+) {
+  const root = await temp('holi-job-vault-')
+  const userData = await temp('holi-job-data-')
+  await mkdir(join(root, 'notes'), { recursive: true })
+  await writeFile(join(root, 'notes/Plan.md'), 'Ship it\n')
+  const script = join(userData, 'fake-codex.js')
+  await writeFile(script, body)
+  const lists: SessionSummary[][] = []
+  const jobs = createJobs({
+    vault: { remote: 'syv/vault', root },
+    scratchRoot: join(userData, 'agent-jobs'),
+    onChange: (list) => lists.push(list),
+    killGraceMs: 200,
+    log: () => {},
+    ...opts,
+  })
+  const ended = (id: string) =>
+    vi.waitFor(
+      () => {
+        const row = jobs.sessions().find((s) => s.id === id)
+        if (row?.outcome === undefined) throw new Error('still running')
+        return row
+      },
+      { timeout: 5_000 },
+    )
+  return { root, userData, script, jobs, lists, ended, provider: scripted(script) }
+}
+
+describe('a job', () => {
+  it('runs in a scratch folder and copies back only what it wrote in scope', async () => {
+    const { root, userData, jobs, provider, ended } = await rig(SUCCESS)
+    const started = await jobs.start({
+      provider,
+      name: 'Plan: vault app',
+      prompt: 'go',
+      scope: SCOPE,
+    })
+    expect(started.ok).toBe(true)
+    const id = (started as { sessionId: string }).sessionId
+    expect(id).toMatch(JOB_SESSION_ID)
+    expect(jobs.sessions()[0]).toMatchObject({ id, provider: 'codex', state: 'working' })
+
+    const row = await ended(id)
+    expect(row).toMatchObject({ state: 'idle', outcome: 'done' })
+    expect(await readFile(join(root, 'notes/Plan.app/index.html'), 'utf8')).toBe('<h1>Ship it</h1>')
+    expect(await readFile(join(root, 'notes/Plan.app/app.yaml'), 'utf8')).toBe(
+      'description: The plan\n',
+    )
+    expect(await readFile(join(root, 'notes/Plan.md'), 'utf8')).toBe('Ship it\n')
+    expect(await exists(join(root, 'stray.txt'))).toBe(false)
+    expect(await exists(join(root, 'notes/Plan.app/hosts'))).toBe(false)
+    for (const name of ['.hidden', 'me.local.md', '.env', 'sub/AGENTS.md', 'claude.md']) {
+      expect(await exists(join(root, 'notes/Plan.app', name))).toBe(false)
+      expect(row.message).toContain(`notes/Plan.app/${name}`)
+    }
+    // The scratch folder is gone.
+    await vi.waitFor(async () => expect(await readdir(join(userData, 'agent-jobs'))).toEqual([]))
+  })
+
+  it('fails with the turn’s own reason, and writes nothing', async () => {
+    const { root, jobs, provider, ended } = await rig(FAILED)
+    const started = await jobs.start({ provider, name: 'x', prompt: 'go', scope: SCOPE })
+    const row = await ended((started as { sessionId: string }).sessionId)
+    expect(row).toMatchObject({ outcome: 'failed', message: 'The model refused.' })
+    expect(await exists(join(root, 'notes/Plan.app/index.html'))).toBe(false)
+  })
+
+  it('fails with what a crash said on stderr', async () => {
+    const { jobs, provider, ended } = await rig(CRASH)
+    const started = await jobs.start({ provider, name: 'x', prompt: 'go', scope: SCOPE })
+    const row = await ended((started as { sessionId: string }).sessionId)
+    expect(row.outcome).toBe('failed')
+    expect(row.message).toBe('Codex exited with code 3: boom: no sign-in')
+  })
+
+  it('is stopped by Stop, and by leaving the vault', async () => {
+    const { userData, jobs, provider, ended } = await rig(HANG)
+    const a = await jobs.start({ provider, name: 'a', prompt: 'go', scope: SCOPE })
+    const aId = (a as { sessionId: string }).sessionId
+    await vi.waitFor(() => expect(jobs.sessions()[0]?.state).toBe('working'))
+    expect(await jobs.stop(aId)).toEqual({ ok: true })
+    expect(await ended(aId)).toMatchObject({ outcome: 'failed', message: 'Stopped.' })
+
+    const b = await jobs.start({ provider, name: 'b', prompt: 'go', scope: SCOPE })
+    expect(b.ok).toBe(true)
+    await jobs.leave()
+    expect(jobs.sessions()).toEqual([])
+    expect(await exists(join(userData, 'agent-jobs'))).toBe(false)
+  })
+
+  it('copies nothing back past its limits', async () => {
+    for (const [count, size] of [
+      [201, 1],
+      [2, 11 * 1024 * 1024],
+    ] as const) {
+      const { root, jobs, provider, ended } = await rig(WRITES(count, size))
+      const started = await jobs.start({ provider, name: 'x', prompt: 'go', scope: SCOPE })
+      const row = await ended((started as { sessionId: string }).sessionId)
+      expect(row.outcome).toBe('failed')
+      expect(row.message).toMatch(/more than Holi copies back/)
+      expect(await exists(join(root, 'notes/Plan.app/f0.txt'))).toBe(false)
+      expect(await exists(join(root, 'notes/Plan.app/app.yaml'))).toBe(false)
+    }
+  })
+
+  it('stops where a Stop comes in during the copy back', async () => {
+    let id = ''
+    let jobs: Awaited<ReturnType<typeof rig>>['jobs'] | undefined
+    const r = await rig(WRITES(5, 1), {
+      afterWrite: async () => {
+        await jobs!.stop(id)
+      },
+    })
+    jobs = r.jobs
+    const started = await r.jobs.start({
+      provider: r.provider,
+      name: 'x',
+      prompt: 'go',
+      scope: SCOPE,
+    })
+    id = (started as { sessionId: string }).sessionId
+    const row = await r.ended(id)
+    expect(row).toMatchObject({ outcome: 'failed', message: 'Stopped.' })
+    // One file landed before the Stop; the finished marker never did.
+    const written = (await readdir(join(r.root, 'notes/Plan.app'))).sort()
+    expect(written).toHaveLength(1)
+    expect(await exists(join(r.root, 'notes/Plan.app/app.yaml'))).toBe(false)
+  })
+
+  it('leaves the list a while after it ends', async () => {
+    const { jobs, provider, ended } = await rig(CRASH, { keepMs: 50 })
+    const started = await jobs.start({ provider, name: 'x', prompt: 'go', scope: SCOPE })
+    await ended((started as { sessionId: string }).sessionId)
+    await vi.waitFor(() => expect(jobs.sessions()).toEqual([]))
+  })
+
+  it('is refused when the agent is not installed, or a file cannot be read', async () => {
+    const { jobs, provider } = await rig(SUCCESS)
+    const missing: JobsProvider = {
+      ...provider,
+      capabilities: { jobs: { ...provider.capabilities.jobs, command: () => null } },
+    }
+    expect(await jobs.start({ provider: missing, name: 'x', prompt: 'go', scope: SCOPE })).toEqual({
+      ok: false,
+      message: 'Codex is not installed.',
+    })
+    expect(
+      await jobs.start({
+        provider,
+        name: 'x',
+        prompt: 'go',
+        scope: { read: ['notes/Gone.md'], write: [] },
+      }),
+    ).toEqual({ ok: false, message: 'Holi could not read notes/Gone.md.' })
+  })
+
+  it('runs Codex as `codex exec`, sandboxed in the scratch folder', async () => {
+    const { root, userData, jobs, ended } = await rig(SUCCESS)
+    // A stand-in `codex` that checks its arguments, then runs the script.
+    const argv = join(userData, 'argv.json')
+    const check = join(userData, 'check.js')
+    await writeFile(
+      check,
+      [
+        `require('node:fs').writeFileSync(${JSON.stringify(argv)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd() }))`,
+        `require(${JSON.stringify(join(userData, 'fake-codex.js'))})`,
+      ].join('\n'),
+    )
+    const bin = join(userData, 'codex')
+    await writeFile(bin, `#!/bin/sh\nexec "${process.execPath}" "${check}" "$@"\n`)
+    await chmod(bin, 0o755)
+    const codex = codexProvider({ resolveBin: () => bin }) as JobsProvider
+    const started = await jobs.start({
+      provider: codex,
+      name: 'x',
+      prompt: 'Make it',
+      scope: SCOPE,
+    })
+    const row = await ended((started as { sessionId: string }).sessionId)
+    expect(row.outcome).toBe('done')
+    const seen = JSON.parse(await readFile(argv, 'utf8')) as { args: string[]; cwd: string }
+    const scratch = seen.args[seen.args.indexOf('-C') + 1]!
+    expect(seen.args).toEqual(jobArgs({ cwd: scratch, prompt: 'Make it' }))
+    expect(scratch.startsWith(join(userData, 'agent-jobs'))).toBe(true)
+    expect(await readFile(join(root, 'notes/Plan.app/app.yaml'), 'utf8')).toContain('The plan')
+  })
+})
+
+describe('the Codex job command', () => {
+  it('never asks, has no network, and keeps the prompt after --', () => {
+    expect(jobArgs({ cwd: '/s', prompt: '--help', model: 'gpt-5' })).toEqual([
+      'exec',
+      '--json',
+      '--skip-git-repo-check',
+      '-C',
+      '/s',
+      '--sandbox',
+      'workspace-write',
+      '-c',
+      'approval_policy="never"',
+      '-c',
+      'sandbox_workspace_write.network_access=false',
+      '-c',
+      'mcp_servers={}',
+      '-c',
+      'web_search="disabled"',
+      '-c',
+      'tools.web_search=false',
+      '-m',
+      'gpt-5',
+      '--',
+      '--help',
+    ])
+  })
+
+  it('fences a session to its folder with the same tools off, asking in its terminal', () => {
+    const codex = codexProvider({ resolveBin: () => '/usr/local/bin/codex' })
+    const cmd = codex.terminal(
+      { root: '/v', configDir: '/c', binDir: null },
+      { session: 'p0123456789ab', fence: '/s', prompt: '--help' },
+    )
+    expect(fenceArgs('/s')).toContain('approval_policy="on-request"')
+    expect(fenceArgs('/s')).toContain('sandbox_workspace_write.network_access=false')
+    expect(fenceArgs('/s')).toContain('mcp_servers={}')
+    expect(cmd?.args.slice(2)).toEqual([...fenceArgs('/s'), '--', '--help'])
+    expect(codex.capabilities.fenced).toBe(true)
+  })
+
+  it('carries no Holi commands on its PATH', () => {
+    const codex = codexProvider({ resolveBin: () => '/usr/local/bin/codex' }) as JobsProvider
+    const cmd = codex.capabilities.jobs.command({ cwd: '/s', prompt: 'p' })
+    expect(cmd?.env.PATH?.split(':')).not.toContain('/holi/bin')
+    expect(cmd?.env.HOLI_AGENT_SESSION).toBeUndefined()
+  })
+
+  it('reads the events it needs and nothing else', () => {
+    expect(readJobEvent('{"type":"thread.started","thread_id":"th-1"}')).toEqual({
+      kind: 'thread',
+      id: 'th-1',
+    })
+    expect(readJobEvent('{"type":"turn.completed","usage":{}}')).toEqual({
+      kind: 'turn-completed',
+    })
+    expect(readJobEvent('{"type":"turn.failed","error":{"message":"no"}}')).toEqual({
+      kind: 'turn-failed',
+      message: 'no',
+    })
+    expect(readJobEvent('{"type":"error","message":"stream lost"}')).toEqual({
+      kind: 'error',
+      message: 'stream lost',
+    })
+    expect(readJobEvent('{"type":"item.completed"}')).toBeNull()
+    expect(readJobEvent('not json')).toBeNull()
+  })
+
+  it('matches a write scope exactly or by folder', () => {
+    expect(inWriteScope('a/B.app/index.html', ['a/B.app/**'])).toBe(true)
+    expect(inWriteScope('a/B.apps/x', ['a/B.app/**'])).toBe(false)
+    expect(inWriteScope('a/B.md', ['a/B.md'])).toBe(true)
+    expect(inWriteScope('a/C.md', ['a/B.md'])).toBe(false)
+  })
+})
+
+describe('agent.job', () => {
+  const claude = {
+    id: 'claude',
+    label: 'Claude Code',
+    capabilities: { background: {} },
+  } as unknown as AgentProvider
+  const codex = {
+    id: 'codex',
+    label: 'Codex',
+    capabilities: { jobs: {} },
+  } as unknown as AgentProvider
+  const bare = { id: 'codex', label: 'Codex', capabilities: {} } as unknown as AgentProvider
+
+  function table(providers: AgentProvider[]) {
+    const launch = vi.fn(async () => ({ ok: true as const, sessionId: 'abcd1234' }))
+    const start = vi.fn(async () => ({ ok: true as const, sessionId: 'j0123456789ab' }))
+    const caps = agentCapabilities({
+      sessions: { launch } as never,
+      own: {} as never,
+      jobs: { start } as never,
+      fenced: {} as never,
+      providers,
+      terminals: {} as never,
+      liveRemote: () => 'syv/vault',
+      commitNow: async () => null,
+    })
+    const ctx = { remote: 'syv/vault', root: '/v' } as unknown as CapabilityContext
+    const entry = caps['agent.job']
+    const run = (params: unknown) => entry.run(ctx, entry.params(params))
+    return { run, launch, start, params: entry.params }
+  }
+
+  const ASK = {
+    name: 'Plan: vault app',
+    prompt: 'Make it',
+    system: 'Nobody is watching.',
+    model: 'claude-sonnet-5-5',
+    scope: { read: ['notes/Plan.md'], write: ['notes/Plan.app/**'] },
+  }
+
+  it('runs on Claude Code as a background session allowed exactly its scope', async () => {
+    const { run, launch, start } = table([claude, codex])
+    expect(await run({ ...ASK, provider: 'claude' })).toEqual({ ok: true, sessionId: 'abcd1234' })
+    expect(start).not.toHaveBeenCalled()
+    expect(launch).toHaveBeenCalledWith({
+      name: 'Plan: vault app',
+      prompt: 'Make it',
+      model: 'claude-sonnet-5-5',
+      appendSystemPrompt: 'Nobody is watching.',
+      allow: scopeRules(ASK.scope),
+    })
+    expect(scopeRules(ASK.scope)).toEqual([
+      'Read(./notes/Plan.md)',
+      'Read(./notes/Plan.app/**)',
+      'Edit(./notes/Plan.app/**)',
+      'Write(./notes/Plan.app/**)',
+    ])
+  })
+
+  it('runs on Codex as a job, never on Claude Code', async () => {
+    const { run, launch, start } = table([claude, codex])
+    const { model: _model, ...ask } = ASK
+    expect(await run({ ...ask, provider: 'codex' })).toEqual({
+      ok: true,
+      sessionId: 'j0123456789ab',
+    })
+    expect(launch).not.toHaveBeenCalled()
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: codex, scope: ASK.scope, system: 'Nobody is watching.' }),
+    )
+  })
+
+  it('refuses an agent that cannot run unwatched', async () => {
+    const { run, launch, start } = table([claude, bare])
+    expect(await run({ ...ASK, provider: 'codex' })).toEqual({
+      ok: false,
+      message: 'Codex cannot run a job with nobody watching.',
+    })
+    expect(launch).not.toHaveBeenCalled()
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it('refuses a scope outside what a capability may touch', () => {
+    const { params } = table([claude])
+    const bad = (scope: unknown) => () => params({ ...ASK, scope })
+    expect(bad({ read: ['.holi/memory/x.md'], write: [] })).toThrow()
+    expect(bad({ read: [], write: ['notes/*.md'] })).toThrow()
+    expect(bad({ read: ['../out.md'], write: [] })).toThrow()
+    expect(bad({ read: [], write: ['.env'] })).toThrow()
+    expect(bad(undefined)).toThrow()
+  })
+})
+
+describe('agent.scoped', () => {
+  const claude = {
+    id: 'claude',
+    label: 'Claude Code',
+    capabilities: { background: {} },
+  } as unknown as AgentProvider
+  const codex = {
+    id: 'codex',
+    label: 'Codex',
+    capabilities: { jobs: {}, fenced: true },
+  } as unknown as AgentProvider
+  const unfenced = {
+    id: 'codex',
+    label: 'Codex',
+    capabilities: { jobs: {} },
+  } as unknown as AgentProvider
+
+  function table(providers: AgentProvider[]) {
+    const launch = vi.fn(async () => ({ ok: true as const, sessionId: 'abcd1234' }))
+    const fence = vi.fn(async () => ({
+      ok: true as const,
+      sessionId: 'p0123456789ab',
+      terminalId: 't1',
+    }))
+    const caps = agentCapabilities({
+      sessions: { launch } as never,
+      own: {} as never,
+      jobs: {} as never,
+      fenced: { start: fence },
+      providers,
+      terminals: {} as never,
+      liveRemote: () => 'syv/vault',
+      commitNow: async () => null,
+    })
+    const ctx = { remote: 'syv/vault', root: '/v' } as unknown as CapabilityContext
+    const entry = caps['agent.scoped']
+    return { run: (params: unknown) => entry.run(ctx, entry.params(params)), launch, fence }
+  }
+
+  const ASK = {
+    name: 'Plan: vault app',
+    prompt: 'Make it',
+    system: 'Make the app.',
+    scope: { read: ['notes/Plan.md'], write: ['notes/Plan.app/**'] },
+  }
+
+  it('runs on Claude Code as a background session allowed exactly its scope', async () => {
+    const { run, launch, fence } = table([claude, codex])
+    expect(await run({ ...ASK, model: 'claude-sonnet-5-5', provider: 'claude' })).toEqual({
+      ok: true,
+      sessionId: 'abcd1234',
+    })
+    expect(fence).not.toHaveBeenCalled()
+    expect(launch).toHaveBeenCalledWith({
+      name: 'Plan: vault app',
+      prompt: 'Make it',
+      model: 'claude-sonnet-5-5',
+      appendSystemPrompt: 'Make the app.',
+      allow: scopeRules(ASK.scope),
+    })
+  })
+
+  it('runs on Codex as a session fenced to a folder of Holi’s', async () => {
+    const { run, launch, fence } = table([claude, codex])
+    expect(await run({ ...ASK, provider: 'codex', cols: 90 })).toMatchObject({
+      ok: true,
+      sessionId: 'p0123456789ab',
+    })
+    expect(launch).not.toHaveBeenCalled()
+    expect(fence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: codex,
+        scope: ASK.scope,
+        system: 'Make the app.',
+        cols: 90,
+      }),
+    )
+  })
+
+  it('refuses an agent that cannot be fenced, never running another', async () => {
+    const { run, launch, fence } = table([claude, unfenced])
+    expect(await run({ ...ASK, provider: 'codex' })).toEqual({
+      ok: false,
+      message: 'Codex cannot run a session fenced to what it may touch.',
+    })
+    expect(launch).not.toHaveBeenCalled()
+    expect(fence).not.toHaveBeenCalled()
+  })
+})
+
+describe('a fenced session', () => {
+  async function fencedRig() {
+    const root = await temp('holi-fenced-vault-')
+    const userData = await temp('holi-fenced-data-')
+    await mkdir(join(root, 'notes'), { recursive: true })
+    await writeFile(join(root, 'notes/Plan.md'), 'Ship it\n')
+    const jobs = createJobs({
+      vault: { remote: 'syv/vault', root },
+      scratchRoot: join(userData, 'agent-jobs'),
+      onChange: () => {},
+      log: () => {},
+    })
+    let fence: Fence | undefined
+    const own = {
+      start: vi.fn(async (_provider: string, args: { prompt?: string; fence?: Fence }) => {
+        fence = args.fence
+        return { ok: true as const, sessionId: 'p0123456789ab', terminalId: 't1' }
+      }),
+    }
+    const fenced = createFencedSessions({
+      vault: { remote: 'syv/vault', root },
+      scratchRoot: join(userData, 'agent-fenced'),
+      own,
+      copyBack: jobs.copyBack,
+      log: () => {},
+    })
+    const res = await fenced.start({
+      provider: { id: 'codex', label: 'Codex', capabilities: { fenced: true } } as never,
+      name: 'Plan: vault app',
+      prompt: 'Make it',
+      system: 'Make the app.',
+      scope: SCOPE,
+    })
+    if (fence === undefined) throw new Error('no fence')
+    return { root, res, own, fence, fenced }
+  }
+
+  it('starts in a folder holding what it reads, and copies back what it wrote as a turn ends', async () => {
+    const { root, res, own, fence } = await fencedRig()
+    expect(res.ok).toBe(true)
+    expect(own.start.mock.calls[0]?.[1].prompt).toBe('Make the app.\n\nMake it')
+    expect(await readFile(join(fence.dir, 'notes/Plan.md'), 'utf8')).toBe('Ship it\n')
+
+    await mkdir(join(fence.dir, 'notes/Plan.app'), { recursive: true })
+    await writeFile(join(fence.dir, 'notes/Plan.app/index.html'), '<h1>Ship it</h1>')
+    await writeFile(join(fence.dir, 'notes/Plan.app/app.yaml'), 'description: The plan\n')
+    await writeFile(join(fence.dir, 'notes/Plan.app/.env'), 'TOKEN=no')
+    await writeFile(join(fence.dir, 'notes/Plan.md'), 'rewritten')
+    await fence.turnEnded()
+    expect(await readFile(join(root, 'notes/Plan.app/app.yaml'), 'utf8')).toBe(
+      'description: The plan\n',
+    )
+    expect(await exists(join(root, 'notes/Plan.app/.env'))).toBe(false)
+    expect(await readFile(join(root, 'notes/Plan.md'), 'utf8')).toBe('Ship it\n')
+
+    // A later turn's change, then the session exits: copied, and the folder goes.
+    await writeFile(join(fence.dir, 'notes/Plan.app/index.html'), '<h1>Shipped</h1>')
+    fence.exited()
+    await vi.waitFor(() => expect(exists(join(fence.dir, 'notes/Plan.md'))).resolves.toBe(false))
+    expect(await readFile(join(root, 'notes/Plan.app/index.html'), 'utf8')).toBe('<h1>Shipped</h1>')
+  })
+
+  it('says why when its session does not start', async () => {
+    const { fenced, own } = await fencedRig()
+    own.start.mockResolvedValueOnce({ ok: false, message: 'Codex is not installed.' } as never)
+    const res = await fenced.start({
+      provider: { id: 'codex' } as never,
+      name: 'x',
+      prompt: 'x',
+      scope: SCOPE,
+    })
+    expect(res).toEqual({ ok: false, message: 'Codex is not installed.' })
+    await fenced.leave()
+  })
+})

@@ -19,6 +19,12 @@
  *   and automations need it, since their runs start with no terminal.
  * - `turns`: hook routes that report a turn's start and end.
  * - `status`: how full a session's context is, and its model.
+ * - `jobs`: a prompt run once with nobody watching, in a scratch folder Holi
+ *   owns, its output read as events (`host/jobs.ts`). Codex's `codex exec`.
+ *   What the job may write is copied back into the vault when it succeeds.
+ * - `fenced`: a session Holi runs whose terminal can be fenced to a folder
+ *   of Holi's (`TerminalOpts.fence`): its cwd, its writes sandboxed there.
+ *   What it may write is copied back at each turn's end (`host/fenced.ts`).
  */
 import { AGENT_PROVIDER_IDS, type AgentProviderId } from '@holi/shared'
 import type { BridgeRoute, SeedContribution } from '../../../main/plugin-api'
@@ -63,6 +69,10 @@ export interface TerminalOpts {
   prompt?: string
   /** Holi's id for a session it runs itself, which its hooks name. */
   session?: string
+  /** A folder of Holi's the session is fenced to (`fenced` only): its cwd,
+   *  its writes sandboxed to it, with no network, MCP servers or web search,
+   *  and the agent's own approvals in its terminal. */
+  fence?: string
 }
 
 /** Where the provider's hook routes are served (the bridge). */
@@ -113,8 +123,28 @@ interface BackgroundCapability {
   message(channel: SessionChannel, text: string): Promise<void>
 }
 
+/** What a job's output said, one line of it at a time. */
+export type JobEvent =
+  | { kind: 'thread'; id: string }
+  | { kind: 'turn-started' }
+  | { kind: 'turn-completed' }
+  | { kind: 'turn-failed'; message: string }
+  | { kind: 'error'; message: string }
+
+/** A prompt run once, unwatched, in a folder of Holi's (`host/jobs.ts`). */
+interface JobsCapability {
+  /** What runs the job in `cwd`. Null when the agent is not installed. */
+  command(args: { cwd: string; prompt: string; model?: string }): TerminalCommand | null
+  /** One line of the job's standard output, or null when it says nothing
+   *  the host reads. Another program's output: never throws. */
+  event(line: string): JobEvent | null
+}
+
 interface ProviderCapabilities {
   background?: BackgroundCapability
+  jobs?: JobsCapability
+  /** `terminal` honours `TerminalOpts.fence`. */
+  fenced?: true
   /** Serve the hook routes that report turns. Returns the undo. */
   turns?: { routes(server: RouteServer, deps: TurnRouteDeps): () => void }
   status?: {
@@ -153,3 +183,10 @@ export type BackgroundProvider = AgentProvider & {
 
 export const hasBackground = (p: AgentProvider): p is BackgroundProvider =>
   p.capabilities.background !== undefined
+
+/** A provider that runs jobs. */
+export type JobsProvider = AgentProvider & {
+  capabilities: ProviderCapabilities & { jobs: JobsCapability }
+}
+
+export const hasJobs = (p: AgentProvider): p is JobsProvider => p.capabilities.jobs !== undefined

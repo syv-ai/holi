@@ -53,6 +53,11 @@ export interface AgentSession {
   startedAt?: number
   /** Claude Code's conversation id, once it has said. */
   conversationId?: string
+  /** A job's end (Holi runs it with no terminal): whether it did what it was
+   *  asked. Absent while it runs, and on every other session. */
+  outcome?: 'done' | 'failed'
+  /** Why a job failed, in words. */
+  message?: string
 }
 
 /**

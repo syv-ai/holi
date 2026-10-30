@@ -305,6 +305,10 @@ export interface AgentSessionRow {
   model?: string
   /** When it started, epoch ms. */
   startedAt?: number
+  /** A job's end: whether it did what it was asked. Absent while it runs. */
+  outcome?: 'done' | 'failed'
+  /** Why a job failed, in words. */
+  message?: string
 }
 
 /** A file a run changed, across its whole range. */

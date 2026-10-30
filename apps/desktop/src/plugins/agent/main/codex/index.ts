@@ -15,6 +15,20 @@
  * environment carries to Codex and on to its hook). The turn's start comes
  * from the terminal (`../host/pty-signals.ts`).
  *
+ * **Jobs** are `codex exec --json` in a scratch folder Holi made
+ * (`../host/jobs.ts`): the workspace-write sandbox with no network, no MCP
+ * servers and no web search, and an approval policy of never, so a step the
+ * sandbox refuses fails rather than waiting on a person nobody is. The
+ * sandbox keeps its writes to the folder; it can still read the disk, so
+ * what bounds a job is what Holi copies back. Its JSONL events say how the
+ * run went.
+ *
+ * **A fenced session** (`TerminalOpts.fence`) is the TUI in a scratch folder
+ * Holi made (`../host/fenced.ts`), under the same sandbox and with the same
+ * tools off, but with Codex's interactive approvals: the person watches it
+ * and answers in its terminal. What it wrote is copied back at each turn's
+ * end, which `notify` reports.
+ *
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { accessSync, constants } from 'node:fs'
@@ -23,7 +37,7 @@ import { join } from 'node:path'
 import { resolveBin, shellReadBridgeEnv } from '../../../../main/plugin-api'
 import { buildAgentEnv } from '../claude/cli'
 import { PTY_SESSION_ID } from '../host/pty-sessions'
-import type { AgentProvider, RouteServer, TurnRouteDeps } from '../provider'
+import type { AgentProvider, JobEvent, RouteServer, TurnRouteDeps } from '../provider'
 
 /**
  * The variable that names the session to its hook.
@@ -109,6 +123,121 @@ export function registerCodexRoutes(server: RouteServer, deps: TurnRouteDeps): (
   })
 }
 
+/**
+ * What runs a job: `codex exec` in `cwd`, its writes sandboxed to it, with no
+ * network and never asking. Every option before `--`, so the prompt is only
+ * ever the prompt.
+ *
+ * The person's `config.toml` must not hand an unattended run tools outside
+ * the sandbox, so the MCP servers are emptied and web search is off, under
+ * both the key current Codex reads (`web_search`) and the older
+ * `tools.web_search`. These keys are Codex's as best known, not verified
+ * against a real `codex` here.
+ * @public exported for its test
+ */
+export function jobArgs({
+  cwd,
+  prompt,
+  model,
+}: {
+  cwd: string
+  prompt: string
+  model?: string
+}): string[] {
+  return [
+    'exec',
+    '--json',
+    '--skip-git-repo-check',
+    '-C',
+    cwd,
+    '--sandbox',
+    'workspace-write',
+    '-c',
+    'approval_policy="never"',
+    '-c',
+    'sandbox_workspace_write.network_access=false',
+    '-c',
+    'mcp_servers={}',
+    '-c',
+    'web_search="disabled"',
+    '-c',
+    'tools.web_search=false',
+    ...(model === undefined ? [] : ['-m', model]),
+    '--',
+    prompt,
+  ]
+}
+
+/**
+ * What fences a session to `dir`: its writes sandboxed there with no
+ * network, the person's MCP servers and web search off (as `jobArgs`), and
+ * approvals asked in the terminal (`on-request`), whatever `config.toml`
+ * says.
+ * @public exported for its test
+ */
+export function fenceArgs(dir: string): string[] {
+  return [
+    '-C',
+    dir,
+    '--sandbox',
+    'workspace-write',
+    '-c',
+    'approval_policy="on-request"',
+    '-c',
+    'sandbox_workspace_write.network_access=false',
+    '-c',
+    'mcp_servers={}',
+    '-c',
+    'web_search="disabled"',
+    '-c',
+    'tools.web_search=false',
+  ]
+}
+
+/** A message out of an event's `error`, or its own `message`. */
+function messageOf(r: Record<string, unknown>): string {
+  const error = r['error']
+  const nested =
+    error !== null && typeof error === 'object'
+      ? (error as Record<string, unknown>)['message']
+      : undefined
+  const own = r['message']
+  const text = typeof nested === 'string' ? nested : typeof own === 'string' ? own : ''
+  return text.trim() === '' ? 'Codex reported an error.' : text.trim()
+}
+
+/**
+ * One line of `codex exec --json`: the thread, a turn's start and end, and
+ * errors. Anything else (items, usage) is nothing to the host.
+ * @public exported for its test
+ */
+export function readJobEvent(line: string): JobEvent | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(line)
+  } catch {
+    return null
+  }
+  if (parsed === null || typeof parsed !== 'object') return null
+  const r = parsed as Record<string, unknown>
+  switch (r['type']) {
+    case 'thread.started': {
+      const id = r['thread_id']
+      return typeof id === 'string' && /^[\w-]{1,80}$/.test(id) ? { kind: 'thread', id } : null
+    }
+    case 'turn.started':
+      return { kind: 'turn-started' }
+    case 'turn.completed':
+      return { kind: 'turn-completed' }
+    case 'turn.failed':
+      return { kind: 'turn-failed', message: messageOf(r) }
+    case 'error':
+      return { kind: 'error', message: messageOf(r) }
+    default:
+      return null
+  }
+}
+
 export interface CodexProviderDeps {
   resolveBin?: () => string | null
 }
@@ -133,6 +262,7 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
         args: [
           '-c',
           notifyOverride(),
+          ...(opts.fence === undefined ? [] : fenceArgs(opts.fence)),
           ...(opts.resume === undefined
             ? []
             : ['resume', ...(opts.resume === 'pick' ? [] : [opts.resume])]),
@@ -143,6 +273,27 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
         env,
       }
     },
-    capabilities: { turns: { routes: registerCodexRoutes } },
+    capabilities: {
+      turns: { routes: registerCodexRoutes },
+      fenced: true,
+      jobs: {
+        command({ cwd, prompt, model }) {
+          const path = bin()
+          if (path === null) return null
+          // No Holi commands on its PATH and no session id: a job writes
+          // nothing of the vault but the folder it runs in. Its sandbox can
+          // still read the disk; what reaches the vault is what Holi copies
+          // back.
+          const env = buildAgentEnv(process.env)
+          delete env[SESSION_ENV]
+          return {
+            bin: path,
+            args: jobArgs({ cwd, prompt, ...(model === undefined ? {} : { model }) }),
+            env,
+          }
+        },
+        event: readJobEvent,
+      },
+    },
   }
 }

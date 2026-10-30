@@ -99,11 +99,17 @@ export function usePluginSetting(info: PluginInfo, key: string): unknown {
   return pluginSettingValue(values, info, key)
 }
 
-/** The agent a new session runs on this machine (`agentProvider`): its
- *  default until the vault's settings are read. */
-export const agentProviderSettingAtom = atom((get) => {
+/** This machine's `agentProvider`, or null until the vault's settings are
+ *  read: for a run that must not start on the default by mistake. */
+export const loadedAgentProviderAtom = atom((get) => {
   const cached = get(vaultSettingsAtom)
   return cached !== null && cached.remote === get(activeRemoteAtom)
     ? cached.settings.agentProvider
-    : VAULT_SETTING_DEFAULTS.agentProvider
+    : null
 })
+
+/** The agent a new session runs on this machine (`agentProvider`): its
+ *  default until the vault's settings are read. */
+export const agentProviderSettingAtom = atom(
+  (get) => get(loadedAgentProviderAtom) ?? VAULT_SETTING_DEFAULTS.agentProvider,
+)
