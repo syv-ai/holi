@@ -44,6 +44,7 @@ it('runs whatever a stale plugins.yaml pins for it', async () => {
       liveRemote: () => 'o/r',
       commitNow: async () => null,
       defaultProvider: async () => 'claude' as const,
+      unattended: { allowed: async () => true, set: async () => {} },
     }),
     'agent',
   )

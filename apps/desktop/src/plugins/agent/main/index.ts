@@ -29,6 +29,7 @@ import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { createPtySessions, parsePastFile, PTY_SESSION_ID } from './host/pty-sessions'
 import { createFencedSessions } from './host/fenced'
 import { createJobs } from './host/jobs'
+import { createUnattendedStore } from './host/unattended'
 import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
 import { openTurnLog } from './host/turn-log'
@@ -113,6 +114,8 @@ export const agentMain: MainPlugin = {
     })
     piBackground.setVault(ctx.remote, ctx.root)
     const ptyHistory = jsonFileStore(join(ctx.userData, 'agent-pty-history.json'), parsePastFile)
+    // Which vaults this machine lets Codex run unattended in.
+    const unattended = createUnattendedStore(join(ctx.userData, 'agent-unattended.json'))
     const ptySessions = createPtySessions({
       vault: { remote: ctx.remote, root: ctx.root },
       past: {
@@ -182,6 +185,7 @@ export const agentMain: MainPlugin = {
         commitNow: () => ctx.commitNow(),
         pi: piBackground,
         defaultProvider: async () => (await readVaultSettings(ctx.root)).agentProvider,
+        unattended,
       }),
       ...inboxCapabilities({ inbox, liveRemote }),
     })
@@ -277,6 +281,9 @@ export const agentMain: MainPlugin = {
       unreport()
       unmention()
       unwatchNeedsYou()
+      // A fenced session still starting opens nothing now, or is one the
+      // sessions' leave ends.
+      await fenced.closing().catch((err) => console.error('[agent] fenced sessions:', err))
       await ptySessions.leave().catch((err) => console.error('[agent] pty sessions:', err))
       await piBackground.leave().catch((err) => console.error('[agent] Pi sessions:', err))
       await fenced.leave().catch((err) => console.error('[agent] fenced sessions:', err))

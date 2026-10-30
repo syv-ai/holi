@@ -709,7 +709,7 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     key: 'agentProvider',
     label: 'New sessions run',
     explanation:
-      'The coding agent for new sessions, Holis, and automations. Codex cannot run unattended work yet.',
+      'The coding agent for new sessions, Holis, and automations. On Codex, Holis and automations run only once this machine lets Codex run unattended in the vault, in Settings.',
     type: {
       kind: 'enum',
       options: [

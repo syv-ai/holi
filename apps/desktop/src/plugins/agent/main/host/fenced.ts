@@ -25,16 +25,8 @@ import { randomBytes } from 'node:crypto'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AgentProvider, VaultRef } from '../provider'
-import {
-  copyIn,
-  leftOutMessage,
-  takenDestination,
-  takenMessage,
-  type JobScope,
-  type Jobs,
-  type Made,
-} from './jobs'
-import type { FenceCopy, PtySessions } from './pty-sessions'
+import { copyIn, takenDestination, takenMessage, type JobScope, type Jobs, type Made } from './jobs'
+import type { PtySessions } from './pty-sessions'
 import type { Geometry, StartResult } from './sessions'
 
 export interface FencedSessionsDeps {
@@ -58,78 +50,121 @@ export interface FencedSessions {
       scope: JobScope
     },
   ): Promise<StartResult>
+  /** The vault is being left: a start under way opens no session, and
+   *  once this resolves every session it opened is one `PtySessions.leave`
+   *  ends. Called before that. */
+  closing(): Promise<void>
   /** Wait for the copies under way, then delete every folder. */
   leave(): Promise<void>
 }
 
 export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
   const log = deps.log ?? ((msg: string) => console.log(`[agent-fenced] ${msg}`))
-  const copies = new Set<Promise<unknown>>()
+  const copies = new Set<Promise<void>>()
   // Folders a crash left behind. Their processes died with Holi's PTYs.
   const swept = rm(deps.scratchRoot, { recursive: true, force: true }).catch(() => undefined)
 
-  return {
-    async start({ provider, name, prompt, system, scope, cols, rows }) {
-      await swept
-      const taken = await takenDestination(deps.vault.root, scope.write)
-      if (taken !== null) return { ok: false, message: takenMessage(taken) }
-      const id = randomBytes(6).toString('hex')
-      const dir = join(deps.scratchRoot, id)
-      const state = join(deps.scratchRoot, `${id}.agent`)
-      const drop = async (): Promise<void> => {
-        await rm(dir, { recursive: true, force: true }).catch(() => undefined)
-        await rm(state, { recursive: true, force: true }).catch(() => undefined)
-      }
-      await mkdir(dir, { recursive: true })
-      await mkdir(state, { recursive: true, mode: 0o700 })
-      // What it was given and what it wrote, each written again only while
-      // the vault still holds it, and what it wrote into new folders, which
-      // no copy writes over otherwise.
-      const made: Made = new Map()
-      const unread = await copyIn(deps.vault.root, dir, scope.read, made)
-      if (unread !== null) {
+  /** Bumped as the vault is left: a start that began before sees it. */
+  let generation = 0
+  const starting = new Set<Promise<StartResult>>()
+
+  async function begin({
+    provider,
+    name,
+    prompt,
+    system,
+    scope,
+    cols,
+    rows,
+  }: Parameters<FencedSessions['start']>[0]): Promise<StartResult> {
+    const began = generation
+    const left = (): boolean => generation !== began
+    const gone = { ok: false as const, message: 'The vault was left before the session started.' }
+    await swept
+    if (left()) return gone
+    const taken = await takenDestination(deps.vault.root, scope.write)
+    if (taken !== null) return { ok: false, message: takenMessage(taken) }
+    const id = randomBytes(6).toString('hex')
+    const dir = join(deps.scratchRoot, id)
+    const state = join(deps.scratchRoot, `${id}.agent`)
+    const drop = async (): Promise<void> => {
+      await rm(dir, { recursive: true, force: true }).catch(() => undefined)
+      await rm(state, { recursive: true, force: true }).catch(() => undefined)
+    }
+    await mkdir(dir, { recursive: true })
+    await mkdir(state, { recursive: true, mode: 0o700 })
+    for (const path of scope.read) {
+      const abs = await exactPath(deps.vault.root, path)
+      const copied =
+        abs !== null &&
+        (await mkdir(dirname(join(dir, path)), { recursive: true })
+          .then(() => copyFile(abs, join(dir, path)))
+          .then(
+            () => true,
+            () => false,
+          ))
+      if (!copied) {
         await drop()
-        return { ok: false, message: unread }
+        return { ok: false, message: `Holi could not read ${path}.` }
       }
+    }
 
-      // One copy at a time: a turn's end and the exit never overlap.
-      // How it went goes on the session's row, where its caller reads it.
-      let chain: Promise<unknown> = Promise.resolve()
-      const copy = (): Promise<FenceCopy> => {
-        const next = chain.then(async (): Promise<FenceCopy> => {
-          try {
-            const { written, skipped } = await deps.copyBack(dir, scope.write, made)
-            log(`${name}: ${written} file(s) copied back, ${skipped.length} left out`)
-            const leftOut = leftOutMessage(skipped)
-            return leftOut === undefined ? {} : { leftOut }
-          } catch (err) {
-            log(`${name}: ${(err as Error).message}`)
-            return { error: (err as Error).message }
-          }
-        })
-        chain = next
-        copies.add(next)
-        void next.finally(() => copies.delete(next))
-        return next
-      }
-
-      const started = await deps.own.start(provider.id, {
-        name,
-        prompt: system === undefined ? prompt : `${system}\n\n${prompt}`,
-        ...(cols === undefined ? {} : { cols }),
-        ...(rows === undefined ? {} : { rows }),
-        fence: {
-          dir,
-          state,
-          turnEnded: copy,
-          exited: () =>
-            void copy()
-              .then(() => provider.release?.(state))
-              .finally(drop),
-        },
+    // One copy at a time: a turn's end and the exit never overlap. What
+    // it wrote into its new folders, which no copy writes over otherwise.
+    const made = new Set<string>()
+    let chain = Promise.resolve()
+    const copy = (): Promise<void> => {
+      const next = chain.then(async () => {
+        try {
+          const { written, skipped } = await deps.copyBack(dir, scope.write, made)
+          log(`${name}: ${written} file(s) copied back, ${skipped.length} left out`)
+        } catch (err) {
+          log(`${name}: ${(err as Error).message}`)
+        }
       })
-      if (!started.ok) await drop()
-      return started
+      chain = next
+      copies.add(next)
+      void next.finally(() => copies.delete(next))
+      return next
+    }
+
+    if (left()) {
+      await drop()
+      return gone
+    }
+    const started = await deps.own.start(provider.id, {
+      name,
+      prompt: system === undefined ? prompt : `${system}\n\n${prompt}`,
+      ...(cols === undefined ? {} : { cols }),
+      ...(rows === undefined ? {} : { rows }),
+      fence: {
+        dir,
+        state,
+        turnEnded: copy,
+        exited: () =>
+          void copy()
+            .then(() => provider.release?.(state))
+            .finally(drop),
+      },
+    })
+    if (!started.ok) await drop()
+    return started
+  }
+
+  return {
+    async start(args) {
+      const begun = begin(args)
+      starting.add(begun)
+      try {
+        return await begun
+      } finally {
+        starting.delete(begun)
+      }
+    },
+
+    async closing() {
+      generation += 1
+      await Promise.allSettled([...starting])
     },
 
     async leave() {
