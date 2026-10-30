@@ -109,6 +109,9 @@ export interface Jobs {
   stop(id: string): Promise<ActionResult>
   /** Stop every job and delete every scratch folder. */
   leave(): Promise<void>
+  /** Copy back what `dir` holds inside `write`, as a job's success does:
+   *  a session fenced to a folder of Holi's (`fenced.ts`) at each turn's end. */
+  copyBack(dir: string, write: readonly string[]): Promise<{ written: number; skipped: string[] }>
 }
 
 interface Job {
@@ -278,7 +281,7 @@ export function createJobs(deps: JobsDeps): Jobs {
    * sentence when a path cannot be written or the job wrote too much.
    */
   async function copyBack(
-    job: Job,
+    job: Pick<Job, 'dir' | 'stopped'>,
     write: readonly string[],
   ): Promise<{ written: number; skipped: string[] }> {
     const skipped: string[] = []
@@ -519,5 +522,7 @@ export function createJobs(deps: JobsDeps): Jobs {
       await rm(deps.scratchRoot, { recursive: true, force: true }).catch(() => undefined)
       push()
     },
+
+    copyBack: (dir, write) => copyBack({ dir }, write),
   }
 }

@@ -27,6 +27,7 @@ async function rig() {
     sessions: {} as never,
     own: {} as never,
     jobs: {} as never,
+    fenced: {} as never,
     providers: [],
     terminals: {} as never,
     liveRemote: () => REMOTE,

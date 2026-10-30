@@ -23,6 +23,12 @@
  * what bounds a job is what Holi copies back. Its JSONL events say how the
  * run went.
  *
+ * **A fenced session** (`TerminalOpts.fence`) is the TUI in a scratch folder
+ * Holi made (`../host/fenced.ts`), under the same sandbox and with the same
+ * tools off, but with Codex's interactive approvals: the person watches it
+ * and answers in its terminal. What it wrote is copied back at each turn's
+ * end, which `notify` reports.
+ *
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { accessSync, constants } from 'node:fs'
@@ -162,6 +168,32 @@ export function jobArgs({
   ]
 }
 
+/**
+ * What fences a session to `dir`: its writes sandboxed there with no
+ * network, the person's MCP servers and web search off (as `jobArgs`), and
+ * approvals asked in the terminal (`on-request`), whatever `config.toml`
+ * says.
+ * @public exported for its test
+ */
+export function fenceArgs(dir: string): string[] {
+  return [
+    '-C',
+    dir,
+    '--sandbox',
+    'workspace-write',
+    '-c',
+    'approval_policy="on-request"',
+    '-c',
+    'sandbox_workspace_write.network_access=false',
+    '-c',
+    'mcp_servers={}',
+    '-c',
+    'web_search="disabled"',
+    '-c',
+    'tools.web_search=false',
+  ]
+}
+
 /** A message out of an event's `error`, or its own `message`. */
 function messageOf(r: Record<string, unknown>): string {
   const error = r['error']
@@ -230,6 +262,7 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
         args: [
           '-c',
           notifyOverride(),
+          ...(opts.fence === undefined ? [] : fenceArgs(opts.fence)),
           ...(opts.resume === undefined
             ? []
             : ['resume', ...(opts.resume === 'pick' ? [] : [opts.resume])]),
@@ -242,6 +275,7 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
     },
     capabilities: {
       turns: { routes: registerCodexRoutes },
+      fenced: true,
       jobs: {
         command({ cwd, prompt, model }) {
           const path = bin()

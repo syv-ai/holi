@@ -22,6 +22,7 @@ import { piProvider } from './pi'
 import { createPiBackground } from './pi/background'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { createPtySessions, parsePastFile, PTY_SESSION_ID } from './host/pty-sessions'
+import { createFencedSessions } from './host/fenced'
 import { createJobs } from './host/jobs'
 import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
@@ -143,6 +144,14 @@ export const agentMain: MainPlugin = {
         pushSessions()
       },
     })
+    // Sessions Holi runs fenced to a folder of its own, what they wrote
+    // copied back as each turn ends.
+    const fenced = createFencedSessions({
+      vault: { remote: ctx.remote, root: ctx.root },
+      scratchRoot: join(ctx.userData, 'agent-fenced'),
+      own: ptySessions,
+      copyBack: jobs.copyBack,
+    })
     // What the agent and Holi want the person to see: an entry in the
     // vault's inbox, and a banner while Holi is out of sight.
     const inbox = createInbox({
@@ -156,6 +165,7 @@ export const agentMain: MainPlugin = {
         sessions: started,
         own: ptySessions,
         jobs,
+        fenced,
         providers,
         terminals,
         liveRemote,
@@ -258,6 +268,7 @@ export const agentMain: MainPlugin = {
       unwatchNeedsYou()
       await ptySessions.leave().catch((err) => console.error('[agent] pty sessions:', err))
       await piBackground.leave().catch((err) => console.error('[agent] Pi sessions:', err))
+      await fenced.leave().catch((err) => console.error('[agent] fenced sessions:', err))
       await jobs.leave().catch((err) => console.error('[agent] jobs:', err))
       await started.leave().catch((err) => console.error('[agent] leave failed:', err))
       await terminals.closeAll().catch((err) => console.error('[agent] terminals:', err))
