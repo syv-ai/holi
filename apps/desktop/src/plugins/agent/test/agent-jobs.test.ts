@@ -9,7 +9,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CapabilityContext } from '../../../main/capabilities/registry'
-import { codexProvider, jobArgs, readJobEvent } from '../main/codex'
+import { codexProvider, fenceArgs, jobArgs, readJobEvent } from '../main/codex'
+import { createFencedSessions } from '../main/host/fenced'
+import type { Fence } from '../main/host/pty-sessions'
 import { agentCapabilities, scopeRules } from '../main/host/capabilities'
 import { createJobs, inWriteScope, JOB_SESSION_ID, type JobScope } from '../main/host/jobs'
 import type { SessionSummary } from '../main/claude/listing'
@@ -323,6 +325,19 @@ describe('the Codex job command', () => {
     ])
   })
 
+  it('fences a session to its folder with the same tools off, asking in its terminal', () => {
+    const codex = codexProvider({ resolveBin: () => '/usr/local/bin/codex' })
+    const cmd = codex.terminal(
+      { root: '/v', configDir: '/c', binDir: null },
+      { session: 'p0123456789ab', fence: '/s', prompt: '--help' },
+    )
+    expect(fenceArgs('/s')).toContain('approval_policy="on-request"')
+    expect(fenceArgs('/s')).toContain('sandbox_workspace_write.network_access=false')
+    expect(fenceArgs('/s')).toContain('mcp_servers={}')
+    expect(cmd?.args.slice(2)).toEqual([...fenceArgs('/s'), '--', '--help'])
+    expect(codex.capabilities.fenced).toBe(true)
+  })
+
   it('carries no Holi commands on its PATH', () => {
     const codex = codexProvider({ resolveBin: () => '/usr/local/bin/codex' }) as JobsProvider
     const cmd = codex.capabilities.jobs.command({ cwd: '/s', prompt: 'p' })
@@ -378,6 +393,7 @@ describe('agent.job', () => {
       sessions: { launch } as never,
       own: {} as never,
       jobs: { start } as never,
+      fenced: {} as never,
       providers,
       terminals: {} as never,
       liveRemote: () => 'syv/vault',
@@ -447,5 +463,171 @@ describe('agent.job', () => {
     expect(bad({ read: ['../out.md'], write: [] })).toThrow()
     expect(bad({ read: [], write: ['.env'] })).toThrow()
     expect(bad(undefined)).toThrow()
+  })
+})
+
+describe('agent.scoped', () => {
+  const claude = {
+    id: 'claude',
+    label: 'Claude Code',
+    capabilities: { background: {} },
+  } as unknown as AgentProvider
+  const codex = {
+    id: 'codex',
+    label: 'Codex',
+    capabilities: { jobs: {}, fenced: true },
+  } as unknown as AgentProvider
+  const unfenced = {
+    id: 'codex',
+    label: 'Codex',
+    capabilities: { jobs: {} },
+  } as unknown as AgentProvider
+
+  function table(providers: AgentProvider[]) {
+    const launch = vi.fn(async () => ({ ok: true as const, sessionId: 'abcd1234' }))
+    const fence = vi.fn(async () => ({
+      ok: true as const,
+      sessionId: 'p0123456789ab',
+      terminalId: 't1',
+    }))
+    const caps = agentCapabilities({
+      sessions: { launch } as never,
+      own: {} as never,
+      jobs: {} as never,
+      fenced: { start: fence },
+      providers,
+      terminals: {} as never,
+      liveRemote: () => 'syv/vault',
+      commitNow: async () => null,
+    })
+    const ctx = { remote: 'syv/vault', root: '/v' } as unknown as CapabilityContext
+    const entry = caps['agent.scoped']
+    return { run: (params: unknown) => entry.run(ctx, entry.params(params)), launch, fence }
+  }
+
+  const ASK = {
+    name: 'Plan: vault app',
+    prompt: 'Make it',
+    system: 'Make the app.',
+    scope: { read: ['notes/Plan.md'], write: ['notes/Plan.app/**'] },
+  }
+
+  it('runs on Claude Code as a background session allowed exactly its scope', async () => {
+    const { run, launch, fence } = table([claude, codex])
+    expect(await run({ ...ASK, model: 'claude-sonnet-5-5', provider: 'claude' })).toEqual({
+      ok: true,
+      sessionId: 'abcd1234',
+    })
+    expect(fence).not.toHaveBeenCalled()
+    expect(launch).toHaveBeenCalledWith({
+      name: 'Plan: vault app',
+      prompt: 'Make it',
+      model: 'claude-sonnet-5-5',
+      appendSystemPrompt: 'Make the app.',
+      allow: scopeRules(ASK.scope),
+    })
+  })
+
+  it('runs on Codex as a session fenced to a folder of Holi’s', async () => {
+    const { run, launch, fence } = table([claude, codex])
+    expect(await run({ ...ASK, provider: 'codex', cols: 90 })).toMatchObject({
+      ok: true,
+      sessionId: 'p0123456789ab',
+    })
+    expect(launch).not.toHaveBeenCalled()
+    expect(fence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: codex,
+        scope: ASK.scope,
+        system: 'Make the app.',
+        cols: 90,
+      }),
+    )
+  })
+
+  it('refuses an agent that cannot be fenced, never running another', async () => {
+    const { run, launch, fence } = table([claude, unfenced])
+    expect(await run({ ...ASK, provider: 'codex' })).toEqual({
+      ok: false,
+      message: 'Codex cannot run a session fenced to what it may touch.',
+    })
+    expect(launch).not.toHaveBeenCalled()
+    expect(fence).not.toHaveBeenCalled()
+  })
+})
+
+describe('a fenced session', () => {
+  async function fencedRig() {
+    const root = await temp('holi-fenced-vault-')
+    const userData = await temp('holi-fenced-data-')
+    await mkdir(join(root, 'notes'), { recursive: true })
+    await writeFile(join(root, 'notes/Plan.md'), 'Ship it\n')
+    const jobs = createJobs({
+      vault: { remote: 'syv/vault', root },
+      scratchRoot: join(userData, 'agent-jobs'),
+      onChange: () => {},
+      log: () => {},
+    })
+    let fence: Fence | undefined
+    const own = {
+      start: vi.fn(async (_provider: string, args: { prompt?: string; fence?: Fence }) => {
+        fence = args.fence
+        return { ok: true as const, sessionId: 'p0123456789ab', terminalId: 't1' }
+      }),
+    }
+    const fenced = createFencedSessions({
+      vault: { remote: 'syv/vault', root },
+      scratchRoot: join(userData, 'agent-fenced'),
+      own,
+      copyBack: jobs.copyBack,
+      log: () => {},
+    })
+    const res = await fenced.start({
+      provider: { id: 'codex', label: 'Codex', capabilities: { fenced: true } } as never,
+      name: 'Plan: vault app',
+      prompt: 'Make it',
+      system: 'Make the app.',
+      scope: SCOPE,
+    })
+    if (fence === undefined) throw new Error('no fence')
+    return { root, res, own, fence, fenced }
+  }
+
+  it('starts in a folder holding what it reads, and copies back what it wrote as a turn ends', async () => {
+    const { root, res, own, fence } = await fencedRig()
+    expect(res.ok).toBe(true)
+    expect(own.start.mock.calls[0]?.[1].prompt).toBe('Make the app.\n\nMake it')
+    expect(await readFile(join(fence.dir, 'notes/Plan.md'), 'utf8')).toBe('Ship it\n')
+
+    await mkdir(join(fence.dir, 'notes/Plan.app'), { recursive: true })
+    await writeFile(join(fence.dir, 'notes/Plan.app/index.html'), '<h1>Ship it</h1>')
+    await writeFile(join(fence.dir, 'notes/Plan.app/app.yaml'), 'description: The plan\n')
+    await writeFile(join(fence.dir, 'notes/Plan.app/.env'), 'TOKEN=no')
+    await writeFile(join(fence.dir, 'notes/Plan.md'), 'rewritten')
+    await fence.turnEnded()
+    expect(await readFile(join(root, 'notes/Plan.app/app.yaml'), 'utf8')).toBe(
+      'description: The plan\n',
+    )
+    expect(await exists(join(root, 'notes/Plan.app/.env'))).toBe(false)
+    expect(await readFile(join(root, 'notes/Plan.md'), 'utf8')).toBe('Ship it\n')
+
+    // A later turn's change, then the session exits: copied, and the folder goes.
+    await writeFile(join(fence.dir, 'notes/Plan.app/index.html'), '<h1>Shipped</h1>')
+    fence.exited()
+    await vi.waitFor(() => expect(exists(join(fence.dir, 'notes/Plan.md'))).resolves.toBe(false))
+    expect(await readFile(join(root, 'notes/Plan.app/index.html'), 'utf8')).toBe('<h1>Shipped</h1>')
+  })
+
+  it('says why when its session does not start', async () => {
+    const { fenced, own } = await fencedRig()
+    own.start.mockResolvedValueOnce({ ok: false, message: 'Codex is not installed.' } as never)
+    const res = await fenced.start({
+      provider: { id: 'codex' } as never,
+      name: 'x',
+      prompt: 'x',
+      scope: SCOPE,
+    })
+    expect(res).toEqual({ ok: false, message: 'Codex is not installed.' })
+    await fenced.leave()
   })
 })

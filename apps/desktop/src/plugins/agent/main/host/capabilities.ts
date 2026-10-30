@@ -13,6 +13,8 @@
  *
  * **Jobs** (`jobs.ts`) are a third kind, for a provider that runs a prompt
  * unattended without a supervisor: named by Holi's id, with no terminal.
+ * **Fenced sessions** (`fenced.ts`) are sessions Holi runs in a folder of
+ * its own, the same kind as the rest of its sessions.
  *
  * **Turns** are what the agent's last turns changed: a commit range each, so
  * the file list is asked of git every time rather than stored. A revert is a
@@ -49,6 +51,7 @@ import {
   type AgentProvider,
   type ProviderId,
 } from '../provider'
+import type { FencedSessions } from './fenced'
 import type { JobResult, Jobs, JobScope } from './jobs'
 import { openTurnLog, type TurnRecord } from './turn-log'
 import type { PtySessions } from './pty-sessions'
@@ -91,6 +94,8 @@ export interface AgentCapabilitiesDeps {
   >
   /** The jobs Holi runs for a provider with `jobs`. */
   jobs: Pick<Jobs, 'sessions' | 'has' | 'start' | 'stop'>
+  /** Sessions Holi runs fenced to a folder, for a provider with `fenced`. */
+  fenced: Pick<FencedSessions, 'start'>
   /** Every provider, the background one first. */
   providers: readonly AgentProvider[]
   terminals: Pick<AgentTerminals, 'list' | 'attach' | 'close'>
@@ -414,6 +419,61 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         return {
           ok: false,
           message: `${provider.label} cannot run a job with nobody watching.`,
+        }
+      },
+    }),
+
+    /**
+     * A session the person can watch, answer and add to, whose first turn is
+     * `prompt`, touching only its `scope` (as `agent.job`): Create vault
+     * app's. A provider with `background` runs it as a background session
+     * allowed exactly that scope; one with `fenced` runs it in its terminal
+     * in a folder of Holi's, and what it wrote is copied back as each turn
+     * ends and when it exits (`fenced.ts`). Any other is refused, never run
+     * on another agent. The UI door alone, as `agent.launch`.
+     */
+    'agent.scoped': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const model = optionalStringParam(p, 'model')
+        const system = optionalStringParam(p, 'system')
+        const provider = providerParam(p)
+        return {
+          ...geometry(p),
+          name: stringParam(p, 'name'),
+          prompt: stringParam(p, 'prompt'),
+          scope: scopeParam(p),
+          ...(model === undefined ? {} : { model }),
+          ...(system === undefined ? {} : { system }),
+          ...(provider === undefined ? {} : { provider }),
+        }
+      },
+      run: async (ctx, { provider: id, scope, system, model, ...args }): Promise<JobResult> => {
+        if (!live(ctx)) return notOpen
+        const provider =
+          id === undefined ? deps.providers[0] : deps.providers.find((p) => p.id === id)
+        if (provider === undefined) return { ok: false, message: 'No agent can run this.' }
+        if (hasBackground(provider)) {
+          return deps.sessions.launch({
+            name: args.name,
+            prompt: args.prompt,
+            allow: scopeRules(scope),
+            ...(model === undefined ? {} : { model }),
+            ...(system === undefined ? {} : { appendSystemPrompt: system }),
+          })
+        }
+        if (provider.capabilities.fenced === true) {
+          return deps.fenced.start({
+            provider,
+            ...args,
+            scope,
+            ...(system === undefined ? {} : { system }),
+          })
+        }
+        return {
+          ok: false,
+          message: `${provider.label} cannot run a session fenced to what it may touch.`,
         }
       },
     }),
