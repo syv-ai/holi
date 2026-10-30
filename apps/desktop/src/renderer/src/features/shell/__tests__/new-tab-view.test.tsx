@@ -74,6 +74,8 @@ test("the take-control pill shows over the board's free ground, or on focus", ()
   mount()
   // The whole name: no cursor block or Enter hint rides along.
   const pill = screen.getByRole('button', { name: 'Take control · Paper run' })
+  // An aria-hidden block would not change that name, so look for it too.
+  expect(pill.querySelector('[aria-hidden], kbd')).toBeNull()
   expect(pill.dataset.show).toBe('false')
   fireEvent.pointerMove(pill.parentElement!)
   expect(pill.dataset.show).toBe('true')
