@@ -214,14 +214,26 @@ const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LS'])
 
 const RULE = /^([A-Za-z]+)(?:\((.*)\))?$/
 
+/** The rules the Holis plugin adds to every run of a Holi (its memory and
+ *  its report, `plugins/holis/main/holis.ts`): Holi's own commands, which
+ *  reach Holi over the bridge, which a sandbox with no network cannot. A run
+ *  goes without them; the Holi's own rules never do. */
+const HOLI_RUN_RULES = new Set(
+  ['remember', 'revise', 'forget', 'recall', 'search', 'report'].map(
+    (verb) => `Bash(holi holis ${verb}:*)`,
+  ),
+)
+
 /**
  * Claude Code permission rules as the sandbox a vault job runs in: the vault
  * folders it may write. A read is allowed, since the sandbox reads anyway; a
- * write is a folder (`Edit(tilbud/**)`), never a file, the whole vault or a
- * hidden folder such as `.holi/`; Holi's own commands (`Bash(holi …)`) need
- * Holi's bridge, which the sandbox's lack of network keeps out of reach, so
- * they are left out. Anything else, a command or a web tool, has no sandbox
- * path, and the run is refused with the rule that stopped it.
+ * write is a folder (`Edit(tilbud/**)`), never a file, the whole vault, a
+ * home path (`~/…`) or a hidden folder such as `.holi/`. The memory and
+ * report rules the Holis plugin adds to a Holi's run are left out
+ * (`HOLI_RUN_RULES`). Anything else, a command (Holi's own included, which
+ * need the bridge the sandbox's lack of network keeps out of reach) or a web
+ * tool, has no sandbox path, and the run is refused with the rule that
+ * stopped it.
  * @public exported for its test
  */
 export function vaultSandbox(
@@ -234,7 +246,13 @@ export function vaultSandbox(
     const tool = m?.[1] ?? ''
     const arg = m?.[2]?.trim()
     if (READ_TOOLS.has(tool)) continue
-    if (tool === 'Bash' && arg !== undefined && /^holi(\s|:|$)/.test(arg)) continue
+    if (HOLI_RUN_RULES.has(rule)) continue
+    if (tool === 'Bash' && arg !== undefined && /^holi(\s|:|$)/.test(arg)) {
+      return {
+        ok: false,
+        message: `\`${rule}\` is a Holi command, which Codex's sandbox has no network to reach, so this run did not start. Run it on Claude Code, or leave the rule out.`,
+      }
+    }
     if (!WRITE_TOOLS.has(tool)) {
       return {
         ok: false,
@@ -242,6 +260,12 @@ export function vaultSandbox(
       }
     }
     const path = (arg ?? '').replace(/^\.\//, '')
+    if (path.startsWith('~')) {
+      return {
+        ok: false,
+        message: `\`${rule}\` names a folder outside the vault, so this run did not start. Name one in the vault, as \`Edit(tilbud/**)\`.`,
+      }
+    }
     const folder = path.endsWith('/**') ? path.slice(0, -3) : null
     const rel = folder === null || folder.includes('*') ? null : readableOrNull(folder)
     if (rel === null || rel.split('/').some((segment) => segment.startsWith('.'))) {
@@ -669,7 +693,8 @@ export function createJobs(deps: JobsDeps): Jobs {
       // The outcome is on the row before the bracket's end is told, so
       // whoever hears the turn end reads it idle.
       if (job.place !== null) deps.bracket?.(id, 'end')
-      if (job.queue.length > 0) followUp(job)
+      // A stopped job takes nothing more, whatever came in while it stopped.
+      if (job.stopped === undefined && job.queue.length > 0) followUp(job)
     }
     // `close` waits for the output to be read to its end; `error` is a
     // process that never ran.
@@ -854,6 +879,10 @@ export function createJobs(deps: JobsDeps): Jobs {
           'UNAVAILABLE',
           'A job in a scratch folder takes no follow-up: it ends with its one turn.',
         )
+      }
+      // Its process is being stopped: a message now would start it again.
+      if (job.busy && job.stopped !== undefined) {
+        throw new CapabilityError('UNAVAILABLE', 'That job is being stopped.')
       }
       if (job.queue.length >= MAX_QUEUE) {
         throw new CapabilityError('UNAVAILABLE', 'That job has too many messages waiting.')

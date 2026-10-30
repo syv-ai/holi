@@ -66,7 +66,7 @@ const event = (o: unknown) => `console.log(${JSON.stringify(JSON.stringify(o))})
  *  beside it, and some things it may not. */
 const SUCCESS = [
   "const fs = require('node:fs')",
-  event({ type: 'thread.started', thread_id: 'th-1' }),
+  event({ type: 'thread.started', thread_id: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51' }),
   event({ type: 'turn.started' }),
   "const note = fs.readFileSync('notes/Plan.md', 'utf8')",
   "fs.mkdirSync('notes/Plan.app', { recursive: true })",
@@ -440,9 +440,11 @@ describe('the Codex job command', () => {
   })
 
   it('reads the events it needs and nothing else', () => {
-    expect(readJobEvent('{"type":"thread.started","thread_id":"th-1"}')).toEqual({
+    expect(
+      readJobEvent('{"type":"thread.started","thread_id":"0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51"}'),
+    ).toEqual({
       kind: 'thread',
-      id: 'th-1',
+      id: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51',
     })
     expect(readJobEvent('{"type":"turn.completed","usage":{}}')).toEqual({
       kind: 'turn-completed',
@@ -587,7 +589,7 @@ describe('a job in the vault', () => {
 
   const WRITES = [
     "const fs = require('node:fs')",
-    event({ type: 'thread.started', thread_id: 'th-9' }),
+    event({ type: 'thread.started', thread_id: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a59' }),
     event({ type: 'turn.started' }),
     "fs.writeFileSync('Q4.md', 'proposal')",
     // A turn long enough for a follow-up to arrive while it runs.
@@ -654,7 +656,10 @@ describe('a job in the vault', () => {
     // A follow-up while the turn runs waits for it, then resumes the thread.
     jobs.message(id, 'Make it shorter.')
     await vi.waitFor(() => expect(runs).toHaveLength(2), { timeout: 5_000 })
-    expect(runs[1]).toMatchObject({ resume: 'th-9', prompt: 'Make it shorter.' })
+    expect(runs[1]).toMatchObject({
+      resume: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a59',
+      prompt: 'Make it shorter.',
+    })
     // The follow-up runs on the same state folder, where its thread is.
     expect(runs[1]!.state).toBe(runs[0]!.state)
     const row = await vi.waitFor(
@@ -685,6 +690,8 @@ describe('a job in the vault', () => {
       'WebFetch',
       'Edit(notes/Plan.md)',
       'Edit(.holi/**)',
+      'Edit(~/notes/**)',
+      'Bash(holi google read:*)',
       'Edit',
     ]) {
       const res = await jobs.start({ provider, name: 'x', prompt: 'go', allow: [rule] })
@@ -703,6 +710,27 @@ describe('a job in the vault', () => {
     expect(vaultSandbox(['Edit(**)']).ok).toBe(false)
     expect(vaultSandbox(['Edit(a/*.md)']).ok).toBe(false)
     expect(vaultSandbox(['Edit(../out/**)']).ok).toBe(false)
+    // A Holi's memory and report rules are its run's, left out; no other.
+    expect(vaultSandbox(['Edit(a/**)', 'Bash(holi holis remember:*)'])).toEqual({
+      ok: true,
+      write: ['a'],
+    })
+    expect(vaultSandbox(['Bash(holi holis delete:*)']).ok).toBe(false)
+  })
+
+  it('takes no message while it is being stopped, and starts no turn after', async () => {
+    const { jobs, provider, runs } = await vaultRig()
+    const started = await jobs.start({ provider, name: 'x', prompt: 'go', allow: ['Edit(a/**)'] })
+    const id = (started as { sessionId: string }).sessionId
+    const stopping = jobs.stop(id)
+    expect(() => jobs.message(id, 'one more')).toThrow(/being stopped/)
+    await stopping
+    expect(jobs.sessions().find((s) => s.id === id)).toMatchObject({
+      outcome: 'failed',
+      message: 'Stopped.',
+    })
+    expect(runs).toHaveLength(1)
+    await jobs.leave()
   })
 
   it('takes no follow-up in a scratch folder', async () => {
@@ -715,8 +743,20 @@ describe('a job in the vault', () => {
 })
 
 describe('the Codex job command in the vault', () => {
+  it('takes only a UUID for the thread it resumes, after --', () => {
+    expect(() => jobArgs({ cwd: '/v', prompt: 'p', resume: '--yolo' })).toThrow()
+    expect(readJobEvent('{"type":"thread.started","thread_id":"--yolo"}')).toBeNull()
+  })
+
   it('writes only its folders, with no web search, and resumes a thread with the prompt last', () => {
-    expect(jobArgs({ cwd: '/v/a', prompt: 'more', writable: ['/v/b'], resume: 'th-9' })).toEqual([
+    expect(
+      jobArgs({
+        cwd: '/v/a',
+        prompt: 'more',
+        writable: ['/v/b'],
+        resume: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a59',
+      }),
+    ).toEqual([
       'exec',
       '--json',
       '--skip-git-repo-check',
@@ -735,8 +775,8 @@ describe('the Codex job command in the vault', () => {
       '-c',
       'tools.web_search=false',
       'resume',
-      'th-9',
       '--',
+      '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a59',
       'more',
     ])
     expect(jobArgs({ cwd: '/v', prompt: 'p', readOnly: true })).toEqual([
