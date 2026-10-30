@@ -124,7 +124,7 @@ beforeEach(() => {
   write.mockReset()
   cap.mockReset()
   cap.mockImplementation(({ name }: { name: string }) =>
-    Promise.resolve(name === 'agent.launch' ? { ok: true, sessionId: 'abc12345' } : { ok: true }),
+    Promise.resolve(name === 'agent.job' ? { ok: true, sessionId: 'abc12345' } : { ok: true }),
   )
   store = createStore()
   store.set(activeRemoteAtom, 'syv/vault')
@@ -175,7 +175,7 @@ test('⌘B is always claimed by the editor, never the sidebar toggle', async () 
   expect(allowed).toBe(false)
 })
 
-test('Space on an empty line asks Sonnet, locks the page, and unlocks when done', async () => {
+test('Space on an empty line asks Claude Code on Sonnet, locks the page, and unlocks when done', async () => {
   const user = userEvent.setup()
   open('---\ntitle: Plan\n---\n\n')
   const box = await editorBox()
@@ -189,13 +189,16 @@ test('Space on an empty line asks Sonnet, locks the page, and unlocks when done'
 
   await waitFor(() =>
     expect(cap).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'agent.launch', remote: 'syv/vault' }),
+      expect.objectContaining({ name: 'agent.job', remote: 'syv/vault' }),
     ),
   )
   const launch = JSON.parse(cap.mock.calls[0]![0].paramsJson)
-  expect(launch.model).toBe('claude-sonnet-5-5')
+  expect(launch).toMatchObject({
+    provider: 'claude',
+    model: 'claude-sonnet-5-5',
+    scope: { read: [PATH], write: [PATH] },
+  })
   expect(launch.prompt).toContain('Write an introduction')
-  expect(launch.allow).toContain('Edit(./notes/Plan.md)')
   // The marker was saved where the person asked, under the kept frontmatter.
   expect(files.get(PATH)).toBe('---\ntitle: Plan\n---\n\n<!-- holi:agent -->\n')
 
@@ -207,6 +210,28 @@ test('Space on an empty line asks Sonnet, locks the page, and unlocks when done'
 
   act(() => store.set(sessions, [{ id: 'abc12345', name: '', state: 'idle' }]))
   await waitFor(() => expect(box).toHaveAttribute('contenteditable', 'true'))
+})
+
+test('a write runs on Codex when it is the default, on its own model', async () => {
+  const user = userEvent.setup()
+  store.set(vaultSettingsAtom, {
+    remote: 'syv/vault',
+    settings: { ...VAULT_SETTING_DEFAULTS, agentProvider: 'codex', warnings: [] },
+  })
+  open('---\ntitle: Plan\n---\n\n')
+  const box = await editorBox()
+  box.focus()
+  fireEvent.keyDown(box, { key: ' ', code: 'Space' })
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Write an introduction{Enter}',
+  )
+  await waitFor(() =>
+    expect(cap).toHaveBeenCalledWith(expect.objectContaining({ name: 'agent.job' })),
+  )
+  const job = JSON.parse(cap.mock.calls.find(([c]) => c.name === 'agent.job')![0].paramsJson)
+  expect(job).toMatchObject({ provider: 'codex', scope: { read: [PATH], write: [PATH] } })
+  expect(job.model).toBeUndefined()
 })
 
 test('Stop ends the run', async () => {
@@ -397,18 +422,14 @@ test("Ask AI's own instruction rewrites only the passage selected when it opened
   await user.type(prompt, 'Translate it into Danish{Enter}')
 
   await waitFor(() =>
-    expect(cap).toHaveBeenCalledWith(expect.objectContaining({ name: 'agent.launch' })),
+    expect(cap).toHaveBeenCalledWith(expect.objectContaining({ name: 'agent.job' })),
   )
   const launch = JSON.parse(cap.mock.calls[0]![0].paramsJson)
   expect(launch.prompt).toContain('<passage>\nShip the beta\n</passage>')
   expect(launch.prompt).not.toContain('Keep this line')
   expect(launch.prompt).toContain('Translate it into Danish')
   expect(launch.prompt).toContain('change nothing else in the document')
-  expect(launch.allow).toEqual([
-    'Read(./notes/Plan.md)',
-    'Edit(./notes/Plan.md)',
-    'Write(./notes/Plan.md)',
-  ])
+  expect(launch.scope).toEqual({ read: [PATH], write: [PATH] })
   // The page is locked while it runs.
   await waitFor(() => expect(editor.isEditable).toBe(false))
 })
