@@ -29,7 +29,9 @@ export const automationsMain: MainPlugin = {
   async activate(ctx) {
     let live: SessionSummary[] = []
     ctx.hear('agent', 'sessions', (list) => {
-      if (Array.isArray(list)) live = list as SessionSummary[]
+      if (!Array.isArray(list)) return
+      live = list as SessionSummary[]
+      scheduler.sessionsChanged(live)
     })
     // Which automations this machine runs, and what they did: outside the
     // vault, where the agent cannot approve its own (`scheduler.ts`).

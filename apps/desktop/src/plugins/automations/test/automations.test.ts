@@ -173,6 +173,17 @@ describe('approval', () => {
     expect(launched[0]!.allow).toBeUndefined()
   })
 
+  it('passes an explicit Pi provider/model-id and ignores legacy Claude aliases', async () => {
+    selectedProvider = 'pi'
+    await writeSchedule(
+      'inbox.local.md',
+      'name: Inbox\ncron: "*/30 * * * *"\nmodel: anthropic/claude-sonnet',
+    )
+    await scheduler.enable(vault(), 'inbox')
+    await scheduler.run(vault(), 'inbox')
+    expect(launched[0]).toMatchObject({ provider: 'pi', model: 'anthropic/claude-sonnet' })
+  })
+
   it('records a Pi capability failure without falling back to another provider', async () => {
     selectedProvider = 'pi'
     launchFails = 'Pi does not support background sessions.'
@@ -400,6 +411,25 @@ describe('closing a run when it is done', () => {
     return record.jobId!
   }
   const latest = async () => (await scheduler.list(vault()))[0]!.runs[0]!
+
+  it('marks pushed Pi failures failed immediately, stops them, and permits the next run', async () => {
+    selectedProvider = 'pi'
+    const id = await started()
+    live[0] = { ...live[0]!, outcome: 'failed', error: 'worker crashed' }
+    scheduler.sessionsChanged(live)
+    await vi.waitFor(async () =>
+      expect(await latest()).toMatchObject({
+        jobId: id,
+        outcome: 'failed',
+        message: 'worker crashed',
+        finishedAt: expect.any(String),
+      }),
+    )
+    expect(stopped).toEqual([id])
+    expect(workLog.join('\n')).toContain('failed: worker crashed')
+    const next = await scheduler.run(vault(), 'inbox')
+    expect(next.outcome).toBe('started')
+  })
 
   it('stops it once its turn ends and the listing, a few looks later, reads it idle', async () => {
     const id = await started()
