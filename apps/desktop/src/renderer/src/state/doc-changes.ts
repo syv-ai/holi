@@ -7,19 +7,20 @@
  * later, so the time moves after every tab you edit and then leave. So a
  * view hands over what it showed as it goes (`sawText`), and a hidden tab's
  * new time is only a reason to read the file and compare, both sides tidied
- * the way the commit tidies (`normalizeText`). A tab never shown since it
+ * the way the commit tidies (`differsBeyondTidy`). A tab never shown since it
  * opened is compared against what the file said the first time it was read.
  *
  * Kept for this window only, like the tabs themselves.
  */
 import { useEffect, useRef } from 'react'
 import { atom, useAtomValue, useSetAtom } from 'jotai'
-import { normalizeText } from '@holi/shared'
+import { differsBeyondTidy, type Normalizer } from '@holi/shared'
 
 import { trpc } from '@/lib/trpc'
 
 import { shellWorkspaceAtom } from './shell-tabs'
 import { activeEntry, entryViews, type ShellWorkspace } from './shell-workspace'
+import { claimsAtom } from './plugins'
 import { parseTabKey } from './tab-descriptor'
 import { activeRemoteAtom, snapshotAtom } from './vaults'
 
@@ -48,26 +49,30 @@ export function docTabs(ws: ShellWorkspace): {
 export const changedDocsAtom = atom<ReadonlySet<string>>(new Set<string>())
 
 const keyOf = (remote: string, path: string) => `${remote}\n${path}`
-const tidy = (text: string, path: string) => normalizeText(text, path, [])
 
-/** What each document last showed in its view, tidied. */
+/** What each document last showed in its view, as it was; tidied only when
+ *  compared, so the claims' canonical forms apply to both sides. */
 const seen = new Map<string, string>()
 
 /** A view's last text for `path`, as it closes: what was read or saved, or
  *  the edits it is about to write. */
 export function sawText(remote: string, path: string, text: string): void {
-  seen.set(keyOf(remote, path), tidy(text, path))
+  seen.set(keyOf(remote, path), text)
 }
 
 /** Whether `text` on disk is something other than what the tab showed;
  *  false for a tab with nothing to compare to yet, which takes `text` as
  *  its starting point. */
-function changedFromSeen(remote: string, path: string, text: string): boolean {
+function changedFromSeen(
+  remote: string,
+  path: string,
+  text: string,
+  normalizers: readonly Normalizer[],
+): boolean {
   const key = keyOf(remote, path)
-  const now = tidy(text, path)
   const before = seen.get(key)
-  if (before === undefined) seen.set(key, now)
-  return before !== undefined && before !== now
+  if (before === undefined) seen.set(key, text)
+  return before !== undefined && differsBeyondTidy(before, text, path, normalizers)
 }
 
 /** Follows the open vault's document tabs and marks the hidden ones whose
@@ -76,6 +81,7 @@ export function useDocChangeMarks(): void {
   const remote = useAtomValue(activeRemoteAtom)
   const ws = useAtomValue(shellWorkspaceAtom)
   const snapshot = useAtomValue(snapshotAtom)
+  const claims = useAtomValue(claimsAtom)
   const setChanged = useSetAtom(changedDocsAtom)
   /** Each document's time when it was last compared or shown. */
   const checked = useRef(new Map<string, string>())
@@ -109,11 +115,11 @@ export function useDocChangeMarks(): void {
       void trpc.notes.read
         .query({ remote, path })
         .then((text) => {
-          if (!changedFromSeen(remote, path, text)) return
+          if (!changedFromSeen(remote, path, text, claims)) return
           if (remoteRef.current !== remote || showingRef.current.has(path)) return
           setChanged((marked) => new Set(marked).add(path))
         })
         .catch(() => undefined)
     }
-  }, [remote, ws, snapshot, setChanged])
+  }, [remote, ws, snapshot, claims, setChanged])
 }

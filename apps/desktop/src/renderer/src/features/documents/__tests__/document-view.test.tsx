@@ -4,7 +4,7 @@
  * empty line asks Sonnet to write there: the marker is saved, the run locks
  * the page until its session is done, and Stop ends it.
  */
-import { emptyVaultSnapshot, VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import { emptyVaultSnapshot, normalizeText, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import userEvent from '@testing-library/user-event'
 import { atom, createStore, Provider } from 'jotai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -353,9 +353,6 @@ test('a document switched away from and back to keeps its caret', async () => {
   const text = '# Plan\n\nIntro\n\n## Next steps\n\nShip it.\n'
   const first = open(text)
   const box = await editorBox()
-  type WithEditor = HTMLElement & {
-    editor: import('@tiptap/react').Editor
-  }
   const editor = (box as WithEditor).editor
   let at = -1
   editor.state.doc.descendants((node, pos) => {
@@ -370,4 +367,77 @@ test('a document switched away from and back to keeps its caret', async () => {
   open(text)
   const back = ((await editorBox()) as WithEditor).editor
   await waitFor(() => expect(back.state.selection.from).toBe(at))
+})
+
+type WithEditor = HTMLElement & { editor: import('@tiptap/react').Editor }
+
+/** The position `offset` characters into the first text that holds `needle`. */
+function textPos(editor: import('@tiptap/react').Editor, needle: string, offset = 0): number {
+  let at = -1
+  editor.state.doc.descendants((node, pos) => {
+    if (at === -1 && node.isText && node.text!.includes(needle))
+      at = pos + node.text!.indexOf(needle) + offset
+  })
+  return at
+}
+
+/** The file changes on disk, and the snapshot reports its new time. */
+function changeOnDisk(text: string, updatedAt: string) {
+  files.set(PATH, text)
+  act(() =>
+    store.set(snapshotAtom, {
+      ...emptyVaultSnapshot(),
+      docs: [{ path: PATH, kind: 'note', updatedAt }],
+    } as never),
+  )
+}
+
+test('the commit tidy leaves the caret, and the space before it, where they are', async () => {
+  open('# Plan\n\nAlpha\n\nBeta\n')
+  const editor = ((await editorBox()) as WithEditor).editor
+  act(() => {
+    // A word, a space, and a pause to think.
+    editor
+      .chain()
+      .setTextSelection(textPos(editor, 'Alpha', 5))
+      .insertContent(' hello ')
+      .run()
+  })
+  const caret = editor.state.selection.from
+  // Autosave writes the trailing space; the commit's normalize-md strips it.
+  await waitFor(() => expect(write).toHaveBeenCalledTimes(1), { timeout: 2000 })
+  const saved = files.get(PATH)!
+  const tidied = normalizeText(saved, PATH, [])
+  expect(tidied).not.toBe(saved)
+  changeOnDisk(tidied, '2026-10-23T10:00:05Z')
+
+  // Give the reload its read, and a save its delay.
+  await act(() => new Promise((resolve) => setTimeout(resolve, 800)))
+  expect(editor.state.selection.from).toBe(caret)
+  expect(editor.state.selection.$from.parent.textContent).toBe('Alpha hello ')
+  // The untidied buffer is nothing new, so it is not written back.
+  expect(write).toHaveBeenCalledTimes(1)
+})
+
+test('a change on disk keeps the caret in its place, and is not undoable', async () => {
+  open('# Plan\n\nAlpha\n\nBeta\n')
+  const editor = ((await editorBox()) as WithEditor).editor
+  act(() => {
+    editor.commands.setTextSelection(textPos(editor, 'Alpha', 2))
+  })
+
+  // A pull or the agent: words added below the caret.
+  changeOnDisk('# Plan\n\nAlpha\n\nBeta gamma\n', '2026-10-23T10:00:05Z')
+  await waitFor(() => expect(editor.state.doc.textContent).toContain('Beta gamma'))
+
+  const { $from } = editor.state.selection
+  expect($from.parent.textContent).toBe('Alpha')
+  expect($from.parentOffset).toBe(2)
+
+  // ⌘Z undoes your own edits, never a co-author's.
+  act(() => {
+    editor.commands.undo()
+  })
+  expect(editor.state.doc.textContent).toContain('Beta gamma')
+  expect(write).not.toHaveBeenCalled()
 })
