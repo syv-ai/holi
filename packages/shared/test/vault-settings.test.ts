@@ -399,6 +399,16 @@ describe('parseSettingsPatch — the write-side trust boundary', () => {
     expect(patch).toEqual({ dailyNotes: false })
   })
 
+  it('accepts Pi as a machine-local agent provider and reads it back', () => {
+    const { patch, warnings } = parseSettingsPatch('{"agentProvider":"pi"}', CORE_TRANSFORMS)
+    expect(warnings).toEqual([])
+    expect(patch).toEqual({ agentProvider: 'pi' })
+    expect(resolveAppSettings(null, committed(patch))).toMatchObject({
+      agentProvider: 'pi',
+      warnings: [],
+    })
+  })
+
   it('normalises a home exactly as a read does', () => {
     const { patch } = parseSettingsPatch(JSON.stringify({ home: './Notes/a.md' }), CORE_TRANSFORMS)
     expect(patch.home).toBe('Notes/a.md')

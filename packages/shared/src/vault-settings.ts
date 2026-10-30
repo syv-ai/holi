@@ -709,12 +709,13 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     key: 'agentProvider',
     label: 'New sessions run',
     explanation:
-      'The coding agent a new session starts in. Holis and automations always run Claude Code.',
+      'The coding agent for new sessions, Holis, and automations. Codex cannot run unattended work yet.',
     type: {
       kind: 'enum',
       options: [
         { value: 'claude', label: 'Claude Code' },
         { value: 'codex', label: 'Codex' },
+        { value: 'pi', label: 'Pi' },
       ],
     },
     default: 'claude' as AgentProviderId,
