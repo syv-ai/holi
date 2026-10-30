@@ -392,6 +392,28 @@ describe('closing a run when it is done', () => {
     expect(workLog.join('\n')).toContain('[[.holi/schedules/inbox.local.md]]')
   })
 
+  it('records a run whose session failed as failed, with why, before the stop takes it', async () => {
+    const id = await started()
+    // A Codex job whose turn failed: idle, its outcome on the row until the
+    // stop removes it.
+    live[0] = {
+      ...live[0]!,
+      state: 'idle',
+      outcome: 'failed',
+      message: 'Codex exited with code 1: sandbox denied',
+    }
+    await scheduler.turnEnded(id)
+    expect(stopped).toEqual([id])
+    expect(await latest()).toMatchObject({
+      jobId: id,
+      outcome: 'failed',
+      message: 'Codex exited with code 1: sandbox denied',
+      finishedAt: expect.any(String),
+    })
+    expect(workLog.join('\n')).toContain('failed: Codex exited with code 1: sandbox denied')
+    expect(workLog.join('\n')).not.toMatch(/: done/)
+  })
+
   it('leaves a run its Stop says is paused on background work, until a Stop with none', async () => {
     const id = await started()
     live[0]!.state = 'idle'
