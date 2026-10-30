@@ -125,13 +125,11 @@ export class PiRpcRun {
     this.pending += chunk
     if (Buffer.byteLength(this.pending) > this.maxLineBytes && !this.pending.includes('\n')) {
       this.pending = ''
-      this.parseErrors = Math.min(3, this.parseErrors + 1)
-      if (this.parseErrors >= 3)
-        this.finish({
-          status: 'failed',
-          output: this.output,
-          error: 'Pi RPC emitted oversized or malformed records',
-        })
+      this.finish({
+        status: 'failed',
+        output: this.output,
+        error: 'Pi RPC emitted an oversized record',
+      })
       return
     }
     let newline: number
@@ -161,12 +159,18 @@ export class PiRpcRun {
   }
 
   private onRecord(record: Record<string, unknown>): void {
-    if (record.type === 'response' && record.command === 'prompt' && record.success === false) {
-      this.finish({
-        status: 'failed',
-        output: this.output,
-        error: String(record.error ?? 'Pi rejected prompt'),
-      })
+    if (record.type === 'response' && record.command === 'prompt') {
+      if (record.success === false) {
+        this.finish({
+          status: 'failed',
+          output: this.output,
+          error: String(record.error ?? 'Pi rejected prompt'),
+        })
+      } else if (
+        (record.data as { disposition?: unknown } | undefined)?.disposition === 'handled'
+      ) {
+        this.finish({ status: 'completed', output: this.output })
+      }
     }
     if (record.type === 'agent_start') this.active = true
     if (record.type === 'message_update') {

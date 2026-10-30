@@ -74,15 +74,25 @@ describe('PiRpcRun', () => {
       bin: 'pi',
       cwd: '/v',
       maxOutputBytes: 3,
-      maxLineBytes: 8,
+      maxLineBytes: 128,
       spawn: () => fakeProcess.child,
     })
     const result = run.prompt('x')
     fakeProcess.stdout.write(
       '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"long"}}\n',
     )
-    fakeProcess.stdout.write('123456789')
+    fakeProcess.stdout.write('1'.repeat(129))
     await expect(result).resolves.toMatchObject({ status: 'failed', output: 'lon' })
+  })
+
+  it('finishes when a Pi command handles the prompt without starting a run', async () => {
+    const fakeProcess = fake()
+    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => fakeProcess.child })
+    const result = run.prompt('/handled')
+    fakeProcess.stdout.write(
+      '{"type":"response","command":"prompt","success":true,"data":{"disposition":"handled"}}\n',
+    )
+    await expect(result).resolves.toMatchObject({ status: 'completed' })
   })
 
   it('cancels and kills the managed child', async () => {
