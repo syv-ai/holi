@@ -18,9 +18,9 @@ describe('the Pi provider', () => {
     const id = '018f1234-5678-7abc-8def-0123456789ab'
     expect(pi.terminal(TARGET, { resume: id })?.args).toEqual(['--session-id', id])
     expect(pi.terminal(TARGET, { conversation: id })?.args).toEqual(['--session-id', id])
-    expect(pi.terminal(TARGET, { fork: id, conversation: '018f1234-5678-7abc-8def-0123456789ac' })?.args).toEqual([
-      '--fork', id, '--session-id', '018f1234-5678-7abc-8def-0123456789ac',
-    ])
+    expect(
+      pi.terminal(TARGET, { fork: id, conversation: '018f1234-5678-7abc-8def-0123456789ac' })?.args,
+    ).toEqual(['--fork', id, '--session-id', '018f1234-5678-7abc-8def-0123456789ac'])
     expect(pi.terminal(TARGET, { resume: 'not-a-session' })?.args).toEqual([])
     expect(pi.terminal(TARGET, { prompt: 'Review this vault' })?.args).toEqual([
       '--',
