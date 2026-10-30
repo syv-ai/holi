@@ -172,13 +172,18 @@ export function jobArgs({
   writable = [],
   readOnly = false,
   resume,
-}: Omit<JobRun, 'state' | 'vault'>): string[] {
+  state,
+}: Omit<JobRun, 'state' | 'vault'> & { state?: string }): string[] {
   return [
     'exec',
     '--json',
     '--skip-git-repo-check',
     '-C',
     cwd,
+    // Its last message in the job's state folder, which also puts that
+    // folder on its command line: what Holi's startup sweep knows a job
+    // that outlived a crash by (`../host/jobs.ts`).
+    ...(state === undefined ? [] : ['--output-last-message', join(state, 'last-message.md')]),
     '--sandbox',
     readOnly ? 'read-only' : 'workspace-write',
     '-c',

@@ -4,9 +4,10 @@
  * its scope copied back. Codex is not on the test machine, so its process is
  * a small node script that prints the JSONL `codex exec --json` does.
  */
+import { spawn } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CapabilityContext } from '../../../main/capabilities/registry'
 import { codexProvider, fenceArgs, jobArgs, readJobEvent } from '../main/codex'
@@ -298,9 +299,38 @@ describe('a job', () => {
     expect(row.outcome).toBe('done')
     const seen = JSON.parse(await readFile(argv, 'utf8')) as { args: string[]; cwd: string }
     const scratch = seen.args[seen.args.indexOf('-C') + 1]!
-    expect(seen.args).toEqual(jobArgs({ cwd: scratch, prompt: 'Make it' }))
+    // Its state folder is on its command line, where the startup sweep looks.
+    const state = dirname(seen.args[seen.args.indexOf('--output-last-message') + 1]!)
+    expect(state.endsWith('.agent')).toBe(true)
+    expect(seen.args).toEqual(jobArgs({ cwd: scratch, prompt: 'Make it', state }))
     expect(scratch.startsWith(join(userData, 'agent-jobs'))).toBe(true)
     expect(await readFile(join(root, 'notes/Plan.app/app.yaml'), 'utf8')).toContain('The plan')
+  })
+})
+
+describe('a job that outlived a crash', () => {
+  it('is killed at the next start, known by the state folder its command line names', async () => {
+    const userData = await temp('holi-job-data-')
+    const scratchRoot = join(userData, 'agent-jobs')
+    const state = join(scratchRoot, 'j0123456789ab.agent')
+    await mkdir(state, { recursive: true })
+    const orphan = spawn(
+      process.execPath,
+      ['-e', 'setInterval(() => {}, 1000)', '--', join(state, 'sessions')],
+      { detached: true, stdio: 'ignore' },
+    )
+    const gone = new Promise((resolve) => orphan.on('exit', resolve))
+    await writeFile(join(scratchRoot, 'j0123456789ab.pid'), `${orphan.pid}\n${state}\n`)
+    createJobs({
+      vault: { remote: 'syv/vault', root: userData },
+      scratchRoot,
+      onChange: () => {},
+      log: () => {},
+    })
+    await gone
+    await vi.waitFor(async () =>
+      expect(await exists(join(scratchRoot, 'j0123456789ab.pid'))).toBe(false),
+    )
   })
 })
 

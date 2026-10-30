@@ -6,11 +6,14 @@
  * process's permissions. So the process is the boundary. Everything is denied
  * unless named here:
  *
+ * - **programs**: the Node that runs Pi and Pi's own script, named by path,
+ *   and nothing else.
  * - **reads**: the system's libraries and tools, Pi's install and the Node
- *   that runs it, Pi's own sign-in and settings files (never its other
- *   sessions), and the job's folders. A folder may carry `hidden` paths
- *   that stay unreadable inside it: in the vault, its git, Holi's and the
- *   agents' folders, and local and secret files.
+ *   that runs it, and the job's folders (Pi's own folder for the job among
+ *   them, never the person's). A folder may carry `hidden` paths that stay
+ *   unreadable inside it, a writable one included: in the vault, every path
+ *   with a segment that starts with a dot (git, Holi's and the agents'
+ *   folders, secret files), and every local one.
  * - **writes**: the job's folders and nothing else, and `/dev/null`.
  * - **network**: outbound to an address, for Pi's calls to its model, and
  *   the system's resolver. A job's tools have no way onto it but a shell,
@@ -24,6 +27,8 @@
 
 /** What a profile allows. Every path absolute and real. */
 export interface SandboxSpec {
+  /** The programs it may run: the runtime and the script it runs. */
+  exec: readonly string[]
   /** Folders whose files may be read, and paths in them that may not. */
   read: readonly { dir: string; hidden?: readonly RegExp[] }[]
   /** Single files that may be read. */
@@ -55,8 +60,16 @@ const DEVICES = ['/dev/null', '/dev/zero', '/dev/random', '/dev/urandom']
 /** A path as an SBPL string literal. */
 const quote = (path: string): string => `"${path.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 
-/** A regex as an SBPL regex literal: JavaScript's `\\/` is a plain `/`. */
-const regex = (re: RegExp): string => `#"${re.source.replace(/\\\//g, '/').replace(/"/g, '\\"')}"`
+/** A regex as an SBPL regex literal: JavaScript's `\\/` is a plain `/`. A
+ *  `#"…"` literal has no escape for `"`, so a path with one is refused. */
+const regex = (re: RegExp): string => {
+  if (re.source.includes('"')) {
+    throw new Error(
+      'A folder the job reads has a double quote in its path, which its sandbox cannot name.',
+    )
+  }
+  return `#"${re.source.replace(/\\\//g, '/')}"`
+}
 
 /** Escape a path for a regex: what a hidden pattern is anchored under. */
 const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -72,13 +85,15 @@ export function sandboxProfile(spec: SandboxSpec): string {
     '(version 1)',
     '(deny default)',
     '(allow process-fork)',
-    '(allow process-exec)',
     '(allow signal (target same-sandbox))',
     '(allow sysctl-read)',
     // A name and a size, never contents: Node stats its way up every path.
     '(allow file-read-metadata)',
     `(allow file-read* (literal "/") ${[...SYSTEM_READ.map((p) => `(subpath ${quote(p)})`), ...DEVICES.map((p) => `(literal ${quote(p)})`)].join(' ')})`,
   ]
+  if (spec.exec.length > 0) {
+    lines.push(`(allow process-exec ${spec.exec.map((p) => `(literal ${quote(p)})`).join(' ')})`)
+  }
   const reads = [
     ...spec.read.map(({ dir }) => `(subpath ${quote(dir)})`),
     ...spec.readFiles.map((file) => `(literal ${quote(file)})`),
@@ -104,17 +119,25 @@ export function sandboxProfile(spec: SandboxSpec): string {
   return `${lines.join('\n')}\n`
 }
 
+/** A word matched in any case: Seatbelt's regexes take no flags. */
+const anyCase = (word: string): string =>
+  [...word].map((c) => `[${c.toLowerCase()}${c.toUpperCase()}]`).join('')
+
 /**
- * What in a vault stays unreadable to a job that reads it: git, Holi's and
- * the agents' folders, and local and secret files, at any depth
- * (`isSharedContentPath` names the same kinds).
+ * What in a vault stays unreadable to a job that reads it, at any depth and
+ * in any segment, as the shared rules read a path: every segment that starts
+ * with a dot (`isHiddenPath`: git, Holi's and the agents' folders), a
+ * segment with the `.local` marker (`isLocalOnlyPath`, a personal app's
+ * folder included), and a secret file's or folder's name in any case
+ * (`isSecretPath`). The marker is matched in any case too: the disk is
+ * case-blind.
  * @public exported for its test
  */
 export function vaultHidden(root: string): RegExp[] {
-  const under = `^${escapeRegex(root)}/`
+  const segment = `^${escapeRegex(root)}/(.*/)?`
   return [
-    new RegExp(`${under}(.*/)?\\.(git|holi|claude|codex|pi|agents)(/|$)`),
-    new RegExp(`${under}(.*/)?[^/]*\\.local(\\.[^/]*)?$`),
-    new RegExp(`${under}(.*/)?\\.(env|secrets)(\\.[^/]*)?$`),
+    new RegExp(`${segment}\\.[^/]*(/|$)`),
+    new RegExp(`${segment}[^/]*\\.${anyCase('local')}(\\.[^/]*)?(/|$)`),
+    new RegExp(`${segment}\\.(${anyCase('env')}|${anyCase('secrets')})(\\.[^/]*)?(/|$)`),
   ]
 }

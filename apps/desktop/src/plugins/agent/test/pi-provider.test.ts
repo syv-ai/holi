@@ -4,12 +4,24 @@
  * is a small node script that speaks the RPC lines Pi does; the sandbox
  * itself is run for real where it exists (macOS).
  */
-import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { execFile, spawn } from 'node:child_process'
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { createInterface } from 'node:readline'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { resolveBin } from '../../../main/plugin-api'
 import { createJobs } from '../main/host/jobs'
 import {
   installRoot,
@@ -17,8 +29,11 @@ import {
   jobCommand,
   jobEnv,
   jobInput,
+  pickModel,
+  piProgram,
   piProvider,
   readJobEvent,
+  returnSignIn,
   terminalArgs,
 } from '../main/pi'
 import { sandboxProfile, vaultHidden } from '../main/pi/sandbox'
@@ -36,6 +51,18 @@ const temp = async (prefix: string): Promise<string> => {
 }
 
 const RUN: JobRun = { cwd: '/v/tilbud', prompt: 'Work on it.', state: '/data/j1.agent' }
+
+/** The launcher `pi.dev/install.sh` writes, in the part Holi reads. */
+const LAUNCHER = [
+  '#!/bin/sh',
+  'pi_bin_dir=${pi_launcher%/*}',
+  'pi_agent_dir=${pi_bin_dir%/*}',
+  'pi_current_file=$pi_agent_dir/install/current-version',
+  'pi_release_dir=$pi_agent_dir/install/releases/$pi_current_version',
+  'pi_release_bin=$pi_release_dir/node_modules/.bin/pi',
+  'exec "$pi_release_bin" "$@"',
+  '',
+].join('\n')
 
 describe('a Pi terminal', () => {
   it('names a new session by the UUID Holi chose, reopens it, forks it, and keeps the ask after --', () => {
@@ -81,9 +108,12 @@ describe('a Pi terminal', () => {
 })
 
 describe('a Pi job', () => {
-  it('runs in RPC mode with everything of the person’s setup off and the file tools alone', () => {
+  it('runs in RPC mode with everything of the person’s setup off, offline, and the file tools alone', () => {
     expect(
-      jobArgs({ ...RUN, model: 'gpt-5', resume: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51' }),
+      jobArgs(
+        { ...RUN, model: 'ignored', resume: '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a51' },
+        { provider: 'openai', model: 'gpt-5' },
+      ),
     ).toEqual([
       '--mode',
       'rpc',
@@ -97,8 +127,11 @@ describe('a Pi job', () => {
       '--no-themes',
       '--no-mcp',
       '--no-approve',
+      '--offline',
       '--tools',
       'read,edit,write',
+      '--provider',
+      'openai',
       '--model',
       'gpt-5',
     ])
@@ -108,49 +141,212 @@ describe('a Pi job', () => {
     ])
   })
 
-  it('keeps only home, a path, the language and the model keys of its environment', () => {
+  it('keeps only home, a path, the language, the model keys and the way to the network', () => {
     const env = jobEnv(
       {
         HOME: '/Users/ada',
         PATH: '/holi/bin:/usr/bin',
         LANG: 'da_DK.UTF-8',
         OPENAI_API_KEY: 'sk-1',
+        HTTPS_PROXY: 'http://proxy:3128',
+        no_proxy: 'localhost',
+        NODE_EXTRA_CA_CERTS: '/etc/corp.pem',
+        PI_CODING_AGENT_DIR: '/Users/ada/pi',
         GITHUB_TOKEN: 'ghp-no',
         HOLI_BRIDGE_TOKEN: 'no',
         SSH_AUTH_SOCK: '/tmp/agent',
       },
-      { runtimeBin: '/opt/node/bin', state: '/data/j1.agent' },
+      { runtimeBin: '/opt/node/bin', state: '/data/j1.agent', agentDir: '/data/j1.agent/pi-agent' },
     )
     expect(env).toEqual({
       HOME: '/Users/ada',
       PATH: '/opt/node/bin:/usr/bin:/bin',
       LANG: 'da_DK.UTF-8',
       TMPDIR: '/data/j1.agent/tmp',
+      PI_CODING_AGENT_DIR: '/data/j1.agent/pi-agent',
       OPENAI_API_KEY: 'sk-1',
+      HTTPS_PROXY: 'http://proxy:3128',
+      no_proxy: 'localhost',
+      NODE_EXTRA_CA_CERTS: '/etc/corp.pem',
     })
   })
 
-  it('runs under sandbox-exec, its runtime named, writing only its folders', () => {
-    const cmd = jobCommand(
-      '/nowhere/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js',
-      { ...RUN, writable: ['/v/arkiv'], vault: '/v' },
-      { env: { HOME: '/Users/ada' }, node: null },
+  /** A home with Pi's folder (settings and models behind symlinks, as a
+   *  dotfiles setup has them, and two providers signed in), a Pi install,
+   *  a vault and a job's state folder. */
+  async function machine() {
+    const root = await temp('holi-pi-machine-')
+    const home = join(root, 'home')
+    const agent = join(home, '.pi', 'agent')
+    const dotfiles = join(home, 'dotfiles')
+    await mkdir(agent, { recursive: true })
+    await mkdir(dotfiles, { recursive: true })
+    await writeFile(
+      join(dotfiles, 'settings.json'),
+      JSON.stringify({ defaultProvider: 'anthropic', defaultModel: 'claude-haiku-4-5' }),
     )
-    expect(cmd.bin).toBe('/usr/bin/sandbox-exec')
-    expect(cmd.args[0]).toBe('-p')
-    const profile = cmd.args[1]!
-    expect(profile).toContain('(subpath "/nowhere/lib/node_modules")')
+    await symlink(join(dotfiles, 'settings.json'), join(agent, 'settings.json'))
+    await writeFile(join(dotfiles, 'models.json'), '{"providers":{}}')
+    await symlink(join(dotfiles, 'models.json'), join(agent, 'models.json'))
+    await writeFile(
+      join(agent, 'auth.json'),
+      JSON.stringify({
+        anthropic: { type: 'oauth', access: 'a1', refresh: 'r1', expires: 1 },
+        openai: { type: 'api_key', key: 'sk-other' },
+      }),
+    )
+    await mkdir(join(agent, 'sessions'), { recursive: true })
+    const lib = join(root, 'lib/node_modules/@earendil-works/pi-coding-agent/dist')
+    await mkdir(lib, { recursive: true })
+    const script = join(lib, 'cli.js')
+    await writeFile(script, '#!/usr/bin/env node\n')
+    await chmod(script, 0o755)
+    const vault = join(root, 'vault')
+    await mkdir(join(vault, 'tilbud'), { recursive: true })
+    const state = join(root, 'data/j1.agent')
+    await mkdir(join(state, 'tmp'), { recursive: true })
+    const node = await realpath(process.execPath)
+    const run: JobRun = { cwd: join(vault, 'tilbud'), prompt: 'Go.', state, vault }
+    return { root, home, agent, script, vault, state, node, run, env: { HOME: home } }
+  }
+
+  it('runs under sandbox-exec, its runtime and script named, writing only its folders', async () => {
+    const { agent, script, vault, state, node, run, env } = await machine()
+    const { command } = jobCommand(
+      script,
+      { ...run, writable: [join(vault, 'arkiv')] },
+      {
+        env,
+        node,
+      },
+    )
+    expect(command.bin).toBe('/usr/bin/sandbox-exec')
+    expect(command.args[0]).toBe('-p')
+    const profile = command.args[1]!
+    expect(profile).toContain(`(allow process-exec (literal "${node}") (literal "${script}"))`)
+    expect(profile).toContain(`(subpath "${script.slice(0, script.indexOf('/@earendil'))}")`)
     expect(profile).toContain(
-      '(allow file-read* file-write* (subpath "/v/tilbud") (subpath "/v/arkiv") (subpath "/data/j1.agent") (subpath "/Users/ada/.pi/agent/auth.json") (subpath "/Users/ada/.pi/agent/auth.json.lock"))',
+      `(allow file-read* file-write* (subpath "${join(vault, 'tilbud')}") (subpath "${join(vault, 'arkiv')}") (subpath "${state}"))`,
     )
-    expect(profile).not.toContain('/Users/ada/.pi/agent/sessions')
-    expect(cmd.args.slice(2)).toEqual([
-      '/nowhere/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js',
-      ...jobArgs(RUN),
+    // Nothing of the person's Pi folder: the job has its own.
+    expect(profile).not.toContain(agent)
+    expect(command.env.PI_CODING_AGENT_DIR).toBe(join(state, 'pi-agent'))
+    expect(command.args.slice(2)).toEqual([
+      node,
+      script,
+      ...jobArgs(run, { provider: 'anthropic', model: 'claude-haiku-4-5' }),
     ])
     // Read-only: nothing of the vault is writable.
-    const ro = jobCommand('/p/cli.js', { ...RUN, readOnly: true, vault: '/v' }, { node: null })
-    expect(ro.args[1]).not.toContain('(subpath "/v/tilbud")')
+    const ro = jobCommand(script, { ...run, readOnly: true }, { env, node })
+    expect(ro.command.args[1]).not.toContain(`(subpath "${join(vault, 'tilbud')}")`)
+  })
+
+  it('gets copies of Pi’s settings and the sign-in of its one provider', async () => {
+    const { agent, script, state, node, run, env } = await machine()
+    const { signIn } = jobCommand(script, run, { env, node })
+    const own = join(state, 'pi-agent')
+    expect(JSON.parse(await readFile(join(own, 'auth.json'), 'utf8'))).toEqual({
+      anthropic: { type: 'oauth', access: 'a1', refresh: 'r1', expires: 1 },
+    })
+    // The symlinks read through: plain files in the job's folder.
+    expect((await lstat(join(own, 'settings.json'))).isSymbolicLink()).toBe(false)
+    expect(await readFile(join(own, 'models.json'), 'utf8')).toBe('{"providers":{}}')
+    expect(signIn).toMatchObject({ file: join(agent, 'auth.json'), provider: 'anthropic' })
+    // The job's own model names its provider.
+    jobCommand(script, { ...run, model: 'openai/gpt-5' }, { env, node })
+    expect(JSON.parse(await readFile(join(own, 'auth.json'), 'utf8'))).toEqual({
+      openai: { type: 'api_key', key: 'sk-other' },
+    })
+  })
+
+  it('does not run when it cannot tell which provider runs it', async () => {
+    const { agent, script, node, run, env } = await machine()
+    await rm(join(agent, 'settings.json'))
+    expect(() => jobCommand(script, run, { env, node })).toThrow(/Pi has no default model/)
+    expect(() => jobCommand(script, { ...run, model: 'gpt-5' }, { env, node })).toThrow(
+      /which of Pi's providers runs gpt-5/,
+    )
+    expect(pickModel({ defaultProvider: 'openai' }, 'gpt-5')).toEqual({
+      provider: 'openai',
+      model: 'gpt-5',
+    })
+  })
+
+  it('hands a refreshed token back to that provider alone, under Pi’s lock', async () => {
+    const { agent, script, state, node, run, env } = await machine()
+    const { signIn } = jobCommand(script, run, { env, node })
+    const own = join(state, 'pi-agent', 'auth.json')
+    const refreshed = { type: 'oauth', access: 'a2', refresh: 'r2', expires: 2 }
+    await writeFile(
+      own,
+      JSON.stringify({ anthropic: refreshed, openai: { type: 'api_key', key: 'x' } }),
+    )
+    await returnSignIn(signIn)
+    expect(JSON.parse(await readFile(join(agent, 'auth.json'), 'utf8'))).toEqual({
+      anthropic: refreshed,
+      openai: { type: 'api_key', key: 'sk-other' },
+    })
+    await expect(lstat(join(agent, 'auth.json.lock'))).rejects.toThrow()
+    // One the person changed meanwhile is newer: it stands.
+    const second = jobCommand(script, run, { env, node }).signIn
+    await writeFile(
+      join(agent, 'auth.json'),
+      JSON.stringify({ anthropic: { type: 'oauth', access: 'mine', refresh: 'r3', expires: 3 } }),
+    )
+    await writeFile(own, JSON.stringify({ anthropic: { ...refreshed, access: 'a4' } }))
+    await returnSignIn(second)
+    expect(JSON.parse(await readFile(join(agent, 'auth.json'), 'utf8'))).toMatchObject({
+      anthropic: { access: 'mine' },
+    })
+    // Nor is a credential of another kind taken back.
+    const third = jobCommand(script, run, { env, node }).signIn
+    await writeFile(own, JSON.stringify({ anthropic: { type: 'api_key', key: 'planted' } }))
+    await returnSignIn(third)
+    expect(JSON.parse(await readFile(join(agent, 'auth.json'), 'utf8'))).toMatchObject({
+      anthropic: { access: 'mine' },
+    })
+  })
+
+  it('follows Pi’s own launcher to its release and its Node', async () => {
+    const { root, home, node, run, env } = await machine()
+    const managed = join(home, '.pi', 'agent')
+    const release = join(managed, 'install/releases/1.4.0/node_modules')
+    const cli = join(release, '@earendil-works/pi-coding-agent/dist/cli.js')
+    await mkdir(dirname(cli), { recursive: true })
+    await writeFile(cli, '#!/usr/bin/env node\n')
+    await chmod(cli, 0o755)
+    await mkdir(join(release, '.bin'), { recursive: true })
+    await symlink('../@earendil-works/pi-coding-agent/dist/cli.js', join(release, '.bin/pi'))
+    await writeFile(join(managed, 'install/current-version'), '1.4.0\n')
+    const launcher = join(managed, 'bin/pi')
+    await mkdir(dirname(launcher), { recursive: true })
+    await writeFile(launcher, LAUNCHER)
+    await chmod(launcher, 0o755)
+    const piNode = join(home, '.local/share/pi-node/current/bin/node')
+    await mkdir(dirname(piNode), { recursive: true })
+    await symlink(node, piNode)
+    expect(piProgram(launcher, env, null)).toEqual({ runtime: node, script: cli })
+    const { command } = jobCommand(launcher, run, { env, node: null })
+    expect(command.args[1]).toContain(`(subpath "${release}")`)
+    expect(command.args[1]).not.toContain(`(subpath "${managed}")`)
+    // A version it cannot read, or a script it cannot follow, is refused.
+    await writeFile(join(managed, 'install/current-version'), '../../..\n')
+    expect(() => piProgram(launcher, env, node)).toThrow(/could not tell which Pi release/)
+    const shell = join(root, 'pi-wrapper')
+    await writeFile(shell, '#!/bin/sh\nexec somewhere "$@"\n')
+    expect(() => piProgram(shell, env, node)).toThrow(/cannot follow/)
+  })
+
+  it('never opens the home folder or Pi’s own to a job', async () => {
+    const { home, node, run, env } = await machine()
+    // A script straight in the home folder would make it the install's root.
+    const loose = join(home, 'bin/pi')
+    await mkdir(dirname(loose), { recursive: true })
+    await writeFile(loose, '#!/usr/bin/env node\n')
+    expect(() => jobCommand(loose, run, { env, node })).toThrow(/your home folder/)
+    const inAgent = join(home, '.pi/agent/pi.js')
+    await writeFile(inAgent, '#!/usr/bin/env node\n')
+    expect(() => jobCommand(inAgent, run, { env, node })).toThrow(/Pi's own folder/)
   })
 
   it('finds its install’s packages', () => {
@@ -227,6 +423,7 @@ require('node:readline').createInterface({ input: process.stdin })
   .on('line', (line) => {
     const c = JSON.parse(line)
     if (c.type === 'get_state') {
+      if (mode === 'refuse-state') return out({ id: c.id, type: 'response', command: 'get_state', success: false, error: 'Session file is not readable.' })
       out({ id: c.id, type: 'response', command: 'get_state', success: true, data: { sessionId: session, model: { id: 'gpt-5' } } })
     } else if (c.type === 'prompt') {
       if (mode === 'refuse') return out({ id: c.id, type: 'response', command: 'prompt', success: false, error: 'No API key found for the selected model.' })
@@ -323,6 +520,8 @@ describe('Pi jobs over RPC', () => {
     for (const [mode, message] of [
       ['error', '401 invalid x-api-key'],
       ['refuse', 'No API key found for the selected model.'],
+      // Refused, though the run that follows settles as it should.
+      ['refuse-state', 'Session file is not readable.'],
     ] as const) {
       const { jobs, ended, start } = await rig(mode)
       expect(await ended(await start())).toMatchObject({ outcome: 'failed', message })
@@ -351,26 +550,27 @@ describe('Pi jobs over RPC', () => {
 })
 
 describe('the sandbox profile', () => {
-  it('denies by default, reads the system and what it is given, and writes only its folders', () => {
+  it('denies by default, runs and reads only what it is given, and writes only its folders', () => {
     const hidden = vaultHidden('/v')
     expect(
       sandboxProfile({
+        exec: ['/opt/node/bin/node', '/opt/pi/cli.js'],
         read: [{ dir: '/opt/pi' }, { dir: '/v', hidden }],
-        readFiles: ['/Users/ada/.pi/agent/settings.json'],
+        readFiles: ['/etc/corp.pem'],
         write: ['/v/out', '/data/j1.agent'],
       }),
     ).toMatchInlineSnapshot(`
       "(version 1)
       (deny default)
       (allow process-fork)
-      (allow process-exec)
       (allow signal (target same-sandbox))
       (allow sysctl-read)
       (allow file-read-metadata)
       (allow file-read* (literal "/") (subpath "/usr/lib") (subpath "/usr/share") (subpath "/usr/bin") (subpath "/bin") (subpath "/System") (subpath "/Library/Preferences") (subpath "/private/etc") (subpath "/private/var/db/timezone") (subpath "/private/var/db/dyld") (subpath "/opt/homebrew/Cellar") (subpath "/opt/homebrew/opt") (subpath "/usr/local/Cellar") (subpath "/usr/local/opt") (literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom"))
-      (allow file-read* (subpath "/opt/pi") (subpath "/v") (literal "/Users/ada/.pi/agent/settings.json"))
+      (allow process-exec (literal "/opt/node/bin/node") (literal "/opt/pi/cli.js"))
+      (allow file-read* (subpath "/opt/pi") (subpath "/v") (literal "/etc/corp.pem"))
       (allow file-read* file-write* (subpath "/v/out") (subpath "/data/j1.agent"))
-      (deny file-read* file-write* (regex #"^/v/(.*/)?\\.(git|holi|claude|codex|pi|agents)(/|$)") (regex #"^/v/(.*/)?[^/]*\\.local(\\.[^/]*)?$") (regex #"^/v/(.*/)?\\.(env|secrets)(\\.[^/]*)?$"))
+      (deny file-read* file-write* (regex #"^/v/(.*/)?\\.[^/]*(/|$)") (regex #"^/v/(.*/)?[^/]*\\.[lL][oO][cC][aA][lL](\\.[^/]*)?(/|$)") (regex #"^/v/(.*/)?\\.([eE][nN][vV]|[sS][eE][cC][rR][eE][tT][sS])(\\.[^/]*)?(/|$)"))
       (allow file-write-data (literal "/dev/null"))
       (allow system-socket)
       (allow network-outbound (remote ip))
@@ -379,13 +579,35 @@ describe('the sandbox profile', () => {
     `)
   })
 
-  it('keeps git, Holi’s folders, local and secret files of the vault hidden', () => {
-    const [folders, local, secret] = vaultHidden('/v')
-    expect(folders!.test('/v/.holi/bridge.local.env')).toBe(true)
-    expect(folders!.test('/v/notes/.git/config')).toBe(true)
-    expect(local!.test('/v/USER.local.md')).toBe(true)
-    expect(secret!.test('/v/a/.env.production')).toBe(true)
-    for (const re of [folders!, local!, secret!]) expect(re.test('/v/notes/plan.md')).toBe(false)
+  it('keeps every dot segment, local and secret path of the vault hidden, at any depth', () => {
+    const hidden = vaultHidden('/v')
+    const isHidden = (path: string) => hidden.some((re) => re.test(path))
+    for (const path of [
+      '/v/.holi/bridge.local.env',
+      '/v/notes/.git/config',
+      '/v/.gitignore',
+      '/v/USER.local.md',
+      '/v/Home.local.app/records.json',
+      '/v/apps/Home.LOCAL.app/records.json',
+      '/v/a/.env.production',
+      '/v/.secrets/token',
+      '/v/.env.d/x',
+      '/v/.ENV',
+      '/v/out/.cache/x',
+    ]) {
+      expect(isHidden(path), path).toBe(true)
+    }
+    for (const path of ['/v/notes/plan.md', '/v/env.md', '/v/local.md', '/v/Home.app/index.html']) {
+      expect(isHidden(path), path).toBe(false)
+    }
+    expect(() =>
+      sandboxProfile({
+        exec: [],
+        read: [{ dir: '/v"x', hidden: vaultHidden('/v"x') }],
+        readFiles: [],
+        write: [],
+      }),
+    ).toThrow(/double quote/)
   })
 
   it.runIf(process.platform === 'darwin')(
@@ -393,25 +615,44 @@ describe('the sandbox profile', () => {
     async () => {
       const dir = await temp('holi-pi-sandbox-')
       const vault = join(dir, 'vault')
+      const outside = join(dir, 'outside')
       await mkdir(join(vault, 'out'), { recursive: true })
       await mkdir(join(vault, '.holi'), { recursive: true })
+      await mkdir(join(vault, 'Home.local.app'), { recursive: true })
+      await mkdir(join(vault, '.secrets'), { recursive: true })
+      await mkdir(join(vault, '.env.d'), { recursive: true })
+      await mkdir(outside, { recursive: true })
       await writeFile(join(vault, 'note.md'), 'hi')
       await writeFile(join(vault, '.holi/bridge.local.env'), 'TOKEN')
+      await writeFile(join(vault, 'Home.local.app/records.json'), '{}')
+      await writeFile(join(vault, '.secrets/token'), 'x')
+      await writeFile(join(vault, '.env.d/x'), 'x')
+      await writeFile(join(vault, '.ENV'), 'x')
+      await writeFile(join(outside, 'other.md'), 'x')
       const node = await realpath(process.execPath)
       const profile = sandboxProfile({
+        exec: [node],
         read: [{ dir: join(node, '../..') }, { dir: vault, hidden: vaultHidden(vault) }],
         readFiles: [],
         write: [join(vault, 'out')],
       })
+      const at = (rel: string) => JSON.stringify(join(vault, rel))
       const probe = `
         const fs = require('node:fs')
         const tryIt = (f) => { try { f(); return 'allowed' } catch (e) { return e.code } }
         console.log(JSON.stringify({
-          writeOut: tryIt(() => fs.writeFileSync(${JSON.stringify(join(vault, 'out/a.md'))}, 'x')),
-          writeVault: tryIt(() => fs.writeFileSync(${JSON.stringify(join(vault, 'b.md'))}, 'x')),
+          writeOut: tryIt(() => fs.writeFileSync(${at('out/a.md')}, 'x')),
+          writeOutHidden: tryIt(() => fs.writeFileSync(${at('out/.env')}, 'x')),
+          writeVault: tryIt(() => fs.writeFileSync(${at('b.md')}, 'x')),
           writeElsewhere: tryIt(() => fs.writeFileSync(${JSON.stringify(join(dir, 'c.md'))}, 'x')),
-          readNote: tryIt(() => fs.readFileSync(${JSON.stringify(join(vault, 'note.md'))})),
-          readHidden: tryIt(() => fs.readFileSync(${JSON.stringify(join(vault, '.holi/bridge.local.env'))})),
+          readNote: tryIt(() => fs.readFileSync(${at('note.md')})),
+          readOutside: tryIt(() => fs.readFileSync(${JSON.stringify(join(outside, 'other.md'))})),
+          readHidden: tryIt(() => fs.readFileSync(${at('.holi/bridge.local.env')})),
+          readLocalApp: tryIt(() => fs.readFileSync(${at('Home.local.app/records.json')})),
+          readSecrets: tryIt(() => fs.readFileSync(${at('.secrets/token')})),
+          readEnvFolder: tryIt(() => fs.readFileSync(${at('.env.d/x')})),
+          readEnvUpper: tryIt(() => fs.readFileSync(${at('.ENV')})),
+          exec: tryIt(() => require('node:child_process').execFileSync('/bin/echo', ['x'])),
         }))
       `
       const { stdout } = await promisify(execFile)('/usr/bin/sandbox-exec', [
@@ -423,11 +664,80 @@ describe('the sandbox profile', () => {
       ])
       expect(JSON.parse(stdout)).toEqual({
         writeOut: 'allowed',
+        writeOutHidden: 'EPERM',
         writeVault: 'EPERM',
         writeElsewhere: 'EPERM',
         readNote: 'allowed',
+        readOutside: 'EPERM',
         readHidden: 'EPERM',
+        readLocalApp: 'EPERM',
+        readSecrets: 'EPERM',
+        readEnvFolder: 'EPERM',
+        readEnvUpper: 'EPERM',
+        exec: 'EPERM',
       })
     },
   )
+})
+
+/** The Pi on this machine (`HOLI_PI_BIN`, else `pi` on `PATH`), when there
+ *  is one: the smoke test runs it for real, under the real profile. */
+const realPi = (() => {
+  const override = process.env.HOLI_PI_BIN
+  return override !== undefined && override !== '' ? override : resolveBin('pi')
+})()
+
+describe.runIf(process.platform === 'darwin' && realPi !== null)('the real Pi, sandboxed', () => {
+  it('starts, says its session, and ends on an abort and its input closed', async () => {
+    const root = await temp('holi-pi-real-')
+    const home = join(root, 'home')
+    const agent = join(home, '.pi/agent')
+    await mkdir(agent, { recursive: true })
+    await writeFile(
+      join(agent, 'settings.json'),
+      JSON.stringify({ defaultProvider: 'anthropic', defaultModel: 'claude-haiku-4-5' }),
+    )
+    const vault = join(root, 'vault')
+    await mkdir(join(vault, 'out'), { recursive: true })
+    const state = join(root, 'data/j1.agent')
+    await mkdir(join(state, 'tmp'), { recursive: true })
+    const run: JobRun = { cwd: join(vault, 'out'), prompt: 'unused', state, vault }
+    const { command } = jobCommand(realPi!, run, {
+      env: { HOME: home, PATH: process.env.PATH ?? '' },
+    })
+    const child = spawn(command.bin, command.args, {
+      cwd: run.cwd,
+      env: command.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let stderr = ''
+    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')))
+    const exited = new Promise<number | null>((resolve) => child.on('close', resolve))
+    const events: unknown[] = []
+    createInterface({ input: child.stdout }).on('line', (line) => {
+      const event = readJobEvent(line)
+      if (event !== null) events.push(event)
+    })
+    child.stdin.write(`${jobInput(run)[0]}\n`)
+    try {
+      await vi.waitFor(
+        () => expect(events).toContainEqual(expect.objectContaining({ kind: 'thread' })),
+        {
+          timeout: 20_000,
+          interval: 50,
+        },
+      )
+    } catch (err) {
+      child.kill('SIGKILL')
+      throw new Error(`${(err as Error).message}\n${stderr}`)
+    }
+    child.stdin.write(`${piProvider().capabilities.jobs!.input!.abort}\n`)
+    child.stdin.end()
+    expect(await exited).toBe(0)
+    // The job's Pi folder was its own: the session landed in its state.
+    expect(events[0]).toMatchObject({
+      kind: 'thread',
+      id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    })
+  }, 30_000)
 })

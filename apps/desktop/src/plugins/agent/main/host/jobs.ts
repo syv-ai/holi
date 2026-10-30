@@ -36,9 +36,10 @@
  *
  * Either way, what a turn's process left running in its group is killed when
  * it exits. Beside the scratch folders is `<id>.pid`, the running turn's pid
- * and the folder it runs in, outside what any job may write: a crash leaves
+ * and the job's state folder, outside what any job may write: a crash leaves
  * it behind, and the next start kills that group (when it still leads one and
- * its command names that folder) before the folders go.
+ * its command line names that folder, as every provider's does) before the
+ * folders go.
  *
  * **It is a session in the one list**, named by Holi's id (`j` and twelve hex
  * digits): working while a turn runs, then idle with its `outcome` (and why,
@@ -551,6 +552,7 @@ export function createJobs(deps: JobsDeps): Jobs {
         ...(input === undefined ? {} : { input: true }),
       })
     } catch (err) {
+      void job.provider.capabilities.jobs.ended?.(run).catch(() => undefined)
       return {
         ok: false,
         message: `${job.provider.label} did not start: ${(err as Error).message}`,
@@ -563,7 +565,10 @@ export function createJobs(deps: JobsDeps): Jobs {
     job.busy = true
     delete job.stopped
     if (child.pid !== undefined) {
-      const line = `${child.pid}\n${run.cwd}\n`
+      // The state folder, which every provider's command line names (Pi's
+      // session folder, Codex's last message): the folder it runs in is not
+      // always there.
+      const line = `${child.pid}\n${run.state}\n`
       void mkdir(deps.scratchRoot, { recursive: true })
         .then(() => writeFile(pidFile(id), line))
         .catch(() => undefined)
@@ -617,7 +622,8 @@ export function createJobs(deps: JobsDeps): Jobs {
             failure = event.message
             return
           case 'error':
-            error = event.message
+            // A refused command fails the turn, whatever settles after.
+            error ??= event.message
             endInput()
             return
           case 'turn-started':
@@ -644,19 +650,25 @@ export function createJobs(deps: JobsDeps): Jobs {
       exitedResolve()
       // Whatever it left running dies with it, before anything is read.
       killGroup(job)
+      const ended = (): Promise<void> =>
+        (provider.capabilities.jobs.ended?.(run) ?? Promise.resolve()).catch((err: unknown) =>
+          log(`${id}: ${(err as Error).message}`),
+        )
       if (jobs.get(id) !== job) {
+        await ended()
         if (job.place !== null) deps.bracket?.(id, 'forget')
         return
       }
       // Exited: a Stop from here on signals nothing, since its pid may
       // already be another process's.
       job.child = null
+      await ended()
       let outcome: 'done' | 'failed'
       let why: string | undefined
       if (job.stopped !== undefined) {
         outcome = 'failed'
         why = job.stopped
-      } else if (completed && failure === null && code === 0) {
+      } else if (completed && failure === null && error === null && code === 0) {
         outcome = 'done'
         if (job.dir !== null) {
           try {
@@ -744,8 +756,8 @@ export function createJobs(deps: JobsDeps): Jobs {
   }
 
   // Scratch folders a crash left behind. A job that outlived it is killed
-  // first, when its pid still leads a group whose command names the folder
-  // it ran in (a pid is reused); then the folders go. A job starts once
+  // first, when its pid still leads a group whose command line names its
+  // state folder (a pid is reused); then the folders go. A job starts once
   // they are gone.
   async function sweep(): Promise<void> {
     const names = await readdir(deps.scratchRoot).catch(() => [] as string[])
