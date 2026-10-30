@@ -11,6 +11,11 @@
  * (`sessions`, `terminals`, `pty-data`, `pty-exit`), and keystrokes and
  * resizes come back as events too, because they must keep their order.
  *
+ * **Jobs** (`jobs.ts`) are a third kind, for a provider that runs a prompt
+ * unattended without a supervisor: named by Holi's id, with no terminal.
+ * **Fenced sessions** (`fenced.ts`) are sessions Holi runs in a folder of
+ * its own, the same kind as the rest of its sessions.
+ *
  * **Turns** are what the agent's last turns changed: a commit range each, so
  * the file list is asked of git every time rather than stored. A revert is a
  * write and a new commit, never a rewrite, the same rule history's restore
@@ -26,6 +31,7 @@ import {
   noParams,
   optionalStringParam,
   paramsObject,
+  readableOrNull,
   removeDocFile,
   stringParam,
   VAULT_NOT_OPEN,
@@ -38,7 +44,15 @@ import {
 import type { ActionResult, AgentSessions, Geometry, OpenResult, StartResult } from './sessions'
 import type { AgentTerminals, TerminalSummary } from './terminals'
 import { JOB_ID, type SessionSummary } from '../claude/listing'
-import { hasBackground, isProviderId, type AgentProvider, type ProviderId } from '../provider'
+import {
+  hasBackground,
+  hasJobs,
+  isProviderId,
+  type AgentProvider,
+  type ProviderId,
+} from '../provider'
+import type { FencedSessions } from './fenced'
+import type { JobResult, Jobs, JobScope } from './jobs'
 import { openTurnLog, type TurnRecord } from './turn-log'
 import type { PtySessions } from './pty-sessions'
 
@@ -50,6 +64,8 @@ export interface ProviderSummary {
   installed: boolean
   /** Its sessions can run with nobody watching (Holis, automations). */
   background: boolean
+  /** It can run a job: one prompt, unwatched, in a folder of Holi's. */
+  jobs: boolean
 }
 
 export const AGENT_NAMESPACES = ['agent'] as const
@@ -76,6 +92,10 @@ export interface AgentCapabilitiesDeps {
     PtySessions,
     'sessions' | 'has' | 'ownsTerminal' | 'terminalOf' | 'start' | 'send' | 'stop'
   >
+  /** The jobs Holi runs for a provider with `jobs`. */
+  jobs: Pick<Jobs, 'sessions' | 'has' | 'start' | 'stop'>
+  /** Sessions Holi runs fenced to a folder, for a provider with `fenced`. */
+  fenced: Pick<FencedSessions, 'start'>
   /** Every provider, the background one first. */
   providers: readonly AgentProvider[]
   terminals: Pick<AgentTerminals, 'list' | 'attach' | 'close'>
@@ -127,6 +147,59 @@ const rangeParams = (raw: unknown): { base: string; end: string } => {
   return { base: stringParam(p, 'base'), end: stringParam(p, 'end') }
 }
 
+/** The most paths a job's scope names. */
+const MAX_SCOPE = 50
+
+/**
+ * A job's scope: vault paths it reads, and paths or `folder/**` it writes.
+ * Each must be a path a capability may read (never the agent surface, an
+ * app's records, a secret or this machine's state), and a write names no
+ * other wildcard.
+ */
+function scopeParam(raw: Record<string, unknown>): JobScope {
+  const scope = raw['scope']
+  if (scope === null || typeof scope !== 'object') {
+    throw new CapabilityError('BAD_REQUEST', 'scope must say what the job reads and writes')
+  }
+  const list = (key: 'read' | 'write'): string[] => {
+    const value = (scope as Record<string, unknown>)[key]
+    if (
+      !Array.isArray(value) ||
+      value.length > MAX_SCOPE ||
+      value.some((p) => typeof p !== 'string')
+    ) {
+      throw new CapabilityError('BAD_REQUEST', `scope.${key} must be a list of vault paths`)
+    }
+    return value as string[]
+  }
+  const checked = (path: string, glob: boolean): string => {
+    const base = glob && path.endsWith('/**') ? path.slice(0, -3) : path
+    const rel = base.includes('*') ? null : readableOrNull(base)
+    if (rel === null) {
+      throw new CapabilityError(
+        'FORBIDDEN',
+        `A job cannot touch ${path}: it is not a vault file an agent may be given.`,
+      )
+    }
+    return base === path ? rel : `${rel}/**`
+  }
+  return {
+    read: list('read').map((p) => checked(p, false)),
+    write: list('write').map((p) => checked(p, true)),
+  }
+}
+
+/** A job's scope as Claude Code's permission rules: what a background
+ *  session started for it is allowed without asking.
+ * @public exported for its test
+ */
+export function scopeRules(scope: JobScope): string[] {
+  return [
+    ...scope.read.map((p) => `Read(./${p})`),
+    ...scope.write.flatMap((p) => [`Read(./${p})`, `Edit(./${p})`, `Write(./${p})`]),
+  ]
+}
+
 /** A vault path, checked. The params keep it a plain string, as the renderer
  *  sends it; `run` brands it again. */
 function relPath(path: string): VaultRelPath {
@@ -145,6 +218,10 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
     const p = id === undefined ? undefined : deps.providers.find((x) => x.id === id)
     return p === undefined || hasBackground(p)
   }
+  const jobOnly = {
+    ok: false as const,
+    message: 'A job runs with no terminal: what it did shows where it was started.',
+  }
   const ownOnly = (verb: string) => ({
     ok: false as const,
     message: `Only a Claude Code session can be ${verb} from Holi.`,
@@ -160,7 +237,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         // Asked as the renderer mounts, and the vault may only just have
         // opened: finish attaching to it first.
         await deps.sessions.ensure()
-        return [...deps.sessions.sessions(), ...deps.own.sessions()]
+        return [...deps.sessions.sessions(), ...deps.own.sessions(), ...deps.jobs.sessions()]
       },
       text: (sessions) => sessions.map((s) => `${s.state}\t${s.name}`).join('\n'),
     }),
@@ -187,6 +264,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
           label: p.label,
           installed: p.installed(),
           background: hasBackground(p),
+          jobs: hasJobs(p),
         })),
     }),
 
@@ -214,6 +292,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
       run: async (ctx, args): Promise<OpenResult> => {
         if (!live(ctx)) return notOpen
+        if (args.attach !== undefined && deps.jobs.has(args.attach)) return jobOnly
         // A session Holi runs is its own terminal: that one, never a second.
         if (args.attach !== undefined && deps.own.has(args.attach)) {
           const terminalId = deps.own.terminalOf(args.attach)
@@ -292,6 +371,113 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       run: async (ctx, args) => (live(ctx) ? deps.sessions.launch(args) : notOpen),
     }),
 
+    /**
+     * One prompt run with nobody watching, by `provider` (the background one
+     * when omitted), touching only its `scope`: the files it reads and the
+     * paths (or `folder/**`) it writes. A provider with `background` runs it
+     * as a background session allowed exactly that scope; one with `jobs`
+     * runs it in a folder of Holi's and copies back what it wrote
+     * (`jobs.ts`). Any other is refused, never run on another agent. The UI
+     * door alone, as `agent.launch`.
+     */
+    'agent.job': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const model = optionalStringParam(p, 'model')
+        const system = optionalStringParam(p, 'system')
+        const provider = providerParam(p)
+        return {
+          name: stringParam(p, 'name'),
+          prompt: stringParam(p, 'prompt'),
+          scope: scopeParam(p),
+          ...(model === undefined ? {} : { model }),
+          ...(system === undefined ? {} : { system }),
+          ...(provider === undefined ? {} : { provider }),
+        }
+      },
+      run: async (ctx, { provider: id, scope, system, ...args }): Promise<JobResult> => {
+        if (!live(ctx)) return notOpen
+        const provider =
+          id === undefined ? deps.providers[0] : deps.providers.find((p) => p.id === id)
+        if (provider === undefined) return { ok: false, message: 'No agent can run this.' }
+        if (hasBackground(provider)) {
+          return deps.sessions.launch({
+            ...args,
+            allow: scopeRules(scope),
+            ...(system === undefined ? {} : { appendSystemPrompt: system }),
+          })
+        }
+        if (hasJobs(provider)) {
+          return deps.jobs.start({
+            provider,
+            ...args,
+            scope,
+            ...(system === undefined ? {} : { system }),
+          })
+        }
+        return {
+          ok: false,
+          message: `${provider.label} cannot run a job with nobody watching.`,
+        }
+      },
+    }),
+
+    /**
+     * A session the person can watch, answer and add to, whose first turn is
+     * `prompt`, touching only its `scope` (as `agent.job`): Create vault
+     * app's. A provider with `background` runs it as a background session
+     * allowed exactly that scope; one with `fenced` runs it in its terminal
+     * in a folder of Holi's, and what it wrote is copied back as each turn
+     * ends and when it exits (`fenced.ts`). Any other is refused, never run
+     * on another agent. The UI door alone, as `agent.launch`.
+     */
+    'agent.scoped': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const model = optionalStringParam(p, 'model')
+        const system = optionalStringParam(p, 'system')
+        const provider = providerParam(p)
+        return {
+          ...geometry(p),
+          name: stringParam(p, 'name'),
+          prompt: stringParam(p, 'prompt'),
+          scope: scopeParam(p),
+          ...(model === undefined ? {} : { model }),
+          ...(system === undefined ? {} : { system }),
+          ...(provider === undefined ? {} : { provider }),
+        }
+      },
+      run: async (ctx, { provider: id, scope, system, model, ...args }): Promise<JobResult> => {
+        if (!live(ctx)) return notOpen
+        const provider =
+          id === undefined ? deps.providers[0] : deps.providers.find((p) => p.id === id)
+        if (provider === undefined) return { ok: false, message: 'No agent can run this.' }
+        if (hasBackground(provider)) {
+          return deps.sessions.launch({
+            name: args.name,
+            prompt: args.prompt,
+            allow: scopeRules(scope),
+            ...(model === undefined ? {} : { model }),
+            ...(system === undefined ? {} : { appendSystemPrompt: system }),
+          })
+        }
+        if (provider.capabilities.fenced === true) {
+          return deps.fenced.start({
+            provider,
+            ...args,
+            scope,
+            ...(system === undefined ? {} : { system }),
+          })
+        }
+        return {
+          ok: false,
+          message: `${provider.label} cannot run a session fenced to what it may touch.`,
+        }
+      },
+    }),
+
     /** Whether Holi has a terminal open on the session: someone may be
      *  watching it, so it is not to be stopped from under them. */
     'agent.watched': cap({
@@ -319,6 +505,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
       run: async (ctx, { provider, ...args }): Promise<OpenResult> => {
         if (!live(ctx)) return notOpen
+        if (deps.jobs.has(args.target)) return jobOnly
         if (deps.own.has(args.target)) return deps.own.send(args.target, args.text)
         if (args.target === 'new' && provider !== undefined && !isBackground(provider)) {
           const started = await deps.own.start(provider, {
@@ -349,7 +536,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       params: (raw) => {
         const p = paramsObject(raw)
         const session = stringParam(p, 'session')
-        if (!JOB_ID.test(session) && !deps.own.has(session)) {
+        if (!JOB_ID.test(session) && !deps.own.has(session) && !deps.jobs.has(session)) {
           throw new CapabilityError('BAD_REQUEST', `not a session id: ${session}`)
         }
         const text = stringParam(p, 'text')
@@ -363,7 +550,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', VAULT_NOT_OPEN)
         // A session Holi runs itself has no inbox: messaging is Claude Code's
         // background capability, and typing into its terminal is not this.
-        if (deps.own.has(session)) {
+        if (deps.own.has(session) || deps.jobs.has(session)) {
           throw new CapabilityError('UNAVAILABLE', 'Only a Claude Code session takes messages.')
         }
         await deps.sessions.message(session, text)
@@ -377,6 +564,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       params: idParams,
       run: async (ctx, { id }): Promise<ActionResult> => {
         if (!live(ctx)) return notOpen
+        if (deps.jobs.has(id)) return deps.jobs.stop(id)
         return deps.own.has(id) ? deps.own.stop(id) : deps.sessions.stop(id)
       },
     }),
@@ -387,6 +575,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       params: idParams,
       run: async (ctx, { id }): Promise<ActionResult> => {
         if (!live(ctx)) return notOpen
+        if (deps.jobs.has(id)) return jobOnly
         return deps.own.has(id) ? ownOnly('restarted') : deps.sessions.respawn(id)
       },
     }),
@@ -400,6 +589,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
       run: async (ctx, { id, ...size }): Promise<StartResult> => {
         if (!live(ctx)) return notOpen
+        if (deps.jobs.has(id)) return jobOnly
         return deps.own.has(id) ? ownOnly('copied') : deps.sessions.duplicate(id, size)
       },
     }),

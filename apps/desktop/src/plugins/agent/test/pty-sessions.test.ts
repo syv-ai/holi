@@ -9,7 +9,7 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-function setup() {
+function setup(capabilities: AgentProvider['capabilities'] = {}) {
   vi.useFakeTimers()
   const asked: TerminalOpts[] = []
   const provider: AgentProvider = {
@@ -18,17 +18,19 @@ function setup() {
     notInstalled: 'Codex is not installed',
     installed: () => true,
     configure: async () => ({ dir: '/home/.codex' }),
-    terminal: (_target, opts = {}) => {
+    terminal: (target, opts = {}) => {
+      targets.push(target)
       asked.push(opts)
       return { bin: '/bin/codex', args: [], env: {} }
     },
-    capabilities: {},
+    capabilities,
   }
   const opened: OpenArgs[] = []
   const closed: string[] = []
   const pastes: Array<[string, string]> = []
   const edges: string[] = []
   const lists: unknown[] = []
+  const targets: { binDir: string | null }[] = []
   const sessions = createPtySessions({
     vault: VAULT,
     providers: [provider],
@@ -53,7 +55,7 @@ function setup() {
     idleMs: 100,
     log: () => {},
   })
-  return { sessions, opened, closed, pastes, edges, asked, lists }
+  return { sessions, opened, closed, pastes, edges, asked, lists, targets }
 }
 
 describe('nameOf', () => {
@@ -160,5 +162,50 @@ describe('sessions Holi runs', () => {
   it('refuses a provider it does not run', async () => {
     const t = setup()
     expect((await t.sessions.start('claude', {})).ok).toBe(false)
+  })
+
+  it('runs a fenced one in its folder, copying back before its turn closes', async () => {
+    const t = setup({ fenced: true })
+    let copied!: () => void
+    const fence = {
+      dir: '/scratch/abc',
+      state: '/scratch/abc.agent',
+      turnEnded: vi.fn(() => {
+        return new Promise<void>((resolve) => (copied = resolve))
+      }),
+      exited: vi.fn(),
+    }
+    const res = await t.sessions.start('codex', { prompt: 'Make the app', fence })
+    if (!res.ok) throw new Error(res.message)
+    expect(t.opened[0]?.cwd).toBe('/scratch/abc')
+    expect(t.asked[0]?.fence).toEqual({ dir: '/scratch/abc', state: '/scratch/abc.agent' })
+    // Holi's commands reach the vault: none on a fenced session's PATH.
+    expect(t.targets[0]?.binDir).toBeNull()
+
+    t.sessions.noteTurn(res.sessionId, false)
+    expect(fence.turnEnded).toHaveBeenCalledOnce()
+    expect(t.edges).toEqual([`begin:${res.sessionId}`])
+    copied()
+    await vi.waitFor(() =>
+      expect(t.edges).toEqual([`begin:${res.sessionId}`, `end:${res.sessionId}`]),
+    )
+
+    await t.sessions.stop(res.sessionId)
+    expect(fence.exited).toHaveBeenCalledOnce()
+  })
+
+  it('refuses a fence its provider cannot keep', async () => {
+    const t = setup()
+    const fence = {
+      dir: '/scratch/abc',
+      state: '/scratch/abc.agent',
+      turnEnded: async () => {},
+      exited: () => {},
+    }
+    expect(await t.sessions.start('codex', { prompt: 'x', fence })).toEqual({
+      ok: false,
+      message: 'Codex cannot run fenced to a folder.',
+    })
+    expect(t.opened).toEqual([])
   })
 })

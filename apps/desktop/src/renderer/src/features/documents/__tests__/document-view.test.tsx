@@ -3,9 +3,11 @@
  * its frontmatter kept aside, ⌘B is always the editor's, and Space on an
  * empty line asks Sonnet to write there: the marker is saved, the run locks
  * the page until its session is done, and Stop ends it. Ask AI's Start chat
- * opens a conversation about the selected passage beside the document.
+ * opens a conversation about the selected passage beside the document. Create
+ * vault app runs on this machine's agent as a session the person can open, and
+ * opens the app once its `app.yaml` lands.
  */
-import { emptyVaultSnapshot, normalizeText } from '@holi/shared'
+import { emptyVaultSnapshot, normalizeText, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import userEvent from '@testing-library/user-event'
 import { atom, createStore, Provider } from 'jotai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -15,6 +17,8 @@ import * as agentService from '@/state/agent-service'
 import { installedPluginsAtom } from '@/state/plugins'
 import type { ConversationStart } from '@/state/plugin-types'
 import { pendingHeadingAtom } from '@/state/open-document'
+import { vaultSettingsAtom } from '@/state/settings'
+import { openTabAtom } from '@/state/shell-tabs'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 import { DocumentView } from '../document-view'
@@ -69,7 +73,18 @@ vi.mock('@/lib/trpc', () => ({
         query: () => Promise.resolve([{ login: 'ada', name: 'Ada', avatarUrl: null }]),
       },
     },
-    cap: { run: { mutate: (input: unknown) => cap(input) } },
+    // The agents' names answer on their own, out of `cap`'s calls.
+    cap: {
+      run: {
+        mutate: (input: { name: string }) =>
+          input.name === 'agent.providers'
+            ? Promise.resolve([
+                { id: 'claude', label: 'Claude Code' },
+                { id: 'codex', label: 'Codex' },
+              ])
+            : cap(input),
+      },
+    },
   },
 }))
 
@@ -81,9 +96,17 @@ vi.mock('@/state/agent-service', async () => {
   return {
     __sessions: sessions,
     useAgentService: () => ({ name: 'Claude', sessions }),
-    showAgentSessionAtom: makeAtom(null, () => undefined),
+    showAgentSessionAtom: makeAtom(null, (_get, _set, args: unknown) => shown(args)),
   }
 })
+
+const shown = vi.hoisted(() => vi.fn())
+
+/** The plugin that provides the agent, as far as core's state can tell. */
+const AGENT_PLUGIN = {
+  info: { id: 'stand-in', label: 'Stand-in', default: true },
+  agent: { name: 'Claude' },
+} as never
 
 const sessions = (
   agentService as unknown as {
@@ -110,6 +133,12 @@ beforeEach(() => {
     docs: [{ path: PATH, kind: 'note', updatedAt: '2026-10-23T10:00:00Z' }],
   } as never)
   store.set(sessions, [])
+  store.set(installedPluginsAtom, [AGENT_PLUGIN])
+  shown.mockReset()
+  store.set(vaultSettingsAtom, {
+    remote: 'syv/vault',
+    settings: { ...VAULT_SETTING_DEFAULTS, warnings: [] },
+  })
 })
 
 afterEach(() => vi.useRealTimers())
@@ -212,7 +241,7 @@ test("the menu copies the document's Holi link", async () => {
   open('# Plan\n\nBody\n')
   await editorBox()
   await user.click(screen.getByRole('button', { name: 'Document actions' }))
-  await user.click(await screen.findByRole('menuitem', { name: 'Copy Holi Link' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Copy Holi link' }))
   expect(writeText).toHaveBeenCalledWith('holi://open?vault=syv/vault&path=notes/Plan.md')
   expect(screen.getByRole('menuitem', { name: 'Copied' })).toBeInTheDocument()
 })
@@ -384,6 +413,156 @@ test("Ask AI's own instruction rewrites only the passage selected when it opened
   await waitFor(() => expect(editor.isEditable).toBe(false))
 })
 
+/** Open the document as the tab in front, with a spy for what it opens. */
+function openFocused(text: string) {
+  files.set(PATH, text)
+  store.set(openTabAtom, { kind: 'doc', path: PATH })
+  const onOpen = vi.fn()
+  render(
+    <Provider store={store}>
+      <DocumentView path={PATH} onOpen={onOpen} />
+    </Provider>,
+  )
+  return onOpen
+}
+
+async function createVaultApp() {
+  const user = userEvent.setup()
+  await editorBox()
+  await user.click(screen.getByRole('button', { name: 'Document actions' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Create vault app' }))
+  await waitFor(() =>
+    expect(cap).toHaveBeenCalledWith(expect.objectContaining({ name: 'agent.scoped' })),
+  )
+  return JSON.parse(cap.mock.calls.find(([c]) => c.name === 'agent.scoped')![0].paramsJson)
+}
+
+const NOW = '2026-10-30T10:00:00Z'
+
+/** The app's finished marker lands in the vault. */
+function appWritten(app: string) {
+  act(() =>
+    store.set(snapshotAtom, (s) => ({
+      ...s,
+      files: [
+        ...s.files,
+        { path: `${app}/index.html`, updatedAt: NOW },
+        { path: `${app}/app.yaml`, updatedAt: NOW },
+      ],
+    })),
+  )
+}
+
+test('Create vault app runs on Claude Code as a session, and opens the app beside the note', async () => {
+  cap.mockImplementation(({ name }: { name: string }) =>
+    Promise.resolve(name === 'agent.scoped' ? { ok: true, sessionId: 'abc12345' } : { ok: true }),
+  )
+  const onOpen = openFocused('# Plan\n')
+  const job = await createVaultApp()
+  expect(job).toMatchObject({
+    provider: 'claude',
+    model: 'claude-sonnet-5-5',
+    scope: { read: [PATH], write: ['notes/Plan.app/**'] },
+  })
+  expect(job.prompt).toContain('`notes/Plan.app`')
+  // A session the person watches: not told nobody is.
+  expect(job.system).not.toMatch(/nobody is watching/i)
+  expect(screen.queryByText(/artifact/i)).toBeNull()
+  // The page is not locked: the app is beside it, not in it.
+  expect(await editorBox()).toHaveAttribute('contenteditable', 'true')
+
+  act(() => store.set(sessions, [{ id: 'abc12345', name: '', state: 'working' }]))
+  expect(await screen.findByText('Creating the vault app…')).toBeInTheDocument()
+  // Its session can be opened, watched and added to while it works.
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Open session' }))
+  expect(shown).toHaveBeenCalledWith({ session: 'abc12345', live: true })
+  // Idle with no app yet: it waits on the person, and is not done.
+  act(() => store.set(sessions, [{ id: 'abc12345', name: '', state: 'idle' }]))
+  expect(await screen.findByText('Waiting for you in Agents')).toBeInTheDocument()
+  expect(onOpen).not.toHaveBeenCalled()
+  appWritten('notes/Plan.app')
+  await waitFor(() => expect(onOpen).toHaveBeenCalledWith('notes/Plan.app'))
+})
+
+test('Create vault app runs on Codex when it is the default, under a free name', async () => {
+  cap.mockImplementation(({ name }: { name: string }) =>
+    Promise.resolve(
+      name === 'agent.scoped' ? { ok: true, sessionId: 'p0123456789ab' } : { ok: true },
+    ),
+  )
+  store.set(vaultSettingsAtom, {
+    remote: 'syv/vault',
+    settings: { ...VAULT_SETTING_DEFAULTS, agentProvider: 'codex', warnings: [] },
+  })
+  // An app of that name is already there, and an old artifact is left alone.
+  store.set(snapshotAtom, (s) => ({
+    ...s,
+    dirs: ['notes', 'notes/Plan.app', 'notes/Plan Artifact.app'],
+  }))
+  const onOpen = openFocused('# Plan\n')
+  const job = await createVaultApp()
+  expect(job.provider).toBe('codex')
+  expect(job.model).toBeUndefined()
+  expect(job.scope.write).toEqual(['notes/Plan 2.app/**'])
+
+  act(() => store.set(sessions, [{ id: 'p0123456789ab', name: '', state: 'working' }]))
+  // A turn's end copied the app back while its session goes on.
+  appWritten('notes/Plan 2.app')
+  await waitFor(() => expect(onOpen).toHaveBeenCalledWith('notes/Plan 2.app'))
+})
+
+test("a vault app's failure shows in the run's pill, and nothing opens", async () => {
+  cap.mockImplementation(({ name }: { name: string }) =>
+    Promise.resolve(
+      name === 'agent.scoped'
+        ? { ok: false, message: 'Codex cannot run a session fenced to what it may touch.' }
+        : { ok: true },
+    ),
+  )
+  store.set(vaultSettingsAtom, {
+    remote: 'syv/vault',
+    settings: { ...VAULT_SETTING_DEFAULTS, agentProvider: 'codex', warnings: [] },
+  })
+  const onOpen = openFocused('# Plan\n')
+  await createVaultApp()
+  expect(
+    await screen.findByText('Codex cannot run a session fenced to what it may touch.'),
+  ).toBeInTheDocument()
+  expect(onOpen).not.toHaveBeenCalled()
+})
+
+test('a vault app Claude Code would not start says why in the pill', async () => {
+  cap.mockImplementation(({ name }: { name: string }) =>
+    Promise.resolve(
+      name === 'agent.scoped'
+        ? { ok: false, message: 'This folder is not trusted by Claude Code.' }
+        : { ok: true },
+    ),
+  )
+  const onOpen = openFocused('# Plan\n')
+  await createVaultApp()
+  expect(await screen.findByText('This folder is not trusted by Claude Code.')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Trust in Claude Code' })).toBeInTheDocument()
+  expect(onOpen).not.toHaveBeenCalled()
+})
+
+test('a vault app made while another tab is in front waits on Open', async () => {
+  cap.mockImplementation(({ name }: { name: string }) =>
+    Promise.resolve(name === 'agent.scoped' ? { ok: true, sessionId: 'abc12345' } : { ok: true }),
+  )
+  const onOpen = openFocused('# Plan\n')
+  await createVaultApp()
+  act(() => store.set(sessions, [{ id: 'abc12345', name: '', state: 'working' }]))
+  act(() => store.set(openTabAtom, { kind: 'doc', path: 'notes/Other.md' }))
+  act(() => store.set(sessions, []))
+  appWritten('notes/Plan.app')
+  const openButton = await screen.findByRole('button', { name: 'Open' })
+  expect(screen.getByText('The vault app is ready')).toBeInTheDocument()
+  expect(onOpen).not.toHaveBeenCalled()
+  await userEvent.setup().click(openButton)
+  expect(onOpen).toHaveBeenCalledWith('notes/Plan.app')
+})
+
 test("cancelling Ask AI's own instruction starts nothing and keeps the selection", async () => {
   const user = userEvent.setup()
   open('# Plan\n\nShip the beta on Friday.\n')
@@ -466,4 +645,61 @@ test('Start chat opens a new session beside the document, the passage as its con
   expect(cap).not.toHaveBeenCalled()
   expect(editor.isEditable).toBe(true)
   expect(editor.getMarkdown()).toBe(before)
+})
+
+test("Create vault app waits until this machine's agent is read", async () => {
+  const user = userEvent.setup()
+  store.set(vaultSettingsAtom, null)
+  openFocused('# Plan\n')
+  await editorBox()
+  await user.click(screen.getByRole('button', { name: 'Document actions' }))
+  expect(await screen.findByRole('menuitem', { name: 'Create vault app' })).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  )
+  expect(cap).not.toHaveBeenCalled()
+})
+
+test('Stop while a vault app is starting stops the session the start returns', async () => {
+  let started!: (r: { ok: true; sessionId: string }) => void
+  cap.mockImplementation(({ name }: { name: string }) =>
+    name === 'agent.scoped'
+      ? new Promise((r) => (started = r))
+      : Promise.resolve(name === 'agent.providers' ? [] : { ok: true }),
+  )
+  openFocused('# Plan\n')
+  await createVaultApp()
+  await userEvent.setup().click(await screen.findByRole('button', { name: 'Stop' }))
+  expect(await screen.findByText('Stopped')).toBeInTheDocument()
+  expect(cap).not.toHaveBeenCalledWith(expect.objectContaining({ name: 'agent.stop' }))
+  await act(async () => started({ ok: true, sessionId: 'p0123456789ab' }))
+  await waitFor(() =>
+    expect(cap).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'agent.stop',
+        paramsJson: JSON.stringify({ id: 'p0123456789ab' }),
+      }),
+    ),
+  )
+  expect(screen.getByText('Stopped')).toBeInTheDocument()
+})
+
+test('Stop on a vault app wins over its app landing after it', async () => {
+  cap.mockImplementation(({ name }: { name: string }) =>
+    Promise.resolve(
+      name === 'agent.scoped' ? { ok: true, sessionId: 'p0123456789ab' } : { ok: true },
+    ),
+  )
+  const onOpen = openFocused('# Plan\n')
+  await createVaultApp()
+  act(() => store.set(sessions, [{ id: 'p0123456789ab', name: '', state: 'working' }]))
+  await userEvent.setup().click(await screen.findByRole('button', { name: 'Stop' }))
+  await waitFor(() =>
+    expect(cap).toHaveBeenCalledWith(expect.objectContaining({ name: 'agent.stop' })),
+  )
+  // The copy back as its session closed lands after Stop: the run stays stopped.
+  act(() => store.set(sessions, []))
+  appWritten('notes/Plan.app')
+  expect(await screen.findByText('Stopped')).toBeInTheDocument()
+  expect(onOpen).not.toHaveBeenCalled()
 })

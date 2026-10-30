@@ -45,6 +45,7 @@ import { basename, joinPath, parentOf } from '@/lib/tree-paths'
 import { canMoveInto } from '@/lib/tree-view'
 import { useTabDrag } from '@/features/shell/use-tab-drag'
 import { openDialogAtom } from '@/state/dialogs'
+import { startVaultAppAtom, vaultAppOfferAtom } from '@/state/document-runs'
 import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
 import { closeTabsWhere } from '@/state/shell-workspace'
 import { parseTabKey, tabKey, tabPath } from '@/state/tab-descriptor'
@@ -94,6 +95,8 @@ export function FilesSection({
   const claims = useAtomValue(claimsAtom)
   const snapshot = useAtomValue(snapshotAtom)
   const openDialog = useSetAtom(openDialogAtom)
+  const vaultAppOffer = useAtomValue(vaultAppOfferAtom)
+  const startVaultApp = useSetAtom(startVaultAppAtom)
   const openTab = useSetAtom(openTabAtom)
   /** The tab a row opens as: a plugin's folder document (a deck) is its
    *  surface, so the row, its drag and its highlight all go by that. */
@@ -459,6 +462,7 @@ export function FilesSection({
       item: tree.getItemInstance(id),
       dirs: files.dirs,
       remote: files.remote,
+      vaultApp: vaultAppOffer,
       pluginActions: pluginRowActions({
         id,
         remote: files.remote,
@@ -476,6 +480,11 @@ export function FilesSection({
         moveTo: (path, dest) =>
           void attempt(`move “${basename(path)}”`, () => moveInto([path], dest)),
         remove: setDeleting,
+        // The note opens, so its pill says how the app is going.
+        createVaultApp: (path) => {
+          onOpen(path)
+          void startVaultApp(path)
+        },
       },
     })
   }
