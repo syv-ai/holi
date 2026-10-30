@@ -113,7 +113,7 @@ sessions waiting on a permission prompt or a question and what other plugins add
 report that asked for you); empty, it says what lands there and offers a new session. It is a row
 of its own and never the home: a tab with nothing selected says no session is open there, and
 offers one.
-Under it **History**, then the places plugins add (Automations), then their sections
+Under it **History**, **Memory** (what the agents remember, [agent-memory](agent-memory.md)), then the places plugins add (Automations), then their sections
 ([Holis](holis.md)), then **Sessions** with its **+** (⌘N). Automations and Holis are not
 finished, so for now each is a locked row marked **In progress** (`AUTOMATIONS_READY`,
 `HOLIS_READY` in their `info.ts`), and ⌘K leaves them out.
