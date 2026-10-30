@@ -73,7 +73,7 @@ function AgentsCard() {
             key={agent.id}
             title={agent.label}
             description={agent.description}
-            mark={<AgentMark agent={agent.id} size="lg" />}
+            mark={<AgentMark agent={agent.id} size="lg" brandClaude />}
           >
             {agent.id === current ? (
               <Badge variant="success-light">Default</Badge>

@@ -1,6 +1,26 @@
 import { expect, test } from 'vitest'
 import { render } from '@/test/render'
-import { AgentMark } from '../marks'
+import { AgentMark, pluginMark } from '../marks'
+
+test('Claude uses a neutral mark except in General Settings', () => {
+  const { container, rerender } = render(<AgentMark agent="claude" />)
+  expect(container.querySelector('svg')).not.toHaveClass('text-orange-500')
+
+  rerender(<AgentMark agent="claude" brandClaude />)
+  expect(container.querySelector('svg')).toHaveClass('text-orange-500')
+})
+
+test('generic agent marks do not use the Claude brand', () => {
+  const { container } = render(
+    <>
+      <AgentMark agent={undefined} />
+      {pluginMark('agent')}
+    </>,
+  )
+  for (const mark of container.querySelectorAll('svg')) {
+    expect(mark).not.toHaveClass('text-orange-500')
+  }
+})
 
 test('uses the monochrome 4x4 Pi staircase mark', () => {
   const { container } = render(<AgentMark agent="pi" />)

@@ -1,5 +1,5 @@
-import { SiClaude, SiGit, SiGithub } from '@icons-pack/react-simple-icons'
-import { PuzzleIcon } from 'lucide-react'
+import { SiGit, SiGithub } from '@icons-pack/react-simple-icons'
+import { AstroidIcon, PuzzleIcon } from 'lucide-react'
 
 import { BRAND_MONOGRAM } from '@/lib/brand-shapes'
 import { cn } from '@/lib/cn'
@@ -7,9 +7,9 @@ import { channelLabel, type ActivityChannel } from '@/state/activity'
 
 /**
  * An Output channel's mark: the brand's own where the channel is a brand's
- * (git, Claude for the agent, GitHub for sync, which is pull and push
- * against it, Holi for the app), a lucide glyph for plugins. Brand colours
- * are the palette with their `dark:` pair: categorical identity.
+ * (git, GitHub for sync, which is pull and push against it, Holi for the app),
+ * a lucide glyph for agents and plugins. Brand colours are the palette with
+ * their `dark:` pair: categorical identity.
  */
 
 function HoliGlyph({ className }: { className?: string }) {
@@ -37,9 +37,7 @@ function ChannelMark({ channel, className }: { channel: ActivityChannel; classNa
     case 'sync':
       return <SiGithub aria-hidden="true" className={cn(look, 'text-foreground')} />
     case 'agent':
-      return (
-        <SiClaude aria-hidden="true" className={cn(look, 'text-orange-500 dark:text-orange-400')} />
-      )
+      return <AstroidIcon aria-hidden="true" className={cn(look, 'text-foreground')} />
     case 'plugins':
       return <PuzzleIcon aria-hidden="true" className={cn(look, 'text-muted-foreground')} />
     case 'app':

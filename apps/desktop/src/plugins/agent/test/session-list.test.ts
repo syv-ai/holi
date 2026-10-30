@@ -5,7 +5,7 @@
  */
 import { expect, test, vi } from 'vitest'
 import { createStore } from 'jotai'
-import { HistoryIcon } from 'lucide-react'
+import { HistoryIcon, InboxIcon } from 'lucide-react'
 import type { AgentsSessionItem } from '@/plugin-api'
 import {
   groupRows,
@@ -33,8 +33,12 @@ const item = (over: Partial<AgentsSessionItem> = {}): AgentsSessionItem => ({
 
 const seen = (since = 0, map: Record<string, number> = {}) => ({ since, seen: map })
 
-test('History has a generic tab icon instead of a provider mark', () => {
+test('Inbox and History have their own tab icons instead of provider marks', () => {
   const look = createStore().get(sessionTabLookAtom)
+  expect(look({ owner: 'agent', id: 'inbox' })).toMatchObject({
+    title: 'Inbox',
+    icon: InboxIcon,
+  })
   expect(look({ owner: 'agent', id: 'history' })).toMatchObject({
     title: 'History',
     icon: HistoryIcon,
