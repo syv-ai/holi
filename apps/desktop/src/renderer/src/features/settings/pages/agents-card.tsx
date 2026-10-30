@@ -5,7 +5,9 @@
  * Make default, Test, and Edit; one a person added can be removed, and an
  * edited built-in put back as Holi has it. The default is `agentProvider` in
  * `app.local.yaml`; one naming an agent since removed is said, never quietly
- * replaced.
+ * replaced. Making one the default that runs nothing unattended, or Pi, asks
+ * first. A file Holi could not read, or entries in it that it left out, are
+ * said with a way forward.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { useAtom, useAtomValue } from 'jotai'
@@ -13,7 +15,7 @@ import { atomWithStorage } from 'jotai/utils'
 import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { EllipsisIcon, PlusIcon } from 'lucide-react'
 
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
@@ -47,6 +49,16 @@ interface HarnessSummary {
   builtIn: boolean
   edited: boolean
   path: string | null
+  /** Why Holis, automations and Create vault app cannot run on it. */
+  unattended: string | null
+}
+
+/** Mirrors `HarnessListing` there. */
+interface HarnessListing {
+  agents: readonly HarnessSummary[]
+  file: string
+  ignored: number
+  unreadable: string | null
 }
 
 type TestResult = { ok: true; output: string } | { ok: false; message: string; output: string }
@@ -54,7 +66,15 @@ type TestResult = { ok: true; output: string } | { ok: false; message: string; o
 type ListState =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; list: readonly HarnessSummary[] }
+  | { kind: 'ready'; listing: HarnessListing }
+
+/** A question before an agent becomes the default. */
+interface DefaultAsk {
+  id: string
+  title: string
+  description: string
+  confirmLabel: string
+}
 
 /** What each built-in agent is, beside its row. */
 const BUILT_IN_ABOUT: Readonly<Record<string, string>> = {
@@ -149,9 +169,18 @@ export function AgentsCard() {
   const current = resolved?.agentProvider ?? VAULT_SETTING_DEFAULTS.agentProvider
   const remote = useAtomValue(activeRemoteAtom)
   const [warned, setWarned] = useAtom(piWarnedAtom)
-  const [askPi, setAskPi] = useState(false)
+  const [asking, setAsking] = useState<DefaultAsk | null>(null)
+  const [resetting, setResetting] = useState(false)
   const [state, setState] = useState<ListState>({ kind: 'loading' })
-  const [editing, setEditing] = useState<{ harness: HarnessRecord | null } | null>(null)
+  // The dialog mounts afresh each time it opens (`key`), so its form is
+  // filled from the agent it opens on; `open` false keeps it while it closes.
+  const [editing, setEditing] = useState<{
+    harness: HarnessRecord | null
+    open: boolean
+    n: number
+  }>({ harness: null, open: false, n: 0 })
+  const edit = (harness: HarnessRecord | null): void =>
+    setEditing((e) => ({ harness, open: true, n: e.n + 1 }))
   const [removing, setRemoving] = useState<HarnessSummary | null>(null)
   const [testing, setTesting] = useState<{
     label: string
@@ -161,11 +190,11 @@ export function AgentsCard() {
   const read = useCallback(() => {
     if (remote === null) return
     setState({ kind: 'loading' })
-    agentCall<HarnessSummary[]>(remote, 'agent.harnesses', {})
-      .then((list) =>
+    agentCall<HarnessListing>(remote, 'agent.harnesses', {})
+      .then((listing) =>
         setState(
-          Array.isArray(list)
-            ? { kind: 'ready', list }
+          Array.isArray(listing?.agents)
+            ? { kind: 'ready', listing }
             : { kind: 'error', message: 'The agent did not answer with a list.' },
         ),
       )
@@ -175,11 +204,28 @@ export function AgentsCard() {
   }, [remote])
   useEffect(read, [read])
 
-  const makeDefault = (id: string): void => {
+  const makeDefault = (v: HarnessSummary): void => {
+    const id = v.harness.id
     // The default is what Holis, automations and a document's Ask AI and rewrites run on:
+    // one that runs nothing unattended fails them, which is said each time.
+    if (v.unattended !== null) {
+      setAsking({
+        id,
+        title: `Make ${v.harness.label} the default?`,
+        description: v.unattended,
+        confirmLabel: `Make ${v.harness.label} the default`,
+      })
+      return
+    }
     // Pi there runs every tool without asking, which is said once.
     if (id === 'pi' && remote !== null && warned[remote] !== true) {
-      setAskPi(true)
+      setAsking({
+        id,
+        title: 'Run unattended work on Pi?',
+        description:
+          "Holis, automations and a document's Ask AI and rewrites will run on Pi with nobody watching. Pi asks before no tool: each run edits the files it may touch without asking you. Holi keeps it to those files, and runs it only on macOS.",
+        confirmLabel: 'Make Pi the default',
+      })
       return
     }
     void write('agentProvider', id, 'local')
@@ -204,12 +250,13 @@ export function AgentsCard() {
     read()
   }
 
-  const list = state.kind === 'ready' ? state.list : []
+  const listing = state.kind === 'ready' ? state.listing : null
+  const list = listing?.agents ?? []
   const missing =
     state.kind === 'ready' && resolved !== null && !list.some((v) => v.harness.id === current)
 
   const actionsOf = (v: HarnessSummary): MenuAction[] => [
-    { kind: 'item', label: 'Edit', run: () => setEditing({ harness: v.harness }) },
+    { kind: 'item', label: 'Edit', run: () => edit(v.harness) },
     ...(v.builtIn && !v.edited
       ? []
       : [
@@ -228,7 +275,7 @@ export function AgentsCard() {
       title="Agents"
       description="The coding agents on this machine. A new session starts in the default one; hover the Sessions + to start another."
       action={
-        <Button variant="outline" size="sm" onClick={() => setEditing({ harness: null })}>
+        <Button variant="outline" size="sm" onClick={() => edit(null)}>
           <PlusIcon data-icon="inline-start" aria-hidden="true" />
           Add agent
         </Button>
@@ -241,6 +288,44 @@ export function AgentsCard() {
             This machine's default, {current}, is not one of its agents any more. A new session asks
             which agent to start in until you make one the default.
           </AlertDescription>
+        </Alert>
+      ) : null}
+      {listing !== null && listing.unreadable !== null ? (
+        <Alert variant="destructive" className="my-3">
+          <AlertTitle>Holi could not read this machine's agents file</AlertTitle>
+          <AlertDescription>
+            <p>
+              {listing.unreadable} Until it can, Holi uses the built-in agents as it ships them and
+              changes nothing in {listing.file}. Fix the file and Retry, or Reset it: a copy is kept
+              beside it as .bad.
+            </p>
+          </AlertDescription>
+          <AlertAction>
+            <Button variant="outline" size="sm" onClick={read}>
+              Retry
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setResetting(true)}>
+              Reset
+            </Button>
+          </AlertAction>
+        </Alert>
+      ) : listing !== null && listing.ignored > 0 ? (
+        <Alert variant="warning" className="my-3">
+          <AlertTitle>
+            {listing.ignored === 1 ? '1 entry ignored' : `${listing.ignored} entries ignored`}
+          </AlertTitle>
+          <AlertDescription>
+            <p>
+              {listing.file} has {listing.ignored === 1 ? 'an entry' : 'entries'} that did not read
+              as an agent. Fix them there and Retry. The next change here keeps a copy of the file
+              beside it as .bad, then leaves them out.
+            </p>
+          </AlertDescription>
+          <AlertAction>
+            <Button variant="outline" size="sm" onClick={read}>
+              Retry
+            </Button>
+          </AlertAction>
         </Alert>
       ) : null}
       {resolved === null || state.kind === 'loading' ? (
@@ -261,7 +346,7 @@ export function AgentsCard() {
           description="Add the command-line agent you use, and Holi runs it in the vault."
           className="h-auto"
         >
-          <Button variant="outline" size="sm" onClick={() => setEditing({ harness: null })}>
+          <Button variant="outline" size="sm" onClick={() => edit(null)}>
             Add agent
           </Button>
         </EmptyState>
@@ -283,7 +368,7 @@ export function AgentsCard() {
               {v.harness.id === current ? (
                 <Badge variant="success-light">Default</Badge>
               ) : (
-                <Button variant="outline" size="sm" onClick={() => makeDefault(v.harness.id)}>
+                <Button variant="outline" size="sm" onClick={() => makeDefault(v)}>
                   Make default
                 </Button>
               )}
@@ -308,9 +393,10 @@ export function AgentsCard() {
         <CodexUnattendedRow key={remote} remote={remote} />
       ) : null}
       <HarnessDialog
-        open={editing !== null}
-        onOpenChange={(open) => !open && setEditing(null)}
-        harness={editing?.harness ?? null}
+        key={`${editing.harness?.id ?? 'new'}-${editing.n}`}
+        open={editing.open}
+        onOpenChange={(open) => !open && setEditing((e) => ({ ...e, open: false }))}
+        harness={editing.harness}
         onSave={save}
       />
       <ConfirmDialog
@@ -359,14 +445,30 @@ export function AgentsCard() {
         </DialogContent>
       </Dialog>
       <ConfirmDialog
-        open={askPi}
-        onOpenChange={setAskPi}
-        title="Run unattended work on Pi?"
-        description="Holis, automations and a document's Ask AI and rewrites will run on Pi with nobody watching. Pi asks before no tool: each run edits the files it may touch without asking you. Holi keeps it to those files, and runs it only on macOS."
-        confirmLabel="Make Pi the default"
+        open={asking !== null}
+        onOpenChange={(open) => !open && setAsking(null)}
+        title={asking?.title ?? ''}
+        description={asking?.description}
+        confirmLabel={asking?.confirmLabel ?? 'Make default'}
         onConfirm={async () => {
-          if (remote !== null) setWarned((all) => ({ ...all, [remote]: true }))
-          await write('agentProvider', 'pi', 'local')
+          if (asking === null) return
+          if (asking.id === 'pi' && remote !== null) {
+            setWarned((all) => ({ ...all, [remote]: true }))
+          }
+          await write('agentProvider', asking.id, 'local')
+        }}
+      />
+      <ConfirmDialog
+        open={resetting}
+        onOpenChange={setResetting}
+        title="Reset this machine's agents file?"
+        description="Holi keeps a copy of it beside it as .bad, then starts it over: the agents you added are gone from Settings, and the built-in ones go back to what Holi ships."
+        confirmLabel="Reset"
+        destructive
+        onConfirm={async () => {
+          if (remote === null) return
+          await agentCall(remote, 'agent.harnessReset', {})
+          read()
         }}
       />
     </SettingsGroup>

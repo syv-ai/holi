@@ -368,7 +368,7 @@ describe('a job', () => {
     const person = await personHome()
     const codex = codexProvider({
       resolveBin: () => bin,
-      env: { PATH: process.env.PATH ?? '', CODEX_HOME: person },
+      base: { PATH: process.env.PATH ?? '', CODEX_HOME: person },
     }) as JobsProvider
     const started = await jobs.start({
       provider: codex,
@@ -460,7 +460,7 @@ describe('the Codex job command', () => {
     const state = await temp('holi-fenced-state-')
     const codex = codexProvider({
       resolveBin: () => '/usr/local/bin/codex',
-      env: { PATH: '/usr/bin', CODEX_HOME: person },
+      base: { PATH: '/usr/bin', CODEX_HOME: person },
     })
     const cmd = codex.terminal(
       { root: '/v', configDir: '/c', binDir: null },
@@ -483,7 +483,7 @@ describe('the Codex job command', () => {
     const state = await temp('holi-job-state-')
     const codex = codexProvider({
       resolveBin: () => '/usr/local/bin/codex',
-      env: { PATH: '/usr/bin', CODEX_HOME: person },
+      base: { PATH: '/usr/bin', CODEX_HOME: person },
     }) as JobsProvider
     const cmd = codex.capabilities.jobs.command({ cwd: '/s', prompt: 'p', state })
     expect(cmd?.env.PATH?.split(':')).not.toContain('/holi/bin')

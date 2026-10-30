@@ -70,14 +70,8 @@ export interface ProviderSummary {
   jobs: boolean
   /** A live session of it can be copied (Pi's `--fork`). */
   copies: boolean
-  /** It is a harness a person added (Settings, General, Agents). */
-  custom: boolean
-  /** It can start on a first message. */
-  prompts: boolean
   /** It has a picker of its earlier conversations to resume. */
   resumePicker: boolean
-  /** Why it runs nothing unattended, or null when it can. */
-  unattended: string | null
 }
 
 export const AGENT_NAMESPACES = ['agent'] as const
@@ -301,13 +295,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
           background: hasBackground(p),
           jobs: hasJobs(p),
           copies: hasBackground(p) || p.namesConversation === true,
-          custom: p.custom === true,
-          prompts: (p.refuses?.({ prompt: 'x' }) ?? null) === null,
           resumePicker: !hasBackground(p) && (p.refuses?.({ resume: 'pick' }) ?? null) === null,
-          unattended:
-            hasBackground(p) || hasJobs(p)
-              ? null
-              : (p.unattended ?? `${p.label} cannot run a job with nobody watching.`),
         })),
     }),
 

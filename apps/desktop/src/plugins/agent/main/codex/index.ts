@@ -297,11 +297,17 @@ export function readJobEvent(line: string): JobEvent | null {
 export interface CodexProviderDeps {
   resolveBin?: () => string | null
   /** The environment Codex runs from, `CODEX_HOME` and its keys among it. */
-  env?: NodeJS.ProcessEnv
+  base?: NodeJS.ProcessEnv
+  /** The environment its preset sets, which its jobs get too: the person
+   *  set it on purpose (a key, a config folder). */
+  env?: () => Record<string, string>
 }
 
 export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
-  const base = deps.env ?? process.env
+  const base = deps.base ?? process.env
+  /** Where the person's Codex folder is: their environment, then the
+   *  preset's (a `CODEX_HOME` it sets). */
+  const person = (): NodeJS.ProcessEnv => ({ ...base, ...deps.env?.() })
   const bin = deps.resolveBin ?? (() => resolveCodexBin(base))
   return {
     id: 'codex',
@@ -309,7 +315,7 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
     notInstalled: NOT_INSTALLED,
     installed: () => bin() !== null,
     // Codex keeps its own home; Holi has nothing to provision in it.
-    configure: async () => ({ dir: personCodexHome(base) }),
+    configure: async () => ({ dir: personCodexHome(person()) }),
     terminal(target, opts = {}) {
       const path = bin()
       if (path === null) return null
@@ -318,7 +324,7 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
       if (opts.session !== undefined) env[SESSION_ENV] = opts.session
       // A fenced session runs on a Codex folder of its own, without the
       // person's MCP servers.
-      if (opts.fence !== undefined) env.CODEX_HOME = prepareCodexHome(opts.fence.state, base)
+      if (opts.fence !== undefined) env.CODEX_HOME = prepareCodexHome(opts.fence.state, person())
       const asked = opts.prompt === undefined || opts.prompt.trim() === '' ? undefined : opts.prompt
       return {
         bin: path,
@@ -346,7 +352,7 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
         env,
       }
     },
-    release: (state) => releaseCodexHome(state, base),
+    release: (state) => releaseCodexHome(state, person()),
     capabilities: {
       turns: { routes: registerCodexRoutes },
       fenced: true,
@@ -359,10 +365,12 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
           // nothing of Holi's, only the folders its sandbox lets it write.
           // Its sandbox can still read the disk; what a scratch job hands the
           // vault is what Holi copies back. Its Codex folder is its own, with
-          // no MCP servers, and a follow-up finds its thread there.
-          const env = buildAgentEnv(base)
+          // no MCP servers, and a follow-up finds its thread there; a
+          // `CODEX_HOME` the preset sets is the person's folder it copies.
+          const preset = deps.env?.() ?? {}
+          const env = { ...buildAgentEnv(base), ...preset }
           delete env[SESSION_ENV]
-          env.CODEX_HOME = prepareCodexHome(run.state, base)
+          env.CODEX_HOME = prepareCodexHome(run.state, person())
           return { bin: path, args: jobArgs(run), env }
         },
         event: readJobEvent,

@@ -25,15 +25,18 @@ import { resolveBin } from '../../../../main/plugin-api'
 export const INTEGRATIONS = ['claude', 'codex', 'pi'] as const
 export type HarnessIntegration = (typeof INTEGRATIONS)[number]
 
-/** How Holi hears a session's turns. */
-type HarnessSignals = 'terminal' | 'holi-hook'
+/** Is `id` a built-in agent's? */
+export const isIntegration = (id: string): id is HarnessIntegration =>
+  (INTEGRATIONS as readonly string[]).includes(id)
 
 export interface Harness {
   id: string
   label: string
   /** A built-in agent's real integration. Absent: a basic terminal agent. */
   integration?: HarnessIntegration
-  /** What a terminal runs. For a preset, `args` go before its own. */
+  /** What a terminal runs. For Codex's and Pi's presets, `args` go before
+   *  their own; Claude Code's preset takes none (its sessions are its
+   *  supervisor's, which reads no arguments or environment of Holi's). */
   command: { bin: string; args: string[] }
   /** Starting on a first message: arguments after the command's, one of them
    *  exactly `{prompt}`. */
@@ -41,10 +44,8 @@ export interface Harness {
   /** Picking up a conversation: the CLI's own picker (`pick`), or one by its
    *  id (`byId`, one argument exactly `{id}`). */
   resume?: { pick?: string[]; byId?: string[] }
+  /** Set for its terminals, and for Codex's and Pi's jobs too. */
   env?: Record<string, string>
-  /** `terminal`: turns read off the PTY. `holi-hook`: also the `holi-signal`
-   *  command, which the person wires into their CLI's hooks. */
-  signals?: HarnessSignals
   /** What Test runs: arguments after the program, `--version` when absent. */
   test?: string[]
 }
@@ -52,6 +53,12 @@ export interface Harness {
 export interface HarnessFile {
   version: 1
   harnesses: Harness[]
+  /** Read, never written: entries in the file that did not read as a
+   *  harness, left out. */
+  ignored?: number
+  /** Read, never written: why the file as a whole could not be read. While
+   *  it is set, Holi writes nothing over the file until it is reset. */
+  unreadable?: string
 }
 
 const PROMPT = '{prompt}'
@@ -197,7 +204,12 @@ export function readHarness(
   const harness: Harness = { id: id as string, label, command: { bin, args } }
   if (integration !== undefined) harness.integration = integration
 
-  if (raw['prompt'] !== undefined || raw['resume'] !== undefined || raw['signals'] !== undefined) {
+  if (integration === 'claude' && (args.length > 0 || raw['env'] !== undefined)) {
+    problems.push(
+      "Claude Code's sessions run in its own background supervisor, which takes no arguments or environment from Holi.",
+    )
+  }
+  if (raw['prompt'] !== undefined || raw['resume'] !== undefined) {
     if (integration !== undefined) {
       problems.push(
         `How ${label || 'a built-in agent'} starts, resumes and reports its turns is its integration's.`,
@@ -239,12 +251,6 @@ export function readHarness(
       if (Object.keys(out).length > 0) harness.env = out
     }
   }
-  if (raw['signals'] !== undefined) {
-    const signals = raw['signals']
-    if (signals !== 'terminal' && signals !== 'holi-hook') {
-      problems.push('Turns are read from the terminal, or also from holi-signal.')
-    } else harness.signals = signals
-  }
   if (raw['test'] !== undefined) {
     const read = argsProblems(raw['test'], 'test')
     problems.push(...read.problems)
@@ -254,18 +260,35 @@ export function readHarness(
 }
 
 /**
- * The record's file: every harness that reads as one, the rest left out, so
- * a hand edit gone wrong costs its own entry. One entry per id.
+ * The record's file: every harness that reads as one, the rest left out and
+ * counted, so a hand edit gone wrong costs its own entry and says so. One
+ * entry per id. A file that is not JSON, not this shape or of a version this
+ * Holi does not know is `unreadable`: nothing in it is used, and nothing is
+ * written over it until a person resets it. `text` is the file as it is on
+ * disk, null when there is none.
  * @public exported for its test
  */
-export function parseHarnessFile(raw: unknown): HarnessFile {
-  const list = isRecord(raw) && Array.isArray(raw['harnesses']) ? raw['harnesses'] : []
+export function parseHarnessFile(raw: unknown, text: string | null = null): HarnessFile {
+  const empty: HarnessFile = { version: 1, harnesses: [] }
+  if (text === null) return empty
+  if (raw === null) return { ...empty, unreadable: 'It is not valid JSON.' }
+  if (!isRecord(raw) || !Array.isArray(raw['harnesses'])) {
+    return { ...empty, unreadable: 'It is not an object with a harnesses list.' }
+  }
+  if (raw['version'] !== 1) {
+    return {
+      ...empty,
+      unreadable: `It is version ${JSON.stringify(raw['version']) ?? 'none'}, which this Holi does not know.`,
+    }
+  }
   const harnesses: Harness[] = []
-  for (const entry of list) {
+  let ignored = 0
+  for (const entry of raw['harnesses']) {
     const read = readHarness(entry)
     if (read.ok && !harnesses.some((h) => h.id === read.harness.id)) harnesses.push(read.harness)
+    else ignored += 1
   }
-  return { version: 1, harnesses }
+  return ignored > 0 ? { version: 1, harnesses, ignored } : { version: 1, harnesses }
 }
 
 /** One placeholder filled: the whole argument that is it, and no other. */
@@ -297,13 +320,25 @@ export function harnessRefusal(h: Harness, opts: HarnessOpts): string | null {
   if (asked && opts.resume !== undefined) {
     return `${h.label} cannot take a message while it picks up a conversation.`
   }
+  if (asked && opts.prompt!.startsWith('-') && !endsOptions(h)) {
+    return `${h.label} would read a message that starts with - as an option. Start it with another character, or put -- on the line before {prompt} in Settings, General, Agents.`
+  }
   return null
+}
+
+/** A `--` argument comes before `{prompt}`: what follows is no option. */
+function endsOptions(h: Harness): boolean {
+  const args = [...h.command.args, ...(h.prompt?.args ?? [])]
+  const at = args.indexOf(PROMPT)
+  return at !== -1 && args.slice(0, at).includes('--')
 }
 
 /**
  * A basic terminal agent's arguments: the command's, then how it starts.
- * Placeholders fill whole arguments, so a prompt that starts with `-` is
- * still one argument, never split and never read by a shell.
+ * Placeholders fill whole arguments, so a prompt is one argument, never
+ * split and never read by a shell; one that starts with `-` is refused
+ * unless a `--` before `{prompt}` keeps the CLI from reading it as an
+ * option.
  * @public exported for its test
  */
 export function harnessArgs(h: Harness, opts: HarnessOpts): string[] {

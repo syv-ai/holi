@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 import type { CapabilityContext } from '../../../main/plugin-api'
-import { SESSION_ENV } from '../main/codex'
+import { codexProvider, SESSION_ENV } from '../main/codex'
 import { harnessCapabilities } from '../main/harness/capabilities'
 import {
   harnessArgs,
@@ -75,22 +75,42 @@ describe('a harness record', () => {
     expect(problems({ ...AIDER, id: 'claude' }).join(' ')).toMatch(/built-in/)
   })
 
-  it('keeps what reads as a harness out of a hand-edited file, once per id', () => {
-    const file = parseHarnessFile({
-      version: 1,
-      harnesses: [AIDER, { ...AIDER, label: 'Again' }, { id: 'Bad' }, 'nonsense'],
-    })
-    expect(file).toEqual({ version: 1, harnesses: [AIDER] })
-    expect(parseHarnessFile(null)).toEqual({ version: 1, harnesses: [] })
+  it('keeps what reads as a harness out of a hand-edited file, once per id, counting the rest', () => {
+    const file = parseHarnessFile(
+      { version: 1, harnesses: [AIDER, { ...AIDER, label: 'Again' }, { id: 'Bad' }, 'nonsense'] },
+      '…',
+    )
+    expect(file).toEqual({ version: 1, harnesses: [AIDER], ignored: 3 })
+    expect(parseHarnessFile(null, null)).toEqual({ version: 1, harnesses: [] })
+  })
+
+  it('calls a file it cannot read unreadable, never empty', () => {
+    expect(parseHarnessFile(null, '{ "version": 1,').unreadable).toMatch(/not valid JSON/)
+    expect(parseHarnessFile({ version: 2, harnesses: [] }, '…').unreadable).toMatch(/version 2/)
+    expect(parseHarnessFile([AIDER], '…').unreadable).toMatch(/harnesses list/)
+  })
+
+  it("takes no arguments or environment for Claude Code's preset", () => {
+    expect(
+      problems({ ...PRESETS[0]!, command: { bin: 'claude', args: ['--x'] } }).join(' '),
+    ).toMatch(/supervisor/)
+    expect(problems({ ...PRESETS[0]!, env: { A: '1' } }).join(' ')).toMatch(/supervisor/)
+    expect(problems({ ...PRESETS[1]!, env: { A: '1' } })).toEqual([])
   })
 })
 
 describe('a harness command line', () => {
   it('fills placeholders as whole arguments, never splitting what was asked', () => {
-    expect(harnessArgs(AIDER, { prompt: '--delete everything; now' })).toEqual([
+    expect(harnessArgs(AIDER, { prompt: 'delete everything; now' })).toEqual([
       '--no-auto-commits',
       '--message',
-      '--delete everything; now',
+      'delete everything; now',
+    ])
+    const ended = { ...AIDER, prompt: { args: ['--', '{prompt}'] } }
+    expect(harnessArgs(ended, { prompt: '--delete everything' })).toEqual([
+      '--no-auto-commits',
+      '--',
+      '--delete everything',
     ])
     expect(harnessArgs(AIDER, { resume: '0b5c2f3e-1d2a-4c5b-8e9f-0a1b2c3d4e5f' })).toEqual([
       '--no-auto-commits',
@@ -122,6 +142,8 @@ describe('a harness command line', () => {
     expect(bare.refuses?.({ resume: '0b5c2f3e-1d2a-4c5b-8e9f-0a1b2c3d4e5f' })).toMatch(/by its id/)
     expect(bare.refuses?.({})).toBeNull()
     expect(bare.unattended).toMatch(/only in a terminal/)
+    // Without a `--` before {prompt}, the CLI would read it as an option.
+    expect(harnessProvider(AIDER).refuses?.({ prompt: '-rf' })).toMatch(/as an option/)
   })
 
   it('reports a program that is not there in words that say what to do', () => {
@@ -156,9 +178,10 @@ const builtIn = (id: string): AgentProvider =>
     capabilities: {},
   }) as AgentProvider
 
-async function registry(store = memoryStore()) {
+async function registry(store = memoryStore(), keepBad?: () => Promise<void>) {
   return createHarnessRegistry({
     store,
+    ...(keepBad === undefined ? {} : { keepBad }),
     builtIns: {
       claude: (current) => withPreset(builtIn('claude'), current),
       codex: (current) => withPreset(builtIn('codex'), current),
@@ -212,6 +235,56 @@ describe('the harness registry', () => {
     expect(store.now().harnesses).toEqual([])
   })
 
+  it("gives Claude Code's terminals none of its preset, which its supervisor would not read", async () => {
+    const store = memoryStore({
+      version: 1,
+      // Written by hand: the record refuses it, the registry ignores it anyway.
+      harnesses: [{ ...PRESETS[0]!, command: { bin: 'claude', args: ['--x'] }, env: { B: '2' } }],
+    })
+    const reg = await registry(store)
+    const claude = reg.providers().find((p) => p.id === 'claude')!
+    expect(claude.terminal(TARGET)).toEqual({ bin: '/bin/claude', args: ['own'], env: { A: '1' } })
+  })
+
+  it('finds a built-in program by its own lookup, a renamed one on PATH', async () => {
+    const reg = await createHarnessRegistry({
+      store: memoryStore(),
+      bins: { claude: () => '/opt/holi-claude' },
+      builtIns: {
+        claude: (_current, bin) => ({ ...builtIn('claude'), installed: () => bin() !== null }),
+        codex: () => builtIn('codex'),
+        pi: () => builtIn('pi'),
+      },
+    })
+    expect(reg.resolve('claude')).toBe('/opt/holi-claude')
+    await reg.save({ ...PRESETS[0]!, command: { bin: '/nowhere/claude', args: [] } }, false)
+    expect(reg.resolve('claude')).toBeNull()
+  })
+
+  it('writes nothing over a file it could not read, until it is reset', async () => {
+    const kept: string[] = []
+    const store = memoryStore({ version: 1, harnesses: [], unreadable: 'It is not valid JSON.' })
+    const reg = await registry(store, async () => void kept.push('bad'))
+    expect(reg.status()).toEqual({ ignored: 0, unreadable: 'It is not valid JSON.' })
+    await expect(reg.save(AIDER, true)).rejects.toThrow(/could not read.*reset/)
+    expect(store.now().unreadable).toBe('It is not valid JSON.')
+    await reg.reset()
+    expect(kept).toEqual(['bad'])
+    expect(store.now()).toEqual({ version: 1, harnesses: [] })
+    await reg.save(AIDER, true)
+    expect(store.now().harnesses).toEqual([AIDER])
+  })
+
+  it('keeps a copy before a write that drops entries it left out', async () => {
+    const kept: string[] = []
+    const store = memoryStore({ version: 1, harnesses: [], ignored: 2 })
+    const reg = await registry(store, async () => void kept.push('bad'))
+    expect(reg.status().ignored).toBe(2)
+    await reg.save(AIDER, true)
+    expect(kept).toEqual(['bad'])
+    expect(store.now()).toEqual({ version: 1, harnesses: [AIDER] })
+  })
+
   it('removes one that was added', async () => {
     const reg = await registry(memoryStore({ version: 1, harnesses: [AIDER] }))
     await reg.remove('aider')
@@ -220,15 +293,26 @@ describe('the harness registry', () => {
   })
 })
 
+describe("a preset's environment in Codex's jobs", () => {
+  const run = { cwd: '/tmp', prompt: 'Go', state: '/tmp' }
+
+  it("reaches Codex's jobs", () => {
+    const codex = codexProvider({ resolveBin: () => '/bin/codex', env: () => ({ MY_KEY: 'k' }) })
+    expect(codex.capabilities.jobs?.command(run)?.env.MY_KEY).toBe('k')
+  })
+})
+
 describe('editing harnesses', () => {
   it('opens only the UI door: no agent session or app can add a program to run', async () => {
     const caps = harnessCapabilities({
       registry: await registry(),
+      file: '/data/agent-harnesses.json',
       root: () => '/v',
       changed: () => {},
     })
     expect(Object.keys(caps).sort()).toEqual([
       'agent.harnessRemove',
+      'agent.harnessReset',
       'agent.harnessSave',
       'agent.harnessTest',
       'agent.harnesses',
@@ -241,11 +325,12 @@ describe('editing harnesses', () => {
     const runs: unknown[] = []
     const caps = harnessCapabilities({
       registry: reg,
+      file: '/data/agent-harnesses.json',
       root: () => '/v',
       changed: () => {},
       run: async (bin, args, opts) => {
         runs.push({ bin, args, cwd: opts.cwd, timeoutMs: opts.timeoutMs })
-        return { code: 0, output: 'sh 1.0\n', timedOut: false }
+        return { code: 0, output: 'sh 1.0\n', timedOut: false, overLimit: false }
       },
     })
     const ctx = {} as CapabilityContext
@@ -259,6 +344,30 @@ describe('editing harnesses', () => {
     const res = await caps['agent.harnessTest'].run(ctx, { id: 'aider' })
     expect(res).toEqual({ ok: true, output: 'sh 1.0\n' })
     expect(runs).toEqual([{ bin: '/bin/sh', args: ['-c', 'echo'], cwd: '/v', timeoutMs: 5000 }])
+    const listing = await caps['agent.harnesses'].run(ctx, {})
+    expect(listing.agents.find((a) => a.harness.id === 'aider')?.unattended).toMatch(
+      /only in a terminal/,
+    )
+  })
+
+  it('says a test that printed too much apart from one that ran too long', async () => {
+    const reg = await registry(
+      memoryStore({ version: 1, harnesses: [{ ...AIDER, command: { bin: '/bin/sh', args: [] } }] }),
+    )
+    let answer = { code: null as number | null, output: 'y\n', timedOut: false, overLimit: true }
+    const caps = harnessCapabilities({
+      registry: reg,
+      file: '/data/agent-harnesses.json',
+      root: () => '/v',
+      changed: () => {},
+      run: async () => answer,
+    })
+    const ctx = {} as CapabilityContext
+    const over = await caps['agent.harnessTest'].run(ctx, { id: 'aider' })
+    expect(over.ok === false && over.message).toMatch(/printed more than/)
+    answer = { ...answer, timedOut: true, overLimit: false }
+    const slow = await caps['agent.harnessTest'].run(ctx, { id: 'aider' })
+    expect(slow.ok === false && slow.message).toMatch(/after 5 seconds/)
   })
 })
 
@@ -323,12 +432,9 @@ describe('provider selection', () => {
     const [summary] = await table['agent.providers'].run(ctx, {})
     expect(summary).toMatchObject({
       id: 'aider',
-      custom: true,
-      prompts: true,
       resumePicker: true,
       background: false,
       jobs: false,
-      unattended: custom.unattended,
     })
   })
 })

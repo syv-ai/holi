@@ -2,7 +2,11 @@
  * Add or edit one agent harness (docs/features/agent-sessions.md, Harnesses).
  * Every list is one argument per line, never a command line split on spaces:
  * what is typed is what the program gets. A built-in agent shows its command
- * fields alone; how it starts, resumes and reports its turns is its own.
+ * fields alone; how it starts and resumes is its own, and Claude Code takes
+ * no arguments or environment at all.
+ *
+ * The form is filled once, when it mounts: the card mounts it afresh (a new
+ * `key`) each time it opens on an agent.
  */
 import { useState } from 'react'
 import { AGENT_ID } from '@holi/shared'
@@ -18,13 +22,6 @@ import {
 } from '@/components/ui/dialog'
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 
 /** Mirrors `Harness` in the agent's main/harness/record.ts. */
@@ -36,7 +33,6 @@ export interface HarnessRecord {
   prompt?: { args: string[] }
   resume?: { pick?: string[]; byId?: string[] }
   env?: Record<string, string>
-  signals?: 'terminal' | 'holi-hook'
   test?: string[]
 }
 
@@ -49,7 +45,6 @@ type Draft = {
   pick: string
   byId: string
   env: string
-  signals: 'terminal' | 'holi-hook'
   test: string
 }
 
@@ -69,7 +64,6 @@ function draftOf(h: HarnessRecord | null): Draft {
     env: Object.entries(h?.env ?? {})
       .map(([key, value]) => `${key}=${value}`)
       .join('\n'),
-    signals: h?.signals ?? 'terminal',
     test: h?.test === undefined ? '--version' : lines(h.test),
   }
 }
@@ -97,7 +91,9 @@ function recordOf(draft: Draft, base: HarnessRecord | null): HarnessRecord {
     command: { bin: draft.bin.trim(), args: argsOf(draft.args) },
   }
   if (base?.integration !== undefined) record.integration = base.integration
-  if (Object.keys(env).length > 0) record.env = env
+  // Claude Code's sessions are its supervisor's, which reads neither.
+  if (base?.integration === 'claude') record.command.args = []
+  else if (Object.keys(env).length > 0) record.env = env
   if (base?.integration === undefined) {
     if (argsOf(draft.prompt).length > 0) record.prompt = { args: argsOf(draft.prompt) }
     const pick = argsOf(draft.pick)
@@ -108,7 +104,6 @@ function recordOf(draft: Draft, base: HarnessRecord | null): HarnessRecord {
         ...(byId.length > 0 ? { byId } : {}),
       }
     }
-    if (draft.signals !== 'terminal') record.signals = draft.signals
   }
   const test = argsOf(draft.test)
   if (!(test.length === 1 && test[0] === '--version')) record.test = test
@@ -156,6 +151,9 @@ export function HarnessDialog({
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }))
   const creating = harness === null
   const builtIn = harness?.integration !== undefined
+  // Claude Code's sessions run in its own background supervisor, which takes
+  // no arguments or environment from Holi.
+  const claude = harness?.integration === 'claude'
   const idOk = AGENT_ID.test(draft.id)
 
   const submit = async () => {
@@ -172,17 +170,7 @@ export function HarnessDialog({
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (next) {
-          setDraft(draftOf(harness))
-          setIdTouched(false)
-          setError(null)
-        }
-        onOpenChange(next)
-      }}
-    >
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="lg">
         <div className="flex max-h-160 flex-col gap-6 overflow-y-auto">
           <DialogHeader>
@@ -236,34 +224,41 @@ export function HarnessDialog({
                 onChange={(event) => set({ bin: event.target.value })}
               />
             </Row>
-            <Row
-              id="harness-args"
-              label="Arguments"
-              hint={
-                builtIn
-                  ? `One per line, before the ones ${harness.label} gets from Holi.`
-                  : 'One per line, every time it starts.'
-              }
-            >
-              <Textarea
+            {claude ? (
+              <FieldDescription>
+                Claude Code takes no arguments or environment here: its sessions run in its own
+                background supervisor, which does not read them.
+              </FieldDescription>
+            ) : (
+              <Row
                 id="harness-args"
-                rows={2}
-                value={draft.args}
-                onChange={(event) => set({ args: event.target.value })}
-              />
-            </Row>
+                label="Arguments"
+                hint={
+                  builtIn
+                    ? `One per line, before the ones ${harness.label} gets from Holi, in its terminals only.`
+                    : 'One per line, every time it starts.'
+                }
+              >
+                <Textarea
+                  id="harness-args"
+                  rows={2}
+                  value={draft.args}
+                  onChange={(event) => set({ args: event.target.value })}
+                />
+              </Row>
+            )}
             {builtIn ? null : (
               <>
                 <Row
                   id="harness-prompt"
                   label="Start on a message"
-                  hint="One per line, with {prompt} on a line of its own. Empty: it cannot start on a message."
+                  hint="One per line, with {prompt} on a line of its own after a -- line, so a message that starts with - is not read as an option. Empty: it cannot start on a message."
                 >
                   <Textarea
                     id="harness-prompt"
                     rows={2}
                     value={draft.prompt}
-                    placeholder={'--message\n{prompt}'}
+                    placeholder={'--\n{prompt}'}
                     onChange={(event) => set({ prompt: event.target.value })}
                   />
                 </Row>
@@ -293,38 +288,26 @@ export function HarnessDialog({
                     onChange={(event) => set({ byId: event.target.value })}
                   />
                 </Row>
-                <Row
-                  id="harness-signals"
-                  label="Turns"
-                  hint="Holi always reads the terminal. With hooks, also wire holi-signal turn-end (and status) into the CLI's own hooks."
-                >
-                  <Select
-                    value={draft.signals}
-                    onValueChange={(value) => set({ signals: value as Draft['signals'] })}
-                  >
-                    <SelectTrigger id="harness-signals" className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="terminal">From the terminal</SelectItem>
-                      <SelectItem value="holi-hook">From the terminal and holi-signal</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Row>
               </>
             )}
-            <Row
-              id="harness-env"
-              label="Environment"
-              hint="NAME=value, one per line. PATH and HOLI_ variables are Holi's."
-            >
-              <Textarea
+            {claude ? null : (
+              <Row
                 id="harness-env"
-                rows={2}
-                value={draft.env}
-                onChange={(event) => set({ env: event.target.value })}
-              />
-            </Row>
+                label="Environment"
+                hint={
+                  builtIn
+                    ? "NAME=value, one per line, for its terminals and its unattended runs too. PATH and HOLI_ variables are Holi's."
+                    : "NAME=value, one per line. PATH and HOLI_ variables are Holi's."
+                }
+              >
+                <Textarea
+                  id="harness-env"
+                  rows={2}
+                  value={draft.env}
+                  onChange={(event) => set({ env: event.target.value })}
+                />
+              </Row>
+            )}
             <Row
               id="harness-test"
               label="Test arguments"
