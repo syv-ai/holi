@@ -18,7 +18,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { holiLink, isHoliLinkable, isResolved } from '@holi/shared'
+import { differsBeyondTidy, holiLink, isHoliLinkable, isResolved } from '@holi/shared'
 import { useAtomValue } from 'jotai'
 import { findNext, findPrev } from 'prosemirror-search'
 import { EditorContent, useEditor } from '@tiptap/react'
@@ -51,6 +51,7 @@ import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 import { AgentPrompt, AgentStatus } from './agent-prompt'
 import { askAiSlashItem } from './ask-ai-slash'
+import { applyReload } from './apply-reload'
 import { artifactPathFor, isRunLive, locksDocument, useDocumentAgent } from './document-agent'
 import { parentOf } from '@/lib/tree-paths'
 import { CommentsPanel } from './comments-panel'
@@ -277,10 +278,12 @@ function DocumentEditor({
 
   useSelectionReport(editor, path, head)
 
+  const claims = useAtomValue(claimsAtom)
+  /** The latest claims, for `save` and the reload, which outlive the render that made them. */
+  const claimsRef = useRef(claims)
+  claimsRef.current = claims
   /** What the first claim on this path draws above it: a link's card. */
-  const Banner = useAtomValue(claimsAtom).find(
-    (claim) => claim.banner !== undefined && claim.match(path),
-  )?.banner
+  const Banner = claims.find((claim) => claim.banner !== undefined && claim.match(path))?.banner
   useDocumentPosition({ editor, remote, path, scrollerRef, markdown })
 
   const holiLinks = isHoliLinkable(path)
@@ -306,7 +309,9 @@ function DocumentEditor({
     saveTimer.current = undefined
     if (!editor || editor.isDestroyed) return
     const text = markdown()
-    if (text === lastText.current) {
+    // Differing only by what the commit tidies away is nothing to save:
+    // writing it would just be tidied again.
+    if (!differsBeyondTidy(lastText.current, text, path, claimsRef.current)) {
       setSaveState('saved')
       return
     }
@@ -341,14 +346,20 @@ function DocumentEditor({
       .query({ remote, path })
       .then((text) => {
         if (!live || editor.isDestroyed || text === lastText.current) return
+        // The commit's tidy (`normalize-md`) rewrote what was saved: nothing
+        // new, so the buffer stays, and with it a space just typed under the
+        // caret. The next save compares against the tidied file.
+        if (!differsBeyondTidy(lastText.current, text, path, claimsRef.current)) {
+          lastText.current = text
+          return
+        }
         if (saveTimer.current !== undefined && !locked) return
         const next = splitDocument(text)
+        // The refs follow only once the buffer took the file: a reload that
+        // throws leaves both on what the buffer still holds.
+        applyReload(editor, next.body)
         head.current = next.head
         lastText.current = text
-        editor.commands.setContent(next.body, {
-          contentType: 'markdown',
-          emitUpdate: false,
-        })
         placeRef.current()
       })
       .catch(() => undefined)

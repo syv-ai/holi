@@ -173,8 +173,7 @@ colour and file count, and the emoji icon map on a row and its tab
 target drawn inline and the hover preview card ([wiki-links](features/wiki-links.md)).
 
 **Merging an outside write into a dirty note.** A change on disk is read back unless local edits are
-pending, which win; the 3-way merge, the conflict banner and an undo-neutral reload are not built
-for notes ([editor](features/editor.md)).
+pending, which win; the 3-way merge and the conflict banner are not built for notes ([editor](features/editor.md)).
 
 **A vault's theme on screen.** `.holi/settings/theme.css` is seeded, parsed and written, but the
 renderer runs on shadcn's neutral theme and the settings have no Appearance page
