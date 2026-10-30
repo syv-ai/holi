@@ -86,7 +86,12 @@ export interface AgentCapabilitiesDeps {
   /** Pi's per-job RPC supervisor; unlike Claude it is managed by Holi. */
   pi?: {
     sessions(): SessionSummary[]
-    launch(args: { name: string; prompt: string; model?: string }): Promise<unknown>
+    launch(args: {
+      name: string
+      prompt: string
+      model?: string
+      system?: string
+    }): Promise<unknown>
     message(id: string, text: string): Promise<void>
     stop(id: string): Promise<ActionResult>
   }
@@ -222,6 +227,12 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       run: async (ctx, args): Promise<OpenResult> => {
         if (!live(ctx)) return notOpen
         // A session Holi runs is its own terminal: that one, never a second.
+        if (
+          args.attach !== undefined &&
+          deps.pi?.sessions().some((session) => session.id === args.attach)
+        ) {
+          return { ok: false, message: 'Pi background sessions have no TUI to attach to.' }
+        }
         if (args.attach !== undefined && deps.own.has(args.attach)) {
           const terminalId = deps.own.terminalOf(args.attach)
           return terminalId === null
@@ -307,6 +318,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
             name: args.name,
             prompt: args.prompt,
             ...(args.model === undefined ? {} : { model: args.model }),
+            ...(args.appendSystemPrompt === undefined ? {} : { system: args.appendSystemPrompt }),
           })
         }
         return deps.sessions.launch(args)
@@ -319,7 +331,10 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       doors: ['ui'],
       params: idParams,
       run: async (ctx, { id }): Promise<boolean> =>
-        live(ctx) && (deps.own.has(id) || deps.sessions.watched(id)),
+        live(ctx) &&
+        (deps.own.has(id) ||
+          deps.pi?.sessions().some((session) => session.id === id) === true ||
+          deps.sessions.watched(id)),
     }),
 
     /** Put text in a session's input, unsent: a live one by id, or `'new'`,
@@ -416,6 +431,9 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       params: idParams,
       run: async (ctx, { id }): Promise<ActionResult> => {
         if (!live(ctx)) return notOpen
+        if (deps.pi?.sessions().some((session) => session.id === id)) {
+          return { ok: false, message: 'Pi background sessions cannot be restarted from a TUI.' }
+        }
         return deps.own.has(id) ? ownOnly('restarted') : deps.sessions.respawn(id)
       },
     }),
@@ -429,6 +447,9 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
       run: async (ctx, { id, ...size }): Promise<StartResult> => {
         if (!live(ctx)) return notOpen
+        if (deps.pi?.sessions().some((session) => session.id === id)) {
+          return { ok: false, message: 'Pi background sessions cannot be duplicated from a TUI.' }
+        }
         return deps.own.has(id) ? ownOnly('copied') : deps.sessions.duplicate(id, size)
       },
     }),

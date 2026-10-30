@@ -64,25 +64,78 @@ describe('Pi background runs', () => {
     await launch.run(ctx, launch.params({ name: 'pi', prompt: 'go', provider: 'pi' }))
     expect(calls).toEqual(['claude', 'pi'])
   })
+  it('refuses TUI attach, restart, and duplicate for managed Pi sessions', async () => {
+    const pi = {
+      sessions: () => [{ id: 'pi123456', provider: 'pi', name: 'run', state: 'working' }],
+      launch: async () => ({ ok: true, sessionId: 'pi123456' }),
+      message: async () => {},
+      stop: async () => ({ ok: true }),
+    }
+    const table = agentCapabilities({
+      sessions: {
+        open: async () => ({ ok: true }),
+        respawn: async () => ({ ok: true }),
+        duplicate: async () => ({ ok: true }),
+      } as never,
+      own: { has: () => false } as never,
+      providers: [] as never,
+      terminals: {} as never,
+      liveRemote: () => 'owner/vault',
+      commitNow: async () => {},
+      pi,
+    })
+    const ctx = { remote: 'owner/vault' } as CapabilityContext
+    const open = table['agent.open'] as {
+      params(raw: unknown): unknown
+      run(ctx: CapabilityContext, args: never): Promise<unknown>
+    }
+    const respawn = table['agent.respawn'] as {
+      params(raw: unknown): unknown
+      run(ctx: CapabilityContext, args: never): Promise<unknown>
+    }
+    const duplicate = table['agent.duplicate'] as {
+      params(raw: unknown): unknown
+      run(ctx: CapabilityContext, args: never): Promise<unknown>
+    }
+    await expect(
+      open.run(ctx, open.params({ attach: 'pi123456' }) as never),
+    ).resolves.toMatchObject({
+      ok: false,
+      message: 'Pi background sessions have no TUI to attach to.',
+    })
+    await expect(
+      respawn.run(ctx, respawn.params({ id: 'pi123456' }) as never),
+    ).resolves.toMatchObject({
+      ok: false,
+      message: 'Pi background sessions cannot be restarted from a TUI.',
+    })
+    await expect(
+      duplicate.run(ctx, duplicate.params({ id: 'pi123456' }) as never),
+    ).resolves.toMatchObject({
+      ok: false,
+      message: 'Pi background sessions cannot be duplicated from a TUI.',
+    })
+  })
+
   it('launches one managed RPC job, brackets turns, delivers follow-ups and stops', async () => {
     const rpc = fake()
     const brackets: string[] = []
-    const events: string[] = []
     const manager = createPiBackground({
       bin: () => '/usr/bin/pi',
-      spawn: (_bin, _args, options) => {
+      spawn: (_bin, args, options) => {
+        expect(args).toEqual(['--mode', 'rpc', '--append-system-prompt', 'System direction'])
         expect(options.cwd).toBe('/vault')
         return rpc.child
       },
       bracket: (_id, edge) => brackets.push(edge),
-      changed: () => events.push('sessions'),
-      settled: () => events.push('settled'),
+      changed: () => {},
     })
     manager.setVault('owner/vault', '/vault')
     const launched = await manager.launch({
       name: 'Review',
       prompt: 'Review this',
-      model: 'test-model',
+      model: 'provider/test-model',
+      system: 'System direction',
     })
     expect(launched.ok).toBe(true)
     if (!launched.ok) throw new Error(launched.message)
@@ -90,7 +143,12 @@ describe('Pi background runs', () => {
     expect(manager.sessions()).toMatchObject([
       { id, provider: 'pi', name: 'Review', state: 'working' },
     ])
-    expect(rpc.commands.map((command) => command.type)).toEqual(['set_model', 'prompt'])
+    expect(rpc.commands.map((command) => command.type)).toEqual(['set_model'])
+    expect(rpc.commands[0]).toMatchObject({ provider: 'provider', modelId: 'test-model' })
+    rpc.stdout.write(
+      `{"type":"response","id":"${rpc.commands[0]!.id}","command":"set_model","success":true}\n`,
+    )
+    expect(rpc.commands.at(-1)).toMatchObject({ type: 'prompt', message: 'Review this' })
     rpc.stdout.write('{"type":"agent_settled","aborted":false}\n')
     await new Promise((resolve) => setImmediate(resolve))
     expect(manager.sessions()).toMatchObject([{ id, state: 'idle' }])
@@ -99,7 +157,6 @@ describe('Pi background runs', () => {
     await expect(manager.stop(id)).resolves.toMatchObject({ ok: true })
     await manager.leave()
     expect(brackets).toEqual(['begin', 'end', 'begin', 'end'])
-    expect(events).toContain('settled')
     expect(manager.sessions()).toEqual([])
   })
 
@@ -111,7 +168,6 @@ describe('Pi background runs', () => {
       },
       bracket: () => {},
       changed: () => {},
-      settled: () => {},
     })
     startupFailure.setVault('owner/vault', '/vault')
     await expect(startupFailure.launch({ name: 'x', prompt: 'x' })).resolves.toMatchObject({
@@ -126,7 +182,6 @@ describe('Pi background runs', () => {
       spawn: () => rpc.child,
       bracket: (_id, edge) => brackets.push(edge),
       changed: () => {},
-      settled: () => {},
     })
     active.setVault('owner/vault', '/vault')
     await active.launch({ name: 'x', prompt: 'x' })
@@ -140,7 +195,6 @@ describe('Pi background runs', () => {
       bin: () => null,
       bracket: () => {},
       changed: () => {},
-      settled: () => {},
     })
     expect(await manager.launch({ name: 'x', prompt: 'x' })).toMatchObject({ ok: false })
     manager.setVault('owner/vault', '/vault')
