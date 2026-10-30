@@ -45,7 +45,8 @@ export interface DocumentActionsProps {
   smallText: boolean
   onFullWidthChange: (fullWidth: boolean) => void
   onSmallTextChange: (smallText: boolean) => void
-  /** Null while an agent run is already going, or there is no agent. */
+  /** Null while an agent run is already going, there is no agent, this
+   *  machine's agent is not yet known, or the note cannot have an app. */
   onCreateVaultApp: (() => void) | null
   /** The document's Holi links; null for a file a teammate could not open
    *  (a local file). `heading` is null above the first heading. */
