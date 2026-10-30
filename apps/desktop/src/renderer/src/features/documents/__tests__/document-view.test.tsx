@@ -660,6 +660,30 @@ test("Create vault app waits until this machine's agent is read", async () => {
   expect(cap).not.toHaveBeenCalled()
 })
 
+test('Stop while a vault app is starting stops the session the start returns', async () => {
+  let started!: (r: { ok: true; sessionId: string }) => void
+  cap.mockImplementation(({ name }: { name: string }) =>
+    name === 'agent.scoped'
+      ? new Promise((r) => (started = r))
+      : Promise.resolve(name === 'agent.providers' ? [] : { ok: true }),
+  )
+  openFocused('# Plan\n')
+  await createVaultApp()
+  await userEvent.setup().click(await screen.findByRole('button', { name: 'Stop' }))
+  expect(await screen.findByText('Stopped')).toBeInTheDocument()
+  expect(cap).not.toHaveBeenCalledWith(expect.objectContaining({ name: 'agent.stop' }))
+  await act(async () => started({ ok: true, sessionId: 'p0123456789ab' }))
+  await waitFor(() =>
+    expect(cap).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'agent.stop',
+        paramsJson: JSON.stringify({ id: 'p0123456789ab' }),
+      }),
+    ),
+  )
+  expect(screen.getByText('Stopped')).toBeInTheDocument()
+})
+
 test('Stop on a vault app wins over its app landing after it', async () => {
   cap.mockImplementation(({ name }: { name: string }) =>
     Promise.resolve(

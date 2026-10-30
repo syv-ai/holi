@@ -59,6 +59,8 @@ export interface PtySessionsDeps {
 /** A session fenced to a folder of Holi's (`fenced.ts`). @public: kept for its test. */
 export interface Fence {
   dir: string
+  /** A folder of Holi's outside `dir` for the agent's own state. */
+  state: string
   /** A turn ended: copy back what it wrote. */
   turnEnded(): Promise<void>
   /** The session's process exited. */
@@ -214,15 +216,22 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
           push()
         },
       })
+      let command: ReturnType<AgentProvider['terminal']>
+      try {
+        command = provider.terminal(target, {
+          session: id,
+          ...(fence === undefined ? {} : { fence: { dir: fence.dir, state: fence.state } }),
+          ...(prompt === undefined ? {} : { prompt }),
+          ...(resume === undefined ? {} : { resume }),
+        })
+      } catch (err) {
+        signals.dispose()
+        return { ok: false, message: (err as Error).message }
+      }
       const opened = deps.terminals.open({
         remote: deps.vault.remote,
         cwd: fence?.dir ?? deps.vault.root,
-        command: provider.terminal(target, {
-          session: id,
-          ...(fence === undefined ? {} : { fence: fence.dir }),
-          ...(prompt === undefined ? {} : { prompt }),
-          ...(resume === undefined ? {} : { resume }),
-        }),
+        command,
         notInstalled: provider.notInstalled,
         attach: id,
         ...(cols === undefined ? {} : { cols }),

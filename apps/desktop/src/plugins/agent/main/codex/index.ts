@@ -16,12 +16,11 @@
  * from the terminal (`../host/pty-signals.ts`).
  *
  * **Jobs** are `codex exec --json` in a scratch folder Holi made
- * (`../host/jobs.ts`): the workspace-write sandbox with no network, no MCP
- * servers and no web search, and an approval policy of never, so a step the
- * sandbox refuses fails rather than waiting on a person nobody is. The
- * sandbox keeps its writes to the folder; it can still read the disk, so
- * what bounds a job is what Holi copies back. Its JSONL events say how the
- * run went.
+ * (`../host/jobs.ts`): the workspace-write sandbox with no network and no web
+ * search, and an approval policy of never, so a step the sandbox refuses
+ * fails rather than waiting on a person nobody is. The sandbox keeps its
+ * writes to the folder; it can still read the disk, so what bounds a job is
+ * what Holi copies back. Its JSONL events say how the run went.
  *
  * **A fenced session** (`TerminalOpts.fence`) is the TUI in a scratch folder
  * Holi made (`../host/fenced.ts`), under the same sandbox and with the same
@@ -29,13 +28,19 @@
  * and answers in its terminal. What it wrote is copied back at each turn's
  * end, which `notify` reports.
  *
+ * **Neither runs on the person's `~/.codex`.** Each gets a Codex folder of
+ * its own in its state folder (`home.ts`), with their sign-in and model
+ * settings and none of their MCP servers, plugins, skills or hooks: a
+ * command-line override cannot take those away. A token Codex refreshed
+ * there goes back into their `auth.json` once the process exits
+ * (`release`).
+ *
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { accessSync, constants } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 import { resolveBin, shellReadBridgeEnv } from '../../../../main/plugin-api'
 import { buildAgentEnv } from '../claude/cli'
+import { personCodexHome, prepareCodexHome, releaseCodexHome } from './home'
 import { PTY_SESSION_ID } from '../host/pty-sessions'
 import type { AgentProvider, JobEvent, RouteServer, TurnRouteDeps } from '../provider'
 
@@ -128,11 +133,10 @@ export function registerCodexRoutes(server: RouteServer, deps: TurnRouteDeps): (
  * network and never asking. Every option before `--`, so the prompt is only
  * ever the prompt.
  *
- * The person's `config.toml` must not hand an unattended run tools outside
- * the sandbox, so the MCP servers are emptied and web search is off, under
+ * An unattended run must have no tools outside the sandbox: it runs on a
+ * Codex folder with no MCP servers (`home.ts`), and web search is off, under
  * both the key current Codex reads (`web_search`) and the older
- * `tools.web_search`. These keys are Codex's as best known, not verified
- * against a real `codex` here.
+ * `tools.web_search`.
  * @public exported for its test
  */
 export function jobArgs({
@@ -157,8 +161,6 @@ export function jobArgs({
     '-c',
     'sandbox_workspace_write.network_access=false',
     '-c',
-    'mcp_servers={}',
-    '-c',
     'web_search="disabled"',
     '-c',
     'tools.web_search=false',
@@ -170,7 +172,8 @@ export function jobArgs({
 
 /**
  * What fences a session to `dir`: its writes sandboxed there with no
- * network, the person's MCP servers and web search off (as `jobArgs`), and
+ * network, web search off (as `jobArgs`; its Codex folder has no MCP
+ * servers), and
  * approvals asked in the terminal (`on-request`), whatever `config.toml`
  * says.
  * @public exported for its test
@@ -185,8 +188,6 @@ export function fenceArgs(dir: string): string[] {
     'approval_policy="on-request"',
     '-c',
     'sandbox_workspace_write.network_access=false',
-    '-c',
-    'mcp_servers={}',
     '-c',
     'web_search="disabled"',
     '-c',
@@ -240,29 +241,35 @@ export function readJobEvent(line: string): JobEvent | null {
 
 export interface CodexProviderDeps {
   resolveBin?: () => string | null
+  /** The environment Codex runs from, `CODEX_HOME` and its keys among it. */
+  env?: NodeJS.ProcessEnv
 }
 
 export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
-  const bin = deps.resolveBin ?? (() => resolveCodexBin())
+  const base = deps.env ?? process.env
+  const bin = deps.resolveBin ?? (() => resolveCodexBin(base))
   return {
     id: 'codex',
     label: 'Codex',
     notInstalled: NOT_INSTALLED,
     installed: () => bin() !== null,
     // Codex keeps its own home; Holi has nothing to provision in it.
-    configure: async () => ({ dir: process.env.CODEX_HOME ?? join(homedir(), '.codex') }),
+    configure: async () => ({ dir: personCodexHome(base) }),
     terminal(target, opts = {}) {
       const path = bin()
       if (path === null) return null
-      const env = buildAgentEnv(process.env, { binDir: target.binDir })
+      const env = buildAgentEnv(base, { binDir: target.binDir })
       delete env[SESSION_ENV]
       if (opts.session !== undefined) env[SESSION_ENV] = opts.session
+      // A fenced session runs on a Codex folder of its own, without the
+      // person's MCP servers.
+      if (opts.fence !== undefined) env.CODEX_HOME = prepareCodexHome(opts.fence.state, base)
       return {
         bin: path,
         args: [
           '-c',
           notifyOverride(),
-          ...(opts.fence === undefined ? [] : fenceArgs(opts.fence)),
+          ...(opts.fence === undefined ? [] : fenceArgs(opts.fence.dir)),
           ...(opts.resume === undefined
             ? []
             : ['resume', ...(opts.resume === 'pick' ? [] : [opts.resume])]),
@@ -273,19 +280,21 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
         env,
       }
     },
+    release: (state) => releaseCodexHome(state, base),
     capabilities: {
       turns: { routes: registerCodexRoutes },
       fenced: true,
       jobs: {
-        command({ cwd, prompt, model }) {
+        command({ cwd, prompt, model, state }) {
           const path = bin()
           if (path === null) return null
           // No Holi commands on its PATH and no session id: a job writes
           // nothing of the vault but the folder it runs in. Its sandbox can
           // still read the disk; what reaches the vault is what Holi copies
-          // back.
-          const env = buildAgentEnv(process.env)
+          // back. Its Codex folder is its own, with no MCP servers.
+          const env = buildAgentEnv(base)
           delete env[SESSION_ENV]
+          env.CODEX_HOME = prepareCodexHome(state, base)
           return {
             bin: path,
             args: jobArgs({ cwd, prompt, ...(model === undefined ? {} : { model }) }),

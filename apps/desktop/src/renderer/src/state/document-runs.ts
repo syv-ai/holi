@@ -55,6 +55,9 @@ export interface AgentRun {
    *  the app when it finishes, it offers it. */
   away?: boolean
   sessionId: string | null
+  /** Which start this run is waiting on (`launchRunAtom`): a start that
+   *  resolves for a run since stopped or replaced stops what it started. */
+  launch?: number
   status: AgentRunStatus
   /** Set once the session was seen working, so its idle means done. */
   seenWorking: boolean
@@ -94,11 +97,18 @@ export async function agentCapability<T>(
 
 type StartResult = { ok: true; sessionId: string } | { ok: false; message: string }
 
-/** Start a run with `capabilityName`, and note its session or why not. */
+let launches = 0
+
+/**
+ * Start a run with `capabilityName`, and note its session or why not. A Stop
+ * while it starts has no session to stop yet: the run is no longer live when
+ * the start comes back (or another run took its place), so the session it
+ * started is stopped there and then, never followed.
+ */
 export const launchRunAtom = atom(
   null,
   async (
-    _get,
+    get,
     set,
     {
       remote,
@@ -107,8 +117,22 @@ export const launchRunAtom = atom(
       params,
     }: { remote: string; path: string; capabilityName: string; params: unknown },
   ) => {
+    const launch = ++launches
+    set(patchRunAtom, { path, patch: { launch } })
+    const current = (): AgentRun | undefined => {
+      const run = get(documentRunsAtom)[path]
+      return run?.launch === launch && isRunLive(run) ? run : undefined
+    }
     try {
       const result = await agentCapability<StartResult>(remote, capabilityName, params)
+      if (current() === undefined) {
+        if (result.ok) {
+          await agentCapability(remote, 'agent.stop', { id: result.sessionId }).catch(
+            () => undefined,
+          )
+        }
+        return
+      }
       set(patchRunAtom, {
         path,
         patch: result.ok
@@ -116,6 +140,7 @@ export const launchRunAtom = atom(
           : { status: 'failed', message: result.message },
       })
     } catch (err) {
+      if (current() === undefined) return
       set(patchRunAtom, {
         path,
         patch: {

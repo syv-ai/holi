@@ -169,6 +169,7 @@ describe('sessions Holi runs', () => {
     let copied!: () => void
     const fence = {
       dir: '/scratch/abc',
+      state: '/scratch/abc.agent',
       turnEnded: vi.fn(() => {
         return new Promise<void>((resolve) => (copied = resolve))
       }),
@@ -177,7 +178,7 @@ describe('sessions Holi runs', () => {
     const res = await t.sessions.start('codex', { prompt: 'Make the app', fence })
     if (!res.ok) throw new Error(res.message)
     expect(t.opened[0]?.cwd).toBe('/scratch/abc')
-    expect(t.asked[0]?.fence).toBe('/scratch/abc')
+    expect(t.asked[0]?.fence).toEqual({ dir: '/scratch/abc', state: '/scratch/abc.agent' })
     // Holi's commands reach the vault: none on a fenced session's PATH.
     expect(t.targets[0]?.binDir).toBeNull()
 
@@ -195,7 +196,12 @@ describe('sessions Holi runs', () => {
 
   it('refuses a fence its provider cannot keep', async () => {
     const t = setup()
-    const fence = { dir: '/scratch/abc', turnEnded: async () => {}, exited: () => {} }
+    const fence = {
+      dir: '/scratch/abc',
+      state: '/scratch/abc.agent',
+      turnEnded: async () => {},
+      exited: () => {},
+    }
     expect(await t.sessions.start('codex', { prompt: 'x', fence })).toEqual({
       ok: false,
       message: 'Codex cannot run fenced to a folder.',

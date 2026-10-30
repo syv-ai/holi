@@ -53,9 +53,10 @@ capability may read. A `background` provider runs it as a background session all
 scope (`Read(./x)`, `Edit`/`Write(./folder/**)`); a `jobs` provider runs it in
 `<userData>/agent-jobs/<id>/`, the readable files copied in at their vault paths. Codex's is
 `codex exec --json --skip-git-repo-check -C <scratch> --sandbox workspace-write` with
-`approval_policy="never"`, no network, no MCP servers and web search off, so the person's
-`config.toml` cannot hand an unattended run tools outside the sandbox: a step its sandbox refuses
-fails rather than waiting on nobody, and Codex's own permission model is not bypassed. **A job is
+`approval_policy="never"`, no network and web search off, on a Codex folder of the job's own (below),
+so the person's MCP servers, plugins and skills cannot hand an unattended run tools outside the
+sandbox: a step its sandbox refuses fails rather than waiting on nobody, and Codex's own permission
+model is not bypassed. **A job is
 bounded by what it writes back, not by what it reads**: Codex's sandbox keeps its writes to the
 scratch folder but can read the disk. Holi reads its JSONL events (thread, turn completed, turn
 failed, error) and, when the turn completed and the process exited 0, kills what is left of its
@@ -70,7 +71,22 @@ minutes; it has no terminal, so Open, Restart, Duplicate and messages are refuse
 leaving the vault and quitting (whose question counts a running job) stop its process group, a
 Stop during the copy back stops it there and the job fails, and its scratch folder is deleted.
 Beside each folder is `<id>.pid`; one a crash left behind is killed at the next start, when that
-pid still leads a group whose command names the folder. A provider with neither is refused, never
+pid still leads a group whose command names the folder. **A new folder is never written over**: a
+`folder/**` in the write scope (Create vault app's `<name>.app`) must not be in the vault when the
+run starts, or it does not start; and a copy into it is refused, writing nothing of it, when it
+holds anything this run did not write there, as when sync brought the same app in meanwhile.
+
+**Codex's own folder for a run.** A `-c mcp_servers={}` override does not clear the servers the
+person's `config.toml` names (Codex 0.166.0 still lists them), so a job and a fenced session run
+with `CODEX_HOME` set to a folder in their state folder (`<id>.agent/codex-home`, beside the
+scratch folder and outside what the run may write; `codex/home.ts`). It holds the person's
+`auth.json` (read through a symlink) and a `config.toml` of their model and provider keys alone
+(`model`, `model_provider`, `model_providers`, the reasoning and verbosity keys, the forced login
+keys) with `cli_auth_credentials_store = "file"`; their MCP servers, profiles, plugins, skills,
+hooks, trusted projects and global `AGENTS.md` are dropped. With no `auth.json` and no API key in
+the environment (Codex may keep the sign-in in the keychain, tied to its folder's path) the run
+does not start and says how to sign in so it can. Once the process exits, a sign-in Codex refreshed
+there goes back into the person's `auth.json`, but only while theirs is still the one handed over. A provider with neither is refused, never
 run on another agent. It is for a plugin built on the agent, whose run nobody watches; what a
 person starts and may want to follow is a fenced session (below).
 
@@ -82,11 +98,11 @@ allowed exactly the scope, as a job. A `fenced` provider runs it as a session Ho
 `<userData>/agent-fenced/<id>/`, the readable files copied in at their vault paths, with no Holi
 commands on its `PATH` and the system text put before the prompt. Codex's is its TUI with
 `-C <scratch> --sandbox workspace-write`, `approval_policy="on-request"` (its interactive
-approvals, asked in its terminal, whatever `config.toml` says), no network, no MCP servers and web
-search off. As each turn ends (`notify`, or the terminal going quiet) and once more when its
+approvals, asked in its terminal, whatever `config.toml` says), no network and web search off, on
+a Codex folder of its own with no MCP servers (above). As each turn ends (`notify`, or the terminal going quiet) and once more when its
 process exits, what it wrote is copied back by the jobs' copy (the write scope, the vault's shared
-content, no symlink followed, `app.yaml` last, the same caps), before the turn's bracket closes so
-the turn review shows it. The folder is deleted when the process exits, and every folder when the
+content, no symlink followed, `app.yaml` last, the same caps, never over a new folder something
+else made), before the turn's bracket closes so the turn review shows it. The folder is deleted when the process exits, and every folder when the
 agent leaves the vault or starts. A provider with neither is refused, never run on another agent.
 The document menu's and the file tree's **Create vault app** ([editor](editor.md)) is its caller.
 
@@ -415,7 +431,8 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 
 - `apps/desktop/src/plugins/agent/main/index.ts`: the plugin's main side; `provider.ts`: the line between the host and
   the agents it runs, the core and the capabilities
-- `apps/desktop/src/plugins/agent/main/codex/`: Codex as a provider: the command, the `notify` hook and its route
+- `apps/desktop/src/plugins/agent/main/codex/`: Codex as a provider: the command, the `notify` hook and its route,
+  and a run's own Codex folder (`home.ts`)
 - `apps/desktop/src/plugins/agent/main/host/pty-sessions.ts`, `pty-signals.ts`: the sessions Holi runs itself, and
   their turns read off the terminal
 - `apps/desktop/src/plugins/agent/main/host/jobs.ts`: jobs, their scratch folders, events and copy back

@@ -69,10 +69,11 @@ export interface TerminalOpts {
   prompt?: string
   /** Holi's id for a session it runs itself, which its hooks name. */
   session?: string
-  /** A folder of Holi's the session is fenced to (`fenced` only): its cwd,
-   *  its writes sandboxed to it, with no network, MCP servers or web search,
-   *  and the agent's own approvals in its terminal. */
-  fence?: string
+  /** A folder of Holi's the session is fenced to (`fenced` only): its cwd
+   *  (`dir`), its writes sandboxed to it, with no network, MCP servers or web
+   *  search, and the agent's own approvals in its terminal; and a folder of
+   *  Holi's outside it for the agent's own state (`state`). */
+  fence?: { dir: string; state: string }
 }
 
 /** Where the provider's hook routes are served (the bridge). */
@@ -133,8 +134,15 @@ export type JobEvent =
 
 /** A prompt run once, unwatched, in a folder of Holi's (`host/jobs.ts`). */
 interface JobsCapability {
-  /** What runs the job in `cwd`. Null when the agent is not installed. */
-  command(args: { cwd: string; prompt: string; model?: string }): TerminalCommand | null
+  /** What runs the job in `cwd`, with `state` a folder of Holi's outside it
+   *  for the agent's own (its own home, say). Null when the agent is not
+   *  installed. Throws with a sentence when it cannot run. */
+  command(args: {
+    cwd: string
+    prompt: string
+    model?: string
+    state: string
+  }): TerminalCommand | null
   /** One line of the job's standard output, or null when it says nothing
    *  the host reads. Another program's output: never throws. */
   event(line: string): JobEvent | null
@@ -173,6 +181,10 @@ export interface AgentProvider {
   firstSpawn?: { take(configDir: string): Promise<boolean>; notice: string }
   /** What the provider writes into a vault. */
   seed?: SeedContribution
+  /** A process Holi ran on one of its state folders (a job's, a fenced
+   *  session's) has exited: take back what the agent keeps of the person's,
+   *  such as a sign-in it refreshed there. Never throws. */
+  release?(state: string): Promise<void>
   capabilities: ProviderCapabilities
 }
 

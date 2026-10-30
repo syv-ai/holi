@@ -18,6 +18,18 @@
  * fails. A failed or stopped job copies nothing back, and a Stop during the
  * copy stops it there. The folder is deleted either way.
  *
+ * **A new folder is never written over.** A `folder/**` in the write scope
+ * is where the run makes something (Create vault app's `<name>.app`): it
+ * must not be in the vault when the run starts, and at each copy everything
+ * in it must be what this run wrote there. When sync or anything else put
+ * it there meanwhile, the copy is refused in words and nothing of it is
+ * written (`takenDestination`, `copyBack`).
+ *
+ * Beside the folder is the agent's own state folder (`<id>.agent/`, its own
+ * Codex home, say), outside what the job may write; once the process exits
+ * the provider takes back what it keeps of the person's there
+ * (`AgentProvider.release`), and it goes with the job.
+ *
  * Beside each folder is `<id>.pid`, the process's pid, outside what the job
  * may write: a crash leaves it behind, and the next start kills that group
  * (when it still leads one and its command names the folder) before the
@@ -110,8 +122,14 @@ export interface Jobs {
   /** Stop every job and delete every scratch folder. */
   leave(): Promise<void>
   /** Copy back what `dir` holds inside `write`, as a job's success does:
-   *  a session fenced to a folder of Holi's (`fenced.ts`) at each turn's end. */
-  copyBack(dir: string, write: readonly string[]): Promise<{ written: number; skipped: string[] }>
+   *  a session fenced to a folder of Holi's (`fenced.ts`) at each turn's end.
+   *  `made` is what this run wrote into its new folders so far, which it
+   *  adds to. */
+  copyBack(
+    dir: string,
+    write: readonly string[],
+    made: Set<string>,
+  ): Promise<{ written: number; skipped: string[] }>
 }
 
 interface Job {
@@ -120,6 +138,8 @@ interface Job {
   name: string
   startedAt: number
   dir: string
+  /** The agent's own state, outside `dir`. */
+  state: string
   child: ChildProcess | null
   outcome?: 'done' | 'failed'
   message?: string
@@ -145,6 +165,46 @@ const MAX_COPY_FILES = 200
 const MAX_COPY_BYTES = 20 * 1024 * 1024
 /** How many left-out paths a job's message names. */
 const SHOWN_SKIPPED = 10
+
+/** The new folders a write scope names (`folder/**`). */
+const newFolders = (write: readonly string[]): string[] =>
+  write.filter((p) => p.endsWith('/**')).map((p) => p.slice(0, -3))
+
+/** Every entry under `dir` that is not a folder (a link is not followed),
+ *  vault-relative under `prefix`. */
+async function entriesUnder(dir: string, prefix: string): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+  const out: string[] = []
+  for (const entry of entries) {
+    const rel = `${prefix}/${entry.name}`
+    if (entry.isDirectory()) out.push(...(await entriesUnder(join(dir, entry.name), rel)))
+    else out.push(rel)
+  }
+  return out
+}
+
+/**
+ * The first new folder of `write` already in the vault at `root`, or null.
+ * Case-blind where the disk is: on macOS `plan.app` is `Plan.app`.
+ * @public exported for its test
+ */
+export async function takenDestination(
+  root: string,
+  write: readonly string[],
+): Promise<string | null> {
+  for (const folder of newFolders(write)) {
+    const there = await lstat(join(root, folder)).then(
+      () => true,
+      () => false,
+    )
+    if (there) return folder
+  }
+  return null
+}
+
+/** Why a run did not start: where it would make something is taken. */
+export const takenMessage = (folder: string): string =>
+  `${folder} is already in the vault, and Holi never writes over it, so the run did not start.`
 
 const MANIFEST = 'app.yaml'
 const isManifest = (rel: string): boolean => rel === MANIFEST || rel.endsWith(`/${MANIFEST}`)
@@ -283,6 +343,7 @@ export function createJobs(deps: JobsDeps): Jobs {
   async function copyBack(
     job: Pick<Job, 'dir' | 'stopped'>,
     write: readonly string[],
+    made: Set<string>,
   ): Promise<{ written: number; skipped: string[] }> {
     const skipped: string[] = []
     const allowed: { path: string; rel: VaultRelPath }[] = []
@@ -312,6 +373,19 @@ export function createJobs(deps: JobsDeps): Jobs {
         `The job wrote more than Holi copies back (${MAX_COPY_FILES} files, ${MAX_COPY_BYTES / 1024 / 1024} MB), so nothing was written.`,
       )
     }
+    // A new folder holds only what this run wrote there, or nothing of it
+    // is written: whatever else is in it came from somewhere else meanwhile.
+    for (const folder of newFolders(write)) {
+      if (!allowed.some(({ rel }) => rel.startsWith(`${folder}/`))) continue
+      const theirs = (await entriesUnder(join(deps.vault.root, folder), folder)).filter(
+        (rel) => !made.has(rel),
+      )
+      if (theirs.length > 0) {
+        throw new Error(
+          `Holi did not copy back ${folder}: something else put it in the vault while the agent worked, and Holi never writes over it.`,
+        )
+      }
+    }
     const ordered = [
       ...allowed.filter(({ rel }) => !isManifest(rel)),
       ...allowed.filter(({ rel }) => isManifest(rel)),
@@ -329,6 +403,7 @@ export function createJobs(deps: JobsDeps): Jobs {
       }
       if (job.stopped !== undefined) break
       await writeAtomic(deps.vault.root, rel, data)
+      made.add(rel)
       written += 1
       await deps.afterWrite?.(rel)
     }
@@ -342,6 +417,7 @@ export function createJobs(deps: JobsDeps): Jobs {
     if (message !== undefined) job.message = message
     job.child = null
     void rm(job.dir, { recursive: true, force: true }).catch(() => undefined)
+    void rm(job.state, { recursive: true, force: true }).catch(() => undefined)
     void rm(pidFile(job.id), { force: true }).catch(() => undefined)
     job.dropTimer = setTimeout(() => {
       if (jobs.get(job.id) === job) {
@@ -383,13 +459,18 @@ export function createJobs(deps: JobsDeps): Jobs {
     async start({ provider, name, prompt, system, model, scope }) {
       const id = `j${randomBytes(6).toString('hex')}`
       const dir = join(deps.scratchRoot, id)
+      const state = join(deps.scratchRoot, `${id}.agent`)
       const fail = async (message: string): Promise<JobResult> => {
         await rm(dir, { recursive: true, force: true }).catch(() => undefined)
+        await rm(state, { recursive: true, force: true }).catch(() => undefined)
         await rm(pidFile(id), { force: true }).catch(() => undefined)
         return { ok: false, message }
       }
       await swept
+      const taken = await takenDestination(deps.vault.root, scope.write)
+      if (taken !== null) return fail(takenMessage(taken))
       await mkdir(dir, { recursive: true })
+      await mkdir(state, { recursive: true, mode: 0o700 })
       for (const path of scope.read) {
         const abs = await exactPath(deps.vault.root, path)
         if (abs === null) return fail(`Holi could not read ${path}.`)
@@ -400,11 +481,17 @@ export function createJobs(deps: JobsDeps): Jobs {
         )
         if (!copied) return fail(`Holi could not read ${path}.`)
       }
-      const command = provider.capabilities.jobs.command({
-        cwd: dir,
-        prompt: system === undefined ? prompt : `${system}\n\n${prompt}`,
-        ...(model === undefined ? {} : { model }),
-      })
+      let command: ReturnType<JobsProvider['capabilities']['jobs']['command']>
+      try {
+        command = provider.capabilities.jobs.command({
+          cwd: dir,
+          prompt: system === undefined ? prompt : `${system}\n\n${prompt}`,
+          ...(model === undefined ? {} : { model }),
+          state,
+        })
+      } catch (err) {
+        return fail((err as Error).message)
+      }
       if (command === null) return fail(provider.notInstalled)
 
       let child: ChildProcess
@@ -420,6 +507,7 @@ export function createJobs(deps: JobsDeps): Jobs {
         name,
         startedAt: Date.now(),
         dir,
+        state,
         child,
         exited: new Promise<void>((r) => (exitedResolve = r)),
       }
@@ -463,10 +551,11 @@ export function createJobs(deps: JobsDeps): Jobs {
         // Exited: a Stop from here on signals nothing, since its pid may
         // already be another process's.
         job.child = null
+        await provider.release?.(state)
         if (job.stopped !== undefined) return finish(job, 'failed', job.stopped)
         if (completed && failure === null && code === 0) {
           try {
-            const { written, skipped } = await copyBack(job, scope.write)
+            const { written, skipped } = await copyBack(job, scope.write, new Set())
             // A Stop pressed during the copy wins.
             if (job.stopped !== undefined) return finish(job, 'failed', job.stopped)
             log(`${id}: done, ${written} file(s) written, ${skipped.length} left out`)
@@ -523,6 +612,6 @@ export function createJobs(deps: JobsDeps): Jobs {
       push()
     },
 
-    copyBack: (dir, write) => copyBack({ dir }, write),
+    copyBack: (dir, write, made) => copyBack({ dir }, write, made),
   }
 }
