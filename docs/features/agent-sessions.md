@@ -17,6 +17,7 @@ its per-vault directory, what it seeds. **Its core is enough to run it in a tab*
 | `background` | sessions its own supervisor runs, which outlive a terminal and can run unwatched | `claude --bg`              | no                       |
 | `turns`      | hook routes that report a turn's start and end                                   | `UserPromptSubmit`, `Stop` | turn ends, from `notify` |
 | `status`     | how full the context is, and the model                                           | the status line            | no                       |
+| `jobs`       | one prompt run unwatched in a scratch folder of Holi's, its result copied back   | no (`background` serves)   | `codex exec --json`      |
 
 **Two kinds of session, one list.** A background provider's sessions are its supervisor's, keyed
 by its job id (the rest of this page). Any other provider's are **sessions Holi runs itself**
@@ -43,6 +44,25 @@ ask and its thread id for Resume. Codex reads the vault's `AGENTS.md` itself. It
 (`UserPromptSubmit` and the rest) would give a turn's start too, but each must first be trusted in
 `/hooks`, so Holi does not use them. **Resume a Codex conversation**, in the menu on the
 Sessions +, opens `codex resume`, Codex's own picker.
+
+**Jobs** (`host/jobs.ts`) are how a provider without a supervisor runs a prompt with nobody
+watching, through `agent.job` (UI door only): a name, a prompt, an optional system text and model,
+and a **scope**, the vault paths it reads and the paths or `folder/**` it writes, each a path a
+capability may read. A `background` provider runs it as a background session allowed exactly that
+scope (`Read(./x)`, `Edit`/`Write(./folder/**)`); a `jobs` provider runs it in
+`<userData>/agent-jobs/<id>/`, the readable files copied in at their vault paths. Codex's is
+`codex exec --json --skip-git-repo-check -C <scratch> --sandbox workspace-write` with
+`approval_policy="never"` and no network: a step its sandbox refuses fails rather than waiting
+on nobody, and Codex's own permission model is not bypassed. Holi reads its JSONL events (thread,
+turn completed, turn failed, error) and, when the turn completed and the process exited 0, copies
+back only the regular files it wrote inside the write scope, each checked as a vault path with no
+symlink on the way, any `app.yaml` last. A failure copies nothing and says why: the turn's own
+reason, else the last line Codex printed. A job is a session in the one list, named `j` and twelve
+hex digits, working while it runs, then idle with its `outcome` and `message` for ten minutes; it
+has no terminal, so Open, Restart, Duplicate and messages are refused in words. Stop, leaving the
+vault and quitting (whose question counts a running job) stop its process group, and its scratch
+folder is deleted. A provider with neither is refused, never run on another agent. The document
+menu's **Create vault app** ([editor](editor.md)) is its caller.
 
 **Which agent a new session runs** is this machine's `agentProvider` (`app.local.yaml`; the
 **Agents** card in Settings → General, a row per agent with **Make default**): which agent is installed and signed in is the machine's, not the
@@ -99,6 +119,7 @@ wrote into `plugins.yaml` is ignored, and dropped at the file's next write.
 plugin that requires it ([architecture](../architecture.md), Plugins); it offers general
 capabilities any such plugin calls, from its renderer or, through `ctx.call`, from its main side:
 `agent.launch` (a background session whose first turn is a prompt, with no terminal),
+`agent.job` (a prompt run unwatched on any provider that can, within a scope; Jobs above),
 `agent.providers` (the agents a session can run, and which are installed), and the session verbs.
 Holis and automations are such callers. The turn bracket's outside driver is the agent's own
 sessions Holi runs: the listing never names their ids, so its reconcile forgets only the turns of
@@ -370,6 +391,7 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - `apps/desktop/src/plugins/agent/main/codex/`: Codex as a provider: the command, the `notify` hook and its route
 - `apps/desktop/src/plugins/agent/main/host/pty-sessions.ts`, `pty-signals.ts`: the sessions Holi runs itself, and
   their turns read off the terminal
+- `apps/desktop/src/plugins/agent/main/host/jobs.ts`: jobs, their scratch folders, events and copy back
 - `apps/desktop/src/plugins/agent/main/claude/`: Claude Code as the provider: `cli.ts` (every `claude` command, one
   environment, the binary), `listing.ts` (the listing, state rules, the watch), `routes.ts` (the
   turn, session and status-line routes), `messaging.ts` (the inbox socket writer)

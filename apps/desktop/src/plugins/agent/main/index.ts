@@ -20,6 +20,7 @@ import { claudeSeed } from './claude/seed'
 import { codexProvider } from './codex'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { createPtySessions, PTY_SESSION_ID } from './host/pty-sessions'
+import { createJobs } from './host/jobs'
 import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
 import { openTurnLog } from './host/turn-log'
@@ -51,11 +52,12 @@ export const agentMain: MainPlugin = {
 
     // One list for the renderer and the plugins built on the agent: the
     // background sessions Claude Code's supervisor runs, then the ones Holi
-    // runs itself.
+    // runs itself, then its jobs.
     let background: SessionSummary[] = []
     let own: SessionSummary[] = []
+    let jobRows: SessionSummary[] = []
     const pushSessions = (): void => {
-      const all = [...background, ...own]
+      const all = [...background, ...own, ...jobRows]
       ctx.emit(ctx.remote, 'sessions', all)
       ctx.publish('sessions', all)
       sessionLog.sessions(all)
@@ -93,6 +95,16 @@ export const agentMain: MainPlugin = {
         pushSessions()
       },
     })
+    // Prompts run unwatched by a provider without a supervisor, each in a
+    // scratch folder of its own.
+    const jobs = createJobs({
+      vault: { remote: ctx.remote, root: ctx.root },
+      scratchRoot: join(ctx.userData, 'agent-jobs'),
+      onChange: (list) => {
+        jobRows = list
+        pushSessions()
+      },
+    })
     // What the agent and Holi want the person to see: an entry in the
     // vault's inbox, and a banner while Holi is out of sight.
     const inbox = createInbox({
@@ -105,6 +117,7 @@ export const agentMain: MainPlugin = {
       ...agentCapabilities({
         sessions: started,
         own: ptySessions,
+        jobs,
         providers,
         terminals,
         liveRemote,
@@ -159,7 +172,7 @@ export const agentMain: MainPlugin = {
     // is working or waiting on you: that turn is cut short. Idle sessions
     // stop without a question; their conversations stay in the agents list.
     ctx.guardQuit(() => {
-      const busy = [...started.sessions(), ...ptySessions.sessions()].filter(
+      const busy = [...started.sessions(), ...ptySessions.sessions(), ...jobs.sessions()].filter(
         (s) => s.state !== 'idle',
       )
       if (busy.length === 0) return null
@@ -202,6 +215,7 @@ export const agentMain: MainPlugin = {
       unmention()
       unwatchNeedsYou()
       await ptySessions.leave().catch((err) => console.error('[agent] pty sessions:', err))
+      await jobs.leave().catch((err) => console.error('[agent] jobs:', err))
       await started.leave().catch((err) => console.error('[agent] leave failed:', err))
       await terminals.closeAll().catch((err) => console.error('[agent] terminals:', err))
     }

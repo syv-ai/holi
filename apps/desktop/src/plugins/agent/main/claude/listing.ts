@@ -70,6 +70,11 @@ export interface SessionSummary {
   /** Claude Code's conversation id (its transcript's name), once it has
    *  said: what a read-only view of the conversation reads. */
   conversationId?: string
+  /** A job's end (`host/jobs.ts`): whether it did what it was asked. Absent
+   *  while it runs, and on every other kind of session. */
+  outcome?: 'done' | 'failed'
+  /** Why a job failed, in words. */
+  message?: string
 }
 
 /** What a session's status line says: its context use and its model. */
