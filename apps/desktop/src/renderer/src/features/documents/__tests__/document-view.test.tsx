@@ -183,15 +183,15 @@ test('Space on an empty line asks Sonnet, locks the page, and unlocks when done'
   await waitFor(() => expect(box).toHaveAttribute('contenteditable', 'true'))
 })
 
-test('Pi uses the local default and shows its warning without Claude-only launch options', async () => {
+test('Pi uses the local default without an editor warning or Claude-only launch options', async () => {
   const user = userEvent.setup()
   store.set(vaultSettingsAtom, {
     remote: 'syv/vault',
     settings: { ...VAULT_SETTING_DEFAULTS, agentProvider: 'pi', warnings: [] },
   })
   open('')
-  expect(await screen.findByText('Pi document runs are not sandboxed')).toBeVisible()
   const box = await editorBox()
+  expect(screen.queryByText('Pi document runs are not sandboxed')).not.toBeInTheDocument()
   box.focus()
   fireEvent.keyDown(box, { key: ' ', code: 'Space' })
   await user.type(
