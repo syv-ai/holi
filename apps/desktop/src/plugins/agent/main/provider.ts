@@ -184,6 +184,9 @@ interface JobsCapability {
    *  that start a turn, and the one that asks it to stop. Its input is closed
    *  once the run settles or a command fails, which ends the process. */
   input?: { start(run: JobRun): string[]; abort: string }
+  /** Once a turn's process has exited, whatever its outcome: Pi takes back
+   *  a sign-in it refreshed. */
+  ended?(run: JobRun): Promise<void>
 }
 
 interface ProviderCapabilities {

@@ -140,13 +140,14 @@ with the same sandbox, every option before `resume` as `codex exec`'s usage line
 at once when it is idle. A job in a scratch folder ends with its one turn and takes none. Stop,
 leaving the vault and quitting (whose question counts a running job) stop its process group and
 drop what was queued (a message while it stops is refused, and no turn starts after), a Stop during the copy back stops it there and the job fails, and a scratch
-folder is deleted. Beside the scratch folders is `<id>.pid`, the running turn's pid and the folder
-it runs in; one a crash left behind is killed at the next start, when that pid still leads a group
-whose command names that folder. Leaving the vault while a job is still getting ready (its
-folders made, its files copied in) spawns nothing: the start sees the vault was left and stops
-there, and the leave waits for every start under way before it stops the jobs. A fenced session
-still starting opens no session the same way. A provider with neither capability is refused,
-never run on another agent. It is for a plugin built on the agent, whose run nobody watches; what a person
+folder is deleted. Beside the scratch folders is `<id>.pid`, the running turn's pid and the job's
+state folder `<id>.agent/`, which every provider's command line names (Pi's session folder, Codex's
+`--output-last-message` file); one a crash left behind is killed at the next start, when that pid
+still leads a group whose command line names that folder. Leaving the vault while a job is still
+getting ready (its folders made, its files copied in) spawns nothing: the start sees the vault was
+left and stops there, and the leave waits for every start under way before it stops the jobs. A
+fenced session still starting opens no session the same way. A provider with neither capability is
+refused, never run on another agent. It is for a plugin built on the agent, whose run nobody watches; what a person
 starts and may want to follow is a fenced session (below).
 
 **Codex's own folder for a run.** A `-c mcp_servers={}` override does not clear the servers the
@@ -182,20 +183,41 @@ The document menu's and the file tree's **Create vault app** ([editor](editor.md
 with its process's permissions and asks before none. So the process is the boundary, and a job
 runs only where Holi can draw one: on macOS, under `/usr/bin/sandbox-exec -p <profile>`
 (`pi/sandbox.ts`); anywhere else it is refused ("no safe boundary on this platform"), never run
-unbounded. The profile denies by default and allows reading the system's libraries, Pi's install
-and the Node that runs it, Pi's own `settings.json`, `models.json` and global instructions (never
-its other sessions), and the job's files: the scratch folder, or for a job in the vault the clone
-but for its git, Holi's and the agents' folders and its local and secret files. It allows writing
-the job's folders (the scratch folder, or the vault folders `allow` names, nothing when it has
-none), the job's own `<id>.agent/` folder (Pi's session and a temporary folder), and Pi's
-`auth.json` and its lock, which a token refresh writes. Outbound network is allowed for Pi's calls
-to its model; its tools are `read`, `edit` and `write` alone, so no tool reaches it. The
-environment is `HOME`, `PATH`, `LANG`, `TMPDIR`, `PI_CODING_AGENT_DIR` and the model-key
-variables, nothing else. Pi runs `--mode rpc` with extensions, skills, prompt templates, themes,
-MCP and the project's own `.pi/` off (`--no-approve`). Holi asks `get_state` for the session's id
+unbounded. The profile denies by default. It runs only the Node that runs Pi and Pi's script, both
+named by path: Pi found as a Node script runs on the `node` on `PATH`, Pi's own installer's
+launcher (`~/.pi/agent/bin/pi`, a shell script) is followed to the release its
+`install/current-version` names and the Node the installer put in `~/.local/share/pi-node`, a
+binary runs as itself, and any other script is refused, since Holi cannot tell what it would run.
+It allows reading the system's libraries, Pi's install and the Node that runs it, and the job's
+files: the scratch folder, or for a job in the vault the clone but for every path with a segment
+that starts with a dot (git, Holi's and the agents' folders, secret files), every local one and
+every secret name in any case, at any depth, the shared path rules' kinds. It allows writing the
+job's folders (the scratch folder, or the vault folders `allow` names, nothing when it has none,
+and never a hidden path in them) and the job's own `<id>.agent/` folder. No folder a job reads or
+writes may be the home folder, Pi's own folder or one above either: such a job is refused, never
+widened. A path with a double quote in it, which the profile cannot name, refuses the job too.
+
+**A Pi job never sees the person's Pi folder.** It runs with a folder of its own,
+`<id>.agent/pi-agent/`, as `PI_CODING_AGENT_DIR`, which Holi fills before each turn, outside the
+sandbox: copies of `settings.json`, `models.json`, `models-store.json` and the global instructions
+(a symlinked file, as a dotfiles setup has it, read through), and an `auth.json` with one entry, the
+sign-in of the provider the job runs on. That provider is the job's model's (`provider/id`), else
+Pi's `defaultProvider` and `defaultModel` from its settings, passed as `--provider` and `--model`;
+with neither, the job is refused with the reason, since Holi cannot tell which sign-in it needs.
+After the turn, when Pi refreshed that sign-in, the entry goes back into the person's `auth.json`,
+that provider's alone, under Pi's own lock (the `auth.json.lock` folder): only a credential of the
+kind it was, and only while the person's entry is still the one handed over. Pi takes its own lock
+on settings even to read them, which its own folder lets it. Outbound network is allowed for Pi's
+calls to its model; its tools are `read`, `edit` and `write` alone, so no tool reaches it. The
+environment is `HOME`, `PATH`, `LANG`, `TMPDIR`, `PI_CODING_AGENT_DIR`, the model-key variables and
+the proxy and certificate variables (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` in either case, and
+`NODE_EXTRA_CA_CERTS`, whose file it may read), nothing else. Pi runs `--mode rpc --offline`
+(no catalogue refresh at startup) with extensions, skills, prompt templates, themes, MCP and the
+project's own `.pi/` off (`--no-approve`). Holi asks `get_state` for the session's id
 and model, sends the prompt, and waits for `agent_settled`, never `agent_end` or the prompt's
 acceptance; then it closes Pi's input, which ends the process. The last reply's `stopReason:
-"error"` or a refused command fails the turn with Pi's reason. Each reply's `usage.totalTokens` is
+"error"` or a refused command (even `get_state`, with a run that settles after) fails the turn
+with Pi's reason. Each reply's `usage.totalTokens` is
 the job's `tokens`, and the model shows on its row. A follow-up is a new process on the same
 session (`--session <id>` from the job's session folder): queued while a turn runs, like Codex's.
 Stop sends `abort` and closes the input, then signals the process group if it has not exited.
