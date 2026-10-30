@@ -68,6 +68,7 @@ import { useSelectionReport } from './use-selection-report'
 import { DocumentFormatBubble } from './document-format-bubble'
 import { DocumentHeader, type SaveState } from './document-header'
 import { documentTitle, joinDocument, splitDocument } from './markdown'
+import { applyReload } from './apply-reload'
 import { ErrorState } from '@/composites/empty-state'
 
 // How long typing has to pause before the file is written.
@@ -345,10 +346,9 @@ function DocumentEditor({
         const next = splitDocument(text)
         head.current = next.head
         lastText.current = text
-        editor.commands.setContent(next.body, {
-          contentType: 'markdown',
-          emitUpdate: false,
-        })
+        const document = editor.markdown.parse(next.body)
+        const transaction = applyReload(editor.state, document)
+        if (transaction) editor.view.dispatch(transaction)
         placeRef.current()
       })
       .catch(() => undefined)
