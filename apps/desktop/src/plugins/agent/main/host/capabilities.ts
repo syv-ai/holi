@@ -76,6 +76,7 @@ export interface AgentCapabilitiesDeps {
     PtySessions,
     | 'sessions'
     | 'past'
+    | 'hasPast'
     | 'reopen'
     | 'duplicate'
     | 'has'
@@ -95,9 +96,6 @@ export interface AgentCapabilitiesDeps {
   /** Pi's per-job RPC supervisor; unlike Claude it is managed by Holi. */
   pi?: {
     sessions(): SessionSummary[]
-    past?(): SessionSummary[]
-    reopen?(id: string, size: Geometry): Promise<StartResult>
-    duplicate?(id: string, size: Geometry): Promise<StartResult>
     launch(args: {
       name: string
       prompt: string
@@ -110,7 +108,6 @@ export interface AgentCapabilitiesDeps {
 }
 
 const notOpen = { ok: false as const, message: VAULT_NOT_OPEN }
-const UUID_SESSION = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 /** Far under Claude Code's own cap of about a million characters: a message
  *  is a note to a session, not a document. */
@@ -198,11 +195,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       run: async (ctx): Promise<SessionSummary[]> => {
         if (!live(ctx)) return []
         await deps.sessions.ensure()
-        return [
-          ...(await deps.sessions.past()),
-          ...(await deps.own.past()),
-          ...(deps.pi?.past?.() ?? []),
-        ]
+        return [...deps.sessions.past(), ...(await deps.own.past())]
       },
     }),
 
@@ -223,20 +216,6 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       doors: ['ui'],
       params: noParams,
       run: async (ctx): Promise<TerminalSummary[]> => (live(ctx) ? deps.terminals.list() : []),
-    }),
-
-    'agent.reopen': cap({
-      doors: ['ui'],
-      params: (raw) => ({
-        ...geometry(paramsObject(raw)),
-        id: stringParam(paramsObject(raw), 'id'),
-      }),
-      run: async (ctx, { id, ...size }): Promise<StartResult> => {
-        if (!live(ctx)) return notOpen
-        return (await deps.own.past()).some((s) => s.id === id)
-          ? deps.own.reopen(id, size)
-          : deps.sessions.open({ ...size, attach: id })
-      },
     }),
 
     /** A terminal on the agents list, on one session with `attach`, on a
@@ -270,13 +249,13 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
             ? { ok: false, message: 'That session has ended.' }
             : { ok: true, terminalId }
         }
+        if (args.attach !== undefined && (await deps.own.hasPast(args.attach))) {
+          const reopened = await deps.own.reopen(args.attach, args)
+          return reopened.ok ? { ok: true, terminalId: reopened.terminalId } : reopened
+        }
         // Anything else is a background session's job id, which reaches
         // `claude attach` as an argument: nothing else gets that far.
-        if (
-          args.attach !== undefined &&
-          !JOB_ID.test(args.attach) &&
-          !UUID_SESSION.test(args.attach)
-        ) {
+        if (args.attach !== undefined && !JOB_ID.test(args.attach)) {
           throw new CapabilityError('BAD_REQUEST', `not a session id: ${args.attach}`)
         }
         return deps.sessions.open(args)

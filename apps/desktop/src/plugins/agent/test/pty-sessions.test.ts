@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createPtySessions, nameOf, PTY_SESSION_ID } from '../main/host/pty-sessions'
+import {
+  CONVERSATION_ID,
+  createPtySessions,
+  nameOf,
+  parsePastFile,
+  PTY_SESSION_ID,
+} from '../main/host/pty-sessions'
 import type { OpenArgs } from '../main/host/terminals'
 import type { AgentProvider, TerminalOpts } from '../main/provider'
 
@@ -9,12 +15,19 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-function setup() {
+function setup(
+  providerId: 'codex' | 'pi' = 'codex',
+  past?: {
+    read(): Promise<import('../main/claude/listing').SessionSummary[]>
+    write(rows: import('../main/claude/listing').SessionSummary[]): Promise<void>
+  },
+) {
   vi.useFakeTimers()
   const asked: TerminalOpts[] = []
   const provider: AgentProvider = {
-    id: 'codex',
-    label: 'Codex',
+    id: providerId,
+    label: providerId === 'pi' ? 'Pi' : 'Codex',
+    ...(providerId === 'pi' ? { namesConversation: true } : {}),
     notInstalled: 'Codex is not installed',
     installed: () => true,
     configure: async () => ({ dir: '/home/.codex' }),
@@ -32,6 +45,7 @@ function setup() {
   const sessions = createPtySessions({
     vault: VAULT,
     providers: [provider],
+    ...(past === undefined ? {} : { past }),
     terminals: {
       open: (args) => {
         opened.push(args)
@@ -65,6 +79,46 @@ describe('nameOf', () => {
 })
 
 describe('sessions Holi runs', () => {
+  it('rejects invalid past ids and providers', () => {
+    const rows = parsePastFile({
+      'syv/vault': [
+        {
+          id: 'p0123456789ab',
+          provider: 'pi',
+          name: 'Valid',
+          state: 'idle',
+          startedAt: 1,
+          conversationId: '123e4567-e89b-42d3-a456-426614174000',
+        },
+        {
+          id: 'not-an-id',
+          provider: 'pi',
+          name: 'Bad id',
+          state: 'idle',
+          startedAt: 1,
+          conversationId: '123e4567-e89b-42d3-a456-426614174000',
+        },
+        {
+          id: 'p0123456789ab',
+          provider: 'unknown',
+          name: 'Bad provider',
+          state: 'idle',
+          startedAt: 1,
+          conversationId: '123e4567-e89b-42d3-a456-426614174000',
+        },
+        {
+          id: 'p0123456789ab',
+          provider: 'pi',
+          name: 'Bad conversation',
+          state: 'idle',
+          startedAt: 1,
+          conversationId: 'not-a-uuid',
+        },
+      ],
+    })
+    expect(rows['syv/vault']).toHaveLength(1)
+  })
+
   it('starts one in a terminal of its own, named by its id', async () => {
     const t = setup()
     const res = await t.sessions.start('codex', { cols: 100, rows: 30 })
@@ -129,11 +183,14 @@ describe('sessions Holi runs', () => {
     const t = setup()
     const res = await t.sessions.start('codex', {})
     if (!res.ok) throw new Error(res.message)
-    t.sessions.noteConversation(res.sessionId, { name: 'Plan the week', conversationId: 'th-1' })
+    t.sessions.noteConversation(res.sessionId, {
+      name: 'Plan the week',
+      conversationId: '123e4567-e89b-42d3-a456-426614174000',
+    })
     t.sessions.noteConversation(res.sessionId, { name: 'Something else' })
     expect(t.sessions.sessions()[0]).toMatchObject({
       name: 'Plan the week',
-      conversationId: 'th-1',
+      conversationId: '123e4567-e89b-42d3-a456-426614174000',
     })
   })
 
@@ -155,6 +212,70 @@ describe('sessions Holi runs', () => {
     // Gone mid-turn: nothing recorded.
     expect(t.edges.at(-1)).toBe(`forget:${res.sessionId}`)
     expect(t.sessions.send(res.sessionId, 'hello').ok).toBe(false)
+  })
+
+  it('keeps Pi conversation UUIDs separate from Holi PTY ids', async () => {
+    const t = setup('pi')
+    const result = await t.sessions.start('pi', {})
+    if (!result.ok) throw new Error(result.message)
+    expect(result.sessionId).toMatch(PTY_SESSION_ID)
+    expect(t.asked[0]?.session).toBe(result.sessionId)
+    expect(t.asked[0]?.conversation).toMatch(CONVERSATION_ID)
+    expect(t.asked[0]?.conversation).not.toBe(result.sessionId)
+  })
+
+  it('persists closed sessions locally and reopens the same conversation and PTY id', async () => {
+    let history: import('../main/claude/listing').SessionSummary[] = []
+    const store = {
+      read: async () => history,
+      write: async (rows: typeof history) => {
+        history = rows
+      },
+    }
+    const first = setup('pi', store)
+    const started = await first.sessions.start('pi', {})
+    if (!started.ok) throw new Error(started.message)
+    first.opened[0]!.onExit?.()
+    await first.sessions.past()
+    expect(history[0]).toMatchObject({ id: started.sessionId, provider: 'pi' })
+    const conversationId = history[0]?.conversationId
+    const reopened = setup('pi', store)
+    expect(await reopened.sessions.hasPast(started.sessionId)).toBe(true)
+    const result = await reopened.sessions.reopen(started.sessionId, {})
+    expect(result).toMatchObject({ ok: true, sessionId: started.sessionId })
+    expect(reopened.asked[0]).toMatchObject({ session: started.sessionId, resume: conversationId })
+    expect(reopened.sessions.sessions()[0]?.id).toBe(started.sessionId)
+  })
+
+  it('forks a live Pi conversation under a new UUID and does not persist native picker sessions', async () => {
+    const t = setup('pi')
+    const original = await t.sessions.start('pi', {})
+    if (!original.ok) throw new Error(original.message)
+    const fork = await t.sessions.duplicate(original.sessionId, {})
+    if (!fork.ok) throw new Error(fork.message)
+    expect(fork.sessionId).not.toBe(original.sessionId)
+    expect(t.asked[1]).toMatchObject({ fork: t.asked[0]?.conversation })
+    expect(t.asked[1]?.conversation).toMatch(CONVERSATION_ID)
+
+    const picker = await t.sessions.start('pi', { resume: 'pick' })
+    if (!picker.ok) throw new Error(picker.message)
+    expect(t.asked[2]?.session).toMatch(PTY_SESSION_ID)
+    expect(t.asked[2]?.conversation).toBeUndefined()
+    t.opened[2]!.onExit?.()
+    expect(await t.sessions.past()).toEqual([])
+  })
+
+  it('resumes a native UUID under a new PTY id and rejects invalid conversation identifiers', async () => {
+    const t = setup('pi')
+    const conversationId = '123e4567-e89b-42d3-a456-426614174000'
+    const resumed = await t.sessions.start('pi', { resume: conversationId })
+    if (!resumed.ok) throw new Error(resumed.message)
+    expect(resumed.sessionId).toMatch(PTY_SESSION_ID)
+    expect(resumed.sessionId).not.toBe(conversationId)
+    expect(t.asked[0]).toMatchObject({ session: resumed.sessionId, resume: conversationId })
+    expect(t.sessions.sessions()[0]?.conversationId).toBe(conversationId)
+    expect(await t.sessions.start('pi', { resume: 'not-a-uuid' })).toMatchObject({ ok: false })
+    expect(await t.sessions.start('pi', { fork: 'not-a-uuid' })).toMatchObject({ ok: false })
   })
 
   it('refuses a provider it does not run', async () => {

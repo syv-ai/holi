@@ -21,7 +21,7 @@ import { codexProvider } from './codex'
 import { piProvider } from './pi'
 import { createPiBackground } from './pi/background'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
-import { createPtySessions, PTY_SESSION_ID } from './host/pty-sessions'
+import { createPtySessions, parsePastFile, PTY_SESSION_ID } from './host/pty-sessions'
 import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
 import { openTurnLog } from './host/turn-log'
@@ -55,8 +55,13 @@ export const agentMain: MainPlugin = {
     // background sessions Claude Code's supervisor runs, then the ones Holi
     // runs itself.
     let background: SessionSummary[] = []
+    let backgroundPast: SessionSummary[] = []
     let piSessions: SessionSummary[] = []
     let own: SessionSummary[] = []
+    let ownPast: SessionSummary[] = []
+    const pushHistory = (): void => {
+      ctx.emit(ctx.remote, 'history', [...backgroundPast, ...ownPast])
+    }
     const pushSessions = (): void => {
       const all = [...background, ...piSessions, ...own]
       ctx.emit(ctx.remote, 'sessions', all)
@@ -66,6 +71,11 @@ export const agentMain: MainPlugin = {
 
     const started = createAgentSessions({
       emit: (remote, name, payload) => {
+        if (name === 'history' && remote === ctx.remote) {
+          backgroundPast = payload as SessionSummary[]
+          pushHistory()
+          return
+        }
         if (name !== 'sessions') return ctx.emit(remote, name, payload)
         background = payload as SessionSummary[]
         pushSessions()
@@ -94,8 +104,15 @@ export const agentMain: MainPlugin = {
       },
     })
     piBackground.setVault(ctx.remote, ctx.root)
+    const ptyHistory = jsonFileStore(join(ctx.userData, 'agent-pty-history.json'), parsePastFile)
     const ptySessions = createPtySessions({
       vault: { remote: ctx.remote, root: ctx.root },
+      past: {
+        read: async () => (await ptyHistory.read())[ctx.remote] ?? [],
+        write: async (list) => {
+          await ptyHistory.update((all) => ({ ...all, [ctx.remote]: list }))
+        },
+      },
       providers: providers.filter((p) => !hasBackground(p)),
       terminals,
       // Its turns pause sync and are recorded like a background session's.
@@ -105,6 +122,14 @@ export const agentMain: MainPlugin = {
         own = list
         pushSessions()
       },
+      onPast: (list) => {
+        ownPast = list
+        void pushHistory()
+      },
+    })
+    void ptySessions.past().then((list) => {
+      ownPast = list
+      pushHistory()
     })
     // What the agent and Holi want the person to see: an entry in the
     // vault's inbox, and a banner while Holi is out of sight.

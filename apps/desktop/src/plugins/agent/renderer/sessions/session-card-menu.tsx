@@ -153,6 +153,8 @@ function useRowActions(
   // Claude's supervised sessions have a terminal to attach and restart.
   // A Pi RPC job has neither; Pi's separate native PTY session does.
   const background = liveSession?.provider === 'claude'
+  const nativePi =
+    (liveSession?.provider ?? item.agent) === 'pi' && /^p[0-9a-f]{12}$/.test(jobId ?? '')
   const piRpc = (liveSession?.provider ?? item.agent) === 'pi' && jobId?.length === 8
   const sessionId = item.sessionId ?? jobId
   const icon = (Glyph: typeof PinIcon) => <Glyph aria-hidden="true" />
@@ -174,10 +176,17 @@ function useRowActions(
             },
           },
         ]
-  // Claude Code's own TUI on it: a copy of the conversation by its id, or a
-  // live background run itself.
+  // A Pi PTY has its own terminal; reopening a stopped one uses Holi's id.
+  // Claude's conversation id instead opens a separate Claude terminal.
   const conversationId = item.sessionId
-  if (!piRpc && conversationId !== undefined) {
+  if (nativePi && jobId !== undefined) {
+    place.push({
+      kind: 'item',
+      label: 'Open in terminal',
+      icon: icon(SquareTerminalIcon),
+      run: () => void attach(jobId),
+    })
+  } else if (!piRpc && conversationId !== undefined) {
     place.push({
       kind: 'item',
       label: 'Open in terminal',
@@ -260,20 +269,20 @@ function useRowActions(
   }
   if (isLive && jobId !== undefined) {
     if (background) {
-      running.push(
-        {
-          kind: 'item',
-          label: 'Restart',
-          icon: icon(RotateCwIcon),
-          run: () => void respawn(jobId),
-        },
-        {
-          kind: 'item',
-          label: 'Duplicate',
-          icon: icon(CopyPlusIcon),
-          run: () => void duplicate(jobId),
-        },
-      )
+      running.push({
+        kind: 'item',
+        label: 'Restart',
+        icon: icon(RotateCwIcon),
+        run: () => void respawn(jobId),
+      })
+    }
+    if (background || nativePi) {
+      running.push({
+        kind: 'item',
+        label: 'Duplicate',
+        icon: icon(CopyPlusIcon),
+        run: () => void duplicate(jobId),
+      })
     }
     running.push({
       kind: 'item',

@@ -239,7 +239,7 @@ function DocumentEditor({
         },
       },
       onUpdate: ({ transaction }) => {
-        if (!transaction.docChanged) return
+        if (!transaction.docChanged || transaction.getMeta('preventUpdate')) return
         setSaveState('saving')
         window.clearTimeout(saveTimer.current)
         saveTimer.current = window.setTimeout(() => void save(), SAVE_DELAY_MS)
@@ -344,12 +344,17 @@ function DocumentEditor({
         if (!live || editor.isDestroyed || text === lastText.current) return
         if (saveTimer.current !== undefined && !locked) return
         const next = splitDocument(text)
-        head.current = next.head
-        lastText.current = text
-        const document = editor.markdown.parse(next.body)
-        const transaction = applyReload(editor.state, document)
-        if (transaction) editor.view.dispatch(transaction)
-        placeRef.current()
+        try {
+          const changed = applyReload(editor, next.body)
+          head.current = next.head
+          lastText.current = text
+          if (changed) placeRef.current()
+          setSaveState('saved')
+        } catch {
+          // Keep the last-known file snapshot unchanged so a later disk update
+          // can retry; dispatch failures must not be mistaken for a successful reload.
+          setSaveState('error')
+        }
       })
       .catch(() => undefined)
     return () => {

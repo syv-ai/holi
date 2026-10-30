@@ -23,16 +23,47 @@
  * NOTE: no `electron` import, so this loads under vitest.
  */
 import { randomBytes, randomUUID } from 'node:crypto'
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
 import type { SessionState, SessionSummary } from '../claude/listing'
-import type { AgentProvider, ProviderId, VaultRef } from '../provider'
+import { isProviderId, type AgentProvider, type ProviderId, type VaultRef } from '../provider'
 import { createTurnSignals, type TurnSignals } from './pty-signals'
 import type { ActionResult, Geometry, OpenResult, StartResult } from './sessions'
 import type { AgentTerminals } from './terminals'
 
-/** Holi's id for a session it runs: never a background job id (eight hex). */
+/** Holi's id for a session it runs: never a conversation id or job id. */
 export const PTY_SESSION_ID = /^p[0-9a-f]{12}$/
+export const CONVERSATION_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const PAST_MAX = 50
+
+interface PastStore {
+  read(): Promise<SessionSummary[]>
+  write(list: SessionSummary[]): Promise<void>
+}
+
+/** Strictly validate local history; malformed rows are never resumed. */
+export function parsePastFile(raw: unknown): Record<string, SessionSummary[]> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const parsed: Record<string, SessionSummary[]> = {}
+  for (const [remote, value] of Object.entries(raw)) {
+    if (!Array.isArray(value)) continue
+    parsed[remote] = value.filter((row): row is SessionSummary => {
+      if (!row || typeof row !== 'object') return false
+      const session = row as Partial<SessionSummary>
+      return (
+        typeof session.id === 'string' &&
+        PTY_SESSION_ID.test(session.id) &&
+        isProviderId(session.provider) &&
+        typeof session.name === 'string' &&
+        session.state === 'idle' &&
+        typeof session.startedAt === 'number' &&
+        Number.isFinite(session.startedAt) &&
+        typeof session.conversationId === 'string' &&
+        CONVERSATION_ID.test(session.conversationId)
+      )
+    })
+  }
+  return parsed
+}
 
 const NEW_SESSION = 'New session'
 
@@ -49,6 +80,9 @@ export interface PtySessionsDeps {
   binDir(): string | null
   /** The list changed. */
   onChange(list: SessionSummary[]): void
+  /** Per-vault local history store, kept outside the synced clone. */
+  past?: PastStore
+  onPast?(list: SessionSummary[]): void
   idleMs?: number
   log?: (msg: string) => void
 }
@@ -56,6 +90,7 @@ export interface PtySessionsDeps {
 export interface PtySessions {
   sessions(): SessionSummary[]
   past(): Promise<SessionSummary[]>
+  hasPast(id: string): Promise<boolean>
   reopen(id: string, size: Geometry): Promise<StartResult>
   duplicate(id: string, size: Geometry): Promise<StartResult>
   has(id: string): boolean
@@ -94,6 +129,7 @@ interface Session {
   startedAt: number
   terminalId: string
   conversationId?: string
+  persistConversation: boolean
   /** A notification asked for the person, and nothing was typed since. */
   attention: boolean
   signals: TurnSignals
@@ -112,43 +148,27 @@ export function nameOf(text: string): string | null {
 export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   const log = deps.log ?? ((msg: string) => console.log(`[agent-pty] ${msg}`))
   const sessions = new Map<string, Session>()
-  const historyFile = join(deps.vault.root, '.holi', 'agent', 'pty-history.json')
-  type Past = {
-    id: string
-    provider: ProviderId
-    name: string
-    startedAt: number
-    conversationId: string
-  }
-  let pastCache: Past[] | null = null
-  const readPast = async (): Promise<Past[]> => {
-    if (pastCache !== null) return pastCache
-    try {
-      const data: unknown = JSON.parse(await readFile(historyFile, 'utf8'))
-      pastCache = Array.isArray(data)
-        ? data.filter((x): x is Past =>
-            Boolean(
-              x &&
-              typeof x.id === 'string' &&
-              typeof x.provider === 'string' &&
-              typeof x.name === 'string' &&
-              typeof x.startedAt === 'number' &&
-              typeof x.conversationId === 'string',
-            ),
-          )
-        : []
-    } catch {
-      pastCache = []
+  const memoryPast: PastStore = (() => {
+    let rows: SessionSummary[] = []
+    return {
+      read: async () => rows,
+      write: async (next) => {
+        rows = next
+      },
     }
-    return pastCache
+  })()
+  const pastStore = deps.past ?? memoryPast
+  let pastQueue: Promise<unknown> = Promise.resolve()
+  const changePast = (change: (rows: SessionSummary[]) => SessionSummary[]): Promise<void> => {
+    const next = pastQueue.then(async () => {
+      const rows = change(await pastStore.read())
+      await pastStore.write(rows)
+      deps.onPast?.(rows)
+    })
+    pastQueue = next.catch((err: unknown) => log(`closed sessions: ${String(err)}`))
+    return pastQueue as Promise<void>
   }
-  const savePast = async (entry: Past): Promise<void> => {
-    const rows = (await readPast()).filter((x) => x.id !== entry.id)
-    rows.unshift(entry)
-    pastCache = rows.slice(0, 100)
-    await mkdir(join(deps.vault.root, '.holi', 'agent'), { recursive: true })
-    await writeFile(historyFile, JSON.stringify(pastCache), 'utf8')
-  }
+  const reopening = new Set<string>()
   const configured = new Map<ProviderId, Promise<{ dir: string } | null>>()
   let lastPushed = ''
 
@@ -203,34 +223,39 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   const api: PtySessions = {
     sessions: summaries,
     async past() {
+      await pastQueue
       const open = new Set(sessions.keys())
-      return (await readPast())
-        .filter((p) => !open.has(p.id))
-        .map((p) => ({
-          id: p.id,
-          provider: p.provider,
-          name: p.name,
-          state: 'idle' as const,
-          startedAt: p.startedAt,
-          conversationId: p.conversationId,
-        }))
+      return (await pastStore.read()).filter((p) => !open.has(p.id))
+    },
+    async hasPast(id) {
+      return (await api.past()).some((p) => p.id === id)
     },
     async reopen(id, size) {
-      const past = (await readPast()).find((p) => p.id === id)
-      if (!past || sessions.has(id))
-        return { ok: false, message: 'That session cannot be reopened.' }
-      return api.start(past.provider, {
-        ...size,
-        name: past.name,
-        resume: past.conversationId,
-        sessionId: past.id,
-      })
+      if (sessions.has(id) || reopening.has(id)) {
+        return { ok: false, message: 'That session is open already.' }
+      }
+      reopening.add(id)
+      try {
+        const past = (await api.past()).find((p) => p.id === id)
+        if (!past || typeof past.conversationId !== 'string') {
+          return { ok: false, message: 'That session cannot be reopened.' }
+        }
+        const result = await api.start(past.provider, {
+          ...size,
+          name: past.name,
+          resume: past.conversationId,
+          sessionId: past.id,
+        })
+        if (result.ok) await changePast((rows) => rows.filter((p) => p.id !== id))
+        return result
+      } finally {
+        reopening.delete(id)
+      }
     },
     async duplicate(id, size) {
       const source = sessions.get(id)
-      const stored = source ? undefined : (await readPast()).find((p) => p.id === id)
-      const providerId = source?.provider ?? stored?.provider
-      const conversation = source?.conversationId ?? stored?.conversationId
+      const providerId = source?.provider
+      const conversation = source?.conversationId
       if (!providerId || !conversation)
         return { ok: false, message: 'That session cannot be duplicated.' }
       const provider = deps.providers.find((p) => p.id === providerId)
@@ -238,7 +263,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         return { ok: false, message: `${provider?.label ?? providerId} cannot be copied.` }
       return api.start(providerId, {
         ...size,
-        name: source ? nameFor(source) : stored!.name,
+        name: source === undefined ? NEW_SESSION : nameFor(source),
         fork: conversation,
       })
     },
@@ -255,14 +280,23 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       if (config === null) {
         return { ok: false, message: `${provider.label} could not be set up for this vault.` }
       }
-      const id =
-        sessionId ?? (provider.id === 'pi' ? randomUUID() : `p${randomBytes(6).toString('hex')}`)
+      if (resume !== undefined && resume !== 'pick' && !CONVERSATION_ID.test(resume)) {
+        return { ok: false, message: 'That is not a valid conversation id.' }
+      }
+      if (fork !== undefined && !CONVERSATION_ID.test(fork)) {
+        return { ok: false, message: 'That is not a valid conversation id.' }
+      }
+      if (sessionId !== undefined && !PTY_SESSION_ID.test(sessionId)) {
+        return { ok: false, message: 'That is not a valid Holi session id.' }
+      }
+      const id = sessionId ?? `p${randomBytes(6).toString('hex')}`
       if (sessions.has(id)) return { ok: false, message: 'That session is already open.' }
-      const conversationId = provider.namesConversation
-        ? resume && sessionId
+      const conversationId =
+        resume !== undefined && resume !== 'pick'
           ? resume
-          : id
-        : undefined
+          : provider.namesConversation === true && (fork !== undefined || resume === undefined)
+            ? randomUUID()
+            : undefined
       const target = { root: deps.vault.root, configDir: config.dir, binDir: deps.binDir() }
       // Filled in once the terminal exists; its callbacks only run after.
       let session: Session | null = null
@@ -314,16 +348,20 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
           if (s.signals.inTurn) deps.bracket(id, 'forget')
           s.signals.dispose()
           sessions.delete(id)
-          if (s.conversationId !== undefined) {
-            void savePast({
+          push()
+          if (s.persistConversation && s.conversationId !== undefined) {
+            const closed: SessionSummary = {
               id: s.id,
               provider: s.provider,
               name: nameFor(s),
+              state: 'idle',
               startedAt: s.startedAt,
               conversationId: s.conversationId,
-            }).catch(log)
+            }
+            void changePast((rows) =>
+              [closed, ...rows.filter((p) => p.id !== s.id)].slice(0, PAST_MAX),
+            )
           }
-          push()
         },
       })
       if (!opened.ok) {
@@ -339,6 +377,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         startedAt: Date.now(),
         terminalId: opened.id,
         ...(conversationId === undefined ? {} : { conversationId }),
+        persistConversation: resume !== 'pick',
         attention: false,
         signals,
       }
@@ -378,12 +417,14 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       const s = sessions.get(id)
       if (s === undefined) return
       if (s.name === null && about.name !== undefined) s.name = nameOf(about.name)
-      if (about.conversationId !== undefined) s.conversationId = about.conversationId
+      if (about.conversationId !== undefined && CONVERSATION_ID.test(about.conversationId))
+        s.conversationId = about.conversationId
       push()
     },
 
     async leave() {
       await Promise.all([...sessions.values()].map((s) => deps.terminals.close(s.terminalId)))
+      await pastQueue
       for (const s of sessions.values()) s.signals.dispose()
       sessions.clear()
       push()

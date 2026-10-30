@@ -7,6 +7,7 @@ import { createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import {
   agentSessionsAtom,
+  agentHistoryAtom,
   agentTerminalsAtom,
   askTargetsAtom,
   defaultAgentTargetAtom,
@@ -22,6 +23,8 @@ import {
   stopSessionAtom,
 } from '../renderer/state/send'
 import { registerSessionTerminal } from '../renderer/lib/session-terminals'
+import { agentsViewAtom } from '../renderer/state/agents-view'
+import { showSessionAtom } from '../renderer/state/session-view'
 import {
   activeRemoteAtom,
   activeSurfaceIdAtom,
@@ -128,6 +131,17 @@ test('opening a session reuses the window Holi opened for it', async () => {
 
   expect(open).not.toHaveBeenCalled()
   expect(shown(store)).toBe('t-a')
+})
+
+test('opening a stopped Pi conversation uses its own terminal rather than Claude respawn', async () => {
+  const store = storeWith()
+  const id = 'p0123456789ab'
+  store.set(agentHistoryAtom, [session({ id, provider: 'pi' })])
+
+  const result = await store.set(showSessionAtom, { session: id, live: false })
+
+  expect(result).toEqual({ ok: true })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id })
 })
 
 test('opening a session with no window attaches a new one', async () => {
