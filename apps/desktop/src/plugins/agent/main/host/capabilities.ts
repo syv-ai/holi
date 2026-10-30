@@ -170,7 +170,12 @@ function scopeParam(raw: Record<string, unknown>): JobScope {
   const checked = (path: string, glob: boolean): string => {
     const base = glob && path.endsWith('/**') ? path.slice(0, -3) : path
     const rel = base.includes('*') ? null : readableOrNull(base)
-    if (rel === null) throw new CapabilityError('FORBIDDEN', path)
+    if (rel === null) {
+      throw new CapabilityError(
+        'FORBIDDEN',
+        `A job cannot touch ${path}: it is not a vault file an agent may be given.`,
+      )
+    }
     return base === path ? rel : `${rel}/**`
   }
   return {

@@ -90,6 +90,16 @@ const AGENT_SURFACE_NAMES = new Set(AGENT_SURFACE_FILES.map((f) => f.toLowerCase
  * any member's editor would.
  */
 export function isAppWritablePath(path: string): boolean {
+  return isSharedContentPath(path) && appBundleOf(path) === null
+}
+
+/**
+ * `isAppWritablePath` without the bundle rule: the vault's shared content,
+ * an app's own bundle included. What anything written for the vault by a
+ * process Holi does not trust (a vault app, an agent's unwatched job) may
+ * land on; `path` is already normalised.
+ */
+export function isSharedContentPath(path: string): boolean {
   return !(
     isHiddenPath(path) ||
     isLocalOnlyPath(path) ||
@@ -97,8 +107,7 @@ export function isAppWritablePath(path: string): boolean {
     isMachineStatePath(path) ||
     isAgentSurfacePath(path) ||
     AGENT_SURFACE_NAMES.has(path.toLowerCase()) ||
-    path.split('/').some((seg) => AGENT_INSTRUCTION_NAMES.has(seg.toLowerCase())) ||
-    appBundleOf(path) !== null
+    path.split('/').some((seg) => AGENT_INSTRUCTION_NAMES.has(seg.toLowerCase()))
   )
 }
 

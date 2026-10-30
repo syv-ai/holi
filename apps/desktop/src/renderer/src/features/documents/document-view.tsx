@@ -504,7 +504,7 @@ function DocumentEditor({
             smallText={smallText}
             onFullWidthChange={setFullWidth}
             onSmallTextChange={setSmallText}
-            onCreateVaultApp={canAsk ? () => void createVaultApp() : null}
+            onCreateVaultApp={canAsk && agent.appable ? () => void createVaultApp() : null}
             holiLinks={holiLinks}
             comments={
               commentable

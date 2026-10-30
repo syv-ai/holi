@@ -16,9 +16,12 @@
  * from the terminal (`../host/pty-signals.ts`).
  *
  * **Jobs** are `codex exec --json` in a scratch folder Holi made
- * (`../host/jobs.ts`): the workspace-write sandbox with no network, and an
- * approval policy of never, so a step the sandbox refuses fails rather than
- * waiting on a person nobody is. Its JSONL events say how the run went.
+ * (`../host/jobs.ts`): the workspace-write sandbox with no network, no MCP
+ * servers and no web search, and an approval policy of never, so a step the
+ * sandbox refuses fails rather than waiting on a person nobody is. The
+ * sandbox keeps its writes to the folder; it can still read the disk, so
+ * what bounds a job is what Holi copies back. Its JSONL events say how the
+ * run went.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
@@ -115,9 +118,15 @@ export function registerCodexRoutes(server: RouteServer, deps: TurnRouteDeps): (
 }
 
 /**
- * What runs a job: `codex exec` in `cwd`, sandboxed to it with no network and
- * never asking. Every option before `--`, so the prompt is only ever the
- * prompt.
+ * What runs a job: `codex exec` in `cwd`, its writes sandboxed to it, with no
+ * network and never asking. Every option before `--`, so the prompt is only
+ * ever the prompt.
+ *
+ * The person's `config.toml` must not hand an unattended run tools outside
+ * the sandbox, so the MCP servers are emptied and web search is off, under
+ * both the key current Codex reads (`web_search`) and the older
+ * `tools.web_search`. These keys are Codex's as best known, not verified
+ * against a real `codex` here.
  * @public exported for its test
  */
 export function jobArgs({
@@ -141,6 +150,12 @@ export function jobArgs({
     'approval_policy="never"',
     '-c',
     'sandbox_workspace_write.network_access=false',
+    '-c',
+    'mcp_servers={}',
+    '-c',
+    'web_search="disabled"',
+    '-c',
+    'tools.web_search=false',
     ...(model === undefined ? [] : ['-m', model]),
     '--',
     prompt,
@@ -231,8 +246,10 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
         command({ cwd, prompt, model }) {
           const path = bin()
           if (path === null) return null
-          // No Holi commands on its PATH and no session id: a job reaches
-          // nothing of the vault but the folder it runs in.
+          // No Holi commands on its PATH and no session id: a job writes
+          // nothing of the vault but the folder it runs in. Its sandbox can
+          // still read the disk; what reaches the vault is what Holi copies
+          // back.
           const env = buildAgentEnv(process.env)
           delete env[SESSION_ENV]
           return {

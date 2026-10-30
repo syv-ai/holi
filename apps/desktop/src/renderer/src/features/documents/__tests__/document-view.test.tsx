@@ -73,7 +73,18 @@ vi.mock('@/lib/trpc', () => ({
         query: () => Promise.resolve([{ login: 'ada', name: 'Ada', avatarUrl: null }]),
       },
     },
-    cap: { run: { mutate: (input: unknown) => cap(input) } },
+    // The agents' names answer on their own, out of `cap`'s calls.
+    cap: {
+      run: {
+        mutate: (input: { name: string }) =>
+          input.name === 'agent.providers'
+            ? Promise.resolve([
+                { id: 'claude', label: 'Claude Code' },
+                { id: 'codex', label: 'Codex' },
+              ])
+            : cap(input),
+      },
+    },
   },
 }))
 
@@ -114,6 +125,10 @@ beforeEach(() => {
     docs: [{ path: PATH, kind: 'note', updatedAt: '2026-10-23T10:00:00Z' }],
   } as never)
   store.set(sessions, [])
+  store.set(vaultSettingsAtom, {
+    remote: 'syv/vault',
+    settings: { ...VAULT_SETTING_DEFAULTS, warnings: [] },
+  })
 })
 
 afterEach(() => vi.useRealTimers())
@@ -622,4 +637,39 @@ test('Start chat opens a new session beside the document, the passage as its con
   expect(cap).not.toHaveBeenCalled()
   expect(editor.isEditable).toBe(true)
   expect(editor.getMarkdown()).toBe(before)
+})
+
+test("Create vault app waits until this machine's agent is read", async () => {
+  const user = userEvent.setup()
+  store.set(vaultSettingsAtom, null)
+  openFocused('# Plan\n')
+  await editorBox()
+  await user.click(screen.getByRole('button', { name: 'Document actions' }))
+  expect(await screen.findByRole('menuitem', { name: 'Create vault app' })).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  )
+  expect(cap).not.toHaveBeenCalled()
+})
+
+test('Stop on a vault app wins over the job finishing after it', async () => {
+  cap.mockImplementation(({ name }: { name: string }) =>
+    Promise.resolve(name === 'agent.job' ? { ok: true, sessionId: 'j0123456789ab' } : { ok: true }),
+  )
+  const onOpen = openFocused('# Plan\n')
+  await createVaultApp()
+  act(() => store.set(sessions, [{ id: 'j0123456789ab', name: '', state: 'working' }]))
+  await userEvent.setup().click(await screen.findByRole('button', { name: 'Stop' }))
+  await waitFor(() =>
+    expect(cap).toHaveBeenCalledWith(expect.objectContaining({ name: 'agent.stop' })),
+  )
+  // The copy back finished as Stop came in: the run stays stopped.
+  act(() =>
+    store.set(sessions, [
+      { id: 'j0123456789ab', name: '', state: 'idle', outcome: 'done' } as never,
+    ]),
+  )
+  appWritten('notes/Plan.app')
+  expect(await screen.findByText('Stopped')).toBeInTheDocument()
+  expect(onOpen).not.toHaveBeenCalled()
 })

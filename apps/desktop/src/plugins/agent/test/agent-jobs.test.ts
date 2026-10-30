@@ -49,6 +49,13 @@ const SUCCESS = [
   "fs.writeFileSync('stray.txt', 'no')",
   // A link could point anywhere: never followed back.
   "fs.symlinkSync('/etc/hosts', 'notes/Plan.app/hosts')",
+  // In scope, but not the vault's shared content: never copied back.
+  "fs.writeFileSync('notes/Plan.app/.hidden', 'no')",
+  "fs.writeFileSync('notes/Plan.app/me.local.md', 'no')",
+  "fs.writeFileSync('notes/Plan.app/.env', 'TOKEN=no')",
+  "fs.mkdirSync('notes/Plan.app/sub', { recursive: true })",
+  "fs.writeFileSync('notes/Plan.app/sub/AGENTS.md', 'no')",
+  "fs.writeFileSync('notes/Plan.app/claude.md', 'no')",
   event({ type: 'turn.completed', usage: {} }),
 ].join('\n')
 
@@ -64,6 +71,17 @@ const CRASH = "console.error('boom: no sign-in'); process.exit(3)"
 const HANG = [event({ type: 'turn.started' }), 'setInterval(() => {}, 1000)'].join('\n')
 
 const SCOPE: JobScope = { read: ['notes/Plan.md'], write: ['notes/Plan.app/**'] }
+
+/** A successful run that writes `count` files of `size` bytes in scope. */
+const WRITES = (count: number, size: number) =>
+  [
+    "const fs = require('node:fs')",
+    event({ type: 'turn.started' }),
+    "fs.mkdirSync('notes/Plan.app', { recursive: true })",
+    `for (let i = 0; i < ${count}; i++) fs.writeFileSync('notes/Plan.app/f' + i + '.txt', Buffer.alloc(${size}, 97))`,
+    "fs.writeFileSync('notes/Plan.app/app.yaml', 'description: x\\n')",
+    event({ type: 'turn.completed' }),
+  ].join('\n')
 
 /** A provider whose job is `node <script>`, read as Codex's events. */
 function scripted(script: string): JobsProvider {
@@ -87,7 +105,10 @@ function scripted(script: string): JobsProvider {
   }
 }
 
-async function rig(body: string, opts: { keepMs?: number } = {}) {
+async function rig(
+  body: string,
+  opts: { keepMs?: number; afterWrite?: (rel: string) => Promise<void> | void } = {},
+) {
   const root = await temp('holi-job-vault-')
   const userData = await temp('holi-job-data-')
   await mkdir(join(root, 'notes'), { recursive: true })
@@ -138,6 +159,10 @@ describe('a job', () => {
     expect(await readFile(join(root, 'notes/Plan.md'), 'utf8')).toBe('Ship it\n')
     expect(await exists(join(root, 'stray.txt'))).toBe(false)
     expect(await exists(join(root, 'notes/Plan.app/hosts'))).toBe(false)
+    for (const name of ['.hidden', 'me.local.md', '.env', 'sub/AGENTS.md', 'claude.md']) {
+      expect(await exists(join(root, 'notes/Plan.app', name))).toBe(false)
+      expect(row.message).toContain(`notes/Plan.app/${name}`)
+    }
     // The scratch folder is gone.
     await vi.waitFor(async () => expect(await readdir(join(userData, 'agent-jobs'))).toEqual([]))
   })
@@ -171,6 +196,45 @@ describe('a job', () => {
     await jobs.leave()
     expect(jobs.sessions()).toEqual([])
     expect(await exists(join(userData, 'agent-jobs'))).toBe(false)
+  })
+
+  it('copies nothing back past its limits', async () => {
+    for (const [count, size] of [
+      [201, 1],
+      [2, 11 * 1024 * 1024],
+    ] as const) {
+      const { root, jobs, provider, ended } = await rig(WRITES(count, size))
+      const started = await jobs.start({ provider, name: 'x', prompt: 'go', scope: SCOPE })
+      const row = await ended((started as { sessionId: string }).sessionId)
+      expect(row.outcome).toBe('failed')
+      expect(row.message).toMatch(/more than Holi copies back/)
+      expect(await exists(join(root, 'notes/Plan.app/f0.txt'))).toBe(false)
+      expect(await exists(join(root, 'notes/Plan.app/app.yaml'))).toBe(false)
+    }
+  })
+
+  it('stops where a Stop comes in during the copy back', async () => {
+    let id = ''
+    let jobs: Awaited<ReturnType<typeof rig>>['jobs'] | undefined
+    const r = await rig(WRITES(5, 1), {
+      afterWrite: async () => {
+        await jobs!.stop(id)
+      },
+    })
+    jobs = r.jobs
+    const started = await r.jobs.start({
+      provider: r.provider,
+      name: 'x',
+      prompt: 'go',
+      scope: SCOPE,
+    })
+    id = (started as { sessionId: string }).sessionId
+    const row = await r.ended(id)
+    expect(row).toMatchObject({ outcome: 'failed', message: 'Stopped.' })
+    // One file landed before the Stop; the finished marker never did.
+    const written = (await readdir(join(r.root, 'notes/Plan.app'))).sort()
+    expect(written).toHaveLength(1)
+    expect(await exists(join(r.root, 'notes/Plan.app/app.yaml'))).toBe(false)
   })
 
   it('leaves the list a while after it ends', async () => {
@@ -246,6 +310,12 @@ describe('the Codex job command', () => {
       'approval_policy="never"',
       '-c',
       'sandbox_workspace_write.network_access=false',
+      '-c',
+      'mcp_servers={}',
+      '-c',
+      'web_search="disabled"',
+      '-c',
+      'tools.web_search=false',
       '-m',
       'gpt-5',
       '--',

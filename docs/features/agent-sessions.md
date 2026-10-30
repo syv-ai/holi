@@ -52,17 +52,26 @@ capability may read. A `background` provider runs it as a background session all
 scope (`Read(./x)`, `Edit`/`Write(./folder/**)`); a `jobs` provider runs it in
 `<userData>/agent-jobs/<id>/`, the readable files copied in at their vault paths. Codex's is
 `codex exec --json --skip-git-repo-check -C <scratch> --sandbox workspace-write` with
-`approval_policy="never"` and no network: a step its sandbox refuses fails rather than waiting
-on nobody, and Codex's own permission model is not bypassed. Holi reads its JSONL events (thread,
-turn completed, turn failed, error) and, when the turn completed and the process exited 0, copies
-back only the regular files it wrote inside the write scope, each checked as a vault path with no
-symlink on the way, any `app.yaml` last. A failure copies nothing and says why: the turn's own
-reason, else the last line Codex printed. A job is a session in the one list, named `j` and twelve
-hex digits, working while it runs, then idle with its `outcome` and `message` for ten minutes; it
-has no terminal, so Open, Restart, Duplicate and messages are refused in words. Stop, leaving the
-vault and quitting (whose question counts a running job) stop its process group, and its scratch
-folder is deleted. A provider with neither is refused, never run on another agent. The document
-menu's **Create vault app** ([editor](editor.md)) is its caller.
+`approval_policy="never"`, no network, no MCP servers and web search off, so the person's
+`config.toml` cannot hand an unattended run tools outside the sandbox: a step its sandbox refuses
+fails rather than waiting on nobody, and Codex's own permission model is not bypassed. **A job is
+bounded by what it writes back, not by what it reads**: Codex's sandbox keeps its writes to the
+scratch folder but can read the disk. Holi reads its JSONL events (thread, turn completed, turn
+failed, error) and, when the turn completed and the process exited 0, kills what is left of its
+process group, then copies back only the regular files it wrote inside the write scope that are the
+vault's shared content (`isSharedContentPath`: nothing hidden, local, secret, machine state, on
+the agent surface, or an `AGENTS.md`/`CLAUDE.md` at any depth), each checked as a vault path and
+read with no symlink followed, any `app.yaml` last. What it left out the job's message names.
+More than 200 files or 20 MB copies nothing and fails. A failure copies nothing and says why: the
+turn's own reason, else the last line Codex printed. A job is a session in the one list, named `j`
+and twelve hex digits, working while it runs, then idle with its `outcome` and `message` for ten
+minutes; it has no terminal, so Open, Restart, Duplicate and messages are refused in words. Stop,
+leaving the vault and quitting (whose question counts a running job) stop its process group, a
+Stop during the copy back stops it there and the job fails, and its scratch folder is deleted.
+Beside each folder is `<id>.pid`; one a crash left behind is killed at the next start, when that
+pid still leads a group whose command names the folder. A provider with neither is refused, never
+run on another agent. The document menu's **Create vault app** ([editor](editor.md)) is its
+caller.
 
 **Which agent a new session runs** is this machine's `agentProvider` (`app.local.yaml`; the
 **Agents** card in Settings → General, a row per agent with **Make default**): which agent is installed and signed in is the machine's, not the

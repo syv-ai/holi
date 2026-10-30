@@ -10,7 +10,10 @@
  * vault app, a vault app made from the document, beside it, which leaves the
  * document alone. It runs on this machine's agent (`agentProvider`) as a job
  * (`agent.job`): a background session for Claude Code, a sandboxed
- * `codex exec` for Codex, never another agent than the one chosen.
+ * `codex exec` for Codex, never another agent than the one chosen. It is
+ * offered once this machine's choice is read (never the default in its
+ * place), and only for a note whose app beside it would be the vault's
+ * shared content (`isAppWritablePath`): not a hidden, local or agent file.
  *
  * A run's state is read off the agent's session rows: working, waiting on
  * the person (a permission prompt it was not pre-allowed), or done once the
@@ -18,14 +21,14 @@
  * app is done only once its `app.yaml` is in the vault. Runs live in an atom
  * keyed by path, so a run outlives its tab being switched away.
  */
-import type { AgentProviderId, VaultSnapshot } from '@holi/shared'
+import { isAppWritablePath, type AgentProviderId, type VaultSnapshot } from '@holi/shared'
 import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect } from 'react'
 
 import { parentOf } from '@/lib/tree-paths'
 import { trpc } from '@/lib/trpc'
 import { useAgentService } from '@/state/agent-service'
-import { agentProviderSettingAtom } from '@/state/settings'
+import { loadedAgentProviderAtom } from '@/state/settings'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 import { AGENT_MARKER } from './markdown'
@@ -38,10 +41,12 @@ const AGENT_MODEL = 'claude-sonnet-5-5'
  *  `app.yaml` to show in the vault: a rescan behind the write. */
 const APP_SETTLE_MS = 10_000
 
-const PROVIDER_LABEL: Record<AgentProviderId, string> = {
-  claude: 'Claude Code',
-  codex: 'Codex',
-}
+/** What `agent.launch` runs a write or rewrite on. */
+const LAUNCH_PROVIDER: AgentProviderId = 'claude'
+
+/** Each agent's name as main gives it (`agent.providers`), by vault: asked
+ *  once, as the first run starts. */
+const providerLabelsAtom = atom<{ remote: string; labels: Record<string, string> } | null>(null)
 
 export type AgentRunKind = 'write' | 'rewrite' | 'vault-app'
 
@@ -202,7 +207,9 @@ export function useDocumentAgent(path: string) {
   const service = useAgentService()
   const sessions = useAtomValue(service?.sessions ?? EMPTY_SESSIONS)
   const snapshot = useAtomValue(snapshotAtom)
-  const provider = useAtomValue(agentProviderSettingAtom)
+  const provider = useAtomValue(loadedAgentProviderAtom)
+  const labels = useAtomValue(providerLabelsAtom)
+  const setLabels = useSetAtom(providerLabelsAtom)
   const run = runs[path]
 
   const update = (patch: Partial<AgentRun>) =>
@@ -289,17 +296,36 @@ export function useDocumentAgent(path: string) {
     }
   }
 
+  /** The run's agent by name: main's, asked for the first time alongside
+   *  the run; "the agent" until it answers. */
+  function agentLabel(remote: string, id: AgentProviderId): string {
+    const known = labels !== null && labels.remote === remote ? labels.labels[id] : undefined
+    if (known !== undefined) return known
+    void capability<readonly { id: string; label: string }[]>(remote, 'agent.providers', {})
+      .then((list) => {
+        if (!Array.isArray(list)) return
+        const byId = Object.fromEntries(list.map((p) => [p.id, p.label]))
+        setLabels({ remote, labels: byId })
+        const label = byId[id]
+        if (label !== undefined) update({ agent: label })
+      })
+      .catch(() => undefined)
+    return 'the agent'
+  }
+
   const start = async (kind: AgentRunKind, request: string, passage?: string) => {
     if (remote === null) return
     const name = path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/i, '')
     if (kind === 'vault-app') {
+      // Never on the default in place of a choice not yet read.
+      if (provider === null) return
       const appPath = vaultAppPathFor(path, takenIn(snapshot))
       setRuns((all) => ({
         ...all,
         [path]: {
           kind,
           label: request,
-          agent: PROVIDER_LABEL[provider],
+          agent: agentLabel(remote, provider),
           appPath,
           sessionId: null,
           status: 'starting',
@@ -323,7 +349,7 @@ export function useDocumentAgent(path: string) {
       [path]: {
         kind,
         label,
-        agent: PROVIDER_LABEL.claude,
+        agent: agentLabel(remote, LAUNCH_PROVIDER),
         sessionId: null,
         status: 'starting',
         seenWorking: false,
@@ -339,12 +365,15 @@ export function useDocumentAgent(path: string) {
     })
   }
 
+  // Stopped wins over anything the session says after: main fails a job
+  // whose Stop came during its copy back, and a run no longer live is not
+  // followed.
   const stop = async () => {
     if (!run || remote === null) return
+    update({ status: 'stopped' })
     if (run.sessionId !== null) {
       await capability(remote, 'agent.stop', { id: run.sessionId }).catch(() => undefined)
     }
-    update({ status: 'stopped' })
   }
 
   const dismiss = useCallback(
@@ -356,7 +385,15 @@ export function useDocumentAgent(path: string) {
     [path, setRuns],
   )
 
-  return { run, start, stop, dismiss, available: service !== null }
+  return {
+    run,
+    start,
+    stop,
+    dismiss,
+    available: service !== null,
+    /** Create vault app can run on this note now. */
+    appable: provider !== null && isAppWritablePath(path),
+  }
 }
 
 const EMPTY_SESSIONS = atom(
