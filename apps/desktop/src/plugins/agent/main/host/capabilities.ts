@@ -70,6 +70,14 @@ export interface ProviderSummary {
   jobs: boolean
   /** A live session of it can be copied (Pi's `--fork`). */
   copies: boolean
+  /** It is a harness a person added (Settings, General, Agents). */
+  custom: boolean
+  /** It can start on a first message. */
+  prompts: boolean
+  /** It has a picker of its earlier conversations to resume. */
+  resumePicker: boolean
+  /** Why it runs nothing unattended, or null when it can. */
+  unattended: string | null
 }
 
 export const AGENT_NAMESPACES = ['agent'] as const
@@ -116,8 +124,9 @@ export interface AgentCapabilitiesDeps {
   /** Which vaults this machine lets an agent whose jobs read the whole disk
    *  run unattended in (`unattended.ts`). */
   unattended: UnattendedStore
-  /** Every provider, the background one first. */
-  providers: readonly AgentProvider[]
+  /** Every provider, the background one first: this machine's harnesses,
+   *  read per call (`../harness/registry.ts`). */
+  providers(): readonly AgentProvider[]
   terminals: Pick<AgentTerminals, 'list' | 'attach' | 'close'>
   /** The open vault's remote, or null with none open. */
   liveRemote(): string | null
@@ -235,11 +244,14 @@ function relPath(path: string): VaultRelPath {
 
 export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
   const live = (ctx: CapabilityContext): boolean => deps.liveRemote() === ctx.remote
-  /** Whether a provider's sessions are the background kind. Unknown is the
-   *  background provider, which every caller before providers meant. */
+  /** Whether a provider's sessions are the background kind. None named is
+   *  the background provider, which every caller before providers meant; one
+   *  named that is not on this machine is not, so it is refused where it is
+   *  started rather than run on Claude Code. */
   const isBackground = (id: ProviderId | undefined): boolean => {
-    const p = id === undefined ? undefined : deps.providers.find((x) => x.id === id)
-    return p === undefined || hasBackground(p)
+    if (id === undefined) return true
+    const p = deps.providers().find((x) => x.id === id)
+    return p !== undefined && hasBackground(p)
   }
   const jobOnly = {
     ok: false as const,
@@ -282,13 +294,20 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       doors: ['ui'],
       params: noParams,
       run: async (): Promise<ProviderSummary[]> =>
-        deps.providers.map((p) => ({
+        deps.providers().map((p) => ({
           id: p.id,
           label: p.label,
           installed: p.installed(),
           background: hasBackground(p),
           jobs: hasJobs(p),
           copies: hasBackground(p) || p.namesConversation === true,
+          custom: p.custom === true,
+          prompts: (p.refuses?.({ prompt: 'x' }) ?? null) === null,
+          resumePicker: !hasBackground(p) && (p.refuses?.({ resume: 'pick' }) ?? null) === null,
+          unattended:
+            hasBackground(p) || hasJobs(p)
+              ? null
+              : (p.unattended ?? `${p.label} cannot run a job with nobody watching.`),
         })),
     }),
 
@@ -301,7 +320,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       doors: ['ui'],
       params: (raw) => ({ provider: providerParam(paramsObject(raw)) ?? 'claude' }),
       run: async (ctx, { provider: id }): Promise<boolean> => {
-        const provider = deps.providers.find((p) => p.id === id)
+        const provider = deps.providers().find((p) => p.id === id)
         if (provider === undefined || !hasJobs(provider)) return true
         if (provider.capabilities.jobs.readsAnywhere !== true) return true
         return deps.unattended.allowed(ctx.remote, id)
@@ -471,8 +490,13 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       run: async (ctx, { provider: id, where, system, model, ...args }): Promise<JobResult> => {
         if (!live(ctx)) return notOpen
         const wanted = id ?? (await deps.defaultProvider())
-        const provider = deps.providers.find((p) => p.id === wanted)
-        if (provider === undefined) return { ok: false, message: 'No agent can run this.' }
+        const provider = deps.providers().find((p) => p.id === wanted)
+        if (provider === undefined) {
+          return {
+            ok: false,
+            message: `${wanted} is not an agent on this machine. Choose the default in Settings, General, Agents.`,
+          }
+        }
         if (hasBackground(provider)) {
           return deps.sessions.launch({
             ...args,
@@ -501,7 +525,8 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         }
         return {
           ok: false,
-          message: `${provider.label} cannot run a job with nobody watching.`,
+          message:
+            provider.unattended ?? `${provider.label} cannot run a job with nobody watching.`,
         }
       },
     }),
@@ -535,7 +560,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       run: async (ctx, { provider: id, scope, system, model, ...args }): Promise<JobResult> => {
         if (!live(ctx)) return notOpen
         const provider =
-          id === undefined ? deps.providers[0] : deps.providers.find((p) => p.id === id)
+          id === undefined ? deps.providers()[0] : deps.providers().find((p) => p.id === id)
         if (provider === undefined) return { ok: false, message: 'No agent can run this.' }
         if (hasBackground(provider)) {
           return deps.sessions.launch({

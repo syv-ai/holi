@@ -5,7 +5,7 @@
  */
 import { atom } from 'jotai'
 import type { AgentProviderId } from '@holi/shared'
-import { activeRemoteAtom, agentProviderSettingAtom } from '@/plugin-api'
+import { activeRemoteAtom, agentProviderSettingAtom, type PluginEventHandler } from '@/plugin-api'
 import { agentCap } from '../agent-cap'
 
 /** Mirrors `ProviderSummary` in main/host/capabilities.ts. */
@@ -20,6 +20,14 @@ interface AgentProviderInfo {
   jobs: boolean
   /** A live session of it can be copied. */
   copies: boolean
+  /** A harness a person added. */
+  custom: boolean
+  /** It can start on a first message. */
+  prompts: boolean
+  /** It has a picker of its earlier conversations. */
+  resumePicker: boolean
+  /** Why it runs nothing unattended, or null when it can. */
+  unattended: string | null
 }
 
 export type ProvidersState =
@@ -50,6 +58,32 @@ export const newSessionProviderAtom = atom(
   (get): AgentProviderId => get(pickedProviderAtom) ?? get(agentProviderSettingAtom),
 )
 
-/** An agent's name, as a person says it. */
-export const providerLabel = (id: string): string =>
-  id === 'codex' ? 'Codex' : id === 'pi' ? 'Pi' : 'Claude Code'
+const BUILT_IN_LABELS: Readonly<Record<string, string>> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+  pi: 'Pi',
+}
+
+/** An agent's name, as a person says it: this machine's registry's, the
+ *  built-in name until it answers, else its id. */
+export const providerLabel = (providers: ProvidersState, id: string): string =>
+  (providers.kind === 'ready' ? providers.providers.find((p) => p.id === id)?.label : undefined) ??
+  BUILT_IN_LABELS[id] ??
+  id
+
+/** The default agent names none on this machine: a harness since removed.
+ *  A new session then asks which agent, never picks one itself. */
+export const defaultMissingAtom = atom((get): boolean => {
+  if (get(pickedProviderAtom) !== null) return false
+  const providers = get(providersAtom)
+  const id = get(agentProviderSettingAtom)
+  return providers.kind === 'ready' && !providers.providers.some((p) => p.id === id)
+})
+
+/** Main changed this machine's harnesses (Settings, General, Agents): the
+ *  list is asked for again. */
+export const providerEvents: Readonly<Record<string, PluginEventHandler>> = {
+  providers: ({ remote }, store) => {
+    if (remote === store.get(activeRemoteAtom)) void store.set(loadProvidersAtom)
+  },
+}

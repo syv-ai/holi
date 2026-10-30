@@ -63,7 +63,7 @@ const NOT_INSTALLED =
   'Codex CLI not found on PATH. Install it (https://developers.openai.com/codex/cli) and restart Holi.'
 
 /** `HOLI_CODEX_BIN` when set, else `codex` on `PATH`. */
-function resolveCodexBin(env: NodeJS.ProcessEnv = process.env): string | null {
+export function resolveCodexBin(env: NodeJS.ProcessEnv = process.env): string | null {
   const override = env.HOLI_CODEX_BIN
   if (override) {
     try {

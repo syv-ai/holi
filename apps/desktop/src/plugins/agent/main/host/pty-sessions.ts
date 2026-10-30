@@ -107,7 +107,9 @@ export function parsePastFile(raw: unknown): Record<string, SessionSummary[]> {
 
 export interface PtySessionsDeps {
   vault: VaultRef
-  providers: readonly AgentProvider[]
+  /** The agents it may run, read per start: this machine's harnesses
+   *  change while the vault is open. */
+  providers(): readonly AgentProvider[]
   terminals: Pick<AgentTerminals, 'open' | 'close' | 'paste' | 'list'>
   /** The vault's turn bracket: sync pauses and the turn is recorded. */
   bracket(id: string, edge: 'begin' | 'end' | 'forget'): void
@@ -163,6 +165,11 @@ export interface PtySessions {
   noteTurn(id: string, active: boolean): void
   /** What the session's hook said about it. */
   noteConversation(id: string, about: { name?: string; conversationId?: string }): void
+  /** What the session's hook said of its context and model
+   *  (`holi-signal status`). */
+  noteStatus(id: string, status: { contextPercent?: number; model?: string }): void
+  /** The agent a live session runs. */
+  providerOf(id: string): ProviderId | null
   /** End every session. */
   leave(): Promise<void>
 }
@@ -177,6 +184,8 @@ interface Session {
   /** A notification asked for the person, and nothing was typed since. */
   attention: boolean
   signals: TurnSignals
+  contextPercent?: number
+  model?: string
 }
 
 /**
@@ -230,6 +239,8 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       ...(s.attention ? { waitingFor: 'an answer' } : {}),
       startedAt: s.startedAt,
       ...(s.conversationId === undefined ? {} : { conversationId: s.conversationId }),
+      ...(s.contextPercent === undefined ? {} : { contextPercent: s.contextPercent }),
+      ...(s.model === undefined ? {} : { model: s.model }),
     }))
 
   function push(): void {
@@ -277,9 +288,12 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       id?: string
     },
   ): Promise<StartResult> {
-    const provider = deps.providers.find((p) => p.id === providerId)
+    const provider = deps.providers().find((p) => p.id === providerId)
     if (provider === undefined) {
-      return { ok: false, message: `${providerId} is not an agent Holi knows.` }
+      return {
+        ok: false,
+        message: `${providerId} is not an agent on this machine. Choose one in Settings, General, Agents.`,
+      }
     }
     if (resume !== undefined && resume !== 'pick' && !CONVERSATION_ID.test(resume)) {
       return { ok: false, message: 'That is not a conversation Holi can pick up.' }
@@ -287,6 +301,13 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     if (fork !== undefined && !CONVERSATION_ID.test(fork)) {
       return { ok: false, message: 'That is not a conversation Holi can copy.' }
     }
+    const refused =
+      provider.refuses?.({
+        ...(prompt === undefined ? {} : { prompt }),
+        ...(resume === undefined ? {} : { resume }),
+        ...(fork === undefined ? {} : { fork }),
+      }) ?? null
+    if (refused !== null) return { ok: false, message: refused }
     const config = await configure(provider)
     if (config === null) {
       return { ok: false, message: `${provider.label} could not be set up for this vault.` }
@@ -457,7 +478,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     async duplicate(id, size) {
       const s = sessions.get(id)
       if (s === undefined) return gone
-      const provider = deps.providers.find((p) => p.id === s.provider)
+      const provider = deps.providers().find((p) => p.id === s.provider)
       if (provider?.namesConversation !== true || s.conversationId === undefined) {
         return {
           ok: false,
@@ -499,6 +520,16 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       if (about.conversationId !== undefined) s.conversationId = about.conversationId
       push()
     },
+
+    noteStatus(id, status) {
+      const s = sessions.get(id)
+      if (s === undefined) return
+      if (status.contextPercent !== undefined) s.contextPercent = status.contextPercent
+      if (status.model !== undefined) s.model = status.model
+      push()
+    },
+
+    providerOf: (id) => sessions.get(id)?.provider ?? null,
 
     async leave() {
       await Promise.all([...sessions.values()].map((s) => deps.terminals.close(s.terminalId)))

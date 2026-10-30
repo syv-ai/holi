@@ -15,7 +15,7 @@ import {
 } from '@/plugin-api'
 import { agentCap } from '../agent-cap'
 import { agentsViewAtom, viewTerminalsAtom } from './agents-view'
-import { newSessionProviderAtom, providerLabel } from './providers'
+import { newSessionProviderAtom, providerLabel, providersAtom } from './providers'
 import { agentGeometryAtom } from './sessions'
 import { respawnSessionAtom, type AgentResult } from './send'
 import { toast } from 'sonner'
@@ -79,7 +79,7 @@ export const startViewSessionAtom = atom(
       ...get(agentGeometryAtom),
     })
     if (!res.ok) {
-      toast.error(`Couldn't start ${providerLabel(provider)}. ${res.message}`)
+      toast.error(`Couldn't start ${providerLabel(get(providersAtom), provider)}. ${res.message}`)
       return res
     }
     set(viewTerminalsAtom, (t) => ({ ...t, [res.sessionId]: res.terminalId }))

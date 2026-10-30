@@ -40,7 +40,7 @@ function setup(extra: Partial<AgentProvider> = {}) {
   const targets: { binDir: string | null }[] = []
   const sessions = createPtySessions({
     vault: VAULT,
-    providers: [provider],
+    providers: () => [provider],
     terminals: {
       open: (args) => {
         opened.push(args)
