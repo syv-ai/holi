@@ -9,6 +9,7 @@
  * once more when main has linked the agent's commands after such a change.
  */
 import { atom } from 'jotai'
+import { atomWithStorage } from 'jotai/utils'
 import { communityPluginsSignature, servedFile } from '@holi/shared'
 import { snapshotAtom, type PluginStore } from '@/plugin-api'
 import { communityCap } from './community-cap'
@@ -19,6 +20,18 @@ export type { PluginRow, ServerState }
 
 /** The open vault's rows, with the vault they were read for. */
 export const rowsAtom = atom<{ remote: string; rows: readonly PluginRow[] } | null>(null)
+
+/**
+ * The plugins whose vault notice this machine dismissed, as ids by vault.
+ * By id, not by pin, so a newer version the vault pins stays dismissed. Kept
+ * in `localStorage` as the tree's other per-vault view choices are: it hides a
+ * line on this machine, and the vault's files, which its members share, are
+ * left alone. Settings still lists the plugin and installs it.
+ */
+export const dismissedNoticesAtom = atomWithStorage<Readonly<Record<string, readonly string[]>>>(
+  'holi:community:dismissedNotices',
+  {},
+)
 
 /** Each file's server, by vault path, as the last `server` event said. */
 export const serversAtom = atom<Readonly<Record<string, ServerState>>>({})
