@@ -316,3 +316,79 @@ test('a change on disk keeps the caret in its place, and is not undoable', async
   expect(editor.state.doc.textContent).toContain('Beta gamma')
   expect(write).not.toHaveBeenCalled()
 })
+
+/** Select `words` in the editor and wait for the format bubble's Ask AI. */
+async function selectForAskAi(words: string) {
+  const box = await editorBox()
+  const editor = (box as HTMLElement & { editor: import('@tiptap/react').Editor }).editor
+  let from = -1
+  editor.state.doc.descendants((node, pos) => {
+    if (from === -1 && node.isText && node.text!.includes(words)) {
+      from = pos + node.text!.indexOf(words)
+    }
+  })
+  act(() => {
+    editor
+      .chain()
+      .focus()
+      .setTextSelection({ from, to: from + words.length })
+      .run()
+  })
+  const selected = () =>
+    editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to)
+  return { editor, selected, askAi: await screen.findByRole('button', { name: 'Ask AI' }) }
+}
+
+test("Ask AI's own instruction rewrites only the passage selected when it opened", async () => {
+  const user = userEvent.setup()
+  open('# Plan\n\nShip the beta on Friday.\n\nKeep this line.\n')
+  const { editor, selected, askAi } = await selectForAskAi('Ship the beta')
+  await user.click(askAi)
+  // The presets are still there, beside the custom entry.
+  expect(await screen.findByRole('menuitem', { name: 'Improve writing' })).toBeInTheDocument()
+  await user.click(screen.getByRole('menuitem', { name: 'Custom instruction…' }))
+
+  const prompt = await screen.findByRole('textbox', { name: 'What should the agent do?' })
+  await waitFor(() => expect(prompt).toHaveFocus())
+  // The selection is kept while the prompt has focus.
+  expect(selected()).toBe('Ship the beta')
+  await user.type(prompt, 'Translate it into Danish{Enter}')
+
+  await waitFor(() =>
+    expect(cap).toHaveBeenCalledWith(expect.objectContaining({ name: 'agent.launch' })),
+  )
+  const launch = JSON.parse(cap.mock.calls[0]![0].paramsJson)
+  expect(launch.prompt).toContain('Ship the beta')
+  expect(launch.prompt).not.toContain('Keep this line')
+  expect(launch.prompt).toContain('Translate it into Danish')
+  expect(launch.prompt).toContain('change nothing else in the document')
+  expect(launch.allow).toEqual([
+    'Read(./notes/Plan.md)',
+    'Edit(./notes/Plan.md)',
+    'Write(./notes/Plan.md)',
+  ])
+  // The page is locked while it runs.
+  await waitFor(() => expect(editor.isEditable).toBe(false))
+})
+
+test("cancelling Ask AI's own instruction starts nothing and keeps the selection", async () => {
+  const user = userEvent.setup()
+  open('# Plan\n\nShip the beta on Friday.\n')
+  const { editor, selected, askAi } = await selectForAskAi('Ship the beta')
+  const before = editor.getMarkdown()
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Custom instruction…' }))
+  const prompt = await screen.findByRole('textbox', { name: 'What should the agent do?' })
+  await waitFor(() => expect(prompt).toHaveFocus())
+  // An empty instruction is not sent.
+  await user.keyboard('{Enter}')
+  expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+  await user.type(prompt, 'Make it formal{Escape}')
+
+  await waitFor(() =>
+    expect(screen.queryByRole('textbox', { name: 'What should the agent do?' })).toBeNull(),
+  )
+  expect(cap).not.toHaveBeenCalled()
+  expect(editor.getMarkdown()).toBe(before)
+  expect(selected()).toBe('Ship the beta')
+})

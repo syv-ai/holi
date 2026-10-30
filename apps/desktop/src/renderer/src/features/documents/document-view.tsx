@@ -550,7 +550,9 @@ function DocumentEditor({
                       linkOpen={linkOpen}
                       onLinkOpenChange={setLinkOpen}
                       onQuickCommand={
-                        canAsk ? (verb, passage) => void quickCommand(verb, passage) : null
+                        canAsk
+                          ? (instruction, passage) => void quickCommand(instruction, passage)
+                          : null
                       }
                       onComment={commentable ? () => void commentOnSelection() : null}
                     />

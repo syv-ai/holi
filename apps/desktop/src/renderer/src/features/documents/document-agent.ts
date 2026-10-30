@@ -5,8 +5,8 @@
  *
  * Three kinds. **write**: the person pressed Space on an empty line and asked
  * for something; a marker line in the file says where. **rewrite**: a quick
- * command on a selection (simplify, fix grammar). **artifact**: a vault app
- * made from the document, beside it. The first two edit the document, so it
+ * command, or the person's own instruction, on a selection. **artifact**: a
+ * vault app made from the document, beside it. The first two edit the document, so it
  * is locked while they run; an artifact leaves it alone.
  *
  * A run's state is read off the agent's session rows: working, waiting on
@@ -95,9 +95,13 @@ function promptFor(
   if (kind === 'rewrite') {
     return {
       prompt: [
-        `In \`${path}\`, ${request} this passage, and change nothing else in the document:`,
+        `In \`${path}\`, the person selected this passage:`,
         '',
         passage ?? '',
+        '',
+        `and asked: ${request}`,
+        '',
+        'Do that to this passage only, and change nothing else in the document.',
       ].join('\n'),
       allow: own,
     }
