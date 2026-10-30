@@ -149,6 +149,7 @@ function HistoryView(): React.JSX.Element {
 
 /** What the agents remember, each memory opening its file. */
 function MemoryView(): React.JSX.Element {
+  const remote = useAtomValue(activeRemoteAtom)
   return (
     <>
       <Bar>
@@ -156,7 +157,9 @@ function MemoryView(): React.JSX.Element {
       </Bar>
       <div className="min-h-0 flex-1 overflow-y-auto" data-agents-memory="">
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-6 py-6">
-          <MemoryList />
+          {/* Keyed on the vault: another vault starts from loading, never
+              from the last one's memories. */}
+          <MemoryList key={remote ?? ''} />
         </div>
       </div>
     </>

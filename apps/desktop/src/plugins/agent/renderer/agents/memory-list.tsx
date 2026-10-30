@@ -34,7 +34,8 @@ function Row({ memory }: { memory: Memory }): React.JSX.Element {
     <li data-memory={memory.path}>
       <Button
         variant="ghost"
-        className="h-auto w-full min-w-0 items-stretch text-start font-normal"
+        size="row"
+        className="w-full min-w-0"
         onClick={() => open(memory.path)}
       >
         <span className="flex w-full min-w-0 flex-col gap-1 py-1">
@@ -75,7 +76,9 @@ export function MemoryList(): React.JSX.Element {
     if (remote === null) return
     let live = true
     const now = new Date()
-    void Promise.all(
+    // One file that will not read (a personal memory the expiry sweep just
+    // deleted, which the watcher does not report) drops its row, not the list.
+    void Promise.allSettled(
       files.map(async ({ path }): Promise<Memory> => {
         const text = await trpc.notes.read.query({ remote, path })
         return {
@@ -84,15 +87,15 @@ export function MemoryList(): React.JSX.Element {
           expired: isExpiredMemory(path, text, now),
         }
       }),
-    ).then(
-      (memories) => {
-        if (live) setRead({ status: 'ready', memories })
-      },
-      (err: unknown) => {
-        if (live)
-          setRead({ status: 'error', message: err instanceof Error ? err.message : String(err) })
-      },
-    )
+    ).then((results) => {
+      if (!live) return
+      const memories = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
+      const failed = results.find((r) => r.status === 'rejected')
+      if (memories.length === 0 && failed !== undefined) {
+        const err: unknown = failed.reason
+        setRead({ status: 'error', message: err instanceof Error ? err.message : String(err) })
+      } else setRead({ status: 'ready', memories })
+    })
     return () => {
       live = false
     }
@@ -125,7 +128,7 @@ export function MemoryList(): React.JSX.Element {
       <IconStackEmpty
         icon={Brain}
         title="Nothing remembered yet"
-        description="When an agent learns something worth keeping, a convention, a person, how this vault works, it writes one memory per fact in .holi/memory/. They show here."
+        description="When an agent learns something worth keeping (a convention, a person, how this vault works), it writes one memory per fact in .holi/memory/. They show here."
         action={{ label: 'New session', icon: SquarePen, onClick: () => void create() }}
       />
     )

@@ -9,7 +9,8 @@ are shown.
 **Memory, in the Agents sidebar, lists every memory**, shared and personal, grouped by type, each
 with its description, and marked personal or with its `expires` (and expired once it has passed).
 It reads the files, not `index.md`, which leaves out personal memories and changes only on commit.
-A row opens its file.
+A personal memory shows after the next rescan, since the watcher ignores `.local.` files
+(`isWatchIgnoredPath`). A row opens its file.
 
 ## How it works
 

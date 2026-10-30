@@ -48,9 +48,9 @@ goes to the views, and runs the shell's actions with the same handlers their key
 - **A plugin's rows** come through `RendererPlugin.commandMenu`: an atom of entries (an id, a
   label, an icon, keywords, a muted detail, and a group: `go`, `action`, or a name of its own
   that lists only once something is typed) and a `run` that takes the id. The agent adds the
-  Inbox and its conversations, automations their list, New automation and each one, and the
-  Holis New Holi, How Holis work and each Holi. Each opens what its sidebar row opens, so it
-  becomes a tab the same way.
+  Inbox, History, Memory and its conversations, automations their list, New automation and each
+  one, and the Holis New Holi, How Holis work and each Holi. Each opens what its sidebar row
+  opens, so it becomes a tab the same way.
 
 ## Rules
 
