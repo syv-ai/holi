@@ -75,6 +75,9 @@ export interface SessionSummary {
   outcome?: 'done' | 'failed'
   /** Why a job failed, in words. */
   message?: string
+  /** Tokens its turns used, input and output, when its agent reports them
+   *  (a Codex job's `turn.completed`). A count, never a share of a window. */
+  tokens?: number
 }
 
 /** What a session's status line says: its context use and its model. */

@@ -38,10 +38,24 @@ would start the same session under the same per-machine approval:
 Holi in it (`from: owner/repo#id`), read from that vault each time, its approval still this
 vault's.
 
-**Holis and automations on another agent.** Their runs need a provider with `background`, which
-only Claude Code has. Codex now runs unattended jobs (`codex exec`, in a scratch folder that ends
-when Holi quits; [agent-sessions](features/agent-sessions.md), Jobs), but a Holi's or an
-automation's run reads and writes the vault itself and outlives a quit, which a job does not.
+**More of Codex.** Codex runs Holis and automations as jobs in the vault
+([agent-sessions](features/agent-sessions.md), Jobs), but not all of what Claude Code's runs do:
+
+- **Codex's app-server** (`codex app-server`): live steering of a running turn (`turn/steer`),
+  thread listing and fork, approvals answered from Holi, and a run that outlives Holi quitting. A
+  follow-up to a job waits for its turn to end and resumes the thread with `codex exec resume`.
+- **Duplicate** of a Codex session, until Holi knows a CLI verb that copies a conversation.
+- **Holi's own commands in a Codex run**: `holi holis report` and the memory commands reach Holi
+  over the bridge, which the run's sandbox, having no network, cannot. A Holi run on Codex works
+  and its turns are recorded, but it cannot report or keep its memory. Any other `Bash(holi …)`
+  rule refuses the run.
+- **Tokens of an interactive Codex session**: its `notify` payload carries none, so only a job's
+  row counts them.
+- **The model of an interactive Codex session**: nothing Codex reports to Holi names it, so its row
+  says Codex, not the model.
+- **A document's AI Rewrite and Write on Codex**: they still start a Claude Code background
+  session through `agent.launch` (`document-agent.ts`), whatever this machine's default agent is.
+  Only Create vault app runs on the default agent.
 
 **More providers.** opencode and pi, each as its core and whatever its hooks allow.
 

@@ -7,6 +7,7 @@
  * a check until the row is opened.
  */
 import { CheckIcon, CircleAlertIcon, ZapIcon } from 'lucide-react'
+import { useAtomValue } from 'jotai'
 import type { ComponentProps } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -16,7 +17,8 @@ import { AgentMark } from '@/composites/marks'
 import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
 import { cn } from '@/plugin-api'
 import { DEFAULT_HOLI_COLOUR, relativeAge } from '@holi/shared'
-import { modelLabel, type SessionRow } from '../state/session-list'
+import { providersAtom } from '../state/providers'
+import { modelLabel, tokensLabel, type SessionRow } from '../state/session-list'
 
 /** The state or the age, right-aligned on the card's first line. */
 function CardStatus({ row, now }: { row: SessionRow; now: number }): React.JSX.Element {
@@ -142,6 +144,13 @@ export function SessionCard({
   onFocus: () => void
 }): React.JSX.Element {
   const { item, state, current } = row
+  const providers = useAtomValue(providersAtom)
+  // An agent on its own default model says none: the row names the agent,
+  // as main lists it, rather than guess a model.
+  const agentName =
+    providers.kind === 'ready'
+      ? providers.providers.find((p) => p.id === (item.agent ?? 'claude'))?.label
+      : undefined
   const by =
     item.by === undefined
       ? ''
@@ -149,7 +158,8 @@ export function SessionCard({
   const label = [item.title, stateWords(row), by].filter(Boolean).join(', ')
   const meta = [
     item.by === undefined ? undefined : item.by.name,
-    modelLabel(item.model),
+    item.model === undefined ? agentName : modelLabel(item.model),
+    tokensLabel(item.tokens),
     item.location,
   ]
     .filter(Boolean)

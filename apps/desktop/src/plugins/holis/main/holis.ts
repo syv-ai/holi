@@ -20,10 +20,11 @@
  * anyone approves. It goes into a run inside a `<memory>` block that says what
  * it is: facts the Holi wrote earlier.
  *
- * **A send is a session like any other**: a background session (`claude
- * --bg`), started through the agent (`agent.launch`). Who the Holi is goes in
- * with Claude Code's own `--append-system-prompt`; its first turn is one line
- * naming the document. **What came of it is the Holi's to say**, with `holi
+ * **A send is a session like any other**, started through the agent
+ * (`agent.job`) on this machine's default agent: a background session on
+ * Claude Code (`claude --bg`), a job in the vault on Codex. Who the Holi is
+ * goes in as its system text; its first turn is one line naming the
+ * document. **What came of it is the Holi's to say**, with `holi
  * holis report`, on the run's record. A report that asks for the person
  * (`--needs-you`) is told where they are.
  *
@@ -190,7 +191,7 @@ export interface NeedsYou {
 
 export interface HolisDeps {
   store: JsonFileStore<HolisFile>
-  /** A background session through the agent (`agent.launch`). */
+  /** A run through the agent (`agent.job`), on this machine's default agent. */
   launch(args: {
     name: string
     prompt: string

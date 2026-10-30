@@ -93,6 +93,9 @@ export interface SessionSummary {
   id: string
   name: string
   state: 'needs-you' | 'working' | 'idle'
+  /** A job's last turn, while it is idle: how it went, and why it failed. */
+  outcome?: 'done' | 'failed'
+  message?: string
 }
 
 /** What the Holis plugin says of a Holi an automation names (`holis.context`). */
@@ -132,6 +135,7 @@ export interface RunRecord {
   /** ISO time it was due to start, or asked to. */
   at: string
   trigger: RunTrigger
+  /** `failed` with a `jobId` is a run whose session started and failed. */
   outcome: 'started' | 'skipped' | 'failed'
   /** The session it started. */
   jobId?: string
@@ -563,7 +567,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     const def = entry.parsed.def
     const at = now()
     const state = (await stateOf(vault.remote))[entry.path]
-    const previous = state?.runs.find((r) => r.outcome === 'started')
+    // A run that started a session, whether it went well or not.
+    const previous = state?.runs.find((r) => r.jobId !== undefined)
     let record: RunRecord
     const prior =
       previous?.jobId === undefined
@@ -678,14 +683,28 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     router.settle(path, null, now().getTime())
   }
 
-  /** Mark a run done, and how. */
-  async function finish(vault: SchedulerVault, path: string, jobId: string, kept: boolean) {
+  /** Mark a run done, and how: `failed`, with why, when its session's last
+   *  turn said so (a job's `outcome`). */
+  async function finish(
+    vault: SchedulerVault,
+    path: string,
+    jobId: string,
+    kept: boolean,
+    failed?: string,
+  ) {
     const { remote } = vault
     const at = now().toISOString()
     const file = await changeState(remote, path, (s) => ({
       ...s,
       runs: s.runs.map((r) =>
-        r.jobId === jobId ? { ...r, finishedAt: at, ...(kept ? { kept: true as const } : {}) } : r,
+        r.jobId === jobId
+          ? {
+              ...r,
+              finishedAt: at,
+              ...(kept ? { kept: true as const } : {}),
+              ...(failed === undefined ? {} : { outcome: 'failed' as const, message: failed }),
+            }
+          : r,
       ),
     }))
     router.running(path, false)
@@ -698,12 +717,14 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     })
     turnEnds.delete(jobId)
     await settleRun(path)
-    log(`${path}: run ${jobId} finished${kept ? ', left open' : ', closed'}`)
+    log(
+      `${path}: run ${jobId} ${failed === undefined ? 'finished' : `failed (${failed})`}${kept ? ', left open' : ', closed'}`,
+    )
     await logRun(
       vault.root,
       await nameOf(vault.root, path),
       path,
-      kept ? 'done, left open' : 'done',
+      `${failed === undefined ? 'done' : `failed: ${failed}`}${kept ? ', left open' : ''}`,
     )
     changed(remote)
   }
@@ -732,9 +753,15 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         if (session === undefined) return await finish(vault, path, jobId, false)
         if (session.state === 'needs-you') return
         if (session.state === 'idle') {
-          if (await deps.sessions.watched(jobId)) return await finish(vault, path, jobId, true)
+          // Read before the stop, which takes the session and its outcome
+          // with it.
+          const failed =
+            session.outcome === 'failed' ? (session.message ?? 'The run failed.') : undefined
+          if (await deps.sessions.watched(jobId)) {
+            return await finish(vault, path, jobId, true, failed)
+          }
           const stopped = await deps.sessions.stop(jobId)
-          if (stopped.ok) return await finish(vault, path, jobId, false)
+          if (stopped.ok) return await finish(vault, path, jobId, false, failed)
           log(`${path}: could not close run ${jobId}: ${stopped.message}`)
           return
         }
@@ -857,7 +884,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       const s = state[entry.path]
       const start = s?.approvedAt ?? at.toISOString()
       // A run still working writes files of its own: not events for it.
-      const latest = s?.runs.find((r) => r.outcome === 'started')
+      const latest = s?.runs.find((r) => r.jobId !== undefined)
       router.running(entry.path, latest !== undefined && latest.finishedAt === undefined)
       const moved = router.sweep(
         { path: entry.path, on: entry.parsed.def.on },
@@ -877,7 +904,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         }))
       }
 
-      const started = s?.runs.find((r) => r.outcome === 'started')
+      const started = s?.runs.find((r) => r.jobId !== undefined)
       const batch = router.due(
         entry.path,
         at.getTime(),
