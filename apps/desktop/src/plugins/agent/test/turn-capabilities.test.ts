@@ -33,6 +33,7 @@ async function rig() {
     liveRemote: () => REMOTE,
     commitNow: () => plainGit(root, ['commit', '-am', 'revert']),
     defaultProvider: async () => 'claude' as const,
+    unattended: { allowed: async () => true, set: async () => {} },
   })
   const ctx = {
     remote: REMOTE,

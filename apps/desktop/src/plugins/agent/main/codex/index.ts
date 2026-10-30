@@ -345,6 +345,7 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
       turns: { routes: registerCodexRoutes },
       fenced: true,
       jobs: {
+        readsAnywhere: true,
         command(run) {
           const path = bin()
           if (path === null) return null

@@ -13,6 +13,7 @@ import { codexProvider, fenceArgs, jobArgs, readJobEvent } from '../main/codex'
 import { createFencedSessions } from '../main/host/fenced'
 import type { Fence } from '../main/host/pty-sessions'
 import { agentCapabilities, scopeRules } from '../main/host/capabilities'
+import { createUnattendedStore, unattendedRefusal } from '../main/host/unattended'
 import {
   createJobs,
   inWriteScope,
@@ -209,6 +210,32 @@ describe('a job', () => {
     const row = await ended((started as { sessionId: string }).sessionId)
     expect(row.outcome).toBe('failed')
     expect(row.message).toBe('Codex exited with code 3: boom: no sign-in')
+  })
+
+  it('spawns nothing once the vault is left while it gets ready', async () => {
+    const root = await temp('holi-job-vault-')
+    const userData = await temp('holi-job-data-')
+    await mkdir(join(root, 'notes'), { recursive: true })
+    await writeFile(join(root, 'notes/Plan.md'), 'Ship it\n')
+    const spawn = vi.fn(() => {
+      throw new Error('spawned after the vault was left')
+    })
+    const jobs = createJobs({
+      vault: { remote: 'syv/vault', root },
+      scratchRoot: join(userData, 'agent-jobs'),
+      onChange: () => {},
+      log: () => {},
+      spawn,
+    })
+    const provider = scripted(join(userData, 'none.js'))
+    const scratch = jobs.start({ provider, name: 'a', prompt: 'go', scope: SCOPE })
+    const vault = jobs.start({ provider, name: 'b', prompt: 'go', allow: ['Edit(tilbud/**)'] })
+    await jobs.leave()
+    const gone = { ok: false, message: 'The vault was left before the job started.' }
+    expect(await scratch).toEqual(gone)
+    expect(await vault).toEqual(gone)
+    expect(spawn).not.toHaveBeenCalled()
+    expect(jobs.sessions()).toEqual([])
   })
 
   it('is stopped by Stop, and by leaving the vault', async () => {
@@ -495,6 +522,7 @@ describe('agent.job', () => {
       liveRemote: () => 'syv/vault',
       commitNow: async () => null,
       defaultProvider: async () => 'claude' as const,
+      unattended: { allowed: async () => true, set: async () => {} },
     })
     const ctx = { remote: 'syv/vault', root: '/v' } as unknown as CapabilityContext
     const entry = caps['agent.job']
@@ -830,6 +858,7 @@ describe('agent.job in the vault', () => {
       liveRemote: () => 'syv/vault',
       commitNow: async () => null,
       defaultProvider: async () => fallback,
+      unattended: { allowed: async () => true, set: async () => {} },
     })
     const ctx = { remote: 'syv/vault', root: '/v' } as unknown as CapabilityContext
     const entry = caps['agent.job']
@@ -871,6 +900,68 @@ describe('agent.job in the vault', () => {
   })
 })
 
+describe('an unattended Codex run', () => {
+  const codex = {
+    id: 'codex',
+    label: 'Codex',
+    capabilities: { jobs: { readsAnywhere: true } },
+  } as unknown as AgentProvider
+
+  async function gate() {
+    const unattended = createUnattendedStore(join(await temp('holi-unattended-'), 'u.json'))
+    const start = vi.fn(async () => ({ ok: true as const, sessionId: 'j0123456789ab' }))
+    const caps = agentCapabilities({
+      sessions: {} as never,
+      own: {} as never,
+      jobs: { start } as never,
+      fenced: {} as never,
+      providers: [codex],
+      terminals: {} as never,
+      liveRemote: () => 'syv/vault',
+      commitNow: async () => null,
+      defaultProvider: async () => 'codex',
+      unattended,
+    })
+    const ctx = { remote: 'syv/vault', root: '/v' } as unknown as CapabilityContext
+    const call = <K extends 'agent.job' | 'agent.unattended' | 'agent.allowUnattended'>(
+      name: K,
+      p: unknown,
+    ) => (caps[name].run as (c: unknown, a: unknown) => Promise<unknown>)(ctx, caps[name].params(p))
+    return { call, start, unattended }
+  }
+
+  const RUN = { name: 'Proposal', prompt: 'Go.', allow: ['Edit(tilbud/**)'] }
+
+  it('is refused in main until this machine allows it for the vault, and says how and why', async () => {
+    const { call, start, unattended } = await gate()
+    expect(await call('agent.unattended', { provider: 'codex' })).toBe(false)
+    expect(await call('agent.job', RUN)).toEqual({
+      ok: false,
+      message: unattendedRefusal('Codex'),
+    })
+    expect(unattendedRefusal('Codex')).toMatch(/Settings, General, Agents/)
+    expect(unattendedRefusal('Codex')).toMatch(/read any file on this computer/)
+    expect(start).not.toHaveBeenCalled()
+
+    // Another vault's yes is not this one's.
+    await unattended.set('syv/other', 'codex', true)
+    expect(await call('agent.job', RUN)).toMatchObject({ ok: false })
+
+    await call('agent.allowUnattended', { provider: 'codex', on: true })
+    expect(await call('agent.unattended', { provider: 'codex' })).toBe(true)
+    expect(await call('agent.job', RUN)).toEqual({ ok: true, sessionId: 'j0123456789ab' })
+
+    await call('agent.allowUnattended', { provider: 'codex', on: false })
+    expect(await call('agent.job', RUN)).toMatchObject({ ok: false })
+    expect(start).toHaveBeenCalledOnce()
+  })
+
+  it('is what Codex declares', () => {
+    const real = codexProvider({ resolveBin: () => '/usr/local/bin/codex' }) as JobsProvider
+    expect(real.capabilities.jobs.readsAnywhere).toBe(true)
+  })
+})
+
 describe('agent.scoped', () => {
   const claude = {
     id: 'claude',
@@ -905,6 +996,7 @@ describe('agent.scoped', () => {
       liveRemote: () => 'syv/vault',
       commitNow: async () => null,
       defaultProvider: async () => 'claude',
+      unattended: { allowed: async () => true, set: async () => {} },
     })
     const ctx = { remote: 'syv/vault', root: '/v' } as unknown as CapabilityContext
     const entry = caps['agent.scoped']
@@ -1066,6 +1158,23 @@ describe('a fenced session', () => {
     fence.exited()
     await vi.waitFor(() => expect(release).toHaveBeenCalledWith(fence.state))
     await vi.waitFor(() => expect(readdir(fence.state)).rejects.toThrow())
+  })
+
+  it('opens no session once the vault is being left', async () => {
+    const { fenced, own } = await fencedRig()
+    own.start.mockClear()
+    const res = fenced.start({
+      provider: { id: 'codex' } as never,
+      name: 'x',
+      prompt: 'x',
+      scope: { read: ['notes/Plan.md'], write: ['notes/Other.app/**'] },
+    })
+    await fenced.closing()
+    expect(await res).toEqual({
+      ok: false,
+      message: 'The vault was left before the session started.',
+    })
+    expect(own.start).not.toHaveBeenCalled()
   })
 
   it('says why when its session does not start', async () => {

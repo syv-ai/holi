@@ -154,6 +154,10 @@ export interface JobRun {
 
 /** A prompt run unwatched, sandboxed by the agent (`host/jobs.ts`). */
 interface JobsCapability {
+  /** Its sandbox bounds what it writes, not what it reads: a job can read any
+   *  file on this computer, so one runs unattended only in a vault this
+   *  machine allowed (`host/unattended.ts`). Codex's. */
+  readsAnywhere?: true
   /** What runs one turn of the job. Null when the agent is not installed.
    *  Throws with a sentence when it cannot run. */
   command(run: JobRun): TerminalCommand | null

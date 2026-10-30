@@ -127,11 +127,13 @@ fails, and closes the run as a `Stop` does below; a turn that failed records the
 with Codex's reason, in Run history and the work log. A `model` is Claude Code's and is left out.
 The rest of this section is Claude Code's.
 
-**An automation on Codex can read anything on the disk.** Its sandbox bounds what it writes, the
-schedule's folders, not what it reads, and what it writes is synced and pushed like any edit. A
-note from someone untrusted that the run reads can steer it, and what it writes then reaches
-everyone the vault syncs with. This is a known risk of unattended Codex runs: give it only the
-folders it needs.
+**An automation runs on Codex only once this machine allows it** for the vault (Settings →
+General → Agents, **Let Codex run unattended in this vault**, after a dialog); until then main
+refuses the run, which is recorded as failed with the reason and where to turn it on. Its sandbox
+bounds what it writes, the schedule's folders, not what it reads: it can read any file on this
+computer and write what it read into the vault's synced folders, so a note from someone untrusted
+could make it publish private data ([agent-sessions](agent-sessions.md), Jobs). Even on, give it
+only the folders it needs.
 
 **A run is a background session** started with `claude --bg`, no terminal, named `<name> · HH:MM`.
 Its first turn is one line Holi adds (the schedule's path, the time, the previous run's time, so a

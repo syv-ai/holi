@@ -93,12 +93,18 @@ on `provider` or else this machine's `agentProvider`, and one of two bounds.
   turn is recorded under the job's id. A Holi's `model` is Claude Code's and is not passed to
   another agent.
 
-**What a Codex job can reach is a known risk of unattended runs.** Its sandbox bounds what it
-writes, not what it reads: a job can read anything on this machine's disk that the person can,
-and writes only its allowed folders. What it writes in the vault is synced and pushed like any
-edit. So a note from someone untrusted, in a folder it reads, can steer what it does and what it
-writes, and through a pushed edit what others read. Give a Holi or an automation on Codex only the
-folders it needs, and run nothing on notes you do not trust.
+**An unattended Codex run waits for this machine's yes** (`host/unattended.ts`). Its sandbox
+bounds what it writes, not what it reads: a job can read any file on this computer that the person
+can, and write what it read into the vault's synced folders, which are pushed like any edit. So a
+note from someone untrusted, in a folder it reads, could make it publish private data to everyone
+the vault syncs with. So `agent.job` on Codex (a jobs provider marked `readsAnywhere`) is refused
+in main until someone on this machine turns on **Let Codex run unattended in this vault**
+(Settings → General → Agents), after a dialog that says exactly that; the refusal says where to
+turn it on and why. The answer is this machine's, by remote, in `<userData>/agent-unattended.json`
+(`agent.unattended`, `agent.allowUnattended`, UI door only), never in the vault, where a teammate
+could commit it or a run could write it. It turns off at a click. A watched session (Create vault
+app's fenced one) is not gated: the person is there and answers its approvals. Even on, give a
+Holi or an automation on Codex only the folders it needs.
 
 Codex's job is `codex exec --json --skip-git-repo-check -C <folder> --sandbox workspace-write`
 with `approval_policy="never"`, no network and web search off, on a Codex folder of the job's own
@@ -121,8 +127,11 @@ leaving the vault and quitting (whose question counts a running job) stop its pr
 drop what was queued (a message while it stops is refused, and no turn starts after), a Stop during the copy back stops it there and the job fails, and a scratch
 folder is deleted. Beside the scratch folders is `<id>.pid`, the running turn's pid and the folder
 it runs in; one a crash left behind is killed at the next start, when that pid still leads a group
-whose command names that folder. A provider with neither capability is refused, never run on
-another agent. It is for a plugin built on the agent, whose run nobody watches; what a person
+whose command names that folder. Leaving the vault while a job is still getting ready (its
+folders made, its files copied in) spawns nothing: the start sees the vault was left and stops
+there, and the leave waits for every start under way before it stops the jobs. A fenced session
+still starting opens no session the same way. A provider with neither capability is refused,
+never run on another agent. It is for a plugin built on the agent, whose run nobody watches; what a person
 starts and may want to follow is a fenced session (below).
 
 **Codex's own folder for a run.** A `-c mcp_servers={}` override does not clear the servers the
@@ -488,6 +497,7 @@ showing it busy, crosses it off), so a session resumed from the list is never re
   their turns read off the terminal
 - `apps/desktop/src/plugins/agent/main/host/jobs.ts`: jobs, their scratch folders, events and copy back
 - `apps/desktop/src/plugins/agent/main/host/fenced.ts`: fenced sessions, their folders and copies back
+- `apps/desktop/src/plugins/agent/main/host/unattended.ts`: which vaults this machine lets Codex run unattended in
 - `apps/desktop/src/plugins/agent/main/claude/`: Claude Code as the provider: `cli.ts` (every `claude` command, one
   environment, the binary), `listing.ts` (the listing, state rules, the watch), `routes.ts` (the
   turn, session and status-line routes), `messaging.ts` (the inbox socket writer)

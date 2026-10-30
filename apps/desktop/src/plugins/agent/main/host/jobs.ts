@@ -770,105 +770,129 @@ export function createJobs(deps: JobsDeps): Jobs {
   }
   const swept = sweep()
 
+  /** Leaving the vault bumps it: a start that began before sees it changed
+   *  and spawns nothing. */
+  let generation = 0
+  /** Starts getting ready (folders, copies): `leave` waits for them. */
+  const starting = new Set<Promise<JobResult>>()
+
+  /** A job's start, up to its first turn's spawn. Between its awaits the
+   *  vault may be left; it then stops there, before anything runs. */
+  async function begin(spec: JobSpec): Promise<JobResult> {
+    const { provider, name, prompt, system, model } = spec
+    const began = generation
+    const id = `j${randomBytes(6).toString('hex')}`
+    const job: Job = {
+      id,
+      provider,
+      name,
+      startedAt: Date.now(),
+      ...(model === undefined ? {} : { model }),
+      dir: null,
+      place: null,
+      state: join(deps.scratchRoot, `${id}.agent`),
+      made: new Set(),
+      child: null,
+      busy: false,
+      queue: [],
+      tokens: 0,
+      exited: Promise.resolve(),
+    }
+
+    await swept
+    // Left while it got ready: it never spawns against the closed vault.
+    const left = (): boolean => generation !== began
+    const gone = 'The vault was left before the job started.'
+    if (left()) return { ok: false, message: gone }
+    await mkdir(job.state, { recursive: true, mode: 0o700 })
+    if ('allow' in spec) {
+      const sandbox = vaultSandbox(spec.allow)
+      if (!sandbox.ok) {
+        await rm(job.state, { recursive: true, force: true }).catch(() => undefined)
+        return sandbox
+      }
+      const place = left() ? gone : await placeIn(sandbox.write)
+      if (typeof place === 'string' || left()) {
+        await rm(job.state, { recursive: true, force: true }).catch(() => undefined)
+        return { ok: false, message: typeof place === 'string' ? place : gone }
+      }
+      job.place = place
+      // The agent runs in a folder of the vault, or reads it all: every
+      // path it is given is the vault's.
+      const where = `The vault is ${deps.vault.root}. Every vault path named here is relative to it.`
+      jobs.set(id, job)
+      const started = runTurn(
+        job,
+        {
+          cwd: place.cwd,
+          prompt: [system, where, prompt].filter((p) => p !== undefined).join('\n\n'),
+          writable: place.writable,
+          readOnly: place.readOnly,
+          state: job.state,
+          ...(model === undefined ? {} : { model }),
+        },
+        [],
+      )
+      if (!started.ok) {
+        drop(job)
+        return started
+      }
+      return { ok: true, sessionId: id }
+    }
+
+    const { scope } = spec
+    const dir = join(deps.scratchRoot, id)
+    const fail = async (message: string): Promise<JobResult> => {
+      await rm(dir, { recursive: true, force: true }).catch(() => undefined)
+      await rm(job.state, { recursive: true, force: true }).catch(() => undefined)
+      await rm(pidFile(id), { force: true }).catch(() => undefined)
+      return { ok: false, message }
+    }
+    const taken = await takenDestination(deps.vault.root, scope.write)
+    if (taken !== null) return fail(takenMessage(taken))
+    await mkdir(dir, { recursive: true })
+    for (const path of scope.read) {
+      const abs = await exactPath(deps.vault.root, path)
+      if (abs === null) return fail(`Holi could not read ${path}.`)
+      await mkdir(dirname(join(dir, path)), { recursive: true })
+      const copied = await copyFile(abs, join(dir, path)).then(
+        () => true,
+        () => false,
+      )
+      if (!copied) return fail(`Holi could not read ${path}.`)
+    }
+    if (left()) return fail(gone)
+    job.dir = dir
+    jobs.set(id, job)
+    const started = runTurn(
+      job,
+      {
+        cwd: dir,
+        prompt: system === undefined ? prompt : `${system}\n\n${prompt}`,
+        state: job.state,
+        ...(model === undefined ? {} : { model }),
+      },
+      scope.write,
+    )
+    if (!started.ok) {
+      jobs.delete(id)
+      return fail(started.message)
+    }
+    return { ok: true, sessionId: id }
+  }
+
   return {
     sessions: summaries,
     has: (id) => jobs.has(id),
 
     async start(spec) {
-      const { provider, name, prompt, system, model } = spec
-      const id = `j${randomBytes(6).toString('hex')}`
-      const job: Job = {
-        id,
-        provider,
-        name,
-        startedAt: Date.now(),
-        ...(model === undefined ? {} : { model }),
-        dir: null,
-        place: null,
-        state: join(deps.scratchRoot, `${id}.agent`),
-        made: new Set(),
-        child: null,
-        busy: false,
-        queue: [],
-        tokens: 0,
-        exited: Promise.resolve(),
+      const begun = begin(spec)
+      starting.add(begun)
+      try {
+        return await begun
+      } finally {
+        starting.delete(begun)
       }
-
-      await swept
-      await mkdir(job.state, { recursive: true, mode: 0o700 })
-      if ('allow' in spec) {
-        const sandbox = vaultSandbox(spec.allow)
-        if (!sandbox.ok) {
-          await rm(job.state, { recursive: true, force: true }).catch(() => undefined)
-          return sandbox
-        }
-        const place = await placeIn(sandbox.write)
-        if (typeof place === 'string') {
-          await rm(job.state, { recursive: true, force: true }).catch(() => undefined)
-          return { ok: false, message: place }
-        }
-        job.place = place
-        // The agent runs in a folder of the vault, or reads it all: every
-        // path it is given is the vault's.
-        const where = `The vault is ${deps.vault.root}. Every vault path named here is relative to it.`
-        jobs.set(id, job)
-        const started = runTurn(
-          job,
-          {
-            cwd: place.cwd,
-            prompt: [system, where, prompt].filter((p) => p !== undefined).join('\n\n'),
-            writable: place.writable,
-            readOnly: place.readOnly,
-            state: job.state,
-            ...(model === undefined ? {} : { model }),
-          },
-          [],
-        )
-        if (!started.ok) {
-          drop(job)
-          return started
-        }
-        return { ok: true, sessionId: id }
-      }
-
-      const { scope } = spec
-      const dir = join(deps.scratchRoot, id)
-      const fail = async (message: string): Promise<JobResult> => {
-        await rm(dir, { recursive: true, force: true }).catch(() => undefined)
-        await rm(job.state, { recursive: true, force: true }).catch(() => undefined)
-        await rm(pidFile(id), { force: true }).catch(() => undefined)
-        return { ok: false, message }
-      }
-      const taken = await takenDestination(deps.vault.root, scope.write)
-      if (taken !== null) return fail(takenMessage(taken))
-      await mkdir(dir, { recursive: true })
-      for (const path of scope.read) {
-        const abs = await exactPath(deps.vault.root, path)
-        if (abs === null) return fail(`Holi could not read ${path}.`)
-        await mkdir(dirname(join(dir, path)), { recursive: true })
-        const copied = await copyFile(abs, join(dir, path)).then(
-          () => true,
-          () => false,
-        )
-        if (!copied) return fail(`Holi could not read ${path}.`)
-      }
-      job.dir = dir
-      jobs.set(id, job)
-      const started = runTurn(
-        job,
-        {
-          cwd: dir,
-          prompt: system === undefined ? prompt : `${system}\n\n${prompt}`,
-          state: job.state,
-          ...(model === undefined ? {} : { model }),
-        },
-        scope.write,
-      )
-      if (!started.ok) {
-        jobs.delete(id)
-        return fail(started.message)
-      }
-      return { ok: true, sessionId: id }
     },
 
     message(id, text) {
@@ -911,6 +935,10 @@ export function createJobs(deps: JobsDeps): Jobs {
     },
 
     async leave() {
+      // A start under way spawns nothing now; once each has stopped or
+      // spawned, every job there is is in the list, and stopped below.
+      generation += 1
+      await Promise.allSettled([...starting])
       const all = [...jobs.values()]
       await Promise.all(all.map((job) => kill(job, 'Stopped.')))
       for (const job of all) clearTimeout(job.dropTimer)
