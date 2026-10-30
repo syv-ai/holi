@@ -16,7 +16,7 @@ import { AgentMark } from '@/composites/marks'
 import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
 import { cn } from '@/plugin-api'
 import { DEFAULT_HOLI_COLOUR, relativeAge } from '@holi/shared'
-import { modelLabel, type SessionRow } from '../state/session-list'
+import { modelLabel, tokensLabel, type SessionRow } from '../state/session-list'
 
 /** The state or the age, right-aligned on the card's first line. */
 function CardStatus({ row, now }: { row: SessionRow; now: number }): React.JSX.Element {
@@ -150,6 +150,7 @@ export function SessionCard({
   const meta = [
     item.by === undefined ? undefined : item.by.name,
     modelLabel(item.model, item.agent),
+    tokensLabel(item.tokens),
     item.location,
   ]
     .filter(Boolean)

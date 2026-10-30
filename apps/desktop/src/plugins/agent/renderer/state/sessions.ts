@@ -61,6 +61,9 @@ export interface AgentSession {
   /** What a job that completed left out, in words; why one failed is its
    *  `error`. */
   message?: string
+  /** Tokens its turns used, when its agent reports a count (a Codex job):
+   *  never a share of a context window. */
+  tokens?: number
 }
 
 /**
