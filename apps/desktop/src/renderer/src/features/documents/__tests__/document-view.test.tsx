@@ -4,7 +4,7 @@
  * empty line asks Sonnet to write there: the marker is saved, the run locks
  * the page until its session is done, and Stop ends it.
  */
-import { emptyVaultSnapshot } from '@holi/shared'
+import { emptyVaultSnapshot, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import userEvent from '@testing-library/user-event'
 import { atom, createStore, Provider } from 'jotai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -13,6 +13,7 @@ import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import * as agentService from '@/state/agent-service'
 import { pendingHeadingAtom } from '@/state/open-document'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { vaultSettingsAtom } from '@/state/settings'
 
 import { DocumentView } from '../document-view'
 
@@ -102,6 +103,10 @@ beforeEach(() => {
   )
   store = createStore()
   store.set(activeRemoteAtom, 'syv/vault')
+  store.set(vaultSettingsAtom, {
+    remote: 'syv/vault',
+    settings: { ...VAULT_SETTING_DEFAULTS, agentProvider: 'claude', warnings: [] },
+  })
   store.set(snapshotAtom, {
     ...emptyVaultSnapshot(),
     docs: [{ path: PATH, kind: 'note', updatedAt: '2026-10-23T10:00:00Z' }],
@@ -161,9 +166,10 @@ test('Space on an empty line asks Sonnet, locks the page, and unlocks when done'
     ),
   )
   const launch = JSON.parse(cap.mock.calls[0]![0].paramsJson)
+  expect(launch.provider).toBe('claude')
   expect(launch.model).toBe('claude-sonnet-5-5')
-  expect(launch.prompt).toContain('Write an introduction')
   expect(launch.allow).toContain('Edit(./notes/Plan.md)')
+  expect(launch.prompt).toContain('Write an introduction')
   // The marker was saved where the person asked, under the kept frontmatter.
   expect(files.get(PATH)).toBe('---\ntitle: Plan\n---\n\n<!-- holi:agent -->\n')
 
@@ -175,6 +181,42 @@ test('Space on an empty line asks Sonnet, locks the page, and unlocks when done'
 
   act(() => store.set(sessions, [{ id: 'abc12345', name: '', state: 'idle' }]))
   await waitFor(() => expect(box).toHaveAttribute('contenteditable', 'true'))
+})
+
+test('Pi uses the local default and shows its warning without Claude-only launch options', async () => {
+  const user = userEvent.setup()
+  store.set(vaultSettingsAtom, {
+    remote: 'syv/vault',
+    settings: { ...VAULT_SETTING_DEFAULTS, agentProvider: 'pi', warnings: [] },
+  })
+  open('')
+  expect(await screen.findByText('Pi document runs are not sandboxed')).toBeVisible()
+  const box = await editorBox()
+  box.focus()
+  fireEvent.keyDown(box, { key: ' ', code: 'Space' })
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Write it{Enter}',
+  )
+  await waitFor(() => expect(cap).toHaveBeenCalled())
+  const launch = JSON.parse(cap.mock.calls[0]![0].paramsJson)
+  expect(launch.provider).toBe('pi')
+  expect(launch).not.toHaveProperty('model')
+  expect(launch).not.toHaveProperty('allow')
+})
+
+test('a failed document run keeps its failure status', async () => {
+  cap.mockImplementationOnce(() => Promise.resolve({ ok: false, message: 'Pi unavailable' }))
+  const user = userEvent.setup()
+  open('')
+  const box = await editorBox()
+  box.focus()
+  fireEvent.keyDown(box, { key: ' ', code: 'Space' })
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Write it{Enter}',
+  )
+  expect(await screen.findByText('Pi unavailable')).toBeVisible()
 })
 
 test('Stop ends the run', async () => {
