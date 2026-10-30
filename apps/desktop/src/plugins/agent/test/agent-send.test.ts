@@ -23,11 +23,12 @@ import {
   stopSessionAtom,
 } from '../renderer/state/send'
 import { registerSessionTerminal } from '../renderer/lib/session-terminals'
-import { agentsViewAtom } from '../renderer/state/agents-view'
+import { agentsViewAtom, viewTerminalsAtom } from '../renderer/state/agents-view'
 import { showSessionAtom } from '../renderer/state/session-view'
 import {
   activeRemoteAtom,
   activeSurfaceIdAtom,
+  appModeAtom,
   openSurfaceAtom,
   surfaceTabIdsAtom,
 } from '@/plugin-api'
@@ -195,10 +196,17 @@ test('stop goes to main and answers what it said', async () => {
   expect(stop).toHaveBeenCalledWith('aaaaaaaa')
 })
 
-test('duplicate opens the copy', async () => {
-  const store = storeWith([session({ id: 'aaaaaaaa' })])
+test('duplicate opens the copy in its provider-marked session tab', async () => {
+  const copiedId = 'p0123456789ab'
+  duplicate.mockResolvedValueOnce({ ok: true, sessionId: copiedId, terminalId: 'copied' })
+  const store = storeWith([session({ id: 'aaaaaaaa', provider: 'pi' })])
+
   await store.set(duplicateSessionAtom, 'aaaaaaaa')
+
   expect(shown(store)).toBe('copied')
+  expect(store.get(appModeAtom)).toBe('agents')
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: copiedId })
+  expect(store.get(viewTerminalsAtom)[copiedId]).toBe('copied')
 })
 
 test('an ask may go to any live session not waiting on a question of its own', () => {
