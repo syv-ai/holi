@@ -9,6 +9,7 @@ directories:
   output: release
 files:
   - out/**/*
+  - assets/menu-bar-icon.png
   - package.json
 asarUnpack:
   # A native module and its spawn helper are executed, so they cannot live
