@@ -30,6 +30,9 @@ import {
   serversAtom,
   setupLogsAtom,
   updatesAtom,
+  dismissedNoticesAtom,
+  dismissNoticeAtom,
+  communityNoticeGroups,
   type PluginRow,
   type ServerState,
 } from './state'
@@ -89,24 +92,16 @@ const DOCUMENT_SURFACE: Surface = {
 }
 
 /** Plugins the vault turns on that cannot run here yet. */
-const waitingAtom = atom((get): readonly PluginRow[] =>
-  (get(rowsAtom)?.rows ?? []).filter((r) => r.on && r.status !== 'ready'),
-)
-
-/** Plugins the vault runs here whose readiness check fails. */
-const notWorkingAtom = atom((get): readonly PluginRow[] =>
-  (get(rowsAtom)?.rows ?? []).filter((r) => r.running && r.check?.ok === false),
-)
-
-/** Plugins the vault runs here that have a newer release, with it. */
-const updatableAtom = atom((get): readonly { row: PluginRow; version: string }[] => {
-  const updates = get(updatesAtom)
-  return (get(rowsAtom)?.rows ?? []).flatMap((row) =>
-    row.on && row.status === 'ready' && updates[row.id] !== undefined
-      ? [{ row, version: updates[row.id]! }]
-      : [],
-  )
+const noticeGroupsAtom = atom((get) => {
+  const remote = get(activeRemoteAtom)
+  const rows = get(rowsAtom)
+  if (remote === null || rows?.remote !== remote)
+    return { waiting: [], notWorking: [], updatable: [] }
+  return communityNoticeGroups(rows.rows, get(dismissedNoticesAtom)[remote] ?? [], get(updatesAtom))
 })
+const waitingAtom = atom((get): readonly PluginRow[] => get(noticeGroupsAtom).waiting)
+const notWorkingAtom = atom((get): readonly PluginRow[] => get(noticeGroupsAtom).notWorking)
+const updatableAtom = atom((get) => get(noticeGroupsAtom).updatable)
 
 /**
  * The notice a vault's plugins raise under the file tree, one line per plugin
@@ -121,6 +116,7 @@ function WaitingNotice(): React.JSX.Element | null {
   const remote = useAtomValue(activeRemoteAtom)
   const store = useStore()
   const openDialog = useSetAtom(openDialogAtom)
+  const dismiss = useSetAtom(dismissNoticeAtom)
   const [error, setError] = useState<string | null>(null)
   const [checking, setChecking] = useState<string | null>(null)
   if (
@@ -166,11 +162,21 @@ function WaitingNotice(): React.JSX.Element | null {
             This vault uses <span className="text-foreground">{row.name}</span>
             {row.pin !== null && <> {row.pin.version}</>}
           </span>
-          {(row.pin !== null || row.install !== null) && (
-            <Button size="xs" variant="secondary" onClick={() => void next(row)}>
-              {row.status === 'not-installed' ? 'Install…' : 'Set up…'}
+          <div className="flex shrink-0 items-center gap-1">
+            {(row.pin !== null || row.install !== null) && (
+              <Button size="xs" variant="secondary" onClick={() => void next(row)}>
+                {row.status === 'not-installed' ? 'Install…' : 'Set up…'}
+              </Button>
+            )}
+            <Button
+              size="xs"
+              variant="ghost"
+              aria-label={`Dismiss ${row.name} notice`}
+              onClick={() => dismiss({ remote, id: row.id })}
+            >
+              Dismiss
             </Button>
-          )}
+          </div>
         </div>
       ))}
       {notWorking.map((row) => (

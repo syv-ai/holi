@@ -9,6 +9,7 @@
  * once more when main has linked the agent's commands after such a change.
  */
 import { atom } from 'jotai'
+import { atomWithStorage } from 'jotai/utils'
 import { communityPluginsSignature, servedFile } from '@holi/shared'
 import { snapshotAtom, type PluginStore } from '@/plugin-api'
 import { communityCap } from './community-cap'
@@ -19,6 +20,49 @@ export type { PluginRow, ServerState }
 
 /** The open vault's rows, with the vault they were read for. */
 export const rowsAtom = atom<{ remote: string; rows: readonly PluginRow[] } | null>(null)
+
+/** Install/setup notices dismissed on this machine, independent of pin version. */
+export const dismissedNoticesAtom = atomWithStorage<Record<string, readonly string[]>>(
+  'holi:community-notice-dismissals',
+  {},
+  undefined,
+  { getOnInit: true },
+)
+
+export const dismissNoticeAtom = atom(
+  null,
+  (get, set, { remote, id }: { remote: string; id: string }) => {
+    const all = get(dismissedNoticesAtom)
+    const ids = all[remote] ?? []
+    if (ids.includes(id)) return
+    set(dismissedNoticesAtom, { ...all, [remote]: [...ids, id] })
+  },
+)
+
+/** Hide only install/setup notices; readiness and update alerts remain independent. */
+export function communityNoticeGroups(
+  rows: readonly PluginRow[],
+  dismissed: readonly string[],
+  updates: Readonly<Record<string, string>>,
+) {
+  return {
+    waiting: waitingNotices(rows, dismissed),
+    notWorking: rows.filter((row) => row.running && row.check?.ok === false),
+    updatable: rows.flatMap((row) =>
+      row.on && row.status === 'ready' && updates[row.id] !== undefined
+        ? [{ row, version: updates[row.id]! }]
+        : [],
+    ),
+  }
+}
+
+function waitingNotices(
+  rows: readonly PluginRow[],
+  dismissed: readonly string[],
+): readonly PluginRow[] {
+  const hidden = new Set(dismissed)
+  return rows.filter((row) => row.on && row.status !== 'ready' && !hidden.has(row.id))
+}
 
 /** Each file's server, by vault path, as the last `server` event said. */
 export const serversAtom = atom<Readonly<Record<string, ServerState>>>({})
