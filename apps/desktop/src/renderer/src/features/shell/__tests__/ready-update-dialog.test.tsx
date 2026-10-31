@@ -1,7 +1,7 @@
-import { render, screen } from '@/test/render'
+import { act, render, screen, waitFor } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { createStore, Provider } from 'jotai'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { UpdateStatus } from '../../../../../main/updates/state'
 import { updateStatusAtom } from '@/state/updates'
 import { ReadyUpdateDialog } from '../ready-update-dialog'
@@ -30,9 +30,29 @@ function mount(status: UpdateStatus = ready) {
   return store
 }
 
+let sendVisibility: (visible: boolean) => void
+let nativeVisible = true
+const trpc = vi.fn(async () => ({ ok: true as const, data: undefined }))
+
+beforeEach(() => {
+  sendVisibility = () => {}
+  nativeVisible = true
+  trpc.mockClear()
+  vi.stubGlobal('holi', {
+    trpc,
+    window: {
+      onVisible: (cb: (visible: boolean) => void) => {
+        sendVisibility = cb
+        return () => {}
+      },
+      isVisible: async () => nativeVisible,
+    },
+  })
+})
+
 afterEach(() => {
   window.localStorage.clear()
-  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+  vi.unstubAllGlobals()
 })
 
 describe('ReadyUpdateDialog', () => {
@@ -50,16 +70,56 @@ describe('ReadyUpdateDialog', () => {
     expect(await screen.findByRole('dialog', { name: 'Holi 1.1.0 is ready' })).toBeInTheDocument()
   })
 
-  test('waits until the window is visible and does not prompt after a download failure', async () => {
-    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+  test('waits for a hidden-at-login native window even when the document is visible', async () => {
+    nativeVisible = false
+    expect(document.visibilityState).toBe('visible')
     const store = mount()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
-    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
-    document.dispatchEvent(new Event('visibilitychange'))
+    sendVisibility(true)
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
 
-    store.set(updateStatusAtom, { ...ready, state: 'available', lastError: 'download failed' })
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    act(() =>
+      store.set(updateStatusAtom, { ...ready, state: 'available', lastError: 'download failed' }),
+    )
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  test('ignores a stale initial visibility answer after a show event', async () => {
+    let answer: (visible: boolean) => void = () => {}
+    window.holi.window.isVisible = () => new Promise((resolve) => (answer = resolve))
+    mount()
+    sendVisibility(true)
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    answer(false)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
+  test('Restart now uses the existing guarded install action', async () => {
+    mount()
+    await userEvent.click(await screen.findByRole('button', { name: 'Restart now' }))
+    await waitFor(() =>
+      expect(trpc).toHaveBeenCalledWith({
+        path: 'updates.install',
+        type: 'mutation',
+        input: undefined,
+      }),
+    )
+  })
+
+  test('drops a stale ready candidate after changing channels', async () => {
+    const store = mount()
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    act(() =>
+      store.set(updateStatusAtom, {
+        ...ready,
+        state: 'checking',
+        channel: 'dev',
+        availableVersion: null,
+      }),
+    )
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    act(() => store.set(updateStatusAtom, { ...ready, channel: 'dev', availableVersion: '1.2.0' }))
+    expect(await screen.findByRole('dialog', { name: 'Holi 1.2.0 is ready' })).toBeInTheDocument()
   })
 })

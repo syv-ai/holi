@@ -219,6 +219,11 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
   win.on('enter-full-screen', sendFullScreen)
   win.on('leave-full-screen', sendFullScreen)
   win.webContents.on('did-finish-load', sendFullScreen)
+  // DOM visibility alone is not a reliable signal for a window created hidden
+  // at login. The ready-update prompt uses the real native window state.
+  const sendVisibility = () => win.webContents.send('window:visible', win.isVisible())
+  win.on('show', sendVisibility)
+  win.on('hide', sendVisibility)
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) {
@@ -817,6 +822,9 @@ async function main(): Promise<void> {
   })
 
   registerIpc({ router, rootFor: (remote) => rootFor(remote) })
+  ipcMain.handle('window:is-visible', (event) =>
+    mainWindow !== null && event.sender === mainWindow.webContents ? mainWindow.isVisible() : false,
+  )
 
   const holiCliPath = await installHoliCli(app.getPath('userData'))
   await installNodeFallback(app.getPath('userData'), process.execPath)

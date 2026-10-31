@@ -36,36 +36,55 @@ function saveDismissal(key: string): void {
 export function ReadyUpdateDialog(): React.JSX.Element | null {
   const status = useAtomValue(updateStatusAtom)
   const install = useSetAtom(installUpdateAtom)
-  const [visible, setVisible] = useState(() => document.visibilityState === 'visible')
-  const [dismissedKey, setDismissedKey] = useState<string | null>(null)
+  const [visible, setVisible] = useState(false)
+  const [eligibleKey, setEligibleKey] = useState<string | null>(null)
+  const readyKey =
+    status?.state === 'ready' && status.availableVersion !== null
+      ? dismissalKey(status.availableVersion, status.channel)
+      : null
 
   useEffect(() => {
-    const onVisibilityChange = () => setVisible(document.visibilityState === 'visible')
-    document.addEventListener('visibilitychange', onVisibilityChange)
-    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+    let active = true
+    let receivedPush = false
+    const off = window.holi.window.onVisible((next) => {
+      receivedPush = true
+      setVisible(next)
+    })
+    // Subscribe first, then ask: a show/hide push wins if it races the answer.
+    void window.holi.window.isVisible().then(
+      (next) => {
+        if (active && !receivedPush) setVisible(next)
+      },
+      () => {
+        // The window can close before its initial visibility query answers.
+      },
+    )
+    return () => {
+      active = false
+      off()
+    }
   }, [])
 
-  if (status?.state !== 'ready') return null
-  const version = status.availableVersion
-  if (version === null) return null
-  const readyStatus = status
-  const readyKey = dismissalKey(version, readyStatus.channel)
-  const open = visible && !wasDismissed(readyKey) && dismissedKey !== readyKey
+  useEffect(() => {
+    setEligibleKey(readyKey !== null && !wasDismissed(readyKey) ? readyKey : null)
+  }, [readyKey])
+
+  if (readyKey === null || eligibleKey !== readyKey || status?.state !== 'ready') return null
   const dismiss = () => {
     saveDismissal(readyKey)
-    setDismissedKey(readyKey)
+    setEligibleKey(null)
   }
 
   return (
     <Dialog
-      open={open}
+      open={visible}
       onOpenChange={(nextOpen) => {
         if (!nextOpen) dismiss()
       }}
     >
-      <DialogContent aria-describedby="ready-update-description">
+      <DialogContent aria-describedby="ready-update-description" showCloseButton={false}>
         <DialogHeader>
-          <DialogTitle>Holi {readyStatus.availableVersion} is ready</DialogTitle>
+          <DialogTitle>Holi {status.availableVersion} is ready</DialogTitle>
           <DialogDescription id="ready-update-description">
             Restart Holi to install this update. Your vault will be saved and synced before
             restarting.
