@@ -59,6 +59,7 @@ import { AppSidebar } from '@/features/sidebar/app-sidebar'
 import { useSidebarApps } from '@/features/sidebar/sidebar-apps'
 import { useNewDocument } from '@/features/sidebar/use-files'
 import { DialogHost } from './dialog-host'
+import { ReadyUpdateDialog } from './ready-update-dialog'
 import { MobileHeader } from './mobile-header'
 import { readShares, writeShares } from './split-shares'
 import { SplitView, type MemberSlot } from './split-view'
@@ -495,6 +496,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
       />
       <ShortcutsDialog />
       <DialogHost />
+      <ReadyUpdateDialog />
     </SidebarProvider>
   )
 }

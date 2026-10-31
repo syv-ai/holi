@@ -169,6 +169,22 @@ describe('updater channel switching', () => {
     updater.dispose()
   })
 
+  it('keeps the ready update when the guarded restart is cancelled', async () => {
+    const beforeInstall = vi.fn(async () => false)
+    const updater = createUpdater({ send: vi.fn(), beforeInstall })
+    await tick()
+    mocks.updater.emit('update-available', { version: '1.1.0' })
+    mocks.updater.emit('update-downloaded')
+
+    updater.install()
+    await tick()
+
+    expect(beforeInstall).toHaveBeenCalledOnce()
+    expect(updater.status()).toMatchObject({ state: 'ready', availableVersion: '1.1.0' })
+    expect(mocks.updater.quitAndInstall).not.toHaveBeenCalled()
+    updater.dispose()
+  })
+
   it('does not install a ready candidate staged on the previous channel', async () => {
     const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
     await tick()
