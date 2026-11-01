@@ -51,6 +51,7 @@ import {
   closeTabsToRight,
   dropOnStrip,
   entryId,
+  entryIds,
   focusMember,
   isSplit,
   MAX_SPLIT,
@@ -66,6 +67,7 @@ import {
 } from '@/state/shell-workspace'
 
 import { useTabLook } from './tab-look'
+import { TabSwitcher, type SwitcherRow } from './tab-switcher'
 import { TAB_MIME, tabDragAtom, useTabDragSource } from './use-tab-drag'
 
 export type HeaderTab = {
@@ -154,198 +156,228 @@ export function TabStrip({
     return dropOnStrip(ws, dragged, at) === ws ? null : at
   }
 
-  return (
-    // A row, not a landmark: the title band holds it on desktop, the mobile
-    // column's header on phones.
-    <div
-      data-slot="site-header"
-      className="group/strip flex h-full min-w-0 flex-1 items-center gap-2 px-2"
-    >
-      <Tabs
-        value={ws.active ?? ''}
-        onValueChange={(id) => act((w) => selectEntry(w, id))}
-        className="min-w-0 flex-1 items-center data-horizontal:flex-row"
-      >
-        {count > 0 ? (
-          <TabsList
-            variant="line"
-            aria-label="Tabs"
-            className="min-w-0 justify-start overflow-x-auto group-data-horizontal/tabs:h-9"
-            onDragOver={(event) => {
-              const at = stripDrop(event)
-              if (at !== dropAt) setDropAt(at)
-              if (at === null) return
-              event.preventDefault()
-              event.dataTransfer.dropEffect = 'move'
-            }}
-            onDragLeave={(event) => {
-              const to = event.relatedTarget
-              if (!(to instanceof Node) || !event.currentTarget.contains(to)) {
-                setDropAt(null)
-              }
-            }}
-            onDrop={(event) => {
-              const at = stripDrop(event)
-              const key = event.dataTransfer.getData(TAB_MIME) || dragged
-              setDropAt(null)
-              setDrag(null)
-              if (at === null || key === null) return
-              event.preventDefault()
-              act((w) => dropOnStrip(w, key, at))
-            }}
-          >
-            {ws.entries.map((entry, index) => {
-              const id = entryId(entry)
-              const members = isSplit(entry) ? entry.views.map(look) : null
-              const tab = members === null ? look(id) : null
-              const label =
-                tab !== null ? spoken(tab) : `Split view: ${members!.map(spoken).join(', ')}`
-              return (
-                <ContextMenu key={id}>
-                  <ContextMenuTrigger asChild>
-                    {/* The close button is the trigger's sibling: a button
-                        cannot hold another button. */}
-                    <div
-                      data-entry-id={id}
-                      data-tab-key={tab === null ? undefined : id}
-                      data-drop-before={dropAt === index || undefined}
-                      data-drop-after={(dropAt === count && index === count - 1) || undefined}
-                      {...(draggable ? dragSource(id) : {})}
-                      onContextMenu={(event) =>
-                        setMenuMember(
-                          (event.target as HTMLElement)
-                            .closest<HTMLElement>('[data-member]')
-                            ?.getAttribute('data-member') ?? null,
-                        )
-                      }
-                      className={cn(
-                        'group/tab relative flex h-full',
-                        // Where a dragged entry would land: a hairline in
-                        // the gap.
-                        'data-drop-before:before:bg-primary data-drop-before:before:absolute data-drop-before:before:inset-y-1.5 data-drop-before:before:-start-0.5 data-drop-before:before:w-0.5 data-drop-before:before:rounded-full',
-                        'data-drop-after:after:bg-primary data-drop-after:after:absolute data-drop-after:after:inset-y-1.5 data-drop-after:after:-end-0.5 data-drop-after:after:w-0.5 data-drop-after:after:rounded-full',
-                      )}
-                    >
-                      <TabsTrigger
-                        value={id}
-                        aria-label={label}
-                        onClick={(event) => {
-                          // A member's part of the pill focuses that member.
-                          const member = (event.target as HTMLElement)
-                            .closest<HTMLElement>('[data-member]')
-                            ?.getAttribute('data-member')
-                          if (member) act((w) => focusMember(w, id, member))
-                        }}
-                        variant="tab"
-                        className={cn(
-                          'hover:bg-foreground/5',
-                          'group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 dark:group-data-[variant=line]/tabs-list:data-active:bg-foreground/8',
-                          tab !== null ? 'w-56' : members!.length > 2 ? 'w-80' : 'w-64',
-                        )}
-                      >
-                        {tab !== null ? (
-                          <>
-                            <TabMark tab={tab} dot={false} />
-                            <span className="truncate">{tab.title}</span>
-                            {tab.status !== undefined ? <TabStatus status={tab.status} /> : null}
-                          </>
-                        ) : (
-                          <SplitMembers
-                            drag={draggable ? memberDrag : undefined}
-                            members={members!}
-                            focused={split?.id === id ? (entry as ShellSplit).focused : null}
-                          />
-                        )}
-                      </TabsTrigger>
-                      {/* Shown on hover and keyboard focus, and always on the tab
-                          in front unless its status badge holds the place. */}
-                      <span
-                        className={cn(
-                          'absolute end-1.5 top-1/2 -translate-y-1/2 opacity-0 group-hover/tab:opacity-100 has-focus-visible:opacity-100',
-                          tab?.status === undefined && 'group-has-data-active/tab:opacity-100',
-                        )}
-                      >
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          aria-label={tab !== null ? `Close ${tab.title}` : 'Close split view'}
-                          onClick={() => act((w) => closeEntry(w, id))}
-                        >
-                          <XIcon aria-hidden="true" />
-                        </Button>
-                      </span>
-                    </div>
-                  </ContextMenuTrigger>
-                  <EntryMenu
-                    split={isSplit(entry) ? entry : null}
-                    member={
-                      isSplit(entry) && menuMember !== null && entry.views.includes(menuMember)
-                        ? (members!.find((m) => m.id === menuMember) ?? null)
-                        : null
-                    }
-                    onMoveOut={(key) => act((w) => moveOut(w, key))}
-                    onReplace={(key) => act((w) => replaceWithNew(w, key))}
-                    onCloseMember={(key) => act((w) => closeTab(w, key))}
-                    last={index === count - 1}
-                    only={count < 2}
-                    onOpenInSplit={() => act((w) => openInSplit(w, id))}
-                    onSeparate={() => act((w) => separate(w, id))}
-                    onClose={() => act((w) => closeEntry(w, id))}
-                    onCloseOthers={() => act((w) => closeOtherTabs(w, id))}
-                    onCloseRight={() => act((w) => closeTabsToRight(w, id))}
-                    onReopen={() => act(reopenClosed)}
-                  />
-                </ContextMenu>
-              )
-            })}
-          </TabsList>
-        ) : null}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label="New tab" onClick={onNewTab}>
-              <PlusIcon aria-hidden="true" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>New tab</TooltipContent>
-        </Tooltip>
-      </Tabs>
+  /** An entry as the tab switcher lists it: a tab's mark and title, a
+   *  split's members side by side, as in the strip. */
+  function switcherRow(id: string): SwitcherRow {
+    const entry = ws.entries.find((candidate) => entryId(candidate) === id)
+    if (isSplit(entry)) {
+      const members = entry.views.map(look)
+      return {
+        name: `Split view: ${members.map(spoken).join(', ')}`,
+        content: <SplitMembers members={members} focused={null} />,
+      }
+    }
+    const tab = look(id)
+    return {
+      name: spoken(tab),
+      content: (
+        <>
+          <TabMark tab={tab} />
+          <span className="truncate">{tab.title}</span>
+        </>
+      ),
+    }
+  }
 
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon-sm" aria-label="Tab options">
-            <EllipsisVerticalIcon aria-hidden="true" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-56">
-          <DropdownMenuItem
-            disabled={ws.active === null || (split !== null && split.views.length >= MAX_SPLIT)}
-            onSelect={() => act(splitActive)}
-          >
-            <Columns2Icon aria-hidden="true" />
-            Split view
-            <DropdownMenuShortcut>⌘\</DropdownMenuShortcut>
-          </DropdownMenuItem>
-          {split !== null ? (
-            <DropdownMenuItem onSelect={() => act((w) => separate(w, split.id))}>
-              <UngroupIcon aria-hidden="true" />
-              Separate
-              <DropdownMenuShortcut>⇧⌘\</DropdownMenuShortcut>
-            </DropdownMenuItem>
+  return (
+    <TabSwitcher
+      order={entryIds(ws)}
+      active={ws.active}
+      onSelect={(id) => act((w) => selectEntry(w, id))}
+      row={switcherRow}
+    >
+      {/* A row, not a landmark: the title band holds it on desktop, the mobile
+        column's header on phones. */}
+      <div
+        data-slot="site-header"
+        className="group/strip flex h-full min-w-0 flex-1 items-center gap-2 px-2"
+      >
+        <Tabs
+          value={ws.active ?? ''}
+          onValueChange={(id) => act((w) => selectEntry(w, id))}
+          className="min-w-0 flex-1 items-center data-horizontal:flex-row"
+        >
+          {count > 0 ? (
+            <TabsList
+              variant="line"
+              aria-label="Tabs"
+              className="min-w-0 justify-start overflow-x-auto group-data-horizontal/tabs:h-9"
+              onDragOver={(event) => {
+                const at = stripDrop(event)
+                if (at !== dropAt) setDropAt(at)
+                if (at === null) return
+                event.preventDefault()
+                event.dataTransfer.dropEffect = 'move'
+              }}
+              onDragLeave={(event) => {
+                const to = event.relatedTarget
+                if (!(to instanceof Node) || !event.currentTarget.contains(to)) {
+                  setDropAt(null)
+                }
+              }}
+              onDrop={(event) => {
+                const at = stripDrop(event)
+                const key = event.dataTransfer.getData(TAB_MIME) || dragged
+                setDropAt(null)
+                setDrag(null)
+                if (at === null || key === null) return
+                event.preventDefault()
+                act((w) => dropOnStrip(w, key, at))
+              }}
+            >
+              {ws.entries.map((entry, index) => {
+                const id = entryId(entry)
+                const members = isSplit(entry) ? entry.views.map(look) : null
+                const tab = members === null ? look(id) : null
+                const label =
+                  tab !== null ? spoken(tab) : `Split view: ${members!.map(spoken).join(', ')}`
+                return (
+                  <ContextMenu key={id}>
+                    <ContextMenuTrigger asChild>
+                      {/* The close button is the trigger's sibling: a button
+                        cannot hold another button. */}
+                      <div
+                        data-entry-id={id}
+                        data-tab-key={tab === null ? undefined : id}
+                        data-drop-before={dropAt === index || undefined}
+                        data-drop-after={(dropAt === count && index === count - 1) || undefined}
+                        {...(draggable ? dragSource(id) : {})}
+                        onContextMenu={(event) =>
+                          setMenuMember(
+                            (event.target as HTMLElement)
+                              .closest<HTMLElement>('[data-member]')
+                              ?.getAttribute('data-member') ?? null,
+                          )
+                        }
+                        className={cn(
+                          'group/tab relative flex h-full',
+                          // Where a dragged entry would land: a hairline in
+                          // the gap.
+                          'data-drop-before:before:bg-primary data-drop-before:before:absolute data-drop-before:before:inset-y-1.5 data-drop-before:before:-start-0.5 data-drop-before:before:w-0.5 data-drop-before:before:rounded-full',
+                          'data-drop-after:after:bg-primary data-drop-after:after:absolute data-drop-after:after:inset-y-1.5 data-drop-after:after:-end-0.5 data-drop-after:after:w-0.5 data-drop-after:after:rounded-full',
+                        )}
+                      >
+                        <TabsTrigger
+                          value={id}
+                          aria-label={label}
+                          onClick={(event) => {
+                            // A member's part of the pill focuses that member.
+                            const member = (event.target as HTMLElement)
+                              .closest<HTMLElement>('[data-member]')
+                              ?.getAttribute('data-member')
+                            if (member) act((w) => focusMember(w, id, member))
+                          }}
+                          variant="tab"
+                          className={cn(
+                            'hover:bg-foreground/5',
+                            'group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 dark:group-data-[variant=line]/tabs-list:data-active:bg-foreground/8',
+                            tab !== null ? 'w-56' : members!.length > 2 ? 'w-80' : 'w-64',
+                          )}
+                        >
+                          {tab !== null ? (
+                            <>
+                              <TabMark tab={tab} dot={false} />
+                              <span className="truncate">{tab.title}</span>
+                              {tab.status !== undefined ? <TabStatus status={tab.status} /> : null}
+                            </>
+                          ) : (
+                            <SplitMembers
+                              drag={draggable ? memberDrag : undefined}
+                              members={members!}
+                              focused={split?.id === id ? (entry as ShellSplit).focused : null}
+                            />
+                          )}
+                        </TabsTrigger>
+                        {/* Shown on hover and keyboard focus, and always on the tab
+                          in front unless its status badge holds the place. */}
+                        <span
+                          className={cn(
+                            'absolute end-1.5 top-1/2 -translate-y-1/2 opacity-0 group-hover/tab:opacity-100 has-focus-visible:opacity-100',
+                            tab?.status === undefined && 'group-has-data-active/tab:opacity-100',
+                          )}
+                        >
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label={tab !== null ? `Close ${tab.title}` : 'Close split view'}
+                            onClick={() => act((w) => closeEntry(w, id))}
+                          >
+                            <XIcon aria-hidden="true" />
+                          </Button>
+                        </span>
+                      </div>
+                    </ContextMenuTrigger>
+                    <EntryMenu
+                      split={isSplit(entry) ? entry : null}
+                      member={
+                        isSplit(entry) && menuMember !== null && entry.views.includes(menuMember)
+                          ? (members!.find((m) => m.id === menuMember) ?? null)
+                          : null
+                      }
+                      onMoveOut={(key) => act((w) => moveOut(w, key))}
+                      onReplace={(key) => act((w) => replaceWithNew(w, key))}
+                      onCloseMember={(key) => act((w) => closeTab(w, key))}
+                      last={index === count - 1}
+                      only={count < 2}
+                      onOpenInSplit={() => act((w) => openInSplit(w, id))}
+                      onSeparate={() => act((w) => separate(w, id))}
+                      onClose={() => act((w) => closeEntry(w, id))}
+                      onCloseOthers={() => act((w) => closeOtherTabs(w, id))}
+                      onCloseRight={() => act((w) => closeTabsToRight(w, id))}
+                      onReopen={() => act(reopenClosed)}
+                    />
+                  </ContextMenu>
+                )
+              })}
+            </TabsList>
           ) : null}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => act(reopenClosed)}>
-            <RotateCcwIcon aria-hidden="true" />
-            Reopen closed tab
-            <DropdownMenuShortcut>⇧⌘T</DropdownMenuShortcut>
-          </DropdownMenuItem>
-          <DropdownMenuItem disabled={count === 0} onSelect={() => act(closeAllTabs)}>
-            <XIcon aria-hidden="true" />
-            Close all tabs
-            <DropdownMenuShortcut>⌥⌘W</DropdownMenuShortcut>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" aria-label="New tab" onClick={onNewTab}>
+                <PlusIcon aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>New tab</TooltipContent>
+          </Tooltip>
+        </Tabs>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-sm" aria-label="Tab options">
+              <EllipsisVerticalIcon aria-hidden="true" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuItem
+              disabled={ws.active === null || (split !== null && split.views.length >= MAX_SPLIT)}
+              onSelect={() => act(splitActive)}
+            >
+              <Columns2Icon aria-hidden="true" />
+              Split view
+              <DropdownMenuShortcut>⌘\</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            {split !== null ? (
+              <DropdownMenuItem onSelect={() => act((w) => separate(w, split.id))}>
+                <UngroupIcon aria-hidden="true" />
+                Separate
+                <DropdownMenuShortcut>⇧⌘\</DropdownMenuShortcut>
+              </DropdownMenuItem>
+            ) : null}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => act(reopenClosed)}>
+              <RotateCcwIcon aria-hidden="true" />
+              Reopen closed tab
+              <DropdownMenuShortcut>⇧⌘T</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={count === 0} onSelect={() => act(closeAllTabs)}>
+              <XIcon aria-hidden="true" />
+              Close all tabs
+              <DropdownMenuShortcut>⌥⌘W</DropdownMenuShortcut>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </TabSwitcher>
   )
 }
 

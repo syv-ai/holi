@@ -72,6 +72,18 @@ both sides tidied, against what the view last showed. A tab not shown since it o
 against the file as first read. A split's members have no room for a badge, so each shows its
 state as a dot on its mark.
 
+**The switcher.** Hold ⌃ and press Tab: a list of the strip's entries hangs under the strip, each
+with its mark and title as the strip draws them (a split's members side by side), the next entry
+selected. Each further Tab moves on, ⇧Tab moves back, both wrapping; letting go of ⌃ opens the
+entry selected, and Escape, a click outside or the window losing focus cancels. Clicking a row
+opens it. The order is the strip's, starting from the active entry: Holi keeps no record of which
+tab was used last, so the first press goes to the next tab, not the one used before. Run from the
+Keyboard shortcuts dialog, where ⌃ is not held, it selects the neighbour at once. The mechanics are
+one pure function (`features/shell/tab-switch.ts`); the list is a stock `Popover` holding a
+`Command` list (`tab-switcher.tsx`) that takes no focus, so focus stays in the editor or terminal it
+was in. ⌃Tab reaches it from there because its row runs before the focused widget sees the key
+([keyboard shortcuts](keyboard-shortcuts.md)).
+
 Entries drag along the strip to reorder (a hairline marks where it would land). A tab's
 right-click menu: **Open in split view**, Close, Close others, Close tabs to the right, Reopen
 closed tab. A split's: **Separate**, then the same closes. The strip's ⋯ holds Split view,
@@ -129,7 +141,7 @@ it.
 
 **Keys.** ⌘\ split view, ⇧⌘\ separate, ⌃⌥→ / ⌃⌥← focus the next or previous member, ⌘W closes the
 focused member inside a split and the tab otherwise ([keyboard shortcuts](keyboard-shortcuts.md)).
-Next/previous tab and ⌘1–9 go over strip entries, a split counting as one.
+The tab switcher (⌃Tab, ⌃⇧Tab) and ⌘1–9 go over strip entries, a split counting as one.
 
 **motion-panels** (MIT, Valerii Strilets; `components/ui/motion-panels.tsx` is its shadcn item)
 lays the views out in `features/shell/split-view.tsx`. Its group holds one panel that fills and sized panels around
@@ -265,7 +277,7 @@ play ranked live. Sign-in and adding a vault run the same board as background on
 - `apps/desktop/src/renderer/src/state/tab-descriptor.ts`, `shell-workspace.ts`, `shell-tabs.ts`,
   `alt-open.ts`
 - `apps/desktop/src/renderer/src/features/shell/`: `app-shell.tsx` (ReUI's `app-shell-21`),
-  `tab-strip.tsx`, `split-view.tsx`, `use-tab-drag.ts`, `tab-view.tsx`, `tab-look.tsx`,
+  `tab-strip.tsx`, `tab-switcher.tsx`, `tab-switch.ts`, `split-view.tsx`, `use-tab-drag.ts`, `tab-view.tsx`, `tab-look.tsx`,
   `use-shell-shortcuts.ts`, `new-tab-view.tsx`; `hooks/use-session-tabs.ts`
 - `apps/desktop/src/renderer/src/components/ui/motion-panels.tsx`
 - `apps/desktop/src/main/menu.ts`: ⌘W and ⌘⇧W

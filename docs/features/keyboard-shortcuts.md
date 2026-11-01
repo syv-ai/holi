@@ -18,7 +18,10 @@ command list: `?`, ↓ to a row, ↩ runs it, so a person who forgot a key can s
   the agent plugin runs, rename only while the sidebar is open to show the field.
 - **One dispatcher.** One `keydown` listener on the window, installed by the app shell, resolves a
   key against the table with a pure function (`resolveShortcut`), so a test says exactly when a key
-  does and does not fire. The application menu's `menu:command` channel runs ids the same way.
+  does and does not fire. It listens twice: in the bubbling phase for most rows, so the focused
+  widget goes first, and in the capture phase for the rows marked `capture`, which run before the
+  focused widget sees the key and are kept from it. Only ⌃Tab and ⌃⇧Tab are `capture`: the tab
+  switcher has to work from an editor or a terminal, which would take Tab. The application menu's `menu:command` channel runs ids the same way.
 - **Platform keys.** On a Mac ⌘ is Command and ⌃ is Control, each only itself; elsewhere both are
   Ctrl, and the dialog says `Ctrl`, `Alt`, `Shift`. A Mac never takes Control's text-editing keys
   (⌃B, ⌃K, ⌃N) for a ⌘ shortcut. A symbol key such as `?` ignores the Shift that types it.
@@ -85,9 +88,9 @@ screen.
 
 - **Never while typing, unless the row says so.** In a text field, the editor or the terminal only
   rows marked `whileTyping` fire, which is every modified key except collapse all and the two path
-  copies; `?` and F2 are characters or the field's own there. In the terminal no Control key fires, with one exception:
+  copies; `?` and F2 are characters or the field's own there. In the terminal no Control key fires:
   those are the terminal's (Claude Code's own keys included), and on a Mac ⌘ is free because xterm
-  leaves Command alone. The exception is ⌃\`, which toggles the bottom panel
+  leaves Command alone. The exceptions are ⌃Tab (the tab switcher, below) and ⌃\`, which toggles the bottom panel
   ([status bar](status-bar.md)) and is marked `inTerminal`, so the panel closes from inside the
   shell it shows; the panel's xterm hands it back rather than typing it. The panel keys are VS
   Code's, registered by the panel itself, and clash with nothing in the menu or the table (⌘\` is
@@ -104,7 +107,11 @@ screen.
 - **⌘W is the menu's.** It is the File menu's accelerator (`main/menu.ts`), which fires before the
   page sees the key, so its row is display only (`boundBy: 'menu'`) and main sends `tab.close`.
   Mail, Calendar and Settings are tabs, so ⌘W closes them like any other.
-- **The tab keys act on the one strip** ([tabs and split view](tabs-panes.md)): next, previous
+- **⌃Tab is a hold.** With ⌃ held, each Tab steps the tab switcher (⇧Tab back) and letting go
+  of ⌃ opens the tab selected; Escape cancels ([tabs and split view](tabs-panes.md)). It fires in
+  the terminal too (`inTerminal`) and before it (`capture`), so the agent never gets the Tab or the
+  Escape. Run from the dialog it steps to the neighbour at once.
+- **The tab keys act on the one strip** ([tabs and split view](tabs-panes.md)): the switcher
   and ⌘1–9 go over its entries, a split counting as one; ⌥⌘W closes them all. **⌘W closes the
   view in front:** the focused member inside a split (a 2-split turns back into a tab), the tab
   otherwise. ⌘T opens a New tab at the strip's end, or while the sidebar is on Agents starts a

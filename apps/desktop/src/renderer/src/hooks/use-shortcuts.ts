@@ -72,22 +72,32 @@ export function useShortcutDispatcher(): void {
       const slots = store.get(handlersAtom).get(id)
       slots?.[slots.length - 1]?.current(index)
     }
-    const onKey = (e: KeyboardEvent): void => {
-      const match = resolveShortcut(e, {
-        mac: isMac(),
-        target: keyTargetOf(e.target),
-        dialogOpen: dialogOpen(),
-        live: store.get(liveShortcutIdsAtom),
-      })
-      if (match === null) return
-      e.preventDefault()
-      run(match.shortcut.id, match.index)
-    }
+    // Two phases: a `capture` row runs before the focused widget sees the
+    // key, and is kept from it; every other row lets the widget go first.
+    const listener =
+      (capture: boolean) =>
+      (e: KeyboardEvent): void => {
+        const match = resolveShortcut(e, {
+          mac: isMac(),
+          target: keyTargetOf(e.target),
+          dialogOpen: dialogOpen(),
+          live: store.get(liveShortcutIdsAtom),
+          capture,
+        })
+        if (match === null) return
+        e.preventDefault()
+        if (capture) e.stopPropagation()
+        run(match.shortcut.id, match.index)
+      }
+    const onKey = listener(false)
+    const onCapturedKey = listener(true)
     window.addEventListener('keydown', onKey)
+    window.addEventListener('keydown', onCapturedKey, true)
     // Absent in a test or a page without the preload bridge.
     const offMenu = window.holi?.menu?.onCommand((id) => run(id, 0))
     return () => {
       window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keydown', onCapturedKey, true)
       offMenu?.()
     }
   }, [store])
