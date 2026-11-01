@@ -54,7 +54,7 @@ import {
 } from '../provider'
 import type { FencedSessions } from './fenced'
 import { unattendedRefusal, type UnattendedStore } from './unattended'
-import type { JobResult, Jobs, JobScope } from './jobs'
+import { jobMayRead, type JobResult, type Jobs, type JobScope } from './jobs'
 import { openTurnLog, type TurnRecord } from './turn-log'
 import type { PtySessions } from './pty-sessions'
 

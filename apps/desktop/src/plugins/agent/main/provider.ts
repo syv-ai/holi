@@ -143,6 +143,8 @@ export type JobEvent =
 export interface JobRun {
   /** Where it runs, and the one folder it may write unless `readOnly`. */
   cwd: string
+  /** The vault's root, which a scratch job does not run in. */
+  root: string
   prompt: string
   model?: string
   /** Other folders it may write, absolute. */

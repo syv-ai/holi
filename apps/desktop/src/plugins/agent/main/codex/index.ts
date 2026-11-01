@@ -178,7 +178,7 @@ export function jobArgs({
   writable = [],
   readOnly = false,
   resume,
-}: Omit<JobRun, 'state'>): string[] {
+}: Omit<JobRun, 'state' | 'root'>): string[] {
   return [
     'exec',
     '--json',
@@ -313,7 +313,12 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
       if (opts.session !== undefined) env[SESSION_ENV] = opts.session
       // A fenced session runs on a Codex folder of its own, without the
       // person's MCP servers.
-      if (opts.fence !== undefined) env.CODEX_HOME = prepareCodexHome(opts.fence.state, base)
+      // Nor any project's own: the folder it runs in, the folder that holds
+      // it and the vault are untrusted (`home.ts` says why).
+      if (opts.fence !== undefined) {
+        const { dir, state } = opts.fence
+        env.CODEX_HOME = prepareCodexHome(state, [dir, dirname(dir), target.root], base)
+      }
       const asked = opts.prompt === undefined || opts.prompt.trim() === '' ? undefined : opts.prompt
       return {
         bin: path,
@@ -357,7 +362,9 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
           // no MCP servers, and a follow-up finds its thread there.
           const env = buildAgentEnv(base)
           delete env[SESSION_ENV]
-          env.CODEX_HOME = prepareCodexHome(run.state, base)
+          // Nor any project's own: where it runs, the folder that holds it
+          // and the vault are untrusted (`home.ts` says why).
+          env.CODEX_HOME = prepareCodexHome(run.state, [run.cwd, dirname(run.cwd), run.root], base)
           return { bin: path, args: jobArgs(run), env }
         },
         event: readJobEvent,

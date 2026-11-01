@@ -62,7 +62,8 @@ watching, through `agent.job` (UI door only): a name, a prompt, an optional syst
 on `provider` or else this machine's `agentProvider`, and one of two bounds.
 
 - A **scope**: the vault paths it reads and the paths or `folder/**` it writes, each a path a
-  capability may read. A `background` provider runs it as a background session allowed exactly
+  capability may read in no hidden folder (`jobMayRead`: a `.codex/config.toml` copied into the
+  run's folder would configure the run). A `background` provider runs it as a background session allowed exactly
   that scope (`Read(./x)`, `Edit`/`Write(./folder/**)`); a `jobs` provider runs it in
   `<userData>/agent-jobs/<id>/`, the readable files copied in at their vault paths. **Such a job is
   bounded by what it writes back, not by what it reads**: Codex's sandbox keeps its writes to the
@@ -146,7 +147,10 @@ its thread; `codex/home.ts`). It holds the person's `auth.json` (read through a 
 `config.toml` of their model and provider keys alone (`model`, `model_provider`, `model_providers`,
 the reasoning and verbosity keys, the forced login keys) with `cli_auth_credentials_store =
 "file"`; their MCP servers, profiles, plugins, skills, hooks, trusted projects and global
-`AGENTS.md` are dropped. With no `auth.json` and no API key in the environment (Codex may keep the
+`AGENTS.md` are dropped. The run's folder, the folder that holds it and the vault are written in
+as untrusted projects: Codex otherwise trusts the folder it runs in by itself (keyed by its git
+root, else the folder) and loads that project's `.codex/config.toml`, whose MCP servers it would
+start outside the sandbox. With no `auth.json` and no API key in the environment (Codex may keep the
 sign-in in the keychain, tied to its folder's path) the run does not start and says how to sign in
 so it can. Once a turn's process exits, a sign-in Codex refreshed there goes back into the
 person's `auth.json`, but only while theirs is still the one handed over.

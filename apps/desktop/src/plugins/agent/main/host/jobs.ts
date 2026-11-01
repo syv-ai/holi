@@ -162,6 +162,12 @@ export interface Jobs {
   ): Promise<{ written: number; skipped: string[] }>
 }
 
+/** What a run was given and wrote into the vault so far: each path, and the
+ *  hash of the bytes it was given or wrote there. */
+export type Made = Map<string, string>
+
+const hashOf = (data: Buffer): string => createHash('sha256').update(data).digest('hex')
+
 /** Where a vault job runs and what it may write, absolute. */
 interface VaultPlace {
   cwd: string
@@ -180,8 +186,8 @@ interface Job {
   place: VaultPlace | null
   /** The agent's own state, outside what it may write. */
   state: string
-  /** What a scratch job wrote into its new folders. */
-  made: Set<string>
+  /** What a scratch job was given and wrote (`Made`). */
+  made: Made
   child: ChildProcess | null
   /** A turn is under way: running, or its writes being copied back. */
   busy: boolean
@@ -557,16 +563,10 @@ export function createJobs(deps: JobsDeps): Jobs {
         )
       }
     }
-    const ordered = [
-      ...allowed.filter(({ rel }) => !isManifest(rel)),
-      ...allowed.filter(({ rel }) => isManifest(rel)),
-    ]
-    let written = 0
-    for (const { path, rel } of ordered) {
-      if (job.stopped !== undefined) break
-      if ((await exactPath(deps.vault.root, rel)) === null) {
-        throw new Error(`Holi could not write ${rel}.`)
-      }
+    // What it was given or wrote before is written again only while the
+    // vault still holds that, and only when the run changed it since.
+    const pending: { path: string; rel: VaultRelPath; data: Buffer; hash: string }[] = []
+    for (const { path, rel } of allowed) {
       const data = await readRegular(join(dir, path))
       if (data === null) {
         skipped.push(rel)
@@ -783,6 +783,7 @@ export function createJobs(deps: JobsDeps): Jobs {
       job,
       {
         cwd: place.cwd,
+        root: deps.vault.root,
         prompt: text,
         writable: place.writable,
         readOnly: place.readOnly,
@@ -857,7 +858,7 @@ export function createJobs(deps: JobsDeps): Jobs {
       dir: null,
       place: null,
       state: join(deps.scratchRoot, `${id}.agent`),
-      made: new Set(),
+      made: new Map(),
       child: null,
       busy: false,
       queue: [],
@@ -891,6 +892,7 @@ export function createJobs(deps: JobsDeps): Jobs {
         job,
         {
           cwd: place.cwd,
+          root: deps.vault.root,
           prompt: [system, where, prompt].filter((p) => p !== undefined).join('\n\n'),
           writable: place.writable,
           readOnly: place.readOnly,
@@ -917,16 +919,8 @@ export function createJobs(deps: JobsDeps): Jobs {
     const taken = await takenDestination(deps.vault.root, scope.write)
     if (taken !== null) return fail(takenMessage(taken))
     await mkdir(dir, { recursive: true })
-    for (const path of scope.read) {
-      const abs = await exactPath(deps.vault.root, path)
-      if (abs === null) return fail(`Holi could not read ${path}.`)
-      await mkdir(dirname(join(dir, path)), { recursive: true })
-      const copied = await copyFile(abs, join(dir, path)).then(
-        () => true,
-        () => false,
-      )
-      if (!copied) return fail(`Holi could not read ${path}.`)
-    }
+    const unread = await copyIn(deps.vault.root, dir, scope.read, job.made)
+    if (unread !== null) return fail(unread)
     if (left()) return fail(gone)
     job.dir = dir
     jobs.set(id, job)
@@ -934,6 +928,7 @@ export function createJobs(deps: JobsDeps): Jobs {
       job,
       {
         cwd: dir,
+        root: deps.vault.root,
         prompt: system === undefined ? prompt : `${system}\n\n${prompt}`,
         state: job.state,
         ...(model === undefined ? {} : { model }),
