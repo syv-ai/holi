@@ -814,6 +814,9 @@ async function main(): Promise<void> {
       const { shell } = await import('electron')
       await shell.trashItem(path)
     },
+    showItemInFolder: (path) => {
+      void import('electron').then(({ shell }) => shell.showItemInFolder(path))
+    },
   })
 
   registerIpc({ router, rootFor: (remote) => rootFor(remote) })
