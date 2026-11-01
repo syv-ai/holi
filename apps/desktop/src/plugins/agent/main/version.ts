@@ -10,7 +10,7 @@
  */
 import { execFile } from 'node:child_process'
 import { cap, noParams } from '../../../main/plugin-api'
-import { resolveClaudeBin } from './claude/cli'
+import { buildAgentEnv, resolveClaudeBin } from './claude/cli'
 
 const VERSION_TIMEOUT_MS = 5_000
 
@@ -25,9 +25,21 @@ interface VersionDeps {
 
 function defaultRun(bin: string, args: string[], timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(bin, args, { timeout: timeoutMs, encoding: 'utf8' }, (err, stdout) =>
-      err ? reject(err) : resolve(stdout),
+    // The agent's environment: an npm-installed `claude` finds `node` on its
+    // PATH, and the session's own Claude Code variables are not passed on.
+    const child = execFile(
+      bin,
+      args,
+      {
+        timeout: timeoutMs,
+        maxBuffer: 64 * 1024,
+        encoding: 'utf8',
+        env: buildAgentEnv(process.env),
+      },
+      (err, stdout) => (err ? reject(err) : resolve(stdout)),
     )
+    // No input: `claude` waits on an open stdin pipe (`claude/cli.ts`).
+    child.stdin?.end()
   })
 }
 
