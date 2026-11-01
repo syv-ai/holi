@@ -150,6 +150,16 @@ describe('the send gate asks', () => {
     expect(send).toContain('q2.pdf')
     expect(send).toContain('Board deck.pptx')
     expect(reply).toContain('notes/plan.md')
+
+    // An escaped space is one name; a body that mentions `--attach` is no file.
+    const odd = (
+      await decide(
+        bash(
+          "holi google send --to ada@syv.ai --attach Board\\ deck.pptx <<'EOF'\nuse --attach x\nEOF",
+        ),
+      )
+    ).hookSpecificOutput?.permissionDecisionReason
+    expect(odd).toContain('It attaches: Board deck.pptx.')
   })
 
   it('warns that reply --all widens the audience', async () => {

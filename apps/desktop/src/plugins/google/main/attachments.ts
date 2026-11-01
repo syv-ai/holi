@@ -28,7 +28,9 @@ import type { MailPart } from './mime'
  * Gmail's limit on what one message may carry. Counted on the files as they
  * are, before base64: the number a person knows their files by.
  */
-const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+// Gmail's 25 MB is the whole message, encoded: base64 makes the files about
+// a third larger, so they may come to 18 MB.
+const MAX_ATTACHMENT_BYTES = 18 * 1024 * 1024
 
 /** Types a mail client opens by its declared type. Anything else is
  *  `mimeFor`'s (images and PDF), then `application/octet-stream`. */
@@ -92,7 +94,7 @@ export async function vaultAttachments(
   if (total > MAX_ATTACHMENT_BYTES) {
     throw new CapabilityError(
       'BAD_REQUEST',
-      `the attachments come to ${megabytes(total)}, over Gmail's limit of 25 MB for one message`,
+      `the attachments come to ${megabytes(total)}, over the 18 MB that fits in Gmail's 25 MB message once encoded`,
       'attach fewer or smaller files, or share a link to them instead',
     )
   }

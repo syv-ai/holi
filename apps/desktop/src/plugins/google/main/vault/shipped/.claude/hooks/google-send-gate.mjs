@@ -102,8 +102,11 @@ function audienceOf(command) {
  * the person sees which ordinary ones go.
  */
 function attachmentsOf(command) {
-  const paths = [...command.matchAll(/--attach[= ]+(?:"([^"]+)"|'([^']+)'|(\S+))/g)]
-    .map((m) => m[1] ?? m[2] ?? m[3])
+  // The command line only, not a heredoc body that may mention `--attach`;
+  // an escaped space is part of the name.
+  const line = command.split('<<')[0]
+  const paths = [...line.matchAll(/--attach[= ]+(?:"([^"]+)"|'([^']+)'|((?:\\ |\S)+))/g)]
+    .map((m) => m[1] ?? m[2] ?? m[3]?.replaceAll('\\ ', ' '))
     .filter(Boolean)
   return paths.length === 0 ? '' : ` It attaches: ${paths.join(', ')}.`
 }

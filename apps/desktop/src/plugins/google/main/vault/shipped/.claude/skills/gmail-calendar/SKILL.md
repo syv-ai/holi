@@ -183,7 +183,8 @@ EOF
 
 Only files inside the vault go, and not every one: a `.local.` file, a secret
 (`.env` and the like), `.claude/`, `.holi/memory/` and other agent files are
-refused, as is anything over Gmail's 25 MB per message. A refusal says which
+refused, as are files over 18 MB together (Gmail's 25 MB per message, once
+encoded). A refusal says which
 path stopped it; tell the user rather than copying the file somewhere that
 passes. To send something that is not in the vault yet (a PDF you render from
 a note), write it into the vault first. `send --draft` takes no `--attach`: the
