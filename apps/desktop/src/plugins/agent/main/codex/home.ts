@@ -19,6 +19,13 @@
  *   dropped: MCP servers, profiles, plugins, skills, hooks, `notify`, trusted
  *   projects, the sandbox and approval keys (Holi sets its own), and the
  *   global `AGENTS.md`.
+ * - every folder the run could take for its project (`untrusted`: its
+ *   working folder, the folder that holds it, the vault) marked untrusted.
+ *   Codex trusts the folder it runs in by itself (it writes
+ *   `trust_level = "trusted"` for it, keyed by the git root or else the
+ *   folder) and then loads that project's `.codex/config.toml`, whose
+ *   `[mcp_servers]` it would start outside the sandbox. An untrusted
+ *   project's config is never read.
  *
  * With no `auth.json` and no API key in the environment there is no sign-in
  * to hand over (Codex may keep it in the keychain, whose entry is tied to
@@ -27,6 +34,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
+import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -71,12 +79,25 @@ function readOrNull(path: string): string | null {
   }
 }
 
+/** A folder as given, and as the disk names it when that differs (`/tmp` is
+ *  `/private/tmp` on macOS): Codex keys a project by its absolute path. */
+function spellings(path: string): string[] {
+  let real = path
+  try {
+    real = realpathSync(path)
+  } catch {
+    // Not made yet: the path as given is the one Codex sees.
+  }
+  return real === path ? [path] : [path, real]
+}
+
 /**
- * The `config.toml` a run gets, out of the person's: `KEPT_KEYS` alone, and
- * the sign-in read from `auth.json`.
+ * The `config.toml` a run gets, out of the person's: `KEPT_KEYS` alone, the
+ * sign-in read from `auth.json`, and each folder of `untrusted` (absolute)
+ * an untrusted project.
  * @public exported for its test
  */
-export function runConfig(personToml: string | null): string {
+export function runConfig(personToml: string | null, untrusted: readonly string[] = []): string {
   let person: Record<string, unknown> = {}
   if (personToml !== null) {
     try {
@@ -89,15 +110,26 @@ export function runConfig(personToml: string | null): string {
   }
   const kept: Record<string, unknown> = {}
   for (const key of KEPT_KEYS) if (person[key] !== undefined) kept[key] = person[key]
-  return stringify({ ...kept, cli_auth_credentials_store: 'file' })
+  const projects: Record<string, { trust_level: 'untrusted' }> = {}
+  for (const path of untrusted.flatMap(spellings)) projects[path] = { trust_level: 'untrusted' }
+  return stringify({
+    ...kept,
+    cli_auth_credentials_store: 'file',
+    ...(Object.keys(projects).length === 0 ? {} : { projects }),
+  })
 }
 
 /**
  * Make (or refresh, for a follow-up turn) the run's Codex folder in `state`,
- * and return it: the person's sign-in and model settings, nothing else. Each
- * call hands over the person's `auth.json` as it is now.
+ * and return it: the person's sign-in and model settings, nothing else, and
+ * the folders of `untrusted` untrusted projects. Each call hands over the
+ * person's `auth.json` as it is now.
  */
-export function prepareCodexHome(state: string, env: NodeJS.ProcessEnv = process.env): string {
+export function prepareCodexHome(
+  state: string,
+  untrusted: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   const person = personCodexHome(env)
   const home = join(state, HOME)
   mkdirSync(home, { recursive: true, mode: 0o700 })
@@ -109,7 +141,7 @@ export function prepareCodexHome(state: string, env: NodeJS.ProcessEnv = process
   } catch {
     throw new Error(`Holi could not read Codex's folder (${person}), so the run did not start.`)
   }
-  writeFileSync(join(home, 'config.toml'), runConfig(config), { mode: 0o600 })
+  writeFileSync(join(home, 'config.toml'), runConfig(config, untrusted), { mode: 0o600 })
   if (auth === null) {
     rmSync(join(home, 'auth.json'), { force: true })
     rmSync(join(state, AUTH_GIVEN), { force: true })
@@ -151,7 +183,11 @@ export async function releaseCodexHome(
     if (given === null || after === null || after === given || !isObject(after)) return
     const target = realpathSync(join(personCodexHome(env), 'auth.json'))
     if ((await readFile(target, 'utf8')) !== given) return
-    const next = join(dirname(target), `.${basename(target)}.holi-${process.pid}`)
+    // Its own name: jobs in this process may release at the same time.
+    const next = join(
+      dirname(target),
+      `.${basename(target)}.holi-${randomBytes(6).toString('hex')}`,
+    )
     await writeFile(next, after, { mode: 0o600 })
     await rename(next, target)
     // A follow-up turn compares against what the person's file now holds.

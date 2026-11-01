@@ -52,7 +52,7 @@ import {
   type ProviderId,
 } from '../provider'
 import type { FencedSessions } from './fenced'
-import type { JobResult, Jobs, JobScope } from './jobs'
+import { jobMayRead, type JobResult, type Jobs, type JobScope } from './jobs'
 import { openTurnLog, type TurnRecord } from './turn-log'
 import type { PtySessions } from './pty-sessions'
 
@@ -175,7 +175,8 @@ const MAX_SCOPE = 50
 /**
  * A job's scope: vault paths it reads, and paths or `folder/**` it writes.
  * Each must be a path a capability may read (never the agent surface, an
- * app's records, a secret or this machine's state), and a write names no
+ * app's records, a secret or this machine's state) in no hidden folder
+ * (`jobMayRead`: `.codex/` would configure the run), and a write names no
  * other wildcard.
  */
 function scopeParam(raw: Record<string, unknown>): JobScope {
@@ -197,7 +198,7 @@ function scopeParam(raw: Record<string, unknown>): JobScope {
   const checked = (path: string, glob: boolean): string => {
     const base = glob && path.endsWith('/**') ? path.slice(0, -3) : path
     const rel = base.includes('*') ? null : readableOrNull(base)
-    if (rel === null) {
+    if (rel === null || !jobMayRead(rel)) {
       throw new CapabilityError(
         'FORBIDDEN',
         `A job cannot touch ${path}: it is not a vault file an agent may be given.`,

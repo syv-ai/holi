@@ -25,6 +25,12 @@
  * it there meanwhile, the copy is refused in words and nothing of it is
  * written (`takenDestination`, `copyBack`).
  *
+ * **Nor is what it wrote, once someone changed it.** A run that copies back
+ * more than once (a fenced session, each turn) keeps the hash of each file
+ * as it wrote it. A file the run left as it was is not written again; one it
+ * changed again while the vault's copy is no longer what it wrote (someone
+ * edited it, or deleted it) is refused in words, and nothing is written.
+ *
  * Beside the folder is the agent's own state folder (`<id>.agent/`, its own
  * Codex home, say), outside what the job may write; once the process exits
  * the provider takes back what it keeps of the person's there
@@ -45,12 +51,12 @@
  * NOTE: no `electron` import, so this loads under vitest.
  */
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
 import { copyFile, lstat, mkdir, open, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
-import { isSharedContentPath, vaultRelPath, type VaultRelPath } from '@holi/shared'
+import { isHiddenPath, isSharedContentPath, vaultRelPath, type VaultRelPath } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
 import { defaultProbePid, writeAtomic, type PidState } from '../../../../main/plugin-api'
 import type { SessionSummary } from '../claude/listing'
@@ -123,14 +129,20 @@ export interface Jobs {
   leave(): Promise<void>
   /** Copy back what `dir` holds inside `write`, as a job's success does:
    *  a session fenced to a folder of Holi's (`fenced.ts`) at each turn's end.
-   *  `made` is what this run wrote into its new folders so far, which it
-   *  adds to. */
+   *  `made` is what this run wrote so far, each path with the hash of what
+   *  it wrote there, which it adds to. */
   copyBack(
     dir: string,
     write: readonly string[],
-    made: Set<string>,
+    made: Made,
   ): Promise<{ written: number; skipped: string[] }>
 }
+
+/** What a run wrote into the vault so far: each path, and the hash of the
+ *  bytes it wrote there. */
+export type Made = Map<string, string>
+
+const hashOf = (data: Buffer): string => createHash('sha256').update(data).digest('hex')
 
 interface Job {
   id: string
@@ -198,6 +210,40 @@ export async function takenDestination(
       () => false,
     )
     if (there) return folder
+  }
+  return null
+}
+
+/**
+ * Whether a job may be given a vault file to read: one no folder of it is
+ * hidden. A hidden folder is where an agent looks for its own settings
+ * (`.codex/config.toml` names MCP servers Codex starts, `.claude/`,
+ * `.agents/`), in any case, since the disk is case-blind on macOS. Copied
+ * into a run's folder, it would configure the run; and a hidden file is
+ * nothing a job writes back.
+ */
+export const jobMayRead = (rel: string): boolean => !isHiddenPath(rel)
+
+/**
+ * Copy each of `read` from the vault at `root` into `dir`, at its vault path.
+ * The message of the first it may not or could not read, else null.
+ */
+export async function copyIn(
+  root: string,
+  dir: string,
+  read: readonly string[],
+): Promise<string | null> {
+  for (const path of read) {
+    const abs = jobMayRead(path) ? await exactPath(root, path) : null
+    const copied =
+      abs !== null &&
+      (await mkdir(dirname(join(dir, path)), { recursive: true })
+        .then(() => copyFile(abs, join(dir, path)))
+        .then(
+          () => true,
+          () => false,
+        ))
+    if (!copied) return `Holi could not read ${path}.`
   }
   return null
 }
@@ -343,7 +389,7 @@ export function createJobs(deps: JobsDeps): Jobs {
   async function copyBack(
     job: Pick<Job, 'dir' | 'stopped'>,
     write: readonly string[],
-    made: Set<string>,
+    made: Made,
   ): Promise<{ written: number; skipped: string[] }> {
     const skipped: string[] = []
     const allowed: { path: string; rel: VaultRelPath }[] = []
@@ -386,24 +432,41 @@ export function createJobs(deps: JobsDeps): Jobs {
         )
       }
     }
-    const ordered = [
-      ...allowed.filter(({ rel }) => !isManifest(rel)),
-      ...allowed.filter(({ rel }) => isManifest(rel)),
-    ]
-    let written = 0
-    for (const { path, rel } of ordered) {
-      if (job.stopped !== undefined) break
-      if ((await exactPath(deps.vault.root, rel)) === null) {
-        throw new Error(`Holi could not write ${rel}.`)
-      }
+    // What it wrote before is written again only while the vault still
+    // holds that, and only when the run changed it since.
+    const pending: { path: string; rel: VaultRelPath; data: Buffer; hash: string }[] = []
+    for (const { path, rel } of allowed) {
       const data = await readRegular(join(job.dir, path))
       if (data === null) {
         skipped.push(rel)
         continue
       }
+      const hash = hashOf(data)
+      const before = made.get(rel)
+      if (before === hash) continue
+      if (before !== undefined) {
+        const now = await readRegular(join(deps.vault.root, rel))
+        if (now === null || hashOf(now) !== before) {
+          throw new Error(
+            `Holi did not copy back what the agent wrote: ${rel} changed in the vault since the agent wrote it, and Holi never writes over it.`,
+          )
+        }
+      }
+      pending.push({ path, rel, data, hash })
+    }
+    const ordered = [
+      ...pending.filter(({ rel }) => !isManifest(rel)),
+      ...pending.filter(({ rel }) => isManifest(rel)),
+    ]
+    let written = 0
+    for (const { rel, data, hash } of ordered) {
+      if (job.stopped !== undefined) break
+      if ((await exactPath(deps.vault.root, rel)) === null) {
+        throw new Error(`Holi could not write ${rel}.`)
+      }
       if (job.stopped !== undefined) break
       await writeAtomic(deps.vault.root, rel, data)
-      made.add(rel)
+      made.set(rel, hash)
       written += 1
       await deps.afterWrite?.(rel)
     }
@@ -471,20 +534,13 @@ export function createJobs(deps: JobsDeps): Jobs {
       if (taken !== null) return fail(takenMessage(taken))
       await mkdir(dir, { recursive: true })
       await mkdir(state, { recursive: true, mode: 0o700 })
-      for (const path of scope.read) {
-        const abs = await exactPath(deps.vault.root, path)
-        if (abs === null) return fail(`Holi could not read ${path}.`)
-        await mkdir(dirname(join(dir, path)), { recursive: true })
-        const copied = await copyFile(abs, join(dir, path)).then(
-          () => true,
-          () => false,
-        )
-        if (!copied) return fail(`Holi could not read ${path}.`)
-      }
+      const unread = await copyIn(deps.vault.root, dir, scope.read)
+      if (unread !== null) return fail(unread)
       let command: ReturnType<JobsProvider['capabilities']['jobs']['command']>
       try {
         command = provider.capabilities.jobs.command({
           cwd: dir,
+          root: deps.vault.root,
           prompt: system === undefined ? prompt : `${system}\n\n${prompt}`,
           ...(model === undefined ? {} : { model }),
           state,
@@ -555,7 +611,7 @@ export function createJobs(deps: JobsDeps): Jobs {
         if (job.stopped !== undefined) return finish(job, 'failed', job.stopped)
         if (completed && failure === null && code === 0) {
           try {
-            const { written, skipped } = await copyBack(job, scope.write, new Set())
+            const { written, skipped } = await copyBack(job, scope.write, new Map())
             // A Stop pressed during the copy wins.
             if (job.stopped !== undefined) return finish(job, 'failed', job.stopped)
             log(`${id}: done, ${written} file(s) written, ${skipped.length} left out`)

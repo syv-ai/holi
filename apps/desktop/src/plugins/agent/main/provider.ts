@@ -141,6 +141,8 @@ interface JobsCapability {
    *  installed. Throws with a sentence when it cannot run. */
   command(args: {
     cwd: string
+    /** The vault's root, which the job does not run in. */
+    root: string
     prompt: string
     model?: string
     state: string

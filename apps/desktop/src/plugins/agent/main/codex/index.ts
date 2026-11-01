@@ -38,6 +38,7 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { accessSync, constants } from 'node:fs'
+import { dirname } from 'node:path'
 import { resolveBin, shellReadBridgeEnv } from '../../../../main/plugin-api'
 import { buildAgentEnv } from '../claude/cli'
 import { personCodexHome, prepareCodexHome, releaseCodexHome } from './home'
@@ -263,7 +264,12 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
       if (opts.session !== undefined) env[SESSION_ENV] = opts.session
       // A fenced session runs on a Codex folder of its own, without the
       // person's MCP servers.
-      if (opts.fence !== undefined) env.CODEX_HOME = prepareCodexHome(opts.fence.state, base)
+      // Nor any project's own: the folder it runs in, the folder that holds
+      // it and the vault are untrusted (`home.ts` says why).
+      if (opts.fence !== undefined) {
+        const { dir, state } = opts.fence
+        env.CODEX_HOME = prepareCodexHome(state, [dir, dirname(dir), target.root], base)
+      }
       return {
         bin: path,
         args: [
@@ -285,7 +291,7 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
       turns: { routes: registerCodexRoutes },
       fenced: true,
       jobs: {
-        command({ cwd, prompt, model, state }) {
+        command({ cwd, root, prompt, model, state }) {
           const path = bin()
           if (path === null) return null
           // No Holi commands on its PATH and no session id: a job writes
@@ -294,7 +300,7 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
           // back. Its Codex folder is its own, with no MCP servers.
           const env = buildAgentEnv(base)
           delete env[SESSION_ENV]
-          env.CODEX_HOME = prepareCodexHome(state, base)
+          env.CODEX_HOME = prepareCodexHome(state, [cwd, dirname(cwd), root], base)
           return {
             bin: path,
             args: jobArgs({ cwd, prompt, ...(model === undefined ? {} : { model }) }),

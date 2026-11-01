@@ -318,6 +318,18 @@ describe('a job', () => {
     ).toEqual({ ok: false, message: 'Holi could not read notes/Gone.md.' })
   })
 
+  it('is never given an agent’s settings folder to read, in any case', async () => {
+    const { root, userData, jobs, provider } = await rig(SUCCESS)
+    await mkdir(join(root, '.codex'), { recursive: true })
+    await writeFile(join(root, '.codex/config.toml'), '[mcp_servers.x]\ncommand = "touch"\n')
+    for (const path of ['.codex/config.toml', '.CODEX/config.toml']) {
+      expect(
+        await jobs.start({ provider, name: 'x', prompt: 'go', scope: { read: [path], write: [] } }),
+      ).toEqual({ ok: false, message: `Holi could not read ${path}.` })
+    }
+    expect(await readdir(join(userData, 'agent-jobs')).catch(() => [])).toEqual([])
+  })
+
   it('runs Codex as `codex exec`, sandboxed in the scratch folder', async () => {
     const { root, userData, jobs, ended } = await rig(SUCCESS)
     // A stand-in `codex` that checks its arguments, then runs the script.
@@ -427,13 +439,21 @@ describe('the Codex job command', () => {
       resolveBin: () => '/usr/local/bin/codex',
       env: { PATH: '/usr/bin', CODEX_HOME: person },
     }) as JobsProvider
-    const cmd = codex.capabilities.jobs.command({ cwd: '/s', prompt: 'p', state })
+    const cmd = codex.capabilities.jobs.command({
+      cwd: '/scratch/j1',
+      root: '/vault',
+      prompt: 'p',
+      state,
+    })
     expect(cmd?.env.PATH?.split(':')).not.toContain('/holi/bin')
     expect(cmd?.env.HOLI_AGENT_SESSION).toBeUndefined()
     expect(cmd?.env.CODEX_HOME).toBe(join(state, 'codex-home'))
-    expect(await readFile(join(state, 'codex-home/config.toml'), 'utf8')).not.toContain(
-      'mcp_servers',
-    )
+    const config = await readFile(join(state, 'codex-home/config.toml'), 'utf8')
+    expect(config).not.toContain('mcp_servers')
+    // No project's own config.toml either: where it runs, and the vault.
+    for (const folder of ['/scratch/j1', '/scratch', '/vault']) {
+      expect(config).toContain(`[projects."${folder}"]\ntrust_level = "untrusted"`)
+    }
     // The person's folder is untouched.
     expect(await readFile(join(person, 'config.toml'), 'utf8')).toBe(PERSON_CONFIG)
   })
@@ -555,6 +575,9 @@ describe('agent.job', () => {
     expect(bad({ read: [], write: ['notes/*.md'] })).toThrow()
     expect(bad({ read: ['../out.md'], write: [] })).toThrow()
     expect(bad({ read: [], write: ['.env'] })).toThrow()
+    expect(bad({ read: ['.codex/config.toml'], write: [] })).toThrow()
+    expect(bad({ read: ['.Codex/config.toml'], write: [] })).toThrow()
+    expect(bad({ read: ['notes/.agents/x.md'], write: [] })).toThrow()
     expect(bad(undefined)).toThrow()
   })
 })
@@ -728,6 +751,31 @@ describe('a fenced session', () => {
       'description: Theirs\n',
     )
     expect(await exists(join(root, 'notes/Plan.app/index.html'))).toBe(false)
+  })
+
+  it('never writes over a file it wrote that someone changed in the vault since', async () => {
+    const { root, fence } = await fencedRig()
+    await mkdir(join(fence.dir, 'notes/Plan.app'), { recursive: true })
+    await writeFile(join(fence.dir, 'notes/Plan.app/index.html'), '<h1>One</h1>')
+    await writeFile(join(fence.dir, 'notes/Plan.app/app.yaml'), 'description: One\n')
+    await fence.turnEnded()
+    // Someone edits the manifest between turns; the agent leaves it alone.
+    await writeFile(join(root, 'notes/Plan.app/app.yaml'), 'description: Theirs\n')
+    await writeFile(join(fence.dir, 'notes/Plan.app/index.html'), '<h1>Two</h1>')
+    await fence.turnEnded()
+    expect(await readFile(join(root, 'notes/Plan.app/index.html'), 'utf8')).toBe('<h1>Two</h1>')
+    expect(await readFile(join(root, 'notes/Plan.app/app.yaml'), 'utf8')).toBe(
+      'description: Theirs\n',
+    )
+
+    // Now the agent changes what was edited: nothing of the turn is written.
+    await writeFile(join(fence.dir, 'notes/Plan.app/index.html'), '<h1>Three</h1>')
+    await writeFile(join(fence.dir, 'notes/Plan.app/app.yaml'), 'description: Mine\n')
+    await fence.turnEnded()
+    expect(await readFile(join(root, 'notes/Plan.app/index.html'), 'utf8')).toBe('<h1>Two</h1>')
+    expect(await readFile(join(root, 'notes/Plan.app/app.yaml'), 'utf8')).toBe(
+      'description: Theirs\n',
+    )
   })
 
   it('does not start where what it makes is already in the vault', async () => {

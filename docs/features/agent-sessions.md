@@ -49,7 +49,8 @@ Sessions +, opens `codex resume`, Codex's own picker.
 **Jobs** (`host/jobs.ts`) are how a provider without a supervisor runs a prompt with nobody
 watching, through `agent.job` (UI door only): a name, a prompt, an optional system text and model,
 and a **scope**, the vault paths it reads and the paths or `folder/**` it writes, each a path a
-capability may read. A `background` provider runs it as a background session allowed exactly that
+capability may read in no hidden folder (`jobMayRead`: a `.codex/config.toml` copied into the run's
+folder would configure the run). A `background` provider runs it as a background session allowed exactly that
 scope (`Read(./x)`, `Edit`/`Write(./folder/**)`); a `jobs` provider runs it in
 `<userData>/agent-jobs/<id>/`, the readable files copied in at their vault paths. Codex's is
 `codex exec --json --skip-git-repo-check -C <scratch> --sandbox workspace-write` with
@@ -83,7 +84,10 @@ scratch folder and outside what the run may write; `codex/home.ts`). It holds th
 `auth.json` (read through a symlink) and a `config.toml` of their model and provider keys alone
 (`model`, `model_provider`, `model_providers`, the reasoning and verbosity keys, the forced login
 keys) with `cli_auth_credentials_store = "file"`; their MCP servers, profiles, plugins, skills,
-hooks, trusted projects and global `AGENTS.md` are dropped. With no `auth.json` and no API key in
+hooks, trusted projects and global `AGENTS.md` are dropped. The run's folder, the folder that
+holds it and the vault are written in as untrusted projects: Codex otherwise trusts the folder it
+runs in by itself (keyed by its git root, else the folder) and loads that project's
+`.codex/config.toml`, whose MCP servers it would start outside the sandbox. With no `auth.json` and no API key in
 the environment (Codex may keep the sign-in in the keychain, tied to its folder's path) the run
 does not start and says how to sign in so it can. Once the process exits, a sign-in Codex refreshed
 there goes back into the person's `auth.json`, but only while theirs is still the one handed over. A provider with neither is refused, never
@@ -102,7 +106,9 @@ approvals, asked in its terminal, whatever `config.toml` says), no network and w
 a Codex folder of its own with no MCP servers (above). As each turn ends (`notify`, or the terminal going quiet) and once more when its
 process exits, what it wrote is copied back by the jobs' copy (the write scope, the vault's shared
 content, no symlink followed, `app.yaml` last, the same caps, never over a new folder something
-else made), before the turn's bracket closes so the turn review shows it. The folder is deleted when the process exits, and every folder when the
+else made). A file it wrote at an earlier turn is written again only when it changed it since, and
+then only while the vault still holds what it wrote: a file someone edited or deleted meanwhile
+refuses the copy, and nothing of that turn is written. All this happens before the turn's bracket closes so the turn review shows it. The folder is deleted when the process exits, and every folder when the
 agent leaves the vault or starts. A provider with neither is refused, never run on another agent.
 The document menu's and the file tree's **Create vault app** ([editor](editor.md)) is its caller.
 

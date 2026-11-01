@@ -2,9 +2,11 @@
  * A Codex run's own folder (`codex/home.ts`): the person's sign-in and model
  * settings and nothing else, and a refreshed sign-in handed back.
  */
+import { realpathSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { parse } from 'smol-toml'
 import { afterEach, describe, expect, it } from 'vitest'
 import { prepareCodexHome, releaseCodexHome, runConfig } from '../main/codex/home'
 
@@ -47,6 +49,18 @@ describe("a Codex run's config", () => {
     }
   })
 
+  it('makes every folder the run could take for its project untrusted, and trusts none', async () => {
+    const dir = await temp()
+    const config = parse(
+      runConfig('[projects."/elsewhere"]\ntrust_level = "trusted"\n', [dir, '/vault/root']),
+    ) as { projects?: Record<string, { trust_level?: string }> }
+    expect(config.projects?.[dir]).toEqual({ trust_level: 'untrusted' })
+    expect(config.projects?.['/vault/root']).toEqual({ trust_level: 'untrusted' })
+    // macOS names the temp folder through a link (`/var` is `/private/var`).
+    expect(config.projects?.[realpathSync(dir)]).toEqual({ trust_level: 'untrusted' })
+    expect(Object.values(config.projects ?? {}).map((p) => p.trust_level)).not.toContain('trusted')
+  })
+
   it('refuses a config.toml it cannot read', () => {
     expect(() => runConfig('model = ')).toThrow(/not TOML/)
   })
@@ -59,7 +73,7 @@ describe("a Codex run's folder", () => {
     await writeFile(join(real, 'auth.json'), AUTH)
     await symlink(join(real, 'auth.json'), join(person, 'auth.json'))
     const state = await temp()
-    const home = prepareCodexHome(state, { CODEX_HOME: person })
+    const home = prepareCodexHome(state, [], { CODEX_HOME: person })
     expect(home).toBe(join(state, 'codex-home'))
     expect(await readFile(join(home, 'auth.json'), 'utf8')).toBe(AUTH)
   })
@@ -67,8 +81,8 @@ describe("a Codex run's folder", () => {
   it('does not run with no sign-in to hand over, unless a key is in the environment', async () => {
     const person = await temp()
     const state = await temp()
-    expect(() => prepareCodexHome(state, { CODEX_HOME: person })).toThrow(/codex login/)
-    expect(prepareCodexHome(state, { CODEX_HOME: person, OPENAI_API_KEY: 'sk' })).toBe(
+    expect(() => prepareCodexHome(state, [], { CODEX_HOME: person })).toThrow(/codex login/)
+    expect(prepareCodexHome(state, [], { CODEX_HOME: person, OPENAI_API_KEY: 'sk' })).toBe(
       join(state, 'codex-home'),
     )
   })
@@ -79,7 +93,7 @@ describe("a Codex run's folder", () => {
     await writeFile(join(real, 'auth.json'), AUTH)
     await symlink(join(real, 'auth.json'), join(person, 'auth.json'))
     const state = await temp()
-    const home = prepareCodexHome(state, { CODEX_HOME: person })
+    const home = prepareCodexHome(state, [], { CODEX_HOME: person })
     await writeFile(join(home, 'auth.json'), REFRESHED)
     await releaseCodexHome(state, { CODEX_HOME: person })
     expect(await readFile(join(real, 'auth.json'), 'utf8')).toBe(REFRESHED)
@@ -90,14 +104,14 @@ describe("a Codex run's folder", () => {
     const person = await temp()
     await writeFile(join(person, 'auth.json'), AUTH)
     const state = await temp()
-    const home = prepareCodexHome(state, { CODEX_HOME: person })
+    const home = prepareCodexHome(state, [], { CODEX_HOME: person })
     await writeFile(join(person, 'auth.json'), 'theirs')
     await writeFile(join(home, 'auth.json'), REFRESHED)
     await releaseCodexHome(state, { CODEX_HOME: person })
     expect(await readFile(join(person, 'auth.json'), 'utf8')).toBe('theirs')
 
     await writeFile(join(person, 'auth.json'), AUTH)
-    prepareCodexHome(state, { CODEX_HOME: person })
+    prepareCodexHome(state, [], { CODEX_HOME: person })
     await writeFile(join(home, 'auth.json'), 'half a fi')
     await releaseCodexHome(state, { CODEX_HOME: person })
     expect(await readFile(join(person, 'auth.json'), 'utf8')).toBe(AUTH)
@@ -109,7 +123,7 @@ describe("a Codex run's folder", () => {
     await writeFile(join(person, 'auth.json'), AUTH)
     await writeFile(join(person, 'config.toml'), '[mcp_servers.x]\ncommand = "y"\n')
     const state = await temp()
-    prepareCodexHome(state, { CODEX_HOME: person })
+    prepareCodexHome(state, [], { CODEX_HOME: person })
     await releaseCodexHome(state, { CODEX_HOME: person })
     expect(await readFile(join(person, 'config.toml'), 'utf8')).toBe(
       '[mcp_servers.x]\ncommand = "y"\n',

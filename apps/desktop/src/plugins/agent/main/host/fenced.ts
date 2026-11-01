@@ -22,11 +22,10 @@
  * NOTE: no `electron` import, so this loads under vitest.
  */
 import { randomBytes } from 'node:crypto'
-import { copyFile, mkdir, rm } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import { exactPath } from '@holi/shared/path-safety-node'
+import { mkdir, rm } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { AgentProvider, VaultRef } from '../provider'
-import { takenDestination, takenMessage, type JobScope, type Jobs } from './jobs'
+import { copyIn, takenDestination, takenMessage, type JobScope, type Jobs, type Made } from './jobs'
 import type { PtySessions } from './pty-sessions'
 import type { Geometry, StartResult } from './sessions'
 
@@ -75,25 +74,16 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
       }
       await mkdir(dir, { recursive: true })
       await mkdir(state, { recursive: true, mode: 0o700 })
-      for (const path of scope.read) {
-        const abs = await exactPath(deps.vault.root, path)
-        const copied =
-          abs !== null &&
-          (await mkdir(dirname(join(dir, path)), { recursive: true })
-            .then(() => copyFile(abs, join(dir, path)))
-            .then(
-              () => true,
-              () => false,
-            ))
-        if (!copied) {
-          await drop()
-          return { ok: false, message: `Holi could not read ${path}.` }
-        }
+      const unread = await copyIn(deps.vault.root, dir, scope.read)
+      if (unread !== null) {
+        await drop()
+        return { ok: false, message: unread }
       }
 
       // One copy at a time: a turn's end and the exit never overlap. What
-      // it wrote into its new folders, which no copy writes over otherwise.
-      const made = new Set<string>()
+      // it wrote, which a later copy writes again only while the vault still
+      // holds it, and into new folders, which no copy writes over otherwise.
+      const made: Made = new Map()
       let chain = Promise.resolve()
       const copy = (): Promise<void> => {
         const next = chain.then(async () => {
