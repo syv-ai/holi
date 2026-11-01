@@ -845,16 +845,16 @@ async function main(): Promise<void> {
   })
   await bridge.start()
   const binDir = dirname(holiCliPath)
-  await loginPath
-
-  // What works across vaults (reminders) starts now, its launch catch-up
-  // with it, whichever vault opens.
-  void plugins.syncBackground()
 
   // Opened at login, Holi starts out of sight: the window loads (so the
   // vault opens) without showing, until the dock or the tray's Open Holi.
   const atLogin = process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin
   const win = createWindow({ show: !atLogin })
+  // What works across vaults (reminders) starts once the login shell's PATH
+  // is read (begun at launch, settled within its timeout), so a tool it
+  // starts is found; the window does not wait for it. Its launch catch-up
+  // comes with it, whichever vault opens.
+  void loginPath.then(() => plugins.syncBackground())
   // Pull on focus. The interval exists for the case where the window never
   // loses focus at all.
   win.on('focus', () => host.active()?.onFocus())
