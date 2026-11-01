@@ -142,6 +142,8 @@ export interface JobsDeps {
 export interface Jobs {
   sessions(): SessionSummary[]
   has(id: string): boolean
+  /** The agent a job runs on, while it runs. */
+  providerOf(id: string): JobsProvider | undefined
   start(spec: JobSpec): Promise<JobResult>
   /** A follow-up to a vault job: a new turn on its thread, now or when the
    *  running one ends. Throws a `CapabilityError` when it cannot take one. */
@@ -948,6 +950,7 @@ export function createJobs(deps: JobsDeps): Jobs {
   return {
     sessions: summaries,
     has: (id) => jobs.has(id),
+    providerOf: (id) => jobs.get(id)?.provider,
 
     async start(spec) {
       const begun = begin(spec)

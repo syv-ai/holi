@@ -960,10 +960,16 @@ describe('an unattended Codex run', () => {
   async function gate() {
     const unattended = createUnattendedStore(join(await temp('holi-unattended-'), 'u.json'))
     const start = vi.fn(async () => ({ ok: true as const, sessionId: 'j0123456789ab' }))
+    const message = vi.fn()
     const caps = agentCapabilities({
       sessions: {} as never,
-      own: {} as never,
-      jobs: { start } as never,
+      own: { has: () => false } as never,
+      jobs: {
+        start,
+        message,
+        has: (id: string) => id === 'j0123456789ab',
+        providerOf: () => codex,
+      } as never,
       fenced: {} as never,
       providers: [codex],
       terminals: {} as never,
@@ -973,11 +979,13 @@ describe('an unattended Codex run', () => {
       unattended,
     })
     const ctx = { remote: 'syv/vault', root: '/v' } as unknown as CapabilityContext
-    const call = <K extends 'agent.job' | 'agent.unattended' | 'agent.allowUnattended'>(
+    const call = <
+      K extends 'agent.job' | 'agent.unattended' | 'agent.allowUnattended' | 'agent.message',
+    >(
       name: K,
       p: unknown,
     ) => (caps[name].run as (c: unknown, a: unknown) => Promise<unknown>)(ctx, caps[name].params(p))
-    return { call, start, unattended }
+    return { call, start, message, unattended }
   }
 
   const RUN = { name: 'Proposal', prompt: 'Go.', allow: ['Edit(tilbud/**)'] }
@@ -1004,6 +1012,16 @@ describe('an unattended Codex run', () => {
     await call('agent.allowUnattended', { provider: 'codex', on: false })
     expect(await call('agent.job', RUN)).toMatchObject({ ok: false })
     expect(start).toHaveBeenCalledOnce()
+  })
+
+  it('takes no follow-up once the vault’s yes is taken back', async () => {
+    const { call, message } = await gate()
+    await call('agent.allowUnattended', { provider: 'codex', on: true })
+    const next = { session: 'j0123456789ab', text: 'And the summary.' }
+    expect(await call('agent.message', next)).toEqual({ ok: true })
+    await call('agent.allowUnattended', { provider: 'codex', on: false })
+    await expect(call('agent.message', next)).rejects.toThrow(unattendedRefusal('Codex'))
+    expect(message).toHaveBeenCalledOnce()
   })
 
   it('is what Codex declares', () => {

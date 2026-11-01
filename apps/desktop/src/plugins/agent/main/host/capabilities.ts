@@ -105,7 +105,7 @@ export interface AgentCapabilitiesDeps {
     | 'stop'
   >
   /** The jobs Holi runs for a provider with `jobs`. */
-  jobs: Pick<Jobs, 'sessions' | 'has' | 'start' | 'message' | 'stop'>
+  jobs: Pick<Jobs, 'sessions' | 'has' | 'providerOf' | 'start' | 'message' | 'stop'>
   /** Sessions Holi runs fenced to a folder, for a provider with `fenced`. */
   fenced: Pick<FencedSessions, 'start'>
   /** This machine's agent for the vault (`agentProvider`): what a job runs
@@ -676,6 +676,15 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', VAULT_NOT_OPEN)
         // A job takes it as its next turn, queued while one runs.
         if (deps.jobs.has(session)) {
+          // Each turn is a run of its own: a yes taken back since it started
+          // stops the next.
+          const provider = deps.jobs.providerOf(session)
+          if (
+            provider?.capabilities.jobs.readsAnywhere === true &&
+            !(await deps.unattended.allowed(ctx.remote, provider.id))
+          ) {
+            throw new CapabilityError('FORBIDDEN', unattendedRefusal(provider.label))
+          }
           deps.jobs.message(session, text)
           return { ok: true }
         }
