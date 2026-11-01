@@ -1,4 +1,7 @@
 import { execFileSync } from 'node:child_process'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { CapabilityContext } from '../../../main/plugin-api'
 import { codexProvider, SESSION_ENV } from '../main/codex'
@@ -292,11 +295,19 @@ describe('the harness registry', () => {
 })
 
 describe("a preset's environment in Codex's jobs", () => {
-  const run = { cwd: '/tmp', root: '/tmp', prompt: 'Go', state: '/tmp' }
-
-  it("reaches Codex's jobs", () => {
-    const codex = codexProvider({ resolveBin: () => '/bin/codex', env: () => ({ MY_KEY: 'k' }) })
+  it("reaches Codex's jobs", async () => {
+    // A Codex folder of its own with a sign-in, never this machine's.
+    const person = await mkdtemp(join(tmpdir(), 'holi-codex-person-'))
+    const state = await mkdtemp(join(tmpdir(), 'holi-codex-state-'))
+    await writeFile(join(person, 'auth.json'), '{}')
+    const codex = codexProvider({
+      resolveBin: () => '/bin/codex',
+      env: () => ({ MY_KEY: 'k', CODEX_HOME: person }),
+    })
+    const run = { cwd: state, root: state, prompt: 'Go', state }
     expect(codex.capabilities.jobs?.command(run)?.env.MY_KEY).toBe('k')
+    await rm(person, { recursive: true, force: true })
+    await rm(state, { recursive: true, force: true })
   })
 })
 
