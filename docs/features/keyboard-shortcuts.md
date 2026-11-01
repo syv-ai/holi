@@ -112,9 +112,10 @@ screen.
 - **⌃Tab is a hold.** With ⌃ held, each Tab steps the tab switcher (⇧Tab back) and letting go
   of ⌃ opens the tab selected; Escape cancels ([tabs and split view](tabs-panes.md)). It fires in
   the terminal too (`inTerminal`) and before it (`capture`), so the agent never gets the Tab or the
-  Escape. Run from the dialog it steps to the neighbour at once.
+  Escape. The list is most recently used first, so a quick ⌃Tab goes back to the tab you were
+  just in. Run from the dialog it goes there at once.
 - **The tab keys act on the one strip** ([tabs and split view](tabs-panes.md)): the switcher
-  and ⌘1–9 go over its entries, a split counting as one; ⌥⌘W closes them all. **⌘W closes the
+  and ⌘1–9 go over its entries (the switcher most recently used first, ⌘1–9 in strip order), a split counting as one; ⌥⌘W closes them all. **⌘W closes the
   view in front:** the focused member inside a split (a 2-split turns back into a tab), the tab
   otherwise. ⌘T opens a New tab at the strip's end, or while the sidebar is on Agents starts a
   session in the default agent, as + does.

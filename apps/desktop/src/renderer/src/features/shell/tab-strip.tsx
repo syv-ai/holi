@@ -50,8 +50,8 @@ import {
   closeTab,
   closeTabsToRight,
   dropOnStrip,
+  entriesByRecency,
   entryId,
-  entryIds,
   focusMember,
   isSplit,
   MAX_SPLIT,
@@ -181,7 +181,7 @@ export function TabStrip({
 
   return (
     <TabSwitcher
-      order={entryIds(ws)}
+      order={entriesByRecency(ws)}
       active={ws.active}
       onSelect={(id) => act((w) => selectEntry(w, id))}
       row={switcherRow}

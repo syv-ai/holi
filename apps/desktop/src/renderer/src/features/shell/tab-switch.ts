@@ -5,8 +5,9 @@
  * cancels. The view (`tab-switcher.tsx`) feeds it key events and selects the
  * entry it hands back; nothing here knows about React or the DOM.
  *
- * The order is the strip's, starting from the active entry: Holi keeps no
- * record of which tab was used last.
+ * The order is the caller's: the shell hands it the entries most recently
+ * used first (`entriesByRecency`), so the first press goes to the tab used
+ * before this one.
  */
 
 /** Open: the strip's entries as they were on the first press, and which one
@@ -14,7 +15,7 @@
 export type TabSwitch = { order: readonly string[]; at: number } | null
 
 export type TabSwitchEvent =
-  /** ⌃Tab (1) or ⌃⇧Tab (-1). `held` says Control is still down: run from
+  /** ⌃Tab (1) or ⌃⇧Tab (-1), over `order` (most recently used first). `held` says Control is still down: run from
    *  the shortcuts list or the menu it is not, and the step lands at once. */
   | {
       kind: 'step'

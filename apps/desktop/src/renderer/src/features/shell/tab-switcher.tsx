@@ -15,11 +15,11 @@ export interface SwitcherRow {
 
 /**
  * Hold Control and press Tab (docs/features/tabs-panes.md): the first press
- * opens a list of the strip's entries under the strip with the next one
- * selected, each further Tab moves on (Shift+Tab back), letting go of
- * Control opens the selected entry (or pressing a row opens that one), and
- * Escape or a click outside cancels.
- * The mechanics are `tab-switch.ts`; this listens for the keys and draws the
+ * opens a list of the strip's entries under the strip, most recently used
+ * first, with the one used before this selected; each further Tab moves on
+ * (Shift+Tab back), letting go of Control opens the selected entry (or
+ * pressing a row opens that one), and Escape or a click outside cancels. The
+ * mechanics are `tab-switch.ts`; this listens for the keys and draws the
  * list. Focus never leaves where it was, an editor or a terminal included:
  * ⌃Tab is a `capture` row, so the dispatcher takes it before they see it.
  */
@@ -30,7 +30,7 @@ export function TabSwitcher({
   row,
   children,
 }: {
-  /** The strip's entries, in order. */
+  /** The strip's entries, most recently used first. */
   order: readonly string[]
   active: string | null
   /** Select an entry, as a click on its tab does. */
@@ -43,7 +43,8 @@ export function TabSwitcher({
   const current = useRef<TabSwitch>(null)
   const select = useRef(onSelect)
   select.current = onSelect
-  /** The strip as it is now, which a release checks the selection against. */
+  /** The entries as they are now, which a release checks the selection
+   *  against. */
   const strip = useRef(order)
   strip.current = order
   const listRef = useRef<HTMLDivElement>(null)
