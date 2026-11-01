@@ -78,13 +78,15 @@ state as a dot on its mark.
 **The switcher.** Hold ⌃ and press Tab: a list of the strip's entries hangs under the strip, each
 with its mark and title as the strip draws them (a split's members side by side), the next entry
 selected. Each further Tab moves on, ⇧Tab moves back, both wrapping; letting go of ⌃ opens the
-entry selected, and Escape, a click outside or the window losing focus cancels. Clicking a row
-opens it. The order is the strip's, starting from the active entry: Holi keeps no record of which
-tab was used last, so the first press goes to the next tab, not the one used before. Run from the
-Keyboard shortcuts dialog, where ⌃ is not held, it selects the neighbour at once. The mechanics are
-one pure function (`features/shell/tab-switch.ts`); the list is a stock `Popover` holding a
-`Command` list (`tab-switcher.tsx`) that takes no focus, so focus stays in the editor or terminal it
-was in. ⌃Tab reaches it from there because its row runs before the focused widget sees the key
+entry selected, and Escape, a click outside or the window losing focus cancels. Pressing a row
+opens it (on pointerdown, as ⌃ is still held and a Mac makes a ⌃-click a secondary click); the
+pointer does not move the selection. A tab closed while switching opens nothing. The order is the
+strip's, starting from the active entry: Holi keeps no record of which tab was used last, so the
+first press goes to the next tab, not the one used before. Run from the Keyboard shortcuts dialog,
+where ⌃ is not held, it selects the neighbour at once. The mechanics are one pure function
+(`features/shell/tab-switch.ts`); the list is a stock `Popover` holding a `Command` list
+(`tab-switcher.tsx`) that takes no focus, so focus stays in the editor or terminal it was in. ⌃Tab
+reaches it from there because its row runs before the focused widget sees the key
 ([keyboard shortcuts](keyboard-shortcuts.md)).
 
 Entries drag along the strip to reorder (a hairline marks where it would land). A tab's
@@ -280,8 +282,9 @@ play ranked live. Sign-in and adding a vault run the same board as background on
 - `apps/desktop/src/renderer/src/state/tab-descriptor.ts`, `shell-workspace.ts`, `shell-tabs.ts`,
   `alt-open.ts`
 - `apps/desktop/src/renderer/src/features/shell/`: `app-shell.tsx` (ReUI's `app-shell-21`),
-  `tab-strip.tsx`, `tab-switcher.tsx`, `tab-switch.ts`, `split-view.tsx`, `use-tab-drag.ts`, `tab-view.tsx`, `tab-look.tsx`,
-  `use-shell-shortcuts.ts`, `new-tab-view.tsx`; `hooks/use-session-tabs.ts`
+  `tab-strip.tsx`, `tab-switcher.tsx`, `tab-switch.ts`, `split-view.tsx`, `use-tab-drag.ts`,
+  `tab-view.tsx`, `tab-look.tsx`, `use-shell-shortcuts.ts`, `new-tab-view.tsx`;
+  `hooks/use-session-tabs.ts`
 - `apps/desktop/src/renderer/src/components/ui/motion-panels.tsx`
 - `apps/desktop/src/main/menu.ts`: ⌘W and ⌘⇧W
 - `state/panes.ts` and `state/surfaces.ts` are the earlier shell's workspace and are only half retired: the fresh shell does not render `state/panes.ts`, so `openNoteTabAtom` (re-exported by `@/plugin-api`) and the plugin-facing `surfaceTabIdsAtom` open or list nothing on screen, while `state/surfaces.ts` now also calls `openTabAtom`. Which of them a plugin may rely on is a product question in [findings](../refactor/findings.md).

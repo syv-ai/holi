@@ -17,7 +17,8 @@ export interface SwitcherRow {
  * Hold Control and press Tab (docs/features/tabs-panes.md): the first press
  * opens a list of the strip's entries under the strip with the next one
  * selected, each further Tab moves on (Shift+Tab back), letting go of
- * Control opens the selected entry, and Escape or a click outside cancels.
+ * Control opens the selected entry (or pressing a row opens that one), and
+ * Escape or a click outside cancels.
  * The mechanics are `tab-switch.ts`; this listens for the keys and draws the
  * list. Focus never leaves where it was, an editor or a terminal included:
  * ⌃Tab is a `capture` row, so the dispatcher takes it before they see it.
@@ -40,11 +41,11 @@ export function TabSwitcher({
 }) {
   const [state, setState] = useState<TabSwitch>(null)
   const current = useRef<TabSwitch>(null)
-  /** Whether Control is down, from the last key event: run from the
-   *  shortcuts list it is not, and the step selects at once. */
-  const held = useRef(false)
   const select = useRef(onSelect)
   select.current = onSelect
+  /** The strip as it is now, which a release checks the selection against. */
+  const strip = useRef(order)
+  strip.current = order
   const listRef = useRef<HTMLDivElement>(null)
 
   const send = useRef((event: TabSwitchEvent) => {
@@ -54,17 +55,20 @@ export function TabSwitcher({
     if (result.select !== undefined) select.current(result.select)
   }).current
 
+  // Control is held when a key ran it; from the shortcuts dialog there is
+  // no key, and the step lands at once.
   useShortcutHandlers({
-    'tab.next': () => send({ kind: 'step', step: 1, held: held.current, order, active }),
-    'tab.previous': () => send({ kind: 'step', step: -1, held: held.current, order, active }),
+    'tab.next': (_, key) =>
+      send({ kind: 'step', step: 1, held: key?.ctrlKey === true, order, active }),
+    'tab.previous': (_, key) =>
+      send({ kind: 'step', step: -1, held: key?.ctrlKey === true, order, active }),
   })
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      held.current = e.ctrlKey
       if (current.current === null) return
       if (e.type === 'keyup' && !e.ctrlKey) {
-        send({ kind: 'release' })
+        send({ kind: 'release', order: strip.current })
       } else if (e.type === 'keydown' && e.key === 'Escape') {
         // Never the focused widget's Escape too: a terminal would interrupt
         // its agent.
@@ -74,10 +78,7 @@ export function TabSwitcher({
       }
     }
     // A Control let go in another window never comes back as a keyup.
-    const onBlur = (): void => {
-      held.current = false
-      send({ kind: 'cancel' })
-    }
+    const onBlur = (): void => send({ kind: 'cancel' })
     window.addEventListener('keydown', onKey, true)
     window.addEventListener('keyup', onKey, true)
     window.addEventListener('blur', onBlur)
@@ -122,24 +123,39 @@ export function TabSwitcher({
         onOpenAutoFocus={(event) => event.preventDefault()}
         onCloseAutoFocus={(event) => event.preventDefault()}
       >
-        <Command shouldFilter={false} label="Switch tab" value={String(state?.at ?? 0)}>
+        {/* The pointer does not move the selection: what is marked is what
+            letting go opens. */}
+        <Command
+          shouldFilter={false}
+          disablePointerSelection
+          label="Switch tab"
+          value={String(state?.at ?? 0)}
+        >
           <CommandList ref={listRef} label="Open tabs">
             {rows.map((entry, index) => (
               <CommandItem
                 key={entry.id}
                 value={String(index)}
                 aria-label={entry.name}
-                onSelect={() => send({ kind: 'choose', id: entry.id })}
+                // On pointerdown, not click: Control is still held, and on a
+                // Mac a Control-click is a secondary click that never clicks.
+                onPointerDown={(event) => {
+                  if (event.button !== 0) return
+                  event.preventDefault()
+                  send({ kind: 'choose', id: entry.id, order: strip.current })
+                }}
+                onContextMenu={(event) => event.preventDefault()}
               >
                 {entry.content}
               </CommandItem>
             ))}
           </CommandList>
         </Command>
-        <span aria-live="polite" className="sr-only">
-          {selected?.name}
-        </span>
       </PopoverContent>
+      {/* Mounted always, so the first selection is a change it announces. */}
+      <span aria-live="polite" className="sr-only">
+        {selected?.name ?? ''}
+      </span>
     </Popover>
   )
 }

@@ -31,7 +31,10 @@ export function useShortcutHandlers(
     if (ids === '') return
     const slots = ids
       .split('\n')
-      .map((id): [string, Slot] => [id, { current: (index) => latest.current[id]?.(index) }])
+      .map((id): [string, Slot] => [
+        id,
+        { current: (index, key) => latest.current[id]?.(index, key) },
+      ])
     setHandlers((map) => {
       const next = new Map(map)
       for (const [id, slot] of slots) next.set(id, [...(next.get(id) ?? []), slot])
@@ -60,17 +63,17 @@ function dialogOpen(): boolean {
 }
 
 /**
- * The one `keydown` listener over the table, and the menu's ids. Installed
- * once; it reads the handlers through the store, so registering one never
- * re-subscribes it.
+ * The `keydown` listeners over the table, one per phase, and the menu's ids.
+ * Installed once; they read the handlers through the store, so registering
+ * one never re-subscribes them.
  */
 export function useShortcutDispatcher(): void {
   const store = useStore()
 
   useEffect(() => {
-    const run = (id: string, index: number): void => {
+    const run = (id: string, index: number, key?: KeyboardEvent): void => {
       const slots = store.get(handlersAtom).get(id)
-      slots?.[slots.length - 1]?.current(index)
+      slots?.[slots.length - 1]?.current(index, key)
     }
     // Two phases: a `capture` row runs before the focused widget sees the
     // key, and is kept from it; every other row lets the widget go first.
@@ -87,7 +90,7 @@ export function useShortcutDispatcher(): void {
         if (match === null) return
         e.preventDefault()
         if (capture) e.stopPropagation()
-        run(match.shortcut.id, match.index)
+        run(match.shortcut.id, match.index, e)
       }
     const onKey = listener(false)
     const onCapturedKey = listener(true)

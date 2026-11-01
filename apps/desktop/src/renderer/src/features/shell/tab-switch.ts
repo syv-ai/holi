@@ -23,12 +23,13 @@ export type TabSwitchEvent =
       order: readonly string[]
       active: string | null
     }
-  /** Control let go. */
-  | { kind: 'release' }
+  /** Control let go. `order` is the strip as it is now: an entry closed
+   *  while switching opens nothing. */
+  | { kind: 'release'; order: readonly string[] }
   /** Escape, a click outside, or the window losing focus. */
   | { kind: 'cancel' }
-  /** A row clicked. */
-  | { kind: 'choose'; id: string }
+  /** A row clicked, against the strip as it is now. */
+  | { kind: 'choose'; id: string; order: readonly string[] }
 
 export interface TabSwitchResult {
   state: TabSwitch
@@ -54,10 +55,15 @@ export function tabSwitch(state: TabSwitch, event: TabSwitchEvent): TabSwitchRes
       return { state: { order, at } }
     }
     case 'release':
-      return state === null ? { state } : { state: null, select: state.order[state.at]! }
+      return state === null ? { state } : still(event.order, state.order[state.at]!)
     case 'cancel':
       return { state: null }
     case 'choose':
-      return { state: null, select: event.id }
+      return still(event.order, event.id)
   }
+}
+
+/** Closed, selecting `id` if the strip still holds it. */
+function still(order: readonly string[], id: string): TabSwitchResult {
+  return order.includes(id) ? { state: null, select: id } : { state: null }
 }

@@ -15,13 +15,16 @@ describe('tabSwitch', () => {
     expect(state?.at).toBe(0)
     state = tabSwitch(state, step(-1)).state
     expect(state?.at).toBe(3)
-    expect(tabSwitch(state, { kind: 'release' })).toEqual({ state: null, select: 'd' })
+    expect(tabSwitch(state, { kind: 'release', order })).toEqual({ state: null, select: 'd' })
   })
 
   test('Escape cancels without selecting; a click chooses its row', () => {
     const open = tabSwitch(null, step(1)).state
     expect(tabSwitch(open, { kind: 'cancel' })).toEqual({ state: null })
-    expect(tabSwitch(open, { kind: 'choose', id: 'a' })).toEqual({ state: null, select: 'a' })
+    expect(tabSwitch(open, { kind: 'choose', id: 'a', order })).toEqual({
+      state: null,
+      select: 'a',
+    })
   })
 
   test('not held (the shortcuts list) it selects the neighbour at once', () => {
@@ -31,6 +34,11 @@ describe('tabSwitch', () => {
   test('nothing to switch to stays closed; a stray release does nothing', () => {
     const one = { kind: 'step', step: 1, held: true, order: ['a'], active: 'a' } as const
     expect(tabSwitch(null, one)).toEqual({ state: null })
-    expect(tabSwitch(null, { kind: 'release' })).toEqual({ state: null })
+    expect(tabSwitch(null, { kind: 'release', order })).toEqual({ state: null })
+  })
+
+  test('a tab closed while switching opens nothing on release', () => {
+    const open = tabSwitch(null, step(1)).state
+    expect(tabSwitch(open, { kind: 'release', order: ['a', 'b', 'd'] })).toEqual({ state: null })
   })
 })
