@@ -45,7 +45,7 @@ export const RichTextTable = TableKit.configure({
  * descendant classes.
  *
  * Banded: no lines, the header row on `--muted` and the body rows in two
- * quieter fills of it, the block rounded and clipped, so a table never reads
+ * quieter fills of it, the block's corners rounded, so a table never reads
  * as a code block (one muted fill, monospaced). Lines: no fills, a muted
  * smaller header over a `--border` line, `--divider` lines between rows, no
  * vertical lines, and the first column on the text's edge. */
@@ -56,7 +56,10 @@ export const RICH_TEXT_TABLE_PROSE = cn(
   '[&_.tiptap_:is(td,th)]:relative [&_.tiptap_:is(td,th)]:px-3 [&_.tiptap_:is(td,th)]:py-2 [&_.tiptap_:is(td,th)]:text-start [&_.tiptap_:is(td,th)]:align-top',
   '[&_.tiptap_th]:font-medium',
   // Banded. The header is the table's first row, so the first body row is even.
-  '[&[data-table-style=banded]_.tiptap_table]:border-separate [&[data-table-style=banded]_.tiptap_table]:border-spacing-0 [&[data-table-style=banded]_.tiptap_table]:overflow-hidden [&[data-table-style=banded]_.tiptap_table]:rounded-lg',
+  '[&[data-table-style=banded]_.tiptap_table]:border-separate [&[data-table-style=banded]_.tiptap_table]:border-spacing-0',
+  // Rounded by its corner cells rather than clipped, so the last column's
+  // resize handle still shows.
+  '[&[data-table-style=banded]_.tiptap_tr:first-child>:first-child]:rounded-ss-lg [&[data-table-style=banded]_.tiptap_tr:first-child>:last-child]:rounded-se-lg [&[data-table-style=banded]_.tiptap_tr:last-child>:first-child]:rounded-es-lg [&[data-table-style=banded]_.tiptap_tr:last-child>:last-child]:rounded-ee-lg',
   '[&[data-table-style=banded]_.tiptap_th]:bg-muted',
   '[&[data-table-style=banded]_.tiptap_tr:nth-child(even)>td]:bg-muted/50 [&[data-table-style=banded]_.tiptap_tr:nth-child(odd)>td]:bg-muted/25',
   // Lines.

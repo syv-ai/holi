@@ -22,7 +22,7 @@ import {
 } from '@holi/shared'
 
 import { trpc } from '@/lib/trpc'
-import { loadVaultSettingsAtom, vaultSettingsAtom } from '@/state/settings'
+import { activeVaultSettingsAtom, loadVaultSettingsAtom, vaultSettingsAtom } from '@/state/settings'
 import { activeRemoteAtom } from '@/state/vaults'
 
 export type SettingsWrite = (key: VaultSettingKey | 'plugins', value: unknown) => Promise<void>
@@ -33,15 +33,13 @@ export function useVaultSettings(): {
   write: SettingsWrite
 } {
   const remote = useAtomValue(activeRemoteAtom)
-  const cached = useAtomValue(vaultSettingsAtom)
+  const resolved = useAtomValue(activeVaultSettingsAtom)
   const setCached = useSetAtom(vaultSettingsAtom)
   const load = useSetAtom(loadVaultSettingsAtom)
 
   useEffect(() => {
     load().catch((error: unknown) => console.warn('[settings] read failed:', error))
   }, [load, remote])
-
-  const resolved = cached !== null && cached.remote === remote ? cached.settings : null
 
   const write = useCallback<SettingsWrite>(
     async (key, value) => {

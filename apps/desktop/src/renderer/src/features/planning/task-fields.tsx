@@ -14,7 +14,7 @@
  * Sharing is whether the file is committed: a private task is
  * `task.<name>.local.md`, on this machine only (docs/features/tasks.md).
  */
-import { useState, type ComponentProps, type ReactNode } from 'react'
+import { Fragment, useState, type ComponentProps, type ReactNode } from 'react'
 import { isEstimate, type Priority, type StatusDef } from '@holi/shared'
 import { useAtomValue } from 'jotai'
 import {
@@ -177,22 +177,25 @@ function FieldTrigger({
         className={cn(!set && 'text-muted-foreground')}
         {...props}
       >
-        {chipIcon ?? <Icon data-icon="inline-start" aria-hidden="true" />}
+        {/* A field with a mark of its own (even none, a status not defined)
+            shows it in place of the field's. */}
+        {chipIcon !== undefined ? chipIcon : <Icon data-icon="inline-start" aria-hidden="true" />}
         {set ? children : label}
       </Button>
     )
   }
+  // A long value ends in an ellipsis rather than leaving the row.
   const value = set ? (
-    <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+    <span className="flex min-w-0 items-center gap-1.5">
       {valueIcon}
-      {children}
+      <span className="truncate">{children}</span>
     </span>
   ) : (
-    <span className="text-muted-foreground">Empty</span>
+    <span className="text-muted-foreground truncate">Empty</span>
   )
   if (layout === 'rows') {
     return (
-      <Button type="button" variant="ghost" size="row" className="w-full" {...props}>
+      <Button type="button" variant="ghost" size="field" {...props}>
         <span className="text-muted-foreground flex w-28 shrink-0 items-center gap-2">
           <Icon aria-hidden="true" />
           {label}
@@ -204,9 +207,12 @@ function FieldTrigger({
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-muted-foreground text-xs">{label}</span>
-      <Button type="button" variant="ghost" size="row" className="-mx-2" {...props}>
-        {value}
-      </Button>
+      {/* The tint reaches past the label's edge, and the value sits under it. */}
+      <div className="-mx-2 flex min-w-0">
+        <Button type="button" variant="ghost" size="field" {...props}>
+          {value}
+        </Button>
+      </div>
     </div>
   )
 }
@@ -714,6 +720,29 @@ function SharingField({
   )
 }
 
+/**
+ * The order each layout draws the fields in. Chips and the stacked sidebar
+ * read as one line, start before due. Two columns fill row by row, so their
+ * order makes the pairs read across: Status and Priority, Assignees and
+ * Labels, Start and Due date, Project and Estimate, then Sharing.
+ */
+const LINE_ORDER: readonly TaskFieldKey[] = [
+  'status',
+  'assignees',
+  'priority',
+  'start',
+  'due',
+  'tags',
+  'folder',
+  'estimate',
+  'shared',
+]
+const FIELD_ORDER: Record<TaskFieldsLayout, readonly TaskFieldKey[]> = {
+  chips: LINE_ORDER,
+  rows: ['status', 'priority', 'assignees', 'tags', 'start', 'due', 'folder', 'estimate', 'shared'],
+  stacked: LINE_ORDER,
+}
+
 /** The groups' look per layout: a wrapping row, two columns that fold to
  *  one in a narrow pane, or a column. */
 const LAYOUT_CLASS: Record<TaskFieldsLayout, string> = {
@@ -737,59 +766,82 @@ export function TaskFields({
   layout?: TaskFieldsLayout
   className?: string
 }) {
+  const fields: Record<TaskFieldKey, ReactNode> = {
+    status: (
+      <StatusField
+        layout={layout}
+        statuses={statuses}
+        value={values.status}
+        onChange={(value) => onChange({ field: 'status', value })}
+      />
+    ),
+    assignees: (
+      <AssigneesField
+        layout={layout}
+        value={values.assignees}
+        onChange={(value) => onChange({ field: 'assignees', value })}
+      />
+    ),
+    priority: (
+      <PriorityField
+        layout={layout}
+        value={values.priority}
+        onChange={(value) => onChange({ field: 'priority', value })}
+      />
+    ),
+    start: (
+      <DateField
+        layout={layout}
+        field="start"
+        value={values.start}
+        today={today}
+        onChange={(value) => onChange({ field: 'start', value })}
+      />
+    ),
+    due: (
+      <DateField
+        layout={layout}
+        field="due"
+        value={values.due}
+        today={today}
+        onChange={(value) => onChange({ field: 'due', value })}
+      />
+    ),
+    tags: (
+      <LabelsField
+        layout={layout}
+        value={values.tags}
+        onChange={(value) => onChange({ field: 'tags', value })}
+      />
+    ),
+    folder: (
+      <ProjectField
+        layout={layout}
+        value={values.folder}
+        onChange={(value) => onChange({ field: 'folder', value })}
+      />
+    ),
+    estimate: (
+      <EstimateField
+        layout={layout}
+        value={values.estimate}
+        onChange={(value) => onChange({ field: 'estimate', value })}
+      />
+    ),
+    shared: (
+      <SharingField
+        layout={layout}
+        value={values.shared}
+        onChange={(value) => onChange({ field: 'shared', value })}
+      />
+    ),
+  }
   return (
     <div className={cn('@container/task-fields', className)}>
       <div role="group" aria-label="Task fields" className={LAYOUT_CLASS[layout]}>
-        <StatusField
-          layout={layout}
-          statuses={statuses}
-          value={values.status}
-          onChange={(value) => onChange({ field: 'status', value })}
-        />
-        <AssigneesField
-          layout={layout}
-          value={values.assignees}
-          onChange={(value) => onChange({ field: 'assignees', value })}
-        />
-        <PriorityField
-          layout={layout}
-          value={values.priority}
-          onChange={(value) => onChange({ field: 'priority', value })}
-        />
-        <DateField
-          layout={layout}
-          field="start"
-          value={values.start}
-          today={today}
-          onChange={(value) => onChange({ field: 'start', value })}
-        />
-        <DateField
-          layout={layout}
-          field="due"
-          value={values.due}
-          today={today}
-          onChange={(value) => onChange({ field: 'due', value })}
-        />
-        <LabelsField
-          layout={layout}
-          value={values.tags}
-          onChange={(value) => onChange({ field: 'tags', value })}
-        />
-        <ProjectField
-          layout={layout}
-          value={values.folder}
-          onChange={(value) => onChange({ field: 'folder', value })}
-        />
-        <EstimateField
-          layout={layout}
-          value={values.estimate}
-          onChange={(value) => onChange({ field: 'estimate', value })}
-        />
-        <SharingField
-          layout={layout}
-          value={values.shared}
-          onChange={(value) => onChange({ field: 'shared', value })}
-        />
+        {FIELD_ORDER[layout].map((key) => (
+          <Fragment key={key}>{fields[key]}</Fragment>
+        ))}
       </div>
     </div>
   )

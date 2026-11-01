@@ -164,12 +164,26 @@ export function writeSettingsText(
     ).map((line) => `# ${line}`),
   ]
 
-  for (const setting of VAULT_SETTINGS) {
+  // The committed file lists the vault's own settings, then every personal
+  // one, which it can give a default for. The local file lists the personal
+  // ones and keeps any vault setting it answers (a Home of your own).
+  const listed = committed
+    ? [
+        ...VAULT_SETTINGS.filter((s) => s.target === 'committed'),
+        ...VAULT_SETTINGS.filter((s) => s.target === 'local'),
+      ]
+    : VAULT_SETTINGS.filter(
+        (s) => s.target === 'local' || Object.prototype.hasOwnProperty.call(values, s.key),
+      )
+  let personalNoted = false
+  for (const setting of listed) {
     const has = Object.prototype.hasOwnProperty.call(values, setting.key)
-    // A file lists the settings Settings writes to it, and keeps any other
-    // it answers: a vault's default for a personal setting, committed by
-    // hand, or a personal answer to a vault's setting.
-    if (setting.target !== target && !has) continue
+    if (committed && setting.target === 'local' && !personalNoted) {
+      personalNoted = true
+      lines.push('')
+      const note = `Personal settings. Settings writes these to each person\u2019s ${SETTINGS_LOCAL_FILE}. A value here is the vault\u2019s default, and anyone\u2019s own answer there wins.`
+      for (const line of wrap(note)) lines.push(`# ${line}`)
+    }
     lines.push('', `# ── ${setting.label}`)
     for (const line of wrap(setting.explanation, 72)) lines.push(`#   ${line}`)
     for (const hint of legalValues(setting.type)) {

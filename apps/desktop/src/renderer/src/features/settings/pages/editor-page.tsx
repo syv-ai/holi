@@ -1,5 +1,5 @@
 /** Editor: how notes read and behave for you. */
-import { EDITOR_FONTS, type EditorFont, type PropertiesLayout, type TableStyle } from '@holi/shared'
+import type { EditorFont, PropertiesLayout, TableStyle } from '@holi/shared'
 import { Switch } from '@/components/ui/switch'
 import {
   choiceSetting,
@@ -7,21 +7,10 @@ import {
   SettingsGroup,
   SettingsFieldRow,
   SettingsRowsLoading,
-  type Choice,
 } from '../settings-kit'
 import { useVaultSettings } from '../use-vault-settings'
 
-const FONT_LABEL: Record<EditorFont, string> = {
-  serif: 'Serif',
-  sans: 'Sans',
-  mono: 'Mono',
-}
-
-const FONTS: readonly Choice<EditorFont>[] = EDITOR_FONTS.map((font) => ({
-  value: font,
-  label: FONT_LABEL[font],
-}))
-
+const FONTS = choiceSetting<EditorFont>('editorFont')
 const PROPERTIES = choiceSetting<PropertiesLayout>('propertiesLayout')
 const TABLES = choiceSetting<TableStyle>('tableStyle')
 
@@ -37,14 +26,11 @@ export function EditorPage() {
         <SettingsRowsLoading rows={5} label="Reading the settings" />
       ) : (
         <>
-          <SettingsFieldRow
-            title="Notes are set in"
-            description="Prose only. Code and frontmatter stay monospaced. On this machine only."
-          >
+          <SettingsFieldRow title={FONTS.title} description={FONTS.description}>
             <Segmented
-              label="Notes are set in"
+              label={FONTS.title}
               value={resolved.editorFont}
-              choices={FONTS}
+              choices={FONTS.choices}
               onChange={(font) => void write('editorFont', font)}
             />
           </SettingsFieldRow>

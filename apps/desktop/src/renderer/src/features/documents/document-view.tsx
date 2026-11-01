@@ -89,6 +89,17 @@ const SAVE_DELAY_MS = 600
 const DROP_LINE =
   '[&_.prosemirror-dropcursor-block]:text-primary [&_.prosemirror-dropcursor-block]:h-0.5! [&_.prosemirror-dropcursor-block]:rounded-full'
 
+/**
+ * When a task's properties may sit in a sidebar: only while the view is wide
+ * enough to keep a readable text column beside it, a wider view when the
+ * comments panel is open too. Below that the sidebar is hidden and the
+ * inline properties show instead.
+ */
+const SIDEBAR_FITS = {
+  alone: { sidebar: 'hidden @4xl/document:flex', inline: '@4xl/document:hidden' },
+  besideComments: { sidebar: 'hidden @7xl/document:flex', inline: '@7xl/document:hidden' },
+} as const
+
 type Load =
   | { kind: 'loading' }
   | { kind: 'ready'; head: string; body: string; text: string }
@@ -186,7 +197,7 @@ function DocumentEditor({
   const tableStyle = useAppSetting('tableStyle')
   const propertiesLayout = useAppSetting('propertiesLayout')
   const hasProperties = useHasTaskProperties(path)
-  const { write: writeSetting } = useVaultSettings()
+  const { resolved: settings, write: writeSetting } = useVaultSettings()
   const [promptBox] = useState(() => {
     const box = document.createElement('div')
     box.contentEditable = 'false'
@@ -497,11 +508,13 @@ function DocumentEditor({
     if (!res.ok) toast.error(`Couldn't start the chat. ${res.message}`)
   }
 
+  const sidebarFits = commentable && commentsOpen ? SIDEBAR_FITS.besideComments : SIDEBAR_FITS.alone
+
   return (
     <TooltipProvider delayDuration={300}>
       <div
         ref={viewRef}
-        className="text-foreground relative flex h-full min-h-0 w-full flex-col"
+        className="text-foreground @container/document relative flex h-full min-h-0 w-full flex-col"
         onKeyDown={handleViewKeyDown}
       >
         {/* Locked while a run edits the document: nothing in it answers. */}
@@ -524,6 +537,8 @@ function DocumentEditor({
             properties={
               hasProperties
                 ? {
+                    // Nothing to flip until the settings are read.
+                    disabled: settings === null,
                     sidebar: propertiesLayout === 'sidebar',
                     onSidebarChange: (sidebar) =>
                       void writeSetting('propertiesLayout', sidebar ? 'sidebar' : 'inline'),
@@ -564,19 +579,21 @@ function DocumentEditor({
                   <Banner path={path} />
                 </div>
               ) : null}
-              {/* A task's properties, on the body's column; nothing for a note. */}
-              {propertiesLayout === 'inline' ? (
-                <TaskProperties
-                  path={path}
-                  layout="inline"
-                  beforeWrite={save}
-                  onMoved={onMoved}
-                  className={cn(
-                    'mx-auto w-full px-4 pt-8 sm:px-16 sm:pt-12',
-                    fullWidth ? 'max-w-none' : 'max-w-3xl',
-                  )}
-                />
-              ) : null}
+              {/* A task's properties, on the body's column; nothing for a note.
+                  In a sidebar only when the view has room for it beside the
+                  text (and the comments, when they are open): narrower, they
+                  stay here whatever the setting says. */}
+              <TaskProperties
+                path={path}
+                layout="inline"
+                beforeWrite={save}
+                onMoved={onMoved}
+                className={cn(
+                  'mx-auto w-full px-4 pt-8 sm:px-16 sm:pt-12',
+                  fullWidth ? 'max-w-none' : 'max-w-3xl',
+                  propertiesLayout === 'sidebar' && sidebarFits.inline,
+                )}
+              />
               <div ref={pageRef} className={cn('relative min-h-full', DROP_LINE)}>
                 {editor ? (
                   <EditorContent
@@ -642,7 +659,13 @@ function DocumentEditor({
               </div>
             </div>
             {propertiesLayout === 'sidebar' ? (
-              <TaskProperties path={path} layout="sidebar" beforeWrite={save} onMoved={onMoved} />
+              <TaskProperties
+                path={path}
+                layout="sidebar"
+                beforeWrite={save}
+                onMoved={onMoved}
+                className={sidebarFits.sidebar}
+              />
             ) : null}
             {commentable && commentsOpen ? (
               <CommentsPanel

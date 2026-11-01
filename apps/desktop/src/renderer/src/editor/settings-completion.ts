@@ -73,7 +73,11 @@ function valuesFor(key: string): Completion[] | null {
 
 /** The settings this file may carry, as completable keys. */
 function keysFor(target: SettingTarget): Completion[] {
-  const own = VAULT_SETTINGS.filter((s: VaultSetting) => s.target === target).map((s) => ({
+  // The vault's file takes every setting, a personal one as the vault's
+  // default; the local file takes the personal ones.
+  const own = VAULT_SETTINGS.filter(
+    (s: VaultSetting) => target === 'committed' || s.target === target,
+  ).map((s) => ({
     label: s.key,
     detail: s.label,
     info: s.explanation,

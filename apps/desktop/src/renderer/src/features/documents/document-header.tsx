@@ -90,6 +90,7 @@ interface DocumentHeaderProps extends Omit<DocumentActionsProps, 'editor'> {
   /** Whether a document's properties sit in a sidebar (`propertiesLayout`);
    *  null for a document that has none. */
   properties?: {
+    disabled: boolean
     sidebar: boolean
     onSidebarChange: (sidebar: boolean) => void
   } | null
@@ -158,6 +159,7 @@ export function DocumentHeader({
             <Toggle
               size="sm"
               pressed={properties.sidebar}
+              disabled={properties.disabled}
               onPressedChange={properties.onSidebarChange}
               aria-label="Properties in a sidebar"
               className="shrink-0"

@@ -66,17 +66,18 @@ test('completes a partly typed value, replacing only what was typed', () => {
 })
 
 test('completes a key, and types the colon for you', () => {
-  const result = suggest('edi', 'local')
+  const result = suggest('edi')
   expect(result?.from).toBe(0)
   const option = result?.options.find((o) => o.label === 'editorFont')
   expect(option?.apply).toBe('editorFont: ')
 })
 
-test('offers only the keys that belong in this file', () => {
-  // `colorScheme` is machine-local; suggesting it in the committed file would
-  // be suggesting that a teammate's appearance choice gets shared.
-  expect(labels('', 'committed', true)).not.toContain('colorScheme')
+test('offers the keys that belong in this file', () => {
+  // The vault's file may give a personal setting a default; the local file
+  // holds only what is personal.
+  expect(labels('', 'committed', true)).toContain('colorScheme')
   expect(labels('', 'local', true)).toContain('colorScheme')
+  expect(labels('', 'local', true)).not.toContain('dailyNotes')
 })
 
 test('an empty line stays quiet unless you ask', () => {

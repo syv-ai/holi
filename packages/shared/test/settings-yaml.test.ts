@@ -84,9 +84,9 @@ describe('writing to a settings file', () => {
     expect(writeSettingsText({}, 'committed', [])).toContain('# autoUpdateSkills:')
   })
 
-  it("keeps a vault's default for a personal setting, which only a hand edit writes", () => {
+  it("lists the personal settings in the vault's file, where a value is the vault's default", () => {
     expect(writeSettingsText({ editorFont: 'mono' }, 'committed', [])).toContain('editorFont: mono')
-    expect(writeSettingsText({}, 'committed', [])).not.toContain('editorFont')
+    expect(writeSettingsText({}, 'committed', [])).toContain('# editorFont:')
   })
 
   it('keeps a key no setting describes', () => {

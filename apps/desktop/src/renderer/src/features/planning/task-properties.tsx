@@ -146,15 +146,17 @@ export function TaskProperties({
       ) : (
         <div className={className}>
           <Collapsible open={open} onOpenChange={setOpen}>
-            <CollapsibleTrigger asChild>
-              <Button variant="text" size="inline" className="text-muted-foreground mb-1 text-xs">
-                <ChevronDownIcon
-                  aria-hidden="true"
-                  className="motion-respond group-data-[state=closed]/button:-rotate-90"
-                />
-                Properties
-              </Button>
-            </CollapsibleTrigger>
+            <div className="mb-1 flex">
+              <CollapsibleTrigger asChild>
+                <Button variant="section" size="inline">
+                  <ChevronDownIcon
+                    aria-hidden="true"
+                    className="motion-respond group-data-[state=closed]/button:-rotate-90"
+                  />
+                  Properties
+                </Button>
+              </CollapsibleTrigger>
+            </div>
             <CollapsibleContent>{fields}</CollapsibleContent>
           </Collapsible>
         </div>
