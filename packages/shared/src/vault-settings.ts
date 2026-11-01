@@ -124,8 +124,9 @@ export const WINDOW_GLASSES: readonly WindowGlass[] = ['clear', 'frosted', 'soli
  * The font the **notes editor** sets prose in. Code, frontmatter and the
  * plain/code editor are never affected — see `notesFontTheme`.
  *
- * **A name, never a CSS string.** `.holi/settings/app.yaml` is committed, so in a
- * shared vault this value was written by somebody else; a `font-family` taken
+ * **A name, never a CSS string.** Settings writes it to the local file, but a
+ * vault may commit a default in `.holi/settings/app.yaml`, so in a shared
+ * vault this value may have been written by somebody else; a `font-family` taken
  * from it verbatim would be arbitrary CSS crossing a trust boundary (the theme
  * whitelist argument). Three names resolve to three stacks this file owns, so
  * no sanitizer is needed.
@@ -697,11 +698,14 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
       ],
     },
     default: 'serif' as EditorFont,
-    target: 'committed',
+    // Personal, like every setting about how Holi looks or behaves for you:
+    // written to the local file, while a vault may still commit a default in
+    // `app.yaml` by hand that holds until someone sets their own.
+    target: 'local',
     // Not asked at birth, deliberately: it has a good default and no
     // consequence at a vault's first moment.
     askedAtBirth: false,
-    whereToChange: SETTINGS_FILE_HINT,
+    whereToChange: LOCAL_FILE_HINT,
     section: 'editor',
   },
   {

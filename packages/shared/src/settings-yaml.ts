@@ -165,13 +165,16 @@ export function writeSettingsText(
   ]
 
   for (const setting of VAULT_SETTINGS) {
-    if (setting.target !== target) continue
+    const has = Object.prototype.hasOwnProperty.call(values, setting.key)
+    // A file lists the settings Settings writes to it, and keeps any other
+    // it answers: a vault's default for a personal setting, committed by
+    // hand, or a personal answer to a vault's setting.
+    if (setting.target !== target && !has) continue
     lines.push('', `# ── ${setting.label}`)
     for (const line of wrap(setting.explanation, 72)) lines.push(`#   ${line}`)
     for (const hint of legalValues(setting.type)) {
       for (const line of wrap(hint, 72)) lines.push(`#   ${line}`)
     }
-    const has = Object.prototype.hasOwnProperty.call(values, setting.key)
     // The transforms' defaults include the installed plugins'.
     const fallback =
       setting.type.kind === 'flags' ? transformDefaults(knownTransforms(known)) : setting.default

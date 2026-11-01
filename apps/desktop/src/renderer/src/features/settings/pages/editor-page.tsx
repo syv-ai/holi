@@ -1,4 +1,4 @@
-/** Editor: how the vault's notes read. */
+/** Editor: how notes read and behave for you. */
 import { EDITOR_FONTS, type EditorFont } from '@holi/shared'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -35,13 +35,13 @@ export function EditorPage() {
         <>
           <SettingsFieldRow
             title="Notes are set in"
-            description="Prose only. Code and frontmatter stay monospaced. Shared with the vault."
+            description="Prose only. Code and frontmatter stay monospaced. On this machine only."
           >
             <Segmented
               label="Notes are set in"
               value={resolved.editorFont}
               choices={FONTS}
-              onChange={(font) => void write('editorFont', font, 'committed')}
+              onChange={(font) => void write('editorFont', font)}
             />
           </SettingsFieldRow>
           <SettingsFieldRow
@@ -52,7 +52,7 @@ export function EditorPage() {
             <Switch
               id="settings-daily-notes"
               checked={resolved.dailyNotes}
-              onCheckedChange={(on) => void write('dailyNotes', on, 'committed')}
+              onCheckedChange={(on) => void write('dailyNotes', on)}
             />
           </SettingsFieldRow>
           <SettingsFieldRow
@@ -63,7 +63,7 @@ export function EditorPage() {
             <Switch
               id="settings-space-asks"
               checked={resolved.spaceAsksAgent}
-              onCheckedChange={(on) => void write('spaceAsksAgent', on, 'local')}
+              onCheckedChange={(on) => void write('spaceAsksAgent', on)}
             />
           </SettingsFieldRow>
         </>

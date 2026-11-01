@@ -7,21 +7,25 @@
  * value the page sends meets the same validator a teammate's committed file
  * does. Optimistic, because a control that lags its click reads as broken;
  * the forced re-read after it is what makes it true.
+ *
+ * **Which file is the setting's own answer** (`target` in `VAULT_SETTINGS`),
+ * never the caller's: personal settings go to the local file, the vault's to
+ * the committed one (docs/features/settings.md).
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect } from 'react'
 import { toast } from 'sonner'
-import type { ResolvedVaultSettings, SettingTarget, VaultSettingKey } from '@holi/shared'
+import {
+  VAULT_SETTING_DESCRIPTORS,
+  type ResolvedVaultSettings,
+  type VaultSettingKey,
+} from '@holi/shared'
 
 import { trpc } from '@/lib/trpc'
 import { loadVaultSettingsAtom, vaultSettingsAtom } from '@/state/settings'
 import { activeRemoteAtom } from '@/state/vaults'
 
-export type SettingsWrite = (
-  key: VaultSettingKey | 'plugins',
-  value: unknown,
-  target: SettingTarget,
-) => Promise<void>
+export type SettingsWrite = (key: VaultSettingKey | 'plugins', value: unknown) => Promise<void>
 
 export function useVaultSettings(): {
   /** `null` until the open vault's settings are read, never another vault's. */
@@ -40,8 +44,9 @@ export function useVaultSettings(): {
   const resolved = cached !== null && cached.remote === remote ? cached.settings : null
 
   const write = useCallback<SettingsWrite>(
-    async (key, value, target) => {
+    async (key, value) => {
       if (remote === null || resolved === null) return
+      const target = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === key)?.target ?? 'committed'
       // The plugins row answers for the vault's half of its resolved value.
       const optimistic =
         key === 'plugins' ? { ...resolved.plugins, vault: value as Record<string, boolean> } : value

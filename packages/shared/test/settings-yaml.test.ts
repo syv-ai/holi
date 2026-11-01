@@ -74,14 +74,19 @@ describe('writing to a settings file', () => {
       'committed',
       [],
     )
-    expect(written).toContain('# editorFont:')
+    expect(written).toContain('# maxCommittedFileBytes:')
     expect(written).toContain('dailyNotes: false')
   })
 
   it('turns an answer back into a comment when it is unset', () => {
-    const answered = writeSettingsText({ editorFont: 'serif' }, 'committed', [])
-    expect(answered).toContain('editorFont: serif')
-    expect(writeSettingsText({}, 'committed', [])).toContain('# editorFont:')
+    const answered = writeSettingsText({ autoUpdateSkills: true }, 'committed', [])
+    expect(answered).toContain('autoUpdateSkills: true')
+    expect(writeSettingsText({}, 'committed', [])).toContain('# autoUpdateSkills:')
+  })
+
+  it("keeps a vault's default for a personal setting, which only a hand edit writes", () => {
+    expect(writeSettingsText({ editorFont: 'mono' }, 'committed', [])).toContain('editorFont: mono')
+    expect(writeSettingsText({}, 'committed', [])).not.toContain('editorFont')
   })
 
   it('keeps a key no setting describes', () => {

@@ -66,7 +66,7 @@ test('completes a partly typed value, replacing only what was typed', () => {
 })
 
 test('completes a key, and types the colon for you', () => {
-  const result = suggest('edi')
+  const result = suggest('edi', 'local')
   expect(result?.from).toBe(0)
   const option = result?.options.find((o) => o.label === 'editorFont')
   expect(option?.apply).toBe('editorFont: ')
