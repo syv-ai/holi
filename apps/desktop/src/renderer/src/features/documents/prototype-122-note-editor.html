@@ -1,0 +1,259 @@
+<!doctype html>
+<!-- PROTOTYPE for syv-ai/holi#122. Throwaway. Holi's seeded theme tokens, mocked note view.
+     Three questions, each with its own variants: ?p=A|B|C (properties) &t=A|B|C (table) &m=A|B|C (menu) &theme=dark|light -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>#122 prototype: properties, tables, document menu</title>
+<style>
+  :root { font-family: Inter, -apple-system, system-ui, sans-serif; --radius: .5rem; }
+  [data-theme='dark'] {
+    --background:#121212; --foreground:#f4f4f5;
+    --card: color-mix(in oklab, #121212 96%, white);
+    --popover: color-mix(in oklab, #121212 93%, white);
+    --muted:#27272a; --muted-foreground:#a1a1aa;
+    --accent: color-mix(in oklab, #121212 89%, white);
+    --border: color-mix(in oklab, #3f3f46 45%, #27272a);
+    --divider: color-mix(in srgb, var(--border) 55%, var(--background));
+    --primary:#f4f4f5; --primary-fg:#18181b; --code:#fdba74; --link:#7dd3fc;
+    --task-doing:#388bfd; --task-done:#3fb950; --task-todo:#6e7681;
+    --shadow-popover: inset 0 0 0 1px rgb(255 255 255 / .1), 0 2px 32px rgb(0 0 0 / .32);
+    --sidebar: #161616;
+  }
+  [data-theme='light'] {
+    --background:#fafafa; --foreground:#171717; --card:#fff; --popover:#fff;
+    --muted:#e5e5e5; --muted-foreground:#525252; --accent:#e5e5e5;
+    --border:#d4d4d4; --divider: color-mix(in srgb, var(--border) 55%, var(--background));
+    --primary:#18181b; --primary-fg:#fff; --code:#c2410c; --link:#0369a1;
+    --task-doing:#388bfd; --task-done:#3fb950; --task-todo:#6e7681;
+    --shadow-popover: inset 0 0 0 1px rgb(0 0 0 / .07), 0 2px 24px rgb(0 0 0 / .12);
+    --sidebar: #f2f2f2;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--background); color:var(--foreground); font-size:16px; line-height:1.6; }
+  .shell { display:flex; height:100vh; }
+  .side { width:220px; background:var(--sidebar); padding:48px 10px 10px; font-size:13px; color:var(--muted-foreground); flex-shrink:0; }
+  .side div { padding:4px 8px; border-radius:6px; } .side .on { background:var(--accent); color:var(--foreground); }
+  .view { flex:1; display:flex; flex-direction:column; min-width:0; }
+  .tabs { height:38px; display:flex; align-items:flex-end; gap:2px; padding:0 8px; font-size:13px; }
+  .tabs span { padding:6px 12px; border-radius:6px 6px 0 0; color:var(--muted-foreground); }
+  .tabs .on { background:var(--accent); color:var(--foreground); }
+  .vh { display:flex; align-items:center; gap:8px; padding:8px 16px; box-shadow: 0 1px 0 var(--divider); }
+  .vh .t { flex:1; min-width:0; } .vh .t b { font-size:14px; font-weight:600; } .vh .t div { font-size:12px; color:var(--muted-foreground); }
+  .btn { font:inherit; font-size:13px; color:var(--foreground); background:transparent; border:0; border-radius:6px; padding:4px 8px; cursor:pointer; display:inline-flex; gap:6px; align-items:center; }
+  .btn:hover, .btn.on { background:var(--accent); }
+  .ico { width:16px; height:16px; display:inline-block; opacity:.75; }
+  .avs { display:flex; } .av { width:22px; height:22px; border-radius:50%; background:var(--muted); font-size:10px; display:grid; place-items:center; margin-left:-6px; box-shadow:0 0 0 2px var(--background); }
+  .body { flex:1; overflow:auto; display:flex; }
+  .page { flex:1; min-width:0; overflow:auto; }
+  .doc { max-width:48rem; margin:0 auto; padding:24px 48px 160px; }
+  h1 { font-size:30px; line-height:1.2; margin:16px 0 12px; font-weight:700; }
+  h2 { font-size:20px; margin:28px 0 8px; position:relative; }
+  p { margin:8px 0; }
+  .muted { color:var(--muted-foreground); }
+  .xs { font-size:12px; } .sm { font-size:14px; }
+  pre { background:var(--muted); border-radius:var(--radius); padding:12px 16px; font:13px/24px ui-monospace, Menlo, monospace; margin:16px 0; overflow:auto; }
+  pre .k { color:var(--code); }
+  /* status dot */
+  .dot { width:10px; height:10px; border-radius:50%; display:inline-block; box-shadow: inset 0 0 0 2px var(--task-doing); }
+  .dot.half { background: conic-gradient(var(--task-doing) 0 50%, transparent 50%); }
+  .chip { display:inline-flex; align-items:center; gap:6px; font-size:13px; padding:2px 8px; border-radius:6px; }
+  .chip:hover { background:var(--accent); }
+  .tag { font-size:12px; padding:1px 8px; border-radius:999px; background:var(--muted); }
+  /* ── Properties ── */
+  .pA { margin:4px 0 8px; font-size:14px; }
+  .pA .head { display:flex; align-items:center; gap:6px; color:var(--muted-foreground); font-size:12px; padding:4px 0; cursor:pointer; }
+  .pA .row { display:grid; grid-template-columns: 9rem 1fr; align-items:center; min-height:32px; border-radius:6px; padding:0 6px; margin:0 -6px; }
+  .pA .row:hover { background:var(--accent); }
+  .pA .lab { color:var(--muted-foreground); display:flex; gap:8px; align-items:center; font-size:13px; }
+  .pA .empty { color:var(--muted-foreground); opacity:.7; }
+  .pD { display:grid; grid-template-columns:1fr 1fr; column-gap:24px; }
+  .pD .row { grid-template-columns: 7.5rem 1fr; }
+  .pA .add { color:var(--muted-foreground); font-size:13px; padding:6px 0; }
+  .pB { width:280px; flex-shrink:0; background:var(--sidebar); padding:20px 16px; font-size:13px; overflow:auto; }
+  .pB h4 { margin:0 0 12px; font-size:12px; font-weight:500; color:var(--muted-foreground); }
+  .pB .f { margin-bottom:14px; }
+  .pB .f .lab { font-size:12px; color:var(--muted-foreground); margin-bottom:2px; }
+  .pB .f .val { padding:4px 8px; margin:0 -8px; border-radius:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .pB .f .val:hover { background:var(--accent); }
+  .pB .grp { padding-top:12px; margin-top:4px; }
+  .pC { display:grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap:4px; margin:4px 0 12px; }
+  .pC .cell { background:var(--card); border-radius:var(--radius); padding:8px 10px; }
+  [data-theme='dark'] .pC .cell { background: color-mix(in oklab, var(--background) 94%, white); }
+  [data-theme='light'] .pC .cell { background: color-mix(in oklab, var(--background) 96%, black); }
+  .pC .cell:hover { background:var(--accent) !important; }
+  .pC .lab { font-size:12px; color:var(--muted-foreground); line-height:1.4; }
+  .pC .val { font-size:14px; display:flex; gap:6px; align-items:center; min-height:22px; flex-wrap:wrap; }
+  /* ── Tables ── */
+  table { width:100%; border-collapse:collapse; font-size:14px; table-layout:fixed; margin:24px 0; }
+  th, td { text-align:start; padding:8px 12px; vertical-align:top; }
+  th { font-weight:500; }
+  /* current */
+  .t0 th, .t0 td { border:1px solid var(--border); } .t0 th { background:var(--muted); color:var(--muted-foreground); }
+  /* A banded: background only */
+  .tA { border-radius:var(--radius); overflow:hidden; border-collapse:separate; border-spacing:0; }
+  .tA th { background:var(--muted); }
+  .tA tbody tr:nth-child(odd) td { background: color-mix(in oklab, var(--muted) 45%, var(--background)); }
+  .tA tbody tr:nth-child(even) td { background: color-mix(in oklab, var(--muted) 22%, var(--background)); }
+  /* B tiles: every cell its own surface, the page shows through the gaps */
+  .tB { border-collapse:separate; border-spacing:2px; margin-inline:-2px; width:calc(100% + 4px); }
+  .tB td, .tB th { background: color-mix(in oklab, var(--muted) 40%, var(--background)); border-radius:4px; }
+  .tB th { background:var(--muted); }
+  /* C hairlines */
+  .tC th { color:var(--muted-foreground); font-size:13px; box-shadow: inset 0 -1px 0 var(--border); }
+  .tC td { box-shadow: inset 0 -1px 0 var(--divider); }
+  .tC th:first-child, .tC td:first-child { padding-left:0; }
+  .tC td:first-child { font-weight:500; }
+  /* ── Menu ── */
+  .menu { position:absolute; right:12px; top:88px; width:240px; background:var(--popover); box-shadow:var(--shadow-popover); border-radius:calc(var(--radius) + 2px); padding:4px; font-size:13px; z-index:5; }
+  .menu .lbl { font-size:12px; color:var(--muted-foreground); padding:6px 8px 2px; }
+  .menu .it { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:6px; }
+  .menu .it:hover { background:var(--accent); }
+  .menu .it .r { margin-left:auto; color:var(--muted-foreground); font-size:12px; }
+  .menu .sep { height:1px; background:var(--border); margin:4px -4px; }
+  .menu .dis { opacity:.5; }
+  .seg { display:flex; gap:2px; background:var(--muted); border-radius:6px; padding:2px; margin:4px; }
+  .seg span { flex:1; text-align:center; font-size:12px; padding:4px; border-radius:4px; color:var(--muted-foreground); }
+  .seg .on { background:var(--popover); color:var(--foreground); }
+  .anchor { position:absolute; left:-24px; top:2px; font-size:16px; color:var(--muted-foreground); opacity:0; border-radius:4px; padding:0 4px; }
+  h2:hover .anchor { opacity:1; }
+  .note { font-size:12px; color:var(--muted-foreground); background:var(--accent); border-radius:6px; padding:6px 10px; margin:8px 0; }
+  /* floating switcher */
+  .bar { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); display:flex; gap:6px; background:#000; color:#fff; padding:6px; border-radius:999px; font:12px system-ui; z-index:50; box-shadow:0 4px 20px rgb(0 0 0 / .4); }
+  .bar .q { display:flex; align-items:center; gap:2px; background:#222; border-radius:999px; padding:2px 4px; }
+  .bar button { background:transparent; color:#fff; border:0; cursor:pointer; font:inherit; padding:4px 8px; border-radius:999px; }
+  .bar button:hover { background:#333; } .bar .cur { min-width:190px; text-align:center; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const Q = {
+  p: { D: 'Two-column rows (toggle → sidebar)', B: 'Sidebar (toggle → rows)', A: 'Labelled rows, one column', C: 'Labelled tiles' },
+  t: { A: 'Banded, background only', C: 'Hairlines between rows', '0': 'Today (for reference)', B: 'Tiles with gaps' },
+  m: { A: 'Trimmed, labels dropped', B: 'View toggles on top', C: 'Split: Aa for view, ⋯ for actions' },
+}
+const params = new URLSearchParams(location.search)
+const state = { p: params.get('p') || 'D', t: params.get('t') || 'A', m: params.get('m') || 'A', theme: params.get('theme') || 'dark', menu: params.get('menu') !== '0' }
+function save() { const u = new URLSearchParams({ p: state.p, t: state.t, m: state.m, theme: state.theme, menu: state.menu ? '1' : '0' }); history.replaceState(null, '', '?' + u); render() }
+function cycle(q, d) { const ks = Object.keys(Q[q]); state[q] = ks[(ks.indexOf(state[q]) + d + ks.length) % ks.length]; save() }
+
+const I = (s) => `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${s}</svg>`
+const ic = {
+  status: I('<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>'),
+  user: I('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'),
+  flag: I('<path d="M4 22V4h12l-2 4 2 4H4"/>'),
+  cal: I('<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>'),
+  tag: I('<path d="M12 2H2v10l9.3 9.3a2 2 0 0 0 2.8 0l7.2-7.2a2 2 0 0 0 0-2.8z"/><circle cx="7" cy="7" r="1.5"/>'),
+  folder: I('<path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'),
+  timer: I('<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M10 2h4"/>'),
+  lock: I('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'),
+  plus: I('<path d="M12 5v14M5 12h14"/>'),
+  chev: I('<path d="m6 9 6 6 6-6"/>'),
+  more: I('<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'),
+  panel: I('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/>'),
+  link: I('<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>'),
+  file: I('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>'),
+  code: I('<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>'),
+  spark: I('<path d="M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2z"/>'),
+  width: I('<path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4"/>'),
+  type: I('<path d="M4 7V4h16v3M9 20h6M12 4v16"/>'),
+  copy: I('<rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16V4h12"/>'),
+  check: I('<path d="M20 6 9 17l-5-5"/>'),
+  hist: I('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l4 2"/>'),
+  msg: I('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'),
+  aa: '<span style="font-size:13px;font-weight:600">Aa</span>',
+  sub: I('<path d="m9 18 6-6-6-6"/>'),
+}
+const P = [
+  ['Status', ic.status, '<span class="dot half"></span> In progress'],
+  ['Assignees', ic.user, '<span class="av" style="margin:0">AH</span> ada'],
+  ['Priority', ic.flag, 'High'],
+  ['Start date', ic.cal, 'Mon 3 Nov'],
+  ['Due date', ic.cal, 'Fri 7 Nov'],
+  ['Labels', ic.tag, '<span class="tag">design</span><span class="tag">editor</span>'],
+  ['Project', ic.folder, 'notes-editor'],
+  ['Estimate', ic.timer, null],
+  ['Sharing', ic.lock, 'Shared with the vault'],
+]
+const val = (v) => v ?? '<span class="empty muted">Empty</span>'
+
+function propsA() {
+  return `<div class="pA"><div class="head">${ic.chev} Properties</div>
+    ${P.map(([l, i, v]) => `<div class="row"><span class="lab">${i}${l}</span><span style="display:flex;gap:6px;align-items:center">${val(v)}</span></div>`).join('')}
+    <div class="add">+ Add a property</div></div>`
+}
+function propsD() {
+  return `<div class="pA"><div class="head">${ic.chev} Properties</div><div class="pD">
+    ${P.map(([l, i, v]) => `<div class="row"><span class="lab">${i}${l}</span><span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${val(v)}</span></div>`).join('')}
+    </div><div class="add">+ Add a property</div></div>`
+}
+function propsB() {
+  const g1 = P.slice(0, 5), g2 = P.slice(5)
+  const f = ([l, i, v]) => `<div class="f"><div class="lab">${l}</div><div class="val">${val(v)}</div></div>`
+  return `<aside class="pB"><h4>Properties</h4>${g1.map(f).join('')}<div class="grp">${g2.map(f).join('')}</div><div class="muted xs" style="padding-top:8px">+ Add a property</div></aside>`
+}
+function propsC() {
+  return `<div class="pC">${P.map(([l, i, v]) => `<div class="cell"><div class="lab">${l}</div><div class="val">${v ?? '<span class="muted">Not set</span>'}</div></div>`).join('')}</div>`
+}
+const rows = [['Status', 'Today', 'Proposed'], ['Properties', 'Loose chips', 'Labelled panel'], ['Tables', 'Faint lines', 'Readable grid'], ['Menu', '7 entries', '4 to 5 entries']]
+const table = () => `<table class="t${state.t}"><thead><tr><th>Area</th><th>Now</th><th>After</th></tr></thead><tbody>${rows.slice(1).map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}<tr><td>Docs</td><td>editor.md</td><td>frontmatter.md</td></tr></tbody></table>`
+
+function menu() {
+  if (!state.menu) return ''
+  const it = (i, t, r = '') => `<div class="it">${i}${t}${r ? `<span class="r">${r}</span>` : ''}</div>`
+  if (state.m === 'A') return `<div class="menu">
+    ${it(ic.width, 'Full width', '✓')}${it(ic.type, 'Small text')}
+    <div class="sep"></div>
+    ${it(ic.link, 'Copy Holi link')}${it(ic.copy, 'Copy as', '›')}
+    <div class="sep"></div>
+    ${it(ic.spark, 'Turn into an artifact')}
+    <div class="note" style="margin:6px 4px 2px">Copy as › Markdown, HTML. Copy link to heading moves to the # beside each heading.</div></div>`
+  if (state.m === 'B') return `<div class="menu">
+    <div class="seg"><span class="on">Normal</span><span>Full width</span></div>
+    <div class="seg"><span class="on">Text</span><span>Small text</span></div>
+    <div class="sep"></div>
+    ${it(ic.link, 'Copy Holi link')}${it(ic.file, 'Copy Markdown')}${it(ic.code, 'Copy HTML')}
+    <div class="sep"></div>${it(ic.spark, 'Turn into an artifact')}</div>`
+  return `<div class="menu" style="right:48px">
+    ${it(ic.link, 'Copy Holi link')}${it(ic.copy, 'Copy as', '›')}
+    <div class="sep"></div>${it(ic.spark, 'Turn into an artifact')}
+    <div class="note" style="margin:6px 4px 2px">Full width and Small text move to the Aa button beside it. Copy link to heading moves to the # beside each heading.</div></div>`
+}
+
+function render() {
+  document.documentElement.dataset.theme = state.theme
+  const side = state.p === 'B'
+  const headingLink = state.m !== 'B'
+  document.getElementById('app').innerHTML = `
+  <div class="shell"><nav class="side"><div>Home</div><div>Agents</div><div class="on">notes-editor</div><div style="padding-left:20px" class="on">task.properties-panel.md</div><div style="padding-left:20px">roadmap.md</div></nav>
+  <div class="view"><div class="tabs"><span class="on">Properties panel</span><span>roadmap</span></div>
+   <div class="vh" style="position:relative"><div class="t"><b>Properties panel</b><div>notes-editor · Saved</div></div>
+     <div class="avs"><span class="av">AH</span><span class="av">RK</span></div>
+     <button class="btn">${ic.hist} History</button><button class="btn">${ic.msg}</button>
+     ${state.p === 'B' || state.p === 'D' ? `<button class="btn ${side ? 'on' : ''}" onclick="state.p=state.p==='B'?'D':'B';save()" aria-label="Properties in a sidebar">${ic.panel}</button>` : ''}
+     ${state.m === 'C' ? `<button class="btn">${ic.aa}</button>` : ''}
+     <button class="btn ${state.menu ? 'on' : ''}" onclick="state.menu=!state.menu;save()">${ic.more}</button>
+     ${menu()}
+   </div>
+   <div class="body"><div class="page"><div class="doc" style="${side ? 'max-width:44rem' : ''}">
+     ${state.p === 'A' ? propsA() : ''}${state.p === 'D' ? propsD() : ''}
+     <h1>Properties panel</h1>
+     ${state.p === 'C' ? propsC() : ''}
+     <p>Frontmatter shows as a loose row of chips today. This page compares ways to give each field a name.</p>
+     <h2>${headingLink ? '<span class="anchor">#</span>' : ''}Comparison</h2>
+     ${table()}
+     <p class="muted sm">A code block, so the table can be told apart from one:</p>
+     <pre><span class="k">status</span>: doing\n<span class="k">priority</span>: high\n<span class="k">due</span>: 2026-11-07</pre>
+     <h2>${headingLink ? '<span class="anchor">#</span>' : ''}Next</h2>
+     <p>Pick a variant per question with the bar below. Hover a heading to see the link affordance.</p>
+   </div></div>${side ? propsB() : ''}</div></div></div>
+  <div class="bar">
+    ${['p', 't', 'm'].map((q) => `<div class="q"><button onclick="cycle('${q}',-1)">‹</button><span class="cur">${{ p: 'Properties', t: 'Table', m: 'Menu' }[q]} ${state[q]}: ${Q[q][state[q]]}</span><button onclick="cycle('${q}',1)">›</button></div>`).join('')}
+    <button onclick="state.theme=state.theme==='dark'?'light':'dark';save()">${state.theme}</button>
+  </div>`
+}
+render()
+</script>
+</body>
+</html>
