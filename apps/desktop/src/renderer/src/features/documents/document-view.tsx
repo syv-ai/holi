@@ -15,7 +15,9 @@
  *
  * A note's comment threads sit in a panel beside the text, their passages
  * tinted in it (`document-comments.ts`): the format bubble's Comment, or
- * ⌘⌥M, starts one on the selection.
+ * ⌘⌥M, starts one on the selection. A task's properties sit above the text or
+ * in a panel beside it, as the person's `propertiesLayout` says; the header's
+ * toggle flips it.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -45,12 +47,14 @@ import {
 } from '@/features/documents/rich-text/rich-text-table'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { cn } from '@/lib/cn'
-import { TaskProperties } from '@/features/planning/task-properties'
+import { TaskProperties, useHasTaskProperties } from '@/features/planning/task-properties'
+import { useVaultSettings } from '@/features/settings/use-vault-settings'
 import { trpc } from '@/lib/trpc'
 import { sawText } from '@/state/doc-changes'
 import { canStartConversationAtom, startConversationAtom } from '@/state/agents-slots'
 import { isRunLive } from '@/state/document-runs'
 import { claimsAtom } from '@/state/plugins'
+import { useAppSetting } from '@/state/settings'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { focusedTab } from '@/state/shell-workspace'
 import { tabPath } from '@/state/tab-descriptor'
@@ -179,6 +183,10 @@ function DocumentEditor({
   const [deleteTableOpen, setDeleteTableOpen] = useState(false)
   const [fullWidth, setFullWidth] = useState(false)
   const [smallText, setSmallText] = useState(false)
+  const tableStyle = useAppSetting('tableStyle')
+  const propertiesLayout = useAppSetting('propertiesLayout')
+  const hasProperties = useHasTaskProperties(path)
+  const { write: writeSetting } = useVaultSettings()
   const [promptBox] = useState(() => {
     const box = document.createElement('div')
     box.contentEditable = 'false'
@@ -512,7 +520,16 @@ function DocumentEditor({
             onFullWidthChange={setFullWidth}
             onSmallTextChange={setSmallText}
             onCreateVaultApp={canAsk && agent.appable ? () => void createVaultApp() : null}
-            holiLinks={holiLinks}
+            holiLink={holiLinks?.file ?? null}
+            properties={
+              hasProperties
+                ? {
+                    sidebar: propertiesLayout === 'sidebar',
+                    onSidebarChange: (sidebar) =>
+                      void writeSetting('propertiesLayout', sidebar ? 'sidebar' : 'inline'),
+                  }
+                : null
+            }
             comments={
               commentable
                 ? {
@@ -547,20 +564,24 @@ function DocumentEditor({
                   <Banner path={path} />
                 </div>
               ) : null}
-              {/* A task's fields, on the body's column; nothing for a note. */}
-              <TaskProperties
-                path={path}
-                beforeWrite={save}
-                onMoved={onMoved}
-                className={cn(
-                  'mx-auto w-full px-4 pt-8 sm:px-16 sm:pt-12',
-                  fullWidth ? 'max-w-none' : 'max-w-3xl',
-                )}
-              />
+              {/* A task's properties, on the body's column; nothing for a note. */}
+              {propertiesLayout === 'inline' ? (
+                <TaskProperties
+                  path={path}
+                  layout="inline"
+                  beforeWrite={save}
+                  onMoved={onMoved}
+                  className={cn(
+                    'mx-auto w-full px-4 pt-8 sm:px-16 sm:pt-12',
+                    fullWidth ? 'max-w-none' : 'max-w-3xl',
+                  )}
+                />
+              ) : null}
               <div ref={pageRef} className={cn('relative min-h-full', DROP_LINE)}>
                 {editor ? (
                   <EditorContent
                     editor={editor}
+                    data-table-style={tableStyle}
                     onKeyDown={(event) => {
                       const mod = event.metaKey || event.ctrlKey
                       if (mod && !event.altKey && event.key.toLowerCase() === 'k') {
@@ -604,6 +625,7 @@ function DocumentEditor({
                       editable={editable}
                       scrollerRef={pageRef}
                       onDeleteTable={() => setDeleteTableOpen(true)}
+                      headingLink={holiLinks?.heading ?? null}
                     />
                   </>
                 ) : null}
@@ -619,6 +641,9 @@ function DocumentEditor({
                   : null}
               </div>
             </div>
+            {propertiesLayout === 'sidebar' ? (
+              <TaskProperties path={path} layout="sidebar" beforeWrite={save} onMoved={onMoved} />
+            ) : null}
             {commentable && commentsOpen ? (
               <CommentsPanel
                 load={threadsLoad}

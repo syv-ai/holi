@@ -172,6 +172,9 @@ interface RichTextBlockGutterProps {
   scrollerRef: RefObject<HTMLDivElement | null>
   /** Tables confirm before they go. */
   onDeleteTable: () => void
+  /** The Holi link to the heading the caret is in, for a heading's menu;
+   *  null for a file a teammate could not open. */
+  headingLink?: (() => string | null) | null
 }
 
 export function RichTextBlockGutter({
@@ -179,6 +182,7 @@ export function RichTextBlockGutter({
   editable,
   scrollerRef,
   onDeleteTable,
+  headingLink = null,
 }: RichTextBlockGutterProps) {
   const [shown, setShown] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -484,7 +488,12 @@ export function RichTextBlockGutter({
           }}
         >
           {menu ? (
-            <RichTextBlockMenuItems editor={editor} menu={menu} onDeleteTable={onDeleteTable} />
+            <RichTextBlockMenuItems
+              editor={editor}
+              menu={menu}
+              onDeleteTable={onDeleteTable}
+              headingLink={headingLink}
+            />
           ) : null}
         </DropdownMenuContent>
       </DropdownMenu>

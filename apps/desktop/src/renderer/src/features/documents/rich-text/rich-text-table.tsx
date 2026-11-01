@@ -39,14 +39,31 @@ export const RichTextTable = TableKit.configure({
   table: { resizable: true, cellMinWidth: 96 },
 })
 
-/** Table chrome from the host's table tokens. Tiptap ships no table CSS, and
- * its wrapper drops HTMLAttributes while resizable, hence descendant classes. */
+/** Table chrome from the host's table tokens, in the two looks `tableStyle`
+ * offers, switched by `data-table-style` on the editor root. Tiptap ships
+ * no table CSS, and its wrapper drops HTMLAttributes while resizable, hence
+ * descendant classes.
+ *
+ * Banded: no lines, the header row on `--muted` and the body rows in two
+ * quieter fills of it, the block rounded and clipped, so a table never reads
+ * as a code block (one muted fill, monospaced). Lines: no fills, a muted
+ * smaller header over a `--border` line, `--divider` lines between rows, no
+ * vertical lines, and the first column on the text's edge. */
 export const RICH_TEXT_TABLE_PROSE = cn(
   // The top gap holds the table bar, so it never covers the line above.
   '[&_.tiptap_.tableWrapper]:mt-10 [&_.tiptap_.tableWrapper]:mb-6 [&_.tiptap_.tableWrapper]:overflow-x-auto',
-  '[&_.tiptap_table]:w-full [&_.tiptap_table]:table-fixed [&_.tiptap_table]:border-collapse [&_.tiptap_table]:text-sm',
-  '[&_.tiptap_:is(td,th)]:border-border [&_.tiptap_:is(td,th)]:relative [&_.tiptap_:is(td,th)]:border [&_.tiptap_:is(td,th)]:px-3 [&_.tiptap_:is(td,th)]:py-2 [&_.tiptap_:is(td,th)]:text-start [&_.tiptap_:is(td,th)]:align-top',
-  '[&_.tiptap_th]:bg-muted [&_.tiptap_th]:text-muted-foreground [&_.tiptap_th]:font-medium',
+  '[&_.tiptap_table]:w-full [&_.tiptap_table]:table-fixed [&_.tiptap_table]:text-sm',
+  '[&_.tiptap_:is(td,th)]:relative [&_.tiptap_:is(td,th)]:px-3 [&_.tiptap_:is(td,th)]:py-2 [&_.tiptap_:is(td,th)]:text-start [&_.tiptap_:is(td,th)]:align-top',
+  '[&_.tiptap_th]:font-medium',
+  // Banded. The header is the table's first row, so the first body row is even.
+  '[&[data-table-style=banded]_.tiptap_table]:border-separate [&[data-table-style=banded]_.tiptap_table]:border-spacing-0 [&[data-table-style=banded]_.tiptap_table]:overflow-hidden [&[data-table-style=banded]_.tiptap_table]:rounded-lg',
+  '[&[data-table-style=banded]_.tiptap_th]:bg-muted',
+  '[&[data-table-style=banded]_.tiptap_tr:nth-child(even)>td]:bg-muted/50 [&[data-table-style=banded]_.tiptap_tr:nth-child(odd)>td]:bg-muted/25',
+  // Lines.
+  '[&[data-table-style=lines]_.tiptap_table]:border-collapse',
+  '[&[data-table-style=lines]_.tiptap_th]:text-muted-foreground [&[data-table-style=lines]_.tiptap_th]:border-border [&[data-table-style=lines]_.tiptap_th]:border-b [&[data-table-style=lines]_.tiptap_th]:text-xs',
+  '[&[data-table-style=lines]_.tiptap_td]:border-divider [&[data-table-style=lines]_.tiptap_td]:border-b',
+  '[&[data-table-style=lines]_.tiptap_:is(td,th):first-child]:ps-0',
   '[&_.tiptap_.selectedCell]:after:bg-primary/10 [&_.tiptap_.selectedCell]:after:pointer-events-none [&_.tiptap_.selectedCell]:after:absolute [&_.tiptap_.selectedCell]:after:inset-0',
   '[&_.tiptap_.column-resize-handle]:bg-primary [&_.tiptap_.column-resize-handle]:pointer-events-none [&_.tiptap_.column-resize-handle]:absolute [&_.tiptap_.column-resize-handle]:inset-y-0 [&_.tiptap_.column-resize-handle]:-end-px [&_.tiptap_.column-resize-handle]:z-10 [&_.tiptap_.column-resize-handle]:w-0.5',
   '[&_.tiptap.resize-cursor]:cursor-col-resize',

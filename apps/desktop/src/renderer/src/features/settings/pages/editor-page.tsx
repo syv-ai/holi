@@ -1,7 +1,8 @@
 /** Editor: how notes read and behave for you. */
-import { EDITOR_FONTS, type EditorFont } from '@holi/shared'
+import { EDITOR_FONTS, type EditorFont, type PropertiesLayout, type TableStyle } from '@holi/shared'
 import { Switch } from '@/components/ui/switch'
 import {
+  choiceSetting,
   Segmented,
   SettingsGroup,
   SettingsFieldRow,
@@ -21,6 +22,9 @@ const FONTS: readonly Choice<EditorFont>[] = EDITOR_FONTS.map((font) => ({
   label: FONT_LABEL[font],
 }))
 
+const PROPERTIES = choiceSetting<PropertiesLayout>('propertiesLayout')
+const TABLES = choiceSetting<TableStyle>('tableStyle')
+
 export function EditorPage() {
   const { resolved, write } = useVaultSettings()
 
@@ -30,7 +34,7 @@ export function EditorPage() {
       description="How notes read and what the editor does as you type."
     >
       {resolved === null ? (
-        <SettingsRowsLoading rows={3} label="Reading the settings" />
+        <SettingsRowsLoading rows={5} label="Reading the settings" />
       ) : (
         <>
           <SettingsFieldRow
@@ -42,6 +46,22 @@ export function EditorPage() {
               value={resolved.editorFont}
               choices={FONTS}
               onChange={(font) => void write('editorFont', font)}
+            />
+          </SettingsFieldRow>
+          <SettingsFieldRow title={PROPERTIES.title} description={PROPERTIES.description}>
+            <Segmented
+              label={PROPERTIES.title}
+              value={resolved.propertiesLayout}
+              choices={PROPERTIES.choices}
+              onChange={(layout) => void write('propertiesLayout', layout)}
+            />
+          </SettingsFieldRow>
+          <SettingsFieldRow title={TABLES.title} description={TABLES.description}>
+            <Segmented
+              label={TABLES.title}
+              value={resolved.tableStyle}
+              choices={TABLES.choices}
+              onChange={(style) => void write('tableStyle', style)}
             />
           </SettingsFieldRow>
           <SettingsFieldRow

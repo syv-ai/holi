@@ -135,6 +135,13 @@ export type EditorFont = 'mono' | 'sans' | 'serif'
 
 export const EDITOR_FONTS: readonly EditorFont[] = ['mono', 'sans', 'serif']
 
+/** Where a task document's properties show: rows above the text, or a
+ *  sidebar beside it. */
+export type PropertiesLayout = 'inline' | 'sidebar'
+
+/** How a note's tables are drawn: alternate rows banded, or lines between. */
+export type TableStyle = 'banded' | 'lines'
+
 /**
  * Which coding agent a new session runs (docs/features/agent-sessions.md,
  * Harnesses): one of this machine's agent harnesses, by its id. The built-in
@@ -220,6 +227,10 @@ export interface ResolvedAppSettings {
   colorScheme: ColorScheme
   windowGlass: WindowGlass
   editorFont: EditorFont
+  /** Where a task document's properties show. */
+  propertiesLayout: PropertiesLayout
+  /** How a note's tables are drawn. */
+  tableStyle: TableStyle
   /** Space on an empty line opens an ask for a new agent session. */
   spaceAsksAgent: boolean
   /** The agent a new session runs unless the person picks another. */
@@ -398,6 +409,8 @@ export type VaultSettingKey =
   | 'colorScheme'
   | 'windowGlass'
   | 'editorFont'
+  | 'propertiesLayout'
+  | 'tableStyle'
   | 'spaceAsksAgent'
   | 'agentProvider'
   | 'gridArcade'
@@ -704,6 +717,41 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     target: 'local',
     // Not asked at birth, deliberately: it has a good default and no
     // consequence at a vault's first moment.
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'editor',
+  },
+  {
+    key: 'propertiesLayout',
+    label: 'Properties sit',
+    explanation:
+      'Where a task’s fields show in its document: as rows above the text, or in a sidebar beside it.',
+    type: {
+      kind: 'enum',
+      options: [
+        { value: 'inline', label: 'Above the text' },
+        { value: 'sidebar', label: 'In a sidebar' },
+      ],
+    },
+    default: 'inline' as PropertiesLayout,
+    target: 'local',
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'editor',
+  },
+  {
+    key: 'tableStyle',
+    label: 'Tables are drawn with',
+    explanation: 'Bands of colour on alternate rows, or thin lines between them.',
+    type: {
+      kind: 'enum',
+      options: [
+        { value: 'banded', label: 'Bands' },
+        { value: 'lines', label: 'Lines' },
+      ],
+    },
+    default: 'banded' as TableStyle,
+    target: 'local',
     askedAtBirth: false,
     whereToChange: LOCAL_FILE_HINT,
     section: 'editor',

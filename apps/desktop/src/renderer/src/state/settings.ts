@@ -25,6 +25,7 @@ import {
   pluginSettingValue,
   type PluginInfo,
   type ResolvedVaultSettings,
+  type VaultSettingKey,
 } from '@holi/shared'
 import { trpc } from '@/lib/trpc'
 import { activeRemoteAtom, snapshotAtom } from './vaults'
@@ -97,6 +98,18 @@ export function usePluginSetting(info: PluginInfo, key: string): unknown {
   const remote = useAtomValue(activeRemoteAtom)
   const values = cached !== null && cached.remote === remote ? cached.settings.pluginValues : {}
   return pluginSettingValue(values, info, key)
+}
+
+/** One of core's settings in the open vault (`VAULT_SETTINGS`): its default
+ *  until the vault's settings are read. */
+export function useAppSetting<K extends VaultSettingKey>(
+  key: K,
+): Omit<ResolvedVaultSettings, 'warnings'>[K] {
+  const cached = useAtomValue(vaultSettingsAtom)
+  const remote = useAtomValue(activeRemoteAtom)
+  return cached !== null && cached.remote === remote
+    ? cached.settings[key]
+    : VAULT_SETTING_DEFAULTS[key]
 }
 
 /** This machine's `agentProvider`, or null until the vault's settings are
