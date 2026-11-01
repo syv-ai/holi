@@ -75,8 +75,10 @@ both sides tidied, against what the view last showed. A tab not shown since it o
 against the file as first read. A split's members have no room for a badge, so each shows its
 state as a dot on its mark.
 
-**The count.** Beside the strip's ⋯ a muted `text-xs` line says how many entries are open
-(`4 tabs`), a split counting as one.
+**The count.** When the strip holds more entries than it has room to show, a muted `text-xs` line
+beside its ⋯ says how many are open (`12 tabs`), a split counting as one. While every tab is in
+sight it says nothing. A `ResizeObserver` on the strip and its entries compares what it holds with
+what it shows, so a window resize or a tab opening brings the count in or out.
 
 **The switcher.** Hold ⌃ and press Tab: a list of the strip's entries hangs under the strip, each
 with its mark and title as the strip draws them (a split's members side by side), most recently

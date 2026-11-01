@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useState, type DragEvent, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import {
   CheckIcon,
@@ -135,6 +135,21 @@ export function TabStrip({
   const act = (change: (w: ShellWorkspace) => ShellWorkspace) => setWs(change)
   const split = activeSplit(ws)
   const count = ws.entries.length
+  /** Whether the strip holds more tabs than it shows, which is when it says
+   *  how many there are. */
+  const listRef = useRef<HTMLDivElement>(null)
+  const [overflowing, setOverflowing] = useState(false)
+  useEffect(() => {
+    const list = listRef.current
+    if (list === null) return
+    // The list and each entry: a window resize, or an entry turning into a
+    // wider split. A newly observed element reports at once, so the first
+    // measure needs no call of its own.
+    const observer = new ResizeObserver(() => setOverflowing(list.scrollWidth > list.clientWidth))
+    observer.observe(list)
+    for (const child of list.children) observer.observe(child)
+    return () => observer.disconnect()
+  }, [ws.entries])
 
   /** The insertion point under the pointer: before the first entry whose
    *  middle is right of it, else the end. */
@@ -199,6 +214,7 @@ export function TabStrip({
         >
           {count > 0 ? (
             <TabsList
+              ref={listRef}
               variant="line"
               aria-label="Tabs"
               className="min-w-0 justify-start overflow-x-auto group-data-horizontal/tabs:h-9"
@@ -341,7 +357,7 @@ export function TabStrip({
           </Tooltip>
         </Tabs>
 
-        {count > 0 ? (
+        {count > 0 && overflowing ? (
           <span className="text-muted-foreground text-xs whitespace-nowrap tabular-nums">
             {count === 1 ? '1 tab' : `${count} tabs`}
           </span>
