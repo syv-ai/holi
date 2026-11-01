@@ -9,8 +9,9 @@
  * the forced re-read after it is what makes it true.
  *
  * **Which file is the setting's own answer** (`target` in `VAULT_SETTINGS`),
- * never the caller's: personal settings go to the local file, the vault's to
- * the committed one (docs/features/settings.md).
+ * never the caller's: an override of how Holi looks or behaves for you goes
+ * to the local file, the vault's content and sync settings to the committed
+ * one (docs/features/settings.md).
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect } from 'react'

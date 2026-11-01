@@ -24,13 +24,20 @@ const seeded = seedSettingsText(seedSettings('committed'), 'committed', [])
 const seededLocal = seedSettingsText(seedSettings('local'), 'local', [])
 
 describe('a seeded settings file', () => {
-  it('names every setting filed under its layer, answered or not', () => {
-    // Against the list, never a count. The gap this closes is exactly the two
+  it("names every setting in the vault's file, answered or not", () => {
+    // Against the list, never a count. The gap this closes is exactly the
     // settings the ritual does not ask about, which appeared in no file at all.
     for (const setting of VAULT_SETTINGS) {
-      const text = setting.target === 'committed' ? seeded : seededLocal
-      expect(text, setting.key).toContain(`${setting.key}:`)
-      expect(text, setting.key).toContain(setting.label)
+      expect(seeded, setting.key).toContain(`${setting.key}:`)
+      expect(seeded, setting.key).toContain(setting.label)
+    }
+  })
+
+  it('lists in the local file only what this machine overrides', () => {
+    const answered = Object.keys(seedSettings('local'))
+    for (const setting of VAULT_SETTINGS) {
+      if (answered.includes(setting.key)) expect(seededLocal).toContain(`${setting.key}:`)
+      else expect(seededLocal, setting.key).not.toContain(`${setting.key}:`)
     }
   })
 
@@ -84,7 +91,7 @@ describe('writing to a settings file', () => {
     expect(writeSettingsText({}, 'committed', [])).toContain('# autoUpdateSkills:')
   })
 
-  it("lists the personal settings in the vault's file, where a value is the vault's default", () => {
+  it("holds the vault's value for a setting Settings writes locally", () => {
     expect(writeSettingsText({ editorFont: 'mono' }, 'committed', [])).toContain('editorFont: mono')
     expect(writeSettingsText({}, 'committed', [])).toContain('# editorFont:')
   })

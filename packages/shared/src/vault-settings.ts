@@ -365,7 +365,11 @@ function clone(value: unknown): unknown {
 // What a vault is asked at birth
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Which of the two files a row's answer is written to. */
+/**
+ * Which of the two files a Settings row writes. Either file may hold any
+ * setting: `app.yaml` the vault's value, `app.local.yaml` this machine's
+ * override of it. The target only says where the row's answer goes.
+ */
 export type SettingTarget = 'committed' | 'local'
 
 /** One option in a `choice`. `value` is whatever the key holds (a `home` string
@@ -711,9 +715,8 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
       ],
     },
     default: 'serif' as EditorFont,
-    // Personal, like every setting about how Holi looks or behaves for you:
-    // written to the local file, while a vault may still commit a default in
-    // `app.yaml` by hand that holds until someone sets their own.
+    // How Holi looks for you: Settings writes your override to the local
+    // file, over the vault's value in `app.yaml`.
     target: 'local',
     // Not asked at birth, deliberately: it has a good default and no
     // consequence at a vault's first moment.

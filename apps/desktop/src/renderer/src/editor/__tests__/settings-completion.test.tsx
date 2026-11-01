@@ -19,21 +19,21 @@ import { settingsCompletion, settingsCompletionSource } from '../settings-comple
 import { plainTextExtensions } from '../extensions'
 
 /** What the source offers with the cursor at the end of `doc`. */
-function suggest(doc: string, target: 'committed' | 'local' = 'committed', explicit = false) {
+function suggest(doc: string, explicit = false) {
   const state = EditorState.create({ doc })
   const context = new CompletionContext(state, doc.length, explicit)
-  return settingsCompletionSource(target)(context)
+  return settingsCompletionSource()(context)
 }
 
-const labels = (doc: string, target?: 'committed' | 'local', explicit?: boolean): string[] =>
-  (suggest(doc, target, explicit)?.options ?? []).map((o) => o.label)
+const labels = (doc: string, explicit?: boolean): string[] =>
+  (suggest(doc, explicit)?.options ?? []).map((o) => o.label)
 
 test('a boolean setting offers true and false', () => {
   expect(labels('dailyNotes: ')).toEqual(['true', 'false'])
 })
 
 test('an enum offers its values, with the pane’s own wording beside them', () => {
-  const result = suggest('colorScheme: ', 'local')
+  const result = suggest('colorScheme: ')
   expect(result?.options.map((o) => o.label)).toEqual(['system', 'light', 'dark'])
   // The file and the settings tab should explain a choice in the same words.
   expect(result?.options.map((o) => o.detail)).toEqual(['Match my system', 'Light', 'Dark'])
@@ -72,18 +72,17 @@ test('completes a key, and types the colon for you', () => {
   expect(option?.apply).toBe('editorFont: ')
 })
 
-test('offers the keys that belong in this file', () => {
-  // The vault's file may give a personal setting a default; the local file
-  // holds only what is personal.
-  expect(labels('', 'committed', true)).toContain('colorScheme')
-  expect(labels('', 'local', true)).toContain('colorScheme')
-  expect(labels('', 'local', true)).not.toContain('dailyNotes')
+test('offers every setting, in either file', () => {
+  // The vault's file holds the vault's value for each, the local file this
+  // machine's override of any of them.
+  expect(labels('', true)).toContain('colorScheme')
+  expect(labels('', true)).toContain('dailyNotes')
 })
 
 test('an empty line stays quiet unless you ask', () => {
   // Opening a file should not greet you with a list you did not summon.
-  expect(suggest('', 'committed', false)).toBeNull()
-  expect(suggest('', 'committed', true)).not.toBeNull()
+  expect(suggest('', false)).toBeNull()
+  expect(suggest('', true)).not.toBeNull()
 })
 
 test('a commented-out line still completes', () => {

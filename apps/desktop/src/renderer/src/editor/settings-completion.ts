@@ -11,13 +11,12 @@ import type { Completion, CompletionContext, CompletionResult } from '@codemirro
 import { holiCompletion } from './completion'
 import type { Extension } from '@codemirror/state'
 import { SETTINGS_FILE, SETTINGS_LOCAL_FILE, VAULT_SETTINGS } from '@holi/shared'
-import type { SettingTarget, VaultSetting } from '@holi/shared'
+import type { VaultSetting } from '@holi/shared'
 
-/** Which settings file a path is, or `null` for anything else. */
-function targetFor(path: string): SettingTarget | null {
-  if (path === SETTINGS_FILE) return 'committed'
-  if (path === SETTINGS_LOCAL_FILE) return 'local'
-  return null
+/** Whether a path is one of the two settings files, which take the same keys:
+ *  the vault's value, or this machine's override of it. */
+function isSettingsFile(path: string): boolean {
+  return path === SETTINGS_FILE || path === SETTINGS_LOCAL_FILE
 }
 
 /** `dailyNotes: tr` → the key and what has been typed of the value. `null` when
@@ -71,13 +70,9 @@ function valuesFor(key: string): Completion[] | null {
   }))
 }
 
-/** The settings this file may carry, as completable keys. */
-function keysFor(target: SettingTarget): Completion[] {
-  // The vault's file takes every setting, a personal one as the vault's
-  // default; the local file takes the personal ones.
-  const own = VAULT_SETTINGS.filter(
-    (s: VaultSetting) => target === 'committed' || s.target === target,
-  ).map((s) => ({
+/** The settings a settings file may carry, as completable keys. */
+function settingKeys(): Completion[] {
+  const own = VAULT_SETTINGS.map((s: VaultSetting) => ({
     label: s.key,
     detail: s.label,
     info: s.explanation,
@@ -95,7 +90,7 @@ function keysFor(target: SettingTarget): Completion[] {
   ]
 }
 
-function source(target: SettingTarget) {
+function source() {
   return (context: CompletionContext): CompletionResult | null => {
     const line = context.state.doc.lineAt(context.pos)
     const before = line.text.slice(0, context.pos - line.from)
@@ -118,16 +113,15 @@ function source(target: SettingTarget) {
     const typed = key[2] ?? ''
     // An empty line only completes when asked (⌃Space).
     if (typed === '' && !context.explicit) return null
-    return { from: context.pos - typed.length, options: keysFor(target), validFor: /^\w*$/ }
+    return { from: context.pos - typed.length, options: settingKeys(), validFor: /^\w*$/ }
   }
 }
 
 /** Completion for `.holi/settings/app.yaml` and its local sibling; nothing for
  *  anything else. */
 export function settingsCompletion(path: string): Extension[] {
-  const target = targetFor(path)
-  if (target === null) return []
-  return [holiCompletion([source(target)])]
+  if (!isSettingsFile(path)) return []
+  return [holiCompletion([source()])]
 }
 
 /**

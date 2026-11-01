@@ -132,13 +132,18 @@ function wrap(text: string, width = 76): string[] {
 /**
  * A settings file's text, written out in full every time.
  *
- * **The file lists every setting, whether or not this vault answers one.** A
- * setting this vault has not answered is a commented line, with its explanation
- * and legal values above it, so it is discoverable without the settings tab.
+ * **The vault's file lists every setting, whether or not this vault answers
+ * one.** It holds the vault's value for each of them. A setting this vault has
+ * not answered is a commented line, with its explanation and legal values
+ * above it, so it is discoverable without the settings tab.
  *
  * **That is also what lets a default stay a default**: a commented line
  * is visible to a reader and invisible to the resolver, so a default can still
  * be raised later for vaults that never pinned it.
+ *
+ * **The local file lists only what it answers**: this machine's overrides of
+ * the vault's values, each with its explanation. A key it does not hold
+ * follows the vault.
  *
  * **Generated, not merged**, like `writeThemeText`: re-emitting keeps the list
  * complete when a setting is added to `VAULT_SETTINGS`, and the cost is that
@@ -154,36 +159,23 @@ export function writeSettingsText(
   const committed = target === 'committed'
   const lines: string[] = [
     ...wrap(
-      `Every setting this vault has. A COMMENTED line is not set: Holi\u2019s own default is in force, and a default can still improve later. Uncomment one to pin it for this vault.`,
+      committed
+        ? `Every setting this vault has, and the vault\u2019s value for it. A COMMENTED line is not set: Holi\u2019s own default is in force, and a default can still improve later. Uncomment one to pin it for this vault.`
+        : `This machine\u2019s overrides of the vault\u2019s settings. Each key here wins over the same key in ${SETTINGS_FILE}; one this file does not hold follows the vault.`,
     ).map((line) => `# ${line}`),
     '#',
     ...wrap(
       committed
-        ? `This file is committed, so it travels with the vault and everyone who clones it gets these answers. Anything meant for this machine alone lives in ${SETTINGS_LOCAL_FILE} beside it.`
-        : `This file is never committed. It is this machine\u2019s answer, and it overrides ${SETTINGS_FILE} key by key.`,
+        ? `This file is committed, so it travels with the vault and everyone who clones it gets these answers. An override for one machine alone lives in ${SETTINGS_LOCAL_FILE} beside it.`
+        : `This file is never committed, so nobody else sees what it says.`,
     ).map((line) => `# ${line}`),
   ]
 
-  // The committed file lists the vault's own settings, then every personal
-  // one, which it can give a default for. The local file lists the personal
-  // ones and keeps any vault setting it answers (a Home of your own).
   const listed = committed
-    ? [
-        ...VAULT_SETTINGS.filter((s) => s.target === 'committed'),
-        ...VAULT_SETTINGS.filter((s) => s.target === 'local'),
-      ]
-    : VAULT_SETTINGS.filter(
-        (s) => s.target === 'local' || Object.prototype.hasOwnProperty.call(values, s.key),
-      )
-  let personalNoted = false
+    ? VAULT_SETTINGS
+    : VAULT_SETTINGS.filter((s) => Object.prototype.hasOwnProperty.call(values, s.key))
   for (const setting of listed) {
     const has = Object.prototype.hasOwnProperty.call(values, setting.key)
-    if (committed && setting.target === 'local' && !personalNoted) {
-      personalNoted = true
-      lines.push('')
-      const note = `Personal settings. Settings writes these to each person\u2019s ${SETTINGS_LOCAL_FILE}. A value here is the vault\u2019s default, and anyone\u2019s own answer there wins.`
-      for (const line of wrap(note)) lines.push(`# ${line}`)
-    }
     lines.push('', `# ── ${setting.label}`)
     for (const line of wrap(setting.explanation, 72)) lines.push(`#   ${line}`)
     for (const hint of legalValues(setting.type)) {
