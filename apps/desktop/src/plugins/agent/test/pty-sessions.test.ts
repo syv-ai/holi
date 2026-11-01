@@ -48,7 +48,7 @@ function setup(
   const targets: { binDir: string | null }[] = []
   const sessions = createPtySessions({
     vault: VAULT,
-    providers: [provider],
+    providers: () => [provider],
     ...(past === undefined ? {} : { past }),
     terminals: {
       open: (args) => {

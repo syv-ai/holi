@@ -78,7 +78,9 @@ const NAME_MAX = 80
 
 export interface PtySessionsDeps {
   vault: VaultRef
-  providers: readonly AgentProvider[]
+  /** The agents it may run, read per start: this machine's harnesses
+   *  change while the vault is open. */
+  providers(): readonly AgentProvider[]
   terminals: Pick<AgentTerminals, 'open' | 'close' | 'paste' | 'list'>
   /** The vault's turn bracket: sync pauses and the turn is recorded. */
   bracket(id: string, edge: 'begin' | 'end' | 'forget'): void
@@ -143,6 +145,11 @@ export interface PtySessions {
   noteTurn(id: string, active: boolean): void
   /** What the session's hook said about it. */
   noteConversation(id: string, about: { name?: string; conversationId?: string }): void
+  /** What the session's hook said of its context and model
+   *  (`holi-signal status`). */
+  noteStatus(id: string, status: { contextPercent?: number; model?: string }): void
+  /** The agent a live session runs. */
+  providerOf(id: string): ProviderId | null
   /** End every session. */
   leave(): Promise<void>
 }
@@ -160,6 +167,8 @@ interface Session {
   signals: TurnSignals
   /** How its last copy back went, when it is fenced. */
   copy?: FenceCopy
+  contextPercent?: number
+  model?: string
 }
 
 /**
@@ -225,6 +234,8 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       // A fenced session whose writes did not reach the vault says why.
       ...(s.copy?.error === undefined ? {} : { outcome: 'failed' as const, error: s.copy.error }),
       ...(s.copy?.leftOut === undefined ? {} : { message: s.copy.leftOut }),
+      ...(s.contextPercent === undefined ? {} : { contextPercent: s.contextPercent }),
+      ...(s.model === undefined ? {} : { model: s.model }),
     }))
 
   function push(): void {
@@ -292,7 +303,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       const conversation = source?.conversationId
       if (!providerId || !conversation)
         return { ok: false, message: 'That session cannot be duplicated.' }
-      const provider = deps.providers.find((p) => p.id === providerId)
+      const provider = deps.providers().find((p) => p.id === providerId)
       if (!provider?.namesConversation)
         return { ok: false, message: `${provider?.label ?? providerId} cannot be copied.` }
       return api.start(providerId, {
@@ -306,10 +317,19 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     terminalOf: (id) => sessions.get(id)?.terminalId ?? null,
 
     async start(providerId, { name, prompt, resume, fence, cols, rows, sessionId, fork }) {
-      const provider = deps.providers.find((p) => p.id === providerId)
+      const provider = deps.providers().find((p) => p.id === providerId)
       if (provider === undefined) {
-        return { ok: false, message: `${providerId} is not an agent Holi knows.` }
+        return {
+          ok: false,
+          message: `${providerId} is not an agent on this machine. Choose one in Settings, General, Agents.`,
+        }
       }
+      const refused =
+        provider.refuses?.({
+          ...(prompt === undefined ? {} : { prompt }),
+          ...(resume === undefined ? {} : { resume }),
+        }) ?? null
+      if (refused !== null) return { ok: false, message: refused }
       const config = await configure(provider)
       if (config === null) {
         return { ok: false, message: `${provider.label} could not be set up for this vault.` }
@@ -486,6 +506,16 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         s.conversationId = about.conversationId
       push()
     },
+
+    noteStatus(id, status) {
+      const s = sessions.get(id)
+      if (s === undefined) return
+      if (status.contextPercent !== undefined) s.contextPercent = status.contextPercent
+      if (status.model !== undefined) s.model = status.model
+      push()
+    },
+
+    providerOf: (id) => sessions.get(id)?.provider ?? null,
 
     async leave() {
       await Promise.all([...sessions.values()].map((s) => deps.terminals.close(s.terminalId)))

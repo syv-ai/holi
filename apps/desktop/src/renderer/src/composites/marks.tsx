@@ -54,7 +54,8 @@ function OpenAIMark({ className }: { className?: string }) {
 }
 
 /** The coding agents' marks (`agentProvider`): Pi and Codex keep their own;
- *  Claude and unknown agents use a terminal outside General Settings. */
+ *  Claude outside General Settings, and an agent a person added in Settings,
+ *  get a terminal. */
 const AGENT_MARKS: Record<string, { glyph: IconGlyph; className?: string }> = {
   codex: { glyph: OpenAIMark, className: 'text-foreground' },
   pi: { glyph: PiMark },
