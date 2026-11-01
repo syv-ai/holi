@@ -1,6 +1,6 @@
 /**
  * The Agents mode's main view (docs/features/agent-sessions.md, The Agents
- * view): one of five things, picked in the sidebar.
+ * view): one of six things, picked in the sidebar.
  *
  * - **Home**, what a tab with nothing selected shows: that no session is
  *   open there, and New session. Never the Inbox, which is its own row.
@@ -9,6 +9,7 @@
  *   and what other plugins add there (a Holi's report that asked for you).
  * - **History**: every conversation and run, open or closed, by day, with
  *   the search and its filter. Opening one puts it back in Sessions.
+ * - **Memory**: what the agents remember, the vault's `.holi/memory/`.
  * - **A live session**, of any agent: its terminal, filling the view.
  * - **A row another plugin added**: that plugin's own view (its slot).
  *
@@ -43,6 +44,7 @@ import { SessionSearch } from '../sessions/session-filters'
 import { SessionHistory } from '../sessions/session-list'
 import { agentGeometryAtom, agentSessionsAtom, type AgentSession } from '../state/sessions'
 import { InboxEntries } from './inbox-entries'
+import { MemoryList } from './memory-list'
 import { Skeleton } from '@/components/ui/skeleton'
 
 function Bar({
@@ -239,6 +241,25 @@ function PiRunView({ session }: { session: AgentSession }): React.JSX.Element {
   )
 }
 
+/** What the agents remember, each memory opening its file. */
+function MemoryView(): React.JSX.Element {
+  const remote = useAtomValue(activeRemoteAtom)
+  return (
+    <>
+      <Bar>
+        <span className="font-medium">Memory</span>
+      </Bar>
+      <div className="min-h-0 flex-1 overflow-y-auto" data-agents-memory="">
+        <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-6 py-6">
+          {/* Keyed on the vault: another vault starts from loading, never
+              from the last one's memories. */}
+          <MemoryList key={remote ?? ''} />
+        </div>
+      </div>
+    </>
+  )
+}
+
 /**
  * A live session: its terminal, the whole view, and nothing drawn over it.
  * The agent's own TUI is the interface; what Holi adds is around it (the
@@ -370,6 +391,8 @@ export function AgentsView({
         <InboxView />
       ) : view.kind === 'history' ? (
         <HistoryView />
+      ) : view.kind === 'memory' ? (
+        <MemoryView />
       ) : (
         <Home />
       )}
