@@ -1,6 +1,6 @@
 /**
  * What the Agents mode shows (docs/features/sidebar.md): the agent's own
- * views (its home, the Inbox, History, a live session), or a row another plugin added
+ * views (its home, the Inbox, History, Memory, a live session), or a row another plugin added
  * (its slot). The selection is core's `agentsSelectionAtom`, shared with those
  * plugins; this module reads the agent's part of it.
  *
@@ -19,6 +19,8 @@ export type AgentsView =
   | { kind: 'inbox' }
   /** Every conversation and run, open or closed, by day. */
   | { kind: 'history' }
+  /** What the agents remember: the vault's `.holi/memory/`. */
+  | { kind: 'memory' }
   /** A live background session, in its terminal. */
   | { kind: 'session'; id: string }
   /** A row another plugin added: its own main view draws it. */
@@ -31,6 +33,7 @@ export function agentsViewOf(sel: { owner: string; id: string } | null): AgentsV
   if (sel.id === 'new') return { kind: 'home' }
   if (sel.id === 'inbox') return { kind: 'inbox' }
   if (sel.id === 'history') return { kind: 'history' }
+  if (sel.id === 'memory') return { kind: 'memory' }
   const [kind, ...rest] = sel.id.split(':')
   if (kind === 'session') return { kind: 'session', id: rest.join(':') }
   return { kind: 'home' }
@@ -46,6 +49,7 @@ export const agentsViewAtom = atom(
     else if (view.kind === 'inbox') set(agentsSelectionAtom, { owner: AGENT_OWNER, id: 'inbox' })
     else if (view.kind === 'history')
       set(agentsSelectionAtom, { owner: AGENT_OWNER, id: 'history' })
+    else if (view.kind === 'memory') set(agentsSelectionAtom, { owner: AGENT_OWNER, id: 'memory' })
     else if (view.kind === 'slot') set(agentsSelectionAtom, { owner: view.owner, id: view.id })
     else set(agentsSelectionAtom, { owner: AGENT_OWNER, id: `session:${view.id}` })
   },
