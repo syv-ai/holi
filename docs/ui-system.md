@@ -52,9 +52,10 @@ design system on top of the stock one.
   `destructive`, `border`, `input`, `ring`, the `sidebar-*` set, and pairs), and `@theme inline`
   exposes them as `--color-*` utilities that hold `var()` pointers, so overriding a token
   re-cascades every utility. State tokens (`success`, `info`, `warning`, `invert`) are exposed the
-  same way. One value departs from the published theme: dark `muted-foreground` is
-  `oklch(0.8 0 0)`, not `0.708`, so muted text meets WCAG AA (4.5:1) on every dark surface even at
-  the 70% opacity of a small group header. Holi's seeded `theme.css`, which reaches vault-app
+  same way. One token departs from the published theme: `muted-foreground` is
+  `oklch(0.34 0 0)` in light (not `0.556`) and `oklch(0.8 0 0)` in dark (not `0.708`), so muted
+  text meets WCAG AA (4.5:1) on every surface in both modes even at the 70% opacity of a small
+  group header. Holi's seeded `theme.css`, which reaches vault-app
   frames as their base (`plugins/apps/main/tokens.ts`), raises its own the same way.
 - Dark follows the `data-theme` stamp on `<html>` (`state/color-scheme.ts`); `dark:` variants key
   off it, and `color-scheme` follows so unpainted native UI does.
