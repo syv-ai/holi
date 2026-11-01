@@ -106,9 +106,10 @@ approvals, asked in its terminal, whatever `config.toml` says), no network and w
 a Codex folder of its own with no MCP servers (above). As each turn ends (`notify`, or the terminal going quiet) and once more when its
 process exits, what it wrote is copied back by the jobs' copy (the write scope, the vault's shared
 content, no symlink followed, `app.yaml` last, the same caps, never over a new folder something
-else made). A file it wrote at an earlier turn is written again only when it changed it since, and
-then only while the vault still holds what it wrote: a file someone edited or deleted meanwhile
-refuses the copy, and nothing of that turn is written. All this happens before the turn's bracket closes so the turn review shows it. The folder is deleted when the process exits, and every folder when the
+else made). A file it was given or wrote at an earlier turn is written again only when it changed
+it since, and then only while the vault still holds what it was given or wrote: a file someone
+edited or deleted meanwhile refuses the copy, and nothing of that turn is written. A job's one
+copy back holds to the same for the files it was given. All this happens before the turn's bracket closes so the turn review shows it. The folder is deleted when the process exits, and every folder when the
 agent leaves the vault or starts. A provider with neither is refused, never run on another agent.
 The document menu's and the file tree's **Create vault app** ([editor](editor.md)) is its caller.
 

@@ -74,16 +74,17 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
       }
       await mkdir(dir, { recursive: true })
       await mkdir(state, { recursive: true, mode: 0o700 })
-      const unread = await copyIn(deps.vault.root, dir, scope.read)
+      // What it was given and what it wrote, each written again only while
+      // the vault still holds it, and what it wrote into new folders, which
+      // no copy writes over otherwise.
+      const made: Made = new Map()
+      const unread = await copyIn(deps.vault.root, dir, scope.read, made)
       if (unread !== null) {
         await drop()
         return { ok: false, message: unread }
       }
 
-      // One copy at a time: a turn's end and the exit never overlap. What
-      // it wrote, which a later copy writes again only while the vault still
-      // holds it, and into new folders, which no copy writes over otherwise.
-      const made: Made = new Map()
+      // One copy at a time: a turn's end and the exit never overlap.
       let chain = Promise.resolve()
       const copy = (): Promise<void> => {
         const next = chain.then(async () => {

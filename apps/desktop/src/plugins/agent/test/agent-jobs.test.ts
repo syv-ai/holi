@@ -673,7 +673,7 @@ describe('agent.scoped', () => {
 })
 
 describe('a fenced session', () => {
-  async function fencedRig(release?: (state: string) => Promise<void>) {
+  async function fencedRig(release?: (state: string) => Promise<void>, scope: JobScope = SCOPE) {
     const root = await temp('holi-fenced-vault-')
     const userData = await temp('holi-fenced-data-')
     await mkdir(join(root, 'notes'), { recursive: true })
@@ -708,7 +708,7 @@ describe('a fenced session', () => {
       name: 'Plan: vault app',
       prompt: 'Make it',
       system: 'Make the app.',
-      scope: SCOPE,
+      scope,
     })
     if (fence === undefined) throw new Error('no fence')
     return { root, userData, res, own, fence, fenced }
@@ -776,6 +776,21 @@ describe('a fenced session', () => {
     expect(await readFile(join(root, 'notes/Plan.app/app.yaml'), 'utf8')).toBe(
       'description: Theirs\n',
     )
+  })
+
+  it('never writes over a file it was given that someone changed in the vault meanwhile', async () => {
+    const { root, fence } = await fencedRig(undefined, {
+      read: ['notes/Plan.md'],
+      write: ['notes/Plan.md'],
+    })
+    // Edited in the vault during the first turn, which leaves its copy alone.
+    await writeFile(join(root, 'notes/Plan.md'), 'Theirs\n')
+    await fence.turnEnded()
+    expect(await readFile(join(root, 'notes/Plan.md'), 'utf8')).toBe('Theirs\n')
+    // The next turn changes its copy: still not written over theirs.
+    await writeFile(join(fence.dir, 'notes/Plan.md'), 'Mine\n')
+    await fence.turnEnded()
+    expect(await readFile(join(root, 'notes/Plan.md'), 'utf8')).toBe('Theirs\n')
   })
 
   it('does not start where what it makes is already in the vault', async () => {

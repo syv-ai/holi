@@ -53,7 +53,7 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
-import { copyFile, lstat, mkdir, open, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, open, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { isHiddenPath, isSharedContentPath, vaultRelPath, type VaultRelPath } from '@holi/shared'
@@ -225,25 +225,32 @@ export async function takenDestination(
 export const jobMayRead = (rel: string): boolean => !isHiddenPath(rel)
 
 /**
- * Copy each of `read` from the vault at `root` into `dir`, at its vault path.
- * The message of the first it may not or could not read, else null.
+ * Copy each of `read` from the vault at `root` into `dir`, at its vault path,
+ * and note in `made` the hash of what it copied: a file the run may also
+ * write is then copied back only while the vault still holds what it was
+ * given. The message of the first it may not or could not read, else null.
  */
 export async function copyIn(
   root: string,
   dir: string,
   read: readonly string[],
+  made: Made,
 ): Promise<string | null> {
   for (const path of read) {
     const abs = jobMayRead(path) ? await exactPath(root, path) : null
-    const copied =
-      abs !== null &&
-      (await mkdir(dirname(join(dir, path)), { recursive: true })
-        .then(() => copyFile(abs, join(dir, path)))
-        .then(
-          () => true,
-          () => false,
-        ))
-    if (!copied) return `Holi could not read ${path}.`
+    const data =
+      abs === null
+        ? null
+        : await readFile(abs).then(
+            async (bytes) => {
+              await mkdir(dirname(join(dir, path)), { recursive: true })
+              await writeFile(join(dir, path), bytes)
+              return bytes
+            },
+            () => null,
+          )
+    if (data === null) return `Holi could not read ${path}.`
+    made.set(path, hashOf(data))
   }
   return null
 }
@@ -534,7 +541,8 @@ export function createJobs(deps: JobsDeps): Jobs {
       if (taken !== null) return fail(takenMessage(taken))
       await mkdir(dir, { recursive: true })
       await mkdir(state, { recursive: true, mode: 0o700 })
-      const unread = await copyIn(deps.vault.root, dir, scope.read)
+      const made: Made = new Map()
+      const unread = await copyIn(deps.vault.root, dir, scope.read, made)
       if (unread !== null) return fail(unread)
       let command: ReturnType<JobsProvider['capabilities']['jobs']['command']>
       try {
@@ -611,7 +619,7 @@ export function createJobs(deps: JobsDeps): Jobs {
         if (job.stopped !== undefined) return finish(job, 'failed', job.stopped)
         if (completed && failure === null && code === 0) {
           try {
-            const { written, skipped } = await copyBack(job, scope.write, new Map())
+            const { written, skipped } = await copyBack(job, scope.write, made)
             // A Stop pressed during the copy wins.
             if (job.stopped !== undefined) return finish(job, 'failed', job.stopped)
             log(`${id}: done, ${written} file(s) written, ${skipped.length} left out`)
