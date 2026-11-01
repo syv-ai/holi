@@ -321,6 +321,11 @@ describe('the seed tables', () => {
       'Bash(holi google unschedule:*)',
       'Bash(holi google send:*)',
       'Bash(holi google reply:*)',
+      'Bash(holi google respond:*)',
+      'Bash(holi google api POST:*)',
+      'Bash(holi google api PUT:*)',
+      'Bash(holi google api PATCH:*)',
+      'Bash(holi google api DELETE:*)',
     ])
   })
 

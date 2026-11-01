@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Holi PreToolUse hook — the send gate.
 //
-// Sending mail and replying are the two things the agent can do that reach
-// another human and cannot be undone. Everything else it can do to a mailbox or
-// a calendar, the user can put back with one click.
+// Sending mail, replying and answering an invitation are the things the agent
+// can do that reach another human and cannot be undone, and a raw `holi google
+// api` call that is not a GET may be any of them. Everything else it can do to
+// a mailbox or a calendar, the user can put back with one click.
 //
-// So this returns `ask` for those two, and nothing at all for everything else.
+// So this returns `ask` for those, and nothing at all for everything else.
 // `ask` is the mechanism the whole design was chosen for: it overrides
 // `permissions.allow` AND a prior "don't ask again", which no permission rule
 // does. The user still decides — they just always get to. Printing nothing and
@@ -25,8 +26,6 @@
 // The claim it supports is "the agent never sends without you seeing it", not
 // "the agent cannot send".
 
-/** The two subcommands that reach another person. */
-const REACHES_A_HUMAN = ['send', 'reply']
 
 function decide(decision, reason) {
   process.stdout.write(
@@ -93,12 +92,46 @@ function audienceOf(command) {
   return `It goes to: ${recipients.join(', ')}.`
 }
 
+const MAIL_PROMPT = (command) =>
+  `This sends mail from your account. ${audienceOf(command)} ` +
+  'It cannot be recalled, so Holi asks every time — even if you have allowed ' +
+  'this command before. The message text is on stdin and is not shown here.'
+
 /**
- * Does this command line invoke `holi google send` or `holi google reply`?
+ * The `holi google` verbs that reach another person, and what the prompt for
+ * each says. Each takes the command line and the word after the verb, and
+ * answers the reason to ask, or `null` when this call reaches nobody. A verb
+ * not here has no opinion.
+ *
+ * `api` is decided from the method alone: its body is on stdin, which this
+ * cannot see, so every call that is not a GET asks, whatever it does. Holi
+ * itself refuses the calls no answer may allow (a permanent delete, a path
+ * outside Gmail and Calendar), so this only has to ask.
+ */
+const REACHES_A_HUMAN = {
+  send: MAIL_PROMPT,
+  reply: MAIL_PROMPT,
+  respond: () =>
+    'This answers a calendar invitation from your account, and Google tells the ' +
+    'organizer, with any --comment in the command. Holi asks every time — even if ' +
+    'you have allowed this command before.',
+  api: (_command, method) =>
+    method.toUpperCase() === 'GET'
+      ? null
+      : `This calls Google's API directly (${method || 'no method'}). Holi cannot tell ` +
+        'from the command whether it reaches someone (sending mail, changing an event ' +
+        'other people are invited to), so it asks for every call that is not a GET. ' +
+        'Any body is on stdin and is not shown here. Holi refuses permanent deletes ' +
+        'itself, whatever you answer.',
+}
+
+/**
+ * Why to ask about this command line, or `null`: does it invoke a `holi google`
+ * verb that reaches someone?
  *
  * Matched on the *invocation*, not on the presence of the word: `grep send
  * notes.md` is not a send, and a gate that prompts on it teaches the user to
- * click through prompts.
+ * click through prompts. Every invocation in the line is checked.
  *
  * Three spellings of the command are live, and all must match: the bare name
  * (resolved via PATH), `$HOLI_BIN`, and an absolute path to the generated
@@ -106,17 +139,24 @@ function audienceOf(command) {
  * is a gate that never fires. Holi refuses any word between `holi` and the
  * verb, so nothing can be slipped in between to step around this.
  */
-function isSend(command) {
-  // The command word, however it was spelled, then `google`, then the verb.
-  // `[^\s|;&]*` keeps them adjacent within one pipeline stage, so
-  // `holi google search x | grep send` does not match.
+function reasonToAsk(command) {
+  // The command word, however it was spelled, then `google`, then the verb,
+  // then the word after it. `[^\s|;&]*` keeps them adjacent within one
+  // pipeline stage, so `holi google search x | grep send` does not match.
   const invocation = new RegExp(
-    String.raw`(^|[|;&]|\s)` + // start of a command
+    String.raw`(?:^|[|;&]|\s)` + // start of a command
       String.raw`(?:["']?\$\{?HOLI_BIN\}?["']?|[^\s|;&]*\bholi["']?)` + // the binary
       String.raw`\s+["']?google["']?` + // the group
-      String.raw`\s+["']?(?:${REACHES_A_HUMAN.join('|')})\b`, // the verb
+      String.raw`\s+["']?([A-Za-z-]+)\b["']?` + // the verb
+      String.raw`(?:\s+["']?([^\s"'|;&]*))?`, // the word after it
+    'g',
   )
-  return invocation.test(command)
+  for (const [, verb, next] of command.matchAll(invocation)) {
+    if (!Object.hasOwn(REACHES_A_HUMAN, verb)) continue
+    const reason = REACHES_A_HUMAN[verb](command, next ?? '')
+    if (reason !== null) return reason
+  }
+  return null
 }
 
 const raw = await readStdin()
@@ -175,12 +215,12 @@ if (typeof command !== 'string') {
   ask('Holi could not read this command, so it is asking rather than assuming it is safe.')
 }
 
-if (isSend(command)) {
-  ask(
-    `This sends mail from your account. ${audienceOf(command)} ` +
-      'It cannot be recalled, so Holi asks every time — even if you have allowed ' +
-      'this command before. The message text is on stdin and is not shown here.',
-  )
+let reason
+try {
+  reason = reasonToAsk(command)
+} catch {
+  ask('Holi could not read this command, so it is asking rather than assuming it is safe.')
 }
+if (reason !== null) ask(reason)
 
 pass()

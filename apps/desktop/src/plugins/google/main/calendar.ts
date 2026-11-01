@@ -1,6 +1,7 @@
 /**
  * The agenda: Google Calendar, flattened into the shape the panel renders, plus
- * the agent's attendee-free calendar writes at the bottom.
+ * the agent's attendee-free calendar writes at the bottom, and answering an
+ * invitation, the one that tells somebody.
  */
 import { fenceUntrusted } from '@holi/shared'
 import type { GoogleApi } from './api'
@@ -434,7 +435,8 @@ function byStart(a: CalendarEvent, b: CalendarEvent): number {
  *
  * **Every function here is bounded by one rule: it must not email anyone.**
  * An event carrying attendees sends invitations on create and cancellations on
- * delete, which makes it the calendar's version of `send`.
+ * delete, which makes it the calendar's version of `send`. `respondToEvent`,
+ * last, is the one exception, and the send gate asks before it runs.
  *
  * The bound is enforced here rather than in `SKILL.md` on purpose: the agent is
  * the thing being bounded, so a rule it can read and reason about is not a
@@ -494,6 +496,13 @@ interface RawAttendees {
   summary?: string
 }
 
+/** An event as a refusal names it. The title is the organizer's words, so it
+ *  is fenced like everything else `holi google` prints. */
+const eventName = (id: string, summary: string | undefined): string =>
+  summary === undefined || summary === ''
+    ? `Event ${id}`
+    : `Event ${id} (${fenceUntrusted(summary, 'calendar')})`
+
 /**
  * Refuse anything that would put mail in someone's inbox.
  *
@@ -505,14 +514,9 @@ async function assertNobodyIsInvited(api: GoogleApi, eventId: string): Promise<v
   const event = await api.get<RawAttendees>(`${PRIMARY_EVENTS}/${encodeURIComponent(eventId)}`)
   if (Array.isArray(event.attendees) && event.attendees.length > 0) {
     // Read by the agent, so it says what to do instead rather than only what
-    // went wrong. The title is the organizer's words, so it is fenced like
-    // everything else `holi google` prints.
-    const named =
-      event.summary === undefined || event.summary === ''
-        ? `Event ${eventId}`
-        : `Event ${eventId} (${fenceUntrusted(event.summary, 'calendar')})`
+    // went wrong.
     throw new Error(
-      `${named} has attendees, so changing it would email them. ` +
+      `${eventName(eventId, event.summary)} has attendees, so changing it would email them. ` +
         'Holi does not let me do that: ask the user to make this change in Google Calendar.',
     )
   }
@@ -551,4 +555,54 @@ export async function updateEvent(api: GoogleApi, id: string, patch: EventPatch)
 export async function deleteEvent(api: GoogleApi, id: string): Promise<void> {
   await assertNobodyIsInvited(api, id)
   await api.del(`${PRIMARY_EVENTS}/${encodeURIComponent(id)}?${NO_MAIL}`)
+}
+
+/** What `holi google respond` answers an invitation with. */
+export type InviteAnswer = 'accepted' | 'declined' | 'tentative'
+
+/** The event as Google holds it, for answering it. */
+interface RawInvite {
+  summary?: string
+  organizer?: { self?: boolean }
+  attendees?: Record<string, unknown>[]
+}
+
+/**
+ * Answer an invitation: the one calendar write here that reaches another
+ * person, since Google tells the organizer (`sendUpdates=all`). The agent's
+ * send gate asks the person before the command runs.
+ *
+ * Only the person's own attendee entry is sent, with `attendeesOmitted`, which
+ * is how Calendar takes "update just my answer": a `PATCH` replaces the whole
+ * `attendees` array, and sending everyone else's entries back would rewrite
+ * them with whatever this read saw. The entry is copied, so a field Holi does
+ * not know about (`additionalGuests`, an old comment kept when no new one is
+ * given) survives. Refused when the person is not invited, and when they
+ * organise it: an organizer's change to the attendee list mails every guest.
+ */
+export async function respondToEvent(
+  api: GoogleApi,
+  id: string,
+  answer: InviteAnswer,
+  comment?: string,
+): Promise<void> {
+  const url = `${PRIMARY_EVENTS}/${encodeURIComponent(id)}`
+  const event = await api.get<RawInvite>(url)
+  if (event.organizer?.self === true) {
+    throw new Error(
+      `${eventName(id, event.summary)} is one the user organises, so there is no invitation ` +
+        'to answer. Ask the user to change it in Google Calendar.',
+    )
+  }
+  const self = (event.attendees ?? []).find((a) => a.self === true)
+  if (self === undefined) {
+    throw new Error(
+      `${eventName(id, event.summary)} does not list the user as a guest, so there is ` +
+        'no invitation to answer.',
+    )
+  }
+  await api.patch(`${url}?sendUpdates=all`, {
+    attendeesOmitted: true,
+    attendees: [{ ...self, responseStatus: answer, ...(comment === undefined ? {} : { comment }) }],
+  })
 }

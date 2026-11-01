@@ -11,10 +11,13 @@
  * vault whose user re-enables a claude.ai connector.
  *
  * The `ask` rules are the *undoable* tier and are NOT the wall: allow-always
- * past them is fine, each has a one-click undo. The wall for send and reply is
- * the hook, which overrides both this list and a prior "don't ask again". The
- * send and reply rules here cover a vault whose hook file was removed. Claude
- * Code reads `holi google send:*` as a prefix, so each verb is its own rule.
+ * past them is fine, each has a one-click undo. The wall for send, reply,
+ * respond and a mutating `api` call is the hook, which overrides both this list
+ * and a prior "don't ask again". Their rules here cover a vault whose hook file
+ * was removed, or predates `respond` and `api`: the hook is shipped, and reaches
+ * an existing vault only through `holi skills update`, while this fragment
+ * merges into every vault. Claude Code reads `holi google send:*` as a prefix,
+ * so each verb, and each `api` method but GET, is its own rule.
  */
 import { seedFolder, type SeedContribution, type SettingsFragment } from '../../../main/plugin-api'
 
@@ -39,6 +42,11 @@ const SETTINGS: SettingsFragment = {
       'Bash(holi google unschedule:*)',
       'Bash(holi google send:*)',
       'Bash(holi google reply:*)',
+      'Bash(holi google respond:*)',
+      'Bash(holi google api POST:*)',
+      'Bash(holi google api PUT:*)',
+      'Bash(holi google api PATCH:*)',
+      'Bash(holi google api DELETE:*)',
     ],
   },
 }

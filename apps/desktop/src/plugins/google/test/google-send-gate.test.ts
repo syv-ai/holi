@@ -143,6 +143,27 @@ describe('the send gate asks', () => {
     expect(reason).toMatch(/everyone|all/i)
   })
 
+  // Google tells the organizer, so an answer to an invite reaches a person.
+  it('asks for answering an invitation', async () => {
+    expect(decisionOf(await decide(bash('holi google respond ev-1 --no --comment x')))).toBe('ask')
+    expect(decisionOf(await decide(bash('"$HOLI_BIN" google "respond" ev-1 --yes')))).toBe('ask')
+  })
+
+  // The body is on stdin, out of the hook's sight, so the method decides:
+  // every raw call that is not a GET asks, however its method is spelled.
+  it('asks for every raw api call that is not a GET', async () => {
+    for (const command of [
+      'holi google api POST gmail/v1/users/me/messages/send --body -',
+      'holi google api patch calendar/v3/calendars/primary/events/e1 --body -',
+      "holi google api 'DELETE' calendar/v3/calendars/primary/events/e1",
+      'holi google api "$M" gmail/v1/users/me/labels',
+      'holi google api --method GET gmail/v1/users/me/labels',
+      'holi google api GET gmail/v1/users/me/labels && holi google api PUT x',
+    ]) {
+      expect(decisionOf(await decide(bash(command))), command).toBe('ask')
+    }
+  })
+
   it('still says it cannot be recalled, and that allowing it before does not skip this', async () => {
     const reason = (await decide(bash('holi google send --to ada@syv.ai'))).hookSpecificOutput
       ?.permissionDecisionReason
@@ -170,6 +191,10 @@ describe('the send gate has no opinion', () => {
   it('passes on the reads', async () => {
     expect(decisionOf(await decide(bash("holi google search 'is:unread'")))).toBe('none')
     expect(decisionOf(await decide(bash('holi google agenda')))).toBe('none')
+    expect(decisionOf(await decide(bash('holi google api GET gmail/v1/users/me/labels')))).toBe(
+      'none',
+    )
+    expect(decisionOf(await decide(bash("holi google api 'get' calendar/v3/colors")))).toBe('none')
   })
 
   it('passes on an unrelated command that merely contains the word send', async () => {

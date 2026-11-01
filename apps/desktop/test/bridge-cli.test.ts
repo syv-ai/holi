@@ -13,7 +13,7 @@ import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentCapabilities } from '../src/plugins/agent/main/host/capabilities'
 import { appsCapabilities, storeCapabilities } from '../src/plugins/apps/main/capabilities'
-import { installHoliCli } from '../src/main/bridge/cli'
+import { installHoliCli, resolveArgv } from '../src/main/bridge/cli'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
 import { SPILL_BYTES } from '../src/main/bridge/spill'
 import { OUT_DIR } from '../src/main/vault/out-files'
@@ -431,5 +431,30 @@ describe('a command that reads stdin', () => {
     const res = await run(bin, ['x', 'echo', 'ada', '--draft', 'd1'], env, 'ignored')
     expect(res.code).toBe(0)
     expect(ran).toHaveBeenCalledWith({ to: 'ada', draft: 'd1' })
+  })
+})
+
+describe('a command whose body is read from stdin only as `-`', () => {
+  const commands = [
+    { name: 'x.call', cli: { args: ['path'], summary: 'call', stdin: 'body', stdinOnDash: true } },
+  ] as const
+
+  it('has no body when it is left out, and never asks for stdin', () => {
+    expect(resolveArgv(['x', 'call', 'a'], commands, null)).toMatchObject({
+      kind: 'run',
+      params: { path: 'a' },
+    })
+  })
+
+  it('reads stdin for `--body -`, and takes any other value as it is', () => {
+    expect(resolveArgv(['x', 'call', 'a', '--body', '-'], commands, null)).toEqual({
+      kind: 'stdin',
+    })
+    expect(resolveArgv(['x', 'call', 'a', '--body', '-'], commands, '{}')).toMatchObject({
+      params: { path: 'a', body: '{}' },
+    })
+    expect(resolveArgv(['x', 'call', 'a', '--body', '{"a":1}'], commands, null)).toMatchObject({
+      params: { body: '{"a":1}' },
+    })
   })
 })
