@@ -131,13 +131,27 @@ export function FilesSection({
   /** Set by a menu's Rename; the field opens once the menu has closed, so
    *  the menu handing focus back does not take it from the field. */
   const renameNext = useRef<string | null>(null)
-  /** A row just made from a New item: its name field opens as soon as the
-   *  tree has it, so typing names it. */
-  const [naming, setNaming] = useState<string | null>(null)
-  /** Rows that just landed (made, moved, renamed, dropped in): they fade in
-   *  once, so the eye finds where they went. */
+  /** Rows that just landed (made, moved, renamed, dropped in, revealed): they
+   *  rise in once, so the eye finds where they went. */
   const [arrived, setArrived] = useState<ReadonlySet<string>>(new Set())
-  const markArrived = (paths: string[]) => setArrived((current) => new Set([...current, ...paths]))
+  /** The rows that landed last, waiting for the tree to show one: then they
+   *  are selected and the first shown is focused and scrolled into view, its
+   *  name field open when `name` is set (a row just made as Untitled).
+   *  `snapshot` is the one current when they landed: once a newer one still
+   *  shows none of them (a dotfile while hidden files are off), they are
+   *  dropped rather than shown whenever they next appear. */
+  const [landing, setLanding] = useState<{
+    paths: string[]
+    name: boolean
+    snapshot: object
+  } | null>(null)
+  /** Every row the tree makes, moves or is asked to show lands here, the one
+   *  place a row is brought into view. */
+  const land = (paths: string[], { name = false } = {}) => {
+    if (paths.length === 0) return
+    setArrived((current) => new Set([...current, ...paths]))
+    setLanding({ paths, name, snapshot })
+  }
 
   // A plugin's folder document (a deck) opens as its surface, and its chevron
   // shows the files inside; an app's bundle is one document and only opens.
@@ -164,11 +178,11 @@ export function FilesSection({
     onMoved(moves)
   }
 
-  /** Move `sources` into `dest`, the rows landing there visibly. */
-  async function moveInto(sources: string[], dest: string) {
-    if (!canMoveInto(sources, dest)) return
+  /** Move `sources` into `dest`; the paths they land at, for the caller to land. */
+  async function moveInto(sources: string[], dest: string): Promise<string[]> {
+    if (!canMoveInto(sources, dest)) return []
     await move(planMoveInto(files.allPaths, sources, dest))
-    markArrived(sources.map((source) => joinPath(dest, basename(source))))
+    return sources.map((source) => joinPath(dest, basename(source)))
   }
 
   /** Rows from this vault move; anything else is copied in from outside. */
@@ -181,18 +195,17 @@ export function FilesSection({
           .map((source) => source.slice(prefix.length))
       : []
     const outside = sources.filter((source) => !prefix || !source.startsWith(prefix))
-    if (inside.length > 0) await moveInto(inside, dest)
+    const moved = inside.length > 0 ? await moveInto(inside, dest) : []
+    const copied: string[] = []
     if (outside.length > 0) {
       const skipped = await importFiles(outside, dest)
       for (const { name, reason } of skipped) toast.error(`${name}: ${reason}`)
       const took = new Set(skipped.map((skip) => skip.name))
-      markArrived(
-        outside
-          .map((source) => basename(source))
-          .filter((name) => !took.has(name))
-          .map((name) => joinPath(dest, name)),
-      )
+      for (const source of outside) {
+        if (!took.has(basename(source))) copied.push(joinPath(dest, basename(source)))
+      }
     }
+    land([...moved, ...copied])
   }
 
   /** A new name in the same folder: a file moves, a folder moves what it
@@ -235,15 +248,15 @@ export function FilesSection({
         moves.length > 0 ? moves : [{ from: `${from}/${GITKEEP}`, to: `${to}/${GITKEEP}` }],
       )
     }
-    markArrived([to])
+    land([to])
   }
 
   async function onDrop(items: ItemInstance<TreeItemData>[], target: DragTarget<TreeItemData>) {
     const dest = folderOf(target.item)
     const sources = items.map((item) => item.getId())
     const moving = sources.filter((source) => parentOf(source) !== dest)
-    if (moving.length > 0) await moveInto(moving, dest)
-    // Between two rows: the moved rows land there in the folder's order.
+    const moved = moving.length > 0 ? await moveInto(moving, dest) : []
+    // Between two rows: the rows land there in the folder's order.
     if ('insertionIndex' in target) {
       const landed = sources.map((source) => joinPath(dest, basename(source)))
       const siblings = target.item
@@ -252,7 +265,8 @@ export function FilesSection({
         .filter((id) => !sources.includes(id))
       siblings.splice(target.insertionIndex, 0, ...landed)
       setOrder(dest, siblings)
-    }
+      land(landed)
+    } else land(moved)
   }
 
   // A file's row drags as its tab too, beside the tree's own move.
@@ -313,46 +327,42 @@ export function FilesSection({
     tree.rebuildTree()
   }, [data, tree])
 
-  // Reveal in Files (an app's card): open the row's folders, then select it,
-  // focus it and scroll it into view once the tree has drawn them. The tree
-  // may mount with the request already made (the sidebar was on Agents), so
-  // it catches up; a row the tree does not have yet keeps the request waiting.
-  const revealFrame = useRef(0)
-  useEffect(() => () => cancelAnimationFrame(revealFrame.current), [])
+  // Rows that landed: once the tree shows one, open its folders, select the
+  // rows shown, and focus and scroll to the first (headless-tree's `scrollTo`
+  // waits for the row to be drawn). Nothing here reads what the rebuild above
+  // computes: expanding, selecting and focusing go by id.
+  useEffect(() => {
+    if (landing === null) return
+    const shown = landing.paths.filter((landed) => data[landed] !== undefined)
+    const path = shown[0]
+    if (path === undefined) {
+      if (snapshot !== landing.snapshot) setLanding(null)
+      return
+    }
+    setLanding(null)
+    const parts = path.split('/')
+    for (let i = 1; i < parts.length; i++) {
+      const folder = tree.getItemInstance(parts.slice(0, i).join('/'))
+      if (!folder.isExpanded()) folder.expand()
+    }
+    const item = tree.getItemInstance(path)
+    tree.setSelectedItems(shown)
+    item.setFocused()
+    void item.scrollTo({ block: 'nearest' })
+    if (landing.name) item.startRenaming()
+  }, [data, landing, snapshot, tree])
+
+  // Reveal in Files (an app's card). The tree may mount with the request
+  // already made (the sidebar was on Agents), so it catches up; a row the
+  // tree does not have yet keeps the request waiting.
   useRequest(
     revealInFilesRequestAtom,
     ({ path }) => {
       if (data[path] === undefined) return false
-      const parts = path.split('/')
-      for (let i = 1; i < parts.length; i++) {
-        tree.getItemInstance(parts.slice(0, i).join('/')).expand()
-      }
-      revealFrame.current = requestAnimationFrame(() => {
-        const item = tree.getItemInstance(path)
-        item.setFocused()
-        tree.setSelectedItems([path])
-        void item.scrollTo({ block: 'nearest' })
-        markArrived([path])
-      })
+      land([path])
     },
     { catchUp: true },
   )
-
-  // A row just made: once the snapshot has it, select it, scroll it into view
-  // and open its name field.
-  const namingFrame = useRef(0)
-  useEffect(() => () => cancelAnimationFrame(namingFrame.current), [])
-  useEffect(() => {
-    if (naming === null || data[naming] === undefined) return
-    setNaming(null)
-    namingFrame.current = requestAnimationFrame(() => {
-      const item = tree.getItemInstance(naming)
-      tree.setSelectedItems([naming])
-      item.setFocused()
-      void item.scrollTo({ block: 'nearest' })
-      item.startRenaming()
-    })
-  }, [data, naming, tree])
 
   /** A deck's row: its chevron expands it, the rest opens it, where the
    *  tree's own press would do both. */
@@ -396,18 +406,21 @@ export function FilesSection({
   })
 
   /** Make what a New menu item makes, named `name` in `parent`, and open
-   *  it: a folder document as itself, not its entry file. Throws the
-   *  plugin's refusal. */
-  async function made(create: FileCreate, parent: string, name: string): Promise<string | null> {
-    if (files.remote === null) return null
+   *  it: a folder document as itself, not its entry file. `untitled` opens
+   *  its name field, so typing names it. Throws the plugin's refusal. */
+  async function made(
+    create: FileCreate,
+    parent: string,
+    name: string,
+    { untitled = false } = {},
+  ): Promise<void> {
+    if (files.remote === null) return
     const path = await create.run({ remote: files.remote, parent, name })
-    if (!path) return null
+    if (!path) return
     const suffix = create.entry === undefined ? null : `/${create.entry}`
     const opened = suffix !== null && path.endsWith(suffix) ? path.slice(0, -suffix.length) : path
-    reveal(parent)
-    markArrived([opened])
+    land([opened], { name: untitled })
     onOpen(opened)
-    return opened
   }
 
   /** The web address a browser's drag carries, if that is all it carries. */
@@ -424,7 +437,7 @@ export function FilesSection({
   /** A web address dropped from a browser, saved as a link in `parent`. */
   function dropUrl(url: string, parent: string) {
     if (urlCreate === undefined) return
-    void attempt('save the link', () => made(urlCreate, parent, url).then(() => undefined))
+    void attempt('save the link', () => made(urlCreate, parent, url))
   }
 
   /** Finder drops on the empty space below the rows land at the root, and a
@@ -448,7 +461,7 @@ export function FilesSection({
     void attempt('create a document', async () => {
       const name = freeName(files.taken, '', 'Untitled', '.md')
       await createNote(name)
-      markArrived([name])
+      land([name])
       onOpen(name)
     })
   }
@@ -473,7 +486,7 @@ export function FilesSection({
     siblings.splice(from, 1)
     siblings.splice(to, 0, id)
     setOrder(folderOf(parent), siblings)
-    markArrived([id])
+    land([id])
   }
 
   /** The actions on one row: what right-click on it, or ⋯ with it focused, offers. */
@@ -508,7 +521,7 @@ export function FilesSection({
         },
         shift,
         moveTo: (path, dest) =>
-          void attempt(`move “${basename(path)}”`, () => moveInto([path], dest)),
+          void attempt(`move “${basename(path)}”`, async () => land(await moveInto([path], dest))),
         remove: setDeleting,
       },
     })
@@ -557,11 +570,6 @@ export function FilesSection({
     return item.isFolder() && !browsable.has(target) ? target : parentOf(target)
   }
 
-  /** Shows what was just made inside `parent`, which may be collapsed. */
-  function reveal(parent: string) {
-    if (parent !== '') tree.getItemInstance(parent).expand()
-  }
-
   const newActionsOf = (target: string | null): MenuAction[] => {
     const parent = newParent(target)
     return newActions({
@@ -574,9 +582,7 @@ export function FilesSection({
           void attempt('create the folder', async () => {
             const name = joinPath(parent, freeName(files.taken, parent, 'New folder'))
             await createFolder(name)
-            reveal(parent)
-            markArrived([name])
-            setNaming(name)
+            land([name], { name: true })
           }),
         newTask: () =>
           void attempt('create the task', async () => {
@@ -585,19 +591,20 @@ export function FilesSection({
               status: 'todo',
               folder: parent,
             })
-            if (path) onOpen(path)
+            if (!path) return
+            land([path])
+            onOpen(path)
           }),
         make: (create) =>
           create.asksName === true
             ? setAsking({ create, parent })
             : void attempt(`make the ${create.label.toLowerCase()}`, async () => {
-                const path = await made(
+                await made(
                   create,
                   parent,
                   freeName(files.taken, parent, 'Untitled', '.app').replace(/\.app$/, ''),
+                  { untitled: true },
                 )
-                // Made as Untitled: its name field opens, so typing names it.
-                if (path !== null) setNaming(path)
               }),
         toggleTasks: files.toggleTasks,
         toggleHidden: files.toggleHidden,
@@ -680,7 +687,7 @@ export function FilesSection({
               // Rows fade out toward the foot; at the end of the list the
               // bottom padding lifts the last row clear of the fade.
               className={cn(
-                'fade-foot relative min-h-0 flex-1 overflow-y-auto pb-12 overscroll-contain rounded-md motion-respond',
+                'fade-foot relative min-h-0 flex-1 overflow-y-auto pb-12 scroll-pb-12 overscroll-contain rounded-md motion-respond',
                 'data-dropping:bg-foreground/5 data-dropping:ring-ring/50 data-dropping:ring-1',
               )}
             >
@@ -800,9 +807,7 @@ export function FilesSection({
         asking={asking}
         onClose={() => setAsking(null)}
         onMake={(name) =>
-          asking === null
-            ? Promise.resolve()
-            : made(asking.create, asking.parent, name).then(() => undefined)
+          asking === null ? Promise.resolve() : made(asking.create, asking.parent, name)
         }
       />
     </SidebarGroup>
