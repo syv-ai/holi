@@ -972,7 +972,7 @@ export async function replyToThread(
   api: GoogleApi,
   threadId: string,
   body: string,
-  options: { all?: boolean } = {},
+  options: { all?: boolean; attachments?: MailPart[] } = {},
 ): Promise<{ id: string | null }> {
   const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(threadId)}`, {
     format: 'metadata',
@@ -1026,6 +1026,7 @@ export async function replyToThread(
         body,
         ...(inReplyTo === undefined ? {} : { inReplyTo }),
         references,
+        ...(options.attachments === undefined ? {} : { attachments: options.attachments }),
       }),
     ),
     // Belt and braces with the headers: the id files it in the thread even if a

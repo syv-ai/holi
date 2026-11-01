@@ -136,6 +136,22 @@ describe('the send gate asks', () => {
     expect(reason).toMatch(/sender/i)
   })
 
+  // Files leave the machine too, and unlike the body they are on the command
+  // line, so the person sees which ones before they go.
+  it('names every attached file, on a send and on a reply', async () => {
+    const send = (
+      await decide(
+        bash(`holi google send --to ada@syv.ai --attach q2.pdf --attach "Board deck.pptx"`),
+      )
+    ).hookSpecificOutput?.permissionDecisionReason
+    const reply = (await decide(bash('holi google reply t1 --attach=notes/plan.md')))
+      .hookSpecificOutput?.permissionDecisionReason
+
+    expect(send).toContain('q2.pdf')
+    expect(send).toContain('Board deck.pptx')
+    expect(reply).toContain('notes/plan.md')
+  })
+
   it('warns that reply --all widens the audience', async () => {
     const reason = (await decide(bash('holi google reply t1 --all'))).hookSpecificOutput
       ?.permissionDecisionReason

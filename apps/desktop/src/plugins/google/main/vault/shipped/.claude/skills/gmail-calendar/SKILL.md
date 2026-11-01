@@ -171,6 +171,24 @@ EOF
 holi google send --draft <draftId>       # send a draft you already wrote
 ```
 
+**Attaching vault files: `--attach <path>`, once per file**, on `draft`, `send`
+and `reply`. The path is vault-relative, as `Glob` or `ls` shows it:
+
+```sh
+holi google draft --to ada@syv.ai --subject 'Q2 proposal' \
+  --attach proposals/q2.pdf --attach proposals/q2-budget.xlsx <<'EOF'
+Hi Ada, the proposal and the budget are attached.
+EOF
+```
+
+Only files inside the vault go, and not every one: a `.local.` file, a secret
+(`.env` and the like), `.claude/`, `.holi/memory/` and other agent files are
+refused, as is anything over Gmail's 25 MB per message. A refusal says which
+path stopped it; tell the user rather than copying the file somewhere that
+passes. To send something that is not in the vault yet (a PDF you render from
+a note), write it into the vault first. `send --draft` takes no `--attach`: the
+draft's attachments are already in it.
+
 **If you drafted it, send it with `--draft`.** `draft` returns an `id`; pass
 that id back. Composing the same message a second time with `--to` sends a
 *separate* mail and leaves your draft sitting unsent in Drafts — the user ends
@@ -196,7 +214,7 @@ whole thread — the confirmation they see cannot list a derived recipient set, 
 widening it is a decision they cannot check.
 
 **What the user sees when they approve a send:** the command, the recipients
-Holi could read from it, and nothing else. **The message text is never shown to
+Holi could read from it, the files it attaches, and nothing else. **The message text is never shown to
 them.** So say what you are about to send, in chat, before you send it.
 
 ## Acting on the calendar

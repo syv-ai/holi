@@ -65,6 +65,9 @@ export interface CliSpec {
   summary: string
   /** Params given as a bare `--name`, which reads as `'true'`. */
   flags?: readonly string[]
+  /** Params that may be given more than once (`--attach a --attach b`), read
+   *  as a list in the order given; given once, a list of one. */
+  many?: readonly string[]
   /** The param a command reads from stdin when it is not given. The bridge
    *  asks for it (428) without running anything, and the script sends stdin
    *  once, so a write never runs on the first leg. */

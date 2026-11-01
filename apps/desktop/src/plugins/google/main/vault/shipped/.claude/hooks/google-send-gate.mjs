@@ -94,6 +94,21 @@ function audienceOf(command) {
 }
 
 /**
+ * The vault files this command sends along, as far as the command can say.
+ *
+ * Files are the other thing that leaves the machine, and unlike the body they
+ * are named on the command line (`--attach <path>`, once per file), so the
+ * prompt lists them. Holi refuses local and secret files itself; this is so
+ * the person sees which ordinary ones go.
+ */
+function attachmentsOf(command) {
+  const paths = [...command.matchAll(/--attach[= ]+(?:"([^"]+)"|'([^']+)'|(\S+))/g)]
+    .map((m) => m[1] ?? m[2] ?? m[3])
+    .filter(Boolean)
+  return paths.length === 0 ? '' : ` It attaches: ${paths.join(', ')}.`
+}
+
+/**
  * Does this command line invoke `holi google send` or `holi google reply`?
  *
  * Matched on the *invocation*, not on the presence of the word: `grep send
@@ -177,7 +192,7 @@ if (typeof command !== 'string') {
 
 if (isSend(command)) {
   ask(
-    `This sends mail from your account. ${audienceOf(command)} ` +
+    `This sends mail from your account. ${audienceOf(command)}${attachmentsOf(command)} ` +
       'It cannot be recalled, so Holi asks every time — even if you have allowed ' +
       'this command before. The message text is on stdin and is not shown here.',
   )

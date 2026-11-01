@@ -36,7 +36,8 @@ export type CliRequest =
       name: string
       label: string
       usage: string
-      params: Record<string, string>
+      /** A `many` param is a list; every other is one string. */
+      params: Record<string, string | string[]>
       json: boolean
     }
   /** Not a command: the text says why and what is (exit 2). */
@@ -57,6 +58,7 @@ function commandLine({ name, cli }: CliCommand): string {
     words.push(arg.endsWith('?') ? `[<${argName(arg)}>]` : `<${arg}>`)
   }
   for (const flag of cli.flags ?? []) words.push(`[--${flag}]`)
+  for (const name of cli.many ?? []) words.push(`[--${name} <${name}>]...`)
   return words.join(' ')
 }
 
@@ -103,7 +105,7 @@ export function resolveArgv(
     text: `${label}: ${why}\nusage: ${commandLine(command)}`,
   })
   const { cli } = command
-  const params: Record<string, string> = {}
+  const params: Record<string, string | string[]> = {}
   const positionals: string[] = []
   let json = false
   let options = true
@@ -116,6 +118,13 @@ export function resolveArgv(
       const eq = word.indexOf('=')
       const name = eq < 0 ? word.slice(2) : word.slice(2, eq)
       if (!OPTION_NAME.test(name)) return wrong(`not an option: ${word}`)
+      if (cli.many?.includes(name)) {
+        const value = eq >= 0 ? word.slice(eq + 1) : rest[++i]
+        if (value === undefined) return wrong(`--${name} needs a value`)
+        const prior = params[name]
+        params[name] = [...(Array.isArray(prior) ? prior : []), value]
+        continue
+      }
       if (Object.hasOwn(params, name)) return wrong(`--${name} is given twice`)
       if (eq < 0 && name === 'json') {
         json = true

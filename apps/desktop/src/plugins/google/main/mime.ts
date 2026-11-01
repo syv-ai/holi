@@ -13,8 +13,8 @@
 
 import { randomBytes } from 'node:crypto'
 
-/** A file travelling with a message. Only forwards produce these: there
- *  is no file picker, so the bytes always come from another Gmail message. */
+/** A file travelling with a message: a forwarded message's (the composer has
+ *  no file picker) or a vault file the agent attached (`attachments.ts`). */
 export interface MailPart {
   filename: string
   mimeType: string
@@ -144,8 +144,23 @@ function textBody(mimeType: string, content: string): Body {
  * closes, reached through a forwarded message's headers.
  */
 function quoteParameter(value: string): string {
-  if (isAscii(value)) return `"${value.replace(/[\\"]/g, '\\$&')}"`
-  return encodeHeaderWord(value)
+  // The encoded word is quoted too: its `=` and `?` are not legal bare in a
+  // parameter value, and a strict parser drops the whole parameter.
+  return `"${(isAscii(value) ? value : encodeHeaderWord(value)).replace(/[\\"]/g, '\\$&')}"`
+}
+
+/**
+ * A non-ASCII filename as RFC 2231 says it (`filename*=UTF-8''%C3%B8.pdf`),
+ * beside the RFC 2047 word `quoteParameter` writes: a client that knows 2231
+ * reads this one, and Gmail and older clients read the other.
+ */
+function extendedFilename(value: string): string {
+  if (isAscii(value)) return ''
+  const encoded = encodeURIComponent(value).replace(
+    /['()*!]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  )
+  return `; filename*=UTF-8''${encoded}`
 }
 
 /** Base64 wrapped at 76 columns. A line over 998 octets is refused outright by
@@ -160,7 +175,10 @@ function attachmentBody(part: MailPart): Body {
   return {
     headers: [
       ['Content-Type', `${part.mimeType}; name=${quoteParameter(part.filename)}`],
-      ['Content-Disposition', `attachment; filename=${quoteParameter(part.filename)}`],
+      [
+        'Content-Disposition',
+        `attachment; filename=${quoteParameter(part.filename)}${extendedFilename(part.filename)}`,
+      ],
       ['Content-Transfer-Encoding', 'base64'],
     ],
     content: wrapBase64(part.data),
