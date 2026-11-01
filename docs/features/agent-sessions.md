@@ -66,8 +66,10 @@ bin directory first on `PATH` is what keeps `holi` resolvable in all of them.
 `node "<script>"`, and an app opened from the Dock or Finder has launchd's `PATH`
 (`/usr/bin:/bin:/usr/sbin:/sbin`). Left like that every hook exits 127, which Claude Code counts as
 non-blocking, so the turn signals, the focus context and the Google send gate quietly stop. The
-agent's `PATH` is therefore Holi's bin directory, the inherited `PATH`, the usual tool directories
-(`toolPath`: Homebrew's, `~/.local/bin` and so on), and last Holi's own `node` (`bin/fallback/node`,
+agent's `PATH` is therefore Holi's bin directory, the inherited `PATH`, the login shell's `PATH`
+(read once at launch with `$SHELL -ilc`, as a terminal would see it, so `gh`, an nvm `node` or
+`claude` are found by name), the usual tool directories for when that read fails (`toolPath`:
+Homebrew's, `~/.local/bin` and so on), and last Holi's own `node` (`bin/fallback/node`,
 written at every launch: the app's executable run with `ELECTRON_RUN_AS_NODE`). A `node` the machine
 has is always found first. The supervisor keeps the environment of the process that started it, so an
 already running one picks this up only after it has exited (it does when idle).

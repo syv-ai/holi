@@ -3,6 +3,7 @@ import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { loadLoginPath } from '../../../main/bin'
 import { installNodeFallback } from '../../../main/bridge/node-fallback'
 import { buildAgentEnv } from '../main/claude/cli'
 
@@ -84,6 +85,20 @@ describe('the agent finds node from a Dock-launched Holi', () => {
     // `~/.local/bin` is not on the Dock's PATH, and is where Claude Code and
     // many node installs put things.
     expect(sh(env, 'holi-probe-tool')).toBe('local-bin-tool')
+  })
+
+  it('finds what the login shell’s PATH has, as a terminal would', async () => {
+    const dir = await tempDir()
+    await writeFile(join(dir, 'holi-login-tool'), '#!/bin/sh\necho login-tool\n')
+    await chmod(join(dir, 'holi-login-tool'), 0o755)
+    // What a login shell prints: whatever its rc files say, then the PATH.
+    await loadLoginPath({ SHELL: '/bin/zsh' }, async (shell, args) => {
+      expect([shell, args[0]]).toEqual(['/bin/zsh', '-ilc'])
+      return `welcome back\n__HOLI_LOGIN_PATH__/usr/bin:${dir}__HOLI_LOGIN_PATH__`
+    })
+    const { env, binDir } = await finderEnv()
+    expect(sh(env, 'holi-login-tool')).toBe('login-tool')
+    expect(env.PATH!.split(':')[0]).toBe(binDir)
   })
 
   describe('every hook Holi seeds', () => {

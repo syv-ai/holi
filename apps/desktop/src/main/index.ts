@@ -32,6 +32,7 @@ import { createSession } from './github/electron'
 import { createMembersCache } from './github/members-cache'
 import { installHoliCli } from './bridge/cli'
 import { installNodeFallback } from './bridge/node-fallback'
+import { loadLoginPath } from './bin'
 import { createCapabilityHost } from './capabilities/dispatch'
 import { CapabilityError } from './capabilities/error'
 import { vaultNotOpen } from './capabilities/fences'
@@ -246,6 +247,9 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
 }
 
 async function main(): Promise<void> {
+  // The login shell's PATH, for every tool Holi starts (`main/bin.ts`). Read
+  // while the app gets ready and awaited before anything can start an agent.
+  const loginPath = loadLoginPath()
   app.on('second-instance', (_event, argv) => {
     // A link clicked on Windows or Linux launches Holi again with the link in
     // argv; `openLink` brings the window forward itself.
@@ -841,6 +845,7 @@ async function main(): Promise<void> {
   })
   await bridge.start()
   const binDir = dirname(holiCliPath)
+  await loginPath
 
   // What works across vaults (reminders) starts now, its launch catch-up
   // with it, whichever vault opens.
