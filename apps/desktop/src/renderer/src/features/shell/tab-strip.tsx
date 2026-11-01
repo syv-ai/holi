@@ -341,6 +341,11 @@ export function TabStrip({
           </Tooltip>
         </Tabs>
 
+        {count > 0 ? (
+          <span className="text-muted-foreground text-xs whitespace-nowrap tabular-nums">
+            {count === 1 ? '1 tab' : `${count} tabs`}
+          </span>
+        ) : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon-sm" aria-label="Tab options">

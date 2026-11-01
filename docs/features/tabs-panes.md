@@ -72,6 +72,9 @@ both sides tidied, against what the view last showed. A tab not shown since it o
 against the file as first read. A split's members have no room for a badge, so each shows its
 state as a dot on its mark.
 
+**The count.** Beside the strip's ⋯ a muted `text-xs` line says how many entries are open
+(`4 tabs`), a split counting as one.
+
 **The switcher.** Hold ⌃ and press Tab: a list of the strip's entries hangs under the strip, each
 with its mark and title as the strip draws them (a split's members side by side), the next entry
 selected. Each further Tab moves on, ⇧Tab moves back, both wrapping; letting go of ⌃ opens the
