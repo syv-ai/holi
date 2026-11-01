@@ -35,10 +35,8 @@ function Row({ entry, unread }: { entry: InboxEntry; unread: boolean }): React.J
     <li className="group/row relative flex" data-inbox-entry={entry.id}>
       <Button
         variant="ghost"
-        className={cn(
-          'h-auto w-full min-w-0 items-stretch text-start font-normal',
-          unread && 'bg-foreground/5',
-        )}
+        size="row"
+        className={cn('w-full min-w-0', unread && 'bg-foreground/5')}
         disabled={!opens}
         onClick={() => open(entry)}
       >

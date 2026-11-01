@@ -394,6 +394,7 @@ export const sessionTabLookAtom = atom((get) => {
     const view = agentsViewOf(selection)
     if (view.kind === 'inbox') return { title: 'Inbox', state: 'idle' }
     if (view.kind === 'history') return { title: 'History', state: 'idle' }
+    if (view.kind === 'memory') return { title: 'Memory', state: 'idle' }
     const jobId = view.kind === 'session' ? view.id : null
     const row = rows.find((r) => isCurrent(r.item, selection, jobId))
     if (row === undefined) return undefined

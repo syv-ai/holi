@@ -69,6 +69,8 @@ command list: `?`, ↓ to a row, ↩ runs it, so a person who forgot a key can s
 | Files      | New agent session             | ⇧⌘N          | Ctrl Shift N              |
 | Files      | Rename selected file          | F2           | F2                        |
 | Files      | Collapse all folders          | ⌥⌘←          | Ctrl Alt ←                |
+| Files      | Copy absolute path            | ⌥⌘C          | Ctrl Alt C                |
+| Files      | Copy relative path            | ⌥⇧⌘C         | Ctrl Alt Shift C          |
 | Apps       | Open Mail / Open Calendar     | ⇧⌘M / ⇧⌘C    | Ctrl Shift M / C          |
 | Help       | Show keyboard shortcuts       | ? or ⌘/      | ? or Ctrl /               |
 
@@ -82,8 +84,8 @@ screen.
 ## Rules
 
 - **Never while typing, unless the row says so.** In a text field, the editor or the terminal only
-  rows marked `whileTyping` fire, which is every modified key except collapse all; `?` and F2 are
-  characters or the field's own there. In the terminal no Control key fires, with one exception:
+  rows marked `whileTyping` fire, which is every modified key except collapse all and the two path
+  copies; `?` and F2 are characters or the field's own there. In the terminal no Control key fires, with one exception:
   those are the terminal's (Claude Code's own keys included), and on a Mac ⌘ is free because xterm
   leaves Command alone. The exception is ⌃\`, which toggles the bottom panel
   ([status bar](status-bar.md)) and is marked `inTerminal`, so the panel closes from inside the

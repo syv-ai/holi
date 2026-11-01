@@ -1,11 +1,11 @@
 /**
  * The agent's rows in the ⌘K command menu (`RendererPlugin.commandMenu`,
- * docs/features/command-palette.md): the Inbox and History to go to, and every
- * conversation in the session list, found by its title once something is
- * typed. Opening one is what picking its row in the sidebar does.
+ * docs/features/command-palette.md): the Inbox, History and Memory to go
+ * to, and every conversation in the session list, found by its title once
+ * something is typed. Opening one is what picking its row in the sidebar does.
  */
 import { atom } from 'jotai'
-import { History, Inbox, MessageSquare } from 'lucide-react'
+import { Brain, History, Inbox, MessageSquare } from 'lucide-react'
 import type { CommandMenuEntry } from '@/plugin-api'
 import { inboxCountAtom } from './agents-status'
 import { agentsViewAtom } from './agents-view'
@@ -33,6 +33,13 @@ export const agentMenuEntriesAtom = atom((get): readonly CommandMenuEntry[] => {
       icon: History,
       keywords: ['sessions', 'conversations', 'past', 'closed'],
     },
+    {
+      id: 'memory',
+      label: 'Memory',
+      group: 'go',
+      icon: Brain,
+      keywords: ['remember', 'memories', 'facts', 'agents'],
+    },
     ...get(sessionRowsAtom)
       .filter((row) => row.item.archived !== true)
       .map((row): CommandMenuEntry => {
@@ -56,6 +63,10 @@ export const runAgentMenuEntryAtom = atom(null, (get, set, id: string): void => 
   }
   if (id === 'history') {
     set(agentsViewAtom, { kind: 'history' })
+    return
+  }
+  if (id === 'memory') {
+    set(agentsViewAtom, { kind: 'memory' })
     return
   }
   if (!id.startsWith(ROW)) return
