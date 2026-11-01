@@ -12,12 +12,13 @@ import {
   ZapIcon,
 } from 'lucide-react'
 
-import { AgentMark } from '@/composites/marks'
+import { AgentMark, FolderDocumentMark } from '@/composites/marks'
 import { PixelPersona } from '@/composites/pixel-persona/pixel-persona'
 import type { AgentsTabLook } from '@/plugin-api'
 import { changedDocsAtom } from '@/state/doc-changes'
-import { runningPluginsAtom, surfacesAtom } from '@/state/plugins'
+import { folderClaimsAtom, runningPluginsAtom, surfacesAtom } from '@/state/plugins'
 import { parseTabKey } from '@/state/tab-descriptor'
+import { basename } from '@/lib/tree-paths'
 
 import type { HeaderTab } from './tab-strip'
 import { useSidebarApps } from '@/features/sidebar/sidebar-apps'
@@ -29,7 +30,7 @@ const NO_LOOKS = atom<LookUp>(() => () => undefined)
 /** A file's name as its tab says it, as the files list shows it: without its
  *  folders or its extension. */
 function fileTitle(path: string): string {
-  return path.slice(path.lastIndexOf('/') + 1).replace(/(?<=.)\.[^./]+$/, '')
+  return basename(path).replace(/(?<=.)\.[^./]+$/, '')
 }
 
 /** A session's mark: the Holi's face when one ran it, the automation's
@@ -61,6 +62,7 @@ function SessionMark({ look }: { look: AgentsTabLook | undefined }) {
 export function useTabLook(): (key: string) => HeaderTab {
   const apps = useSidebarApps()
   const surfaces = useAtomValue(surfacesAtom)
+  const folderClaims = useAtomValue(folderClaimsAtom)
   const looksAtom =
     useAtomValue(runningPluginsAtom).find((plugin) => plugin.agentsMode)?.agentsMode?.tabLook ??
     NO_LOOKS
@@ -78,7 +80,11 @@ export function useTabLook(): (key: string) => HeaderTab {
             ...(changedDocs.has(tab.path) ? { status: 'updated' as const } : {}),
           }
         case 'vault-app':
-          return { id: key, title: fileTitle(tab.path), icon: AppWindowIcon }
+          return {
+            id: key,
+            title: fileTitle(tab.path),
+            mark: <FolderDocumentMark name={basename(tab.path)} />,
+          }
         case 'board':
           return { id: key, title: 'Board', icon: SquareKanbanIcon }
         case 'graph':
@@ -88,11 +94,17 @@ export function useTabLook(): (key: string) => HeaderTab {
         case 'surface': {
           const surface = surfaces.get(tab.surface)
           const label = surface?.label
+          // A folder document's tab (a deck, an app) holds its path as the
+          // id, and shows the glyph its row in the tree does.
+          const path =
+            tab.id !== undefined && folderClaims.some((c) => c.folder.surface === tab.surface)
+              ? tab.id
+              : null
           return {
             id: key,
             title: typeof label === 'function' ? label(tab.id ?? '') : (label ?? tab.surface),
-            // Its own icon: a plugin's deck shows the plugin's.
             icon: surface?.icon ?? AppWindowIcon,
+            ...(path === null ? {} : { mark: <FolderDocumentMark name={basename(path)} /> }),
           }
         }
         case 'new':
@@ -118,6 +130,6 @@ export function useTabLook(): (key: string) => HeaderTab {
           return { id: key, title: key }
       }
     },
-    [apps, surfaces, lookUp, changedDocs],
+    [apps, surfaces, folderClaims, lookUp, changedDocs],
   )
 }
