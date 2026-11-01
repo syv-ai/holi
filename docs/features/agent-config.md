@@ -188,9 +188,9 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
 
 - `holi <namespace> <verb>`: generic. It posts its argv to the bridge's `/cli`, and main reads
   it against the capabilities open at the CLI door ([vault apps](vault-apps.md)), each of which
-  declares its positional arguments and a one-line summary; bare `holi` prints them all. Any
-  argument can also be given as `--name value`, `--json` prints the value, and nothing may come
-  before the verb. Exit 0 prints the answer, 1 a refusal (its code and a `next:` step), 2 a usage
+  declares its positional arguments and a one-line summary; bare `holi` prints them all. An
+  argument can also be given as `--name value` (not `google api`'s method and path, which a gate
+  reads by position), `--json` prints the value, and nothing may come before the verb. Exit 0 prints the answer, 1 a refusal (its code and a `next:` step), 2 a usage
   error. An answer over 16 KiB is written to `.holi/state/out/` and the command prints its path and
   shape instead ([architecture](../architecture.md) §3). A command that reads a
   body from stdin and was not given one is answered 428 without running, and the script sends

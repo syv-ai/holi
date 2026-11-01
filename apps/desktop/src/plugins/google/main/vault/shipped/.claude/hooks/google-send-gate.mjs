@@ -66,7 +66,7 @@ function readStdin() {
  * A `reply` is the exception: its recipients are derived from the thread inside
  * Holi, so they are nowhere in the command, and the prompt says so plainly.
  */
-function audienceOf(command) {
+function audienceOf(command, verb) {
   // `send --draft <id>` is the second exception: the draft carries its own
   // recipients inside Gmail, and the user can go and look at it.
   if (/--draft\b/.test(command)) {
@@ -75,7 +75,7 @@ function audienceOf(command) {
       'draft rather than in this command, so open it in Drafts if you want to check them.'
     )
   }
-  if (/\breply\b/.test(command)) {
+  if (verb === 'reply') {
     return /--all\b/.test(command)
       ? 'It goes to everyone on the thread (--all). Holi works the recipients out ' +
           'from the thread, so they are not visible in this command.'
@@ -92,14 +92,15 @@ function audienceOf(command) {
   return `It goes to: ${recipients.join(', ')}.`
 }
 
-const MAIL_PROMPT = (command) =>
-  `This sends mail from your account. ${audienceOf(command)} ` +
+const MAIL_PROMPT = (command, _next, verb) =>
+  `This sends mail from your account. ${audienceOf(command, verb)} ` +
   'It cannot be recalled, so Holi asks every time — even if you have allowed ' +
   'this command before. The message text is on stdin and is not shown here.'
 
 /**
  * The `holi google` verbs that reach another person, and what the prompt for
- * each says. Each takes the command line and the word after the verb, and
+ * each says. Each takes the command line as a shell reads it
+ * (`asTheShellReads`), the word after the verb and the verb, and
  * answers the reason to ask, or `null` when this call reaches nobody. A verb
  * not here has no opinion.
  *
@@ -126,6 +127,73 @@ const REACHES_A_HUMAN = {
 }
 
 /**
+ * The command line with its quoting taken away, as a shell would read the
+ * words: a backslash-newline joins the lines, quotes go (`a""pi`, `'send'`,
+ * `$'respond'`, `"$HOLI_BIN"`) and a backslash before a character leaves the
+ * character (`s\end`). The text inside a quote is kept as it is, spaces
+ * included, so a quoted path or a quoted `holi google send` in an `echo` reads
+ * as words too: a needless prompt costs a click, a missed one a mail.
+ * Expansions are left as written; no string match follows those.
+ */
+function asTheShellReads(command) {
+  let out = ''
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i]
+    if (c === '\\') {
+      const next = command[++i]
+      if (next !== undefined && next !== '\n') out += next
+    } else if (c === "'") {
+      const end = command.indexOf("'", i + 1)
+      out += end < 0 ? command.slice(i + 1) : command.slice(i + 1, end)
+      i = end < 0 ? command.length : end
+    } else if (c === '$' && command[i + 1] === "'") {
+      i += 2
+      while (i < command.length && command[i] !== "'") {
+        if (command[i] === '\\' && i + 1 < command.length) {
+          const [char, used] = ansiEscape(command, i + 1)
+          out += char
+          i += used + 1
+        } else {
+          out += command[i++]
+        }
+      }
+    } else if (c === '"' || (c === '$' && command[i + 1] === '"')) {
+      if (c === '$') i++
+      for (i++; i < command.length && command[i] !== '"'; i++) {
+        // Inside double quotes a backslash only escapes `$`, a backtick, `"`,
+        // a backslash or a newline; before anything else it stays.
+        if (command[i] === '\\' && '$`"\\\n'.includes(command[i + 1] ?? '')) {
+          i++
+          if (command[i] !== '\n') out += command[i]
+        } else {
+          out += command[i]
+        }
+      }
+    } else {
+      out += c
+    }
+  }
+  return out
+}
+
+/** One escape inside `$'…'`, read from just after its backslash: the
+ *  character it stands for, and how many characters it took. */
+function ansiEscape(text, at) {
+  const c = text[at]
+  const hex = /^x([0-9a-fA-F]{1,2})/.exec(text.slice(at))
+  if (hex) return [String.fromCharCode(parseInt(hex[1], 16)), hex[0].length]
+  const uni = /^[uU]([0-9a-fA-F]{1,8})/.exec(text.slice(at))
+  if (uni) {
+    const code = parseInt(uni[1], 16)
+    return [code <= 0x10ffff ? String.fromCodePoint(code) : '', uni[0].length]
+  }
+  const oct = /^[0-7]{1,3}/.exec(text.slice(at))
+  if (oct) return [String.fromCharCode(parseInt(oct[0], 8)), oct[0].length]
+  const named = { n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', e: '\x1b', f: '\f', v: '\v' }
+  return [Object.hasOwn(named, c) ? named[c] : c, 1]
+}
+
+/**
  * Why to ask about this command line, or `null`: does it invoke a `holi google`
  * verb that reaches someone?
  *
@@ -135,25 +203,27 @@ const REACHES_A_HUMAN = {
  *
  * Three spellings of the command are live, and all must match: the bare name
  * (resolved via PATH), `$HOLI_BIN`, and an absolute path to the generated
- * script, any of them quoted, as `google` and the verb may be too. Missing one
- * is a gate that never fires. Holi refuses any word between `holi` and the
- * verb, so nothing can be slipped in between to step around this.
+ * script. Matched on the line as a shell reads it, so quoting, escaping or a
+ * line continuation anywhere in the words changes nothing. Missing one is a
+ * gate that never fires. Holi refuses any word between `holi` and the verb,
+ * so nothing can be slipped in between to step around this.
  */
 function reasonToAsk(command) {
+  const words = asTheShellReads(command)
   // The command word, however it was spelled, then `google`, then the verb,
   // then the word after it. `[^\s|;&]*` keeps them adjacent within one
   // pipeline stage, so `holi google search x | grep send` does not match.
   const invocation = new RegExp(
     String.raw`(?:^|[|;&]|\s)` + // start of a command
-      String.raw`(?:["']?\$\{?HOLI_BIN\}?["']?|[^\s|;&]*\bholi["']?)` + // the binary
-      String.raw`\s+["']?google["']?` + // the group
-      String.raw`\s+["']?([A-Za-z-]+)\b["']?` + // the verb
-      String.raw`(?:\s+["']?([^\s"'|;&]*))?`, // the word after it
+      String.raw`(?:\$\{?HOLI_BIN\}?|[^\s|;&]*\bholi)` + // the binary
+      String.raw`\s+google` + // the group
+      String.raw`\s+([A-Za-z-]+)\b` + // the verb
+      String.raw`(?:\s+([^\s|;&]*))?`, // the word after it
     'g',
   )
-  for (const [, verb, next] of command.matchAll(invocation)) {
+  for (const [, verb, next] of words.matchAll(invocation)) {
     if (!Object.hasOwn(REACHES_A_HUMAN, verb)) continue
-    const reason = REACHES_A_HUMAN[verb](command, next ?? '')
+    const reason = REACHES_A_HUMAN[verb](command, next ?? '', verb)
     if (reason !== null) return reason
   }
   return null

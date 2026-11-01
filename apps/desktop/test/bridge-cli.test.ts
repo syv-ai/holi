@@ -458,3 +458,25 @@ describe('a command whose body is read from stdin only as `-`', () => {
     })
   })
 })
+
+describe('a command whose arguments are positional only', () => {
+  const commands = [
+    { name: 'x.call', cli: { args: ['method', 'path'], summary: 'call', positionalOnly: true } },
+  ] as const
+
+  it('takes them in their place', () => {
+    expect(resolveArgv(['x', 'call', 'POST', 'a'], commands, null)).toMatchObject({
+      kind: 'run',
+      params: { method: 'POST', path: 'a' },
+    })
+  })
+
+  it('refuses one given as an option', () => {
+    expect(
+      resolveArgv(['x', 'call', '--method', 'POST', '--path', 'a'], commands, null),
+    ).toMatchObject({ kind: 'usage' })
+    expect(resolveArgv(['x', 'call', 'a', '--method=POST'], commands, null)).toMatchObject({
+      kind: 'usage',
+    })
+  })
+})

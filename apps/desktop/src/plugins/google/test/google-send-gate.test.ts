@@ -164,6 +164,27 @@ describe('the send gate asks', () => {
     }
   })
 
+  // A shell joins these into the plain words before it runs them, so the gate
+  // must read them the same way, for every verb.
+  it('asks when a word is partly quoted, escaped or split across lines', async () => {
+    for (const command of [
+      'holi google a""pi POST gmail/v1/users/me/messages/send --body -',
+      'holi google s\\end --to a@b.c',
+      "holi google $'respond' e1 --yes",
+      'holi \\\ngoogle api POST gmail/v1/users/me/messages/send',
+      "holi google re'ply' t1",
+      'holi google api P""OST gmail/v1/users/me/drafts/send',
+    ]) {
+      expect(decisionOf(await decide(bash(command))), command).toBe('ask')
+    }
+  })
+
+  it('still names the recipients of an escaped send', async () => {
+    const reason = (await decide(bash('holi google s\\end --to "ada@syv.ai"'))).hookSpecificOutput
+      ?.permissionDecisionReason
+    expect(reason).toContain('ada@syv.ai')
+  })
+
   it('still says it cannot be recalled, and that allowing it before does not skip this', async () => {
     const reason = (await decide(bash('holi google send --to ada@syv.ai'))).hookSpecificOutput
       ?.permissionDecisionReason

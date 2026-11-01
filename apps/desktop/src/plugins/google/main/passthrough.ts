@@ -2,23 +2,23 @@
  * `holi google api <METHOD> <path>`: the rest of Gmail and Calendar, for what
  * the named verbs do not cover (docs/features/google.md).
  *
- * **Main decides what a call is**, from the method, the path and the body, and
- * never from anything the agent says about it. One table (`RULES`) sorts every
- * call into a tier:
+ * **What main enforces, and what it only labels.** Main refuses the blocked
+ * tier, keeps every call on the two APIs' paths, and makes a calendar write it
+ * judges silent stay silent (`sendUpdates=none`, whatever the call said).
+ * Asking is not main's: the send gate, a hook that sees only the command line,
+ * asks before every call that is not a `GET`, and the vault's merged ask rules
+ * do the same where its hook is older. The tier main gives a call (`RULES`)
+ * picks between those, from the method, the path and the body, and never from
+ * anything the agent says about it:
  *
  * - `read`: a `GET`, or Calendar's `freeBusy`, which is a query sent as a POST.
  * - `write`: undoable and reaching nobody: a label change, trash and untrash,
  *   a draft, a solo event. Calendar writes in this tier carry
- *   `sendUpdates=none` whatever the call said, so a write judged silent stays so.
+ *   `sendUpdates=none`.
  * - `reaches-others`: sending mail, any event change Holi cannot see the
  *   guests of, `sendUpdates` other than `none`, and **anything mutating the
  *   table does not know**.
  * - blocked: every permanent delete, refused here whatever the person answers.
- *
- * The send gate sees only the command line, not the body on stdin, so it asks
- * for every call that is not a `GET`: a superset of `reaches-others`. Main's
- * part is the floor beneath it: the blocked tier, the two APIs and nothing
- * else, and no path that could leave them.
  *
  * The path is relative to Google's API root, `gmail/v1/users/me/...` or
  * `calendar/v3/...`; Holi supplies the host. A host, a scheme, `..`, an empty
@@ -204,9 +204,14 @@ function parseBody(text: string | undefined): unknown {
  * comes from the method, the path and the body alone.
  */
 export function planApiCall(methodText: string, rawPath: string, bodyText?: string): ApiCall {
-  const method = methodText.toUpperCase()
+  // Exactly as written: the gate and the vault's ask rules read the method off
+  // the command line, so `post` must not run as a POST they never saw.
+  const method = methodText
   if (!METHODS.includes(method)) {
-    throw new CapabilityError('BAD_REQUEST', `the method is one of ${METHODS.join(', ')}`)
+    throw new CapabilityError(
+      'BAD_REQUEST',
+      `the method is one of ${METHODS.join(', ')}, written in capitals`,
+    )
   }
   const { service, rest, query } = resolvePath(rawPath)
   const body = parseBody(bodyText)
@@ -252,7 +257,9 @@ export function planApiCall(methodText: string, rawPath: string, bodyText?: stri
  * agent passes back to a command, never prose. Every other string in an answer
  * is fenced, since a raw answer's free text is somebody else's (a header, a
  * snippet, a title, a base64 body); a field this list does not know is fenced
- * too, so a new one errs towards the label.
+ * too, so a new one errs towards the label. Even here a value with whitespace
+ * or a `<` in it is fenced: no id, date or enum has either. Not `iCalUID`,
+ * which whoever sent the invitation chose.
  */
 const PLAIN = new Set([
   'id',
@@ -278,7 +285,6 @@ const PLAIN = new Set([
   'updated',
   'htmlLink',
   'hangoutLink',
-  'iCalUID',
   'recurringEventId',
   'status',
   'responseStatus',
@@ -292,14 +298,79 @@ const PLAIN = new Set([
   'uri',
 ])
 
-/** `value` with every string not under a `PLAIN` key fenced as `source`. */
-export function fenceAnswer(value: unknown, source: UntrustedSource, key?: string): unknown {
+/** Fields whose whole content, keys included, someone else chose: an event's
+ *  `extendedProperties` (an organizer's `shared` ones reach every guest), its
+ *  `gadget` and `source`, and a conference add-on's parameters. Nothing under
+ *  them is plain, whatever its key. */
+const FOREIGN = new Set(['extendedProperties', 'gadget', 'source', 'addOnParameters'])
+
+const words = (text: string): string[] => text.split(/\s+/).filter(Boolean)
+
+/**
+ * The object keys Gmail's and Calendar's resources use, printed as they are.
+ * Any other key is someone's own (a map an add-on or an organizer filled), so
+ * it is fenced like any other text of theirs. A numeric key (`colors`'s ids)
+ * is plain.
+ */
+const KNOWN_KEYS = new Set([
+  ...PLAIN,
+  ...FOREIGN,
+  // Gmail's
+  ...words(`
+  messages threads drafts labels history snippet payload headers name value filename body
+  size data parts raw message messagesAdded messagesDeleted labelsAdded labelsRemoved
+  messagesTotal messagesUnread threadsTotal threadsUnread messageListVisibility
+  labelListVisibility color textColor backgroundColor filter criteria action from to
+  subject query negatedQuery hasAttachment excludeChats sizeComparison addLabelIds
+  removeLabelIds forward sendAs sendAsEmail displayName replyToAddress signature
+  isPrimary isDefault treatAsAlias verificationStatus smtpMsa enableAutoReply
+  responseSubject responseBodyPlainText responseBodyHtml restrictToContacts
+  restrictToDomain startTime endTime forwardingEmail forwardingAddresses delegates
+  delegateEmail filters enabled autoExpunge expungeBehavior maxFolderSize accessWindow
+  disposition language displayLanguage
+  `),
+  // Calendar's
+  ...words(`
+  items summary description location start end endTimeUnspecified recurrence
+  originalStartTime attendees organizer creator self optional resource comment
+  additionalGuests attendeesOmitted anyoneCanAddSelf guestsCanInviteOthers
+  guestsCanModify guestsCanSeeOtherGuests privateCopy locked reminders useDefault
+  overrides method minutes sequence attachments fileUrl title iconLink fileId
+  conferenceData createRequest requestId conferenceSolutionKey entryPoints entryPointType
+  label pin accessCode meetingCode passcode password conferenceSolution key iconUri
+  conferenceId notes parameters workingLocationProperties homeOffice customLocation
+  officeLocation buildingId floorId floorSectionId deskId outOfOfficeProperties
+  autoDeclineMode declineMessage focusTimeProperties chatStatus birthdayProperties
+  defaultReminders notificationSettings notifications primary deleted hidden selected
+  summaryOverride foregroundColor conferenceProperties allowedConferenceSolutionTypes
+  calendars groups busy errors reason domain timeMin timeMax scope role event calendar
+  iCalUID private shared display preferences height width link url defaultEventLength
+  error code
+  `),
+])
+
+const plainKey = (key: string): boolean => KNOWN_KEYS.has(key) || /^\d+$/.test(key)
+
+/** `value` with every string not under a `PLAIN` key, and every key not in
+ *  `KNOWN_KEYS`, fenced as `source`; everything under a `FOREIGN` field is. */
+export function fenceAnswer(
+  value: unknown,
+  source: UntrustedSource,
+  key?: string,
+  foreign = false,
+): unknown {
   if (typeof value === 'string') {
-    return key !== undefined && PLAIN.has(key) ? value : fenceUntrusted(value, source)
+    const plain = !foreign && key !== undefined && PLAIN.has(key) && !/[\s<]/.test(value)
+    return plain ? value : fenceUntrusted(value, source)
   }
-  if (Array.isArray(value)) return value.map((item) => fenceAnswer(item, source, key))
+  if (Array.isArray(value)) return value.map((item) => fenceAnswer(item, source, key, foreign))
   if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fenceAnswer(v, source, k)]))
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [
+        !foreign && plainKey(k) ? k : fenceUntrusted(k, source),
+        fenceAnswer(v, source, k, foreign || FOREIGN.has(k)),
+      ]),
+    )
   }
   return value
 }

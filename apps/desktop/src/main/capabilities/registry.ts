@@ -59,7 +59,7 @@ export interface CapabilityContext {
 export interface CliSpec {
   /** Positional params, in order. A trailing `?` marks an optional one, and
    *  only the last ones may be optional. Any param can also be given as
-   *  `--name value`. */
+   *  `--name value`, unless `positionalOnly`. */
   args: readonly string[]
   /** One line for `holi`'s usage. */
   summary: string
@@ -69,6 +69,10 @@ export interface CliSpec {
    *  asks for it (428) without running anything, and the script sends stdin
    *  once, so a write never runs on the first leg. */
   stdin?: string
+  /** The positional params are given only in their place, never as
+   *  `--name value`: a gate that reads them off the command line by position
+   *  (the send gate's `holi google api <METHOD>`) then sees what runs. */
+  positionalOnly?: true
   /** A param that, given, means the command has no body to read, so the
    *  bridge never asks for stdin and the script never waits on it
    *  (`holi google send --draft <id>`). */

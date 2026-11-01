@@ -898,9 +898,10 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     }),
 
     /**
-     * The rest of Gmail and Calendar: `METHOD path [--body -]`, judged in
-     * main (`planApiCall`), never by what the agent says it is. The gate asks
-     * before any call that is not a `GET`. CLI only, so `run` is the CLI door
+     * The rest of Gmail and Calendar: `METHOD path [--body -]`. Main refuses
+     * what no answer may allow and keeps a silent calendar write silent
+     * (`planApiCall`); the gate asks before any call that is not a `GET`, and
+     * reads the method by position, so method and path are positional only. CLI only, so `run` is the CLI door
      * and fences the answer itself: which text is whose depends on the API
      * the call went to, which the result alone no longer says.
      */
@@ -909,9 +910,10 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       cli: {
         args: ['method', 'path'],
         summary:
-          'call the Gmail or Calendar API: METHOD gmail/v1/users/me/... or calendar/v3/..., [--body -] (JSON on stdin); asks first unless GET',
+          'call the Gmail or Calendar API: METHOD gmail/v1/users/me/... or calendar/v3/..., [--body -] (JSON on stdin); METHOD in capitals; asks first unless GET',
         stdin: 'body',
         stdinOnDash: true,
+        positionalOnly: true,
       },
       params: (raw) => {
         const p = paramsObject(raw)

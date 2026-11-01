@@ -243,11 +243,14 @@ holi google api POST gmail/v1/users/me/threads/<threadId>/modify --body - <<'EOF
 EOF
 ```
 
-The path is what follows `https://gmail.googleapis.com/` or
+The method comes first, in capitals (`GET`, `POST`, `PUT`, `PATCH`,
+`DELETE`), then the path, each in its place: Holi refuses `post` or
+`--method POST`. The path is what follows `https://gmail.googleapis.com/` or
 `https://www.googleapis.com/`: it starts `gmail/v1/users/me/` or `calendar/v3/`,
 with its query string if it has one, and never a host. Quote a path with `?` in
 it. The body is JSON, on stdin with `--body -`. The answer is Google's own JSON
-with every free-text string fenced (see below), Gmail's base64 `data` too: drop
+with every free-text string, and any key that is not Google's own, fenced (see
+below), Gmail's base64 `data` too: drop
 the tags before decoding it. Google's references:
 https://developers.google.com/workspace/gmail/api/reference/rest and
 https://developers.google.com/workspace/calendar/api/v3/reference.

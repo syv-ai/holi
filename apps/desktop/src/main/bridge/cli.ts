@@ -16,8 +16,9 @@
  * (opening a tab, scaffolding a directory, a record write that is a file
  * change in git history). Those that reach another person, `holi google
  * send|reply|respond` and any `holi google api` that is not a GET, are asked
- * about by the agent's send gate, a hook that matches the command line; `resolveArgv` refuses any word before the verb so that
- * match stays sound.
+ * about by the agent's send gate, a hook that matches the command line;
+ * `resolveArgv` refuses any word before the verb, and a `positionalOnly`
+ * command's arguments given as options, so that match stays sound.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
@@ -67,7 +68,7 @@ function usageText(commands: readonly CliCommand[]): string {
     '',
     ...commands.flatMap((c) => [`  ${commandLine(c)}`, `      ${c.cli.summary}`]),
     '',
-    'Any argument can also be given as --name value. --json prints the result as JSON.',
+    'Most arguments can also be given as --name value. --json prints the result as JSON.',
   ].join('\n')
 }
 
@@ -117,6 +118,9 @@ export function resolveArgv(
       const name = eq < 0 ? word.slice(2) : word.slice(2, eq)
       if (!OPTION_NAME.test(name)) return wrong(`not an option: ${word}`)
       if (Object.hasOwn(params, name)) return wrong(`--${name} is given twice`)
+      if (cli.positionalOnly === true && cli.args.some((arg) => argName(arg) === name)) {
+        return wrong(`give ${name} in its place, not as --${name}`)
+      }
       if (eq < 0 && name === 'json') {
         json = true
       } else if (eq < 0 && cli.flags?.includes(name)) {
@@ -189,8 +193,8 @@ const SCRIPT = `#!/bin/sh
 # yours: the port and the token come from the vault you are in.
 #
 # Nearly every command is reversible or read-only. Those that reach other
-# people (sending mail, answering an invite) are asked about before they run, by a hook in the vault, not here. If this
-# says Holi is not running, it is not running, or you are not inside one of
+# people (sending mail, answering an invite) are asked about before they run,
+# by a hook in the vault, not here. If this says Holi is not running, it is not running, or you are not inside one of
 # its vaults.
 set -eu
 
