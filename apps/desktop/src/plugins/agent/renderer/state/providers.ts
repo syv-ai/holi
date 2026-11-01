@@ -18,14 +18,8 @@ interface AgentProviderInfo {
   background: boolean
   /** It can run a job: one prompt, unwatched, in a folder of Holi's. */
   jobs: boolean
-  /** A harness a person added. */
-  custom: boolean
-  /** It can start on a first message. */
-  prompts: boolean
   /** It has a picker of its earlier conversations. */
   resumePicker: boolean
-  /** Why it runs nothing unattended, or null when it can. */
-  unattended: string | null
 }
 
 export type ProvidersState =

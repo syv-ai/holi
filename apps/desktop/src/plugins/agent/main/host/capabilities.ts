@@ -68,14 +68,8 @@ export interface ProviderSummary {
   background: boolean
   /** It can run a job: one prompt, unwatched, in a folder of Holi's. */
   jobs: boolean
-  /** It is a harness a person added (Settings, General, Agents). */
-  custom: boolean
-  /** It can start on a first message. */
-  prompts: boolean
   /** It has a picker of its earlier conversations to resume. */
   resumePicker: boolean
-  /** Why it runs nothing unattended, or null when it can. */
-  unattended: string | null
 }
 
 export const AGENT_NAMESPACES = ['agent'] as const
@@ -313,14 +307,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
           installed: p.installed(),
           background: p.id === 'pi' || hasBackground(p),
           jobs: hasJobs(p),
-          custom: p.custom === true,
-          prompts: (p.refuses?.({ prompt: 'x' }) ?? null) === null,
           resumePicker: !hasBackground(p) && (p.refuses?.({ resume: 'pick' }) ?? null) === null,
-          // Pi runs unattended work through its RPC supervisor (`deps.pi`).
-          unattended:
-            hasBackground(p) || hasJobs(p) || p.id === 'pi'
-              ? null
-              : (p.unattended ?? `${p.label} cannot run a job with nobody watching.`),
         })),
     }),
 
