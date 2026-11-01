@@ -22,10 +22,11 @@ Write the issue and show it to the user before it goes anywhere:
   `A skill or instruction is unclear or wrong`, `Other`.
 - **Feedback:** what you were doing, where it got stuck, and what would have
   made it easy.
-- **Context:** the skill, `holi` command or Holi feature involved, and
-  `claude --version`.
+- **Context:** the skill, `holi` command or Holi feature involved, and the
+  two lines `holi agent version` prints (Holi's version and Claude Code's).
 
-One issue per problem, so each can be closed on its own.
+One issue per problem, so each can be closed on its own. Leave it unassigned:
+the Holi team triages new issues. Assign someone only when the user names them.
 
 ## Then one of two ways
 
