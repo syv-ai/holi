@@ -105,7 +105,7 @@
   --secondary: var(--color-neutral-200);
   --secondary-foreground: var(--color-neutral-900);
   --muted: var(--color-neutral-200);
-  --muted-foreground: color-mix(in oklab, var(--color-neutral-700) 42%, var(--color-neutral-800));
+  --muted-foreground: var(--color-neutral-600);
   /* The subtle hover surface, not the brand. */
   --accent: var(--color-neutral-200);
   --accent-foreground: var(--color-neutral-900);

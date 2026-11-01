@@ -206,7 +206,7 @@ function MailItem({
             <span
               className={cn(
                 'text-xs whitespace-nowrap tabular-nums',
-                thread.unread ? 'text-foreground/70 font-medium' : 'text-muted-foreground/60',
+                thread.unread ? 'text-foreground/70 font-medium' : 'text-muted-foreground',
               )}
             >
               {listStamp(thread.date)}
@@ -275,7 +275,7 @@ function DraftItem({ draft, onClick }: { draft: DraftSummary; onClick: () => voi
           <span className="text-foreground/75 truncate text-sm leading-tight font-medium">
             {recipients(draft)}
           </span>
-          <span className="text-muted-foreground/60 shrink-0 text-xs whitespace-nowrap tabular-nums">
+          <span className="text-muted-foreground shrink-0 text-xs whitespace-nowrap tabular-nums">
             {listStamp(draft.date)}
           </span>
         </div>
