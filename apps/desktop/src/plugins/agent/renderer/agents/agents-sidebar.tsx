@@ -2,8 +2,8 @@
  * The Agents mode's sidebar (docs/features/agent-sessions.md, The Agents
  * view), top to bottom:
  *
- * - **Inbox**, what needs you, and **History**, every conversation and run,
- *   then the places other plugins add beside them (their slots' `nav`:
+ * - **Inbox**, what needs you, **History**, every conversation and run, and
+ *   **Memory**, what the agents remember, then the places other plugins add beside them (their slots' `nav`:
  *   Automations).
  * - **Their sections**, by order (Holis).
  * - **Sessions**, with its +: the conversations and runs that are open, as
@@ -14,7 +14,7 @@
  * After MonoCode's sidebar (MIT, Copyright (c) 2026 Nick; see NOTICE.md).
  */
 import { useAtomValue, useSetAtom } from 'jotai'
-import { History, Inbox } from 'lucide-react'
+import { Brain, History, Inbox } from 'lucide-react'
 import { SidebarMenu } from '@/components/ui/sidebar'
 import { agentsSlotsAtom } from '@/plugin-api'
 import { SessionList } from '../sessions/session-list'
@@ -56,6 +56,12 @@ export function AgentsSidebar(): React.JSX.Element {
           label="History"
           current={view.kind === 'history'}
           onClick={() => setView({ kind: 'history' })}
+        />
+        <SidebarNavItem
+          icon={Brain}
+          label="Memory"
+          current={view.kind === 'memory'}
+          onClick={() => setView({ kind: 'memory' })}
         />
         {slots.map((slot) => (slot.nav === undefined ? null : <slot.nav key={slot.plugin} />))}
       </SidebarMenu>
