@@ -683,7 +683,7 @@ describe('a job in the vault', () => {
     event({ type: 'turn.completed', usage: { input_tokens: 400, output_tokens: 100 } }),
   ].join('\n')
 
-  async function vaultRig() {
+  async function vaultRig(mayRun?: () => Promise<string | null>) {
     const root = await temp('holi-job-vault-')
     const userData = await temp('holi-job-data-')
     const first = join(userData, 'first.js')
@@ -698,6 +698,7 @@ describe('a job in the vault', () => {
       bracket: (id, edge) => edges.push(`${edge}:${id}`),
       killGraceMs: 200,
       log: () => {},
+      ...(mayRun === undefined ? {} : { mayRun }),
     })
     return { root, jobs, edges, ...turns(first, next) }
   }
@@ -794,6 +795,27 @@ describe('a job in the vault', () => {
       write: ['a'],
     })
     expect(vaultSandbox(['Bash(holi holis delete:*)']).ok).toBe(false)
+  })
+
+  it('asks again before a queued follow-up, and runs none it may not', async () => {
+    let refusal: string | null = null
+    const { jobs, provider, runs } = await vaultRig(async () => refusal)
+    const started = await jobs.start({ provider, name: 'x', prompt: 'go', allow: ['Edit(a/**)'] })
+    const id = (started as { sessionId: string }).sessionId
+    // Queued while the first turn runs, then the yes is taken back.
+    jobs.message(id, 'one more')
+    refusal = 'Not unattended here.'
+    const row = await vi.waitFor(
+      () => {
+        const r = jobs.sessions().find((s) => s.id === id)
+        if (r?.outcome !== 'failed') throw new Error('still running')
+        return r
+      },
+      { timeout: 5_000 },
+    )
+    expect(row).toMatchObject({ state: 'idle', message: 'Not unattended here.' })
+    expect(runs).toHaveLength(1)
+    await jobs.leave()
   })
 
   it('takes no message while it is being stopped, and starts no turn after', async () => {

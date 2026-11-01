@@ -135,6 +135,10 @@ export interface JobsDeps {
   /** The longest a turn runs before it is stopped. */
   maxMs?: number
   log?: (msg: string) => void
+  /** Why `provider` may not start another turn now, or null: asked before
+   *  each follow-up, so a vault's yes taken back meanwhile stops the next
+   *  turn (`unattended.ts`). */
+  mayRun?: (provider: JobsProvider) => Promise<string | null>
   /** Called after each file copied back: tests stop a job mid-copy here. */
   afterWrite?: (rel: string) => Promise<void> | void
 }
@@ -760,7 +764,7 @@ export function createJobs(deps: JobsDeps): Jobs {
       // whoever hears the turn end reads it idle.
       if (job.place !== null) deps.bracket?.(id, 'end')
       // A stopped job takes nothing more, whatever came in while it stopped.
-      if (job.stopped === undefined && job.queue.length > 0) followUp(job)
+      if (job.stopped === undefined && job.queue.length > 0) void followUp(job)
     }
     // `close` waits for the output to be read to its end; `error` is a
     // process that never ran.
@@ -773,10 +777,21 @@ export function createJobs(deps: JobsDeps): Jobs {
     return { ok: true }
   }
 
-  /** Send what is queued as one turn on the job's thread. */
-  function followUp(job: Job): void {
+  /** Send what is queued as one turn on the job's thread, once the agent may
+   *  still run. */
+  async function followUp(job: Job): Promise<void> {
     const place = job.place
     if (place === null || job.thread === undefined || job.queue.length === 0) return
+    // Working from here: what comes in while it asks queues behind it, and a
+    // Stop meanwhile wins.
+    delete job.stopped
+    job.busy = true
+    const refused = (await deps.mayRun?.(job.provider)) ?? null
+    if (job.stopped !== undefined) return finish(job, 'failed', job.stopped)
+    if (refused !== null) {
+      job.queue = []
+      return finish(job, 'failed', refused)
+    }
     const text = job.queue.join('\n\n')
     job.queue = []
     const started = runTurn(
@@ -980,7 +995,7 @@ export function createJobs(deps: JobsDeps): Jobs {
         job.queue = []
         throw new CapabilityError('UNAVAILABLE', 'That job never said which thread it was.')
       }
-      followUp(job)
+      void followUp(job)
     },
 
     async stop(id) {

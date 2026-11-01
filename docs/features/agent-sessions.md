@@ -107,7 +107,7 @@ in main until someone on this machine turns on **Let Codex run unattended in thi
 turn it on and why. The answer is this machine's, by remote, in `<userData>/agent-unattended.json`
 (`agent.unattended`, `agent.allowUnattended`, UI door only), never in the vault, where a teammate
 could commit it or a run could write it. It turns off at a click, and a follow-up message
-(`agent.message`) to a running Codex job asks again, so a yes taken back stops its next turn. A watched session (Create vault
+(`agent.message`) to a running Codex job asks again, as does each queued turn before it starts, so a yes taken back stops its next turn. A watched session (Create vault
 app's fenced one) is not gated: the person is there and answers its approvals. Even on, give a
 Holi or an automation on Codex only the folders it needs.
 

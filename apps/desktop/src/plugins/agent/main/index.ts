@@ -29,7 +29,7 @@ import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { createPtySessions, parsePastFile, PTY_SESSION_ID } from './host/pty-sessions'
 import { createFencedSessions } from './host/fenced'
 import { createJobs } from './host/jobs'
-import { createUnattendedStore } from './host/unattended'
+import { createUnattendedStore, unattendedRefusal } from './host/unattended'
 import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
 import { openTurnLog } from './host/turn-log'
@@ -152,6 +152,12 @@ export const agentMain: MainPlugin = {
       vault: { remote: ctx.remote, root: ctx.root },
       scratchRoot: join(ctx.userData, 'agent-jobs'),
       bracket: (id, edge) => started.bracket(id, edge),
+      // Each follow-up asks for the vault's yes again.
+      mayRun: async (provider) =>
+        provider.capabilities.jobs.readsAnywhere === true &&
+        !(await unattended.allowed(ctx.remote, provider.id))
+          ? unattendedRefusal(provider.label)
+          : null,
       onChange: (list) => {
         jobRows = list
         pushSessions()
