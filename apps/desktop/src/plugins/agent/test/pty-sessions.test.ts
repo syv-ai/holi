@@ -323,6 +323,26 @@ describe('sessions Holi runs', () => {
     expect((await t.sessions.start('claude', {})).ok).toBe(false)
   })
 
+  it('runs a background provider only for its sign-in, which reads no turns off its terminal', async () => {
+    const background = {} as NonNullable<AgentProvider['capabilities']['background']>
+    const t = setup('codex', undefined, { background })
+    expect((await t.sessions.start('codex', {})).ok).toBe(false)
+
+    const res = await t.sessions.start('codex', { login: true })
+    if (!res.ok) throw new Error(res.message)
+    expect(t.asked[0]?.login).toBe(true)
+    // One sign-in at a time.
+    expect(await t.sessions.start('codex', { login: true })).toEqual(res)
+    t.opened[0]!.onInput?.('/login\r')
+    expect(t.sessions.sessions()).toEqual([
+      expect.objectContaining({ id: res.sessionId, state: 'idle' }),
+    ])
+    expect(t.edges).toEqual([])
+
+    await t.sessions.stop(res.sessionId)
+    expect(t.sessions.sessions()).toEqual([])
+  })
+
   it('runs a fenced one in its folder, copying back before its turn closes, and says when that failed', async () => {
     const t = setup('codex', undefined, { fenced: 'sandbox' })
     let copied!: (copy: FenceCopy) => void

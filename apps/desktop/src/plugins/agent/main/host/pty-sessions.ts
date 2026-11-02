@@ -22,6 +22,14 @@
  * copied back as each turn ends, before the turn's bracket closes, and
  * once more when it exits.
  *
+ * **A sign-in is one too.** A provider whose sessions its supervisor runs
+ * (Claude Code) has no session here but one: the terminal that runs its own
+ * sign-in (`login`). Once signed in that terminal is a working session in the
+ * vault, so it is listed, attached and stopped like the rest while its process
+ * lives. Nothing reports its turns (its hooks name a background job, and it is
+ * none), and its stream is not read for them either: Holi does not infer what
+ * Claude Code is doing, so it reads idle and pauses no sync.
+ *
  * One per vault activation: the agent starts in a vault, and these sessions
  * end when it stops there.
  *
@@ -29,7 +37,14 @@
  */
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { SessionState, SessionSummary } from '../claude/listing'
-import { isProviderId, type AgentProvider, type ProviderId, type VaultRef } from '../provider'
+import {
+  firstSpawnNotice,
+  hasBackground,
+  isProviderId,
+  type AgentProvider,
+  type ProviderId,
+  type VaultRef,
+} from '../provider'
 import { createTurnSignals, type TurnSignals } from './pty-signals'
 import type { ActionResult, Geometry, OpenResult, StartResult } from './sessions'
 import type { AgentTerminals } from './terminals'
@@ -81,7 +96,8 @@ const NAME_MAX = 80
 export interface PtySessionsDeps {
   vault: VaultRef
   /** The agents it may run, read per start: this machine's harnesses
-   *  change while the vault is open. */
+   *  change while the vault is open. One with `background` runs here only
+   *  for its sign-in (`login`). */
   providers(): readonly AgentProvider[]
   terminals: Pick<AgentTerminals, 'open' | 'close' | 'paste' | 'list'>
   /** The vault's turn bracket: sync pauses and the turn is recorded. */
@@ -127,11 +143,13 @@ export interface PtySessions {
   ownsTerminal(terminalId: string): boolean
   /** The session's terminal. */
   terminalOf(id: string): string | null
-  /** A new session of `provider`: its first message `prompt`, or a
-   *  conversation to pick up (`resume`). */
+  /** A new session of `provider`: its first message `prompt`, a
+   *  conversation to pick up (`resume`), or the provider's own sign-in
+   *  (`login`), which is the only session a background provider has here. */
   start(
     provider: ProviderId,
     args: Geometry & {
+      login?: boolean
       name?: string
       prompt?: string
       resume?: string
@@ -163,6 +181,8 @@ interface Session {
   startedAt: number
   terminalId: string
   conversationId?: string
+  /** The terminal that signs its provider in (`login`). */
+  signIn: boolean
   persistConversation: boolean
   /** A notification asked for the person, and nothing was typed since. */
   attention: boolean
@@ -213,6 +233,8 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     return pastQueue as Promise<void>
   }
   const reopening = new Set<string>()
+  /** A sign-in still starting, by provider. */
+  const signingIn = new Map<ProviderId, Promise<StartResult>>()
   const configured = new Map<ProviderId, Promise<{ dir: string } | null>>()
   let lastPushed = ''
 
@@ -245,6 +267,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       ...(s.contextPercent === undefined ? {} : { contextPercent: s.contextPercent }),
       ...(s.model === undefined ? {} : { model: s.model }),
       ...(s.copying ? { copying: true } : {}),
+      ...(s.signIn ? { signIn: true } : {}),
     })),
     ...[...finishedFences.values()].map(({ row }) => row),
   ]
@@ -271,6 +294,232 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   }
 
   const gone = { ok: false as const, message: 'That session has ended.' }
+
+  type StartArgs = Parameters<PtySessions['start']>[1]
+
+  async function startNow(
+    providerId: ProviderId,
+    { login, name, prompt, resume, fence, cols, rows, sessionId, fork }: StartArgs,
+  ): Promise<StartResult> {
+    const provider = deps.providers().find((p) => p.id === providerId)
+    if (provider === undefined) {
+      return {
+        ok: false,
+        message: `${providerId} is not an agent on this machine. Choose one in Settings, General, Agents.`,
+      }
+    }
+    const refused =
+      provider.refuses?.({
+        ...(prompt === undefined ? {} : { prompt }),
+        ...(resume === undefined ? {} : { resume }),
+      }) ?? null
+    if (refused !== null) return { ok: false, message: refused }
+    // Its supervisor runs a background provider's sessions; only the
+    // terminal that signs it in is Holi's.
+    const signIn = login === true
+    if (hasBackground(provider) !== signIn) {
+      return {
+        ok: false,
+        message: signIn
+          ? `${provider.label} signs in inside its sessions.`
+          : `${provider.label} sessions run in the background, not here.`,
+      }
+    }
+    const config = await configure(provider)
+    if (config === null) {
+      return { ok: false, message: `${provider.label} could not be set up for this vault.` }
+    }
+    if (fence !== undefined && provider.capabilities.fenced === undefined) {
+      return { ok: false, message: `${provider.label} cannot run fenced to a folder.` }
+    }
+    if (resume !== undefined && resume !== 'pick' && !CONVERSATION_ID.test(resume)) {
+      return { ok: false, message: 'That is not a valid conversation id.' }
+    }
+    if (fork !== undefined && !CONVERSATION_ID.test(fork)) {
+      return { ok: false, message: 'That is not a valid conversation id.' }
+    }
+    if (sessionId !== undefined && !PTY_SESSION_ID.test(sessionId)) {
+      return { ok: false, message: 'That is not a valid Holi session id.' }
+    }
+    const id = sessionId ?? `p${randomBytes(6).toString('hex')}`
+    if (sessions.has(id)) return { ok: false, message: 'That session is already open.' }
+    const conversationId =
+      resume !== undefined && resume !== 'pick'
+        ? resume
+        : provider.namesConversation === true && (fork !== undefined || resume === undefined)
+          ? randomUUID()
+          : undefined
+    const target = {
+      root: deps.vault.root,
+      configDir: config.dir,
+      // Holi's commands reach the vault: a fenced session has none.
+      binDir: fence === undefined ? deps.binDir() : null,
+    }
+    // Filled in once the terminal exists; its callbacks only run after.
+    let session: Session | null = null
+    const signals = createTurnSignals({
+      ...(deps.idleMs === undefined ? {} : { idleMs: deps.idleMs }),
+      onBegin: () => {
+        if (session !== null) {
+          session.copy = undefined
+          session.copying = false
+        }
+        deps.bracket(id, 'begin')
+        push()
+      },
+      onEnd: () => {
+        const close = (): void => {
+          deps.bracket(id, 'end')
+          push()
+        }
+        // What a fenced turn wrote is in the vault before its turn closes.
+        if (fence === undefined) close()
+        else {
+          if (session !== null) session.copying = true
+          push()
+          void fence
+            .turnEnded()
+            .then((copy) => {
+              if (session !== null && !session.exiting) session.copy = copy
+            })
+            .finally(() => {
+              if (session !== null && !session.exiting) session.copying = false
+              close()
+            })
+        }
+      },
+      onAttention: () => {
+        if (session === null || !signals.inTurn) return
+        session.attention = true
+        push()
+      },
+    })
+    let command: ReturnType<AgentProvider['terminal']>
+    try {
+      command = provider.terminal(target, {
+        session: id,
+        ...(signIn ? { login: true } : {}),
+        ...(fence === undefined ? {} : { fence: { dir: fence.dir, state: fence.state } }),
+        ...(prompt === undefined ? {} : { prompt }),
+        ...(resume === undefined ? {} : { resume }),
+        ...(fork === undefined ? {} : { fork }),
+        ...(conversationId === undefined ? {} : { conversation: conversationId }),
+      })
+    } catch (err) {
+      signals.dispose()
+      return { ok: false, message: (err as Error).message }
+    }
+    const notice = await firstSpawnNotice(provider, config.dir)
+    const opened = deps.terminals.open({
+      remote: deps.vault.remote,
+      cwd: fence?.dir ?? deps.vault.root,
+      command,
+      notInstalled: provider.notInstalled,
+      attach: id,
+      ...(cols === undefined ? {} : { cols }),
+      ...(rows === undefined ? {} : { rows }),
+      ...(notice === undefined ? {} : { notice }),
+      onInput: (data) => {
+        // A sign-in's turns are Claude Code's own: nothing typed is read.
+        if (signIn) return
+        const s = session
+        if (s === null) return
+        // Anything typed answers what was asked, and the turn goes on.
+        if (s.attention) {
+          s.attention = false
+          s.signals.begin()
+          push()
+        }
+        s.signals.input(data)
+      },
+      onOutput: (data) => {
+        if (!signIn) session?.signals.output(data)
+      },
+      onExit: (lastTitle) => {
+        const s = session
+        if (s === null || sessions.get(id) !== s) return
+        const inTurn = s.signals.inTurn
+        s.signals.dispose()
+        if (fence !== undefined) {
+          s.exiting = true
+          s.copying = true
+          push()
+          void fence
+            .exited()
+            .catch((err: unknown): FenceCopy => ({ error: String(err) }))
+            .then((copy) => {
+              if (sessions.get(id) !== s) return
+              if (inTurn) deps.bracket(id, 'forget')
+              sessions.delete(id)
+              const row: SessionSummary = {
+                id,
+                provider: s.provider,
+                name: nameFor(s, lastTitle),
+                state: 'idle',
+                startedAt: s.startedAt,
+                closed: true,
+                outcome: copy.error === undefined ? 'completed' : 'failed',
+                ...(copy.error === undefined ? {} : { error: copy.error }),
+                ...(copy.leftOut === undefined ? {} : { message: copy.leftOut }),
+              }
+              // Keep failures and omissions until the vault is left: the
+              // document may have been closed when the final copy finished.
+              const timer =
+                copy.error === undefined && copy.leftOut === undefined
+                  ? setTimeout(() => {
+                      finishedFences.delete(id)
+                      push()
+                    }, FENCED_RESULT_MS)
+                  : undefined
+              finishedFences.set(id, { row, timer })
+              push()
+            })
+          return
+        }
+        if (inTurn) deps.bracket(id, 'forget')
+        sessions.delete(id)
+        push()
+        if (s.persistConversation && s.conversationId !== undefined) {
+          const closed: SessionSummary = {
+            id: s.id,
+            provider: s.provider,
+            name: nameFor(s, lastTitle),
+            state: 'idle',
+            startedAt: s.startedAt,
+            conversationId: s.conversationId,
+          }
+          void changePast((rows) =>
+            [closed, ...rows.filter((p) => p.id !== s.id)].slice(0, PAST_MAX),
+          )
+        }
+      },
+    })
+    if (!opened.ok) {
+      signals.dispose()
+      return opened
+    }
+    session = {
+      id,
+      provider: provider.id,
+      name:
+        (name === undefined ? null : nameOf(name)) ??
+        (prompt === undefined ? null : nameOf(prompt)),
+      startedAt: Date.now(),
+      terminalId: opened.id,
+      ...(conversationId === undefined ? {} : { conversationId }),
+      signIn,
+      // A fenced session's conversation ran in a scratch folder: reopened
+      // from history it would run on the vault itself, unfenced.
+      persistConversation: resume !== 'pick' && fence === undefined,
+      attention: false,
+      signals,
+    }
+    sessions.set(id, session)
+    // A session started on a prompt is in its first turn already.
+    if (prompt !== undefined && prompt.trim() !== '') signals.begin()
+    push()
+    return { ok: true, sessionId: id, terminalId: opened.id }
+  }
 
   const api: PtySessions = {
     sessions: summaries,
@@ -327,206 +576,20 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     ownsTerminal: (terminalId) => [...sessions.values()].some((s) => s.terminalId === terminalId),
     terminalOf: (id) => sessions.get(id)?.terminalId ?? null,
 
-    async start(providerId, { name, prompt, resume, fence, cols, rows, sessionId, fork }) {
-      const provider = deps.providers().find((p) => p.id === providerId)
-      if (provider === undefined) {
-        return {
-          ok: false,
-          message: `${providerId} is not an agent on this machine. Choose one in Settings, General, Agents.`,
-        }
+    start(providerId, args) {
+      if (args.login !== true) return startNow(providerId, args)
+      // One sign-in at a time: a second ask gets the terminal of the first,
+      // the one still starting included.
+      const running = [...sessions.values()].find((s) => s.signIn && s.provider === providerId)
+      if (running !== undefined) {
+        return Promise.resolve({ ok: true, sessionId: running.id, terminalId: running.terminalId })
       }
-      const refused =
-        provider.refuses?.({
-          ...(prompt === undefined ? {} : { prompt }),
-          ...(resume === undefined ? {} : { resume }),
-        }) ?? null
-      if (refused !== null) return { ok: false, message: refused }
-      const config = await configure(provider)
-      if (config === null) {
-        return { ok: false, message: `${provider.label} could not be set up for this vault.` }
+      let pending = signingIn.get(providerId)
+      if (pending === undefined) {
+        pending = startNow(providerId, args).finally(() => signingIn.delete(providerId))
+        signingIn.set(providerId, pending)
       }
-      if (fence !== undefined && provider.capabilities.fenced === undefined) {
-        return { ok: false, message: `${provider.label} cannot run fenced to a folder.` }
-      }
-      if (resume !== undefined && resume !== 'pick' && !CONVERSATION_ID.test(resume)) {
-        return { ok: false, message: 'That is not a valid conversation id.' }
-      }
-      if (fork !== undefined && !CONVERSATION_ID.test(fork)) {
-        return { ok: false, message: 'That is not a valid conversation id.' }
-      }
-      if (sessionId !== undefined && !PTY_SESSION_ID.test(sessionId)) {
-        return { ok: false, message: 'That is not a valid Holi session id.' }
-      }
-      const id = sessionId ?? `p${randomBytes(6).toString('hex')}`
-      if (sessions.has(id)) return { ok: false, message: 'That session is already open.' }
-      const conversationId =
-        resume !== undefined && resume !== 'pick'
-          ? resume
-          : provider.namesConversation === true && (fork !== undefined || resume === undefined)
-            ? randomUUID()
-            : undefined
-      const target = {
-        root: deps.vault.root,
-        configDir: config.dir,
-        // Holi's commands reach the vault: a fenced session has none.
-        binDir: fence === undefined ? deps.binDir() : null,
-      }
-      // Filled in once the terminal exists; its callbacks only run after.
-      let session: Session | null = null
-      const signals = createTurnSignals({
-        ...(deps.idleMs === undefined ? {} : { idleMs: deps.idleMs }),
-        onBegin: () => {
-          if (session !== null) {
-            session.copy = undefined
-            session.copying = false
-          }
-          deps.bracket(id, 'begin')
-          push()
-        },
-        onEnd: () => {
-          const close = (): void => {
-            deps.bracket(id, 'end')
-            push()
-          }
-          // What a fenced turn wrote is in the vault before its turn closes.
-          if (fence === undefined) close()
-          else {
-            if (session !== null) session.copying = true
-            push()
-            void fence
-              .turnEnded()
-              .then((copy) => {
-                if (session !== null && !session.exiting) session.copy = copy
-              })
-              .finally(() => {
-                if (session !== null && !session.exiting) session.copying = false
-                close()
-              })
-          }
-        },
-        onAttention: () => {
-          if (session === null || !signals.inTurn) return
-          session.attention = true
-          push()
-        },
-      })
-      let command: ReturnType<AgentProvider['terminal']>
-      try {
-        command = provider.terminal(target, {
-          session: id,
-          ...(fence === undefined ? {} : { fence: { dir: fence.dir, state: fence.state } }),
-          ...(prompt === undefined ? {} : { prompt }),
-          ...(resume === undefined ? {} : { resume }),
-          ...(fork === undefined ? {} : { fork }),
-          ...(conversationId === undefined ? {} : { conversation: conversationId }),
-        })
-      } catch (err) {
-        signals.dispose()
-        return { ok: false, message: (err as Error).message }
-      }
-      const opened = deps.terminals.open({
-        remote: deps.vault.remote,
-        cwd: fence?.dir ?? deps.vault.root,
-        command,
-        notInstalled: provider.notInstalled,
-        attach: id,
-        ...(cols === undefined ? {} : { cols }),
-        ...(rows === undefined ? {} : { rows }),
-        onInput: (data) => {
-          const s = session
-          if (s === null) return
-          // Anything typed answers what was asked, and the turn goes on.
-          if (s.attention) {
-            s.attention = false
-            s.signals.begin()
-            push()
-          }
-          s.signals.input(data)
-        },
-        onOutput: (data) => session?.signals.output(data),
-        onExit: (lastTitle) => {
-          const s = session
-          if (s === null || sessions.get(id) !== s) return
-          const inTurn = s.signals.inTurn
-          s.signals.dispose()
-          if (fence !== undefined) {
-            s.exiting = true
-            s.copying = true
-            push()
-            void fence
-              .exited()
-              .catch((err: unknown): FenceCopy => ({ error: String(err) }))
-              .then((copy) => {
-                if (sessions.get(id) !== s) return
-                if (inTurn) deps.bracket(id, 'forget')
-                sessions.delete(id)
-                const row: SessionSummary = {
-                  id,
-                  provider: s.provider,
-                  name: nameFor(s, lastTitle),
-                  state: 'idle',
-                  startedAt: s.startedAt,
-                  closed: true,
-                  outcome: copy.error === undefined ? 'completed' : 'failed',
-                  ...(copy.error === undefined ? {} : { error: copy.error }),
-                  ...(copy.leftOut === undefined ? {} : { message: copy.leftOut }),
-                }
-                // Keep failures and omissions until the vault is left: the
-                // document may have been closed when the final copy finished.
-                const timer =
-                  copy.error === undefined && copy.leftOut === undefined
-                    ? setTimeout(() => {
-                        finishedFences.delete(id)
-                        push()
-                      }, FENCED_RESULT_MS)
-                    : undefined
-                finishedFences.set(id, { row, timer })
-                push()
-              })
-            return
-          }
-          if (inTurn) deps.bracket(id, 'forget')
-          sessions.delete(id)
-          push()
-          if (s.persistConversation && s.conversationId !== undefined) {
-            const closed: SessionSummary = {
-              id: s.id,
-              provider: s.provider,
-              name: nameFor(s, lastTitle),
-              state: 'idle',
-              startedAt: s.startedAt,
-              conversationId: s.conversationId,
-            }
-            void changePast((rows) =>
-              [closed, ...rows.filter((p) => p.id !== s.id)].slice(0, PAST_MAX),
-            )
-          }
-        },
-      })
-      if (!opened.ok) {
-        signals.dispose()
-        return opened
-      }
-      session = {
-        id,
-        provider: provider.id,
-        name:
-          (name === undefined ? null : nameOf(name)) ??
-          (prompt === undefined ? null : nameOf(prompt)),
-        startedAt: Date.now(),
-        terminalId: opened.id,
-        ...(conversationId === undefined ? {} : { conversationId }),
-        // A fenced session's conversation ran in a scratch folder: reopened
-        // from history it would run on the vault itself, unfenced.
-        persistConversation: resume !== 'pick' && fence === undefined,
-        attention: false,
-        signals,
-      }
-      sessions.set(id, session)
-      // A session started on a prompt is in its first turn already.
-      if (prompt !== undefined && prompt.trim() !== '') signals.begin()
-      push()
-      return { ok: true, sessionId: id, terminalId: opened.id }
+      return pending
     },
 
     send(id, text) {
