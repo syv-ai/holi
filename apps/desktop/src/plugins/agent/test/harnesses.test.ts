@@ -426,7 +426,6 @@ describe('provider selection', () => {
       liveRemote: () => 'syv/vault',
       commitNow: async () => null,
       defaultProvider: async () => 'aider',
-      unattended: { allowed: async () => true, set: async () => {} },
     })
     return { table, started }
   }

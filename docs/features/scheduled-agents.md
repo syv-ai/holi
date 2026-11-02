@@ -130,13 +130,12 @@ not enforced, and a `model` used only when it is `provider/model-id`. Turning an
 approves it on this machine's agent: changing the default asks again. The rest of this section is
 Claude Code's.
 
-**An automation runs on Codex only once this machine allows it** for the vault (Settings →
-General → Agents, **Let Codex run unattended in this vault**, after a dialog); until then main
-refuses the run, which is recorded as failed with the reason and where to turn it on. Its sandbox
-bounds what it writes, the schedule's folders, not what it reads: it can read any file on this
-computer and write what it read into the vault's synced folders, so a note from someone untrusted
-could make it publish private data ([agent-sessions](agent-sessions.md), Jobs). Even on, give it
-only the folders it needs.
+**An automation on Codex can read any file on this computer.** Its sandbox bounds what it
+writes, the schedule's folders, not what it reads: it can write what it read into the vault's
+synced folders, so a note from someone untrusted can make it publish private data
+([agent-sessions](agent-sessions.md), Jobs). Settings → General → Agents warns about this beside
+Codex; there is no separate per-vault permission. Give the automation only the writable folders
+it needs.
 
 **A run is a background session** started with `claude --bg`, no terminal, named `<name> · HH:MM`.
 Its first turn is one line Holi adds (the schedule's path, the time, the previous run's time, so a

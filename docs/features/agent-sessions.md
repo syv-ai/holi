@@ -99,19 +99,15 @@ on `provider` or else this machine's `agentProvider`, and one of two bounds.
   turn is recorded under the job's id. A Holi's `model` is Claude Code's and is not passed to
   another agent.
 
-**An unattended Codex run waits for this machine's yes** (`host/unattended.ts`). Its sandbox
-bounds what it writes, not what it reads: a job can read any file on this computer that the person
-can, and write what it read into the vault's synced folders, which are pushed like any edit. So a
-note from someone untrusted, in a folder it reads, could make it publish private data to everyone
-the vault syncs with. So `agent.job` on Codex (a jobs provider marked `readsAnywhere`) is refused
-in main until someone on this machine turns on **Let Codex run unattended in this vault**
-(Settings → General → Agents), after a dialog that says exactly that; the refusal says where to
-turn it on and why. The answer is this machine's, by remote, in `<userData>/agent-unattended.json`
-(`agent.unattended`, `agent.allowUnattended`, UI door only), never in the vault, where a teammate
-could commit it or a run could write it. It turns off at a click, and a follow-up message
-(`agent.message`) to a running Codex job asks again, as does each queued turn before it starts, so a yes taken back stops its next turn. A watched session (Create vault
-app's fenced one) is not gated: the person is there and answers its approvals. Even on, give a
-Holi or an automation on Codex only the folders it needs.
+**Unattended Codex jobs can read the whole computer.** Their sandbox bounds what they write,
+not what they read: a job can read any file on this computer that the person can and write what
+it read into the vault's synced folders, which are pushed like any edit. A note from someone
+untrusted, in a folder it reads, can make it publish private data to everyone the vault syncs
+with. Settings → General → Agents says so beside Codex, as it warns about Pi's unsandboxed
+background runs. There is no separate per-vault permission for Codex jobs: Ask AI, Holis and
+automations run on the selected agent. Give a Holi or automation on Codex only the writable
+folders it needs. A watched session (Create vault app's fenced one) uses Codex's own approval
+prompts.
 
 Codex's job is `codex exec --json --skip-git-repo-check -C <folder> --sandbox workspace-write`
 with `approval_policy="never"`, no network and web search off, on a Codex folder of the job's own
@@ -596,19 +592,12 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 
 - `apps/desktop/src/plugins/agent/main/index.ts`: the plugin's main side; `provider.ts`: the line between the host and
   the agents it runs, the core and the capabilities
-- `apps/desktop/src/plugins/agent/main/harness/`: the harnesses: `record.ts` (the record, its
-  validation, the presets, argv), `registry.ts` (the re-readable registry, presets over the
-  built-in providers, a basic terminal agent per added harness), `signal.ts` (`holi-signal` and
-  its route), `capabilities.ts` (the UI-door verbs Settings uses)
-- `apps/desktop/src/renderer/src/features/settings/pages/agents-card.tsx`, `harness-dialog.tsx`: the
-  Agents card and its form
 - `apps/desktop/src/plugins/agent/main/codex/`: Codex as a provider: the command, the `notify` hook and its route,
   and a run's own Codex folder (`home.ts`)
 - `apps/desktop/src/plugins/agent/main/host/pty-sessions.ts`, `pty-signals.ts`: the sessions Holi runs itself, and
   their turns read off the terminal
 - `apps/desktop/src/plugins/agent/main/host/jobs.ts`: jobs, their scratch folders, events and copy back
 - `apps/desktop/src/plugins/agent/main/host/fenced.ts`: fenced sessions, their folders and copies back
-- `apps/desktop/src/plugins/agent/main/host/unattended.ts`: which vaults this machine lets Codex run unattended in
 - `apps/desktop/src/plugins/agent/main/claude/`: Claude Code as the provider: `cli.ts` (every `claude` command, one
   environment, the binary), `listing.ts` (the listing, state rules, the watch), `routes.ts` (the
   turn, session and status-line routes), `messaging.ts` (the inbox socket writer)

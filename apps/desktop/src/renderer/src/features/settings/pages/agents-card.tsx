@@ -17,7 +17,6 @@ import { EllipsisIcon, PlusIcon } from 'lucide-react'
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
 import {
   Dialog,
   DialogContent,
@@ -78,7 +77,8 @@ interface DefaultAsk {
 /** What each built-in agent is, beside its row. */
 const BUILT_IN_ABOUT: Readonly<Record<string, string>> = {
   claude: "Anthropic's agent. Its sessions keep running in the background.",
-  codex: "OpenAI's agent, signed in as on the command line. Its sessions run while Holi is open.",
+  codex:
+    "OpenAI's agent, signed in as on the command line. Its sessions run while Holi is open. Unattended jobs (Ask AI, Holis and automations) can read any file on this computer and write what they read into synced vault folders.",
   pi: "Pi's coding agent, using your normal configuration and sign-in. Background runs are not sandboxed and can access files beyond the requested document.",
 }
 
@@ -87,72 +87,6 @@ const CUSTOM_ABOUT =
 
 async function agentCall<T>(remote: string, name: string, params: unknown): Promise<T> {
   return (await trpc.cap.run.mutate({ remote, name, paramsJson: JSON.stringify(params) })) as T
-}
-
-/** What a Codex job can do, said before anyone lets one run unwatched. */
-const CODEX_RISK =
-  'A Codex job can read any file on this computer and write what it read into this vault’s synced folders. A note from someone you do not trust could make it publish private data to everyone this vault syncs with.'
-
-/**
- * Whether Codex may run unattended here (Holis, automations): this
- * machine's answer for this vault, which main enforces (`agent.job`). Off until someone turns it on, after a dialog that
- * says what it risks; off again at a click.
- */
-function CodexUnattendedRow({ remote }: { remote: string }) {
-  const [allowed, setAllowed] = useState<boolean | null>(null)
-  const [failed, setFailed] = useState(false)
-  const [asking, setAsking] = useState(false)
-
-  const read = useCallback(() => {
-    setFailed(false)
-    agentCall<boolean>(remote, 'agent.unattended', { provider: 'codex' }).then(
-      (on) => setAllowed(on === true),
-      () => setFailed(true),
-    )
-  }, [remote])
-  useEffect(read, [read])
-
-  const set = async (on: boolean): Promise<void> => {
-    await agentCall(remote, 'agent.allowUnattended', { provider: 'codex', on })
-    setAllowed(on)
-  }
-
-  return (
-    <SettingsFieldRow
-      title="Let Codex run unattended in this vault"
-      htmlFor="codex-unattended"
-      description={
-        failed ? (
-          <span className="text-destructive">Holi could not read this machine’s answer.</span>
-        ) : (
-          'Holis and automations on Codex run only once this is on, on this machine. A Codex job can read any file on this computer.'
-        )
-      }
-    >
-      {failed ? (
-        <Button variant="outline" size="sm" onClick={read}>
-          Retry
-        </Button>
-      ) : (
-        <Switch
-          id="codex-unattended"
-          checked={allowed === true}
-          disabled={allowed === null}
-          onCheckedChange={(on) => (on ? setAsking(true) : void set(false).catch(read))}
-        />
-      )}
-      <ConfirmDialog
-        open={asking}
-        onOpenChange={setAsking}
-        title="Let Codex run unattended in this vault?"
-        description={CODEX_RISK}
-        confirmLabel="Let it run"
-        cancelLabel="Not now"
-        destructive
-        onConfirm={() => set(true)}
-      />
-    </SettingsFieldRow>
-  )
 }
 
 /** The command a harness runs, as one line to read (never to run). */
@@ -371,9 +305,6 @@ export function AgentsCard() {
           </SettingsFieldRow>
         ))
       )}
-      {remote !== null && list.some((v) => v.harness.id === 'codex') ? (
-        <CodexUnattendedRow key={remote} remote={remote} />
-      ) : null}
       <HarnessDialog
         key={`${editing.harness?.id ?? 'new'}-${editing.n}`}
         open={editing.open}

@@ -62,8 +62,19 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
-import { link, lstat, mkdir, open, readdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import {
+  link,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
+import { dirname, join, relative } from 'node:path'
 import { createInterface } from 'node:readline'
 import { isHiddenPath, isSharedContentPath, vaultRelPath, type VaultRelPath } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
@@ -71,7 +82,6 @@ import {
   CapabilityError,
   defaultProbePid,
   readableOrNull,
-  writeAtomic,
   type PidState,
 } from '../../../../main/plugin-api'
 import type { SessionSummary } from '../claude/listing'
@@ -136,10 +146,10 @@ export interface JobsDeps {
   /** The longest a turn runs before it is stopped. */
   maxMs?: number
   log?: (msg: string) => void
-  /** Why `provider` may not start another turn now, or null: asked before
-   *  each follow-up, so a vault's yes taken back meanwhile stops the next
-   *  turn (`unattended.ts`). */
-  mayRun?: (provider: JobsProvider) => Promise<string | null>
+  /** Called after the first hash check: tests inject a concurrent vault edit. */
+  beforeReplace?: (rel: string) => Promise<void> | void
+  /** Called after moving the old file aside: tests write through its open descriptor. */
+  beforePublish?: (rel: string) => Promise<void> | void
   /** Called after each file copied back: tests stop a job mid-copy here. */
   afterWrite?: (rel: string) => Promise<void> | void
 }
@@ -147,8 +157,6 @@ export interface JobsDeps {
 export interface Jobs {
   sessions(): SessionSummary[]
   has(id: string): boolean
-  /** The agent a job runs on, while it runs. */
-  providerOf(id: string): JobsProvider | undefined
   start(spec: JobSpec): Promise<JobResult>
   /** A follow-up to a vault job: a new turn on its thread, now or when the
    *  running one ends. Throws a `CapabilityError` when it cannot take one. */
@@ -551,6 +559,54 @@ export function createJobs(deps: JobsDeps): Jobs {
     }
   }
 
+  /** Move the current file aside atomically, then publish the replacement
+   * only if the name remains free. The moved file is checked before publishing:
+   * a sync write arriving after the caller's hash check is never replaced.
+   * A competing file arriving while the name is free wins as well. */
+  async function replaceKnown(abs: string, rel: VaultRelPath, data: Buffer, before: string) {
+    const hold = await mkdtemp(join(dirname(abs), '.holi-copy-'))
+    const previous = join(hold, 'previous')
+    let moved = false
+    let keep = false
+    try {
+      await rename(abs, previous)
+      moved = true
+      const old = await readRegular(previous)
+      if (old === null || hashOf(old) !== before) throw new Error(collision(rel))
+      await deps.beforePublish?.(rel)
+      // Check an open descriptor's write before publishing the replacement.
+      // A write after this check is the residual race the vault accepts.
+      const after = await readRegular(previous)
+      if (after === null || hashOf(after) !== before) throw new Error(collision(rel))
+      if (!(await createExclusive(abs, data))) throw new Error(collision(rel))
+    } catch (err) {
+      if (moved) {
+        const old = await readRegular(previous)
+        try {
+          // A newly arrived file owns the name; never remove or replace it.
+          await link(previous, abs)
+        } catch (restore) {
+          if ((restore as NodeJS.ErrnoException).code !== 'EEXIST') {
+            keep = true
+            throw new Error(
+              `${String(err)} The previous file is preserved at ${relative(deps.vault.root, previous)}.`,
+            )
+          }
+          // Keep a changed version that could belong to the other writer.
+          if (old === null || hashOf(old) !== before) keep = true
+        }
+      }
+      if (keep) {
+        throw new Error(
+          `${String(err)} The previous file is preserved at ${relative(deps.vault.root, previous)}.`,
+        )
+      }
+      throw err
+    } finally {
+      if (!keep) await rm(hold, { recursive: true, force: true })
+    }
+  }
+
   /**
    * Copy back what the job wrote inside its scope, `app.yaml` last, stopping
    * where a Stop came in. Returns what it wrote and what it left out (not
@@ -648,7 +704,8 @@ export function createJobs(deps: JobsDeps): Jobs {
             `Holi did not copy back what the agent wrote: ${rel} changed in the vault since the agent wrote it, and Holi never writes over it.`,
           )
         }
-        await writeAtomic(deps.vault.root, rel, data)
+        await deps.beforeReplace?.(rel)
+        await replaceKnown(abs, rel, data, before)
       }
       made.set(rel, hash)
       written += 1
@@ -824,21 +881,12 @@ export function createJobs(deps: JobsDeps): Jobs {
     return { ok: true }
   }
 
-  /** Send what is queued as one turn on the job's thread, once the agent may
-   *  still run. */
-  async function followUp(job: Job): Promise<void> {
+  /** Send what is queued as one turn on the job's thread. */
+  function followUp(job: Job): void {
     const place = job.place
     if (place === null || job.thread === undefined || job.queue.length === 0) return
-    // Working from here: what comes in while it asks queues behind it, and a
-    // Stop meanwhile wins.
     delete job.stopped
     job.busy = true
-    const refused = (await deps.mayRun?.(job.provider)) ?? null
-    if (job.stopped !== undefined) return finish(job, 'failed', job.stopped)
-    if (refused !== null) {
-      job.queue = []
-      return finish(job, 'failed', refused)
-    }
     const text = job.queue.join('\n\n')
     job.queue = []
     const started = runTurn(
@@ -1007,7 +1055,6 @@ export function createJobs(deps: JobsDeps): Jobs {
   return {
     sessions: summaries,
     has: (id) => jobs.has(id),
-    providerOf: (id) => jobs.get(id)?.provider,
 
     async start(spec) {
       const begun = begin(spec)

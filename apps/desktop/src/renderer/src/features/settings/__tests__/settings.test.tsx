@@ -81,13 +81,9 @@ const AGENTS = {
   unreadable: null,
 }
 
-/** The agent's capabilities: Codex not yet let run unattended here. */
+/** The agent's harnesses on this machine. */
 const capRun = vi.fn(async (input: { name: string }) =>
-  input.name === 'agent.harnesses'
-    ? AGENTS
-    : input.name === 'agent.unattended'
-      ? false
-      : { ok: true },
+  input.name === 'agent.harnesses' ? AGENTS : { ok: true },
 )
 
 // Every other call the shell makes answers nothing, and never rejects. Two
@@ -301,29 +297,17 @@ test('General says what the repo weighs on GitHub, against what GitHub recommend
   ).toBeTruthy()
 })
 
-test('Codex runs unattended in the vault only after a dialog that says what it risks', async () => {
-  mount({ agent: true })
+test('Codex describes the risk of unattended jobs without a separate switch', async () => {
+  mount()
   fireEvent.keyDown(window, { key: ',', metaKey: true })
-  const toggle = await screen.findByRole('switch', {
-    name: 'Let Codex run unattended in this vault',
-  })
-  await waitFor(() => expect(toggle).not.toBeDisabled())
-  expect(toggle).not.toBeChecked()
-  fireEvent.click(toggle)
-  const dialog = await screen.findByRole('alertdialog')
-  expect(within(dialog).getByText(/read any file on this computer/)).toBeTruthy()
-  expect(capRun).not.toHaveBeenCalledWith(
-    expect.objectContaining({ name: 'agent.allowUnattended' }),
+  const agents = (await screen.findByRole('heading', { level: 2, name: 'Agents' })).closest(
+    'section',
+  )!
+  const codex = within(agents).getByText('Codex').closest('[data-slot="field"]') as HTMLElement
+  expect(within(codex).getByText(/Ask AI, Holis and automations/)).toHaveTextContent(
+    'read any file on this computer and write what they read into synced vault folders',
   )
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Let it run' }))
-  await waitFor(() =>
-    expect(capRun).toHaveBeenCalledWith({
-      remote: 'mara/notes',
-      name: 'agent.allowUnattended',
-      paramsJson: JSON.stringify({ provider: 'codex', on: true }),
-    }),
-  )
-  await waitFor(() => expect(toggle).toBeChecked())
+  expect(within(agents).queryByRole('switch', { name: /Codex/ })).toBeNull()
 })
 
 test("an agent's Edit opens on that agent, every time, and saves it", async () => {

@@ -28,7 +28,6 @@ import { merge3, vaultRelPath, type VaultRelPath } from '@holi/shared'
 import {
   cap,
   CapabilityError,
-  flagParam,
   noParams,
   optionalStringParam,
   paramsObject,
@@ -53,7 +52,6 @@ import {
   type ProviderId,
 } from '../provider'
 import type { FencedSessions } from './fenced'
-import { unattendedRefusal, type UnattendedStore } from './unattended'
 import { jobMayRead, type JobResult, type Jobs, type JobScope } from './jobs'
 import { openTurnLog, type TurnRecord } from './turn-log'
 import type { PtySessions } from './pty-sessions'
@@ -107,15 +105,12 @@ export interface AgentCapabilitiesDeps {
     | 'stop'
   >
   /** The jobs Holi runs for a provider with `jobs`. */
-  jobs: Pick<Jobs, 'sessions' | 'has' | 'providerOf' | 'start' | 'message' | 'stop'>
+  jobs: Pick<Jobs, 'sessions' | 'has' | 'start' | 'message' | 'stop'>
   /** Sessions Holi runs fenced to a folder, for a provider with `fenced`. */
   fenced: Pick<FencedSessions, 'start'>
   /** This machine's agent for the vault (`agentProvider`): what a job runs
    *  on when its caller does not say. */
   defaultProvider(): Promise<ProviderId>
-  /** Which vaults this machine lets an agent whose jobs read the whole disk
-   *  run unattended in (`unattended.ts`). */
-  unattended: UnattendedStore
   /** Every provider, the background one first: this machine's harnesses,
    *  read per call (`../harness/registry.ts`). */
   providers(): readonly AgentProvider[]
@@ -309,38 +304,6 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
           jobs: hasJobs(p),
           resumePicker: !hasBackground(p) && (p.refuses?.({ resume: 'pick' }) ?? null) === null,
         })),
-    }),
-
-    /**
-     * Whether `provider` may run unattended in this vault on this machine:
-     * always, for an agent whose jobs do not read the whole disk; for one that
-     * does (Codex), once someone here allowed it (`unattended.ts`).
-     */
-    'agent.unattended': cap({
-      doors: ['ui'],
-      params: (raw) => ({ provider: providerParam(paramsObject(raw)) ?? 'claude' }),
-      run: async (ctx, { provider: id }): Promise<boolean> => {
-        const provider = deps.providers().find((p) => p.id === id)
-        if (provider === undefined || !hasJobs(provider)) return true
-        if (provider.capabilities.jobs.readsAnywhere !== true) return true
-        return deps.unattended.allowed(ctx.remote, id)
-      },
-    }),
-
-    /** Let `provider` run unattended in this vault on this machine, or stop
-     *  letting it. The UI door alone: Settings asks the person first. */
-    'agent.allowUnattended': cap({
-      doors: ['ui'],
-      params: (raw) => {
-        const p = paramsObject(raw)
-        const provider = providerParam(p)
-        if (provider === undefined) throw new CapabilityError('BAD_REQUEST', 'provider is required')
-        return { provider, on: flagParam(p, 'on') }
-      },
-      run: async (ctx, { provider, on }): Promise<{ ok: true }> => {
-        await deps.unattended.set(ctx.remote, provider, on)
-        return { ok: true }
-      },
     }),
 
     'agent.terminals': cap({
@@ -544,13 +507,6 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
           })
         }
         if (hasJobs(provider)) {
-          // Its jobs can read the whole disk: only once this machine said so.
-          if (
-            provider.capabilities.jobs.readsAnywhere === true &&
-            !(await deps.unattended.allowed(ctx.remote, provider.id))
-          ) {
-            return { ok: false, message: unattendedRefusal(provider.label) }
-          }
           return deps.jobs.start({
             provider,
             ...args,
@@ -699,15 +655,6 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', VAULT_NOT_OPEN)
         // A job takes it as its next turn, queued while one runs.
         if (deps.jobs.has(session)) {
-          // Each turn is a run of its own: a yes taken back since it started
-          // stops the next.
-          const provider = deps.jobs.providerOf(session)
-          if (
-            provider?.capabilities.jobs.readsAnywhere === true &&
-            !(await deps.unattended.allowed(ctx.remote, provider.id))
-          ) {
-            throw new CapabilityError('FORBIDDEN', unattendedRefusal(provider.label))
-          }
           deps.jobs.message(session, text)
           return { ok: true }
         }

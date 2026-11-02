@@ -40,6 +40,8 @@ export const PTY_SESSION_ID = /^p[0-9a-f]{12}$/
 export const CONVERSATION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const PAST_MAX = 50
+/** A fenced terminal is gone, but its final copy result remains readable. */
+const FENCED_RESULT_MS = 10 * 60_000
 
 interface PastStore {
   read(): Promise<SessionSummary[]>
@@ -109,8 +111,8 @@ export interface Fence {
   state: string
   /** A turn ended: copy back what it wrote, and say how that went. */
   turnEnded(): Promise<FenceCopy>
-  /** The session's process exited. */
-  exited(): void
+  /** The session's process exited; report its final copy before losing the row. */
+  exited(): Promise<FenceCopy>
 }
 
 export interface PtySessions {
@@ -169,6 +171,8 @@ interface Session {
   copy?: FenceCopy
   contextPercent?: number
   model?: string
+  copying?: boolean
+  exiting?: boolean
 }
 
 /**
@@ -184,6 +188,10 @@ export function nameOf(text: string): string | null {
 export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   const log = deps.log ?? ((msg: string) => console.log(`[agent-pty] ${msg}`))
   const sessions = new Map<string, Session>()
+  const finishedFences = new Map<
+    string,
+    { row: SessionSummary; timer?: ReturnType<typeof setTimeout> }
+  >()
   const memoryPast: PastStore = (() => {
     let rows: SessionSummary[] = []
     return {
@@ -209,7 +217,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   let lastPushed = ''
 
   const stateOf = (s: Session): SessionState =>
-    s.attention ? 'needs-you' : s.signals.inTurn ? 'working' : 'idle'
+    s.copying ? 'working' : s.attention ? 'needs-you' : s.signals.inTurn ? 'working' : 'idle'
 
   /** A session's name: what Holi was told, else the title its program set. */
   const nameFor = (s: Session, lastTitle?: string): string => {
@@ -222,8 +230,8 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     return title === '' ? NEW_SESSION : title
   }
 
-  const summaries = (): SessionSummary[] =>
-    [...sessions.values()].map((s) => ({
+  const summaries = (): SessionSummary[] => [
+    ...[...sessions.values()].map((s) => ({
       id: s.id,
       provider: s.provider,
       name: nameFor(s),
@@ -236,7 +244,10 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       ...(s.copy?.leftOut === undefined ? {} : { message: s.copy.leftOut }),
       ...(s.contextPercent === undefined ? {} : { contextPercent: s.contextPercent }),
       ...(s.model === undefined ? {} : { model: s.model }),
-    }))
+      ...(s.copying ? { copying: true } : {}),
+    })),
+    ...[...finishedFences.values()].map(({ row }) => row),
+  ]
 
   function push(): void {
     const next = summaries()
@@ -365,6 +376,10 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       const signals = createTurnSignals({
         ...(deps.idleMs === undefined ? {} : { idleMs: deps.idleMs }),
         onBegin: () => {
+          if (session !== null) {
+            session.copy = undefined
+            session.copying = false
+          }
           deps.bracket(id, 'begin')
           push()
         },
@@ -376,12 +391,17 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
           // What a fenced turn wrote is in the vault before its turn closes.
           if (fence === undefined) close()
           else {
+            if (session !== null) session.copying = true
+            push()
             void fence
               .turnEnded()
               .then((copy) => {
-                if (session !== null) session.copy = copy
+                if (session !== null && !session.exiting) session.copy = copy
               })
-              .finally(close)
+              .finally(() => {
+                if (session !== null && !session.exiting) session.copying = false
+                close()
+              })
           }
         },
         onAttention: () => {
@@ -425,11 +445,47 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         },
         onOutput: (data) => session?.signals.output(data),
         onExit: (lastTitle) => {
-          fence?.exited()
           const s = session
           if (s === null || sessions.get(id) !== s) return
-          if (s.signals.inTurn) deps.bracket(id, 'forget')
+          const inTurn = s.signals.inTurn
           s.signals.dispose()
+          if (fence !== undefined) {
+            s.exiting = true
+            s.copying = true
+            push()
+            void fence
+              .exited()
+              .catch((err: unknown): FenceCopy => ({ error: String(err) }))
+              .then((copy) => {
+                if (sessions.get(id) !== s) return
+                if (inTurn) deps.bracket(id, 'forget')
+                sessions.delete(id)
+                const row: SessionSummary = {
+                  id,
+                  provider: s.provider,
+                  name: nameFor(s, lastTitle),
+                  state: 'idle',
+                  startedAt: s.startedAt,
+                  closed: true,
+                  outcome: copy.error === undefined ? 'completed' : 'failed',
+                  ...(copy.error === undefined ? {} : { error: copy.error }),
+                  ...(copy.leftOut === undefined ? {} : { message: copy.leftOut }),
+                }
+                // Keep failures and omissions until the vault is left: the
+                // document may have been closed when the final copy finished.
+                const timer =
+                  copy.error === undefined && copy.leftOut === undefined
+                    ? setTimeout(() => {
+                        finishedFences.delete(id)
+                        push()
+                      }, FENCED_RESULT_MS)
+                    : undefined
+                finishedFences.set(id, { row, timer })
+                push()
+              })
+            return
+          }
+          if (inTurn) deps.bracket(id, 'forget')
           sessions.delete(id)
           push()
           if (s.persistConversation && s.conversationId !== undefined) {
@@ -522,6 +578,8 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       await pastQueue
       for (const s of sessions.values()) s.signals.dispose()
       sessions.clear()
+      for (const { timer } of finishedFences.values()) if (timer) clearTimeout(timer)
+      finishedFences.clear()
       push()
     },
   }
