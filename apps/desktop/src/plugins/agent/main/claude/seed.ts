@@ -152,7 +152,8 @@ const AGENT_SETTINGS: SettingsFragment = {
     // Network egress: the user still approves each one, it just does not
     // slip through unasked. The automations plugin adds its own rules.
     ask: ['Bash(curl:*)', 'Bash(wget:*)'],
-    // The memory lint and `holi comments list` only read, so they run unasked.
+    // The memory lint, `holi comments list` and `holi agent version` only
+    // read, so they run unasked.
     // `holi agent notify` is an inbox entry, a banner and a log line on this
     // machine, `holi agent log` the line alone. Asking first would stop an
     // unattended run at a prompt nobody sees, which is the opposite of telling
@@ -161,6 +162,7 @@ const AGENT_SETTINGS: SettingsFragment = {
       'Bash(node .claude/skills/memory/lint.mjs:*)',
       'Bash(holi agent notify:*)',
       'Bash(holi agent log:*)',
+      'Bash(holi agent version:*)',
       'Bash(holi comments list:*)',
     ],
     // Claude Code tools with no job in a vault: notebooks, plan mode,

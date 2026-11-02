@@ -48,12 +48,13 @@ import { INBOX_FILE, parseInbox } from './inbox/rules'
 import { sweepAgentMemory, SWEEP_EVERY_MS } from './memory/sweep'
 import type { SessionSummary } from './claude/listing'
 import { hasBackground } from './provider'
+import { versionCapabilities } from './version'
 
 export const agentMain: MainPlugin = {
   info: AGENT_INFO,
   seed: claudeSeed,
   async activate(ctx) {
-    const { nativeTheme } = await import('electron')
+    const { app, nativeTheme } = await import('electron')
     // This machine's agents: the built-in three, each reading its preset as
     // it runs, and the ones a person added in Settings
     // (docs/features/agent-sessions.md, Harnesses).
@@ -237,6 +238,7 @@ export const agentMain: MainPlugin = {
         root: () => (liveRemote() === ctx.remote ? ctx.root : null),
         changed: () => ctx.emit(ctx.remote, 'providers', null),
       }),
+      ...versionCapabilities({ holi: app.getVersion() }),
     })
     const unwatchNeedsYou = watchNeedsYou({
       sessions: started,
