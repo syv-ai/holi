@@ -12,7 +12,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { emptyVaultSnapshot } from '@holi/shared'
+import { emptyVaultSnapshot, type AgentProviderId } from '@holi/shared'
 import { jsonFileStore } from '../../../main/plugin-api'
 import { scheduleCapabilities } from '../main/capabilities'
 import {
@@ -34,7 +34,7 @@ let clock: Date
 let launched: {
   name: string
   prompt: string
-  provider: 'claude' | 'codex' | 'pi'
+  provider: AgentProviderId
   model?: string
   allow?: readonly string[]
   system?: string

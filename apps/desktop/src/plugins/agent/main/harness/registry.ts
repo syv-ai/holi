@@ -1,6 +1,6 @@
 /**
  * This machine's agents, as one re-readable registry
- * (docs/features/agent-sessions.md, Harnesses): the two built-in providers,
+ * (docs/features/agent-sessions.md, Harnesses): the three built-in providers,
  * each kept once and reading its preset as it runs, then a basic terminal
  * agent for each harness a person added.
  *

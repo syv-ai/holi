@@ -188,6 +188,7 @@ async function registry(store = memoryStore(), keepBad?: () => Promise<void>) {
     builtIns: {
       claude: (current) => withPreset(builtIn('claude'), current),
       codex: (current) => withPreset(builtIn('codex'), current),
+      pi: (current) => withPreset(builtIn('pi'), current),
     },
   })
 }
@@ -196,10 +197,10 @@ describe('the harness registry', () => {
   it('lists the presets first, then what was added, and re-reads its file', async () => {
     const store = memoryStore()
     const reg = await registry(store)
-    expect(reg.providers().map((p) => p.id)).toEqual(['claude', 'codex'])
+    expect(reg.providers().map((p) => p.id)).toEqual(['claude', 'codex', 'pi'])
     await store.update(() => ({ version: 1, harnesses: [AIDER] }))
     await reg.reload()
-    expect(reg.providers().map((p) => p.id)).toEqual(['claude', 'codex', 'aider'])
+    expect(reg.providers().map((p) => p.id)).toEqual(['claude', 'codex', 'pi', 'aider'])
   })
 
   it('adds once per id, and refuses to change one that is not there', async () => {
@@ -255,6 +256,7 @@ describe('the harness registry', () => {
       builtIns: {
         claude: (_current, bin) => ({ ...builtIn('claude'), installed: () => bin() !== null }),
         codex: () => builtIn('codex'),
+        pi: () => builtIn('pi'),
       },
     })
     expect(reg.resolve('claude')).toBe('/opt/holi-claude')
@@ -289,7 +291,7 @@ describe('the harness registry', () => {
   it('removes one that was added', async () => {
     const reg = await registry(memoryStore({ version: 1, harnesses: [AIDER] }))
     await reg.remove('aider')
-    expect(reg.providers().map((p) => p.id)).toEqual(['claude', 'codex'])
+    expect(reg.providers().map((p) => p.id)).toEqual(['claude', 'codex', 'pi'])
     await expect(reg.remove('aider')).rejects.toThrow(/no agent/)
   })
 })

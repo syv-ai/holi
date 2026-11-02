@@ -4,7 +4,7 @@
  * command lines it needs for what that agent supports.
  *
  * The record is `<userData>/agent-harnesses.json`, this machine's alone: which
- * CLIs are installed is the machine's, never the vault's. The two built-in
+ * CLIs are installed is the machine's, never the vault's. The three built-in
  * agents are presets in it, shown and editable in their command fields,
  * keeping their real integrations (`integration`); one a person adds has no
  * integration and is a basic terminal agent.

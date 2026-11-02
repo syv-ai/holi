@@ -58,6 +58,13 @@ const AGENTS = {
       unattended: null,
     },
     {
+      harness: { id: 'pi', label: 'Pi', integration: 'pi', command: { bin: 'pi', args: [] } },
+      builtIn: true,
+      edited: false,
+      path: '/usr/local/bin/pi',
+      unattended: null,
+    },
+    {
       harness: {
         id: 'aider',
         label: 'Aider',

@@ -104,7 +104,8 @@ describe('sessions Holi runs', () => {
         },
         {
           id: 'p0123456789ab',
-          provider: 'unknown',
+          // Any harness slug is an agent's id; this is none.
+          provider: 'Not an agent!',
           name: 'Bad provider',
           state: 'idle',
           startedAt: 1,
