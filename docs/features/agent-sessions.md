@@ -1,7 +1,7 @@
 # Agent sessions
 
-The vault assistant is a coding agent run as it runs itself, in a terminal: Claude Code or Codex
-so far, one **provider** each. A session is the agent's own TUI, never a re-drawing of it, so any
+The vault assistant is a coding agent run as it runs itself, in a terminal: Claude Code, Codex,
+or Pi, one **provider** each. A session is the agent's own TUI, never a re-drawing of it, so any
 agent with a CLI can be one. Holi opens terminals onto sessions, reads what they are doing from
 signals rather than from their text, keeps its own git out of their way, shows what each turn
 changed, and hands them merge conflicts. Configuration is in [agent-config.md](agent-config.md).
@@ -12,11 +12,11 @@ A provider (`agent/main/provider.ts`) is everything one agent owns: the command 
 its per-vault directory, what it seeds. **Its core is enough to run it in a tab**; the rest are
 **capabilities**, and the UI offers a feature only when the session's provider has it:
 
-| Capability   | What it gives                                                                    | Claude Code                | Codex                    |
-| ------------ | -------------------------------------------------------------------------------- | -------------------------- | ------------------------ |
-| `background` | sessions its own supervisor runs, which outlive a terminal and can run unwatched | `claude --bg`              | no                       |
-| `turns`      | hook routes that report a turn's start and end                                   | `UserPromptSubmit`, `Stop` | turn ends, from `notify` |
-| `status`     | how full the context is, and the model                                           | the status line            | no                       |
+| Capability   | What it gives                                                                    | Claude Code                | Codex                    | Pi  |
+| ------------ | -------------------------------------------------------------------------------- | -------------------------- | ------------------------ | --- |
+| `background` | sessions its own supervisor runs, which outlive a terminal and can run unwatched | `claude --bg`              | no                       | no  |
+| `turns`      | hook routes that report a turn's start and end                                   | `UserPromptSubmit`, `Stop` | turn ends, from `notify` | no  |
+| `status`     | how full the context is, and the model                                           | the status line            | no                       | no  |
 
 **Two kinds of session, one list.** A background provider's sessions are its supervisor's, keyed
 by its job id (the rest of this page). Any other provider's are **sessions Holi runs itself**
@@ -46,9 +46,12 @@ Sessions +, opens `codex resume`, Codex's own picker.
 
 **Which agent a new session runs** is this machine's `agentProvider` (`app.local.yaml`; the
 **Agents** card in Settings → General, a row per agent with **Make default**): which agent is installed and signed in is the machine's, not the
-vault's. The menu on the Sessions + picks another for one session. **Holis and automations always
-run Claude Code**: their runs start with nobody watching, which needs `background`, and
-`agent.launch` refuses a provider without it.
+vault's. The menu on the Sessions + picks another for one session. **Holis and automations run
+on the default agent** when it supports unattended work: Claude Code uses its background
+supervisor, and Pi uses a Holi-managed RPC process. Codex cannot run these jobs yet, so
+`agent.launch` refuses it. Changing the default requires fresh approval for Holis and
+automations. Pi's runs use the person's normal filesystem permissions, without a sandbox
+or per-tool approval prompts; their configured `allow` rules are not enforced.
 
 ## How it works
 
