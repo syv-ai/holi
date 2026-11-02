@@ -198,7 +198,7 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   `comments list|add|reply|resolve|reopen`, `community path`, `pdf comments|typst`, `google agenda|search|read|mark-read|star|archive|trash|draft|send|reply|schedule|reschedule|unschedule`, `tasks list|complete`,
   `store list|get|put|delete|check`,
   `docs list|read|inspect|render|open|screenshot|create|update|delete|settle`, `sync status`,
-  `agent sessions|notify|log|message`, `schedules list|disable|run` (turning one on is the
+  `agent sessions|notify|log|message|version`, `schedules list|disable|run` (turning one on is the
   Automations editor's alone), `holis list|report`,
   `vault members|recents`. The registry's reads the agent already has as Grep, Read and git
   (search, history, settings) stay app-only rather than grow a second way in. The script is
@@ -211,7 +211,8 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
 - `holi pdf render` for PDF export, the same render as Convert to PDF, and `holi pdf typst`, which prints the Typst binary's path ([pdf.md](pdf.md)).
 - Shipped skills: the agent's `memory`, `notify`, `note-comments`, `show-the-user`
   (`holi docs open` and `holi docs screenshot`), `theme` and `holi-feedback` (a GitHub issue on syv-ai/holi,
-  labelled `vault-assistant`, through `.github/ISSUE_TEMPLATE/vault-assistant.yml`); the Tasks
+  labelled `vault-assistant`, through `.github/ISSUE_TEMPLATE/vault-assistant.yml`, left
+  unassigned for the team to triage, its context from `holi agent version`); the Tasks
   plugin's `using-tasks`, the automations plugin's `scheduled-agents`, the Holis plugin's `holis`,
   the apps plugin's `vault-apps`, the links plugin's `using-links`, Google's `gmail-calendar`, and
   PDF's `md-to-pdf` and `pdf-comments`.

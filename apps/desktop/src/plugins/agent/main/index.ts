@@ -42,12 +42,13 @@ import { INBOX_FILE, parseInbox } from './inbox/rules'
 import { sweepAgentMemory, SWEEP_EVERY_MS } from './memory/sweep'
 import type { SessionSummary } from './claude/listing'
 import { hasBackground } from './provider'
+import { versionCapabilities } from './version'
 
 export const agentMain: MainPlugin = {
   info: AGENT_INFO,
   seed: claudeSeed,
   async activate(ctx) {
-    const { nativeTheme } = await import('electron')
+    const { app, nativeTheme } = await import('electron')
     const claude = claudeProvider({
       userData: ctx.userData,
       holiBin: () => join(ctx.binDir(), 'holi'),
@@ -184,6 +185,7 @@ export const agentMain: MainPlugin = {
         defaultProvider: async () => (await readVaultSettings(ctx.root)).agentProvider,
       }),
       ...inboxCapabilities({ inbox, liveRemote }),
+      ...versionCapabilities({ holi: app.getVersion() }),
     })
     const unwatchNeedsYou = watchNeedsYou({
       sessions: started,
