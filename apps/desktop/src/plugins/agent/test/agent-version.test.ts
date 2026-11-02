@@ -2,7 +2,10 @@
  * `holi agent version`: Holi's version and the Claude Code one, which is
  * `unknown` whenever Claude Code cannot say.
  */
-import { describe, expect, it } from 'vitest'
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
 import type { CapabilityContext } from '../../../main/capabilities/registry'
 import { versionCapabilities } from '../main/version'
 
@@ -27,8 +30,42 @@ describe('agent.version', () => {
     expect(text).toBe('Holi 0.5.0\nClaude Code 2.1.312')
   })
 
+  it('uses Holi’s Claude binary even when the Dock PATH cannot find it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'holi-agent-version-'))
+    const bin = join(dir, 'claude')
+    try {
+      await writeFile(bin, '#!/bin/sh\n')
+      await chmod(bin, 0o755)
+      vi.stubEnv('HOLI_CLAUDE_BIN', bin)
+      vi.stubEnv('PATH', '/nonexistent')
+      const asked: string[][] = []
+      const text = await versionText({
+        holi: '0.5.0',
+        run: async (resolvedBin, args) => {
+          asked.push([resolvedBin, ...args])
+          return '2.1.312 (Claude Code)\n'
+        },
+      })
+      expect(asked).toEqual([[bin, '--version']])
+      expect(text).toBe('Holi 0.5.0\nClaude Code 2.1.312')
+    } finally {
+      vi.unstubAllEnvs()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it('says unknown when claude is not on this machine', async () => {
     const text = await versionText({ holi: '0.5.0', claudeBin: () => null })
+    expect(text).toBe('Holi 0.5.0\nClaude Code unknown')
+  })
+
+  it('says unknown when the resolver cannot inspect the binary', async () => {
+    const text = await versionText({
+      holi: '0.5.0',
+      claudeBin: () => {
+        throw new Error('access denied')
+      },
+    })
     expect(text).toBe('Holi 0.5.0\nClaude Code unknown')
   })
 

@@ -54,9 +54,9 @@ export const versionCapabilities = (deps: VersionDeps) => {
   const run = deps.run ?? defaultRun
 
   async function claudeCode(): Promise<string> {
-    const bin = claudeBin()
-    if (bin === null) return 'unknown'
     try {
+      const bin = claudeBin()
+      if (bin === null) return 'unknown'
       // `2.1.312 (Claude Code)`: the name is said once, in the text below.
       const out = await run(bin, ['--version'], VERSION_TIMEOUT_MS)
       const line = (out.trim().split('\n')[0] ?? '').replace(/\s*\(Claude Code\)$/, '')
