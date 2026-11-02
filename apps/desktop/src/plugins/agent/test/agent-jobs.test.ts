@@ -13,7 +13,6 @@ import { codexProvider, fenceArgs, jobArgs, readJobEvent } from '../main/codex'
 import { createFencedSessions } from '../main/host/fenced'
 import type { Fence } from '../main/host/pty-sessions'
 import { agentCapabilities, scopeRules } from '../main/host/capabilities'
-import { createUnattendedStore, unattendedRefusal } from '../main/host/unattended'
 import {
   createJobs,
   inWriteScope,
@@ -569,7 +568,6 @@ describe('agent.job', () => {
       liveRemote: () => 'syv/vault',
       commitNow: async () => null,
       defaultProvider: async () => 'claude' as const,
-      unattended: { allowed: async () => true, set: async () => {} },
     })
     const ctx = { remote: 'syv/vault', root: '/v' } as unknown as CapabilityContext
     const entry = caps['agent.job']
@@ -683,7 +681,7 @@ describe('a job in the vault', () => {
     event({ type: 'turn.completed', usage: { input_tokens: 400, output_tokens: 100 } }),
   ].join('\n')
 
-  async function vaultRig(mayRun?: () => Promise<string | null>) {
+  async function vaultRig() {
     const root = await temp('holi-job-vault-')
     const userData = await temp('holi-job-data-')
     const first = join(userData, 'first.js')
@@ -698,7 +696,6 @@ describe('a job in the vault', () => {
       bracket: (id, edge) => edges.push(`${edge}:${id}`),
       killGraceMs: 200,
       log: () => {},
-      ...(mayRun === undefined ? {} : { mayRun }),
     })
     return { root, jobs, edges, ...turns(first, next) }
   }
@@ -800,27 +797,6 @@ describe('a job in the vault', () => {
       write: ['a'],
     })
     expect(vaultSandbox(['Bash(holi holis delete:*)']).ok).toBe(false)
-  })
-
-  it('asks again before a queued follow-up, and runs none it may not', async () => {
-    let refusal: string | null = null
-    const { jobs, provider, runs } = await vaultRig(async () => refusal)
-    const started = await jobs.start({ provider, name: 'x', prompt: 'go', allow: ['Edit(a/**)'] })
-    const id = (started as { sessionId: string }).sessionId
-    // Queued while the first turn runs, then the yes is taken back.
-    jobs.message(id, 'one more')
-    refusal = 'Not unattended here.'
-    const row = await vi.waitFor(
-      () => {
-        const r = jobs.sessions().find((s) => s.id === id)
-        if (r?.outcome !== 'failed') throw new Error('still running')
-        return r
-      },
-      { timeout: 5_000 },
-    )
-    expect(row).toMatchObject({ state: 'idle', error: 'Not unattended here.' })
-    expect(runs).toHaveLength(1)
-    await jobs.leave()
   })
 
   it('takes no message while it is being stopped, and starts no turn after', async () => {
@@ -935,7 +911,6 @@ describe('agent.job in the vault', () => {
       liveRemote: () => 'syv/vault',
       commitNow: async () => null,
       defaultProvider: async () => fallback,
-      unattended: { allowed: async () => true, set: async () => {} },
     })
     const ctx = { remote: 'syv/vault', root: '/v' } as unknown as CapabilityContext
     const entry = caps['agent.job']
@@ -977,15 +952,14 @@ describe('agent.job in the vault', () => {
   })
 })
 
-describe('an unattended Codex run', () => {
+describe('Codex jobs without a per-vault grant', () => {
   const codex = {
     id: 'codex',
     label: 'Codex',
-    capabilities: { jobs: { readsAnywhere: true } },
+    capabilities: { jobs: {} },
   } as unknown as AgentProvider
 
-  async function gate() {
-    const unattended = createUnattendedStore(join(await temp('holi-unattended-'), 'u.json'))
+  function table() {
     const start = vi.fn(async () => ({ ok: true as const, sessionId: 'j0123456789ab' }))
     const message = vi.fn()
     const caps = agentCapabilities({
@@ -995,7 +969,6 @@ describe('an unattended Codex run', () => {
         start,
         message,
         has: (id: string) => id === 'j0123456789ab',
-        providerOf: () => codex,
       } as never,
       fenced: {} as never,
       providers: [codex],
@@ -1003,57 +976,38 @@ describe('an unattended Codex run', () => {
       liveRemote: () => 'syv/vault',
       commitNow: async () => null,
       defaultProvider: async () => 'codex',
-      unattended,
     })
     const ctx = { remote: 'syv/vault', root: '/v' } as unknown as CapabilityContext
-    const call = <
-      K extends 'agent.job' | 'agent.unattended' | 'agent.allowUnattended' | 'agent.message',
-    >(
-      name: K,
-      p: unknown,
-    ) => (caps[name].run as (c: unknown, a: unknown) => Promise<unknown>)(ctx, caps[name].params(p))
-    return { call, start, message, unattended }
+    const call = <K extends 'agent.job' | 'agent.message'>(name: K, p: unknown) =>
+      (caps[name].run as (c: unknown, a: unknown) => Promise<unknown>)(ctx, caps[name].params(p))
+    return { call, start, message }
   }
 
-  const RUN = { name: 'Proposal', prompt: 'Go.', allow: ['Edit(tilbud/**)'] }
-
-  it('is refused in main until this machine allows it for the vault, and says how and why', async () => {
-    const { call, start, unattended } = await gate()
-    expect(await call('agent.unattended', { provider: 'codex' })).toBe(false)
-    expect(await call('agent.job', RUN)).toEqual({
-      ok: false,
-      message: unattendedRefusal('Codex'),
+  it('starts an Ask AI document job without asking for a vault grant', async () => {
+    const { call, start } = table()
+    const scope = { read: ['notes/Plan.md'], write: ['notes/Plan.md'] }
+    expect(await call('agent.job', { name: 'Ask AI', prompt: 'Rewrite this.', scope })).toEqual({
+      ok: true,
+      sessionId: 'j0123456789ab',
     })
-    expect(unattendedRefusal('Codex')).toMatch(/Settings, General, Agents/)
-    expect(unattendedRefusal('Codex')).toMatch(/read any file on this computer/)
-    expect(start).not.toHaveBeenCalled()
-
-    // Another vault's yes is not this one's.
-    await unattended.set('syv/other', 'codex', true)
-    expect(await call('agent.job', RUN)).toMatchObject({ ok: false })
-
-    await call('agent.allowUnattended', { provider: 'codex', on: true })
-    expect(await call('agent.unattended', { provider: 'codex' })).toBe(true)
-    expect(await call('agent.job', RUN)).toEqual({ ok: true, sessionId: 'j0123456789ab' })
-
-    await call('agent.allowUnattended', { provider: 'codex', on: false })
-    expect(await call('agent.job', RUN)).toMatchObject({ ok: false })
-    expect(start).toHaveBeenCalledOnce()
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ provider: codex, scope }))
   })
 
-  it('takes no follow-up once the vault’s yes is taken back', async () => {
-    const { call, message } = await gate()
-    await call('agent.allowUnattended', { provider: 'codex', on: true })
+  it('starts a vault job and takes a follow-up without asking for a grant', async () => {
+    const { call, start, message } = table()
+    expect(
+      await call('agent.job', {
+        name: 'Proposal',
+        prompt: 'Go.',
+        allow: ['Edit(tilbud/**)'],
+      }),
+    ).toEqual({ ok: true, sessionId: 'j0123456789ab' })
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: codex, allow: ['Edit(tilbud/**)'] }),
+    )
     const next = { session: 'j0123456789ab', text: 'And the summary.' }
     expect(await call('agent.message', next)).toEqual({ ok: true })
-    await call('agent.allowUnattended', { provider: 'codex', on: false })
-    await expect(call('agent.message', next)).rejects.toThrow(unattendedRefusal('Codex'))
-    expect(message).toHaveBeenCalledOnce()
-  })
-
-  it('is what Codex declares', () => {
-    const real = codexProvider({ resolveBin: () => '/usr/local/bin/codex' }) as JobsProvider
-    expect(real.capabilities.jobs.readsAnywhere).toBe(true)
+    expect(message).toHaveBeenCalledWith('j0123456789ab', next.text)
   })
 })
 
@@ -1091,7 +1045,6 @@ describe('agent.scoped', () => {
       liveRemote: () => 'syv/vault',
       commitNow: async () => null,
       defaultProvider: async () => 'claude',
-      unattended: { allowed: async () => true, set: async () => {} },
     })
     const ctx = { remote: 'syv/vault', root: '/v' } as unknown as CapabilityContext
     const entry = caps['agent.scoped']

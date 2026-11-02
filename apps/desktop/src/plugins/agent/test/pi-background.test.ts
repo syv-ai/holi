@@ -68,7 +68,6 @@ describe('Pi background runs', () => {
       jobs: { has: () => false, sessions: () => [] } as never,
       fenced: {} as never,
       defaultProvider: async () => 'claude',
-      unattended: {} as never,
       providers: [
         { id: 'claude', installed: () => true },
         { id: 'pi', installed: () => true },
@@ -120,7 +119,6 @@ describe('Pi background runs', () => {
       jobs: { has: () => false, sessions: () => [] } as never,
       fenced: {} as never,
       defaultProvider: async () => 'claude',
-      unattended: {} as never,
       providers: [] as never,
       terminals: {} as never,
       liveRemote: () => 'owner/vault',

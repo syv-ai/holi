@@ -24,11 +24,6 @@ const write = vi.fn(async (_input: unknown) => ({
   warnings: [] as string[],
 }))
 
-/** The agent's capabilities: Codex not yet let run unattended here. */
-const capRun = vi.fn(async ({ name }: { name: string }) =>
-  name === 'agent.unattended' ? false : { ok: true },
-)
-
 const SETTINGS: ResolvedVaultSettings = {
   ...VAULT_SETTING_DEFAULTS,
   warnings: [],
@@ -50,8 +45,7 @@ vi.mock('@/lib/trpc', () => {
             : null
   const procedure = (name: string) => ({
     query: async () => answer(name),
-    mutate:
-      name === 'settings.write' ? write : name === 'cap.run' ? capRun : async () => ({ ok: true }),
+    mutate: name === 'settings.write' ? write : async () => ({ ok: true }),
     subscribe: () => ({ unsubscribe() {} }),
   })
   const router = (routerName: string) =>
@@ -99,13 +93,7 @@ const CONNECTIONS: RendererPlugin = {
   ],
 }
 
-/** The plugin that provides the agent, as far as Settings can tell. */
-const AGENT_PLUGIN = {
-  info: { id: 'stand-in', label: 'Stand-in', default: true },
-  agent: { name: 'Claude' },
-} as never
-
-function mount({ agent = false }: { agent?: boolean } = {}) {
+function mount() {
   const store = createStore()
   store.set(activeRemoteAtom, 'mara/notes')
   store.set(vaultsAtom, [
@@ -117,7 +105,7 @@ function mount({ agent = false }: { agent?: boolean } = {}) {
     },
   ] as never)
   store.set(snapshotAtom, emptyVaultSnapshot())
-  store.set(installedPluginsAtom, agent ? [CONNECTIONS, AGENT_PLUGIN] : [CONNECTIONS])
+  store.set(installedPluginsAtom, [CONNECTIONS])
   store.set(vaultSettingsAtom, { remote: 'mara/notes', settings: SETTINGS })
   render(
     <Provider store={store}>
@@ -129,7 +117,6 @@ function mount({ agent = false }: { agent?: boolean } = {}) {
 
 beforeEach(() => {
   write.mockClear()
-  capRun.mockClear()
 })
 
 test('⌘, opens Settings as a tab, its nav in place of the files', async () => {
@@ -245,27 +232,15 @@ test('General says what the repo weighs on GitHub, against what GitHub recommend
   ).toBeTruthy()
 })
 
-test('Codex runs unattended in the vault only after a dialog that says what it risks', async () => {
-  mount({ agent: true })
+test('Codex describes the risk of unattended jobs without a separate switch', async () => {
+  mount()
   fireEvent.keyDown(window, { key: ',', metaKey: true })
-  const toggle = await screen.findByRole('switch', {
-    name: 'Let Codex run unattended in this vault',
-  })
-  await waitFor(() => expect(toggle).not.toBeDisabled())
-  expect(toggle).not.toBeChecked()
-  fireEvent.click(toggle)
-  const dialog = await screen.findByRole('alertdialog')
-  expect(within(dialog).getByText(/read any file on this computer/)).toBeTruthy()
-  expect(capRun).not.toHaveBeenCalledWith(
-    expect.objectContaining({ name: 'agent.allowUnattended' }),
+  const agents = (await screen.findByRole('heading', { level: 2, name: 'Agents' })).closest(
+    'section',
+  )!
+  const codex = within(agents).getByText('Codex').closest('[data-slot="field"]') as HTMLElement
+  expect(within(codex).getByText(/Ask AI, Holis and automations/)).toHaveTextContent(
+    'read any file on this computer and write what they read into synced vault folders',
   )
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Let it run' }))
-  await waitFor(() =>
-    expect(capRun).toHaveBeenCalledWith({
-      remote: 'mara/notes',
-      name: 'agent.allowUnattended',
-      paramsJson: JSON.stringify({ provider: 'codex', on: true }),
-    }),
-  )
-  await waitFor(() => expect(toggle).toBeChecked())
+  expect(within(agents).queryByRole('switch', { name: /Codex/ })).toBeNull()
 })
