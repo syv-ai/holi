@@ -75,7 +75,10 @@ Beside each folder is `<id>.pid`; one a crash left behind is killed at the next 
 pid still leads a group whose command names the folder. **A new folder is never written over**: a
 `folder/**` in the write scope (Create vault app's `<name>.app`) must not be in the vault when the
 run starts, or it does not start; and a copy into it is refused, writing nothing of it, when it
-holds anything this run did not write there, as when sync brought the same app in meanwhile.
+holds anything this run did not write there, as when sync brought the same app in meanwhile. Each
+new file is linked into place, which fails when its name is taken, so one that arrives after that
+check is not written over either: the copy stops there and says so. A file the run was given or
+wrote before is written over only while the vault still holds exactly that, read again just before.
 
 **Codex's own folder for a run.** A `-c mcp_servers={}` override does not clear the servers the
 person's `config.toml` names (Codex 0.166.0 still lists them), so a job and a fenced session run
@@ -112,7 +115,9 @@ content, no symlink followed, `app.yaml` last, the same caps, never over a new f
 else made). A file it was given or wrote at an earlier turn is written again only when it changed
 it since, and then only while the vault still holds what it was given or wrote: a file someone
 edited or deleted meanwhile refuses the copy, and nothing of that turn is written. A job's one
-copy back holds to the same for the files it was given. All this happens before the turn's bracket closes so the turn review shows it. The folder is deleted when the process exits, and every folder when the
+copy back holds to the same for the files it was given. A copy that fails puts the session's row
+in `outcome: failed` with why as its `error` (the document's pill shows it), and what one left out
+is its `message`, until the next copy. All this happens before the turn's bracket closes so the turn review shows it. The folder is deleted when the process exits, and every folder when the
 agent leaves the vault or starts. A provider with neither is refused, never run on another agent:
 Pi has no `jobs`, so a job asked of Pi is refused. The document menu's and the file tree's **Create vault app** ([editor](editor.md)) is its caller.
 

@@ -153,6 +153,8 @@ export function useDocumentAgent(path: string) {
       }
       return
     }
+    // What its copy back left out, kept for the words if the app never comes.
+    if (row.message !== undefined && row.message !== run.message) update({ message: row.message })
     if (row.outcome === 'failed') {
       update({
         status: 'failed',
@@ -186,7 +188,13 @@ export function useDocumentAgent(path: string) {
     }
     if (!run.ended) return
     const timer = window.setTimeout(
-      () => update({ status: 'failed', message: `${run.agent} finished without making the app.` }),
+      () =>
+        update({
+          status: 'failed',
+          message: [`${run.agent} finished without making the app.`, run.message]
+            .filter(Boolean)
+            .join(' '),
+        }),
       APP_SETTLE_MS,
     )
     return () => window.clearTimeout(timer)

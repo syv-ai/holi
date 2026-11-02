@@ -93,13 +93,20 @@ export interface PtySessionsDeps {
   log?: (msg: string) => void
 }
 
+/** How a fenced session's copy back went: why it failed, or what it left
+ *  out. Its row carries it (`outcome`/`error`, `message`) until the next. */
+export interface FenceCopy {
+  error?: string
+  leftOut?: string
+}
+
 /** A session fenced to a folder of Holi's (`fenced.ts`). @public: kept for its test. */
 export interface Fence {
   dir: string
   /** A folder of Holi's outside `dir` for the agent's own state. */
   state: string
-  /** A turn ended: copy back what it wrote. */
-  turnEnded(): Promise<void>
+  /** A turn ended: copy back what it wrote, and say how that went. */
+  turnEnded(): Promise<FenceCopy>
   /** The session's process exited. */
   exited(): void
 }
@@ -151,6 +158,8 @@ interface Session {
   /** A notification asked for the person, and nothing was typed since. */
   attention: boolean
   signals: TurnSignals
+  /** How its last copy back went, when it is fenced. */
+  copy?: FenceCopy
 }
 
 /**
@@ -213,6 +222,9 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       ...(s.attention ? { waitingFor: 'an answer' } : {}),
       startedAt: s.startedAt,
       ...(s.conversationId === undefined ? {} : { conversationId: s.conversationId }),
+      // A fenced session whose writes did not reach the vault says why.
+      ...(s.copy?.error === undefined ? {} : { outcome: 'failed' as const, error: s.copy.error }),
+      ...(s.copy?.leftOut === undefined ? {} : { message: s.copy.leftOut }),
     }))
 
   function push(): void {
@@ -343,7 +355,14 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
           }
           // What a fenced turn wrote is in the vault before its turn closes.
           if (fence === undefined) close()
-          else void fence.turnEnded().finally(close)
+          else {
+            void fence
+              .turnEnded()
+              .then((copy) => {
+                if (session !== null) session.copy = copy
+              })
+              .finally(close)
+          }
         },
         onAttention: () => {
           if (session === null || !signals.inTurn) return

@@ -5,6 +5,7 @@ import {
   nameOf,
   parsePastFile,
   PTY_SESSION_ID,
+  type FenceCopy,
 } from '../main/host/pty-sessions'
 import type { OpenArgs } from '../main/host/terminals'
 import type { AgentProvider, TerminalOpts } from '../main/provider'
@@ -321,14 +322,14 @@ describe('sessions Holi runs', () => {
     expect((await t.sessions.start('claude', {})).ok).toBe(false)
   })
 
-  it('runs a fenced one in its folder, copying back before its turn closes', async () => {
+  it('runs a fenced one in its folder, copying back before its turn closes, and says when that failed', async () => {
     const t = setup('codex', undefined, { fenced: 'sandbox' })
-    let copied!: () => void
+    let copied!: (copy: FenceCopy) => void
     const fence = {
       dir: '/scratch/abc',
       state: '/scratch/abc.agent',
       turnEnded: vi.fn(() => {
-        return new Promise<void>((resolve) => (copied = resolve))
+        return new Promise<FenceCopy>((resolve) => (copied = resolve))
       }),
       exited: vi.fn(),
     }
@@ -342,10 +343,17 @@ describe('sessions Holi runs', () => {
     t.sessions.noteTurn(res.sessionId, false)
     expect(fence.turnEnded).toHaveBeenCalledOnce()
     expect(t.edges).toEqual([`begin:${res.sessionId}`])
-    copied()
+    const error = 'Holi did not copy back notes/Plan.app/app.yaml: something else put it there.'
+    copied({ error, leftOut: 'Holi left out what it may not write: notes/Plan.app/.env.' })
     await vi.waitFor(() =>
       expect(t.edges).toEqual([`begin:${res.sessionId}`, `end:${res.sessionId}`]),
     )
+    // Its row says why its writes did not reach the vault.
+    expect(t.sessions.sessions()[0]).toMatchObject({
+      outcome: 'failed',
+      error,
+      message: 'Holi left out what it may not write: notes/Plan.app/.env.',
+    })
 
     await t.sessions.stop(res.sessionId)
     expect(fence.exited).toHaveBeenCalledOnce()
@@ -356,7 +364,7 @@ describe('sessions Holi runs', () => {
     const fence = {
       dir: '/scratch/abc',
       state: '/scratch/abc.agent',
-      turnEnded: async () => {},
+      turnEnded: async () => ({}),
       exited: () => {},
     }
     expect(await t.sessions.start('codex', { prompt: 'x', fence })).toEqual({
