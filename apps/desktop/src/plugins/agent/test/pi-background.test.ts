@@ -1,5 +1,5 @@
 import { PassThrough } from 'node:stream'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PiChild } from '../main/pi/rpc'
 import { createPiBackground } from '../main/pi/background'
 import { agentCapabilities } from '../main/host/capabilities'
@@ -34,19 +34,25 @@ function fake() {
       }
     }
   })
+  let onExit: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined
+  let killed = false
   const child: PiChild = {
     stdin,
     stdout,
     stderr,
-    once() {
+    once(event, listener) {
+      if (event === 'exit') onExit = listener as typeof onExit
       return this
     },
     kill() {
+      killed = true
       return true
     },
   }
-  return { child, stdout, commands }
+  return { child, stdout, commands, exit: () => onExit?.(0, null), wasKilled: () => killed }
 }
+
+afterEach(() => vi.useRealTimers())
 
 describe('Pi background runs', () => {
   it('keeps Claude as the default launch provider and dispatches explicit Pi launches', async () => {
@@ -188,11 +194,46 @@ describe('Pi background runs', () => {
         contextPercent: 13,
       },
     ])
+    rpc.exit()
     await expect(manager.message(id, 'Follow up')).rejects.toThrow(/process exited/)
-    await expect(manager.stop(id)).resolves.toMatchObject({ ok: true })
+    await expect(manager.stop(id)).resolves.toMatchObject({ ok: false })
     await manager.leave()
     expect(brackets).toEqual(['begin', 'end'])
     expect(manager.sessions()).toEqual([])
+  })
+
+  it('keeps a successful Pi process available for follow-ups, then expires it and its row', async () => {
+    vi.useFakeTimers()
+    const rpc = fake()
+    const manager = createPiBackground({
+      bin: () => '/usr/bin/pi',
+      spawn: () => rpc.child,
+      bracket: () => {},
+      changed: () => {},
+    })
+    manager.setVault('owner/vault', '/vault')
+    const started = await manager.launch({ name: 'x', prompt: 'first' })
+    if (!started.ok) throw new Error(started.message)
+    rpc.stdout.write('{"type":"agent_settled","aborted":false}\n')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(manager.sessions()[0]?.outcome).toBe('completed')
+    expect(manager.sessions()).toHaveLength(1)
+
+    await manager.message(started.sessionId, 'second')
+    await Promise.resolve()
+    expect(rpc.commands.filter((command) => command.type === 'prompt')).toHaveLength(2)
+    rpc.stdout.write('{"type":"agent_settled","aborted":false}\n')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(manager.sessions()[0]?.outcome).toBe('completed')
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(rpc.wasKilled()).toBe(true)
+    expect(manager.sessions()).toEqual([])
+    await expect(manager.message(started.sessionId, 'too late')).rejects.toThrow(
+      /no running Pi session/,
+    )
+    await manager.leave()
   })
 
   it('uses the sanitized environment for managed RPC Pi', async () => {

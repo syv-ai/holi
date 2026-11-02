@@ -226,7 +226,9 @@ export function useDocumentAgent(path: string) {
         update({ status: 'stopped', message: 'The active vault changed before the agent started.' })
         return
       }
-      const provider = settings.agentProvider
+      // Codex cannot run unattended jobs yet. Keep Ask AI available by using
+      // Claude for that default; Pi remains explicitly routed to Pi.
+      const provider = settings.agentProvider === 'codex' ? 'claude' : settings.agentProvider
       update({ provider })
       const result = await capability<
         { ok: true; sessionId: string } | { ok: false; message: string }

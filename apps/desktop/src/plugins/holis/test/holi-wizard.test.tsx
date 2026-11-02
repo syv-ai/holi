@@ -136,6 +136,27 @@ test('walks the steps and creates a Holi, then asks for approval', async () => {
   expect(await screen.findByText('Run Proposal on this machine?')).toBeTruthy()
 })
 
+test('Pi approval warns that allow rules do not constrain tools or mail', async () => {
+  const store = createStore()
+  store.set(activeRemoteAtom, 'o/vault')
+  store.set(pendingApprovalAtom, {
+    holi: { ...made, provider: 'pi', allow: ['Bash(mail:*)'] },
+    path: 'kunder/a.md',
+  })
+  render(
+    <Provider store={store}>
+      <ApproveHoliDialog />
+    </Provider>,
+  )
+
+  const warning = await screen.findByText(/This runs with Pi\./)
+  expect(warning).toHaveTextContent(/allow` rules are not enforced by Pi/)
+  expect(warning).toHaveTextContent('no per-tool approval prompts')
+  expect(warning).toHaveTextContent('including sending mail')
+  expect(screen.getByText('Configured allow rules (not enforced)')).toBeTruthy()
+  expect(screen.queryByText('Nothing: it asks before each action.')).toBeNull()
+})
+
 test('a refusal from main stays in the wizard, with Try again', async () => {
   create.mockRejectedValue(new Error('There is already a Holi called captain.'))
   const store = setup('create')

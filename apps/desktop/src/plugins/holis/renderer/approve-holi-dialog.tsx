@@ -67,21 +67,23 @@ export function ApproveHoliDialog(): React.JSX.Element | null {
               {holi.status === 'changed'
                 ? 'What it does changed since you approved it here, by a pull or by an edit. Read it again.'
                 : 'It is a file in the vault, which anyone who can push can change. Approving runs what it says now; a change asks again.'}{' '}
-              {path === undefined ? (
-                'It asks you before anything its rules do not allow.'
-              ) : (
+              {path !== undefined && (
                 <>
                   It starts on <code className="font-mono text-xs">{path}</code>, in the Agents
-                  view, and asks you before anything its rules do not allow.
+                  view.{' '}
                 </>
-              )}{' '}
-              Its memory is notes its runs keep, and is not part of what you approve.
-              {holi.provider === 'pi' && (
+              )}
+              {holi.provider === 'pi' ? (
                 <>
-                  {' '}
-                  This approval is for Pi, which runs with your normal filesystem permissions and is
-                  not sandboxed to the requested document. It can read and change other files your
-                  account can access.
+                  This runs with Pi. The `allow` rules are not enforced by Pi; it has no per-tool
+                  approval prompts, so it may act without asking, including sending mail. Pi also
+                  runs with your normal filesystem permissions and is not sandboxed to the requested
+                  document. It can read and change other files your account can access.
+                </>
+              ) : (
+                <>
+                  It asks you before anything its rules do not allow. Its memory is notes its runs
+                  keep, and is not part of what you approve.
                 </>
               )}
             </p>
@@ -90,8 +92,26 @@ export function ApproveHoliDialog(): React.JSX.Element | null {
                 {holi.soul === undefined || holi.soul === '' ? 'Empty.' : holi.soul}
               </p>
             </Part>
-            <Part label="Allowed without asking">
-              {allow.length === 0 ? (
+            <Part
+              label={
+                holi.provider === 'pi'
+                  ? 'Configured allow rules (not enforced)'
+                  : 'Allowed without asking'
+              }
+            >
+              {holi.provider === 'pi' ? (
+                allow.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No rules configured.</p>
+                ) : (
+                  <p className="rounded-xl bg-foreground/[0.04] p-2.5 font-mono text-xs leading-relaxed">
+                    {allow.map((r) => (
+                      <span key={r} className="block">
+                        {r}
+                      </span>
+                    ))}
+                  </p>
+                )
+              ) : allow.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   Nothing: it asks before each action.
                 </p>

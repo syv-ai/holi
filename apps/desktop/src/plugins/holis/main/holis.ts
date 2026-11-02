@@ -463,7 +463,10 @@ export function createHolis(deps: HolisDeps): Holis {
     return found
   }
 
-  async function approvedEntry(vault: HolisVault, ref: string): Promise<ValidEntry> {
+  async function approvedEntry(
+    vault: HolisVault,
+    ref: string,
+  ): Promise<{ entry: ValidEntry; provider: AgentProviderId }> {
     const entry = valid(find(await readHolis(vault.root), ref))
     const provider = await deps.provider(vault.root)
     const status = statusOf(entry, (await stateOf(vault.remote))[entry.path], provider)
@@ -476,7 +479,7 @@ export function createHolis(deps: HolisDeps): Holis {
           : `${name} is not approved on this machine yet.`,
       )
     }
-    return entry
+    return { entry, provider }
   }
 
   async function systemFor(vault: HolisVault, entry: ValidEntry, sent: boolean): Promise<string> {
@@ -513,7 +516,7 @@ export function createHolis(deps: HolisDeps): Holis {
     },
 
     async send(vault, ref, path) {
-      const entry = await approvedEntry(vault, ref)
+      const { entry, provider } = await approvedEntry(vault, ref)
       const def = entry.parsed.def
       if (!holiAccepts(def, path)) {
         throw new CapabilityError('BAD_REQUEST', `${def.name} does not take ${path}.`)
@@ -524,7 +527,8 @@ export function createHolis(deps: HolisDeps): Holis {
       sending.add(entry.path)
       try {
         const base = path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/, '')
-        const provider = await deps.provider(vault.root)
+        // Keep the provider whose fingerprint was checked above; resolving
+        // settings again here could switch to an unapproved provider.
         // Legacy Holi model aliases are Claude-specific; Pi accepts explicit
         // provider/model-id values and otherwise uses its configured default.
         const model = provider === 'pi' && !def.model?.includes('/') ? undefined : def.model

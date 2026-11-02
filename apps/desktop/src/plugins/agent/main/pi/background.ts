@@ -134,12 +134,12 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     deps.bracket(job.id, result.status === 'completed' ? 'end' : 'forget')
     deps.changed()
     if (result.status === 'completed') {
-      // A completed run no longer needs a resident Pi process. Keep its final
-      // summary briefly so turn-end consumers can observe the result, then
-      // drop the Sessions row rather than retaining it for the vault lifetime.
-      job.run.close()
+      // Keep the RPC process available for a follow-up during a bounded idle
+      // window. The completed snapshot above remains observable to consumers.
+      if (job.retentionTimer) clearTimeout(job.retentionTimer)
       job.retentionTimer = setTimeout(() => {
         if (jobs.get(job.id) !== job || job.busy) return
+        job.run.close()
         jobs.delete(job.id)
         deps.changed()
       }, 30_000)
@@ -162,7 +162,14 @@ export function createPiBackground(deps: PiBackgroundDeps) {
         throw new Error(`no running Pi session ${id}`)
       if (job.busy) job.run.followUp(text)
       else {
-        if (!job.run.isAlive) throw new Error(`Pi RPC process exited before the follow-up`)
+        if (!job.run.isAlive) {
+          if (job.retentionTimer) clearTimeout(job.retentionTimer)
+          jobs.delete(job.id)
+          deps.changed()
+          throw new Error(`Pi RPC process exited before the follow-up`)
+        }
+        if (job.retentionTimer) clearTimeout(job.retentionTimer)
+        job.retentionTimer = undefined
         deps.bracket(job.id, 'begin')
         void runTurn(job, text)
       }
@@ -173,7 +180,10 @@ export function createPiBackground(deps: PiBackgroundDeps) {
         return { ok: false as const, message: 'That session has ended.' }
       if (job.retentionTimer) clearTimeout(job.retentionTimer)
       if (job.busy) job.run.cancel()
-      else job.run.close()
+      else {
+        job.run.close()
+        jobs.delete(job.id)
+      }
       job.state = 'idle'
       job.outcome = 'aborted'
       deps.changed()
