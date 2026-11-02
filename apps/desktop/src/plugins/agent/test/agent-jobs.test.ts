@@ -1103,7 +1103,11 @@ describe('agent.scoped', () => {
 })
 
 describe('a fenced session', () => {
-  async function fencedRig(release?: (state: string) => Promise<void>, scope: JobScope = SCOPE) {
+  async function fencedRig(
+    release?: (state: string) => Promise<void>,
+    scope: JobScope = SCOPE,
+    beforeReplace?: (rel: string) => Promise<void> | void,
+  ) {
     const root = await temp('holi-fenced-vault-')
     const userData = await temp('holi-fenced-data-')
     await mkdir(join(root, 'notes'), { recursive: true })
@@ -1112,6 +1116,7 @@ describe('a fenced session', () => {
       vault: { remote: 'syv/vault', root },
       scratchRoot: join(userData, 'agent-jobs'),
       onChange: () => {},
+      ...(beforeReplace === undefined ? {} : { beforeReplace }),
       log: () => {},
     })
     let fence: Fence | undefined
@@ -1206,6 +1211,27 @@ describe('a fenced session', () => {
     expect(await readFile(join(root, 'notes/Plan.app/app.yaml'), 'utf8')).toBe(
       'description: Theirs\n',
     )
+  })
+
+  it('preserves an existing app file changed after the last hash check', async () => {
+    let rootPath = ''
+    let inject = false
+    const { root, fence } = await fencedRig(undefined, SCOPE, async (rel) => {
+      if (inject && rel === 'notes/Plan.app/index.html') {
+        await writeFile(join(rootPath, rel), '<h1>Theirs</h1>')
+      }
+    })
+    rootPath = root
+    await mkdir(join(fence.dir, 'notes/Plan.app'), { recursive: true })
+    await writeFile(join(fence.dir, 'notes/Plan.app/index.html'), '<h1>First</h1>')
+    await writeFile(join(fence.dir, 'notes/Plan.app/app.yaml'), 'description: First\n')
+    await fence.turnEnded()
+    await writeFile(join(fence.dir, 'notes/Plan.app/index.html'), '<h1>Second</h1>')
+    inject = true
+    const result = await fence.turnEnded()
+    expect(result.error).toMatch(/did not copy back notes\/Plan.app\/index.html/)
+    expect(await readFile(join(root, 'notes/Plan.app/index.html'), 'utf8')).toBe('<h1>Theirs</h1>')
+    expect((await readdir(join(root, 'notes/Plan.app'))).sort()).toEqual(['app.yaml', 'index.html'])
   })
 
   it('never writes over a file it was given that someone changed in the vault meanwhile', async () => {
