@@ -51,6 +51,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  document.querySelectorAll('[role="dialog"]').forEach((dialog) => dialog.remove())
   window.localStorage.clear()
   vi.unstubAllGlobals()
 })
@@ -58,31 +59,57 @@ afterEach(() => {
 describe('ReadyUpdateDialog', () => {
   test('shows ready version and saves Later once per version and channel', async () => {
     mount()
-    expect(await screen.findByRole('dialog', { name: 'Holi 1.1.0 is ready' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('alertdialog', { name: 'Holi 1.1.0 is ready' }),
+    ).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Later' }))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(window.localStorage.getItem('holi:ready-update-dismissed:stable:1.1.0')).toBe('true')
 
     mount()
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
 
     mount({ ...ready, channel: 'dev' })
-    expect(await screen.findByRole('dialog', { name: 'Holi 1.1.0 is ready' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('alertdialog', { name: 'Holi 1.1.0 is ready' }),
+    ).toBeInTheDocument()
+  })
+
+  test('waits until another dialog closes before presenting the update prompt', async () => {
+    const otherDialog = document.createElement('div')
+    otherDialog.setAttribute('role', 'dialog')
+    otherDialog.textContent = 'Other dialog'
+    document.body.append(otherDialog)
+    mount()
+    expect(
+      screen.queryByRole('alertdialog', { name: 'Holi 1.1.0 is ready' }),
+    ).not.toBeInTheDocument()
+
+    otherDialog.remove()
+    expect(
+      await screen.findByRole('alertdialog', { name: 'Holi 1.1.0 is ready' }),
+    ).toBeInTheDocument()
+  })
+
+  test('does not focus Later by default when the prompt opens', async () => {
+    mount()
+    await screen.findByRole('alertdialog', { name: 'Holi 1.1.0 is ready' })
+    expect(screen.getByRole('button', { name: 'Later' })).not.toHaveFocus()
   })
 
   test('waits for a hidden-at-login native window even when the document is visible', async () => {
     nativeVisible = false
     expect(document.visibilityState).toBe('visible')
     const store = mount()
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
 
     sendVisibility(true)
-    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
 
     act(() =>
       store.set(updateStatusAtom, { ...ready, state: 'available', lastError: 'download failed' }),
     )
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
   })
 
   test('ignores a stale initial visibility answer after a show event', async () => {
@@ -90,9 +117,9 @@ describe('ReadyUpdateDialog', () => {
     window.holi.window.isVisible = () => new Promise((resolve) => (answer = resolve))
     mount()
     sendVisibility(true)
-    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
     answer(false)
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
   })
 
   test('Restart now uses the existing guarded install action', async () => {
@@ -109,7 +136,7 @@ describe('ReadyUpdateDialog', () => {
 
   test('drops a stale ready candidate after changing channels', async () => {
     const store = mount()
-    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
     act(() =>
       store.set(updateStatusAtom, {
         ...ready,
@@ -118,8 +145,10 @@ describe('ReadyUpdateDialog', () => {
         availableVersion: null,
       }),
     )
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
     act(() => store.set(updateStatusAtom, { ...ready, channel: 'dev', availableVersion: '1.2.0' }))
-    expect(await screen.findByRole('dialog', { name: 'Holi 1.2.0 is ready' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('alertdialog', { name: 'Holi 1.2.0 is ready' }),
+    ).toBeInTheDocument()
   })
 })
