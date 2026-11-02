@@ -89,6 +89,9 @@ declare global {
        *  traffic lights. Returns its unsubscribe. */
       window: {
         onFullScreen(cb: (fullScreen: boolean) => void): () => void
+        /** Native visibility, including a window created hidden at login. */
+        onVisible(cb: (visible: boolean) => void): () => void
+        isVisible(): Promise<boolean>
       }
       /** The activity log, a line at a time as main writes it. Returns its
        *  unsubscribe. */

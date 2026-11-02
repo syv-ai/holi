@@ -105,6 +105,7 @@ const onTerminalContext = pushChannel<unknown>('terminal:context')
 /** The window went in or out of fullscreen. macOS hides the traffic lights
  *  there, so the band the sidebar keeps for them can go. */
 const onFullScreen = pushChannel<boolean>('window:fullscreen')
+const onVisible = pushChannel<boolean>('window:visible')
 
 /** The ONE seam between renderer and main (architecture §3). */
 contextBridge.exposeInMainWorld('holi', {
@@ -140,6 +141,8 @@ contextBridge.exposeInMainWorld('holi', {
   },
   window: {
     onFullScreen,
+    onVisible,
+    isVisible: (): Promise<boolean> => ipcRenderer.invoke('window:is-visible'),
   },
   activity: {
     onEntry: onActivityEntry,

@@ -3,6 +3,7 @@ import { Provider, createStore } from 'jotai'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from '@/App'
+import { ReadyUpdateDialog } from '@/features/shell/ready-update-dialog'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { flushAllBuffers } from '@/lib/buffer-registry'
 import { stampPlatform } from '@/lib/platform'
@@ -49,6 +50,7 @@ createRoot(document.getElementById('root')!).render(
     <Provider store={store}>
       <TooltipProvider>
         <App />
+        <ReadyUpdateDialog />
       </TooltipProvider>
     </Provider>
   </React.StrictMode>,
