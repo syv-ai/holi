@@ -146,8 +146,10 @@ export interface JobsDeps {
   /** The longest a turn runs before it is stopped. */
   maxMs?: number
   log?: (msg: string) => void
-  /** Called after the last hash check: tests inject a concurrent vault edit. */
+  /** Called after the first hash check: tests inject a concurrent vault edit. */
   beforeReplace?: (rel: string) => Promise<void> | void
+  /** Called after moving the old file aside: tests write through its open descriptor. */
+  beforePublish?: (rel: string) => Promise<void> | void
   /** Called after each file copied back: tests stop a job mid-copy here. */
   afterWrite?: (rel: string) => Promise<void> | void
 }
@@ -571,10 +573,12 @@ export function createJobs(deps: JobsDeps): Jobs {
       moved = true
       const old = await readRegular(previous)
       if (old === null || hashOf(old) !== before) throw new Error(collision(rel))
-      if (!(await createExclusive(abs, data))) throw new Error(collision(rel))
-      // A writer holding the old file open can still change it after the move.
+      await deps.beforePublish?.(rel)
+      // Check an open descriptor's write before publishing the replacement.
+      // A write after this check is the residual race the vault accepts.
       const after = await readRegular(previous)
       if (after === null || hashOf(after) !== before) throw new Error(collision(rel))
+      if (!(await createExclusive(abs, data))) throw new Error(collision(rel))
     } catch (err) {
       if (moved) {
         const old = await readRegular(previous)

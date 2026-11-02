@@ -63,7 +63,7 @@ const NOT_INSTALLED =
   'Codex CLI not found on PATH. Install it (https://developers.openai.com/codex/cli) and restart Holi.'
 
 /** `HOLI_CODEX_BIN` when set, else `codex` on `PATH`. */
-function resolveCodexBin(env: NodeJS.ProcessEnv = process.env): string | null {
+export function resolveCodexBin(env: NodeJS.ProcessEnv = process.env): string | null {
   const override = env.HOLI_CODEX_BIN
   if (override) {
     try {
@@ -292,11 +292,17 @@ export function readJobEvent(line: string): JobEvent | null {
 export interface CodexProviderDeps {
   resolveBin?: () => string | null
   /** The environment Codex runs from, `CODEX_HOME` and its keys among it. */
-  env?: NodeJS.ProcessEnv
+  base?: NodeJS.ProcessEnv
+  /** The environment its preset sets, which its jobs get too: the person
+   *  set it on purpose (a key, a config folder). */
+  env?: () => Record<string, string>
 }
 
 export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
-  const base = deps.env ?? process.env
+  const base = deps.base ?? process.env
+  /** Where the person's Codex folder is: their environment, then the
+   *  preset's (a `CODEX_HOME` it sets). */
+  const person = (): NodeJS.ProcessEnv => ({ ...base, ...deps.env?.() })
   const bin = deps.resolveBin ?? (() => resolveCodexBin(base))
   return {
     id: 'codex',
@@ -304,7 +310,7 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
     notInstalled: NOT_INSTALLED,
     installed: () => bin() !== null,
     // Codex keeps its own home; Holi has nothing to provision in it.
-    configure: async () => ({ dir: personCodexHome(base) }),
+    configure: async () => ({ dir: personCodexHome(person()) }),
     terminal(target, opts = {}) {
       const path = bin()
       if (path === null) return null
@@ -317,7 +323,7 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
       // it and the vault are untrusted (`home.ts` says why).
       if (opts.fence !== undefined) {
         const { dir, state } = opts.fence
-        env.CODEX_HOME = prepareCodexHome(state, [dir, dirname(dir), target.root], base)
+        env.CODEX_HOME = prepareCodexHome(state, [dir, dirname(dir), target.root], person())
       }
       const asked = opts.prompt === undefined || opts.prompt.trim() === '' ? undefined : opts.prompt
       return {
@@ -346,7 +352,7 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
         env,
       }
     },
-    release: (state) => releaseCodexHome(state, base),
+    release: (state) => releaseCodexHome(state, person()),
     capabilities: {
       turns: { routes: registerCodexRoutes },
       fenced: 'sandbox',
@@ -358,12 +364,18 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
           // nothing of Holi's, only the folders its sandbox lets it write.
           // Its sandbox can still read the disk; what a scratch job hands the
           // vault is what Holi copies back. Its Codex folder is its own, with
-          // no MCP servers, and a follow-up finds its thread there.
-          const env = buildAgentEnv(base)
+          // no MCP servers, and a follow-up finds its thread there; a
+          // `CODEX_HOME` the preset sets is the person's folder it copies.
+          const preset = deps.env?.() ?? {}
+          const env = { ...buildAgentEnv(base), ...preset }
           delete env[SESSION_ENV]
           // Nor any project's own: where it runs, the folder that holds it
           // and the vault are untrusted (`home.ts` says why).
-          env.CODEX_HOME = prepareCodexHome(run.state, [run.cwd, dirname(run.cwd), run.root], base)
+          env.CODEX_HOME = prepareCodexHome(
+            run.state,
+            [run.cwd, dirname(run.cwd), run.root],
+            person(),
+          )
           return { bin: path, args: jobArgs(run), env }
         },
         event: readJobEvent,

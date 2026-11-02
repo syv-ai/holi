@@ -4,7 +4,17 @@
  * its scope copied back. Codex is not on the test machine, so its process is
  * a small node script that prints the JSONL `codex exec --json` does.
  */
-import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -405,7 +415,7 @@ describe('a job', () => {
     const person = await personHome()
     const codex = codexProvider({
       resolveBin: () => bin,
-      env: { PATH: process.env.PATH ?? '', CODEX_HOME: person },
+      base: { PATH: process.env.PATH ?? '', CODEX_HOME: person },
     }) as JobsProvider
     const started = await jobs.start({
       provider: codex,
@@ -468,7 +478,7 @@ describe('the Codex job command', () => {
     const state = await temp('holi-fenced-state-')
     const codex = codexProvider({
       resolveBin: () => '/usr/local/bin/codex',
-      env: { PATH: '/usr/bin', CODEX_HOME: person },
+      base: { PATH: '/usr/bin', CODEX_HOME: person },
     })
     const cmd = codex.terminal(
       { root: '/v', configDir: '/c', binDir: null },
@@ -491,7 +501,7 @@ describe('the Codex job command', () => {
     const state = await temp('holi-job-state-')
     const codex = codexProvider({
       resolveBin: () => '/usr/local/bin/codex',
-      env: { PATH: '/usr/bin', CODEX_HOME: person },
+      base: { PATH: '/usr/bin', CODEX_HOME: person },
     }) as JobsProvider
     const cmd = codex.capabilities.jobs.command({
       cwd: '/scratch/j1',
@@ -563,7 +573,7 @@ describe('agent.job', () => {
       own: {} as never,
       jobs: { start } as never,
       fenced: {} as never,
-      providers,
+      providers: () => providers,
       terminals: {} as never,
       liveRemote: () => 'syv/vault',
       commitNow: async () => null,
@@ -906,7 +916,7 @@ describe('agent.job in the vault', () => {
       own: {} as never,
       jobs: { start } as never,
       fenced: {} as never,
-      providers: [claude, codex],
+      providers: () => [claude, codex],
       terminals: {} as never,
       liveRemote: () => 'syv/vault',
       commitNow: async () => null,
@@ -971,7 +981,7 @@ describe('Codex jobs without a per-vault grant', () => {
         has: (id: string) => id === 'j0123456789ab',
       } as never,
       fenced: {} as never,
-      providers: [codex],
+      providers: () => [codex],
       terminals: {} as never,
       liveRemote: () => 'syv/vault',
       commitNow: async () => null,
@@ -1040,7 +1050,7 @@ describe('agent.scoped', () => {
       own: {} as never,
       jobs: {} as never,
       fenced: { start: fence },
-      providers,
+      providers: () => providers,
       terminals: {} as never,
       liveRemote: () => 'syv/vault',
       commitNow: async () => null,
@@ -1107,6 +1117,7 @@ describe('a fenced session', () => {
     release?: (state: string) => Promise<void>,
     scope: JobScope = SCOPE,
     beforeReplace?: (rel: string) => Promise<void> | void,
+    beforePublish?: (rel: string) => Promise<void> | void,
   ) {
     const root = await temp('holi-fenced-vault-')
     const userData = await temp('holi-fenced-data-')
@@ -1117,6 +1128,7 @@ describe('a fenced session', () => {
       scratchRoot: join(userData, 'agent-jobs'),
       onChange: () => {},
       ...(beforeReplace === undefined ? {} : { beforeReplace }),
+      ...(beforePublish === undefined ? {} : { beforePublish }),
       log: () => {},
     })
     let fence: Fence | undefined
@@ -1232,6 +1244,32 @@ describe('a fenced session', () => {
     expect(result.error).toMatch(/did not copy back notes\/Plan.app\/index.html/)
     expect(await readFile(join(root, 'notes/Plan.app/index.html'), 'utf8')).toBe('<h1>Theirs</h1>')
     expect((await readdir(join(root, 'notes/Plan.app'))).sort()).toEqual(['app.yaml', 'index.html'])
+  })
+
+  it('restores a vault file changed through an open descriptor after it was moved aside', async () => {
+    let writer: Awaited<ReturnType<typeof open>> | undefined
+    let inject = false
+    const { root, fence } = await fencedRig(undefined, SCOPE, undefined, async (rel) => {
+      if (!inject || rel !== 'notes/Plan.app/index.html' || writer === undefined) return
+      await writer.truncate(0)
+      await writer.writeFile('<h1>Theirs</h1>')
+    })
+    await mkdir(join(fence.dir, 'notes/Plan.app'), { recursive: true })
+    await writeFile(join(fence.dir, 'notes/Plan.app/index.html'), '<h1>First</h1>')
+    await writeFile(join(fence.dir, 'notes/Plan.app/app.yaml'), 'description: First\n')
+    await fence.turnEnded()
+    writer = await open(join(root, 'notes/Plan.app/index.html'), 'r+')
+    try {
+      await writeFile(join(fence.dir, 'notes/Plan.app/index.html'), '<h1>Second</h1>')
+      inject = true
+      const result = await fence.turnEnded()
+      expect(result.error).toMatch(/did not copy back notes\/Plan.app\/index.html/)
+      expect(await readFile(join(root, 'notes/Plan.app/index.html'), 'utf8')).toBe(
+        '<h1>Theirs</h1>',
+      )
+    } finally {
+      await writer.close()
+    }
   })
 
   it('never writes over a file it was given that someone changed in the vault meanwhile', async () => {

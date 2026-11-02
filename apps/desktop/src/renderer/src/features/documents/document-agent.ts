@@ -318,7 +318,6 @@ export function useDocumentAgent(path: string) {
       await agentCapability(remote, 'agent.stop', { id: run.sessionId }).catch(() => undefined)
     }
   }
-
   const markOpened = useCallback(
     () => store.set(patchRunAtom, { path, patch: { opened: true } }),
     [path, store],

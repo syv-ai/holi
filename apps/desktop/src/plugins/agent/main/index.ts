@@ -12,6 +12,7 @@
  * Electron loads inside `activate`, so the plugin stays importable under
  * plain Node in the tests.
  */
+import { copyFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   jsonFileStore,
@@ -21,10 +22,15 @@ import {
 } from '../../../main/plugin-api'
 import { AGENT_INFO } from '../info'
 import { claudeProvider } from './claude'
+import { resolveClaudeBin } from './claude/cli'
 import { claudeSeed } from './claude/seed'
-import { codexProvider } from './codex'
-import { piProvider } from './pi'
+import { codexProvider, resolveCodexBin } from './codex'
+import { piCommand, piProvider } from './pi'
 import { createPiBackground } from './pi/background'
+import { harnessCapabilities } from './harness/capabilities'
+import { isIntegration, parseHarnessFile } from './harness/record'
+import { createHarnessRegistry, withPreset } from './harness/registry'
+import { installSignalCommand, registerSignalRoute } from './harness/signal'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { createPtySessions, parsePastFile, PTY_SESSION_ID } from './host/pty-sessions'
 import { createFencedSessions } from './host/fenced'
@@ -49,12 +55,46 @@ export const agentMain: MainPlugin = {
   seed: claudeSeed,
   async activate(ctx) {
     const { app, nativeTheme } = await import('electron')
-    const claude = claudeProvider({
-      userData: ctx.userData,
-      holiBin: () => join(ctx.binDir(), 'holi'),
-      systemPrefersDark: () => nativeTheme.shouldUseDarkColors,
+    // This machine's agents: the built-in three, each reading its preset as
+    // it runs, and the ones a person added in Settings
+    // (docs/features/agent-sessions.md, Harnesses).
+    const harnessFile = join(ctx.userData, 'agent-harnesses.json')
+    const harnesses = await createHarnessRegistry({
+      store: jsonFileStore(harnessFile, parseHarnessFile),
+      // What Holi could not read in the file is kept beside it before a write.
+      keepBad: () =>
+        copyFile(harnessFile, `${harnessFile}.bad`).catch((err: NodeJS.ErrnoException) => {
+          if (err.code !== 'ENOENT') throw err
+        }),
+      bins: {
+        claude: () => resolveClaudeBin(),
+        codex: () => resolveCodexBin(),
+        pi: () => resolveBin('pi'),
+      },
+      builtIns: {
+        claude: (current, bin) =>
+          withPreset(
+            claudeProvider({
+              userData: ctx.userData,
+              holiBin: () => join(ctx.binDir(), 'holi'),
+              systemPrefersDark: () => nativeTheme.shouldUseDarkColors,
+              resolveBin: bin,
+            }),
+            current,
+          ),
+        codex: (current, bin) =>
+          withPreset(codexProvider({ resolveBin: bin, env: () => current().env ?? {} }), current),
+        pi: (current, bin) =>
+          withPreset(piProvider({ resolveBin: bin, env: () => current().env ?? {} }), current),
+      },
     })
-    const providers = [claude, codexProvider(), piProvider()]
+    const providers = (): ReturnType<typeof harnesses.providers> => harnesses.providers()
+    const claude = providers().find(hasBackground)!
+    // `holi-signal`, the hook command a harness a person added reports
+    // its turns with.
+    await installSignalCommand(ctx.binDir()).catch((err: unknown) =>
+      console.error('[agent] holi-signal:', err),
+    )
     const terminals = createAgentTerminals({ emit: ctx.emit })
     const sessionLog = createSessionLog(ctx.log)
     const liveRemote = (): string | null => ctx.active()?.remote ?? null
@@ -103,8 +143,15 @@ export const agentMain: MainPlugin = {
       turnLogFor: openTurnLog,
       snapshot: worktreeEnd,
     })
+    // Pi's RPC runs find `pi` and its environment as its terminals do: the
+    // preset's program and variables, its arguments being a terminal's alone.
+    const piRuns = piCommand({
+      resolveBin: () => harnesses.resolve('pi'),
+      env: () => harnesses.get('pi')?.env ?? {},
+    })
     const piBackground = createPiBackground({
-      bin: () => resolveBin('pi'),
+      bin: piRuns.bin,
+      env: piRuns.env,
       binDir: ctx.binDir,
       bracket: (id, edge) => started.bracket(id, edge),
       changed: () => {
@@ -122,7 +169,7 @@ export const agentMain: MainPlugin = {
           await ptyHistory.update((all) => ({ ...all, [ctx.remote]: list }))
         },
       },
-      providers: providers.filter((p) => !hasBackground(p)),
+      providers: () => providers().filter((p) => !hasBackground(p)),
       terminals,
       // Its turns pause sync and are recorded like a background session's.
       bracket: (id, edge) => started.bracket(id, edge),
@@ -185,6 +232,12 @@ export const agentMain: MainPlugin = {
         defaultProvider: async () => (await readVaultSettings(ctx.root)).agentProvider,
       }),
       ...inboxCapabilities({ inbox, liveRemote }),
+      ...harnessCapabilities({
+        registry: harnesses,
+        file: harnessFile,
+        root: () => (liveRemote() === ctx.remote ? ctx.root : null),
+        changed: () => ctx.emit(ctx.remote, 'providers', null),
+      }),
       ...versionCapabilities({ holi: app.getVersion() }),
     })
     const unwatchNeedsYou = watchNeedsYou({
@@ -213,8 +266,9 @@ export const agentMain: MainPlugin = {
       }
     })
     // Each provider's hooks, by the session id they carry: a session Holi
-    // runs, or a background job.
-    for (const p of providers) {
+    // runs, or a background job. The built-in ones are fixed, so their
+    // routes are served once.
+    for (const p of providers().filter((x) => x.custom !== true)) {
       p.capabilities.turns?.routes(ctx, {
         onTurn: (remote, id, active, pending) => {
           if (!PTY_SESSION_ID.test(id)) return started.noteTurn(remote, id, active, pending)
@@ -230,6 +284,21 @@ export const agentMain: MainPlugin = {
         onChannel: (remote, id, channel) => started.noteChannel(remote, id, channel),
       })
     }
+    // `holi-signal`, from a session of a harness a person added: whichever
+    // of them wired it into their CLI's hooks. The built-in agents report
+    // through their own hooks.
+    const unsignal = registerSignalRoute(ctx, {
+      onSignal: (remote, id, signal) => {
+        if (remote !== ctx.remote) return
+        const provider = ptySessions.providerOf(id)
+        if (provider === null || isIntegration(provider)) return
+        if (signal.kind === 'status') return ptySessions.noteStatus(id, signal)
+        if (signal.conversationId !== undefined) {
+          ptySessions.noteConversation(id, { conversationId: signal.conversationId })
+        }
+        ptySessions.noteTurn(id, false)
+      },
+    })
     // Quitting stops the vault's sessions, so it asks first when one of them
     // is working or waiting on you: that turn is cut short. Idle sessions
     // stop without a question; their conversations stay in the agents list.
@@ -275,6 +344,7 @@ export const agentMain: MainPlugin = {
     // opened; the ones Holi runs end with it.
     return async () => {
       clearInterval(sweepTimer)
+      unsignal()
       await sweeping
       unreport()
       unmention()

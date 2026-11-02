@@ -28,7 +28,7 @@ async function rig() {
     own: {} as never,
     jobs: {} as never,
     fenced: {} as never,
-    providers: [],
+    providers: () => [],
     terminals: {} as never,
     liveRemote: () => REMOTE,
     commitNow: () => plainGit(root, ['commit', '-am', 'revert']),

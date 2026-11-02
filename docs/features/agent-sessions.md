@@ -1,7 +1,7 @@
 # Agent sessions
 
 The vault assistant is a coding agent run as it runs itself, in a terminal: Claude Code, Codex,
-or Pi, one **provider** each. A session is the agent's own TUI, never a re-drawing of it, so any
+Pi, or any CLI a person adds as a [harness](#harnesses), one **provider** each. A session is the agent's own TUI, never a re-drawing of it, so any
 agent with a CLI can be one. Holi opens terminals onto sessions, reads what they are doing from
 signals rather than from their text, keeps its own git out of their way, shows what each turn
 changed, and hands them merge conflicts. Configuration is in [agent-config.md](agent-config.md).
@@ -180,15 +180,96 @@ is its `message`, until the next copy. All this happens before the turn's bracke
 agent leaves the vault or starts. A provider with neither is refused, never run on another agent:
 Pi has no `jobs`, so a job asked of Pi is refused. The document menu's and the file tree's **Create vault app** ([editor](editor.md)) is its caller.
 
-**Which agent a new session runs** is this machine's `agentProvider` (`app.local.yaml`; the
-**Agents** card in Settings → General, a row per agent with **Make default**): which agent is installed and signed in is the machine's, not the
-vault's. The menu on the Sessions + picks another for one session. **Holis and automations run
-on the default agent** when it supports unattended work: Claude Code uses its background
-supervisor and Pi a Holi-managed RPC process (both `agent.launch`), and Codex runs a job in the
-vault (`agent.job` with their `allow`, under the rules above), refused with the reason when their
-rules ask for more than its sandbox can enforce. Changing the default requires fresh approval for
-Holis and automations. Pi's runs use the person's normal filesystem permissions, without a sandbox
-or per-tool approval prompts; their configured `allow` rules are not enforced.
+**Which agent a new session runs** is this machine's `agentProvider` (`app.local.yaml`, an
+agent's id; the **Agents** card in Settings → General, a row per agent with **Make default**): which
+agent is installed and signed in is the machine's, not the vault's. The menu on the Sessions + picks
+another for one session. **Holis and automations run on the default agent** when it supports
+unattended work: Claude Code uses its background supervisor and Pi a Holi-managed RPC process (both
+`agent.launch`), and Codex runs a job in the vault (`agent.job` with their `allow`, under the rules
+above), refused with the reason when their rules ask for more than its sandbox can enforce.
+Changing the default requires fresh approval for Holis and automations. Pi's runs use the person's
+normal filesystem permissions, without a sandbox or per-tool approval prompts; their configured
+`allow` rules are not enforced. A
+default that names an agent this machine no longer has (a harness removed) is said in Settings, and
+the Sessions + then opens its menu and asks which agent; nothing is started on another agent in its
+place, and `agent.start`, `agent.job` and a new session from `agent.send` refuse it in words.
+
+## Harnesses
+
+The agents are one re-readable registry (`agent/main/harness/`), kept on this machine in
+`<userData>/agent-harnesses.json` (`{ version: 1, harnesses: [...] }`): which CLIs are installed
+is the machine's, so nothing of it syncs. Each **harness** is an id (a slug, `[a-z][a-z0-9-]{1,31}`,
+which is what `agentProvider` holds), a name, and what Holi runs:
+
+| Field         | What it is                                                                               |
+| ------------- | ---------------------------------------------------------------------------------------- |
+| `command`     | `bin` (a bare name looked up on `PATH`, or a full path) and `args`, every time it starts |
+| `prompt.args` | how it starts on a first message, one argument exactly `{prompt}`                        |
+| `resume.pick` | the CLI's own picker of earlier conversations (Resume in the + menu)                     |
+| `resume.byId` | one conversation by its id, one argument exactly `{id}` (History's reopen)               |
+| `env`         | variables to add; never `PATH`, `HOLI_*` or the bridge's                                 |
+| `test`        | what Test runs, `--version` when absent                                                  |
+| `integration` | `claude`, `codex` or `pi`: a built-in agent's own                                        |
+
+**The three built-in agents are presets.** They are listed whether or not the file names them, and
+editing one writes its entry: its name and which program runs (a preset that still names `claude`,
+`codex` or `pi` keeps its own lookup, `HOLI_<AGENT>_BIN` included, which Test and Not found use too).
+Codex's also takes arguments, put before the ones it gets from Holi in its terminal only, and an
+environment, which reaches its terminals and its jobs alike: a person set it on purpose (a
+`CODEX_HOME` it sets is the person's Codex folder a job's copies come from). Pi's program and
+environment reach every Pi process, its terminals and its RPC runs (Holis, automations, Ask AI)
+alike, through one definition (`piCommand`); its arguments reach its terminals only, since an RPC
+run's arguments are its mode, and the form says so. Claude Code's takes
+neither: its sessions run in its background supervisor, which reads nothing of the preset, and a
+terminal given them would differ from the session it shows, so the form leaves both out and the
+record refuses them. Everything else stays its integration's: how it starts, resumes, reports
+turns, and its jobs' arguments, which are their sandbox. Put back as Holi has it, a preset is no
+entry at all.
+
+**A file Holi cannot read is never taken for an empty one.** One that is not JSON, not
+`{ version, harnesses }` or of a version this Holi does not know is unreadable: the built-in agents
+run as Holi ships them, nothing is written over it, and the Agents card says why, with Retry and
+**Reset** (`agent.harnessReset`), which keeps the file as `agent-harnesses.json.bad` before
+starting it over. An entry that does not read as a harness is left out and counted, and the card
+says how many; the next write keeps the file as `.bad` first, then drops them.
+
+**A harness a person adds is a basic terminal agent**: the core alone, a session Holi runs in a PTY
+of its own with the vault as cwd. It starts on a message only with `prompt`, offers Resume only
+with `resume.pick`, and reopens from History only with `resume.byId` and a conversation id it was
+told; anything else it was not given is refused in words (`AgentProvider.refuses`), never run some
+other way. It has no `background` and no `jobs`, so Holis, automations and Create vault app refuse
+it with the reason (`AgentProvider.unattended`), never falling back to Claude Code. Making one the
+default asks first, with that reason. `agent.providers` says what each agent can do
+(`resumePicker` among it), so the UI offers only that. Its mark is a generic terminal.
+
+**The execution boundary.** A command is argv handed to node-pty, never a shell string: the program
+must be a bare name (`[A-Za-z0-9][A-Za-z0-9._+-]*`) or a full path, and one that reads as a command
+line (`aider --yes`) is refused with what to do; each argument is one line in the form;
+placeholders fill a whole argument and nothing else, so a prompt that holds a `;` is one argument.
+One that starts with `-` is refused, in words, unless a `--` argument comes before `{prompt}`:
+the CLI would read it as an option, and the form's placeholder shows `--` above `{prompt}`. The program must resolve to an executable file on disk, or its terminal says
+how to fix it (`notInstalled`). Its environment is Holi's agent environment plus `env`, which may
+not move `PATH` (Holi's bin folder goes first), Holi's own variables or the bridge's. Editing
+harnesses is the UI door only (`agent.harnesses`, `agent.harnessSave`, `agent.harnessRemove`,
+`agent.harnessReset`, `agent.harnessTest`): an agent session or an app that could add one would run any program it liked,
+outside every permission prompt.
+
+**Turn signals.** Every session Holi runs is read off its terminal (above). A session of a harness
+a person added can also report through **`holi-signal`**, which Holi writes into its bin
+folder, first on every session's `PATH`: Codex's notify hook made general, for a person to wire
+into their CLI's own hooks. `holi-signal turn-end [--conversation <uuid>]` ends the turn (and
+names the conversation, which makes the session reopenable when `resume.byId` is set);
+`holi-signal status [--context <percent>] [--model <name>]` fills its row's context meter and
+model. It posts its arguments, form-encoded by curl, to the bridge's `/agent/signal`, keyed by
+`HOLI_AGENT_SESSION`; it is quiet, bounded and a no-op outside a Holi session or with Holi closed.
+A signal from a built-in agent's session is ignored: those report through their own hooks.
+
+**Settings → General → Agents** lists every agent: its name, its command line as text to read, Not
+found when the program is not on this machine, Default or **Make default**, **Test** (the `test`
+arguments in the vault, in a process group of its own that is stopped, TERM then KILL, after five
+seconds or once it printed 256 KB, each said apart; its output shown) and a menu with Edit and Remove
+(Put back Holi's settings for an edited preset). **Add agent** opens the same form. An edit reaches
+the next session at once: main tells the renderer (`providers`) and the + menu asks again.
 
 ## How it works
 
