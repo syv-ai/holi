@@ -25,9 +25,12 @@ function saveDismissal(key: string): void {
   }
 }
 
-function hasOpenDialog(title: string): boolean {
+function hasOpenDialog(): boolean {
+  const ownDialog = document
+    .querySelector('[data-ready-update-dialog]')
+    ?.closest('[role="dialog"], [role="alertdialog"]')
   return [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')].some(
-    (dialog) => !dialog.textContent?.includes(title),
+    (dialog) => dialog !== ownDialog,
   )
 }
 
@@ -49,6 +52,7 @@ export function ReadyUpdateDialog(): React.JSX.Element | null {
     const off = window.holi.window.onVisible((next) => {
       receivedPush = true
       setVisible(next)
+      if (next) setTemporarilyClosed(false)
     })
     // Subscribe first, then ask: a show/hide push wins if it races the answer.
     void window.holi.window.isVisible().then(
@@ -67,11 +71,11 @@ export function ReadyUpdateDialog(): React.JSX.Element | null {
 
   useEffect(() => {
     setEligibleKey(readyKey !== null && !wasDismissed(readyKey) ? readyKey : null)
+    setTemporarilyClosed(false)
   }, [readyKey])
 
   useEffect(() => {
-    const updateBlock = () =>
-      setDialogBlocked(hasOpenDialog(`Holi ${status?.availableVersion ?? ''} is ready`))
+    const updateBlock = () => setDialogBlocked(hasOpenDialog())
     updateBlock()
     const observer = new MutationObserver(updateBlock)
     observer.observe(document.body, { childList: true, subtree: true, attributes: true })
@@ -99,7 +103,7 @@ export function ReadyUpdateDialog(): React.JSX.Element | null {
         setEligibleKey(null)
       }}
       size="sm"
-      title={`Holi ${status.availableVersion} is ready`}
+      title={<span data-ready-update-dialog>{`Holi ${status.availableVersion} is ready`}</span>}
       description="Restart Holi to install this update. Your vault will be saved and synced before restarting."
       cancelLabel="Later"
       confirmLabel="Restart now"
