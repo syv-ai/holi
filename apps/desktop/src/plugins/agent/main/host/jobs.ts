@@ -62,7 +62,7 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, mkdir, open, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { link, lstat, mkdir, open, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { isHiddenPath, isSharedContentPath, vaultRelPath, type VaultRelPath } from '@holi/shared'
@@ -377,6 +377,37 @@ export async function copyIn(
   return null
 }
 
+/** What a copy back left out, in words, or undefined when it left out
+ *  nothing: a completed job's `message`, and a fenced session's. */
+export const leftOutMessage = (skipped: readonly string[]): string | undefined =>
+  skipped.length === 0
+    ? undefined
+    : `Holi left out what it may not write: ${skipped.slice(0, SHOWN_SKIPPED).join(', ')}${skipped.length > SHOWN_SKIPPED ? ` and ${skipped.length - SHOWN_SKIPPED} more` : ''}.`
+
+/** Why a copy back stopped: something else put `rel` in the vault. */
+const collision = (rel: string): string =>
+  `Holi did not copy back ${rel}: something else put it in the vault while the agent worked, and Holi never writes over it.`
+
+/**
+ * Write `data` at `abs` only if nothing is there: a file beside it, linked
+ * into place, which fails when the name is taken (on a case-blind disk too)
+ * however late that name came, then unlinked. False when it was taken.
+ */
+async function createExclusive(abs: string, data: Buffer): Promise<boolean> {
+  await mkdir(dirname(abs), { recursive: true })
+  const tmp = join(dirname(abs), `.holi-tmp-${randomBytes(6).toString('hex')}`)
+  await writeFile(tmp, data)
+  try {
+    await link(tmp, abs)
+    return true
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false
+    throw err
+  } finally {
+    await rm(tmp, { force: true }).catch(() => undefined)
+  }
+}
+
 /** Why a run did not start: where it would make something is taken. */
 export const takenMessage = (folder: string): string =>
   `${folder} is already in the vault, and Holi never writes over it, so the run did not start.`
@@ -568,9 +599,7 @@ export function createJobs(deps: JobsDeps): Jobs {
         (rel) => !made.has(rel),
       )
       if (theirs.length > 0) {
-        throw new Error(
-          `Holi did not copy back ${folder}: something else put it in the vault while the agent worked, and Holi never writes over it.`,
-        )
+        throw new Error(collision(folder))
       }
     }
     // What it was given or wrote before is written again only while the
@@ -602,11 +631,25 @@ export function createJobs(deps: JobsDeps): Jobs {
     let written = 0
     for (const { rel, data, hash } of ordered) {
       if (job.stopped !== undefined) break
-      if ((await exactPath(deps.vault.root, rel)) === null) {
-        throw new Error(`Holi could not write ${rel}.`)
-      }
+      const abs = await exactPath(deps.vault.root, rel)
+      if (abs === null) throw new Error(`Holi could not write ${rel}.`)
       if (job.stopped !== undefined) break
-      await writeAtomic(deps.vault.root, rel, data)
+      const before = made.get(rel)
+      if (before === undefined) {
+        // A new file: written only where nothing is, even something that
+        // arrived after the checks above (a sync bringing the same app).
+        if (!(await createExclusive(abs, data))) throw new Error(collision(rel))
+      } else {
+        // What this run was given or wrote before: written over only while
+        // the vault still holds exactly that, read again just before.
+        const now = await readRegular(abs)
+        if (now === null || hashOf(now) !== before) {
+          throw new Error(
+            `Holi did not copy back what the agent wrote: ${rel} changed in the vault since the agent wrote it, and Holi never writes over it.`,
+          )
+        }
+        await writeAtomic(deps.vault.root, rel, data)
+      }
       made.set(rel, hash)
       written += 1
       await deps.afterWrite?.(rel)
@@ -742,9 +785,7 @@ export function createJobs(deps: JobsDeps): Jobs {
           try {
             const { written, skipped } = await copyBack(job, job.dir, write, job.made)
             log(`${id}: done, ${written} file(s) written, ${skipped.length} left out`)
-            if (skipped.length > 0) {
-              why = `Holi left out what it may not write: ${skipped.slice(0, SHOWN_SKIPPED).join(', ')}${skipped.length > SHOWN_SKIPPED ? ` and ${skipped.length - SHOWN_SKIPPED} more` : ''}.`
-            }
+            why = leftOutMessage(skipped) ?? why
           } catch (err) {
             outcome = 'failed'
             why = (err as Error).message

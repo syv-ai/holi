@@ -25,8 +25,16 @@ import { randomBytes } from 'node:crypto'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AgentProvider, VaultRef } from '../provider'
-import { copyIn, takenDestination, takenMessage, type JobScope, type Jobs, type Made } from './jobs'
-import type { PtySessions } from './pty-sessions'
+import {
+  copyIn,
+  leftOutMessage,
+  takenDestination,
+  takenMessage,
+  type JobScope,
+  type Jobs,
+  type Made,
+} from './jobs'
+import type { FenceCopy, PtySessions } from './pty-sessions'
 import type { Geometry, StartResult } from './sessions'
 
 export interface FencedSessionsDeps {
@@ -60,7 +68,7 @@ export interface FencedSessions {
 
 export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
   const log = deps.log ?? ((msg: string) => console.log(`[agent-fenced] ${msg}`))
-  const copies = new Set<Promise<void>>()
+  const copies = new Set<Promise<unknown>>()
   // Folders a crash left behind. Their processes died with Holi's PTYs.
   const swept = rm(deps.scratchRoot, { recursive: true, force: true }).catch(() => undefined)
 
@@ -104,14 +112,18 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
     }
 
     // One copy at a time: a turn's end and the exit never overlap.
-    let chain = Promise.resolve()
-    const copy = (): Promise<void> => {
-      const next = chain.then(async () => {
+    // How it went goes on the session's row, where its caller reads it.
+    let chain: Promise<unknown> = Promise.resolve()
+    const copy = (): Promise<FenceCopy> => {
+      const next = chain.then(async (): Promise<FenceCopy> => {
         try {
           const { written, skipped } = await deps.copyBack(dir, scope.write, made)
           log(`${name}: ${written} file(s) copied back, ${skipped.length} left out`)
+          const leftOut = leftOutMessage(skipped)
+          return leftOut === undefined ? {} : { leftOut }
         } catch (err) {
           log(`${name}: ${(err as Error).message}`)
+          return { error: (err as Error).message }
         }
       })
       chain = next
