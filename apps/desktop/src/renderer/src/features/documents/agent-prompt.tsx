@@ -125,13 +125,13 @@ export function AgentStatus({
       : run.status === 'working'
         ? `${WORKING[run.kind]}…`
         : run.status === 'needs-you'
-          ? 'Waiting for you in Agents'
+          ? (run.message ?? 'Waiting for you in Agents')
           : run.status === 'failed'
             ? (run.message ?? 'The agent could not run.')
             : run.status === 'stopped'
               ? 'Stopped'
               : run.kind === 'vault-app'
-                ? 'The vault app is ready'
+                ? `The vault app is ready${run.message === undefined ? '' : `. ${run.message}`}`
                 : 'Done'
 
   return (

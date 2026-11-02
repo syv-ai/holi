@@ -60,6 +60,7 @@ vi.mock('@/lib/trpc', () => ({
             {
               sha: '4a14110aaaa',
               subject: 'Update',
+              // The history fixture stays recent relative to the test run, not render time.
               date: new Date(Date.now() - 2 * 3_600_000).toISOString(),
               author: 'Ada',
               added: 1,
@@ -105,6 +106,9 @@ vi.mock('@/state/agent-service', async () => {
       state: 'needs-you' | 'working' | 'idle'
       outcome?: 'completed' | 'failed' | 'aborted'
       error?: string
+      message?: string
+      copying?: boolean
+      closed?: boolean
     }[]
   >([])
   return {
@@ -132,6 +136,9 @@ const sessions = (
           state: 'needs-you' | 'working' | 'idle'
           outcome?: 'completed' | 'failed' | 'aborted'
           error?: string
+          message?: string
+          copying?: boolean
+          closed?: boolean
         }[]
       >
     >
@@ -658,6 +665,119 @@ test('Create vault app runs on Codex when it is the default, under a free name',
   // A turn's end copied the app back while its session goes on.
   appWritten('notes/Plan 2.app')
   await waitFor(() => expect(onOpen).toHaveBeenCalledWith('notes/Plan 2.app'))
+})
+
+test('a partial fenced copy stays visible when the app is ready', async () => {
+  cap.mockImplementation(({ name }: { name: string }) =>
+    Promise.resolve(
+      name === 'agent.scoped' ? { ok: true, sessionId: 'p0123456789ab' } : { ok: true },
+    ),
+  )
+  store.set(vaultSettingsAtom, {
+    remote: 'syv/vault',
+    settings: { ...VAULT_SETTING_DEFAULTS, agentProvider: 'codex', warnings: [] },
+  })
+  const onOpen = openFocused('# Plan\n')
+  await createVaultApp()
+  act(() =>
+    store.set(sessions, [{ id: 'p0123456789ab', name: '', state: 'working', copying: true }]),
+  )
+  appWritten('notes/Plan.app')
+  expect(onOpen).not.toHaveBeenCalled()
+  const warning = 'Holi left out notes/Plan.app/assets/logo.png.'
+  act(() =>
+    store.set(sessions, [{ id: 'p0123456789ab', name: '', state: 'idle', message: warning }]),
+  )
+  expect(await screen.findByText(`The vault app is ready. ${warning}`)).toBeInTheDocument()
+  expect(onOpen).not.toHaveBeenCalled()
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Open' }))
+  expect(onOpen).toHaveBeenCalledWith('notes/Plan.app')
+})
+
+test('a final copy failure reappears on the document after its ready app was opened', async () => {
+  cap.mockImplementation(({ name }: { name: string }) =>
+    Promise.resolve(
+      name === 'agent.scoped' ? { ok: true, sessionId: 'p0123456789ab' } : { ok: true },
+    ),
+  )
+  files.set(PATH, '# Plan\n')
+  store.set(openTabAtom, { kind: 'doc', path: PATH })
+  const onOpen = vi.fn()
+  const mount = () =>
+    render(
+      <Provider store={store}>
+        <DocumentView path={PATH} onOpen={onOpen} />
+      </Provider>,
+    )
+  const first = mount()
+  await createVaultApp()
+  act(() => store.set(sessions, [{ id: 'p0123456789ab', name: '', state: 'working' }]))
+  appWritten('notes/Plan.app')
+  await waitFor(() => expect(onOpen).toHaveBeenCalledOnce())
+  expect(screen.queryByText('The vault app is ready')).not.toBeInTheDocument()
+  first.unmount()
+  act(() =>
+    store.set(sessions, [
+      {
+        id: 'p0123456789ab',
+        name: '',
+        state: 'idle',
+        closed: true,
+        outcome: 'failed',
+        error: 'Holi could not copy back the final changes.',
+      },
+    ]),
+  )
+  mount()
+  expect(await screen.findByText('Holi could not copy back the final changes.')).toBeInTheDocument()
+  expect(onOpen).toHaveBeenCalledOnce()
+})
+
+test('a late partial copy warning reappears after the ready app was opened', async () => {
+  cap.mockImplementation(({ name }: { name: string }) =>
+    Promise.resolve(
+      name === 'agent.scoped' ? { ok: true, sessionId: 'p0123456789ab' } : { ok: true },
+    ),
+  )
+  const onOpen = openFocused('# Plan\n')
+  await createVaultApp()
+  act(() => store.set(sessions, [{ id: 'p0123456789ab', name: '', state: 'working' }]))
+  appWritten('notes/Plan.app')
+  await waitFor(() => expect(onOpen).toHaveBeenCalledOnce())
+  const warning = 'Holi left out notes/Plan.app/assets/logo.png.'
+  act(() =>
+    store.set(sessions, [
+      { id: 'p0123456789ab', name: '', state: 'idle', closed: true, message: warning },
+    ]),
+  )
+  expect(await screen.findByText(`The vault app is ready. ${warning}`)).toBeInTheDocument()
+  expect(onOpen).toHaveBeenCalledOnce()
+})
+
+test('a failed fenced turn can recover in the same session', async () => {
+  cap.mockImplementation(({ name }: { name: string }) =>
+    Promise.resolve(
+      name === 'agent.scoped' ? { ok: true, sessionId: 'p0123456789ab' } : { ok: true },
+    ),
+  )
+  const onOpen = openFocused('# Plan\n')
+  await createVaultApp()
+  act(() =>
+    store.set(sessions, [
+      { id: 'p0123456789ab', name: '', state: 'idle', outcome: 'failed', error: 'Copy failed.' },
+    ]),
+  )
+  expect(await screen.findByText('Copy failed.')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Open session' })).toBeInTheDocument()
+  act(() => store.set(sessions, [{ id: 'p0123456789ab', name: '', state: 'working' }]))
+  expect(await screen.findByText('Creating the vault app…')).toBeInTheDocument()
+  act(() =>
+    store.set(sessions, [{ id: 'p0123456789ab', name: '', state: 'working', copying: true }]),
+  )
+  appWritten('notes/Plan.app')
+  expect(onOpen).not.toHaveBeenCalled()
+  act(() => store.set(sessions, [{ id: 'p0123456789ab', name: '', state: 'idle' }]))
+  await waitFor(() => expect(onOpen).toHaveBeenCalledWith('notes/Plan.app'))
 })
 
 test("a vault app's failure shows in the run's pill, and nothing opens", async () => {

@@ -311,6 +311,8 @@ export interface AgentSessionRow {
   /** What a job that completed left out, in words; why one failed is its
    *  `error`. */
   message?: string
+  copying?: boolean
+  closed?: boolean
 }
 
 /** A file a run changed, across its whole range. */

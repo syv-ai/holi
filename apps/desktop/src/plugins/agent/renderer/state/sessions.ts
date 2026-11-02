@@ -61,6 +61,8 @@ export interface AgentSession {
   /** What a job that completed left out, in words; why one failed is its
    *  `error`. */
   message?: string
+  copying?: boolean
+  closed?: boolean
 }
 
 /**

@@ -396,9 +396,10 @@ function DocumentEditor({
     const run = agent.run
     if (!run || run.status !== 'done') return
     if (run.kind === 'vault-app') {
-      if (run.away || run.appPath === undefined) return
+      // A partial copy stays on the pill until the person has seen what was left out.
+      if (run.away || run.opened || run.appPath === undefined || run.message !== undefined) return
       if (tabPath(focusedTab(store.get(shellWorkspaceAtom))) !== path) return
-      agent.dismiss()
+      agent.markOpened()
       onOpen(run.appPath)
       return
     }
@@ -659,7 +660,13 @@ function DocumentEditor({
           </div>
         </div>
 
-        {agent.run ? (
+        {agent.run &&
+        !(
+          agent.run.kind === 'vault-app' &&
+          agent.run.status === 'done' &&
+          agent.run.opened &&
+          agent.run.message === undefined
+        ) ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex justify-center px-4">
             <div className="pointer-events-auto">
               <AgentStatus
@@ -668,7 +675,7 @@ function DocumentEditor({
                 onDismiss={agent.dismiss}
                 onOpenApp={() => {
                   const app = agent.run?.appPath
-                  agent.dismiss()
+                  agent.markOpened()
                   if (app !== undefined) onOpen(app)
                 }}
               />

@@ -143,10 +143,24 @@ export function useDocumentAgent(path: string) {
   // app's session going idle or ending is not the app being done: that
   // waits on the app, and idle until then is waiting on the person.
   useEffect(() => {
-    if (!run || !isRunLive(run) || run.sessionId === null || run.ended) return
+    if (!run || run.sessionId === null) return
     const app = run.kind === 'vault-app'
-    const ended = (): void => update(app ? { ended: true } : { status: 'done' })
     const row = sessions.find((session) => session.id === run.sessionId)
+    // A ready app can still have an open fenced session. Keep following its
+    // result even after the pill is hidden and the app has been opened.
+    if (app && run.status === 'done') {
+      if (row?.outcome === 'failed') {
+        update({
+          status: row.closed ? 'failed' : 'needs-you',
+          message: row.error ?? 'The agent could not finish.',
+        })
+      } else if (row?.message !== undefined && row.message !== run.message) {
+        update({ message: row.message })
+      }
+      return
+    }
+    if (!isRunLive(run) || run.ended) return
+    const ended = (): void => update(app ? { ended: true } : { status: 'done' })
     if (row === undefined) {
       if (run.seenWorking) {
         if (run.provider === 'pi') {
@@ -158,17 +172,16 @@ export function useDocumentAgent(path: string) {
     // What its copy back left out, kept for the words if the app never comes.
     if (row.message !== undefined && row.message !== run.message) update({ message: row.message })
     if (row.outcome === 'failed') {
-      update({
-        status: 'failed',
-        message: row.error ?? 'The agent could not finish.',
-      })
+      const status = app && !row.closed ? 'needs-you' : 'failed'
+      const message = row.error ?? 'The agent could not finish.'
+      if (run.status !== status || run.message !== message) update({ status, message })
     } else if (row.outcome === 'aborted') {
       update({ status: 'stopped' })
     } else if (row.outcome === 'completed') {
       ended()
     } else if (row.state === 'working') {
-      if (run.status !== 'working' || !run.seenWorking)
-        update({ status: 'working', seenWorking: true })
+      if (run.status !== 'working' || !run.seenWorking || run.message !== undefined)
+        update({ status: 'working', seenWorking: true, message: undefined })
     } else if (row.state === 'needs-you') {
       if (run.status !== 'needs-you') update({ status: 'needs-you' })
     } else if (run.seenWorking && run.provider !== 'pi') {
@@ -182,8 +195,11 @@ export function useDocumentAgent(path: string) {
   // A vault app is done once its `app.yaml` is in the vault, and failed when
   // its session ended and it never comes.
   const finished = run?.appPath !== undefined && appFinished(snapshot, run.appPath)
+  const copyRow = sessions.find((row) => row.id === run?.sessionId)
+  const copying = copyRow?.copying === true
+  const copyFailed = copyRow?.outcome === 'failed'
   useEffect(() => {
-    if (!run || !isRunLive(run) || run.appPath === undefined) return
+    if (!run || !isRunLive(run) || run.appPath === undefined || copying || copyFailed) return
     if (finished) {
       update({ status: 'done' })
       return
@@ -202,7 +218,7 @@ export function useDocumentAgent(path: string) {
     return () => window.clearTimeout(timer)
     // `update` writes the same atom this reads; the run and the app are the deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run, finished])
+  }, [run, finished, copying, copyFailed])
 
   // Leaving the document while a run goes on: when it finishes, its app is
   // offered rather than opened over whatever is in front by then.
@@ -303,6 +319,11 @@ export function useDocumentAgent(path: string) {
     }
   }
 
+  const markOpened = useCallback(
+    () => store.set(patchRunAtom, { path, patch: { opened: true } }),
+    [path, store],
+  )
+
   const dismiss = useCallback(
     () =>
       setRuns((all) => {
@@ -317,6 +338,7 @@ export function useDocumentAgent(path: string) {
     start,
     stop,
     dismiss,
+    markOpened,
     available: service !== null,
     /** Create vault app can run on this note now. */
     appable: offer(path),

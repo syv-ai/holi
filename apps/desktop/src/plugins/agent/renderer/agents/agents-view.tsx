@@ -270,6 +270,7 @@ function MemoryView(): React.JSX.Element {
  */
 function SessionView({ id }: { id: string }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
+  const session = useAtomValue(agentSessionsAtom).find((row) => row.id === id)
   const geometry = useAtomValue(agentGeometryAtom)
   const setGeometry = useSetAtom(agentGeometryAtom)
   const owned = useAtomValue(viewTerminalsAtom)[id]
@@ -280,7 +281,7 @@ function SessionView({ id }: { id: string }): React.JSX.Element {
   const opened = useRef<string | null>(owned ?? null)
 
   useEffect(() => {
-    if (remote === null) return
+    if (remote === null || session?.closed) return
     let gone = false
     if (opened.current === null) {
       void agentCap.open(remote, { attach: id, ...geometry }).then((res) => {
@@ -309,8 +310,18 @@ function SessionView({ id }: { id: string }): React.JSX.Element {
     // Opened once per session shown (and per Retry); the geometry is only
     // where it starts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [remote, id, attempt])
+  }, [remote, id, attempt, session?.closed])
 
+  if (session?.closed) {
+    return (
+      <IconStackEmpty
+        icon={TerminalSquare}
+        title={session.outcome === 'failed' ? 'Vault app copy failed' : 'Session ended'}
+        description={session.error ?? session.message ?? 'The session has finished.'}
+        role="status"
+      />
+    )
+  }
   if (error !== null) {
     return (
       <IconStackEmpty

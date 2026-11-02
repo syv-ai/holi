@@ -146,8 +146,15 @@ export function createFencedSessions(deps: FencedSessionsDeps): FencedSessions {
         state,
         turnEnded: copy,
         exited: () =>
-          void copy()
-            .then(() => provider.release?.(state))
+          copy()
+            .then(async (result) => {
+              try {
+                await provider.release?.(state)
+              } catch (err) {
+                log(`${name}: could not release agent state: ${String(err)}`)
+              }
+              return result
+            })
             .finally(drop),
       },
     })

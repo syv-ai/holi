@@ -55,6 +55,8 @@ export interface AgentRun {
   /** The document's view was left while the run went on: it does not open
    *  the app when it finishes, it offers it. */
   away?: boolean
+  /** The ready app was opened; keep the run to surface later copy failures. */
+  opened?: boolean
   sessionId: string | null
   /** Which start this run is waiting on (`launchRunAtom`): a start that
    *  resolves for a run since stopped or replaced stops what it started. */
