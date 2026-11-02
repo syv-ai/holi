@@ -6,11 +6,12 @@ customer note into a PDF proposal laid out as the vault's template; Assistant ca
 digest every weekday. A person sends a Holi work from the menu beside a document's **Agent** button,
 or gives it **habits**: [automations](scheduled-agents.md) it carries out on a clock. Either way the
 run is this machine's agent in the vault, under the Holi's soul and rules: Claude Code, asking the
-person what its rules do not cover, or Codex in a sandbox its rules must fit
-([agent-sessions](agent-sessions.md), Jobs).
+person what its rules do not cover; Codex in a sandbox its rules must fit
+([agent-sessions](agent-sessions.md), Jobs); or Pi, with the person's normal permissions and its
+rules not enforced. Approving a Holi approves it on that agent: changing the default asks again.
 
 Holis are the plugin `holis` (`src/plugins/holis/`, on by default), built on the agent: it runs
-every Holi through the agent's `agent.job` and reaches the agent's sessions only through core.
+every Holi through the agent's `agent.launch` (`agent.job` on Codex) and reaches the agent's sessions only through core.
 
 **On Codex.** A run goes to this machine's agent (`agentProvider`); a Holi has no agent of its
 own. On Codex it is a job in the vault: `allow` must be reads and folder writes
@@ -103,7 +104,7 @@ menu of what plugins offer for the document (`RendererPlugin.documentActions`). 
 and knows nothing of Holis; the Holis plugin contributes its rows: **Send to Holi**, the Holis that
 take this document, then **All Holis** (the others, shown as taking other documents), then **New
 Holi…**, which opens the wizard with the document's folder as its `accepts`. A send is a background
-session (`claude --bg` through `agent.job`) on Claude Code, shown in the Agents view; its first turn is one line
+session (`claude --bg` through `agent.launch`) on Claude Code, shown in the Agents view; its first turn is one line
 naming the document, and its turns pause sync and are recorded under its job id like any session's.
 
 **Approved per machine, per change.** A Holi syncs, so a teammate's pull brings it, and a run of it
@@ -204,7 +205,7 @@ offers theirs or yours. **Memory**: one fact a row, each editable or forgotten, 
 ## The path of a send
 
 One path, no parallel mechanism: the document's Agent menu (a plugin slot) → approval if new or
-changed (`holis.approve`, the UI door) → `holis.send` → `agent.job` (`claude --bg` with the
+changed (`holis.approve`, the UI door) → `holis.send` → `agent.launch` (`claude --bg` with the
 Holi's system prompt, model and rules) → the Agents view on its session → the turn hooks bracket
 each turn on the vault's one working set and record it under the job id → `holi holis report`
 writes the run's record → the `holis` event, and the renderer reads the list again → the Holi's

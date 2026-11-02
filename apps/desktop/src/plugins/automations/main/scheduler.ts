@@ -621,9 +621,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         ),
         provider,
         ...(model === undefined ? {} : { model }),
-        ...(provider === 'claude'
-          ? { allow: [...new Set([...def.allow, ...(holi?.allow ?? [])])] }
-          : {}),
+        // Pi does not enforce them; Codex's job in the vault takes its
+        // writable folders from them.
+        ...(provider === 'pi'
+          ? {}
+          : { allow: [...new Set([...def.allow, ...(holi?.allow ?? [])])] }),
         ...(holi === undefined ? {} : { system: holi.system }),
       })
       record = res.ok

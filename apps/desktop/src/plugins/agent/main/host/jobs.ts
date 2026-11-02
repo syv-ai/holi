@@ -47,7 +47,8 @@
  * **It is a session in the one list**, named by Holi's id (`j` and twelve hex
  * digits): working while a turn runs, then idle with its `outcome` (and why,
  * when it failed) for a while, so whoever started it reads the result off the
- * row. What its turns used is its `tokens`, when the agent says.
+ * row: `completed` or `failed`, as a Pi run's, why it failed as its `error`.
+ * What its turns used is its `usage.total`, when the agent says.
  *
  * **A follow-up** (`message`) to a vault job is a new turn on the agent's
  * thread (`resume`): queued while a turn runs, sent when it ends. The agent
@@ -195,7 +196,8 @@ interface Job {
   child: ChildProcess | null
   /** A turn is under way: running, or its writes being copied back. */
   busy: boolean
-  outcome?: 'done' | 'failed'
+  outcome?: 'completed' | 'failed'
+  /** Why it failed, or what a completed turn left out. */
   message?: string
   /** Why it was stopped from outside, which is then its message. */
   stopped?: string
@@ -449,9 +451,13 @@ export function createJobs(deps: JobsDeps): Jobs {
       state: j.busy ? 'working' : 'idle',
       startedAt: j.startedAt,
       ...(j.model === undefined ? {} : { model: j.model }),
-      ...(j.tokens > 0 ? { tokens: j.tokens } : {}),
+      ...(j.tokens > 0 ? { usage: { total: j.tokens } } : {}),
       ...(j.busy || j.outcome === undefined ? {} : { outcome: j.outcome }),
-      ...(j.busy || j.message === undefined ? {} : { message: j.message }),
+      ...(j.busy || j.message === undefined
+        ? {}
+        : j.outcome === 'failed'
+          ? { error: j.message }
+          : { message: j.message }),
     }))
 
   function push(): void {
@@ -618,7 +624,7 @@ export function createJobs(deps: JobsDeps): Jobs {
 
   /** The job's turn ended: its outcome stands until a follow-up starts
    *  another, and it leaves the list a while after the last. */
-  function finish(job: Job, outcome: 'done' | 'failed', message?: string): void {
+  function finish(job: Job, outcome: 'completed' | 'failed', message?: string): void {
     job.outcome = outcome
     if (message === undefined) delete job.message
     else job.message = message
@@ -725,13 +731,13 @@ export function createJobs(deps: JobsDeps): Jobs {
       // already be another process's.
       job.child = null
       await provider.release?.(job.state)
-      let outcome: 'done' | 'failed'
+      let outcome: 'completed' | 'failed'
       let why: string | undefined
       if (job.stopped !== undefined) {
         outcome = 'failed'
         why = job.stopped
       } else if (completed && failure === null && code === 0) {
-        outcome = 'done'
+        outcome = 'completed'
         if (job.dir !== null) {
           try {
             const { written, skipped } = await copyBack(job, job.dir, write, job.made)

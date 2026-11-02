@@ -71,7 +71,7 @@ test('a live session carries what its tokens were into its row', () => {
     provider: 'codex',
     name: 'Proposal',
     state: 'idle',
-    tokens: 2_000,
+    usage: { total: 2_000 },
   }
   expect(mergeSessionItems([item({ jobId: live.id })], [live])[0]).toMatchObject({ tokens: 2_000 })
   expect(mergeSessionItems([], [live])[0]).toMatchObject({ agent: 'codex', tokens: 2_000 })

@@ -20,9 +20,10 @@
  * anyone approves. It goes into a run inside a `<memory>` block that says what
  * it is: facts the Holi wrote earlier.
  *
- * **A send is a session like any other**, started through the agent
- * (`agent.job`) on this machine's default agent: a background session on
- * Claude Code (`claude --bg`), a job in the vault on Codex. Who the Holi is
+ * **A send is a session like any other**, started through the agent on
+ * this machine's default agent, which its approval is bound to: a background
+ * session on Claude Code (`claude --bg`) or a Holi-managed RPC run on Pi
+ * (`agent.launch`), a job in the vault on Codex (`agent.job`). Who the Holi is
  * goes in as its system text; its first turn is one line naming the
  * document. **What came of it is the Holi's to say**, with `holi
  * holis report`, on the run's record. A report that asks for the person
@@ -541,9 +542,9 @@ export function createHolis(deps: HolisDeps): Holis {
           prompt: sendPrompt(path),
           provider,
           ...(model === undefined ? {} : { model }),
-          ...(provider === 'claude'
-            ? { allow: [...def.allow, ...memoryRules(), REPORT_RULE] }
-            : {}),
+          // Pi does not enforce them; Codex's job in the vault takes its
+          // writable folders from them.
+          ...(provider === 'pi' ? {} : { allow: [...def.allow, ...memoryRules(), REPORT_RULE] }),
           system: await systemFor(vault, entry, true),
         })
         if (!res.ok) throw new CapabilityError('UNAVAILABLE', res.message)

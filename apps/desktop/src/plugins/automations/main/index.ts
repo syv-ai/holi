@@ -1,7 +1,7 @@
 /**
  * The automations plugin's main side (docs/features/scheduled-agents.md):
  * the open vault's automations, checked every half minute, each run on this
- * machine's agent through the agent (`agent.job`), which it requires. An automation a
+ * machine's agent through the agent (`agent.launch`, `agent.job` on Codex), which it requires. An automation a
  * Holi carries out gets that Holi from the Holis plugin (`holis.context`).
  *
  * It hears the agent's session list and turn ends (`ctx.hear`), which is how

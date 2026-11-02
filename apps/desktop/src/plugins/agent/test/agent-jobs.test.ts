@@ -749,7 +749,12 @@ describe('a job in the vault', () => {
       },
       { timeout: 5_000 },
     )
-    expect(row).toMatchObject({ state: 'idle', outcome: 'done', model: 'gpt-5', tokens: 2000 })
+    expect(row).toMatchObject({
+      state: 'idle',
+      outcome: 'completed',
+      model: 'gpt-5',
+      usage: { total: 2000 },
+    })
     expect(edges).toEqual([`begin:${id}`, `end:${id}`, `begin:${id}`, `end:${id}`])
     expect(await readFile(join(root, 'tilbud/Q4.md'), 'utf8')).toBe('proposal')
   })
@@ -813,7 +818,7 @@ describe('a job in the vault', () => {
       },
       { timeout: 5_000 },
     )
-    expect(row).toMatchObject({ state: 'idle', message: 'Not unattended here.' })
+    expect(row).toMatchObject({ state: 'idle', error: 'Not unattended here.' })
     expect(runs).toHaveLength(1)
     await jobs.leave()
   })
@@ -827,7 +832,7 @@ describe('a job in the vault', () => {
     await stopping
     expect(jobs.sessions().find((s) => s.id === id)).toMatchObject({
       outcome: 'failed',
-      message: 'Stopped.',
+      error: 'Stopped.',
     })
     expect(runs).toHaveLength(1)
     await jobs.leave()

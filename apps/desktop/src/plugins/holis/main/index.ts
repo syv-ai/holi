@@ -1,7 +1,8 @@
 /**
  * The Holis plugin's main side (docs/features/holis.md): the vault's Holis,
  * their approvals and runs, and the commands their runs keep their memory
- * with. A send runs through the agent (`agent.job`), which it requires.
+ * with. A send runs through the agent (`agent.launch`, `agent.job` on
+ * Codex), which it requires.
  *
  * Electron loads inside `activate`, so the plugin stays importable under
  * plain Node in the tests.

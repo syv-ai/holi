@@ -26,15 +26,17 @@ by its job id (the rest of this page). Any other provider's are **sessions Holi 
 digits), alive exactly as long as that process. Closing its tab leaves it running and its row
 brings it back; Stop ends it. Both kinds are one `sessions` event, each summary carrying its
 `provider`, and every `agent.*` verb goes to the kind the id names; one a kind cannot do (Restart
-and Duplicate on a live session Holi runs) is refused in words. Codex's CLI has no verb Holi could
-back either with: `codex resume` picks up a closed conversation, and a copy of one is not offered
-until Holi knows a CLI verb for it.
+on a live session Holi runs, Duplicate on one whose agent cannot fork a conversation) is refused in
+words. Codex's CLI has no verb Holi could back either with: `codex resume` picks up a closed
+conversation, and a copy of one is not offered until Holi knows a CLI verb for it. Pi's
+conversations are named by Holi (`--session-id`), so Duplicate forks one (`--fork`).
 
 **A session Holi ran stays reopenable.** When it ends with its conversation known (Codex's hook
-said its thread), it is kept on this machine (`<userData>/agent-sessions.json`, by vault, the
-latest fifty), and History lists it with the stopped background sessions. Opening it runs `codex
-resume <thread>` under the same id, through the same `agent.respawn` a stopped background session
-is brought back with.
+said its thread; a Pi conversation is the id Holi named it with) and was not fenced, it is kept on
+this machine (`<userData>/agent-pty-history.json`, by vault, the latest fifty), and History lists
+it with the stopped background sessions. Opening it (`agent.open`, or the `agent.respawn` a stopped
+background session is brought back with) starts the agent on that conversation again under the
+same id: `codex resume <thread>`, Pi with `--session-id`.
 
 **A session Holi runs is read off its terminal**, unless its hooks say (`host/pty-signals.ts`):
 Enter typed outside a paste begins a turn, five seconds without output ends one (a TUI at work
@@ -120,8 +122,10 @@ its JSONL events (thread, turn completed with its token usage, turn failed, erro
 process exits, what it left running in its process group is killed, before anything is copied
 back or the next turn starts. A failure says why: the turn's own reason, else the last line Codex
 printed. A job is a session in the one list, named `j` and twelve hex digits, working while a turn
-runs or its writes are copied back, then idle with its `outcome` and `message` for ten minutes,
-and its `tokens` (input and output, summed over its turns) when Codex reported them: a count,
+runs or its writes are copied back, then idle for ten minutes with its `outcome` (`completed` or
+`failed`, as a Pi run's), why it failed as its `error` and what a completed one left out as its
+`message`, and its `usage.total` (input and output tokens, summed over its turns, the field a Pi
+run reports too) when Codex reported them: a count,
 never a share of a context window, shown beside the model on its row. It has no terminal, so
 Open, Restart and Duplicate are refused in words. **A message** (`agent.message`) to a job in the
 vault is its next turn on the same thread, `codex exec <options> resume -- <thread> <prompt>`

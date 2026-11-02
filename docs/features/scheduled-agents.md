@@ -7,7 +7,7 @@ file dropped in `inbox/`. The definition is a file in the vault; whether it runs
 choice; each run is an ordinary [agent session](agent-sessions.md), carried out by this machine's
 agent as it is or by one of the vault's [Holis](holis.md), with its soul and memory. Automations
 are the plugin `automations` (`src/plugins/automations/`, on by default), built on the agent: it
-starts each run through `agent.job` and hears the agent's session list and turn ends through the
+starts each run through `agent.launch` (`agent.job` on Codex) and hears the agent's session list and turn ends through the
 main-side plugin channel (`ctx.hear`). Until the feature is finished, the renderer shows
 Automations as a locked **In progress** row and keeps them out of ⌘K (`AUTOMATIONS_READY` in
 `info.ts`); automations already switched on still run.
@@ -125,7 +125,10 @@ the sandbox has no network to reach Holi) or a web tool, rather than run on Clau
 asks anyone: a step outside its sandbox fails. Its turn ends when Codex says `turn.completed` or
 fails, and closes the run as a `Stop` does below; a turn that failed records the run as failed,
 with Codex's reason, in Run history and the work log. A `model` is Claude Code's and is left out.
-The rest of this section is Claude Code's.
+**On Pi**, a run is Pi's Holi-managed RPC process with the person's normal permissions, `allow`
+not enforced, and a `model` used only when it is `provider/model-id`. Turning an automation on
+approves it on this machine's agent: changing the default asks again. The rest of this section is
+Claude Code's.
 
 **An automation runs on Codex only once this machine allows it** for the vault (Settings →
 General → Agents, **Let Codex run unattended in this vault**, after a dialog); until then main
@@ -344,7 +347,7 @@ repeats inside one session.
   `ctx.onSnapshot`
 - `apps/desktop/src/plugins/tasks/main/triggers.ts`, `apps/desktop/src/plugins/google/main/triggers.ts`:
   the task, calendar and mail sources
-- `apps/desktop/src/plugins/agent/main/host/capabilities.ts` (`agent.job`, `agent.watched`),
+- `apps/desktop/src/plugins/agent/main/host/capabilities.ts` (`agent.launch`, `agent.job`, `agent.watched`),
   `main/host/sessions.ts` (`launch`, a session with no terminal, and what it publishes)
 - `apps/desktop/src/plugins/automations/renderer/`: `automations-view.tsx`, `automation-editor.tsx`,
   `holi-picker.tsx`, `automations-section.tsx`

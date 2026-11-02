@@ -76,7 +76,7 @@ function liveItem(s: AgentSession): AgentsSessionItem {
     agent: s.provider,
     updatedAt: s.startedAt ?? 0,
     ...(s.model === undefined ? {} : { model: s.model }),
-    ...(s.tokens === undefined ? {} : { tokens: s.tokens }),
+    ...(s.usage?.total === undefined ? {} : { tokens: s.usage.total }),
     ...(s.waitingFor === undefined ? {} : { waitingFor: s.waitingFor }),
   }
 }
@@ -114,7 +114,7 @@ export function mergeSessionItems(
           agent: s.provider,
           updatedAt: Math.max(item.updatedAt, s.startedAt ?? 0),
           ...((s.model ?? item.model) === undefined ? {} : { model: s.model ?? item.model }),
-          ...(s.tokens === undefined ? {} : { tokens: s.tokens }),
+          ...(s.usage?.total === undefined ? {} : { tokens: s.usage.total }),
           ...(s.waitingFor === undefined ? {} : { waitingFor: s.waitingFor }),
         })
         continue
