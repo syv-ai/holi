@@ -263,7 +263,7 @@ export function DocumentFormatBubble({
               >
                 {/* Mounts per open, so the field always starts empty. */}
                 <AgentPrompt
-                  heading="Ask Sonnet to change the selection"
+                  heading="Ask AI to change the selection"
                   placeholder="Make it more formal, turn it into a list…"
                   onSubmit={submitCustom}
                   onCancel={() => setCustomPassage(null)}

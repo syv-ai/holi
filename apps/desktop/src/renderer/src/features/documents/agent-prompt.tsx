@@ -27,7 +27,7 @@ import type { AgentRun } from './document-agent'
  *  Shift+Enter breaks the line, Escape closes. */
 export function AgentPrompt({
   initial = '',
-  heading = 'Ask Sonnet to write or change this document',
+  heading = 'Ask AI to write or change this document',
   placeholder = 'Draft an introduction, turn the list into a table…',
   onSubmit,
   onCancel,
