@@ -16,7 +16,7 @@ A markdown file's YAML frontmatter is meant to be drawn as one block at the top 
 
 **Raw YAML fallback.** No schema (the agent surface, hidden paths) or frontmatter that is not a mapping gets a nested `EditorView` with the YAML grammar and highlighting, and none of the markdown stack. Its edits are written back over the region under a marker annotation, with the `---` fences rebuilt every time. Broken YAML turns the chevron red and holds the autosave (`frontmatterValid`).
 
-**A new note is empty.** The file tree's `+` creates it with no frontmatter, and nothing adds a block on commit: a note gets one when a value is first given, however it arrived. An empty block (`---` then `---`) reads as an empty mapping and draws as rows.
+**A new note is empty.** The file tree's New document creates it with no frontmatter, and nothing adds a block on commit: a note gets one when a value is first given, however it arrived. An empty block (`---` then `---`) reads as an empty mapping and draws as rows.
 
 **Look and motion.** The block sits on the text's own edge, as wide as the text, so the summary line, the title under it and the body share one left edge; the open fields keep the properties' 24rem. It has `0.5rem` above and `1rem` beneath it. Opening animates from the old height to `auto`. Values carry no edge and no fill, in either theme and under the pointer (a field with no edge); the row tints under the pointer instead.
 

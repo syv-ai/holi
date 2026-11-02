@@ -4,13 +4,13 @@ import { isHoliLinkable } from '@holi/shared'
 import {
   ArrowDownIcon,
   ArrowUpIcon,
+  FilePlusIcon,
   FileSymlinkIcon,
   FolderInputIcon,
   FolderOpenIcon,
   FolderPlusIcon,
   HardDriveIcon,
   LinkIcon,
-  ListChecksIcon,
   PencilIcon,
   SquareSplitHorizontalIcon,
   Trash2Icon,
@@ -190,39 +190,36 @@ export function pluginRowActions({
   ]
 }
 
-/** The New menu: what is made in a folder, then the view switches. */
+/**
+ * The New menu: what can be made in a folder, a document and a folder first,
+ * then each enabled claim's (New task, New Link, New app). The Files header's
+ * + opens it alone; the ⋯ and right-click menus show it above `viewActions`.
+ */
 export function newActions({
   creates,
   remote,
-  showTasks,
-  showHidden,
   on,
 }: {
   creates: readonly FileCreate[]
   remote: string | null
-  showTasks: boolean
-  showHidden: boolean
   on: {
+    newNote: () => void
     newFolder: () => void
-    newTask: () => void
     make: (create: FileCreate) => void
-    toggleTasks: () => void
-    toggleHidden: () => void
-    collapseAll: () => void
   }
 }): MenuAction[] {
   return [
     {
       kind: 'item',
-      label: 'New folder',
-      icon: <FolderPlusIcon aria-hidden="true" />,
-      run: on.newFolder,
+      label: 'New document',
+      icon: <FilePlusIcon aria-hidden="true" />,
+      run: on.newNote,
     },
     {
       kind: 'item',
-      label: 'New task',
-      icon: <ListChecksIcon aria-hidden="true" />,
-      run: on.newTask,
+      label: 'New folder',
+      icon: <FolderPlusIcon aria-hidden="true" />,
+      run: on.newFolder,
     },
     ...creates.map((create): MenuAction => ({
       kind: 'item',
@@ -231,7 +228,24 @@ export function newActions({
       disabled: remote === null,
       run: () => on.make(create),
     })),
-    { kind: 'separator' },
+  ]
+}
+
+/** The view switches the ⋯ and right-click menus end with. */
+export function viewActions({
+  showTasks,
+  showHidden,
+  on,
+}: {
+  showTasks: boolean
+  showHidden: boolean
+  on: {
+    toggleTasks: () => void
+    toggleHidden: () => void
+    collapseAll: () => void
+  }
+}): MenuAction[] {
+  return [
     { kind: 'check', label: 'Show task files', checked: showTasks, toggle: on.toggleTasks },
     { kind: 'check', label: 'Show hidden files', checked: showHidden, toggle: on.toggleHidden },
     { kind: 'separator' },
