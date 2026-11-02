@@ -133,6 +133,13 @@ describe('approval', () => {
 })
 
 describe('sending a document', () => {
+  it('requires approval again when the configured provider changes', async () => {
+    await approved()
+    selectedProvider = 'pi'
+    expect((await holis.list(vault()))[0]!.status).toBe('changed')
+    await expect(holis.send(vault(), 'proposal', 'kunder/a.md')).rejects.toThrow(/Approve it again/)
+  })
+
   it('starts a session with its rules, model, soul and memory, naming the document', async () => {
     await approved()
     await writeHoli({ memory: '- 2026-10-01 · Prices in DKK\n' })

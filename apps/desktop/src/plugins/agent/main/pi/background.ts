@@ -30,6 +30,7 @@ interface PiJob {
   contextPercent?: number
   busy: boolean
   statsUpdated: boolean
+  retentionTimer?: ReturnType<typeof setTimeout>
 }
 
 export interface PiBackgroundDeps {
@@ -132,7 +133,18 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     // hear. Aborts and failures release sync without masquerading as completion.
     deps.bracket(job.id, result.status === 'completed' ? 'end' : 'forget')
     deps.changed()
-    if (result.status !== 'completed') job.run.close()
+    if (result.status === 'completed') {
+      // A completed run no longer needs a resident Pi process. Keep its final
+      // summary briefly so turn-end consumers can observe the result, then
+      // drop the Sessions row rather than retaining it for the vault lifetime.
+      job.run.close()
+      job.retentionTimer = setTimeout(() => {
+        if (jobs.get(job.id) !== job || job.busy) return
+        jobs.delete(job.id)
+        deps.changed()
+      }, 30_000)
+      job.retentionTimer.unref()
+    } else job.run.close()
   }
 
   return {
@@ -150,6 +162,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
         throw new Error(`no running Pi session ${id}`)
       if (job.busy) job.run.followUp(text)
       else {
+        if (!job.run.isAlive) throw new Error(`Pi RPC process exited before the follow-up`)
         deps.bracket(job.id, 'begin')
         void runTurn(job, text)
       }
@@ -158,6 +171,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       const job = jobs.get(id)
       if (!job || job.remote !== remote)
         return { ok: false as const, message: 'That session has ended.' }
+      if (job.retentionTimer) clearTimeout(job.retentionTimer)
       if (job.busy) job.run.cancel()
       else job.run.close()
       job.state = 'idle'
@@ -171,6 +185,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       root = null
       const closing = [...jobs.values()].filter((job) => job.remote === oldRemote)
       for (const job of closing) {
+        if (job.retentionTimer) clearTimeout(job.retentionTimer)
         job.run.close()
         jobs.delete(job.id)
         if (job.busy) deps.bracket(job.id, 'forget')

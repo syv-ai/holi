@@ -37,6 +37,7 @@ const holi = (over: Partial<HoliSummary>): HoliSummary => ({
   folder: true,
   name: 'X',
   status: 'approved',
+  provider: 'claude',
   accepts: [],
   allow: [],
   soul: 'Do it.',

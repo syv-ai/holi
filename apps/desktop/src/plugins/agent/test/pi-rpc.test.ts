@@ -27,7 +27,12 @@ function fake() {
       return true
     },
   }
-  return { child, stdout, commands }
+  return {
+    child,
+    stdout,
+    commands,
+    exit: () => exit?.(1, null),
+  }
 }
 
 describe('PiRpcRun', () => {
@@ -66,6 +71,16 @@ describe('PiRpcRun', () => {
     expect(fakeProcess.commands.map((c) => c.type)).toEqual(['prompt', 'prompt', 'prompt'])
     expect(fakeProcess.commands[1]).toMatchObject({ streamingBehavior: 'steer' })
     expect(fakeProcess.commands[2]).toMatchObject({ streamingBehavior: 'followUp' })
+  })
+
+  it('rejects a follow-up when the RPC process exited between turns', async () => {
+    const process = fake()
+    const run = new PiRpcRun({ bin: 'pi', cwd: '/v', spawn: () => process.child })
+    const first = run.prompt('first')
+    process.stdout.write('{"type":"agent_settled","aborted":false}\n')
+    await expect(first).resolves.toMatchObject({ status: 'completed' })
+    process.exit()
+    expect(() => run.followUp('second')).toThrow(/process exited/)
   })
 
   it('bounds output and returns failed on malformed input limit', async () => {

@@ -76,6 +76,14 @@ export function ApproveHoliDialog(): React.JSX.Element | null {
                 </>
               )}{' '}
               Its memory is notes its runs keep, and is not part of what you approve.
+              {holi.provider === 'pi' && (
+                <>
+                  {' '}
+                  This approval is for Pi, which runs with your normal filesystem permissions and is
+                  not sandboxed to the requested document. It can read and change other files your
+                  account can access.
+                </>
+              )}
             </p>
             <Part label="Soul">
               <p className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-xl bg-foreground/[0.04] p-2.5 text-sm leading-relaxed">

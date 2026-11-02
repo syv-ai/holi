@@ -188,11 +188,10 @@ describe('Pi background runs', () => {
         contextPercent: 13,
       },
     ])
-    await manager.message(id, 'Follow up')
-    expect(rpc.commands.at(-1)).toMatchObject({ type: 'prompt', message: 'Follow up' })
+    await expect(manager.message(id, 'Follow up')).rejects.toThrow(/process exited/)
     await expect(manager.stop(id)).resolves.toMatchObject({ ok: true })
     await manager.leave()
-    expect(brackets).toEqual(['begin', 'end', 'begin', 'forget'])
+    expect(brackets).toEqual(['begin', 'end'])
     expect(manager.sessions()).toEqual([])
   })
 

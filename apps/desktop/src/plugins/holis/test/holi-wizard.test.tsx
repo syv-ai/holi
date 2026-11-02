@@ -37,6 +37,7 @@ const made: HoliSummary = {
   mascot: 'captain',
   color: '#a5a1ff',
   status: 'new',
+  provider: 'claude',
   accepts: ['kunder/**/*.md'],
   allow: ['Edit(tilbud/**)'],
   soul: 'Write proposals.',
