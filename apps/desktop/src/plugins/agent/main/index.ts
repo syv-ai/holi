@@ -22,6 +22,8 @@ import { piProvider } from './pi'
 import { createPiBackground } from './pi/background'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { createPtySessions, parsePastFile, PTY_SESSION_ID } from './host/pty-sessions'
+import { createFencedSessions } from './host/fenced'
+import { createJobs } from './host/jobs'
 import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
 import { openTurnLog } from './host/turn-log'
@@ -53,17 +55,18 @@ export const agentMain: MainPlugin = {
 
     // One list for the renderer and the plugins built on the agent: the
     // background sessions Claude Code's supervisor runs, then the ones Holi
-    // runs itself.
+    // runs itself, then its jobs.
     let background: SessionSummary[] = []
     let backgroundPast: SessionSummary[] = []
     let piSessions: SessionSummary[] = []
     let own: SessionSummary[] = []
     let ownPast: SessionSummary[] = []
+    let jobRows: SessionSummary[] = []
     const pushHistory = (): void => {
       ctx.emit(ctx.remote, 'history', [...backgroundPast, ...ownPast])
     }
     const pushSessions = (): void => {
-      const all = [...background, ...piSessions, ...own]
+      const all = [...background, ...piSessions, ...own, ...jobRows]
       ctx.emit(ctx.remote, 'sessions', all)
       ctx.publish('sessions', all)
       sessionLog.sessions(all)
@@ -131,6 +134,24 @@ export const agentMain: MainPlugin = {
       ownPast = list
       pushHistory()
     })
+    // Prompts run unwatched by a provider without a supervisor, each in a
+    // scratch folder of its own.
+    const jobs = createJobs({
+      vault: { remote: ctx.remote, root: ctx.root },
+      scratchRoot: join(ctx.userData, 'agent-jobs'),
+      onChange: (list) => {
+        jobRows = list
+        pushSessions()
+      },
+    })
+    // Sessions Holi runs fenced to a folder of its own, what they wrote
+    // copied back as each turn ends.
+    const fenced = createFencedSessions({
+      vault: { remote: ctx.remote, root: ctx.root },
+      scratchRoot: join(ctx.userData, 'agent-fenced'),
+      own: ptySessions,
+      copyBack: jobs.copyBack,
+    })
     // What the agent and Holi want the person to see: an entry in the
     // vault's inbox, and a banner while Holi is out of sight.
     const inbox = createInbox({
@@ -143,6 +164,8 @@ export const agentMain: MainPlugin = {
       ...agentCapabilities({
         sessions: started,
         own: ptySessions,
+        jobs,
+        fenced,
         providers,
         terminals,
         liveRemote,
@@ -202,6 +225,7 @@ export const agentMain: MainPlugin = {
         ...started.sessions(),
         ...piBackground.sessions(),
         ...ptySessions.sessions(),
+        ...jobs.sessions(),
       ].filter((s) => s.state !== 'idle')
       if (busy.length === 0) return null
       const one = busy.length === 1
@@ -244,6 +268,8 @@ export const agentMain: MainPlugin = {
       unwatchNeedsYou()
       await ptySessions.leave().catch((err) => console.error('[agent] pty sessions:', err))
       await piBackground.leave().catch((err) => console.error('[agent] Pi sessions:', err))
+      await fenced.leave().catch((err) => console.error('[agent] fenced sessions:', err))
+      await jobs.leave().catch((err) => console.error('[agent] jobs:', err))
       await started.leave().catch((err) => console.error('[agent] leave failed:', err))
       await terminals.closeAll().catch((err) => console.error('[agent] terminals:', err))
     }

@@ -5,6 +5,7 @@ import {
   nameOf,
   parsePastFile,
   PTY_SESSION_ID,
+  type FenceCopy,
 } from '../main/host/pty-sessions'
 import type { OpenArgs } from '../main/host/terminals'
 import type { AgentProvider, TerminalOpts } from '../main/provider'
@@ -21,6 +22,7 @@ function setup(
     read(): Promise<import('../main/claude/listing').SessionSummary[]>
     write(rows: import('../main/claude/listing').SessionSummary[]): Promise<void>
   },
+  capabilities: AgentProvider['capabilities'] = {},
 ) {
   vi.useFakeTimers()
   const asked: TerminalOpts[] = []
@@ -31,17 +33,19 @@ function setup(
     notInstalled: 'Codex is not installed',
     installed: () => true,
     configure: async () => ({ dir: '/home/.codex' }),
-    terminal: (_target, opts = {}) => {
+    terminal: (target, opts = {}) => {
+      targets.push(target)
       asked.push(opts)
       return { bin: '/bin/codex', args: [], env: {} }
     },
-    capabilities: {},
+    capabilities,
   }
   const opened: OpenArgs[] = []
   const closed: string[] = []
   const pastes: Array<[string, string]> = []
   const edges: string[] = []
   const lists: unknown[] = []
+  const targets: { binDir: string | null }[] = []
   const sessions = createPtySessions({
     vault: VAULT,
     providers: [provider],
@@ -67,7 +71,7 @@ function setup(
     idleMs: 100,
     log: () => {},
   })
-  return { sessions, opened, closed, pastes, edges, asked, lists }
+  return { sessions, opened, closed, pastes, edges, asked, lists, targets }
 }
 
 describe('nameOf', () => {
@@ -316,5 +320,116 @@ describe('sessions Holi runs', () => {
   it('refuses a provider it does not run', async () => {
     const t = setup()
     expect((await t.sessions.start('claude', {})).ok).toBe(false)
+  })
+
+  it('runs a fenced one in its folder, copying back before its turn closes, and says when that failed', async () => {
+    const t = setup('codex', undefined, { fenced: 'sandbox' })
+    let copied!: (copy: FenceCopy) => void
+    const fence = {
+      dir: '/scratch/abc',
+      state: '/scratch/abc.agent',
+      turnEnded: vi.fn(() => {
+        return new Promise<FenceCopy>((resolve) => (copied = resolve))
+      }),
+      exited: vi.fn(async () => ({})),
+    }
+    const res = await t.sessions.start('codex', { prompt: 'Make the app', fence })
+    if (!res.ok) throw new Error(res.message)
+    expect(t.opened[0]?.cwd).toBe('/scratch/abc')
+    expect(t.asked[0]?.fence).toEqual({ dir: '/scratch/abc', state: '/scratch/abc.agent' })
+    // Holi's commands reach the vault: none on a fenced session's PATH.
+    expect(t.targets[0]?.binDir).toBeNull()
+
+    t.sessions.noteTurn(res.sessionId, false)
+    expect(fence.turnEnded).toHaveBeenCalledOnce()
+    expect(t.edges).toEqual([`begin:${res.sessionId}`])
+    const error = 'Holi did not copy back notes/Plan.app/app.yaml: something else put it there.'
+    copied({ error, leftOut: 'Holi left out what it may not write: notes/Plan.app/.env.' })
+    await vi.waitFor(() =>
+      expect(t.edges).toEqual([`begin:${res.sessionId}`, `end:${res.sessionId}`]),
+    )
+    // Its row says why its writes did not reach the vault.
+    expect(t.sessions.sessions()[0]).toMatchObject({
+      outcome: 'failed',
+      error,
+      message: 'Holi left out what it may not write: notes/Plan.app/.env.',
+    })
+
+    await t.sessions.stop(res.sessionId)
+    expect(fence.exited).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the final copy error after the terminal exits until the vault is left', async () => {
+    const t = setup('codex', undefined, { fenced: 'sandbox' })
+    let finish!: (result: FenceCopy) => void
+    const fence = {
+      dir: '/scratch/abc',
+      state: '/scratch/abc.agent',
+      turnEnded: async () => ({}),
+      exited: () => new Promise<FenceCopy>((resolve) => (finish = resolve)),
+    }
+    const started = await t.sessions.start('codex', { prompt: 'Make the app', fence })
+    if (!started.ok) throw new Error(started.message)
+    t.opened[0]?.onExit?.()
+    expect(t.sessions.sessions()[0]).toMatchObject({ id: started.sessionId, copying: true })
+    expect(t.sessions.has(started.sessionId)).toBe(true)
+    finish({ error: 'Holi could not copy back app.yaml.' })
+    await vi.waitFor(() =>
+      expect(t.sessions.sessions()[0]).toMatchObject({
+        id: started.sessionId,
+        closed: true,
+        outcome: 'failed',
+        error: 'Holi could not copy back app.yaml.',
+      }),
+    )
+    expect(t.sessions.has(started.sessionId)).toBe(false)
+    expect(t.edges).toEqual([`begin:${started.sessionId}`, `forget:${started.sessionId}`])
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    expect(t.sessions.sessions()[0]).toMatchObject({
+      id: started.sessionId,
+      error: 'Holi could not copy back app.yaml.',
+    })
+    await t.sessions.leave()
+    expect(t.sessions.sessions()).toEqual([])
+  })
+
+  it('retains final omissions but expires a clean final copy', async () => {
+    const t = setup('codex', undefined, { fenced: 'sandbox' })
+    const fenced = (copy: FenceCopy) => ({
+      dir: '/scratch/abc',
+      state: '/scratch/abc.agent',
+      turnEnded: async () => ({}),
+      exited: async () => copy,
+    })
+    const partial = await t.sessions.start('codex', {
+      fence: fenced({ leftOut: 'Holi left out app.local.yaml.' }),
+    })
+    const clean = await t.sessions.start('codex', { fence: fenced({}) })
+    if (!partial.ok || !clean.ok) throw new Error('fenced session did not start')
+    t.opened[0]?.onExit?.()
+    t.opened[1]?.onExit?.()
+    await vi.waitFor(() => expect(t.sessions.sessions()).toHaveLength(2))
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    expect(t.sessions.sessions()).toEqual([
+      expect.objectContaining({
+        id: partial.sessionId,
+        message: 'Holi left out app.local.yaml.',
+      }),
+    ])
+  })
+
+  it('refuses a fence its provider cannot keep', async () => {
+    const t = setup()
+    const fence = {
+      dir: '/scratch/abc',
+      state: '/scratch/abc.agent',
+      turnEnded: async () => ({}),
+      exited: async () => ({}),
+    }
+    expect(await t.sessions.start('codex', { prompt: 'x', fence })).toEqual({
+      ok: false,
+      message: 'Codex cannot run fenced to a folder.',
+    })
+    expect(t.opened).toEqual([])
   })
 })

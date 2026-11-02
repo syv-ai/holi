@@ -8,10 +8,11 @@ import { useState } from 'react'
 import { useAtomValue } from 'jotai'
 import type { Editor } from '@tiptap/react'
 
+import { isRunLive } from '@/state/document-runs'
 import { pluginSlashCommandsAtom } from '@/state/plugins'
 
 import { agentPromptKey, agentPromptPos, onEmptyLineAt, setAgentPrompt } from './agent-trigger'
-import { isRunLive, type useDocumentAgent } from './document-agent'
+import type { useDocumentAgent } from './document-agent'
 import { AGENT_MARKER } from './markdown'
 import { pluginSlashItem } from './plugin-slash'
 import type { RichTextSlashItem } from './rich-text/rich-text-slash-menu'
@@ -90,10 +91,10 @@ export function useDocumentAgentPrompt({
     await agent.start('rewrite', instruction, passage)
   }
 
-  async function turnIntoArtifact() {
+  async function createVaultApp() {
     await save()
-    await agent.start('artifact', 'Make an artifact')
+    await agent.start('vault-app', 'Creating a vault app')
   }
 
-  return { promptOpen, promptInitial, closePrompt, sendPrompt, quickCommand, turnIntoArtifact }
+  return { promptOpen, promptInitial, closePrompt, sendPrompt, quickCommand, createVaultApp }
 }

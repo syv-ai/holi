@@ -65,6 +65,8 @@ describe('Pi background runs', () => {
         },
       } as never,
       own: {} as never,
+      jobs: { has: () => false, sessions: () => [] } as never,
+      fenced: {} as never,
       providers: [
         { id: 'claude', installed: () => true },
         { id: 'pi', installed: () => true },
@@ -113,6 +115,8 @@ describe('Pi background runs', () => {
         duplicate: async () => ({ ok: true }),
       } as never,
       own: { has: () => false } as never,
+      jobs: { has: () => false, sessions: () => [] } as never,
+      fenced: {} as never,
       providers: [] as never,
       terminals: {} as never,
       liveRemote: () => 'owner/vault',

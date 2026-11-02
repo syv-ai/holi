@@ -38,12 +38,12 @@ would start the same session under the same per-machine approval:
 Holi in it (`from: owner/repo#id`), read from that vault each time, its approval still this
 vault's.
 
-**Holis and automations on another agent.** Their runs need a provider with `background`, which
-only Claude Code has. `codex exec` runs a prompt unwatched and fires `notify`, so Codex could carry
-a run once a run in a Holi-owned process, which ends when Holi quits, is acceptable
-([agent-sessions](features/agent-sessions.md), Providers).
+**Holis and automations on Codex.** Their runs need Claude Code's `background` or Pi's
+Holi-managed RPC process; Codex has neither. Codex now runs unattended jobs (`codex exec`, in a scratch folder that ends
+when Holi quits; [agent-sessions](features/agent-sessions.md), Jobs), but a Holi's or an
+automation's run reads and writes the vault itself and outlives a quit, which a job does not.
 
-**More providers.** opencode and pi, each as its core and whatever its hooks allow.
+**More providers.** opencode, as its core and whatever its hooks allow.
 
 **The rest of the inbox.** A banner clicked while Holi had no window open opens Holi, but not the
 entry: the renderer is not listening yet when the click lands, so the entry waits in the inbox. A

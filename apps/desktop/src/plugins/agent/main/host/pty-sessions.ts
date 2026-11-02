@@ -17,6 +17,11 @@
  * Every turn goes through the vault's turn bracket (`bracket`), so sync
  * pauses and the turn is recorded like a background session's.
  *
+ * **A fenced session** runs in a folder of Holi's instead of the clone
+ * (`fenced.ts`), with no Holi commands on its `PATH`: what it wrote is
+ * copied back as each turn ends, before the turn's bracket closes, and
+ * once more when it exits.
+ *
  * One per vault activation: the agent starts in a vault, and these sessions
  * end when it stops there.
  *
@@ -35,6 +40,8 @@ export const PTY_SESSION_ID = /^p[0-9a-f]{12}$/
 export const CONVERSATION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const PAST_MAX = 50
+/** A fenced terminal is gone, but its final copy result remains readable. */
+const FENCED_RESULT_MS = 10 * 60_000
 
 interface PastStore {
   read(): Promise<SessionSummary[]>
@@ -88,6 +95,24 @@ export interface PtySessionsDeps {
   log?: (msg: string) => void
 }
 
+/** How a fenced session's copy back went: why it failed, or what it left
+ *  out. Its row carries it (`outcome`/`error`, `message`) until the next. */
+export interface FenceCopy {
+  error?: string
+  leftOut?: string
+}
+
+/** A session fenced to a folder of Holi's (`fenced.ts`). @public: kept for its test. */
+export interface Fence {
+  dir: string
+  /** A folder of Holi's outside `dir` for the agent's own state. */
+  state: string
+  /** A turn ended: copy back what it wrote, and say how that went. */
+  turnEnded(): Promise<FenceCopy>
+  /** The session's process exited; report its final copy before losing the row. */
+  exited(): Promise<FenceCopy>
+}
+
 export interface PtySessions {
   sessions(): SessionSummary[]
   past(): Promise<SessionSummary[]>
@@ -110,6 +135,7 @@ export interface PtySessions {
       resume?: string
       sessionId?: string
       fork?: string
+      fence?: Fence
     },
   ): Promise<StartResult>
   /** Put text in a session's input, unsent. */
@@ -134,6 +160,10 @@ interface Session {
   /** A notification asked for the person, and nothing was typed since. */
   attention: boolean
   signals: TurnSignals
+  /** How its last copy back went, when it is fenced. */
+  copy?: FenceCopy
+  copying?: boolean
+  exiting?: boolean
 }
 
 /**
@@ -149,6 +179,10 @@ export function nameOf(text: string): string | null {
 export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   const log = deps.log ?? ((msg: string) => console.log(`[agent-pty] ${msg}`))
   const sessions = new Map<string, Session>()
+  const finishedFences = new Map<
+    string,
+    { row: SessionSummary; timer?: ReturnType<typeof setTimeout> }
+  >()
   const memoryPast: PastStore = (() => {
     let rows: SessionSummary[] = []
     return {
@@ -174,7 +208,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   let lastPushed = ''
 
   const stateOf = (s: Session): SessionState =>
-    s.attention ? 'needs-you' : s.signals.inTurn ? 'working' : 'idle'
+    s.copying ? 'working' : s.attention ? 'needs-you' : s.signals.inTurn ? 'working' : 'idle'
 
   /** A session's name: what Holi was told, else the title its program set. */
   const nameFor = (s: Session, lastTitle?: string): string => {
@@ -187,8 +221,8 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     return title === '' ? NEW_SESSION : title
   }
 
-  const summaries = (): SessionSummary[] =>
-    [...sessions.values()].map((s) => ({
+  const summaries = (): SessionSummary[] => [
+    ...[...sessions.values()].map((s) => ({
       id: s.id,
       provider: s.provider,
       name: nameFor(s),
@@ -196,7 +230,13 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       ...(s.attention ? { waitingFor: 'an answer' } : {}),
       startedAt: s.startedAt,
       ...(s.conversationId === undefined ? {} : { conversationId: s.conversationId }),
-    }))
+      // A fenced session whose writes did not reach the vault says why.
+      ...(s.copy?.error === undefined ? {} : { outcome: 'failed' as const, error: s.copy.error }),
+      ...(s.copy?.leftOut === undefined ? {} : { message: s.copy.leftOut }),
+      ...(s.copying ? { copying: true } : {}),
+    })),
+    ...[...finishedFences.values()].map(({ row }) => row),
+  ]
 
   function push(): void {
     const next = summaries()
@@ -276,7 +316,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     ownsTerminal: (terminalId) => [...sessions.values()].some((s) => s.terminalId === terminalId),
     terminalOf: (id) => sessions.get(id)?.terminalId ?? null,
 
-    async start(providerId, { name, prompt, resume, cols, rows, sessionId, fork }) {
+    async start(providerId, { name, prompt, resume, fence, cols, rows, sessionId, fork }) {
       const provider = deps.providers.find((p) => p.id === providerId)
       if (provider === undefined) {
         return { ok: false, message: `${providerId} is not an agent Holi knows.` }
@@ -284,6 +324,9 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       const config = await configure(provider)
       if (config === null) {
         return { ok: false, message: `${provider.label} could not be set up for this vault.` }
+      }
+      if (fence !== undefined && provider.capabilities.fenced === undefined) {
+        return { ok: false, message: `${provider.label} cannot run fenced to a folder.` }
       }
       if (resume !== undefined && resume !== 'pick' && !CONVERSATION_ID.test(resume)) {
         return { ok: false, message: 'That is not a valid conversation id.' }
@@ -302,18 +345,44 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
           : provider.namesConversation === true && (fork !== undefined || resume === undefined)
             ? randomUUID()
             : undefined
-      const target = { root: deps.vault.root, configDir: config.dir, binDir: deps.binDir() }
+      const target = {
+        root: deps.vault.root,
+        configDir: config.dir,
+        // Holi's commands reach the vault: a fenced session has none.
+        binDir: fence === undefined ? deps.binDir() : null,
+      }
       // Filled in once the terminal exists; its callbacks only run after.
       let session: Session | null = null
       const signals = createTurnSignals({
         ...(deps.idleMs === undefined ? {} : { idleMs: deps.idleMs }),
         onBegin: () => {
+          if (session !== null) {
+            session.copy = undefined
+            session.copying = false
+          }
           deps.bracket(id, 'begin')
           push()
         },
         onEnd: () => {
-          deps.bracket(id, 'end')
-          push()
+          const close = (): void => {
+            deps.bracket(id, 'end')
+            push()
+          }
+          // What a fenced turn wrote is in the vault before its turn closes.
+          if (fence === undefined) close()
+          else {
+            if (session !== null) session.copying = true
+            push()
+            void fence
+              .turnEnded()
+              .then((copy) => {
+                if (session !== null && !session.exiting) session.copy = copy
+              })
+              .finally(() => {
+                if (session !== null && !session.exiting) session.copying = false
+                close()
+              })
+          }
         },
         onAttention: () => {
           if (session === null || !signals.inTurn) return
@@ -321,16 +390,24 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
           push()
         },
       })
-      const opened = deps.terminals.open({
-        remote: deps.vault.remote,
-        cwd: deps.vault.root,
-        command: provider.terminal(target, {
+      let command: ReturnType<AgentProvider['terminal']>
+      try {
+        command = provider.terminal(target, {
           session: id,
+          ...(fence === undefined ? {} : { fence: { dir: fence.dir, state: fence.state } }),
           ...(prompt === undefined ? {} : { prompt }),
           ...(resume === undefined ? {} : { resume }),
           ...(fork === undefined ? {} : { fork }),
           ...(conversationId === undefined ? {} : { conversation: conversationId }),
-        }),
+        })
+      } catch (err) {
+        signals.dispose()
+        return { ok: false, message: (err as Error).message }
+      }
+      const opened = deps.terminals.open({
+        remote: deps.vault.remote,
+        cwd: fence?.dir ?? deps.vault.root,
+        command,
         notInstalled: provider.notInstalled,
         attach: id,
         ...(cols === undefined ? {} : { cols }),
@@ -350,8 +427,45 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         onExit: (lastTitle) => {
           const s = session
           if (s === null || sessions.get(id) !== s) return
-          if (s.signals.inTurn) deps.bracket(id, 'forget')
+          const inTurn = s.signals.inTurn
           s.signals.dispose()
+          if (fence !== undefined) {
+            s.exiting = true
+            s.copying = true
+            push()
+            void fence
+              .exited()
+              .catch((err: unknown): FenceCopy => ({ error: String(err) }))
+              .then((copy) => {
+                if (sessions.get(id) !== s) return
+                if (inTurn) deps.bracket(id, 'forget')
+                sessions.delete(id)
+                const row: SessionSummary = {
+                  id,
+                  provider: s.provider,
+                  name: nameFor(s, lastTitle),
+                  state: 'idle',
+                  startedAt: s.startedAt,
+                  closed: true,
+                  outcome: copy.error === undefined ? 'completed' : 'failed',
+                  ...(copy.error === undefined ? {} : { error: copy.error }),
+                  ...(copy.leftOut === undefined ? {} : { message: copy.leftOut }),
+                }
+                // Keep failures and omissions until the vault is left: the
+                // document may have been closed when the final copy finished.
+                const timer =
+                  copy.error === undefined && copy.leftOut === undefined
+                    ? setTimeout(() => {
+                        finishedFences.delete(id)
+                        push()
+                      }, FENCED_RESULT_MS)
+                    : undefined
+                finishedFences.set(id, { row, timer })
+                push()
+              })
+            return
+          }
+          if (inTurn) deps.bracket(id, 'forget')
           sessions.delete(id)
           push()
           if (s.persistConversation && s.conversationId !== undefined) {
@@ -382,7 +496,9 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         startedAt: Date.now(),
         terminalId: opened.id,
         ...(conversationId === undefined ? {} : { conversationId }),
-        persistConversation: resume !== 'pick',
+        // A fenced session's conversation ran in a scratch folder: reopened
+        // from history it would run on the vault itself, unfenced.
+        persistConversation: resume !== 'pick' && fence === undefined,
         attention: false,
         signals,
       }
@@ -432,6 +548,8 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       await pastQueue
       for (const s of sessions.values()) s.signals.dispose()
       sessions.clear()
+      for (const { timer } of finishedFences.values()) if (timer) clearTimeout(timer)
+      finishedFences.clear()
       push()
     },
   }

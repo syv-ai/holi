@@ -308,6 +308,10 @@ export interface AgentSessionRow {
   model?: string
   /** When it started, epoch ms. */
   startedAt?: number
+  /** What a job or fenced copy left out, in words. */
+  message?: string
+  copying?: boolean
+  closed?: boolean
 }
 
 /** A file a run changed, across its whole range. */
