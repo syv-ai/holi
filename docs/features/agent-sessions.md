@@ -213,7 +213,7 @@ which is what `agentProvider` holds), a name, and what Holi runs:
 | `resume.byId` | one conversation by its id, one argument exactly `{id}` (History's reopen)               |
 | `env`         | variables to add; never `PATH`, `HOLI_*` or the bridge's                                 |
 | `test`        | what Test runs, `--version` when absent                                                  |
-| `integration` | `claude`, `codex` or `pi`: a built-in agent's own                                       |
+| `integration` | `claude`, `codex` or `pi`: a built-in agent's own                                        |
 
 **The three built-in agents are presets.** They are listed whether or not the file names them, and
 editing one writes its entry: its name and which program runs (a preset that still names `claude`,
