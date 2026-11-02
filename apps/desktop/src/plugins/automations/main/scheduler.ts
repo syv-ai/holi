@@ -102,6 +102,7 @@ export interface SessionSummary {
 export interface HoliContext {
   id: string
   name: string
+  provider: AgentProviderId
   approval: string
   model?: string
   allow: string[]
@@ -332,17 +333,23 @@ export interface Scheduler {
 interface FileEntry {
   path: string
   parsed: ReturnType<typeof parseScheduleFile>
+  /** The provider whose choice this entry's approval covers. */
+  provider?: AgentProviderId
   /** The Holi it names, read now; or why it cannot run it. */
   holi?: HoliContext | { error: string }
 }
 
-type ValidEntry = FileEntry & { parsed: { ok: true; def: ScheduleDef } }
+type ValidEntry = FileEntry & {
+  parsed: { ok: true; def: ScheduleDef }
+  provider: AgentProviderId
+}
 
 /** What turning it on approves: its own text and, when a Holi carries it
  *  out, what approving that Holi approves (its soul, model and rules). */
 const fingerprint = (entry: ValidEntry): string =>
   createHash('sha256')
     .update(scheduleApprovalText(entry.parsed.def))
+    .update(`\nprovider:${entry.provider}`)
     .update(entry.holi !== undefined && 'approval' in entry.holi ? `\n${entry.holi.approval}` : '')
     .digest('hex')
 
@@ -488,14 +495,19 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     return Promise.all(
       entries.map(async (e) => {
         const id = e.parsed.ok ? e.parsed.def.holi : undefined
-        if (id === undefined) return e
+        if (!e.parsed.ok) return e
+        if (id === undefined) return { ...e, provider: await deps.provider(vault.root) }
         const holi =
           deps.holi === undefined
             ? { error: 'Holis are off in this vault.' }
             : await deps.holi(vault, id).catch((err: unknown) => ({
                 error: err instanceof Error ? err.message : String(err),
               }))
-        return { ...e, holi }
+        return {
+          ...e,
+          holi,
+          ...('provider' in holi ? { provider: holi.provider } : {}),
+        }
       }),
     )
   }
@@ -593,7 +605,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       }
       // The Holi that carries it out, read as the run starts: its memory now.
       const holi = entry.holi !== undefined && 'system' in entry.holi ? entry.holi : undefined
-      const provider = await deps.provider(vault.root)
+      const { provider } = entry
       const requestedModel = def.model ?? holi?.model
       // Pi overrides use provider/model-id pairs. Legacy Claude aliases mean
       // use Pi's configured default model.
@@ -885,8 +897,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   async function routeEvents(vault: SchedulerVault, entries: readonly FileEntry[]): Promise<void> {
     const state = await stateOf(vault.remote)
     const on = entries.filter(
-      (e): e is FileEntry & { parsed: { ok: true; def: ScheduleDef } } =>
-        e.parsed.ok && e.parsed.def.on.length > 0 && statusOf(e, state[e.path]) === 'on',
+      (e): e is ValidEntry =>
+        e.parsed.ok &&
+        e.provider !== undefined &&
+        e.parsed.def.on.length > 0 &&
+        statusOf(e, state[e.path]) === 'on',
     )
     routed = on.map((e) => ({ path: e.path, on: e.parsed.def.on }))
     router.keep(new Set(routed.map((r) => r.path)))
