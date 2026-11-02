@@ -48,13 +48,13 @@ import {
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { cn } from '@/lib/cn'
 import { TaskProperties, useHasTaskProperties } from '@/features/planning/task-properties'
-import { useVaultSettings } from '@/features/settings/use-vault-settings'
+import { useSettingsWrite } from '@/features/settings/use-vault-settings'
 import { trpc } from '@/lib/trpc'
 import { sawText } from '@/state/doc-changes'
 import { canStartConversationAtom, startConversationAtom } from '@/state/agents-slots'
 import { isRunLive } from '@/state/document-runs'
 import { claimsAtom } from '@/state/plugins'
-import { useAppSetting } from '@/state/settings'
+import { activeVaultSettingsAtom, useAppSetting } from '@/state/settings'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { focusedTab } from '@/state/shell-workspace'
 import { tabPath } from '@/state/tab-descriptor'
@@ -197,7 +197,8 @@ function DocumentEditor({
   const tableStyle = useAppSetting('tableStyle')
   const propertiesLayout = useAppSetting('propertiesLayout')
   const hasProperties = useHasTaskProperties(path)
-  const { resolved: settings, write: writeSetting } = useVaultSettings()
+  const settingsRead = useAtomValue(activeVaultSettingsAtom) !== null
+  const writeSetting = useSettingsWrite()
   const [promptBox] = useState(() => {
     const box = document.createElement('div')
     box.contentEditable = 'false'
@@ -538,7 +539,7 @@ function DocumentEditor({
               hasProperties
                 ? {
                     // Nothing to flip until the settings are read.
-                    disabled: settings === null,
+                    disabled: !settingsRead,
                     sidebar: propertiesLayout === 'sidebar',
                     onSidebarChange: (sidebar) =>
                       void writeSetting('propertiesLayout', sidebar ? 'sidebar' : 'inline'),

@@ -35,14 +35,25 @@ export function useVaultSettings(): {
 } {
   const remote = useAtomValue(activeRemoteAtom)
   const resolved = useAtomValue(activeVaultSettingsAtom)
-  const setCached = useSetAtom(vaultSettingsAtom)
   const load = useSetAtom(loadVaultSettingsAtom)
 
   useEffect(() => {
     load().catch((error: unknown) => console.warn('[settings] read failed:', error))
   }, [load, remote])
 
-  const write = useCallback<SettingsWrite>(
+  return { resolved, write: useSettingsWrite() }
+}
+
+/** The write alone, for a control outside the settings pages (the document
+ *  header's properties toggle): it reads nothing, and does nothing until the
+ *  open vault's settings have been read. */
+export function useSettingsWrite(): SettingsWrite {
+  const remote = useAtomValue(activeRemoteAtom)
+  const resolved = useAtomValue(activeVaultSettingsAtom)
+  const setCached = useSetAtom(vaultSettingsAtom)
+  const load = useSetAtom(loadVaultSettingsAtom)
+
+  return useCallback<SettingsWrite>(
     async (key, value) => {
       if (remote === null || resolved === null) return
       const target = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === key)?.target ?? 'committed'
@@ -71,6 +82,4 @@ export function useVaultSettings(): {
     },
     [remote, resolved, setCached, load],
   )
-
-  return { resolved, write }
 }
