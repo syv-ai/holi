@@ -1,7 +1,8 @@
 /**
  * The Holis plugin's main side (docs/features/holis.md): the vault's Holis,
  * their approvals and runs, and the commands their runs keep their memory
- * with. A send runs through the agent (`agent.launch`), which it requires.
+ * with. A send runs through the agent (`agent.launch`, `agent.job` on
+ * Codex), which it requires.
  *
  * Electron loads inside `activate`, so the plugin stays importable under
  * plain Node in the tests.
@@ -42,11 +43,19 @@ export const holisMain: MainPlugin = {
       store: jsonFileStore(join(ctx.userData, 'holis.json'), parseHolisFile),
       provider: async (root) => (await readVaultSettings(root)).agentProvider,
       launch: async ({ provider, allow, ...args }) =>
-        (await ctx.call('agent.launch', {
-          ...args,
-          provider,
-          ...(provider === 'claude' && allow !== undefined ? { allow } : {}),
-        })) as Launched,
+        (await (provider === 'codex'
+          ? // Codex runs it as a job in the vault, its writable folders the
+            // ones `allow` names (`agent.job`).
+            ctx.call('agent.job', {
+              ...args,
+              provider,
+              ...(allow === undefined ? {} : { allow }),
+            })
+          : ctx.call('agent.launch', {
+              ...args,
+              provider,
+              ...(provider === 'claude' && allow !== undefined ? { allow } : {}),
+            }))) as Launched,
       emit: ctx.emit,
       needsYou: notify,
     })

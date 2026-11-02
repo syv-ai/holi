@@ -39,14 +39,13 @@ const AGENTS: readonly {
   {
     id: 'claude',
     label: 'Claude Code',
-    description:
-      "Anthropic's agent. Its sessions keep running in the background, and Holis and automations run on it.",
+    description: "Anthropic's agent. Its sessions keep running in the background.",
   },
   {
     id: 'codex',
     label: 'Codex',
     description:
-      "OpenAI's agent, signed in as on the command line. Its sessions run while Holi is open.",
+      "OpenAI's agent, signed in as on the command line. Its sessions run while Holi is open. Unattended jobs (Ask AI, Holis and automations) can read any file on this computer and write what they read into synced vault folders.",
   },
   {
     id: 'pi',

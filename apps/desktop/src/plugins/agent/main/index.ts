@@ -13,7 +13,12 @@
  * plain Node in the tests.
  */
 import { join } from 'node:path'
-import { jsonFileStore, resolveBin, type MainPlugin } from '../../../main/plugin-api'
+import {
+  jsonFileStore,
+  readVaultSettings,
+  resolveBin,
+  type MainPlugin,
+} from '../../../main/plugin-api'
 import { AGENT_INFO } from '../info'
 import { claudeProvider } from './claude'
 import { claudeSeed } from './claude/seed'
@@ -134,11 +139,16 @@ export const agentMain: MainPlugin = {
       ownPast = list
       pushHistory()
     })
-    // Prompts run unwatched by a provider without a supervisor, each in a
-    // scratch folder of its own.
+    void ptySessions.past().then((list) => {
+      ownPast = list
+    })
+    // Prompts run unwatched by a provider without a supervisor: in a scratch
+    // folder of their own, or in the vault, whose turns pause sync and are
+    // recorded like a session's.
     const jobs = createJobs({
       vault: { remote: ctx.remote, root: ctx.root },
       scratchRoot: join(ctx.userData, 'agent-jobs'),
+      bracket: (id, edge) => started.bracket(id, edge),
       onChange: (list) => {
         jobRows = list
         pushSessions()
@@ -171,6 +181,7 @@ export const agentMain: MainPlugin = {
         liveRemote,
         commitNow: () => ctx.commitNow(),
         pi: piBackground,
+        defaultProvider: async () => (await readVaultSettings(ctx.root)).agentProvider,
       }),
       ...inboxCapabilities({ inbox, liveRemote }),
     })
@@ -266,6 +277,9 @@ export const agentMain: MainPlugin = {
       unreport()
       unmention()
       unwatchNeedsYou()
+      // A fenced session still starting opens nothing now, or is one the
+      // sessions' leave ends.
+      await fenced.closing().catch((err) => console.error('[agent] fenced sessions:', err))
       await ptySessions.leave().catch((err) => console.error('[agent] pty sessions:', err))
       await piBackground.leave().catch((err) => console.error('[agent] Pi sessions:', err))
       await fenced.leave().catch((err) => console.error('[agent] fenced sessions:', err))

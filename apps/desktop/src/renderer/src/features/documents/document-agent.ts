@@ -6,11 +6,13 @@
  *
  * Three kinds. **write**: the person pressed Space on an empty line and asked
  * for something; a marker line in the file says where. **rewrite**: a quick
- * command, or the person's own instruction, on a selection. These two run
- * through the configured background provider via `agent.launch`: Claude Code
- * on Sonnet 5.5, pre-approved only the named file tools; Pi with the user's
- * normal permissions, so the file instruction is not a boundary. They edit
- * the document, so it is locked while they run. **vault-app**: Create
+ * command, or the person's own instruction, on a selection. These two run on
+ * this machine's agent: Claude Code on Sonnet 5.5 (`agent.launch`),
+ * pre-approved only the named file tools; Pi (`agent.launch`) with the
+ * user's normal permissions, so the file instruction is not a boundary; Codex
+ * as a job (`agent.job`) fenced to the document, which is copied into its
+ * scratch folder and back. They edit the document, so it is locked while
+ * they run. **vault-app**: Create
  * vault app (`startVaultAppAtom`), a vault app made from the document beside
  * it, which leaves the document alone, as a session the person can open,
  * watch and add to.
@@ -266,9 +268,7 @@ export function useDocumentAgent(path: string) {
         update({ status: 'stopped', message: 'The active vault changed before the agent started.' })
         return
       }
-      // Codex cannot run unattended jobs yet. Keep Ask AI available by using
-      // Claude for that default; Pi remains explicitly routed to Pi.
-      provider = settings.agentProvider === 'codex' ? 'claude' : settings.agentProvider
+      provider = settings.agentProvider
     } catch (err) {
       update({
         status: 'failed',
@@ -277,18 +277,36 @@ export function useDocumentAgent(path: string) {
       return
     }
     update({ provider, agent: store.set(agentLabelAtom, { remote, id: provider, path }) })
-    await store.set(launchRunAtom, {
-      remote,
-      path,
-      capabilityName: 'agent.launch',
-      params: {
-        name: `${name}: ${label}`,
-        prompt,
-        provider,
-        ...(provider === 'claude' ? { model: AGENT_MODEL, allow } : {}),
-        system: SYSTEM,
-      },
-    })
+    await store.set(
+      launchRunAtom,
+      provider === 'codex'
+        ? {
+            // A job fenced to the document: it reads and writes that file
+            // alone, in a scratch folder, and only that file comes back.
+            remote,
+            path,
+            capabilityName: 'agent.job',
+            params: {
+              provider,
+              name: `${name}: ${label}`,
+              prompt,
+              system: SYSTEM,
+              scope: { read: [path], write: [path] },
+            },
+          }
+        : {
+            remote,
+            path,
+            capabilityName: 'agent.launch',
+            params: {
+              name: `${name}: ${label}`,
+              prompt,
+              provider,
+              ...(provider === 'claude' ? { model: AGENT_MODEL, allow } : {}),
+              system: SYSTEM,
+            },
+          },
+    )
   }
 
   // Stopped wins over anything the session says after: a run no longer live

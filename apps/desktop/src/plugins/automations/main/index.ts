@@ -1,7 +1,7 @@
 /**
  * The automations plugin's main side (docs/features/scheduled-agents.md):
- * the open vault's automations, checked every half minute, each run a
- * background session through the agent, which it requires. An automation a
+ * the open vault's automations, checked every half minute, each run on this
+ * machine's agent through the agent (`agent.launch`, `agent.job` on Codex), which it requires. An automation a
  * Holi carries out gets that Holi from the Holis plugin (`holis.context`).
  *
  * It hears the agent's session list and turn ends (`ctx.hear`), which is how
@@ -40,11 +40,19 @@ export const automationsMain: MainPlugin = {
       provider: async (root) => (await readVaultSettings(root)).agentProvider,
       sessions: {
         launch: async ({ provider, allow, ...args }) =>
-          (await ctx.call('agent.launch', {
-            ...args,
-            provider,
-            ...(provider === 'claude' && allow !== undefined ? { allow } : {}),
-          })) as { ok: true; sessionId: string } | { ok: false; message: string },
+          (await (provider === 'codex'
+            ? // Codex runs it as a job in the vault, its writable folders the
+              // ones `allow` names (`agent.job`).
+              ctx.call('agent.job', {
+                ...args,
+                provider,
+                ...(allow === undefined ? {} : { allow }),
+              })
+            : ctx.call('agent.launch', {
+                ...args,
+                provider,
+                ...(provider === 'claude' && allow !== undefined ? { allow } : {}),
+              }))) as { ok: true; sessionId: string } | { ok: false; message: string },
         sessions: () => live,
         stop: async (id) => (await ctx.call('agent.stop', { id })) as Result,
         watched: async (id) => (await ctx.call('agent.watched', { id })) === true,

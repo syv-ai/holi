@@ -308,7 +308,8 @@ export interface AgentSessionRow {
   model?: string
   /** When it started, epoch ms. */
   startedAt?: number
-  /** What a job or fenced copy left out, in words. */
+  /** What a job that completed left out, in words; why one failed is its
+   *  `error`. */
   message?: string
   copying?: boolean
   closed?: boolean
@@ -471,6 +472,8 @@ export interface AgentsSessionItem {
   title: string
   /** The model in Claude Code's words or alias (`Opus 5.5`, `opus`). */
   model?: string
+  /** Tokens its turns used, when its agent reports a count (a Codex job). */
+  tokens?: number
   /** The coding agent that runs it (`claude`, `codex`), for its mark.
    *  Absent is Claude Code. */
   agent?: string

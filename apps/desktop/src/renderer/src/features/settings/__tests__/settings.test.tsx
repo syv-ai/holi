@@ -231,3 +231,16 @@ test('General says what the repo weighs on GitHub, against what GitHub recommend
     }),
   ).toBeTruthy()
 })
+
+test('Codex describes the risk of unattended jobs without a separate switch', async () => {
+  mount()
+  fireEvent.keyDown(window, { key: ',', metaKey: true })
+  const agents = (await screen.findByRole('heading', { level: 2, name: 'Agents' })).closest(
+    'section',
+  )!
+  const codex = within(agents).getByText('Codex').closest('[data-slot="field"]') as HTMLElement
+  expect(within(codex).getByText(/Ask AI, Holis and automations/)).toHaveTextContent(
+    'read any file on this computer and write what they read into synced vault folders',
+  )
+  expect(within(agents).queryByRole('switch', { name: /Codex/ })).toBeNull()
+})

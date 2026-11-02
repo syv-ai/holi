@@ -75,11 +75,15 @@ export interface SessionSummary {
   /** Claude Code's conversation id (its transcript's name), once it has
    *  said: what a read-only view of the conversation reads. */
   conversationId?: string
-  /** What a job or fenced copy left out, in words; why one failed is its `error`. */
+  /** What a job that completed left out (`host/jobs.ts`), in words; why one
+   *  failed is its `error`. */
   message?: string
   /** A fenced turn's copy is still in progress, or its terminal is gone. */
   copying?: boolean
   closed?: boolean
+  /** Tokens its turns used, input and output, when its agent reports them
+   *  (a Codex job's `turn.completed`). A count, never a share of a window. */
+  tokens?: number
 }
 
 /** What a session's status line says: its context use and its model. */
