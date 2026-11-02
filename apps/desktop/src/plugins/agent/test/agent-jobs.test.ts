@@ -264,6 +264,33 @@ describe('a job', () => {
     expect(await exists(join(r.root, 'notes/Plan.app/app.yaml'))).toBe(false)
   })
 
+  it('never writes over a file that lands between its check and its write', async () => {
+    let root = ''
+    // The pages are written; then, before the manifest, sync brings one.
+    const r = await rig(WRITES(1, 1), {
+      afterWrite: async (rel) => {
+        if (rel === 'notes/Plan.app/f0.txt') {
+          await writeFile(join(root, 'notes/Plan.app/app.yaml'), 'description: Theirs\n')
+        }
+      },
+    })
+    root = r.root
+    const started = await r.jobs.start({
+      provider: r.provider,
+      name: 'x',
+      prompt: 'go',
+      scope: SCOPE,
+    })
+    const row = await r.ended((started as { sessionId: string }).sessionId)
+    expect(row.outcome).toBe('failed')
+    expect(row.error).toMatch(/notes\/Plan\.app\/app\.yaml: something else put it in the vault/)
+    expect(await readFile(join(root, 'notes/Plan.app/app.yaml'), 'utf8')).toBe(
+      'description: Theirs\n',
+    )
+    // Nothing of the write is left beside it.
+    expect((await readdir(join(root, 'notes/Plan.app'))).sort()).toEqual(['app.yaml', 'f0.txt'])
+  })
+
   it('does not start where what it makes is already in the vault', async () => {
     const { root, jobs, provider } = await rig(SUCCESS)
     await mkdir(join(root, 'notes/Plan.app'), { recursive: true })
