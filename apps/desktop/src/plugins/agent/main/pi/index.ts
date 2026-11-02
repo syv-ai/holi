@@ -10,7 +10,7 @@ import type { AgentProvider } from '../provider'
 
 /** @public */
 export const NOT_INSTALLED =
-  'Pi is not installed. Install it with `npm install -g @mariozechner/pi-coding-agent`.'
+  'Pi is not installed. Install it with `npm install -g @earendil-works/pi-coding-agent`.'
 
 const CONVERSATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 

@@ -51,7 +51,8 @@ const AGENTS: readonly {
   {
     id: 'pi',
     label: 'Pi',
-    description: "Pi's interactive coding agent, using your normal Pi configuration and sign-in.",
+    description:
+      "Pi's coding agent, using your normal configuration and sign-in. Background runs are not sandboxed and can access files beyond the requested document.",
   },
 ]
 

@@ -65,6 +65,10 @@ export class PiRpcRun {
   private phase: 'prompt' | 'setting-model' | 'idle' = 'idle'
   private readonly commands = new Map<string, string>()
 
+  get isAlive(): boolean {
+    return !this.exited && !this.closed
+  }
+
   constructor(options: PiRpcOptions) {
     this.maxOutputBytes = options.maxOutputBytes ?? 1024 * 1024
     this.maxLineBytes = options.maxLineBytes ?? 1024 * 1024
@@ -117,7 +121,8 @@ export class PiRpcRun {
   }
 
   prompt(message: string): Promise<PiRunResult> {
-    if (this.closed || this.active) return Promise.reject(new Error('Pi RPC run is not idle'))
+    if (!this.isAlive || this.active)
+      return Promise.reject(new Error('Pi RPC run is not available for another turn'))
     this.settled = false
     this.active = true
     this.lastError = undefined
@@ -147,6 +152,7 @@ export class PiRpcRun {
   /** Queue an instruction for after Pi finishes its current work. */
   followUp(message: string): void {
     this.requireActive()
+    if (!this.isAlive) throw new Error('Pi RPC process exited before the follow-up')
     this.send({ type: 'prompt', message, streamingBehavior: 'followUp' })
   }
 
@@ -190,6 +196,7 @@ export class PiRpcRun {
   }
 
   private requireActive(): void {
+    if (this.exited || this.closed) throw new Error('Pi RPC process exited before the follow-up')
     if (!this.active || this.settled) throw new Error('Pi RPC run is not active')
   }
 
