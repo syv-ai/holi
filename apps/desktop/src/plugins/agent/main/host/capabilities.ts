@@ -470,6 +470,16 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         if (provider === 'codex') {
           return { ok: false as const, message: 'Codex cannot run unattended jobs in Holi yet.' }
         }
+        if (provider !== 'claude') {
+          const selected = deps.providers().find((p) => p.id === provider)
+          return {
+            ok: false as const,
+            message:
+              selected === undefined
+                ? `${provider} is not an agent on this machine. Choose the default in Settings, General, Agents.`
+                : (selected.unattended ?? `${selected.label} cannot run with nobody watching.`),
+          }
+        }
         return deps.sessions.launch(args)
       },
     }),

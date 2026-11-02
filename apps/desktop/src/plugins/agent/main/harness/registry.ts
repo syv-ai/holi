@@ -98,7 +98,15 @@ export function withPreset<P extends AgentProvider>(base: P, current: () => Harn
       return {
         bin: command.bin,
         args: [...h.command.args, ...command.args],
-        env: { ...command.env, ...h.env },
+        env: {
+          ...command.env,
+          ...h.env,
+          // A fenced Codex run has its own prepared home; the preset's
+          // CODEX_HOME was used as the source, not the run's destination.
+          ...(base.id === 'codex' && opts?.fence !== undefined
+            ? { CODEX_HOME: command.env.CODEX_HOME }
+            : {}),
+        },
       }
     },
   }

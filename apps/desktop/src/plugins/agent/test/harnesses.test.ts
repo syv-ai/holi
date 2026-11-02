@@ -297,19 +297,29 @@ describe('the harness registry', () => {
 })
 
 describe("a preset's environment in Codex's jobs", () => {
-  it("reaches Codex's jobs", async () => {
-    // A Codex folder of its own with a sign-in, never this machine's.
+  it('uses the preset home as a source, not as a fenced session home', async () => {
     const person = await mkdtemp(join(tmpdir(), 'holi-codex-person-'))
     const state = await mkdtemp(join(tmpdir(), 'holi-codex-state-'))
-    await writeFile(join(person, 'auth.json'), '{}')
-    const codex = codexProvider({
-      resolveBin: () => '/bin/codex',
-      env: () => ({ MY_KEY: 'k', CODEX_HOME: person }),
-    })
-    const run = { cwd: state, root: state, prompt: 'Go', state }
-    expect(codex.capabilities.jobs?.command(run)?.env.MY_KEY).toBe('k')
-    await rm(person, { recursive: true, force: true })
-    await rm(state, { recursive: true, force: true })
+    try {
+      await writeFile(join(person, 'auth.json'), '{}')
+      const preset = { ...PRESETS[1]!, env: { MY_KEY: 'k', CODEX_HOME: person } }
+      const codex = withPreset(
+        codexProvider({ resolveBin: () => '/bin/codex', env: () => preset.env }),
+        () => preset,
+      )
+      const ordinary = codex.terminal(TARGET)
+      expect(ordinary?.env.CODEX_HOME).toBe(person)
+      expect(ordinary?.env.MY_KEY).toBe('k')
+      const fenced = codex.terminal(TARGET, { fence: { dir: state, state } })
+      expect(fenced?.env.CODEX_HOME).toBe(join(state, 'codex-home'))
+      expect(fenced?.env.MY_KEY).toBe('k')
+      const run = { cwd: state, root: state, prompt: 'Go', state }
+      expect(codex.capabilities.jobs?.command(run)?.env.MY_KEY).toBe('k')
+      expect(codex.capabilities.jobs?.command(run)?.env.CODEX_HOME).toBe(join(state, 'codex-home'))
+    } finally {
+      await rm(person, { recursive: true, force: true })
+      await rm(state, { recursive: true, force: true })
+    }
   })
 })
 
@@ -398,6 +408,10 @@ describe('provider selection', () => {
           started.push('claude')
           return { ok: true as const, sessionId: 'abcd1234', terminalId: 't' }
         },
+        launch: async () => {
+          started.push('claude')
+          return { ok: true as const, sessionId: 'abcd1234' }
+        },
       } as never,
       own: {
         start: async (provider: string) => {
@@ -426,6 +440,23 @@ describe('provider selection', () => {
     )
     expect(res.ok).toBe(false)
     expect(started).toEqual(['gone'])
+  })
+
+  it('does not run a custom or removed default on Claude Code through agent.launch', async () => {
+    const { table, started } = caps([claude, custom])
+    const entry = table['agent.launch']
+    const params = entry.params({ name: 'Run', prompt: 'Go' })
+    const customResult = await entry.run(ctx, { ...params, provider: 'aider' })
+    expect(customResult).toEqual({ ok: false, message: custom.unattended })
+    const removedResult = (await entry.run(ctx, { ...params, provider: 'removed' })) as {
+      ok: boolean
+      message: string
+    }
+    expect(removedResult.ok).toBe(false)
+    expect(removedResult.message).toMatch(/not an agent on this machine/)
+    expect(started).toEqual([])
+    expect(await entry.run(ctx, { ...params, provider: 'claude' })).toMatchObject({ ok: true })
+    expect(started).toEqual(['claude'])
   })
 
   it('refuses unattended work on a harness that was added, saying why', async () => {

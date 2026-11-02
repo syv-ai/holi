@@ -48,7 +48,10 @@ export function jsonFileStore<T>(
   const read = async (): Promise<T> => {
     if (cached !== null) return cached.value
     const began = writes
-    const text = await readFile(path, 'utf8').catch(() => null)
+    const text = await readFile(path, 'utf8').catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
     let raw: unknown = null
     if (text !== null) {
       try {

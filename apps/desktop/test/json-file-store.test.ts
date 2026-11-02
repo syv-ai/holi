@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -28,6 +28,14 @@ describe('jsonFileStore', () => {
     await store.update((c) => ({ ...c, a: 1 }))
     await writeFile(path, '{ not json')
     expect(await store.read()).toEqual({})
+  })
+
+  it('does not overwrite a file it cannot read', async () => {
+    await mkdir(path, { recursive: true })
+    const store = jsonFileStore(path, record)
+    await expect(store.read()).rejects.toMatchObject({ code: 'EISDIR' })
+    await expect(store.update(() => ({ a: 1 }))).rejects.toMatchObject({ code: 'EISDIR' })
+    await expect(readFile(path, 'utf8')).rejects.toMatchObject({ code: 'EISDIR' })
   })
 
   it('writes readable JSON with a trailing newline', async () => {
