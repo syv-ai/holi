@@ -38,6 +38,8 @@ export interface PiBackgroundDeps {
   bracket(id: string, edge: 'begin' | 'end' | 'forget'): void
   changed(): void
   binDir?: () => string
+  /** The run's environment (`piCommand`); Holi's agent environment when absent. */
+  env?: (binDir: string | undefined) => Record<string, string>
   spawn?: ConstructorParameters<typeof PiRpcRun>[0]['spawn']
 }
 
@@ -74,7 +76,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       run = new PiRpcRun({
         bin,
         cwd: root,
-        env: buildPiEnv(process.env, { binDir: deps.binDir?.() }),
+        env: (deps.env ?? ((binDir) => buildPiEnv(process.env, { binDir })))(deps.binDir?.()),
         onStats: (stats) => {
           const job = jobs.get(id)
           if (!job || job.remote !== remote) return

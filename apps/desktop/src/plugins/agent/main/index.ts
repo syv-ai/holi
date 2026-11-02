@@ -25,7 +25,7 @@ import { claudeProvider } from './claude'
 import { resolveClaudeBin } from './claude/cli'
 import { claudeSeed } from './claude/seed'
 import { codexProvider, resolveCodexBin } from './codex'
-import { piProvider } from './pi'
+import { piCommand, piProvider } from './pi'
 import { createPiBackground } from './pi/background'
 import { harnessCapabilities } from './harness/capabilities'
 import { isIntegration, parseHarnessFile } from './harness/record'
@@ -84,7 +84,8 @@ export const agentMain: MainPlugin = {
           ),
         codex: (current, bin) =>
           withPreset(codexProvider({ resolveBin: bin, env: () => current().env ?? {} }), current),
-        pi: (current, bin) => withPreset(piProvider({ resolveBin: bin }), current),
+        pi: (current, bin) =>
+          withPreset(piProvider({ resolveBin: bin, env: () => current().env ?? {} }), current),
       },
     })
     const providers = (): ReturnType<typeof harnesses.providers> => harnesses.providers()
@@ -142,8 +143,15 @@ export const agentMain: MainPlugin = {
       turnLogFor: openTurnLog,
       snapshot: worktreeEnd,
     })
+    // Pi's RPC runs find `pi` and its environment as its terminals do: the
+    // preset's program and variables, its arguments being a terminal's alone.
+    const piRuns = piCommand({
+      resolveBin: () => harnesses.resolve('pi'),
+      env: () => harnesses.get('pi')?.env ?? {},
+    })
     const piBackground = createPiBackground({
-      bin: () => resolveBin('pi'),
+      bin: piRuns.bin,
+      env: piRuns.env,
       binDir: ctx.binDir,
       bracket: (id, edge) => started.bracket(id, edge),
       changed: () => {

@@ -16,10 +16,26 @@ const CONVERSATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 
 export interface PiProviderDeps {
   resolveBin?: () => string | null
+  /** Variables the Pi preset adds (Settings, General, Agents). */
+  env?: () => Readonly<Record<string, string>>
+}
+
+/** How every Pi process Holi starts is found and given its environment, a
+ *  terminal's and an RPC run's alike: the preset's program, else `pi` on
+ *  `PATH`, and Holi's agent environment plus the preset's variables. The
+ *  preset's arguments are a terminal's alone: an RPC run's are its mode. */
+export function piCommand(deps: PiProviderDeps = {}) {
+  return {
+    bin: deps.resolveBin ?? (() => resolveBin('pi')),
+    env: (binDir: string | null | undefined): Record<string, string> => ({
+      ...buildPiEnv(process.env, { binDir }),
+      ...deps.env?.(),
+    }),
+  }
 }
 
 export function piProvider(deps: PiProviderDeps = {}): AgentProvider {
-  const bin = deps.resolveBin ?? (() => resolveBin('pi'))
+  const { bin, env: envFor } = piCommand(deps)
   return {
     id: 'pi',
     label: 'Pi',
@@ -49,8 +65,7 @@ export function piProvider(deps: PiProviderDeps = {}): AgentProvider {
                 ? ['--session-id', conversation]
                 : []
       if (opts.prompt !== undefined && opts.prompt.trim() !== '') args.push('--', opts.prompt)
-      const env = buildPiEnv(process.env, { binDir: target.binDir })
-      return { bin: path, args, env }
+      return { bin: path, args, env: envFor(target.binDir) }
     },
     // Create vault app runs it in a scratch folder of Holi's, copied back
     // each turn, but nothing sandboxes it there: it keeps the person's own

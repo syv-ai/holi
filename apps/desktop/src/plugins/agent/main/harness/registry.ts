@@ -52,7 +52,7 @@ export function harnessProvider(
     // Nothing of the CLI's own is provisioned: its home stays the person's.
     configure: async ({ root }) => ({ dir: root }),
     refuses: (opts) => harnessRefusal(h, optsOf(opts)),
-    unattended: `${h.label} runs only in a terminal you watch. Holis and automations need Claude Code, Codex or Pi as this machine's default agent, and Create vault app Claude Code or Codex.`,
+    unattended: `${h.label} runs only in a terminal you watch. Holis, automations and Create vault app need Claude Code, Codex or Pi as this machine's default agent.`,
     terminal(target, opts = {}) {
       const path = resolve(h.command.bin)
       if (path === null) return null

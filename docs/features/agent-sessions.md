@@ -220,9 +220,10 @@ editing one writes its entry: its name and which program runs (a preset that sti
 `codex` or `pi` keeps its own lookup, `HOLI_<AGENT>_BIN` included, which Test and Not found use too).
 Codex's also takes arguments, put before the ones it gets from Holi in its terminal only, and an
 environment, which reaches its terminals and its jobs alike: a person set it on purpose (a
-`CODEX_HOME` it sets is the person's Codex folder a job's copies come from). Pi's takes arguments
-and an environment for its terminals; its background runs keep finding `pi` and its environment
-themselves. Claude Code's takes
+`CODEX_HOME` it sets is the person's Codex folder a job's copies come from). Pi's program and
+environment reach every Pi process, its terminals and its RPC runs (Holis, automations, Ask AI)
+alike, through one definition (`piCommand`); its arguments reach its terminals only, since an RPC
+run's arguments are its mode, and the form says so. Claude Code's takes
 neither: its sessions run in its background supervisor, which reads nothing of the preset, and a
 terminal given them would differ from the session it shows, so the form leaves both out and the
 record refuses them. Everything else stays its integration's: how it starts, resumes, reports
