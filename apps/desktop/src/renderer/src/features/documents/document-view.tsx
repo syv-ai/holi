@@ -239,7 +239,7 @@ function DocumentEditor({
         },
       },
       onUpdate: ({ transaction }) => {
-        if (!transaction.docChanged) return
+        if (!transaction.docChanged || transaction.getMeta('preventUpdate')) return
         setSaveState('saving')
         window.clearTimeout(saveTimer.current)
         saveTimer.current = window.setTimeout(() => void save(), SAVE_DELAY_MS)
@@ -355,12 +355,17 @@ function DocumentEditor({
         }
         if (saveTimer.current !== undefined && !locked) return
         const next = splitDocument(text)
-        // The refs follow only once the buffer took the file: a reload that
-        // throws leaves both on what the buffer still holds.
-        applyReload(editor, next.body)
-        head.current = next.head
-        lastText.current = text
-        placeRef.current()
+        try {
+          const changed = applyReload(editor, next.body)
+          head.current = next.head
+          lastText.current = text
+          if (changed) placeRef.current()
+          setSaveState('saved')
+        } catch {
+          // Keep the last-known file snapshot unchanged so a later disk update
+          // can retry; dispatch failures must not be mistaken for a successful reload.
+          setSaveState('error')
+        }
       })
       .catch(() => undefined)
     return () => {

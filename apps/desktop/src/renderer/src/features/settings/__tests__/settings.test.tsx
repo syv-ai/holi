@@ -136,6 +136,23 @@ test('Ctrl+, opens it too', async () => {
   expect(await screen.findByRole('tab', { name: /Settings/ })).toBeTruthy()
 })
 
+test('Pi can be the default agent without a warning in Settings', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'general'))
+  await screen.findByRole('heading', { level: 1, name: 'General' })
+
+  act(() =>
+    store.set(vaultSettingsAtom, {
+      remote: 'mara/notes',
+      settings: { ...SETTINGS, agentProvider: 'pi' },
+    }),
+  )
+  const agents = screen.getByRole('heading', { level: 2, name: 'Agents' }).closest('section')!
+  const piRow = within(agents).getByText('Pi').closest('[data-slot="field"]') as HTMLElement
+  expect(within(piRow).getByText('Default')).toBeVisible()
+  expect(within(agents).queryByRole('alert')).toBeNull()
+})
+
 test("Open Connections lands on the plugin's own page", async () => {
   const store = mount()
   act(() => store.set(openSettingsSectionAtom, 'connections'))

@@ -32,6 +32,7 @@
 import { createHash } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { AgentProviderId } from '@holi/shared'
 import {
   editHoliText,
   HOLI_COLOURS,
@@ -113,6 +114,8 @@ export interface HoliSummary {
   folder: boolean
   name: string
   status: HoliStatus
+  /** Provider this machine will use; approval is scoped to it. */
+  provider: AgentProviderId
   /** Why it does not parse. */
   error?: string
   mascot?: HoliMascot
@@ -136,6 +139,7 @@ export interface HoliSummary {
 export interface HoliContext {
   id: string
   name: string
+  provider: AgentProviderId
   /** `holiApprovalText`, for the automation's own fingerprint. */
   approval: string
   model?: string
@@ -191,9 +195,11 @@ export interface NeedsYou {
 export interface HolisDeps {
   store: JsonFileStore<HolisFile>
   /** A background session through the agent (`agent.launch`). */
+  provider(root: string): Promise<AgentProviderId>
   launch(args: {
     name: string
     prompt: string
+    provider: AgentProviderId
     model?: string
     allow?: readonly string[]
     system?: string
@@ -245,9 +251,10 @@ type ValidEntry = Entry & { parsed: { ok: true; def: HoliDef } }
 
 const soulOf = (entry: ValidEntry): string => holiSoul(entry.parsed.def, entry.soulText)
 
-const fingerprintOf = (entry: ValidEntry): string =>
+const fingerprintOf = (entry: ValidEntry, provider: AgentProviderId): string =>
   createHash('sha256')
     .update(holiApprovalText(entry.parsed.def, soulOf(entry)))
+    .update(`\nprovider:${provider}`)
     .digest('hex')
 
 /** A Holi's folder, whichever form it is: its soul and memory live there. */
@@ -276,10 +283,14 @@ async function readHolis(root: string): Promise<Entry[]> {
   return out
 }
 
-function statusOf(entry: Entry, state: HoliState | undefined): HoliStatus {
+function statusOf(
+  entry: Entry,
+  state: HoliState | undefined,
+  provider: AgentProviderId,
+): HoliStatus {
   if (!entry.parsed.ok) return 'invalid'
   if (state?.approved === undefined) return 'new'
-  return state.approved === fingerprintOf(entry as ValidEntry) ? 'approved' : 'changed'
+  return state.approved === fingerprintOf(entry as ValidEntry, provider) ? 'approved' : 'changed'
 }
 
 /** One Holi by its path or its id. An id two Holis share (`x/` and
@@ -397,14 +408,19 @@ export function createHolis(deps: HolisDeps): Holis {
 
   const changed = (remote: string): void => deps.emit(remote, 'holis', null)
 
-  function summarise(entry: Entry, state: HoliState | undefined): HoliSummary {
+  function summarise(
+    entry: Entry,
+    state: HoliState | undefined,
+    provider: AgentProviderId,
+  ): HoliSummary {
     const id = holiIdOf(entry.path)
     const base = {
       path: entry.path,
       dir: dirOf(entry.path),
       id,
       local: entry.path.includes('.local.'),
-      status: statusOf(entry, state),
+      status: statusOf(entry, state, provider),
+      provider,
       runs: state?.runs ?? [],
     }
     if (!entry.parsed.ok) {
@@ -429,13 +445,17 @@ export function createHolis(deps: HolisDeps): Holis {
       allow: def.allow,
       soul: soulOf(ok),
       unknownKeys: def.unknownKeys,
-      fingerprint: fingerprintOf(ok),
+      fingerprint: fingerprintOf(ok, provider),
     }
   }
 
   async function list(vault: HolisVault): Promise<HoliSummary[]> {
-    const [entries, state] = await Promise.all([readHolis(vault.root), stateOf(vault.remote)])
-    return entries.map((e) => summarise(e, state[e.path]))
+    const [entries, state, provider] = await Promise.all([
+      readHolis(vault.root),
+      stateOf(vault.remote),
+      deps.provider(vault.root),
+    ])
+    return entries.map((e) => summarise(e, state[e.path], provider))
   }
 
   async function one(vault: HolisVault, path: string): Promise<HoliSummary> {
@@ -444,9 +464,13 @@ export function createHolis(deps: HolisDeps): Holis {
     return found
   }
 
-  async function approvedEntry(vault: HolisVault, ref: string): Promise<ValidEntry> {
+  async function approvedEntry(
+    vault: HolisVault,
+    ref: string,
+  ): Promise<{ entry: ValidEntry; provider: AgentProviderId }> {
     const entry = valid(find(await readHolis(vault.root), ref))
-    const status = statusOf(entry, (await stateOf(vault.remote))[entry.path])
+    const provider = await deps.provider(vault.root)
+    const status = statusOf(entry, (await stateOf(vault.remote))[entry.path], provider)
     if (status !== 'approved') {
       const name = entry.parsed.def.name
       throw new CapabilityError(
@@ -456,7 +480,7 @@ export function createHolis(deps: HolisDeps): Holis {
           : `${name} is not approved on this machine yet.`,
       )
     }
-    return entry
+    return { entry, provider }
   }
 
   async function systemFor(vault: HolisVault, entry: ValidEntry, sent: boolean): Promise<string> {
@@ -480,7 +504,8 @@ export function createHolis(deps: HolisDeps): Holis {
 
     async approve(vault, ref, seen) {
       const entry = valid(find(await readHolis(vault.root), ref))
-      if (seen !== fingerprintOf(entry)) {
+      const provider = await deps.provider(vault.root)
+      if (seen !== fingerprintOf(entry, provider)) {
         throw new CapabilityError(
           'BAD_REQUEST',
           `${entry.parsed.def.name} changed since you looked. Read it again before approving it.`,
@@ -492,7 +517,7 @@ export function createHolis(deps: HolisDeps): Holis {
     },
 
     async send(vault, ref, path) {
-      const entry = await approvedEntry(vault, ref)
+      const { entry, provider } = await approvedEntry(vault, ref)
       const def = entry.parsed.def
       if (!holiAccepts(def, path)) {
         throw new CapabilityError('BAD_REQUEST', `${def.name} does not take ${path}.`)
@@ -503,11 +528,19 @@ export function createHolis(deps: HolisDeps): Holis {
       sending.add(entry.path)
       try {
         const base = path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/, '')
+        // Keep the provider whose fingerprint was checked above; resolving
+        // settings again here could switch to an unapproved provider.
+        // Legacy Holi model aliases are Claude-specific; Pi accepts explicit
+        // provider/model-id values and otherwise uses its configured default.
+        const model = provider === 'pi' && !def.model?.includes('/') ? undefined : def.model
         const res = await deps.launch({
           name: `${def.name} · ${base}`,
           prompt: sendPrompt(path),
-          ...(def.model === undefined ? {} : { model: def.model }),
-          allow: [...def.allow, ...memoryRules(), REPORT_RULE],
+          provider,
+          ...(model === undefined ? {} : { model }),
+          ...(provider === 'claude'
+            ? { allow: [...def.allow, ...memoryRules(), REPORT_RULE] }
+            : {}),
           system: await systemFor(vault, entry, true),
         })
         if (!res.ok) throw new CapabilityError('UNAVAILABLE', res.message)
@@ -612,10 +645,12 @@ export function createHolis(deps: HolisDeps): Holis {
     async context(vault, ref) {
       const entry = valid(find(await readHolis(vault.root), ref))
       const def = entry.parsed.def
+      const provider = await deps.provider(vault.root)
       return {
         id: def.id,
         name: def.name,
-        approval: holiApprovalText(def, soulOf(entry)),
+        provider,
+        approval: `${holiApprovalText(def, soulOf(entry))}\nprovider:${provider}${provider === 'pi' ? "\nPi runs with the user's normal filesystem permissions, not a document sandbox." : ''}`,
         ...(def.model === undefined ? {} : { model: def.model }),
         allow: [...def.allow, ...memoryRules()],
         system: await systemFor(vault, entry, false),

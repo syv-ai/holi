@@ -59,6 +59,7 @@
 import { createHash } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { AgentProviderId } from '@holi/shared'
 import {
   describeSchedule,
   dueRun,
@@ -93,12 +94,15 @@ export interface SessionSummary {
   id: string
   name: string
   state: 'needs-you' | 'working' | 'idle'
+  outcome?: 'completed' | 'failed' | 'aborted'
+  error?: string
 }
 
 /** What the Holis plugin says of a Holi an automation names (`holis.context`). */
 export interface HoliContext {
   id: string
   name: string
+  provider: AgentProviderId
   approval: string
   model?: string
   allow: string[]
@@ -255,10 +259,12 @@ interface SchedulerVault {
 export interface SchedulerDeps {
   store: JsonFileStore<SchedulesFile>
   /** The open vault's sessions, through the agent. */
+  provider(root: string): Promise<AgentProviderId>
   sessions: {
     launch(args: {
       name: string
       prompt: string
+      provider: AgentProviderId
       model?: string
       allow?: readonly string[]
       system?: string
@@ -313,6 +319,8 @@ export interface Scheduler {
    *  it is a run of a schedule, close it once it is done. Resolves when it has
    *  settled one way or the other. */
   turnEnded(jobId: string, pending?: number | null): Promise<void>
+  /** A pushed session snapshot may contain a terminal Pi process failure. */
+  sessionsChanged(sessions: readonly SessionSummary[]): void
   /** An event one of the vault's plugins told: for the trigger router. */
   hear(event: VaultEvent): void
   /** A scan of the attached vault: the files added and changed since the
@@ -325,17 +333,23 @@ export interface Scheduler {
 interface FileEntry {
   path: string
   parsed: ReturnType<typeof parseScheduleFile>
+  /** The provider whose choice this entry's approval covers. */
+  provider?: AgentProviderId
   /** The Holi it names, read now; or why it cannot run it. */
   holi?: HoliContext | { error: string }
 }
 
-type ValidEntry = FileEntry & { parsed: { ok: true; def: ScheduleDef } }
+type ValidEntry = FileEntry & {
+  parsed: { ok: true; def: ScheduleDef }
+  provider: AgentProviderId
+}
 
 /** What turning it on approves: its own text and, when a Holi carries it
  *  out, what approving that Holi approves (its soul, model and rules). */
 const fingerprint = (entry: ValidEntry): string =>
   createHash('sha256')
     .update(scheduleApprovalText(entry.parsed.def))
+    .update(`\nprovider:${entry.provider}`)
     .update(entry.holi !== undefined && 'approval' in entry.holi ? `\n${entry.holi.approval}` : '')
     .digest('hex')
 
@@ -481,14 +495,19 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     return Promise.all(
       entries.map(async (e) => {
         const id = e.parsed.ok ? e.parsed.def.holi : undefined
-        if (id === undefined) return e
+        if (!e.parsed.ok) return e
+        if (id === undefined) return { ...e, provider: await deps.provider(vault.root) }
         const holi =
           deps.holi === undefined
             ? { error: 'Holis are off in this vault.' }
             : await deps.holi(vault, id).catch((err: unknown) => ({
                 error: err instanceof Error ? err.message : String(err),
               }))
-        return { ...e, holi }
+        return {
+          ...e,
+          holi,
+          ...('provider' in holi ? { provider: holi.provider } : {}),
+        }
       }),
     )
   }
@@ -586,7 +605,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       }
       // The Holi that carries it out, read as the run starts: its memory now.
       const holi = entry.holi !== undefined && 'system' in entry.holi ? entry.holi : undefined
-      const model = def.model ?? holi?.model
+      const { provider } = entry
+      const requestedModel = def.model ?? holi?.model
+      // Pi overrides use provider/model-id pairs. Legacy Claude aliases mean
+      // use Pi's configured default model.
+      const model = provider === 'pi' && !requestedModel?.includes('/') ? undefined : requestedModel
       const res = await deps.sessions.launch({
         name: `${def.name} · ${clock(at)}`,
         prompt: runPrompt(
@@ -596,8 +619,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           previous === undefined ? null : new Date(previous.at),
           cause,
         ),
+        provider,
         ...(model === undefined ? {} : { model }),
-        allow: [...new Set([...def.allow, ...(holi?.allow ?? [])])],
+        ...(provider === 'claude'
+          ? { allow: [...new Set([...def.allow, ...(holi?.allow ?? [])])] }
+          : {}),
         ...(holi === undefined ? {} : { system: holi.system }),
       })
       record = res.ok
@@ -708,6 +734,33 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     changed(remote)
   }
 
+  /** A Pi process failure is terminal and does not have a Claude turn-end. */
+  async function failRun(
+    vault: SchedulerVault,
+    path: string,
+    jobId: string,
+    error: string,
+  ): Promise<void> {
+    const at = now().toISOString()
+    await changeState(vault.remote, path, (s) => ({
+      ...s,
+      runs: s.runs.map((r) =>
+        r.jobId === jobId && r.finishedAt === undefined
+          ? { ...r, outcome: 'failed' as const, message: error, finishedAt: at }
+          : r,
+      ),
+    }))
+    router.running(path, false)
+    settling.delete(path)
+    turnEnds.delete(jobId)
+    log(`${path}: run ${jobId} failed: ${error}`)
+    await logRun(vault.root, await nameOf(vault.root, path), path, `failed: ${error}`)
+    changed(vault.remote)
+    await deps.sessions.stop(jobId).catch((err: unknown) => {
+      log(`${path}: could not stop failed run ${jobId}: ${String(err)}`)
+    })
+  }
+
   /**
    * Close a run whose turn just ended, once the listing agrees it is idle.
    * Its Stop naming background work or crons still pending, it is paused, not
@@ -729,6 +782,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       for (let i = 0; i < CLOSE_POLLS; i++) {
         if (attached !== vault) return
         const session = deps.sessions.sessions().find((s) => s.id === jobId)
+        if (session?.outcome === 'failed' || session?.outcome === 'aborted') {
+          return await failRun(vault, path, jobId, session.error ?? `Pi session ${session.outcome}`)
+        }
         if (session === undefined) return await finish(vault, path, jobId, false)
         if (session.state === 'needs-you') return
         if (session.state === 'idle') {
@@ -841,8 +897,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   async function routeEvents(vault: SchedulerVault, entries: readonly FileEntry[]): Promise<void> {
     const state = await stateOf(vault.remote)
     const on = entries.filter(
-      (e): e is FileEntry & { parsed: { ok: true; def: ScheduleDef } } =>
-        e.parsed.ok && e.parsed.def.on.length > 0 && statusOf(e, state[e.path]) === 'on',
+      (e): e is ValidEntry =>
+        e.parsed.ok &&
+        e.provider !== undefined &&
+        e.parsed.def.on.length > 0 &&
+        statusOf(e, state[e.path]) === 'on',
     )
     routed = on.map((e) => ({ path: e.path, on: e.parsed.def.on }))
     router.keep(new Set(routed.map((r) => r.path)))
@@ -931,6 +990,28 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     list,
 
     turnEnded: closeWhenDone,
+
+    sessionsChanged(sessions) {
+      const vault = attached
+      if (vault === null) return
+      for (const session of sessions) {
+        if (session.outcome !== 'failed' && session.outcome !== 'aborted') continue
+        if (closing.has(session.id)) continue
+        closing.add(session.id)
+        void runOf(vault.remote, session.id)
+          .then((path) => {
+            if (path === null) return
+            return failRun(
+              vault,
+              path,
+              session.id,
+              session.error ?? `Pi session ${session.outcome}`,
+            )
+          })
+          .catch((err: unknown) => log(`failing ${session.id} failed: ${String(err)}`))
+          .finally(() => closing.delete(session.id))
+      }
+    },
 
     hear(event) {
       if (attached === null) return
