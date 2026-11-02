@@ -689,6 +689,66 @@ test('a partial fenced copy stays visible when the app is ready', async () => {
   expect(onOpen).toHaveBeenCalledWith('notes/Plan.app')
 })
 
+test('a final copy failure reappears on the document after its ready app was opened', async () => {
+  cap.mockImplementation(({ name }: { name: string }) =>
+    Promise.resolve(
+      name === 'agent.scoped' ? { ok: true, sessionId: 'p0123456789ab' } : { ok: true },
+    ),
+  )
+  files.set(PATH, '# Plan\n')
+  store.set(openTabAtom, { kind: 'doc', path: PATH })
+  const onOpen = vi.fn()
+  const mount = () =>
+    render(
+      <Provider store={store}>
+        <DocumentView path={PATH} onOpen={onOpen} />
+      </Provider>,
+    )
+  const first = mount()
+  await createVaultApp()
+  act(() => store.set(sessions, [{ id: 'p0123456789ab', name: '', state: 'working' }]))
+  appWritten('notes/Plan.app')
+  await waitFor(() => expect(onOpen).toHaveBeenCalledOnce())
+  expect(screen.queryByText('The vault app is ready')).not.toBeInTheDocument()
+  first.unmount()
+  act(() =>
+    store.set(sessions, [
+      {
+        id: 'p0123456789ab',
+        name: '',
+        state: 'idle',
+        closed: true,
+        outcome: 'failed',
+        error: 'Holi could not copy back the final changes.',
+      },
+    ]),
+  )
+  mount()
+  expect(await screen.findByText('Holi could not copy back the final changes.')).toBeInTheDocument()
+  expect(onOpen).toHaveBeenCalledOnce()
+})
+
+test('a late partial copy warning reappears after the ready app was opened', async () => {
+  cap.mockImplementation(({ name }: { name: string }) =>
+    Promise.resolve(
+      name === 'agent.scoped' ? { ok: true, sessionId: 'p0123456789ab' } : { ok: true },
+    ),
+  )
+  const onOpen = openFocused('# Plan\n')
+  await createVaultApp()
+  act(() => store.set(sessions, [{ id: 'p0123456789ab', name: '', state: 'working' }]))
+  appWritten('notes/Plan.app')
+  await waitFor(() => expect(onOpen).toHaveBeenCalledOnce())
+  const warning = 'Holi left out notes/Plan.app/assets/logo.png.'
+  act(() =>
+    store.set(sessions, [
+      { id: 'p0123456789ab', name: '', state: 'idle', closed: true, message: warning },
+    ]),
+  )
+  expect(await screen.findByText(`The vault app is ready. ${warning}`)).toBeInTheDocument()
+  expect(onOpen).toHaveBeenCalledOnce()
+})
+
 test('a failed fenced turn can recover in the same session', async () => {
   cap.mockImplementation(({ name }: { name: string }) =>
     Promise.resolve(

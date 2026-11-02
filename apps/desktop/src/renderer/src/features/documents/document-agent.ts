@@ -141,10 +141,24 @@ export function useDocumentAgent(path: string) {
   // app's session going idle or ending is not the app being done: that
   // waits on the app, and idle until then is waiting on the person.
   useEffect(() => {
-    if (!run || !isRunLive(run) || run.sessionId === null || run.ended) return
+    if (!run || run.sessionId === null) return
     const app = run.kind === 'vault-app'
-    const ended = (): void => update(app ? { ended: true } : { status: 'done' })
     const row = sessions.find((session) => session.id === run.sessionId)
+    // A ready app can still have an open fenced session. Keep following its
+    // result even after the pill is hidden and the app has been opened.
+    if (app && run.status === 'done') {
+      if (row?.outcome === 'failed') {
+        update({
+          status: row.closed ? 'failed' : 'needs-you',
+          message: row.error ?? 'The agent could not finish.',
+        })
+      } else if (row?.message !== undefined && row.message !== run.message) {
+        update({ message: row.message })
+      }
+      return
+    }
+    if (!isRunLive(run) || run.ended) return
+    const ended = (): void => update(app ? { ended: true } : { status: 'done' })
     if (row === undefined) {
       if (run.seenWorking) {
         if (run.provider === 'pi') {
@@ -287,6 +301,11 @@ export function useDocumentAgent(path: string) {
     }
   }
 
+  const markOpened = useCallback(
+    () => store.set(patchRunAtom, { path, patch: { opened: true } }),
+    [path, store],
+  )
+
   const dismiss = useCallback(
     () =>
       setRuns((all) => {
@@ -301,6 +320,7 @@ export function useDocumentAgent(path: string) {
     start,
     stop,
     dismiss,
+    markOpened,
     available: service !== null,
     /** Create vault app can run on this note now. */
     appable: offer(path),

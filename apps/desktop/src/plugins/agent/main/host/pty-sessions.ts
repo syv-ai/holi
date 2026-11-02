@@ -181,7 +181,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   const sessions = new Map<string, Session>()
   const finishedFences = new Map<
     string,
-    { row: SessionSummary; timer: ReturnType<typeof setTimeout> }
+    { row: SessionSummary; timer?: ReturnType<typeof setTimeout> }
   >()
   const memoryPast: PastStore = (() => {
     let rows: SessionSummary[] = []
@@ -451,10 +451,15 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
                   ...(copy.error === undefined ? {} : { error: copy.error }),
                   ...(copy.leftOut === undefined ? {} : { message: copy.leftOut }),
                 }
-                const timer = setTimeout(() => {
-                  finishedFences.delete(id)
-                  push()
-                }, FENCED_RESULT_MS)
+                // Keep failures and omissions until the vault is left: the
+                // document may have been closed when the final copy finished.
+                const timer =
+                  copy.error === undefined && copy.leftOut === undefined
+                    ? setTimeout(() => {
+                        finishedFences.delete(id)
+                        push()
+                      }, FENCED_RESULT_MS)
+                    : undefined
                 finishedFences.set(id, { row, timer })
                 push()
               })
@@ -543,7 +548,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       await pastQueue
       for (const s of sessions.values()) s.signals.dispose()
       sessions.clear()
-      for (const { timer } of finishedFences.values()) clearTimeout(timer)
+      for (const { timer } of finishedFences.values()) if (timer) clearTimeout(timer)
       finishedFences.clear()
       push()
     },

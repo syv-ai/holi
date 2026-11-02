@@ -359,7 +359,7 @@ describe('sessions Holi runs', () => {
     expect(fence.exited).toHaveBeenCalledOnce()
   })
 
-  it('keeps the final copy error after the terminal exits, then expires its row', async () => {
+  it('keeps the final copy error after the terminal exits until the vault is left', async () => {
     const t = setup('codex', undefined, { fenced: 'sandbox' })
     let finish!: (result: FenceCopy) => void
     const fence = {
@@ -385,7 +385,37 @@ describe('sessions Holi runs', () => {
     expect(t.sessions.has(started.sessionId)).toBe(false)
     expect(t.edges).toEqual([`begin:${started.sessionId}`, `forget:${started.sessionId}`])
     await vi.advanceTimersByTimeAsync(10 * 60_000)
+    expect(t.sessions.sessions()[0]).toMatchObject({
+      id: started.sessionId,
+      error: 'Holi could not copy back app.yaml.',
+    })
+    await t.sessions.leave()
     expect(t.sessions.sessions()).toEqual([])
+  })
+
+  it('retains final omissions but expires a clean final copy', async () => {
+    const t = setup('codex', undefined, { fenced: 'sandbox' })
+    const fenced = (copy: FenceCopy) => ({
+      dir: '/scratch/abc',
+      state: '/scratch/abc.agent',
+      turnEnded: async () => ({}),
+      exited: async () => copy,
+    })
+    const partial = await t.sessions.start('codex', {
+      fence: fenced({ leftOut: 'Holi left out app.local.yaml.' }),
+    })
+    const clean = await t.sessions.start('codex', { fence: fenced({}) })
+    if (!partial.ok || !clean.ok) throw new Error('fenced session did not start')
+    t.opened[0]?.onExit?.()
+    t.opened[1]?.onExit?.()
+    await vi.waitFor(() => expect(t.sessions.sessions()).toHaveLength(2))
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    expect(t.sessions.sessions()).toEqual([
+      expect.objectContaining({
+        id: partial.sessionId,
+        message: 'Holi left out app.local.yaml.',
+      }),
+    ])
   })
 
   it('refuses a fence its provider cannot keep', async () => {
