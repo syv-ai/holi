@@ -67,8 +67,8 @@ the agent surface, or an `AGENTS.md`/`CLAUDE.md` at any depth), each checked as 
 read with no symlink followed, any `app.yaml` last. What it left out the job's message names.
 More than 200 files or 20 MB copies nothing and fails. A failure copies nothing and says why: the
 turn's own reason, else the last line Codex printed. A job is a session in the one list, named `j`
-and twelve hex digits, working while it runs, then idle with its `outcome` and `message` for ten
-minutes; it has no terminal, so Open, Restart, Duplicate and messages are refused in words. Stop,
+and twelve hex digits, working while it runs, then idle for ten minutes with its `outcome`
+(`completed` or `failed`, as a Pi run's) and, when it failed, why as its `error`; it has no terminal, so Open, Restart, Duplicate and messages are refused in words. Stop,
 leaving the vault and quitting (whose question counts a running job) stop its process group, a
 Stop during the copy back stops it there and the job fails, and its scratch folder is deleted.
 Beside each folder is `<id>.pid`; one a crash left behind is killed at the next start, when that
@@ -110,8 +110,8 @@ else made). A file it was given or wrote at an earlier turn is written again onl
 it since, and then only while the vault still holds what it was given or wrote: a file someone
 edited or deleted meanwhile refuses the copy, and nothing of that turn is written. A job's one
 copy back holds to the same for the files it was given. All this happens before the turn's bracket closes so the turn review shows it. The folder is deleted when the process exits, and every folder when the
-agent leaves the vault or starts. A provider with neither is refused, never run on another agent.
-The document menu's and the file tree's **Create vault app** ([editor](editor.md)) is its caller.
+agent leaves the vault or starts. A provider with neither is refused, never run on another agent:
+Pi has neither, so a job or fenced session asked of Pi is refused. The document menu's and the file tree's **Create vault app** ([editor](editor.md)) is its caller.
 
 **Which agent a new session runs** is this machine's `agentProvider` (`app.local.yaml`; the
 **Agents** card in Settings → General, a row per agent with **Make default**): which agent is installed and signed in is the machine's, not the

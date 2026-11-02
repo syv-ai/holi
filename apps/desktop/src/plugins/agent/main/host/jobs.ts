@@ -153,7 +153,8 @@ interface Job {
   /** The agent's own state, outside `dir`. */
   state: string
   child: ChildProcess | null
-  outcome?: 'done' | 'failed'
+  outcome?: 'completed' | 'failed'
+  /** Why it failed, or what a completed job left out. */
   message?: string
   /** Why it was stopped from outside, which is then its message. */
   stopped?: string
@@ -326,7 +327,11 @@ export function createJobs(deps: JobsDeps): Jobs {
       state: j.outcome === undefined ? 'working' : 'idle',
       startedAt: j.startedAt,
       ...(j.outcome === undefined ? {} : { outcome: j.outcome }),
-      ...(j.message === undefined ? {} : { message: j.message }),
+      ...(j.message === undefined
+        ? {}
+        : j.outcome === 'failed'
+          ? { error: j.message }
+          : { message: j.message }),
     }))
 
   function push(): void {
@@ -482,7 +487,7 @@ export function createJobs(deps: JobsDeps): Jobs {
 
   const pidFile = (id: string): string => join(deps.scratchRoot, `${id}.pid`)
 
-  function finish(job: Job, outcome: 'done' | 'failed', message?: string): void {
+  function finish(job: Job, outcome: 'completed' | 'failed', message?: string): void {
     job.outcome = outcome
     if (message !== undefined) job.message = message
     job.child = null
@@ -625,7 +630,7 @@ export function createJobs(deps: JobsDeps): Jobs {
             log(`${id}: done, ${written} file(s) written, ${skipped.length} left out`)
             return finish(
               job,
-              'done',
+              'completed',
               skipped.length === 0
                 ? undefined
                 : `Holi left out what it may not write: ${skipped.slice(0, SHOWN_SKIPPED).join(', ')}${skipped.length > SHOWN_SKIPPED ? ` and ${skipped.length - SHOWN_SKIPPED} more` : ''}.`,

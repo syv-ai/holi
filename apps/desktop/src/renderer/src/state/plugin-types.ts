@@ -308,9 +308,8 @@ export interface AgentSessionRow {
   model?: string
   /** When it started, epoch ms. */
   startedAt?: number
-  /** A job's end: whether it did what it was asked. Absent while it runs. */
-  outcome?: 'done' | 'failed'
-  /** Why a job failed, in words. */
+  /** What a job that completed left out, in words; why one failed is its
+   *  `error`. */
   message?: string
 }
 

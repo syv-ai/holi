@@ -20,7 +20,6 @@ import { pendingHeadingAtom } from '@/state/open-document'
 import { vaultSettingsAtom } from '@/state/settings'
 import { openTabAtom } from '@/state/shell-tabs'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
-import { vaultSettingsAtom } from '@/state/settings'
 
 import { DocumentView } from '../document-view'
 

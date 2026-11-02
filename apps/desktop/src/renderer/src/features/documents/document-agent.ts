@@ -156,11 +156,11 @@ export function useDocumentAgent(path: string) {
     if (row.outcome === 'failed') {
       update({
         status: 'failed',
-        message: row.error ?? row.message ?? 'The agent could not finish.',
+        message: row.error ?? 'The agent could not finish.',
       })
     } else if (row.outcome === 'aborted') {
       update({ status: 'stopped' })
-    } else if (row.outcome === 'done' || (run.provider === 'pi' && row.outcome === 'completed')) {
+    } else if (row.outcome === 'completed') {
       ended()
     } else if (row.state === 'working') {
       if (run.status !== 'working' || !run.seenWorking)

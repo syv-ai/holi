@@ -5,7 +5,7 @@ explorer) as a `<name>.app` folder anywhere in the vault, usually beside the not
 syncs with the vault like any other content, shows in the file tree as one row, and opens inside
 Holi as a tab, where it can read the vault's documents and tasks through a narrow bridge.
 A note's menu, and its row menu in the file tree, have **Create vault app**, which has this
-machine's agent, Claude Code or Codex, make `<note>.app` from the whole note beside it, leaving
+machine's agent, Claude Code or Codex (Pi has no fenced sessions, so it is refused), make `<note>.app` from the whole note beside it, leaving
 the note as it was, in a session the person can watch and add to ([editor](editor.md)).
 
 ## How it works

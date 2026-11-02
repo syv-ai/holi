@@ -178,7 +178,7 @@ describe('a job', () => {
     expect(jobs.sessions()[0]).toMatchObject({ id, provider: 'codex', state: 'working' })
 
     const row = await ended(id)
-    expect(row).toMatchObject({ state: 'idle', outcome: 'done' })
+    expect(row).toMatchObject({ state: 'idle', outcome: 'completed' })
     expect(await readFile(join(root, 'notes/Plan.app/index.html'), 'utf8')).toBe('<h1>Ship it</h1>')
     expect(await readFile(join(root, 'notes/Plan.app/app.yaml'), 'utf8')).toBe(
       'description: The plan\n',
@@ -198,7 +198,7 @@ describe('a job', () => {
     const { root, jobs, provider, ended } = await rig(FAILED)
     const started = await jobs.start({ provider, name: 'x', prompt: 'go', scope: SCOPE })
     const row = await ended((started as { sessionId: string }).sessionId)
-    expect(row).toMatchObject({ outcome: 'failed', message: 'The model refused.' })
+    expect(row).toMatchObject({ outcome: 'failed', error: 'The model refused.' })
     expect(await exists(join(root, 'notes/Plan.app/index.html'))).toBe(false)
   })
 
@@ -207,7 +207,7 @@ describe('a job', () => {
     const started = await jobs.start({ provider, name: 'x', prompt: 'go', scope: SCOPE })
     const row = await ended((started as { sessionId: string }).sessionId)
     expect(row.outcome).toBe('failed')
-    expect(row.message).toBe('Codex exited with code 3: boom: no sign-in')
+    expect(row.error).toBe('Codex exited with code 3: boom: no sign-in')
   })
 
   it('is stopped by Stop, and by leaving the vault', async () => {
@@ -216,7 +216,7 @@ describe('a job', () => {
     const aId = (a as { sessionId: string }).sessionId
     await vi.waitFor(() => expect(jobs.sessions()[0]?.state).toBe('working'))
     expect(await jobs.stop(aId)).toEqual({ ok: true })
-    expect(await ended(aId)).toMatchObject({ outcome: 'failed', message: 'Stopped.' })
+    expect(await ended(aId)).toMatchObject({ outcome: 'failed', error: 'Stopped.' })
 
     const b = await jobs.start({ provider, name: 'b', prompt: 'go', scope: SCOPE })
     expect(b.ok).toBe(true)
@@ -234,7 +234,7 @@ describe('a job', () => {
       const started = await jobs.start({ provider, name: 'x', prompt: 'go', scope: SCOPE })
       const row = await ended((started as { sessionId: string }).sessionId)
       expect(row.outcome).toBe('failed')
-      expect(row.message).toMatch(/more than Holi copies back/)
+      expect(row.error).toMatch(/more than Holi copies back/)
       expect(await exists(join(root, 'notes/Plan.app/f0.txt'))).toBe(false)
       expect(await exists(join(root, 'notes/Plan.app/app.yaml'))).toBe(false)
     }
@@ -257,7 +257,7 @@ describe('a job', () => {
     })
     id = (started as { sessionId: string }).sessionId
     const row = await r.ended(id)
-    expect(row).toMatchObject({ outcome: 'failed', message: 'Stopped.' })
+    expect(row).toMatchObject({ outcome: 'failed', error: 'Stopped.' })
     // One file landed before the Stop; the finished marker never did.
     const written = (await readdir(join(r.root, 'notes/Plan.app'))).sort()
     expect(written).toHaveLength(1)
@@ -284,7 +284,7 @@ describe('a job', () => {
     await writeFile(join(root, 'notes/Plan.app/app.yaml'), 'description: Theirs\n')
     const row = await ended((started as { sessionId: string }).sessionId)
     expect(row.outcome).toBe('failed')
-    expect(row.message).toMatch(/notes\/Plan\.app: something else put it in the vault/)
+    expect(row.error).toMatch(/notes\/Plan\.app: something else put it in the vault/)
     expect(await readFile(join(root, 'notes/Plan.app/app.yaml'), 'utf8')).toBe(
       'description: Theirs\n',
     )
@@ -360,7 +360,7 @@ describe('a job', () => {
       scope: SCOPE,
     })
     const row = await ended((started as { sessionId: string }).sessionId)
-    expect(row.outcome).toBe('done')
+    expect(row.outcome).toBe('completed')
     const seen = JSON.parse(await readFile(argv, 'utf8')) as {
       args: string[]
       cwd: string
