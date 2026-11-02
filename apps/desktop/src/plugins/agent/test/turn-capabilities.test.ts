@@ -26,10 +26,13 @@ async function rig() {
   const table = agentCapabilities({
     sessions: {} as never,
     own: {} as never,
+    jobs: {} as never,
+    fenced: {} as never,
     providers: [],
     terminals: {} as never,
     liveRemote: () => REMOTE,
     commitNow: () => plainGit(root, ['commit', '-am', 'revert']),
+    defaultProvider: async () => 'claude' as const,
   })
   const ctx = {
     remote: REMOTE,

@@ -17,6 +17,8 @@ import { closeTabsForPaths, retargetTab, retargetTabs, workspaceAtom } from './p
 // reads the other's atoms until a store does.
 import { folderSurfacesAtom } from './plugins'
 import { openDocumentAtom } from './open-document'
+// A cycle too (`document-runs` reads `activeRemoteAtom`), safe the same way.
+import { documentRunsAtom } from './document-runs'
 import { settledRect } from '@/lib/settled-rect'
 
 type JotaiStore = ReturnType<typeof createStore>
@@ -129,6 +131,8 @@ export const loadSnapshotAtom = atom(null, async (get, set) => {
  * here may keep a snapshot keyed by remote.
  */
 export const openVaultAtom = atom(null, async (_get, set, remote: string) => {
+  // Nothing of the vault left carries over: its document runs ended with it.
+  set(documentRunsAtom, {})
   const snapshot = await trpc.vaults.open.mutate({ remote })
   set(activeRemoteAtom, remote)
   set(snapshotAtom, snapshot)

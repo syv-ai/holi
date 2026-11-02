@@ -371,6 +371,19 @@ test('with nothing yet, an empty state starts one in the default agent', async (
   expect(store.get(agentsViewAtom)).toEqual({ kind: 'history' })
 })
 
+test('a native Pi session opens its terminal and can be duplicated', async () => {
+  const store = setup({ sessions: false, fakes: [] })
+  const id = 'p0123456789ab'
+  act(() =>
+    store.set(agentSessionsAtom, [
+      { id, provider: 'pi', name: 'Pi plan', state: 'idle', startedAt: NOW },
+    ]),
+  )
+  expect(await menuOf(/^Pi plan/)).toContain('Duplicate')
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Open in terminal' }))
+  expect(agentCap.open).toHaveBeenCalledWith('o/notes', expect.objectContaining({ attach: id }))
+})
+
 test('Open in terminal resumes a copy of the conversation by its id', async () => {
   setup({
     sessions: false,

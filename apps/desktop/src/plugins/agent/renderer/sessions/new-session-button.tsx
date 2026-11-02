@@ -118,9 +118,11 @@ export function NewSessionButton(): React.JSX.Element {
             </DropdownMenuItem>
           ))
         )}
-        {list.some((p) => !p.background && p.installed) && <DropdownMenuSeparator />}
+        {list.some((p) => (!p.background || p.id === 'pi') && p.installed) && (
+          <DropdownMenuSeparator />
+        )}
         {list
-          .filter((p) => !p.background && p.installed)
+          .filter((p) => (!p.background || p.id === 'pi') && p.installed)
           .map((p) => (
             <DropdownMenuItem
               key={`resume-${p.id}`}

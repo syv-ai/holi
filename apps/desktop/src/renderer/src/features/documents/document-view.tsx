@@ -8,7 +8,8 @@
  *
  * The agent is part of the page: Space on an empty line asks it to write
  * there, the format bubble's Ask AI rewrites a selection, and the menu's
- * Turn into an Artifact makes a vault app of the document. While a run edits
+ * Create vault app makes a vault app of the document beside it, and opens it
+ * when it is done if the document is still in front. While a run edits
  * the document the page is locked (nothing in it can be pressed) and the
  * status pill at its foot says what it is doing and offers Stop.
  *
@@ -18,8 +19,9 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { toast } from 'sonner'
 import { differsBeyondTidy, holiLink, isHoliLinkable, isResolved } from '@holi/shared'
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { findNext, findPrev } from 'prosemirror-search'
 import { EditorContent, useEditor } from '@tiptap/react'
 
@@ -46,13 +48,18 @@ import { cn } from '@/lib/cn'
 import { TaskProperties } from '@/features/planning/task-properties'
 import { trpc } from '@/lib/trpc'
 import { sawText } from '@/state/doc-changes'
+import { canStartConversationAtom, startConversationAtom } from '@/state/agents-slots'
+import { isRunLive } from '@/state/document-runs'
 import { claimsAtom } from '@/state/plugins'
+import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { focusedTab } from '@/state/shell-workspace'
+import { tabPath } from '@/state/tab-descriptor'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 import { AgentPrompt, AgentStatus } from './agent-prompt'
 import { askAiSlashItem } from './ask-ai-slash'
 import { applyReload } from './apply-reload'
-import { artifactPathFor, isRunLive, locksDocument, useDocumentAgent } from './document-agent'
+import { locksDocument, useDocumentAgent } from './document-agent'
 import { parentOf } from '@/lib/tree-paths'
 import { CommentsPanel } from './comments-panel'
 import { DocumentComments } from './document-comments'
@@ -165,6 +172,7 @@ function DocumentEditor({
   onMoved?: (from: string, to: string) => void
 }) {
   const agent = useDocumentAgent(path)
+  const store = useStore()
   const locked = locksDocument(agent.run)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [linkOpen, setLinkOpen] = useState(false)
@@ -239,7 +247,7 @@ function DocumentEditor({
         },
       },
       onUpdate: ({ transaction }) => {
-        if (!transaction.docChanged) return
+        if (!transaction.docChanged || transaction.getMeta('preventUpdate')) return
         setSaveState('saving')
         window.clearTimeout(saveTimer.current)
         saveTimer.current = window.setTimeout(() => void save(), SAVE_DELAY_MS)
@@ -250,7 +258,7 @@ function DocumentEditor({
 
   const editable = useRichTextSelector(editor, (current) => current?.isEditable ?? true)
 
-  const { promptOpen, promptInitial, closePrompt, sendPrompt, quickCommand, turnIntoArtifact } =
+  const { promptOpen, promptInitial, closePrompt, sendPrompt, quickCommand, createVaultApp } =
     useDocumentAgentPrompt({ editor, path, agent, handlers, save })
 
   const comments = useDocumentComments({ editor, path, docs, head, save })
@@ -355,12 +363,17 @@ function DocumentEditor({
         }
         if (saveTimer.current !== undefined && !locked) return
         const next = splitDocument(text)
-        // The refs follow only once the buffer took the file: a reload that
-        // throws leaves both on what the buffer still holds.
-        applyReload(editor, next.body)
-        head.current = next.head
-        lastText.current = text
-        placeRef.current()
+        try {
+          const changed = applyReload(editor, next.body)
+          head.current = next.head
+          lastText.current = text
+          if (changed) placeRef.current()
+          setSaveState('saved')
+        } catch {
+          // Keep the last-known file snapshot unchanged so a later disk update
+          // can retry; dispatch failures must not be mistaken for a successful reload.
+          setSaveState('error')
+        }
       })
       .catch(() => undefined)
     return () => {
@@ -376,14 +389,25 @@ function DocumentEditor({
     editor.setEditable(!locked)
   }, [editor, locked])
 
-  // A finished edit clears its pill on its own; an artifact waits to be
-  // opened or dismissed.
+  // A finished edit clears its pill on its own. A finished vault app opens
+  // when the document is still the tab in front and was never left while it
+  // ran; otherwise it waits on the pill's Open.
   useEffect(() => {
     const run = agent.run
-    if (!run || run.status !== 'done' || run.kind === 'artifact') return
+    if (!run || run.status !== 'done') return
+    if (run.kind === 'vault-app') {
+      // A partial copy stays on the pill until the person has seen what was left out.
+      if (run.away || run.opened || run.appPath === undefined || run.message !== undefined) return
+      if (tabPath(focusedTab(store.get(shellWorkspaceAtom))) !== path) return
+      agent.markOpened()
+      onOpen(run.appPath)
+      return
+    }
     const timer = window.setTimeout(agent.dismiss, 1500)
     return () => window.clearTimeout(timer)
-  }, [agent.run, agent.dismiss])
+    // `onOpen` is the shell's, new each render; the run is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent.run, agent.dismiss, path, store])
 
   /**
    * The whole page takes a press. Below the last line it starts a new one
@@ -451,6 +475,19 @@ function DocumentEditor({
   }
 
   const canAsk = agent.available && !isRunLive(agent.run)
+  const canStartChat = useAtomValue(canStartConversationAtom)
+  const startConversation = useSetAtom(startConversationAtom)
+
+  /** A new agent session beside the document, the passage in its input as
+   *  context, for the person to ask about it. */
+  async function startChat(passage: string) {
+    const res = await startConversation({
+      text: '',
+      context: [{ kind: 'passage', path, text: passage }],
+      beside: true,
+    })
+    if (!res.ok) toast.error(`Couldn't start the chat. ${res.message}`)
+  }
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -474,7 +511,7 @@ function DocumentEditor({
             smallText={smallText}
             onFullWidthChange={setFullWidth}
             onSmallTextChange={setSmallText}
-            onTurnIntoArtifact={canAsk ? () => void turnIntoArtifact() : null}
+            onCreateVaultApp={canAsk && agent.appable ? () => void createVaultApp() : null}
             holiLinks={holiLinks}
             comments={
               commentable
@@ -550,8 +587,11 @@ function DocumentEditor({
                       linkOpen={linkOpen}
                       onLinkOpenChange={setLinkOpen}
                       onQuickCommand={
-                        canAsk ? (verb, passage) => void quickCommand(verb, passage) : null
+                        canAsk
+                          ? (instruction, passage) => void quickCommand(instruction, passage)
+                          : null
                       }
+                      onStartChat={canStartChat ? (passage) => void startChat(passage) : null}
                       onComment={commentable ? () => void commentOnSelection() : null}
                     />
                     <RichTextLinkBubble editor={editor} onEdit={openLinkEditor} />
@@ -620,16 +660,23 @@ function DocumentEditor({
           </div>
         </div>
 
-        {agent.run ? (
+        {agent.run &&
+        !(
+          agent.run.kind === 'vault-app' &&
+          agent.run.status === 'done' &&
+          agent.run.opened &&
+          agent.run.message === undefined
+        ) ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex justify-center px-4">
             <div className="pointer-events-auto">
               <AgentStatus
                 run={agent.run}
                 onStop={() => void agent.stop()}
                 onDismiss={agent.dismiss}
-                onOpenArtifact={() => {
-                  agent.dismiss()
-                  onOpen(artifactPathFor(path))
+                onOpenApp={() => {
+                  const app = agent.run?.appPath
+                  agent.markOpened()
+                  if (app !== undefined) onOpen(app)
                 }}
               />
             </div>

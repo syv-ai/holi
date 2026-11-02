@@ -16,6 +16,8 @@ interface AgentProviderInfo {
   installed: boolean
   /** Its sessions can run with nobody watching. */
   background: boolean
+  /** It can run a job: one prompt, unwatched, in a folder of Holi's. */
+  jobs: boolean
 }
 
 export type ProvidersState =
@@ -48,4 +50,4 @@ export const newSessionProviderAtom = atom(
 
 /** An agent's name, as a person says it. */
 export const providerLabel = (id: AgentProviderId): string =>
-  id === 'codex' ? 'Codex' : 'Claude Code'
+  id === 'codex' ? 'Codex' : id === 'pi' ? 'Pi' : 'Claude Code'
