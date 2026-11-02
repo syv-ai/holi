@@ -84,9 +84,10 @@ export function useDocumentAgentPrompt({
     await agent.start('write', request)
   }
 
-  async function quickCommand(verb: string, passage: string) {
+  /** A quick command or the person's own instruction, on a selected passage. */
+  async function quickCommand(instruction: string, passage: string) {
     await save()
-    await agent.start('rewrite', verb, passage)
+    await agent.start('rewrite', instruction, passage)
   }
 
   async function turnIntoArtifact() {
