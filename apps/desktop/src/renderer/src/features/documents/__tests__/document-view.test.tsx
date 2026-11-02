@@ -204,6 +204,26 @@ test('Space on an empty line asks Sonnet, locks the page, and unlocks when done'
   await waitFor(() => expect(box).toHaveAttribute('contenteditable', 'true'))
 })
 
+test('Codex-default Ask AI runs through Claude until unattended Codex is supported', async () => {
+  const user = userEvent.setup()
+  store.set(vaultSettingsAtom, {
+    remote: 'syv/vault',
+    settings: { ...VAULT_SETTING_DEFAULTS, agentProvider: 'codex', warnings: [] },
+  })
+  open('')
+  const box = await editorBox()
+  box.focus()
+  fireEvent.keyDown(box, { key: ' ', code: 'Space' })
+  await user.type(
+    await screen.findByRole('textbox', { name: 'What should the agent do?' }),
+    'Write it{Enter}',
+  )
+  await waitFor(() => expect(cap).toHaveBeenCalled())
+  const launch = JSON.parse(cap.mock.calls[0]![0].paramsJson)
+  expect(launch.provider).toBe('claude')
+  expect(launch.model).toBe('claude-sonnet-5-5')
+})
+
 test('Pi uses the local default without an editor warning or Claude-only launch options', async () => {
   const user = userEvent.setup()
   store.set(vaultSettingsAtom, {

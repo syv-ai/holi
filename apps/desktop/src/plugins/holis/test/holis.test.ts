@@ -31,6 +31,7 @@ let root: string
 let data: string
 let launched: Parameters<HolisDeps['launch']>[0][]
 let selectedProvider: 'claude' | 'codex' | 'pi'
+let onProviderRead: (() => void) | undefined
 let emitted: string[]
 let asked: NeedsYou[]
 let holis: Holis
@@ -59,11 +60,16 @@ beforeEach(async () => {
   data = await mkdtemp(join(tmpdir(), 'holi-holis-data-'))
   launched = []
   selectedProvider = 'claude'
+  onProviderRead = undefined
   emitted = []
   asked = []
   holis = createHolis({
     store: jsonFileStore(join(data, 'holis.json'), parseHolisFile),
-    provider: async () => selectedProvider,
+    provider: async () => {
+      const provider = selectedProvider
+      onProviderRead?.()
+      return provider
+    },
     async launch(args) {
       launched.push(args)
       return { ok: true, sessionId: `job${launched.length}` }
@@ -170,6 +176,22 @@ describe('sending a document', () => {
       { jobId: 'job1', at: today.toISOString(), path: 'kunder/nordlys.md' },
     ])
     expect(emitted).toContain('holis')
+  })
+
+  it('launches with the provider whose approval was checked, even if settings change mid-send', async () => {
+    selectedProvider = 'pi'
+    await writeHoli({ yaml: PROPOSAL, soul: SOUL })
+    const [entry] = await holis.list(vault())
+    await holis.approve(vault(), 'proposal', entry!.fingerprint!)
+    onProviderRead = () => {
+      selectedProvider = 'claude'
+      onProviderRead = undefined
+    }
+
+    await holis.send(vault(), 'proposal', 'kunder/a.md')
+
+    expect(launched).toHaveLength(1)
+    expect(launched[0]!.provider).toBe('pi')
   })
 
   it('selects Pi, uses its configured default for Claude aliases, and accepts explicit model ids', async () => {
