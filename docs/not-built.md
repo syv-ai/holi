@@ -53,9 +53,6 @@ vault's.
   row counts them.
 - **The model of an interactive Codex session**: nothing Codex reports to Holi names it, so its row
   says Codex, not the model.
-- **A document's AI Rewrite and Write on Codex**: with Codex the default they start a Claude Code
-  background session through `agent.launch` (`document-agent.ts`); on Claude Code or Pi they run
-  on the default agent. Create vault app runs on Codex.
 
 **More providers.** opencode, as its core and whatever its hooks allow.
 

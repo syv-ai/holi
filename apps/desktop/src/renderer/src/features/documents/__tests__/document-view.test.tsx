@@ -236,7 +236,7 @@ test('Space on an empty line asks Sonnet, locks the page, and unlocks when done'
   await waitFor(() => expect(box).toHaveAttribute('contenteditable', 'true'))
 })
 
-test('Codex-default Ask AI runs through Claude until unattended Codex is supported', async () => {
+test('Codex-default Ask AI runs on Codex as a job fenced to the document', async () => {
   const user = userEvent.setup()
   store.set(vaultSettingsAtom, {
     remote: 'syv/vault',
@@ -251,9 +251,13 @@ test('Codex-default Ask AI runs through Claude until unattended Codex is support
     'Write it{Enter}',
   )
   await waitFor(() => expect(cap).toHaveBeenCalled())
-  const launch = JSON.parse(cap.mock.calls[0]![0].paramsJson)
-  expect(launch.provider).toBe('claude')
-  expect(launch.model).toBe('claude-sonnet-5-5')
+  const call = cap.mock.calls[0]![0]
+  expect(call.name).toBe('agent.job')
+  const job = JSON.parse(call.paramsJson)
+  expect(job.provider).toBe('codex')
+  expect(job.scope).toEqual({ read: [PATH], write: [PATH] })
+  expect(job.model).toBeUndefined()
+  expect(job.allow).toBeUndefined()
 })
 
 test('Pi uses the local default without an editor warning or Claude-only launch options', async () => {

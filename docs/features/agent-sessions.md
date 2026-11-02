@@ -140,7 +140,8 @@ whose command names that folder. Leaving the vault while a job is still getting 
 folders made, its files copied in) spawns nothing: the start sees the vault was left and stops
 there, and the leave waits for every start under way before it stops the jobs. A fenced session
 still starting opens no session the same way. A provider with neither capability is refused,
-never run on another agent. It is for a plugin built on the agent, whose run nobody watches; what a person
+never run on another agent. It is for a plugin built on the agent, whose run nobody watches, and for a document's Ask AI
+write and rewrite on Codex, a job whose scope is the document alone ([editor](editor.md)); what a person
 starts and may want to follow is a fenced session (below).
 
 **Codex's own folder for a run.** A `-c mcp_servers={}` override does not clear the servers the
