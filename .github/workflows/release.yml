@@ -145,16 +145,98 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
+        # The GitHub API sometimes answers 500 for a moment. Both commands are
+        # safe to repeat (an existing release is reused, assets are clobbered),
+        # so a failed attempt is retried before the build is thrown away. A new
+        # release starts as a draft and is published only once every asset is
+        # up, so dev clients never see a dev.N without its dev-mac.yml. gh finds
+        # a draft by its pending tag; publishing an already published release
+        # (a re-run) changes nothing.
         run: |
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --target "$GITHUB_SHA" --title "Holi $VERSION" --prerelease --generate-notes
+          # `set -e` does not apply inside `if publish`, so each command returns.
+          publish() {
+            if ! gh release view "$TAG" >/dev/null 2>&1; then
+              gh release create "$TAG" --target "$GITHUB_SHA" --title "Holi $VERSION" --prerelease --draft --generate-notes || return 1
+            fi
+            gh release upload "$TAG" \
+              apps/desktop/release/*.dmg \
+              apps/desktop/release/*.zip \
+              apps/desktop/release/*.blockmap \
+              apps/desktop/release/dev-mac.yml \
+              --clobber || return 1
+            gh release edit "$TAG" --draft=false
+          }
+          for attempt in 1 2 3 4; do
+            if publish; then exit 0; fi
+            if [ "$attempt" -lt 4 ]; then
+              echo "Publishing failed (attempt $attempt); retrying in $((attempt * 30))s."
+              sleep $((attempt * 30))
+            fi
+          done
+          exit 1
+
+  dev-release-alert:
+    # A main commit whose dev prerelease failed or was cancelled (a GitHub API
+    # error, no macOS runner) leaves the dev channel behind main. Keep one open
+    # issue labelled dev-release-failed for it, and close it once a dev
+    # prerelease at least as new is published. Runs finish out of order, so a
+    # run only speaks for itself: a failure is ignored when a newer dev
+    # prerelease already exists, and a success closes the issue only when it is
+    # not older than the failure the issue reports.
+    needs: build-prerelease-mac
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - name: Open, update or close the dev release issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ needs.build-prerelease-mac.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+          LABEL: dev-release-failed
+        run: |
+          RUN=$GITHUB_RUN_NUMBER
+          ISSUE=$(gh issue list --label "$LABEL" --state open --limit 1 --json number --jq '.[0].number // empty')
+          # The run number of the failure the open issue reports, from its marker.
+          REPORTED=0
+          if [ -n "$ISSUE" ]; then
+            REPORTED=$(gh issue view "$ISSUE" --json body --jq '.body' | sed -n 's/.*<!-- dev-run: \([0-9]*\) -->.*/\1/p' | head -n 1)
+            REPORTED=${REPORTED:-0}
           fi
-          gh release upload "$TAG" \
-            apps/desktop/release/*.dmg \
-            apps/desktop/release/*.zip \
-            apps/desktop/release/*.blockmap \
-            apps/desktop/release/dev-mac.yml \
-            --clobber
+
+          if [ "$RESULT" = success ]; then
+            if [ -n "$ISSUE" ] && [ "$RUN" -ge "$REPORTED" ]; then
+              gh issue close "$ISSUE" --comment "dev.$RUN for $GITHUB_SHA is published and includes every earlier main commit: $RUN_URL"
+            fi
+            exit 0
+          fi
+          if [ "$RESULT" != failure ] && [ "$RESULT" != cancelled ]; then exit 0; fi
+
+          # Newest published dev prerelease run number, from tags like v0.7.1-dev.63.
+          NEWEST=$(gh release list --limit 50 --exclude-drafts --json tagName,isPrerelease --jq '[.[] | select(.isPrerelease) | .tagName | capture("-dev\\.(?<n>[0-9]+)$").n | tonumber] | max // 0')
+          if [ "$NEWEST" -gt "$RUN" ]; then
+            echo "dev.$NEWEST is already published; the channel is ahead of this run."
+            exit 0
+          fi
+
+          BODY=$(printf '%s\n' \
+            "The dev prerelease for \`main\` commit $GITHUB_SHA (dev.$RUN) ended as **$RESULT**, so the dev channel is behind \`main\`." \
+            "" \
+            "Run: $RUN_URL" \
+            "" \
+            "Newest published dev prerelease: dev.$NEWEST. Re-run the failed jobs, or push again: the next dev prerelease includes this commit, and this issue closes when one is published." \
+            "" \
+            "<!-- dev-run: $RUN -->")
+          if [ -z "$ISSUE" ]; then
+            gh label create "$LABEL" --color d73a4a --description "A dev prerelease on main failed or was cancelled" --force
+            gh issue create --title "Dev prerelease failed: the dev channel is behind main" --label "$LABEL" --body "$BODY"
+          elif [ "$RUN" -ge "$REPORTED" ]; then
+            gh issue edit "$ISSUE" --body "$BODY"
+            gh issue comment "$ISSUE" --body "dev.$RUN for $GITHUB_SHA ended as **$RESULT**: $RUN_URL"
+          fi
 
   release:
     needs: [version, build-mac]
