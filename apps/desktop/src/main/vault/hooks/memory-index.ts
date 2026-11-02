@@ -50,7 +50,26 @@ export async function memoryIndex(
   now = new Date(),
 ): Promise<TransformResult> {
   if (!touchesSharedMemory(staged)) return { changed: [], notes: [] }
+  const { changed, count } = await writeMemoryIndex(root, now)
+  if (!changed) {
+    return { changed: [], notes: [`memory-index: ${count} memory file(s), index unchanged`] }
+  }
+  return {
+    changed: [MEMORY_INDEX],
+    notes: [`memory-index: rebuilt the index from ${count} memory file(s)`],
+  }
+}
 
+/**
+ * Write the index the tree's shared memories make, ungated. The transform calls
+ * it when a commit touches memory, and a merge calls it when the two sides'
+ * indexes conflict: the index is generated, so the merged tree's memories are
+ * the one right answer to that conflict.
+ */
+export async function writeMemoryIndex(
+  root: string,
+  now = new Date(),
+): Promise<{ changed: boolean; count: number }> {
   const entries: MemoryEntry[] = []
   for (const path of await listFiles(root)) {
     if (!isSharedMemoryPath(path)) continue
@@ -68,16 +87,7 @@ export async function memoryIndex(
 
   // **Only when it differs**, or every memory edit that did not move a title
   // would restage an unchanged index.
-  if (current === next) {
-    return {
-      changed: [],
-      notes: [`memory-index: ${entries.length} memory file(s), index unchanged`],
-    }
-  }
-
+  if (current === next) return { changed: false, count: entries.length }
   await writeAtomic(root, rel, next)
-  return {
-    changed: [MEMORY_INDEX],
-    notes: [`memory-index: rebuilt the index from ${entries.length} memory file(s)`],
-  }
+  return { changed: true, count: entries.length }
 }

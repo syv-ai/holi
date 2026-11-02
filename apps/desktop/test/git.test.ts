@@ -463,6 +463,68 @@ describe('pull', () => {
     expect((await repo.status()).merging).toBe(false)
     expect(await readFile(join(ours, sidecar), 'utf8')).toBe('{"threads":{"t":{}}}\n')
   })
+
+  it('keeps a note deleted here and edited by a teammate, and merges', async () => {
+    // The modify/delete has one answer: keeping the edit loses nothing.
+    const { ours, theirs } = await pair()
+    await publish(theirs, 'note.md', 'one\n')
+    await openRepo(ours).pull()
+    await publish(theirs, 'note.md', 'two\n')
+    await plainGit(ours, ['rm', '-q', 'note.md'])
+    await plainGit(ours, ['commit', '-qm', 'delete'])
+
+    const repo = openRepo(ours)
+    expect((await repo.pull()).kind).toBe('merged')
+    expect((await repo.status()).dirty).toBe(false)
+    expect(await readFile(join(ours, 'note.md'), 'utf8')).toBe('two\n')
+  })
+
+  it('regenerates a conflicting memory index from the merged memories', async () => {
+    // The index is generated, so the two sides' versions of it never need a
+    // person: the memories both sides wrote are listed, in one index.
+    const { ours, theirs } = await pair()
+    const memory = (title: string) => `---\ntype: note\ndescription: ${title}\n---\n\nFact.\n`
+    for (const repo of [ours, theirs]) {
+      await mkdir(join(repo, '.holi/memory'), { recursive: true })
+    }
+    await publish(theirs, '.holi/memory/index.md', '# Index\n\n- a\n')
+    await openRepo(ours).pull()
+    await writeFile(join(theirs, '.holi/memory/theirs.md'), memory('Theirs'), 'utf8')
+    await publish(theirs, '.holi/memory/index.md', '# Index\n\n- a\n- theirs\n')
+    await writeFile(join(ours, '.holi/memory/ours.md'), memory('Ours'), 'utf8')
+    await commitFile(ours, '.holi/memory/index.md', '# Index\n\n- a\n- ours\n')
+
+    const repo = openRepo(ours)
+    expect((await repo.pull()).kind).toBe('merged')
+    expect((await repo.status()).dirty).toBe(false)
+    const index = await readFile(join(ours, '.holi/memory/index.md'), 'utf8')
+    expect(index).toContain('[[.holi/memory/ours.md|')
+    expect(index).toContain('[[.holi/memory/theirs.md|')
+    expect(index).not.toContain('<<<<<<<')
+  })
+
+  it('leaves the memory index a conflict while a memory still holds markers', async () => {
+    // The index is read from the tree, so rebuilding it now would list a
+    // memory's conflict markers and mark the index resolved.
+    const { ours, theirs } = await pair()
+    const memory = (description: string) => `---\ntype: note\ndescription: ${description}\n---\n`
+    for (const repo of [ours, theirs]) {
+      await mkdir(join(repo, '.holi/memory'), { recursive: true })
+    }
+    await writeFile(join(theirs, '.holi/memory/m.md'), memory('base'), 'utf8')
+    await publish(theirs, '.holi/memory/index.md', '# Index\n\n- base\n')
+    await openRepo(ours).pull()
+    await writeFile(join(theirs, '.holi/memory/m.md'), memory('theirs'), 'utf8')
+    await publish(theirs, '.holi/memory/index.md', '# Index\n\n- theirs\n')
+    await writeFile(join(ours, '.holi/memory/m.md'), memory('ours'), 'utf8')
+    await commitFile(ours, '.holi/memory/index.md', '# Index\n\n- ours\n')
+
+    const result = await openRepo(ours).remerge()
+    expect(result).toEqual({
+      kind: 'conflict',
+      paths: ['.holi/memory/index.md', '.holi/memory/m.md'],
+    })
+  })
 })
 
 describe('push', () => {
