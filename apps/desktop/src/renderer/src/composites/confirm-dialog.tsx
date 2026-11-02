@@ -70,9 +70,9 @@ export function ConfirmDialog({
     setPending(true)
     setError(null)
     result.then(
-      () => {
+      (outcome) => {
         setPending(false)
-        onOpenChange(false)
+        if (outcome !== false) onOpenChange(false)
       },
       (err: unknown) => {
         setPending(false)

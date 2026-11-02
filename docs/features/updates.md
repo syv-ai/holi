@@ -27,7 +27,7 @@ only. It checks ten seconds after launch, every four hours, on focus and on wake
 held. electron-updater downloads it automatically; main pushes status through `updates:status` and
 `trpc.updates.*`.
 
-**A ready update asks once.** When the window is visible and no other dialog is open, Holi shows a confirmation with **Restart now** and **Later**. The prompt waits behind another dialog and appears when it closes. Restart uses the guarded install path and stays pending while it runs; **Later** dismisses this version on this release channel on this machine (`localStorage`). Closing the prompt another way does not save a dismissal, so the prompt remains available later.
+**A ready update asks once.** When the window is visible and no other dialog is open, Holi shows a confirmation with **Restart now** and **Later**. The prompt waits behind another dialog and appears when it closes. Restart uses the guarded install path and stays pending while it runs; if the guard declines, the prompt stays open. **Later** dismisses this version on this release channel on this machine (`localStorage`). Escape closes the prompt temporarily; Holi offers it again the next time its native window becomes visible, or immediately for a newly ready candidate.
 
 **Installing is a quit.** A downloaded update installs on any quit. **Restart to update** runs the
 same path as ⌘Q first: the plugins' quit questions (a busy agent session asks), then the teardown

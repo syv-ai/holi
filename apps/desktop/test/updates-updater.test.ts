@@ -176,12 +176,34 @@ describe('updater channel switching', () => {
     mocks.updater.emit('update-available', { version: '1.1.0' })
     mocks.updater.emit('update-downloaded')
 
-    updater.install()
-    await tick()
+    await expect(updater.install()).resolves.toBe(false)
 
     expect(beforeInstall).toHaveBeenCalledOnce()
     expect(updater.status()).toMatchObject({ state: 'ready', availableVersion: '1.1.0' })
     expect(mocks.updater.quitAndInstall).not.toHaveBeenCalled()
+    updater.dispose()
+  })
+
+  it('waits for the guarded install outcome before reporting success', async () => {
+    let allowInstall!: (go: boolean) => void
+    const beforeInstall = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          allowInstall = resolve
+        }),
+    )
+    const updater = createUpdater({ send: vi.fn(), beforeInstall })
+    await tick()
+    mocks.updater.emit('update-available', { version: '1.1.0' })
+    mocks.updater.emit('update-downloaded')
+
+    const installing = updater.install()
+    await tick()
+    expect(beforeInstall).toHaveBeenCalledOnce()
+    expect(mocks.updater.quitAndInstall).not.toHaveBeenCalled()
+    allowInstall(true)
+    await expect(installing).resolves.toBe(true)
+    expect(mocks.updater.quitAndInstall).toHaveBeenCalledOnce()
     updater.dispose()
   })
 

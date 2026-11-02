@@ -91,6 +91,18 @@ describe('ReadyUpdateDialog', () => {
     ).toBeInTheDocument()
   })
 
+  test('blocks another dialog even when it has the same title', async () => {
+    const otherDialog = document.createElement('div')
+    otherDialog.setAttribute('role', 'dialog')
+    otherDialog.textContent = 'Holi 1.1.0 is ready'
+    document.body.append(otherDialog)
+    mount()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+
+    otherDialog.remove()
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
+  })
+
   test('does not focus Later by default when the prompt opens', async () => {
     mount()
     await screen.findByRole('alertdialog', { name: 'Holi 1.1.0 is ready' })
@@ -132,6 +144,45 @@ describe('ReadyUpdateDialog', () => {
         input: undefined,
       }),
     )
+  })
+
+  test('holds confirmation pending through the guarded install and keeps the prompt on decline', async () => {
+    let finishInstall!: (result: Awaited<ReturnType<typeof trpc>>) => void
+    trpc.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishInstall = resolve
+      }),
+    )
+    mount()
+    await userEvent.click(await screen.findByRole('button', { name: 'Restart now' }))
+    expect(screen.getByRole('button', { name: /Restart now/ })).toBeDisabled()
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+
+    await act(async () => finishInstall({ ok: true, data: false } as never))
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Restart now/ })).toBeEnabled()
+  })
+
+  test('Escape only closes until the next native visibility opportunity', async () => {
+    mount()
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    sendVisibility(false)
+    sendVisibility(true)
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
+  })
+
+  test('resets an Escape dismissal for a changed candidate', async () => {
+    const store = mount()
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+
+    act(() => store.set(updateStatusAtom, { ...ready, channel: 'dev', availableVersion: '1.2.0' }))
+    expect(
+      await screen.findByRole('alertdialog', { name: 'Holi 1.2.0 is ready' }),
+    ).toBeInTheDocument()
   })
 
   test('drops a stale ready candidate after changing channels', async () => {
