@@ -14,8 +14,9 @@
  * and not while a run on that note is live.
  */
 import { isAppWritablePath, type AgentProviderId, type VaultSnapshot } from '@holi/shared'
-import { atom } from 'jotai'
+import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { AstroidIcon, LinkIcon, type LucideIcon } from 'lucide-react'
+import { useEffect } from 'react'
 
 import { parentOf } from '@/lib/tree-paths'
 import { trpc } from '@/lib/trpc'
@@ -158,8 +159,49 @@ export const launchRunAtom = atom(
 )
 
 /** Each agent's name as main gives it (`agent.providers`), by vault: asked
- *  once, as the first run starts. */
+ *  once, the first time a name is wanted. */
 const providerLabelsAtom = atom<{ remote: string; labels: Record<string, string> } | null>(null)
+
+let loadingLabels: { remote: string; done: Promise<Record<string, string> | null> } | null = null
+
+/** The agents' names for `remote`: the ones already asked for, or main's,
+ *  asked once however many want them at the same time; null when main does
+ *  not answer, so the next one asks again. */
+const loadProviderLabelsAtom = atom(null, (get, set, remote: string) => {
+  const labels = get(providerLabelsAtom)
+  if (labels !== null && labels.remote === remote) return Promise.resolve(labels.labels)
+  if (loadingLabels !== null && loadingLabels.remote === remote) return loadingLabels.done
+  const done = agentCapability<readonly { id: string; label: string }[]>(
+    remote,
+    'agent.providers',
+    {},
+  )
+    .then((list) => {
+      if (!Array.isArray(list)) return null
+      const byId = Object.fromEntries(list.map((p) => [p.id, p.label]))
+      set(providerLabelsAtom, { remote, labels: byId })
+      return byId
+    })
+    .catch(() => null)
+    .finally(() => {
+      if (loadingLabels?.done === done) loadingLabels = null
+    })
+  loadingLabels = { remote, done }
+  return done
+})
+
+/** Agent `id`'s name in the open vault, asked for the first time it is
+ *  wanted; null until it is known. */
+export function useAgentLabel(id: AgentProviderId): string | null {
+  const remote = useAtomValue(activeRemoteAtom)
+  const labels = useAtomValue(providerLabelsAtom)
+  const load = useSetAtom(loadProviderLabelsAtom)
+  const known = remote !== null && labels !== null && labels.remote === remote
+  useEffect(() => {
+    if (remote !== null && !known) void load(remote)
+  }, [remote, known, load])
+  return known ? (labels.labels[id] ?? null) : null
+}
 
 /** The run's agent by name: main's, asked for the first time alongside the
  *  run on `path`, which takes it when it comes; "the agent" until then. */
@@ -169,15 +211,10 @@ export const agentLabelAtom = atom(
     const labels = get(providerLabelsAtom)
     const known = labels !== null && labels.remote === remote ? labels.labels[id] : undefined
     if (known !== undefined) return known
-    void agentCapability<readonly { id: string; label: string }[]>(remote, 'agent.providers', {})
-      .then((list) => {
-        if (!Array.isArray(list)) return
-        const byId = Object.fromEntries(list.map((p) => [p.id, p.label]))
-        set(providerLabelsAtom, { remote, labels: byId })
-        const label = byId[id]
-        if (label !== undefined) set(patchRunAtom, { path, patch: { agent: label } })
-      })
-      .catch(() => undefined)
+    void set(loadProviderLabelsAtom, remote).then((byId) => {
+      const label = byId?.[id]
+      if (label !== undefined) set(patchRunAtom, { path, patch: { agent: label } })
+    })
     return 'the agent'
   },
 )
