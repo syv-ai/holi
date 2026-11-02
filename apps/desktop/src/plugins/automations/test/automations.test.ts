@@ -46,6 +46,7 @@ let stopped: string[]
 let watched: Set<string>
 let launchFails: string | null
 let selectedProvider: 'claude' | 'codex' | 'pi'
+let afterHoliRead: (() => void) | null
 /** What the scheduler hears a turn end through. */
 let turnEnd: ((id: string, pending: number | null) => void) | null
 let scheduler: Scheduler
@@ -84,7 +85,11 @@ function make(): Scheduler {
       },
     },
     emit: (_remote, name) => emitted.push(name),
-    holi: async (_vault, id) => holis[id] ?? { error: `No Holi ${id}` },
+    holi: async (_vault, id) => {
+      const context = holis[id]
+      afterHoliRead?.()
+      return context ?? { error: `No Holi ${id}` }
+    },
     lastTurnAt: async () => lastTurn,
     workLog: async (_root, _at, text) => {
       workLog.push(text)
@@ -116,6 +121,7 @@ beforeEach(async () => {
   watched = new Set()
   launchFails = null
   selectedProvider = 'claude'
+  afterHoliRead = null
   turnEnd = null
   emitted = []
   lastTurn = null
@@ -171,6 +177,26 @@ describe('approval', () => {
     expect(launched[0]).toMatchObject({ provider: 'pi', name: 'Inbox · 10:01' })
     expect(launched[0]!.model).toBeUndefined()
     expect(launched[0]!.allow).toBeUndefined()
+  })
+
+  it('changes approval when the selected provider changes and requires Pi reapproval', async () => {
+    await writeSchedule('inbox.local.md', 'name: Inbox\ncron: "*/30 * * * *"')
+    await scheduler.enable(vault(), 'inbox')
+    selectedProvider = 'pi'
+
+    expect((await scheduler.list(vault()))[0]!.status).toBe('changed')
+    await expect(scheduler.run(vault(), 'inbox')).rejects.toThrow(/changed/)
+    clock = at(10, 30)
+    await scheduler.tick()
+    expect(launched).toEqual([])
+
+    await scheduler.enable(vault(), 'inbox')
+    await scheduler.run(vault(), 'inbox')
+    live[0]!.state = 'idle'
+    clock = at(11, 0)
+    await scheduler.tick()
+    expect(launched).toHaveLength(2)
+    expect(launched.every((run) => run.provider === 'pi')).toBe(true)
   })
 
   it('passes an explicit Pi provider/model-id and ignores legacy Claude aliases', async () => {
@@ -503,6 +529,7 @@ describe('automations a Holi carries out', () => {
   const HOLI: HoliContext = {
     id: 'assistant',
     name: 'Assistant',
+    provider: 'claude',
     approval: '{"instructions":"Be brief."}',
     model: 'opus',
     allow: ['Bash(holi holis remember:*)'],
@@ -520,6 +547,19 @@ describe('automations a Holi carries out', () => {
     expect(launched[0]!.allow).toContain('Bash(holi holis remember:*)')
     holis['assistant'] = { ...HOLI, approval: '{"instructions":"Send mail."}' }
     expect((await scheduler.list(vault()))[0]!.status).toBe('changed')
+  })
+
+  it('launches with the provider returned by Holi approval even if settings change afterward', async () => {
+    holis['assistant'] = HOLI
+    await writeSchedule('digest.local.md', "cron: '0 * * * *'\nholi: assistant")
+    await scheduler.enable(vault(), 'digest')
+    afterHoliRead = () => {
+      selectedProvider = 'pi'
+      afterHoliRead = null
+    }
+
+    await scheduler.run(vault(), 'digest')
+    expect(launched[0]!.provider).toBe('claude')
   })
 
   it('cannot run a Holi that is gone', async () => {

@@ -235,6 +235,7 @@ describe('sending a document', () => {
     expect(ctx.system).toContain('An automation on this machine')
     expect(ctx.system).not.toContain('holis report')
     expect(ctx.allow).toContain('Bash(holi holis remember:*)')
+    expect(ctx.provider).toBe('claude')
     expect(ctx.approval).toContain('Templates/proposal.typ')
   })
 })

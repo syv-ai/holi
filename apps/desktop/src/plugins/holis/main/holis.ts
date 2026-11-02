@@ -139,6 +139,7 @@ export interface HoliSummary {
 export interface HoliContext {
   id: string
   name: string
+  provider: AgentProviderId
   /** `holiApprovalText`, for the automation's own fingerprint. */
   approval: string
   model?: string
@@ -648,6 +649,7 @@ export function createHolis(deps: HolisDeps): Holis {
       return {
         id: def.id,
         name: def.name,
+        provider,
         approval: `${holiApprovalText(def, soulOf(entry))}\nprovider:${provider}${provider === 'pi' ? "\nPi runs with the user's normal filesystem permissions, not a document sandbox." : ''}`,
         ...(def.model === undefined ? {} : { model: def.model }),
         allow: [...def.allow, ...memoryRules()],
