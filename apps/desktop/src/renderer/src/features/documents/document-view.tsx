@@ -396,7 +396,8 @@ function DocumentEditor({
     const run = agent.run
     if (!run || run.status !== 'done') return
     if (run.kind === 'vault-app') {
-      if (run.away || run.appPath === undefined) return
+      // A partial copy stays on the pill until the person has seen what was left out.
+      if (run.away || run.appPath === undefined || run.message !== undefined) return
       if (tabPath(focusedTab(store.get(shellWorkspaceAtom))) !== path) return
       agent.dismiss()
       onOpen(run.appPath)

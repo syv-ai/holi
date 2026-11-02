@@ -53,12 +53,23 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
-import { link, lstat, mkdir, open, readdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import {
+  link,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
+import { dirname, join, relative } from 'node:path'
 import { createInterface } from 'node:readline'
 import { isHiddenPath, isSharedContentPath, vaultRelPath, type VaultRelPath } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
-import { defaultProbePid, writeAtomic, type PidState } from '../../../../main/plugin-api'
+import { defaultProbePid, type PidState } from '../../../../main/plugin-api'
 import type { SessionSummary } from '../claude/listing'
 import type { JobsProvider, VaultRef } from '../provider'
 import type { ActionResult } from './sessions'
@@ -118,6 +129,8 @@ export interface JobsDeps {
   log?: (msg: string) => void
   /** Called after each file copied back: tests stop a job mid-copy here. */
   afterWrite?: (rel: string) => Promise<void> | void
+  /** A competing vault write at the last read/publication seam, for tests. */
+  beforeReplace?: (rel: string) => Promise<void> | void
 }
 
 export interface Jobs {
@@ -429,6 +442,52 @@ export function createJobs(deps: JobsDeps): Jobs {
    * the vault's shared content, or no longer a regular file). Throws with a
    * sentence when a path cannot be written or the job wrote too much.
    */
+  /** Move the current file aside atomically, then publish the replacement
+   * only if the name remains free. The moved file is checked before publishing:
+   * a sync write arriving after the caller's hash check is never replaced.
+   * A competing file arriving while the name is free wins as well. */
+  async function replaceKnown(abs: string, rel: VaultRelPath, data: Buffer, before: string) {
+    const hold = await mkdtemp(join(dirname(abs), '.holi-copy-'))
+    const previous = join(hold, 'previous')
+    let moved = false
+    let keep = false
+    try {
+      await rename(abs, previous)
+      moved = true
+      const old = await readRegular(previous)
+      if (old === null || hashOf(old) !== before) throw new Error(collision(rel))
+      if (!(await createExclusive(abs, data))) throw new Error(collision(rel))
+      // A writer holding the old file open can still change it after the move.
+      const after = await readRegular(previous)
+      if (after === null || hashOf(after) !== before) throw new Error(collision(rel))
+    } catch (err) {
+      if (moved) {
+        const old = await readRegular(previous)
+        try {
+          // A newly arrived file owns the name; never remove or replace it.
+          await link(previous, abs)
+        } catch (restore) {
+          if ((restore as NodeJS.ErrnoException).code !== 'EEXIST') {
+            keep = true
+            throw new Error(
+              `${String(err)} The previous file is preserved at ${relative(deps.vault.root, previous)}.`,
+            )
+          }
+          // Keep a changed version that could belong to the other writer.
+          if (old === null || hashOf(old) !== before) keep = true
+        }
+      }
+      if (keep) {
+        throw new Error(
+          `${String(err)} The previous file is preserved at ${relative(deps.vault.root, previous)}.`,
+        )
+      }
+      throw err
+    } finally {
+      if (!keep) await rm(hold, { recursive: true, force: true })
+    }
+  }
+
   async function copyBack(
     job: Pick<Job, 'dir' | 'stopped'>,
     write: readonly string[],
@@ -519,7 +578,8 @@ export function createJobs(deps: JobsDeps): Jobs {
             `Holi did not copy back what the agent wrote: ${rel} changed in the vault since the agent wrote it, and Holi never writes over it.`,
           )
         }
-        await writeAtomic(deps.vault.root, rel, data)
+        await deps.beforeReplace?.(rel)
+        await replaceKnown(abs, rel, data, before)
       }
       made.set(rel, hash)
       written += 1

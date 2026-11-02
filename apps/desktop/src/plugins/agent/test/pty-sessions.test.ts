@@ -331,7 +331,7 @@ describe('sessions Holi runs', () => {
       turnEnded: vi.fn(() => {
         return new Promise<FenceCopy>((resolve) => (copied = resolve))
       }),
-      exited: vi.fn(),
+      exited: vi.fn(async () => ({})),
     }
     const res = await t.sessions.start('codex', { prompt: 'Make the app', fence })
     if (!res.ok) throw new Error(res.message)
@@ -359,13 +359,42 @@ describe('sessions Holi runs', () => {
     expect(fence.exited).toHaveBeenCalledOnce()
   })
 
+  it('keeps the final copy error after the terminal exits, then expires its row', async () => {
+    const t = setup('codex', undefined, { fenced: 'sandbox' })
+    let finish!: (result: FenceCopy) => void
+    const fence = {
+      dir: '/scratch/abc',
+      state: '/scratch/abc.agent',
+      turnEnded: async () => ({}),
+      exited: () => new Promise<FenceCopy>((resolve) => (finish = resolve)),
+    }
+    const started = await t.sessions.start('codex', { prompt: 'Make the app', fence })
+    if (!started.ok) throw new Error(started.message)
+    t.opened[0]?.onExit?.()
+    expect(t.sessions.sessions()[0]).toMatchObject({ id: started.sessionId, copying: true })
+    expect(t.sessions.has(started.sessionId)).toBe(true)
+    finish({ error: 'Holi could not copy back app.yaml.' })
+    await vi.waitFor(() =>
+      expect(t.sessions.sessions()[0]).toMatchObject({
+        id: started.sessionId,
+        closed: true,
+        outcome: 'failed',
+        error: 'Holi could not copy back app.yaml.',
+      }),
+    )
+    expect(t.sessions.has(started.sessionId)).toBe(false)
+    expect(t.edges).toEqual([`begin:${started.sessionId}`, `forget:${started.sessionId}`])
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    expect(t.sessions.sessions()).toEqual([])
+  })
+
   it('refuses a fence its provider cannot keep', async () => {
     const t = setup()
     const fence = {
       dir: '/scratch/abc',
       state: '/scratch/abc.agent',
       turnEnded: async () => ({}),
-      exited: () => {},
+      exited: async () => ({}),
     }
     expect(await t.sessions.start('codex', { prompt: 'x', fence })).toEqual({
       ok: false,

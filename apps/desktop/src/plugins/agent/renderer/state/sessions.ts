@@ -58,9 +58,10 @@ export interface AgentSession {
   startedAt?: number
   /** Claude Code's conversation id, once it has said. */
   conversationId?: string
-  /** What a job that completed left out, in words; why one failed is its
-   *  `error`. */
+  /** What a job or fenced copy left out, in words. */
   message?: string
+  copying?: boolean
+  closed?: boolean
 }
 
 /**

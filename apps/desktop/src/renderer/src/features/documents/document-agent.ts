@@ -156,17 +156,16 @@ export function useDocumentAgent(path: string) {
     // What its copy back left out, kept for the words if the app never comes.
     if (row.message !== undefined && row.message !== run.message) update({ message: row.message })
     if (row.outcome === 'failed') {
-      update({
-        status: 'failed',
-        message: row.error ?? 'The agent could not finish.',
-      })
+      const status = app && !row.closed ? 'needs-you' : 'failed'
+      const message = row.error ?? 'The agent could not finish.'
+      if (run.status !== status || run.message !== message) update({ status, message })
     } else if (row.outcome === 'aborted') {
       update({ status: 'stopped' })
     } else if (row.outcome === 'completed') {
       ended()
     } else if (row.state === 'working') {
-      if (run.status !== 'working' || !run.seenWorking)
-        update({ status: 'working', seenWorking: true })
+      if (run.status !== 'working' || !run.seenWorking || run.message !== undefined)
+        update({ status: 'working', seenWorking: true, message: undefined })
     } else if (row.state === 'needs-you') {
       if (run.status !== 'needs-you') update({ status: 'needs-you' })
     } else if (run.seenWorking && run.provider !== 'pi') {
@@ -180,8 +179,11 @@ export function useDocumentAgent(path: string) {
   // A vault app is done once its `app.yaml` is in the vault, and failed when
   // its session ended and it never comes.
   const finished = run?.appPath !== undefined && appFinished(snapshot, run.appPath)
+  const copyRow = sessions.find((row) => row.id === run?.sessionId)
+  const copying = copyRow?.copying === true
+  const copyFailed = copyRow?.outcome === 'failed'
   useEffect(() => {
-    if (!run || !isRunLive(run) || run.appPath === undefined) return
+    if (!run || !isRunLive(run) || run.appPath === undefined || copying || copyFailed) return
     if (finished) {
       update({ status: 'done' })
       return
@@ -200,7 +202,7 @@ export function useDocumentAgent(path: string) {
     return () => window.clearTimeout(timer)
     // `update` writes the same atom this reads; the run and the app are the deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run, finished])
+  }, [run, finished, copying, copyFailed])
 
   // Leaving the document while a run goes on: when it finishes, its app is
   // offered rather than opened over whatever is in front by then.

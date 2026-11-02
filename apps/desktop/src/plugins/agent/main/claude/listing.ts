@@ -75,9 +75,11 @@ export interface SessionSummary {
   /** Claude Code's conversation id (its transcript's name), once it has
    *  said: what a read-only view of the conversation reads. */
   conversationId?: string
-  /** What a job that completed left out (`host/jobs.ts`), in words; why one
-   *  failed is its `error`. */
+  /** What a job or fenced copy left out, in words; why one failed is its `error`. */
   message?: string
+  /** A fenced turn's copy is still in progress, or its terminal is gone. */
+  copying?: boolean
+  closed?: boolean
 }
 
 /** What a session's status line says: its context use and its model. */
