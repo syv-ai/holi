@@ -423,7 +423,7 @@ describe('the Codex job command', () => {
     expect(fenceArgs('/s')).toContain('approval_policy="on-request"')
     expect(fenceArgs('/s')).toContain('sandbox_workspace_write.network_access=false')
     expect(cmd?.args.slice(2)).toEqual([...fenceArgs('/s'), '--', '--help'])
-    expect(codex.capabilities.fenced).toBe(true)
+    expect(codex.capabilities.fenced).toBe('sandbox')
     // Its own Codex folder: signed in, without the person's MCP server.
     expect(cmd?.env.CODEX_HOME).toBe(join(state, 'codex-home'))
     const config = await readFile(join(state, 'codex-home/config.toml'), 'utf8')
@@ -591,7 +591,7 @@ describe('agent.scoped', () => {
   const codex = {
     id: 'codex',
     label: 'Codex',
-    capabilities: { jobs: {}, fenced: true },
+    capabilities: { jobs: {}, fenced: 'sandbox' },
   } as unknown as AgentProvider
   const unfenced = {
     id: 'codex',
@@ -702,7 +702,7 @@ describe('a fenced session', () => {
       provider: {
         id: 'codex',
         label: 'Codex',
-        capabilities: { fenced: true },
+        capabilities: { fenced: 'sandbox' },
         ...(release === undefined ? {} : { release }),
       } as never,
       name: 'Plan: vault app',

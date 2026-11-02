@@ -52,6 +52,9 @@ export function piProvider(deps: PiProviderDeps = {}): AgentProvider {
       const env = buildPiEnv(process.env, { binDir: target.binDir })
       return { bin: path, args, env }
     },
-    capabilities: {},
+    // Create vault app runs it in a scratch folder of Holi's, copied back
+    // each turn, but nothing sandboxes it there: it keeps the person's own
+    // permissions, as its background runs do.
+    capabilities: { fenced: 'folder' },
   }
 }

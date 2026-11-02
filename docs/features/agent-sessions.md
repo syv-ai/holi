@@ -12,13 +12,13 @@ A provider (`agent/main/provider.ts`) is everything one agent owns: the command 
 its per-vault directory, what it seeds. **Its core is enough to run it in a tab**; the rest are
 **capabilities**, and the UI offers a feature only when the session's provider has it:
 
-| Capability   | What it gives                                                                    | Claude Code                | Codex                    | Pi  |
-| ------------ | -------------------------------------------------------------------------------- | -------------------------- | ------------------------ | --- |
-| `background` | sessions its own supervisor runs, which outlive a terminal and can run unwatched | `claude --bg`              | no                       | no  |
-| `turns`      | hook routes that report a turn's start and end                                   | `UserPromptSubmit`, `Stop` | turn ends, from `notify` | no  |
-| `status`     | how full the context is, and the model                                           | the status line            | no                       | no  |
-| `jobs`       | one prompt run unwatched in a scratch folder of Holi's, its result copied back   | no (`background` serves)   | `codex exec --json`      | no  |
-| `fenced`     | a session in its terminal fenced to a scratch folder, its writes copied back     | no (`background` serves)   | its TUI, sandboxed       | no  |
+| Capability   | What it gives                                                                    | Claude Code                | Codex                    | Pi                   |
+| ------------ | -------------------------------------------------------------------------------- | -------------------------- | ------------------------ | -------------------- |
+| `background` | sessions its own supervisor runs, which outlive a terminal and can run unwatched | `claude --bg`              | no                       | no                   |
+| `turns`      | hook routes that report a turn's start and end                                   | `UserPromptSubmit`, `Stop` | turn ends, from `notify` | no                   |
+| `status`     | how full the context is, and the model                                           | the status line            | no                       | no                   |
+| `jobs`       | one prompt run unwatched in a scratch folder of Holi's, its result copied back   | no (`background` serves)   | `codex exec --json`      | no                   |
+| `fenced`     | a session in its terminal fenced to a scratch folder, its writes copied back     | no (`background` serves)   | its TUI, sandboxed       | its TUI, unsandboxed |
 
 **Two kinds of session, one list.** A background provider's sessions are its supervisor's, keyed
 by its job id (the rest of this page). Any other provider's are **sessions Holi runs itself**
@@ -103,7 +103,10 @@ allowed exactly the scope, as a job. A `fenced` provider runs it as a session Ho
 commands on its `PATH` and the system text put before the prompt. Codex's is its TUI with
 `-C <scratch> --sandbox workspace-write`, `approval_policy="on-request"` (its interactive
 approvals, asked in its terminal, whatever `config.toml` says), no network and web search off, on
-a Codex folder of its own with no MCP servers (above). As each turn ends (`notify`, or the terminal going quiet) and once more when its
+a Codex folder of its own with no MCP servers (above). Pi's is its TUI with the folder as its cwd
+and nothing else: no sandbox holds it there, so it keeps the person's own permissions and can read
+and write past the folder, as its background runs can; only what it wrote inside the folder and
+the write scope comes back. Holi is customizable this way on purpose, and asks nothing first. As each turn ends (`notify`, or the terminal going quiet) and once more when its
 process exits, what it wrote is copied back by the jobs' copy (the write scope, the vault's shared
 content, no symlink followed, `app.yaml` last, the same caps, never over a new folder something
 else made). A file it was given or wrote at an earlier turn is written again only when it changed
@@ -111,7 +114,7 @@ it since, and then only while the vault still holds what it was given or wrote: 
 edited or deleted meanwhile refuses the copy, and nothing of that turn is written. A job's one
 copy back holds to the same for the files it was given. All this happens before the turn's bracket closes so the turn review shows it. The folder is deleted when the process exits, and every folder when the
 agent leaves the vault or starts. A provider with neither is refused, never run on another agent:
-Pi has neither, so a job or fenced session asked of Pi is refused. The document menu's and the file tree's **Create vault app** ([editor](editor.md)) is its caller.
+Pi has no `jobs`, so a job asked of Pi is refused. The document menu's and the file tree's **Create vault app** ([editor](editor.md)) is its caller.
 
 **Which agent a new session runs** is this machine's `agentProvider` (`app.local.yaml`; the
 **Agents** card in Settings → General, a row per agent with **Make default**): which agent is installed and signed in is the machine's, not the

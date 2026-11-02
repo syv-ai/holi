@@ -289,7 +289,7 @@ export function codexProvider(deps: CodexProviderDeps = {}): AgentProvider {
     release: (state) => releaseCodexHome(state, base),
     capabilities: {
       turns: { routes: registerCodexRoutes },
-      fenced: true,
+      fenced: 'sandbox',
       jobs: {
         command({ cwd, root, prompt, model, state }) {
           const path = bin()

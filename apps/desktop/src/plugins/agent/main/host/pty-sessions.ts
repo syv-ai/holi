@@ -302,7 +302,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       if (config === null) {
         return { ok: false, message: `${provider.label} could not be set up for this vault.` }
       }
-      if (fence !== undefined && provider.capabilities.fenced !== true) {
+      if (fence !== undefined && provider.capabilities.fenced === undefined) {
         return { ok: false, message: `${provider.label} cannot run fenced to a folder.` }
       }
       if (resume !== undefined && resume !== 'pick' && !CONVERSATION_ID.test(resume)) {

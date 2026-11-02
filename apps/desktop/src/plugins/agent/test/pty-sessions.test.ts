@@ -322,7 +322,7 @@ describe('sessions Holi runs', () => {
   })
 
   it('runs a fenced one in its folder, copying back before its turn closes', async () => {
-    const t = setup('codex', undefined, { fenced: true })
+    const t = setup('codex', undefined, { fenced: 'sandbox' })
     let copied!: () => void
     const fence = {
       dir: '/scratch/abc',

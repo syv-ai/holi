@@ -484,7 +484,8 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
      * `prompt`, touching only its `scope` (as `agent.job`): Create vault
      * app's. A provider with `background` runs it as a background session
      * allowed exactly that scope; one with `fenced` runs it in its terminal
-     * in a folder of Holi's, and what it wrote is copied back as each turn
+     * in a folder of Holi's (sandboxed there on Codex, not on Pi, which runs
+     * with the person's own permissions), and what it wrote is copied back as each turn
      * ends and when it exits (`fenced.ts`). Any other is refused, never run
      * on another agent. The UI door alone, as `agent.launch`.
      */
@@ -519,7 +520,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
             ...(system === undefined ? {} : { appendSystemPrompt: system }),
           })
         }
-        if (provider.capabilities.fenced === true) {
+        if (provider.capabilities.fenced !== undefined) {
           return deps.fenced.start({
             provider,
             ...args,

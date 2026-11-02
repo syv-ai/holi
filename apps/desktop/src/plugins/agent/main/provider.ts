@@ -23,8 +23,10 @@
  *   owns, its output read as events (`host/jobs.ts`). Codex's `codex exec`.
  *   What the job may write is copied back into the vault when it succeeds.
  * - `fenced`: a session Holi runs whose terminal can be fenced to a folder
- *   of Holi's (`TerminalOpts.fence`): its cwd, its writes sandboxed there.
- *   What it may write is copied back at each turn's end (`host/fenced.ts`).
+ *   of Holi's (`TerminalOpts.fence`): its cwd, and with `sandbox` its writes
+ *   sandboxed there (Codex); with `folder` only its cwd, the agent free to
+ *   reach past it with the person's own permissions (Pi). Either way what it
+ *   may write is copied back at each turn's end (`host/fenced.ts`).
  */
 import { AGENT_PROVIDER_IDS, type AgentProviderId } from '@holi/shared'
 import type { BridgeRoute, SeedContribution } from '../../../main/plugin-api'
@@ -155,8 +157,9 @@ interface JobsCapability {
 interface ProviderCapabilities {
   background?: BackgroundCapability
   jobs?: JobsCapability
-  /** `terminal` honours `TerminalOpts.fence`. */
-  fenced?: true
+  /** `terminal` runs in `TerminalOpts.fence`'s folder: sandboxed there
+   *  (`sandbox`), or with nothing holding it to it (`folder`). */
+  fenced?: 'sandbox' | 'folder'
   /** Serve the hook routes that report turns. Returns the undo. */
   turns?: { routes(server: RouteServer, deps: TurnRouteDeps): () => void }
   status?: {
