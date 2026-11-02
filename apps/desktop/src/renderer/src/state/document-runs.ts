@@ -65,6 +65,8 @@ export interface AgentRun {
   message?: string
 }
 
+/** The open vault's runs, by path: emptied as a vault opens (`openVaultAtom`),
+ *  so none carries over to the next. */
 export const documentRunsAtom = atom<Readonly<Record<string, AgentRun>>>({})
 
 export function isRunLive(run: AgentRun | undefined): boolean {
