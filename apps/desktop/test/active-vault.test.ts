@@ -16,6 +16,8 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { GitError, openRepo } from '../src/main/git'
+import * as vaultWatcher from '../src/main/vault/watcher'
+import * as vaultStore from '../src/main/vault/vault-store'
 import type { HeldBackFile } from '../src/main/vault/large-files'
 import {
   createVaultHost,
@@ -138,6 +140,106 @@ describe('ActiveVault — snapshot', () => {
   it('scans on open, before any event fires', async () => {
     const { active } = await vault()
     expect(paths(active.snapshot())).toEqual(['README.md'])
+  })
+
+  it('rescans and autosaves a note created between the opening scan and watcher readiness', async () => {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const snaps = snapshots()
+    const before = Number(await plainGit(dir, ['rev-list', '--count', 'HEAD']))
+    const actualWatchVault = vaultWatcher.watchVault
+    const watchSpy = vi.spyOn(vaultWatcher, 'watchVault').mockImplementation(async (args) => {
+      // watchVault is reached only after openActiveVault's opening scan. Write
+      // before the watcher is constructed so the note is in the precise gap
+      // that the post-readiness rescan must close.
+      await writeFile(join(dir, 'between-scan-and-watch.md'), '# Between\n', 'utf8')
+      return actualWatchVault(args)
+    })
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: snaps.push,
+      onSyncState: () => {},
+      // No heal tick can rescue a missed opening note during this test.
+      timings: {
+        rescanDebounceMs: 60_000,
+        commitQuietMs: 100,
+        healIntervalMs: 60_000,
+        pullIntervalMs: 60_000,
+      },
+    })
+    open.push(active)
+    watchSpy.mockRestore()
+
+    await waitFor('the post-readiness opening snapshot', () =>
+      paths(active.snapshot()).includes('between-scan-and-watch.md'),
+    )
+    await waitFor(
+      'the opening autosave commit',
+      async () => Number(await plainGit(dir, ['rev-list', '--count', 'HEAD'])) === before + 1,
+    )
+
+    expect(paths(snaps.last)).toContain('between-scan-and-watch.md')
+    expect((await active.repo.status()).dirty).toBe(false)
+  })
+
+  it('rescans after a watcher event arrives during the opening rescan', async () => {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const snaps = snapshots()
+    const actualWatchVault = vaultWatcher.watchVault
+    let onChange: (() => void) | undefined
+    const watchSpy = vi.spyOn(vaultWatcher, 'watchVault').mockImplementation(async (args) => {
+      onChange = args.onChange
+      return actualWatchVault(args)
+    })
+    const actualScan = vaultStore.scanVault
+    let releaseScan!: () => void
+    let scanStarted!: () => void
+    const started = new Promise<void>((resolve) => (scanStarted = resolve))
+    const blocked = new Promise<void>((resolve) => (releaseScan = resolve))
+    let scanCount = 0
+    const scanSpy = vi.spyOn(vaultStore, 'scanVault').mockImplementation(async (...args) => {
+      const snapshot = await actualScan(...args)
+      if (++scanCount === 2) {
+        scanStarted()
+        await blocked
+      }
+      return snapshot
+    })
+
+    const activePromise = openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: snaps.push,
+      onSyncState: () => {},
+      timings: {
+        rescanDebounceMs: 20,
+        commitQuietMs: 60_000,
+        healIntervalMs: 60_000,
+        pullIntervalMs: 60_000,
+      },
+    })
+    await started
+    await writeFile(join(dir, 'during-rescan.md'), '# During rescan\n', 'utf8')
+    onChange!()
+    const staleSnapshot = snaps.next()
+    releaseScan()
+    await staleSnapshot
+    expect(paths(snaps.last)).not.toContain('during-rescan.md')
+    const active = await activePromise
+    open.push(active)
+    watchSpy.mockRestore()
+    scanSpy.mockRestore()
+
+    await waitFor('the queued snapshot rescan', () =>
+      paths(active.snapshot()).includes('during-rescan.md'),
+    )
+    expect(paths(active.snapshot())).toContain('during-rescan.md')
   })
 
   it('pushes a snapshot when a note appears', async () => {
