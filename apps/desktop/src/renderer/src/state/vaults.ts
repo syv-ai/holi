@@ -131,6 +131,8 @@ export const loadSnapshotAtom = atom(null, async (get, set) => {
  * here may keep a snapshot keyed by remote.
  */
 export const openVaultAtom = atom(null, async (_get, set, remote: string) => {
+  // What was typed goes into the vault it was typed in, before that one closes.
+  await flushAllBuffers()
   // Nothing of the vault left carries over: its document runs ended with it.
   set(documentRunsAtom, {})
   const snapshot = await trpc.vaults.open.mutate({ remote })
@@ -149,6 +151,7 @@ export const openVaultAtom = atom(null, async (_get, set, remote: string) => {
  * user can act on (no network, no access, no such repo).
  */
 export const addVaultAtom = atom(null, async (_get, set, remote: string) => {
+  await flushAllBuffers()
   const snapshot = await trpc.vaults.add.mutate({ remote })
   set(activeRemoteAtom, remote)
   set(snapshotAtom, snapshot)

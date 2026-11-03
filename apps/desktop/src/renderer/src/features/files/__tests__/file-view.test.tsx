@@ -8,7 +8,8 @@ import { emptyVaultSnapshot } from '@holi/shared'
 import { createStore, Provider } from 'jotai'
 import { afterEach, expect, test, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
-import { render, screen, waitFor } from '@/test/render'
+import { act, render, screen, waitFor } from '@/test/render'
+import { flushAllBuffers, saveAllBuffers } from '@/lib/buffer-registry'
 import { coreContributionAtom } from '@/state/plugins'
 import { editorSelectionAtom } from '@/state/ui-report'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
@@ -197,6 +198,51 @@ test('a json file saves once it parses, and not before', async () => {
       text: '{"a": 2}\n',
     }),
   )
+})
+
+test('a flush writes a pending edit at once, and a rename after it writes nothing to the old path', async () => {
+  read.mockResolvedValue('a\n')
+  write.mockResolvedValue(undefined)
+  historyList.mockResolvedValue([])
+  const view = setup('src/old.ts')
+  expect(await screen.findByText('Saved')).toBeInTheDocument()
+
+  await typeInto('b\n')
+  // Well inside the save delay, as a rename's flush is.
+  await act(() => flushAllBuffers())
+  expect(write).toHaveBeenCalledTimes(1)
+  expect(write).toHaveBeenLastCalledWith({ remote: 'syv-ai/site', path: 'src/old.ts', text: 'b\n' })
+
+  // The rename moves the file, and the tab follows it to its new path.
+  read.mockResolvedValue('b\n')
+  view.rerender(
+    <Provider store={lastStore}>
+      <FileView path="src/new.ts" />
+    </Provider>,
+  )
+  await waitFor(() =>
+    expect(document.querySelector('[data-file-editor="src/new.ts"]')).toBeInTheDocument(),
+  )
+  await act(() => new Promise((resolve) => setTimeout(resolve, 800)))
+  expect(write).toHaveBeenCalledTimes(1)
+})
+
+test('a flush writes json that does not parse, and ⌘S holds it', async () => {
+  read.mockResolvedValue('{"a": 1}\n')
+  write.mockResolvedValue(undefined)
+  historyList.mockResolvedValue([])
+  setup('.holi/config.json')
+  expect(await screen.findByText('Saved')).toBeInTheDocument()
+
+  await typeInto('{"a": ')
+  await act(() => saveAllBuffers())
+  expect(write).not.toHaveBeenCalled()
+  await act(() => flushAllBuffers())
+  expect(write).toHaveBeenCalledWith({
+    remote: 'syv-ai/site',
+    path: '.holi/config.json',
+    text: '{"a": ',
+  })
 })
 
 test('⌘F finds in a code file, steps through the matches and replaces them', async () => {

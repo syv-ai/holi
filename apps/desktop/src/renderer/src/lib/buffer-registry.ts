@@ -21,10 +21,7 @@ interface Buffer {
 
 const buffers = new Set<Buffer>()
 
-/**
- * Register a buffer's writers. Returns the deregistration.
- * @public exported for its test
- */
+/** Register a buffer's writers. Returns the deregistration. */
 export function registerBuffer(flush: Flusher, save: Flusher = flush): () => void {
   const entry: Buffer = { flush, save }
   buffers.add(entry)

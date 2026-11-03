@@ -44,6 +44,8 @@ reportUiToMain(store)
 window.holi.vault.onFlushRequest(() => {
   void flushAllBuffers().finally(() => window.holi.vault.flushDone())
 })
+// Leaving the window is a flush point too (`docs/features/editor.md`).
+window.addEventListener('blur', () => void flushAllBuffers())
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

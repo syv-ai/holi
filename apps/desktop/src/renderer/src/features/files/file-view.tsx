@@ -25,6 +25,7 @@ import { ViewHeader, ViewHeaderTitle } from '@/composites/view-header'
 import { Skeleton } from '@/components/ui/skeleton'
 import { plainTextExtensions } from '@/editor/extensions'
 import { syntaxValid } from '@/editor/languages'
+import { registerBuffer } from '@/lib/buffer-registry'
 import { trpc } from '@/lib/trpc'
 import { vaultAssetUrl } from '@/lib/vault-asset'
 import { sawText } from '@/state/doc-changes'
@@ -147,12 +148,13 @@ function TextEditor({
     const length = lastText.current.length
     const clamp = (at: number) => Math.min(Math.max(at, 0), length)
 
-    async function save(view: EditorView) {
+    /** Write the text now; `gated` holds it back while its syntax is broken. */
+    async function write(view: EditorView, gated: boolean) {
       window.clearTimeout(saveTimer.current)
       saveTimer.current = undefined
       const next = view.state.doc.toString()
       if (next === lastText.current) return callbacks.current.onSaveState('saved')
-      if (!syntaxValid(path, next)) return callbacks.current.onSaveState('held')
+      if (gated && !syntaxValid(path, next)) return callbacks.current.onSaveState('held')
       callbacks.current.onSaveState('saving')
       try {
         await trpc.notes.write.mutate({ remote: remote!, path, text: next })
@@ -163,6 +165,7 @@ function TextEditor({
         callbacks.current.onSaveState('error')
       }
     }
+    const save = (view: EditorView) => write(view, true)
 
     const view = new EditorView({
       parent: host,
@@ -223,7 +226,14 @@ function TextEditor({
     }
     const noteScroll = () => memory.note(remote, path, { scrollTop: scroller.scrollTop })
     scroller.addEventListener('scroll', noteScroll, { passive: true })
+    // A rename, move, delete, vault switch or quit writes the edit first, to
+    // the path it was typed at, broken syntax and all; ⌘S keeps the gate.
+    const unregister = registerBuffer(
+      () => write(view, false),
+      () => save(view),
+    )
     return () => {
+      unregister()
       scroller.removeEventListener('scroll', noteScroll)
       // Leaving the editor writes what is pending, and leaves what it showed
       // for its tab to be compared to (`doc-changes.ts`).

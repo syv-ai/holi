@@ -38,15 +38,11 @@ vi.mock('../renderer/agent-cap', () => ({
   },
 }))
 
-const flushAllBuffers = vi.fn(() => Promise.resolve())
-vi.mock('@/lib/buffer-registry', () => ({ flushAllBuffers: () => flushAllBuffers() }))
-
 const TURN = { base: 'aaa', end: 'bbb', at: '2026-09-09T10:00:00Z', sessionId: 'sess-a' }
 const REMOTE = 'git@github.com:syv-ai/vault.git'
 
 beforeEach(() => {
-  for (const fn of [list, files, fileDiff, revert, flushAllBuffers]) fn.mockReset()
-  flushAllBuffers.mockResolvedValue(undefined)
+  for (const fn of [list, files, fileDiff, revert]) fn.mockReset()
   list.mockResolvedValue([TURN])
   files.mockResolvedValue([{ path: 'a.md', status: 'M', added: 2, removed: 1 }])
   fileDiff.mockResolvedValue({ before: 'old\n', after: 'new\n' })
@@ -192,11 +188,4 @@ test('a reset clears the last turn off the screen', async () => {
   expect(s.get(turnFilesAtom)).toEqual([])
   expect(s.get(selectedTurnPathAtom)).toBeNull()
   expect(s.get(turnDiffAtom)).toBeNull()
-})
-
-test('does not flush the open buffer before reverting', () => {
-  // Unlike History's Restore: a turn revert takes back what the AGENT did, and
-  // flushing would write the reader's unsaved edits to disk only to overwrite
-  // them. Left alone, `decideReload` 3-way merges them instead.
-  expect(flushAllBuffers).not.toHaveBeenCalled()
 })

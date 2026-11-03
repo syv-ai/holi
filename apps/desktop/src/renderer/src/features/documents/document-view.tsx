@@ -44,6 +44,7 @@ import {
   RichTextTableBubble,
 } from '@/features/documents/rich-text/rich-text-table'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { registerBuffer } from '@/lib/buffer-registry'
 import { cn } from '@/lib/cn'
 import { TaskProperties } from '@/features/planning/task-properties'
 import { trpc } from '@/lib/trpc'
@@ -193,6 +194,8 @@ function DocumentEditor({
   /** The file as last read or written: what a change on disk is compared to. */
   const lastText = useRef(initial.text)
   const saveTimer = useRef<number | undefined>(undefined)
+  /** The write under way, which a flush waits for. */
+  const writing = useRef<Promise<void> | undefined>(undefined)
 
   // Callbacks the extensions hold, read through refs so the extensions are
   // made once per document.
@@ -312,9 +315,15 @@ function DocumentEditor({
     return editor ? joinDocument(head.current, editor.getMarkdown()) : lastText.current
   }
 
-  async function save(): Promise<void> {
+  function save(): Promise<void> {
     window.clearTimeout(saveTimer.current)
     saveTimer.current = undefined
+    const done = write()
+    writing.current = done
+    return done
+  }
+
+  async function write(): Promise<void> {
     if (!editor || editor.isDestroyed) return
     const text = markdown()
     // Differing only by what the commit tidies away is nothing to save:
@@ -332,6 +341,23 @@ function DocumentEditor({
       setSaveState('error')
     }
   }
+
+  /** The latest `save`, for the flush, which outlives the render that made it. */
+  const saveRef = useRef(save)
+  saveRef.current = save
+
+  // A rename, move, delete, branch switch, vault switch or quit writes what
+  // is pending first, to the path it was typed at; after that the unmount
+  // below has nothing left to write.
+  useEffect(
+    () =>
+      registerBuffer(() =>
+        saveTimer.current !== undefined
+          ? saveRef.current()
+          : (writing.current ?? Promise.resolve()),
+      ),
+    [editor],
+  )
 
   // Leaving the document writes what is pending, and leaves what it showed
   // for its tab to be compared to (`doc-changes.ts`).

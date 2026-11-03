@@ -108,10 +108,17 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
   }
 
   // There is no `window` in `environment: 'node'` — this creates one rather
-  // than decorating one.
+  // than decorating one. jsdom's is decorated, so a rendered component keeps
+  // its document.
   const priorWindow = (globalThis as Record<string, unknown>).window
-  const existing = (priorWindow ?? {}) as Record<string, unknown>
-  ;(globalThis as Record<string, unknown>).window = { ...existing, holi }
+  const jsdom = typeof document !== 'undefined' && priorWindow !== undefined
+  const priorHoli = jsdom ? (priorWindow as Record<string, unknown>).holi : undefined
+  if (jsdom) (priorWindow as Record<string, unknown>).holi = holi
+  else
+    (globalThis as Record<string, unknown>).window = {
+      ...((priorWindow ?? {}) as Record<string, unknown>),
+      holi,
+    }
 
   return {
     calls,
@@ -140,7 +147,8 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
       // Actually removed, not left behind. A leaked fake makes the NEXT test
       // file talk to a seam that is not there, and the failure surfaces
       // somewhere unrelated.
-      if (priorWindow === undefined) delete (globalThis as Record<string, unknown>).window
+      if (jsdom) (priorWindow as Record<string, unknown>).holi = priorHoli
+      else if (priorWindow === undefined) delete (globalThis as Record<string, unknown>).window
       else (globalThis as Record<string, unknown>).window = priorWindow
     },
   }
