@@ -6,7 +6,7 @@ import { join, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { parseTaskFile, privateTaskPath, sharedTaskPath, taskClaim } from '@holi/shared'
 import { SETTINGS_FILE, VAULT_SETTING_DEFAULTS } from '@holi/shared'
-import { afterAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
 import { seedVault } from './helpers/seed'
 import { makeClone, makeNonVaultRemote, makeRemote, plainGit } from './helpers/git-fixtures'
@@ -56,10 +56,16 @@ async function idleSession(base: string, auth?: StoredAuth): Promise<GitHubSessi
   })
 }
 
+/**
+ * Hosts the running test built, closed after EACH test. Closing one with a vault
+ * open commits, pushes and stops a watcher, about half a second; leaving them
+ * all to one `afterAll` closed nineteen live vaults in a row and ran that hook
+ * past its 10 s limit, with every one of them watching and ticking until then.
+ */
 const hosts: VaultHost[] = []
 
-afterAll(async () => {
-  for (const h of hosts) await h.close().catch(() => {})
+afterEach(async () => {
+  for (const h of hosts.splice(0)) await h.close().catch(() => {})
 })
 
 async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {

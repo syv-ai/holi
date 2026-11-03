@@ -14,8 +14,10 @@ import { taskClaim } from '@holi/shared'
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterAll, afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { GitError, openRepo } from '../src/main/git'
+import * as vaultWatcher from '../src/main/vault/watcher'
+import * as vaultStore from '../src/main/vault/vault-store'
 import type { HeldBackFile } from '../src/main/vault/large-files'
 import {
   createVaultHost,
@@ -139,6 +141,106 @@ describe('ActiveVault — snapshot', () => {
   it('scans on open, before any event fires', async () => {
     const { active } = await vault()
     expect(paths(active.snapshot())).toEqual(['README.md'])
+  })
+
+  it('rescans and autosaves a note created between the opening scan and watcher readiness', async () => {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const snaps = snapshots()
+    const before = Number(await plainGit(dir, ['rev-list', '--count', 'HEAD']))
+    const actualWatchVault = vaultWatcher.watchVault
+    const watchSpy = vi.spyOn(vaultWatcher, 'watchVault').mockImplementation(async (args) => {
+      // watchVault is reached only after openActiveVault's opening scan. Write
+      // before the watcher is constructed so the note is in the precise gap
+      // that the post-readiness rescan must close.
+      await writeFile(join(dir, 'between-scan-and-watch.md'), '# Between\n', 'utf8')
+      return actualWatchVault(args)
+    })
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: snaps.push,
+      onSyncState: () => {},
+      // No heal tick can rescue a missed opening note during this test.
+      timings: {
+        rescanDebounceMs: 60_000,
+        commitQuietMs: 100,
+        healIntervalMs: 60_000,
+        pullIntervalMs: 60_000,
+      },
+    })
+    open.push(active)
+    watchSpy.mockRestore()
+
+    await waitFor('the post-readiness opening snapshot', () =>
+      paths(active.snapshot()).includes('between-scan-and-watch.md'),
+    )
+    await waitFor(
+      'the opening autosave commit',
+      async () => Number(await plainGit(dir, ['rev-list', '--count', 'HEAD'])) === before + 1,
+    )
+
+    expect(paths(snaps.last)).toContain('between-scan-and-watch.md')
+    expect((await active.repo.status()).dirty).toBe(false)
+  })
+
+  it('rescans after a watcher event arrives during the opening rescan', async () => {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const snaps = snapshots()
+    const actualWatchVault = vaultWatcher.watchVault
+    let onChange: (() => void) | undefined
+    const watchSpy = vi.spyOn(vaultWatcher, 'watchVault').mockImplementation(async (args) => {
+      onChange = args.onChange
+      return actualWatchVault(args)
+    })
+    const actualScan = vaultStore.scanVault
+    let releaseScan!: () => void
+    let scanStarted!: () => void
+    const started = new Promise<void>((resolve) => (scanStarted = resolve))
+    const blocked = new Promise<void>((resolve) => (releaseScan = resolve))
+    let scanCount = 0
+    const scanSpy = vi.spyOn(vaultStore, 'scanVault').mockImplementation(async (...args) => {
+      const snapshot = await actualScan(...args)
+      if (++scanCount === 2) {
+        scanStarted()
+        await blocked
+      }
+      return snapshot
+    })
+
+    const activePromise = openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: snaps.push,
+      onSyncState: () => {},
+      timings: {
+        rescanDebounceMs: 20,
+        commitQuietMs: 60_000,
+        healIntervalMs: 60_000,
+        pullIntervalMs: 60_000,
+      },
+    })
+    await started
+    await writeFile(join(dir, 'during-rescan.md'), '# During rescan\n', 'utf8')
+    onChange!()
+    const staleSnapshot = snaps.next()
+    releaseScan()
+    await staleSnapshot
+    expect(paths(snaps.last)).not.toContain('during-rescan.md')
+    const active = await activePromise
+    open.push(active)
+    watchSpy.mockRestore()
+    scanSpy.mockRestore()
+
+    await waitFor('the queued snapshot rescan', () =>
+      paths(active.snapshot()).includes('during-rescan.md'),
+    )
+    expect(paths(active.snapshot())).toContain('during-rescan.md')
   })
 
   it('pushes a snapshot when a note appears', async () => {
@@ -635,6 +737,9 @@ describe('ActiveVault — commit', () => {
     // Autosave pauses during a reconcile, and while paused the vault
     // says so.
     const { active, dir } = await vault(quick)
+    // Opening schedules a post-listening rescan and its initial commit check.
+    // Let that startup work drain before taking the pause test's baseline.
+    await sleep(SETTLE)
     const before = await count(dir)
 
     active.pause('reconciling')
@@ -643,15 +748,20 @@ describe('ActiveVault — commit', () => {
     expect(await count(dir)).toBe(before)
     expect(active.syncState()).toEqual({ kind: 'paused', reason: 'reconciling', manual: true })
 
-    active.resume()
+    // Queue both edits while paused, so resume owns one deterministic flush.
+    // Writing after resume would race retry()'s immediate maybeCommit(): two
+    // commits would then be valid, not evidence of a duplicate commit.
     await writeFile(join(dir, 'after.md'), 'y\n', 'utf8')
-    // Asserted on the OUTCOME rather than on a commit count: whether the work
-    // held back during the pause and the work done after it coalesce into one
-    // commit or land as two is a timing detail, and not what this test is about.
+    active.resume()
     await waitFor('the work to be committed after resuming', async () => {
       const tracked = await plainGit(dir, ['ls-tree', '-r', '--name-only', 'HEAD'])
       return tracked.includes('during.md') && tracked.includes('after.md')
     })
+    await sleep(SETTLE)
+    expect(await count(dir)).toBe(before + 1)
+    const tracked = await plainGit(dir, ['ls-tree', '-r', '--name-only', 'HEAD'])
+    expect(tracked).toContain('during.md')
+    expect(tracked).toContain('after.md')
     expect((await active.repo.status()).dirty).toBe(false)
   })
 
@@ -1557,24 +1667,35 @@ describe('ActiveVault — sync', () => {
       },
       onSnapshot: () => {},
       onSyncState: () => {},
-      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, focusThrottleMs: 300 },
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, focusThrottleMs: 60_000 },
     })
     open.push(active)
 
-    active.onFocus()
-    await waitFor('the first pull to start', () => pulls === 1)
-    // Past the throttle, so this focus is entitled to a pull — and cannot have
-    // one, because the first is still fetching.
-    await sleep(400)
-    active.onFocus()
+    // The throttle reads `Date.now()`, so the clock is moved rather than waited
+    // on. With a real 300 ms throttle this test raced itself both ways: the
+    // pull after the last focus spawns `git status` twice before the stub
+    // counts it, which on a loaded machine outran a wait shorter than the
+    // throttle, and a release that took longer than the throttle let the bug
+    // through. Only Date is faked; the vault's own timers stay real.
+    vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true })
+    try {
+      active.onFocus()
+      await waitFor('the first pull to start', () => pulls === 1)
+      // Past the throttle, so this focus is entitled to a pull — and cannot
+      // have one, because the first is still fetching.
+      vi.setSystemTime(Date.now() + 61_000)
+      active.onFocus()
 
-    release()
-    await waitFor('the first pull to finish', () => active.syncState().kind !== 'pulling')
-    active.onFocus()
+      release()
+      await waitFor('the first pull to finish', () => active.syncState().kind !== 'pulling')
+      // Well inside a window the focus above would have stamped: with the bug
+      // it has been spent, and no amount of waiting produces a second pull.
+      active.onFocus()
 
-    // Short, and deliberately shorter than the throttle: with the bug the
-    // window has been spent and no amount of waiting produces a second pull.
-    await waitFor('a pull on the focus after the fetch', () => pulls === 2, 250)
+      await waitFor('a pull on the focus after the fetch', () => pulls === 2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('does not strand the vault when a push-recovery pull conflicts but names no paths', async () => {
