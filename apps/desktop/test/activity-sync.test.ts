@@ -124,6 +124,9 @@ describe('activity log — sync engine', () => {
     await active.commitNow()
     await active.pushNow()
     await active.pushNow()
+    await waitFor('the offline sync line', () =>
+      log.entries().some((e) => e.channel === 'sync' && e.message.startsWith('Sync: offline')),
+    )
     const failures = log.entries().filter((e) => e.message === 'Push failed')
     expect(failures).toHaveLength(1)
     expect(failures[0]!.detail).toBe(
