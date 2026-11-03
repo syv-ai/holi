@@ -61,7 +61,7 @@ import { createReleaseNotes } from './updates/release-notes'
 import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
 import { registerIpc } from './ipc'
-import { createActivityLog } from './activity/log'
+import { createActivityLog, scrubSecrets } from './activity/log'
 import { captureConsole, createAppLog, rendererLevel, type AppLogEntry } from './logs/app-log'
 import { createTerminals } from './terminal/terminals'
 import { pathToFileURL } from 'node:url'
@@ -436,7 +436,7 @@ async function main(): Promise<void> {
     // Sync that keeps failing says so outside Holi too; inside, the activity
     // log's error line marks the Output (docs/features/vaults-sync.md).
     onSyncFailing: (remote, text) =>
-      void notifyUnfocused({ title: `${remote}: sync is failing`, body: text }),
+      void notifyUnfocused({ title: `${remote}: sync is failing`, body: scrubSecrets(text) }),
     // How everything inside the vault reaches us: its `bridge.local.env`,
     // with what each part of Holi contributes while the vault is open. Made
     // at open, so the file names this run's ports, which move on restart.

@@ -444,7 +444,7 @@ export async function openActiveVault(args: {
    *  last attempt failed (`lastError`, cleared by any that got through, and
    *  set by offline, a refused pull and no access alike) or a conflict waits. */
   function stillFailing(): boolean {
-    return conflictPaths !== null || lastError !== null
+    return conflictPaths !== null || permissionDenied || lastError !== null
   }
 
   function alertFailing(): void {

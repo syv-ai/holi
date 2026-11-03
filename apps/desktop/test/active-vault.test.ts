@@ -1110,6 +1110,39 @@ describe('ActiveVault — sync', () => {
     expect(alerts).toEqual([])
   })
 
+  it('keeps a permission rejection failing after a successful pull', async () => {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const real = openRepo(dir)
+    const alerts: string[] = []
+    let pulled = false
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: {
+        ...real,
+        pull: async () => {
+          pulled = true
+          return real.pull()
+        },
+        push: async () => ({ kind: 'rejected' as const, reason: 'permission' as const }),
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      onSyncFailing: (text) => alerts.push(text),
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, failingAlertMs: 500 },
+    })
+    open.push(active)
+
+    await active.pushNow()
+    await active.retry()
+    expect(pulled).toBe(true)
+    expect(alerts).toEqual([])
+    await waitFor('the permission alert', () => alerts.length > 0)
+    expect(alerts[0]).toContain('Sync has failed')
+  })
+
   it('alerts on a conflict left waiting, naming its files, once the time is up', async () => {
     // A conflict stops the pulls and pushes that would count as failures, so
     // the time trigger is what says it.
