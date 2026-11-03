@@ -31,6 +31,17 @@ words. Codex's CLI has no verb Holi could back either with: `codex resume` picks
 conversation, and a copy of one is not offered until Holi knows a CLI verb for it. Pi's
 conversations are named by Holi (`--session-id`), so Duplicate forks one (`--fork`).
 
+**A background provider's sign-in is a session Holi runs.** `agent.open` with `login` (the
+onboarding's first run, [onboarding](onboarding.md)) starts `claude /login` as one, under Holi's
+id: once signed in that terminal is a working Claude Code session in the vault, so it is in
+Sessions, `agent.sessions` and `holi agent sessions` while its process lives, its row opens it,
+closing its tab leaves it running, Stop ends it, and it leaves the list when it exits. It is the
+only such session a background provider has, and there is one at a time: a second ask gets the
+first's terminal, and any other start of one is refused. Nothing reports
+its turns (the turn hooks name a background job, and it is none) and its stream is not read for
+them, so it reads idle, pauses no sync and records no turn; `holi agent message` refuses it, as
+it does every session Holi runs. Restart and Duplicate are not offered on it.
+
 **A session Holi ran stays reopenable.** When it ends with its conversation known (Codex's hook
 said its thread; a Pi conversation is the id Holi named it with) and was not fenced, it is kept on
 this machine (`<userData>/agent-pty-history.json`, by vault, the latest fifty), and History lists
@@ -274,7 +285,7 @@ the next session at once: main tells the renderer (`providers`) and the + menu a
 ## How it works
 
 **Claude Code's sessions are its supervisor's.** Holi never runs a Claude Code conversation in a
-PTY of its own. It asks Claude Code for one (`claude --bg [--name] [prompt]`, `--resume <id> --fork-session` for a copy), or the
+PTY of its own, except the terminal that signs it in (Providers, above). It asks Claude Code for one (`claude --bg [--name] [prompt]`, `--resume <id> --fork-session` for a copy), or the
 person starts one in the agent list. A session is keyed by its **job id** everywhere: capabilities, the turn
 bracket, turn records. The id survives `/clear`, which changes the conversation's `sessionId`.
 

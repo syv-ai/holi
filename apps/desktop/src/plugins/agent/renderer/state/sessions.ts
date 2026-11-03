@@ -63,6 +63,9 @@ export interface AgentSession {
   message?: string
   copying?: boolean
   closed?: boolean
+  /** The terminal that signs its agent in: no turns to review, restart or
+   *  copy. */
+  signIn?: boolean
 }
 
 /**
