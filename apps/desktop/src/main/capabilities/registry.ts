@@ -75,7 +75,9 @@ export interface CliSpec {
   stdinUnless?: string
   /** A param that, left out, is the calling session's Claude Code job id:
    *  the script sends it from `$CLAUDE_JOB_DIR` when that is set, as a
-   *  background session's status line does. */
+   *  background session's status line does. Inside a session, a different
+   *  value given for it is refused: only a person at a terminal outside any
+   *  session names one. */
   job?: string
 }
 

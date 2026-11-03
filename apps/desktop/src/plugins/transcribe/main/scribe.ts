@@ -1,0 +1,534 @@
+/**
+ * The meeting's scribe: one Claude Code background session per meeting,
+ * started through the agent (`agent.launch`) with a brief of its own, one
+ * allow rule, `Bash(holi meeting:*)`, that cuts the meeting into groups and
+ * writes them through `holi meeting group` (`capabilities.ts`), and no file
+ * or web tools (`SCRIBE_DENY`).
+ *
+ * **It is fed per group, not per minute.** A batch goes when the session is
+ * idle and either at least `BATCH_TRANSCRIPT_S` of new transcript waits, or
+ * the person pressed Summarise now (`summarise`), or the meeting stopped
+ * (the final pass). About three minutes is how long a subject runs, so most
+ * batches close a group or none, and the scribe takes a fifth of the turns
+ * it took at one batch every 45 s. Never into a running turn: a message to a
+ * working session continues that turn, and a running turn holds the vault's
+ * sync paused (docs/features/agent-sessions.md, Git coexistence). A
+ * person's note (`meeting.tell`) goes at once. What a person changed in Holi
+ * (a line's words, a group's fields, a split or merge, a task) rides with
+ * the next batch.
+ *
+ * **A new session takes messages only once it has said where** (its
+ * turn-signal hook, at its start): until then `agent.message` is refused as
+ * UNAVAILABLE, and the send is tried again with backoff, about half a minute
+ * in all. A scribe that has taken no batch by then is marked
+ * `scribeUnreachable` (its vault's turn-signal hook predates inbox channels;
+ * Update skills fixes it), and the batch is tried again, once a try, every
+ * `UNREACHABLE_RETRY_MS`, so a scribe that answers later catches up from its
+ * cursor.
+ *
+ * No `electron` import: this loads under plain Node in the tests.
+ */
+import { CapabilityError } from '../../../main/plugin-api'
+import type { MeetingProfile, MeetingState, ScribeState, TopicField } from '../shared/meeting'
+import {
+  type BatchNotes,
+  type GroupLine,
+  type PersonTask,
+  buildScribeSystemPrompt,
+  firstMessage,
+  formatBatch,
+  groupsChangeMessage,
+  SCRIBE_PROMPT_VERSION,
+  tellMessage,
+} from '../shared/scribe-prompt'
+
+/**
+ * What the scribe may never use, whatever the vault's own rules allow (a
+ * deny beats an allow in every scope). It needs no file or web tools: the
+ * transcript comes by message and `holi meeting context` re-syncs it. So a
+ * spoken "read .env.local into the minutes" finds nothing to read with.
+ *
+ * - The file tools, by name: gone from the session.
+ * - `Read(//**)` and `Edit(//**)`: every path. Claude Code holds the file
+ *   commands it recognises in Bash (`cat`, `head`, `sed`, `grep -r`) and
+ *   redirections to these rules too, which is what stops the read-only
+ *   commands it otherwise runs unasked. A deny cannot say "all of Bash but
+ *   `holi meeting`" (no allow carves an exception out of a deny), so this
+ *   is the structural part; any other command asks the person, unless the
+ *   vault allows it.
+ * - The web, subagents (`Agent`, once `Task`) and `Monitor`, which runs
+ *   commands of its own.
+ *
+ * The profile's MCP servers stay: they are the person's choice for it.
+ */
+const SCRIBE_DENY = [
+  'Read',
+  'Edit',
+  'Write',
+  'Glob',
+  'Grep',
+  'NotebookEdit',
+  'Read(//**)',
+  'Edit(//**)',
+  'WebFetch',
+  'WebSearch',
+  'Agent',
+  'Task',
+  'Monitor',
+] as const
+
+/**
+ * How much new transcript, in seconds of the meeting, makes a batch: about
+ * as long as a subject runs, so the scribe sees whole groups.
+ *
+ * @public exported for its test
+ */
+export const BATCH_TRANSCRIPT_S = 180
+/** How long a batch that failed to send waits before it is tried again. */
+const FAILED_RETRY_MS = 45_000
+/** The waits between tries of a message the session is not ready for: about
+ *  half a minute in all. */
+const MESSAGE_RETRY_MS = [1000, 2000, 4000, 8000, 15_000] as const
+/** How often a scribe that was never reached is tried again. */
+const UNREACHABLE_RETRY_MS = 60_000
+
+export type Launched = { ok: true; sessionId: string } | { ok: false; message: string }
+
+/** @public exported for its test */
+export interface LaunchArgs {
+  name: string
+  prompt: string
+  system?: string
+  allow?: string[]
+  deny?: string[]
+  model?: string
+  mcpConfig?: string
+}
+
+/** The agent's verbs the scribe and builds use (`ctx.call`). */
+export interface AgentCalls {
+  launch(args: LaunchArgs): Promise<Launched>
+  message(session: string, text: string): Promise<unknown>
+}
+
+/**
+ * What waits to reach the scribe besides new transcript: what a person
+ * changed in Holi. Kept with the meeting (`engine.ts`) and emptied as a
+ * batch carrying it is delivered. A split or merge needs no note: the groups
+ * it touched are stale, and every batch lists them.
+ */
+export interface ScribeNotes {
+  /** Lines the scribe was already sent whose words a person corrected, by
+   *  index. */
+  corrections: Record<number, string>
+  /** Tasks a person made, until the scribe hears of them. */
+  tasks?: PersonTask[]
+  /** Groups a person edited, by id, until the scribe hears what they say. */
+  edits?: string[]
+}
+
+/** The groups as a batch lists them. For the final pass the open one is
+ *  shown closed: it closes with the meeting (the engine closes it once the
+ *  pass is over, so the pass may still cut it). */
+function groupLines(meeting: MeetingState, final: boolean): GroupLine[] {
+  return meeting.topics.map((t) => {
+    const open = t.open && !final
+    return {
+      startIndex: t.lines[0] ?? 0,
+      title: t.title,
+      start: t.start,
+      end: t.end,
+      open,
+      stale: t.stale === true || (!open && t.summary.length === 0),
+      edited: t.edited ?? [],
+      suggestions: t.suggestions.map(({ kind, title }) => ({ kind, title })),
+    }
+  })
+}
+
+/** What the edited groups' edited fields say now. */
+function editsOf(meeting: MeetingState, ids: readonly string[]): NonNullable<BatchNotes['edits']> {
+  return ids.flatMap((id) => {
+    const t = meeting.topics.find((x) => x.id === id)
+    if (t === undefined || (t.edited ?? []).length === 0) return []
+    const fields: Partial<Record<TopicField, unknown>> = {}
+    for (const f of t.edited ?? []) fields[f] = t[f]
+    return [{ startIndex: t.lines[0] ?? 0, fields }]
+  })
+}
+
+/** Whether enough new transcript waits for a batch. */
+function transcriptDue(meeting: MeetingState): boolean {
+  const fresh = meeting.segments.filter((s) => s.i > meeting.scribeCursor)
+  const last = fresh.at(-1)
+  if (last === undefined) return false
+  const from = meeting.segments.find((s) => s.i === meeting.scribeCursor)?.end ?? fresh[0]!.start
+  return last.end - from >= BATCH_TRANSCRIPT_S
+}
+
+/** What the scribe reads and changes of the meetings (`engine.ts`). */
+export interface ScribeHost {
+  /** A meeting in memory, with the profile it started with and what a
+   *  person changed for the scribe to hear. */
+  get(
+    id: string,
+  ): { meeting: MeetingState; profile: MeetingProfile; notes: ScribeNotes } | undefined
+  /** The meetings in memory that are recording or finishing. */
+  live(): MeetingState[]
+  /** Something about the meeting changed: persist it and tell the renderer. */
+  changed(id: string): void
+}
+
+/** A row of the agent's `sessions` news, as far as the scribe reads it. */
+interface SessionRow {
+  id: string
+  state: string
+}
+
+/** What a person's word to the scribe is: a standing note, or a change to
+ *  the groups the minutes are built from. */
+export type TellKind = 'note' | 'minutes'
+
+export interface Scribe {
+  launch(meetingId: string): Promise<void>
+  /** The agent's session list changed. */
+  hearSessions(rows: unknown): void
+  /** A session's turn ended. */
+  hearTurnEnd(sessionId: string): void
+  /** New transcript was stitched, or a person changed something: send a
+   *  batch if one is due and the scribe is ready for it. */
+  feed(meetingId: string): void
+  /** The person pressed Summarise now: the next batch goes as soon as the
+   *  scribe is idle, however little transcript waits. */
+  summarise(meetingId: string): void
+  /** A person's note, sent at once; `minutes` asks for the groups, and so
+   *  the minutes, to change. Throws when it cannot be delivered. */
+  tell(meetingId: string, text: string, kind?: TellKind): Promise<void>
+  /** The meeting stopped and its transcript is complete: send the final
+   *  pass, and resolve when the scribe's turn on it ends, or at `deadline`
+   *  (epoch ms), whichever is first. Resolves at once with no scribe. */
+  finish(meetingId: string, deadline: number): Promise<void>
+  dispose(): void
+}
+
+interface Runtime {
+  /** No batch is tried before this (epoch ms): after one that failed. */
+  retryAt: number
+  /** The person pressed Summarise now, and that batch has not gone yet. */
+  now: boolean
+  sending: boolean
+  timer: ReturnType<typeof setTimeout> | null
+  final: {
+    sent: boolean
+    sawWorking: boolean
+    done: () => void
+  } | null
+}
+
+const errorCode = (err: unknown): string | undefined =>
+  typeof err === 'object' && err !== null && typeof (err as { code?: unknown }).code === 'string'
+    ? (err as { code: string }).code
+    : undefined
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+export function createScribe(deps: {
+  agent: AgentCalls
+  host: ScribeHost
+  log(level: 'info' | 'warn' | 'error', message: string): void
+  now?: () => number
+}): Scribe {
+  const now = deps.now ?? Date.now
+  const runtimes = new Map<string, Runtime>()
+  let disposed = false
+
+  const rt = (id: string): Runtime => {
+    let r = runtimes.get(id)
+    if (r === undefined) {
+      r = { retryAt: 0, now: false, sending: false, timer: null, final: null }
+      runtimes.set(id, r)
+    }
+    return r
+  }
+
+  const setState = (m: MeetingState, state: ScribeState): void => {
+    if (m.scribeState === state) return
+    m.scribeState = state
+    deps.host.changed(m.id)
+  }
+
+  /** Deliver `text`, trying again while the session is not ready yet and,
+   *  given `wanted`, while that still holds. `'unavailable'` when the
+   *  session never became ready. */
+  async function deliver(
+    session: string,
+    text: string,
+    wanted: () => boolean = () => true,
+    retries: readonly number[] = MESSAGE_RETRY_MS,
+  ): Promise<true | false | 'unavailable'> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await deps.agent.message(session, text)
+        return true
+      } catch (err) {
+        const wait = retries[attempt]
+        const unavailable = errorCode(err) === 'UNAVAILABLE'
+        if (!unavailable || wait === undefined || disposed || !wanted()) {
+          deps.log('warn', `meeting: could not message session ${session}: ${String(err)}`)
+          return unavailable ? 'unavailable' : false
+        }
+        await sleep(wait)
+        // The session may have stopped, or the meeting ended, meanwhile.
+        if (disposed || !wanted()) return false
+      }
+    }
+  }
+
+  /** Send the meeting's scribe everything past its cursor, the groups as
+   *  they stand and what the person changed; `final` makes it the final
+   *  pass. True when it was delivered. */
+  async function sendBatch(id: string, final = false): Promise<boolean> {
+    const entry = deps.host.get(id)
+    const r = rt(id)
+    const session = entry?.meeting.scribeSessionId
+    if (entry === undefined || session === undefined) return false
+    const { meeting, notes } = entry
+    const fresh = meeting.segments.filter((s) => s.i > meeting.scribeCursor)
+    const last = fresh.at(-1)?.i ?? meeting.scribeCursor
+    // What this batch carries of the person's changes, so a change made
+    // while it is on its way waits for the next one.
+    const corrections = Object.entries(notes.corrections).map(([i, text]) => ({
+      i: Number(i),
+      text,
+    }))
+    const tasks = [...(notes.tasks ?? [])]
+    const edited = [...(notes.edits ?? [])]
+    const edits = editsOf(meeting, edited)
+    const asked = r.now
+    const text = formatBatch(fresh, {
+      groups: groupLines(meeting, final),
+      notes: {
+        ...(corrections.length === 0 ? {} : { corrections }),
+        ...(tasks.length === 0 ? {} : { tasks }),
+        ...(edits.length === 0 ? {} : { edits }),
+      },
+      ...(asked ? { now: true } : {}),
+      ...(final ? { final: true } : {}),
+    })
+    r.sending = true
+    try {
+      // Once known unreachable, one try a time: the background retry is slow.
+      const sent = await deliver(
+        session,
+        text,
+        undefined,
+        meeting.scribeUnreachable === true ? [] : MESSAGE_RETRY_MS,
+      )
+      if (sent === true) {
+        for (const c of corrections) {
+          if (notes.corrections[c.i] === c.text) delete notes.corrections[c.i]
+        }
+        if (tasks.length > 0) {
+          notes.tasks = (notes.tasks ?? []).filter((t) => !tasks.includes(t))
+          if (notes.tasks.length === 0) delete notes.tasks
+        }
+        if (edited.length > 0) {
+          notes.edits = (notes.edits ?? []).filter((t) => !edited.includes(t))
+          if (notes.edits.length === 0) delete notes.edits
+        }
+        if (asked) r.now = false
+        meeting.scribeCursor = last
+        reached(meeting)
+        setState(meeting, 'working')
+        deps.host.changed(id)
+        return true
+      }
+      // A failed send waits before the next try, rather than hammering.
+      r.retryAt = now() + FAILED_RETRY_MS
+      if (sent === 'unavailable' && meeting.scribeCursor < 0 && !disposed) {
+        if (meeting.scribeUnreachable !== true) {
+          meeting.scribeUnreachable = true
+          deps.log(
+            'warn',
+            `meeting "${meeting.title}": the scribe takes no messages; its vault's skills need updating`,
+          )
+          deps.host.changed(id)
+        }
+        // Tried again in the background, slowly, until it answers.
+        r.retryAt = now() + UNREACHABLE_RETRY_MS
+      }
+      if (r.timer === null && !final) {
+        r.timer = setTimeout(
+          () => {
+            r.timer = null
+            feed(id)
+          },
+          Math.max(0, r.retryAt - now()),
+        )
+      }
+      return false
+    } finally {
+      r.sending = false
+    }
+  }
+
+  /** The scribe took a message: it is reachable after all. */
+  function reached(meeting: MeetingState): void {
+    if (meeting.scribeUnreachable === undefined) return
+    delete meeting.scribeUnreachable
+    deps.host.changed(meeting.id)
+  }
+
+  function feed(id: string): void {
+    const entry = deps.host.get(id)
+    const r = rt(id)
+    if (entry === undefined || disposed) return
+    const { meeting } = entry
+    if (meeting.phase === 'finishing') return tryFinal(id)
+    if (meeting.phase !== 'recording' || r.sending || r.final !== null) return
+    if (meeting.scribeState !== 'idle' || meeting.scribeSessionId === undefined) return
+    if (now() < r.retryAt) return
+    if (!r.now && !transcriptDue(meeting)) return
+    void sendBatch(id)
+  }
+
+  /** The final pass, once the scribe is idle. */
+  function tryFinal(id: string): void {
+    const entry = deps.host.get(id)
+    const r = runtimes.get(id)
+    const final = r?.final
+    if (entry === undefined || r === undefined || final == null || final.sent || r.sending) return
+    const { meeting } = entry
+    if (meeting.scribeState === 'gone' || meeting.scribeState === 'off') return final.done()
+    if (meeting.scribeState !== 'idle') return
+    final.sent = true
+    void sendBatch(id, true).then((ok) => {
+      if (!ok) final.done()
+    })
+  }
+
+  /** The scribe of a meeting whose final pass was sent reports a state. */
+  function settleFinal(id: string, state: ScribeState, turnEnded: boolean): void {
+    const final = runtimes.get(id)?.final
+    if (final == null || !final.sent) return
+    if (state === 'working') final.sawWorking = true
+    if (turnEnded || state === 'gone' || (final.sawWorking && state === 'idle')) final.done()
+  }
+
+  const scribed = (sessionId: string): MeetingState | undefined =>
+    deps.host.live().find((m) => m.scribeSessionId === sessionId)
+
+  return {
+    async launch(id) {
+      const entry = deps.host.get(id)
+      if (entry === undefined) return
+      const { meeting, profile } = entry
+      setState(meeting, 'starting')
+      let res: Launched
+      try {
+        res = await deps.agent.launch({
+          name: `Meeting · ${meeting.title}`,
+          system: buildScribeSystemPrompt(profile, meeting),
+          prompt: firstMessage(),
+          allow: ['Bash(holi meeting:*)'],
+          deny: [...SCRIBE_DENY],
+          ...(profile.scribeModel === undefined ? {} : { model: profile.scribeModel }),
+          ...(profile.mcpConfig === undefined ? {} : { mcpConfig: profile.mcpConfig }),
+        })
+      } catch (err) {
+        res = { ok: false, message: String(err) }
+      }
+      if (!res.ok) {
+        deps.log('error', `meeting "${meeting.title}": the scribe did not start: ${res.message}`)
+        setState(meeting, 'gone')
+        return
+      }
+      meeting.scribeSessionId = res.sessionId
+      deps.host.changed(id)
+      deps.log(
+        'info',
+        `meeting "${meeting.title}": scribe ${res.sessionId} started (prompt ${SCRIBE_PROMPT_VERSION})`,
+      )
+    },
+
+    hearSessions(rows) {
+      if (!Array.isArray(rows)) return
+      const list = rows as SessionRow[]
+      for (const meeting of deps.host.live()) {
+        const session = meeting.scribeSessionId
+        if (session === undefined) continue
+        const row = list.find((r) => r?.id === session)
+        const state: ScribeState =
+          row === undefined
+            ? 'gone'
+            : row.state === 'working' || row.state === 'idle' || row.state === 'needs-you'
+              ? row.state
+              : meeting.scribeState
+        setState(meeting, state)
+        settleFinal(meeting.id, state, false)
+        if (state === 'idle' || state === 'gone') feed(meeting.id)
+      }
+    },
+
+    hearTurnEnd(sessionId) {
+      const meeting = scribed(sessionId)
+      if (meeting === undefined) return
+      setState(meeting, 'idle')
+      settleFinal(meeting.id, 'idle', true)
+      feed(meeting.id)
+    },
+
+    feed,
+
+    summarise(id) {
+      rt(id).now = true
+      feed(id)
+    },
+
+    async tell(id, text, kind = 'note') {
+      const meeting = deps.host.get(id)?.meeting
+      const session = meeting?.scribeSessionId
+      if (meeting === undefined || session === undefined || meeting.scribeState === 'gone') {
+        throw new CapabilityError('UNAVAILABLE', 'this meeting has no scribe running')
+      }
+      const message = kind === 'minutes' ? groupsChangeMessage(text) : tellMessage(text)
+      if ((await deliver(session, message)) !== true) {
+        throw new CapabilityError('UNAVAILABLE', 'the scribe did not take the message')
+      }
+      reached(meeting)
+      setState(meeting, 'working')
+    },
+
+    finish(id, deadline) {
+      const meeting = deps.host.get(id)?.meeting
+      if (
+        meeting === undefined ||
+        meeting.scribeSessionId === undefined ||
+        meeting.scribeState === 'gone' ||
+        meeting.scribeState === 'off'
+      ) {
+        return Promise.resolve()
+      }
+      const r = rt(id)
+      return new Promise<void>((resolve) => {
+        const timer = setTimeout(() => done(), Math.max(0, deadline - now()))
+        const done = () => {
+          clearTimeout(timer)
+          if (r.final !== null) r.final = null
+          resolve()
+        }
+        r.final = { sent: false, sawWorking: false, done }
+        tryFinal(id)
+      })
+    },
+
+    dispose() {
+      disposed = true
+      for (const r of runtimes.values()) {
+        if (r.timer !== null) clearTimeout(r.timer)
+        r.final?.done()
+      }
+      runtimes.clear()
+    },
+  }
+}

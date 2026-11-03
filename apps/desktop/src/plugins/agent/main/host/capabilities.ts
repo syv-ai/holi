@@ -24,6 +24,7 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { readFile } from 'node:fs/promises'
+import { isAbsolute } from 'node:path'
 import { merge3, vaultRelPath, type VaultRelPath } from '@holi/shared'
 import {
   cap,
@@ -398,8 +399,12 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
      * A background session whose first turn is `prompt`, with no terminal:
      * how a plugin built on the agent runs Claude Code (a Holi's send, an
      * automation's run), from its main side through `ctx.call`, once it has
-     * approved what runs. `model`, `allow` and `system` (appended to Claude
-     * Code's system prompt) are that approval's. The UI door alone, never
+     * approved what runs. `model`, `allow`, `deny` (Claude Code permission
+     * rules it may never use, `--disallowedTools`, which beat any allow in
+     * any scope, the vault's included), `system` (appended to Claude Code's
+     * system prompt) and `mcpConfig` (an absolute path to an MCP JSON
+     * config, `--mcp-config`, additive to the vault's own) are that
+     * approval's. The UI door alone, never
      * the CLI's: a session could otherwise start another with rules of its
      * own choosing.
      */
@@ -410,20 +415,32 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         const model = optionalStringParam(p, 'model')
         const system = optionalStringParam(p, 'system')
         const provider = providerParam(p)
-        const allow = p['allow']
-        if (
-          allow !== undefined &&
-          (!Array.isArray(allow) || allow.some((r) => typeof r !== 'string'))
-        ) {
-          throw new CapabilityError('BAD_REQUEST', 'allow must be a list of rules')
+        const rules = (key: 'allow' | 'deny'): string[] | undefined => {
+          const list = p[key]
+          if (list === undefined) return undefined
+          if (!Array.isArray(list) || list.some((r) => typeof r !== 'string')) {
+            throw new CapabilityError('BAD_REQUEST', `${key} must be a list of rules`)
+          }
+          return list as string[]
+        }
+        const allow = rules('allow')
+        const deny = rules('deny')
+        const mcpConfig = optionalStringParam(p, 'mcpConfig')
+        if (mcpConfig !== undefined && !isAbsolute(mcpConfig)) {
+          throw new CapabilityError('BAD_REQUEST', 'mcpConfig must be an absolute path')
+        }
+        if (mcpConfig !== undefined && !mcpConfig.endsWith('.json')) {
+          throw new CapabilityError('BAD_REQUEST', 'mcpConfig must be a .json file')
         }
         return {
           name: stringParam(p, 'name'),
           prompt: stringParam(p, 'prompt'),
           ...(provider === undefined ? {} : { provider }),
           ...(model === undefined ? {} : { model }),
-          ...(allow === undefined ? {} : { allow: allow as string[] }),
+          ...(allow === undefined ? {} : { allow }),
+          ...(deny === undefined ? {} : { deny }),
           ...(system === undefined ? {} : { appendSystemPrompt: system }),
+          ...(mcpConfig === undefined ? {} : { mcpConfig }),
         }
       },
       run: async (ctx, { provider = 'claude', ...args }) => {

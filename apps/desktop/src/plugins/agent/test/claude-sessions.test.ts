@@ -190,6 +190,67 @@ describe('claude-cli', () => {
     ])
   })
 
+  it('passes an MCP config as one `=` argument, before the name ends the options', async () => {
+    const calls: string[][] = []
+    const cli = createClaudeCli({
+      resolveBin: () => '/c',
+      run: async (_bin, args) => {
+        calls.push(args)
+        return 'backgrounded · 1234abcd · x\n'
+      },
+      log: () => {},
+    })
+    await cli.startBg(target, {
+      name: 'Meeting · Planning',
+      prompt: 'Begin.',
+      allow: ['Bash(holi meeting:*)'],
+      mcpConfig: '/Users/me/mcp.json',
+    })
+    expect(calls).toEqual([
+      [
+        '--bg',
+        '--mcp-config=/Users/me/mcp.json',
+        '--allowedTools=Bash(holi meeting:*)',
+        '--name',
+        'Meeting · Planning',
+        '--',
+        'Begin.',
+      ],
+    ])
+  })
+
+  it('passes each deny rule as its own `=` argument, a plain option ending them', async () => {
+    const calls: string[][] = []
+    const cli = createClaudeCli({
+      resolveBin: () => '/c',
+      run: async (_bin, args) => {
+        calls.push(args)
+        return 'backgrounded · 1234abcd · x\n'
+      },
+      log: () => {},
+    })
+    await cli.startBg(target, {
+      name: 'Meeting · Planning',
+      prompt: 'Begin.',
+      allow: ['Bash(holi meeting:*)'],
+      deny: ['Read', 'Read(//**)'],
+    })
+    await cli.startBg(target, { prompt: 'Begin.', deny: ['WebFetch'] })
+    expect(calls).toEqual([
+      [
+        '--bg',
+        '--allowedTools=Bash(holi meeting:*)',
+        '--disallowedTools=Read',
+        '--disallowedTools=Read(//**)',
+        '--name',
+        'Meeting · Planning',
+        '--',
+        'Begin.',
+      ],
+      ['--bg', '--disallowedTools=WebFetch', '--name', 'Scheduled run', '--', 'Begin.'],
+    ])
+  })
+
   it('answers the new id, or why there is none', async () => {
     const ok = createClaudeCli({
       resolveBin: () => '/c',

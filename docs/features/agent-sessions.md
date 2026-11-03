@@ -332,7 +332,9 @@ wrote into `plugins.yaml` is ignored, and dropped at the file's next write.
 **Other plugins drive the agent through it, never around it.** The agent knows nothing of a
 plugin that requires it ([architecture](../architecture.md), Plugins); it offers general
 capabilities any such plugin calls, from its renderer or, through `ctx.call`, from its main side:
-`agent.launch` (a background session whose first turn is a prompt, with no terminal),
+`agent.launch` (a background session whose first turn is a prompt, with no terminal, and
+optionally its model, `allow` rules as `--allowedTools`, `deny` rules as `--disallowedTools`, an
+appended system prompt and an MCP config; the UI door alone),
 `agent.job` (a prompt run unwatched on any provider that can, within a scope or under `allow`;
 Jobs above),
 `agent.scoped` (the same, as a session the person can watch; Fenced sessions above),

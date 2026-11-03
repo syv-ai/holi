@@ -45,6 +45,7 @@ other rather than repeating each other.
 | [links](features/links.md)                         | Web addresses saved as link files, and the page previews                 |
 | [browser](features/browser.md)                     | Web pages in a tab, which the agent drives with `holi browser`           |
 | [vault-apps](features/vault-apps.md)               | Agent-written apps in their own origin, their records, slash commands    |
+| [meetings](features/meetings.md)                   | Live captions, minutes and feature cards from a meeting, and Build       |
 | [community-plugins](features/community-plugins.md) | Plugins from other repositories, run as their own processes              |
 | [command-palette](features/command-palette.md)     | ⌘K: documents, views and the shell's actions                             |
 | [shortcuts](features/keyboard-shortcuts.md)        | The shell's keyboard shortcuts, their table and their dialog             |

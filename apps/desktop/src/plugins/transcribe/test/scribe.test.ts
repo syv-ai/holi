@@ -1,0 +1,272 @@
+/**
+ * The scribe session: how it is started, fed per group rather than per
+ * minute (only while idle, and only once three minutes of new transcript
+ * wait, or the person pressed Summarise now), told a person's note at once,
+ * and given the final pass with the last lines at Stop. The agent is a fake.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CapabilityError } from '../../../main/capabilities/error'
+import { firstMessage, groupsChangeMessage, tellMessage } from '../shared/scribe-prompt'
+import { BATCH_TRANSCRIPT_S, type LaunchArgs } from '../main/scribe'
+import { chunkWav, engineRig, SCRIBE, until } from './engine-helpers'
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+})
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+/** A line a minute: chunk n starts at n·60 s, its line at n·60 + 0.5 to + 2.5. */
+const MINUTE = 60
+
+async function meetingRig(opts: Parameters<typeof engineRig>[0] = {}) {
+  const rig = await engineRig({
+    launch: async (_args: LaunchArgs) => ({ ok: true, sessionId: SCRIBE }),
+    ...opts,
+  })
+  const { meetingId } = await rig.meetings.start({ title: 'Planning', profileId: 'default' })
+  const meeting = await rig.meetings.get(meetingId)
+  await until(() => meeting.scribeSessionId === SCRIBE)
+  const scribe = rig.meetings.scribe
+  const say = async (n: number) => {
+    await rig.meetings.chunk({
+      meetingId,
+      n,
+      start: n * MINUTE,
+      duration: 8,
+      audio: chunkWav(8),
+    })
+    await until(() => meeting.segments.some((s) => s.chunk === n))
+  }
+  const sessions = (state: string) => scribe.hearSessions([{ id: SCRIBE, state }])
+  const sentTo = (session: string) =>
+    rig.agent.message.mock.calls.filter(([s]) => s === session).map(([, text]) => text)
+  return { ...rig, meetingId, meeting, scribe, say, sessions, sentTo }
+}
+
+describe('the scribe', () => {
+  it('starts with its brief, its rules and the profile’s model and MCP config', async () => {
+    const rig = await meetingRig({
+      profile: { scribeModel: 'sonnet', mcpConfig: '/Users/me/mcp.json', focus: 'Exports' },
+    })
+    expect(rig.agent.launch).toHaveBeenCalledWith({
+      name: 'Meeting · Planning',
+      system: expect.stringContaining('Exports'),
+      prompt: firstMessage(),
+      allow: ['Bash(holi meeting:*)'],
+      deny: [
+        'Read',
+        'Edit',
+        'Write',
+        'Glob',
+        'Grep',
+        'NotebookEdit',
+        'Read(//**)',
+        'Edit(//**)',
+        'WebFetch',
+        'WebSearch',
+        'Agent',
+        'Task',
+        'Monitor',
+      ],
+      model: 'sonnet',
+      mcpConfig: '/Users/me/mcp.json',
+    })
+    expect(rig.meeting.scribeState).toBe('starting')
+    rig.sessions('working')
+    expect(rig.meeting.scribeState).toBe('working')
+    rig.scribe.hearSessions([])
+    expect(rig.meeting.scribeState).toBe('gone')
+  })
+
+  it(`gets a batch only once ${BATCH_TRANSCRIPT_S} s of new transcript wait, never mid-turn`, async () => {
+    const rig = await meetingRig()
+    rig.sessions('idle')
+    for (const n of [0, 1, 2]) await rig.say(n)
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    // Two minutes of transcript, and plenty of wall time: still nothing.
+    expect(rig.sentTo(SCRIBE)).toEqual([])
+    await rig.say(3)
+    await until(() => rig.sentTo(SCRIBE).length === 1)
+    const first = rig.sentTo(SCRIBE)[0]!
+    for (const n of [0, 1, 2, 3]) expect(first).toContain(`[${n}] Me (${n}:00)`)
+    // The groups so far: the first, open, as the first line made it.
+    expect(first).toContain('Groups so far:\n[0] (untitled) (0:00–now, open)')
+    expect(rig.meeting.scribeCursor).toBe(3)
+    expect(rig.meeting.scribeState).toBe('working')
+
+    // While its turn runs, three more minutes wait.
+    for (const n of [4, 5, 6]) await rig.say(n)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(rig.sentTo(SCRIBE)).toHaveLength(1)
+    rig.scribe.hearTurnEnd(SCRIBE)
+    await until(() => rig.sentTo(SCRIBE).length === 2)
+    const second = rig.sentTo(SCRIBE)[1]!
+    expect(second).toContain('[4] Me (4:00)')
+    expect(second).toContain('[6] Me (6:00)')
+    expect(second).not.toContain('[3] Me')
+    expect(rig.meeting.scribeCursor).toBe(6)
+  })
+
+  it('gets the next batch at once when the person presses Summarise now', async () => {
+    const rig = await meetingRig()
+    rig.sessions('idle')
+    await rig.say(0)
+    expect(rig.sentTo(SCRIBE)).toEqual([])
+    await rig.meetings.summarise(rig.meetingId)
+    await until(() => rig.sentTo(SCRIBE).length === 1)
+    expect(rig.sentTo(SCRIBE)[0]).toContain('[0] Me (0:00)')
+    expect(rig.sentTo(SCRIBE)[0]).toContain('Summarise now')
+
+    // Pressed mid-turn, it waits for the turn to end, then goes with nothing new.
+    await rig.meetings.summarise(rig.meetingId)
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(rig.sentTo(SCRIBE)).toHaveLength(1)
+    rig.scribe.hearTurnEnd(SCRIBE)
+    await until(() => rig.sentTo(SCRIBE).length === 2)
+    expect(rig.sentTo(SCRIBE)[1]).toContain('No new transcript')
+    expect(rig.sentTo(SCRIBE)[1]).toContain('Summarise now')
+
+    // Once delivered, the next batch waits for transcript again.
+    rig.scribe.hearTurnEnd(SCRIBE)
+    await rig.say(1)
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(rig.sentTo(SCRIBE)).toHaveLength(2)
+  })
+
+  it('cannot be asked to summarise without a scribe', async () => {
+    const rig = await meetingRig()
+    rig.scribe.hearSessions([])
+    await expect(rig.meetings.summarise(rig.meetingId)).rejects.toMatchObject({
+      code: 'UNAVAILABLE',
+    })
+  })
+
+  it('is tried again while it cannot take messages yet', async () => {
+    let refusals = 2
+    const rig = await meetingRig({
+      message: async () => {
+        if (refusals-- > 0) throw new CapabilityError('UNAVAILABLE', 'not said where yet')
+        return { ok: true }
+      },
+    })
+    rig.sessions('idle')
+    for (const n of [0, 1, 2, 3]) await rig.say(n)
+    await until(() => rig.meeting.scribeCursor === 3)
+    expect(rig.agent.message).toHaveBeenCalledTimes(3)
+  })
+
+  it('gives up after about half a minute, and the lines wait for the next try', async () => {
+    const rig = await meetingRig({
+      message: async () => {
+        throw new CapabilityError('UNAVAILABLE', 'not said where yet')
+      },
+    })
+    rig.sessions('idle')
+    for (const n of [0, 1, 2, 3]) await rig.say(n)
+    await until(() => rig.agent.message.mock.calls.length === 6)
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(rig.agent.message).toHaveBeenCalledTimes(6)
+    expect(rig.meeting.scribeCursor).toBe(-1)
+  })
+
+  it('that never takes a batch is marked unreachable, tried slowly, and catches up', async () => {
+    let reachable = false
+    const rig = await meetingRig({
+      message: async () => {
+        if (!reachable) {
+          throw new CapabilityError('UNAVAILABLE', 'has not said where it takes messages')
+        }
+        return { ok: true }
+      },
+    })
+    rig.sessions('idle')
+    for (const n of [0, 1, 2, 3]) await rig.say(n)
+    await until(() => rig.meeting.scribeUnreachable === true)
+    expect(rig.agent.message).toHaveBeenCalledTimes(6)
+    // Slowly, in the background: one try a minute.
+    await vi.advanceTimersByTimeAsync(59_000)
+    expect(rig.agent.message).toHaveBeenCalledTimes(6)
+    await until(() => rig.agent.message.mock.calls.length === 7)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(rig.agent.message).toHaveBeenCalledTimes(7)
+    await rig.say(4)
+
+    reachable = true
+    await until(() => rig.meeting.scribeCursor === 4)
+    expect(rig.meeting.scribeUnreachable).toBeUndefined()
+    const caughtUp = rig.sentTo(SCRIBE).at(-1)!
+    expect(caughtUp).toContain('[0] Me')
+    expect(caughtUp).toContain('[4] Me')
+  })
+
+  it('hears a person’s note at once, even mid-turn', async () => {
+    const rig = await meetingRig()
+    rig.sessions('working')
+    await rig.meetings.tell(rig.meetingId, 'Focus on the export.')
+    await rig.meetings.tell(rig.meetingId, 'Drop the budget talk', 'minutes')
+    expect(rig.sentTo(SCRIBE)).toEqual([
+      tellMessage('Focus on the export.'),
+      groupsChangeMessage('Drop the budget talk'),
+    ])
+  })
+
+  it('cannot be told anything once it is gone', async () => {
+    const rig = await meetingRig()
+    rig.scribe.hearSessions([])
+    await expect(rig.meetings.tell(rig.meetingId, 'hello')).rejects.toMatchObject({
+      code: 'UNAVAILABLE',
+    })
+  })
+})
+
+describe('the end of a meeting', () => {
+  it('sends the last lines with the final pass once idle, the last group shown closed', async () => {
+    const rig = await meetingRig()
+    rig.sessions('working')
+    await rig.say(0)
+    await rig.meetings.stop(rig.meetingId)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(rig.meeting.phase).toBe('finishing')
+    expect(rig.sentTo(SCRIBE)).toEqual([])
+    rig.scribe.hearTurnEnd(SCRIBE)
+    await until(() => rig.sentTo(SCRIBE).length === 1)
+    const final = rig.sentTo(SCRIBE)[0]!
+    expect(final).toContain('[0] Me (0:00)')
+    expect(final).toContain('The meeting has ended')
+    // Shown closed, and not written yet: the final pass writes it in full.
+    expect(final).toMatch(/\[0\] \(untitled\) \(0:00–0:02\) — not written yet/)
+    expect(final).not.toContain('open)')
+    // While the pass runs the group is still open, so the pass may cut it.
+    expect(rig.meeting.topics[0]!.open).toBe(true)
+    // A stale idle before its turn starts is not the end of it.
+    rig.sessions('idle')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(rig.meeting.phase).toBe('finishing')
+    rig.sessions('working')
+    rig.scribe.hearTurnEnd(SCRIBE)
+    await until(() => rig.meeting.phase === 'done')
+    // Closed with the meeting, and stale since nothing wrote it.
+    expect(rig.meeting.topics[0]).toMatchObject({ open: false, stale: true })
+  })
+
+  it('is done after three minutes when the scribe never comes back', async () => {
+    const rig = await meetingRig()
+    rig.sessions('working')
+    await rig.meetings.stop(rig.meetingId)
+    const stoppedAt = Date.now()
+    await until(() => rig.meeting.phase === 'done', 200_000)
+    expect(Date.now() - stoppedAt).toBeGreaterThanOrEqual(3 * 60_000)
+    expect(rig.sentTo(SCRIBE)).toEqual([])
+  })
+
+  it('is done at once without a scribe', async () => {
+    const rig = await engineRig()
+    const { meetingId } = await rig.meetings.start({ title: 'Solo', profileId: 'default' })
+    const meeting = await rig.meetings.get(meetingId)
+    await until(() => meeting.scribeState === 'gone')
+    await rig.meetings.stop(meetingId)
+    await until(() => meeting.phase === 'done', 5000)
+  })
+})

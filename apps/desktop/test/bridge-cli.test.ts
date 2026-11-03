@@ -433,3 +433,50 @@ describe('a command that reads stdin', () => {
     expect(ran).toHaveBeenCalledWith({ to: 'ada', draft: 'd1' })
   })
 })
+
+describe('a command that acts as the calling session', () => {
+  const ran = vi.fn<(params: unknown) => void>()
+  const who = cap({
+    doors: ['cli'],
+    cli: { args: [], summary: 'say which session is asking', job: 'session' },
+    params: (raw) => raw as Record<string, string>,
+    run: async (_ctx, p) => {
+      ran(p)
+      return p.session ?? 'nobody'
+    },
+    text: (session) => session,
+  })
+  const inSession = (job: string) => ({ ...env, CLAUDE_JOB_DIR: `/Users/ada/.claude/jobs/${job}` })
+
+  beforeEach(async () => {
+    await server.stop()
+    ran.mockClear()
+    server = bridge({ 'x.who': who }, ['x'])
+    await server.start()
+    await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
+  })
+
+  it('is the session the script runs in, with no flag for it', async () => {
+    const res = await run(bin, ['x', 'who'], inSession('abcd1234'))
+    expect(res).toMatchObject({ code: 0, stdout: 'abcd1234\n' })
+  })
+
+  it('refuses to name another session from inside one, in either spelling', async () => {
+    for (const flag of [['--session', 'ffff0000'], ['--session=ffff0000']]) {
+      const res = await run(bin, ['x', 'who', ...flag], inSession('abcd1234'))
+      expect(res.code, flag.join(' ')).toBe(2)
+      expect(res.stderr).toContain('--session')
+    }
+    expect(ran).not.toHaveBeenCalled()
+  })
+
+  it('takes its own id given again', async () => {
+    const res = await run(bin, ['x', 'who', '--session', 'abcd1234'], inSession('abcd1234'))
+    expect(res).toMatchObject({ code: 0, stdout: 'abcd1234\n' })
+  })
+
+  it('takes the flag from a person at a terminal outside any session', async () => {
+    const res = await run(bin, ['x', 'who', '--session', 'ffff0000'], env)
+    expect(res).toMatchObject({ code: 0, stdout: 'ffff0000\n' })
+  })
+})

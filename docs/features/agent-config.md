@@ -199,7 +199,8 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   `store list|get|put|delete|check`,
   `docs list|read|inspect|render|open|screenshot|create|update|delete|settle`, `sync status`,
   `agent sessions|notify|log|message|version`, `schedules list|disable|run` (turning one on is the
-  Automations editor's alone), `holis list|report`,
+  Automations editor's alone), `holis list|report`, `meeting group|context` (a meeting scribe's
+  alone: refused for any other session),
   `vault members|recents`. The registry's reads the agent already has as Grep, Read and git
   (search, history, settings) stay app-only rather than grow a second way in. The script is
   generated at `<Electron userData>/bin/holi`, and Holi supplies its path as `HOLI_BIN` to its

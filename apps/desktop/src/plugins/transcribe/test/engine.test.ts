@@ -1,0 +1,580 @@
+/**
+ * The meeting engine: audio on disk before anything else, uploads and their
+ * retries, what the service is asked, recovery after a crash, and the files
+ * a meeting leaves in the vault. Fake time, a fake service, no network.
+ */
+import { access, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { MeetingState } from '../shared/meeting'
+import { ASR_URL, type Fetch } from '../main/asr'
+import { parseWav } from '../main/wav'
+import { chunkWav, engineRig, SCRIBE, settle, settleUntil, until } from './engine-helpers'
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+})
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+const present = (path: string) =>
+  access(path).then(
+    () => true,
+    () => false,
+  )
+
+async function started(rig: Awaited<ReturnType<typeof engineRig>>, title = 'Planning') {
+  const { meetingId } = await rig.meetings.start({ title, profileId: 'default' })
+  const meeting = await rig.meetings.get(meetingId)
+  const dir = join(rig.userData, 'meetings', meetingId)
+  const send = (n: number, who: 'me' | 'them' = 'me') =>
+    rig.meetings.chunk({ meetingId, n, start: n * 8, duration: 8, audio: chunkWav(8, who) })
+  return { meetingId, meeting, dir, send }
+}
+
+const chunkStates = (m: MeetingState) => m.chunks.map((c) => c.state)
+
+describe('a chunk', () => {
+  it('is on disk, and in the saved state, before it is uploaded', async () => {
+    let seen: { wav: boolean; state: string } | null = null
+    const rig = await engineRig({
+      fetch: async () => {
+        const dir = join(rig.userData, 'meetings', id)
+        seen = {
+          wav: await present(join(dir, 'chunk-0.wav')),
+          state: await readFile(join(dir, 'state.json'), 'utf8'),
+        }
+        return Response.json({ segments: [{ start: 0, end: 2, text: 'Hej' }] })
+      },
+    })
+    const { meetingId: id, send, meeting } = await started(rig)
+    await send(0)
+    await until(() => meeting.chunks[0]?.state === 'done')
+    expect(seen!.wav).toBe(true)
+    expect(JSON.parse(seen!.state).meeting.chunks[0]).toMatchObject({ n: 0, start: 0 })
+  })
+
+  it('goes up as a mono mix with the profile’s model, language, speaker labels and vocabulary', async () => {
+    const rig = await engineRig({
+      profile: {
+        asrModel: 'syvai/hviske-v5.3',
+        language: 'da',
+        glossary: [
+          { term: 'Claude', heardAs: ['klod'] },
+          { term: 'Holi', heardAs: [] },
+        ],
+      },
+    })
+    const { send, meeting } = await started(rig)
+    await send(0)
+    await until(() => meeting.chunks[0]?.state === 'done')
+    expect(rig.service.fetch).toHaveBeenCalledWith(ASR_URL, expect.anything())
+    const init = rig.service.fetch.mock.calls[0]![1]
+    expect(init.headers).toEqual({ Authorization: 'Bearer test-key' })
+    const form = rig.service.forms[0]!
+    expect(form.get('model')).toBe('syvai/hviske-v5.3')
+    expect(form.get('language')).toBe('da')
+    expect(form.get('response_format')).toBe('verbose_json')
+    expect(form.get('temperature')).toBe('0')
+    expect(form.get('diarize')).toBe('off')
+    expect(form.get('vocab')).toBe('Claude, Holi')
+    const file = form.get('file') as Blob
+    expect(parseWav(new Uint8Array(await file.arrayBuffer())).channels).toBe(1)
+  })
+
+  it('sends no language for auto, and asks for speaker labels in a room', async () => {
+    const rig = await engineRig({ profile: { language: 'auto', roomDiarize: true } })
+    const { send, meeting } = await started(rig)
+    await send(0)
+    await until(() => meeting.chunks[0]?.state === 'done')
+    const form = rig.service.forms[0]!
+    expect(form.has('language')).toBe(false)
+    expect(form.get('diarize')).toBe('on')
+    expect(form.get('model')).toBe('syv-transcribe')
+    expect(form.has('vocab')).toBe(false)
+    expect(meeting.segments[0]?.speaker).toBe('Speaker 1')
+  })
+
+  it('labels who spoke from the stereo audio, and times it from the meeting start', async () => {
+    const rig = await engineRig()
+    const { send, meeting } = await started(rig)
+    await send(0, 'me')
+    await send(1, 'them')
+    await until(() => meeting.segments.length === 2)
+    expect(meeting.segments.map((s) => [s.i, s.speaker, s.start, s.chunk])).toEqual([
+      [0, 'Me', 0.5, 0],
+      [1, 'Them', 8.5, 1],
+    ])
+    expect(meeting.chunks[0]?.latencyMs).toBeGreaterThanOrEqual(0)
+  })
+
+  it('is tried again after 1, 3, 9 and 27 seconds, then marked failed', async () => {
+    let calls = 0
+    const rig = await engineRig({
+      fetch: async () => {
+        calls++
+        return new Response('busy', { status: 503 })
+      },
+    })
+    const { send, meeting } = await started(rig)
+    await send(0)
+    const chunk = () => meeting.chunks[0]!
+    await settleUntil(() => calls === 1 && chunk().state !== 'uploading')
+    for (const [k, ms] of [1000, 3000, 9000, 27_000].entries()) {
+      // A moment short of the wait, nothing; at the wait, the next try.
+      await vi.advanceTimersByTimeAsync(ms - 1)
+      await settle()
+      expect(calls).toBe(k + 1)
+      await vi.advanceTimersByTimeAsync(1)
+      await settleUntil(() => calls === k + 2 && chunk().state !== 'uploading')
+    }
+    expect(chunk()).toMatchObject({
+      state: 'failed',
+      tries: 5,
+      error: expect.stringContaining('503'),
+    })
+  })
+
+  it('that failed is tried again when the meeting stops, and the meeting finishes', async () => {
+    let down = true
+    const rig = await engineRig({
+      fetch: async () =>
+        down
+          ? new Response('down', { status: 502 })
+          : Response.json({ segments: [{ start: 0, end: 2, text: 'Endelig.' }] }),
+    })
+    const { send, meeting, meetingId } = await started(rig)
+    await send(0)
+    await until(() => meeting.chunks[0]?.state === 'failed')
+    down = false
+    await rig.meetings.stop(meetingId)
+    await until(() => meeting.phase === 'done')
+    expect(chunkStates(meeting)).toEqual(['done'])
+    expect(meeting.segments.map((s) => s.text)).toEqual(['Endelig.'])
+  })
+
+  it('that keeps failing after the stop leaves the rest of the transcript whole', async () => {
+    const fetch: Fetch = async (_url, init) => {
+      const file = (init.body as FormData).get('file') as Blob
+      // Chunk 1 is a different length: fail it, always.
+      return file.size > 300_000
+        ? new Response('no', { status: 500 })
+        : Response.json({ segments: [{ start: 0, end: 2, text: 'ok' }] })
+    }
+    const rig = await engineRig({ fetch })
+    const { meeting, meetingId } = await started(rig)
+    const put = (n: number, seconds: number) =>
+      rig.meetings.chunk({
+        meetingId,
+        n,
+        start: n * 8,
+        duration: seconds,
+        audio: chunkWav(seconds),
+      })
+    await put(0, 8)
+    await put(1, 12)
+    await put(2, 8)
+    await until(() => meeting.chunks[1]?.state === 'failed')
+    // Chunk 2 waits for chunk 1: indices are given in order only.
+    expect(meeting.segments.map((s) => s.chunk)).toEqual([0])
+    await rig.meetings.stop(meetingId)
+    await until(() => meeting.phase === 'done')
+    expect(meeting.segments.map((s) => [s.i, s.chunk])).toEqual([
+      [0, 0],
+      [1, 2],
+    ])
+  })
+})
+
+describe('the audio', () => {
+  it('is deleted once transcribed', async () => {
+    const rig = await engineRig()
+    const { send, meeting, dir } = await started(rig)
+    await send(0)
+    await until(() => meeting.chunks[0]?.state === 'done')
+    await until(async () => !(await present(join(dir, 'chunk-0.wav'))))
+    expect(meeting.segments).toHaveLength(1)
+  })
+
+  it('is kept when the profile keeps audio', async () => {
+    const rig = await engineRig({ profile: { keepAudio: true } })
+    const { send, meeting, dir } = await started(rig)
+    await send(0)
+    await until(() => meeting.chunks[0]?.state === 'done')
+    expect(await present(join(dir, 'chunk-0.wav'))).toBe(true)
+  })
+})
+
+describe('after a crash', () => {
+  it('a meeting left recording uploads every chunk on disk and finishes', async () => {
+    const first = await engineRig({ fetch: async () => new Response('', { status: 500 }) })
+    const { meetingId, dir } = await started(first, 'Crashed')
+    // A chunk the state knows, and one written as the crash came.
+    await first.meetings.chunk({
+      meetingId,
+      n: 0,
+      start: 0,
+      duration: 8,
+      audio: chunkWav(8),
+    })
+    await first.meetings.dispose()
+    await writeFile(join(dir, 'chunk-1.wav'), chunkWav(6, 'them'))
+    const state = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8'))
+    expect(state.meeting.phase).toBe('recording')
+
+    const again = await engineRig({ userData: first.userData, root: first.root })
+    const meeting = await again.meetings.get(meetingId)
+    await until(() => meeting.phase === 'done')
+    expect(meeting.chunks.map((c) => [c.n, c.start, c.duration, c.state])).toEqual([
+      [0, 0, 8, 'done'],
+      [1, 8, 6, 'done'],
+    ])
+    expect(meeting.segments.map((s) => [s.i, s.speaker])).toEqual([
+      [0, 'Me'],
+      [1, 'Them'],
+    ])
+    expect(again.meetings.list()).toEqual([
+      expect.objectContaining({ id: meetingId, phase: 'done', title: 'Crashed' }),
+    ])
+    expect((await readdir(dir)).filter((f) => f.endsWith('.wav'))).toEqual([])
+  })
+
+  it('a meeting of another vault is not this one’s', async () => {
+    const first = await engineRig()
+    await started(first)
+    await first.meetings.dispose()
+    const dir = join(first.userData, 'meetings')
+    const [id] = await readdir(dir)
+    const path = join(dir, id!, 'state.json')
+    const state = JSON.parse(await readFile(path, 'utf8'))
+    await writeFile(path, JSON.stringify({ ...state, remote: 'someone/else' }))
+    const again = await engineRig({ userData: first.userData })
+    expect(again.meetings.list()).toEqual([])
+    await expect(again.meetings.get(id!)).rejects.toMatchObject({ code: 'NOT_FOUND' })
+  })
+})
+
+describe('the vault files', () => {
+  it('are the transcript and private minutes, rendered from the groups, in the meeting’s folder', async () => {
+    const rig = await engineRig({
+      launch: async () => ({ ok: true, sessionId: SCRIBE }),
+    })
+    const { send, meeting } = await started(rig, 'Plan: Q1/Q2?')
+    expect(meeting.folder).toMatch(/^Meetings\/\d{4}-\d\d-\d\d Plan Q1 Q2$/)
+    await send(0)
+    await until(() => meeting.segments.length === 1)
+    // The first line opens the first group, and the minutes show it as Now.
+    expect(meeting.topics).toEqual([expect.objectContaining({ id: 't0', open: true })])
+    await until(() => rig.writes.has(`${meeting.folder}/minutes.local.md`))
+    expect(rig.writes.get(`${meeting.folder}/transcript.local.md`)).toContain(
+      '**Mic audio** · 0:00',
+    )
+    expect(rig.writes.get(`${meeting.folder}/transcript.local.md`)).toContain('## Now · 0:00')
+    expect(rig.writes.get(`${meeting.folder}/transcript.local.md`)).toContain('said 1')
+    expect(rig.writes.get(`${meeting.folder}/minutes.local.md`)).toBe(
+      '## Topics\n\n### Now (from 0:00)\n',
+    )
+    expect(meeting.minutes).toBe('## Topics\n\n### Now (from 0:00)\n')
+  })
+
+  it('share the minutes when the profile says so', async () => {
+    const rig = await engineRig({
+      profile: { shareMinutes: true },
+      launch: async () => ({ ok: true, sessionId: SCRIBE }),
+    })
+    const { meeting, send } = await started(rig)
+    await send(0)
+    await until(() => rig.writes.has(`${meeting.folder}/minutes.md`))
+    expect(rig.writes.has(`${meeting.folder}/minutes.local.md`)).toBe(false)
+  })
+
+  it('of a meeting saved before groups keep the minutes its scribe wrote', async () => {
+    const first = await engineRig()
+    const { meetingId, dir, send, meeting } = await started(first, 'Old')
+    await send(0)
+    await until(() => meeting.segments.length === 1)
+    await first.meetings.stop(meetingId)
+    await until(() => meeting.phase === 'done')
+    await first.meetings.dispose()
+    const path = join(dir, 'state.json')
+    const state = JSON.parse(await readFile(path, 'utf8'))
+    state.meeting.minutes = '## Status\n\n- The scribe wrote this'
+    delete state.meeting.topics
+    await writeFile(path, JSON.stringify(state))
+
+    const again = await engineRig({ userData: first.userData, root: first.root })
+    const old = await again.meetings.get(meetingId)
+    expect(old.topics).toEqual([])
+    await again.meetings.editSegment(meetingId, 0, 'Corrected')
+    expect(old.minutes).toBe('## Status\n\n- The scribe wrote this')
+  })
+
+  it('read a group saved with a one-sentence summary as a list', async () => {
+    const first = await engineRig()
+    const { meetingId, dir, send, meeting } = await started(first)
+    await send(0)
+    await until(() => meeting.segments.length === 1)
+    await first.meetings.dispose()
+    const path = join(dir, 'state.json')
+    const state = JSON.parse(await readFile(path, 'utf8'))
+    state.meeting.phase = 'done'
+    state.meeting.topics = [
+      {
+        id: 't0',
+        title: 'Budget',
+        summary: 'One line.',
+        keywords: ['a', 'b'],
+        lines: [0],
+        start: 0,
+        end: 2,
+      },
+    ]
+    await writeFile(path, JSON.stringify(state))
+    const again = await engineRig({ userData: first.userData, root: first.root })
+    expect((await again.meetings.get(meetingId)).topics[0]).toMatchObject({
+      summary: ['One line.'],
+      open: false,
+      decisions: [],
+      questions: [],
+      suggestions: [],
+    })
+  })
+
+  it('a second meeting of the same name on the same day gets a folder of its own', async () => {
+    const rig = await engineRig()
+    const a = await started(rig, 'Standup')
+    const b = await started(rig, 'Standup')
+    expect(b.meeting.folder).toBe(`${a.meeting.folder} (2)`)
+  })
+
+  it('the renderer hears the meeting, at most four times a second, and the list', async () => {
+    const rig = await engineRig()
+    const { send, meeting } = await started(rig)
+    await send(0)
+    await send(1)
+    const heard = () => rig.emitted.filter(([name]) => name === 'meeting')
+    await until(() => (heard().at(-1)?.[1] as MeetingState | undefined)?.segments.length === 2)
+    const at = heard()
+    expect(at.length).toBeGreaterThan(1)
+    at.slice(1).forEach(([, , t], k) => expect(t - at[k]![2]).toBeGreaterThanOrEqual(250))
+    const lists = rig.emitted.filter(([name]) => name === 'meetings')
+    expect(lists.at(-1)![1]).toEqual([expect.objectContaining({ id: meeting.id, cards: 0 })])
+  })
+})
+
+describe('starting', () => {
+  it('names an untitled meeting by the time it started', async () => {
+    const rig = await engineRig()
+    await mkdir(join(rig.userData, 'meetings'), { recursive: true })
+    const { meetingId } = await rig.meetings.start({ profileId: 'default' })
+    expect((await rig.meetings.get(meetingId)).title).toMatch(/^Meeting \d\d\.\d\d$/)
+  })
+})
+
+describe('without a speech key that works', () => {
+  /** A key that can be set and taken away while the engine runs. */
+  function keyed(initial: string | null) {
+    let key = initial
+    return {
+      apiKey: async () => key,
+      set: (next: string | null) => {
+        key = next
+      },
+    }
+  }
+
+  it('keeps the chunks queued, untried, until a key is set, then uploads them', async () => {
+    const key = keyed(null)
+    const rig = await engineRig({ apiKey: key.apiKey })
+    const { send, meeting } = await started(rig)
+    await send(0)
+    await send(1)
+    await until(() => meeting.blocked === 'no-key')
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    await settle()
+    expect(rig.service.fetch).not.toHaveBeenCalled()
+    expect(meeting.chunks.map((c) => [c.state, c.tries])).toEqual([
+      ['queued', 0],
+      ['queued', 0],
+    ])
+
+    key.set('hv_now_there_is_one')
+    rig.meetings.wake()
+    await until(() => meeting.segments.length === 2)
+    expect(chunkStates(meeting)).toEqual(['done', 'done'])
+    expect(meeting.blocked).toBeUndefined()
+    expect(rig.service.fetch.mock.calls[0]![1].headers).toEqual({
+      Authorization: 'Bearer hv_now_there_is_one',
+    })
+  })
+
+  it('takes a 401 as a refused key, not tried again until the key changes', async () => {
+    const key = keyed('hv_revoked_key_000000')
+    let calls = 0
+    const rig = await engineRig({
+      apiKey: key.apiKey,
+      fetch: async (_url, init) => {
+        calls++
+        const auth = (init.headers as Record<string, string>)['Authorization']
+        return auth === 'Bearer hv_revoked_key_000000'
+          ? new Response('{"error":"invalid api key"}', { status: 401 })
+          : Response.json({ segments: [{ start: 0, end: 2, text: 'Hej' }] })
+      },
+    })
+    const { send, meeting } = await started(rig)
+    await send(0)
+    await until(() => meeting.blocked === 'bad-key')
+    // A chunk after it is not sent with the key refused.
+    await send(1)
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    await settle()
+    expect(calls).toBe(1)
+    expect(chunkStates(meeting)).toEqual(['queued', 'queued'])
+    expect(meeting.chunks[0]!.error).not.toContain('hv_revoked')
+
+    key.set('hv_a_good_one_00000000')
+    rig.meetings.wake()
+    await until(() => meeting.segments.length === 2)
+    expect(meeting.blocked).toBeUndefined()
+  })
+
+  it('a meeting stopped while blocked waits for its chunks, past the finishing cap', async () => {
+    const key = keyed(null)
+    const rig = await engineRig({ apiKey: key.apiKey })
+    const { send, meeting, meetingId } = await started(rig)
+    await send(0)
+    await until(() => meeting.blocked === 'no-key')
+    await rig.meetings.stop(meetingId)
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    await settle()
+    expect(meeting.phase).toBe('finishing')
+    expect(chunkStates(meeting)).toEqual(['queued'])
+
+    key.set('hv_now_there_is_one')
+    rig.meetings.wake()
+    await until(() => meeting.phase === 'done')
+    expect(meeting.segments.map((s) => s.text)).toEqual(['said 1'])
+  })
+
+  it('a meeting left over from before a restart waits for the key too', async () => {
+    const first = await engineRig({ apiKey: async () => null })
+    const { meetingId } = await started(first, 'Crashed')
+    await first.meetings.chunk({ meetingId, n: 0, start: 0, duration: 8, audio: chunkWav(8) })
+    await first.meetings.dispose()
+
+    const key = keyed(null)
+    const again = await engineRig({
+      userData: first.userData,
+      root: first.root,
+      apiKey: key.apiKey,
+    })
+    const meeting = await again.meetings.get(meetingId)
+    await until(() => meeting.blocked === 'no-key')
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    await settle()
+    expect(meeting.phase).toBe('finishing')
+    expect(chunkStates(meeting)).toEqual(['queued'])
+
+    key.set('hv_now_there_is_one')
+    again.meetings.wake()
+    await until(() => meeting.phase === 'done')
+    expect(meeting.segments).toHaveLength(1)
+  })
+})
+
+describe('a meeting that ended failed for want of a key', () => {
+  const LEGACY = "SYV_API_KEY is not set in the vault's .env.local"
+
+  /** A meeting that ended as Holi left it before keys were its own: chunk 1
+   *  (12 s, so the fake can tell it apart) failed for the key, the rest as
+   *  `fail` says, the audio of every failed chunk still on disk. */
+  async function endedWithoutKey(phase: 'failed' | 'done') {
+    const first = await engineRig({
+      fetch: async (_url, init) => {
+        const file = (init.body as FormData).get('file') as Blob
+        return phase === 'failed' || file.size > 300_000
+          ? new Response('no', { status: 500 })
+          : Response.json({ segments: [{ start: 0, end: 2, text: `ok ${file.size}` }] })
+      },
+    })
+    const { meetingId, meeting, dir } = await started(first, 'Without key')
+    for (const [n, seconds] of [
+      [0, 8],
+      [1, 12],
+      [2, 8],
+    ] as const) {
+      await first.meetings.chunk({
+        meetingId,
+        n,
+        start: n * 8,
+        duration: seconds,
+        audio: chunkWav(seconds),
+      })
+    }
+    await until(() => meeting.chunks.filter((c) => c.state === 'failed').length > 0)
+    await first.meetings.stop(meetingId)
+    await until(() => meeting.phase === phase)
+    await first.meetings.dispose()
+    const path = join(dir, 'state.json')
+    const state = JSON.parse(await readFile(path, 'utf8'))
+    for (const c of state.meeting.chunks) if (c.state === 'failed') c.error = LEGACY
+    await writeFile(path, JSON.stringify(state))
+    return { first, meetingId, dir }
+  }
+
+  it('is transcribed again once a key is there, without a scribe, and its transcript written', async () => {
+    const { first, meetingId, dir } = await endedWithoutKey('failed')
+    const again = await engineRig({ userData: first.userData, root: first.root })
+    const meeting = await again.meetings.get(meetingId)
+    await until(() => meeting.phase === 'done')
+    expect(chunkStates(meeting)).toEqual(['done', 'done', 'done'])
+    expect(meeting.segments.map((s) => [s.i, s.chunk])).toEqual([
+      [0, 0],
+      [1, 1],
+      [2, 2],
+    ])
+    expect(again.agent.launch).not.toHaveBeenCalled()
+    expect(again.agent.message).not.toHaveBeenCalled()
+    await until(() => again.writes.has(`${meeting.folder}/transcript.local.md`))
+    expect(again.writes.get(`${meeting.folder}/transcript.local.md`)).toContain('said 3')
+    expect((await readdir(dir)).filter((f) => f.endsWith('.wav'))).toEqual([])
+  })
+
+  it('takes only the failed chunks into a done one, numbering their lines after the last', async () => {
+    const { first, meetingId, dir } = await endedWithoutKey('done')
+    const before = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8'))
+      .meeting as MeetingState
+    expect(before.segments.map((s) => s.chunk)).toEqual([0, 2])
+
+    const again = await engineRig({ userData: first.userData, root: first.root })
+    const meeting = await again.meetings.get(meetingId)
+    await until(() => meeting.phase === 'done' && meeting.segments.length === 3)
+    expect(meeting.segments.map((s) => [s.i, s.chunk])).toEqual([
+      [0, 0],
+      [1, 2],
+      [2, 1],
+    ])
+  })
+
+  it('waits, blocked rather than failed, while there is still no key', async () => {
+    const { first, meetingId } = await endedWithoutKey('failed')
+    let key: string | null = null
+    const again = await engineRig({
+      userData: first.userData,
+      root: first.root,
+      apiKey: async () => key,
+    })
+    const meeting = await again.meetings.get(meetingId)
+    await until(() => meeting.blocked === 'no-key')
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    await settle()
+    expect(meeting.phase).toBe('finishing')
+    expect(again.service.fetch).not.toHaveBeenCalled()
+
+    key = 'hv_now_there_is_one'
+    again.meetings.wake()
+    await until(() => meeting.phase === 'done')
+    expect(meeting.segments).toHaveLength(3)
+  })
+})

@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path'
 import {
   app,
   BrowserWindow,
+  desktopCapturer,
   dialog,
   ipcMain,
   nativeImage,
@@ -506,6 +507,28 @@ async function main(): Promise<void> {
    */
   electronSession.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => {
     callback(permission !== 'geolocation')
+  })
+  /**
+   * `getDisplayMedia`, which Electron refuses unless a handler answers it. The
+   * asker is Holi's own document: the Meetings tab recording the meeting's
+   * sound (`plugins/transcribe/renderer/audio/capture.ts`). A frame's request
+   * (a vault app's, whose origin is opaque) is refused, so only a top-level
+   * document is answered. It shares the main screen, with the system's sound
+   * when audio was asked for.
+   */
+  electronSession.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    // No streams is how Electron is told no: `{}` throws when video was asked
+    // for. The typings do not say so.
+    const refuse = (): void => (callback as unknown as (streams: null) => void)(null)
+    if (request.frame === null || request.frame.parent !== null) return refuse()
+    desktopCapturer
+      .getSources({ types: ['screen'] })
+      .then(([screen]) => {
+        if (screen === undefined) return refuse()
+        callback({ video: screen, ...(request.audioRequested ? { audio: 'loopback' } : {}) })
+      })
+      // On macOS: Holi has not been allowed Screen & System Audio Recording.
+      .catch(refuse)
   })
   // Settings' member list reads the same cache as an app and the agent.
   const members = createMembersCache((remote) => session.api.collaborators(remote))

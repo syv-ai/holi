@@ -99,6 +99,7 @@
     "motion-panels": "0.6.1",
     "next-themes": "^0.4.6",
     "node-pty": "^1.0.0",
+    "onnxruntime-web": "1.30.0",
     "prosemirror-search": "^1.1.1",
     "radix-ui": "^1.6.7",
     "react": "^19.2.8",

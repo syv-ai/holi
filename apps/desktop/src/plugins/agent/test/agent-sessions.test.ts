@@ -366,7 +366,7 @@ describe('launched sessions', () => {
   it('start with their options and no terminal', async () => {
     const { sessions, cli, opened, attach } = setup()
     await attach()
-    const args = { name: 'Tidy', prompt: 'tidy the inbox', model: 'opus' }
+    const args = { name: 'Tidy', prompt: 'tidy the inbox', model: 'opus', deny: ['WebFetch'] }
     expect(await sessions.launch(args)).toEqual({ ok: true, sessionId: 'launch00' })
     expect(cli.startBg).toHaveBeenCalledWith(expect.anything(), args)
     expect(opened).toEqual([])

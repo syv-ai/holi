@@ -1,0 +1,106 @@
+/**
+ * Transcribe's main side (docs/features/meetings.md): the meeting engine
+ * (chunks in, transcript, topics, minutes and tasks out), its scribe
+ * session, the tasks sent from it, and this machine's meeting profiles.
+ *
+ * The scribe and the tasks sent are agent sessions (`agent.launch`,
+ * `agent.message`), and a sent task is a task file (`tasks.create`): it
+ * requires both, and
+ * hears the agent's session list and turn ends (`ctx.hear`).
+ *
+ * The speech key is this machine's (`speech-key.ts`), so a key saved in one
+ * vault's Meetings tab wakes every vault's waiting uploads.
+ */
+import { join } from 'node:path'
+import { jsonFileStore, readVaultEnv, type MainPlugin } from '../../../main/plugin-api'
+import { TRANSCRIBE_INFO } from '../info'
+import { meetingCapabilities, MEETING_NAMESPACES } from './capabilities'
+import { createMeetings } from './engine'
+import { createProfiles, parseProfilesFile } from './profiles'
+import type { Launched } from './scribe'
+import { createSpeechKey } from './speech-key'
+import { createSileroVad, dataUrlBytes } from './silero'
+import SILERO_VAD from './assets/silero-vad.onnx?url&inline'
+import { removeVaultFiles, writeVaultText } from './vault-write'
+
+/** Each running vault's engine, woken when the machine's speech key changes. */
+const wakers = new Set<() => void>()
+
+export const transcribeMain: MainPlugin = {
+  info: TRANSCRIBE_INFO,
+  async activate(ctx) {
+    // This machine's, outside any vault: a profile names the MCP config and
+    // models its sessions start with, which the agent must not choose.
+    const profiles = createProfiles(
+      jsonFileStore(join(ctx.userData, 'meeting-profiles.json'), parseProfilesFile),
+    )
+    // The keychain: Electron, loaded only when the plugin starts (after
+    // `whenReady`), so the module stays importable under plain Node.
+    const { speechKeyStore } = await import('./electron')
+    const fetchImpl = (url: string, init: RequestInit) => fetch(url, init)
+    const speechKey = createSpeechKey({
+      store: speechKeyStore(ctx.userData),
+      vaultEnv: () => readVaultEnv(ctx.root),
+      fetch: fetchImpl,
+      changed: () => {
+        for (const wake of wakers) wake()
+      },
+    })
+    const meetings = createMeetings({
+      dir: join(ctx.userData, 'meetings'),
+      remote: ctx.remote,
+      root: ctx.root,
+      profiles,
+      fetch: fetchImpl,
+      apiKey: () => speechKey.resolve(),
+      writeFile: (rel, text) => writeVaultText(ctx.root, rel, text),
+      removeFiles: (rels, folder) => removeVaultFiles(ctx.root, rels, folder),
+      emit: (name, payload) => ctx.emit(ctx.remote, name, payload),
+      agent: {
+        launch: async (args) => (await ctx.call('agent.launch', args)) as Launched,
+        message: (session, text) => ctx.call('agent.message', { session, text }),
+        createTask: async (args) => (await ctx.call('tasks.create', args)) as { path: string },
+        updateTask: async ({ path, description }) => {
+          await ctx.call('tasks.update', { path, patch: { description } })
+        },
+        // Refused like any call while the Holis plugin is off, and by the
+        // Holis for one this machine has not approved.
+        sendToHoli: async (args) => (await ctx.call('holis.send', args)) as { sessionId: string },
+      },
+      // The activity log is what Holi did; what the transcript left out, and
+      // why, is for diagnosis: main's console, the Logs tab at debug.
+      log: (level, message) =>
+        level === 'debug' ? console.debug(`[transcribe] ${message}`) : ctx.log(level, message),
+      // The model is inlined into main's bundle, as seed binaries are.
+      vad: createSileroVad({
+        model: () => dataUrlBytes(SILERO_VAD),
+        log: (level, message) => ctx.log(level, message),
+      }),
+    })
+    const wake = () => meetings.wake()
+    wakers.add(wake)
+    const unsessions = ctx.hear('agent', 'sessions', (list) => meetings.scribe.hearSessions(list))
+    const unturns = ctx.hear('agent', 'turn-end', (p) => {
+      const id = (p as { id?: unknown } | null)?.id
+      if (typeof id === 'string') meetings.scribe.hearTurnEnd(id)
+    })
+    const unregister = ctx.register(
+      MEETING_NAMESPACES,
+      meetingCapabilities({ meetings, profiles, speechKey, remote: ctx.remote }),
+    )
+    await meetings.load()
+    // The list as it is now, for a meeting picked up from before: the
+    // agent's news keeps it after.
+    void ctx
+      .call('agent.sessions', {})
+      .then((list) => meetings.scribe.hearSessions(list))
+      .catch(() => {})
+    return async () => {
+      wakers.delete(wake)
+      unsessions()
+      unturns()
+      unregister()
+      await meetings.dispose()
+    }
+  },
+}
