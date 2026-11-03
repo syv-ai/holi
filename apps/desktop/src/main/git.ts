@@ -547,8 +547,22 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       (p) => p !== MEMORY_INDEX && isSharedMemoryPath(p) && !keep.includes(p),
     )
     if (stages.has(MEMORY_INDEX) && !memoryStillUnmerged) {
-      await writeMemoryIndex(root)
-      await runGit(root, ['add', '--', MEMORY_INDEX], opts)
+      // A dirty shared memory may be held back by the large-file gate. It is
+      // not part of the merge's staged tree, so indexing the worktree here
+      // would commit metadata for an edit that this merge must leave behind.
+      const unstaged = await runGit(root, ['diff', '--name-only', '-z'], opts)
+      const untracked = await runGit(
+        root,
+        ['ls-files', '--others', '--exclude-standard', '-z'],
+        opts,
+      )
+      const heldBackMemory = `${unstaged}${untracked}`
+        .split('\0')
+        .some((path) => path !== '' && isSharedMemoryPath(path) && !stages.has(path))
+      if (!heldBackMemory) {
+        await writeMemoryIndex(root)
+        await runGit(root, ['add', '--', MEMORY_INDEX], opts)
+      }
     }
     const raw = await runGit(root, ['diff', '--name-only', '--diff-filter=U', '-z'], opts).catch(
       () => '',

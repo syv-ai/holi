@@ -3,15 +3,19 @@
  * describes. It runs at the commit boundary so the index is never a
  * follow-up commit, and a burst of memory writes yields one correct index.
  *
- * **Gated on the diff, but indexed from the tree.** The staged set decides
- * *whether* to run, so the common edit-only commit costs nothing; `listFiles`
- * decides *what* goes in, or unrelated memories would drop out.
+ * **Gated on the diff, then indexed from the tree only when it matches the
+ * staged memory tree.** The staged set decides *whether* to run, so the common
+ * edit-only commit costs nothing; `listFiles` decides *what* goes in, or
+ * unrelated memories would drop out. If an unstaged or untracked shared memory
+ * differs from what this commit can contain, defer rather than leak its metadata.
  *
  * A memory past its `expires` is left out (docs/features/agent-memory.md). The
  * file itself stays: shared memory is never deleted unattended, so the memory
  * lint reports it for the agent to propose deleting.
  */
+import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
+import { promisify } from 'node:util'
 import {
   MEMORY_INDEX,
   isExpiredMemory,
@@ -24,6 +28,8 @@ import {
 import { absPathFor, listFiles, writeAtomic } from '../vault-files'
 import type { StagedChanges } from './staged'
 import type { TransformResult } from './relink'
+
+const exec = promisify(execFile)
 
 /**
  * Whether this commit touches a memory the index would list.
@@ -44,12 +50,33 @@ function touchesSharedMemory(staged: StagedChanges): boolean {
   )
 }
 
+/**
+ * Whether any shared memory in the working tree is not represented by the
+ * staged tree. Autosave holds oversized files back, but a transform that scans
+ * the working tree must not let their metadata leak into this commit's index.
+ */
+async function hasUnstagedSharedMemory(root: string): Promise<boolean> {
+  const [unstaged, untracked] = await Promise.all([
+    exec('git', ['diff', '--name-only', '-z', '--', '.holi/memory'], { cwd: root }),
+    exec('git', ['ls-files', '--others', '-z', '--', '.holi/memory'], { cwd: root }),
+  ])
+  return [...unstaged.stdout.split('\0'), ...untracked.stdout.split('\0')].some(
+    (path) => path !== '' && isSharedMemoryPath(path),
+  )
+}
+
 export async function memoryIndex(
   root: string,
   staged: StagedChanges,
   now = new Date(),
 ): Promise<TransformResult> {
   if (!touchesSharedMemory(staged)) return { changed: [], notes: [] }
+  if (await hasUnstagedSharedMemory(root)) {
+    return {
+      changed: [],
+      notes: ['memory-index: deferred because shared memory differs from the staged tree'],
+    }
+  }
   const { changed, count } = await writeMemoryIndex(root, now)
   if (!changed) {
     return { changed: [], notes: [`memory-index: ${count} memory file(s), index unchanged`] }

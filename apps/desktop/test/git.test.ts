@@ -503,6 +503,26 @@ describe('pull', () => {
     expect(index).not.toContain('<<<<<<<')
   })
 
+  it('does not index a held-back shared memory edit while settling an index conflict', async () => {
+    const { ours, theirs } = await pair()
+    const memory = (description: string) => `---\ntype: note\ndescription: ${description}\n---\n`
+    for (const repo of [ours, theirs]) {
+      await mkdir(join(repo, '.holi/memory'), { recursive: true })
+    }
+    await writeFile(join(ours, '.holi/memory/local.md'), memory('base'), 'utf8')
+    await publish(theirs, '.holi/memory/index.md', '# Index\n\n- base\n')
+    await openRepo(ours).pull()
+    await writeFile(join(theirs, '.holi/memory/remote.md'), memory('remote'), 'utf8')
+    await publish(theirs, '.holi/memory/index.md', '# Index\n\n- base\n- remote\n')
+    await commitFile(ours, '.holi/memory/index.md', '# Index\n\n- base\n- local\n')
+    await writeFile(join(ours, '.holi/memory/local.md'), memory('held back'), 'utf8')
+
+    const result = await openRepo(ours).remerge()
+    expect(result).toEqual({ kind: 'conflict', paths: ['.holi/memory/index.md'] })
+    expect(await readFile(join(ours, '.holi/memory/local.md'), 'utf8')).toContain('held back')
+    expect((await openRepo(ours).status()).dirtyPaths).toContain('.holi/memory/local.md')
+  })
+
   it('leaves the memory index a conflict while a memory still holds markers', async () => {
     // The index is read from the tree, so rebuilding it now would list a
     // memory's conflict markers and mark the index resolved.
