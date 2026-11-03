@@ -391,6 +391,10 @@ async function main(): Promise<void> {
 
   const host = createVaultHost({
     registry,
+    // Do not initialise vault tools or agent sessions until the login shell's
+    // PATH has settled. This promise is started at launch; the window is not
+    // held behind it.
+    beforeOpen: () => loginPath,
     // A GETTER, not a string. Read lazily on every git operation, so a sign-out
     // takes effect on the next pull rather than the next restart.
     gitDeps: { token: () => session.token() },

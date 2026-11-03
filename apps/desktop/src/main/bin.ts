@@ -53,19 +53,22 @@ const runShell: RunShell = (shell, args) =>
   new Promise((resolve) => {
     let out = ''
     let settled = false
+    let leaderExited = false
     const child = spawn(shell, args, {
       detached: true,
       stdio: ['ignore', 'pipe', 'ignore'],
-      env: { ...process.env, HOLI_RESOLVING_ENVIRONMENT: '1' },
+      env: { ...process.env, PATH: toolPath(), HOLI_RESOLVING_ENVIRONMENT: '1' },
     })
     const done = (): void => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      try {
-        if (child.pid !== undefined) process.kill(-child.pid, 'SIGKILL')
-      } catch {
-        // The group has already exited.
+      if (!leaderExited) {
+        try {
+          if (child.pid !== undefined) process.kill(-child.pid, 'SIGKILL')
+        } catch {
+          // The group has already exited.
+        }
       }
       resolve(out)
     }
@@ -75,6 +78,9 @@ const runShell: RunShell = (shell, args) =>
       out = (out + chunk).slice(-64 * 1024)
     })
     child.on('error', done)
+    child.on('exit', () => {
+      leaderExited = true
+    })
     child.on('close', done)
   })
 

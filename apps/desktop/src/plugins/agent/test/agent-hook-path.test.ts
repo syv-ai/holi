@@ -97,8 +97,11 @@ describe('the agent finds node from a Dock-launched Holi', () => {
       return `welcome back\n__HOLI_LOGIN_PATH__/usr/bin:${dir}__HOLI_LOGIN_PATH__`
     })
     const { env, binDir } = await finderEnv()
+    const path = env.PATH!.split(':')
     expect(sh(env, 'holi-login-tool')).toBe('login-tool')
-    expect(env.PATH!.split(':')[0]).toBe(binDir)
+    expect(path[0]).toBe(binDir)
+    expect(path).toContain(dir)
+    expect(path.indexOf(dir)).toBeLessThan(path.indexOf(join(binDir, 'fallback')))
   })
 
   describe('every hook Holi seeds', () => {
