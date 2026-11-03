@@ -9,6 +9,7 @@ import {
   agentSessionsAtom,
   agentHistoryAtom,
   agentTerminalsAtom,
+  agentVault,
   askTargetsAtom,
   defaultAgentTargetAtom,
   type AgentSession,
@@ -29,6 +30,7 @@ import {
   activeRemoteAtom,
   activeSurfaceIdAtom,
   appModeAtom,
+  closeSurfaceTabAtom,
   openSurfaceAtom,
   surfaceTabIdsAtom,
 } from '@/plugin-api'
@@ -51,6 +53,9 @@ const start = vi.fn()
 const send = vi.fn()
 const stop = vi.fn()
 const duplicate = vi.fn()
+const detach = vi.fn()
+/** The vault's opening lists, which these tests never answer. */
+const pending = () => new Promise<never>(() => {})
 
 vi.mock('../renderer/agent-cap', () => ({
   agentCap: {
@@ -59,11 +64,15 @@ vi.mock('../renderer/agent-cap', () => ({
     send: (_remote: string, args: unknown) => send(args),
     stop: (_remote: string, { id }: { id: string }) => stop(id),
     duplicate: (_remote: string, args: unknown) => duplicate(args),
+    detach: (remote: string, { id }: { id: string }) => detach(remote, id),
+    history: () => pending(),
+    sessions: () => pending(),
+    terminals: () => pending(),
   },
 }))
 
 beforeEach(() => {
-  for (const fn of [open, start, send, stop, duplicate]) fn.mockReset()
+  for (const fn of [open, start, send, stop, duplicate, detach]) fn.mockReset()
   open.mockResolvedValue({ ok: true, terminalId: 'opened' })
   start.mockResolvedValue({ ok: true, sessionId: 'newnew00', terminalId: 'started' })
   send.mockResolvedValue({ ok: true, terminalId: 'sent' })
@@ -257,4 +266,41 @@ test('a list tab has no session of its own, so the default falls back to the las
   const store = storeWith([session({ id: 'a' })], [terminal('t-a', 'a'), terminal('t-list', null)])
   store.set(openSurfaceAtom, 'agent', 't-list')
   expect(store.get(defaultAgentTargetAtom)).toBe('a')
+})
+
+test('closing a session tab in the strip detaches its terminal', () => {
+  const store = storeWith([session({ id: 'a' })], [terminal('t-a', 'a')])
+  const stopVault = agentVault('o/vault', store)
+  store.set(openSurfaceAtom, 'agent', 't-a')
+
+  store.set(closeSurfaceTabAtom, 'agent', 't-a')
+
+  expect(detach).toHaveBeenCalledWith('o/vault', 't-a')
+  stopVault()
+})
+
+test('switching vaults detaches none of the old vault’s terminals', () => {
+  const store = storeWith([session({ id: 'a' })], [terminal('t-a', 'a')])
+  const stopVault = agentVault('o/vault', store)
+  store.set(openSurfaceAtom, 'agent', 't-a')
+
+  // The strip changes with the vault before the plugin's vault is torn down.
+  store.set(activeRemoteAtom, 'o/other')
+  stopVault()
+
+  expect(detach).not.toHaveBeenCalled()
+  store.set(activeRemoteAtom, 'o/vault')
+  expect(store.get(surfaceTabIdsAtom('agent'))).toEqual(['t-a'])
+})
+
+test('a terminal that left main’s list takes its tab out of the strip', () => {
+  const store = storeWith([session({ id: 'a' })], [terminal('t-a', 'a'), terminal('t-b', null)])
+  const stopVault = agentVault('o/vault', store)
+  store.set(openSurfaceAtom, 'agent', 't-a')
+  store.set(openSurfaceAtom, 'agent', 't-b')
+
+  store.set(agentTerminalsAtom, [terminal('t-b', null)])
+
+  expect(store.get(surfaceTabIdsAtom('agent'))).toEqual(['t-b'])
+  stopVault()
 })

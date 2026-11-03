@@ -139,7 +139,7 @@ export const browserEvents: Readonly<Record<string, PluginEventHandler>> = {
  * each page is.
  */
 export function browserVault(remote: string, store: PluginStore): () => void {
-  const tabs = surfaceTabIdsAtom(BROWSER_SURFACE)
+  const tabs = surfaceTabIdsAtom(BROWSER_SURFACE, remote)
   const asked = store.get(pagesAtom)
   let stopped = false
 
@@ -167,6 +167,7 @@ export function browserVault(remote: string, store: PluginStore): () => void {
         closeSurfaceTabsAtom,
         BROWSER_SURFACE,
         store.get(tabs).filter((id) => !lost.includes(id)),
+        remote,
       )
     }
   })
@@ -184,6 +185,7 @@ export function browserVault(remote: string, store: PluginStore): () => void {
         closeSurfaceTabsAtom,
         BROWSER_SURFACE,
         store.get(tabs).filter((id) => !gone.includes(id)),
+        remote,
       )
     }
     const saved = savedAddresses()
@@ -193,7 +195,8 @@ export function browserVault(remote: string, store: PluginStore): () => void {
   })
 
   // Closing the last tab onto a page closes the page. Diffed across each
-  // change, so a tab moved between panes is not a close.
+  // change of this vault's tabs, so a tab moved into or out of a split is
+  // not a close, and neither is switching to another vault.
   let open = new Set(store.get(tabs))
   const offTabs = store.sub(tabs, () => {
     const now = new Set(store.get(tabs))

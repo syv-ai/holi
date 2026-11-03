@@ -278,14 +278,16 @@ export function agentVault(remote: string, store: PluginStore): () => void {
       closeSurfaceTabsAtom,
       AGENT_SURFACE,
       store.get(agentTerminalsAtom).map((t) => t.id),
+      remote,
     ),
   )
 
   // Closing an agent tab only ends its window (the session keeps running);
   // without a detach the PTY would linger in main's list, which the palette
-  // and the reuse paths read. Diffed across each change of the open tabs, so
-  // a tab moved between panes is not a close.
-  const tabs = surfaceTabIdsAtom(AGENT_SURFACE)
+  // and the reuse paths read. Diffed across each change of this vault's open
+  // tabs, so a tab moved into or out of a split is not a close, and neither
+  // is switching to another vault (its strip is not this one's).
+  const tabs = surfaceTabIdsAtom(AGENT_SURFACE, remote)
   let open = new Set(store.get(tabs))
   const offTabs = store.sub(tabs, () => {
     const now = new Set(store.get(tabs))
