@@ -71,7 +71,7 @@ function setup(
     idleMs: 100,
     log: () => {},
   })
-  return { sessions, opened, closed, pastes, edges, asked, lists, targets }
+  return { sessions, opened, closed, pastes, edges, asked, lists, targets, provider }
 }
 
 describe('nameOf', () => {
@@ -340,6 +340,44 @@ describe('sessions Holi runs', () => {
     expect(t.edges).toEqual([])
 
     await t.sessions.stop(res.sessionId)
+    expect(t.sessions.sessions()).toEqual([])
+  })
+
+  it('does not create a sign-in terminal when the vault is left during configuration', async () => {
+    const t = setup('codex', undefined, {
+      background: {} as NonNullable<AgentProvider['capabilities']['background']>,
+    })
+    let finish!: (value: { dir: string }) => void
+    t.provider.configure = () => new Promise((resolve) => (finish = resolve))
+
+    const starting = t.sessions.start('codex', { login: true })
+    const leaving = t.sessions.leave()
+    finish({ dir: '/home/.codex' })
+
+    await leaving
+    expect(await starting).toMatchObject({ ok: false })
+    expect(t.opened).toEqual([])
+    expect(t.sessions.sessions()).toEqual([])
+  })
+
+  it('does not create a sign-in terminal when the vault is left during the first-spawn notice', async () => {
+    const t = setup('codex', undefined, {
+      background: {} as NonNullable<AgentProvider['capabilities']['background']>,
+    })
+    let finish!: (value: boolean) => void
+    t.provider.firstSpawn = {
+      take: () => new Promise((resolve) => (finish = resolve)),
+      notice: 'Sign in',
+    }
+
+    const starting = t.sessions.start('codex', { login: true })
+    for (let i = 0; i < 10 && finish === undefined; i++) await Promise.resolve()
+    const leaving = t.sessions.leave()
+    finish(true)
+
+    await leaving
+    expect(await starting).toMatchObject({ ok: false })
+    expect(t.opened).toEqual([])
     expect(t.sessions.sessions()).toEqual([])
   })
 

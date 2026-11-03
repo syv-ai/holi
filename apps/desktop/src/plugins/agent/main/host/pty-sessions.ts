@@ -236,6 +236,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
   /** A sign-in still starting, by provider. */
   const signingIn = new Map<ProviderId, Promise<StartResult>>()
   const configured = new Map<ProviderId, Promise<{ dir: string } | null>>()
+  let left = false
   let lastPushed = ''
 
   const stateOf = (s: Session): SessionState =>
@@ -326,6 +327,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       }
     }
     const config = await configure(provider)
+    if (left) return { ok: false, message: 'That vault has been left.' }
     if (config === null) {
       return { ok: false, message: `${provider.label} could not be set up for this vault.` }
     }
@@ -410,6 +412,10 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       return { ok: false, message: (err as Error).message }
     }
     const notice = await firstSpawnNotice(provider, config.dir)
+    if (left) {
+      signals.dispose()
+      return { ok: false, message: 'That vault has been left.' }
+    }
     const opened = deps.terminals.open({
       remote: deps.vault.remote,
       cwd: fence?.dir ?? deps.vault.root,
@@ -637,6 +643,11 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
     providerOf: (id) => sessions.get(id)?.provider ?? null,
 
     async leave() {
+      left = true
+      // A sign-in may still be configuring its CLI or reading its first-spawn
+      // notice. Drain it before closing sessions so it cannot open a terminal
+      // into the vault after leave has returned.
+      await Promise.all([...signingIn.values()])
       await Promise.all([...sessions.values()].map((s) => deps.terminals.close(s.terminalId)))
       await pastQueue
       for (const s of sessions.values()) s.signals.dispose()
