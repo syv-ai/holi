@@ -735,6 +735,9 @@ describe('ActiveVault — commit', () => {
     // Autosave pauses during a reconcile, and while paused the vault
     // says so.
     const { active, dir } = await vault(quick)
+    // Opening schedules a post-listening rescan and its initial commit check.
+    // Let that startup work drain before taking the pause test's baseline.
+    await sleep(SETTLE)
     const before = await count(dir)
 
     active.pause('reconciling')
@@ -743,15 +746,20 @@ describe('ActiveVault — commit', () => {
     expect(await count(dir)).toBe(before)
     expect(active.syncState()).toEqual({ kind: 'paused', reason: 'reconciling', manual: true })
 
-    active.resume()
+    // Queue both edits while paused, so resume owns one deterministic flush.
+    // Writing after resume would race retry()'s immediate maybeCommit(): two
+    // commits would then be valid, not evidence of a duplicate commit.
     await writeFile(join(dir, 'after.md'), 'y\n', 'utf8')
-    // Asserted on the OUTCOME rather than on a commit count: whether the work
-    // held back during the pause and the work done after it coalesce into one
-    // commit or land as two is a timing detail, and not what this test is about.
+    active.resume()
     await waitFor('the work to be committed after resuming', async () => {
       const tracked = await plainGit(dir, ['ls-tree', '-r', '--name-only', 'HEAD'])
       return tracked.includes('during.md') && tracked.includes('after.md')
     })
+    await sleep(SETTLE)
+    expect(await count(dir)).toBe(before + 1)
+    const tracked = await plainGit(dir, ['ls-tree', '-r', '--name-only', 'HEAD'])
+    expect(tracked).toContain('during.md')
+    expect(tracked).toContain('after.md')
     expect((await active.repo.status()).dirty).toBe(false)
   })
 
