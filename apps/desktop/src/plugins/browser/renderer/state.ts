@@ -15,7 +15,6 @@ import {
   closeSurfaceTabsAtom,
   openSurfaceAtom,
   surfaceTabIdsAtom,
-  type Command,
   type CommandMenuEntry,
   type PluginEventHandler,
   type PluginStore,
@@ -69,10 +68,6 @@ const newPageAtom = atom(null, async (get, set, url?: string): Promise<void> => 
   const page = await browserCap.open(remote, { shown: true, ...(url === undefined ? {} : { url }) })
   set(openSurfaceAtom, BROWSER_SURFACE, page.id)
 })
-
-export const BROWSER_COMMANDS: readonly Command[] = [
-  { id: 'browser.new', label: 'New browser tab', run: (_get, set) => void set(newPageAtom) },
-]
 
 export const browserMenuEntriesAtom = atom((): readonly CommandMenuEntry[] => [
   {

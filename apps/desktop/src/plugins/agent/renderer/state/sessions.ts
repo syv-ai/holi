@@ -125,7 +125,7 @@ const titleText = (terminal: AgentTerminal): string =>
   terminal.title.replace(/^[^\p{L}\p{N}]+\s+/u, '').trim()
 
 /** Claude Code titles its list `… claude agents`. */
-export const titleIsList = (terminal: AgentTerminal): boolean =>
+const titleIsList = (terminal: AgentTerminal): boolean =>
   /\bclaude agents$/.test(titleText(terminal))
 
 /**
@@ -283,8 +283,8 @@ export function agentVault(remote: string, store: PluginStore): () => void {
   )
 
   // Closing an agent tab only ends its window (the session keeps running);
-  // without a detach the PTY would linger in main's list, which the palette
-  // and the reuse paths read. Diffed across each change of this vault's open
+  // without a detach the PTY would linger in main's list, which the reuse
+  // paths read. Diffed across each change of this vault's open
   // tabs, so a tab moved into or out of a split is not a close, and neither
   // is switching to another vault (its strip is not this one's).
   const tabs = surfaceTabIdsAtom(AGENT_SURFACE, remote)

@@ -27,7 +27,6 @@ import type {
   SlashCommand,
   Surface,
 } from '@/state/plugin-types'
-import type { Command } from './commands'
 import type { FolderSurface } from './panes'
 import { vaultSettingsAtom } from './settings'
 import { activeRemoteAtom } from './vaults'
@@ -107,11 +106,6 @@ export const pluginSlashCommandsAtom = atom((get): readonly SlashCommand[] =>
   get(runningPluginsAtom).flatMap((p) =>
     p.slashCommands === undefined ? [] : get(p.slashCommands),
   ),
-)
-
-/** Every running plugin's commands, in list order. */
-export const pluginCommandsAtom = atom((get): readonly Command[] =>
-  get(runningPluginsAtom).flatMap((p) => p.commands ?? []),
 )
 
 /** What running plugins add to the ⌘K command menu, each with its plugin's

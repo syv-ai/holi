@@ -11,8 +11,7 @@
  */
 import { atom } from 'jotai'
 import { trpc } from '@/lib/trpc'
-import { openTabAtom } from './shell-tabs'
-import { activeDocAtom, activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
+import { activeRemoteAtom, loadSnapshotAtom } from './vaults'
 
 /**
  * Mint today's daily if it is not there yet, and say where it is. Lands on
@@ -27,21 +26,5 @@ export const ensureTodaysDailyAtom = atom(null, async (get, set): Promise<string
   if (!remote) return null
   const { path, created } = await trpc.notes.getOrCreateDaily.mutate({ remote })
   if (created) await set(loadSnapshotAtom)
-  return path
-})
-
-/**
- * Get-or-create today's daily for the active vault and land on it.
- * Returns the path, or null when there is no active vault. Opens the note
- * **pinned**: you are here to write in it, not browse it.
- *
- * **Unconditional.** The policy lives one layer up, in `state/home.ts`; anything
- * calling this is asking for today's note on purpose.
- */
-export const openTodaysDailyAtom = atom(null, async (get, set): Promise<string | null> => {
-  const path = await set(ensureTodaysDailyAtom)
-  if (path === null) return null
-  set(openTabAtom, { kind: 'doc', path })
-  set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === path) ?? null)
   return path
 })

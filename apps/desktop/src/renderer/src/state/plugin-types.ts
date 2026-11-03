@@ -9,7 +9,6 @@ import type { ComponentType } from 'react'
 import type { PluginInfo, VaultSnapshot } from '@holi/shared'
 export type { /** @public */ IconGlyph } from '@/lib/icon-glyph'
 import type { IconGlyph } from '@/lib/icon-glyph'
-import type { Command } from '@/state/commands'
 import type { PluginDialog } from '@/state/dialogs'
 
 /** What a slash command is given: the text it was typed over, the
@@ -129,9 +128,9 @@ export interface PathClaim {
 /**
  * A kind of tab that is not a file: the board, mail, settings
  * (docs/features/tabs-panes.md). A tab names it as `{kind: 'surface',
- * surface: kind, id?}`, and the pane, the tab strip, the palette, the "Open"
- * commands, Home and `holi.open` all read it from the registry, so a surface
- * whose plugin is off is simply not there.
+ * surface: kind, id?}`, and the pane, the tab strip, the command menu and
+ * `holi.open` all read it from the registry, so a surface whose plugin is off
+ * is simply not there.
  *
  * `kind` is its name: lowercase letters, digits and dashes (`isSurfaceName`).
  * `render` gets the tab's `id` for a surface that is one tab per thing, and
@@ -147,14 +146,13 @@ export interface Surface {
    *  active, so it keeps state a remount would lose (a terminal's
    *  scrollback). */
   keepMounted?: true
-  /** Its tabs open only from its plugin's own controls: the palette, the
-   *  Open commands and Home do not offer it. */
+  /** Its tabs open only from its plugin's own controls: the recents the
+   *  window reports leave it out. */
   unlisted?: true
   /** Offered as the `home` setting, and opened by it. */
   homeable?: true
-  /** The ids there are to open, most recently used first: the palette lists
-   *  them, the Home picker offers a folder document's, and its rail item
-   *  drills down to them. */
+  /** The ids there are to open, most recently used first: the command menu
+   *  and the Apps page list them. */
   instances?: Atom<readonly string[]>
   /** One instance's own words about itself, for its card on a launcher page
    *  (the Apps page); null when it has none. Read again as its files change. */
@@ -178,8 +176,8 @@ export interface Surface {
   /**
    * The tabs of it that exist now, and how each looks, for a surface whose
    * ids come and go outside the vault (an agent's terminals). The tab strip
-   * names and marks a tab from it, the palette lists every one, and a recent
-   * of one lives only while it is listed. Its tabs take the keyboard
+   * names and marks a tab from it, and a recent of one lives only while it is
+   * listed. Its tabs take the keyboard
    * themselves when they open.
    */
   tabs?: Atom<readonly SurfaceTabLook[]>
@@ -196,16 +194,6 @@ export interface SurfaceTabLook {
   tooltip?: string
   /** A background class for a dot drawn in place of the surface's icon. */
   dot?: string
-}
-
-/** Something the palette lists that is not a tab yet, such as a live agent
- *  session (`RendererPlugin.palette`).
- *  @public a plugin names it through `@/plugin-api`. */
-export interface PaletteItem {
-  key: string
-  name: string
-  /** A background class for the dot it is shown with. */
-  dot: string
 }
 
 /**
@@ -242,8 +230,6 @@ export interface RailItem {
    *  surface with instances is listed as a group of them, such as "Apps". */
   label?: string
   visible?: Atom<boolean>
-  /** Run this command (`state/commands.ts`) instead of opening the surface. */
-  command?: string
   /** While true, the item shows that something of the surface's is running. */
   live?: Atom<boolean>
 }
@@ -647,16 +633,6 @@ export interface RendererPlugin {
    *  the built-in commands (docs/features/editor.md). */
   slashCommands?: Atom<readonly SlashCommand[]>
   agent?: AgentServiceSource
-  /** Commands, run by id like core's (`state/commands.ts`), while it runs. */
-  commands?: readonly Command[]
-  /**
-   * What the palette lists beside the vault's files that is not a tab, and
-   * how one is opened: `open` gets its key, and focuses what it opens.
-   */
-  palette?: {
-    items: Atom<readonly PaletteItem[]>
-    open: WritableAtom<null, [key: string], unknown>
-  }
   /** Its rows in the ⌘K command menu, and how one runs. */
   commandMenu?: {
     entries: Atom<readonly CommandMenuEntry[]>

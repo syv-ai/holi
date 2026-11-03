@@ -1,16 +1,9 @@
 /**
- * Daily notes, renderer side — the mechanism, not the policy.
+ * Daily notes, renderer side: the mechanism, not the policy.
  *
- * `openTodaysDailyAtom` used to decide *whether* to mint a daily by asking
- * GitHub how many collaborators the vault had. It no longer decides anything:
- * the vault says so itself via `dailyNotes`, `state/home.ts` reads it, and
- * this layer is the verb. That is what makes ⌘⇧D still work in a vault that
- * keeps no daily notes automatically.
- *
- * What the collaborator check protected — never auto-creating a daily in a
- * shared vault — is now covered in `home.test.ts` against the setting, and
- * being offline is no longer a case at all: there is no network call left to
- * fail.
+ * `ensureTodaysDailyAtom` mints today's daily and says where it is, and
+ * decides nothing: that is what makes ⇧⌘D work in a vault whose `dailyNotes`
+ * is off. Being offline is no case at all: there is no network call to fail.
  */
 import { createStore } from 'jotai'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -20,10 +13,8 @@ import {
   type VaultSnapshot,
 } from '@holi/shared'
 import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
-import { shellWorkspaceAtom } from '@/state/shell-tabs'
-import { allTabs } from '@/state/shell-workspace'
 import { activeRemoteAtom } from '@/state/vaults'
-import { openTodaysDailyAtom } from '@/state/daily'
+import { ensureTodaysDailyAtom } from '@/state/daily'
 
 let holi: FakeHoli | null = null
 afterEach(() => {
@@ -48,8 +39,8 @@ const snap = (path: string): VaultSnapshot => ({
   ignored: [],
 })
 
-describe('openTodaysDailyAtom', () => {
-  it('creates it and opens its tab', async () => {
+describe('ensureTodaysDailyAtom', () => {
+  it('creates it and says where it is', async () => {
     holi = installFakeHoli((op) => {
       if (op.path === 'notes.getOrCreateDaily') return { path: '21-07-2026.md', created: true }
       if (op.path === 'vaults.snapshot') return snap('21-07-2026.md')
@@ -58,16 +49,15 @@ describe('openTodaysDailyAtom', () => {
     const store = createStore()
     store.set(activeRemoteAtom, 'me/notes')
 
-    expect(await store.set(openTodaysDailyAtom)).toBe('21-07-2026.md')
-    expect(allTabs(store.get(shellWorkspaceAtom))).toEqual(['21-07-2026.md'])
+    expect(await store.set(ensureTodaysDailyAtom)).toBe('21-07-2026.md')
+    expect(holi.calls.map((c) => c.path)).toContain('vaults.snapshot')
     expect(holi.calls.map((c) => c.path)).toContain('notes.getOrCreateDaily')
   })
 
   it('mints one even in a vault that would not have auto-created it', async () => {
-    // The new contract, and the reason the gate moved out. This atom is what
-    // ⌘⇧D calls, and ⌘⇧D has to work in a vault whose `dailyNotes` is off —
-    // otherwise "off" means "the feature is gone" rather than "stop doing this
-    // behind my back". Nothing here consults a setting at all.
+    // This atom is what ⇧⌘D calls, and ⇧⌘D has to work in a vault whose
+    // `dailyNotes` is off: otherwise "off" means "the feature is gone" rather
+    // than "stop doing this behind my back". Nothing here consults a setting.
     holi = installFakeHoli((op) => {
       if (op.path === 'settings.read') return settings({ dailyNotes: false })
       if (op.path === 'notes.getOrCreateDaily') return { path: '21-07-2026.md', created: true }
@@ -77,15 +67,13 @@ describe('openTodaysDailyAtom', () => {
     const store = createStore()
     store.set(activeRemoteAtom, 'org/shared')
 
-    expect(await store.set(openTodaysDailyAtom)).toBe('21-07-2026.md')
+    expect(await store.set(ensureTodaysDailyAtom)).toBe('21-07-2026.md')
     expect(holi.calls.map((c) => c.path)).toContain('notes.getOrCreateDaily')
   })
 
   it('asks nobody anything before minting', async () => {
-    // Offline-complete used to be a fallback: the collaborator check defaulted
-    // to "personal" when it threw, so daily notes worked on a plane by way of a
-    // timeout. It is now structural — there is no network call to fail, and no
-    // settings read on this path either.
+    // Offline-complete is structural: there is no network call to fail, and
+    // no settings read on this path either.
     holi = installFakeHoli((op) => {
       if (op.path === 'notes.getOrCreateDaily') return { path: '21-07-2026.md', created: false }
       if (op.path === 'vaults.snapshot') return snap('21-07-2026.md')
@@ -94,7 +82,7 @@ describe('openTodaysDailyAtom', () => {
     const store = createStore()
     store.set(activeRemoteAtom, 'me/notes')
 
-    expect(await store.set(openTodaysDailyAtom)).toBe('21-07-2026.md')
+    expect(await store.set(ensureTodaysDailyAtom)).toBe('21-07-2026.md')
     expect(holi.calls.map((c) => c.path)).not.toContain('github.collaborators')
     expect(holi.calls.map((c) => c.path)).not.toContain('settings.read')
   })
@@ -102,7 +90,7 @@ describe('openTodaysDailyAtom', () => {
   it('does nothing without an active vault', async () => {
     holi = installFakeHoli(() => undefined)
     const store = createStore()
-    expect(await store.set(openTodaysDailyAtom)).toBeNull()
+    expect(await store.set(ensureTodaysDailyAtom)).toBeNull()
     expect(holi.calls.map((c) => c.path)).not.toContain('notes.getOrCreateDaily')
   })
 })
