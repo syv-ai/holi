@@ -21,6 +21,9 @@ import {
 } from '@holi/shared'
 
 const TMP_MARKER = '.holi-tmp-'
+/** The `.gitignore` line for those files, at any depth. One killed mid-write
+ *  outlives its rename, and `git add -A` would publish it. */
+export const TMP_IGNORE_LINE = `${TMP_MARKER}*`
 const JUNK = new Set(OS_JUNK_FILES)
 
 export function absPathFor(root: string, rel: VaultRelPath): string {
