@@ -1261,6 +1261,8 @@ export interface VaultHost {
 
 export function createVaultHost(args: {
   registry: VaultRegistry
+  /** Work required before a vault can start its plugins or agent. */
+  beforeOpen?: () => Promise<void>
   gitDeps?: GitDeps
   /** What the scanner claims in the vault at `root` (`openActiveVault`). */
   claims: (root: string) => Promise<readonly ScanClaim[]>
@@ -1343,6 +1345,7 @@ export function createVaultHost(args: {
           args.onSyncState(current.syncState())
           return current
         }
+        await args.beforeOpen?.()
         await closeCurrent()
 
         const entry = (await args.registry.list()).find((e) => e.remote === remote)

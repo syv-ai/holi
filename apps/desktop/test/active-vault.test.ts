@@ -1630,6 +1630,36 @@ describe('VaultHost', () => {
     expect(held.at(-1)).toEqual([{ path: 'big.bin', bytes: 2000 }])
   })
 
+  it('waits for startup prerequisites before opening a vault', async () => {
+    const { registry } = await twoVaults()
+    let release!: () => void
+    const ready = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const h = createVaultHost({
+      claims: CLAIMS,
+      registry,
+      beforeOpen: () => ready,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+
+    let opened = false
+    const opening = h.open('syv-ai/a').then((vault) => {
+      opened = true
+      return vault
+    })
+    await sleep(0)
+    expect(opened).toBe(false)
+    expect(h.active()).toBeNull()
+
+    release()
+    const vault = await opening
+    expect(h.active()).toBe(vault)
+  })
+
   it('opens a vault and makes it active', async () => {
     const { registry } = await twoVaults()
     const { h } = host(registry)
