@@ -14,7 +14,8 @@ import { execFile } from 'node:child_process'
 import { appendFile, lstat, mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { notePathOfComments } from '@holi/shared'
+import { MEMORY_INDEX, appBundleOf, isAppDataPath, isSharedMemoryPath } from '@holi/shared'
+import { writeMemoryIndex } from './vault/hooks/memory-index'
 
 /**
  * A git command that ran and failed.
@@ -135,7 +136,14 @@ export type PullResult =
   /** `from` and `to` are HEAD before and after: what the merge brought in is
    *  the difference between them. */
   | { kind: 'merged'; commits: number; from: string; to: string }
-  | { kind: 'conflict'; paths: string[] }
+  | {
+      kind: 'conflict'
+      paths: string[]
+      /** A merge refused before it started names no paths; these are the
+       *  uncommitted files here that the incoming side changed, the ones in
+       *  its way. Empty when the refusal was something else. */
+      overwrites?: string[]
+    }
 
 type PushResult =
   | { kind: 'pushed'; commits: number; branch: string }
@@ -471,18 +479,30 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
 
     const merge = await tryGit(root, ['merge', '--no-edit', target], opts)
     if (!merge.ok) {
-      const paths = await settleKeptSidecars()
-      if (paths.length > 0 || !(await isMerging())) {
+      if (!(await isMerging())) {
+        // Refused before it started: git names no unmerged paths, only the
+        // uncommitted ones in its way, which are the incoming side's changes
+        // that are dirty here.
+        return { kind: 'conflict', paths: [], overwrites: await dirtyIncoming(target) }
+      }
+      // A settlement that throws must not leave markers and MERGE_HEAD behind
+      // for autosave to commit: a pull aborts, as it does on a conflict.
+      const paths = await settleOneAnswerConflicts().catch(async (err: unknown) => {
+        if (abortOnConflict) await abortMerge()
+        throw err
+      })
+      if (paths.length > 0) {
         if (abortOnConflict) await abortMerge()
         // Left in the tree for the reconcile otherwise.
         return { kind: 'conflict', paths }
       }
-      // Every conflict was a sidecar kept: the merge is whole, and committed
-      // as `git merge` commits one it finishes itself, with no pre-commit
-      // hook. Its changes were committed on both sides already, and the
-      // hook would hold this merge alone to a gate (large files) the clean
-      // ones skip. The transforms would keep the sidecar anyway: relink
-      // deletes none (`followNoteComments`).
+      // Every conflict had one answer and was settled: the merge is whole,
+      // and committed as `git merge` commits one it finishes itself, with no
+      // pre-commit hook. Its changes were committed on both sides already,
+      // and the hook would hold this merge alone to a gate (large files) the
+      // clean ones skip. The transforms would not undo the settlement: relink
+      // deletes no kept file (`followNoteComments`), and memory-index writes
+      // the index this merge just wrote.
       await runGit(root, [...(await identityArgs()), 'commit', '--no-verify', '--no-edit'], opts)
     }
 
@@ -500,14 +520,94 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
    * the paths still unmerged (`--diff-filter=U`, the paths git could not
    * decide).
    *
-   * A note's comment sidecar merges through its driver and never conflicts on
-   * content, but a modify/delete (the note deleted on one side, commented on
-   * on the other) never reaches a driver. The comment is kept: the sidecar
-   * that changed is staged as it is in the tree, which is where git left it.
-   * A thread whose note is gone is detached, not lost
-   * (docs/features/note-comments.md).
+   * Two kinds have one answer (docs/features/vaults-sync.md):
+   *
+   *   - **A file changed on one side and deleted on the other keeps the
+   *     change.** Deleting it would lose work; keeping it loses nothing, since
+   *     whoever deleted it can delete it again. A modify/delete never reaches
+   *     a merge driver, so this is also how a note's comment sidecar survives
+   *     its note being deleted (docs/features/note-comments.md). The changed
+   *     side is staged as it is in the tree, which is where git left it.
+   *     Which paths qualify is `keepsChangeOverDelete`.
+   *   - **`.holi/memory/index.md` is generated**, so whatever both sides did to
+   *     it, the index the merged tree's memories make is the answer. It is
+   *     written after the kept files are staged, so a kept memory is listed.
    */
-  async function settleKeptSidecars(): Promise<string[]> {
+  async function settleOneAnswerConflicts(): Promise<string[]> {
+    const stages = await unmergedStages()
+    const keep: string[] = []
+    for (const [path, s] of stages) {
+      if (keepsChangeOverDelete(path, s) && (await isFileInTree(path))) keep.push(path)
+    }
+    if (keep.length > 0) await runGit(root, ['add', '--', ...keep], opts)
+    // Read from the tree, so only once no memory there still holds markers;
+    // otherwise the index stays a conflict, and the commit that resolves the
+    // memory rebuilds it through the transform.
+    const memoryStillUnmerged = [...stages.keys()].some(
+      (p) => p !== MEMORY_INDEX && isSharedMemoryPath(p) && !keep.includes(p),
+    )
+    if (stages.has(MEMORY_INDEX) && !memoryStillUnmerged) {
+      // A dirty shared memory may be held back by the large-file gate. It is
+      // not part of the merge's staged tree, so indexing the worktree here
+      // would commit metadata for an edit that this merge must leave behind.
+      const unstaged = await runGit(root, ['diff', '--name-only', '-z'], opts)
+      const untracked = await runGit(
+        root,
+        ['ls-files', '--others', '--exclude-standard', '-z'],
+        opts,
+      )
+      const heldBackMemory = `${unstaged}${untracked}`
+        .split('\0')
+        .some((path) => path !== '' && isSharedMemoryPath(path) && !stages.has(path))
+      if (!heldBackMemory) {
+        await writeMemoryIndex(root)
+        await runGit(root, ['add', '--', MEMORY_INDEX], opts)
+      }
+    }
+    const raw = await runGit(root, ['diff', '--name-only', '--diff-filter=U', '-z'], opts).catch(
+      () => '',
+    )
+    return raw.split('\0').filter((p) => p !== '')
+  }
+
+  /**
+   * Whether a path one side changed and the other deleted keeps the change:
+   * stage 1 (base) and exactly one of 2 (ours) and 3 (theirs). Not the
+   * generated index, which is rebuilt instead, and not a vault app's record,
+   * whose deletion is a deliberate act its store made: that goes to reconcile
+   * (docs/features/vault-apps.md).
+   */
+  function keepsChangeOverDelete(path: string, stages: Set<string>): boolean {
+    if (path === MEMORY_INDEX) return false
+    const bundle = appBundleOf(path)
+    if (bundle !== null && isAppDataPath(path.slice(bundle.length + 1))) return false
+    return stages.has('1') && stages.has('2') !== stages.has('3')
+  }
+
+  /** A file (or link) git left at the path itself. A directory/file conflict
+   *  moves the file aside to `path~<side>`, which staging the bare path would
+   *  not keep, so that one stays a conflict for reconcile. */
+  async function isFileInTree(path: string): Promise<boolean> {
+    const s = await lstat(join(root, path)).catch(() => null)
+    return s !== null && (s.isFile() || s.isSymbolicLink())
+  }
+
+  /** The uncommitted paths here that the incoming side changed: what makes
+   *  `git merge` refuse before it starts. */
+  async function dirtyIncoming(target: string): Promise<string[]> {
+    const raw = await runGit(
+      root,
+      ['diff', '--name-only', '--no-renames', '-z', `HEAD...${target}`],
+      opts,
+    ).catch(() => '')
+    const incoming = new Set(raw.split('\0').filter((p) => p !== ''))
+    const dirty = await status()
+      .then((s) => s.dirtyPaths)
+      .catch(() => [])
+    return dirty.filter((p) => incoming.has(p))
+  }
+
+  async function unmergedStages(): Promise<Map<string, Set<string>>> {
     const unmerged = await runGit(root, ['ls-files', '-u', '-z'], opts).catch(() => '')
     // `<mode> <sha> <stage>\t<path>`: stage 1 base, 2 ours, 3 theirs.
     const stages = new Map<string, Set<string>>()
@@ -517,16 +617,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       const stage = entry.slice(0, tab).split(' ')[2] ?? ''
       stages.set(path, (stages.get(path) ?? new Set()).add(stage))
     }
-    const keep = [...stages]
-      .filter(
-        ([path, s]) => notePathOfComments(path) !== null && s.has('1') && s.has('2') !== s.has('3'),
-      )
-      .map(([path]) => path)
-    if (keep.length > 0) await runGit(root, ['add', '--', ...keep], opts)
-    const raw = await runGit(root, ['diff', '--name-only', '--diff-filter=U', '-z'], opts).catch(
-      () => '',
-    )
-    return raw.split('\0').filter((p) => p !== '')
+    return stages
   }
 
   /**

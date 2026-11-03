@@ -368,6 +368,10 @@ export async function openActiveVault(args: {
    * retries and re-aborts the same merge every interval, forever.
    */
   let conflictPaths: string[] | null = null
+  /** Why the last pull could not start and will not on its own: a held-back
+   *  file the incoming side changed. Not a pause on pulling, which goes on
+   *  trying every tick; set and cleared by each pull that reaches git. */
+  let pullRefused: string | null = null
   /** A reconcile the user asked for is running: `reconcile()` put the conflict
    *  back in the tree and it has not been finished or abandoned yet. Distinct
    *  from `conflictPaths` alone, which is also the sticky banner over a clean
@@ -497,6 +501,7 @@ export async function openActiveVault(args: {
     const blocked = blockedReason(status)
     if (blocked !== null) return { kind: 'paused', reason: blocked }
     if (conflictPaths !== null) return { kind: 'conflict', paths: conflictPaths }
+    if (pullRefused !== null) return { kind: 'paused', reason: pullRefused }
     if (syncing !== null) return { kind: 'pulling' }
     // A permission refusal outranks offline: it does not clear when the network
     // returns, and telling someone to check their wifi for a rights problem
@@ -644,7 +649,14 @@ export async function openActiveVault(args: {
         // Still dirty means something declined to commit it (a reconcile, a
         // detached HEAD). Leave the pull for a later tick rather than making
         // git refuse it.
-        if (status === null || status.dirty) return null
+        //
+        // **Except a held-back file**, which no tick will ever commit, and
+        // which the commit gate already reads as clean. Waiting on one skipped
+        // every pull while it sat there, so every push failed non-fast-forward
+        // under an up-to-date state. `git merge` minds an uncommitted file only
+        // when the merge would overwrite it.
+        const held = new Set(heldBack.map((f) => f.path))
+        if (status === null || status.dirtyPaths.some((p) => !held.has(p))) return null
       }
 
       syncing = 'pulling'
@@ -652,6 +664,17 @@ export async function openActiveVault(args: {
       const result = await args.repo.pull()
       offline = false
       noteSynced()
+      // A held-back file the incoming side changed is in the merge's way for
+      // as long as it is held back, so that refusal is not transient like a
+      // typing race: it is said, naming the file, until a pull gets past it.
+      const held = new Set(heldBack.map((f) => f.path))
+      const inTheWay = result.kind === 'conflict' ? (result.overwrites ?? []) : []
+      const stuck = inTheWay.filter((p) => held.has(p))
+      pullRefused =
+        stuck.length === 0
+          ? null
+          : `cannot pull: held back as too large, and changed on the remote: ${stuck.join(', ')}`
+      if (pullRefused !== null) lastError = pullRefused
       if (result.kind !== 'conflict') settleCaughtUp(true)
       if (result.kind === 'conflict') {
         /**
@@ -795,15 +818,22 @@ export async function openActiveVault(args: {
       let result = await args.repo.push()
       if (result.kind === 'rejected' && result.reason === 'non-fast-forward') {
         log('git', 'info', 'Push rejected: the remote moved, pulling first')
-        // The remote moved. Release the push guard so `maybePull`'s own
-        // synchronous claim of `pullInFlight` can take over. There is no await
-        // between here and that claim, so no other push can slip through the gap.
-        pushInFlight = false
+        // The remote moved. The push guard stays held through the pull: the
+        // pull does not ask it, and `maybePull` drops `pullInFlight` before
+        // its last await, so releasing it here let the merge's own scheduled
+        // push run beside the retry below.
         const pulled = await maybePull()
         // Anything but a clean merge (a conflict, or a declined tick) is now
         // owned by `maybePull`'s state. Do not retry or the state fights it.
+        // A declined pull is said once, though, not left silent: the next
+        // pull tick tries again, and until then the work is not on the remote.
+        // A pull that failed (offline) or was refused has said so itself.
+        if (pulled === null && !offline && pullRefused === null) {
+          const text = 'Push rejected and the pull could not run yet; the next pull retries'
+          if (text !== lastError) log('git', 'warn', text)
+          lastError = text
+        }
         if (pulled?.kind !== 'merged') return false
-        pushInFlight = true
         result = await args.repo.push()
       }
       const succeeded = result.kind === 'pushed' || result.kind === 'nothing-to-push'

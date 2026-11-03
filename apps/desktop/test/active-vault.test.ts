@@ -1385,6 +1385,63 @@ describe('ActiveVault — sync', () => {
     })
   })
 
+  it('pulls past a held-back file, so a rejected push still recovers', async () => {
+    // A held-back file is never committed, so a pull that waited for a clean
+    // tree never ran: every push failed non-fast-forward, under up to date.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    const teammate = await makeClone(origin, 'teammate')
+    await mkdir(join(dir, '.holi/settings'), { recursive: true })
+    await writeFile(join(dir, SETTINGS_FILE), 'maxCommittedFileBytes: 1024\n', 'utf8')
+    await writeFile(join(dir, 'big.bin'), 'x'.repeat(2000), 'utf8')
+    await theyPublish(teammate, 'theirs.md', 'theirs\n')
+    await sleep(QUIESCE)
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    open.push(active)
+
+    await active.commitNow()
+    await active.pushNow()
+    const status = await active.repo.status()
+    expect(status.dirtyPaths).toEqual(['big.bin'])
+    expect([status.ahead, status.behind]).toEqual([0, 0])
+  })
+
+  it('names a held-back file a teammate changed, rather than retrying in silence', async () => {
+    // git refuses the merge before it starts, naming no paths, and the held
+    // file will never be committed, so this refusal is not transient.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    const teammate = await makeClone(origin, 'teammate')
+    await mkdir(join(dir, '.holi/settings'), { recursive: true })
+    await writeFile(join(dir, SETTINGS_FILE), 'maxCommittedFileBytes: 1024\n', 'utf8')
+    await writeFile(join(dir, 'big.bin'), 'x'.repeat(2000), 'utf8')
+    await theyPublish(teammate, 'big.bin', 'theirs\n')
+    await sleep(QUIESCE)
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    open.push(active)
+
+    await active.commitNow()
+    await active.pushNow()
+    const state = active.syncState()
+    expect(state.kind).toBe('paused')
+    expect(state.kind === 'paused' && state.reason).toContain('big.bin')
+    expect(active.syncInfo().lastError).toContain('big.bin')
+  })
+
   it('reports a real conflict during a push recovery and pushes nothing', async () => {
     // The user's work stays local and intact, the remote is
     // untouched, and the tree is left clean for the reconcile path.
