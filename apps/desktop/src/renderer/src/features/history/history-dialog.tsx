@@ -2,9 +2,12 @@
  * A file's history, after GitHub's commits page: the commits grouped under
  * their day on a timeline, filtered by who and by when. A row opens what
  * the commit changed in the file; its buttons copy the sha, open the change,
- * or show the file as that commit left it.
+ * or show the file as that commit left it. A folder's history (a vault app's
+ * bundle) is every commit under it, and a commit shows the changes to each
+ * of its files there; a folder has no "file at this commit".
  */
 import { useState } from 'react'
+import { useAtomValue } from 'jotai'
 import {
   ArrowLeftIcon,
   CalendarIcon,
@@ -44,7 +47,8 @@ import {
   PERIODS,
   type Period,
 } from './commit-groups'
-import { CommitView } from './commit-view'
+import { CommitView, FolderCommitView } from './commit-view'
+import { snapshotAtom } from '@/state/vaults'
 import { initials, shortSha } from './commit-format'
 import { authorFor, type FileAuthor, type FileCommit, type FileHistory } from './use-file-history'
 import { EmptyState, ErrorState } from '@/composites/empty-state'
@@ -77,6 +81,7 @@ export function HistoryDialog({
   const [period, setPeriod] = useState<Period>('all')
   const [detail, setDetail] = useState<Detail>(null)
   const segments = path.split('/')
+  const folder = useAtomValue(snapshotAtom).dirs.includes(path)
 
   return (
     <Dialog
@@ -126,32 +131,40 @@ export function HistoryDialog({
                 <ArrowLeftIcon data-icon="inline-start" aria-hidden="true" />
                 All commits
               </Button>
-              <Button
-                variant={detail.show === 'diff' ? 'secondary' : 'ghost'}
-                size="sm"
-                aria-pressed={detail.show === 'diff'}
-                onClick={() => setDetail({ ...detail, show: 'diff' })}
-              >
-                <FileDiffIcon data-icon="inline-start" aria-hidden="true" />
-                Changes
-              </Button>
-              <Button
-                variant={detail.show === 'file' ? 'secondary' : 'ghost'}
-                size="sm"
-                aria-pressed={detail.show === 'file'}
-                onClick={() => setDetail({ ...detail, show: 'file' })}
-              >
-                <CodeIcon data-icon="inline-start" aria-hidden="true" />
-                File at this commit
-              </Button>
+              {folder ? null : (
+                <>
+                  <Button
+                    variant={detail.show === 'diff' ? 'secondary' : 'ghost'}
+                    size="sm"
+                    aria-pressed={detail.show === 'diff'}
+                    onClick={() => setDetail({ ...detail, show: 'diff' })}
+                  >
+                    <FileDiffIcon data-icon="inline-start" aria-hidden="true" />
+                    Changes
+                  </Button>
+                  <Button
+                    variant={detail.show === 'file' ? 'secondary' : 'ghost'}
+                    size="sm"
+                    aria-pressed={detail.show === 'file'}
+                    onClick={() => setDetail({ ...detail, show: 'file' })}
+                  >
+                    <CodeIcon data-icon="inline-start" aria-hidden="true" />
+                    File at this commit
+                  </Button>
+                </>
+              )}
             </div>
             <div className="max-h-160 min-w-0 overflow-auto">
-              <CommitView
-                key={`${detail.commit.sha}:${detail.show}`}
-                path={path}
-                sha={detail.commit.sha}
-                show={detail.show}
-              />
+              {folder ? (
+                <FolderCommitView key={detail.commit.sha} folder={path} sha={detail.commit.sha} />
+              ) : (
+                <CommitView
+                  key={`${detail.commit.sha}:${detail.show}`}
+                  path={path}
+                  sha={detail.commit.sha}
+                  show={detail.show}
+                />
+              )}
             </div>
           </div>
         ) : (
@@ -163,6 +176,7 @@ export function HistoryDialog({
             onAuthor={setAuthor}
             onPeriod={setPeriod}
             onRetry={onRetry}
+            folder={folder}
             onOpen={(commit, show) => setDetail({ commit, show })}
           />
         )}
@@ -179,6 +193,7 @@ function CommitList({
   onAuthor,
   onPeriod,
   onRetry,
+  folder,
   onOpen,
 }: {
   history: FileHistory
@@ -188,6 +203,7 @@ function CommitList({
   onAuthor: (author: string | null) => void
   onPeriod: (period: Period) => void
   onRetry: () => void
+  folder: boolean
   onOpen: (commit: FileCommit, show: 'diff' | 'file') => void
 }) {
   if (history.kind === 'loading') {
@@ -285,6 +301,7 @@ function CommitList({
                         key={commit.sha}
                         commit={commit}
                         author={authorFor(authors, commit.author)}
+                        folder={folder}
                         onOpen={onOpen}
                       />
                     ))}
@@ -332,10 +349,12 @@ function IconAction({
 function CommitRow({
   commit,
   author,
+  folder,
   onOpen,
 }: {
   commit: FileCommit
   author: FileAuthor
+  folder: boolean
   onOpen: (commit: FileCommit, show: 'diff' | 'file') => void
 }) {
   const who = author.login ?? author.name
@@ -379,9 +398,11 @@ function CommitRow({
         <IconAction label="View the changes" onClick={() => onOpen(commit, 'diff')}>
           <FileDiffIcon aria-hidden="true" />
         </IconAction>
-        <IconAction label="View the file at this commit" onClick={() => onOpen(commit, 'file')}>
-          <CodeIcon aria-hidden="true" />
-        </IconAction>
+        {folder ? null : (
+          <IconAction label="View the file at this commit" onClick={() => onOpen(commit, 'file')}>
+            <CodeIcon aria-hidden="true" />
+          </IconAction>
+        )}
       </div>
     </li>
   )

@@ -1544,13 +1544,20 @@ export function createRouter(deps: RouterDeps) {
   })
 
   const history = t.router({
-    /** The open file's commits, newest-first, following renames. Empty for a
-     *  file with no commits yet (new/untracked). */
+    /** The open file's commits, newest-first, following renames; a folder's
+     *  (a vault app's bundle) are every commit under it. Empty for a file with
+     *  no commits yet (new/untracked). */
     list: t.procedure
       .input(fields({ path: 'string' }))
-      .query(({ input }): Promise<Commit[]> =>
-        activeOrThrow().repo.log({ path: safe(input.path), limit: HISTORY_LIMIT }),
-      ),
+      .query(async ({ input }): Promise<Commit[]> => {
+        const repo = activeOrThrow().repo
+        const path = safe(input.path)
+        const folder = await stat(join(repo.root, path)).then(
+          (s) => s.isDirectory(),
+          () => false,
+        )
+        return repo.log({ path, folder, limit: HISTORY_LIMIT })
+      }),
 
     /** The whole vault's commit log, newest-first — the broad history dialog. */
     log: t.procedure.query((): Promise<Commit[]> =>

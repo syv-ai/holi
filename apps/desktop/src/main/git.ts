@@ -205,8 +205,9 @@ export interface GitRepo {
    *  whose history is gone, which the caller reports rather than crashes on. */
   rangeFiles(from: string, to: string): Promise<RangeFile[]>
   /** The vault's history — which IS git history (`features/history.md`).
-   * `path` follows a file through renames. */
-  log(opts?: { path?: string; limit?: number }): Promise<Commit[]>
+   * `path` follows a file through renames; a `folder` is every commit under it,
+   * which `--follow` (one file only) cannot walk. */
+  log(opts?: { path?: string; folder?: boolean; limit?: number }): Promise<Commit[]>
   /** A file's content at a past commit, for the history preview/restore
    * (`features/history.md`). Rejects when `path` is absent at `sha` —
    * e.g. a commit from before the file was renamed (`show` reads the given name,
@@ -627,7 +628,9 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
    * Fields are delimited with **US (0x1f)**, which nobody types into a commit
    * subject, so a commit message cannot corrupt the parse.
    */
-  async function log(o: { path?: string; limit?: number } = {}): Promise<Commit[]> {
+  async function log(
+    o: { path?: string; folder?: boolean; limit?: number } = {},
+  ): Promise<Commit[]> {
     // **RS (0x1e) leads each record, rather than `-z` separating them.**
     // `--numstat` writes its own newline-separated lines after each commit, and
     // under `-z` it NUL-terminates paths as well — so the record separator and
@@ -641,7 +644,9 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     if (o.limit !== undefined) args.push(`-n${o.limit}`)
     // `--follow` needs exactly one pathspec, and must precede the `--`.
     // `--raw` beside it, for the status letter that tells a copy from a rename.
-    if (o.path !== undefined) args.push('--raw', '--follow', '--', o.path)
+    // A folder is every commit under it, unfollowed.
+    if (o.path !== undefined && o.folder === true) args.push('--', o.path)
+    else if (o.path !== undefined) args.push('--raw', '--follow', '--', o.path)
 
     // A repo with no commits makes `git log` fail rather than print nothing.
     // That is not an error here: a brand-new vault simply has no history yet.

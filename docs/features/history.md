@@ -2,7 +2,7 @@
 
 A vault's history is its git history, and the autosave commits give it fine resolution. Holi shows it in two places: a drawer for the open file and a tab for the whole vault. Both present commits as commits, because the users are developers. Restore brings an old version back as a new commit.
 
-**What the fresh renderer has.** The file's history is a dialog (`features/history/history-dialog.tsx`), opened from the history button in a document's or code file's header (`file-history-button.tsx`), with commits grouped by day and each commit's changes (`commit-view.tsx`). **Not built:** the right-hand file drawer and the vault history tab described below, and Restore from either ([not-built](../not-built.md)). A vault app's approval opens the same dialog on its bundle.
+**What the fresh renderer has.** The file's history is a dialog (`features/history/history-dialog.tsx`), opened from the history button in a document's or code file's header (`file-history-button.tsx`), with commits grouped by day and each commit's changes (`commit-view.tsx`). **Not built:** the right-hand file drawer and the vault history tab described below, and Restore from either ([not-built](../not-built.md)). A vault app's approval opens the same dialog on its bundle: a folder's history is every commit under it (`git log` without `--follow`), and a commit shows the diff of each of its files there, with no "file at this commit".
 
 ## How it works
 
