@@ -20,6 +20,7 @@ import type { HeldBackFile } from '../src/main/vault/large-files'
 import {
   createVaultHost,
   openActiveVault,
+  SYNC_ALERT_FAILURES,
   type ActiveVault,
   type SyncTimings,
   type VaultHost,
@@ -1011,6 +1012,128 @@ describe('ActiveVault — sync', () => {
     await waitFor('the unsynced state', () => active.syncState().kind === 'unsynced')
     expect(active.syncState()).toEqual({ kind: 'unsynced', ahead: 1, behind: 1 })
     expect(syncLabel(active.syncState()).text).toBe('1 ahead, 1 behind')
+  })
+
+  it('alerts once when sync keeps failing, and again only after it got through', async () => {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const real = openRepo(dir)
+    let allowed = false
+    const alerts: string[] = []
+    const lines: string[] = []
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: {
+        ...real,
+        push: async () =>
+          allowed
+            ? { kind: 'nothing-to-push' as const }
+            : { kind: 'rejected' as const, reason: 'permission' as const },
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      onSyncFailing: (text) => alerts.push(text),
+      activity: (entry) => lines.push(entry.message),
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    open.push(active)
+
+    // The open-time push may already have failed once, so count up to the alert.
+    for (let i = 0; i < SYNC_ALERT_FAILURES && alerts.length === 0; i++) await active.pushNow()
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0]).toContain(`failed ${SYNC_ALERT_FAILURES} times`)
+    expect(alerts[0]).toContain('no write access')
+    // Still failing is the same run: no second alert.
+    await active.pushNow()
+    expect(alerts).toHaveLength(1)
+
+    allowed = true
+    await active.pushNow()
+    expect(lines).toContain('Sync is getting through again')
+    allowed = false
+    for (let i = 1; i < SYNC_ALERT_FAILURES; i++) await active.pushNow()
+    expect(alerts).toHaveLength(1)
+    await active.pushNow()
+    expect(alerts).toHaveLength(2)
+  })
+
+  /** A vault whose pushes fail on the network while `failing()` says so. */
+  async function withFlakyPush(failing: () => boolean, failingAlertMs?: number) {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const real = openRepo(dir)
+    const alerts: string[] = []
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: {
+        ...real,
+        push: async () => {
+          if (!failing()) return { kind: 'nothing-to-push' as const }
+          throw new GitError('could not resolve host: github.com', 128, 'could not resolve host')
+        },
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      onSyncFailing: (text) => alerts.push(text),
+      timings: {
+        pullIntervalMs: 60_000,
+        healIntervalMs: 60_000,
+        ...(failingAlertMs === undefined ? {} : { failingAlertMs }),
+      },
+    })
+    open.push(active)
+    return { active, alerts }
+  }
+
+  it('times an outage rather than counting each push it fails', async () => {
+    // Offline, every autosave burst fails a push: a short outage while editing
+    // is not five failures.
+    const { active, alerts } = await withFlakyPush(() => true)
+    for (let i = 0; i <= SYNC_ALERT_FAILURES; i++) await active.pushNow()
+    expect(alerts).toEqual([])
+  })
+
+  it('does not alert, when the time is up, about a blip a later pull got past', async () => {
+    let failing = false
+    const { active, alerts } = await withFlakyPush(() => failing, 800)
+    await active.pushNow()
+    failing = true
+    await active.pushNow()
+    failing = false
+    // A pull reaches the remote, and no push follows it.
+    await active.retry()
+    await sleep(1_000)
+    expect(alerts).toEqual([])
+  })
+
+  it('alerts on a conflict left waiting, naming its files, once the time is up', async () => {
+    // A conflict stops the pulls and pushes that would count as failures, so
+    // the time trigger is what says it.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const real = openRepo(dir)
+    const alerts: string[] = []
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: { ...real, pull: async () => ({ kind: 'conflict' as const, paths: ['a.md'] }) },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      onSyncFailing: (text) => alerts.push(text),
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, failingAlertMs: 100 },
+    })
+    open.push(active)
+
+    await active.retry()
+    await waitFor('the conflict', () => active.syncState().kind === 'conflict')
+    await waitFor('the alert', () => alerts.length > 0)
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0]).toContain('1 file conflict: a.md')
   })
 
   it('reports a permission rejection as no-access, not offline', async () => {
