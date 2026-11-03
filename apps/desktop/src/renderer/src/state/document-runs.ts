@@ -159,7 +159,8 @@ export const launchRunAtom = atom(
 )
 
 /** Each agent's name as main gives it (`agent.providers`), by vault: asked
- *  once, the first time a name is wanted. */
+ *  the first time a name is wanted, and again after this machine's agents
+ *  change (`forgetAgentLabelsAtom`). */
 const providerLabelsAtom = atom<{ remote: string; labels: Record<string, string> } | null>(null)
 
 let loadingLabels: { remote: string; done: Promise<Record<string, string> | null> } | null = null
@@ -179,7 +180,8 @@ const loadProviderLabelsAtom = atom(null, (get, set, remote: string) => {
     .then((list) => {
       if (!Array.isArray(list)) return null
       const byId = Object.fromEntries(list.map((p) => [p.id, p.label]))
-      set(providerLabelsAtom, { remote, labels: byId })
+      // Forgotten while asked: the answer may be from before the change.
+      if (loadingLabels?.done === done) set(providerLabelsAtom, { remote, labels: byId })
       return byId
     })
     .catch(() => null)
@@ -188,6 +190,14 @@ const loadProviderLabelsAtom = atom(null, (get, set, remote: string) => {
     })
   loadingLabels = { remote, done }
   return done
+})
+
+/** This machine's agents changed (one added, renamed or removed): the
+ *  names are asked for again the next time one is wanted, so a new default
+ *  agent is named. The agent plugin calls it on its `providers` event. */
+export const forgetAgentLabelsAtom = atom(null, (_get, set) => {
+  loadingLabels = null
+  set(providerLabelsAtom, null)
 })
 
 /** Agent `id`'s name in the open vault, asked for the first time it is
