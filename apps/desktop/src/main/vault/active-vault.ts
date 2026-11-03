@@ -82,6 +82,9 @@ export interface SyncTimings {
   /** How long quit and a vault switch wait for a best-effort push. The work is
    *  already committed, so an unreachable remote must never hang either. */
   pushBudgetMs: number
+  /** How long sync may keep failing, without one attempt getting through,
+   *  before it says so loudly (`SYNC_ALERT_FAILURES` is the other trigger). */
+  failingAlertMs: number
 }
 
 const DEFAULT_TIMINGS: SyncTimings = {
@@ -92,7 +95,21 @@ const DEFAULT_TIMINGS: SyncTimings = {
   focusThrottleMs: 30_000,
   pushQuietMs: 15_000,
   pushBudgetMs: 1_000,
+  // Five pull ticks: a short outage stays quiet, and a vault stuck for good
+  // is said within the hour.
+  failingAlertMs: 15 * 60_000,
 }
+
+/**
+ * Failed sync attempts in a row that alert at once, ahead of `failingAlertMs`.
+ * An attempt is a pull or a push that git refused (a conflict, a held-back
+ * file in the way, a rejected push); pushes come with every commit burst and
+ * every focus, so such a loop reaches five in minutes while someone works.
+ * A network failure is not counted, only timed: offline, every autosave burst
+ * fails a push, and a short outage while editing must stay quiet.
+ * @public exported for its test
+ */
+export const SYNC_ALERT_FAILURES = 5
 
 export interface ActiveVault {
   readonly remote: string
@@ -256,6 +273,10 @@ export async function openActiveVault(args: {
   /** The activity log (`activity/log.ts`): each commit, merge, push and
    *  sync-state change, never the quiet ticks. */
   activity?: ActivityWrite
+  /** Sync has kept failing (`SYNC_ALERT_FAILURES`, `failingAlertMs`): once
+   *  per run of failures, with what is in the way. The activity log has the
+   *  same words as an error line. */
+  onSyncFailing?: (text: string) => void
   timings?: Partial<SyncTimings>
 }): Promise<ActiveVault> {
   const timings: SyncTimings = { ...DEFAULT_TIMINGS, ...args.timings }
@@ -371,6 +392,10 @@ export async function openActiveVault(args: {
    * retries and re-aborts the same merge every interval, forever.
    */
   let conflictPaths: string[] | null = null
+  /** Why the last pull could not start and will not on its own: a held-back
+   *  file the incoming side changed. Not a pause on pulling, which goes on
+   *  trying every tick; set and cleared by each pull that reaches git. */
+  let pullRefused: string | null = null
   /** A reconcile the user asked for is running: `reconcile()` put the conflict
    *  back in the tree and it has not been finished or abandoned yet. Distinct
    *  from `conflictPaths` alone, which is also the sticky banner over a clean
@@ -390,6 +415,73 @@ export async function openActiveVault(args: {
     lastSyncAt = new Date().toISOString()
     lastError = null
   }
+
+  /**
+   * The alert for sync that keeps failing: a loop that retries quietly can
+   * leave work off the remote for days. A run of failures starts at the first
+   * failed pull or push and ends when one gets through (`noteGotThrough`): a
+   * pull that reached the remote and merged or found nothing, a push it
+   * accepted, or a state read up to date. It alerts once, at
+   * `SYNC_ALERT_FAILURES` counted attempts or after `failingAlertMs`,
+   * whichever comes first; the timer covers the network, which is timed and
+   * not counted, and a conflict, which stops the very attempts that would
+   * count. When the timer fires on a run that is no longer failing (a blip,
+   * then pulls that got through with nothing pushed since), the run just ends.
+   */
+  let failures = 0
+  let failingSince: number | null = null
+  let failingTimer: NodeJS.Timeout | null = null
+  let alerted = false
+
+  /** `network`: the remote could not be reached; timed, not counted. */
+  function noteFailure(how: 'counted' | 'network' = 'counted'): void {
+    if (closed) return
+    if (how === 'counted') failures++
+    failingSince ??= Date.now()
+    if (alerted) return
+    if (failures >= SYNC_ALERT_FAILURES) alertFailing()
+    else failingTimer ??= setTimeout(alertFailing, timings.failingAlertMs)
+  }
+
+  /** Something is in the way right now, not only earlier in the run: the
+   *  last attempt failed (`lastError`, cleared by any that got through, and
+   *  set by offline, a refused pull and no access alike) or a conflict waits. */
+  function stillFailing(): boolean {
+    return conflictPaths !== null || permissionDenied || lastError !== null
+  }
+
+  function alertFailing(): void {
+    if (failingTimer !== null) clearTimeout(failingTimer)
+    failingTimer = null
+    if (closed || alerted || failingSince === null) return
+    if (!stillFailing()) {
+      noteGotThrough()
+      return
+    }
+    alerted = true
+    const minutes = Math.max(1, Math.round((Date.now() - failingSince) / 60_000))
+    const cause =
+      conflictPaths !== null
+        ? `${conflictPaths.length} file${conflictPaths.length === 1 ? '' : 's'} conflict: ${conflictPaths.join(', ')}`
+        : (lastError ?? 'see the activity log')
+    // A run of network failures only is timed, so it has no count to give.
+    const text =
+      failures === 0
+        ? `Sync has failed for ${minutes} min: ${cause}`
+        : `Sync has failed ${failures} time${failures === 1 ? '' : 's'} in ${minutes} min: ${cause}`
+    log('sync', 'error', text)
+    args.onSyncFailing?.(text)
+  }
+
+  /** A pull or push got through: the run of failures, and its alert, end. */
+  function noteGotThrough(): void {
+    if (failingTimer !== null) clearTimeout(failingTimer)
+    failingTimer = null
+    if (alerted) log('sync', 'info', 'Sync is getting through again')
+    failures = 0
+    failingSince = null
+    alerted = false
+  }
   /** Settles `caughtUp()`: true on the first pull that is not a conflict,
    *  false on close. */
   let settleCaughtUp: (ok: boolean) => void = () => {}
@@ -405,7 +497,9 @@ export async function openActiveVault(args: {
   let reconcileFrom: string | null = null
 
   function setState(next: SyncState): void {
-    if (next.kind !== 'pulling') {
+    // `pulling` and `unsynced` come and go with every pull and every commit,
+    // and the commit, pull and push lines already say what happened.
+    if (next.kind !== 'pulling' && next.kind !== 'unsynced') {
       const line = stateLine(next)
       if (line.message !== loggedState) {
         // The first reading at open is not news unless it is bad.
@@ -541,15 +635,21 @@ export async function openActiveVault(args: {
     const blocked = blockedReason(status)
     if (blocked !== null) return { kind: 'paused', reason: blocked }
     if (conflictPaths !== null) return { kind: 'conflict', paths: conflictPaths }
+    if (pullRefused !== null) return { kind: 'paused', reason: pullRefused }
     if (syncing !== null) return { kind: 'pulling' }
     // A permission refusal outranks offline: it does not clear when the network
     // returns, and telling someone to check their wifi for a rights problem
     // wastes their time.
     if (permissionDenied) return { kind: 'no-access' }
     if (offline) return { kind: 'offline', count: status.ahead }
-    // Resting ahead>0 is a bounded transient (the coalesced push has not fired
-    // yet) and is deliberately NOT surfaced: not worth a flickering counter.
-    // The count appears only when offline.
+    // Not caught up is said, not called up to date: a vault ahead or behind
+    // its remote with nothing failing is the push or pull that has not run
+    // yet, or one that keeps declining. The label is quiet and the log does
+    // not hear it (`setState`), so an autosave's few seconds ahead before its
+    // coalesced push neither warns nor writes a line.
+    if (status.ahead > 0 || status.behind > 0) {
+      return { kind: 'unsynced', ahead: status.ahead, behind: status.behind }
+    }
     return { kind: 'up-to-date' }
   }
 
@@ -558,7 +658,11 @@ export async function openActiveVault(args: {
     // `status()` can fail on a vault whose directory vanished; `offline` is the
     // wrong word for it, but a stale state is worse than an imprecise one.
     const status = await args.repo.status().catch(() => null)
-    if (status !== null) setState(computeState(status))
+    if (status === null) return
+    const next = computeState(status)
+    // Caught up both ways is the plainest proof sync got through.
+    if (next.kind === 'up-to-date') noteGotThrough()
+    setState(next)
   }
 
   /**
@@ -688,7 +792,14 @@ export async function openActiveVault(args: {
         // Still dirty means something declined to commit it (a reconcile, a
         // detached HEAD). Leave the pull for a later tick rather than making
         // git refuse it.
-        if (status === null || status.dirty) return null
+        //
+        // **Except a held-back file**, which no tick will ever commit, and
+        // which the commit gate already reads as clean. Waiting on one skipped
+        // every pull while it sat there, so every push failed non-fast-forward
+        // under an up-to-date state. `git merge` minds an uncommitted file only
+        // when the merge would overwrite it.
+        const held = new Set(heldBack.map((f) => f.path))
+        if (status === null || status.dirtyPaths.some((p) => !held.has(p))) return null
       }
 
       syncing = 'pulling'
@@ -696,7 +807,24 @@ export async function openActiveVault(args: {
       const result = await args.repo.pull()
       offline = false
       noteSynced()
+      // A held-back file the incoming side changed is in the merge's way for
+      // as long as it is held back, so that refusal is not transient like a
+      // typing race: it is said, naming the file, until a pull gets past it.
+      const held = new Set(heldBack.map((f) => f.path))
+      const inTheWay = result.kind === 'conflict' ? (result.overwrites ?? []) : []
+      const stuck = inTheWay.filter((p) => held.has(p))
+      pullRefused =
+        stuck.length === 0
+          ? null
+          : `cannot pull: held back as too large, and changed on the remote: ${stuck.join(', ')}`
+      if (pullRefused !== null) {
+        lastError = pullRefused
+        noteFailure()
+      }
       if (result.kind !== 'conflict') settleCaughtUp(true)
+      // The remote answered and the merge went in (or there was none): the
+      // run ends, unless pushing is refused for access, which no pull mends.
+      if (result.kind !== 'conflict' && !permissionDenied) noteGotThrough()
       if (result.kind === 'conflict') {
         /**
          * **A conflict naming no paths is not a conflict.**
@@ -712,6 +840,8 @@ export async function openActiveVault(args: {
          */
         if (result.paths.length === 0) return null
         conflictPaths = result.paths
+        // Counted once: a held-back refusal naming these paths already was.
+        if (pullRefused === null) noteFailure()
         log(
           'git',
           'error',
@@ -753,7 +883,11 @@ export async function openActiveVault(args: {
       // plane fails every interval, and that is one line, not forty.
       if (text !== lastError) log('git', 'warn', 'Pull failed', text)
       lastError = text
-      if (!isIndexLockError(err)) offline = true
+      // A lock someone else held is contention that ends by itself.
+      if (!isIndexLockError(err)) {
+        offline = true
+        noteFailure('network')
+      }
       return null
     } finally {
       syncing = null
@@ -839,15 +973,23 @@ export async function openActiveVault(args: {
       let result = await args.repo.push()
       if (result.kind === 'rejected' && result.reason === 'non-fast-forward') {
         log('git', 'info', 'Push rejected: the remote moved, pulling first')
-        // The remote moved. Release the push guard so `maybePull`'s own
-        // synchronous claim of `pullInFlight` can take over. There is no await
-        // between here and that claim, so no other push can slip through the gap.
-        pushInFlight = false
+        // The remote moved. The push guard stays held through the pull: the
+        // pull does not ask it, and `maybePull` drops `pullInFlight` before
+        // its last await, so releasing it here let the merge's own scheduled
+        // push run beside the retry below.
         const pulled = await maybePull()
         // Anything but a clean merge (a conflict, or a declined tick) is now
         // owned by `maybePull`'s state. Do not retry or the state fights it.
+        // A declined pull is said once, though, not left silent: the next
+        // pull tick tries again, and until then the work is not on the remote.
+        // A pull that failed (offline) or was refused has said so itself.
+        if (pulled === null && !offline && pullRefused === null) {
+          const text = 'Push rejected and the pull could not run yet; the next pull retries'
+          if (text !== lastError) log('git', 'warn', text)
+          lastError = text
+          noteFailure()
+        }
         if (pulled?.kind !== 'merged') return false
-        pushInFlight = true
         result = await args.repo.push()
       }
       const succeeded = result.kind === 'pushed' || result.kind === 'nothing-to-push'
@@ -855,6 +997,7 @@ export async function openActiveVault(args: {
         offline = false
         permissionDenied = false
         noteSynced()
+        noteGotThrough()
         if (result.kind === 'pushed') {
           log(
             'git',
@@ -870,7 +1013,9 @@ export async function openActiveVault(args: {
         lastError = 'no write access'
       }
       // A second non-fast-forward here (someone pushed again in the last few
-      // milliseconds) is left for the next tick rather than looped on.
+      // milliseconds) is left for the next tick rather than looped on, and
+      // counts as a failure, as a refusal does.
+      if (result.kind === 'rejected') noteFailure()
       return succeeded
     } catch (err) {
       console.error('[vault] push failed:', err)
@@ -879,7 +1024,10 @@ export async function openActiveVault(args: {
       lastError = text
       // Mirrors `maybePull`: a lock the user's own git briefly held is contention,
       // not the network, and calling it offline sends someone to check their wifi.
-      if (!isIndexLockError(err)) offline = true
+      if (!isIndexLockError(err)) {
+        offline = true
+        noteFailure('network')
+      }
       return false
     } finally {
       pushInFlight = false
@@ -1260,6 +1408,8 @@ export async function openActiveVault(args: {
       commitTimer = null
       if (pushTimer !== null) clearTimeout(pushTimer)
       pushTimer = null
+      if (failingTimer !== null) clearTimeout(failingTimer)
+      failingTimer = null
       await watcher.close()
       // Leave no stale port behind: a terminal commit after Holi quits would
       // otherwise spend its curl timeout on a socket nobody is listening to.
@@ -1282,6 +1432,8 @@ export interface VaultHost {
 
 export function createVaultHost(args: {
   registry: VaultRegistry
+  /** Work required before a vault can start its plugins or agent. */
+  beforeOpen?: () => Promise<void>
   gitDeps?: GitDeps
   /** What the scanner claims in the vault at `root` (`openActiveVault`). */
   claims: (root: string) => Promise<readonly ScanClaim[]>
@@ -1291,6 +1443,8 @@ export function createVaultHost(args: {
   onCommitted?: (paths: string[] | null) => void
   /** A pull merged commits into the open vault `remote`, at `root`. */
   onPulled?: (vault: { remote: string; root: string }, range: { from: string; to: string }) => void
+  /** Sync in the open vault `remote` has kept failing (`openActiveVault`). */
+  onSyncFailing?: (remote: string, text: string) => void
   /** Writes each opened vault's `bridge.local.env`, and deletes it when the
    *  vault closes (`bridge/env-file.ts`). */
   bridgeEnv?: VaultBridgeEnv
@@ -1364,6 +1518,7 @@ export function createVaultHost(args: {
           args.onSyncState(current.syncState())
           return current
         }
+        await args.beforeOpen?.()
         await closeCurrent()
 
         const entry = (await args.registry.list()).find((e) => e.remote === remote)
@@ -1378,6 +1533,7 @@ export function createVaultHost(args: {
           onHeldBack: args.onHeldBack,
           onCommitted: args.onCommitted,
           onPulled: (range) => args.onPulled?.({ remote, root: entry.path }, range),
+          onSyncFailing: (text) => args.onSyncFailing?.(remote, text),
           bridgeEnv: args.bridgeEnv,
           ...(args.activity === undefined ? {} : { activity: args.activity }),
           timings: args.timings,

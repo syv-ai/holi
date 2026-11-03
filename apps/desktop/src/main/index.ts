@@ -32,6 +32,7 @@ import { createSession } from './github/electron'
 import { createMembersCache } from './github/members-cache'
 import { installHoliCli } from './bridge/cli'
 import { installNodeFallback } from './bridge/node-fallback'
+import { loadLoginPath } from './bin'
 import { createCapabilityHost } from './capabilities/dispatch'
 import { CapabilityError } from './capabilities/error'
 import { vaultNotOpen } from './capabilities/fences'
@@ -60,7 +61,7 @@ import { createReleaseNotes } from './updates/release-notes'
 import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
 import { registerIpc } from './ipc'
-import { createActivityLog } from './activity/log'
+import { createActivityLog, scrubSecrets } from './activity/log'
 import { captureConsole, createAppLog, rendererLevel, type AppLogEntry } from './logs/app-log'
 import { createTerminals } from './terminal/terminals'
 import { pathToFileURL } from 'node:url'
@@ -70,7 +71,7 @@ import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
-import { showNotification } from './notifications'
+import { showNotification, type NativeNotice } from './notifications'
 import { createTray } from './tray'
 import { createUpdater, type Updater } from './updates/updater'
 import { installAppMenu } from './menu'
@@ -251,6 +252,9 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
 }
 
 async function main(): Promise<void> {
+  // The login shell's PATH, for every tool Holi starts (`main/bin.ts`). Read
+  // while the app gets ready and awaited before anything can start an agent.
+  const loginPath = loadLoginPath()
   app.on('second-instance', (_event, argv) => {
     // A link clicked on Windows or Linux launches Holi again with the link in
     // argv; `openLink` brings the window forward itself.
@@ -312,6 +316,24 @@ async function main(): Promise<void> {
     return () => undo.forEach((u) => u())
   }
 
+  /**
+   * A native notification kept off a Holi that has focus: Holi's banners never
+   * cover Holi. A click brings the window forward before `onClick` acts. The
+   * plugins' `notify` and the sync alert both come through here.
+   */
+  const notifyUnfocused = ({ title, body, onClick }: NativeNotice): boolean => {
+    if (BrowserWindow.getFocusedWindow() !== null) return false
+    showNotification({
+      title,
+      body,
+      onClick: () => {
+        openWindow()
+        onClick?.()
+      },
+    })
+    return true
+  }
+
   /** Plugin events, both ways, over the one window. */
   const eventsDeps: PluginEventsDeps = {
     send,
@@ -355,18 +377,7 @@ async function main(): Promise<void> {
     // has focus. A click brings the window forward before the plugin acts.
     focused: () => BrowserWindow.getFocusedWindow() !== null,
     window: () => (mainWindow === null || mainWindow.isDestroyed() ? null : mainWindow),
-    notify: ({ title, body, onClick }) => {
-      if (BrowserWindow.getFocusedWindow() !== null) return false
-      showNotification({
-        title,
-        body,
-        onClick: () => {
-          openWindow()
-          onClick?.()
-        },
-      })
-      return true
-    },
+    notify: notifyUnfocused,
     background: {
       registered: async () =>
         (await registry.list()).map((e) => ({ remote: e.remote, root: e.path })),
@@ -392,6 +403,10 @@ async function main(): Promise<void> {
 
   const host = createVaultHost({
     registry,
+    // Do not initialise vault tools or agent sessions until the login shell's
+    // PATH has settled. This promise is started at launch; the window is not
+    // held behind it.
+    beforeOpen: () => loginPath,
     // A GETTER, not a string. Read lazily on every git operation, so a sign-out
     // takes effect on the next pull rather than the next restart.
     gitDeps: { token: () => session.token() },
@@ -418,6 +433,10 @@ async function main(): Promise<void> {
       })
     },
     onSyncState: (state) => send('vault:sync', state),
+    // Sync that keeps failing says so outside Holi too; inside, the activity
+    // log's error line marks the Output (docs/features/vaults-sync.md).
+    onSyncFailing: (remote, text) =>
+      void notifyUnfocused({ title: `${remote}: sync is failing`, body: scrubSecrets(text) }),
     // How everything inside the vault reaches us: its `bridge.local.env`,
     // with what each part of Holi contributes while the vault is open. Made
     // at open, so the file names this run's ports, which move on restart.
@@ -850,14 +869,15 @@ async function main(): Promise<void> {
   await bridge.start()
   const binDir = dirname(holiCliPath)
 
-  // What works across vaults (reminders) starts now, its launch catch-up
-  // with it, whichever vault opens.
-  void plugins.syncBackground()
-
   // Opened at login, Holi starts out of sight: the window loads (so the
   // vault opens) without showing, until the dock or the tray's Open Holi.
   const atLogin = process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin
   const win = createWindow({ show: !atLogin })
+  // What works across vaults (reminders) starts once the login shell's PATH
+  // is read (begun at launch, settled within its timeout), so a tool it
+  // starts is found; the window does not wait for it. Its launch catch-up
+  // comes with it, whichever vault opens.
+  void loginPath.then(() => plugins.syncBackground())
   // Pull on focus. The interval exists for the case where the window never
   // loses focus at all.
   win.on('focus', () => host.active()?.onFocus())

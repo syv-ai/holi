@@ -1,4 +1,4 @@
-import { SETTINGS_FILE } from '@holi/shared'
+import { SETTINGS_FILE, syncLabel } from '@holi/shared'
 import { taskClaim } from '@holi/shared'
 /**
  * The open vault: what it sees, when it commits, and when it syncs.
@@ -22,6 +22,7 @@ import type { HeldBackFile } from '../src/main/vault/large-files'
 import {
   createVaultHost,
   openActiveVault,
+  SYNC_ALERT_FAILURES,
   type ActiveVault,
   type SyncTimings,
   type VaultHost,
@@ -391,9 +392,10 @@ describe('ActiveVault — commit', () => {
     open.push(active)
 
     // The note + settings landed; big.bin is held back, still on disk, and the
-    // tree reads clean/up-to-date rather than perpetually dirty.
+    // tree reads clean rather than perpetually dirty: one commit ahead, its
+    // coalesced push not due yet.
     expect((await active.repo.status()).dirtyPaths).toEqual(['big.bin'])
-    expect(active.syncState()).toEqual({ kind: 'up-to-date' })
+    expect(active.syncState()).toEqual({ kind: 'unsynced', ahead: 1, behind: 0 })
     expect(active.heldBack()).toEqual([{ path: 'big.bin', bytes: 2000 }])
     expect(held.at(-1)).toEqual([{ path: 'big.bin', bytes: 2000 }])
     await expect(readFile(join(dir, 'big.bin'), 'utf8')).resolves.toHaveLength(2000)
@@ -903,6 +905,49 @@ describe('ActiveVault — sync', () => {
     await plainGit(teammate, ['push', 'origin', 'main'])
   }
 
+  async function topicBehind(upstream: 'none' | 'main') {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    const teammate = await makeClone(origin, 'teammate')
+    await plainGit(dir, ['switch', '-c', 'topic'])
+    await plainGit(dir, ['push', '-u', 'origin', 'topic'])
+    await plainGit(teammate, ['fetch', 'origin'])
+    await plainGit(teammate, ['switch', '--track', 'origin/topic'])
+    await writeFile(join(teammate, 'remote.md'), 'remote change\n', 'utf8')
+    await plainGit(teammate, ['add', '-A'])
+    await plainGit(teammate, ['commit', '-m', 'remote topic change'])
+    await plainGit(teammate, ['push', 'origin', 'topic'])
+    await plainGit(dir, ['fetch', 'origin'])
+    if (upstream === 'none') {
+      await plainGit(dir, ['branch', '--unset-upstream'])
+    } else {
+      await plainGit(dir, ['branch', '--set-upstream-to=origin/main'])
+    }
+    await sleep(QUIESCE)
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    open.push(active)
+    return active
+  }
+
+  it('counts commits behind origin/<branch> without a configured upstream', async () => {
+    const active = await topicBehind('none')
+
+    expect(active.syncState()).toEqual({ kind: 'unsynced', ahead: 0, behind: 1 })
+  })
+
+  it('counts commits behind origin/<branch> when upstream points elsewhere', async () => {
+    const active = await topicBehind('main')
+
+    expect(active.syncState()).toEqual({ kind: 'unsynced', ahead: 0, behind: 1 })
+  })
+
   it('pulls on the interval, and the tree updates itself', async () => {
     // A teammate's work arrives without anyone remembering
     // anything, and a clean merge is silent.
@@ -1042,6 +1087,196 @@ describe('ActiveVault — sync', () => {
       'offline with the waiting count',
       () => JSON.stringify(active.syncState()) === JSON.stringify({ kind: 'offline', count: 2 }),
     )
+  })
+
+  it('says ahead and behind, not up to date, while a pull keeps declining', async () => {
+    // A vault found stuck this way: the remote moved, every push is rejected, and the
+    // recovery pull never gets to merge. Nothing failed outright, and the vault
+    // is not up to date; `holi sync status` says the state's label.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    const teammate = await makeClone(origin, 'teammate')
+    await writeFile(join(teammate, 'theirs.md'), 'theirs\n', 'utf8')
+    await plainGit(teammate, ['add', '-A'])
+    await plainGit(teammate, ['commit', '-m', 'theirs'])
+    await plainGit(teammate, ['push', 'origin', 'main'])
+    await writeFile(join(dir, 'mine.md'), 'mine\n', 'utf8')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'mine'])
+    await plainGit(dir, ['fetch', 'origin'])
+    await sleep(QUIESCE)
+    const real = openRepo(dir)
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      // git refusing up front, as when someone types mid-pull: transient, so
+      // no conflict latches and nothing reads as failed.
+      repo: { ...real, pull: async () => ({ kind: 'conflict' as const, paths: [] }) },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    open.push(active)
+
+    await active.pushNow()
+    await waitFor('the unsynced state', () => active.syncState().kind === 'unsynced')
+    expect(active.syncState()).toEqual({ kind: 'unsynced', ahead: 1, behind: 1 })
+    expect(syncLabel(active.syncState()).text).toBe('1 ahead, 1 behind')
+  })
+
+  it('alerts once when sync keeps failing, and again only after it got through', async () => {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const real = openRepo(dir)
+    let allowed = false
+    const alerts: string[] = []
+    const lines: string[] = []
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: {
+        ...real,
+        push: async () =>
+          allowed
+            ? { kind: 'nothing-to-push' as const }
+            : { kind: 'rejected' as const, reason: 'permission' as const },
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      onSyncFailing: (text) => alerts.push(text),
+      activity: (entry) => lines.push(entry.message),
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    open.push(active)
+
+    // The open-time push may already have failed once, so count up to the alert.
+    for (let i = 0; i < SYNC_ALERT_FAILURES && alerts.length === 0; i++) await active.pushNow()
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0]).toContain(`failed ${SYNC_ALERT_FAILURES} times`)
+    expect(alerts[0]).toContain('no write access')
+    // Still failing is the same run: no second alert.
+    await active.pushNow()
+    expect(alerts).toHaveLength(1)
+
+    allowed = true
+    await active.pushNow()
+    expect(lines).toContain('Sync is getting through again')
+    allowed = false
+    for (let i = 1; i < SYNC_ALERT_FAILURES; i++) await active.pushNow()
+    expect(alerts).toHaveLength(1)
+    await active.pushNow()
+    expect(alerts).toHaveLength(2)
+  })
+
+  /** A vault whose pushes fail on the network while `failing()` says so. */
+  async function withFlakyPush(failing: () => boolean, failingAlertMs?: number) {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const real = openRepo(dir)
+    const alerts: string[] = []
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: {
+        ...real,
+        push: async () => {
+          if (!failing()) return { kind: 'nothing-to-push' as const }
+          throw new GitError('could not resolve host: github.com', 128, 'could not resolve host')
+        },
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      onSyncFailing: (text) => alerts.push(text),
+      timings: {
+        pullIntervalMs: 60_000,
+        healIntervalMs: 60_000,
+        ...(failingAlertMs === undefined ? {} : { failingAlertMs }),
+      },
+    })
+    open.push(active)
+    return { active, alerts }
+  }
+
+  it('times an outage rather than counting each push it fails', async () => {
+    // Offline, every autosave burst fails a push: a short outage while editing
+    // is not five failures.
+    const { active, alerts } = await withFlakyPush(() => true)
+    for (let i = 0; i <= SYNC_ALERT_FAILURES; i++) await active.pushNow()
+    expect(alerts).toEqual([])
+  })
+
+  it('does not alert, when the time is up, about a blip a later pull got past', async () => {
+    let failing = false
+    const { active, alerts } = await withFlakyPush(() => failing, 800)
+    await active.pushNow()
+    failing = true
+    await active.pushNow()
+    failing = false
+    // A pull reaches the remote, and no push follows it.
+    await active.retry()
+    await sleep(1_000)
+    expect(alerts).toEqual([])
+  })
+
+  it('keeps a permission rejection failing after a successful pull', async () => {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const real = openRepo(dir)
+    const alerts: string[] = []
+    let pulled = false
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: {
+        ...real,
+        pull: async () => {
+          pulled = true
+          return real.pull()
+        },
+        push: async () => ({ kind: 'rejected' as const, reason: 'permission' as const }),
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      onSyncFailing: (text) => alerts.push(text),
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, failingAlertMs: 500 },
+    })
+    open.push(active)
+
+    await active.pushNow()
+    await active.retry()
+    expect(pulled).toBe(true)
+    expect(alerts).toEqual([])
+    await waitFor('the permission alert', () => alerts.length > 0)
+    expect(alerts[0]).toContain('Sync has failed')
+  })
+
+  it('alerts on a conflict left waiting, naming its files, once the time is up', async () => {
+    // A conflict stops the pulls and pushes that would count as failures, so
+    // the time trigger is what says it.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const real = openRepo(dir)
+    const alerts: string[] = []
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: { ...real, pull: async () => ({ kind: 'conflict' as const, paths: ['a.md'] }) },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      onSyncFailing: (text) => alerts.push(text),
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, failingAlertMs: 100 },
+    })
+    open.push(active)
+
+    await active.retry()
+    await waitFor('the conflict', () => active.syncState().kind === 'conflict')
+    await waitFor('the alert', () => alerts.length > 0)
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0]).toContain('1 file conflict: a.md')
   })
 
   it('reports a permission rejection as no-access, not offline', async () => {
@@ -1506,6 +1741,63 @@ describe('ActiveVault — sync', () => {
     })
   })
 
+  it('pulls past a held-back file, so a rejected push still recovers', async () => {
+    // A held-back file is never committed, so a pull that waited for a clean
+    // tree never ran: every push failed non-fast-forward, under up to date.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    const teammate = await makeClone(origin, 'teammate')
+    await mkdir(join(dir, '.holi/settings'), { recursive: true })
+    await writeFile(join(dir, SETTINGS_FILE), 'maxCommittedFileBytes: 1024\n', 'utf8')
+    await writeFile(join(dir, 'big.bin'), 'x'.repeat(2000), 'utf8')
+    await theyPublish(teammate, 'theirs.md', 'theirs\n')
+    await sleep(QUIESCE)
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    open.push(active)
+
+    await active.commitNow()
+    await active.pushNow()
+    const status = await active.repo.status()
+    expect(status.dirtyPaths).toEqual(['big.bin'])
+    expect([status.ahead, status.behind]).toEqual([0, 0])
+  })
+
+  it('names a held-back file a teammate changed, rather than retrying in silence', async () => {
+    // git refuses the merge before it starts, naming no paths, and the held
+    // file will never be committed, so this refusal is not transient.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    const teammate = await makeClone(origin, 'teammate')
+    await mkdir(join(dir, '.holi/settings'), { recursive: true })
+    await writeFile(join(dir, SETTINGS_FILE), 'maxCommittedFileBytes: 1024\n', 'utf8')
+    await writeFile(join(dir, 'big.bin'), 'x'.repeat(2000), 'utf8')
+    await theyPublish(teammate, 'big.bin', 'theirs\n')
+    await sleep(QUIESCE)
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    open.push(active)
+
+    await active.commitNow()
+    await active.pushNow()
+    const state = active.syncState()
+    expect(state.kind).toBe('paused')
+    expect(state.kind === 'paused' && state.reason).toContain('big.bin')
+    expect(active.syncInfo().lastError).toContain('big.bin')
+  })
+
   it('reports a real conflict during a push recovery and pushes nothing', async () => {
     // The user's work stays local and intact, the remote is
     // untouched, and the tree is left clean for the reconcile path.
@@ -1692,6 +1984,36 @@ describe('VaultHost', () => {
 
     await h.open('syv-ai/a')
     expect(held.at(-1)).toEqual([{ path: 'big.bin', bytes: 2000 }])
+  })
+
+  it('waits for startup prerequisites before opening a vault', async () => {
+    const { registry } = await twoVaults()
+    let release!: () => void
+    const ready = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const h = createVaultHost({
+      claims: CLAIMS,
+      registry,
+      beforeOpen: () => ready,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+
+    let opened = false
+    const opening = h.open('syv-ai/a').then((vault) => {
+      opened = true
+      return vault
+    })
+    await sleep(0)
+    expect(opened).toBe(false)
+    expect(h.active()).toBeNull()
+
+    release()
+    const vault = await opening
+    expect(h.active()).toBe(vault)
   })
 
   it('opens a vault and makes it active', async () => {

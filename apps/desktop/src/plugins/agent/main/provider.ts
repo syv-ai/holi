@@ -221,6 +221,17 @@ export interface AgentProvider {
   capabilities: ProviderCapabilities
 }
 
+/** What a terminal on `configDir` prints first: the provider's sign-in
+ *  notice, the first time Holi opens one there (`firstSpawn`). */
+export async function firstSpawnNotice(
+  provider: Pick<AgentProvider, 'firstSpawn'>,
+  configDir: string,
+): Promise<string | undefined> {
+  const first = provider.firstSpawn
+  if (first === undefined) return undefined
+  return (await first.take(configDir).catch(() => false)) ? first.notice : undefined
+}
+
 /** A provider whose sessions its own supervisor runs. */
 export type BackgroundProvider = AgentProvider & {
   capabilities: ProviderCapabilities & { background: BackgroundCapability }

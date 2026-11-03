@@ -145,16 +145,35 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
+        # The GitHub API sometimes answers 500 for a moment. Both commands are
+        # safe to repeat (an existing release is reused, assets are clobbered),
+        # so a failed attempt is retried before the build is thrown away. A new
+        # release starts as a draft and is published only once every asset is
+        # up, so dev clients never see a dev.N without its dev-mac.yml. gh finds
+        # a draft by its pending tag; publishing an already published release
+        # (a re-run) changes nothing.
         run: |
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --target "$GITHUB_SHA" --title "Holi $VERSION" --prerelease --generate-notes
-          fi
-          gh release upload "$TAG" \
-            apps/desktop/release/*.dmg \
-            apps/desktop/release/*.zip \
-            apps/desktop/release/*.blockmap \
-            apps/desktop/release/dev-mac.yml \
-            --clobber
+          # `set -e` does not apply inside `if publish`, so each command returns.
+          publish() {
+            if ! gh release view "$TAG" >/dev/null 2>&1; then
+              gh release create "$TAG" --target "$GITHUB_SHA" --title "Holi $VERSION" --prerelease --draft --generate-notes || return 1
+            fi
+            gh release upload "$TAG" \
+              apps/desktop/release/*.dmg \
+              apps/desktop/release/*.zip \
+              apps/desktop/release/*.blockmap \
+              apps/desktop/release/dev-mac.yml \
+              --clobber || return 1
+            gh release edit "$TAG" --draft=false
+          }
+          for attempt in 1 2 3 4; do
+            if publish; then exit 0; fi
+            if [ "$attempt" -lt 4 ]; then
+              echo "Publishing failed (attempt $attempt); retrying in $((attempt * 30))s."
+              sleep $((attempt * 30))
+            fi
+          done
+          exit 1
 
   release:
     needs: [version, build-mac]

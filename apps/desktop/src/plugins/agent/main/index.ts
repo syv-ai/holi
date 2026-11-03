@@ -169,7 +169,8 @@ export const agentMain: MainPlugin = {
           await ptyHistory.update((all) => ({ ...all, [ctx.remote]: list }))
         },
       },
-      providers: () => providers().filter((p) => !hasBackground(p)),
+      // A background provider runs here only for its sign-in.
+      providers,
       terminals,
       // Its turns pause sync and are recorded like a background session's.
       bracket: (id, edge) => started.bracket(id, edge),

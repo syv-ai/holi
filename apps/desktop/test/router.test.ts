@@ -1738,9 +1738,9 @@ describe('sync', () => {
     expect(host.active()).not.toBeNull()
 
     const state = await caller.sync.state()
-    // Resting ahead>0 is not surfaced now that push is automatic — a freshly
-    // added vault settles at up-to-date (or, briefly, pulling on the open fetch).
-    expect(['up-to-date', 'pulling']).toContain(state.kind)
+    // A freshly added vault settles at up-to-date (or, briefly, pulling on the
+    // open fetch, or ahead while an open-time commit waits for its push).
+    expect(['up-to-date', 'pulling', 'unsynced']).toContain(state.kind)
     expect(base).toBeTruthy()
   })
 
