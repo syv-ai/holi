@@ -916,7 +916,6 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     let branch = ''
     let ahead = 0
     let behind = 0
-    let hasUpstream = false
     let detached = false
     let unborn = false
     const dirtyPaths: string[] = []
@@ -951,13 +950,6 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       } else if (key === 'branch.head') {
         if (value === '(detached)') detached = true
         else branch = value
-      } else if (key === 'branch.ab') {
-        // Present only when the branch has an upstream. Absent is not a parse
-        // failure — it means "nothing to compare against", i.e. zero both ways.
-        const [a, b] = value.split(' ')
-        hasUpstream = true
-        ahead = Number(a?.replace('+', '') ?? 0)
-        behind = Math.abs(Number(b ?? 0))
       }
     }
 
@@ -971,17 +963,33 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       }
     }
 
-    // A branch with no upstream (made here, never pushed) has no `branch.ab`,
-    // but its commits are still work GitHub does not have. Count what no
-    // `origin` ref holds, so Leave and the offline count stay honest.
-    if (!hasUpstream && !unborn && !detached) {
-      ahead = Number(
-        await runGit(
+    // Holi always syncs with the namesake branch on origin, not Git's
+    // configurable upstream. Porcelain's branch.ab therefore reports the
+    // wrong counts when the upstream is absent or points elsewhere.
+    if (!unborn && !detached && branch !== '') {
+      const target = `refs/remotes/origin/${branch}`
+      const exists = await tryGit(root, ['rev-parse', '--verify', '--quiet', target], opts)
+      if (exists.ok) {
+        const counts = await runGit(
           root,
-          ['rev-list', '--count', 'HEAD', '--not', '--remotes=origin'],
+          ['rev-list', '--left-right', '--count', `HEAD...${target}`],
           opts,
-        ).catch(() => '0'),
-      )
+        ).catch(() => '0 0')
+        const [local = '0', remote = '0'] = counts.split(/\s+/)
+        ahead = Number(local)
+        behind = Number(remote)
+      } else {
+        // A branch not yet on origin has no namesake commit to compare with.
+        // Count commits no origin branch contains as pending pushes.
+        ahead = Number(
+          await runGit(
+            root,
+            ['rev-list', '--count', 'HEAD', '--not', '--remotes=origin'],
+            opts,
+          ).catch(() => '0'),
+        )
+        behind = 0
+      }
     }
 
     return {

@@ -406,7 +406,9 @@ export async function openActiveVault(args: {
   let reconcileFrom: string | null = null
 
   function setState(next: SyncState): void {
-    if (next.kind !== 'pulling') {
+    // `pulling` and `unsynced` come and go with every pull and every commit,
+    // and the commit, pull and push lines already say what happened.
+    if (next.kind !== 'pulling' && next.kind !== 'unsynced') {
       const line = stateLine(next)
       if (line.message !== loggedState) {
         // The first reading at open is not news unless it is bad.
@@ -508,9 +510,14 @@ export async function openActiveVault(args: {
     // wastes their time.
     if (permissionDenied) return { kind: 'no-access' }
     if (offline) return { kind: 'offline', count: status.ahead }
-    // Resting ahead>0 is a bounded transient (the coalesced push has not fired
-    // yet) and is deliberately NOT surfaced: not worth a flickering counter.
-    // The count appears only when offline.
+    // Not caught up is said, not called up to date: a vault ahead or behind
+    // its remote with nothing failing is the push or pull that has not run
+    // yet, or one that keeps declining. The label is quiet and the log does
+    // not hear it (`setState`), so an autosave's few seconds ahead before its
+    // coalesced push neither warns nor writes a line.
+    if (status.ahead > 0 || status.behind > 0) {
+      return { kind: 'unsynced', ahead: status.ahead, behind: status.behind }
+    }
     return { kind: 'up-to-date' }
   }
 
