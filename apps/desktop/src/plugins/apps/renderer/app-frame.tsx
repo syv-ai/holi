@@ -366,7 +366,7 @@ const day = (iso: string) =>
 
 /** Who wrote the code being approved: the commit that added it and the last
  *  one to change it, from main. The name opens their GitHub profile when main
- *  could tell their login; the hash opens the bundle's history, the dialog a
+ *  could tell their login; the hash opens the bundle's history at that commit, the dialog a
  *  document's History opens. A personal app never committed was written on
  *  this machine. */
 function WrittenBy({
@@ -377,19 +377,32 @@ function WrittenBy({
   authorship: Authorship
 }): React.JSX.Element {
   const { added, last } = authorship
+  // The commit the history opens on, kept after closing so the dialog can
+  // animate out. A closed dialog asks git and GitHub nothing.
+  const [historyAt, setHistoryAt] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
-  const openHistory = () => setHistoryOpen(true)
+  const openAt = (sha: string) => {
+    setHistoryAt(sha)
+    setHistoryOpen(true)
+  }
   return (
     <div className="grid gap-1.5 rounded-xl bg-muted/60 px-4 py-3 text-xs text-muted-foreground">
       {added == null ? (
         <span>Not committed yet: written on this machine.</span>
       ) : (
         <>
-          <CommitLine lead="Added by" commit={added} onOpen={openHistory} />
+          <CommitLine lead="Added by" commit={added} onOpen={() => openAt(added.sha)} />
           {last != null && last.sha !== added.sha && (
-            <CommitLine lead="Last changed by" commit={last} onOpen={openHistory} />
+            <CommitLine lead="Last changed by" commit={last} onOpen={() => openAt(last.sha)} />
           )}
-          <FileHistoryDialog path={path} open={historyOpen} onOpenChange={setHistoryOpen} />
+          {historyAt !== null && (
+            <FileHistoryDialog
+              path={path}
+              sha={historyAt}
+              open={historyOpen}
+              onOpenChange={setHistoryOpen}
+            />
+          )}
         </>
       )}
     </div>

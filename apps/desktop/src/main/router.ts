@@ -1552,6 +1552,8 @@ export function createRouter(deps: RouterDeps) {
       .query(async ({ input }): Promise<Commit[]> => {
         const repo = activeOrThrow().repo
         const path = safe(input.path)
+        // A renamed or deleted bundle is no folder on disk, so it falls to the
+        // single-file walk, which likely finds nothing.
         const folder = await stat(join(repo.root, path)).then(
           (s) => s.isDirectory(),
           () => false,

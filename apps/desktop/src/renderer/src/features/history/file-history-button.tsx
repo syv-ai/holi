@@ -50,13 +50,18 @@ export function FileHistoryDialog({
   path,
   open,
   onOpenChange,
+  sha,
 }: {
   path: string
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** The commit to open on, as `HistoryDialog`'s `sha`. */
+  sha?: string
 }) {
-  const { history, retry } = useFileHistory(path)
-  const authors = useFileAuthors(path)
+  // Asks git and GitHub only while open: the dialog stays mounted for its
+  // close animation, and a closed one wants nothing.
+  const { history, retry } = useFileHistory(path, open)
+  const authors = useFileAuthors(path, open)
   return (
     <HistoryDialog
       path={path}
@@ -65,6 +70,7 @@ export function FileHistoryDialog({
       onRetry={retry}
       open={open}
       onOpenChange={onOpenChange}
+      {...(sha === undefined ? {} : { sha })}
     />
   )
 }

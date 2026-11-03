@@ -102,9 +102,16 @@ export function bumpHistoryEpochs(epochs: HistoryEpochs, paths: string[] | null)
   return { ...epochs, byPath }
 }
 
-/** A number that changes whenever `path`'s git history may have. */
+/** A number that changes whenever `path`'s git history may have: a commit
+ *  that took it, or anything under it when it is a folder (a vault app's
+ *  bundle). */
 export function historyEpoch(epochs: HistoryEpochs, path: string): number {
-  return epochs.all + (epochs.byPath[path] ?? 0)
+  const under = `${path}/`
+  let n = epochs.all
+  for (const [p, count] of Object.entries(epochs.byPath)) {
+    if (p === path || p.startsWith(under)) n += count
+  }
+  return n
 }
 
 export const loadVaultsAtom = atom(null, async (get, set) => {

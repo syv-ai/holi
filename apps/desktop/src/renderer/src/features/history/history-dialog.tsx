@@ -69,6 +69,7 @@ export function HistoryDialog({
   onRetry,
   open,
   onOpenChange,
+  sha,
 }: {
   path: string
   history: FileHistory
@@ -76,10 +77,32 @@ export function HistoryDialog({
   onRetry: () => void
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** A commit to open on, by its sha or a prefix of it: the dialog shows its
+   *  changes once the list has it, until something else is picked. */
+  sha?: string
 }) {
   const [author, setAuthor] = useState<string | null>(null)
   const [period, setPeriod] = useState<Period>('all')
-  const [detail, setDetail] = useState<Detail>(null)
+  const [picked, setPicked] = useState<Detail>(null)
+  const [opening, setOpening] = useState<string | null>(sha ?? null)
+  // Each opening starts on `sha` again: the dialog stays mounted between them.
+  const [openedFor, setOpenedFor] = useState({ open, sha })
+  if (openedFor.open !== open || openedFor.sha !== sha) {
+    setOpenedFor({ open, sha })
+    if (open) {
+      setOpening(sha ?? null)
+      setPicked(null)
+    }
+  }
+  const named =
+    opening !== null && history.kind === 'ready'
+      ? history.commits.find((c) => c.sha === opening || c.sha.startsWith(opening))
+      : undefined
+  const detail: Detail = picked ?? (named === undefined ? null : { commit: named, show: 'diff' })
+  const setDetail = (next: Detail) => {
+    setOpening(null)
+    setPicked(next)
+  }
   const segments = path.split('/')
   const folder = useAtomValue(snapshotAtom).dirs.includes(path)
 
