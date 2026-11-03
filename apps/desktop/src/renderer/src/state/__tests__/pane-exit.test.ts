@@ -102,24 +102,24 @@ describe('switching vault', () => {
     expect(store.get(activeRemoteAtom)).toBe('o/a')
   })
 
-  it('switches at once with nothing to ask about, and empties the workspace', () => {
+  it('switches at once with nothing to ask about, and empties the workspace', async () => {
     const store = createStore()
     store.set(activeRemoteAtom, 'o/a')
     store.set(workspaceAtom, split())
 
-    store.set(switchVaultAtom, 'o/b')
+    await store.set(switchVaultAtom, 'o/b')
 
     expect(store.get(activeRemoteAtom)).toBe('o/b')
     expect(store.get(workspaceAtom)).toEqual(emptyWorkspace())
     expect(store.get(leavingVaultAtom)).toBeNull()
   })
 
-  it('confirming applies the pending switch and clears the question', () => {
+  it('confirming applies the pending switch and clears the question', async () => {
     const store = createStore()
     store.set(activeRemoteAtom, 'o/a')
     store.set(leavingVaultAtom, { kind: 'switch', remote: 'o/b' })
 
-    store.set(applyVaultSwitchAtom, 'o/b')
+    await store.set(applyVaultSwitchAtom, 'o/b')
 
     expect(store.get(activeRemoteAtom)).toBe('o/b')
     expect(store.get(leavingVaultAtom)).toBeNull()

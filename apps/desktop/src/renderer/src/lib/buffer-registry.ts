@@ -11,10 +11,10 @@ type Flusher = () => Promise<void>
 
 /** The two ways a buffer can be asked to write itself. */
 interface Buffer {
-  /** Unconditional (quit, blur, tab close): losing keystrokes is worse than
-   *  briefly invalid syntax. */
+  /** Unconditional (quit, vault switch, a rename, move or delete): losing
+   *  keystrokes is worse than briefly invalid syntax. */
   flush: Flusher
-  /** Gated (⌘S): holds off while syntax is broken, so a half-typed `tags: [`
+  /** Gated (⌘S, window blur): holds off while syntax is broken, so a half-typed `tags: [`
    *  is never the saved state. */
   save: Flusher
 }
@@ -43,6 +43,17 @@ export async function flushAllBuffers(): Promise<void> {
  */
 export async function saveAllBuffers(): Promise<void> {
   await writeAll((b) => b.save, 'save')
+}
+
+/**
+ * Leaving the window saves every buffer, gated: nothing is lost by waiting,
+ * and a half-typed settings file written on the way out would be read back
+ * as empty. Returns the unsubscribe.
+ */
+export function saveBuffersOnBlur(target: Window = window): () => void {
+  const onBlur = () => void saveAllBuffers()
+  target.addEventListener('blur', onBlur)
+  return () => target.removeEventListener('blur', onBlur)
 }
 
 async function writeAll(pick: (b: Buffer) => Flusher, what: string): Promise<void> {

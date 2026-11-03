@@ -8,8 +8,8 @@ import { emptyVaultSnapshot } from '@holi/shared'
 import { createStore, Provider } from 'jotai'
 import { afterEach, expect, test, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
-import { act, render, screen, waitFor } from '@/test/render'
-import { flushAllBuffers, saveAllBuffers } from '@/lib/buffer-registry'
+import { act, fireEvent, render, screen, waitFor } from '@/test/render'
+import { flushAllBuffers, saveAllBuffers, saveBuffersOnBlur } from '@/lib/buffer-registry'
 import { coreContributionAtom } from '@/state/plugins'
 import { editorSelectionAtom } from '@/state/ui-report'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
@@ -243,6 +243,28 @@ test('a flush writes json that does not parse, and ⌘S holds it', async () => {
     path: '.holi/config.json',
     text: '{"a": ',
   })
+})
+
+test('leaving the window saves json that parses, and holds json that does not', async () => {
+  read.mockResolvedValue('{"a": 1}\n')
+  write.mockResolvedValue(undefined)
+  historyList.mockResolvedValue([])
+  const off = saveBuffersOnBlur()
+  setup('.holi/config.json')
+  expect(await screen.findByText('Saved')).toBeInTheDocument()
+
+  await typeInto('{"a": ')
+  await act(async () => void fireEvent.blur(window))
+  expect(write).not.toHaveBeenCalled()
+
+  await typeInto('{"a": 2}\n')
+  await act(async () => void fireEvent.blur(window))
+  expect(write).toHaveBeenCalledWith({
+    remote: 'syv-ai/site',
+    path: '.holi/config.json',
+    text: '{"a": 2}\n',
+  })
+  off()
 })
 
 test('⌘F finds in a code file, steps through the matches and replaces them', async () => {

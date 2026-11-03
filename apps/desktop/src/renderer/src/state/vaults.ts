@@ -131,7 +131,10 @@ export const loadSnapshotAtom = atom(null, async (get, set) => {
  * here may keep a snapshot keyed by remote.
  */
 export const openVaultAtom = atom(null, async (_get, set, remote: string) => {
-  // What was typed goes into the vault it was typed in, before that one closes.
+  // A cross-vault open (`onOpen` below) arrives with the old vault's editors
+  // still mounted: what was typed goes into the vault it was typed in, before
+  // that one closes. A switch from the vault menu flushed already
+  // (`applyVaultSwitchAtom`), and this finds nothing left to write.
   await flushAllBuffers()
   // Nothing of the vault left carries over: its document runs ended with it.
   set(documentRunsAtom, {})
@@ -151,6 +154,7 @@ export const openVaultAtom = atom(null, async (_get, set, remote: string) => {
  * user can act on (no network, no access, no such repo).
  */
 export const addVaultAtom = atom(null, async (_get, set, remote: string) => {
+  // The ritual opens over the old vault's editors, still mounted.
   await flushAllBuffers()
   const snapshot = await trpc.vaults.add.mutate({ remote })
   set(activeRemoteAtom, remote)
@@ -296,6 +300,17 @@ export const switchBranchAtom = atom(
 )
 
 /**
+ * The restore point a multi-file edit starts from: the buffers on disk, then
+ * a commit. Flushed again after it, because an edit typed during the commit
+ * would otherwise be saved to its old path after the files move.
+ */
+async function restorePoint(): Promise<void> {
+  await flushAllBuffers()
+  await trpc.sync.commitNow.mutate()
+  await flushAllBuffers()
+}
+
+/**
  * Rename a note: move the file, rewrite inbound links, follow the open tab.
  *
  * The order is the correctness: flush the live buffer and commit a clean
@@ -322,8 +337,7 @@ export const renameNoteAtom = atom(
   ) => {
     const remote = get(activeRemoteAtom)
     if (!remote) return
-    await flushAllBuffers()
-    await trpc.sync.commitNow.mutate()
+    await restorePoint()
     await trpc.notes.rename.mutate({
       remote,
       from,
@@ -358,8 +372,7 @@ export const moveNotesAtom = atom(
   ) => {
     const remote = get(activeRemoteAtom)
     if (!remote || (moves.length === 0 && folders.length === 0)) return
-    await flushAllBuffers()
-    await trpc.sync.commitNow.mutate()
+    await restorePoint()
     await trpc.notes.move.mutate({ remote, moves, folders })
     set(workspaceAtom, retargetTabs(get(workspaceAtom), moves, get(folderSurfacesAtom)))
     const active = get(activeDocAtom)
@@ -404,8 +417,7 @@ export const deleteManyAtom = atom(
   async (get, set, { paths, folders = [] }: { paths: string[]; folders?: string[] }) => {
     const remote = get(activeRemoteAtom)
     if (!remote || (paths.length === 0 && folders.length === 0)) return
-    await flushAllBuffers()
-    await trpc.sync.commitNow.mutate()
+    await restorePoint()
     await trpc.notes.deleteMany.mutate({ remote, paths, folders })
     const gone = new Set(paths)
     if (gone.has(get(activeDocAtom)?.path ?? '')) set(activeDocAtom, null)

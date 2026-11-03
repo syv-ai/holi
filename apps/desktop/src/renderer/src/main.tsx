@@ -5,7 +5,7 @@ import { createRoot } from 'react-dom/client'
 import { App } from '@/App'
 import { ReadyUpdateDialog } from '@/features/shell/ready-update-dialog'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { flushAllBuffers } from '@/lib/buffer-registry'
+import { flushAllBuffers, saveBuffersOnBlur } from '@/lib/buffer-registry'
 import { stampPlatform } from '@/lib/platform'
 import { hostPluginVaults, installedPluginsAtom } from '@/state/plugins'
 import { reportUiToMain } from '@/state/ui-report'
@@ -44,8 +44,8 @@ reportUiToMain(store)
 window.holi.vault.onFlushRequest(() => {
   void flushAllBuffers().finally(() => window.holi.vault.flushDone())
 })
-// Leaving the window is a flush point too (`docs/features/editor.md`).
-window.addEventListener('blur', () => void flushAllBuffers())
+// Leaving the window saves too, syntax-gated (`docs/features/editor.md`).
+saveBuffersOnBlur()
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
