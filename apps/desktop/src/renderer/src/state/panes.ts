@@ -22,13 +22,6 @@ export interface FolderSurface {
   match(path: string): boolean
 }
 
-/** Open a note as a preview tab in the active pane — the action behind a
- *  wiki-link click from a surface that is not the editor (e.g. a task
- *  description on the board), which switches the view to that note. */
-export const openNoteTabAtom = atom(null, (_get, set, path: string) => {
-  set(workspaceAtom, (w) => openPreview(w, path))
-})
-
 interface Pane {
   tabs: Tab[]
   /** Index into `tabs`. `-1` when the pane is empty, which is the empty-editor

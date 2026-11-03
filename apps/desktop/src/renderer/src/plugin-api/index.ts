@@ -85,7 +85,6 @@ export {
   /** @public */ type AgentsSelection,
 } from '@/state/agents-slots'
 export { openNextBeside } from '@/state/alt-open'
-export { openNoteTabAtom } from '@/state/panes'
 export { openSettingsSectionAtom } from '@/state/settings-section'
 export {
   activeSurfaceIdAtom,
