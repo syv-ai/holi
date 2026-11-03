@@ -1225,7 +1225,11 @@ describe('ActiveVault — sync', () => {
     const dir = await makeClone(origin)
     await sleep(QUIESCE)
     const real = openRepo(dir)
-    const alerts: string[] = []
+    // Whether a pull had got through when each alert fired: the alert must
+    // come after it, or the test would not show that the pull left the run
+    // failing. The clock starts at the first refused push, so it has to
+    // outlast a real push and pull.
+    const alerts: { text: string; afterPull: boolean }[] = []
     let pulled = false
     const active = await openActiveVault({
       claims: CLAIMS,
@@ -1233,24 +1237,26 @@ describe('ActiveVault — sync', () => {
       repo: {
         ...real,
         pull: async () => {
+          const result = await real.pull()
           pulled = true
-          return real.pull()
+          return result
         },
         push: async () => ({ kind: 'rejected' as const, reason: 'permission' as const }),
       },
       onSnapshot: () => {},
       onSyncState: () => {},
-      onSyncFailing: (text) => alerts.push(text),
-      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, failingAlertMs: 500 },
+      onSyncFailing: (text) => alerts.push({ text, afterPull: pulled }),
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, failingAlertMs: 3_000 },
     })
     open.push(active)
 
     await active.pushNow()
     await active.retry()
     expect(pulled).toBe(true)
-    expect(alerts).toEqual([])
     await waitFor('the permission alert', () => alerts.length > 0)
-    expect(alerts[0]).toContain('Sync has failed')
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0].afterPull).toBe(true)
+    expect(alerts[0].text).toContain('Sync has failed')
   })
 
   it('alerts on a conflict left waiting, naming its files, once the time is up', async () => {
