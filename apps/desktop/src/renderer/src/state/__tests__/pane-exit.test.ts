@@ -14,6 +14,8 @@ import {
   workspaceAtom,
   type Workspace,
 } from '@/state/panes'
+import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
+import { allTabs } from '@/state/shell-workspace'
 import { activeRemoteAtom } from '@/state/vaults'
 import { applyVaultSwitchAtom, leavingVaultAtom, switchVaultAtom } from '@/state/vault-switch'
 
@@ -102,16 +104,18 @@ describe('switching vault', () => {
     expect(store.get(activeRemoteAtom)).toBe('o/a')
   })
 
-  it('switches at once with nothing to ask about, and empties the workspace', () => {
+  it('switches at once with nothing to ask about, to that vault’s own tabs', () => {
     const store = createStore()
     store.set(activeRemoteAtom, 'o/a')
-    store.set(workspaceAtom, split())
+    store.set(openTabAtom, { kind: 'doc', path: 'a.md' })
 
     store.set(switchVaultAtom, 'o/b')
 
     expect(store.get(activeRemoteAtom)).toBe('o/b')
-    expect(store.get(workspaceAtom)).toEqual(emptyWorkspace())
+    expect(allTabs(store.get(shellWorkspaceAtom))).toEqual([])
     expect(store.get(leavingVaultAtom)).toBeNull()
+    store.set(switchVaultAtom, 'o/a')
+    expect(allTabs(store.get(shellWorkspaceAtom))).toEqual(['a.md'])
   })
 
   it('confirming applies the pending switch and clears the question', () => {

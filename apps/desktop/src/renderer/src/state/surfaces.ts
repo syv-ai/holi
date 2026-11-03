@@ -13,15 +13,7 @@ import {
   tabKey,
   type TabDescriptor,
 } from './tab-descriptor'
-import {
-  openInNewPane,
-  openPinned,
-  openPreview,
-  openSurface,
-  openTab,
-  workspaceAtom,
-  type Tab,
-} from './panes'
+import type { Tab } from '@/lib/tab'
 import { folderClaimsAtom } from './plugins'
 import { activeRemoteAtom, snapshotAtom } from './vaults'
 
@@ -32,10 +24,7 @@ import { activeRemoteAtom, snapshotAtom } from './vaults'
  */
 export const openSurfaceAtom = atom(null, (_get, set, surface: string, id?: string): void => {
   if (surface === 'home') return void set(openHomeAtom)
-  set(workspaceAtom, (w) => openSurface(w, surface, id))
-  // The tabs the shell draws are `shell-tabs.ts`'s: a vault app by its bundle,
-  // any other surface by name. `workspaceAtom` above is the pane workspace
-  // `surfaceTabIdsAtom` reads; this is what a person sees open.
+  // A vault app opens by its bundle, any other surface by name.
   set(openTabAtom, shellSurfaceTab(surface, id))
 })
 
@@ -147,24 +136,13 @@ export const shellTabForPathAtom = atom((get): ((path: string) => TabDescriptor)
 })
 
 /**
- * Open a vault path by any gesture: a single click's `preview`, a double
- * click's `pinned`, or `pane`, beside the active one. A folder document opens
- * as its surface, which has no preview state.
+ * Open a vault path as the tab it is (`shellTabForPathAtom`): `pane` opens it
+ * in split view beside the focused tab; `preview` and `pinned` both open it as
+ * its own tab, since the shell's tabs have no preview state.
  */
 export const openPathAtom = atom(
   null,
   (get, set, path: string, how: 'preview' | 'pinned' | 'pane' = 'pinned'): void => {
-    const tab = get(tabForPathAtom)(path)
-    // The shell's tabs, as for a surface; `pane` is beside the focused one.
     set(openTabAtom, get(shellTabForPathAtom)(path), { beside: how === 'pane' })
-    set(workspaceAtom, (w) =>
-      how === 'pane'
-        ? openInNewPane(w, tab)
-        : tab.kind !== 'note'
-          ? openTab(w, tab)
-          : how === 'preview'
-            ? openPreview(w, path)
-            : openPinned(w, path),
-    )
   },
 )

@@ -3,8 +3,8 @@
  *
  * The property that matters is the *order*: flush the buffer, commit a clean
  * restore point, rename, then commit again — so the rename lands as one commit
- * on top of a state that is already safe. And the open tab has to follow the
- * file to its new path, or it points at something that no longer exists.
+ * on top of a state that is already safe. The open tab following the file is
+ * the shell's, done by whoever asked for the rename (`onMoved`).
  */
 import { createStore } from 'jotai'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -12,7 +12,6 @@ import type { VaultSnapshot } from '@holi/shared'
 import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { activeRemoteAtom, renameNoteAtom } from '@/state/vaults'
-import { emptyWorkspace, openTab, workspaceAtom } from '@/state/panes'
 
 let holi: FakeHoli | null = null
 afterEach(() => {
@@ -30,7 +29,7 @@ const emptySnapshot = (): VaultSnapshot => ({
 })
 
 describe('renameNoteAtom', () => {
-  it('flushes, commits, renames, commits — and retargets the open tab', async () => {
+  it('flushes, commits, renames, commits', async () => {
     holi = installFakeHoli((op) => {
       if (op.path === 'notes.rename') return { rewritten: [] }
       if (op.path === 'vaults.snapshot') return emptySnapshot()
@@ -38,7 +37,6 @@ describe('renameNoteAtom', () => {
     })
     const store = createStore()
     store.set(activeRemoteAtom, 'syv-ai/notes')
-    store.set(workspaceAtom, openTab(emptyWorkspace(), { kind: 'note', path: 'old.md' }))
 
     let flushed = false
     const unregister = registerBuffer(async () => {
@@ -55,7 +53,6 @@ describe('renameNoteAtom', () => {
       'vaults.snapshot',
       'sync.commitNow',
     ])
-    expect(store.get(workspaceAtom).panes[0]!.tabs).toEqual([{ kind: 'note', path: 'sub/new.md' }])
   })
 
   it('is a no-op with no vault open', async () => {

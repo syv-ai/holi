@@ -12,10 +12,8 @@ import type { HeldBackFile } from '../../../main/vault/large-files'
 import type { RendererPlugin } from '@/state/plugin-types'
 import { flushAllBuffers } from '@/lib/buffer-registry'
 import { trpc } from '@/lib/trpc'
-import { closeTabsForPaths, retargetTab, retargetTabs, workspaceAtom } from './panes'
 // A cycle (`plugins` reads `activeRemoteAtom`), safe because neither module
 // reads the other's atoms until a store does.
-import { folderSurfacesAtom } from './plugins'
 import { openDocumentAtom } from './open-document'
 // A cycle too (`document-runs` reads `activeRemoteAtom`), safe the same way.
 import { documentRunsAtom } from './document-runs'
@@ -293,7 +291,8 @@ export const switchBranchAtom = atom(
 )
 
 /**
- * Rename a note: move the file, rewrite inbound links, follow the open tab.
+ * Rename a note: move the file, rewrite inbound links. Its open tab follows
+ * through the caller (`onMoved`), which owns the shell's tabs.
  *
  * The order is the correctness: flush the live buffer and commit a clean
  * restore point *before* the multi-file edit, so every step after is
@@ -327,7 +326,6 @@ export const renameNoteAtom = atom(
       to,
       ...(localLinksOnly === true ? { localLinksOnly } : {}),
     })
-    set(workspaceAtom, retargetTab(get(workspaceAtom), from, to))
     const wasActive = get(activeDocAtom)?.path === from
     await set(loadSnapshotAtom)
     if (wasActive) set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === to) ?? null)
@@ -338,8 +336,9 @@ export const renameNoteAtom = atom(
 /**
  * Batch move (folder rename/delete-to-move, drag, cut+paste). Same order as
  * `renameNoteAtom`, one commit-pair for the whole batch: flush the live buffer
- * and commit a clean restore point, run the single-pass `notes.move`, retarget
- * every open tab, reload the snapshot, follow the active doc, commit again.
+ * and commit a clean restore point, run the single-pass `notes.move`, reload
+ * the snapshot, follow the active doc, commit again. The open tabs follow
+ * through the caller (`onMoved`).
  * `folders` are the folders the move was aimed at, whose leftovers (`.gitkeep`,
  * ignored files) main carries after the documents.
  */
@@ -358,7 +357,6 @@ export const moveNotesAtom = atom(
     await flushAllBuffers()
     await trpc.sync.commitNow.mutate()
     await trpc.notes.move.mutate({ remote, moves, folders })
-    set(workspaceAtom, retargetTabs(get(workspaceAtom), moves, get(folderSurfacesAtom)))
     const active = get(activeDocAtom)
     const moved = active ? moves.find((m) => m.from === active.path) : undefined
     await set(loadSnapshotAtom)
@@ -392,7 +390,7 @@ export const importFilesAtom = atom(
 
 /**
  * Batch delete (file, folder, multi-selection). Clears the editor if the open
- * note is among them and closes every deleted tab. One commit-pair, like the
+ * note is among them; the caller closes the deleted tabs. One commit-pair, like the
  * others. `folders` are what a folder delete was aimed at, pruned once their
  * documents are gone (`deleteMany` in main).
  */
@@ -406,7 +404,6 @@ export const deleteManyAtom = atom(
     await trpc.notes.deleteMany.mutate({ remote, paths, folders })
     const gone = new Set(paths)
     if (gone.has(get(activeDocAtom)?.path ?? '')) set(activeDocAtom, null)
-    set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), paths, get(folderSurfacesAtom)))
     await set(loadSnapshotAtom)
     await trpc.sync.commitNow.mutate()
   },

@@ -11,7 +11,7 @@
  */
 import { atom } from 'jotai'
 import { trpc } from '@/lib/trpc'
-import { openPinned, workspaceAtom } from './panes'
+import { openTabAtom } from './shell-tabs'
 import { activeDocAtom, activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 
 /**
@@ -41,7 +41,7 @@ export const ensureTodaysDailyAtom = atom(null, async (get, set): Promise<string
 export const openTodaysDailyAtom = atom(null, async (get, set): Promise<string | null> => {
   const path = await set(ensureTodaysDailyAtom)
   if (path === null) return null
-  set(workspaceAtom, openPinned(get(workspaceAtom), path))
+  set(openTabAtom, { kind: 'doc', path })
   set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === path) ?? null)
   return path
 })
