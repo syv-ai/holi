@@ -329,6 +329,7 @@ export async function openActiveVault(args: {
   let cached: VaultSnapshot = await scanVault(root, claimed)
   let state: SyncState = { kind: 'up-to-date' }
   let scanning = false
+  let scanRun: Promise<void> | null = null
   let rescanQueued = false
   let rescanTimer: NodeJS.Timeout | null = null
   let committing = false
@@ -420,7 +421,7 @@ export async function openActiveVault(args: {
     if (!closed) args.onSyncState(next)
   }
 
-  async function rescan(): Promise<void> {
+  async function rescan(force = false): Promise<void> {
     if (closed) return
     if (rescanTimer !== null) {
       clearTimeout(rescanTimer)
@@ -428,33 +429,56 @@ export async function openActiveVault(args: {
     }
     if (scanning) {
       rescanQueued = true
+      if (force && scanRun !== null) {
+        // Mutations use refresh as a consistency guarantee: when it resolves,
+        // even a scan already in progress must have observed the mutation.
+        await scanRun
+        if ((rescanQueued || rescanTimer !== null) && !closed) {
+          if (rescanTimer !== null) clearTimeout(rescanTimer)
+          rescanTimer = null
+          rescanQueued = false
+          await rescan(true)
+        } else if (scanRun !== null) {
+          // Another force-refresh may have claimed the queued scan first.
+          await scanRun
+        }
+      }
       return
     }
     scanning = true
-    try {
-      // A vault directory can vanish under us (a user deleting the clone in
-      // Finder), and a throw here must not take the heal loop down with it. An
-      // empty vault is the honest reading of an absent one.
-      cached = await args
-        .claims()
-        .then((claims) => {
-          claimed = claims
-          return scanVault(root, claims)
-        })
-        .catch(() => emptyVaultSnapshot())
-      if (!closed) args.onSnapshot(cached)
-    } finally {
-      scanning = false
-      if (rescanQueued && !closed) {
-        rescanQueued = false
-        // Bound follow-up scans to the watcher cadence. Events during one scan
-        // coalesce into one follow-up instead of starting concurrent scans or
-        // forming a tight rescan loop under a noisy watcher.
-        rescanTimer ??= setTimeout(() => {
-          rescanTimer = null
-          void rescan()
-        }, timings.rescanDebounceMs)
+    const run = (async () => {
+      try {
+        // A vault directory can vanish under us (a user deleting the clone in
+        // Finder), and a throw here must not take the heal loop down with it. An
+        // empty vault is the honest reading of an absent one.
+        cached = await args
+          .claims()
+          .then((claims) => {
+            claimed = claims
+            return scanVault(root, claims)
+          })
+          .catch(() => emptyVaultSnapshot())
+        if (!closed) args.onSnapshot(cached)
+      } finally {
+        scanning = false
+        if (rescanQueued && !closed) {
+          rescanQueued = false
+          // Bound watcher-triggered follow-up scans to the watcher cadence.
+          // Events during one scan coalesce without concurrent scans or a
+          // tight rescan loop under a noisy watcher. Explicit refreshes bypass
+          // this delay and wait for their follow-up above.
+          rescanTimer ??= setTimeout(() => {
+            rescanTimer = null
+            void rescan()
+          }, timings.rescanDebounceMs)
+        }
       }
+    })()
+    scanRun = run
+    try {
+      await run
+    } finally {
+      if (scanRun === run) scanRun = null
     }
   }
 
@@ -1017,7 +1041,7 @@ export async function openActiveVault(args: {
       // A branch that already has commits origin lacks gets them pushed.
       schedulePush()
     },
-    refresh: rescan,
+    refresh: () => rescan(true),
     commitNow() {
       // ⌘S, a vault switch, and quit. Skips the timer entirely: a real commit
       // point rather than a placebo.
