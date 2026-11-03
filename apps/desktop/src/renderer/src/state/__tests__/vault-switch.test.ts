@@ -1,87 +1,15 @@
 /**
- * Closing panes and switching vaults as atoms, so that a command can drive
- * them. What these pin: a close lands at once, and a switch still asks.
+ * Switching vaults: a switch asks first when leaving would cost something,
+ * and each vault keeps its own tabs.
  */
 import { atom, createStore } from 'jotai'
 import { describe, expect, it } from 'vitest'
 
 import { installedPluginsAtom } from '@/state/plugins'
-import { closeActiveTabAtom, closeTabAtom } from '@/state/pane-exit'
-import {
-  emptyWorkspace,
-  openPreview,
-  splitPane,
-  workspaceAtom,
-  type Workspace,
-} from '@/state/panes'
 import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
 import { allTabs } from '@/state/shell-workspace'
 import { activeRemoteAtom } from '@/state/vaults'
 import { applyVaultSwitchAtom, leavingVaultAtom, switchVaultAtom } from '@/state/vault-switch'
-
-/** `a.md` in the left pane, `c.md` alone in the right one, right focused. */
-function split(): Workspace {
-  return {
-    panes: [
-      { tabs: [{ kind: 'note', path: 'a.md' }], active: 0 },
-      { tabs: [{ kind: 'note', path: 'c.md' }], active: 0 },
-    ],
-    active: 1,
-  }
-}
-
-describe('closing the last tab of a split', () => {
-  it('takes the pane at once: a close never waits on motion', () => {
-    const store = createStore()
-    store.set(workspaceAtom, split())
-
-    store.set(closeTabAtom, 1, 0)
-
-    expect(store.get(workspaceAtom).panes).toHaveLength(1)
-  })
-})
-
-describe('closing a tab that does not empty its pane', () => {
-  it('applies at once', () => {
-    const store = createStore()
-    store.set(workspaceAtom, openPreview(openPreview(emptyWorkspace(), 'a.md'), 'b.md'))
-
-    store.set(closeTabAtom, 0, 1)
-
-    expect(store.get(workspaceAtom).panes[0]!.tabs).toHaveLength(1)
-  })
-})
-
-describe('⌘W', () => {
-  it('closes the focused pane’s active tab', () => {
-    const store = createStore()
-    store.set(workspaceAtom, split())
-
-    store.set(closeActiveTabAtom)
-
-    expect(store.get(workspaceAtom).panes).toHaveLength(1)
-  })
-
-  it('takes an empty pane out of a split: ⌘\\ then ⌘W', () => {
-    const store = createStore()
-    store.set(workspaceAtom, splitPane(openPreview(emptyWorkspace(), 'a.md')))
-
-    store.set(closeActiveTabAtom)
-
-    expect(store.get(workspaceAtom).panes).toHaveLength(1)
-    expect(store.get(workspaceAtom).active).toBe(0)
-  })
-
-  it('does nothing with nothing open', () => {
-    const store = createStore()
-    const one = emptyWorkspace()
-    store.set(workspaceAtom, one)
-
-    store.set(closeActiveTabAtom)
-
-    expect(store.get(workspaceAtom)).toEqual(one)
-  })
-})
 
 /** A test-only plugin for which leaving costs something. */
 const busy = (store: ReturnType<typeof createStore>): void =>

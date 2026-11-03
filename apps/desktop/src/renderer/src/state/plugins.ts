@@ -27,7 +27,7 @@ import type {
   SlashCommand,
   Surface,
 } from '@/state/plugin-types'
-import type { FolderSurface } from './panes'
+import type { FolderSurface } from './shell-workspace'
 import { vaultSettingsAtom } from './settings'
 import { activeRemoteAtom } from './vaults'
 
@@ -85,7 +85,7 @@ export const folderClaimsAtom = atom((get): readonly FolderDocumentClaim[] =>
   folderClaims(get(claimsAtom)),
 )
 
-/** The same, as the panes need them to follow a moved or deleted one. */
+/** The same, as the tabs need them to follow a moved one. */
 export const folderSurfacesAtom = atom((get): readonly FolderSurface[] =>
   get(folderClaimsAtom).map(({ claim, folder }) => ({
     surface: folder.surface,

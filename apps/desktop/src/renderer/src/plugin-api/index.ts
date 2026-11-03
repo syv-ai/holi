@@ -91,7 +91,6 @@ export {
   openPathAtom,
   openSurfaceAtom,
   surfaceTabIdsAtom,
-  /** @public */ tabForPathAtom,
 } from '@/state/surfaces'
 export {
   agentRunFilesAtom,
