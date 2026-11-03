@@ -22,8 +22,8 @@ function AgendaSurface(): React.JSX.Element {
 export const googleRenderer: RendererPlugin = {
   info: GOOGLE_INFO,
   surfaces: [
-    { kind: 'mail', label: 'Mail', icon: Mail, render: MailView, homeable: true },
-    { kind: 'agenda', label: 'Agenda', icon: CalendarDays, render: AgendaSurface, homeable: true },
+    { kind: 'mail', label: 'Mail', icon: Mail, render: MailView },
+    { kind: 'agenda', label: 'Agenda', icon: CalendarDays, render: AgendaSurface },
   ],
   sidebarApps: [
     {

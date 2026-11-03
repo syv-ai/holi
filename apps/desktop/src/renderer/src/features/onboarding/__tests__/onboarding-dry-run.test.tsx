@@ -111,7 +111,7 @@ test('walks naming → plugins → settings → build → threshold without crea
   expect(within(settings).getByRole('group', { name: 'Keep a daily note' })).toBeInTheDocument()
 
   // Answer something, so the write would fire if it were going to.
-  await userEvent.click(within(settings).getByRole('radio', { name: 'Today’s note' }))
+  await userEvent.click(within(settings).getByRole('radio', { name: 'Dark' }))
   await create()
 
   // The threshold builds first, then says ready.

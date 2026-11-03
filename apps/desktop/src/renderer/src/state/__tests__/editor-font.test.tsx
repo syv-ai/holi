@@ -19,7 +19,6 @@ import { EDITOR_FONT_VAR, useEditorFont } from '../editor-font'
 import { vaultSettingsAtom } from '../settings'
 
 const settings = (editorFont: ResolvedVaultSettings['editorFont']): ResolvedVaultSettings => ({
-  home: VAULT_SETTING_DEFAULTS.home,
   plugins: VAULT_SETTING_DEFAULTS.plugins,
   pluginValues: {},
   dailyNotes: true,

@@ -4,7 +4,6 @@
  */
 import { atom, type Atom } from 'jotai'
 import { tabForPath } from '@/state/folder-documents'
-import { openHomeAtom } from './home'
 import { openTabAtom, shellWorkspaceAtom, updateWorkspaceAtom, workspaceOfAtom } from './shell-tabs'
 import { allTabs, closeTab as closeShellTab, closeTabsWhere, focusedTab } from './shell-workspace'
 import {
@@ -17,14 +16,9 @@ import type { Tab } from '@/lib/tab'
 import { folderClaimsAtom } from './plugins'
 import { activeRemoteAtom, snapshotAtom } from './vaults'
 
-/**
- * Open a surface, or focus its tab. Home is the one surface that goes through
- * its setting: the nav's Home, "Go home" and an app's `holi.open('home')` all
- * land wherever `home` says.
- */
+/** Open a surface, or focus its tab: a vault app by its bundle, any other
+ *  surface by name. */
 export const openSurfaceAtom = atom(null, (_get, set, surface: string, id?: string): void => {
-  if (surface === 'home') return void set(openHomeAtom)
-  // A vault app opens by its bundle, any other surface by name.
   set(openTabAtom, shellSurfaceTab(surface, id))
 })
 

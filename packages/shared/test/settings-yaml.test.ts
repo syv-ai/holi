@@ -39,7 +39,7 @@ describe('a seeded settings file', () => {
     // read at the moment somebody is typing one.
     expect(seeded).toContain('One of: true, false')
     expect(seededLocal).toContain('One of: system (Match my system)')
-    expect(seeded).toContain('recents (Vault overview)')
+    expect(seeded).toContain('Any positive number of bytes')
   })
 
   it('comments out a setting the ritual does not ask, so no default is frozen', () => {
@@ -56,7 +56,6 @@ describe('a seeded settings file', () => {
     const resolved = resolveAppSettings(seeded, seededLocal)
     expect(resolved.warnings).toEqual([])
     expect(resolved.dailyNotes).toBe(true)
-    expect(resolved.home).toBe(VAULT_SETTING_DEFAULTS.home)
     // The commented ones fall through to the default rather than being absent.
     expect(resolved.editorFont).toBe(VAULT_SETTING_DEFAULTS.editorFont)
   })

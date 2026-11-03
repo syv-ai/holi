@@ -149,8 +149,6 @@ export interface Surface {
   /** Its tabs open only from its plugin's own controls: the recents the
    *  window reports leave it out. */
   unlisted?: true
-  /** Offered as the `home` setting, and opened by it. */
-  homeable?: true
   /** The ids there are to open, most recently used first: the command menu
    *  and the Apps page list them. */
   instances?: Atom<readonly string[]>
