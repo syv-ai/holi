@@ -58,6 +58,9 @@ export interface Shortcut {
   /** Listed by the dialog but not run from it: the dialog's own keys, and a
    *  range of keys whose one line cannot say which of them to run. */
   listOnly?: true
+  /** One of the few keys a new vault's threshold shows, at this place in the
+   *  order (lowest first). */
+  firstKey?: number
 }
 
 /**
@@ -98,6 +101,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     label: 'Search',
     group: 'Navigation',
     keys: ['⌘K'],
+    firstKey: 1,
     whileTyping: true,
     inDialogs: true,
   },
@@ -129,6 +133,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     label: 'Agent sessions',
     group: 'Navigation',
     keys: ['⌘J'],
+    firstKey: 3,
     whileTyping: true,
     inTerminal: true,
   },
@@ -299,6 +304,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     label: 'New document',
     group: 'Files',
     keys: ['⌘N'],
+    firstKey: 2,
     whileTyping: true,
   },
   // The New tab's Start cards each have a key: ⌘N above, and these two.
