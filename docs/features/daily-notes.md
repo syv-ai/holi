@@ -2,18 +2,17 @@
 
 A vault can keep a journal: one note per day, `DD-MM-YYYY.md` at the vault root, made when the
 vault opens and filed into `journal/` once the day is over. Whether a vault does is its
-`dailyNotes` setting. What it opens on is Home, which may be today's note (the `home` setting,
-[settings](settings.md)).
+`dailyNotes` setting ([settings](settings.md)).
 
 ## How it works
 
 - **Creating.** `getOrCreateDaily` writes today's file if it is absent and returns its path. The
   seed is `type: daily-note` and `date: YYYY-MM-DD` frontmatter, then a `# DD-MM-YYYY` heading.
   "Today" is the device's local date, computed per call, so after midnight you get tomorrow's note.
-- **Opening a vault** runs, in order: open the vault, go Home, sweep. With `dailyNotes` on, today's
-  note is made first, whatever Home is. Home as `daily` opens it; with `dailyNotes` off, the Home
-  tab says the vault keeps none.
-- **⌘⇧D** creates and opens today's note in any vault, including one with `dailyNotes` off.
+- **Opening a vault** should make today's note (with `dailyNotes` on) and then sweep. The shell
+  calls neither on open today ([findings](../refactor/findings.md)).
+- **⇧⌘D**, the New tab's Today's note card and ⌘K's Today's note create and open today's note in
+  any vault, including one with `dailyNotes` off.
 - **The sweep** runs on open when `dailyNotes` is on. It looks at root-level files whose
   frontmatter says `type: daily-note`, skipping today's. An untouched stub (body empty or only the
   seeded heading) that nothing links to is deleted. Anything else is moved to `journal/` through
@@ -31,12 +30,10 @@ vault opens and filed into `journal/` once the day is over. Whether a vault does
 - A note that cannot be positively classified as an untouched stub is never deleted, and a stub
   something links to is archived instead. There is no orphan rescue, so a wrong delete is final.
 - Only root-level dailies are swept, which keeps a re-run a no-op.
-- Minting is not Home. A vault whose Home is its board still keeps its journal.
 - `dailyNotes` off stops the automatic work only; it does not remove the feature.
 - Use a local-date formatter, never `toISOString()`: UTC gives the wrong day near midnight.
 - The task badge counts open tasks linking to the note, not tasks due today; due-today is a board
   question.
-- Home names the daily by kind (`daily`), not path: a path would rot overnight.
 
 ## Rejected
 
@@ -50,7 +47,5 @@ vault opens and filed into `journal/` once the day is over. Whether a vault does
 
 - `packages/shared/src/daily-note.ts`: filename, seed, the untouched-stub test, marker predicates.
 - `apps/desktop/src/main/vault/daily.ts`: `getOrCreateDaily`, `sweepDaily`.
-- `apps/desktop/src/renderer/src/state/daily.ts`: `ensureTodaysDailyAtom`,
-  `openTodaysDailyAtom`, `todayDailyPathAtom`.
-- `apps/desktop/src/renderer/src/state/home.ts` and `lib/home-target.ts`: opening Home.
-- `apps/desktop/src/renderer/src/features/shell/vault-host.tsx`: the open, Home, sweep effect.
+- `apps/desktop/src/renderer/src/state/daily.ts`: `ensureTodaysDailyAtom`.
+- `apps/desktop/src/renderer/src/features/shell/use-shell-shortcuts.ts`: ⇧⌘D.

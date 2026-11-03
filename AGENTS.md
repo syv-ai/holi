@@ -308,8 +308,6 @@ Gotchas of a fresh checkout or worktree that no file states.
   the call site (`@shadcn/lint`'s `no-restyle`).
 - knip treats an export tagged `/** @public */` as used. That tag marks the plugin seam
   (`plugin-api`) and exports kept for a test; anything else unused is deleted, not tagged.
-- Known defect found during the agent-first refactor, still open: plugin `commands` and
-  `palette` never reach ⌘K. See `docs/refactor/findings.md`.
 - To check UI in the running app, start `pnpm dev:debug` (remote debugging port 9333) and
   drive the window with `node apps/desktop/cdp.mjs '<js expression>'`;
   `apps/desktop/scripts/seed-demo.mjs` seeds demo data. The app needs a signed-in GitHub
