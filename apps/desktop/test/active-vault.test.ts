@@ -14,7 +14,7 @@ import { taskClaim } from '@holi/shared'
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterAll, afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { GitError, openRepo } from '../src/main/git'
 import type { HeldBackFile } from '../src/main/vault/large-files'
 import {
@@ -1322,24 +1322,35 @@ describe('ActiveVault — sync', () => {
       },
       onSnapshot: () => {},
       onSyncState: () => {},
-      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, focusThrottleMs: 300 },
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, focusThrottleMs: 60_000 },
     })
     open.push(active)
 
-    active.onFocus()
-    await waitFor('the first pull to start', () => pulls === 1)
-    // Past the throttle, so this focus is entitled to a pull — and cannot have
-    // one, because the first is still fetching.
-    await sleep(400)
-    active.onFocus()
+    // The throttle reads `Date.now()`, so the clock is moved rather than waited
+    // on. With a real 300 ms throttle this test raced itself both ways: the
+    // pull after the last focus spawns `git status` twice before the stub
+    // counts it, which on a loaded machine outran a wait shorter than the
+    // throttle, and a release that took longer than the throttle let the bug
+    // through. Only Date is faked; the vault's own timers stay real.
+    vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true })
+    try {
+      active.onFocus()
+      await waitFor('the first pull to start', () => pulls === 1)
+      // Past the throttle, so this focus is entitled to a pull — and cannot
+      // have one, because the first is still fetching.
+      vi.setSystemTime(Date.now() + 61_000)
+      active.onFocus()
 
-    release()
-    await waitFor('the first pull to finish', () => active.syncState().kind !== 'pulling')
-    active.onFocus()
+      release()
+      await waitFor('the first pull to finish', () => active.syncState().kind !== 'pulling')
+      // Well inside a window the focus above would have stamped: with the bug
+      // it has been spent, and no amount of waiting produces a second pull.
+      active.onFocus()
 
-    // Short, and deliberately shorter than the throttle: with the bug the
-    // window has been spent and no amount of waiting produces a second pull.
-    await waitFor('a pull on the focus after the fetch', () => pulls === 2, 250)
+      await waitFor('a pull on the focus after the fetch', () => pulls === 2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('does not strand the vault when a push-recovery pull conflicts but names no paths', async () => {
