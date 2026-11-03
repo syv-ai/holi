@@ -794,6 +794,49 @@ describe('ActiveVault — sync', () => {
     await plainGit(teammate, ['push', 'origin', 'main'])
   }
 
+  async function topicBehind(upstream: 'none' | 'main') {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    const teammate = await makeClone(origin, 'teammate')
+    await plainGit(dir, ['switch', '-c', 'topic'])
+    await plainGit(dir, ['push', '-u', 'origin', 'topic'])
+    await plainGit(teammate, ['fetch', 'origin'])
+    await plainGit(teammate, ['switch', '--track', 'origin/topic'])
+    await writeFile(join(teammate, 'remote.md'), 'remote change\n', 'utf8')
+    await plainGit(teammate, ['add', '-A'])
+    await plainGit(teammate, ['commit', '-m', 'remote topic change'])
+    await plainGit(teammate, ['push', 'origin', 'topic'])
+    await plainGit(dir, ['fetch', 'origin'])
+    if (upstream === 'none') {
+      await plainGit(dir, ['branch', '--unset-upstream'])
+    } else {
+      await plainGit(dir, ['branch', '--set-upstream-to=origin/main'])
+    }
+    await sleep(QUIESCE)
+    const active = await openActiveVault({
+      claims: CLAIMS,
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    open.push(active)
+    return active
+  }
+
+  it('counts commits behind origin/<branch> without a configured upstream', async () => {
+    const active = await topicBehind('none')
+
+    expect(active.syncState()).toEqual({ kind: 'unsynced', ahead: 0, behind: 1 })
+  })
+
+  it('counts commits behind origin/<branch> when upstream points elsewhere', async () => {
+    const active = await topicBehind('main')
+
+    expect(active.syncState()).toEqual({ kind: 'unsynced', ahead: 0, behind: 1 })
+  })
+
   it('pulls on the interval, and the tree updates itself', async () => {
     // A teammate's work arrives without anyone remembering
     // anything, and a clean merge is silent.
