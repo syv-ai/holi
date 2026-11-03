@@ -93,6 +93,12 @@ export function isWatchIgnoredPath(rel: string): boolean {
   return isLocalOnlyPath(rel)
 }
 
+/** A fresh path for a file Holi writes and nobody else sees: the watcher, the
+ *  scanner and the snapshot all skip the marker (`isNonContentPath`). */
+export function tmpPathIn(dir: string): string {
+  return join(dir, `${TMP_MARKER}${randomBytes(6).toString('hex')}`)
+}
+
 export async function writeAtomic(
   root: string,
   rel: VaultRelPath,
@@ -100,7 +106,7 @@ export async function writeAtomic(
 ): Promise<void> {
   const abs = absPathFor(root, rel)
   await mkdir(dirname(abs), { recursive: true })
-  const tmp = join(dirname(abs), `${TMP_MARKER}${randomBytes(6).toString('hex')}`)
+  const tmp = tmpPathIn(dirname(abs))
   // A string still defaults to utf8; a Uint8Array/Buffer writes bytes verbatim —
   // the branded templates seed binary fonts + logo through this same writer.
   await writeFile(tmp, data)
