@@ -61,7 +61,7 @@ import { createReleaseNotes } from './updates/release-notes'
 import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
 import { registerIpc } from './ipc'
-import { createActivityLog } from './activity/log'
+import { createActivityLog, scrubSecrets } from './activity/log'
 import { captureConsole, createAppLog, rendererLevel, type AppLogEntry } from './logs/app-log'
 import { createTerminals } from './terminal/terminals'
 import { pathToFileURL } from 'node:url'
@@ -71,7 +71,7 @@ import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
-import { showNotification } from './notifications'
+import { showNotification, type NativeNotice } from './notifications'
 import { createTray } from './tray'
 import { createUpdater, type Updater } from './updates/updater'
 import { installAppMenu } from './menu'
@@ -316,6 +316,24 @@ async function main(): Promise<void> {
     return () => undo.forEach((u) => u())
   }
 
+  /**
+   * A native notification kept off a Holi that has focus: Holi's banners never
+   * cover Holi. A click brings the window forward before `onClick` acts. The
+   * plugins' `notify` and the sync alert both come through here.
+   */
+  const notifyUnfocused = ({ title, body, onClick }: NativeNotice): boolean => {
+    if (BrowserWindow.getFocusedWindow() !== null) return false
+    showNotification({
+      title,
+      body,
+      onClick: () => {
+        openWindow()
+        onClick?.()
+      },
+    })
+    return true
+  }
+
   /** Plugin events, both ways, over the one window. */
   const eventsDeps: PluginEventsDeps = {
     send,
@@ -359,18 +377,7 @@ async function main(): Promise<void> {
     // has focus. A click brings the window forward before the plugin acts.
     focused: () => BrowserWindow.getFocusedWindow() !== null,
     window: () => (mainWindow === null || mainWindow.isDestroyed() ? null : mainWindow),
-    notify: ({ title, body, onClick }) => {
-      if (BrowserWindow.getFocusedWindow() !== null) return false
-      showNotification({
-        title,
-        body,
-        onClick: () => {
-          openWindow()
-          onClick?.()
-        },
-      })
-      return true
-    },
+    notify: notifyUnfocused,
     background: {
       registered: async () =>
         (await registry.list()).map((e) => ({ remote: e.remote, root: e.path })),
@@ -426,6 +433,10 @@ async function main(): Promise<void> {
       })
     },
     onSyncState: (state) => send('vault:sync', state),
+    // Sync that keeps failing says so outside Holi too; inside, the activity
+    // log's error line marks the Output (docs/features/vaults-sync.md).
+    onSyncFailing: (remote, text) =>
+      void notifyUnfocused({ title: `${remote}: sync is failing`, body: scrubSecrets(text) }),
     // How everything inside the vault reaches us: its `bridge.local.env`,
     // with what each part of Holi contributes while the vault is open. Made
     // at open, so the file names this run's ports, which move on restart.
