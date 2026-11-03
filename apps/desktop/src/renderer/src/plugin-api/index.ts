@@ -108,7 +108,8 @@ export {
 } from '@/state/agent-service'
 export { surfacesAtom } from '@/state/plugins'
 export { byRecency, recentsAtom } from '@/state/recents'
-export { openCommitInHistoryAtom } from '@/state/history'
+// A path's commits, the dialog a document's History opens.
+export { FileHistoryDialog } from '@/features/history/file-history-button'
 export {
   openDialogAtom,
   /** @public */ type ActiveDialog,

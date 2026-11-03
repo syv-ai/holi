@@ -43,3 +43,28 @@ export function FileHistoryButton({ path }: { path: string }) {
     </div>
   )
 }
+
+/** The same commits dialog on its own, for whatever names a path's history
+ *  without a file header: a vault app's approval opens its bundle's. */
+export function FileHistoryDialog({
+  path,
+  open,
+  onOpenChange,
+}: {
+  path: string
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const { history, retry } = useFileHistory(path)
+  const authors = useFileAuthors(path)
+  return (
+    <HistoryDialog
+      path={path}
+      history={history}
+      authors={authors}
+      onRetry={retry}
+      open={open}
+      onOpenChange={onOpenChange}
+    />
+  )
+}

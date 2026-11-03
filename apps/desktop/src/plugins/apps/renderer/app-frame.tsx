@@ -37,7 +37,7 @@ import {
   activeRemoteAtom,
   closeSurfaceTabAtom,
   cn,
-  openCommitInHistoryAtom,
+  FileHistoryDialog,
   snapshotAtom,
   openExternal,
 } from '@/plugin-api'
@@ -282,7 +282,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
                 <AppsWords asked={ask.affordances} reasons={reasons} />
                 <p>Holi asks again in 30 days, or sooner if the app changes.</p>
               </div>
-              <WrittenBy authorship={authorship} />
+              <WrittenBy path={path} authorship={authorship} />
             </div>
           </CardContent>
           <CardFooter className="justify-end">
@@ -366,28 +366,45 @@ const day = (iso: string) =>
 
 /** Who wrote the code being approved: the commit that added it and the last
  *  one to change it, from main. The name opens their GitHub profile when main
- *  could tell their login; the hash opens the commit in History. A personal
- *  app never committed was written on this machine. */
-function WrittenBy({ authorship }: { authorship: Authorship }): React.JSX.Element {
+ *  could tell their login; the hash opens the bundle's history, the dialog a
+ *  document's History opens. A personal app never committed was written on
+ *  this machine. */
+function WrittenBy({
+  path,
+  authorship,
+}: {
+  path: string
+  authorship: Authorship
+}): React.JSX.Element {
   const { added, last } = authorship
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const openHistory = () => setHistoryOpen(true)
   return (
     <div className="grid gap-1.5 rounded-xl bg-muted/60 px-4 py-3 text-xs text-muted-foreground">
       {added == null ? (
         <span>Not committed yet: written on this machine.</span>
       ) : (
         <>
-          <CommitLine lead="Added by" commit={added} />
+          <CommitLine lead="Added by" commit={added} onOpen={openHistory} />
           {last != null && last.sha !== added.sha && (
-            <CommitLine lead="Last changed by" commit={last} />
+            <CommitLine lead="Last changed by" commit={last} onOpen={openHistory} />
           )}
+          <FileHistoryDialog path={path} open={historyOpen} onOpenChange={setHistoryOpen} />
         </>
       )}
     </div>
   )
 }
 
-function CommitLine({ lead, commit }: { lead: string; commit: AppCommit }): React.JSX.Element {
-  const openCommit = useSetAtom(openCommitInHistoryAtom)
+function CommitLine({
+  lead,
+  commit,
+  onOpen,
+}: {
+  lead: string
+  commit: AppCommit
+  onOpen: () => void
+}): React.JSX.Element {
   const link = '-mx-2 text-xs text-foreground'
   return (
     <span className="min-w-0">
@@ -404,11 +421,7 @@ function CommitLine({ lead, commit }: { lead: string; commit: AppCommit }): Reac
         </Button>
       )}{' '}
       in{' '}
-      <Button
-        variant="link"
-        className={cn(link, 'font-mono')}
-        onClick={() => openCommit(commit.sha)}
-      >
+      <Button variant="link" className={cn(link, 'font-mono')} onClick={onOpen}>
         {commit.sha.slice(0, 7)}
       </Button>
       , {day(commit.date)}

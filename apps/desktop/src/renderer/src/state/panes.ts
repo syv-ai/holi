@@ -9,8 +9,6 @@
 import { atom } from 'jotai'
 import type { SurfaceTab, Tab } from '@/lib/tab'
 
-export type { Tab }
-
 /**
  * A directory that is one document, as the panes need it: the surface its
  * tabs are, by path, and the entry file whose move or delete says where the
@@ -34,6 +32,7 @@ export interface Workspace {
   active: number
 }
 
+/** @public exported for its test */
 export function emptyWorkspace(): Workspace {
   return { panes: [{ tabs: [], active: -1 }], active: 0 }
 }
@@ -79,7 +78,9 @@ function focusExisting(workspace: Workspace, at: { pane: number; tab: number }):
 }
 
 /** Open a tab in the active pane, or focus it if it is already open anywhere
- *  (the one-buffer rule, see `findTab`). */
+ *  (the one-buffer rule, see `findTab`).
+ * @public exported for its test
+ */
 export function openTab(workspace: Workspace, tab: Tab): Workspace {
   const existing = findTab(workspace, tab)
   if (existing !== null) return focusExisting(workspace, existing)
@@ -150,6 +151,7 @@ export function closeTab(workspace: Workspace, index: number): Workspace {
  * If the note is already open, just focus it: clicking it again does not change
  * whether it is pinned. Otherwise, if a preview tab exists, replace it in place
  * (browsing costs one tab); if none does, add one. The new tab is a *preview*.
+ * @public exported for its test
  */
 export function openPreview(workspace: Workspace, path: string): Workspace {
   const existing = findTab(workspace, { kind: 'note', path })
@@ -206,6 +208,7 @@ function pinTabIn(workspace: Workspace, paneIndex: number, index: number): Works
  * untouched, so the user stays on whatever they were looking at, now under its
  * new name. Spans all panes, not just the active one: a note can be open in
  * more than one, and a missed tab would point at a path that no longer exists.
+ * @public exported for its test
  */
 export function retargetTab(workspace: Workspace, from: string, to: string): Workspace {
   return {
@@ -227,6 +230,7 @@ export function retargetTab(workspace: Workspace, from: string, to: string): Wor
  * `A.app/index.html` to `B/A.app/index.html` moves the tab to `B/A.app`. Only
  * the entry file, and only to another directory its claim matches: a note
  * dragged out of an expanded app is not the app moving.
+ * @public exported for its test
  */
 export function retargetTabs(
   workspace: Workspace,
@@ -263,6 +267,7 @@ export function retargetTabs(
  * user stays on it (its index is re-found after the removals); if it was one of
  * the deleted, the pane falls back to the nearest surviving neighbour, and an
  * emptied pane stays as the empty-editor state (`active: -1`), never disappears.
+ * @public exported for its test
  */
 export function closeTabsForPaths(
   workspace: Workspace,
@@ -303,7 +308,9 @@ function closeTabsWhere(workspace: Workspace, gone: (tab: Tab) => boolean): Work
   }
 }
 
-/** What the editor should be showing, or null when the pane is empty. */
+/** What the editor should be showing, or null when the pane is empty.
+ * @public exported for its test
+ */
 export function activeTab(workspace: Workspace): Tab | null {
   const pane = workspace.panes[workspace.active]
   if (pane === undefined || pane.active < 0) return null
@@ -354,6 +361,7 @@ export function splitPane(workspace: Workspace): Workspace {
  *
  * Already open somewhere? Focus it there (the one-buffer rule), which also makes
  * the menu item safe to hit twice.
+ * @public exported for its test
  */
 export function openInNewPane(workspace: Workspace, tab: Tab): Workspace {
   const existing = findTab(workspace, tab)
