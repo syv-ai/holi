@@ -38,12 +38,29 @@ would start the same session under the same per-machine approval:
 Holi in it (`from: owner/repo#id`), read from that vault each time, its approval still this
 vault's.
 
-**Holis and automations on another agent.** Their runs need a provider with `background`, which
-only Claude Code has. `codex exec` runs a prompt unwatched and fires `notify`, so Codex could carry
-a run once a run in a Holi-owned process, which ends when Holi quits, is acceptable
-([agent-sessions](features/agent-sessions.md), Providers).
+**More of Codex.** Codex runs Holis and automations as jobs in the vault
+([agent-sessions](features/agent-sessions.md), Jobs), but not all of what Claude Code's runs do:
 
-**More providers.** opencode and pi, each as its core and whatever its hooks allow.
+- **Codex's app-server** (`codex app-server`): live steering of a running turn (`turn/steer`),
+  thread listing and fork, approvals answered from Holi, and a run that outlives Holi quitting. A
+  follow-up to a job waits for its turn to end and resumes the thread with `codex exec resume`.
+- **Duplicate** of a Codex session, until Holi knows a CLI verb that copies a conversation.
+- **Holi's own commands in a Codex run**: `holi holis report` and the memory commands reach Holi
+  over the bridge, which the run's sandbox, having no network, cannot. A Holi run on Codex works
+  and its turns are recorded, but it cannot report or keep its memory. Any other `Bash(holi …)`
+  rule refuses the run.
+- **Tokens of an interactive Codex session**: its `notify` payload carries none, so only a job's
+  row counts them.
+- **The model of an interactive Codex session**: nothing Codex reports to Holi names it, so its row
+  says Codex, not the model.
+
+**More providers.** opencode, as its core and whatever its hooks allow. Any CLI can be added as a
+harness today, but only as a basic terminal agent: a harness a person adds has no way to declare
+background sessions, jobs or a sandbox, so Holis, automations and Create vault app never run on one,
+and its Duplicate is not offered. Its `holi-signal` reports a turn's end and status, not a turn's
+start (the terminal gives that) nor a question for the person. Test runs only a saved harness, not
+the form's draft. Resume by id works only for CLIs whose conversation ids are UUIDs, since that is
+all `holi-signal --conversation` takes.
 
 **The rest of the inbox.** A banner clicked while Holi had no window open opens Holi, but not the
 entry: the renderer is not listening yet when the click lands, so the entry waits in the inbox. A

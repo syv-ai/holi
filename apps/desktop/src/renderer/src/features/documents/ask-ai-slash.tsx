@@ -4,13 +4,13 @@ import type { RichTextSlashItem } from './rich-text/rich-text-slash-menu'
 import { onEmptyLine } from './agent-trigger'
 
 /** "/ai": the same prompt Space opens, for those who reach for the slash. */
-export function askAiSlashItem(open: (pos: number) => void): RichTextSlashItem {
+export function askAiSlashItem(open: (pos: number) => void, agent = 'AI'): RichTextSlashItem {
   return {
     id: 'ask-ai',
     group: 'AI',
-    title: 'Ask AI',
-    hint: 'Have Sonnet write or change the document',
-    keywords: ['ai', 'agent', 'write', 'sonnet', 'claude'],
+    title: `Ask ${agent}`,
+    hint: 'Write or change this document',
+    keywords: ['ai', 'agent', 'write'],
     icon: <SparklesIcon aria-hidden="true" />,
     can: (editor) => editor.isEditable,
     run: (editor, range) => {

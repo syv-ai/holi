@@ -32,6 +32,7 @@ import { createSession } from './github/electron'
 import { createMembersCache } from './github/members-cache'
 import { installHoliCli } from './bridge/cli'
 import { installNodeFallback } from './bridge/node-fallback'
+import { loadLoginPath } from './bin'
 import { createCapabilityHost } from './capabilities/dispatch'
 import { CapabilityError } from './capabilities/error'
 import { vaultNotOpen } from './capabilities/fences'
@@ -60,7 +61,7 @@ import { createReleaseNotes } from './updates/release-notes'
 import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
 import { registerIpc } from './ipc'
-import { createActivityLog } from './activity/log'
+import { createActivityLog, scrubSecrets } from './activity/log'
 import { captureConsole, createAppLog, rendererLevel, type AppLogEntry } from './logs/app-log'
 import { createTerminals } from './terminal/terminals'
 import { pathToFileURL } from 'node:url'
@@ -70,7 +71,7 @@ import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
-import { showNotification } from './notifications'
+import { showNotification, type NativeNotice } from './notifications'
 import { createTray } from './tray'
 import { createUpdater, type Updater } from './updates/updater'
 import { installAppMenu } from './menu'
@@ -219,6 +220,11 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
   win.on('enter-full-screen', sendFullScreen)
   win.on('leave-full-screen', sendFullScreen)
   win.webContents.on('did-finish-load', sendFullScreen)
+  // DOM visibility alone is not a reliable signal for a window created hidden
+  // at login. The ready-update prompt uses the real native window state.
+  const sendVisibility = () => win.webContents.send('window:visible', win.isVisible())
+  win.on('show', sendVisibility)
+  win.on('hide', sendVisibility)
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) {
@@ -246,6 +252,9 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
 }
 
 async function main(): Promise<void> {
+  // The login shell's PATH, for every tool Holi starts (`main/bin.ts`). Read
+  // while the app gets ready and awaited before anything can start an agent.
+  const loginPath = loadLoginPath()
   app.on('second-instance', (_event, argv) => {
     // A link clicked on Windows or Linux launches Holi again with the link in
     // argv; `openLink` brings the window forward itself.
@@ -307,6 +316,24 @@ async function main(): Promise<void> {
     return () => undo.forEach((u) => u())
   }
 
+  /**
+   * A native notification kept off a Holi that has focus: Holi's banners never
+   * cover Holi. A click brings the window forward before `onClick` acts. The
+   * plugins' `notify` and the sync alert both come through here.
+   */
+  const notifyUnfocused = ({ title, body, onClick }: NativeNotice): boolean => {
+    if (BrowserWindow.getFocusedWindow() !== null) return false
+    showNotification({
+      title,
+      body,
+      onClick: () => {
+        openWindow()
+        onClick?.()
+      },
+    })
+    return true
+  }
+
   /** Plugin events, both ways, over the one window. */
   const eventsDeps: PluginEventsDeps = {
     send,
@@ -350,18 +377,7 @@ async function main(): Promise<void> {
     // has focus. A click brings the window forward before the plugin acts.
     focused: () => BrowserWindow.getFocusedWindow() !== null,
     window: () => (mainWindow === null || mainWindow.isDestroyed() ? null : mainWindow),
-    notify: ({ title, body, onClick }) => {
-      if (BrowserWindow.getFocusedWindow() !== null) return false
-      showNotification({
-        title,
-        body,
-        onClick: () => {
-          openWindow()
-          onClick?.()
-        },
-      })
-      return true
-    },
+    notify: notifyUnfocused,
     background: {
       registered: async () =>
         (await registry.list()).map((e) => ({ remote: e.remote, root: e.path })),
@@ -387,6 +403,10 @@ async function main(): Promise<void> {
 
   const host = createVaultHost({
     registry,
+    // Do not initialise vault tools or agent sessions until the login shell's
+    // PATH has settled. This promise is started at launch; the window is not
+    // held behind it.
+    beforeOpen: () => loginPath,
     // A GETTER, not a string. Read lazily on every git operation, so a sign-out
     // takes effect on the next pull rather than the next restart.
     gitDeps: { token: () => session.token() },
@@ -413,6 +433,10 @@ async function main(): Promise<void> {
       })
     },
     onSyncState: (state) => send('vault:sync', state),
+    // Sync that keeps failing says so outside Holi too; inside, the activity
+    // log's error line marks the Output (docs/features/vaults-sync.md).
+    onSyncFailing: (remote, text) =>
+      void notifyUnfocused({ title: `${remote}: sync is failing`, body: scrubSecrets(text) }),
     // How everything inside the vault reaches us: its `bridge.local.env`,
     // with what each part of Holi contributes while the vault is open. Made
     // at open, so the file names this run's ports, which move on restart.
@@ -773,12 +797,11 @@ async function main(): Promise<void> {
     beforeInstall: async () => {
       if (quitting || confirmingQuit) return false
       confirmingQuit = true
-      const go = await confirmQuit().catch(() => true)
+      const go = await confirmQuit().catch(() => false)
+      const ready = go && (await teardown())
+      quitting = ready
       confirmingQuit = false
-      if (!go) return false
-      quitting = true
-      await teardown()
-      return true
+      return ready
     },
   })
 
@@ -820,6 +843,9 @@ async function main(): Promise<void> {
   })
 
   registerIpc({ router, rootFor: (remote) => rootFor(remote) })
+  ipcMain.handle('window:is-visible', (event) =>
+    mainWindow !== null && event.sender === mainWindow.webContents ? mainWindow.isVisible() : false,
+  )
 
   const holiCliPath = await installHoliCli(app.getPath('userData'))
   await installNodeFallback(app.getPath('userData'), process.execPath)
@@ -842,14 +868,15 @@ async function main(): Promise<void> {
   await bridge.start()
   const binDir = dirname(holiCliPath)
 
-  // What works across vaults (reminders) starts now, its launch catch-up
-  // with it, whichever vault opens.
-  void plugins.syncBackground()
-
   // Opened at login, Holi starts out of sight: the window loads (so the
   // vault opens) without showing, until the dock or the tray's Open Holi.
   const atLogin = process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin
   const win = createWindow({ show: !atLogin })
+  // What works across vaults (reminders) starts once the login shell's PATH
+  // is read (begun at launch, settled within its timeout), so a tool it
+  // starts is found; the window does not wait for it. Its launch catch-up
+  // comes with it, whichever vault opens.
+  void loginPath.then(() => plugins.syncBackground())
   // Pull on focus. The interval exists for the case where the window never
   // loses focus at all.
   win.on('focus', () => host.active()?.onFocus())
@@ -926,60 +953,62 @@ async function main(): Promise<void> {
     if (confirmingQuit) return
     confirmingQuit = true
     void confirmQuit()
-      .catch(() => true)
-      .then((go) => {
+      .catch(() => false)
+      .then(async (go) => {
+        if (go) await teardownAndQuit()
         confirmingQuit = false
-        if (!go) return
-        quitting = true
-        void teardownAndQuit()
       })
   })
 
   async function teardownAndQuit(): Promise<void> {
-    await teardown()
+    if (!(await teardown())) {
+      quitting = false
+      return
+    }
+    quitting = true
     // Only install a candidate downloaded from the selected channel. Squirrel
     // may have staged a different channel's candidate during its check.
     if (updater.installOnQuit()) return
-    // Always quit, even if the flush threw: a failed teardown must not trap
-    // someone in an app they are trying to leave.
     app.quit()
   }
 
   /** Everything a quit does before the process goes: by ⌘Q, the tray, or an
    *  update's restart. Never throws. */
-  async function teardown(): Promise<void> {
-    updater.dispose()
-    // Stop the work across vaults at once (the reminder sweep): no tick into
-    // a teardown. It lets go of the menu-bar item as we leave.
-    await plugins.stopBackground().catch((err) => console.error('[quit] background:', err))
-    await (async () => {
-      try {
-        // Stop what runs in the vault (the agent's sessions and terminals)
-        // before we flush and commit: nothing a session was mid-writing
-        // should race the teardown.
-        await plugins.stop().catch((err) => console.error('[quit] plugins stop failed:', err))
-        await terminals.closeAll().catch((err) => console.error('[quit] terminals failed:', err))
-        await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
-        // A flush point is a flush THEN a commit, and only the renderer can do
-        // the first half: the editor's newest words are not on disk until it
-        // writes them. Quit is the one flush point main starts, so it asks.
-        await requestFlush(flushChannel(mainWindow))
-        // Quit is a leave point: commit the flushed buffer, then get it
-        // off-machine before the window closes. Best-effort with a 1s budget:
-        // an unreachable remote must not hang quit, and the next launch drains
-        // what did not make it out. Order is flush -> commit -> push -> close.
-        const vault = host.active()
-        if (vault !== null) {
-          await vault.commitNow().catch((err) => console.error('[quit] commit failed:', err))
-          await Promise.race([vault.pushNow(), new Promise((r) => setTimeout(r, 1_000))])
-        }
-        // `close()` commits the open vault again (a clean no-op) before letting
-        // go of it.
-        await host.close()
-      } catch (err) {
-        console.error('[quit] teardown failed:', err)
+  async function teardown(): Promise<boolean> {
+    const channel = flushChannel(mainWindow)
+    try {
+      // Ask before tearing down anything: a failed flush must leave the app
+      // usable so the person can correct the problem and retry quit.
+      const result = await requestFlush(channel)
+      if (result !== 'flushed') {
+        console.error(`[quit] buffer flush ${result}; quit cancelled so edits remain available`)
+        return false
       }
-    })()
+      updater.dispose()
+      // Stop the work across vaults and in the active vault only after dirty
+      // buffers are safe on disk.
+      await plugins.stopBackground().catch((err) => console.error('[quit] background:', err))
+      await plugins.stop().catch((err) => console.error('[quit] plugins stop failed:', err))
+      await terminals.closeAll().catch((err) => console.error('[quit] terminals failed:', err))
+      await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
+      // Quit is a leave point: commit the flushed buffer, then get it
+      // off-machine before the window closes. Best-effort with a 1s budget:
+      // an unreachable remote must not hang quit, and the next launch drains
+      // what did not make it out. Order is flush -> commit -> push -> close.
+      const vault = host.active()
+      if (vault !== null) {
+        await vault.commitNow().catch((err) => console.error('[quit] commit failed:', err))
+        await Promise.race([vault.pushNow(), new Promise((r) => setTimeout(r, 1_000))])
+      }
+      // `close()` commits the open vault again (a clean no-op) before letting
+      // go of it.
+      await host.close()
+    } catch (err) {
+      console.error('[quit] teardown failed; quit cancelled so edits remain available:', err)
+      channel.cancel?.()
+      return false
+    }
+    return true
   }
 }
 
@@ -992,17 +1021,36 @@ async function main(): Promise<void> {
  */
 function flushChannel(win: BrowserWindow | null): FlushChannel {
   const target = win !== null && !win.isDestroyed() ? win : null
+  let requestId: string | undefined
+  let done: ((id: string, error?: string) => void) | undefined
   return {
-    send() {
-      target?.webContents.send('vault:flush')
-    },
     onDone(cb) {
-      if (target === null) {
-        queueMicrotask(cb)
-        return () => {}
+      done = cb
+      if (target === null)
+        return () => {
+          done = undefined
+        }
+      const listener = (event: Electron.IpcMainEvent, id: string, error?: string) => {
+        if (
+          event.sender !== target.webContents ||
+          event.senderFrame !== target.webContents.mainFrame
+        )
+          return
+        if (typeof id !== 'string' || (error !== undefined && typeof error !== 'string')) return
+        cb(id, error)
       }
-      ipcMain.once('vault:flush-done', cb)
-      return () => ipcMain.removeListener('vault:flush-done', cb)
+      ipcMain.on('vault:flush-done', listener)
+      return () => ipcMain.removeListener('vault:flush-done', listener)
+    },
+    send(id) {
+      requestId = id
+      if (target === null) queueMicrotask(() => done?.(id))
+      else target.webContents.send('vault:flush', { id })
+    },
+    cancel(id = requestId) {
+      if (target !== null && !target.isDestroyed() && id !== undefined) {
+        target.webContents.send('vault:flush-cancel', { id })
+      }
     },
   }
 }

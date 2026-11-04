@@ -1,5 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react'
-import { useAtomValue, useSetAtom } from 'jotai'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type MouseEvent,
+} from 'react'
+import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import {
   dragAndDropFeature,
   expandAllFeature,
@@ -12,7 +20,7 @@ import {
 } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
 import { toast } from 'sonner'
-import { GITKEEP, holiLink } from '@holi/shared'
+import { GITKEEP, holiLink, TASKS_CLAIM } from '@holi/shared'
 import { cn } from '@/lib/cn'
 
 import { ConfirmDialog } from '@/composites/confirm-dialog'
@@ -46,6 +54,7 @@ import { canMoveInto } from '@/lib/tree-view'
 import { trpc } from '@/lib/trpc'
 import { useTabDrag } from '@/features/shell/use-tab-drag'
 import { openDialogAtom } from '@/state/dialogs'
+import { startVaultAppAtom, vaultAppOfferAtom } from '@/state/document-runs'
 import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
 import { closeTabsWhere } from '@/state/shell-workspace'
 import { parseTabKey, tabKey, tabPath } from '@/state/tab-descriptor'
@@ -59,6 +68,7 @@ import {
   deleteManyAtom,
   importFilesAtom,
   moveNotesAtom,
+  activeRemoteAtom,
   snapshotAtom,
   snapshotLoadedAtom,
   vaultsAtom,
@@ -88,6 +98,8 @@ export function FilesSection({
   onMoved: (moves: Move[]) => void
 }) {
   const files = useFiles()
+  const store = useStore()
+  const mounted = useRef(true)
   const loaded = useAtomValue(snapshotLoadedAtom)
   const order = useAtomValue(treeOrderAtom)
   const setOrder = useSetAtom(setTreeOrderAtom)
@@ -95,6 +107,8 @@ export function FilesSection({
   const claims = useAtomValue(claimsAtom)
   const snapshot = useAtomValue(snapshotAtom)
   const openDialog = useSetAtom(openDialogAtom)
+  const vaultAppOffer = useAtomValue(vaultAppOfferAtom)
+  const startVaultApp = useSetAtom(startVaultAppAtom)
   const openTab = useSetAtom(openTabAtom)
   /** The tab a row opens as: a plugin's folder document (a deck) is its
    *  surface, so the row, its drag and its highlight all go by that. */
@@ -134,24 +148,31 @@ export function FilesSection({
   /** Rows that just landed (made, moved, renamed, dropped in, revealed): they
    *  rise in once, so the eye finds where they went. */
   const [arrived, setArrived] = useState<ReadonlySet<string>>(new Set())
-  /** The rows that landed last, waiting for the tree to show one: then they
-   *  are selected and the first shown is focused and scrolled into view, its
-   *  name field open when `name` is set (a row just made as Untitled).
-   *  `snapshot` is the one current when they landed: once a newer one still
-   *  shows none of them (a dotfile while hidden files are off), they are
-   *  dropped rather than shown whenever they next appear. */
+  /** Rows waiting for the snapshot projection to include them. */
   const [landing, setLanding] = useState<{
     paths: string[]
     name: boolean
-    snapshot: object
+    remote: string | null
   } | null>(null)
   /** Every row the tree makes, moves or is asked to show lands here, the one
    *  place a row is brought into view. */
   const land = (paths: string[], { name = false } = {}) => {
-    if (paths.length === 0) return
+    if (paths.length === 0 || !stillCurrent(files.remote)) return
     setArrived((current) => new Set([...current, ...paths]))
-    setLanding({ paths, name, snapshot })
+    setLanding({ paths, name, remote: files.remote })
   }
+  const stillCurrent = useCallback(
+    (remote: string | null) =>
+      mounted.current && remote !== null && store.get(activeRemoteAtom) === remote,
+    [store],
+  )
+
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
 
   // A plugin's folder document (a deck) opens as its surface, and its chevron
   // shows the files inside; an app's bundle is one document and only opens.
@@ -174,8 +195,9 @@ export function FilesSection({
     item.getId() === ROOT_ID ? '' : item.getId()
 
   async function move(moves: Move[]) {
+    const remote = files.remote
     await moveNotes({ moves })
-    onMoved(moves)
+    if (stillCurrent(remote)) onMoved(moves)
   }
 
   /** Move `sources` into `dest`; the paths they land at, for the caller to land. */
@@ -333,10 +355,42 @@ export function FilesSection({
   // computes: expanding, selecting and focusing go by id.
   useEffect(() => {
     if (landing === null) return
+    if (landing.remote !== files.remote) {
+      setLanding(null)
+      return
+    }
+    if (!stillCurrent(landing.remote)) {
+      setLanding(null)
+      return
+    }
     const shown = landing.paths.filter((landed) => data[landed] !== undefined)
     const path = shown[0]
     if (path === undefined) {
-      if (snapshot !== landing.snapshot) setLanding(null)
+      const present = new Set([
+        ...snapshot.docs.map((doc) => doc.path),
+        ...snapshot.files.map((file) => file.path),
+        ...Object.values(snapshot.claimed).flatMap((set) => [
+          ...set.items.map((item) => item.path),
+          ...set.broken.map((item) => item.path),
+        ]),
+        ...snapshot.dirs,
+      ])
+      const taskPaths = new Set([
+        ...(snapshot.claimed[TASKS_CLAIM]?.items.map((item) => item.path) ?? []),
+        ...(snapshot.claimed[TASKS_CLAIM]?.broken.map((item) => item.path) ?? []),
+      ])
+      // A raw snapshot confirms these rows exist, but a user filter keeps them
+      // out of the tree. Truly absent paths may still be awaiting a scan.
+      if (
+        landing.paths.every(
+          (landed) =>
+            present.has(landed) &&
+            ((taskPaths.has(landed) && !files.showTasks) ||
+              (!files.showHidden && landed.split('/').some((part) => part.startsWith('.')))),
+        )
+      ) {
+        setLanding(null)
+      }
       return
     }
     setLanding(null)
@@ -350,7 +404,7 @@ export function FilesSection({
     item.setFocused()
     void item.scrollTo({ block: 'nearest' })
     if (landing.name) item.startRenaming()
-  }, [data, landing, snapshot, tree])
+  }, [data, files.remote, files.showHidden, files.showTasks, landing, snapshot, stillCurrent, tree])
 
   // Reveal in Files (an app's card). The tree may mount with the request
   // already made (the sidebar was on Agents), so it catches up; a row the
@@ -414,9 +468,10 @@ export function FilesSection({
     name: string,
     { untitled = false } = {},
   ): Promise<void> {
-    if (files.remote === null) return
-    const path = await create.run({ remote: files.remote, parent, name })
-    if (!path) return
+    const remote = files.remote
+    if (remote === null) return
+    const path = await create.run({ remote, parent, name })
+    if (!path || !stillCurrent(remote)) return
     const suffix = create.entry === undefined ? null : `/${create.entry}`
     const opened = suffix !== null && path.endsWith(suffix) ? path.slice(0, -suffix.length) : path
     land([opened], { name: untitled })
@@ -459,10 +514,15 @@ export function FilesSection({
 
   function newNote() {
     void attempt('create a document', async () => {
-      const name = freeName(files.taken, '', 'Untitled', '.md')
-      await createNote(name)
-      land([name])
-      onOpen(name)
+      const remote = files.remote
+      if (remote === null) return
+      const parent = newParent(focused?.getId() ?? null)
+      const name = freeName(files.taken, parent, 'Untitled', '.md')
+      await createNote(joinPath(parent, name))
+      if (!stillCurrent(remote)) return
+      const path = joinPath(parent, name)
+      land([path])
+      onOpen(path)
     })
   }
 
@@ -495,6 +555,7 @@ export function FilesSection({
       item: tree.getItemInstance(id),
       dirs: files.dirs,
       remote: files.remote,
+      vaultApp: vaultAppOffer,
       pluginActions: pluginRowActions({
         id,
         remote: files.remote,
@@ -523,6 +584,11 @@ export function FilesSection({
         moveTo: (path, dest) =>
           void attempt(`move “${basename(path)}”`, async () => land(await moveInto([path], dest))),
         remove: setDeleting,
+        // The note opens, so its pill says how the app is going.
+        createVaultApp: (path) => {
+          onOpen(path)
+          void startVaultApp(path)
+        },
       },
     })
   }
@@ -586,12 +652,13 @@ export function FilesSection({
           }),
         newTask: () =>
           void attempt('create the task', async () => {
+            const remote = files.remote
             const path = await createTask({
               title: 'Untitled task',
               status: 'todo',
               folder: parent,
             })
-            if (!path) return
+            if (!path || !stillCurrent(remote)) return
             land([path])
             onOpen(path)
           }),

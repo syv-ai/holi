@@ -1,7 +1,8 @@
 /**
  * Settings in the shell: ⌘, brings it forward with its nav in the sidebar's
  * place, a plugin's "Open Connections" lands on that page, a setting writes
- * through `settings.write`, and closing the tab gives the files back.
+ * through `settings.write`, closing the tab gives the files back, and an
+ * agent's Edit opens on that agent.
  */
 import { Provider, createStore } from 'jotai'
 import { act } from 'react'
@@ -29,6 +30,62 @@ const SETTINGS: ResolvedVaultSettings = {
   warnings: [],
 }
 
+/** This machine's agents, as `agent.harnesses` lists them. */
+const AGENTS = {
+  agents: [
+    {
+      harness: {
+        id: 'claude',
+        label: 'Claude Code',
+        integration: 'claude',
+        command: { bin: 'claude', args: [] },
+      },
+      builtIn: true,
+      edited: false,
+      path: '/usr/local/bin/claude',
+      unattended: null,
+    },
+    {
+      harness: {
+        id: 'codex',
+        label: 'Codex',
+        integration: 'codex',
+        command: { bin: 'codex', args: [] },
+      },
+      builtIn: true,
+      edited: false,
+      path: '/usr/local/bin/codex',
+      unattended: null,
+    },
+    {
+      harness: { id: 'pi', label: 'Pi', integration: 'pi', command: { bin: 'pi', args: [] } },
+      builtIn: true,
+      edited: false,
+      path: '/usr/local/bin/pi',
+      unattended: null,
+    },
+    {
+      harness: {
+        id: 'aider',
+        label: 'Aider',
+        command: { bin: 'aider', args: ['--no-auto-commits'] },
+      },
+      builtIn: false,
+      edited: false,
+      path: '/usr/local/bin/aider',
+      unattended: 'Aider runs only in a terminal you watch.',
+    },
+  ],
+  file: '/data/agent-harnesses.json',
+  ignored: 0,
+  unreadable: null,
+}
+
+/** The agent's harnesses on this machine. */
+const capRun = vi.fn(async (input: { name: string }) =>
+  input.name === 'agent.harnesses' ? AGENTS : { ok: true },
+)
+
 // Every other call the shell makes answers nothing, and never rejects. Two
 // levels deep, `trpc.<router>.<procedure>`, and nothing for a symbol, so
 // nothing walking the mock can recurse forever.
@@ -45,7 +102,8 @@ vi.mock('@/lib/trpc', () => {
             : null
   const procedure = (name: string) => ({
     query: async () => answer(name),
-    mutate: name === 'settings.write' ? write : async () => ({ ok: true }),
+    mutate:
+      name === 'settings.write' ? write : name === 'cap.run' ? capRun : async () => ({ ok: true }),
     subscribe: () => ({ unsubscribe() {} }),
   })
   const router = (routerName: string) =>
@@ -93,7 +151,13 @@ const CONNECTIONS: RendererPlugin = {
   ],
 }
 
-function mount() {
+/** The plugin that provides the agent, as far as Settings can tell. */
+const AGENT_PLUGIN = {
+  info: { id: 'stand-in', label: 'Stand-in', default: true },
+  agent: { name: 'Claude' },
+} as never
+
+function mount({ agent = false }: { agent?: boolean } = {}) {
   const store = createStore()
   store.set(activeRemoteAtom, 'mara/notes')
   store.set(vaultsAtom, [
@@ -105,7 +169,7 @@ function mount() {
     },
   ] as never)
   store.set(snapshotAtom, emptyVaultSnapshot())
-  store.set(installedPluginsAtom, [CONNECTIONS])
+  store.set(installedPluginsAtom, agent ? [CONNECTIONS, AGENT_PLUGIN] : [CONNECTIONS])
   store.set(vaultSettingsAtom, { remote: 'mara/notes', settings: SETTINGS })
   render(
     <Provider store={store}>
@@ -117,6 +181,7 @@ function mount() {
 
 beforeEach(() => {
   write.mockClear()
+  capRun.mockClear()
 })
 
 test('⌘, opens Settings as a tab, its nav in place of the files', async () => {
@@ -134,6 +199,23 @@ test('Ctrl+, opens it too', async () => {
   mount()
   fireEvent.keyDown(window, { key: ',', ctrlKey: true })
   expect(await screen.findByRole('tab', { name: /Settings/ })).toBeTruthy()
+})
+
+test('Pi can be the default agent without a warning in Settings', async () => {
+  const store = mount()
+  act(() => store.set(openSettingsSectionAtom, 'general'))
+  await screen.findByRole('heading', { level: 1, name: 'General' })
+
+  act(() =>
+    store.set(vaultSettingsAtom, {
+      remote: 'mara/notes',
+      settings: { ...SETTINGS, agentProvider: 'pi' },
+    }),
+  )
+  const agents = screen.getByRole('heading', { level: 2, name: 'Agents' }).closest('section')!
+  const piRow = within(agents).getByText('Pi').closest('[data-slot="field"]') as HTMLElement
+  expect(within(piRow).getByText('Default')).toBeVisible()
+  expect(within(agents).queryByRole('alert')).toBeNull()
 })
 
 test("Open Connections lands on the plugin's own page", async () => {
@@ -213,4 +295,48 @@ test('General says what the repo weighs on GitHub, against what GitHub recommend
       name: "Share of GitHub's recommended size",
     }),
   ).toBeTruthy()
+})
+
+test('Codex describes the risk of unattended jobs without a separate switch', async () => {
+  mount()
+  fireEvent.keyDown(window, { key: ',', metaKey: true })
+  const agents = (await screen.findByRole('heading', { level: 2, name: 'Agents' })).closest(
+    'section',
+  )!
+  const codex = within(agents).getByText('Codex').closest('[data-slot="field"]') as HTMLElement
+  expect(within(codex).getByText(/Ask AI, Holis and automations/)).toHaveTextContent(
+    'read any file on this computer and write what they read into synced vault folders',
+  )
+  expect(within(agents).queryByRole('switch', { name: /Codex/ })).toBeNull()
+})
+
+test("an agent's Edit opens on that agent, every time, and saves it", async () => {
+  mount()
+  fireEvent.keyDown(window, { key: ',', metaKey: true })
+  const editOf = async (label: string): Promise<HTMLElement> => {
+    const more = await screen.findByRole('button', { name: `More for ${label}` })
+    fireEvent.keyDown(more, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }))
+    return screen.findByRole('dialog', { name: `Edit ${label}` })
+  }
+
+  const claude = await editOf('Claude Code')
+  expect(within(claude).getByLabelText('Program')).toHaveValue('claude')
+  // Claude Code's supervisor reads neither, so neither is offered.
+  expect(within(claude).queryByLabelText('Arguments')).toBeNull()
+  expect(within(claude).queryByLabelText('Environment')).toBeNull()
+  fireEvent.click(within(claude).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+  const aider = await editOf('Aider')
+  expect(within(aider).getByLabelText('Program')).toHaveValue('aider')
+  expect(within(aider).getByLabelText('Arguments')).toHaveValue('--no-auto-commits')
+  fireEvent.click(within(aider).getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(capRun.mock.calls.some(([c]) => c.name === 'agent.harnessSave')).toBe(true),
+  )
+  const saved = capRun.mock.calls.find(([c]) => c.name === 'agent.harnessSave')![0] as unknown as {
+    paramsJson: string
+  }
+  expect(JSON.parse(saved.paramsJson)).toMatchObject({ harness: { id: 'aider' }, create: false })
 })

@@ -22,8 +22,9 @@ import {
   type AgentTarget,
   type AgentTerminal,
 } from './sessions'
-import { activeRemoteAtom, openSurfaceAtom } from '@/plugin-api'
+import { activeRemoteAtom, appModeAtom, openSurfaceAtom } from '@/plugin-api'
 import { newSessionProviderAtom } from './providers'
+import { agentsViewAtom, viewTerminalsAtom } from './agents-view'
 
 /** What an action answers: done, or why not, in words the caller can print. */
 export type AgentResult = { ok: true } | { ok: false; message: string }
@@ -198,7 +199,10 @@ export const duplicateSessionAtom = atom(
   async (get, set, id: string): Promise<AgentResult> => {
     const res = await inVault(get, (remote) => agentCap.duplicate(remote, { id, ...geometry(get) }))
     if (!res.ok) return res
-    land(set, res.terminalId)
+    set(viewTerminalsAtom, (terminals) => ({ ...terminals, [res.sessionId]: res.terminalId }))
+    set(appModeAtom, 'agents')
+    set(agentsViewAtom, { kind: 'session', id: res.sessionId })
+    focusSessionTerminal(res.terminalId)
     return { ok: true }
   },
 )

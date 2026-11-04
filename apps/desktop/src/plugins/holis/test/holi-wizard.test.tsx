@@ -37,6 +37,7 @@ const made: HoliSummary = {
   mascot: 'captain',
   color: '#a5a1ff',
   status: 'new',
+  provider: 'claude',
   accepts: ['kunder/**/*.md'],
   allow: ['Edit(tilbud/**)'],
   soul: 'Write proposals.',
@@ -66,7 +67,28 @@ function setup(mode: 'create' | 'learn') {
 
 const next = () => userEvent.click(screen.getByRole('button', { name: 'Continue' }))
 
-test('walks the steps and creates a Holi, then asks for approval', async () => {
+/**
+ * Enter a line of free text as one paste rather than key by key. Typing
+ * re-renders the whole wizard per character, and this flow enters some eighty
+ * of them: two thirds of the first test's time, which ran it past Vitest's 5 s
+ * on a loaded machine. No step here is about keystrokes; the two fields that
+ * act on Enter are still typed.
+ */
+async function fill(label: string, text: string) {
+  await userEvent.click(screen.getByLabelText(label))
+  await userEvent.paste(text)
+}
+
+/**
+ * The whole wizard in one test: seven steps, some sixteen clicks, each a step
+ * the wizard renders. With the typing gone that is still ~3 s on a busy
+ * machine, too close to Vitest's 5 s default for one flow, so it gets the
+ * budget of a long test. A budget only bounds a failure; every wait in it is
+ * on a condition.
+ */
+const WHOLE_FLOW = { timeout: 15_000 }
+
+test('walks the steps and creates a Holi, then asks for approval', WHOLE_FLOW, async () => {
   create.mockResolvedValue(made)
   save.mockResolvedValue({ path: '.holi/schedules/proposal-habit.md' })
   const store = setup('create')
@@ -84,13 +106,13 @@ test('walks the steps and creates a Holi, then asks for approval', async () => {
   expect(name.value).toBe('Captain')
   await userEvent.clear(name)
   expect(screen.getByRole('button', { name: 'Continue' })).toHaveProperty('disabled', true)
-  await userEvent.type(name, 'Proposal')
+  await fill('Name', 'Proposal')
   await userEvent.click(screen.getByRole('radio', { name: 'Professor' }))
-  await userEvent.type(screen.getByLabelText('Short description'), 'Writes proposals')
+  await fill('Short description', 'Writes proposals')
   await next()
 
-  await userEvent.type(screen.getByLabelText('Soul'), 'Write proposals.')
-  await userEvent.type(screen.getByLabelText('Documents it takes'), 'kunder/**/*.md')
+  await fill('Soul', 'Write proposals.')
+  await fill('Documents it takes', 'kunder/**/*.md')
   await next()
 
   // What it may do: a bare Edit is refused, a folder becomes its rule.
@@ -103,7 +125,7 @@ test('walks the steps and creates a Holi, then asks for approval', async () => {
   // A habit, written off.
   await userEvent.click(screen.getByRole('switch', { name: 'Give it a habit' }))
   expect(screen.getByRole('button', { name: 'Continue' })).toHaveProperty('disabled', true)
-  await userEvent.type(screen.getByLabelText('What it does each time'), 'Digest kunder/.')
+  await fill('What it does each time', 'Digest kunder/.')
   await next()
 
   expect(screen.getByText('Review and create', { selector: 'h2' })).toBeTruthy()
@@ -133,6 +155,27 @@ test('walks the steps and creates a Holi, then asks for approval', async () => {
   expect(store.get(holiWizardAtom)).toBeNull()
   expect(store.get(pendingApprovalAtom)?.holi.id).toBe('proposal')
   expect(await screen.findByText('Run Proposal on this machine?')).toBeTruthy()
+})
+
+test('Pi approval warns that allow rules do not constrain tools or mail', async () => {
+  const store = createStore()
+  store.set(activeRemoteAtom, 'o/vault')
+  store.set(pendingApprovalAtom, {
+    holi: { ...made, provider: 'pi', allow: ['Bash(mail:*)'] },
+    path: 'kunder/a.md',
+  })
+  render(
+    <Provider store={store}>
+      <ApproveHoliDialog />
+    </Provider>,
+  )
+
+  const warning = await screen.findByText(/This runs with Pi\./)
+  expect(warning).toHaveTextContent(/allow` rules are not enforced by Pi/)
+  expect(warning).toHaveTextContent('no per-tool approval prompts')
+  expect(warning).toHaveTextContent('including sending mail')
+  expect(screen.getByText('Configured allow rules (not enforced)')).toBeTruthy()
+  expect(screen.queryByText('Nothing: it asks before each action.')).toBeNull()
 })
 
 test('a refusal from main stays in the wizard, with Try again', async () => {

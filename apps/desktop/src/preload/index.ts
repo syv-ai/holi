@@ -46,10 +46,11 @@ const onSkillsUpdated = pushChannel<unknown>('vault:skills')
  * commit (`docs/glossary.md` §Flush). The renderer starts that itself everywhere
  * except quit, which only main knows is happening.
  *
- * Main gives up after a second, so `flushDone()` is a courtesy, not a lock: a
- * renderer that never answers delays a quit, it does not prevent one.
+ * Each reply carries the request id so an old completion cannot approve a
+ * later quit. Failure and timeout keep main from closing the app.
  */
-const onFlushRequest = pushChannel<void>('vault:flush')
+const onFlushRequest = pushChannel<{ id: string }>('vault:flush')
+const onFlushCancelled = pushChannel<{ id: string }>('vault:flush-cancel')
 
 /** Main asks for a vault path in a tab: a clicked reminder's task,
  * `holi docs open`, or a Holi link, which may name a heading to scroll to.
@@ -105,6 +106,7 @@ const onTerminalContext = pushChannel<unknown>('terminal:context')
 /** The window went in or out of fullscreen. macOS hides the traffic lights
  *  there, so the band the sidebar keeps for them can go. */
 const onFullScreen = pushChannel<boolean>('window:fullscreen')
+const onVisible = pushChannel<boolean>('window:visible')
 
 /** The ONE seam between renderer and main (architecture §3). */
 contextBridge.exposeInMainWorld('holi', {
@@ -116,7 +118,8 @@ contextBridge.exposeInMainWorld('holi', {
     onCommitted,
     onSkillsUpdated,
     onFlushRequest,
-    flushDone: () => ipcRenderer.send('vault:flush-done'),
+    onFlushCancelled,
+    flushDone: (id: string, error?: string) => ipcRenderer.send('vault:flush-done', id, error),
     onOpen,
     openReady: () => ipcRenderer.send('vault:open-ready'),
     onLocate,
@@ -140,6 +143,8 @@ contextBridge.exposeInMainWorld('holi', {
   },
   window: {
     onFullScreen,
+    onVisible,
+    isVisible: (): Promise<boolean> => ipcRenderer.invoke('window:is-visible'),
   },
   activity: {
     onEntry: onActivityEntry,
