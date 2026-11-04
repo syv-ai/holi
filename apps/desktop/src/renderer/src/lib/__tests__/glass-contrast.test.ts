@@ -182,7 +182,9 @@ describe('macOS glass text contrast from the production CSS cascade', () => {
   }
 
   it('keeps selected session metadata at full foreground ink over its actual fills', () => {
-    expect(sessionCard).toMatch(/current \? 'text-foreground' : 'text-muted-foreground'/)
+    expect(sessionCard).toMatch(
+      /current \? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground'/,
+    )
     const black: RGB = [0, 0, 0]
     const white: RGB = [1, 1, 1]
     const selectedCard = sessionCard.match(/current && 'bg-foreground\/10 hover:bg-foreground\/12'/)
@@ -206,8 +208,13 @@ describe('macOS glass text contrast from the production CSS cascade', () => {
     }
   })
 
-  it('keeps unselected session metadata at AA contrast over hover fills', () => {
-    expect(sessionCard).toMatch(/current \? 'text-foreground' : 'text-muted-foreground'/)
+  it('keeps unselected session age and provider metadata at AA contrast over hover fills', () => {
+    expect(
+      sessionCard.match(
+        /current \? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground'/g,
+      ),
+    ).toHaveLength(2)
+    expect(sessionCard).toContain("'group h-auto w-full")
     const hoverFill = sessionCard.match(/hover:bg-foreground\/(\d+)/)
     expect(hoverFill).not.toBeNull()
     const fillAlpha = Number(hoverFill![1]!) / 100
@@ -222,32 +229,16 @@ describe('macOS glass text contrast from the production CSS cascade', () => {
       const glassTheme = darkTheme ? darkMac : mac
       const foreground = oklch(themeCss['--foreground']!)
       const sidebar = oklch(themeCss['--sidebar']!)
-      const ink = oklch(
-        darkTheme
-          ? token("[data-platform='mac'][data-theme='dark']", '--muted-foreground')
-          : token("[data-platform='mac']", '--muted-foreground'),
-      )
 
       for (const mode of modes) {
         const modeCss = mode === 'Clear' ? clear : mode === 'Solid' ? solid : {}
         const alpha = percentage(modeCss['--glass-chrome'] ?? mac['--glass-chrome']!)
-        const modeInk =
-          mode === 'Solid'
-            ? oklch(
-                token(
-                  darkTheme
-                    ? "[data-platform='mac'][data-theme='dark'][data-glass='solid']"
-                    : "[data-platform='mac'][data-glass='solid']",
-                  '--muted-foreground',
-                ),
-              )
-            : ink
         expect(glassTheme['--muted-foreground']).toBeDefined()
         for (const backdrop of backdrops) {
           const glassGround = composite(sidebar, backdrop, alpha)
           const hoveredGround = composite(foreground, glassGround, fillAlpha)
           expect(
-            contrast(modeInk, hoveredGround),
+            contrast(foreground, hoveredGround),
             `${theme}/${mode} over ${backdrop[0] === 0 ? 'black' : 'white'}`,
           ).toBeGreaterThanOrEqual(4.5)
         }
@@ -264,7 +255,9 @@ describe('macOS glass text contrast from the production CSS cascade', () => {
     )
     expect(drawerGlass).toBe('oklch(0.44 0 0)')
     expect(darkDrawerGlass).toBe('oklch(0.8 0 0)')
-    expect(sessionCard).toContain("current ? 'text-foreground' : 'text-muted-foreground'")
+    expect(sessionCard).toContain(
+      "current ? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground'",
+    )
     const black: RGB = [0, 0, 0]
     const white: RGB = [1, 1, 1]
     for (const theme of [light, dark]) {

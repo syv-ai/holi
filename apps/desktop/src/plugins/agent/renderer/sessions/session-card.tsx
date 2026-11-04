@@ -65,7 +65,10 @@ function CardStatus({
   }
   return (
     <span
-      className={cn('text-xs tabular-nums', current ? 'text-foreground' : 'text-muted-foreground')}
+      className={cn(
+        'text-xs tabular-nums',
+        current ? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground',
+      )}
     >
       {when}
     </span>
@@ -182,7 +185,7 @@ export function SessionCard({
       onClick={onOpen}
       onFocus={onFocus}
       className={cn(
-        'h-auto w-full min-w-0 justify-start text-start font-normal whitespace-normal',
+        'group h-auto w-full min-w-0 justify-start text-start font-normal whitespace-normal',
         // The sidebar's one fill scale, as the rows above and in Documents.
         'hover:bg-foreground/5',
         current && 'bg-foreground/10 hover:bg-foreground/12',
@@ -209,7 +212,7 @@ export function SessionCard({
         <span
           className={cn(
             'flex min-w-0 items-center gap-1.5 text-xs',
-            current ? 'text-foreground' : 'text-muted-foreground',
+            current ? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground',
           )}
         >
           <CardMark row={row} />
