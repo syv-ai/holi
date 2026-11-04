@@ -319,7 +319,7 @@ export function TabStrip({
                             variant="ghost"
                             size="icon-xs"
                             aria-label={tab !== null ? `Close ${tab.title}` : 'Close split view'}
-                            onClick={() => act((w) => closeEntry(w, id))}
+                            onClick={() => close((w) => closeEntry(w, id))}
                           >
                             <XIcon aria-hidden="true" />
                           </Button>
