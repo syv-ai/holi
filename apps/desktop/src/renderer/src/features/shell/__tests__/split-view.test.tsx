@@ -16,7 +16,16 @@ import {
   type ResolvedVaultSettings,
 } from '@holi/shared'
 
-import { act, createEvent, fireEvent, render, screen, waitFor, within } from '@/test/render'
+import {
+  act,
+  cleanup,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@/test/render'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { activeSplit, focusedTab, isSplit, openTab } from '@/state/shell-workspace'
 import { vaultSettingsAtom } from '@/state/settings'
@@ -189,6 +198,120 @@ test('⌘T opens a New tab; ⇧⌘\\ separates; ⌃⌥→ focuses the next membe
   fireEvent.keyDown(window, { key: '|', ctrlKey: true, shiftKey: true })
   await waitFor(() => expect(views()).toHaveLength(1))
   expect(store.get(shellWorkspaceAtom).entries).toHaveLength(4)
+})
+
+test('parked surface focus returns to the shell after a control or iframe takes focus', async () => {
+  const { show, away } = retainedFixture()
+  show('demo.deck')
+  const control = await screen.findByRole('textbox', { name: 'State demo.deck' })
+  const outside = within(stripOf()).getByRole('tab', { name: 'A' })
+  await act(async () => outside.focus())
+  away()
+  await waitFor(() => expect(document.activeElement).toBe(outside))
+  await act(async () => control.focus())
+  expect(document.activeElement).toBe(outside)
+
+  show('demo.deck')
+  const iframe = document.createElement('iframe')
+  control.closest('[data-pane-host]')!.append(iframe)
+  away()
+  // A remote frame signals window blur, not a bubbling focusin. Suppress
+  // jsdom's local focus events while allowing activeElement to really change.
+  const stopLocalFocus = (event: Event) => event.stopImmediatePropagation()
+  window.addEventListener('focus', stopLocalFocus, true)
+  window.addEventListener('focusin', stopLocalFocus, true)
+  const outsideFocus = vi.spyOn(outside, 'focus')
+  try {
+    await act(async () => {
+      iframe.focus()
+      fireEvent.blur(window)
+    })
+    expect(document.activeElement).toBe(outside)
+    expect(outsideFocus).toHaveBeenCalledWith({ preventScroll: true })
+    outsideFocus.mockClear()
+    // A background remote frame can change focus without either parent
+    // focus signal. The parked-host watcher must catch that too.
+    iframe.focus()
+    await waitFor(() => expect(document.activeElement).toBe(outside))
+    expect(outsideFocus).toHaveBeenCalledWith({ preventScroll: true })
+  } finally {
+    window.removeEventListener('focus', stopLocalFocus, true)
+    window.removeEventListener('focusin', stopLocalFocus, true)
+  }
+})
+
+test('programmatically parking a focused surface releases focus and visible members retain it', async () => {
+  const f = retainedFixture()
+  f.show('one')
+  const first = await screen.findByRole('textbox', { name: 'State one' })
+  await act(async () => first.focus())
+  expect(document.activeElement).toBe(first)
+  const bodyFocus = vi.spyOn(document.body, 'focus')
+  // Native moves retain focus silently. Suppress jsdom/React's local
+  // focus signals so release cannot rely on a fresh focusin or window blur.
+  const stopLocalFocus = (event: Event) => event.stopImmediatePropagation()
+  window.addEventListener('focus', stopLocalFocus, true)
+  window.addEventListener('focusin', stopLocalFocus, true)
+  try {
+    f.away()
+    await waitFor(() => expect(bodyFocus).toHaveBeenCalledWith({ preventScroll: true }))
+    expect(document.activeElement).not.toBe(first)
+  } finally {
+    window.removeEventListener('focus', stopLocalFocus, true)
+    window.removeEventListener('focusin', stopLocalFocus, true)
+  }
+
+  f.show('one')
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => openInSplit(ws, f.key('two'))))
+  const second = await screen.findByRole('textbox', { name: 'State two' })
+  for (const [id, input] of [
+    ['one', first],
+    ['two', second],
+  ] as const) {
+    await act(async () => input.focus())
+    expect(document.activeElement).toBe(input)
+    expect(focusedTab(f.store.get(shellWorkspaceAtom))).toBe(f.key(id))
+    expect(input).toHaveAttribute('data-visible', 'true')
+  }
+})
+
+test('parked focus falls back to body after the last outside target is removed', async () => {
+  const { show, away } = retainedFixture()
+  const outside = document.createElement('button')
+  document.body.append(outside)
+  await act(async () => outside.focus())
+  show('demo.deck')
+  const control = await screen.findByRole('textbox', { name: 'State demo.deck' })
+  away()
+  outside.remove()
+  const originalTabIndex = document.body.getAttribute('tabindex')
+  await act(async () => control.focus())
+  expect(document.activeElement).toBe(document.body)
+  expect(document.body.getAttribute('tabindex')).toBe(originalTabIndex)
+})
+
+test('retained focus guards remove their global handlers on unmount', async () => {
+  const addWindow = vi.spyOn(window, 'addEventListener')
+  const removeWindow = vi.spyOn(window, 'removeEventListener')
+  const addDocument = vi.spyOn(document, 'addEventListener')
+  const removeDocument = vi.spyOn(document, 'removeEventListener')
+  const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame')
+  const f = retainedFixture()
+  f.show('one')
+  const input = await screen.findByRole('textbox', { name: 'State one' })
+  f.away()
+  const windowFocus = addWindow.mock.calls.filter(([type]) => ['blur', 'focus'].includes(type))
+  const documentFocus = addDocument.mock.calls.filter(
+    ([type, , capture]) => ['focus', 'focusin'].includes(type) && capture === true,
+  )
+  expect(windowFocus.length).toBeGreaterThan(0)
+  expect(documentFocus.map(([type]) => type)).toContain('focusin')
+  act(() => input.focus())
+  cleanup()
+  await act(async () => {})
+  for (const call of windowFocus) expect(removeWindow.mock.calls).toContainEqual(call)
+  for (const call of documentFocus) expect(removeDocument.mock.calls).toContainEqual(call)
+  expect(cancelFrame).toHaveBeenCalled()
 })
 
 test('a visited keepMounted surface keeps its document and lease while another tab is shown', async () => {

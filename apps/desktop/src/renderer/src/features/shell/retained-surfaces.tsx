@@ -1,5 +1,5 @@
 import { useAtomValue } from 'jotai'
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { surfacesAtom } from '@/state/plugins'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
@@ -17,7 +17,11 @@ export function useRetainedSurfaces(
   const workspace = useAtomValue(shellWorkspaceAtom)
   const surfaces = useAtomValue(surfacesAtom)
   const parking = useRef<HTMLDivElement>(null)
+  const focusGuard = useRef<{
+    release(host: HTMLElement): void
+  } | null>(null)
   const hosts = useRef(new Map<string, HTMLDivElement>())
+  const releaseFocus = useCallback((host: HTMLElement) => focusGuard.current?.release(host), [])
   const [visited, setVisited] = useState({ remote, keys: [] as string[] })
   const visible = new Set(visibleKeys)
   const open = new Set(allTabs(workspace))
@@ -51,6 +55,93 @@ export function useRetainedSurfaces(
     return host
   }
   useLayoutEffect(() => {
+    const home = parking.current
+    if (home === null) return
+    const ownerDocument = home.ownerDocument
+    const ownerWindow = ownerDocument.defaultView
+    if (ownerWindow === null) return
+    let lastOutside: HTMLElement | null = null
+    let queued = false
+    let frame: number | null = null
+    let disposed = false
+    const outside = (element: Element | null): element is HTMLElement =>
+      element instanceof ownerWindow.HTMLElement &&
+      !home.contains(element) &&
+      element !== ownerDocument.body
+    const focusBody = () => {
+      const body = ownerDocument.body
+      const original = body.getAttribute('tabindex')
+      body.setAttribute('tabindex', '-1')
+      try {
+        body.focus({ preventScroll: true })
+      } finally {
+        if (original === null) body.removeAttribute('tabindex')
+        else body.setAttribute('tabindex', original)
+      }
+    }
+    const focusFallback = () => {
+      const target = lastOutside
+      if (target?.isConnected && outside(target) && target.closest('[inert]') === null) {
+        target.focus({ preventScroll: true })
+        if (ownerDocument.activeElement === target) return
+      }
+      focusBody()
+    }
+    const check = () => {
+      if (disposed) return
+      const active = ownerDocument.activeElement
+      if (home.contains(active)) focusFallback()
+      else if (outside(active)) lastOutside = active
+    }
+    const schedule = () => {
+      if (queued) return
+      queued = true
+      queueMicrotask(() => {
+        queued = false
+        check()
+      })
+    }
+    // A remote document can change frame focus without a parent DOM event.
+    // Watch only while hosts are parked; no layout reads are needed.
+    const watch = () => {
+      if (disposed || frame !== null) return
+      frame = ownerWindow.requestAnimationFrame(() => {
+        frame = null
+        check()
+        if (home.childElementCount > 0) watch()
+      })
+    }
+    const focusIn = (event: FocusEvent) => {
+      if (outside(event.target as Element | null)) lastOutside = event.target as HTMLElement
+      schedule()
+    }
+    const initial = ownerDocument.activeElement
+    if (outside(initial)) lastOutside = initial
+    ownerDocument.addEventListener('focusin', focusIn, true)
+    ownerDocument.addEventListener('focus', schedule, true)
+    ownerWindow.addEventListener('blur', schedule)
+    ownerWindow.addEventListener('focus', schedule)
+    const guard = {
+      release(host: HTMLElement) {
+        // A layout move can adopt this host into another visible slot in
+        // this commit. Only reject focus if it ends up parked.
+        if (host.contains(ownerDocument.activeElement)) schedule()
+        watch()
+      },
+    }
+    focusGuard.current = guard
+    return () => {
+      disposed = true
+      queued = false
+      if (frame !== null) ownerWindow.cancelAnimationFrame(frame)
+      ownerDocument.removeEventListener('focusin', focusIn, true)
+      ownerDocument.removeEventListener('focus', schedule, true)
+      ownerWindow.removeEventListener('blur', schedule)
+      ownerWindow.removeEventListener('focus', schedule)
+      if (focusGuard.current === guard) focusGuard.current = null
+    }
+  }, [])
+  useLayoutEffect(() => {
     const live = new Set(displayed.map(identity))
     for (const [id, host] of hosts.current) {
       if (!live.has(id)) {
@@ -60,7 +151,14 @@ export function useRetainedSurfaces(
     }
   })
   return {
-    slot: (key) => <SurfaceSlot key={identity(key)} host={hostFor(key)} parking={parking} />,
+    slot: (key) => (
+      <SurfaceSlot
+        key={identity(key)}
+        host={hostFor(key)}
+        parking={parking}
+        releaseFocus={releaseFocus}
+      />
+    ),
     content: (
       <>
         <div
@@ -95,9 +193,11 @@ function moveHost(parent: HTMLElement, host: HTMLElement): void {
 function SurfaceSlot({
   host,
   parking,
+  releaseFocus,
 }: {
   host: HTMLDivElement
   parking: React.RefObject<HTMLDivElement | null>
+  releaseFocus(host: HTMLElement): void
 }) {
   const slot = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
@@ -110,6 +210,7 @@ function SurfaceSlot({
     host.inert = false
     return () => {
       if (host.parentElement === destination) {
+        releaseFocus(host)
         const bounds = host.getBoundingClientRect()
         host.style.width = `${bounds.width}px`
         host.style.height = `${bounds.height}px`
@@ -117,6 +218,6 @@ function SurfaceSlot({
         moveHost(home, host)
       }
     }
-  }, [host, parking])
+  }, [host, parking, releaseFocus])
   return <div ref={slot} className="flex h-full min-h-0 w-full min-w-0 flex-1" />
 }
