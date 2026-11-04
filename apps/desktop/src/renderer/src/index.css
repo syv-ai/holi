@@ -286,7 +286,7 @@
 [data-platform='mac'] {
   --glass-chrome: 90%;
   --glass-view: 95%;
-  --muted-foreground: oklch(0.44 0 0);
+  --muted-foreground: oklch(0.43 0 0);
 }
 [data-platform='mac'][data-theme='dark'] {
   --muted-foreground: oklch(0.8 0 0);
