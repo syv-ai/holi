@@ -45,7 +45,7 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
   const syncSubs = new Set<(s: SyncState) => void>()
   const heldBackSubs = new Set<(f: HeldBackFile[]) => void>()
   const committedSubs = new Set<(p: string[] | null) => void>()
-  const flushSubs = new Set<() => void>()
+  const flushSubs = new Set<(request: { id: string }) => void>()
   const openSubs = new Set<
     (p: { remote: string; path: string; heading?: string; focus?: boolean }) => void
   >()
@@ -53,7 +53,8 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
   const pluginSent: { id: string; event: unknown }[] = []
   const testOnboardingSubs = new Set<() => void>()
   const menuCommandSubs = new Set<(id: string) => void>()
-  let onFlushed: (() => void) | null = null
+  let onFlushed: ((id: string, error?: string) => void) | null = null
+  let flushSequence = 0
 
   const subscribe =
     <T>(subs: Set<(v: T) => void>) =>
@@ -79,7 +80,8 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
       // Never fires here: present for the skills watch, which subscribes.
       onSkillsUpdated: subscribe(new Set<(n: unknown) => void>()),
       onFlushRequest: subscribe(flushSubs),
-      flushDone: () => onFlushed?.(),
+      onFlushCancelled: subscribe(new Set<(request: { id: string }) => void>()),
+      flushDone: (id: string, error?: string) => onFlushed?.(id, error),
       onOpen: subscribe(openSubs),
       openReady: () => {},
       onLocate: subscribe(new Set<(r: { id: string; path: string }) => void>()),
@@ -108,10 +110,17 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
   }
 
   // There is no `window` in `environment: 'node'` — this creates one rather
-  // than decorating one.
+  // than decorating one. jsdom's is decorated, so a rendered component keeps
+  // its document.
   const priorWindow = (globalThis as Record<string, unknown>).window
-  const existing = (priorWindow ?? {}) as Record<string, unknown>
-  ;(globalThis as Record<string, unknown>).window = { ...existing, holi }
+  const jsdom = typeof document !== 'undefined' && priorWindow !== undefined
+  const priorHoli = jsdom ? (priorWindow as Record<string, unknown>).holi : undefined
+  if (jsdom) (priorWindow as Record<string, unknown>).holi = holi
+  else
+    (globalThis as Record<string, unknown>).window = {
+      ...((priorWindow ?? {}) as Record<string, unknown>),
+      holi,
+    }
 
   return {
     calls,
@@ -132,15 +141,21 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
     },
     pluginSent,
     requestFlush: () =>
-      new Promise<void>((resolve) => {
-        onFlushed = resolve
-        for (const cb of flushSubs) cb()
+      new Promise<void>((resolve, reject) => {
+        const id = `fake-${++flushSequence}`
+        onFlushed = (ackId, error) => {
+          if (ackId !== id) return
+          if (error === undefined) resolve()
+          else reject(new Error(error))
+        }
+        for (const cb of flushSubs) cb({ id })
       }),
     restore() {
       // Actually removed, not left behind. A leaked fake makes the NEXT test
       // file talk to a seam that is not there, and the failure surfaces
       // somewhere unrelated.
-      if (priorWindow === undefined) delete (globalThis as Record<string, unknown>).window
+      if (jsdom) (priorWindow as Record<string, unknown>).holi = priorHoli
+      else if (priorWindow === undefined) delete (globalThis as Record<string, unknown>).window
       else (globalThis as Record<string, unknown>).window = priorWindow
     },
   }

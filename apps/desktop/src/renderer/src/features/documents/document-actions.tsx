@@ -4,7 +4,8 @@
  * (docs/features/holi-links.md) and Copy as Markdown or HTML, then Create
  * vault app. Copy Holi link and Create vault app are the actions a note's row
  * menu in the file tree has too, drawn from one definition (`NOTE_ACTIONS`).
- * A link to a heading is copied from beside the heading, in the block menu.
+ * Narrow panes offer the heading-link action here because the block gutter is
+ * not laid out there; wider panes keep it beside the heading.
  * A copy confirms in place on its item; only a failure toasts.
  */
 import type { Editor } from '@tiptap/react'
@@ -14,6 +15,7 @@ import {
   CodeIcon,
   CopyIcon,
   FileTextIcon,
+  HashIcon,
   MoreHorizontalIcon,
   TypeIcon,
 } from 'lucide-react'
@@ -32,12 +34,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { NOTE_ACTIONS } from '@/state/document-runs'
+import { useRichTextSelector } from './rich-text/rich-text-state'
 
 import { useCopied } from './use-copied'
 
 const { copyLink: COPY_LINK, createVaultApp: CREATE_VAULT_APP } = NOTE_ACTIONS
 
-type CopyFormat = 'markdown' | 'html' | 'link'
+type CopyFormat = 'markdown' | 'html' | 'link' | 'heading-link'
 
 export interface DocumentActionsProps {
   editor: Editor | null
@@ -53,6 +56,9 @@ export interface DocumentActionsProps {
   /** The document's Holi link; null for a file a teammate could not open
    *  (a local file). */
   holiLink?: (() => string) | null
+  /** The current heading's Holi link; null for an unlinkable document. */
+  headingLink?: (() => string | null) | null
+  compact?: boolean
 }
 
 export function DocumentActions({
@@ -64,8 +70,13 @@ export function DocumentActions({
   onSmallTextChange,
   onCreateVaultApp,
   holiLink = null,
+  headingLink = null,
+  compact = false,
 }: DocumentActionsProps) {
   const { copied, copy } = useCopied<CopyFormat>()
+  const currentHeadingLink = useRichTextSelector(editor, (current) =>
+    current && headingLink ? headingLink() : null,
+  )
 
   function copyAs(format: CopyFormat) {
     if (!editor) return
@@ -102,6 +113,20 @@ export function DocumentActions({
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
+          {headingLink && compact ? (
+            <DropdownMenuItem
+              onSelect={(event) => event.preventDefault()}
+              disabled={!editor || !currentHeadingLink}
+              onClick={() => void copy('heading-link', currentHeadingLink)}
+            >
+              {copied === 'heading-link' ? (
+                <CheckIcon aria-hidden="true" />
+              ) : (
+                <HashIcon aria-hidden="true" />
+              )}
+              {copied === 'heading-link' ? 'Copied' : 'Copy link to heading'}
+            </DropdownMenuItem>
+          ) : null}
           {holiLink ? (
             // Stays open, so the swap to Copied is seen where it was clicked.
             <DropdownMenuItem

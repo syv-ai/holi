@@ -150,9 +150,11 @@ function useRowActions(
   const jobId = item.jobId
   const liveSession = live.find((s) => s.id === jobId)
   const isLive = liveSession !== undefined
-  // Claude's supervised sessions have a terminal to attach and restart.
+  // Claude's supervised sessions have a terminal to attach and restart; its
+  // sign-in, a terminal Holi runs, is not one of them.
   // A Pi RPC job has neither; Pi's separate native PTY session does.
-  const background = liveSession?.provider === 'claude'
+  const signIn = liveSession?.signIn === true
+  const background = liveSession?.provider === 'claude' && !signIn
   const nativePi =
     (liveSession?.provider ?? item.agent) === 'pi' && /^p[0-9a-f]{12}$/.test(jobId ?? '')
   const piRpc = (liveSession?.provider ?? item.agent) === 'pi' && jobId?.length === 8
@@ -254,7 +256,7 @@ function useRowActions(
       run: onClose,
     })
   }
-  if (jobId !== undefined) {
+  if (jobId !== undefined && !signIn) {
     // The turn review, which the session's own view (its terminal) has no
     // room for.
     running.push({

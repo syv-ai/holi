@@ -22,10 +22,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
-import { differsBeyondTidy, holiLink, isHoliLinkable, isResolved } from '@holi/shared'
+import { differsBeyondTidy, holiLink, isHoliLinkable, isResolved, TASKS_CLAIM } from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { findNext, findPrev } from 'prosemirror-search'
-import { EditorContent, useEditor } from '@tiptap/react'
+import { EditorContent, Extension, useEditor } from '@tiptap/react'
+import { Plugin } from '@tiptap/pm/state'
 
 import { DeleteTableDialog } from '@/features/documents/rich-text/delete-table-dialog'
 import { RichTextBlockActions } from '@/features/documents/rich-text/rich-text-block-actions'
@@ -36,6 +37,7 @@ import { RichTextLinkBubble } from '@/features/documents/rich-text/rich-text-lin
 import {
   RICH_TEXT_BASIC_SLASH_ITEMS,
   RichTextSlashCommand,
+  type SlashAgentLabelSource,
   type RichTextSlashItem,
 } from '@/features/documents/rich-text/rich-text-slash-menu'
 import { useRichTextSelector } from '@/features/documents/rich-text/rich-text-state'
@@ -46,13 +48,15 @@ import {
   RichTextTableBubble,
 } from '@/features/documents/rich-text/rich-text-table'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { registerBuffer } from '@/lib/buffer-registry'
 import { cn } from '@/lib/cn'
 import { TaskProperties, useHasTaskProperties } from '@/features/planning/task-properties'
 import { useSettingsWrite } from '@/features/settings/use-vault-settings'
 import { trpc } from '@/lib/trpc'
 import { sawText } from '@/state/doc-changes'
 import { canStartConversationAtom, startConversationAtom } from '@/state/agents-slots'
-import { isRunLive } from '@/state/document-runs'
+import { isRunLive, useAgentLabel } from '@/state/document-runs'
+import { agentProviderSettingAtom } from '@/state/settings'
 import { claimsAtom } from '@/state/plugins'
 import { activeVaultSettingsAtom, useAppSetting } from '@/state/settings'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
@@ -117,8 +121,11 @@ export function DocumentView({
   onMoved?: (from: string, to: string) => void
 }) {
   const remote = useAtomValue(activeRemoteAtom)
-  const docs = useAtomValue(snapshotAtom).docs
-  const mtime = docs.find((doc) => doc.path === path)?.updatedAt
+  const snapshot = useAtomValue(snapshotAtom)
+  const docs = snapshot.docs
+  const mtime =
+    docs.find((doc) => doc.path === path)?.updatedAt ??
+    JSON.stringify(snapshot.claimed[TASKS_CLAIM]?.items.find((item) => item.path === path) ?? null)
   const [load, setLoad] = useState<Load>({ kind: 'loading' })
   const [attempt, setAttempt] = useState(0)
 
@@ -187,6 +194,23 @@ function DocumentEditor({
   onMoved?: (from: string, to: string) => void
 }) {
   const agent = useDocumentAgent(path)
+  const agentLabel = useAgentLabel(useAtomValue(agentProviderSettingAtom)) ?? 'AI'
+  const agentLabelRef = useRef(agentLabel)
+  agentLabelRef.current = agentLabel
+  const labelListeners = useRef(new Set<() => void>())
+  const labelSource = useMemo<SlashAgentLabelSource>(
+    () => ({
+      get: () => agentLabelRef.current,
+      subscribe: (listener) => {
+        labelListeners.current.add(listener)
+        return () => labelListeners.current.delete(listener)
+      },
+    }),
+    [],
+  )
+  useEffect(() => {
+    for (const listener of labelListeners.current) listener()
+  }, [agentLabel])
   const store = useStore()
   const locked = locksDocument(agent.run)
   const [saveState, setSaveState] = useState<SaveState>('saved')
@@ -209,10 +233,35 @@ function DocumentEditor({
   /** The page's scroller, whose place a tab switch keeps. */
   const scrollerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<HTMLDivElement>(null)
+  const [compactView, setCompactView] = useState(false)
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    const measure = () => setCompactView(view.getBoundingClientRect().width < 640)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(view)
+    return () => observer.disconnect()
+  }, [])
   const head = useRef(initial.head)
   /** The file as last read or written: what a change on disk is compared to. */
   const lastText = useRef(initial.text)
   const saveTimer = useRef<number | undefined>(undefined)
+  const dirty = useRef(false)
+  /** Writes are serialized so each one compares against the prior completed write. */
+  const writing = useRef<Promise<void>>(Promise.resolve())
+  const reloadPending = useRef<Promise<void>>(Promise.resolve())
+  const reloadFailed = useRef(false)
+  const frozen = useRef(false)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+  const lockedRef = useRef(locked)
+  lockedRef.current = locked
 
   // Callbacks the extensions hold, read through refs so the extensions are
   // made once per document.
@@ -229,6 +278,17 @@ function DocumentEditor({
 
   const extensions = useMemo(
     () => [
+      Extension.create({
+        name: 'saveFreeze',
+        addProseMirrorPlugins: () => [
+          new Plugin({
+            filterTransaction: (transaction) =>
+              !frozen.current ||
+              !transaction.docChanged ||
+              transaction.getMeta('preventUpdate') === true,
+          }),
+        ],
+      }),
       ...createDocumentExtensions({
         folder: parentOf(path),
         placeholder: 'Type / for commands, or Space to ask AI',
@@ -245,12 +305,13 @@ function DocumentEditor({
         items: [
           ...RICH_TEXT_BASIC_SLASH_ITEMS,
           RICH_TEXT_TABLE_SLASH_ITEM,
-          askAiSlashItem((pos) => handlers.current.trigger(pos)),
+          askAiSlashItem((pos) => handlers.current.trigger(pos), agentLabelRef.current),
         ],
         more: () => handlers.current.pluginItems(),
+        labelSource,
       }),
     ],
-    [path, promptBox],
+    [path, promptBox, labelSource],
   )
 
   const editor = useEditor(
@@ -268,9 +329,13 @@ function DocumentEditor({
       },
       onUpdate: ({ transaction }) => {
         if (!transaction.docChanged || transaction.getMeta('preventUpdate')) return
+        dirty.current = true
         setSaveState('saving')
         window.clearTimeout(saveTimer.current)
-        saveTimer.current = window.setTimeout(() => void save(), SAVE_DELAY_MS)
+        saveTimer.current = window.setTimeout(
+          () => void save().catch(() => undefined),
+          SAVE_DELAY_MS,
+        )
       },
     },
     [extensions],
@@ -318,7 +383,12 @@ function DocumentEditor({
     ? {
         file: () => holiLink({ remote, path }),
         heading: () => {
-          if (!editor) return null
+          if (
+            !editor ||
+            editor.state.selection.$from.depth !== 1 ||
+            editor.state.selection.$from.parent.type.name !== 'heading'
+          )
+            return null
           const heading = headingAtCaret(editor, markdown())
           return heading === null ? null : holiLink({ remote, path, heading })
         },
@@ -332,35 +402,93 @@ function DocumentEditor({
     return editor ? joinDocument(head.current, editor.getMarkdown()) : lastText.current
   }
 
-  async function save(): Promise<void> {
+  function save(): Promise<void> {
     window.clearTimeout(saveTimer.current)
     saveTimer.current = undefined
-    if (!editor || editor.isDestroyed) return
-    const text = markdown()
+    // Capture the body while the editor is alive, but take frontmatter after
+    // pending disk reads: task properties may have changed independently.
+    const body = editor ? editor.getMarkdown() : splitDocument(lastText.current).body
+    const done = writing.current
+      .then(async () => {
+        if (reloadFailed.current) {
+          const failed = reloadPending.current
+          const text = await trpc.notes.read.query({ remote, path })
+          if (reloadPending.current === failed) {
+            head.current = splitDocument(text).head
+            reloadFailed.current = false
+            reloadPending.current = Promise.resolve()
+          }
+        }
+        let pending: Promise<void>
+        do {
+          pending = reloadPending.current
+          await pending
+        } while (pending !== reloadPending.current)
+        await write(joinDocument(head.current, body), true)
+      })
+      .catch((error: unknown) => {
+        setSaveState('error')
+        throw error
+      })
+    writing.current = done.catch(() => undefined)
+    return done
+  }
+
+  async function write(text: string, captured = false): Promise<void> {
     // Differing only by what the commit tidies away is nothing to save:
     // writing it would just be tidied again.
-    if (!differsBeyondTidy(lastText.current, text, path, claimsRef.current)) {
+    if (
+      (!dirty.current && !captured) ||
+      !differsBeyondTidy(lastText.current, text, path, claimsRef.current)
+    ) {
+      dirty.current = false
       setSaveState('saved')
       return
     }
+    setSaveState('saving')
     try {
       await trpc.notes.write.mutate({ remote, path, text })
       lastText.current = text
-      setSaveState('saved')
-      placeRef.current()
-    } catch {
+      dirty.current =
+        mounted.current && editor !== null && !editor.isDestroyed
+          ? differsBeyondTidy(text, markdown(), path, claimsRef.current)
+          : dirty.current && !captured
+      setSaveState(dirty.current ? 'saving' : 'saved')
+      if (mounted.current) placeRef.current()
+    } catch (error) {
       setSaveState('error')
+      throw error
     }
   }
+
+  /** The latest `save`, for the flush, which outlives the render that made it. */
+  const saveRef = useRef(save)
+  saveRef.current = save
+
+  // A rename, move, delete, branch switch, vault switch or quit writes what
+  // is pending first, to the path it was typed at; after that the unmount
+  // below has nothing left to write.
+  useEffect(
+    () =>
+      registerBuffer(
+        () => saveRef.current(),
+        undefined,
+        (value) => {
+          frozen.current = value
+          editor?.setEditable(!value && !lockedRef.current)
+        },
+      ),
+    [editor],
+  )
 
   // Leaving the document writes what is pending, and leaves what it showed
   // for its tab to be compared to (`doc-changes.ts`).
   useEffect(
     () => () => {
-      const pending = saveTimer.current !== undefined
+      const pending = dirty.current
       const live = editor !== null && !editor.isDestroyed
       sawText(remote, path, pending && live ? markdown() : lastText.current)
-      if (pending) void save()
+      if (pending) void save().catch(() => undefined)
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [editor],
@@ -370,32 +498,44 @@ function DocumentEditor({
   useEffect(() => {
     if (!editor || mtime === undefined) return
     let live = true
-    void trpc.notes.read
-      .query({ remote, path })
-      .then((text) => {
-        if (!live || editor.isDestroyed || text === lastText.current) return
-        // The commit's tidy (`normalize-md`) rewrote what was saved: nothing
-        // new, so the buffer stays, and with it a space just typed under the
-        // caret. The next save compares against the tidied file.
-        if (!differsBeyondTidy(lastText.current, text, path, claimsRef.current)) {
-          lastText.current = text
-          return
-        }
-        if (saveTimer.current !== undefined && !locked) return
-        const next = splitDocument(text)
-        try {
-          const changed = applyReload(editor, next.body)
-          head.current = next.head
-          lastText.current = text
-          if (changed) placeRef.current()
-          setSaveState('saved')
-        } catch {
-          // Keep the last-known file snapshot unchanged so a later disk update
-          // can retry; dispatch failures must not be mistaken for a successful reload.
-          setSaveState('error')
-        }
-      })
-      .catch(() => undefined)
+    const reload: Promise<void> = trpc.notes.read.query({ remote, path }).then((text) => {
+      if (!live || editor.isDestroyed) {
+        // A queued save outlives the editor too. Its captured body still needs
+        // the latest metadata; a superseded read must never supply it.
+        if (reloadPending.current === reload) head.current = splitDocument(text).head
+        return
+      }
+      if (text === lastText.current) return
+      // The commit's tidy (`normalize-md`) rewrote what was saved: nothing
+      // new, so the buffer stays, and with it a space just typed under the
+      // caret. The next save compares against the tidied file.
+      if (!differsBeyondTidy(lastText.current, text, path, claimsRef.current)) {
+        lastText.current = text
+        return
+      }
+      const next = splitDocument(text)
+      if (dirty.current && !locked) {
+        head.current = next.head
+        lastText.current = text
+        return
+      }
+      try {
+        const changed = applyReload(editor, next.body)
+        head.current = next.head
+        lastText.current = text
+        if (changed) placeRef.current()
+        setSaveState('saved')
+      } catch {
+        // Keep the last-known file snapshot unchanged so a later disk update
+        // can retry; dispatch failures must not be mistaken for a successful reload.
+        setSaveState('error')
+      }
+    })
+    reloadPending.current = reload
+    reloadFailed.current = false
+    void reload.catch(() => {
+      if (reloadPending.current === reload) reloadFailed.current = true
+    })
     return () => {
       live = false
     }
@@ -406,7 +546,7 @@ function DocumentEditor({
   // A run that edits the document locks it; done, the lock lifts.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
-    editor.setEditable(!locked)
+    editor.setEditable(!locked && !frozen.current)
   }, [editor, locked])
 
   // A finished edit clears its pill on its own. A finished vault app opens
@@ -528,6 +668,7 @@ function DocumentEditor({
             title={documentTitle(path)}
             saveState={saveState}
             locked={locked}
+            compact={compactView}
             markdown={markdown}
             fullWidth={fullWidth}
             smallText={smallText}
@@ -535,6 +676,7 @@ function DocumentEditor({
             onSmallTextChange={setSmallText}
             onCreateVaultApp={canAsk && agent.appable ? () => void createVaultApp() : null}
             holiLink={holiLinks?.file ?? null}
+            headingLink={holiLinks?.heading ?? null}
             properties={
               hasProperties
                 ? {
@@ -597,25 +739,25 @@ function DocumentEditor({
               />
               <div ref={pageRef} className={cn('relative min-h-full', DROP_LINE)}>
                 {editor ? (
-                  <EditorContent
-                    editor={editor}
-                    data-table-style={tableStyle}
-                    onKeyDown={(event) => {
-                      const mod = event.metaKey || event.ctrlKey
-                      if (mod && !event.altKey && event.key.toLowerCase() === 'k') {
-                        event.preventDefault()
-                        openLinkEditor()
-                      }
-                    }}
-                    className={cn(
-                      RICH_TEXT_PROSE,
-                      RICH_TEXT_TABLE_PROSE,
-                      'mx-auto w-full px-4 py-8 sm:px-16 sm:py-12',
-                      fullWidth ? 'max-w-none' : 'max-w-3xl',
-                      smallText && 'text-sm/6',
-                      locked && 'opacity-60',
-                    )}
-                  />
+                  <div data-table-style={tableStyle} className={RICH_TEXT_TABLE_PROSE}>
+                    <EditorContent
+                      editor={editor}
+                      onKeyDown={(event) => {
+                        const mod = event.metaKey || event.ctrlKey
+                        if (mod && !event.altKey && event.key.toLowerCase() === 'k') {
+                          event.preventDefault()
+                          openLinkEditor()
+                        }
+                      }}
+                      className={cn(
+                        RICH_TEXT_PROSE,
+                        'mx-auto w-full px-4 py-8 sm:px-16 sm:py-12',
+                        fullWidth ? 'max-w-none' : 'max-w-3xl',
+                        smallText && 'text-sm/6',
+                        locked && 'opacity-60',
+                      )}
+                    />
+                  </div>
                 ) : (
                   <DocumentSkeleton />
                 )}

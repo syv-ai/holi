@@ -46,7 +46,7 @@ proposes deleting it and the person decides.
 the same commit as the memory it describes, and a burst of writes in one turn is one commit. It is
 grouped by type, one `[[path|Title]]` line per memory with its description (and `(expires <stamp>)`
 after the link when it has one), sorted by path, under a "generated" header. A memory already past
-its `expires` when the index is written is left out. One sorted line per file is also why concurrent additions merge cleanly. It lists shared memories only, and says so in a line under the header. The transform runs last among the transforms, because it is
+its `expires` when the index is written is left out. One sorted line per file is also why concurrent additions merge cleanly, and when two sides' indexes still conflict, sync writes the index again from the merged memories instead of pausing ([vaults-sync.md](vaults-sync.md)). It lists shared memories only, and says so in a line under the header. The transform runs last among the transforms, because it is
 the only one that reads the whole tree rather than the staged set, and it returns at once when
 nothing under `.holi/memory/` is staged. The transform framework is in [vaults-sync.md](vaults-sync.md).
 

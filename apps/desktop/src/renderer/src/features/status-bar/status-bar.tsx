@@ -107,6 +107,7 @@ export function syncItemView(state: SyncState): {
 } {
   switch (state.kind) {
     case 'up-to-date':
+    case 'unsynced':
       return { busy: false, problem: null, click: 'sync' }
     case 'pulling':
       return { busy: true, problem: null, click: 'output' }

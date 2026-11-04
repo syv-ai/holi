@@ -94,6 +94,7 @@ interface DocumentHeaderProps extends Omit<DocumentActionsProps, 'editor'> {
     sidebar: boolean
     onSidebarChange: (sidebar: boolean) => void
   } | null
+  compact?: boolean
 }
 
 export function DocumentHeader({
@@ -105,6 +106,7 @@ export function DocumentHeader({
   locked,
   comments = null,
   properties = null,
+  compact = false,
   ...actions
 }: DocumentHeaderProps) {
   const state = useRichTextState(editor)
@@ -176,7 +178,7 @@ export function DocumentHeader({
           <RichTextHistory editor={editor} state={state} />
           <RichTextToolbarSeparator />
         </div>
-        <DocumentActions editor={editor} {...actions} />
+        <DocumentActions editor={editor} compact={compact} {...actions} />
       </div>
     </ViewHeader>
   )

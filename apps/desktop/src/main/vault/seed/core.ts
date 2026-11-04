@@ -25,6 +25,7 @@ import {
   THEME_LOCAL_FILE,
   type PluginInfo,
 } from '@holi/shared'
+import { TMP_IGNORE_LINE } from '../vault-files'
 import { seedFolder } from './folder'
 import type { SeedContribution } from './types'
 
@@ -85,11 +86,12 @@ export function gitignoreWith(
 
 /**
  * The `.gitignore` this vault should have, or **null** if it has every line it
- * needs: the machine-local lines (core's `*.local.*` ones plus any fragment's)
+ * needs: the machine-local lines (core's `*.local.*` ones, Holi's tmp files and
+ * any fragment's)
  * and, in a section of their own, the OS junk files.
  */
 function vaultGitignore(existing: string | null, fragments: readonly string[]): string | null {
-  const local = gitignoreWith(existing, [...LOCAL_ONLY_IGNORE_LINES, ...fragments])
+  const local = gitignoreWith(existing, [...LOCAL_ONLY_IGNORE_LINES, TMP_IGNORE_LINE, ...fragments])
   return gitignoreWith(local ?? existing, OS_JUNK_FILES, OS_JUNK_HEADER) ?? local
 }
 

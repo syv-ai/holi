@@ -37,11 +37,13 @@ export function SessionTerminal({
   terminalId,
   visible,
   onGeometry,
+  provider,
 }: {
   terminalId: string
   /** This terminal's tab is the one showing. Drives the deferred build and the
    *  refit; the host is hidden rather than unmounted when false. */
   visible: boolean
+  provider?: 'pi' | 'claude' | 'codex'
   /** Every fit, so the panel can spawn the next session at a geometry that has
    *  actually been measured — a tab that has never been shown has none. */
   onGeometry?: (cols: number, rows: number) => void
@@ -172,7 +174,7 @@ export function SessionTerminal({
      */
     term.attachCustomKeyEventHandler((e) => {
       const selected = term.getSelection() || selectionRef.current
-      const action = terminalKeyAction(e, Boolean(selected))
+      const action = terminalKeyAction(e, Boolean(selected), provider)
       if (!action) return true
       e.preventDefault()
       switch (action.kind) {
@@ -247,7 +249,7 @@ export function SessionTerminal({
       fitRef.current = null
       disposeRef.current = null
     }
-  }, [terminalId, syncSize, type])
+  }, [terminalId, provider, syncSize, type])
 
   useEffect(() => () => disposeRef.current?.(), [])
 

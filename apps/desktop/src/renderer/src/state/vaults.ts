@@ -10,7 +10,11 @@ import {
 import type { SyncState } from '../../../main/vault/active-vault'
 import type { HeldBackFile } from '../../../main/vault/large-files'
 import type { RendererPlugin } from '@/state/plugin-types'
-import { flushAllBuffers } from '@/lib/buffer-registry'
+import { flushAllBuffers, freezeBuffers } from '@/lib/buffer-registry'
+import { flushSync } from 'react-dom'
+import { shellWorkspaceAtom } from './shell-tabs'
+import { retargetTabs as retargetShellTabs, closeTabsWhere } from './shell-workspace'
+import { tabPath } from './tab-descriptor'
 import { trpc } from '@/lib/trpc'
 import { closeTabsForPaths, retargetTab, retargetTabs, workspaceAtom } from './panes'
 // A cycle (`plugins` reads `activeRemoteAtom`), safe because neither module
@@ -131,6 +135,11 @@ export const loadSnapshotAtom = atom(null, async (get, set) => {
  * here may keep a snapshot keyed by remote.
  */
 export const openVaultAtom = atom(null, async (_get, set, remote: string) => {
+  // A cross-vault open (`onOpen` below) arrives with the old vault's editors
+  // still mounted: what was typed goes into the vault it was typed in, before
+  // that one closes. A switch from the vault menu flushed already
+  // (`applyVaultSwitchAtom`), and this finds nothing left to write.
+  await flushAllBuffers()
   // Nothing of the vault left carries over: its document runs ended with it.
   set(documentRunsAtom, {})
   const snapshot = await trpc.vaults.open.mutate({ remote })
@@ -149,6 +158,8 @@ export const openVaultAtom = atom(null, async (_get, set, remote: string) => {
  * user can act on (no network, no access, no such repo).
  */
 export const addVaultAtom = atom(null, async (_get, set, remote: string) => {
+  // The ritual opens over the old vault's editors, still mounted.
+  await flushAllBuffers()
   const snapshot = await trpc.vaults.add.mutate({ remote })
   set(activeRemoteAtom, remote)
   set(snapshotAtom, snapshot)
@@ -286,11 +297,26 @@ export const retrySyncAtom = atom(null, async () => {
 export const switchBranchAtom = atom(
   null,
   async (_get, set, { name, create = false }: { name: string; create?: boolean }) => {
-    await flushAllBuffers()
-    await trpc.sync.switchBranch.mutate({ name, create })
-    await set(loadSnapshotAtom)
+    const release = freezeBuffers()
+    try {
+      await flushAllBuffers()
+      await trpc.sync.switchBranch.mutate({ name, create })
+      await set(loadSnapshotAtom)
+    } finally {
+      release()
+    }
   },
 )
+
+/**
+ * The restore point a multi-file edit starts from: the buffers on disk, then
+ * a commit. Callers then freeze editors and flush again, so edits typed
+ * during this commit are saved before the files move.
+ */
+async function restorePoint(): Promise<void> {
+  await flushAllBuffers()
+  await trpc.sync.commitNow.mutate()
+}
 
 /**
  * Rename a note: move the file, rewrite inbound links, follow the open tab.
@@ -319,19 +345,29 @@ export const renameNoteAtom = atom(
   ) => {
     const remote = get(activeRemoteAtom)
     if (!remote) return
-    await flushAllBuffers()
-    await trpc.sync.commitNow.mutate()
-    await trpc.notes.rename.mutate({
-      remote,
-      from,
-      to,
-      ...(localLinksOnly === true ? { localLinksOnly } : {}),
-    })
-    set(workspaceAtom, retargetTab(get(workspaceAtom), from, to))
-    const wasActive = get(activeDocAtom)?.path === from
-    await set(loadSnapshotAtom)
-    if (wasActive) set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === to) ?? null)
-    await trpc.sync.commitNow.mutate()
+    await restorePoint()
+    const release = freezeBuffers()
+    try {
+      await flushAllBuffers()
+      await trpc.notes.rename.mutate({
+        remote,
+        from,
+        to,
+        ...(localLinksOnly === true ? { localLinksOnly } : {}),
+      })
+      flushSync(() => {
+        set(workspaceAtom, retargetTab(get(workspaceAtom), from, to))
+        set(shellWorkspaceAtom, (ws) =>
+          retargetShellTabs(ws, [{ from, to }], get(folderSurfacesAtom)),
+        )
+      })
+      const wasActive = get(activeDocAtom)?.path === from
+      await set(loadSnapshotAtom)
+      if (wasActive) set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === to) ?? null)
+      await trpc.sync.commitNow.mutate()
+    } finally {
+      release()
+    }
   },
 )
 
@@ -355,15 +391,23 @@ export const moveNotesAtom = atom(
   ) => {
     const remote = get(activeRemoteAtom)
     if (!remote || (moves.length === 0 && folders.length === 0)) return
-    await flushAllBuffers()
-    await trpc.sync.commitNow.mutate()
-    await trpc.notes.move.mutate({ remote, moves, folders })
-    set(workspaceAtom, retargetTabs(get(workspaceAtom), moves, get(folderSurfacesAtom)))
-    const active = get(activeDocAtom)
-    const moved = active ? moves.find((m) => m.from === active.path) : undefined
-    await set(loadSnapshotAtom)
-    if (moved) set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === moved.to) ?? null)
-    await trpc.sync.commitNow.mutate()
+    await restorePoint()
+    const release = freezeBuffers()
+    try {
+      await flushAllBuffers()
+      await trpc.notes.move.mutate({ remote, moves, folders })
+      flushSync(() => {
+        set(workspaceAtom, retargetTabs(get(workspaceAtom), moves, get(folderSurfacesAtom)))
+        set(shellWorkspaceAtom, (ws) => retargetShellTabs(ws, moves, get(folderSurfacesAtom)))
+      })
+      const active = get(activeDocAtom)
+      const moved = active ? moves.find((m) => m.from === active.path) : undefined
+      await set(loadSnapshotAtom)
+      if (moved) set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === moved.to) ?? null)
+      await trpc.sync.commitNow.mutate()
+    } finally {
+      release()
+    }
   },
 )
 
@@ -401,13 +445,21 @@ export const deleteManyAtom = atom(
   async (get, set, { paths, folders = [] }: { paths: string[]; folders?: string[] }) => {
     const remote = get(activeRemoteAtom)
     if (!remote || (paths.length === 0 && folders.length === 0)) return
-    await flushAllBuffers()
-    await trpc.sync.commitNow.mutate()
-    await trpc.notes.deleteMany.mutate({ remote, paths, folders })
-    const gone = new Set(paths)
-    if (gone.has(get(activeDocAtom)?.path ?? '')) set(activeDocAtom, null)
-    set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), paths, get(folderSurfacesAtom)))
-    await set(loadSnapshotAtom)
-    await trpc.sync.commitNow.mutate()
+    await restorePoint()
+    const release = freezeBuffers()
+    try {
+      await flushAllBuffers()
+      await trpc.notes.deleteMany.mutate({ remote, paths, folders })
+      const gone = new Set(paths)
+      if (gone.has(get(activeDocAtom)?.path ?? '')) set(activeDocAtom, null)
+      flushSync(() => {
+        set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), paths, get(folderSurfacesAtom)))
+        set(shellWorkspaceAtom, (ws) => closeTabsWhere(ws, (key) => gone.has(tabPath(key) ?? '')))
+      })
+      await set(loadSnapshotAtom)
+      await trpc.sync.commitNow.mutate()
+    } finally {
+      release()
+    }
   },
 )
