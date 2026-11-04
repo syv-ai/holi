@@ -1902,6 +1902,93 @@ describe('ActiveVault — sync', () => {
     expect(await readFile(join(dir, 'on-main.md'), 'utf8').catch(() => null)).toBeNull()
   })
 
+  it('detaches the bridge and closes a watcher when startup callback throws, then retries', async () => {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    let attached = 0
+    let detached = 0
+    let watcherClosed = 0
+    const bridgeEnv = {
+      attach: async () => {
+        attached++
+      },
+      detach: async () => {
+        detached++
+      },
+    }
+    const actualWatch = vaultWatcher.watchVault
+    const watchSpy = vi.spyOn(vaultWatcher, 'watchVault').mockImplementation(async (options) => {
+      const watcher = await actualWatch(options)
+      return {
+        close: async () => {
+          watcherClosed++
+          await watcher.close()
+        },
+      }
+    })
+    try {
+      await expect(
+        openActiveVault({
+          claims: CLAIMS,
+          remote: 'syv-ai/retry',
+          repo: openRepo(dir),
+          onSnapshot: () => {},
+          onSyncState: () => {
+            throw new Error('startup callback')
+          },
+          bridgeEnv,
+          timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+        }),
+      ).rejects.toThrow('startup callback')
+      expect(attached).toBe(1)
+      expect(detached).toBe(1)
+      expect(watcherClosed).toBe(1)
+
+      const active = await openActiveVault({
+        claims: CLAIMS,
+        remote: 'syv-ai/retry',
+        repo: openRepo(dir),
+        onSnapshot: () => {},
+        onSyncState: () => {},
+        bridgeEnv,
+        timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+      })
+      open.push(active)
+      expect(attached).toBe(2)
+    } finally {
+      watchSpy.mockRestore()
+    }
+  })
+
+  it('detaches an attached bridge when watcher startup fails', async () => {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    let detached = 0
+    const watchSpy = vi
+      .spyOn(vaultWatcher, 'watchVault')
+      .mockRejectedValue(new Error('watch failed'))
+    try {
+      await expect(
+        openActiveVault({
+          claims: CLAIMS,
+          remote: 'syv-ai/watch-failure',
+          repo: openRepo(dir),
+          onSnapshot: () => {},
+          onSyncState: () => {},
+          bridgeEnv: {
+            attach: async () => {},
+            detach: async () => {
+              detached++
+            },
+          },
+        }),
+      ).rejects.toThrow('watch failed')
+      expect(detached).toBe(1)
+    } finally {
+      watchSpy.mockRestore()
+    }
+  })
+
   it('does not pause when the branch changes under an open vault', async () => {
     // A checkout in the terminal is followed, not refused: the state is
     // derived fresh from `git status` and the branch is not part of it.
@@ -2182,6 +2269,138 @@ describe('VaultHost', () => {
     const [first, second] = await Promise.all([h.getOrOpen('syv-ai/a'), h.getOrOpen('syv-ai/a')])
     expect(first).toBe(second)
     expect(h.get('syv-ai/a')).toBe(first)
+  })
+
+  it('does not let a slow remote start block a different remote', async () => {
+    const { registry, a, b } = await twoVaults()
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const h = createVaultHost({
+      registry,
+      claims: async (root) => {
+        if (root === a) {
+          entered()
+          await gate
+        }
+        return CLAIMS()
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    try {
+      const slowA = h.getOrOpen('syv-ai/a')
+      await started
+      const fastB = await h.getOrOpen('syv-ai/b')
+      expect(fastB.remote).toBe('syv-ai/b')
+      release()
+      expect((await slowA).remote).toBe('syv-ai/a')
+    } finally {
+      release()
+    }
+  })
+
+  it('closeAll closes starts admitted before it and rejects starts during drain', async () => {
+    const { registry, a } = await twoVaults()
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const h = createVaultHost({
+      registry,
+      claims: async (root) => {
+        if (root === a) {
+          entered()
+          await gate
+        }
+        return CLAIMS()
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    try {
+      const pending = h.getOrOpen('syv-ai/a')
+      await started
+      const draining = h.closeAll()
+      await expect(h.getOrOpen('syv-ai/b')).rejects.toThrow(/closing/)
+      release()
+      await pending
+      await draining
+      expect(h.get('syv-ai/a')).toBeNull()
+      await expect(h.getOrOpen('syv-ai/b')).resolves.toMatchObject({ remote: 'syv-ai/b' })
+    } finally {
+      release()
+    }
+  })
+
+  it('coalesces concurrent closeAll and closes remaining runtimes after one teardown fails', async () => {
+    const { registry } = await twoVaults()
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      activity: ({ message }) => {
+        if (message === 'Closed syv-ai/a') throw new Error('activity failed')
+      },
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    const a = await h.getOrOpen('syv-ai/a')
+    const b = await h.getOrOpen('syv-ai/b')
+    const first = h.closeAll()
+    const second = h.closeAll()
+    expect(second).toBe(first)
+    await expect(first).rejects.toThrow(/Could not close all/)
+    expect(h.get('syv-ai/a')).toBeNull()
+    expect(h.get('syv-ai/b')).toBeNull()
+    expect(a).not.toBe(b)
+  })
+
+  it('continues teardown of every runtime when one push throws', async () => {
+    const { registry } = await twoVaults()
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    const a = await h.getOrOpen('syv-ai/a')
+    const b = await h.getOrOpen('syv-ai/b')
+    let closedA = false
+    let closedB = false
+    const closeA = a.close.bind(a)
+    const closeB = b.close.bind(b)
+    a.pushNow = async () => {
+      throw new Error('push failed')
+    }
+    a.close = async () => {
+      closedA = true
+      await closeA()
+    }
+    b.close = async () => {
+      closedB = true
+      await closeB()
+    }
+
+    await expect(h.closeAll()).rejects.toThrow(/Could not close all/)
+    expect(closedA).toBe(true)
+    expect(closedB).toBe(true)
   })
 
   it('serialises concurrent opens rather than racing two vaults into one slot', async () => {
