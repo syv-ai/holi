@@ -20,7 +20,7 @@ tooltip, a Lucide icon at `size-3.5` and its words. Only what is true is drawn:
   (`animate-spin`, held still under reduced motion). Offline swaps the glyph for a cloud, and a state that
   wants you (a conflict, no access, a blocked pause) for a warning, with the state's words beside
   the counts; the tooltip adds the last failure's first line. Clicking runs a sync now (commit,
-  pull, push: `sync.now`) when the state is up to date or offline, and opens the Output when it is
+  pull, push: `sync.now`) when the state is up to date, ahead and behind, or offline, and opens the Output when it is
   one to read rather than retry.
 - **Synced 2m ago**: when the remote last answered a pull or a push, while the bar is wide enough.
 - **Plugins' items** (`statusItems`), then **Terminal** and **Output**, which toggle the panel on

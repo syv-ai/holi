@@ -1,7 +1,7 @@
 # Agent sessions
 
-The vault assistant is a coding agent run as it runs itself, in a terminal: Claude Code or Codex
-so far, one **provider** each. A session is the agent's own TUI, never a re-drawing of it, so any
+The vault assistant is a coding agent run as it runs itself, in a terminal: Claude Code, Codex,
+Pi, or any CLI a person adds as a [harness](#harnesses), one **provider** each. A session is the agent's own TUI, never a re-drawing of it, so any
 agent with a CLI can be one. Holi opens terminals onto sessions, reads what they are doing from
 signals rather than from their text, keeps its own git out of their way, shows what each turn
 changed, and hands them merge conflicts. Configuration is in [agent-config.md](agent-config.md).
@@ -12,11 +12,13 @@ A provider (`agent/main/provider.ts`) is everything one agent owns: the command 
 its per-vault directory, what it seeds. **Its core is enough to run it in a tab**; the rest are
 **capabilities**, and the UI offers a feature only when the session's provider has it:
 
-| Capability   | What it gives                                                                    | Claude Code                | Codex                    |
-| ------------ | -------------------------------------------------------------------------------- | -------------------------- | ------------------------ |
-| `background` | sessions its own supervisor runs, which outlive a terminal and can run unwatched | `claude --bg`              | no                       |
-| `turns`      | hook routes that report a turn's start and end                                   | `UserPromptSubmit`, `Stop` | turn ends, from `notify` |
-| `status`     | how full the context is, and the model                                           | the status line            | no                       |
+| Capability   | What it gives                                                                    | Claude Code                | Codex                    | Pi                   |
+| ------------ | -------------------------------------------------------------------------------- | -------------------------- | ------------------------ | -------------------- |
+| `background` | sessions its own supervisor runs, which outlive a terminal and can run unwatched | `claude --bg`              | no                       | no                   |
+| `turns`      | hook routes that report a turn's start and end                                   | `UserPromptSubmit`, `Stop` | turn ends, from `notify` | no                   |
+| `status`     | how full the context is, and the model                                           | the status line            | no                       | no                   |
+| `jobs`       | a prompt run unwatched, sandboxed: in a scratch folder, or the vault's folders   | no (`background` serves)   | `codex exec --json`      | no                   |
+| `fenced`     | a session in its terminal fenced to a scratch folder, its writes copied back     | no (`background` serves)   | its TUI, sandboxed       | its TUI, unsandboxed |
 
 **Two kinds of session, one list.** A background provider's sessions are its supervisor's, keyed
 by its job id (the rest of this page). Any other provider's are **sessions Holi runs itself**
@@ -24,13 +26,36 @@ by its job id (the rest of this page). Any other provider's are **sessions Holi 
 digits), alive exactly as long as that process. Closing its tab leaves it running and its row
 brings it back; Stop ends it. Both kinds are one `sessions` event, each summary carrying its
 `provider`, and every `agent.*` verb goes to the kind the id names; one a kind cannot do (Restart
-and Duplicate on a session Holi runs) is refused in words.
+on a live session Holi runs, Duplicate on one whose agent cannot fork a conversation) is refused in
+words. Codex's CLI has no verb Holi could back either with: `codex resume` picks up a closed
+conversation, and a copy of one is not offered until Holi knows a CLI verb for it. Pi's
+conversations are named by Holi (`--session-id`), so Duplicate forks one (`--fork`).
+
+**A background provider's sign-in is a session Holi runs.** `agent.open` with `login` (the
+onboarding's first run, [onboarding](onboarding.md)) starts `claude /login` as one, under Holi's
+id: once signed in that terminal is a working Claude Code session in the vault, so it is in
+Sessions, `agent.sessions` and `holi agent sessions` while its process lives, its row opens it,
+closing its tab leaves it running, Stop ends it, and it leaves the list when it exits. It is the
+only such session a background provider has, and there is one at a time: a second ask gets the
+first's terminal, and any other start of one is refused. Nothing reports
+its turns (the turn hooks name a background job, and it is none) and its stream is not read for
+them, so it reads idle, pauses no sync and records no turn; `holi agent message` refuses it, as
+it does every session Holi runs. Restart and Duplicate are not offered on it.
+
+**A session Holi ran stays reopenable.** When it ends with its conversation known (Codex's hook
+said its thread; a Pi conversation is the id Holi named it with) and was not fenced, it is kept on
+this machine (`<userData>/agent-pty-history.json`, by vault, the latest fifty), and History lists
+it with the stopped background sessions. Opening it (`agent.open`, or the `agent.respawn` a stopped
+background session is brought back with) starts the agent on that conversation again under the
+same id: `codex resume <thread>`, Pi with `--session-id`.
 
 **A session Holi runs is read off its terminal**, unless its hooks say (`host/pty-signals.ts`):
 Enter typed outside a paste begins a turn, five seconds without output ends one (a TUI at work
 redraws its spinner every second), and a bell or an OSC 9 / OSC 777 notification during a turn is
-a question for the person, which the next keystroke answers. Only those signals are read, never
-the text. Coarser than a hook by design: right for a status dot and the sync pause, not for
+a question for the person, which the next keystroke answers. Codex runs with
+`-c tui.notifications=["approval-requested"]`, so an approval it waits on is such a notification
+and its row shows needs-you. A turn's end is not one: the `notify` hook reports it, and as a
+notification it would read as a question at the end of every turn. Only those signals are read, never the text. Coarser than a hook by design: right for a status dot and the sync pause, not for
 chaining work on. Its turns go through the same turn bracket as a background session's, so sync
 pauses and the turn is recorded.
 
@@ -39,21 +64,228 @@ that run and writes nothing into `~/.codex`, whose sign-in and config stay the p
 is one inline shell command, like Claude Code's status line: Codex runs it at each turn's end with
 the turn's JSON, and it posts that to the bridge's `/codex/turn-end` with the session's id, which
 the PTY's environment carries (`HOLI_AGENT_SESSION`). Holi takes the session's name from its first
-ask and its thread id for Resume. Codex reads the vault's `AGENTS.md` itself. Its own hooks
+ask and its thread id for Resume, taken only when it is a UUID, since it goes on Codex's command
+line (`codex resume -- <id>`). Codex reads the vault's `AGENTS.md` itself. Its own hooks
 (`UserPromptSubmit` and the rest) would give a turn's start too, but each must first be trusted in
 `/hooks`, so Holi does not use them. **Resume a Codex conversation**, in the menu on the
 Sessions +, opens `codex resume`, Codex's own picker.
 
-**Which agent a new session runs** is this machine's `agentProvider` (`app.local.yaml`; the
-**Agents** card in Settings → General, a row per agent with **Make default**): which agent is installed and signed in is the machine's, not the
-vault's. The menu on the Sessions + picks another for one session. **Holis and automations always
-run Claude Code**: their runs start with nobody watching, which needs `background`, and
-`agent.launch` refuses a provider without it.
+**Jobs** (`host/jobs.ts`) are how a provider without a supervisor runs a prompt with nobody
+watching, through `agent.job` (UI door only): a name, a prompt, an optional system text and model,
+on `provider` or else this machine's `agentProvider`, and one of two bounds.
+
+- A **scope**: the vault paths it reads and the paths or `folder/**` it writes, each a path a
+  capability may read in no hidden folder (`jobMayRead`: a `.codex/config.toml` copied into the
+  run's folder would configure the run). A `background` provider runs it as a background session allowed exactly
+  that scope (`Read(./x)`, `Edit`/`Write(./folder/**)`); a `jobs` provider runs it in
+  `<userData>/agent-jobs/<id>/`, the readable files copied in at their vault paths. **Such a job is
+  bounded by what it writes back, not by what it reads**: Codex's sandbox keeps its writes to the
+  scratch folder but can read the disk. When the turn completed and the process exited 0, Holi
+  copies back only the regular files it wrote inside the write scope that are the vault's shared
+  content (`isSharedContentPath`: nothing hidden, local, secret, machine state, on the agent
+  surface, or an `AGENTS.md`/`CLAUDE.md` at any depth), each checked as a vault path and read with
+  no symlink followed, any `app.yaml` last. What it left out the job's message names. More than
+  200 files or 20 MB copies nothing and fails. A failure copies nothing. The scratch folder is
+  deleted either way. A fenced session (below) copies back the same way at each turn's end. **A
+  new folder is never written over**: a `folder/**` in the write scope (Create vault app's
+  `<name>.app`) must not be in the vault when the run starts, or it does not start; and a copy
+  into it is refused, writing nothing of it, when it holds anything this run did not write there,
+  as when sync brought the same app in meanwhile. Each new file is linked into place, which fails when its
+  name is taken, so one that arrives after that check is not written over either: the copy stops
+  there and says so. A file the run was given or wrote before is written over only while the vault
+  still holds exactly that, read again just before.
+- **`allow`**: Claude Code permission rules, for a run that works in the vault itself (a Holi's or
+  an automation's). A `background` provider runs it as `agent.launch` would, with those rules. A
+  `jobs` provider runs it in the clone only when every rule is something its sandbox can enforce
+  (`vaultSandbox`): a read (`Read`, `Grep`, `Glob`, `LS`, which the sandbox allows anyway), or a
+  write tool on a folder (`Edit(tilbud/**)`), never a file, the whole vault, or a folder whose
+  name starts with a dot (`.holi/`, `.claude/`) or a home path (`~/…`). The memory and report
+  rules the Holis plugin adds to every Holi's run (`Bash(holi holis remember:*)` and the rest) are
+  left out, since they reach Holi over the bridge and the sandbox has no network. Any other rule,
+  another Holi command, any command or a web tool, refuses the run with that rule named, never widening it and never
+  running it on Claude Code instead. Codex then runs with `-C` the first writable folder,
+  `sandbox_workspace_write.writable_roots` the rest (read-only with none), and the prompt says
+  where the vault is, since every path in it is the vault's. Nothing is copied: the writable
+  folders are its bound. Its turns go through the vault's turn bracket, so sync pauses and each
+  turn is recorded under the job's id. A Holi's `model` is Claude Code's and is not passed to
+  another agent.
+
+**Unattended Codex jobs can read the whole computer.** Their sandbox bounds what they write,
+not what they read: a job can read any file on this computer that the person can and write what
+it read into the vault's synced folders, which are pushed like any edit. A note from someone
+untrusted, in a folder it reads, can make it publish private data to everyone the vault syncs
+with. Settings → General → Agents says so beside Codex, as it warns about Pi's unsandboxed
+background runs. There is no separate per-vault permission for Codex jobs: Ask AI, Holis and
+automations run on the selected agent. Give a Holi or automation on Codex only the writable
+folders it needs. A watched session (Create vault app's fenced one) uses Codex's own approval
+prompts.
+
+Codex's job is `codex exec --json --skip-git-repo-check -C <folder> --sandbox workspace-write`
+with `approval_policy="never"`, no network and web search off, on a Codex folder of the job's own
+(below), so the person's MCP servers, plugins and skills cannot hand an unattended run tools outside
+the sandbox: a step its sandbox refuses fails rather than waiting on nobody, and Codex's own
+permission model is not bypassed. Holi reads
+its JSONL events (thread, turn completed with its token usage, turn failed, error). When a turn's
+process exits, what it left running in its process group is killed, before anything is copied
+back or the next turn starts. A failure says why: the turn's own reason, else the last line Codex
+printed. A job is a session in the one list, named `j` and twelve hex digits, working while a turn
+runs or its writes are copied back, then idle for ten minutes with its `outcome` (`completed` or
+`failed`, as a Pi run's), why it failed as its `error` and what a completed one left out as its
+`message`, and its `usage.total` (input and output tokens, summed over its turns, the field a Pi
+run reports too) when Codex reported them: a count,
+never a share of a context window, shown beside the model on its row. It has no terminal, so
+Open, Restart and Duplicate are refused in words. **A message** (`agent.message`) to a job in the
+vault is its next turn on the same thread, `codex exec <options> resume -- <thread> <prompt>`
+with the same sandbox, every option before `resume` as `codex exec`'s usage line has it (`-C` and
+`--sandbox` are options of `codex exec`, not of `resume`; the thread is only ever a UUID): queued while a turn runs and sent when it ends (Codex takes nothing mid-turn from Holi),
+at once when it is idle. A job in a scratch folder ends with its one turn and takes none. Stop,
+leaving the vault and quitting (whose question counts a running job) stop its process group and
+drop what was queued (a message while it stops is refused, and no turn starts after), a Stop during the copy back stops it there and the job fails, and a scratch
+folder is deleted. Beside the scratch folders is `<id>.pid`, the running turn's pid and the folder
+it runs in; one a crash left behind is killed at the next start, when that pid still leads a group
+whose command names that folder. Leaving the vault while a job is still getting ready (its
+folders made, its files copied in) spawns nothing: the start sees the vault was left and stops
+there, and the leave waits for every start under way before it stops the jobs. A fenced session
+still starting opens no session the same way. A provider with neither capability is refused,
+never run on another agent. It is for a plugin built on the agent, whose run nobody watches, and for a document's Ask AI
+write and rewrite on Codex, a job whose scope is the document alone ([editor](editor.md)); what a person
+starts and may want to follow is a fenced session (below).
+
+**Codex's own folder for a run.** A `-c mcp_servers={}` override does not clear the servers the
+person's `config.toml` names (Codex 0.166.0 still lists them), so a job and a fenced session run
+with `CODEX_HOME` set to a folder in their state folder (`<id>.agent/codex-home`, beside the
+scratch folders and outside what the run may write, kept across a job's turns so a follow-up finds
+its thread; `codex/home.ts`). It holds the person's `auth.json` (read through a symlink) and a
+`config.toml` of their model and provider keys alone (`model`, `model_provider`, `model_providers`,
+the reasoning and verbosity keys, the forced login keys) with `cli_auth_credentials_store =
+"file"`; their MCP servers, profiles, plugins, skills, hooks, trusted projects and global
+`AGENTS.md` are dropped. The run's folder, the folder that holds it and the vault are written in
+as untrusted projects: Codex otherwise trusts the folder it runs in by itself (keyed by its git
+root, else the folder) and loads that project's `.codex/config.toml`, whose MCP servers it would
+start outside the sandbox. With no `auth.json` and no API key in the environment (Codex may keep the
+sign-in in the keychain, tied to its folder's path) the run does not start and says how to sign in
+so it can. Once a turn's process exits, a sign-in Codex refreshed there goes back into the
+person's `auth.json`, but only while theirs is still the one handed over.
+
+**Fenced sessions** (`host/fenced.ts`) are the watched counterpart, through `agent.scoped` (UI
+door only), with the same parameters as `agent.job` (and a terminal's size): a session in the one
+list whose first turn is the prompt, which opens in its terminal, where the person watches it,
+answers its approvals and adds to it. A `background` provider runs it as a background session
+allowed exactly the scope, as a job. A `fenced` provider runs it as a session Holi runs, but in
+`<userData>/agent-fenced/<id>/`, the readable files copied in at their vault paths, with no Holi
+commands on its `PATH` and the system text put before the prompt. Codex's is its TUI with
+`-C <scratch> --sandbox workspace-write`, `approval_policy="on-request"` (its interactive
+approvals, asked in its terminal, whatever `config.toml` says), no network and web search off, on
+a Codex folder of its own with no MCP servers (above). Pi's is its TUI with the folder as its cwd
+and nothing else: no sandbox holds it there, so it keeps the person's own permissions and can read
+and write past the folder, as its background runs can; only what it wrote inside the folder and
+the write scope comes back. Holi is customizable this way on purpose, and asks nothing first. As each turn ends (`notify`, or the terminal going quiet) and once more when its
+process exits, what it wrote is copied back by the jobs' copy (the write scope, the vault's shared
+content, no symlink followed, `app.yaml` last, the same caps, never over a new folder something
+else made). A file it was given or wrote at an earlier turn is written again only when it changed
+it since, and then only while the vault still holds what it was given or wrote: a file someone
+edited or deleted meanwhile refuses the copy, and nothing of that turn is written. A job's one
+copy back holds to the same for the files it was given. A copy that fails puts the session's row
+in `outcome: failed` with why as its `error` (the document's pill shows it), and what one left out
+is its `message`, until the next copy. All this happens before the turn's bracket closes so the turn review shows it. The folder is deleted when the process exits, and every folder when the
+agent leaves the vault or starts. A provider with neither is refused, never run on another agent:
+Pi has no `jobs`, so a job asked of Pi is refused. The document menu's and the file tree's **Create vault app** ([editor](editor.md)) is its caller.
+
+**Which agent a new session runs** is this machine's `agentProvider` (`app.local.yaml`, an
+agent's id; the **Agents** card in Settings → General, a row per agent with **Make default**): which
+agent is installed and signed in is the machine's, not the vault's. The menu on the Sessions + picks
+another for one session. **Holis and automations run on the default agent** when it supports
+unattended work: Claude Code uses its background supervisor and Pi a Holi-managed RPC process (both
+`agent.launch`), and Codex runs a job in the vault (`agent.job` with their `allow`, under the rules
+above), refused with the reason when their rules ask for more than its sandbox can enforce.
+Changing the default requires fresh approval for Holis and automations. Pi's runs use the person's
+normal filesystem permissions, without a sandbox or per-tool approval prompts; their configured
+`allow` rules are not enforced. A
+default that names an agent this machine no longer has (a harness removed) is said in Settings, and
+the Sessions + then opens its menu and asks which agent; nothing is started on another agent in its
+place, and `agent.start`, `agent.job` and a new session from `agent.send` refuse it in words.
+
+## Harnesses
+
+The agents are one re-readable registry (`agent/main/harness/`), kept on this machine in
+`<userData>/agent-harnesses.json` (`{ version: 1, harnesses: [...] }`): which CLIs are installed
+is the machine's, so nothing of it syncs. Each **harness** is an id (a slug, `[a-z][a-z0-9-]{1,31}`,
+which is what `agentProvider` holds), a name, and what Holi runs:
+
+| Field         | What it is                                                                               |
+| ------------- | ---------------------------------------------------------------------------------------- |
+| `command`     | `bin` (a bare name looked up on `PATH`, or a full path) and `args`, every time it starts |
+| `prompt.args` | how it starts on a first message, one argument exactly `{prompt}`                        |
+| `resume.pick` | the CLI's own picker of earlier conversations (Resume in the + menu)                     |
+| `resume.byId` | one conversation by its id, one argument exactly `{id}` (History's reopen)               |
+| `env`         | variables to add; never `PATH`, `HOLI_*` or the bridge's                                 |
+| `test`        | what Test runs, `--version` when absent                                                  |
+| `integration` | `claude`, `codex` or `pi`: a built-in agent's own                                        |
+
+**The three built-in agents are presets.** They are listed whether or not the file names them, and
+editing one writes its entry: its name and which program runs (a preset that still names `claude`,
+`codex` or `pi` keeps its own lookup, `HOLI_<AGENT>_BIN` included, which Test and Not found use too).
+Codex's also takes arguments, put before the ones it gets from Holi in its terminal only, and an
+environment, which reaches its terminals and its jobs alike: a person set it on purpose (a
+`CODEX_HOME` it sets is the person's Codex folder a job's copies come from). Pi's program and
+environment reach every Pi process, its terminals and its RPC runs (Holis, automations, Ask AI)
+alike, through one definition (`piCommand`); its arguments reach its terminals only, since an RPC
+run's arguments are its mode, and the form says so. Claude Code's takes
+neither: its sessions run in its background supervisor, which reads nothing of the preset, and a
+terminal given them would differ from the session it shows, so the form leaves both out and the
+record refuses them. Everything else stays its integration's: how it starts, resumes, reports
+turns, and its jobs' arguments, which are their sandbox. Put back as Holi has it, a preset is no
+entry at all.
+
+**A file Holi cannot read is never taken for an empty one.** One that is not JSON, not
+`{ version, harnesses }` or of a version this Holi does not know is unreadable: the built-in agents
+run as Holi ships them, nothing is written over it, and the Agents card says why, with Retry and
+**Reset** (`agent.harnessReset`), which keeps the file as `agent-harnesses.json.bad` before
+starting it over. An entry that does not read as a harness is left out and counted, and the card
+says how many; the next write keeps the file as `.bad` first, then drops them.
+
+**A harness a person adds is a basic terminal agent**: the core alone, a session Holi runs in a PTY
+of its own with the vault as cwd. It starts on a message only with `prompt`, offers Resume only
+with `resume.pick`, and reopens from History only with `resume.byId` and a conversation id it was
+told; anything else it was not given is refused in words (`AgentProvider.refuses`), never run some
+other way. It has no `background` and no `jobs`, so Holis, automations and Create vault app refuse
+it with the reason (`AgentProvider.unattended`), never falling back to Claude Code. Making one the
+default asks first, with that reason. `agent.providers` says what each agent can do
+(`resumePicker` among it), so the UI offers only that. Its mark is a generic terminal.
+
+**The execution boundary.** A command is argv handed to node-pty, never a shell string: the program
+must be a bare name (`[A-Za-z0-9][A-Za-z0-9._+-]*`) or a full path, and one that reads as a command
+line (`aider --yes`) is refused with what to do; each argument is one line in the form;
+placeholders fill a whole argument and nothing else, so a prompt that holds a `;` is one argument.
+One that starts with `-` is refused, in words, unless a `--` argument comes before `{prompt}`:
+the CLI would read it as an option, and the form's placeholder shows `--` above `{prompt}`. The program must resolve to an executable file on disk, or its terminal says
+how to fix it (`notInstalled`). Its environment is Holi's agent environment plus `env`, which may
+not move `PATH` (Holi's bin folder goes first), Holi's own variables or the bridge's. Editing
+harnesses is the UI door only (`agent.harnesses`, `agent.harnessSave`, `agent.harnessRemove`,
+`agent.harnessReset`, `agent.harnessTest`): an agent session or an app that could add one would run any program it liked,
+outside every permission prompt.
+
+**Turn signals.** Every session Holi runs is read off its terminal (above). A session of a harness
+a person added can also report through **`holi-signal`**, which Holi writes into its bin
+folder, first on every session's `PATH`: Codex's notify hook made general, for a person to wire
+into their CLI's own hooks. `holi-signal turn-end [--conversation <uuid>]` ends the turn (and
+names the conversation, which makes the session reopenable when `resume.byId` is set);
+`holi-signal status [--context <percent>] [--model <name>]` fills its row's context meter and
+model. It posts its arguments, form-encoded by curl, to the bridge's `/agent/signal`, keyed by
+`HOLI_AGENT_SESSION`; it is quiet, bounded and a no-op outside a Holi session or with Holi closed.
+A signal from a built-in agent's session is ignored: those report through their own hooks.
+
+**Settings → General → Agents** lists every agent: its name, its command line as text to read, Not
+found when the program is not on this machine, Default or **Make default**, **Test** (the `test`
+arguments in the vault, in a process group of its own that is stopped, TERM then KILL, after five
+seconds or once it printed 256 KB, each said apart; its output shown) and a menu with Edit and Remove
+(Put back Holi's settings for an edited preset). **Add agent** opens the same form. An edit reaches
+the next session at once: main tells the renderer (`providers`) and the + menu asks again.
 
 ## How it works
 
 **Claude Code's sessions are its supervisor's.** Holi never runs a Claude Code conversation in a
-PTY of its own. It asks Claude Code for one (`claude --bg [--name] [prompt]`, `--resume <id> --fork-session` for a copy), or the
+PTY of its own, except the terminal that signs it in (Providers, above). It asks Claude Code for one (`claude --bg [--name] [prompt]`, `--resume <id> --fork-session` for a copy), or the
 person starts one in the agent list. A session is keyed by its **job id** everywhere: capabilities, the turn
 bracket, turn records. The id survives `/clear`, which changes the conversation's `sessionId`.
 
@@ -66,8 +298,10 @@ bin directory first on `PATH` is what keeps `holi` resolvable in all of them.
 `node "<script>"`, and an app opened from the Dock or Finder has launchd's `PATH`
 (`/usr/bin:/bin:/usr/sbin:/sbin`). Left like that every hook exits 127, which Claude Code counts as
 non-blocking, so the turn signals, the focus context and the Google send gate quietly stop. The
-agent's `PATH` is therefore Holi's bin directory, the inherited `PATH`, the usual tool directories
-(`toolPath`: Homebrew's, `~/.local/bin` and so on), and last Holi's own `node` (`bin/fallback/node`,
+agent's `PATH` is therefore Holi's bin directory, the inherited `PATH`, the login shell's `PATH`
+(read once at launch with `$SHELL -ilc`, as a terminal would see it, so `gh`, an nvm `node` or
+`claude` are found by name), the usual tool directories for when that read fails (`toolPath`:
+Homebrew's, `~/.local/bin` and so on), and last Holi's own `node` (`bin/fallback/node`,
 written at every launch: the app's executable run with `ELECTRON_RUN_AS_NODE`). A `node` the machine
 has is always found first. The supervisor keeps the environment of the process that started it, so an
 already running one picks this up only after it has exited (it does when idle).
@@ -99,6 +333,9 @@ wrote into `plugins.yaml` is ignored, and dropped at the file's next write.
 plugin that requires it ([architecture](../architecture.md), Plugins); it offers general
 capabilities any such plugin calls, from its renderer or, through `ctx.call`, from its main side:
 `agent.launch` (a background session whose first turn is a prompt, with no terminal),
+`agent.job` (a prompt run unwatched on any provider that can, within a scope or under `allow`;
+Jobs above),
+`agent.scoped` (the same, as a session the person can watch; Fenced sessions above),
 `agent.providers` (the agents a session can run, and which are installed), and the session verbs.
 Holis and automations are such callers. The turn bracket's outside driver is the agent's own
 sessions Holi runs: the listing never names their ids, so its reconcile forgets only the turns of
@@ -207,9 +444,10 @@ is no page in between: the terminal is where the first message goes. Hovering th
 ↓ on it) opens a menu of the other ways in (`sessions/new-session-button.tsx`): a session in each
 agent, one not on this machine listed but off, and **Resume a … conversation** for an agent Holi
 runs itself. A start that fails says why in a toast. The command menu's **Ask the agent** and an
-app card's **Ask about this app** start a session the same way (the agent's slot `start`), the
-ask as its first turn and an app named ahead of it by its folder; with only an app, its line goes
-in unsent for the person to finish.
+app card's **Ask about this app** and a document's Ask AI **Start chat** start a session the same
+way (the agent's slot `start`), the ask as its first turn and an app named ahead of it by its
+folder, or a selected passage quoted with its document's path; with only an app or a passage, its
+lines go in unsent for the person to finish.
 
 **Stop, restart, duplicate.** A row's **Stop** runs `claude stop <id>`. An idle session stops at
 once; one mid-turn or waiting on you asks first. Its context menu adds **Restart** (`claude
@@ -346,7 +584,8 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - Codex's `hooks` for a turn's start: each must be trusted in its `/hooks` first, a step between
   someone and their first session; `notify` needs none.
 - A server-side agent: there is no server.
-- A Holi list of past sessions: the agent list is that list.
+- A Holi list of Claude Code's past sessions: its agent list is that list. Codex has no list Holi
+  can read, so Holi keeps the closed sessions it ran itself.
 - A gate before the agent's writes: Claude Code already asks.
 - Recording touched paths from `PostToolUse`: misses edits made through `Bash`.
 - A worktree per session: edits invisible until merged, `.local.` files absent. Hence the seeded
@@ -366,9 +605,12 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 
 - `apps/desktop/src/plugins/agent/main/index.ts`: the plugin's main side; `provider.ts`: the line between the host and
   the agents it runs, the core and the capabilities
-- `apps/desktop/src/plugins/agent/main/codex/`: Codex as a provider: the command, the `notify` hook and its route
+- `apps/desktop/src/plugins/agent/main/codex/`: Codex as a provider: the command, the `notify` hook and its route,
+  and a run's own Codex folder (`home.ts`)
 - `apps/desktop/src/plugins/agent/main/host/pty-sessions.ts`, `pty-signals.ts`: the sessions Holi runs itself, and
   their turns read off the terminal
+- `apps/desktop/src/plugins/agent/main/host/jobs.ts`: jobs, their scratch folders, events and copy back
+- `apps/desktop/src/plugins/agent/main/host/fenced.ts`: fenced sessions, their folders and copies back
 - `apps/desktop/src/plugins/agent/main/claude/`: Claude Code as the provider: `cli.ts` (every `claude` command, one
   environment, the binary), `listing.ts` (the listing, state rules, the watch), `routes.ts` (the
   turn, session and status-line routes), `messaging.ts` (the inbox socket writer)

@@ -155,6 +155,14 @@ release, so its members are offered it in turn.
 tree, with the one next step (install the pinned version, or allow and set up). A running plugin
 whose readiness check fails is there too, with its hint and **Check again**.
 
+The person can dismiss the first kind of line for one plugin in one vault, on this machine only.
+The choice is kept by plugin id, not by version, so a newer pin stays dismissed until the plugin
+runs here: once it is ready in that vault the dismissal is dropped, so a later pin it cannot run
+yet shows its line again. It lives in the renderer's `localStorage` beside the tree's other per-vault view choices, and no vault file
+changes, so the vault's other members still see their own notice. Settings still lists the plugin
+and installs it. A failing readiness check and an update offer cannot be dismissed: they concern a
+plugin running here.
+
 **The agent knows the plugins.** The session overview the agent gets at each start names every
 plugin the vault pins, whether the vault turns it on, and the commands it gives the agent
 ([agent-memory.md](agent-memory.md)), so it finds the plugin before it goes looking elsewhere.

@@ -1,0 +1,97 @@
+# Report failed or cancelled dev prerelease jobs after the Release workflow has
+# fully completed. This separate workflow still starts when Release is cancelled
+# while its macOS job is queued, unlike a dependent job in the cancelled run.
+name: Dev release alert
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  # All release runs reconcile the same issue and must share one lock.
+  group: dev-release-issue
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Reconcile the dev release issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN: ${{ github.event.workflow_run.run_number }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          LABEL: dev-release-failed
+        run: |
+          JOB_RESULT=$(gh run view "$RUN_ID" --json jobs --jq '[.jobs[] | select(.name == "build-prerelease-mac") | .conclusion][0] // ""')
+          # A cancelled workflow can stop before the macOS job is created, in
+          # which case GitHub has no job conclusion to report. Only infer
+          # cancellation for that exact case; other missing jobs are ignored.
+          if [ -z "$JOB_RESULT" ] && [ "$RUN_CONCLUSION" = cancelled ]; then
+            JOB_RESULT=cancelled
+          fi
+          if [ "$JOB_RESULT" != success ] && [ "$JOB_RESULT" != failure ] && [ "$JOB_RESULT" != cancelled ]; then
+            echo "The dev prerelease job ended as '$JOB_RESULT'; nothing to reconcile."
+            exit 0
+          fi
+
+          ISSUE=$(gh issue list --label "$LABEL" --state open --limit 1 --json number --jq '.[0].number // empty')
+          REPORTED=0
+          if [ -n "$ISSUE" ]; then
+            REPORTED=$(gh issue view "$ISSUE" --json body --jq '.body' | sed -n 's/.*<!-- dev-run: \([0-9]*\) -->.*/\1/p' | head -n 1)
+            REPORTED=${REPORTED:-0}
+          fi
+          NEWEST=$(gh release list --limit 50 --exclude-drafts --json tagName,isPrerelease --jq '[.[] | select(.isPrerelease) | .tagName | capture("-dev\\.(?<n>[0-9]+)$").n | tonumber] | max // 0')
+
+          if [ "$JOB_RESULT" = success ]; then
+            if [ -n "$ISSUE" ] && [ "$RUN" -ge "$REPORTED" ] && [ "$NEWEST" -ge "$RUN" ]; then
+              gh issue close "$ISSUE" --comment "dev.$RUN for $SHA is published and includes every earlier main commit: $RUN_URL"
+            fi
+            exit 0
+          fi
+
+          # A rerun can fail after its release was already published. That exact
+          # release covers the run, just like any newer published dev release.
+          if [ "$NEWEST" -ge "$RUN" ]; then
+            echo "dev.$NEWEST is already published; the channel covers this run."
+            exit 0
+          fi
+          if [ -n "$ISSUE" ] && [ "$RUN" -lt "$REPORTED" ]; then
+            echo "The issue already reports newer failed run dev.$REPORTED."
+            exit 0
+          fi
+
+          BODY=$(printf '%s\n' \
+            "The dev prerelease for \`main\` commit $SHA (dev.$RUN) ended as **$JOB_RESULT**, so the dev channel is behind \`main\`." \
+            "" \
+            "Run: $RUN_URL" \
+            "" \
+            "Newest published dev prerelease: dev.$NEWEST. Re-run the failed jobs, or push again: the next dev prerelease includes this commit, and this issue closes when one is published." \
+            "" \
+            "<!-- dev-run: $RUN -->")
+
+          # Refresh immediately before any write. A newer prerelease may have
+          # published while this run was preparing the issue body.
+          NEWEST=$(gh release list --limit 50 --exclude-drafts --json tagName,isPrerelease --jq '[.[] | select(.isPrerelease) | .tagName | capture("-dev\\.(?<n>[0-9]+)$").n | tonumber] | max // 0')
+          if [ "$NEWEST" -ge "$RUN" ]; then
+            echo "dev.$NEWEST was published during reconciliation; no issue write needed."
+            exit 0
+          fi
+          if [ -z "$ISSUE" ]; then
+            gh label create "$LABEL" --color d73a4a --description "A dev prerelease on main failed or was cancelled" --force
+            gh issue create --title "Dev prerelease failed: the dev channel is behind main" --label "$LABEL" --body "$BODY"
+          else
+            gh issue edit "$ISSUE" --body "$BODY"
+            gh issue comment "$ISSUE" --body "dev.$RUN for $SHA ended as **$JOB_RESULT**: $RUN_URL"
+          fi

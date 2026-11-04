@@ -299,12 +299,20 @@ export interface AgentSessionRow {
   id: string
   name: string
   state: 'needs-you' | 'working' | 'idle'
+  /** Result of a managed background run, when it has settled. */
+  outcome?: 'completed' | 'failed' | 'aborted'
+  error?: string
   /** Only for 'needs-you': why, e.g. 'permission prompt'. */
   waitingFor?: string
   /** The model, in the agent's words (`Opus 5.5`), once it has said. */
   model?: string
   /** When it started, epoch ms. */
   startedAt?: number
+  /** What a job that completed left out, in words; why one failed is its
+   *  `error`. */
+  message?: string
+  copying?: boolean
+  closed?: boolean
 }
 
 /** A file a run changed, across its whole range. */
@@ -439,6 +447,8 @@ export interface AgentsMode {
 export interface AgentsTabLook {
   title: string
   state: 'needs-you' | 'working' | 'done' | 'idle'
+  /** A view's own glyph, instead of a session's agent mark. */
+  icon?: IconGlyph
   by?: AgentsSessionItem['by']
   /** The coding agent that runs it, for its mark. */
   agent?: string
@@ -462,6 +472,8 @@ export interface AgentsSessionItem {
   title: string
   /** The model in Claude Code's words or alias (`Opus 5.5`, `opus`). */
   model?: string
+  /** Tokens its turns used, when its agent reports a count (a Codex job). */
+  tokens?: number
   /** The coding agent that runs it (`claude`, `codex`), for its mark.
    *  Absent is Claude Code. */
   agent?: string
@@ -516,13 +528,11 @@ export interface AgentsSessionsSource {
   close?: WritableAtom<null, [key: string], unknown>
 }
 
-/** Something a conversation is about besides its words: a vault app, by its
- *  bundle path, which the agent reads itself (`AgentsSlot.start`). */
-export interface ConversationContext {
-  kind: 'app'
-  path: string
-  name: string
-}
+/** Something a conversation is about besides its words (`AgentsSlot.start`):
+ *  a vault app, by its bundle path, which the agent reads itself; or a passage
+ *  selected in a document, quoted with the document's path. */
+export type ConversationContext =
+  { kind: 'app'; path: string; name: string } | { kind: 'passage'; path: string; text: string }
 
 /** How a conversation starts (`AgentsSlot.start`). */
 export interface ConversationStart {

@@ -70,6 +70,9 @@ function legalValues(type: SettingType): string[] {
     return [`Any positive number of bytes. What the pane offers: ${shown}`]
   }
   if (type.kind === 'enum') return [`One of: ${shown}`]
+  if (type.kind === 'agent') {
+    return [`One of: ${shown}`, 'Or the id of an agent added in Settings, General, Agents.']
+  }
   // `home`: the options, a view's name, and any app or file the vault holds.
   return [
     `One of: ${shown}`,

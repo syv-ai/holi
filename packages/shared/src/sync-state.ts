@@ -13,9 +13,13 @@
 /**
  * The sync indicator's vocabulary.
  *
- * Push is automatic, so an unpushed count is information only when a push is
- * *failing*: it rides `offline` rather than a state of its own.
+ * `up-to-date` means caught up both ways: nothing to push and nothing fetched
+ * that is not merged. Commits that one side has and the other lacks are
+ * `unsynced`, with both counts, so `holi sync status` never calls a vault that is ahead or behind up
+ * to date. It is quiet: an autosave commit is ahead for the few seconds until
+ * its coalesced push, and that is no cause for a warning.
  *
+ *   - `offline`: the unpushed count rides it, since a push is failing.
  *   - `no-access`: a push rejected for *permission* is reported as exactly
  *     that, never dressed as a network failure.
  *   - `paused`: a vault on another branch stays open and readable while sync
@@ -23,6 +27,7 @@
  */
 export type SyncState =
   | { kind: 'up-to-date' }
+  | { kind: 'unsynced'; ahead: number; behind: number }
   | { kind: 'pulling' }
   | { kind: 'offline'; count: number }
   | { kind: 'no-access' }
@@ -50,6 +55,16 @@ export function syncLabel(state: SyncState): SyncLabel {
   switch (state.kind) {
     case 'up-to-date':
       return { text: 'up to date', tone: 'quiet' }
+    case 'unsynced':
+      return {
+        text: [
+          state.ahead > 0 ? `${state.ahead} ahead` : null,
+          state.behind > 0 ? `${state.behind} behind` : null,
+        ]
+          .filter((part) => part !== null)
+          .join(', '),
+        tone: 'quiet',
+      }
     case 'pulling':
       return { text: 'pulling', tone: 'busy' }
     case 'offline':

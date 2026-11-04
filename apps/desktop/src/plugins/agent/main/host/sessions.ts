@@ -26,7 +26,7 @@ import { CapabilityError, type PluginCtx } from '../../../../main/plugin-api'
 import type { VaultCliTarget } from '../claude/cli'
 import type { ClaudeRow, SessionSummary } from '../claude/listing'
 import type { SessionChannel } from '../claude/messaging'
-import type { BackgroundProvider } from '../provider'
+import { firstSpawnNotice, type BackgroundProvider } from '../provider'
 import type { AgentTerminals } from './terminals'
 import { ContextSnapshot, type FocusInput } from './context-snapshot'
 import { createTurnCoordinator, type TurnCoordinator, type TurnVault } from './turn-coordinator'
@@ -93,10 +93,10 @@ export interface AgentSessions {
   past(): SessionSummary[]
   /** Re-read the listing now. Never rejects. */
   refresh(): Promise<void>
-  /** A terminal on the list (no `attach`), on one session, on a copy of a
-   *  conversation by Claude Code's session id (`fork`), or running Claude
-   *  Code's `/login` for the vault's config directory (`login`). */
-  open(args: Geometry & { attach?: string; fork?: string; login?: boolean }): Promise<OpenResult>
+  /** A terminal on the list (no `attach`), on one session, or on a copy of
+   *  a conversation by Claude Code's session id (`fork`). Its sign-in is a
+   *  session Holi runs (`pty-sessions.ts`). */
+  open(args: Geometry & { attach?: string; fork?: string }): Promise<OpenResult>
   /** A new background session, and a terminal on it. With a prompt, that
    *  prompt is its first turn (reconcile); without, it waits for one. */
   start(
@@ -420,16 +420,15 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
 
   async function openOn(
     c: Current,
-    args: Geometry & { attach?: string; fork?: string; login?: boolean },
+    args: Geometry & { attach?: string; fork?: string },
   ): Promise<OpenResult> {
     // Taken here, at a terminal, not at vault open: a run that opens no
     // terminal must leave the notice for the one that does.
-    let firstSpawn = false
+    let notice: string | undefined
     if (!c.spawnChecked) {
       c.spawnChecked = true
-      firstSpawn = (await provider.firstSpawn?.take(c.configDir).catch(() => false)) ?? false
+      notice = await firstSpawnNotice(provider, c.configDir)
     }
-    const notice = firstSpawn ? provider.firstSpawn?.notice : undefined
     const target = targetOf(c)
     const res = deps.terminals.open({
       remote: c.remote,
@@ -437,7 +436,6 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       command: provider.terminal(target, {
         ...(args.attach === undefined ? {} : { attach: args.attach }),
         ...(args.fork === undefined ? {} : { fork: args.fork }),
-        ...(args.login === true ? { login: true } : {}),
       }),
       notInstalled: provider.notInstalled,
       ...(args.attach === undefined ? {} : { attach: args.attach }),

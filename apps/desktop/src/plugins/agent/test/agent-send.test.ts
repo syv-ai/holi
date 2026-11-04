@@ -7,6 +7,7 @@ import { createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import {
   agentSessionsAtom,
+  agentHistoryAtom,
   agentTerminalsAtom,
   askTargetsAtom,
   defaultAgentTargetAtom,
@@ -22,9 +23,12 @@ import {
   stopSessionAtom,
 } from '../renderer/state/send'
 import { registerSessionTerminal } from '../renderer/lib/session-terminals'
+import { agentsViewAtom, viewTerminalsAtom } from '../renderer/state/agents-view'
+import { showSessionAtom } from '../renderer/state/session-view'
 import {
   activeRemoteAtom,
   activeSurfaceIdAtom,
+  appModeAtom,
   openSurfaceAtom,
   surfaceTabIdsAtom,
 } from '@/plugin-api'
@@ -130,6 +134,17 @@ test('opening a session reuses the window Holi opened for it', async () => {
   expect(shown(store)).toBe('t-a')
 })
 
+test('opening a stopped Pi conversation uses its own terminal rather than Claude respawn', async () => {
+  const store = storeWith()
+  const id = 'p0123456789ab'
+  store.set(agentHistoryAtom, [session({ id, provider: 'pi' })])
+
+  const result = await store.set(showSessionAtom, { session: id, live: false })
+
+  expect(result).toEqual({ ok: true })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id })
+})
+
 test('opening a session with no window attaches a new one', async () => {
   const store = storeWith([session({ id: 'aaaaaaaa' })])
   await store.set(openSessionAtom, 'aaaaaaaa')
@@ -181,10 +196,33 @@ test('stop goes to main and answers what it said', async () => {
   expect(stop).toHaveBeenCalledWith('aaaaaaaa')
 })
 
-test('duplicate opens the copy', async () => {
-  const store = storeWith([session({ id: 'aaaaaaaa' })])
+test('duplicate opens the copy in its provider-marked session tab', async () => {
+  const copiedId = 'p0123456789ab'
+  duplicate.mockResolvedValueOnce({ ok: true, sessionId: copiedId, terminalId: 'copied' })
+  const store = storeWith([session({ id: 'aaaaaaaa', provider: 'pi' })])
+
   await store.set(duplicateSessionAtom, 'aaaaaaaa')
-  expect(shown(store)).toBe('copied')
+
+  expect(shown(store)).toBeNull()
+  expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(0)
+  expect(store.get(appModeAtom)).toBe('agents')
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: copiedId })
+  expect(store.get(viewTerminalsAtom)[copiedId]).toBe('copied')
+})
+
+test('a failed duplicate leaves the current session view alone', async () => {
+  duplicate.mockResolvedValueOnce({ ok: false, message: 'That session cannot be duplicated.' })
+  const store = storeWith([session({ id: 'aaaaaaaa', provider: 'pi' })])
+  store.set(appModeAtom, 'agents')
+  store.set(agentsViewAtom, { kind: 'session', id: 'aaaaaaaa' })
+
+  expect(await store.set(duplicateSessionAtom, 'aaaaaaaa')).toEqual({
+    ok: false,
+    message: 'That session cannot be duplicated.',
+  })
+  expect(store.get(agentsViewAtom)).toEqual({ kind: 'session', id: 'aaaaaaaa' })
+  expect(store.get(viewTerminalsAtom)).toEqual({})
+  expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(0)
 })
 
 test('an ask may go to any live session not waiting on a question of its own', () => {
