@@ -145,7 +145,9 @@ Code it is held by the deny rules below. On Pi it is a run with no tools at all 
 servers or project settings), kept for the meeting (`keep`) and stopped when it is done; it answers
 each message with its groups as one JSON array (the prompt's `reply` form), which main reads at the
 turn's end (`agent.reply`) and writes as `holi meeting group` would, telling it in the next message
-which groups were refused and why. It has nothing to read a file or reach the web with, and the
+which groups were refused and why. A person's note waits for the turn under way rather than join
+its answer, and goes next; one that nothing will take (the run ended, the meeting did) is refused,
+never left pending. It has nothing to read a file or reach the web with, and the
 profile's model and MCP servers, which are Claude Code's, are not used. Codex has neither, so a
 meeting on it records and captions without topics (`scribeUnsupported`), and the header says so with
 the fix, never running another agent behind the person's choice. A Stop while the scribe is still
@@ -388,9 +390,13 @@ scan (`meetings.follow`). A folder renamed or moved in the tree takes its meetin
 meeting's paths (its minutes, its tasks) follow, and it writes there from then on. A folder deleted
 from the vault, gone for 5 s (a move removes its files before it writes them again), deletes the
 meeting here too, its recording stopped first (`meeting-removed`: the capture stops and what it
-still has goes nowhere); nothing writes the old path again. A folder at a meeting's old path that
-is not that meeting's is never taken for it: a stale record shows in the list as moved away
-(`away`), opens no folder, and `meeting.start` in a folder whose transcript carries another
+still has goes nowhere); nothing writes the old path again. What this machine had of it (state,
+audio) is set aside in `meetings/.removed/<id>-<time>` for 30 days rather than erased, since a
+folder can go by mistake or by another machine's sync; `meeting.delete` erases at once. A folder
+that stayed while only its transcript went, as in a fresh clone (the transcript is machine-local),
+gets it written again. A folder at a meeting's path that is not that meeting's is never taken for
+it, nor is a file someone put in its transcript's place overwritten: a stale record shows in the
+list as moved away (`away`), opens no folder, and `meeting.start` in a folder whose transcript carries another
 meeting's id is refused. A meeting from before ids takes the transcript at its path as its own.
 
 **Renaming and deleting.** Each meeting in the list has a **…** menu, on hover or focus, and so does

@@ -391,6 +391,25 @@ describe('a person’s word to a Pi assistant', () => {
     expect(rig.sentTo(SCRIBE).at(-1)).toContain('drop the budget talk')
     expect(rig.meeting.scribeState).toBe('working')
   })
+
+  it('is told it was not taken when the run ends before its turn does', async () => {
+    const rig = await meetingRig({ provider: async () => 'pi', reply: async () => '[]' })
+    rig.scribe.hearTurnEnd(SCRIBE)
+    await until(() => rig.meeting.scribeState === 'idle')
+    rig.scribe.summarise(rig.meetingId)
+    await until(() => rig.meeting.scribeState === 'working')
+    let outcome: 'pending' | 'taken' | 'refused' = 'pending'
+    void rig.scribe.tell(rig.meetingId, 'drop the budget talk').then(
+      () => (outcome = 'taken'),
+      () => (outcome = 'refused'),
+    )
+    await vi.advanceTimersByTimeAsync(10)
+    // Its run is no longer listed.
+    rig.scribe.hearSessions([])
+    await until(() => outcome !== 'pending')
+    expect(outcome).toBe('refused')
+    expect(rig.sentTo(SCRIBE).some((t) => t.includes('drop the budget talk'))).toBe(false)
+  })
 })
 
 describe('a tool-less scribe’s answer', () => {

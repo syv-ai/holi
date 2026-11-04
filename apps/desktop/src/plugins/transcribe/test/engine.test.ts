@@ -441,6 +441,27 @@ describe('a meeting folder changed in the vault', () => {
     await until(async () => !(await present(dir)))
     await expect(send(2)).rejects.toMatchObject({ code: 'NOT_FOUND' })
     expect(rig.writes.size).toBe(0)
+    // What this machine had of it is set aside, not erased, and not listed.
+    const removed = join(rig.userData, 'meetings', '.removed')
+    const [kept] = await readdir(removed)
+    expect(kept).toMatch(new RegExp(`^${meetingId}-\\d+$`))
+    expect(await present(join(removed, kept!, 'state.json'))).toBe(true)
+    const again = await engineRig({ userData: rig.userData, root: rig.root })
+    expect(again.meetings.list()).toEqual([])
+  })
+
+  it('set aside when its folder went is erased for good after 30 days', async () => {
+    const rig = await engineRig()
+    const removed = join(rig.userData, 'meetings', '.removed')
+    const day = 24 * 60 * 60 * 1000
+    const old = `0123456789ab-${Date.now() - 31 * day}`
+    const recent = `0123456789ab-${Date.now() - 29 * day}`
+    for (const name of [old, recent]) {
+      await mkdir(join(removed, name), { recursive: true })
+      await writeFile(join(removed, name, 'state.json'), '{}')
+    }
+    await engineRig({ userData: rig.userData, root: rig.root })
+    expect(await readdir(removed)).toEqual([recent])
   })
 
   it('whose transcript alone went, as in a fresh clone, writes it again and loses nothing', async () => {
@@ -457,6 +478,24 @@ describe('a meeting folder changed in the vault', () => {
     await rig.meetings.follow()
     await until(() => rig.writes.get(transcript)?.includes('said 1') === true)
     expect(rig.meetings.list().map((m) => m.id)).toEqual([meetingId])
+    expect(await present(join(dir, 'state.json'))).toBe(true)
+  })
+
+  it('whose transcript someone replaced with their own file leaves that file alone', async () => {
+    const rig = await engineRig()
+    const { meetingId, meeting, dir } = await started(rig)
+    const transcript = `${meeting.folder}/transcript.local.md`
+    await until(() => rig.writes.get(transcript)?.startsWith('---\nmeeting:') === true)
+    await rig.meetings.stop(meetingId)
+    await until(() => meeting.phase === 'done')
+    rig.writes.set(transcript, 'my own notes\n')
+
+    await rig.meetings.follow()
+    await vi.advanceTimersByTimeAsync(6000)
+    await rig.meetings.follow()
+    await settle()
+    expect(rig.writes.get(transcript)).toBe('my own notes\n')
+    expect(rig.meetings.list()).toEqual([expect.objectContaining({ id: meetingId, away: true })])
     expect(await present(join(dir, 'state.json'))).toBe(true)
   })
 

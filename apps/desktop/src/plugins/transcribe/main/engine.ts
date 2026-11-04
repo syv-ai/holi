@@ -134,6 +134,12 @@ const MAX_CHUNK_BYTES = 16 * 1024 * 1024
 /** How long a meeting's folder may be missing before the meeting counts as
  *  deleted: a folder move removes its files before it writes them again. */
 const GONE_MS = 5000
+
+/** Where a meeting whose folder left the vault is kept on this machine
+ *  (under the meetings folder, named `<id>-<when>`), and for how long. */
+const REMOVED = '.removed'
+const REMOVED_DAYS = 30
+const DAY_MS = 24 * 60 * 60 * 1000
 /** What `prepare` writes before a meeting records, which `start` may take. */
 const NOT_RECORDED = 'Not recorded yet: open this meeting and press Record.'
 /** The id at the top of a meeting's transcript. */
@@ -437,6 +443,18 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
   const retryTimers = new Set<ReturnType<typeof setTimeout>>()
 
   const dirOf = (id: string) => join(deps.dir, id)
+
+  /** Meetings set aside past their time are erased for good. */
+  async function purgeRemoved(): Promise<void> {
+    const dir = join(deps.dir, REMOVED)
+    const cutoff = now() - REMOVED_DAYS * DAY_MS
+    for (const name of await readdir(dir).catch(() => [] as string[])) {
+      const at = Number(/^[0-9a-f]{12}-(\d+)$/.exec(name)?.[1])
+      if (Number.isFinite(at) && at < cutoff) {
+        await rm(join(dir, name), { recursive: true, force: true, maxRetries: 3 })
+      }
+    }
+  }
   const wavOf = (id: string, n: number) => join(dirOf(id), `chunk-${n}.wav`)
 
   const scribe = createScribe({
@@ -494,7 +512,8 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
   async function mayWrite(l: Live, adopt = false): Promise<boolean> {
     const mark = await markAt(l.stored.meeting.folder)
     if (mark.kind === 'meeting') return mark.id === l.stored.meeting.id
-    if (adopt) return mark.kind === 'absent' || mark.kind === 'unmarked'
+    // Into a folder whose transcript went, never over a file someone put there.
+    if (adopt) return mark.kind === 'absent'
     // Its transcript was written there, and is gone or replaced: moved or
     // deleted, or a move under way, which `follow` settles.
     if (l.stored.marked === true) return false
@@ -583,12 +602,13 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       } else if (now() - since >= GONE_MS) {
         // The folder stayed and only its transcript went (a clone has none,
         // being a machine-local file): the meeting is still there, and its
-        // transcript is written again. Only a folder gone is a delete.
-        const stayed =
-          (mark.kind === 'absent' || mark.kind === 'unmarked') &&
-          (await deps.folderExists(summary.folder))
-        if (stayed) await adopt(id)
-        else await gone(id)
+        // transcript is written again. A file of someone else's in its place
+        // is theirs: the meeting waits, away, until its own is back (missing
+        // stays set, so this is not timed again). Only a folder gone is a
+        // delete.
+        if (!(await deps.folderExists(summary.folder))) await gone(id)
+        else if (mark.kind === 'absent') await adopt(id)
+        else setAway(id, true)
       } else {
         followAfter(GONE_MS - (now() - since))
       }
@@ -634,7 +654,9 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
   }
 
   /** The meeting's folder was deleted from the vault: so is the meeting, its
-   *  recording stopped first. */
+   *  recording stopped first. What this machine kept of it (the audio, the
+   *  transcript) is set aside for `REMOVED_DAYS` rather than erased: a
+   *  folder can go by mistake, or by another machine's sync. */
   async function gone(id: string): Promise<void> {
     const l = live.get(id)
     const title = l?.stored.meeting.title ?? summaries.get(id)?.title ?? id
@@ -642,12 +664,16 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     if (phase === 'recording' || phase === 'finishing') {
       deps.emit('meeting-removed', { meetingId: id })
     }
-    await forget(id)
-    deps.log('info', `meeting "${title}": its folder was deleted, so the meeting was too`)
+    await forget(id, true)
+    deps.log(
+      'info',
+      `meeting "${title}": its folder was deleted, so the meeting was too (kept aside for ${REMOVED_DAYS} days)`,
+    )
   }
 
-  /** Everything of the meeting on this machine, and nothing in the vault. */
-  async function forget(id: string): Promise<void> {
+  /** Everything of the meeting on this machine, and nothing in the vault;
+   *  with `keep`, its folder here goes into `.removed/` instead. */
+  async function forget(id: string, keep = false): Promise<void> {
     const l = live.get(id)
     if (l !== undefined) {
       for (const timer of [l.persistTimer, l.filesTimer, l.emitTimer]) {
@@ -664,7 +690,15 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     // vault file cannot be removed. A save already under way finishes
     // before the folder goes, so it cannot bring the meeting back.
     await saving.get(id)?.catch(() => {})
-    await rm(dirOf(id), { recursive: true, force: true, maxRetries: 3 })
+    const kept =
+      keep &&
+      (await mkdir(join(deps.dir, REMOVED), { recursive: true })
+        .then(() => rename(dirOf(id), join(deps.dir, REMOVED, `${id}-${now()}`)))
+        .then(
+          () => true,
+          () => false,
+        ))
+    if (!kept) await rm(dirOf(id), { recursive: true, force: true, maxRetries: 3 })
     emitList()
   }
 
@@ -1309,6 +1343,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
   const api: Meetings = {
     async load() {
       await mkdir(deps.dir, { recursive: true })
+      await purgeRemoved()
       const ids = (await readdir(deps.dir).catch(() => [] as string[])).filter((id) =>
         /^[0-9a-f]{12}$/.test(id),
       )

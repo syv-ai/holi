@@ -2,7 +2,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
+import { exactPath } from '@holi/shared/path-safety-node'
 import { moveNotes } from '../src/main/vault/move'
+import { withFileLock } from '../src/main/vault/vault-files'
 
 const dirs: string[] = []
 afterAll(async () => {
@@ -22,6 +24,23 @@ async function vault(files: Record<string, string>): Promise<string> {
 const read = (root: string, rel: string) => readFile(join(root, rel), 'utf8')
 
 describe('moveNotes', () => {
+  it('waits for a write that holds the file by its canonical path', async () => {
+    const root = await vault({ 'old.md': 'body' })
+    // On macOS the temp folder is reached through a link: the canonical path
+    // and the one built from `root` differ, and the lock has to be the same.
+    const key = (await exactPath(root, 'sub/new.md'))!
+    let release!: () => void
+    const held = withFileLock(key, () => new Promise<void>((r) => (release = r)))
+    let moved = false
+    const move = moveNotes(root, [{ from: 'old.md', to: 'sub/new.md' }]).then(() => (moved = true))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(moved).toBe(false)
+    release()
+    await held
+    await move
+    expect(await read(root, 'sub/new.md')).toBe('body')
+  })
+
   it('a single move behaves exactly like a rename (file + inbound rewrite)', async () => {
     const root = await vault({
       'old.md': 'body',

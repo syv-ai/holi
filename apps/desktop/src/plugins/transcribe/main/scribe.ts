@@ -423,6 +423,7 @@ export function createScribe(deps: {
         : `Holi could not write some groups of your last answer; answer them again, fixed:\n${refused.map((x) => `- ${x}`).join('\n')}\n\n${batch}`
     r.sending = true
     r.inflight = last
+    let delivered = false
     try {
       // Once known unreachable, one try a time: the background retry is slow.
       const sent = await deliver(
@@ -432,6 +433,7 @@ export function createScribe(deps: {
         meeting.scribeUnreachable === true ? [] : MESSAGE_RETRY_MS,
       )
       if (sent === true) {
+        delivered = true
         for (const c of corrections) {
           if (notes.corrections[c.i] === c.text) delete notes.corrections[c.i]
         }
@@ -478,7 +480,39 @@ export function createScribe(deps: {
     } finally {
       r.sending = false
       r.inflight = null
+      // No turn started: what a person said meanwhile goes now.
+      if (!delivered) void sendWaiting(id)
     }
+  }
+
+  /** Send a person's word that waited for a tool-less scribe's turn, now
+   *  that none runs; one that is not taken is said so, and the next tried.
+   *  True when one went, so a turn runs. */
+  async function sendWaiting(id: string): Promise<boolean> {
+    const r = runtimes.get(id)
+    while (r !== undefined && r.waiting.length > 0) {
+      const next = r.waiting.shift()!
+      const meeting = deps.host.get(id)?.meeting
+      const session = meeting?.scribeSessionId
+      const alive =
+        meeting !== undefined &&
+        session !== undefined &&
+        meeting.scribeState !== 'gone' &&
+        meeting.scribeState !== 'off'
+      const ok = alive && (await deliver(session, next.text)) === true
+      next.sent(ok)
+      if (ok) {
+        reached(meeting)
+        setState(meeting, 'working')
+        return true
+      }
+    }
+    return false
+  }
+
+  /** Nothing will take what waits: each is told so. */
+  const dropWaiting = (r: Runtime | undefined): void => {
+    for (const w of r?.waiting.splice(0) ?? []) w.sent(false)
   }
 
   /** The scribe took a message: it is reachable after all. */
@@ -652,6 +686,7 @@ export function createScribe(deps: {
         }
         setState(meeting, state)
         settleFinal(meeting.id, state, false)
+        if (state === 'gone') dropWaiting(runtimes.get(meeting.id))
         if (state === 'idle' || state === 'gone') feed(meeting.id)
       }
     },
@@ -669,14 +704,12 @@ export function createScribe(deps: {
       // A tool-less scribe's groups are its answer: written before the turn
       // counts as over, so the final pass ends with them in. A person's word
       // that waited for the turn goes next, before any batch.
-      void answered(sessionId, meeting).finally(() => {
-        const next = r.waiting.shift()
-        if (next === undefined) return ended()
-        void deliver(sessionId, next.text).then((ok) => {
-          next.sent(ok === true)
-          if (ok !== true) ended()
+      void answered(sessionId, meeting)
+        .catch(() => {})
+        .then(() => sendWaiting(meeting.id))
+        .then((went) => {
+          if (!went) ended()
         })
-      })
     },
 
     feed,
@@ -749,6 +782,8 @@ export function createScribe(deps: {
         r.final = { sent: false, sawWorking: false, done }
         tryFinal(id)
       })
+      // The meeting is over: nothing more reaches its scribe.
+      dropWaiting(r)
       // A kept run is the meeting's alone: it ends with it.
       if (r.report === 'reply') void deps.agent.stop(session).catch(() => {})
     },
@@ -758,7 +793,7 @@ export function createScribe(deps: {
       if (r === undefined) return
       if (r.timer !== null) clearTimeout(r.timer)
       r.final?.done()
-      for (const w of r.waiting.splice(0)) w.sent(false)
+      dropWaiting(r)
       runtimes.delete(id)
       // A kept run is the meeting's alone: it ends with it.
       if (r.report === 'reply' && session !== undefined) {
@@ -771,7 +806,7 @@ export function createScribe(deps: {
       for (const r of runtimes.values()) {
         if (r.timer !== null) clearTimeout(r.timer)
         r.final?.done()
-        for (const w of r.waiting.splice(0)) w.sent(false)
+        dropWaiting(r)
       }
       runtimes.clear()
     },
