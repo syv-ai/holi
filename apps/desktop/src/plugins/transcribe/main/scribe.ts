@@ -602,6 +602,8 @@ export function createScribe(deps: {
     const { meeting, profile } = entry
     setState(meeting, 'starting')
     const provider = (await deps.provider?.().catch(() => 'claude' as const)) ?? 'claude'
+    // Deleted meanwhile: there is no meeting to start one for.
+    if (deps.host.get(id)?.meeting !== meeting) return
     const args = launchArgs(provider, meeting, profile)
     if (args === null) {
       meeting.scribeUnsupported = provider
@@ -610,7 +612,8 @@ export function createScribe(deps: {
       return
     }
     delete meeting.scribeUnsupported
-    rt(id).report = args.tools === 'none' ? 'reply' : 'bash'
+    const r = rt(id)
+    r.report = args.tools === 'none' ? 'reply' : 'bash'
     let res: Launched
     try {
       res = await deps.agent.launch(args)
@@ -622,6 +625,12 @@ export function createScribe(deps: {
       setState(meeting, 'gone')
       return
     }
+    if (runtimes.get(id) !== r || deps.host.get(id)?.meeting !== meeting) {
+      // The meeting was deleted while its scribe started (`end` found no
+      // session to stop): the run goes too rather than outlive it.
+      void deps.agent.stop(res.sessionId).catch(() => {})
+      return
+    }
     meeting.scribeSessionId = res.sessionId
     deps.host.changed(id)
     deps.log(
@@ -631,7 +640,7 @@ export function createScribe(deps: {
     // A tool-less run is in its first turn already, and the news of it went
     // out before its session was known here: it is working, so a person's
     // word waits for that turn. One that has answered already is heard now.
-    if (rt(id).report === 'reply') {
+    if (r.report === 'reply') {
       setState(meeting, 'working')
       const answer = await deps.agent.reply(res.sessionId).catch(() => null)
       if (answer !== null) scribe.hearTurnEnd(res.sessionId)

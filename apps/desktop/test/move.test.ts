@@ -24,6 +24,30 @@ async function vault(files: Record<string, string>): Promise<string> {
 const read = (root: string, rel: string) => readFile(join(root, rel), 'utf8')
 
 describe('moveNotes', () => {
+  it('lets no writer that checks one moving file write another between the two', async () => {
+    // A meeting's minutes are written only while its transcript is there.
+    const root = await vault({ 'm/minutes.md': 'minutes', 'm/transcript.md': 'mine' })
+    const key = async (rel: string) => (await exactPath(root, rel))!
+    let release!: () => void
+    const held = withFileLock(
+      await key('m/transcript.md'),
+      () => new Promise<void>((r) => (release = r)),
+    )
+    const move = moveNotes(root, [
+      { from: 'm/minutes.md', to: 'n/minutes.md' },
+      { from: 'm/transcript.md', to: 'n/transcript.md' },
+    ])
+    await new Promise((r) => setTimeout(r, 50))
+    const write = withFileLock(await key('m/minutes.md'), async () => {
+      if ((await readFile(join(root, 'm/transcript.md'), 'utf8').catch(() => null)) === null) return
+      await writeFile(join(root, 'm/minutes.md'), 'written back')
+    })
+    release()
+    await Promise.all([held, move, write])
+    await expect(read(root, 'm/minutes.md')).rejects.toThrow()
+    expect(await read(root, 'n/minutes.md')).toBe('minutes')
+  })
+
   it('waits for a write that holds the file by its canonical path', async () => {
     const root = await vault({ 'old.md': 'body' })
     // On macOS the temp folder is reached through a link: the canonical path

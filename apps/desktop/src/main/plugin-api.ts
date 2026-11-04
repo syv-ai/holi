@@ -334,6 +334,7 @@ export {
   pruneEmptiedFolder,
   removeDocFile,
   withFileLock,
+  withFileLocks,
   writeAtomic,
 } from './vault/vault-files'
 export { moveNotes } from './vault/move'

@@ -37,6 +37,7 @@ import {
   stringParam,
   VAULT_NOT_OPEN,
   withFileLock,
+  withFileLocks,
   writableFile,
   writeAtomic,
   type CapabilityContext,
@@ -883,7 +884,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', VAULT_NOT_OPEN)
         const rel = relPath(args.path)
         if ('delete' in args) {
-          await removeDocFile(ctx.root, rel)
+          await withFileLocks(ctx.root, [rel], () => removeDocFile(ctx.root, rel))
         } else {
           const { text, base } = args
           const abs = await writableFile(ctx, rel)

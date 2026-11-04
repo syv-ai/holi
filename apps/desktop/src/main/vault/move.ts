@@ -26,6 +26,7 @@ import {
   lockPath,
   removeDocFile,
   withFileLock,
+  withFileLocks,
   writeAtomic,
 } from './vault-files'
 
@@ -34,6 +35,27 @@ export async function moveNotes(
   moves: { from: string; to: string }[],
 ): Promise<{ rewritten: { path: string; count: number }[]; comments: string[] }> {
   const map = new Map(moves.map((m) => [m.from, m.to]))
+  // Every moving file and where it lands, locked for the whole move, as every
+  // main-side writer takes a file: a writer that checks a file before writing
+  // beside it (a meeting's, which checks its transcript before its minutes)
+  // neither has a file read away under it nor writes into a folder this move
+  // is emptying.
+  const held = new Set<string>()
+  for (const m of moves) held.add(m.from).add(m.to)
+  const rewritten = await withFileLocks(
+    root,
+    [...held].map((p) => vaultRelPath(p)),
+    () => moveLocked(root, map, held),
+  )
+  const comments = await moveNoteComments(root, moves)
+  return { rewritten: rewritten.sort((a, b) => a.path.localeCompare(b.path)), comments }
+}
+
+async function moveLocked(
+  root: string,
+  map: Map<string, string>,
+  held: ReadonlySet<string>,
+): Promise<{ path: string; count: number }[]> {
   const rewritten: { path: string; count: number }[] = []
   const planned: { dest: string; data: string | Uint8Array }[] = []
 
@@ -55,18 +77,12 @@ export async function moveNotes(
     if (to !== path || count > 0) planned.push({ dest: to, data: next })
   }
 
-  // Each under its file's lock, as every main-side writer takes it: a writer
-  // that checks a file before writing beside it (a meeting's, which checks
-  // its transcript) never writes into a folder this move has just emptied.
-  for (const from of map.keys()) {
-    const rel = vaultRelPath(from)
-    await withFileLock(await lockPath(root, rel), () => removeDocFile(root, rel))
-  }
+  for (const from of map.keys()) await removeDocFile(root, vaultRelPath(from))
   for (const p of planned) {
     const rel = vaultRelPath(p.dest)
-    await withFileLock(await lockPath(root, rel), () => writeAtomic(root, rel, p.data))
+    // A file whose links alone changed is not held: it takes its own lock.
+    if (held.has(p.dest)) await writeAtomic(root, rel, p.data)
+    else await withFileLock(await lockPath(root, rel), () => writeAtomic(root, rel, p.data))
   }
-  const comments = await moveNoteComments(root, moves)
-
-  return { rewritten: rewritten.sort((a, b) => a.path.localeCompare(b.path)), comments }
+  return rewritten
 }

@@ -68,6 +68,7 @@ import {
   pruneEmptiedFolder,
   removeDocFile,
   withFileLock,
+  withFileLocks,
   writeAtomic,
 } from './vault/vault-files'
 import { vaultReadme } from './vault/readme'
@@ -1192,7 +1193,9 @@ export function createRouter(deps: RouterDeps) {
     delete: vaultMutation
       .input(fields({ remote: 'string', path: 'string' }))
       .mutation(async ({ input }) => {
-        await removeDocFile(await rootFor(input.remote), safe(input.path))
+        const root = await rootFor(input.remote)
+        const rel = safe(input.path)
+        await withFileLocks(root, [rel], () => removeDocFile(root, rel))
         return { ok: true as const }
       }),
 
@@ -1294,7 +1297,12 @@ export function createRouter(deps: RouterDeps) {
     // folder would stay on its `.gitkeep` with nothing left to delete.
     deleteMany: vaultMutation.input(deleteManyInput).mutation(async ({ input }) => {
       const root = await rootFor(input.remote)
-      for (const p of input.paths) await removeDocFile(root, safe(p))
+      // Held together, as a move holds its files: no write that checked one
+      // of them lands between two removes.
+      const rels = input.paths.map((p) => safe(p))
+      await withFileLocks(root, rels, async () => {
+        for (const rel of rels) await removeDocFile(root, rel)
+      })
       for (const f of input.folders) await pruneEmptiedFolder(root, safe(f))
       return { ok: true as const }
     }),

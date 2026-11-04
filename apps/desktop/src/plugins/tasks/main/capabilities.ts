@@ -41,6 +41,7 @@ import {
   stringParam,
   lockPath,
   withFileLock,
+  withFileLocks,
   writableFile,
   writablePath,
   writeAtomic,
@@ -451,7 +452,8 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
       writes: true,
       params: pathParams,
       run: async (ctx, { path }) => {
-        await removeDocFile(ctx.root, safe(path))
+        const rel = safe(path)
+        await withFileLocks(ctx.root, [rel], () => removeDocFile(ctx.root, rel))
         return { ok: true as const }
       },
     }),

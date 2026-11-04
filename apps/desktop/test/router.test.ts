@@ -600,6 +600,30 @@ describe('notes', () => {
     expect(await caller.notes.read({ remote: REMOTE, path: 'c.md' })).toBe('C')
   })
 
+  it('deleteMany lets no writer that checks one deleted file bring back another', async () => {
+    // A recording meeting writes its minutes only while its transcript is there.
+    const { caller, root } = await rig({ 'm/minutes.md': 'minutes', 'm/transcript.md': 'mine' })
+    const key = async (rel: string) => (await exactPath(root, rel))!
+    let release!: () => void
+    const held = withFileLock(
+      await key('m/transcript.md'),
+      () => new Promise<void>((r) => (release = r)),
+    )
+    const removal = caller.notes.deleteMany({
+      remote: REMOTE,
+      paths: ['m/minutes.md', 'm/transcript.md'],
+      folders: ['m'],
+    })
+    await new Promise((r) => setTimeout(r, 50))
+    const write = withFileLock(await key('m/minutes.md'), async () => {
+      if ((await readFile(join(root, 'm/transcript.md'), 'utf8').catch(() => null)) === null) return
+      await writeFile(join(root, 'm/minutes.md'), 'written back')
+    })
+    release()
+    await Promise.all([held, removal, write])
+    await expect(stat(join(root, 'm'))).rejects.toThrow()
+  })
+
   it('deleteMany takes a deleted folder with it, keeping what it never listed', async () => {
     // A folder's `.gitkeep` and empty subfolders are not documents, so the
     // delete never listed them; they held the folder on the tree with nothing

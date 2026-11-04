@@ -39,6 +39,25 @@ export async function lockPath(root: string, rel: VaultRelPath): Promise<string>
   return (await exactPath(root, rel)) ?? absPathFor(root, rel)
 }
 
+/**
+ * `withFileLock` over several files at once, for work that removes or moves
+ * them together (a delete, a rename, a folder move): a writer that checks one
+ * file before writing another beside it waits for the whole of it, never
+ * slipping in between two of its files. The locks are taken in one order, so
+ * two such callers over the same files cannot each hold what the other waits
+ * for. `work` must not take any of these locks itself.
+ */
+export async function withFileLocks<T>(
+  root: string,
+  rels: readonly VaultRelPath[],
+  work: () => Promise<T>,
+): Promise<T> {
+  const keys = [...new Set(await Promise.all(rels.map((rel) => lockPath(root, rel))))].sort()
+  const take = (i: number): Promise<T> =>
+    i === keys.length ? work() : withFileLock(keys[i]!, () => take(i + 1))
+  return take(0)
+}
+
 /** abs → validated vault-relative ('/'-separated), or null when outside/unsafe. */
 export function toVaultRel(root: string, absPath: string): VaultRelPath | null {
   const rel = relative(root, absPath)

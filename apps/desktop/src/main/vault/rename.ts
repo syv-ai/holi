@@ -12,7 +12,7 @@ import { readFile } from 'node:fs/promises'
 import { isLocalOnlyPath, rewriteWikiLinks, vaultRelPath } from '@holi/shared'
 import { scanBackrefs } from './backrefs'
 import { moveNoteComments } from './note-comments'
-import { absPathFor, moveDocFile, writeAtomic } from './vault-files'
+import { absPathFor, moveDocFile, withFileLocks, writeAtomic } from './vault-files'
 
 /** Move `from`→`to`, rewriting every inbound `[[link]]` in one pass. The rewrite
  *  runs before the move, so a mid-run failure leaves the source in place and
@@ -38,7 +38,10 @@ export async function renameNote(
     const { text: rewritten } = rewriteWikiLinks(text, from, to)
     await writeAtomic(root, rel, rewritten)
   }
-  await moveDocFile(root, vaultRelPath(from), vaultRelPath(to))
+  // Under both names' locks, as every main-side writer takes a file: one
+  // that checked the old name does not write it again beside the new.
+  const names = [vaultRelPath(from), vaultRelPath(to)] as const
+  await withFileLocks(root, names, () => moveDocFile(root, ...names))
   await moveNoteComments(root, [{ from, to }])
   return { rewritten: referrers }
 }

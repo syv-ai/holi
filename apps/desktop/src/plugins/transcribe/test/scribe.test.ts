@@ -349,6 +349,28 @@ describe('the end of a meeting', () => {
     expect(rig.agent.stop).toHaveBeenCalledWith(SCRIBE)
   })
 
+  it('started for a meeting deleted meanwhile is stopped, not left running', async () => {
+    let started: ((v: { ok: true; sessionId: string }) => void) | undefined
+    const rig = await engineRig({
+      provider: async () => 'pi',
+      launch: () => new Promise((r) => (started = r)),
+    })
+    const { meetingId } = await rig.meetings.start({ title: 'Gone', profileId: 'default' })
+    const meeting = await rig.meetings.get(meetingId)
+    await until(() => started !== undefined)
+    await until(() => rig.writes.has(`${meeting.folder}/transcript.local.md`))
+    // Its folder is deleted from the vault while the run starts.
+    for (const rel of [...rig.writes.keys()]) rig.writes.delete(rel)
+    await rig.meetings.follow()
+    await vi.advanceTimersByTimeAsync(6000)
+    await rig.meetings.follow()
+    await until(() => rig.meetings.list().length === 0)
+    started!({ ok: true, sessionId: SCRIBE })
+    await until(() => rig.agent.stop.mock.calls.length > 0)
+    expect(rig.agent.stop).toHaveBeenCalledWith(SCRIBE)
+    expect(meeting.scribeSessionId).toBeUndefined()
+  })
+
   it('is not started on an agent that cannot run it, and the meeting says why', async () => {
     const rig = await engineRig({
       launch: async () => ({ ok: true, sessionId: SCRIBE }),
