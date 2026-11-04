@@ -5,12 +5,13 @@
  */
 import { type Ref } from 'react'
 import type { Editor } from '@tiptap/react'
-import { MessagesSquareIcon } from 'lucide-react'
+import { CheckIcon, MessagesSquareIcon } from 'lucide-react'
 
 import { RichTextHistory } from '@/features/documents/rich-text/rich-text-controls'
 import { useRichTextState } from '@/features/documents/rich-text/rich-text-state'
 import { RichTextToolbarSeparator } from '@/features/documents/rich-text/rich-text-toolbar'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Toggle } from '@/components/ui/toggle'
 import { ViewHeader, ViewHeaderTitle } from '@/composites/view-header'
 import {
@@ -78,6 +79,7 @@ interface DocumentHeaderProps extends Omit<DocumentActionsProps, 'editor'> {
   path: string
   title: string
   saveState: SaveState
+  taskDone?: { pending: boolean; error: string | null; onDone: () => void }
   /** An agent run is editing the document. */
   locked: boolean
   /** The comments panel's toggle, with the open threads' count; null for a
@@ -95,6 +97,7 @@ export function DocumentHeader({
   path,
   title,
   saveState,
+  taskDone,
   locked,
   comments = null,
   ...actions
@@ -152,6 +155,25 @@ export function DocumentHeader({
           <RichTextToolbarSeparator />
         </div>
         <DocumentActions editor={editor} {...actions} />
+        {taskDone ? (
+          <>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={taskDone.pending || locked || !editor?.isEditable}
+              onClick={taskDone.onDone}
+            >
+              <CheckIcon aria-hidden="true" />
+              {taskDone.pending ? 'Saving…' : 'Done'}
+            </Button>
+            {taskDone.error ? (
+              <span role="alert" className="max-w-48 text-sm text-destructive">
+                {taskDone.error}
+              </span>
+            ) : null}
+          </>
+        ) : null}
       </div>
     </ViewHeader>
   )
