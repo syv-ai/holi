@@ -1,4 +1,4 @@
-import { SETTINGS_FILE, syncLabel } from '@holi/shared'
+import { SETTINGS_FILE, syncLabel, type VaultSnapshot } from '@holi/shared'
 import { taskClaim } from '@holi/shared'
 /**
  * The open vault: what it sees, when it commits, and when it syncs.
@@ -2037,7 +2037,7 @@ describe('VaultHost', () => {
     const h = createVaultHost({
       claims: CLAIMS,
       registry,
-      onSnapshot: snaps.push,
+      onSnapshot: (_remote, snapshot) => snaps.push(snapshot),
       onSyncState: () => {},
       timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, ...timings },
     })
@@ -2064,7 +2064,7 @@ describe('VaultHost', () => {
       claims: CLAIMS,
       registry,
       onSnapshot: () => {},
-      onSyncState: (s) => seen.push(s.kind),
+      onSyncState: (_remote, s) => seen.push(s.kind),
       timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
     })
     hosts.push(h)
@@ -2086,7 +2086,7 @@ describe('VaultHost', () => {
       registry,
       onSnapshot: () => {},
       onSyncState: () => {},
-      onHeldBack: (f) => held.push(f),
+      onHeldBack: (_remote, f) => held.push(f),
       timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
     })
     hosts.push(h)
@@ -2246,6 +2246,73 @@ describe('VaultHost', () => {
     expect(h.active()).toBeNull()
   })
 
+  it('replays the selected runtime after a non-selecting start and isolates background callbacks', async () => {
+    const { registry } = await twoVaults()
+    const seen: Array<{ remote: string; snapshot: VaultSnapshot }> = []
+    const states: string[] = []
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      onSnapshot: (remote, snapshot) => seen.push({ remote, snapshot }),
+      onSyncState: (remote, state) => states.push(`${remote}:${state.kind}`),
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    const a = await h.getOrOpen('syv-ai/a')
+    const count = seen.length
+    await h.open('syv-ai/b')
+    expect(seen.at(-1)?.remote).toBe('syv-ai/b')
+    const afterSelection = seen.length
+    await a.refresh()
+    expect(seen.length).toBe(afterSelection + 1)
+    expect(seen.at(-1)?.remote).toBe('syv-ai/a')
+    expect(states).toContain('syv-ai/b:up-to-date')
+  })
+
+  it('keeps the selected runtime when preparation for a switch fails', async () => {
+    const { registry } = await twoVaults()
+    let fail = false
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      beforeOpen: async () => {
+        if (fail) throw new Error('preparation failed')
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    const selected = await h.open('syv-ai/a')
+    fail = true
+    await expect(h.open('syv-ai/b')).rejects.toThrow('preparation failed')
+    expect(h.active()).toBe(selected)
+    expect(h.get('syv-ai/a')).toBe(selected)
+  })
+
+  it('opens despite a failed best-effort bridge attach and cleans partial work', async () => {
+    const { registry } = await twoVaults()
+    let detached = 0
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      bridgeEnv: {
+        attach: async () => {
+          throw new Error('partial attach')
+        },
+        detach: async () => {
+          detached++
+        },
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    await expect(h.open('syv-ai/a')).resolves.toMatchObject({ remote: 'syv-ai/a' })
+    expect(detached).toBeGreaterThan(0)
+  })
+
   it('opens runtimes independently and closes only the requested remote', async () => {
     const { registry, a } = await twoVaults()
     const { h, snaps } = host(registry, { rescanDebounceMs: 30 })
@@ -2254,7 +2321,9 @@ describe('VaultHost', () => {
     expect(h.active()).toBeNull()
     expect(h.get('syv-ai/a')).toBe(first)
     expect(h.get('syv-ai/b')).toBe(second)
+    await h.open('syv-ai/b')
     await h.close('syv-ai/a')
+    expect(h.active()).toBe(second)
     const before = snaps.count
     await writeFile(join(a, 'orphan.md'), 'closed runtime\\n', 'utf8')
     await sleep(SETTLE)

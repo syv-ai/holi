@@ -647,7 +647,7 @@ export function createRouter(deps: RouterDeps) {
    */
   async function removeClone(remote: string): Promise<void> {
     const root = await rootFor(remote)
-    if (deps.host.active()?.remote === remote) await deps.host.close()
+    await deps.host.close(remote)
     await deps.trashItem(root)
     await deps.registry.remove(remote)
     await deps.plugins.syncBackground()
