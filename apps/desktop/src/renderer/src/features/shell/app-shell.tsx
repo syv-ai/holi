@@ -1,6 +1,6 @@
 // Adapted from ReUI's app-shell-21 block (`npx shadcn@latest view @reui/app-shell-21` shows the published source).
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useClaudeFirstRun } from '@/hooks/use-claude-first-run'
@@ -23,9 +23,9 @@ import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { loadVaultSettingsAtom, vaultSettingsAtom } from '@/state/settings'
 import { ConfirmDialog } from '@/composites/confirm-dialog'
 import {
-  applyEntryClose,
   closesSplit,
-  confirmEntryClose,
+  saveEntryClose,
+  type EntryCloseIntent,
   type EntryCloseRequest,
 } from '@/state/shell-close'
 // Split tabs (docs/features/tabs-panes.md): one strip, a split being one
@@ -52,6 +52,7 @@ import { AGENTS_HOME_KEY, parseTabKey, tabKey, tabPath } from '@/state/tab-descr
 import { shellTabForPathAtom } from '@/state/surfaces'
 import { activeRemoteAtom } from '@/state/vaults'
 import type { Move } from '@/lib/tree-actions'
+import { saveBeforeClosing } from '@/lib/buffer-registry'
 import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
 import { useActivityLog } from '@/state/activity'
 import { useDocChangeMarks } from '@/state/doc-changes'
@@ -89,11 +90,8 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const remote = useAtomValue(activeRemoteAtom)
   const settings = useAtomValue(vaultSettingsAtom)
   const loadSettings = useSetAtom(loadVaultSettingsAtom)
-  const [pendingClose, setPendingClose] = useState<{
-    remote: string | null
-    workspace: typeof ws
-    request: EntryCloseRequest
-  } | null>(null)
+  const store = useStore()
+  const [pendingClose, setPendingClose] = useState<EntryCloseIntent | null>(null)
   const closeConfirmationEnabled =
     settings !== null && settings.remote === remote ? settings.settings.confirmCloseSplitTabs : true
   useEffect(() => {
@@ -190,22 +188,22 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   }
 
   function closeTab(key: string) {
-    setWs((w) => closeTabIn(w, key))
+    void saveBeforeClosing(() => setWs((w) => closeTabIn(w, key)))
   }
 
   function requestEntryClose(request: EntryCloseRequest) {
-    const current = ws
+    const current = store.get(shellWorkspaceAtom)
+    const intent = { remote: store.get(activeRemoteAtom), workspace: current, request }
     if (closesSplit(current, request) && closeConfirmationEnabled) {
-      setPendingClose({ remote, workspace: current, request })
+      setPendingClose(intent)
       return
     }
-    setWs((workspace) => applyEntryClose(workspace, request))
+    void saveEntryClose(store, intent)
   }
 
   function confirmPendingClose() {
-    if (pendingClose === null || pendingClose.remote !== remote) return
-    setWs((current) => confirmEntryClose(current, pendingClose.workspace, pendingClose.request))
-    setPendingClose(null)
+    if (pendingClose === null) return
+    return saveEntryClose(store, pendingClose)
   }
 
   /** Open a vault path, the board, or any tab key: as a tab, or in the

@@ -40,6 +40,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/cn'
+import { saveBeforeClosing } from '@/lib/buffer-registry'
 import type { IconGlyph } from '@/lib/icon-glyph'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import type { EntryCloseRequest } from '@/state/shell-close'
@@ -130,6 +131,8 @@ export function TabStrip({
     }
   }
   const act = (change: (w: ShellWorkspace) => ShellWorkspace) => setWs(change)
+  const close = (change: (w: ShellWorkspace) => ShellWorkspace) =>
+    void saveBeforeClosing(() => setWs(change))
   const split = activeSplit(ws)
   const count = ws.entries.length
 
@@ -283,8 +286,8 @@ export function TabStrip({
                         : null
                     }
                     onMoveOut={(key) => act((w) => moveOut(w, key))}
-                    onReplace={(key) => act((w) => replaceWithNew(w, key))}
-                    onCloseMember={(key) => act((w) => closeTab(w, key))}
+                    onReplace={(key) => close((w) => replaceWithNew(w, key))}
+                    onCloseMember={(key) => close((w) => closeTab(w, key))}
                     last={index === count - 1}
                     only={count < 2}
                     onOpenInSplit={() => act((w) => openInSplit(w, id))}

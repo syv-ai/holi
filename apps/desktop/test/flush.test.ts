@@ -10,18 +10,20 @@
  * That is not a compromise — every interesting case is timing (an ack that
  * never comes, one that comes late), and none of it is about IPC.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { requestFlush, type FlushChannel } from '../src/main/flush'
 
 /** A renderer that acks after `delayMs`, or never if given `null`. */
 function renderer(delayMs: number | null): FlushChannel & { sends: number; listening: boolean } {
-  let done: (() => void) | null = null
+  let done: ((id: string, error?: string) => void) | null = null
+  let requestId = ''
   return {
     sends: 0,
     listening: false,
-    send() {
+    send(id) {
       this.sends += 1
-      if (delayMs !== null) setTimeout(() => done?.(), delayMs)
+      requestId = id
+      if (delayMs !== null) setTimeout(() => done?.(requestId), delayMs)
     },
     onDone(cb) {
       done = cb
@@ -42,14 +44,58 @@ describe('requestFlush', () => {
     expect(channel.sends).toBe(1)
   })
 
-  it('gives up rather than trapping someone in an app they are leaving', async () => {
-    // A renderer that is gone, wedged, or never loaded must not hold the quit
-    // open. `index.ts` already vetoes the first quit to wait for the commit; if
-    // this could hang, that veto would become permanent — and a lost second of
-    // typing is a smaller harm than an app that will not close.
+  it('times out rather than waiting forever for a missing renderer', async () => {
+    // A missing acknowledgement cancels shutdown instead of discarding text.
+    // The caller remains usable and can retry the quit.
     const channel = renderer(null)
 
     expect(await requestFlush(channel, 30)).toBe('timeout')
+  })
+
+  it('does not accept an ack for an older request', async () => {
+    let ack: ((id: string) => void) | undefined
+    const channel: FlushChannel = {
+      send: () => {},
+      onDone: (cb) => {
+        ack = cb
+        return () => {}
+      },
+    }
+    const pending = requestFlush(channel, 20)
+    ack?.('old-request')
+    expect(await pending).toBe('timeout')
+  })
+
+  it('reports a renderer write failure', async () => {
+    let ack: ((id: string, error?: string) => void) | undefined
+    const channel: FlushChannel = {
+      send: (id) => ack?.(id, 'disk full'),
+      onDone: (cb) => {
+        ack = cb
+        return () => {}
+      },
+    }
+    expect(await requestFlush(channel, 100)).toBe('failed')
+  })
+
+  it('releases the shutdown lock on failure or timeout, but not success', async () => {
+    for (const outcome of ['flushed', 'failed', 'timeout'] as const) {
+      let ack!: (id: string, error?: string) => void
+      const cancel = vi.fn()
+      const channel: FlushChannel = {
+        onDone: (cb) => {
+          ack = cb
+          return () => {}
+        },
+        send: (id) => {
+          if (outcome === 'flushed') ack(id)
+          if (outcome === 'failed') ack(id, 'disk full')
+        },
+        cancel,
+      }
+      expect(await requestFlush(channel, 10)).toBe(outcome)
+      expect(cancel).toHaveBeenCalledTimes(outcome === 'flushed' ? 0 : 1)
+    }
   })
 
   it('stops listening once it has an answer, either way', async () => {

@@ -1,4 +1,8 @@
 /** Whole-entry close decisions for the shell's user-initiated close actions. */
+import type { createStore } from 'jotai'
+import { saveBeforeClosing } from '@/lib/buffer-registry'
+import { activeRemoteAtom } from './vaults'
+import { shellWorkspaceAtom } from './shell-tabs'
 import {
   closeAllTabs,
   closeEntry,
@@ -14,6 +18,27 @@ export type EntryCloseRequest =
   | { kind: 'others'; id: string }
   | { kind: 'right'; id: string }
   | { kind: 'all' }
+
+export interface EntryCloseIntent {
+  remote: string | null
+  workspace: ShellWorkspace
+  request: EntryCloseRequest
+}
+
+/** Save before closing only the unchanged workspace the person approved. */
+export async function saveEntryClose(
+  store: ReturnType<typeof createStore>,
+  intent: EntryCloseIntent,
+): Promise<void> {
+  const current = () =>
+    store.get(activeRemoteAtom) === intent.remote &&
+    store.get(shellWorkspaceAtom) === intent.workspace
+  if (!current()) return
+  await saveBeforeClosing(() => {
+    if (!current()) return
+    store.set(shellWorkspaceAtom, (ws) => confirmEntryClose(ws, intent.workspace, intent.request))
+  })
+}
 
 /** The workspace resulting from the requested whole-entry close. */
 export function applyEntryClose(ws: ShellWorkspace, request: EntryCloseRequest): ShellWorkspace {
