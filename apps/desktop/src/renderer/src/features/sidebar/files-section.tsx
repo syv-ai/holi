@@ -60,6 +60,7 @@ import { closeTabsWhere } from '@/state/shell-workspace'
 import { parseTabKey, tabKey, tabPath } from '@/state/tab-descriptor'
 import { shellTabForPathAtom } from '@/state/surfaces'
 import { claimsAtom, folderClaimsAtom } from '@/state/plugins'
+import { useAgentService } from '@/state/agent-service'
 import { createTaskAtom } from '@/state/tasks'
 import { setTreeOrderAtom, treeOrderAtom } from '@/state/tree-order'
 import {
@@ -105,6 +106,7 @@ export function FilesSection({
   const setOrder = useSetAtom(setTreeOrderAtom)
   const folderClaims = useAtomValue(folderClaimsAtom)
   const claims = useAtomValue(claimsAtom)
+  const agent = useAgentService()
   const snapshot = useAtomValue(snapshotAtom)
   const openDialog = useSetAtom(openDialogAtom)
   const vaultAppOffer = useAtomValue(vaultAppOfferAtom)
@@ -116,7 +118,9 @@ export function FilesSection({
   /** What plugins make from the New menu, with the folder document each
    *  one's entry belongs to: a new app opens as the app, not its `index.html`. */
   const creates = claims.flatMap((claim) =>
-    claim.create === undefined ? [] : [{ ...claim.create, entry: claim.folder?.entry }],
+    claim.create === undefined || (claim.create.agent === true && agent === null)
+      ? []
+      : [{ ...claim.create, entry: claim.folder?.entry }],
   )
   /** What a web address dropped from a browser is saved as: a link. */
   const urlCreate = creates.find((create) => create.fromUrl === true)
@@ -470,7 +474,7 @@ export function FilesSection({
   ): Promise<void> {
     const remote = files.remote
     if (remote === null) return
-    const path = await create.run({ remote, parent, name })
+    const path = await create.run({ remote, parent, name, agent })
     if (!path || !stillCurrent(remote)) return
     const suffix = create.entry === undefined ? null : `/${create.entry}`
     const opened = suffix !== null && path.endsWith(suffix) ? path.slice(0, -suffix.length) : path

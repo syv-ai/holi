@@ -7,7 +7,7 @@
  * chevron. A note's menu has Create vault app, as the document's own does.
  */
 import { Provider, createStore, useAtomValue } from 'jotai'
-import { expect, test, vi } from 'vitest'
+import { beforeEach, expect, test, vi } from 'vitest'
 import { emptyVaultSnapshot, TASKS_CLAIM, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import { coreContributionAtom, installedPluginsAtom } from '@/state/plugins'
@@ -22,6 +22,12 @@ import {
 } from '@/state/vaults'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { FilesSection } from '../files-section'
+
+const agentService = vi.hoisted(() => ({ current: null as unknown }))
+vi.mock('@/state/agent-service', () => ({ useAgentService: () => agentService.current }))
+beforeEach(() => {
+  agentService.current = null
+})
 
 const deleteMany = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
 const createNote = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
@@ -86,10 +92,7 @@ function mount() {
       },
     ] as never,
   })
-  const run = vi.fn(
-    async ({ parent, name }: { parent: string; name: string }) =>
-      `${parent === '' ? '' : `${parent}/`}${name}.app/index.html`,
-  )
+  const run = vi.fn(async (_args: { parent: string; name: string; agent: unknown }) => null)
   const makeLink = vi.fn(async ({ name }: { name: string }) =>
     name.startsWith('https://')
       ? 'link.example.md'
@@ -104,9 +107,10 @@ function mount() {
         folder: { surface: 'app', entry: 'index.html' },
         create: {
           id: 'app',
-          label: 'New app',
+          label: 'New app…',
           icon: () => null,
-          placeholder: 'App name',
+          placeholder: 'What should the app do?',
+          agent: true as const,
           run,
         },
       },
@@ -139,28 +143,34 @@ function mount() {
   return { run, makeLink, onOpen, store }
 }
 
-test("New app on a folder's menu makes the app in that folder", async () => {
+test("New app on a folder's menu hands the request to the agent", async () => {
+  const agent = { name: 'Claude', sessions: {}, targets: {}, ask: vi.fn(), start: vi.fn() }
+  agentService.current = agent
   const { run, onOpen } = mount()
   fireEvent.contextMenu(await screen.findByText('kunder'))
-  fireEvent.click(await screen.findByRole('menuitem', { name: 'New app' }))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'New app…' }))
   await waitFor(() =>
     expect(run).toHaveBeenCalledWith({
       remote: 'mara/notes',
       parent: 'kunder',
       name: 'Untitled',
+      agent,
     }),
   )
-  await waitFor(() => expect(onOpen).toHaveBeenCalledWith('kunder/Untitled.app'))
+  expect(onOpen).not.toHaveBeenCalled()
 })
 
-test("New app on a file's menu makes the app beside the file", async () => {
-  const { run } = mount()
+test("New app on a file's menu asks the agent in that file's folder", async () => {
+  const agent = { name: 'Claude', sessions: {}, targets: {}, ask: vi.fn(), start: vi.fn() }
+  agentService.current = agent
+  const { run, onOpen } = mount()
   fireEvent.click(await screen.findByText('kunder'))
   fireEvent.contextMenu(await screen.findByText('brief'))
-  fireEvent.click(await screen.findByRole('menuitem', { name: 'New app' }))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'New app…' }))
   await waitFor(() =>
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({ parent: 'kunder' })),
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ parent: 'kunder', agent })),
   )
+  expect(onOpen).not.toHaveBeenCalled()
 })
 
 test("a file's menu opens it in split view beside what is in front", async () => {
@@ -174,7 +184,7 @@ test("a file's menu opens it in split view beside what is in front", async () =>
 test("a folder's menu has no Open in split view", async () => {
   mount()
   fireEvent.contextMenu(await screen.findByText('kunder'))
-  await screen.findByRole('menuitem', { name: 'New app' })
+  await screen.findByRole('menuitem', { name: 'New folder' })
   expect(screen.queryByRole('menuitem', { name: 'Open in split view' })).toBeNull()
 })
 
@@ -243,6 +253,7 @@ test('New Link asks for the address first, and a refusal stays in the dialog', a
     remote: 'mara/notes',
     parent: 'kunder',
     name: 'https://example.com',
+    agent: null,
   })
 })
 
@@ -262,54 +273,16 @@ test('a web address dropped from a browser is saved as a link', async () => {
       remote: 'mara/notes',
       parent: '',
       name: 'https://example.com/page',
+      agent: null,
     }),
   )
 })
 
-test('a made app keeps landing through snapshots that precede its row', async () => {
-  const { run, store } = mount()
-  let finish!: (path: string) => void
-  run.mockImplementationOnce(
-    () =>
-      new Promise<string>((resolve) => {
-        finish = resolve
-      }),
-  )
+test('without an agent, the files menu cannot create a draft app', async () => {
+  const { run } = mount()
   fireEvent.contextMenu(await screen.findByText('kunder'))
-  fireEvent.click(await screen.findByRole('menuitem', { name: 'New app' }))
-  const original = store.get(snapshotAtom)!
-  store.set(snapshotAtom, {
-    ...original,
-    docs: [
-      ...original.docs,
-      { path: 'kunder/other.md', title: 'other', updatedAt: '2026-10-23T10:00:00Z' },
-    ] as never,
-  })
-  await act(async () => finish('kunder/Untitled.app/index.html'))
-  store.set(snapshotAtom, {
-    ...original,
-    docs: [
-      ...original.docs,
-      { path: 'kunder/unrelated.md', title: 'unrelated', updatedAt: '2026-10-23T10:00:00Z' },
-    ] as never,
-  })
-  // Show the parent so the intervening scan's unrelated row proves the
-  // snapshot has rendered before the target arrives.
-  fireEvent.click(await screen.findByText('kunder'))
-  await screen.findByText('unrelated')
-  expect(screen.queryByText('Untitled.app')).toBeNull()
-  store.set(snapshotAtom, {
-    ...original,
-    docs: [
-      ...original.docs,
-      { path: 'kunder/Untitled.app/index.html', title: 'index', updatedAt: '2026-10-23T10:00:00Z' },
-    ] as never,
-  })
-  expect(await screen.findByLabelText('Rename Untitled.app')).toBeTruthy()
-  expect(screen.getByRole('treeitem', { name: 'Untitled.app' })).toHaveAttribute(
-    'aria-selected',
-    'true',
-  )
+  expect(screen.queryByRole('menuitem', { name: 'New app…' })).toBeNull()
+  expect(run).not.toHaveBeenCalled()
 })
 
 test('New document creates inside the selected folder', async () => {
@@ -335,19 +308,10 @@ test('New document creates inside the selected folder', async () => {
   })
 })
 
-test('a made app opens its name field once the vault has it', async () => {
-  const { store } = mount()
+test('without an agent the New app action is not offered', async () => {
+  mount()
   fireEvent.contextMenu(await screen.findByText('kunder'))
-  fireEvent.click(await screen.findByRole('menuitem', { name: 'New app' }))
-  const snapshot = store.get(snapshotAtom)!
-  store.set(snapshotAtom, {
-    ...snapshot,
-    docs: [
-      ...snapshot.docs,
-      { path: 'kunder/Untitled.app/index.html', title: 'index', updatedAt: '2026-10-23T10:00:00Z' },
-    ] as never,
-  })
-  expect(await screen.findByLabelText('Rename Untitled.app')).toBeTruthy()
+  expect(screen.queryByRole('menuitem', { name: 'New app…' })).toBeNull()
 })
 
 test("a deck's row opens it, and its chevron shows the files inside", async () => {
@@ -399,21 +363,14 @@ test("a note's menu creates a vault app from it once the agent can, and opens th
 test("a folder's menu has no Create vault app", async () => {
   mount()
   fireEvent.contextMenu(await screen.findByText('kunder'))
-  await screen.findByRole('menuitem', { name: 'New app' })
+  await screen.findByRole('menuitem', { name: 'New folder' })
   expect(screen.queryByRole('menuitem', { name: 'Create vault app' })).toBeNull()
 })
 
-test('a delayed app creation cannot land in a different keyed vault', async () => {
-  const { run, onOpen, store } = mount()
-  let finish!: (path: string) => void
-  run.mockImplementationOnce(() => new Promise<string>((resolve) => (finish = resolve)))
+test('a new app request is hidden until the vault agent is available', async () => {
+  mount()
   fireEvent.contextMenu(await screen.findByText('kunder'))
-  fireEvent.click(await screen.findByRole('menuitem', { name: 'New app' }))
-  act(() => store.set(activeRemoteAtom, 'other/vault'))
-  await act(async () => finish('kunder/Untitled.app/index.html'))
-  expect(onOpen).not.toHaveBeenCalled()
-  expect(screen.queryByLabelText('Rename Untitled.app')).toBeNull()
-  expect(screen.getByRole('treeitem', { name: 'kunder' })).toHaveAttribute('aria-selected', 'false')
+  expect(screen.queryByRole('menuitem', { name: 'New app…' })).toBeNull()
 })
 
 test('a delayed task creation cannot land in a different keyed vault', async () => {

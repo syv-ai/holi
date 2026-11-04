@@ -168,17 +168,12 @@ test('while the vault loads, the page shows card skeletons', () => {
   expect(screen.queryByText('No apps yet')).not.toBeInTheDocument()
 })
 
-test('with no apps, the empty state offers New app, which opens the new app', async () => {
-  const create = vi.fn(async () => 'Untitled.app/index.html')
-  const onOpen = renderView(withApps({ apps: [], create }))
+test('with no agent to write one, the empty state offers no app-creation action', () => {
+  const create = vi.fn(async () => null)
+  renderView(withApps({ apps: [], create }))
   expect(screen.getByText('No apps yet')).toBeInTheDocument()
-  await userEvent.click(screen.getByRole('button', { name: 'New app' }))
-  expect(create).toHaveBeenCalledWith({
-    remote: 'syv-ai/site',
-    parent: '',
-    name: 'Untitled',
-  })
-  expect(onOpen).toHaveBeenCalledWith('Untitled.app')
+  expect(screen.queryByRole('button', { name: /build an app/i })).not.toBeInTheDocument()
+  expect(create).not.toHaveBeenCalled()
 })
 
 test('with the plugin off, the page says how to turn it on', () => {
