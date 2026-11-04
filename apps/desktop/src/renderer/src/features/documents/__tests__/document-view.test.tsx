@@ -1143,19 +1143,23 @@ test('custom instruction close restores focus only while its editor is mounted',
   open('Ship the beta.\\n')
   const { editor, askAi } = await selectForAskAi('Ship the beta')
   const focus = vi.spyOn(editor.view, 'focus')
+  act(() => editor.view.focus())
 
   await user.click(askAi)
   await user.click(await screen.findByRole('menuitem', { name: 'Custom instruction…' }))
-  await screen.findByRole('textbox', { name: 'What should the agent do?' })
+  expect(await screen.findByRole('textbox', { name: 'What should the agent do?' })).toHaveFocus()
+  focus.mockClear()
   await user.keyboard('{Escape}')
+  await waitFor(() => expect(editor.view.hasFocus()).toBe(true))
   expect(focus).toHaveBeenCalled()
 
   await user.click(askAi)
   await user.click(await screen.findByRole('menuitem', { name: 'Custom instruction…' }))
-  await screen.findByRole('textbox', { name: 'What should the agent do?' })
+  expect(await screen.findByRole('textbox', { name: 'What should the agent do?' })).toHaveFocus()
+  focus.mockClear()
   act(() => editor.unmount())
   await user.keyboard('{Escape}')
-  expect(focus).toHaveBeenCalledTimes(1)
+  expect(focus).not.toHaveBeenCalled()
 })
 
 test("Ask AI's own instruction rewrites only the passage selected when it opened", async () => {
