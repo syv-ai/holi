@@ -1220,12 +1220,31 @@ describe('ActiveVault — sync', () => {
     expect(alerts).toEqual([])
   })
 
-  it('keeps a permission rejection failing after a successful pull', async () => {
+  it('keeps a permission rejection failing after a successful pull', async ({ onTestFinished }) => {
     const origin = await makeRemote()
     const dir = await makeClone(origin)
     await sleep(QUIESCE)
     const real = openRepo(dir)
-    const alerts: string[] = []
+    // Keep real filesystem, git and watcher timing, but hold only the failure
+    // alert until the real push and pull have completed. This proves the pull
+    // did not clear the permission failure without racing its alert timer
+    // against fixture IO. Use a distinct delay to leave the commit timer alone.
+    const failingAlertMs = 12_345
+    let alertTimeout: (() => void) | undefined
+    const realSetTimeout = globalThis.setTimeout.bind(globalThis)
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation((handler, timeout, ...args) => {
+        if (timeout === failingAlertMs && typeof handler === 'function') {
+          alertTimeout = handler
+          return realSetTimeout(handler, 60_000, ...args)
+        }
+        return realSetTimeout(handler, timeout, ...args)
+      })
+    onTestFinished(() => {
+      setTimeoutSpy.mockRestore()
+    })
+    const alerts: { text: string; afterPull: boolean }[] = []
     let pulled = false
     const active = await openActiveVault({
       claims: CLAIMS,
@@ -1233,24 +1252,27 @@ describe('ActiveVault — sync', () => {
       repo: {
         ...real,
         pull: async () => {
+          const result = await real.pull()
           pulled = true
-          return real.pull()
+          return result
         },
         push: async () => ({ kind: 'rejected' as const, reason: 'permission' as const }),
       },
       onSnapshot: () => {},
       onSyncState: () => {},
-      onSyncFailing: (text) => alerts.push(text),
-      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, failingAlertMs: 500 },
+      onSyncFailing: (text) => alerts.push({ text, afterPull: pulled }),
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, failingAlertMs },
     })
     open.push(active)
 
     await active.pushNow()
     await active.retry()
     expect(pulled).toBe(true)
-    expect(alerts).toEqual([])
-    await waitFor('the permission alert', () => alerts.length > 0)
-    expect(alerts[0]).toContain('Sync has failed')
+    expect(alertTimeout).toBeDefined()
+    alertTimeout!()
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0].afterPull).toBe(true)
+    expect(alerts[0].text).toContain('Sync has failed')
   })
 
   it('alerts on a conflict left waiting, naming its files, once the time is up', async () => {
