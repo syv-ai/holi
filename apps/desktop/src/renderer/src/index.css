@@ -327,6 +327,22 @@
 [data-platform='mac'] [data-glass-ground] {
   background: color-mix(in oklab, var(--background) var(--glass-view), transparent);
 }
+/* Drawers outside main need their own glass ground. Inside it, they share the
+   view's ground instead of stacking a second translucent layer. */
+[data-platform='mac'] [data-drawer][data-glass-ground]:not(main *) {
+  background: color-mix(in oklab, var(--background) var(--glass-view), transparent);
+}
+[data-platform='mac'] [data-drawer][data-glass-ground] {
+  background: transparent;
+}
+/* A drawer outside the view has no opaque parent to carry its text. Keep its
+   dim labels legible against either desktop backdrop, including Clear glass. */
+[data-platform='mac'] [data-drawer][data-glass-ground]:not(main *) {
+  --muted-foreground: oklch(0.44 0 0);
+}
+[data-platform='mac'][data-theme='dark'] [data-drawer][data-glass-ground]:not(main *) {
+  --muted-foreground: oklch(0.8 0 0);
+}
 /* Split view keeps this ground: its views sit edge to edge on `main`, a
  * hairline between them (split-view.tsx), as one tab does. */
 
