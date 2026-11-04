@@ -61,8 +61,8 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
     return out
   }, [all, snapshot.files])
   const openTab = useSetAtom(openTabAtom)
-  /** The apps plugin's New app, as the Files menu offers it. */
-  const { create: newApp, creating } = useNewApp(onOpen)
+  /** Ask the agent to write a new app, as the Files menu does. */
+  const { create: newApp, creating } = useNewApp()
 
   const labelOf = (path: string) =>
     surface === undefined
@@ -200,12 +200,12 @@ export function AppsView({ onOpen }: { onOpen: (path: string) => void }) {
           <IconStackEmpty
             icon={AppWindowIcon}
             title="No apps yet"
-            description="An app is a small web page in the vault, like a dashboard or a CSV explorer. Start one here, or ask the agent to build it."
+            description="An app is a small web page in the vault, like a dashboard or a CSV explorer. Ask the agent to build one."
             action={
               newApp === undefined
                 ? undefined
                 : {
-                    label: creating ? 'Creating…' : 'New app',
+                    label: creating ? 'Starting…' : 'Ask the agent to build an app',
                     icon: PlusIcon,
                     disabled: creating || newApp === undefined,
                     onClick: () => void newApp?.(),

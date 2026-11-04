@@ -209,7 +209,7 @@ export function CommandMenu({
   const openSection = useSetAtom(openSettingsSectionAtom)
   const setTheme = useSetAtom(writeColorSchemeAtom)
   const signOut = useSetAtom(signOutAtom)
-  const newApp = useNewApp((path) => onOpen(path, false)).create
+  const newApp = useNewApp().create
   /** ⌘↵ or ⌃↵ on the row being chosen: open it beside. */
   const beside = useRef(false)
 

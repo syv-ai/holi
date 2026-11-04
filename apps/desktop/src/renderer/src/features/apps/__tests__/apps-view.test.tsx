@@ -9,7 +9,7 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 import type { VaultSnapshot } from '@holi/shared'
 import { fireEvent, render, screen, within } from '@/test/render'
-import type { ConversationStart } from '@/plugin-api/types'
+import type { ClaimCreate, ConversationStart } from '@/plugin-api/types'
 import { agentsSelectionAtom } from '@/state/agents-slots'
 import { openNextBeside } from '@/state/alt-open'
 import { coreContributionAtom, installedPluginsAtom } from '@/state/plugins'
@@ -17,7 +17,11 @@ import { revealInFilesRequestAtom } from '@/state/reveal-in-files'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { useSessionTabs } from '../../../hooks/use-session-tabs'
+import { DialogHost } from '@/features/shell/dialog-host'
 import { AppsView } from '../apps-view'
+
+const agentService = vi.hoisted(() => ({ value: null as unknown }))
+vi.mock('@/state/agent-service', () => ({ useAgentService: () => agentService.value }))
 
 const toasts = vi.hoisted(() => {
   const toast = Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() })
@@ -29,6 +33,7 @@ beforeEach(() => {
   toasts.toast.mockReset()
   toasts.toast.error.mockReset()
   toasts.toast.success.mockReset()
+  agentService.value = null
 })
 
 const APPS = ['tools/Budget.app', 'Home.local.app']
@@ -50,7 +55,7 @@ function withApps({
   apps?: string[]
   describe?: (remote: string, id: string) => Promise<string | null>
   loaded?: boolean
-  create?: () => Promise<string | null>
+  create?: (input: Parameters<ClaimCreate['run']>[0]) => Promise<string | null>
   /** More of the `app` surface: previews, the archive. */
   extra?: Record<string, unknown>
 } = {}) {
@@ -78,7 +83,7 @@ function withApps({
                 id: 'app',
                 label: 'New app',
                 icon: () => null,
-                placeholder: 'App name',
+                placeholder: 'What should the app do?',
                 run: create,
               },
             },
@@ -102,6 +107,7 @@ function renderView(store: ReturnType<typeof createStore>, onOpen = vi.fn()) {
   render(
     <Provider store={store}>
       <AppsView onOpen={onOpen} />
+      <DialogHost />
     </Provider>,
   )
   return onOpen
@@ -168,17 +174,43 @@ test('while the vault loads, the page shows card skeletons', () => {
   expect(screen.queryByText('No apps yet')).not.toBeInTheDocument()
 })
 
-test('with no apps, the empty state offers New app, which opens the new app', async () => {
-  const create = vi.fn(async () => 'Untitled.app/index.html')
-  const onOpen = renderView(withApps({ apps: [], create }))
+test('with an agent, new app asks for a request and only runs the claim after submit', async () => {
+  agentService.value = { name: 'Claude', start: vi.fn() }
+  const create = vi.fn(async () => null)
+  renderView(withApps({ apps: [], create }))
+
+  await userEvent.click(screen.getByRole('button', { name: 'Ask the agent to build an app' }))
+  const field = screen.getByPlaceholderText('What should the app do?')
+  const save = screen.getByRole('button', { name: 'Ask agent' })
+  expect(save).toBeDisabled()
+  expect(create).not.toHaveBeenCalled()
+
+  await userEvent.type(field, 'Show overdue invoices by customer')
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  expect(create).not.toHaveBeenCalled()
+
+  await userEvent.click(screen.getByRole('button', { name: 'Ask the agent to build an app' }))
+  await userEvent.type(
+    screen.getByPlaceholderText('What should the app do?'),
+    'Track reading goals',
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Ask agent' }))
+  await vi.waitFor(() =>
+    expect(create).toHaveBeenCalledWith({
+      remote: 'syv-ai/site',
+      parent: '',
+      name: 'Track reading goals',
+      agent: agentService.value,
+    }),
+  )
+})
+
+test('with no agent to write one, the empty state offers no app-creation action', () => {
+  const create = vi.fn(async () => null)
+  renderView(withApps({ apps: [], create }))
   expect(screen.getByText('No apps yet')).toBeInTheDocument()
-  await userEvent.click(screen.getByRole('button', { name: 'New app' }))
-  expect(create).toHaveBeenCalledWith({
-    remote: 'syv-ai/site',
-    parent: '',
-    name: 'Untitled',
-  })
-  expect(onOpen).toHaveBeenCalledWith('Untitled.app')
+  expect(screen.queryByRole('button', { name: /build an app/i })).not.toBeInTheDocument()
+  expect(create).not.toHaveBeenCalled()
 })
 
 test('with the plugin off, the page says how to turn it on', () => {

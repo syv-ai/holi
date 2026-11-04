@@ -70,7 +70,7 @@ test('Open in Browser opens the address the file holds', async () => {
 
 test('New Link refuses what is not a web address, before asking main', async () => {
   await expect(
-    LINK_PATH_CLAIM.create!.run({ remote: 'syv/vault', parent: '', name: 'notes.md' }),
+    LINK_PATH_CLAIM.create!.run({ remote: 'syv/vault', parent: '', name: 'notes.md', agent: null }),
   ).rejects.toThrow(/isn’t a web address/)
   expect(run).not.toHaveBeenCalled()
 })

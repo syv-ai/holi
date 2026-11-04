@@ -6,7 +6,7 @@
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { AppWindow, Logs, RotateCw } from 'lucide-react'
-import { APP_LOG_FILE, APP_SUFFIX, appSuffix, isAppBundlePath } from '@holi/shared'
+import { APP_LOG_FILE, appSuffix, isAppBundlePath } from '@holi/shared'
 import { APP_MANIFEST_FILE } from '../shared/manifest'
 import { appName } from '../shared/bundle'
 import {
@@ -17,6 +17,7 @@ import {
   type Surface,
 } from '@/plugin-api'
 import { IconButton } from '@/composites/icon-button'
+import { toast } from 'sonner'
 import { AppFrame } from './app-frame'
 import { AppIcon } from './app-icon'
 import { appInstancesAtom, appOpensAtom, archiveAppAtom, archivedAppsAtom } from './apps'
@@ -25,6 +26,14 @@ import { appsCap } from './apps-cap'
 
 /** What makes a bundle an app at all: its entry document. */
 const ENTRY = 'index.html'
+
+/** A new app's first turn: where it goes and what it is for, in the person's
+ *  words. The vault-apps skill holds the rest. */
+/** @public Test the first-turn prompt without importing the renderer surface. */
+export const newAppPrompt = (parent: string, ask: string): string =>
+  `Build a vault app ${parent === '' ? 'at the root of this vault' : `in \`${parent}/\``}: ${ask}\n\n` +
+  'Use the vault-apps skill. Name it for what it does, and open it with ' +
+  '`holi apps open` once it is finished.'
 
 /** The app's reload, which remounts its frame, and its log
  *  (`log.local.txt`), opened in a pane beside it. The log button is disabled
@@ -107,23 +116,21 @@ export const APP_CLAIM: PathClaim = {
         void appsCap.init(remote, { path }).catch((e: unknown) => console.warn('[apps]', e)),
     },
   ],
-  // `holi apps init`'s scaffold. Opening its entry expands the bundle.
+  // The person says what the app is for and the agent writes it, named by
+  // it: an empty scaffold is a page nobody knows how to fill. The session
+  // comes forward, and the agent opens the app once it is finished.
   create: {
     id: 'app',
-    label: 'New app',
+    label: 'New app…',
     icon: AppWindow,
-    placeholder: 'App name',
-    run: async ({ remote, parent, name }) => {
-      const file = name.endsWith(APP_SUFFIX) ? name : `${name}${APP_SUFFIX}`
-      const bundle = parent === '' ? file : `${parent}/${file}`
-      // A refusal (a name that is no app) opens nothing.
-      return appsCap.init(remote, { path: bundle }).then(
-        () => `${bundle}/${ENTRY}`,
-        (e: unknown) => {
-          console.warn('[apps]', e)
-          return null
-        },
-      )
+    placeholder: 'What should the app do?',
+    asksName: true,
+    agent: true,
+    run: async ({ parent, name, agent }) => {
+      if (agent === null) return null
+      const result = await agent.start({ name, prompt: newAppPrompt(parent, name) })
+      if (!result.ok) toast.error(result.message)
+      return null
     },
   },
 }

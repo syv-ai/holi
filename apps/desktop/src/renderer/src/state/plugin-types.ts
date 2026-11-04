@@ -96,9 +96,17 @@ export interface ClaimCreate {
   /** A web address dropped on the tree from a browser is made with this,
    *  the address as its name, in the folder it lands in. */
   fromUrl?: true
-  /** Make it, named `name`, in the folder `parent` ('' for the root). Resolves
-   *  to a vault path to open, or null. */
-  run(ctx: { remote: string; parent: string; name: string }): Promise<string | null>
+  /** The agent makes it, so the menu offers it only while a plugin provides
+   *  one, and `run` gets that agent. */
+  agent?: true
+  /** Make it in the folder `parent` ('' for the root) from `name`, what its
+   *  field was given. Resolves to a vault path to open, or null. */
+  run(ctx: {
+    remote: string
+    parent: string
+    name: string
+    agent: AgentService | null
+  }): Promise<string | null>
 }
 
 /**
