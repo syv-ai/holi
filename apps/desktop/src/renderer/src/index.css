@@ -292,7 +292,7 @@
   --muted-foreground: oklch(0.8 0 0);
 }
 [data-platform='mac'][data-glass='clear'] {
-  --glass-chrome: 88%;
+  --glass-chrome: 82%;
   --glass-view: 85%;
 }
 [data-platform='mac'][data-glass='solid'] {
