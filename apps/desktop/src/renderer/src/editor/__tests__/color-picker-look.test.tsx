@@ -7,10 +7,11 @@
  * exactly the kind of thing that looks right in the source and is wrong on
  * screen, so it is pinned here rather than eyeballed.
  */
-import { render, waitFor } from '@/test/render'
+import { render } from '@/test/render'
 import { useEffect, useRef } from 'react'
 import { expect, test } from 'vitest'
 import { EditorState } from '@codemirror/state'
+import { ensureSyntaxTree } from '@codemirror/language'
 import { EditorView } from '@codemirror/view'
 import { THEME_FILE } from '@holi/shared'
 import { plainTextExtensions } from '../extensions'
@@ -20,10 +21,14 @@ function mount(doc: string): EditorView {
   function Host(): React.JSX.Element {
     const host = useRef<HTMLDivElement | null>(null)
     useEffect(() => {
-      view = new EditorView({
-        state: EditorState.create({ doc, extensions: plainTextExtensions(THEME_FILE) }),
-        parent: host.current!,
-      })
+      const state = EditorState.create({ doc, extensions: plainTextExtensions(THEME_FILE) })
+      // The color-picker plugin discovers decorations in its constructor. Finish
+      // CodeMirror's incremental parse first so this assertion tests the actual
+      // CSS-color widget, not whether a scheduled parse happened to run in time.
+      if (!ensureSyntaxTree(state, state.doc.length, 1000)) {
+        throw new Error('CodeMirror did not finish parsing the editor document')
+      }
+      view = new EditorView({ state, parent: host.current! })
       return () => view?.destroy()
     }, [])
     return <div ref={host} />
@@ -34,8 +39,7 @@ function mount(doc: string): EditorView {
 
 test('a hex in a CSS file gets the published swatch', async () => {
   const view = mount("[data-theme='dark'] {\n  --primary: #8b5cf6;\n}\n")
-  // CodeMirror can finish parsing on its scheduled work under suite load.
-  await waitFor(() => expect(view.dom.querySelector('.cm-css-color-picker-wrapper')).not.toBeNull())
+  expect(view.dom.querySelector('.cm-css-color-picker-wrapper')).not.toBeNull()
   view.destroy()
 })
 
