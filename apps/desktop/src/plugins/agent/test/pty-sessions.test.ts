@@ -240,7 +240,7 @@ describe('sessions Holi runs', () => {
     const first = setup('pi', store)
     const started = await first.sessions.start('pi', {})
     if (!started.ok) throw new Error(started.message)
-    first.opened[0]!.onExit?.()
+    await first.sessions.stop(started.sessionId)
     await first.sessions.past()
     expect(history[0]).toMatchObject({ id: started.sessionId, provider: 'pi' })
     const conversationId = history[0]?.conversationId
@@ -263,14 +263,14 @@ describe('sessions Holi runs', () => {
     const first = setup('pi', store)
     const started = await first.sessions.start('pi', { name: 'Original' })
     if (!started.ok) throw new Error(started.message)
-    first.opened[0]!.onExit?.()
+    await first.sessions.stop(started.sessionId)
     await first.sessions.past()
 
     const reopened = setup('pi', store)
     const opening = reopened.sessions.reopen(started.sessionId, {})
     for (let i = 0; i < 10 && reopened.opened.length === 0; i++) await Promise.resolve()
     expect(reopened.opened).toHaveLength(1)
-    reopened.opened[0]!.onExit?.()
+    await reopened.sessions.stop(started.sessionId)
     expect(await opening).toMatchObject({ ok: true })
     expect(await reopened.sessions.past()).toEqual([
       expect.objectContaining({ id: started.sessionId, name: 'Original' }),
@@ -282,9 +282,29 @@ describe('sessions Holi runs', () => {
     const started = await t.sessions.start('pi', {})
     if (!started.ok) throw new Error(started.message)
     t.opened[0]!.onExit?.('Pi plan')
+    expect(t.sessions.has(started.sessionId)).toBe(true)
+    await t.sessions.stop(started.sessionId)
     expect(await t.sessions.past()).toEqual([
       expect.objectContaining({ id: started.sessionId, name: 'Pi plan' }),
     ])
+  })
+
+  it('keeps an exited Pi session open with its terminal attached until explicitly stopped', async () => {
+    const t = setup('pi')
+    const started = await t.sessions.start('pi', {})
+    if (!started.ok) throw new Error(started.message)
+
+    t.opened[0]!.onExit?.('Pi terminal title')
+
+    expect(t.sessions.has(started.sessionId)).toBe(true)
+    expect(t.sessions.terminalOf(started.sessionId)).toBe(started.terminalId)
+    expect(t.sessions.sessions()).toEqual([
+      expect.objectContaining({ id: started.sessionId, provider: 'pi', name: 'Pi terminal title' }),
+    ])
+    expect(await t.sessions.past()).toEqual([])
+
+    await t.sessions.stop(started.sessionId)
+    expect(t.sessions.has(started.sessionId)).toBe(false)
   })
 
   it('forks a live Pi conversation under a new UUID and does not persist native picker sessions', async () => {

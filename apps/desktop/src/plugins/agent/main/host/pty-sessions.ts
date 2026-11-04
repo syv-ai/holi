@@ -422,6 +422,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       command,
       notInstalled: provider.notInstalled,
       attach: id,
+      retainOnExit: provider.id === 'pi',
       ...(cols === undefined ? {} : { cols }),
       ...(rows === undefined ? {} : { rows }),
       ...(notice === undefined ? {} : { notice }),
@@ -446,6 +447,13 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         if (s === null || sessions.get(id) !== s) return
         const inTurn = s.signals.inTurn
         s.signals.dispose()
+        if (s.provider === 'pi' && fence === undefined) {
+          if (inTurn) deps.bracket(id, 'forget')
+          if (s.name === null && lastTitle !== undefined) s.name = nameOf(lastTitle)
+          s.attention = false
+          push()
+          return
+        }
         if (fence !== undefined) {
           s.exiting = true
           s.copying = true
@@ -608,6 +616,23 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       const s = sessions.get(id)
       if (s === undefined) return gone
       await deps.terminals.close(s.terminalId)
+      if (sessions.get(id) === s) {
+        sessions.delete(id)
+        push()
+        if (s.persistConversation && s.conversationId !== undefined) {
+          const closed: SessionSummary = {
+            id: s.id,
+            provider: s.provider,
+            name: nameFor(s),
+            state: 'idle',
+            startedAt: s.startedAt,
+            conversationId: s.conversationId,
+          }
+          await changePast((rows) =>
+            [closed, ...rows.filter((row) => row.id !== s.id)].slice(0, PAST_MAX),
+          )
+        }
+      }
       return { ok: true }
     },
 

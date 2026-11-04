@@ -55,6 +55,8 @@ export interface OpenArgs {
   notInstalled: string
   /** The session it is opened for; omitted for a background provider's list. */
   attach?: string
+  /** Keep an exited Pi terminal and its transcript until its session is closed. */
+  retainOnExit?: boolean
   /** What the person typed into it, as it goes to the PTY. */
   onInput?(data: string): void
   /** What the program printed. */
@@ -111,6 +113,8 @@ interface Terminal {
   onExit: ((title?: string) => void) | undefined
   /** False until a renderer has taken its state: output goes to the record only. */
   attached: boolean
+  retainOnExit: boolean
+  exited: boolean
   /** True once its TUI has printed and settled; pastes wait until then. */
   ready: boolean
   /** The settle timer is running. */
@@ -159,6 +163,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
       command,
       notInstalled,
       attach,
+      retainOnExit,
       onInput,
       onOutput,
       onExit,
@@ -186,6 +191,8 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
         onInput,
         onExit,
         attached: false,
+        retainOnExit: retainOnExit ?? false,
+        exited: false,
         ready: false,
         settling: false,
         pending: [],
@@ -208,8 +215,11 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
       })
       runtime.onExit((e) => {
         log(`terminal ${id} exited (code ${e.exitCode})`)
-        drop(t)
-        mirror.dispose()
+        t.exited = true
+        if (!t.retainOnExit) {
+          drop(t)
+          mirror.dispose()
+        }
         deps.emit(remote, 'pty-exit', { id, code: e.exitCode })
         pushList(remote)
         onExit?.(t.title)
@@ -248,20 +258,21 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
     write(id, data) {
       const t = terminals.get(id)
       if (t === undefined) return
+      if (t.exited) return
       t.onInput?.(data)
       t.runtime.write(data)
     },
 
     resize(id, cols, rows) {
       const t = terminals.get(id)
-      if (t === undefined) return
+      if (t === undefined || t.exited) return
       t.runtime.resize(cols, rows)
       t.mirror.resize(cols, rows)
     },
 
     paste(id, text) {
       const t = terminals.get(id)
-      if (t === undefined) return false
+      if (t === undefined || t.exited) return false
       if (t.ready) t.runtime.write(bracketedPaste(text))
       else t.pending.push(text)
       return true
