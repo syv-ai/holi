@@ -18,7 +18,8 @@ import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
 import { showAgentSessionAtom } from '@/state/agent-service'
 import { claudeFirstRunAtom } from '@/state/claude-first-run'
-import type { AgentRun } from '@/state/document-runs'
+import { useAgentLabel, type AgentRun } from '@/state/document-runs'
+import { agentProviderSettingAtom } from '@/state/settings'
 import { activeRemoteAtom } from '@/state/vaults'
 
 /** Where the person types what the agent should do: on the line they opened
@@ -26,7 +27,7 @@ import { activeRemoteAtom } from '@/state/vaults'
  *  Shift+Enter breaks the line, Escape closes. */
 export function AgentPrompt({
   initial = '',
-  heading = 'Ask AI to write or change this document',
+  task = 'write or change this document',
   placeholder = 'Draft an introduction, turn the list into a table…',
   onSubmit,
   onCancel,
@@ -34,13 +35,15 @@ export function AgentPrompt({
   /** Written in already, for the person to send or change: an app
    *  command's instruction. */
   initial?: string
-  /** What the prompt is for, above the field. */
-  heading?: string
+  /** What the agent is asked to do, above the field after "Ask <agent> to"
+   *  ("Ask AI to" until the agent's name is known). */
+  task?: string
   placeholder?: string
   onSubmit: (request: string) => void
   onCancel: () => void
 }) {
   const [text, setText] = useState(initial)
+  const agent = useAgentLabel(useAtomValue(agentProviderSettingAtom)) ?? 'AI'
   const send = () => {
     const request = text.trim()
     if (request !== '') onSubmit(request)
@@ -52,7 +55,7 @@ export function AgentPrompt({
       <InputGroupAddon align="block-start">
         <InputGroupText className="text-primary">
           <SparklesIcon aria-hidden="true" />
-          {heading}
+          Ask {agent} to {task}
         </InputGroupText>
       </InputGroupAddon>
       <InputGroupTextarea

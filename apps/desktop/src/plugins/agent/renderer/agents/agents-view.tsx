@@ -360,6 +360,7 @@ function SessionView({ id }: { id: string }): React.JSX.Element {
     <SessionTerminal
       key={terminalId}
       terminalId={terminalId}
+      provider={session?.provider as 'pi' | 'claude' | 'codex' | undefined}
       visible
       onGeometry={(cols, rows) => setGeometry({ cols, rows })}
     />
