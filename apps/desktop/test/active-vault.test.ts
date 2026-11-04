@@ -2415,6 +2415,101 @@ describe('VaultHost', () => {
     }
   })
 
+  it('orders targeted close and reopen behind a visible open awaiting preparation', async () => {
+    const { registry } = await twoVaults()
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let preparing = true
+    const h = createVaultHost({
+      registry,
+      beforeOpen: async () => {
+        if (preparing) {
+          preparing = false
+          entered()
+          await gate
+        }
+      },
+      claims: CLAIMS,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    try {
+      const visibleOpen = h.open('syv-ai/a')
+      await started
+      const close = h.close('syv-ai/a')
+      const reopen = h.open('syv-ai/a')
+      release()
+      await visibleOpen
+      await close
+      const reopened = await reopen
+      expect(h.get('syv-ai/a')).toBe(reopened)
+      expect(h.active()).toBe(reopened)
+    } finally {
+      release()
+    }
+  })
+
+  it('closeAll drains an already-running targeted close', async () => {
+    const { registry } = await twoVaults()
+    const { h } = host(registry)
+    const runtime = await h.getOrOpen('syv-ai/a')
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const close = runtime.close.bind(runtime)
+    runtime.close = async () => {
+      entered()
+      await gate
+      await close()
+    }
+    try {
+      const targeted = h.close('syv-ai/a')
+      await started
+      let allDone = false
+      const all = h.closeAll().then(() => {
+        allDone = true
+      })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(allDone).toBe(false)
+      release()
+      await Promise.all([targeted, all])
+      expect(allDone).toBe(true)
+    } finally {
+      release()
+    }
+  })
+
+  it('isolates throwing selection replay observers and keeps the runtime closable', async () => {
+    const { registry } = await twoVaults()
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      onSnapshot: () => {
+        throw new Error('renderer observer failed')
+      },
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    await expect(h.open('syv-ai/a')).resolves.toMatchObject({ remote: 'syv-ai/a' })
+    expect(h.active()?.remote).toBe('syv-ai/a')
+    await h.close('syv-ai/a')
+    expect(h.get('syv-ai/a')).toBeNull()
+  })
+
   it('coalesces concurrent closeAll and closes remaining runtimes after one teardown fails', async () => {
     const { registry } = await twoVaults()
     const h = createVaultHost({
