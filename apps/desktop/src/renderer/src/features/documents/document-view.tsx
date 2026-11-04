@@ -20,7 +20,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
-import { differsBeyondTidy, holiLink, isHoliLinkable, isResolved } from '@holi/shared'
+import {
+  differsBeyondTidy,
+  holiLink,
+  isHoliLinkable,
+  isResolved,
+  parseTaskFile,
+} from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { findNext, findPrev } from 'prosemirror-search'
 import { EditorContent, Extension, useEditor } from '@tiptap/react'
@@ -557,6 +563,9 @@ function DocumentEditor({
     setDoneError(null)
     try {
       await saveRef.current()
+      // A clean buffer may not write at all. Check the serialized header only
+      // after the queued save so validation sees the latest task text.
+      parseTaskFile(markdown(), path)
       // A vault switch or any workspace change while the write was pending
       // makes the original close stale. Never act on the newly active workspace.
       if (

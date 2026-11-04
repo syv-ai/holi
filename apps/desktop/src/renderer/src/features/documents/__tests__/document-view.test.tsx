@@ -223,6 +223,53 @@ test('Done saves the latest task text before closing its unsplit tab', async () 
   })
 })
 
+test('Done keeps a clean task open when its YAML is malformed', async () => {
+  const user = userEvent.setup()
+  openTask('---\ntags: [\n---\n\n# Task\n')
+  await editorBox(TASK_PATH)
+
+  await user.click(screen.getByRole('button', { name: 'Done' }))
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('frontmatter is not valid YAML')
+  expect(store.get(shellWorkspaceAtom).entries).toContain(TASK_PATH)
+  expect(write).not.toHaveBeenCalled()
+})
+
+test('Done saves a body edit but keeps the task open when its YAML is malformed', async () => {
+  const user = userEvent.setup()
+  openTask('---\ntags: [\n---\n\n# Task\n')
+  const box = await editorBox(TASK_PATH)
+  ;(box as WithEditor).editor.commands.insertContent('Edited body')
+
+  await user.click(screen.getByRole('button', { name: 'Done' }))
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('frontmatter is not valid YAML')
+  expect(store.get(shellWorkspaceAtom).entries).toContain(TASK_PATH)
+  expect(write).toHaveBeenCalledOnce()
+  expect(files.get(TASK_PATH)).toContain('Edited body')
+})
+
+test('Done keeps a task open when a known frontmatter field is invalid', async () => {
+  const user = userEvent.setup()
+  openTask('---\nstatus: []\n---\n\n# Task\n')
+  await editorBox(TASK_PATH)
+
+  await user.click(screen.getByRole('button', { name: 'Done' }))
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('status must be a word')
+  expect(store.get(shellWorkspaceAtom).entries).toContain(TASK_PATH)
+})
+
+test('Done accepts a valid task without frontmatter', async () => {
+  const user = userEvent.setup()
+  openTask('# Task\n')
+  await editorBox(TASK_PATH)
+
+  await user.click(screen.getByRole('button', { name: 'Done' }))
+
+  await waitFor(() => expect(store.get(shellWorkspaceAtom).entries).toHaveLength(0))
+})
+
 test('Done closes only its member of a split', async () => {
   const user = userEvent.setup()
   openTask()
