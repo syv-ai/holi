@@ -107,6 +107,11 @@ const activeSessionAtom = atom<AgentSession | null>((get) => {
     id === null ? null : (sessions.find((s) => s.id === id) ?? null)
   const tabId = get(activeSurfaceIdAtom(AGENT_SURFACE))
   if (tabId !== null) {
+    // Session tabs carry their owner selection (`session:<id>`); they identify
+    // the session directly, unlike surface tabs which identify a terminal.
+    const selectedSessionId = tabId.startsWith('session:') ? tabId.slice(8) : tabId
+    const selectedSession = byId(selectedSessionId)
+    if (selectedSession !== null) return selectedSession
     const shown = byId(terminals.find((t) => t.id === tabId)?.launchedFor ?? null)
     if (shown !== null) return shown
   }

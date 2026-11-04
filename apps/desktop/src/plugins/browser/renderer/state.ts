@@ -43,6 +43,7 @@ export const tabLooksAtom = atom((get): readonly SurfaceTabLook[] =>
 )
 
 const SAVED = 'holi.browser.addresses'
+const SAVED_LIMIT = 50
 
 /** Each tab's last address, by id. Empty when storage cannot be read. */
 function savedAddresses(): Record<string, string> {
@@ -189,8 +190,14 @@ export function browserVault(remote: string, store: PluginStore): () => void {
       )
     }
     const saved = savedAddresses()
-    for (const p of list) if (p.url !== '') saved[p.id] = p.url
-    for (const id of gone) delete saved[id]
+    for (const p of list) {
+      if (p.url === '') continue
+      delete saved[p.id]
+      saved[p.id] = p.url
+    }
+    // Keep recently used addresses after a shell tab closes, but bound the
+    // local cache rather than turning it into an unbounded browsing history.
+    for (const id of Object.keys(saved).slice(0, -SAVED_LIMIT)) delete saved[id]
     saveAddresses(saved)
   })
 
@@ -198,10 +205,26 @@ export function browserVault(remote: string, store: PluginStore): () => void {
   // change of this vault's tabs, so a tab moved into or out of a split is
   // not a close, and neither is switching to another vault.
   let open = new Set(store.get(tabs))
+  const reopening = new Map<string, Promise<void>>()
   const offTabs = store.sub(tabs, () => {
     const now = new Set(store.get(tabs))
     for (const id of open)
-      if (!now.has(id)) void browserCap.close(remote, { tab: id }).catch(() => {})
+      if (!now.has(id) && !reopening.has(id))
+        void browserCap.close(remote, { tab: id }).catch(() => {})
+    for (const id of now) {
+      if (open.has(id) || reopening.has(id) || pages.has(id)) continue
+      const url = savedAddresses()[id]
+      if (url === undefined) continue
+      const pending = browserCap
+        .open(remote, { reopen: id, url, shown: true })
+        .then(async () => {
+          if (stopped || !store.get(tabs).includes(id))
+            await browserCap.close(remote, { tab: id }).catch(() => {})
+        })
+        .catch(() => undefined)
+        .finally(() => reopening.delete(id))
+      reopening.set(id, pending)
+    }
     open = now
   })
 

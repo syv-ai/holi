@@ -1566,6 +1566,16 @@ export function createRouter(deps: RouterDeps) {
       activeOrThrow().repo.log({ limit: HISTORY_LIMIT }),
     ),
 
+    /** A named history target, which may predate the recent-list cap. */
+    commit: t.procedure
+      .input(fields({ sha: 'string' }))
+      .query(async ({ input }): Promise<Commit | null> => {
+        if (!/^[0-9a-f]{40,64}$/i.test(input.sha)) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid commit SHA' })
+        }
+        return activeOrThrow().repo.commit(input.sha)
+      }),
+
     /** What changed lately, for Home's feed: the newest commits, each with
      *  the paths it touched (at most `ACTIVITY_FILES` of them, and how many in
      *  all). Read from git on asking, never kept. */

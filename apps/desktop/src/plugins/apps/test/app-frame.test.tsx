@@ -16,6 +16,16 @@ import userEvent from '@testing-library/user-event'
 import { activeRemoteAtom, snapshotAtom } from '@/plugin-api'
 import { AppFrame } from '../renderer/app-frame'
 import { appOpensAtom } from '../renderer/apps'
+import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
+
+const approvalCommit = vi.hoisted(() => ({
+  sha: 'a'.repeat(40),
+  author: 'Ada',
+  date: '2026-01-01T00:00:00Z',
+  login: null as string | null,
+}))
+const approvalStatus = vi.hoisted(() => ({ needsApproval: false }))
+let fakeHoli: FakeHoli
 
 /** Main's side of the app door, answering the way the registry would. */
 const bridgeMock = vi.fn((input: { remote: string; method: string }): Promise<unknown> => {
@@ -30,7 +40,12 @@ vi.mock('../renderer/apps-cap', () => ({
   appsCap: {
     call: (remote: string, input: { method: string }) => bridgeMock({ remote, ...input }),
     // No `dangerously-allow` reads to approve, so the frame mounts at once.
-    grants: () => Promise.resolve({ codeHash: 'h', affordances: [] }),
+    grants: () =>
+      Promise.resolve({
+        codeHash: 'h',
+        affordances: approvalStatus.needsApproval ? [{ affordance: 'mail', granted: false }] : [],
+        ...(approvalStatus.needsApproval ? { added: approvalCommit, lastChange: null } : {}),
+      }),
     log: () => Promise.resolve(true),
   },
 }))
@@ -63,6 +78,17 @@ function withApps(...bundles: string[]) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  approvalStatus.needsApproval = false
+  fakeHoli?.restore()
+  fakeHoli = installFakeHoli((op) => {
+    if (op.path === 'history.list') return []
+    if (op.path === 'history.commit') {
+      expect(op.input).toEqual({ sha: approvalCommit.sha })
+      return { ...approvalCommit, subject: 'create app', added: 1, removed: 0 }
+    }
+    if (op.path === 'github.fileContributors') return []
+    return undefined
+  })
   closed.length = 0
   withApps('Team/Retro.app')
 })
@@ -75,6 +101,21 @@ async function renderApp() {
   render(<AppFrame path="Team/Retro.app" />)
   await waitFor(() => expect(document.querySelector('iframe')).not.toBeNull())
 }
+
+test('approval authorship opens its exact history target outside the recent list', async () => {
+  approvalStatus.needsApproval = true
+  const user = userEvent.setup()
+  render(<AppFrame path="Team/Retro.app" />)
+  const commitLink = await screen.findByRole('button', { name: approvalCommit.sha.slice(0, 7) })
+  await user.click(commitLink)
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'create app' })).toBeTruthy())
+  expect(fakeHoli.calls).toContainEqual({
+    path: 'history.commit',
+    input: { sha: approvalCommit.sha },
+  })
+  await user.click(screen.getByRole('button', { name: /all commits/i }))
+  expect(screen.getByRole('heading', { name: 'Commits' })).toBeTruthy()
+})
 
 /** A message as the frame itself would send it. */
 function fromFrame(data: unknown, source: Window | null = frameOf().contentWindow) {

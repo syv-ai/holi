@@ -102,7 +102,11 @@ export function activeSurfaceIdAtom(surface: string): Atom<string | null> {
   if (made === undefined) {
     made = atom((get) => {
       const key = focusedTab(get(shellWorkspaceAtom))
-      return key === null ? null : surfaceIdOf(key, surface)
+      if (key === null) return null
+      const id = surfaceIdOf(key, surface)
+      if (id !== null) return id
+      const tab = parseTabKey(key)
+      return tab?.kind === 'session' && tab.owner === surface ? tab.id : null
     })
     activeIdAtoms.set(surface, made)
   }
