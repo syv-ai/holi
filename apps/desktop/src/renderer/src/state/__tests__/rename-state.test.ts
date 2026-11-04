@@ -14,8 +14,11 @@ import { emptyVaultSnapshot, type VaultSnapshot } from '@holi/shared'
 import { FileView } from '@/features/files/file-view'
 import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
 import { act, render, waitFor } from '@/test/render'
-import { activeRemoteAtom, renameNoteAtom } from '@/state/vaults'
+import { activeRemoteAtom, renameNoteAtom, moveNotesAtom, deleteManyAtom } from '@/state/vaults'
 import { emptyWorkspace, openTab, workspaceAtom } from '@/state/panes'
+
+Range.prototype.getBoundingClientRect ??= () => new DOMRect()
+Range.prototype.getClientRects ??= () => [] as unknown as DOMRectList
 
 let holi: FakeHoli | null = null
 afterEach(() => {
@@ -73,6 +76,80 @@ describe('renameNoteAtom', () => {
     })
     expect(store.get(workspaceAtom).panes[0]!.tabs).toEqual([{ kind: 'note', path: 'sub/new.txt' }])
   })
+
+  it.each(['rename', 'move', 'delete'] as const)(
+    'blocks edits during %s without a ghost write',
+    async (operation) => {
+      let releaseCommit!: () => void
+      let releaseMutation!: () => void
+      let committing = false
+      let mutating = false
+      let commits = 0
+      const commit = new Promise<void>((resolve) => {
+        releaseCommit = resolve
+      })
+      const mutation = new Promise<void>((resolve) => {
+        releaseMutation = resolve
+      })
+      holi = installFakeHoli((op) => {
+        if (op.path === 'notes.read') return 'a\n'
+        if (op.path === 'history.list' || op.path === 'github.fileContributors') return []
+        if (op.path === 'sync.commitNow' && ++commits === 1) {
+          committing = true
+          return commit
+        }
+        if (['notes.rename', 'notes.move', 'notes.deleteMany'].includes(op.path)) {
+          mutating = true
+          return mutation
+        }
+        if (op.path === 'vaults.snapshot') return emptySnapshot()
+        return undefined
+      })
+      const store = createStore()
+      store.set(activeRemoteAtom, 'syv-ai/notes')
+      const view = render(
+        createElement(Provider, { store }, createElement(FileView, { path: 'old.txt' })),
+      )
+      const editor = await waitFor(() => {
+        const node = document.querySelector<HTMLElement>('.cm-content')
+        if (node === null) throw new Error('editor not ready')
+        return EditorView.findFromDOM(node)!
+      })
+      const action =
+        operation === 'rename'
+          ? () => store.set(renameNoteAtom, { from: 'old.txt', to: 'new.txt' })
+          : operation === 'move'
+            ? () => store.set(moveNotesAtom, { moves: [{ from: 'old.txt', to: 'new.txt' }] })
+            : () => store.set(deleteManyAtom, { paths: ['old.txt'] })
+      const pending = action()
+      try {
+        await waitFor(() => expect(committing).toBe(true))
+        act(() =>
+          editor.dispatch({
+            changes: { from: 0, to: editor.state.doc.length, insert: 'during commit\n' },
+          }),
+        )
+        releaseCommit()
+        await waitFor(() => expect(mutating).toBe(true))
+        expect(editor.contentDOM).toHaveAttribute('contenteditable', 'false')
+        act(() => editor.dispatch({ changes: { from: 0, insert: 'ghost' } }))
+        expect(editor.state.doc.toString()).toBe('during commit\n')
+        releaseMutation()
+        await act(() => pending)
+        view.unmount()
+        await act(() => new Promise((resolve) => setTimeout(resolve, 700)))
+        const writes = holi.calls.filter((op) => op.path === 'notes.write')
+        expect(writes.map((op) => op.input)).toEqual([
+          { remote: 'syv-ai/notes', path: 'old.txt', text: 'during commit\n' },
+        ])
+      } finally {
+        releaseCommit()
+        releaseMutation()
+        await pending
+        view.unmount()
+      }
+    },
+  )
 
   it('is a no-op with no vault open', async () => {
     holi = installFakeHoli()

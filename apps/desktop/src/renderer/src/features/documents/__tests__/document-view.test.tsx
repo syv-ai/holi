@@ -13,7 +13,7 @@ import { atom, createStore, Provider } from 'jotai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { act, fireEvent, render, screen, waitFor, within } from '@/test/render'
-import { flushAllBuffers } from '@/lib/buffer-registry'
+import { flushAllBuffers, freezeBuffers } from '@/lib/buffer-registry'
 import * as agentService from '@/state/agent-service'
 import { installedPluginsAtom } from '@/state/plugins'
 import type { ConversationStart } from '@/state/plugin-types'
@@ -47,10 +47,10 @@ vi.mock('@/lib/trpc', () => ({
         query: ({ path }: { path: string }) => Promise.resolve(files.get(path) ?? ''),
       },
       write: {
-        mutate: (input: { path: string; text: string }) => {
+        mutate: async (input: { path: string; text: string }) => {
+          await write(input)
           files.set(input.path, input.text)
-          write(input)
-          return Promise.resolve({ ok: true })
+          return { ok: true }
         },
       },
     },
@@ -481,6 +481,77 @@ test('the commit tidy leaves the caret, and the space before it, where they are'
   expect(editor.state.selection.$from.parent.textContent).toBe('Alpha hello ')
   // The untidied buffer is nothing new, so it is not written back.
   expect(write).toHaveBeenCalledTimes(1)
+})
+
+test('flush retries a rejected autosave and propagates a persistent write failure', async () => {
+  open('# Plan\n')
+  const editor = ((await editorBox()) as WithEditor).editor
+  act(() => editor.commands.insertContent('draft'))
+  write.mockRejectedValueOnce(new Error('offline'))
+  await act(() => new Promise((resolve) => setTimeout(resolve, 650)))
+  expect(write).toHaveBeenCalledTimes(1)
+  write.mockRejectedValueOnce(new Error('still offline'))
+  await expect(act(() => flushAllBuffers())).rejects.toThrow('still offline')
+  expect(write).toHaveBeenCalledTimes(2)
+})
+
+test('flush waits for an in-flight autosave then writes an undo to the saved baseline', async () => {
+  files.set(PATH, '# Plan\n\nO\n')
+  open('# Plan\n\nO\n')
+  const editor = ((await editorBox()) as WithEditor).editor
+  let release!: () => void
+  write.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)))
+  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, 'A'))
+  await act(() => new Promise((resolve) => setTimeout(resolve, 650)))
+  expect(write).toHaveBeenCalledTimes(1)
+  act(() => editor.commands.undo())
+  let flushed = false
+  const pending = act(async () => {
+    await flushAllBuffers()
+    flushed = true
+  })
+  const concurrent = flushAllBuffers()
+  expect(flushed).toBe(false)
+  release()
+  await pending
+  await concurrent
+  expect(write).toHaveBeenCalledTimes(2)
+  expect(write).toHaveBeenLastCalledWith(expect.objectContaining({ text: '# Plan\n\nO\n' }))
+})
+
+test('a save freeze blocks document commands while allowing external reloads', async () => {
+  open('# Plan\n\nO\n')
+  const editor = ((await editorBox()) as WithEditor).editor
+  const release = freezeBuffers()
+  try {
+    expect(editor.isEditable).toBe(false)
+    act(() => editor.commands.insertContentAt(editor.state.doc.content.size, 'ghost'))
+    expect(editor.getMarkdown()).not.toContain('ghost')
+    changeOnDisk('# Plan\n\nExternal\n', '2026-10-23T10:00:06Z')
+    await waitFor(() => expect(editor.getMarkdown()).toContain('External'))
+    await act(() => flushAllBuffers())
+    expect(write).not.toHaveBeenCalled()
+  } finally {
+    act(() => release())
+  }
+  expect(editor.isEditable).toBe(true)
+})
+
+test('a captured document write survives unmount and is followed by an undo snapshot', async () => {
+  files.set(PATH, '# Plan\n\nO\n')
+  const view = open('# Plan\n\nO\n')
+  const editor = ((await editorBox()) as WithEditor).editor
+  let release!: () => void
+  write.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)))
+  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, 'A'))
+  await act(() => new Promise((resolve) => setTimeout(resolve, 650)))
+  expect(write).toHaveBeenCalledTimes(1)
+  act(() => editor.commands.undo())
+  const pending = act(() => flushAllBuffers())
+  view.unmount()
+  release()
+  await pending
+  expect(write).toHaveBeenLastCalledWith(expect.objectContaining({ text: '# Plan\n\nO\n' }))
 })
 
 test('a flush writes a pending edit at once, and a rename after it writes nothing to the old path', async () => {

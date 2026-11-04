@@ -15,7 +15,7 @@
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { fileKind } from '@holi/shared'
-import { EditorState } from '@codemirror/state'
+import { Annotation, Compartment, EditorState, Prec } from '@codemirror/state'
 import { findNext, findPrevious } from '@codemirror/search'
 import { EditorView, highlightActiveLineGutter, lineNumbers } from '@codemirror/view'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -84,6 +84,7 @@ type SaveState = 'saved' | 'saving' | 'held' | 'error'
 
 /** How long after the last keystroke a text file is written. */
 const SAVE_DELAY_MS = 600
+const externalReload = Annotation.define<boolean>()
 
 const SAVE_LABEL: Record<SaveState, string> = {
   saved: 'Saved',
@@ -128,6 +129,8 @@ function TextEditor({
   const viewRef = useRef<EditorView | null>(null)
   const lastText = useRef(text)
   const saveTimer = useRef<number | undefined>(undefined)
+  const dirty = useRef(false)
+  const writing = useRef<Promise<void>>(Promise.resolve())
   const callbacks = useRef({ onSaved, onSaveState })
   callbacks.current = { onSaved, onSaveState }
   const [view, setView] = useState<EditorView | null>(null)
@@ -149,24 +152,35 @@ function TextEditor({
     const clamp = (at: number) => Math.min(Math.max(at, 0), length)
 
     /** Write the text now; `gated` holds it back while its syntax is broken. */
-    async function write(view: EditorView, gated: boolean) {
+    function write(view: EditorView, gated: boolean, captured = false): Promise<void> {
       window.clearTimeout(saveTimer.current)
       saveTimer.current = undefined
-      const next = view.state.doc.toString()
-      if (next === lastText.current) return callbacks.current.onSaveState('saved')
-      if (gated && !syntaxValid(path, next)) return callbacks.current.onSaveState('held')
-      callbacks.current.onSaveState('saving')
-      try {
-        await trpc.notes.write.mutate({ remote: remote!, path, text: next })
-        lastText.current = next
-        callbacks.current.onSaved(next)
-        callbacks.current.onSaveState('saved')
-      } catch {
-        callbacks.current.onSaveState('error')
-      }
+      const done = writing.current.then(async () => {
+        const next = view.state.doc.toString()
+        if ((!dirty.current && !captured) || next === lastText.current) {
+          dirty.current = false
+          return callbacks.current.onSaveState('saved')
+        }
+        if (gated && !syntaxValid(path, next)) return callbacks.current.onSaveState('held')
+        callbacks.current.onSaveState('saving')
+        try {
+          await trpc.notes.write.mutate({ remote: remote!, path, text: next })
+          lastText.current = next
+          dirty.current = view.state.doc.toString() !== next || (captured && dirty.current)
+          callbacks.current.onSaved(next)
+          callbacks.current.onSaveState(dirty.current ? 'saving' : 'saved')
+        } catch (error) {
+          callbacks.current.onSaveState('error')
+          throw error
+        }
+      })
+      writing.current = done.catch(() => undefined)
+      return done
     }
     const save = (view: EditorView) => write(view, true)
 
+    const editable = new Compartment()
+    const frozen = { current: false }
     const view = new EditorView({
       parent: host,
       state: EditorState.create({
@@ -180,6 +194,12 @@ function TextEditor({
           highlightActiveLineGutter(),
           ...codeLook(path),
           codeFind(),
+          Prec.highest(editable.of([EditorState.readOnly.of(false), EditorView.editable.of(true)])),
+          EditorState.transactionFilter.of((transaction) =>
+            frozen.current && transaction.docChanged && !transaction.annotation(externalReload)
+              ? []
+              : transaction,
+          ),
           EditorView.updateListener.of((update) => {
             const next = codeFindCount(update.state)
             setCount((was) =>
@@ -207,9 +227,17 @@ function TextEditor({
                 return same ? was : { path, lines: { startLine: start.number, endLine } }
               })
             }
-            if (!update.docChanged) return
+            if (
+              !update.docChanged ||
+              update.transactions.some((tr) => tr.annotation(externalReload))
+            )
+              return
+            dirty.current = true
             window.clearTimeout(saveTimer.current)
-            saveTimer.current = window.setTimeout(() => void save(update.view), SAVE_DELAY_MS)
+            saveTimer.current = window.setTimeout(
+              () => void save(update.view).catch(() => undefined),
+              SAVE_DELAY_MS,
+            )
           }),
         ],
       }),
@@ -229,8 +257,17 @@ function TextEditor({
     // A rename, move, delete, vault switch or quit writes the edit first, to
     // the path it was typed at, broken syntax and all; ⌘S keeps the gate.
     const unregister = registerBuffer(
-      () => write(view, false),
+      () => write(view, false, true),
       () => save(view),
+      (value) => {
+        frozen.current = value
+        view.dispatch({
+          effects: editable.reconfigure([
+            EditorState.readOnly.of(value),
+            EditorView.editable.of(!value),
+          ]),
+        })
+      },
     )
     return () => {
       unregister()
@@ -238,7 +275,7 @@ function TextEditor({
       // Leaving the editor writes what is pending, and leaves what it showed
       // for its tab to be compared to (`doc-changes.ts`).
       sawText(remote, path, view.state.doc.toString())
-      if (saveTimer.current !== undefined) void save(view)
+      if (dirty.current) void save(view).catch(() => undefined)
       view.destroy()
       viewRef.current = null
       setView(null)
@@ -250,10 +287,11 @@ function TextEditor({
   useEffect(() => {
     const view = viewRef.current
     if (view === null || text === lastText.current) return
-    if (saveTimer.current !== undefined) return
+    if (dirty.current) return
     lastText.current = text
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: text },
+      annotations: externalReload.of(true),
     })
   }, [text])
 

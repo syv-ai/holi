@@ -1,9 +1,10 @@
 /**
  * Closing panes and switching vaults as atoms, so that a command can drive
- * them. What these pin: a close lands at once, and a switch still asks.
+ * them. A close waits for persistence, not motion; a switch still asks.
  */
 import { atom, createStore } from 'jotai'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { registerBuffer } from '@/lib/buffer-registry'
 
 import { installedPluginsAtom } from '@/state/plugins'
 import { closeActiveTabAtom, closeTabAtom } from '@/state/pane-exit'
@@ -29,53 +30,98 @@ function split(): Workspace {
 }
 
 describe('closing the last tab of a split', () => {
-  it('takes the pane at once: a close never waits on motion', () => {
+  it('takes the pane after saving, without waiting on motion', async () => {
     const store = createStore()
     store.set(workspaceAtom, split())
 
-    store.set(closeTabAtom, 1, 0)
+    await store.set(closeTabAtom, 1, 0)
 
     expect(store.get(workspaceAtom).panes).toHaveLength(1)
   })
 })
 
+describe('saving before closing', () => {
+  it('keeps the tab mounted until the write completes', async () => {
+    const store = createStore()
+    store.set(workspaceAtom, split())
+    let finish!: () => void
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const freeze = vi.fn()
+    const unregister = registerBuffer(() => pending, undefined, freeze)
+    try {
+      const closing = store.set(closeTabAtom, 1, 0)
+      expect(store.get(workspaceAtom).panes).toHaveLength(2)
+      expect(freeze).toHaveBeenCalledWith(true)
+      finish()
+      await closing
+      expect(store.get(workspaceAtom).panes).toHaveLength(1)
+      expect(freeze).toHaveBeenLastCalledWith(false)
+    } finally {
+      finish()
+      unregister()
+    }
+  })
+
+  it('retains the tab on failure and permits a later close retry', async () => {
+    const store = createStore()
+    store.set(workspaceAtom, split())
+    const save = vi.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValue(undefined)
+    const freeze = vi.fn()
+    const unregister = registerBuffer(save, undefined, freeze)
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      await store.set(closeActiveTabAtom)
+      expect(store.get(workspaceAtom).panes).toHaveLength(2)
+      expect(freeze).toHaveBeenLastCalledWith(false)
+      await store.set(closeActiveTabAtom)
+      expect(store.get(workspaceAtom).panes).toHaveLength(1)
+      expect(save).toHaveBeenCalledTimes(2)
+    } finally {
+      unregister()
+      log.mockRestore()
+    }
+  })
+})
+
 describe('closing a tab that does not empty its pane', () => {
-  it('applies at once', () => {
+  it('applies after saving', async () => {
     const store = createStore()
     store.set(workspaceAtom, openPreview(openPreview(emptyWorkspace(), 'a.md'), 'b.md'))
 
-    store.set(closeTabAtom, 0, 1)
+    await store.set(closeTabAtom, 0, 1)
 
     expect(store.get(workspaceAtom).panes[0]!.tabs).toHaveLength(1)
   })
 })
 
 describe('⌘W', () => {
-  it('closes the focused pane’s active tab', () => {
+  it('closes the focused pane’s active tab', async () => {
     const store = createStore()
     store.set(workspaceAtom, split())
 
-    store.set(closeActiveTabAtom)
+    await store.set(closeActiveTabAtom)
 
     expect(store.get(workspaceAtom).panes).toHaveLength(1)
   })
 
-  it('takes an empty pane out of a split: ⌘\\ then ⌘W', () => {
+  it('takes an empty pane out of a split: ⌘\\ then ⌘W', async () => {
     const store = createStore()
     store.set(workspaceAtom, splitPane(openPreview(emptyWorkspace(), 'a.md')))
 
-    store.set(closeActiveTabAtom)
+    await store.set(closeActiveTabAtom)
 
     expect(store.get(workspaceAtom).panes).toHaveLength(1)
     expect(store.get(workspaceAtom).active).toBe(0)
   })
 
-  it('does nothing with nothing open', () => {
+  it('does nothing with nothing open', async () => {
     const store = createStore()
     const one = emptyWorkspace()
     store.set(workspaceAtom, one)
 
-    store.set(closeActiveTabAtom)
+    await store.set(closeActiveTabAtom)
 
     expect(store.get(workspaceAtom)).toEqual(one)
   })

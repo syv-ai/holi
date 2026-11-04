@@ -16,7 +16,8 @@
  * Shell's add-vault gesture.
  */
 import { atom } from 'jotai'
-import { flushAllBuffers } from '@/lib/buffer-registry'
+import { flushSync } from 'react-dom'
+import { flushAllBuffers, freezeBuffers } from '@/lib/buffer-registry'
 import { emptyWorkspace, workspaceAtom } from './panes'
 import { leaveReasonsAtom } from './plugins'
 import { activeRemoteAtom } from './vaults'
@@ -33,9 +34,16 @@ export const leavingVaultAtom = atom<LeavingVault>(null)
  */
 export const applyVaultSwitchAtom = atom(null, async (_get, set, remote: string): Promise<void> => {
   set(leavingVaultAtom, null)
-  await flushAllBuffers()
-  set(workspaceAtom, emptyWorkspace())
-  set(activeRemoteAtom, remote)
+  const release = freezeBuffers()
+  try {
+    await flushAllBuffers()
+    flushSync(() => {
+      set(workspaceAtom, emptyWorkspace())
+      set(activeRemoteAtom, remote)
+    })
+  } finally {
+    release()
+  }
 })
 
 /** Switch to `remote`, asking first when leaving would cost something. */

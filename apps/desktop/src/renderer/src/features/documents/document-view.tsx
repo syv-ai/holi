@@ -23,7 +23,8 @@ import { toast } from 'sonner'
 import { differsBeyondTidy, holiLink, isHoliLinkable, isResolved } from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { findNext, findPrev } from 'prosemirror-search'
-import { EditorContent, useEditor } from '@tiptap/react'
+import { EditorContent, Extension, useEditor } from '@tiptap/react'
+import { Plugin } from '@tiptap/pm/state'
 
 import { DeleteTableDialog } from '@/features/documents/rich-text/delete-table-dialog'
 import { RichTextBlockActions } from '@/features/documents/rich-text/rich-text-block-actions'
@@ -194,8 +195,12 @@ function DocumentEditor({
   /** The file as last read or written: what a change on disk is compared to. */
   const lastText = useRef(initial.text)
   const saveTimer = useRef<number | undefined>(undefined)
-  /** The write under way, which a flush waits for. */
-  const writing = useRef<Promise<void> | undefined>(undefined)
+  const dirty = useRef(false)
+  /** Writes are serialized so each one compares against the prior completed write. */
+  const writing = useRef<Promise<void>>(Promise.resolve())
+  const frozen = useRef(false)
+  const lockedRef = useRef(locked)
+  lockedRef.current = locked
 
   // Callbacks the extensions hold, read through refs so the extensions are
   // made once per document.
@@ -212,6 +217,17 @@ function DocumentEditor({
 
   const extensions = useMemo(
     () => [
+      Extension.create({
+        name: 'saveFreeze',
+        addProseMirrorPlugins: () => [
+          new Plugin({
+            filterTransaction: (transaction) =>
+              !frozen.current ||
+              !transaction.docChanged ||
+              transaction.getMeta('preventUpdate') === true,
+          }),
+        ],
+      }),
       ...createDocumentExtensions({
         folder: parentOf(path),
         placeholder: 'Type / for commands, or Space to ask AI',
@@ -251,9 +267,13 @@ function DocumentEditor({
       },
       onUpdate: ({ transaction }) => {
         if (!transaction.docChanged || transaction.getMeta('preventUpdate')) return
+        dirty.current = true
         setSaveState('saving')
         window.clearTimeout(saveTimer.current)
-        saveTimer.current = window.setTimeout(() => void save(), SAVE_DELAY_MS)
+        saveTimer.current = window.setTimeout(
+          () => void save().catch(() => undefined),
+          SAVE_DELAY_MS,
+        )
       },
     },
     [extensions],
@@ -318,27 +338,38 @@ function DocumentEditor({
   function save(): Promise<void> {
     window.clearTimeout(saveTimer.current)
     saveTimer.current = undefined
-    const done = write()
-    writing.current = done
+    // Snapshot while the editor is alive. The queued write may run after this
+    // component unmounts (for example, closing a tab during an earlier write).
+    const text = markdown()
+    const done = writing.current.then(() => write(text, true))
+    writing.current = done.catch(() => undefined)
     return done
   }
 
-  async function write(): Promise<void> {
-    if (!editor || editor.isDestroyed) return
-    const text = markdown()
+  async function write(text: string, captured = false): Promise<void> {
     // Differing only by what the commit tidies away is nothing to save:
     // writing it would just be tidied again.
-    if (!differsBeyondTidy(lastText.current, text, path, claimsRef.current)) {
+    if (
+      (!dirty.current && !captured) ||
+      !differsBeyondTidy(lastText.current, text, path, claimsRef.current)
+    ) {
+      dirty.current = false
       setSaveState('saved')
       return
     }
+    setSaveState('saving')
     try {
       await trpc.notes.write.mutate({ remote, path, text })
       lastText.current = text
-      setSaveState('saved')
+      dirty.current =
+        editor !== null && !editor.isDestroyed
+          ? differsBeyondTidy(text, markdown(), path, claimsRef.current)
+          : dirty.current && !captured
+      setSaveState(dirty.current ? 'saving' : 'saved')
       placeRef.current()
-    } catch {
+    } catch (error) {
       setSaveState('error')
+      throw error
     }
   }
 
@@ -351,10 +382,13 @@ function DocumentEditor({
   // below has nothing left to write.
   useEffect(
     () =>
-      registerBuffer(() =>
-        saveTimer.current !== undefined
-          ? saveRef.current()
-          : (writing.current ?? Promise.resolve()),
+      registerBuffer(
+        () => saveRef.current(),
+        undefined,
+        (value) => {
+          frozen.current = value
+          editor?.setEditable(!value && !lockedRef.current)
+        },
       ),
     [editor],
   )
@@ -363,10 +397,10 @@ function DocumentEditor({
   // for its tab to be compared to (`doc-changes.ts`).
   useEffect(
     () => () => {
-      const pending = saveTimer.current !== undefined
+      const pending = dirty.current
       const live = editor !== null && !editor.isDestroyed
       sawText(remote, path, pending && live ? markdown() : lastText.current)
-      if (pending) void save()
+      if (pending) void save().catch(() => undefined)
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [editor],
@@ -387,7 +421,7 @@ function DocumentEditor({
           lastText.current = text
           return
         }
-        if (saveTimer.current !== undefined && !locked) return
+        if (dirty.current && !locked) return
         const next = splitDocument(text)
         try {
           const changed = applyReload(editor, next.body)
@@ -412,7 +446,7 @@ function DocumentEditor({
   // A run that edits the document locks it; done, the lock lifts.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
-    editor.setEditable(!locked)
+    editor.setEditable(!locked && !frozen.current)
   }, [editor, locked])
 
   // A finished edit clears its pill on its own. A finished vault app opens
