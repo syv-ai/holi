@@ -8,9 +8,8 @@
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
 /* shadcn's neutral theme, as published, except `--muted-foreground` in both
- * modes (light 0.556 -> 0.54, dark 0.708 -> 0.8), so muted text meets WCAG AA
- * (4.5:1) at full opacity on every surface. Readable text is never drawn at a
- * reduced opacity on top of it. */
+ * modes (light 0.556 -> 0.54, dark 0.708 -> 0.8). Readable text is never drawn
+ * at reduced opacity. */
 :root {
   --radius: 0.625rem;
   --background: oklch(1 0 0);
@@ -281,18 +280,28 @@
 [data-platform='mac'] [data-slot='sidebar-wrapper'] {
   background: transparent;
 }
-/* Frosted, the default, until the vault's own choice is stamped. */
+/* A translucent ground must remain strong enough for semantic text over both
+   bright and dark desktop backdrops. Frosted is the default until the vault's
+   choice is stamped, including during startup before that choice is loaded. */
 [data-platform='mac'] {
-  --glass-chrome: 70%;
-  --glass-view: 80%;
+  --glass-chrome: 90%;
+  --glass-view: 95%;
+  --muted-foreground: oklch(0.44 0 0);
+}
+[data-platform='mac'][data-theme='dark'] {
+  --muted-foreground: oklch(0.8 0 0);
 }
 [data-platform='mac'][data-glass='clear'] {
-  --glass-chrome: 25%;
-  --glass-view: 0%;
+  --glass-chrome: 88%;
+  --glass-view: 85%;
 }
 [data-platform='mac'][data-glass='solid'] {
   --glass-chrome: 100%;
   --glass-view: 100%;
+  --muted-foreground: oklch(0.54 0 0);
+}
+[data-platform='mac'][data-theme='dark'][data-glass='solid'] {
+  --muted-foreground: oklch(0.8 0 0);
 }
 [data-platform='mac'] [data-slot='sidebar'],
 [data-platform='mac'] [data-slot='app-chrome'] {
