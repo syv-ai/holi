@@ -2457,6 +2457,136 @@ describe('VaultHost', () => {
     }
   })
 
+  it('makes non-selecting starts wait for an admitted targeted close', async () => {
+    const { registry } = await twoVaults()
+    const { h } = host(registry)
+    const old = await h.getOrOpen('syv-ai/a')
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const dispose = old.close.bind(old)
+    old.close = async () => {
+      entered()
+      await gate
+      await dispose()
+    }
+    try {
+      const closing = h.close('syv-ai/a')
+      await started
+      const reopening = h.getOrOpen('syv-ai/a')
+      expect(h.get('syv-ai/a')).toBeNull()
+      release()
+      await closing
+      const replacement = await reopening
+      expect(replacement).not.toBe(old)
+      expect(h.get('syv-ai/a')).toBe(replacement)
+    } finally {
+      release()
+      await h.closeAll().catch(() => {})
+    }
+  })
+
+  it('keeps independent targeted closes from serializing globally', async () => {
+    const { registry } = await twoVaults()
+    const { h } = host(registry)
+    const a = await h.getOrOpen('syv-ai/a')
+    const b = await h.getOrOpen('syv-ai/b')
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const disposeA = a.close.bind(a)
+    a.close = async () => {
+      entered()
+      await gate
+      await disposeA()
+    }
+    try {
+      const closingA = h.close('syv-ai/a')
+      await started
+      await h.close('syv-ai/b')
+      expect(h.get('syv-ai/b')).toBeNull()
+      expect(h.get('syv-ai/a')).toBeNull()
+      release()
+      await closingA
+    } finally {
+      release()
+      await h.closeAll().catch(() => {})
+    }
+  })
+
+  it('keeps non-selecting reopen ordered through visible preparation and close', async () => {
+    const { registry } = await twoVaults()
+    let releasePreparation!: () => void
+    let enteredPreparation!: () => void
+    let releaseDispose!: () => void
+    let enteredDispose!: () => void
+    const preparation = new Promise<void>((resolve) => {
+      releasePreparation = resolve
+    })
+    const preparing = new Promise<void>((resolve) => {
+      enteredPreparation = resolve
+    })
+    const disposal = new Promise<void>((resolve) => {
+      releaseDispose = resolve
+    })
+    const disposing = new Promise<void>((resolve) => {
+      enteredDispose = resolve
+    })
+    let blockPreparation = false
+    const h = createVaultHost({
+      registry,
+      claims: CLAIMS,
+      beforeOpen: async () => {
+        if (blockPreparation) {
+          blockPreparation = false
+          enteredPreparation()
+          await preparation
+        }
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+    try {
+      const runtime = await h.getOrOpen('syv-ai/a')
+      blockPreparation = true
+      const runtimeDispose = runtime.close.bind(runtime)
+      runtime.close = async () => {
+        enteredDispose()
+        await disposal
+        await runtimeDispose()
+      }
+      const visible = h.open('syv-ai/b')
+      await preparing
+      const closing = h.close('syv-ai/a')
+      const reopening = h.getOrOpen('syv-ai/a')
+      releasePreparation()
+      await visible
+      await disposing
+      releaseDispose()
+      await closing
+      const replacement = await reopening
+      expect(replacement).not.toBe(runtime)
+      expect(h.active()?.remote).toBe('syv-ai/b')
+      expect(h.get('syv-ai/a')).toBe(replacement)
+    } finally {
+      releasePreparation()
+      releaseDispose()
+      await h.closeAll().catch(() => {})
+    }
+  })
+
   it('closeAll drains an already-running targeted close', async () => {
     const { registry } = await twoVaults()
     const { h } = host(registry)

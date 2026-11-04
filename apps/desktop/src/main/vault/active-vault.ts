@@ -1508,12 +1508,12 @@ export function createVaultHost(args: {
   /**
    * Let go of whatever is running against this vault, before it closes.
    *
-   * The agent's sessions are the reason it exists. `VaultHost` holds
-   * exactly one `ActiveVault`, so a session left running in the vault being
-   * closed has no repo, no watcher and no sync loop behind it; and its teardown
-   * resumes the sync loop and may take a settle commit, both of which have to
-   * land in the vault it actually ran in. So this is awaited while that vault is
-   * still `active()`, ahead of the flush.
+   * The agent's sessions are the reason it exists. `VaultHost` may hold several
+   * runtimes, while only one is selected. A session left running in the selected
+   * vault being closed has no repo, no watcher and no sync loop behind it; and its
+   * teardown resumes the sync loop and may take a settle commit, both of which
+   * have to land in the vault it actually ran in. So this is awaited while that
+   * vault is still `active()`, ahead of the flush.
    *
    * Not called on a re-open of the vault that is already open: that is the
    * renderer asking for a fresh picture, not a switch.
@@ -1525,6 +1525,7 @@ export function createVaultHost(args: {
   const runtimes = new Map<string, ActiveVault>()
   const starts = new Map<string, Promise<ActiveVault>>()
   const locks = new Map<string, Promise<unknown>>()
+  const closeQueues = new Map<string, Promise<unknown>>()
   let selectionQueue: Promise<unknown> = Promise.resolve()
   let closingAll: Promise<void> | null = null
   let rejectingStarts = false
@@ -1564,6 +1565,18 @@ export function createVaultHost(args: {
   function serialiseSelection<T>(fn: () => Promise<T>): Promise<T> {
     const run = selectionQueue.then(fn, fn)
     selectionQueue = run.catch(() => {})
+    return run
+  }
+  function serialiseClose(remote: string, priorSelection: Promise<unknown>): Promise<void> {
+    const previous = closeQueues.get(remote) ?? Promise.resolve()
+    const run = previous
+      .then(() => priorSelection)
+      .then(() => serialise(remote, () => closeRuntime(remote)))
+    const settled = run.catch(() => {})
+    closeQueues.set(remote, settled)
+    void settled.then(() => {
+      if (closeQueues.get(remote) === settled) closeQueues.delete(remote)
+    })
     return run
   }
 
@@ -1683,10 +1696,15 @@ export function createVaultHost(args: {
   return {
     active: () => current,
     get: (remote) => runtimes.get(remote) ?? null,
-    getOrOpen: (remote) => admit(() => serialise(remote, () => start(remote))),
-    open: (remote) =>
-      admit(() =>
+    getOrOpen: (remote) => {
+      const priorClose = closeQueues.get(remote) ?? Promise.resolve()
+      return admit(() => priorClose.then(() => serialise(remote, () => start(remote))))
+    },
+    open: (remote) => {
+      const priorClose = closeQueues.get(remote) ?? Promise.resolve()
+      return admit(() =>
         serialiseSelection(async () => {
+          await priorClose
           if (current?.remote === remote) {
             notify(() => args.onSnapshot(remote, current!.snapshot()))
             notify(() => args.onSyncState(remote, current!.syncState()))
@@ -1706,7 +1724,8 @@ export function createVaultHost(args: {
           notify(() => args.onHeldBack?.(remote, vault.heldBack()))
           return vault
         }),
-      ),
+      )
+    },
     close: (remote?: string) =>
       trackClose(
         remote === undefined
@@ -1714,9 +1733,7 @@ export function createVaultHost(args: {
               const selected = current?.remote
               if (selected !== undefined) await serialise(selected, () => closeRuntime(selected))
             })
-          : // Use selection ordering so this close follows visible opens already
-            // waiting on preparation, and later opens cannot overtake it.
-            serialiseSelection(() => serialise(remote, () => closeRuntime(remote))),
+          : serialiseClose(remote, selectionQueue),
       ),
     closeAll: () => {
       if (closingAll !== null) return closingAll
