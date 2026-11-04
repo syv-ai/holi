@@ -80,6 +80,18 @@ export function AppearancePage() {
         />
       </SettingsFieldRow>
       <SettingsFieldRow
+        title="Confirm before closing split tabs"
+        description="Ask before closing a tab entry that contains multiple views, including when closing other tabs or all tabs."
+        htmlFor="settings-confirm-close-split-tabs"
+      >
+        <Switch
+          id="settings-confirm-close-split-tabs"
+          disabled={resolved === null}
+          checked={resolved?.confirmCloseSplitTabs ?? true}
+          onCheckedChange={(on) => void write('confirmCloseSplitTabs', on, 'local')}
+        />
+      </SettingsFieldRow>
+      <SettingsFieldRow
         title="Fold the sidebar in Mail and Calendar"
         description="Mail or Calendar in front folds the files sidebar to its rail, and leaving gives it back. ⌘B opens it either way."
         htmlFor="settings-fold-sidebar"

@@ -20,11 +20,18 @@ import { newAgentSessionAtom } from '@/state/agents-slots'
 import { appModeAtom } from '@/state/app-mode'
 import { folderSurfacesAtom, runningPluginsAtom } from '@/state/plugins'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { loadVaultSettingsAtom, vaultSettingsAtom } from '@/state/settings'
+import { ConfirmDialog } from '@/composites/confirm-dialog'
+import {
+  applyEntryClose,
+  closesSplit,
+  confirmEntryClose,
+  type EntryCloseRequest,
+} from '@/state/shell-close'
 // Split tabs (docs/features/tabs-panes.md): one strip, a split being one
 // entry of it.
 import {
   activeSplit,
-  closeAllTabs as closeAllTabsIn,
   closeTab as closeTabIn,
   entryIds,
   focusedTab,
@@ -80,6 +87,21 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   /** The tab strip and its splits, this vault's (`state/shell-tabs.ts`). */
   const [ws, setWs] = useAtom(shellWorkspaceAtom)
   const remote = useAtomValue(activeRemoteAtom)
+  const settings = useAtomValue(vaultSettingsAtom)
+  const loadSettings = useSetAtom(loadVaultSettingsAtom)
+  const [pendingClose, setPendingClose] = useState<{
+    remote: string | null
+    workspace: typeof ws
+    request: EntryCloseRequest
+  } | null>(null)
+  const closeConfirmationEnabled =
+    settings !== null && settings.remote === remote ? settings.settings.confirmCloseSplitTabs : true
+  useEffect(() => {
+    void loadSettings().catch((error: unknown) => console.warn('[settings] read failed:', error))
+  }, [loadSettings, remote])
+  useEffect(() => {
+    if (pendingClose !== null && pendingClose.remote !== remote) setPendingClose(null)
+  }, [pendingClose, remote])
   const tabForPath = useAtomValue(shellTabForPathAtom)
   const folders = useAtomValue(folderSurfacesAtom)
   /** The key a sidebar row, a search hit or a plugin's request opens: a view's
@@ -171,8 +193,19 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     setWs((w) => closeTabIn(w, key))
   }
 
-  function closeAllTabs() {
-    setWs(closeAllTabsIn)
+  function requestEntryClose(request: EntryCloseRequest) {
+    const current = ws
+    if (closesSplit(current, request) && closeConfirmationEnabled) {
+      setPendingClose({ remote, workspace: current, request })
+      return
+    }
+    setWs((workspace) => applyEntryClose(workspace, request))
+  }
+
+  function confirmPendingClose() {
+    if (pendingClose === null || pendingClose.remote !== remote) return
+    setWs((current) => confirmEntryClose(current, pendingClose.workspace, pendingClose.request))
+    setPendingClose(null)
   }
 
   /** Open a vault path, the board, or any tab key: as a tab, or in the
@@ -252,7 +285,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     open: openTabKey,
     selectTab: (id) => setWs((w) => selectEntry(w, id)),
     closeTab,
-    closeAllTabs,
+    closeAllTabs: () => requestEntryClose({ kind: 'all' }),
     reopenTab: () => setWs(reopenClosed),
     splitRight: () => setWs(splitActive),
     newDocument,
@@ -349,7 +382,9 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     )
   }
 
-  const header = <TabStrip onNewTab={openNewTab} draggable={!isMobile} />
+  const header = (
+    <TabStrip onNewTab={openNewTab} onCloseRequest={requestEntryClose} draggable={!isMobile} />
+  )
 
   const main = (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
@@ -494,6 +529,23 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
         onAddVault={onAddVault}
       />
       <ShortcutsDialog />
+      <ConfirmDialog
+        open={pendingClose !== null && pendingClose.remote === remote}
+        onOpenChange={(open) => {
+          if (!open) setPendingClose(null)
+        }}
+        title={
+          pendingClose?.request.kind === 'entry' ? 'Close split tab?' : 'Close tabs with splits?'
+        }
+        description={
+          pendingClose?.request.kind === 'entry'
+            ? 'This tab contains multiple views. Closing it will close every view in the split.'
+            : 'This will close tab entries containing multiple views, including every view in each split.'
+        }
+        confirmLabel={pendingClose?.request.kind === 'entry' ? 'Close tab' : 'Close tabs'}
+        destructive
+        onConfirm={confirmPendingClose}
+      />
       <DialogHost />
     </SidebarProvider>
   )

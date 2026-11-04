@@ -227,6 +227,8 @@ export interface ResolvedAppSettings {
   gridArcade: boolean
   /** Mail or Calendar in front folds the files sidebar to its rail. */
   foldSidebarForApps: boolean
+  /** Warn before closing an entry that contains a split view. */
+  confirmCloseSplitTabs: boolean
   hooks: VaultHooks
   maxCommittedFileBytes: number
   /** Whether Holi brings a release's newer skills and hooks in when the vault
@@ -401,6 +403,7 @@ export type VaultSettingKey =
   | 'agentProvider'
   | 'gridArcade'
   | 'foldSidebarForApps'
+  | 'confirmCloseSplitTabs'
   | 'maxCommittedFileBytes'
   | 'autoUpdateSkills'
 
@@ -678,6 +681,18 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     default: true,
     // Machine-local, like Appearance: how much room one person's mail gets
     // is their own layout, not the vault's.
+    target: 'local',
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'appearance',
+  },
+  {
+    key: 'confirmCloseSplitTabs',
+    label: 'Confirm before closing split tabs',
+    explanation:
+      'Ask before closing a tab entry that contains multiple views, including when closing other tabs or all tabs.',
+    type: { kind: 'boolean' },
+    default: true,
     target: 'local',
     askedAtBirth: false,
     whereToChange: LOCAL_FILE_HINT,
