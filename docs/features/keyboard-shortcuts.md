@@ -7,6 +7,8 @@ command list: `?`, ↓ to a row, ↩ runs it, so a person who forgot a key can s
 
 ## How it works
 
+Pasting a `holi://` link while focus is on the page opens it. Paste into an editor, field or terminal remains ordinary paste; this is a paste event, not a keyboard shortcut or a row in the table.
+
 - **The table** (`lib/shortcuts.ts`): each row is an id, its keys as glyph strings
   (`lib/hotkey.ts`), the label and group the dialog shows, and when it may fire. It holds no
   handlers: the shell's state is React state in the app shell, so the component that owns a piece
