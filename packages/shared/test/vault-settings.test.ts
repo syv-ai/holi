@@ -280,6 +280,7 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
       'windowGlass',
       'gridArcade',
       'foldSidebarForApps',
+      'confirmCloseSplitTabs',
       'spaceAsksAgent',
       'agentProvider',
     ])
@@ -732,6 +733,17 @@ describe('the schema is the only declaration', () => {
       else if (setting.type.kind === 'flags') expect(control.kind).toBe('group')
       else expect(control.kind).toBe('choice')
     }
+  })
+
+  it('defaults split-tab close confirmation on and lets the local file turn it off', () => {
+    expect(VAULT_SETTING_DEFAULTS.confirmCloseSplitTabs).toBe(true)
+    expect(resolveAppSettings(null, null).confirmCloseSplitTabs).toBe(true)
+    expect(
+      resolveAppSettings(null, committed({ confirmCloseSplitTabs: false })).confirmCloseSplitTabs,
+    ).toBe(false)
+    expect(
+      parseSettingsPatch(committed({ confirmCloseSplitTabs: false }), CORE_TRANSFORMS).patch,
+    ).toEqual({ confirmCloseSplitTabs: false })
   })
 
   it('defaults are the schema’s defaults, not a second list', () => {
