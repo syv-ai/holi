@@ -158,7 +158,7 @@ export interface HoliDef {
 export type HoliParse = { ok: true; def: HoliDef } | { ok: false; error: string }
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,47}$/
-const MODEL_RE = /^[A-Za-z0-9][\w.:[\]-]*$/
+const MODEL_RE = /^[A-Za-z0-9][\w.:[\]-]*(?:\/[A-Za-z0-9][\w.:[\]-]*)?$/
 const COLOR_RE = /^#[0-9a-f]{6}$/i
 
 /** The keys a Holi file has today. Any other is a later setting: kept. */
@@ -294,7 +294,7 @@ export function parseHoliFile(text: string, path: string): HoliParse {
   }
   const rawModel = f['model']
   if (rawModel !== undefined && (typeof rawModel !== 'string' || !MODEL_RE.test(rawModel))) {
-    return { ok: false, error: '`model` must be one model name, like `sonnet`' }
+    return { ok: false, error: '`model` must be a model name like `sonnet` or `provider/model-id`' }
   }
   if (f['cron'] !== undefined || f['at'] !== undefined) {
     return {

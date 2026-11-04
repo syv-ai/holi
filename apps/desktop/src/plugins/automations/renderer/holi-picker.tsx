@@ -8,9 +8,8 @@
  * The Holis come from the Holis plugin's own list (`holis.list`), asked by
  * name: a plugin cannot import another's. With Holis off there is only Claude.
  */
-import { SiClaude } from '@icons-pack/react-simple-icons'
 import { useAtomValue } from 'jotai'
-import { Check, ChevronDown } from 'lucide-react'
+import { AstroidIcon, Check, ChevronDown } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { activeRemoteAtom, cn, useHasCapability } from '@/plugin-api'
 import { DEFAULT_HOLI_COLOUR, type PickableHoli } from '@holi/shared'
@@ -53,10 +52,7 @@ function useHolis(): PickableHoli[] {
 
 function Face({ holi, className }: { holi?: PickableHoli; className?: string }) {
   return holi === undefined ? (
-    <SiClaude
-      className={cn('size-3.5', cn('text-orange-500 dark:text-orange-400', className))}
-      aria-hidden="true"
-    />
+    <AstroidIcon className={cn('size-3.5', className)} aria-hidden="true" />
   ) : (
     <PixelPersona
       name={holi.mascot ?? 'strategist'}

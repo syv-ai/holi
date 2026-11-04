@@ -1,6 +1,6 @@
 /**
  * The agent's two surfaces in a document: the prompt that opens on an empty
- * line (Space), and the status pill that says what a run is doing, with Stop.
+ * line (Space) or over a selection, and the status pill that says what a run is doing, with Stop.
  */
 import { useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -18,24 +18,32 @@ import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
 import { showAgentSessionAtom } from '@/state/agent-service'
 import { claudeFirstRunAtom } from '@/state/claude-first-run'
+import { useAgentLabel, type AgentRun } from '@/state/document-runs'
+import { agentProviderSettingAtom } from '@/state/settings'
 import { activeRemoteAtom } from '@/state/vaults'
 
-import type { AgentRun } from './document-agent'
-
-/** Where the person types what the agent should write, on the line they
- *  opened it from. Enter sends, Shift+Enter breaks the line, Escape closes. */
+/** Where the person types what the agent should do: on the line they opened
+ *  it from, or for a selection from the format bubble's Ask AI. Enter sends,
+ *  Shift+Enter breaks the line, Escape closes. */
 export function AgentPrompt({
   initial = '',
+  task = 'write or change this document',
+  placeholder = 'Draft an introduction, turn the list into a table…',
   onSubmit,
   onCancel,
 }: {
   /** Written in already, for the person to send or change: an app
    *  command's instruction. */
   initial?: string
+  /** What the agent is asked to do, above the field after "Ask <agent> to"
+   *  ("Ask AI to" until the agent's name is known). */
+  task?: string
+  placeholder?: string
   onSubmit: (request: string) => void
   onCancel: () => void
 }) {
   const [text, setText] = useState(initial)
+  const agent = useAgentLabel(useAtomValue(agentProviderSettingAtom)) ?? 'AI'
   const send = () => {
     const request = text.trim()
     if (request !== '') onSubmit(request)
@@ -47,7 +55,7 @@ export function AgentPrompt({
       <InputGroupAddon align="block-start">
         <InputGroupText className="text-primary">
           <SparklesIcon aria-hidden="true" />
-          Ask Sonnet to write or change this document
+          Ask {agent} to {task}
         </InputGroupText>
       </InputGroupAddon>
       <InputGroupTextarea
@@ -55,7 +63,7 @@ export function AgentPrompt({
         rows={1}
         value={text}
         aria-label="What should the agent do?"
-        placeholder="Draft an introduction, turn the list into a table…"
+        placeholder={placeholder}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === 'Escape') {
@@ -89,21 +97,22 @@ export function AgentPrompt({
 const WORKING: Record<AgentRun['kind'], string> = {
   write: 'Writing',
   rewrite: 'Rewriting',
-  artifact: 'Making the artifact',
+  'vault-app': 'Creating the vault app',
 }
 
 /** What a run is doing, at the foot of the document. Stop ends it; a run
- *  waiting on a permission can be opened in Agents. */
+ *  waiting on a permission, and a vault app's at any time, can be opened in
+ *  Agents. */
 export function AgentStatus({
   run,
   onStop,
   onDismiss,
-  onOpenArtifact,
+  onOpenApp,
 }: {
   run: AgentRun
   onStop: () => void
   onDismiss: () => void
-  onOpenArtifact: () => void
+  onOpenApp: () => void
 }) {
   const showSession = useSetAtom(showAgentSessionAtom)
   const remote = useAtomValue(activeRemoteAtom)
@@ -115,17 +124,17 @@ export function AgentStatus({
 
   const text =
     run.status === 'starting'
-      ? 'Starting Sonnet…'
+      ? `Starting ${run.agent}…`
       : run.status === 'working'
         ? `${WORKING[run.kind]}…`
         : run.status === 'needs-you'
-          ? 'Waiting for you in Agents'
+          ? (run.message ?? 'Waiting for you in Agents')
           : run.status === 'failed'
             ? (run.message ?? 'The agent could not run.')
             : run.status === 'stopped'
               ? 'Stopped'
-              : run.kind === 'artifact'
-                ? 'The artifact is ready'
+              : run.kind === 'vault-app'
+                ? `The vault app is ready${run.message === undefined ? '' : `. ${run.message}`}`
                 : 'Done'
 
   return (
@@ -141,17 +150,20 @@ export function AgentStatus({
       )}
       <span className="min-w-0 truncate">
         {text}
-        {live && run.kind !== 'artifact' ? (
+        {live && run.kind !== 'vault-app' ? (
           <span className="text-muted-foreground"> · {run.label}</span>
         ) : null}
       </span>
-      {run.status === 'needs-you' && run.sessionId !== null ? (
+      {/* A vault app's session is there to be watched and added to. */}
+      {live &&
+      run.sessionId !== null &&
+      (run.status === 'needs-you' || run.kind === 'vault-app') ? (
         <Button
           variant="ghost"
           size="xs"
           onClick={() => void showSession({ session: run.sessionId!, live: true })}
         >
-          Open
+          {run.kind === 'vault-app' ? 'Open session' : 'Open'}
         </Button>
       ) : null}
       {live ? (
@@ -173,8 +185,8 @@ export function AgentStatus({
               Trust in Claude Code
             </Button>
           ) : null}
-          {run.kind === 'artifact' && run.status === 'done' ? (
-            <Button variant="secondary" size="xs" onClick={onOpenArtifact}>
+          {run.kind === 'vault-app' && run.status === 'done' ? (
+            <Button variant="secondary" size="xs" onClick={onOpenApp}>
               Open
             </Button>
           ) : null}

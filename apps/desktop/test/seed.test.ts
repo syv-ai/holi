@@ -22,6 +22,7 @@ import { googleSeed } from '../src/plugins/google/main/seed'
 import { pdfSeed } from '../src/plugins/pdf/main/seed'
 import { tasksSeed } from '../src/plugins/tasks/main/seed'
 import { coreSeed, GITIGNORE } from '../src/main/vault/seed/core'
+import { TMP_IGNORE_LINE } from '../src/main/vault/vault-files'
 import { ensureSeeded as ensureSeededWith, shippedFiles } from '../src/main/vault/seed/seed'
 import {
   pendingShipped as pendingWith,
@@ -482,7 +483,7 @@ describe('ensureSeeded — the .gitignore', () => {
     const root = await tempDir()
     await writeFile(
       join(root, '.gitignore'),
-      `${[...LOCAL_ONLY_IGNORE_LINES, ...OS_JUNK_FILES].join('\n')}\n`,
+      `${[...LOCAL_ONLY_IGNORE_LINES, TMP_IGNORE_LINE, ...OS_JUNK_FILES].join('\n')}\n`,
     )
     expect((await ensureSeeded(root)).written).not.toContain('.gitignore')
   })
@@ -729,6 +730,7 @@ describe('mergedSettings', () => {
       'Bash(node .claude/skills/memory/lint.mjs:*)',
       'Bash(holi agent notify:*)',
       'Bash(holi agent log:*)',
+      'Bash(holi agent version:*)',
       'Bash(holi comments list:*)',
       'Bash(holi schedules list:*)',
       'Bash(holi pdf comments:*)',
@@ -752,6 +754,7 @@ describe('mergedSettings', () => {
       'Bash(node .claude/skills/memory/lint.mjs:*)',
       'Bash(holi agent notify:*)',
       'Bash(holi agent log:*)',
+      'Bash(holi agent version:*)',
       'Bash(holi comments list:*)',
       'Bash(holi schedules list:*)',
       'Bash(holi pdf comments:*)',

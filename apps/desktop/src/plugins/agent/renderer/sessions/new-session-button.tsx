@@ -3,12 +3,15 @@
  * A click, Enter or Space starts a session in this machine's default agent at
  * once. Hovering it, or ↓ on it, opens the other ways in: a session in each
  * agent, and Resume for an agent Holi runs itself (its own picker of earlier
- * conversations). An agent not on this machine is listed, but off.
+ * conversations). An agent not on this machine is listed, but off. When the
+ * default names an agent this machine no longer has (a harness removed in
+ * Settings), a click opens the menu instead: it asks which agent, never picks.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { PlusIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import {
+  defaultMissingAtom,
   loadProvidersAtom,
   newSessionProviderAtom,
   providerLabel,
@@ -36,6 +39,7 @@ export function NewSessionButton(): React.JSX.Element {
   const providers = useAtomValue(providersAtom)
   const load = useSetAtom(loadProvidersAtom)
   const fallback = useAtomValue(newSessionProviderAtom)
+  const missing = useAtomValue(defaultMissingAtom)
   const start = useSetAtom(startViewSessionAtom)
   const [open, setOpen] = useState(false)
   const timer = useRef<number | null>(null)
@@ -61,6 +65,10 @@ export function NewSessionButton(): React.JSX.Element {
   }, [open, providers.kind, load])
 
   const startDefault = (): void => {
+    if (missing) {
+      setOpen(true)
+      return
+    }
     setOpen(false)
     void start({})
   }
@@ -83,7 +91,11 @@ export function NewSessionButton(): React.JSX.Element {
         <Button
           variant="ghost"
           size="icon-xs"
-          aria-label={`New ${providerLabel(fallback)} session`}
+          aria-label={
+            missing
+              ? 'New session: choose an agent'
+              : `New ${providerLabel(providers, fallback)} session`
+          }
         >
           <PlusIcon />
         </Button>
@@ -96,7 +108,9 @@ export function NewSessionButton(): React.JSX.Element {
         onPointerLeave={() => later(() => setOpen(false), CLOSE_DELAY_MS)}
         onCloseAutoFocus={(e) => e.preventDefault()}
       >
-        <DropdownMenuLabel>New session</DropdownMenuLabel>
+        <DropdownMenuLabel>
+          {missing ? `${fallback} is gone. Start in which agent?` : 'New session'}
+        </DropdownMenuLabel>
         {providers.kind === 'error' ? (
           <DropdownMenuItem onSelect={() => void load()}>
             Couldn't list the agents. Retry
@@ -118,9 +132,9 @@ export function NewSessionButton(): React.JSX.Element {
             </DropdownMenuItem>
           ))
         )}
-        {list.some((p) => !p.background && p.installed) && <DropdownMenuSeparator />}
+        {list.some((p) => p.resumePicker && p.installed) && <DropdownMenuSeparator />}
         {list
-          .filter((p) => !p.background && p.installed)
+          .filter((p) => p.resumePicker && p.installed)
           .map((p) => (
             <DropdownMenuItem
               key={`resume-${p.id}`}
