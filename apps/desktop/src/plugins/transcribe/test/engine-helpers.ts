@@ -135,7 +135,7 @@ export async function engineRig(
       const text = writes.get(rel)
       return text === undefined
         ? null
-        : new TextDecoder().decode(new TextEncoder().encode(text).slice(0, 256))
+        : new TextDecoder().decode(new TextEncoder().encode(text).slice(0, 1024))
     },
     folderExists: async (rel) => [...writes.keys()].some((k) => k.startsWith(`${rel}/`)),
     folders: () => [

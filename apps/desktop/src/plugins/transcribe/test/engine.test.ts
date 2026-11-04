@@ -393,6 +393,18 @@ describe('where a meeting goes', () => {
     expect((await rig.meetings.get(meetingId)).folder).toBe(path)
   })
 
+  it('starts in a placeholder written before placeholders had frontmatter', async () => {
+    const rig = await engineRig()
+    const path = 'Clients/Old.meeting'
+    const title = '会議'.repeat(55)
+    rig.writes.set(
+      `${path}/transcript.local.md`,
+      `# ${title}\n\nNot recorded yet: open this meeting and press Record.\n`,
+    )
+    const { meetingId } = await rig.meetings.start({ title, path })
+    expect((await rig.meetings.get(meetingId)).folder).toBe(path)
+  })
+
   it('is refused in a folder whose transcript is someone’s own file', async () => {
     const rig = await engineRig()
     const path = 'Clients/Acme/Notes.meeting'
@@ -413,6 +425,42 @@ function moveFolder(writes: Map<string, string>, from: string, to: string): void
 }
 
 describe('a meeting folder changed in the vault', () => {
+  it('in a fresh clone, whose folder held only this machine’s files, is written again', async () => {
+    const first = await engineRig()
+    const { meetingId, meeting, send } = await started(first)
+    await send(0)
+    const transcript = `${meeting.folder}/transcript.local.md`
+    await until(() => first.writes.get(transcript)?.includes('said 1') === true)
+    await first.meetings.stop(meetingId)
+    await until(() => meeting.phase === 'done')
+    await first.meetings.dispose()
+
+    // The vault cloned again: git kept none of the folder's local files.
+    const again = await engineRig({ userData: first.userData })
+    await again.meetings.follow()
+    await vi.advanceTimersByTimeAsync(6000)
+    await again.meetings.follow()
+    await until(() => again.writes.get(transcript)?.includes('said 1') === true)
+    expect(again.meetings.list().map((m) => m.id)).toEqual([meetingId])
+  })
+
+  it('from before the suffix follows its folder renamed in place, and no copy elsewhere', async () => {
+    const rig = await engineRig()
+    const { meetingId } = await rig.meetings.start({ title: 'Standup', path: 'Meetings/Standup' })
+    const meeting = await rig.meetings.get(meetingId)
+    const transcript = 'Meetings/Standup/transcript.local.md'
+    await until(() => rig.writes.get(transcript)?.startsWith('---\nmeeting:') === true)
+    await rig.meetings.stop(meetingId)
+    await until(() => meeting.phase === 'done')
+    // A copy dragged into notes/, then the folder itself renamed in place.
+    rig.writes.set('notes/transcript.local.md', rig.writes.get(transcript)!)
+    rig.writes.set('notes/minutes.local.md', '# my notes\n')
+    moveFolder(rig.writes, 'Meetings/Standup', 'Meetings/Daily')
+    await rig.meetings.follow()
+    expect(meeting.folder).toBe('Meetings/Daily')
+    expect(rig.writes.get('notes/minutes.local.md')).toBe('# my notes\n')
+  })
+
   it('whose transcript alone is dragged into another folder stays where it is', async () => {
     const rig = await engineRig()
     const { meetingId, meeting, send } = await started(rig)

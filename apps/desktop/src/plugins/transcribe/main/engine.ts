@@ -42,7 +42,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import type { AgentProviderId } from '@holi/shared'
+import { isLocalOnlyPath, type AgentProviderId } from '@holi/shared'
 import { randomBytes } from 'node:crypto'
 import {
   lstat,
@@ -145,6 +145,8 @@ const NOT_RECORDED = 'Not recorded yet: open this meeting and press Record.'
 /** How the placeholder starts, so it is known by its first bytes, whatever
  *  the length of the title after it. */
 const PLACEHOLDER_HEAD = '---\nmeeting: not recorded\n---\n'
+/** The folder a vault path is in ('' at the root). */
+const parentOf = (path: string): string => path.slice(0, Math.max(0, path.lastIndexOf('/')))
 /** The id at the top of a meeting's transcript. */
 const MARK = /^---\nmeeting: ([0-9a-f]{12})\n---\n/
 
@@ -493,6 +495,9 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
   /** Meetings whose folder is not where their record says, and that no
    *  folder in the vault claims: listed, but no folder opens them. */
   const away = new Set<string>()
+  /** Every vault folder this engine has seen: a meeting's folder missing
+   *  that never was is not a delete (below). */
+  const seenFolders = new Set<string>()
   /** When each meeting's transcript was first found missing. */
   const missing = new Map<string, number>()
   let followTimer: ReturnType<typeof setTimeout> | null = null
@@ -563,23 +568,16 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
 
   async function followNow(): Promise<void> {
     if (disposed) return
-    /** Every folder whose transcript carries an id, read once a pass and
-     *  only when a meeting is not where it was; for an id in two, a
-     *  meeting's folder over a copy of its transcript left elsewhere. */
-    let marked: Map<string, string> | null = null
-    const markedFolders = async (): Promise<Map<string, string>> => {
+    for (const dir of deps.folders()) seenFolders.add(dir)
+    /** Every folder whose transcript carries each id, read once a pass and
+     *  only when a meeting is not where it was. */
+    let marked: Map<string, string[]> | null = null
+    const markedFolders = async (): Promise<Map<string, string[]>> => {
       if (marked !== null) return marked
-      const found = new Map<string, string>()
+      const found = new Map<string, string[]>()
       for (const dir of deps.folders()) {
         const mark = await markAt(dir)
-        if (mark.kind !== 'meeting') continue
-        const seen = found.get(mark.id)
-        if (
-          seen === undefined ||
-          (!seen.endsWith(MEETING_SUFFIX) && dir.endsWith(MEETING_SUFFIX))
-        ) {
-          found.set(mark.id, dir)
-        }
+        if (mark.kind === 'meeting') found.set(mark.id, [...(found.get(mark.id) ?? []), dir])
       }
       marked = found
       return found
@@ -599,13 +597,14 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       // folder is not the meeting moving: the meeting stays and writes its
       // transcript again, and its folder deleted later is a delete. Only a
       // meeting from before folders had the suffix follows into one without
-      // it, once its own is gone (renamed in place).
-      const moved = (await markedFolders()).get(id)
-      if (
-        moved !== undefined &&
-        (moved.endsWith(MEETING_SUFFIX) ||
-          (!summary.folder.endsWith(MEETING_SUFFIX) && !(await deps.folderExists(summary.folder))))
-      ) {
+      // it, beside where it was, once its own is gone (renamed in place).
+      const candidates = (await markedFolders()).get(id) ?? []
+      const moved =
+        candidates.find((dir) => dir.endsWith(MEETING_SUFFIX)) ??
+        (summary.folder.endsWith(MEETING_SUFFIX) || (await deps.folderExists(summary.folder))
+          ? undefined
+          : candidates.find((dir) => parentOf(dir) === parentOf(summary.folder)))
+      if (moved !== undefined) {
         await relocate(id, moved)
         continue
       }
@@ -632,9 +631,17 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
         // is theirs: the meeting waits, away, until its own is back (missing
         // stays set, so this is not timed again). Only a folder gone is a
         // delete.
-        if (!(await deps.folderExists(summary.folder))) await gone(id)
-        else if (mark.kind === 'absent') await adopt(id)
-        else setAway(id, true)
+        //
+        // A folder that holds only this machine's files (the transcript, the
+        // minutes kept local) is not in git, so a fresh clone has none of
+        // it: missing, and never seen here, is that, and the meeting writes
+        // it again. Gone after it was seen, or holding a shared file git
+        // would have brought back, it was deleted.
+        if (await deps.folderExists(summary.folder)) {
+          if (mark.kind === 'absent') await adopt(id)
+          else setAway(id, true)
+        } else if (seenFolders.has(summary.folder) || sharesFiles(stored.meeting)) await gone(id)
+        else await adopt(id)
       } else {
         followAfter(GONE_MS - (now() - since))
       }
@@ -646,6 +653,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     const l = await open(id)
     const m = l.stored.meeting
     const from = m.folder
+    seenFolders.add(to)
     const moved = (p: string): string =>
       p === from || p.startsWith(`${from}/`) ? `${to}${p.slice(from.length)}` : p
     m.folder = to
@@ -678,6 +686,13 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     deps.log('info', `meeting "${l.stored.meeting.title}": its transcript is written again`)
     await writeFiles(l, true)
   }
+
+  /** Whether the meeting's folder holds a file git keeps: its minutes when
+   *  shared, or a task filed there that is not local. */
+  const sharesFiles = (m: MeetingState): boolean =>
+    [m.minutesPath, ...m.cards.map((c) => c.taskPath)].some(
+      (path) => path !== undefined && path.startsWith(`${m.folder}/`) && !isLocalOnlyPath(path),
+    )
 
   /** The meeting's folder was deleted from the vault: so is the meeting, its
    *  recording stopped first. What this machine kept of it (the audio, the
@@ -1417,6 +1432,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
         throw new CapabilityError('CONFLICT', 'that folder holds a transcript of its own')
       }
       const folder = path ?? (await freeFolder(parent, name, at))
+      seenFolders.add(folder)
       const id = randomBytes(6).toString('hex')
       const meeting: MeetingState = {
         id,

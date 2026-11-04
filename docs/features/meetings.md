@@ -398,7 +398,10 @@ still has goes nowhere); nothing writes the old path again. What this machine ha
 audio) is set aside in `meetings/.removed/<id>-<time>` for 30 days rather than erased, since a
 folder can go by mistake or by another machine's sync; `meeting.delete` erases at once. A folder
 that stayed while only its transcript went, as in a fresh clone (the transcript is machine-local),
-gets it written again. A folder at a meeting's path that is not that meeting's is never taken for
+gets it written again. So does a folder a fresh clone has none of because it held only
+machine-local files (the transcript, minutes kept local), which git never had: a meeting folder
+missing that this session never saw, and that held no shared file (shared minutes, a task that is
+not local), is a clone's, not a delete. A folder at a meeting's path that is not that meeting's is never taken for
 it, nor is a file someone put in its transcript's place overwritten: a stale record shows in the
 list as moved away (`away`), opens no folder, and `meeting.start` in a folder whose transcript carries another
 meeting's id, or no id at all (a file of someone's own, not the "not recorded yet" placeholder

@@ -73,7 +73,9 @@ export const transcribeMain: MainPlugin = {
       writeFile: (rel, text, guard) => writeVaultText(ctx.root, rel, text, guard),
       folderExists: (rel) => vaultFolderExists(ctx.root, rel),
       removeFiles: (rels, folder) => removeVaultFiles(ctx.root, rels, folder),
-      readHead: (rel) => readVaultHead(ctx.root, rel),
+      // Far enough for a placeholder from before it carried frontmatter:
+      // its marker line comes after a title of up to 120 characters.
+      readHead: (rel) => readVaultHead(ctx.root, rel, 1024),
       folders: () => folders,
       emit: (name, payload) => ctx.emit(ctx.remote, name, payload),
       agent: {
