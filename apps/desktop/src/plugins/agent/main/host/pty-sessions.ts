@@ -422,6 +422,7 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       command,
       notInstalled: provider.notInstalled,
       attach: id,
+      retainOnExit: provider.id === 'pi',
       ...(cols === undefined ? {} : { cols }),
       ...(rows === undefined ? {} : { rows }),
       ...(notice === undefined ? {} : { notice }),
@@ -446,6 +447,13 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
         if (s === null || sessions.get(id) !== s) return
         const inTurn = s.signals.inTurn
         s.signals.dispose()
+        if (s.provider === 'pi' && fence === undefined) {
+          if (inTurn) deps.bracket(id, 'forget')
+          if (s.name === null && lastTitle !== undefined) s.name = nameOf(lastTitle)
+          s.attention = false
+          push()
+          return
+        }
         if (fence !== undefined) {
           s.exiting = true
           s.copying = true
@@ -608,6 +616,25 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       const s = sessions.get(id)
       if (s === undefined) return gone
       await deps.terminals.close(s.terminalId)
+      // A fenced terminal's exit handler owns finalization: its session must
+      // remain until the asynchronous copy-back has produced the result row.
+      if (sessions.get(id) === s && !s.exiting) {
+        sessions.delete(id)
+        push()
+        if (s.persistConversation && s.conversationId !== undefined) {
+          const closed: SessionSummary = {
+            id: s.id,
+            provider: s.provider,
+            name: nameFor(s),
+            state: 'idle',
+            startedAt: s.startedAt,
+            conversationId: s.conversationId,
+          }
+          await changePast((rows) =>
+            [closed, ...rows.filter((row) => row.id !== s.id)].slice(0, PAST_MAX),
+          )
+        }
+      }
       return { ok: true }
     },
 
@@ -649,8 +676,26 @@ export function createPtySessions(deps: PtySessionsDeps): PtySessions {
       // into the vault after leave has returned.
       await Promise.all([...signingIn.values()])
       await Promise.all([...sessions.values()].map((s) => deps.terminals.close(s.terminalId)))
+      // Pi's PTY is its conversation, so an intentional vault teardown is a
+      // close just like Stop. Include sessions whose process exited earlier:
+      // their retained terminal and conversation are still open until teardown.
+      for (const s of sessions.values()) {
+        if (s.persistConversation && s.conversationId !== undefined) {
+          const closed: SessionSummary = {
+            id: s.id,
+            provider: s.provider,
+            name: nameFor(s),
+            state: 'idle',
+            startedAt: s.startedAt,
+            conversationId: s.conversationId,
+          }
+          await changePast((rows) =>
+            [closed, ...rows.filter((row) => row.id !== s.id)].slice(0, PAST_MAX),
+          )
+        }
+        s.signals.dispose()
+      }
       await pastQueue
-      for (const s of sessions.values()) s.signals.dispose()
       sessions.clear()
       for (const { timer } of finishedFences.values()) if (timer) clearTimeout(timer)
       finishedFences.clear()
