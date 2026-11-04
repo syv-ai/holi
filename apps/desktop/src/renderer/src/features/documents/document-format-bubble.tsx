@@ -46,6 +46,9 @@ import {
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 
 import { AgentPrompt } from './agent-prompt'
+import { useAgentLabel } from '@/state/document-runs'
+import { agentProviderSettingAtom } from '@/state/settings'
+import { useAtomValue } from 'jotai'
 import { extraSelections } from './multi-cursor'
 
 const FORMAT_BUBBLE_KEY = 'documentFormatBubble'
@@ -104,6 +107,7 @@ export function DocumentFormatBubble({
   onStartChat = null,
   onComment = null,
 }: DocumentFormatBubbleProps) {
+  const agentLabel = useAgentLabel(useAtomValue(agentProviderSettingAtom)) ?? 'AI'
   const state = useRichTextState(editor)
   /** The passage the person's own instruction is for, taken when its prompt
    *  opened; null while it is closed. */
@@ -197,12 +201,12 @@ export function DocumentFormatBubble({
                     <Button
                       variant="ghost"
                       size="sm"
-                      aria-label="Ask AI"
+                      aria-label={`Ask ${agentLabel}`}
                       className="text-primary shrink-0"
                       data-toolbar-item=""
                     >
                       <SparklesIcon aria-hidden="true" />
-                      Ask AI
+                      Ask {agentLabel}
                       <ChevronDownIcon aria-hidden="true" className="opacity-60" />
                     </Button>
                   </DropdownMenuTrigger>

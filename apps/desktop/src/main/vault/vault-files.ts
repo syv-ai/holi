@@ -21,6 +21,9 @@ import {
 } from '@holi/shared'
 
 const TMP_MARKER = '.holi-tmp-'
+/** The `.gitignore` line for those files, at any depth. One killed mid-write
+ *  outlives its rename, and `git add -A` would publish it. */
+export const TMP_IGNORE_LINE = `${TMP_MARKER}*`
 const JUNK = new Set(OS_JUNK_FILES)
 
 export function absPathFor(root: string, rel: VaultRelPath): string {
@@ -93,6 +96,12 @@ export function isWatchIgnoredPath(rel: string): boolean {
   return isLocalOnlyPath(rel)
 }
 
+/** A fresh path for a file Holi writes and nobody else sees: the watcher, the
+ *  scanner and the snapshot all skip the marker (`isNonContentPath`). */
+export function tmpPathIn(dir: string): string {
+  return join(dir, `${TMP_MARKER}${randomBytes(6).toString('hex')}`)
+}
+
 export async function writeAtomic(
   root: string,
   rel: VaultRelPath,
@@ -100,7 +109,7 @@ export async function writeAtomic(
 ): Promise<void> {
   const abs = absPathFor(root, rel)
   await mkdir(dirname(abs), { recursive: true })
-  const tmp = join(dirname(abs), `${TMP_MARKER}${randomBytes(6).toString('hex')}`)
+  const tmp = tmpPathIn(dirname(abs))
   // A string still defaults to utf8; a Uint8Array/Buffer writes bytes verbatim —
   // the branded templates seed binary fonts + logo through this same writer.
   await writeFile(tmp, data)

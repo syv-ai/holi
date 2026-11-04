@@ -40,6 +40,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/cn'
+import { saveBeforeClosing } from '@/lib/buffer-registry'
 import type { IconGlyph } from '@/lib/icon-glyph'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import {
@@ -131,6 +132,8 @@ export function TabStrip({
     }
   }
   const act = (change: (w: ShellWorkspace) => ShellWorkspace) => setWs(change)
+  const close = (change: (w: ShellWorkspace) => ShellWorkspace) =>
+    void saveBeforeClosing(() => setWs(change))
   const split = activeSplit(ws)
   const count = ws.entries.length
 
@@ -269,7 +272,7 @@ export function TabStrip({
                           variant="ghost"
                           size="icon-xs"
                           aria-label={tab !== null ? `Close ${tab.title}` : 'Close split view'}
-                          onClick={() => act((w) => closeEntry(w, id))}
+                          onClick={() => close((w) => closeEntry(w, id))}
                         >
                           <XIcon aria-hidden="true" />
                         </Button>
@@ -284,15 +287,15 @@ export function TabStrip({
                         : null
                     }
                     onMoveOut={(key) => act((w) => moveOut(w, key))}
-                    onReplace={(key) => act((w) => replaceWithNew(w, key))}
-                    onCloseMember={(key) => act((w) => closeTab(w, key))}
+                    onReplace={(key) => close((w) => replaceWithNew(w, key))}
+                    onCloseMember={(key) => close((w) => closeTab(w, key))}
                     last={index === count - 1}
                     only={count < 2}
                     onOpenInSplit={() => act((w) => openInSplit(w, id))}
                     onSeparate={() => act((w) => separate(w, id))}
-                    onClose={() => act((w) => closeEntry(w, id))}
-                    onCloseOthers={() => act((w) => closeOtherTabs(w, id))}
-                    onCloseRight={() => act((w) => closeTabsToRight(w, id))}
+                    onClose={() => close((w) => closeEntry(w, id))}
+                    onCloseOthers={() => close((w) => closeOtherTabs(w, id))}
+                    onCloseRight={() => close((w) => closeTabsToRight(w, id))}
                     onReopen={() => act(reopenClosed)}
                   />
                 </ContextMenu>
@@ -338,7 +341,7 @@ export function TabStrip({
             Reopen closed tab
             <DropdownMenuShortcut>⇧⌘T</DropdownMenuShortcut>
           </DropdownMenuItem>
-          <DropdownMenuItem disabled={count === 0} onSelect={() => act(closeAllTabs)}>
+          <DropdownMenuItem disabled={count === 0} onSelect={() => close(closeAllTabs)}>
             <XIcon aria-hidden="true" />
             Close all tabs
             <DropdownMenuShortcut>⌥⌘W</DropdownMenuShortcut>

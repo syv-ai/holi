@@ -71,7 +71,7 @@ function setup(
     idleMs: 100,
     log: () => {},
   })
-  return { sessions, opened, closed, pastes, edges, asked, lists, targets }
+  return { sessions, opened, closed, pastes, edges, asked, lists, targets, provider }
 }
 
 describe('nameOf', () => {
@@ -321,6 +321,64 @@ describe('sessions Holi runs', () => {
   it('refuses a provider it does not run', async () => {
     const t = setup()
     expect((await t.sessions.start('claude', {})).ok).toBe(false)
+  })
+
+  it('runs a background provider only for its sign-in, which reads no turns off its terminal', async () => {
+    const background = {} as NonNullable<AgentProvider['capabilities']['background']>
+    const t = setup('codex', undefined, { background })
+    expect((await t.sessions.start('codex', {})).ok).toBe(false)
+
+    const res = await t.sessions.start('codex', { login: true })
+    if (!res.ok) throw new Error(res.message)
+    expect(t.asked[0]?.login).toBe(true)
+    // One sign-in at a time.
+    expect(await t.sessions.start('codex', { login: true })).toEqual(res)
+    t.opened[0]!.onInput?.('/login\r')
+    expect(t.sessions.sessions()).toEqual([
+      expect.objectContaining({ id: res.sessionId, state: 'idle' }),
+    ])
+    expect(t.edges).toEqual([])
+
+    await t.sessions.stop(res.sessionId)
+    expect(t.sessions.sessions()).toEqual([])
+  })
+
+  it('does not create a sign-in terminal when the vault is left during configuration', async () => {
+    const t = setup('codex', undefined, {
+      background: {} as NonNullable<AgentProvider['capabilities']['background']>,
+    })
+    let finish!: (value: { dir: string }) => void
+    t.provider.configure = () => new Promise((resolve) => (finish = resolve))
+
+    const starting = t.sessions.start('codex', { login: true })
+    const leaving = t.sessions.leave()
+    finish({ dir: '/home/.codex' })
+
+    await leaving
+    expect(await starting).toMatchObject({ ok: false })
+    expect(t.opened).toEqual([])
+    expect(t.sessions.sessions()).toEqual([])
+  })
+
+  it('does not create a sign-in terminal when the vault is left during the first-spawn notice', async () => {
+    const t = setup('codex', undefined, {
+      background: {} as NonNullable<AgentProvider['capabilities']['background']>,
+    })
+    let finish!: (value: boolean) => void
+    t.provider.firstSpawn = {
+      take: () => new Promise((resolve) => (finish = resolve)),
+      notice: 'Sign in',
+    }
+
+    const starting = t.sessions.start('codex', { login: true })
+    for (let i = 0; i < 10 && finish === undefined; i++) await Promise.resolve()
+    const leaving = t.sessions.leave()
+    finish(true)
+
+    await leaving
+    expect(await starting).toMatchObject({ ok: false })
+    expect(t.opened).toEqual([])
+    expect(t.sessions.sessions()).toEqual([])
   })
 
   it('runs a fenced one in its folder, copying back before its turn closes, and says when that failed', async () => {

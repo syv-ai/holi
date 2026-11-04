@@ -70,7 +70,7 @@ export function VaultHost() {
         <LeaveVaultDialog
           intent={leaving.kind}
           onConfirm={() => {
-            if (leaving.kind === 'switch') applySwitch(leaving.remote)
+            if (leaving.kind === 'switch') void applySwitch(leaving.remote)
             else {
               setLeaving(null)
               setShowAdd(true)

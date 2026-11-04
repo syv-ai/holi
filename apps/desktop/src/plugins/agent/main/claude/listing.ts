@@ -81,6 +81,9 @@ export interface SessionSummary {
   /** A fenced turn's copy is still in progress, or its terminal is gone. */
   copying?: boolean
   closed?: boolean
+  /** It is the terminal that signs its provider in (`host/pty-sessions.ts`):
+   *  live like any session, with no turns to review, restart or copy. */
+  signIn?: boolean
   /** Tokens its turns used, input and output, when its agent reports them
    *  (a Codex job's `turn.completed`). A count, never a share of a window. */
   tokens?: number

@@ -121,7 +121,7 @@ export function createVaultPreCommit(opts: {
   const lastRuns = new Map<string, NonNullable<PreCommitStatus['lastRun']>>()
   /** Each vault's environment setup this session, by root. */
   const setups = new Map<string, Promise<void>>()
-  const runEnv = { ...env, PATH: toolPath(env) }
+  const runEnv = () => ({ ...env, PATH: toolPath(env) })
 
   const tool = () => resolveBin('pre-commit', env)
 
@@ -133,7 +133,7 @@ export function createVaultPreCommit(opts: {
     if (bin === null) return Promise.resolve(null)
     let version = versions.get(bin)
     if (version === undefined) {
-      version = exec(bin, ['--version'], { env: runEnv, timeout: 5_000 }).then(
+      version = exec(bin, ['--version'], { env: runEnv(), timeout: 5_000 }).then(
         (r) => r.stdout.trim(),
         () => null,
       )
@@ -151,7 +151,7 @@ export function createVaultPreCommit(opts: {
     if (running !== undefined && !again) return running
     const setup = exec(bin, ['install-hooks'], {
       cwd: root,
-      env: runEnv,
+      env: runEnv(),
       timeout: SETUP_TIMEOUT_MS,
     }).then(
       () => undefined,
@@ -252,7 +252,7 @@ export function createVaultPreCommit(opts: {
         try {
           const run = await exec(bin, ['run', '--hook-stage', 'pre-commit', '--files', ...paths], {
             cwd: root,
-            env: runEnv,
+            env: runEnv(),
             timeout: RUN_TIMEOUT_MS,
             maxBuffer: 4 * 1024 * 1024,
           })

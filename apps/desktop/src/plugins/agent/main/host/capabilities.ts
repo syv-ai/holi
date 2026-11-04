@@ -314,7 +314,8 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
 
     /** A terminal on the agents list, on one session with `attach`, on a
      *  copy of a conversation (Claude Code's session id) with `fork`, or on
-     *  Claude Code's `/login` for the vault with `login`. */
+     *  Claude Code's `/login` for the vault with `login`: a session Holi
+     *  runs, since once signed in it is a working one (`pty-sessions.ts`). */
     'agent.open': cap({
       doors: ['ui'],
       params: (raw) => {
@@ -330,6 +331,13 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
       run: async (ctx, args): Promise<OpenResult> => {
         if (!live(ctx)) return notOpen
+        if (args.login === true) {
+          const { login: _login, attach: _attach, fork: _fork, ...size } = args
+          const claude = deps.providers().find(hasBackground)
+          if (claude === undefined) return { ok: false, message: 'No agent here signs in.' }
+          const started = await deps.own.start(claude.id, { ...size, login: true })
+          return started.ok ? { ok: true, terminalId: started.terminalId } : started
+        }
         if (args.attach !== undefined && deps.jobs.has(args.attach)) return jobOnly
         // A session Holi runs is its own terminal: that one, never a second.
         if (
@@ -702,7 +710,16 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         if (deps.pi?.sessions().some((session) => session.id === id)) {
           return { ok: false, message: 'Pi background sessions cannot be restarted from a TUI.' }
         }
-        if (deps.own.has(id)) return ownOnly('restarted')
+        if (deps.own.has(id)) {
+          const signIn = deps.own.sessions().some((s) => s.id === id && s.signIn === true)
+          return signIn
+            ? {
+                ok: false,
+                message:
+                  'The sign-in terminal is not a background session, so Claude Code cannot restart it. Start a session from the Agents tab.',
+              }
+            : ownOnly('restarted')
+        }
         if (await deps.own.hasPast(id)) {
           const res = await deps.own.reopen(id, {})
           return res.ok ? { ok: true } : res

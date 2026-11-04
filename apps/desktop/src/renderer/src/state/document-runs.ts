@@ -164,6 +164,7 @@ export const launchRunAtom = atom(
 const providerLabelsAtom = atom<{ remote: string; labels: Record<string, string> } | null>(null)
 
 let loadingLabels: { remote: string; done: Promise<Record<string, string> | null> } | null = null
+const agentLabelsRevisionAtom = atom(0)
 
 /** The agents' names for `remote`: the ones already asked for, or main's,
  *  asked once however many want them at the same time; null when main does
@@ -178,10 +179,9 @@ const loadProviderLabelsAtom = atom(null, (get, set, remote: string) => {
     {},
   )
     .then((list) => {
-      if (!Array.isArray(list)) return null
+      if (!Array.isArray(list) || loadingLabels?.done !== done) return null
       const byId = Object.fromEntries(list.map((p) => [p.id, p.label]))
-      // Forgotten while asked: the answer may be from before the change.
-      if (loadingLabels?.done === done) set(providerLabelsAtom, { remote, labels: byId })
+      set(providerLabelsAtom, { remote, labels: byId })
       return byId
     })
     .catch(() => null)
@@ -195,9 +195,10 @@ const loadProviderLabelsAtom = atom(null, (get, set, remote: string) => {
 /** This machine's agents changed (one added, renamed or removed): the
  *  names are asked for again the next time one is wanted, so a new default
  *  agent is named. The agent plugin calls it on its `providers` event. */
-export const forgetAgentLabelsAtom = atom(null, (_get, set) => {
+export const forgetAgentLabelsAtom = atom(null, (get, set) => {
   loadingLabels = null
   set(providerLabelsAtom, null)
+  set(agentLabelsRevisionAtom, get(agentLabelsRevisionAtom) + 1)
 })
 
 /** Agent `id`'s name in the open vault, asked for the first time it is
@@ -205,11 +206,12 @@ export const forgetAgentLabelsAtom = atom(null, (_get, set) => {
 export function useAgentLabel(id: AgentProviderId): string | null {
   const remote = useAtomValue(activeRemoteAtom)
   const labels = useAtomValue(providerLabelsAtom)
+  const revision = useAtomValue(agentLabelsRevisionAtom)
   const load = useSetAtom(loadProviderLabelsAtom)
   const known = remote !== null && labels !== null && labels.remote === remote
   useEffect(() => {
     if (remote !== null && !known) void load(remote)
-  }, [remote, known, load])
+  }, [remote, known, load, revision])
   return known ? (labels.labels[id] ?? null) : null
 }
 
