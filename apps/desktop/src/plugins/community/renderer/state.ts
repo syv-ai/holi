@@ -11,7 +11,7 @@
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
 import { communityPluginsSignature, servedFile } from '@holi/shared'
-import { snapshotAtom, type PluginStore } from '@/plugin-api'
+import { activeRemoteAtom, snapshotAtom, type PluginStore } from '@/plugin-api'
 import { communityCap } from './community-cap'
 import type { PluginRow } from '../main/capabilities'
 import type { ServerState } from '../main/supervisor'
@@ -41,16 +41,43 @@ export const serversAtom = atom<Readonly<Record<string, ServerState>>>({})
 /** A newer release of each plugin installed here from one, by id. */
 export const updatesAtom = atom<Readonly<Record<string, string>>>({})
 
+/** A monotonically fenced request lifetime for one Jotai store. */
+const requestFences = new WeakMap<
+  PluginStore,
+  { lifetime: number; rows: number; updates: number }
+>()
+
+function fenceFor(store: PluginStore) {
+  let fence = requestFences.get(store)
+  if (!fence) {
+    fence = { lifetime: 0, rows: 0, updates: 0 }
+    requestFences.set(store, fence)
+  }
+  return fence
+}
+
+function current(store: PluginStore, remote: string, lifetime: number): boolean {
+  return store.get(activeRemoteAtom) === remote && fenceFor(store).lifetime === lifetime
+}
+
 /** Ask whether newer releases exist (`fresh` skips main's hourly cache). */
 export async function refreshUpdates(
   remote: string,
   store: PluginStore,
   fresh = false,
 ): Promise<void> {
+  const fence = fenceFor(store)
+  const lifetime = fence.lifetime
+  const request = ++fence.updates
   try {
-    store.set(updatesAtom, await communityCap.updates(remote, { fresh }))
+    const updates = await communityCap.updates(remote, { fresh })
+    if (current(store, remote, lifetime) && fenceFor(store).updates === request) {
+      store.set(updatesAtom, updates)
+    }
   } catch (err) {
-    console.error('[community] updates:', err)
+    if (current(store, remote, lifetime) && fenceFor(store).updates === request) {
+      console.error('[community] updates:', err)
+    }
   }
 }
 
@@ -65,11 +92,18 @@ export function servingRow(rows: readonly PluginRow[], path: string): PluginRow 
 
 /** Read the rows for `remote` again. */
 export async function refreshRows(remote: string, store: PluginStore): Promise<void> {
+  const fence = fenceFor(store)
+  const lifetime = fence.lifetime
+  const request = ++fence.rows
   try {
     const rows = await communityCap.list(remote)
-    store.set(rowsAtom, { remote, rows })
+    if (current(store, remote, lifetime) && fenceFor(store).rows === request) {
+      store.set(rowsAtom, { remote, rows })
+    }
   } catch (err) {
-    console.error('[community] list:', err)
+    if (current(store, remote, lifetime) && fenceFor(store).rows === request) {
+      console.error('[community] list:', err)
+    }
   }
 }
 
@@ -78,6 +112,8 @@ const signatureAtom = atom((get) => communityPluginsSignature(get(snapshotAtom).
 
 /** Keep the rows of `remote` current while it is open. */
 export function followRows(remote: string, store: PluginStore): () => void {
+  const fence = fenceFor(store)
+  const lifetime = ++fence.lifetime
   void refreshRows(remote, store)
   void refreshUpdates(remote, store)
   // A vault left open all day still hears of a release.
@@ -90,10 +126,14 @@ export function followRows(remote: string, store: PluginStore): () => void {
     void refreshRows(remote, store)
   })
   return () => {
+    const ownsLifetime = fenceFor(store).lifetime === lifetime
+    if (ownsLifetime) fenceFor(store).lifetime++
     clearInterval(hourly)
     undo()
-    store.set(rowsAtom, null)
-    store.set(serversAtom, {})
-    store.set(updatesAtom, {})
+    if (ownsLifetime) {
+      store.set(rowsAtom, null)
+      store.set(serversAtom, {})
+      store.set(updatesAtom, {})
+    }
   }
 }

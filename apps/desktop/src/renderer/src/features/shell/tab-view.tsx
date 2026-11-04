@@ -23,6 +23,7 @@ import { useSidebarApps } from '@/features/sidebar/sidebar-apps'
  */
 export function TabView({
   tab,
+  visible = true,
   settingsNavInSidebar,
   onOpen,
   onOpenBeside,
@@ -32,6 +33,8 @@ export function TabView({
   onOpenSearch,
 }: {
   tab: string | null
+  /** Whether this tab is the visible/focused split member. */
+  visible?: boolean
   /** Whether the sidebar carries Settings' nav for this tab; otherwise the
    *  view draws its own. */
   settingsNavInSidebar: boolean
@@ -69,7 +72,7 @@ export function TabView({
       // onboarding, as the agent's surface on its terminal.
       const Surface = surfaces.get(descriptor.surface)?.render
       if (Surface !== undefined) {
-        return <Surface key={tab} id={descriptor.id ?? ''} visible />
+        return <Surface key={tab} id={descriptor.id ?? ''} visible={visible} />
       }
       return (
         <IconStackEmpty

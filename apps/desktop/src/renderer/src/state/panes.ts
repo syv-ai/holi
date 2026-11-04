@@ -290,28 +290,6 @@ export function closeTabsForPaths(
   )
 }
 
-/** Close the tabs of `surface` whose id is not in `keep`: what its plugin
- *  says no longer exists, such as a terminal that has exited. */
-export function closeSurfaceTabsExcept(
-  workspace: Workspace,
-  surface: string,
-  keep: readonly string[],
-): Workspace {
-  const gone = (t: Tab) =>
-    t.kind === 'surface' && t.surface === surface && t.id !== undefined && !keep.includes(t.id)
-  if (!workspace.panes.some((p) => p.tabs.some(gone))) return workspace
-  return closeTabsWhere(workspace, gone)
-}
-
-/** The ids of every `surface` tab, across every pane, in pane order. */
-export function surfaceTabIds(workspace: Workspace, surface: string): string[] {
-  return workspace.panes.flatMap((p) =>
-    p.tabs.flatMap((t) =>
-      t.kind === 'surface' && t.surface === surface && t.id !== undefined ? [t.id] : [],
-    ),
-  )
-}
-
 /**
  * Every pane with the matching tabs removed, each pane's active index following
  * the **document** rather than the position. Shared so there is one answer to
@@ -332,7 +310,9 @@ function closeTabsWhere(workspace: Workspace, gone: (tab: Tab) => boolean): Work
   }
 }
 
-/** What the editor should be showing, or null when the pane is empty. */
+/** What the editor should be showing, or null when the pane is empty.
+ * @public exported for the workspace tests.
+ */
 export function activeTab(workspace: Workspace): Tab | null {
   const pane = workspace.panes[workspace.active]
   if (pane === undefined || pane.active < 0) return null

@@ -3,7 +3,12 @@
  * title band holds every tab, a split view being one pill of it; ⌘\\, a
  * tab's menu and a drag make a split; its members carry thin headers.
  */
+import { useEffect } from 'react'
 import { Provider, createStore } from 'jotai'
+import { Input } from '@/components/ui/input'
+import { coreContributionAtom } from '@/state/plugins'
+import { tabKey } from '@/state/tab-descriptor'
+import { closeTab, selectEntry, separate, openInSplit } from '@/state/shell-workspace'
 import { expect, test, vi } from 'vitest'
 import {
   VAULT_SETTING_DEFAULTS,
@@ -11,7 +16,7 @@ import {
   type ResolvedVaultSettings,
 } from '@holi/shared'
 
-import { createEvent, fireEvent, render, screen, waitFor, within } from '@/test/render'
+import { act, createEvent, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { activeSplit, focusedTab, isSplit, openTab } from '@/state/shell-workspace'
 import { vaultSettingsAtom } from '@/state/settings'
@@ -184,6 +189,204 @@ test('⌘T opens a New tab; ⇧⌘\\ separates; ⌃⌥→ focuses the next membe
   fireEvent.keyDown(window, { key: '|', ctrlKey: true, shiftKey: true })
   await waitFor(() => expect(views()).toHaveLength(1))
   expect(store.get(shellWorkspaceAtom).entries).toHaveLength(4)
+})
+
+test('a visited keepMounted surface keeps its document and lease while another tab is shown', async () => {
+  const acquired = vi.fn()
+  const released = vi.fn()
+  function Document({ visible }: { visible: boolean }) {
+    useEffect(() => {
+      acquired()
+      return () => {
+        released()
+      }
+    }, [])
+    return (
+      <Input aria-label="Volatile document state" data-visible={visible} defaultValue="initial" />
+    )
+  }
+  const store = mount()
+  const key = tabKey({ kind: 'surface', surface: 'test-document', id: 'demo.deck' })
+  act(() => {
+    store.set(coreContributionAtom, {
+      surfaces: [
+        {
+          kind: 'test-document',
+          label: 'Deck',
+          icon: () => null,
+          keepMounted: true,
+          render: Document,
+        },
+      ],
+      rail: [],
+      claims: [],
+    })
+    store.set(shellWorkspaceAtom, (ws) => openTab(ws, key))
+  })
+  const input = await screen.findByRole('textbox', { name: 'Volatile document state' })
+  fireEvent.change(input, { target: { value: 'keep this unsaved value' } })
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'A.md')))
+  expect(document.querySelector('[aria-label="Volatile document state"]')).toBe(input)
+  expect(input.isConnected).toBe(true)
+  expect(input.closest('[inert]')).not.toBeNull()
+  expect(input.getAttribute('data-visible')).toBe('false')
+  expect(released).not.toHaveBeenCalled()
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, key)))
+  expect(await screen.findByRole('textbox', { name: 'Volatile document state' })).toBe(input)
+  expect(input).toHaveValue('keep this unsaved value')
+  expect(acquired).toHaveBeenCalledTimes(1)
+  act(() => store.set(shellWorkspaceAtom, (ws) => closeTab(ws, key)))
+  await waitFor(() => expect(released).toHaveBeenCalledTimes(1))
+})
+
+function retainedFixture(keepMounted = true) {
+  const acquired = vi.fn()
+  const released = vi.fn()
+  function Document({ id, visible }: { id?: string; visible: boolean }) {
+    useEffect(() => {
+      acquired(id)
+      return () => {
+        released(id)
+      }
+    }, [id])
+    return <Input aria-label={`State ${id}`} data-visible={visible} defaultValue="initial" />
+  }
+  const store = mount()
+  const surface = {
+    kind: 'test-document',
+    label: 'Deck',
+    icon: () => null,
+    render: Document,
+    ...(keepMounted ? { keepMounted: true as const } : {}),
+  }
+  const install = (enabled: boolean) =>
+    store.set(coreContributionAtom, { surfaces: enabled ? [surface] : [], rail: [], claims: [] })
+  act(() => install(true))
+  const key = (id: string) => tabKey({ kind: 'surface', surface: surface.kind, id })
+  const show = (id: string) =>
+    act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, key(id))))
+  const away = () => act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'A.md')))
+  return { store, acquired, released, key, show, away, install }
+}
+
+test('retained surfaces mount only after first display and close/reopen starts fresh', async () => {
+  const f = retainedFixture()
+  act(() =>
+    f.store.set(shellWorkspaceAtom, (ws) =>
+      selectEntry(openTab(openTab(ws, f.key('one')), f.key('two')), f.key('one')),
+    ),
+  )
+  const first = await screen.findByRole('textbox', { name: 'State one' })
+  expect(document.querySelector('[aria-label="State two"]')).toBeNull()
+  expect(f.acquired.mock.calls).toEqual([['one']])
+  fireEvent.change(first, { target: { value: 'unsaved state' } })
+  f.away()
+  f.show('one')
+  expect(await screen.findByRole('textbox', { name: 'State one' })).toBe(first)
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => closeTab(ws, f.key('one'))))
+  expect(f.released).toHaveBeenCalledTimes(1)
+  f.show('one')
+  expect(await screen.findByRole('textbox', { name: 'State one' })).not.toBe(first)
+  expect(screen.getByRole('textbox', { name: 'State one' })).toHaveValue('initial')
+  expect(f.acquired.mock.calls.filter(([id]) => id === 'one')).toHaveLength(2)
+})
+
+test('parked retained surfaces preserve their viewport size and restore responsive sizing', async () => {
+  const f = retainedFixture()
+  f.show('one')
+  const input = await screen.findByRole('textbox', { name: 'State one' })
+  const host = input.closest<HTMLElement>('[data-pane-host]')!
+  const parking = document.querySelector<HTMLElement>('[data-retained-parking]')!
+  vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({
+    left: 0,
+    top: 0,
+    width: 640,
+    height: 480,
+    right: 640,
+    bottom: 480,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  } as DOMRect)
+
+  f.away()
+
+  expect(host.parentElement).toBe(parking)
+  expect(host.style.width).toBe('640px')
+  expect(host.style.height).toBe('480px')
+  expect(parking).toHaveAttribute('aria-hidden', 'true')
+  expect(parking).toHaveAttribute('inert')
+  expect(parking).not.toHaveAttribute('hidden')
+  expect(parking.style.display).toBe('')
+  expect(parking.className).toContain('invisible')
+  expect(parking.className).toContain('pointer-events-none')
+  expect(parking.className).toContain('absolute')
+
+  f.show('one')
+
+  expect(host.parentElement).not.toBe(parking)
+  expect(host.style.width).toBe('')
+  expect(host.style.height).toBe('')
+  expect(host.className).toContain('w-full')
+})
+
+test('both split members stay visible regardless focus, and separating parks rather than remounts', async () => {
+  const f = retainedFixture()
+  f.show('one')
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => openInSplit(ws, f.key('two'))))
+  const first = await screen.findByRole('textbox', { name: 'State one' })
+  const second = await screen.findByRole('textbox', { name: 'State two' })
+  expect(first.getAttribute('data-visible')).toBe('true')
+  expect(second.getAttribute('data-visible')).toBe('true')
+  fireEvent.pointerDown(first)
+  expect(second.getAttribute('data-visible')).toBe('true')
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => separate(ws, activeSplit(ws)!.id)))
+  expect(first.isConnected).toBe(true)
+  expect(second.isConnected).toBe(true)
+  expect(
+    [first, second].filter((input) => input.getAttribute('data-visible') === 'true'),
+  ).toHaveLength(1)
+  expect(f.acquired).toHaveBeenCalledTimes(2)
+  expect(f.released).not.toHaveBeenCalled()
+})
+
+test('removing a retained surface claim releases hidden content and does not eagerly recreate it', async () => {
+  const f = retainedFixture()
+  f.show('one')
+  const first = await screen.findByRole('textbox', { name: 'State one' })
+  f.away()
+  act(() => f.install(false))
+  expect(first.isConnected).toBe(false)
+  expect(f.released).toHaveBeenCalledTimes(1)
+  act(() => f.install(true))
+  expect(f.acquired).toHaveBeenCalledTimes(1)
+  f.show('one')
+  expect(await screen.findByRole('textbox', { name: 'State one' })).not.toBe(first)
+})
+
+test('the same surface id in another vault gets a fresh instance', async () => {
+  const f = retainedFixture()
+  f.show('one')
+  const first = await screen.findByRole('textbox', { name: 'State one' })
+  fireEvent.change(first, { target: { value: 'vault A only' } })
+  act(() => f.store.set(activeRemoteAtom, 'mara/other'))
+  f.show('one')
+  const second = await screen.findByRole('textbox', { name: 'State one' })
+  expect(second).not.toBe(first)
+  expect(second).toHaveValue('initial')
+  expect(first.isConnected).toBe(false)
+  expect(f.released).toHaveBeenCalledTimes(1)
+})
+
+test('surfaces without keepMounted retain their existing unmount-on-leave behavior', async () => {
+  const f = retainedFixture(false)
+  f.show('one')
+  const first = await screen.findByRole('textbox', { name: 'State one' })
+  f.away()
+  expect(first.isConnected).toBe(false)
+  expect(f.released).toHaveBeenCalledTimes(1)
+  f.show('one')
+  expect(await screen.findByRole('textbox', { name: 'State one' })).not.toBe(first)
 })
 
 /** A drag event at `x`: jsdom's drag events carry no pointer position. */

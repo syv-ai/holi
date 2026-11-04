@@ -5,19 +5,16 @@
 import { atom, type Atom } from 'jotai'
 import { tabForPath } from '@/state/folder-documents'
 import { openHomeAtom } from './home'
-import { openTabAtom } from './shell-tabs'
-import { tabForPath as shellTabForPath, type TabDescriptor } from './tab-descriptor'
+import { openTabAtom, shellWorkspaceAtom } from './shell-tabs'
+import { allTabs, closeTab as closeShellTab, focusedTab } from './shell-workspace'
+import { parseTabKey, tabForPath as shellTabForPath, type TabDescriptor } from './tab-descriptor'
 import {
-  activeTab,
-  closeSurfaceTabsExcept,
-  closeTab,
   openInNewPane,
   openPinned,
-  openPreview,
   openSurface,
-  openTab,
-  surfaceTabIds,
   workspaceAtom,
+  openPreview,
+  openTab,
   type Tab,
 } from './panes'
 import { folderClaimsAtom } from './plugins'
@@ -31,9 +28,6 @@ import { snapshotAtom } from './vaults'
 export const openSurfaceAtom = atom(null, (_get, set, surface: string, id?: string): void => {
   if (surface === 'home') return void set(openHomeAtom)
   set(workspaceAtom, (w) => openSurface(w, surface, id))
-  // The tabs the shell draws are `shell-tabs.ts`'s: a vault app by its bundle,
-  // any other surface by name. `workspaceAtom` above is the pane workspace
-  // `surfaceTabIdsAtom` reads; this is what a person sees open.
   set(openTabAtom, shellSurfaceTab(surface, id))
 })
 
@@ -46,13 +40,12 @@ function shellSurfaceTab(surface: string, id?: string): TabDescriptor {
 /** Close the active pane's tab onto `surface` with `id`, if it has one: an
  *  app's "close tab" once its bundle is gone. */
 export const closeSurfaceTabAtom = atom(null, (_get, set, surface: string, id: string): void => {
-  set(workspaceAtom, (w) => {
-    const pane = w.panes[w.active]
-    if (pane === undefined) return w
-    const index = pane.tabs.findIndex(
-      (t) => t.kind === 'surface' && t.surface === surface && t.id === id,
-    )
-    return index === -1 ? w : closeTab(w, index)
+  set(shellWorkspaceAtom, (ws) => {
+    const key = allTabs(ws).find((tab) => {
+      const descriptor = surfaceDescriptor(tab)
+      return descriptor?.surface === surface && descriptor.id === id
+    })
+    return key === undefined ? ws : closeShellTab(ws, key)
   })
 })
 
@@ -61,9 +54,27 @@ export const closeSurfaceTabAtom = atom(null, (_get, set, surface: string, id: s
 export const closeSurfaceTabsAtom = atom(
   null,
   (_get, set, surface: string, keep: readonly string[]): void => {
-    set(workspaceAtom, (w) => closeSurfaceTabsExcept(w, surface, keep))
+    set(shellWorkspaceAtom, (ws) => {
+      const retained = new Set(keep)
+      return allTabs(ws).reduce((next, key) => {
+        const descriptor = surfaceDescriptor(key)
+        return descriptor?.surface === surface &&
+          descriptor.id !== undefined &&
+          !retained.has(descriptor.id)
+          ? closeShellTab(next, key)
+          : next
+      }, ws)
+    })
   },
 )
+
+/** Vault apps have their own shell descriptor but still use the app surface's
+ * lifecycle interface. */
+function surfaceDescriptor(key: string): { surface: string; id?: string } | null {
+  const tab = parseTabKey(key)
+  if (tab?.kind === 'surface') return tab
+  return tab?.kind === 'vault-app' ? { surface: 'app', id: tab.path } : null
+}
 
 const tabIdAtoms = new Map<string, Atom<readonly string[]>>()
 
@@ -74,7 +85,10 @@ export function surfaceTabIdsAtom(surface: string): Atom<readonly string[]> {
   if (made === undefined) {
     let last: readonly string[] = []
     made = atom((get) => {
-      const next = surfaceTabIds(get(workspaceAtom), surface)
+      const next = allTabs(get(shellWorkspaceAtom)).flatMap((key) => {
+        const descriptor = surfaceDescriptor(key)
+        return descriptor?.surface === surface && descriptor.id !== undefined ? [descriptor.id] : []
+      })
       // The same array while the ids are the same, so a watcher hears changes.
       if (next.length !== last.length || next.some((id, i) => id !== last[i])) last = next
       return last
@@ -92,8 +106,9 @@ export function activeSurfaceIdAtom(surface: string): Atom<string | null> {
   let made = activeIdAtoms.get(surface)
   if (made === undefined) {
     made = atom((get) => {
-      const tab = activeTab(get(workspaceAtom))
-      return tab?.kind === 'surface' && tab.surface === surface ? (tab.id ?? null) : null
+      const tab = focusedTab(get(shellWorkspaceAtom))
+      const descriptor = tab === null ? null : surfaceDescriptor(tab)
+      return descriptor?.surface === surface ? (descriptor.id ?? null) : null
     })
     activeIdAtoms.set(surface, made)
   }

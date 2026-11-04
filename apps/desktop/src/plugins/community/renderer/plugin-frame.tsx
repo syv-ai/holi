@@ -18,18 +18,30 @@ import { rowsAtom, servingRow, serversAtom, type ServerState } from './state'
 type Phase =
   { kind: 'starting' } | { kind: 'running'; port: number } | { kind: 'failed'; message: string }
 
-export function PluginFrame({ path }: { path: string }): React.JSX.Element {
+export function PluginFrame({
+  path,
+  visible = true,
+}: {
+  path: string
+  visible?: boolean
+}): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const rows = useAtomValue(rowsAtom)
   const server: ServerState | undefined = useAtomValue(serversAtom)[path]
-  const row = rows === null ? null : servingRow(rows.rows, path)
+  const row = rows?.remote === remote ? servingRow(rows.rows, path) : null
+  const ownerId = row?.id
+  const eligible = remote !== null && ownerId !== undefined
   const [phase, setPhase] = useState<Phase>({ kind: 'starting' })
   /** Bumped by Restart: a fresh acquire, and a fresh document. */
   const [attempt, setAttempt] = useState(0)
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
-    if (remote === null) return
+    if (remote === null || ownerId === undefined) {
+      setPhase({ kind: 'starting' })
+      setLoaded(false)
+      return
+    }
     let live = true
     setPhase({ kind: 'starting' })
     setLoaded(false)
@@ -48,19 +60,20 @@ export function PluginFrame({ path }: { path: string }): React.JSX.Element {
         .then(({ lease }) => communityCap.release(remote, { lease }))
         .catch(() => undefined)
     }
-  }, [remote, path, attempt])
+  }, [remote, path, attempt, ownerId])
 
   // A server that stops on its own while the tab shows it.
   const exited = server?.state === 'exited' ? server : null
   const name = row?.name ?? 'The plugin'
   const log = server?.log ?? []
 
-  if (phase.kind === 'running' && exited === null) {
+  if (eligible && phase.kind === 'running' && exited === null) {
     return (
       <iframe
         key={`${phase.port}:${attempt}`}
         src={`${pluginServerOrigin(phase.port)}/`}
         aria-label={`${name}: ${path}`}
+        inert={!visible}
         // `allow-same-origin` is safe here, unlike a vault app's frame: the
         // server's loopback origin is never the renderer's, so the frame
         // cannot reach Holi's document with it. It is needed because a dev
@@ -73,7 +86,11 @@ export function PluginFrame({ path }: { path: string }): React.JSX.Element {
     )
   }
 
-  const stopped = phase.kind === 'failed' ? phase.message : (exited?.message ?? null)
+  const stopped = eligible
+    ? phase.kind === 'failed'
+      ? phase.message
+      : (exited?.message ?? null)
+    : null
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 p-6">
       <div className="flex items-center justify-between gap-3">

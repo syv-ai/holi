@@ -11,6 +11,17 @@ if (!Element.prototype.hasPointerCapture) {
   Element.prototype.setPointerCapture = () => {}
   Element.prototype.releasePointerCapture = () => {}
 }
+// Chromium preserves iframe documents with moveBefore. jsdom models DOM
+// insertion only; real browsing-context continuity is exercised in Electron.
+if (!('moveBefore' in Element.prototype)) {
+  Object.defineProperty(Element.prototype, 'moveBefore', {
+    configurable: true,
+    writable: true,
+    value(this: Element, node: Node, before: Node | null) {
+      this.insertBefore(node, before)
+    },
+  })
+}
 if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {}
 // jsdom computes no layout, so it implements neither scroll method on an
 // element. The settings rail uses both — `scrollTo` to start a section at the
