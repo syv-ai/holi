@@ -14,10 +14,19 @@ import {
 } from '@holi/shared'
 import { activeRemoteAtom, type RendererPlugin } from '@/plugin-api'
 import { AGENT_INFO } from '../info'
+import { agentSessionsAtom } from '../renderer/state/sessions'
+import { viewTerminalsAtom } from '../renderer/state/agents-view'
 import { AgentsView } from '../renderer/agents/agents-view'
+
+vi.mock('../renderer/session-terminal', () => ({
+  SessionTerminal: ({ provider }: { provider?: string }) => (
+    <div data-testid="session-terminal" data-provider={provider ?? 'default'} />
+  ),
+}))
 
 vi.mock('../renderer/agent-cap', () => ({
   agentCap: {
+    detach: vi.fn(),
     providers: async () => [
       { id: 'claude', label: 'Claude Code', installed: true, background: true },
       { id: 'codex', label: 'Codex', installed: false, background: false },
@@ -63,6 +72,27 @@ test("a vault with chat: false pinned still opens on the agent's home", () => {
   expect(screen.getByText('No session here')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'New session' })).toBeInTheDocument()
   expect(screen.queryByText('Nothing needs you')).not.toBeInTheDocument()
+})
+
+test('the main Agents view passes the session provider to its terminal', () => {
+  const store = vaultPinning('plugins: {}\n')
+  store.set(agentSessionsAtom, [
+    {
+      id: 'pi-session',
+      provider: 'pi',
+      name: 'Pi session',
+      state: 'idle',
+    },
+  ])
+  store.set(viewTerminalsAtom, { 'pi-session': 'terminal-1' })
+
+  render(
+    <Provider store={store}>
+      <AgentsView selection={{ owner: 'agent', id: 'session:pi-session' }} />
+    </Provider>,
+  )
+
+  expect(screen.getByTestId('session-terminal')).toHaveAttribute('data-provider', 'pi')
 })
 
 test("the home names this machine's agent", () => {
