@@ -130,7 +130,13 @@ export async function engineRig(
       removed.push({ rels: [...rels], folder })
     },
     // The vault is what was written: its files, and the folders they are in.
-    readHead: async (rel) => writes.get(rel)?.slice(0, 256) ?? null,
+    // Cut by bytes, as the real one reads them.
+    readHead: async (rel) => {
+      const text = writes.get(rel)
+      return text === undefined
+        ? null
+        : new TextDecoder().decode(new TextEncoder().encode(text).slice(0, 256))
+    },
     folderExists: async (rel) => [...writes.keys()].some((k) => k.startsWith(`${rel}/`)),
     folders: () => [
       ...new Set(

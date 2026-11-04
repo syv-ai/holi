@@ -142,6 +142,9 @@ const REMOVED_DAYS = 30
 const DAY_MS = 24 * 60 * 60 * 1000
 /** What `prepare` writes before a meeting records, which `start` may take. */
 const NOT_RECORDED = 'Not recorded yet: open this meeting and press Record.'
+/** How the placeholder starts, so it is known by its first bytes, whatever
+ *  the length of the title after it. */
+const PLACEHOLDER_HEAD = '---\nmeeting: not recorded\n---\n'
 /** The id at the top of a meeting's transcript. */
 const MARK = /^---\nmeeting: ([0-9a-f]{12})\n---\n/
 
@@ -506,7 +509,8 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     if (head === null) return { kind: 'absent' }
     const id = MARK.exec(head)?.[1]
     if (id !== undefined) return { kind: 'meeting', id }
-    return { kind: head.includes(NOT_RECORDED) ? 'placeholder' : 'unmarked' }
+    const placeholder = head.startsWith(PLACEHOLDER_HEAD) || head.includes(NOT_RECORDED)
+    return { kind: placeholder ? 'placeholder' : 'unmarked' }
   }
 
   /** Whether the meeting's folder is still its own to write. `adopt`: its
@@ -560,14 +564,22 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
   async function followNow(): Promise<void> {
     if (disposed) return
     /** Every folder whose transcript carries an id, read once a pass and
-     *  only when a meeting is not where it was. */
+     *  only when a meeting is not where it was; for an id in two, a
+     *  meeting's folder over a copy of its transcript left elsewhere. */
     let marked: Map<string, string> | null = null
     const markedFolders = async (): Promise<Map<string, string>> => {
       if (marked !== null) return marked
       const found = new Map<string, string>()
       for (const dir of deps.folders()) {
         const mark = await markAt(dir)
-        if (mark.kind === 'meeting' && !found.has(mark.id)) found.set(mark.id, dir)
+        if (mark.kind !== 'meeting') continue
+        const seen = found.get(mark.id)
+        if (
+          seen === undefined ||
+          (!seen.endsWith(MEETING_SUFFIX) && dir.endsWith(MEETING_SUFFIX))
+        ) {
+          found.set(mark.id, dir)
+        }
       }
       marked = found
       return found
@@ -582,14 +594,17 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
         setAway(id, false)
         continue
       }
-      // Its folder was renamed or moved: the meeting follows. A transcript
-      // dragged out on its own into a folder that is not a meeting's is not
-      // the meeting moving (its folder and minutes are where they were), so
-      // the meeting stays and writes its transcript again.
+      // Its folder was renamed or moved: the meeting follows, into a
+      // meeting's folder. A transcript dragged out on its own into another
+      // folder is not the meeting moving: the meeting stays and writes its
+      // transcript again, and its folder deleted later is a delete. Only a
+      // meeting from before folders had the suffix follows into one without
+      // it, once its own is gone (renamed in place).
       const moved = (await markedFolders()).get(id)
       if (
         moved !== undefined &&
-        (moved.endsWith(MEETING_SUFFIX) || !(await deps.folderExists(summary.folder)))
+        (moved.endsWith(MEETING_SUFFIX) ||
+          (!summary.folder.endsWith(MEETING_SUFFIX) && !(await deps.folderExists(summary.folder))))
       ) {
         await relocate(id, moved)
         continue
@@ -1379,7 +1394,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       const path = await freeFolder(parent, name === '' ? defaultTitle(now()) : name, now())
       await deps.writeFile(
         `${path}/transcript.local.md`,
-        `# ${name === '' ? 'Meeting' : name}\n\n${NOT_RECORDED}\n`,
+        `${PLACEHOLDER_HEAD}# ${name === '' ? 'Meeting' : name}\n\n${NOT_RECORDED}\n`,
       )
       return { path }
     },

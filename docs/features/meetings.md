@@ -387,9 +387,11 @@ Meetings tab.
 **A meeting is known by its id, not its path.** Its transcript starts with `meeting: <id>`
 frontmatter, written when it starts, and the engine checks it before every write and on every vault
 scan (`meetings.follow`). A folder renamed or moved in the tree takes its meeting with it: the
-meeting's paths (its minutes, its tasks) follow, and it writes there from then on. A transcript
-dragged out on its own into a folder that is not a meeting's is not the meeting moving: the meeting
-stays in its folder and writes its transcript there again. A folder deleted
+meeting's paths (its minutes, its tasks) follow, and it writes there from then on. It follows
+only into a meeting's folder (`.meeting`): a transcript dragged out on its own into another folder
+is not the meeting moving, so the meeting stays in its folder and writes its transcript there again,
+and that folder deleted later is a delete. A meeting from before the suffix follows its folder renamed
+in place. A folder deleted
 from the vault, gone for 5 s (a move removes its files before it writes them again), deletes the
 meeting here too, its recording stopped first (`meeting-removed`: the capture stops and what it
 still has goes nowhere); nothing writes the old path again. What this machine had of it (state,
@@ -399,7 +401,8 @@ that stayed while only its transcript went, as in a fresh clone (the transcript 
 gets it written again. A folder at a meeting's path that is not that meeting's is never taken for
 it, nor is a file someone put in its transcript's place overwritten: a stale record shows in the
 list as moved away (`away`), opens no folder, and `meeting.start` in a folder whose transcript carries another
-meeting's id, or no id at all (a file of someone's own), is refused. A meeting from before ids takes the transcript at its path as its own.
+meeting's id, or no id at all (a file of someone's own, not the "not recorded yet" placeholder
+**New meeting** writes, which starts with `meeting: not recorded`), is refused. A meeting from before ids takes the transcript at its path as its own.
 
 **Renaming and deleting.** Each meeting in the list has a **…** menu, on hover or focus, and so does
 its review beside the title: **Rename** edits the title in place (`meeting.rename`; Enter saves,

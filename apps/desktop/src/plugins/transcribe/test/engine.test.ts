@@ -385,6 +385,14 @@ describe('where a meeting goes', () => {
     await expect(rig.meetings.start({ path })).rejects.toMatchObject({ code: 'CONFLICT' })
   })
 
+  it('starts in a folder made with a long title in any script', async () => {
+    const rig = await engineRig()
+    const title = '会議'.repeat(55)
+    const { path } = await rig.meetings.prepare({ folder: 'Clients', title })
+    const { meetingId } = await rig.meetings.start({ title, path })
+    expect((await rig.meetings.get(meetingId)).folder).toBe(path)
+  })
+
   it('is refused in a folder whose transcript is someone’s own file', async () => {
     const rig = await engineRig()
     const path = 'Clients/Acme/Notes.meeting'
@@ -425,6 +433,14 @@ describe('a meeting folder changed in the vault', () => {
     await until(() => rig.writes.get(transcript)?.includes('said 1') === true)
     expect(meeting.folder).toBe(from)
     expect(rig.writes.get(`${from}/minutes.md`)).toBe('# shared minutes\n')
+    expect(rig.writes.get('notes/minutes.md')).toBe('# my notes\n')
+
+    // Its folder deleted later is a delete, not a move into the copy's folder.
+    for (const rel of [...rig.writes.keys()]) if (rel.startsWith(`${from}/`)) rig.writes.delete(rel)
+    await rig.meetings.follow()
+    await vi.advanceTimersByTimeAsync(6000)
+    await rig.meetings.follow()
+    await until(() => rig.meetings.list().length === 0)
     expect(rig.writes.get('notes/minutes.md')).toBe('# my notes\n')
   })
 
