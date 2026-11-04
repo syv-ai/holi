@@ -1250,6 +1250,7 @@ describe('ActiveVault — sync', () => {
     failing = false
     // A pull reaches the remote, and no push follows it. Hold only the alert
     // timer so fixture IO cannot race the retry's real pull.
+    pullCompleted = false
     await active.retry()
     expect(pullCompleted).toBe(true)
     expect(alertTimeout).toBeDefined()
