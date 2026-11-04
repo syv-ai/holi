@@ -40,7 +40,9 @@ export async function saveEntryClose(
   })
 }
 
-/** The workspace resulting from the requested whole-entry close. */
+/** The workspace resulting from the requested whole-entry close.
+ * @public Kept for reducer tests.
+ */
 export function applyEntryClose(ws: ShellWorkspace, request: EntryCloseRequest): ShellWorkspace {
   switch (request.kind) {
     case 'entry':
@@ -72,7 +74,9 @@ export function closesSplit(ws: ShellWorkspace, request: EntryCloseRequest): boo
   return ws.entries.some((entry) => targetIds.has(entryId(entry)) && isSplit(entry))
 }
 
-/** Confirmation is valid only for the unchanged workspace captured at request time. */
+/** Confirmation is valid only for the unchanged workspace captured at request time.
+ * @public Kept for reducer tests.
+ */
 export function confirmEntryClose(
   current: ShellWorkspace,
   captured: ShellWorkspace,
