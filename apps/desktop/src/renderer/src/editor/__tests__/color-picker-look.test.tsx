@@ -7,7 +7,7 @@
  * exactly the kind of thing that looks right in the source and is wrong on
  * screen, so it is pinned here rather than eyeballed.
  */
-import { render } from '@/test/render'
+import { render, waitFor } from '@/test/render'
 import { useEffect, useRef } from 'react'
 import { expect, test } from 'vitest'
 import { EditorState } from '@codemirror/state'
@@ -32,9 +32,10 @@ function mount(doc: string): EditorView {
   return view!
 }
 
-test('a hex in a CSS file gets the published swatch', () => {
+test('a hex in a CSS file gets the published swatch', async () => {
   const view = mount("[data-theme='dark'] {\n  --primary: #8b5cf6;\n}\n")
-  expect(view.dom.querySelector('.cm-css-color-picker-wrapper')).not.toBeNull()
+  // CodeMirror can finish parsing on its scheduled work under suite load.
+  await waitFor(() => expect(view.dom.querySelector('.cm-css-color-picker-wrapper')).not.toBeNull())
   view.destroy()
 })
 
