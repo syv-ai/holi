@@ -185,7 +185,7 @@ function open(text: string, path = PATH) {
 
 const TASK_PATH = 'tasks/task.write-report.md'
 
-function openTask(text = '# Report\\n') {
+function openTask(text = '# Report\n') {
   store.set(openTabAtom, { kind: 'doc', path: TASK_PATH })
   return open(text, TASK_PATH)
 }
@@ -286,11 +286,14 @@ test('a failed Done keeps the task open, explains the error and allows retry', a
   const user = userEvent.setup()
   write.mockRejectedValueOnce(new Error('Invalid task frontmatter'))
   openTask()
-  await editorBox(TASK_PATH)
+  const box = await editorBox(TASK_PATH)
+  act(() => (box as WithEditor).editor.commands.insertContent('Pending edit'))
   await user.click(screen.getByRole('button', { name: 'Done' }))
-  expect(await screen.findByRole('alert')).toHaveTextContent('Invalid task frontmatter')
+  const error = await screen.findByRole('alert')
+  expect(error).toHaveTextContent('Invalid task frontmatter')
+  expect(error).toHaveTextContent('Task is still open')
   expect(store.get(shellWorkspaceAtom).entries).toHaveLength(1)
-  await user.click(screen.getByRole('button', { name: 'Done' }))
+  await user.click(within(error).getByRole('button', { name: 'Retry' }))
   await waitFor(() => expect(store.get(shellWorkspaceAtom).entries).toHaveLength(0))
 })
 
@@ -299,7 +302,8 @@ test('Done does not close a task after the active vault changes during its save'
   const pending = deferred<void>()
   write.mockImplementationOnce(() => pending.promise)
   openTask()
-  await editorBox(TASK_PATH)
+  const box = await editorBox(TASK_PATH)
+  act(() => (box as WithEditor).editor.commands.insertContent('Pending edit'))
   await user.click(screen.getByRole('button', { name: 'Done' }))
   await waitFor(() => expect(write).toHaveBeenCalledOnce())
   act(() => store.set(activeRemoteAtom, 'other/vault'))
@@ -314,13 +318,60 @@ test('Done ignores concurrent clicks while its save is pending', async () => {
   const pending = deferred<void>()
   write.mockImplementationOnce(() => pending.promise)
   openTask()
-  await editorBox(TASK_PATH)
+  const box = await editorBox(TASK_PATH)
+  act(() => (box as WithEditor).editor.commands.insertContent('Pending edit'))
   const done = screen.getByRole('button', { name: 'Done' })
   await user.click(done)
   expect(await screen.findByRole('button', { name: 'Saving…' })).toBeDisabled()
   await act(async () => pending.resolve())
   await waitFor(() => expect(store.get(shellWorkspaceAtom).entries).toHaveLength(0))
   expect(write).toHaveBeenCalledOnce()
+})
+
+test('Done waits for an earlier autosave, saves the latest text and blocks further edits', async () => {
+  const user = userEvent.setup()
+  const pending = deferred<void>()
+  write.mockImplementationOnce(() => pending.promise)
+  openTask()
+  const editor = ((await editorBox(TASK_PATH)) as WithEditor).editor
+  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, 'First draft'))
+  await waitFor(() => expect(write).toHaveBeenCalledOnce(), { timeout: 2000 })
+  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, ' Final wording'))
+
+  await user.click(screen.getByRole('button', { name: 'Done' }))
+
+  expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled()
+  expect(store.get(shellWorkspaceAtom).entries).toContain(TASK_PATH)
+  expect(editor.isEditable).toBe(false)
+  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, 'ghost'))
+  expect(editor.getMarkdown()).not.toContain('ghost')
+  expect(write).toHaveBeenCalledOnce()
+  await act(async () => pending.resolve())
+  await waitFor(() => expect(store.get(shellWorkspaceAtom).entries).toHaveLength(0))
+  expect(write).toHaveBeenCalledTimes(2)
+  expect(files.get(TASK_PATH)).toContain('First draft')
+  expect(files.get(TASK_PATH)).toContain('Final wording')
+  expect(files.get(TASK_PATH)).not.toContain('ghost')
+})
+
+test('Done preserves the task when the workspace changes during its save', async () => {
+  const user = userEvent.setup()
+  const pending = deferred<void>()
+  write.mockImplementationOnce(() => pending.promise)
+  openTask()
+  const editor = ((await editorBox(TASK_PATH)) as WithEditor).editor
+  act(() => editor.commands.insertContent('Pending edit'))
+  await user.click(screen.getByRole('button', { name: 'Done' }))
+  await waitFor(() => expect(write).toHaveBeenCalledOnce())
+  act(() => store.set(openTabAtom, { kind: 'doc', path: PATH }))
+  const changed = store.get(shellWorkspaceAtom)
+
+  await act(async () => pending.resolve())
+
+  expect(store.get(shellWorkspaceAtom)).toBe(changed)
+  expect(changed.entries).toContain(TASK_PATH)
+  expect(changed.entries).toContain(PATH)
+  expect(editor.isEditable).toBe(true)
 })
 
 test('Done is unavailable while buffers are externally frozen', async () => {

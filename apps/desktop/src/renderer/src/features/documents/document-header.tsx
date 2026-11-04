@@ -10,6 +10,7 @@ import { CheckIcon, MessagesSquareIcon } from 'lucide-react'
 import { RichTextHistory } from '@/features/documents/rich-text/rich-text-controls'
 import { useRichTextState } from '@/features/documents/rich-text/rich-text-state'
 import { RichTextToolbarSeparator } from '@/features/documents/rich-text/rich-text-toolbar'
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Toggle } from '@/components/ui/toggle'
@@ -109,54 +110,54 @@ export function DocumentHeader({
   // line goes first, then the faces, History's label, and undo and redo
   // (⌘Z still works); the title truncates and the menu always stays.
   return (
-    <ViewHeader ref={ref}>
-      <ViewHeaderTitle
-        title={title}
-        badge={
-          locked ? (
-            <Badge variant="outline" className="shrink-0 font-normal">
-              Locked
-            </Badge>
-          ) : undefined
-        }
-        meta={
-          <>
-            {folder ? (
-              <>
-                <span className="truncate">{folder}</span>
-                <Dot />
-              </>
-            ) : null}
-            <span aria-live="polite" className="shrink-0">
-              {saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : 'Saved'}
-            </span>
-          </>
-        }
-      />
+    <>
+      <ViewHeader ref={ref}>
+        <ViewHeaderTitle
+          title={title}
+          badge={
+            locked ? (
+              <Badge variant="outline" className="shrink-0 font-normal">
+                Locked
+              </Badge>
+            ) : undefined
+          }
+          meta={
+            <>
+              {folder ? (
+                <>
+                  <span className="truncate">{folder}</span>
+                  <Dot />
+                </>
+              ) : null}
+              <span aria-live="polite" className="shrink-0">
+                {saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : 'Saved'}
+              </span>
+            </>
+          }
+        />
 
-      <Contributors path={path} />
-      <FileHistoryButton path={path} />
-      {comments ? (
-        <Toggle
-          size="sm"
-          pressed={comments.open}
-          onPressedChange={comments.onOpenChange}
-          aria-label={comments.count > 0 ? `Comments, ${comments.count} open` : 'Comments'}
-          className="shrink-0"
-        >
-          <MessagesSquareIcon aria-hidden="true" />
-          {comments.count > 0 ? <span className="tabular-nums">{comments.count}</span> : null}
-        </Toggle>
-      ) : null}
+        <Contributors path={path} />
+        <FileHistoryButton path={path} />
+        {comments ? (
+          <Toggle
+            size="sm"
+            pressed={comments.open}
+            onPressedChange={comments.onOpenChange}
+            aria-label={comments.count > 0 ? `Comments, ${comments.count} open` : 'Comments'}
+            className="shrink-0"
+          >
+            <MessagesSquareIcon aria-hidden="true" />
+            {comments.count > 0 ? <span className="tabular-nums">{comments.count}</span> : null}
+          </Toggle>
+        ) : null}
 
-      <div className="flex shrink-0 items-center gap-1">
-        <div className="hidden items-center gap-1 @md/view-header:flex">
-          <RichTextHistory editor={editor} state={state} />
-          <RichTextToolbarSeparator />
-        </div>
-        <DocumentActions editor={editor} {...actions} />
-        {taskDone ? (
-          <>
+        <div className="flex shrink-0 items-center gap-1">
+          <div className="hidden items-center gap-1 @md/view-header:flex">
+            <RichTextHistory editor={editor} state={state} />
+            <RichTextToolbarSeparator />
+          </div>
+          <DocumentActions editor={editor} {...actions} />
+          {taskDone ? (
             <Button
               type="button"
               size="sm"
@@ -167,14 +168,28 @@ export function DocumentHeader({
               <CheckIcon aria-hidden="true" />
               {taskDone.pending ? 'Saving…' : 'Done'}
             </Button>
-            {taskDone.error ? (
-              <span role="alert" className="max-w-48 text-sm text-destructive">
-                {taskDone.error}
-              </span>
-            ) : null}
-          </>
-        ) : null}
-      </div>
-    </ViewHeader>
+          ) : null}
+        </div>
+      </ViewHeader>
+      {taskDone?.error ? (
+        <div className="px-4 pt-3">
+          <Alert variant="destructive">
+            <AlertTitle>Task is still open</AlertTitle>
+            <AlertDescription>{taskDone.error}</AlertDescription>
+            <AlertAction>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={taskDone.pending || locked || !editor?.isEditable}
+                onClick={taskDone.onDone}
+              >
+                Retry
+              </Button>
+            </AlertAction>
+          </Alert>
+        </div>
+      ) : null}
+    </>
   )
 }
