@@ -489,6 +489,21 @@ describe('a meeting folder changed in the vault', () => {
     expect([...again.writes.keys()].filter((rel) => rel.startsWith(`${folder}/`))).toEqual([])
   })
 
+  it('deleted now is deleted even when this clone could not be named', async () => {
+    const rig = await engineRig({ failWrites: (rel) => rel === '.holi/meetings.local.json' })
+    const { meeting, send } = await started(rig)
+    await send(0)
+    const folder = meeting.folder
+    await until(() => rig.writes.get(`${folder}/transcript.local.md`)?.includes('said 1') === true)
+    for (const rel of [...rig.writes.keys()])
+      if (rel.startsWith(`${folder}/`)) rig.writes.delete(rel)
+    await rig.meetings.follow()
+    await vi.advanceTimersByTimeAsync(6000)
+    await rig.meetings.follow()
+    await until(() => rig.meetings.list().length === 0)
+    expect([...rig.writes.keys()].filter((rel) => rel.startsWith(`${folder}/`))).toEqual([])
+  })
+
   it('from an earlier session is deleted with its folder now', async () => {
     const first = await engineRig()
     const { meetingId, meeting, send } = await started(first)

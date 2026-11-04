@@ -649,7 +649,10 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
         if (await deps.folderExists(summary.folder)) {
           if (mark.kind === 'absent') await adopt(id)
           else setAway(id, true)
-        } else if ((cloneId !== null && stored.clone === cloneId) || sharesFiles(stored.meeting)) {
+        } else if (
+          (cloneId !== null && cloneOf.get(id) === cloneId) ||
+          sharesFiles(stored.meeting)
+        ) {
           await gone(id)
         } else await adopt(id)
       } else {
@@ -733,8 +736,10 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       await deps.writeFile(CLONE_FILE, `${JSON.stringify({ clone })}\n`)
       return clone
     } catch (err) {
+      // Kept for this session, so a delete now still holds; the next start
+      // takes the vault for a fresh clone.
       deps.log('warn', `meetings: could not write ${CLONE_FILE}: ${String(err)}`)
-      return null
+      return clone
     }
   }
 
@@ -815,6 +820,9 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
   async function persistStored(stored: Stored): Promise<void> {
     const id = stored.meeting.id
     if (deleted.has(id)) return
+    // The clone noted for it wins over a copy loaded before it was noted.
+    const clone = cloneOf.get(id)
+    if (clone !== undefined) stored.clone = clone
     const save = (async () => {
       await saving.get(id)?.catch(() => {})
       if (deleted.has(id)) return

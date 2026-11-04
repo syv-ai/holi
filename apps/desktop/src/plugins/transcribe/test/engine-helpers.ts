@@ -80,6 +80,8 @@ export async function engineRig(
     service?: () => Promise<SpeechService>
     /** The vault's agent; Claude Code unless given. */
     provider?: () => Promise<AgentProviderId>
+    /** Vault paths whose write fails, as a refused or full disk would. */
+    failWrites?: (rel: string) => boolean
   } = {},
 ) {
   const userData = opts.userData ?? (await mkdtemp(join(tmpdir(), 'holi-meetings-')))
@@ -122,6 +124,7 @@ export async function engineRig(
     service: opts.service ?? (async () => ({ url: null, model: null })),
     provider: opts.provider ?? (async () => 'claude'),
     writeFile: async (rel, text, guard) => {
+      if (opts.failWrites?.(rel) === true) throw new Error(`could not write ${rel}`)
       if (guard !== undefined && !(await guard())) return false
       writes.set(rel, text)
       return true
