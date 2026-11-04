@@ -5,24 +5,25 @@
  */
 const MOUSE_TRACKING_MODES = new Set(['9', '1000', '1002', '1003'])
 const MAX_PENDING_CSI = 4096
+const CSI_CONTROLS = /[\x00-\x17\x19\x1c-\x1f\x7f]/g
 
 export function createPiMouseSelectionFilter(): (data: string) => string {
-  let state: 'ground' | 'escape' | 'csi' | 'string' | 'string-escape' = 'ground'
-  let csi = ''
+  let state: 'ground' | 'escape' | 'csi' = 'ground'
+  let pending = ''
 
   function finishCsi(sequence: string): string {
-    const prefix = sequence.startsWith('\x1b[') ? 2 : 1
+    const prefix = sequence.startsWith('\x1b') ? sequence.indexOf('[') + 1 : 1
     const body = sequence.slice(prefix, -1)
-    if (!body.startsWith('?') || sequence.at(-1) !== 'h') return sequence
+    if (sequence.at(-1) !== 'h' || !/^\?[0-9;]*$/.test(body.replace(CSI_CONTROLS, '')))
+      return sequence
 
-    const params = body.slice(1).split(';')
-    if (params.some((param) => param !== '' && !/^\d+$/.test(param))) return sequence
     return (
       sequence.slice(0, prefix) +
-      '?' +
-      params
-        .map((param) => (MOUSE_TRACKING_MODES.has(String(Number(param))) ? '0' : param))
-        .join(';') +
+      body.replace(/[0-9][0-9\x00-\x17\x19\x1c-\x1f\x7f]*/g, (param) =>
+        MOUSE_TRACKING_MODES.has(String(Number(param.replace(CSI_CONTROLS, ''))))
+          ? param.replace(/[0-9]/g, '0')
+          : param,
+      ) +
       'h'
     )
   }
@@ -31,60 +32,48 @@ export function createPiMouseSelectionFilter(): (data: string) => string {
     let output = ''
     for (const char of data) {
       const code = char.codePointAt(0)!
+      // ESC and CSI restart parsing even inside an unfinished control sequence
+      // or control string. Forward the old prefix, then inspect the new one.
+      if (char === '\x1b' || char === '\x9b') {
+        output += pending
+        pending = char
+        state = char === '\x1b' ? 'escape' : 'csi'
+        continue
+      }
       switch (state) {
         case 'ground':
-          if (char === '\x1b') {
-            state = 'escape'
-            csi = char
-          } else if (char === '\x9b') {
-            state = 'csi'
-            csi = char
-          } else if (
-            char === '\x90' ||
-            char === '\x9d' ||
-            char === '\x98' ||
-            char === '\x9e' ||
-            char === '\x9f'
-          ) {
-            state = 'string'
-            output += char
-          } else {
-            output += char
-          }
+          output += char
           break
         case 'escape':
-          csi += char
+          pending += char
           if (char === '[') state = 'csi'
-          else if (char === ']' || char === 'P' || char === '^' || char === '_') {
-            state = 'string'
-            output += csi
-            csi = ''
-          } else {
-            output += csi
-            csi = ''
+          else if (
+            pending.length > MAX_PENDING_CSI ||
+            !(code <= 0x17 || code === 0x19 || (code >= 0x1c && code <= 0x1f) || code === 0x7f)
+          ) {
+            output += pending
+            pending = ''
             state = 'ground'
           }
           break
         case 'csi':
-          csi += char
+          pending += char
           if (code >= 0x40 && code <= 0x7e) {
-            output += finishCsi(csi)
-            csi = ''
+            output += finishCsi(pending)
+            pending = ''
             state = 'ground'
-          } else if (csi.length > MAX_PENDING_CSI) {
-            output += csi
-            csi = ''
+          } else if (
+            char === '\x18' ||
+            char === '\x1a' ||
+            code > 0x9f ||
+            pending.length > MAX_PENDING_CSI
+          ) {
+            // Cancellation, invalid Unicode, and overlong sequences pass through
+            // unchanged; never retain an unbounded or cancelled PTY fragment.
+            output += pending
+            pending = ''
             state = 'ground'
           }
-          break
-        case 'string':
-          output += char
-          if (char === '\x1b') state = 'string-escape'
-          else if (char === '\x07' || char === '\x9c') state = 'ground'
-          break
-        case 'string-escape':
-          output += char
-          state = char === '\\' ? 'ground' : 'string'
           break
       }
     }
