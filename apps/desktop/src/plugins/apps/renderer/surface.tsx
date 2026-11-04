@@ -29,6 +29,7 @@ const ENTRY = 'index.html'
 
 /** A new app's first turn: where it goes and what it is for, in the person's
  *  words. The vault-apps skill holds the rest. */
+/** @public Test the first-turn prompt without importing the renderer surface. */
 export const newAppPrompt = (parent: string, ask: string): string =>
   `Build a vault app ${parent === '' ? 'at the root of this vault' : `in \`${parent}/\``}: ${ask}\n\n` +
   'Use the vault-apps skill. Name it for what it does, and open it with ' +
@@ -123,6 +124,7 @@ export const APP_CLAIM: PathClaim = {
     label: 'New app…',
     icon: AppWindow,
     placeholder: 'What should the app do?',
+    asksName: true,
     agent: true,
     run: async ({ parent, name, agent }) => {
       if (agent === null) return null
