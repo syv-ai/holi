@@ -68,12 +68,19 @@ export async function removeVaultFiles(
   await pruneEmptiedFolder(root, vaultRelPath(folder))
 }
 
+/** How much of a transcript is read to know it: its id, or the placeholder,
+ *  even one from before placeholders had frontmatter, whose marker line comes
+ *  after a title of up to 120 characters of any script.
+ *
+ *  @public exported for the test rig's own reader */
+export const HEAD_BYTES = 1024
+
 /** The first `bytes` of a vault file as text, or null when there is none:
  *  enough to read the id a meeting's transcript starts with. */
 export async function readVaultHead(
   root: string,
   path: string,
-  bytes = 256,
+  bytes = HEAD_BYTES,
 ): Promise<string | null> {
   const abs = await exactPath(root, vaultRelPath(path)).catch(() => null)
   if (abs === null) return null

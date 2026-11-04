@@ -145,6 +145,9 @@ const NOT_RECORDED = 'Not recorded yet: open this meeting and press Record.'
 /** How the placeholder starts, so it is known by its first bytes, whatever
  *  the length of the title after it. */
 const PLACEHOLDER_HEAD = '---\nmeeting: not recorded\n---\n'
+/** A machine-local file in the vault naming this clone of it, made the
+ *  first time the engine runs in it: a clone made again has a new one. */
+const CLONE_FILE = '.holi/meetings.local.json'
 /** The folder a vault path is in ('' at the root). */
 const parentOf = (path: string): string => path.slice(0, Math.max(0, path.lastIndexOf('/')))
 /** The id at the top of a meeting's transcript. */
@@ -168,6 +171,10 @@ interface Stored {
    *  its folder is known by that wherever it is moved. A meeting saved before
    *  that has none until its transcript is written again. */
   marked?: true
+  /** The clone of the vault its folder was last seen in (`CLONE_FILE`). Its
+   *  folder missing from that clone was deleted; missing from another, it
+   *  never came with the clone (it held only this machine's files). */
+  clone?: string
 }
 
 interface Live {
@@ -495,9 +502,10 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
   /** Meetings whose folder is not where their record says, and that no
    *  folder in the vault claims: listed, but no folder opens them. */
   const away = new Set<string>()
-  /** Every vault folder this engine has seen: a meeting's folder missing
-   *  that never was is not a delete (below). */
-  const seenFolders = new Set<string>()
+  /** This clone's name (`CLONE_FILE`), read or made at `load`. */
+  let cloneId: string | null = null
+  /** The clone each meeting's record names, as loaded or since noted. */
+  const cloneOf = new Map<string, string | undefined>()
   /** When each meeting's transcript was first found missing. */
   const missing = new Map<string, number>()
   let followTimer: ReturnType<typeof setTimeout> | null = null
@@ -568,7 +576,6 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
 
   async function followNow(): Promise<void> {
     if (disposed) return
-    for (const dir of deps.folders()) seenFolders.add(dir)
     /** Every folder whose transcript carries each id, read once a pass and
      *  only when a meeting is not where it was. */
     let marked: Map<string, string[]> | null = null
@@ -590,6 +597,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       if (mark.kind === 'meeting' && mark.id === id) {
         missing.delete(id)
         setAway(id, false)
+        await noteClone(id)
         continue
       }
       // Its folder was renamed or moved: the meeting follows, into a
@@ -634,14 +642,16 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
         //
         // A folder that holds only this machine's files (the transcript, the
         // minutes kept local) is not in git, so a fresh clone has none of
-        // it: missing, and never seen here, is that, and the meeting writes
-        // it again. Gone after it was seen, or holding a shared file git
-        // would have brought back, it was deleted.
+        // it: missing from a clone the meeting was never seen in, that is
+        // what happened, and the meeting writes it again. Missing from the
+        // clone it was seen in, or holding a shared file git would have
+        // brought back, it was deleted, Holi running or not.
         if (await deps.folderExists(summary.folder)) {
           if (mark.kind === 'absent') await adopt(id)
           else setAway(id, true)
-        } else if (seenFolders.has(summary.folder) || sharesFiles(stored.meeting)) await gone(id)
-        else await adopt(id)
+        } else if ((cloneId !== null && stored.clone === cloneId) || sharesFiles(stored.meeting)) {
+          await gone(id)
+        } else await adopt(id)
       } else {
         followAfter(GONE_MS - (now() - since))
       }
@@ -653,7 +663,6 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     const l = await open(id)
     const m = l.stored.meeting
     const from = m.folder
-    seenFolders.add(to)
     const moved = (p: string): string =>
       p === from || p.startsWith(`${from}/`) ? `${to}${p.slice(from.length)}` : p
     m.folder = to
@@ -688,11 +697,46 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
   }
 
   /** Whether the meeting's folder holds a file git keeps: its minutes when
-   *  shared, or a task filed there that is not local. */
+   *  shared and written, or a task filed there that is not local. */
   const sharesFiles = (m: MeetingState): boolean =>
-    [m.minutesPath, ...m.cards.map((c) => c.taskPath)].some(
+    [m.minutes.trim() === '' ? undefined : m.minutesPath, ...m.cards.map((c) => c.taskPath)].some(
       (path) => path !== undefined && path.startsWith(`${m.folder}/`) && !isLocalOnlyPath(path),
     )
+
+  /** Record that the meeting's folder is in this clone. */
+  async function noteClone(id: string): Promise<void> {
+    if (cloneId === null || cloneOf.get(id) === cloneId) return
+    cloneOf.set(id, cloneId)
+    const l = live.get(id)
+    if (l !== undefined) {
+      l.stored.clone = cloneId
+      persistSoon(l)
+      return
+    }
+    const stored = await readStored(id)
+    if (stored === null || deleted.has(id)) return
+    stored.clone = cloneId
+    await persistStored(stored).catch(() => {})
+  }
+
+  /** This clone's name, made and written the first time. */
+  async function loadClone(): Promise<string | null> {
+    const text = await deps.readHead(CLONE_FILE).catch(() => null)
+    try {
+      const clone = (JSON.parse(text ?? '') as { clone?: unknown }).clone
+      if (typeof clone === 'string' && /^[0-9a-f]{12}$/.test(clone)) return clone
+    } catch {
+      // None yet, or not ours: made now.
+    }
+    const clone = randomBytes(6).toString('hex')
+    try {
+      await deps.writeFile(CLONE_FILE, `${JSON.stringify({ clone })}\n`)
+      return clone
+    } catch (err) {
+      deps.log('warn', `meetings: could not write ${CLONE_FILE}: ${String(err)}`)
+      return null
+    }
+  }
 
   /** The meeting's folder was deleted from the vault: so is the meeting, its
    *  recording stopped first. What this machine kept of it (the audio, the
@@ -764,7 +808,12 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
   async function persist(l: Live): Promise<void> {
     if (l.persistTimer !== null) clearTimeout(l.persistTimer)
     l.persistTimer = null
-    const id = l.stored.meeting.id
+    await persistStored(l.stored)
+  }
+
+  /** Save a record, after any save of it already under way. */
+  async function persistStored(stored: Stored): Promise<void> {
+    const id = stored.meeting.id
     if (deleted.has(id)) return
     const save = (async () => {
       await saving.get(id)?.catch(() => {})
@@ -772,7 +821,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       await mkdir(dirOf(id), { recursive: true })
       const path = join(dirOf(id), 'state.json')
       const tmp = `${path}.${randomBytes(3).toString('hex')}.tmp`
-      await writeFile(tmp, JSON.stringify(l.stored), 'utf8')
+      await writeFile(tmp, JSON.stringify(stored), 'utf8')
       await rename(tmp, path)
     })()
     saving.set(id, save)
@@ -828,6 +877,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
           l.fresh = false
           persistSoon(l)
         }
+        if (rel.endsWith('/transcript.local.md')) await noteClone(l.stored.meeting.id)
       } catch (err) {
         deps.log('error', `meeting: could not write ${rel}: ${String(err)}`)
       }
@@ -1385,6 +1435,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     async load() {
       await mkdir(deps.dir, { recursive: true })
       await purgeRemoved()
+      cloneId = await loadClone()
       const ids = (await readdir(deps.dir).catch(() => [] as string[])).filter((id) =>
         /^[0-9a-f]{12}$/.test(id),
       )
@@ -1392,6 +1443,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
         const stored = await readStored(id)
         if (stored === null) continue
         summaries.set(id, summarize(stored.meeting))
+        cloneOf.set(id, stored.clone)
         const m = stored.meeting
         if (m.phase === 'recording' || m.phase === 'finishing') {
           const l = liveOf(stored)
@@ -1432,7 +1484,6 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
         throw new CapabilityError('CONFLICT', 'that folder holds a transcript of its own')
       }
       const folder = path ?? (await freeFolder(parent, name, at))
-      seenFolders.add(folder)
       const id = randomBytes(6).toString('hex')
       const meeting: MeetingState = {
         id,

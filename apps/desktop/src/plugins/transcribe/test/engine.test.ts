@@ -444,6 +444,74 @@ describe('a meeting folder changed in the vault', () => {
     expect(again.meetings.list().map((m) => m.id)).toEqual([meetingId])
   })
 
+  it('in a fresh clone, set to share minutes it never had, is written again', async () => {
+    const first = await engineRig({ profile: { shareMinutes: true } })
+    const { meetingId, meeting } = await started(first)
+    const transcript = `${meeting.folder}/transcript.local.md`
+    await until(() => first.writes.get(transcript)?.startsWith('---\nmeeting:') === true)
+    // Stopped before anything was said: no minutes, so nothing git keeps.
+    await first.meetings.stop(meetingId)
+    await until(() => meeting.phase === 'done')
+    expect(meeting.minutes.trim()).toBe('')
+    expect(first.writes.has(`${meeting.folder}/minutes.md`)).toBe(false)
+    await first.meetings.dispose()
+
+    const again = await engineRig({ userData: first.userData })
+    await again.meetings.follow()
+    await vi.advanceTimersByTimeAsync(6000)
+    await again.meetings.follow()
+    await until(() => again.writes.has(transcript))
+    expect(again.meetings.list().map((m) => m.id)).toEqual([meetingId])
+  })
+
+  it('from an earlier session, deleted while Holi was closed, is deleted', async () => {
+    const first = await engineRig()
+    const { meetingId, meeting, send } = await started(first)
+    await send(0)
+    const folder = meeting.folder
+    await until(
+      () => first.writes.get(`${folder}/transcript.local.md`)?.includes('said 1') === true,
+    )
+    await first.meetings.stop(meetingId)
+    await until(() => meeting.phase === 'done')
+    await first.meetings.dispose()
+    // Deleted with Holi closed: the same clone, without the folder.
+    for (const rel of [...first.writes.keys()]) {
+      if (rel.startsWith(`${folder}/`)) first.writes.delete(rel)
+    }
+
+    const again = await engineRig({ userData: first.userData, root: first.root })
+    expect(again.meetings.list().map((m) => m.id)).toEqual([meetingId])
+    await again.meetings.follow()
+    await vi.advanceTimersByTimeAsync(6000)
+    await again.meetings.follow()
+    await until(() => again.meetings.list().length === 0)
+    expect([...again.writes.keys()].filter((rel) => rel.startsWith(`${folder}/`))).toEqual([])
+  })
+
+  it('from an earlier session is deleted with its folder now', async () => {
+    const first = await engineRig()
+    const { meetingId, meeting, send } = await started(first)
+    await send(0)
+    const folder = meeting.folder
+    await until(
+      () => first.writes.get(`${folder}/transcript.local.md`)?.includes('said 1') === true,
+    )
+    await first.meetings.stop(meetingId)
+    await until(() => meeting.phase === 'done')
+    await first.meetings.dispose()
+
+    const again = await engineRig({ userData: first.userData, root: first.root })
+    await again.meetings.follow()
+    for (const rel of [...again.writes.keys()]) {
+      if (rel.startsWith(`${folder}/`)) again.writes.delete(rel)
+    }
+    await again.meetings.follow()
+    await vi.advanceTimersByTimeAsync(6000)
+    await again.meetings.follow()
+    await until(() => again.meetings.list().length === 0)
+  })
+
   it('from before the suffix follows its folder renamed in place, and no copy elsewhere', async () => {
     const rig = await engineRig()
     const { meetingId } = await rig.meetings.start({ title: 'Standup', path: 'Meetings/Standup' })

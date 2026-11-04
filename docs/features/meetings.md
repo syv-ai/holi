@@ -399,9 +399,12 @@ audio) is set aside in `meetings/.removed/<id>-<time>` for 30 days rather than e
 folder can go by mistake or by another machine's sync; `meeting.delete` erases at once. A folder
 that stayed while only its transcript went, as in a fresh clone (the transcript is machine-local),
 gets it written again. So does a folder a fresh clone has none of because it held only
-machine-local files (the transcript, minutes kept local), which git never had: a meeting folder
-missing that this session never saw, and that held no shared file (shared minutes, a task that is
-not local), is a clone's, not a delete. A folder at a meeting's path that is not that meeting's is never taken for
+machine-local files (the transcript, minutes kept local), which git never had. A clone is known by a
+machine-local file the engine writes the first time it runs in it, `.holi/meetings.local.json`, and
+each meeting records the clone its folder was last seen in: a folder missing from that clone was
+deleted, whether Holi was running or not, while one missing from another clone, holding no shared
+file (shared minutes that were written, a task that is not local), came with none of it, and is
+written again. A folder at a meeting's path that is not that meeting's is never taken for
 it, nor is a file someone put in its transcript's place overwritten: a stale record shows in the
 list as moved away (`away`), opens no folder, and `meeting.start` in a folder whose transcript carries another
 meeting's id, or no id at all (a file of someone's own, not the "not recorded yet" placeholder

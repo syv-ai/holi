@@ -12,6 +12,7 @@ import type { Fetch } from '../main/asr'
 import { createMeetings } from '../main/engine'
 import { DEFAULT_PROFILE, type Profiles } from '../main/profiles'
 import type { Launched, LaunchArgs } from '../main/scribe'
+import { HEAD_BYTES } from '../main/vault-write'
 import { encodeWav } from '../main/wav'
 
 const RATE = 16_000
@@ -135,7 +136,7 @@ export async function engineRig(
       const text = writes.get(rel)
       return text === undefined
         ? null
-        : new TextDecoder().decode(new TextEncoder().encode(text).slice(0, 1024))
+        : new TextDecoder().decode(new TextEncoder().encode(text).slice(0, HEAD_BYTES))
     },
     folderExists: async (rel) => [...writes.keys()].some((k) => k.startsWith(`${rel}/`)),
     folders: () => [
