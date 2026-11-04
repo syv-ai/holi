@@ -167,6 +167,7 @@ export function createTurnSignals(deps: TurnSignalsDeps): TurnSignals {
     },
     dispose() {
       disposed = true
+      inTurn = false
       stopTimer()
     },
   }
