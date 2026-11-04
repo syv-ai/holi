@@ -1,5 +1,5 @@
 /**
- * Send a topic, or one of Hviske's suggestions in it, to an agent: the main
+ * Send a topic, or one of the scribe's suggestions in it, to an agent: the main
  * action of the Meetings tab. A panel from the right shows the topic's title
  * and summary, asks what should be done (prefilled from a suggestion),
  * whether it is a feature or a to-do, and offers what else in the meeting

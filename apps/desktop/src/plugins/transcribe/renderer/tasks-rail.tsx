@@ -1,6 +1,6 @@
 /**
  * The meeting's Tasks: what people sent from it, or made and have not sent
- * yet, as rows (`task-row.tsx`), oldest first. Hviske's suggestions live in
+ * yet, as rows (`task-row.tsx`), oldest first. The scribe's suggestions live in
  * their topics until someone sends one. Custom range makes a task from a
  * stretch of the meeting that is not one topic (`custom-range-dialog.tsx`).
  */

@@ -14,7 +14,7 @@ import { MEETING_COMMANDS, meetingMenuEntriesAtom, runMeetingMenuEntryAtom } fro
 import { MEETING_CLAIM, meetingName } from './meeting-claim'
 import { MeetingsSurface } from './meetings-surface'
 import { RecordingStatusItem } from './recording-status-item'
-import { recorderAtom, recordingAtom, stopRecordingAtom } from './recorder'
+import { discardRecordingAtom, recorderAtom, recordingAtom, stopRecordingAtom } from './recorder'
 import { MEETINGS_SURFACE, meetingsVault, transcribeEvents } from './state'
 
 export const transcribeRenderer: RendererPlugin = {
@@ -25,6 +25,14 @@ export const transcribeRenderer: RendererPlugin = {
     // hands over its last audio before main's capabilities do.
     'stop-recording': ({ remote }, store) => {
       if (store.get(recorderAtom).remote === remote) void store.set(stopRecordingAtom)
+    },
+    // Its folder was deleted from the vault: so was the meeting, and what it
+    // records goes nowhere.
+    'meeting-removed': ({ remote, payload }, store) => {
+      const id = (payload as { meetingId?: unknown } | null)?.meetingId
+      if (store.get(recorderAtom).remote === remote && typeof id === 'string') {
+        void store.set(discardRecordingAtom, id)
+      }
     },
   },
   claims: [MEETING_CLAIM],

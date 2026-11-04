@@ -6,8 +6,8 @@
  * one open at a time (opening one folds the others, and a bar of the strip
  * scrolls smoothly to its topic) or all at once, and, while the meeting records,
  * the open one last as Now, with what is being said and Summarise now (the
- * next batch to Hviske at once, `meeting.summarise`). While it records the
- * header has Ask Hviske, which changes topics in words. A meeting saved
+ * next batch to the scribe at once, `meeting.summarise`). While it records the
+ * header has Ask the assistant, which changes topics in words. A meeting saved
  * before topics shows the minutes its scribe wrote, as they are.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
@@ -23,7 +23,14 @@ import {
   useSensors,
   type DragEndEvent,
 } from '@dnd-kit/core'
-import { activeRemoteAtom, cn, prefersReducedMotion, useNow } from '@/plugin-api'
+import {
+  activeRemoteAtom,
+  cn,
+  openSettingsSectionAtom,
+  prefersReducedMotion,
+  showAgentSessionAtom,
+  useNow,
+} from '@/plugin-api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -32,16 +39,17 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { MarkdownText } from '@/composites/markdown-text'
 import { joinedSets } from '../shared/joins'
 import type { MeetingState, Topic } from '../shared/meeting'
-import { AskHviske } from './ask-hviske'
+import { AskAssistant } from './ask-assistant'
 import { clock } from './format'
 import { GroupSection, Keywords } from './group-section'
 import { meetingCap } from './meeting-cap'
-import { SCRIBE_NAME } from './names'
+import { SCRIBE_TITLE } from './names'
+import { useScribeReadiness, type ScribeReadiness } from './scribe-ready'
 import { SpeakerBadge } from './speaker-badge'
 import { message, minutesAskedAtom, putTopicsAtom, sendPanelAtom } from './state'
 import { topicName } from './topic-index'
 
-/** How long Hviske is said to be on it, at most, if it writes nothing sooner. */
+/** How long the scribe is said to be on it, at most, if it writes nothing sooner. */
 const ASKED_MS = 60_000
 /** The open topic's last lines shown under it. */
 const TAIL = 3
@@ -173,6 +181,70 @@ function TopicStrip({
   )
 }
 
+/** Why Summarise now cannot go yet, and what gets the assistant going. */
+function ScribeNotReady({
+  meeting,
+  readiness,
+}: {
+  meeting: MeetingState
+  readiness: Extract<ScribeReadiness, { ready: false }>
+}): React.JSX.Element {
+  const remote = useAtomValue(activeRemoteAtom)
+  const showSession = useSetAtom(showAgentSessionAtom)
+  const openSettings = useSetAtom(openSettingsSectionAtom)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const session = meeting.scribeSessionId
+
+  const restart = async () => {
+    if (remote === null) return
+    setBusy(true)
+    setError(null)
+    try {
+      await meetingCap['scribe.restart'](remote, { meetingId: meeting.id })
+    } catch (e) {
+      setError(`${SCRIBE_TITLE} didn’t start: ${message(e)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div role="status" aria-label="Assistant" className="flex flex-col gap-1">
+      <p className="text-xs text-muted-foreground">{readiness.reason}</p>
+      {readiness.fixes.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1">
+          {readiness.fixes.includes('settings') && (
+            <Button size="xs" variant="outline" onClick={() => openSettings('general')}>
+              Agent settings
+            </Button>
+          )}
+          {readiness.fixes.includes('restart') && (
+            <Button size="xs" variant="outline" disabled={busy} onClick={() => void restart()}>
+              {busy && <Spinner />}
+              Start the assistant
+            </Button>
+          )}
+          {readiness.fixes.includes('open-session') && session !== undefined && (
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => void showSession({ session, live: meeting.scribeState !== 'gone' })}
+            >
+              Open its session
+            </Button>
+          )}
+        </div>
+      )}
+      {error !== null && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
+    </div>
+  )
+}
+
 /** The topic being talked about now: its last lines, Send and Summarise now. */
 function NowGroup({ meeting, topic }: { meeting: MeetingState; topic: Topic }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
@@ -180,6 +252,7 @@ function NowGroup({ meeting, topic }: { meeting: MeetingState; topic: Topic }): 
   const now = useNow(1000)
   const [asked, setAsked] = useState<{ at: number; minutesAt: number | undefined } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const readiness = useScribeReadiness(meeting)
   const summarising =
     asked !== null && meeting.minutesAt === asked.minutesAt && now - asked.at < ASKED_MS
   const lines = new Set(topic.lines.slice(-TAIL))
@@ -192,7 +265,7 @@ function NowGroup({ meeting, topic }: { meeting: MeetingState; topic: Topic }): 
       await meetingCap.summarise(remote, { meetingId: meeting.id })
       setAsked({ at: Date.now(), minutesAt: meeting.minutesAt })
     } catch (e) {
-      setError(`${SCRIBE_NAME} didn’t get that: ${message(e)}`)
+      setError(`${SCRIBE_TITLE} didn’t get that: ${message(e)}`)
     }
   }
 
@@ -218,7 +291,7 @@ function NowGroup({ meeting, topic }: { meeting: MeetingState; topic: Topic }): 
         <Button
           size="xs"
           variant="secondary"
-          disabled={summarising}
+          disabled={summarising || !readiness.ready}
           onClick={() => void summarise()}
         >
           <Sparkles aria-hidden />
@@ -247,10 +320,11 @@ function NowGroup({ meeting, topic }: { meeting: MeetingState; topic: Topic }): 
             ))}
           </ol>
         )}
+        {!readiness.ready && <ScribeNotReady meeting={meeting} readiness={readiness} />}
         {summarising && (
           <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
             <Spinner />
-            {SCRIBE_NAME} is summarising…
+            {SCRIBE_TITLE} is summarising…
           </p>
         )}
         {error !== null && (
@@ -268,7 +342,7 @@ export function GroupSections({
   live,
 }: {
   meeting: MeetingState
-  /** The meeting records: the open topic is Now, and Hviske can be asked. */
+  /** The meeting records: the open topic is Now, and the scribe can be asked. */
   live: boolean
 }): React.JSX.Element {
   const now = useNow(1000)
@@ -363,7 +437,7 @@ export function GroupSections({
         )}
         {live && (
           <div className="ms-auto flex min-w-0 flex-1 items-center justify-end">
-            <AskHviske
+            <AskAssistant
               meetingId={meeting.id}
               onAsked={() =>
                 setAllAsked((all) => ({
@@ -379,7 +453,7 @@ export function GroupSections({
       {updating && (
         <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
           <Spinner />
-          {SCRIBE_NAME} is updating the topics…
+          {SCRIBE_TITLE} is updating the topics…
         </p>
       )}
       {askError !== null && (
@@ -392,7 +466,7 @@ export function GroupSections({
       ) : topics.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           {live
-            ? `${SCRIBE_NAME} groups the meeting into topics every few minutes, as it goes.`
+            ? `${SCRIBE_TITLE} groups the meeting into topics every few minutes, as it goes.`
             : 'This meeting has no topics.'}
         </p>
       ) : (

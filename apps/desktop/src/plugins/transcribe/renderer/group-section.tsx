@@ -1,14 +1,14 @@
 /**
- * One topic of the minutes: a closed group as Hviske wrote it, or as the
+ * One topic of the minutes: a closed group as the scribe wrote it, or as the
  * person corrected it. Folded, it is one row to scan: its number, title,
  * gist (the first summary bullet) and its time. Open, it has two tabs: the
- * summary, decisions, open questions, Hviske's suggestions as compact rows,
+ * summary, decisions, open questions, the scribe's suggestions as compact rows,
  * each with Send (or, once sent, its run), and its keywords; and its
  * transcript, the topic's own lines word for word. Its actions show on
  * hover, focus or when open: Send (the whole topic, `send-panel.tsx`), and
  * under its menu Edit (every field in place, `meeting.group.edit`; what a
- * person edits is theirs, and Hviske leaves it) and Merge with the previous
- * (`meeting.group.merge`). A topic Hviske has still to write, after a split
+ * person edits is theirs, and the scribe leaves it) and Merge with the previous
+ * (`meeting.group.merge`). A topic the scribe has still to write, after a split
  * or a merge, says so. A joined topic reads as one: each list across all
  * its groups, and its menu edits one group at a time (Edit part).
  */
@@ -48,7 +48,7 @@ import { CaptionLine } from './caption-line'
 import { ListField } from './card-fields'
 import { clock } from './format'
 import { meetingCap } from './meeting-cap'
-import { SCRIBE_NAME } from './names'
+import { SCRIBE_TITLE } from './names'
 import { RunState, useRun } from './run-state'
 import { message, putTopicAtom, putTopicsAtom, sendPanelAtom } from './state'
 import { KindIcon, OpenSession } from './task-row'
@@ -347,8 +347,8 @@ function TopicBody({
     <div className="flex flex-col gap-3">
       {stale && (
         <p className="text-xs text-muted-foreground">
-          {SCRIBE_NAME} will rewrite {parts.length > 1 ? 'part of this topic' : 'this topic'} in its
-          next pass.
+          {SCRIBE_TITLE} will rewrite {parts.length > 1 ? 'part of this topic' : 'this topic'} in
+          its next pass.
         </p>
       )}
       <Items items={all((t) => t.summary)} />
@@ -371,7 +371,7 @@ function TopicBody({
       <Keywords topic={{ ...parts[0]!, keywords }} />
       {edited.length > 0 && (
         <p className="text-xs text-muted-foreground">
-          Edited by you: {edited.map((f) => FIELD_NAMES[f]).join(', ')}. {SCRIBE_NAME} keeps your
+          Edited by you: {edited.map((f) => FIELD_NAMES[f]).join(', ')}. {SCRIBE_TITLE} keeps your
           words.
         </p>
       )}
@@ -418,7 +418,7 @@ export function GroupSection({
   const name = topicName(topic)
   const gist =
     topic.summary[0] ??
-    (topic.stale === true ? `${SCRIBE_NAME} will rewrite this topic in its next pass.` : null)
+    (topic.stale === true ? `${SCRIBE_TITLE} will rewrite this topic in its next pass.` : null)
   const drag = useDraggable({ id: topic.id })
   const drop = useDroppable({ id: topic.id })
   const target = drop.isOver && drop.active !== null && drop.active.id !== topic.id

@@ -15,6 +15,7 @@ import { activeRemoteAtom } from '@/plugin-api'
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -158,13 +159,18 @@ const TESTED = {
     'The service could not be reached, or did not answer as a speech service. Check its address and model.',
 } as const
 
-/** syv.ai's service, or another one's address and model, saved together. */
+/** syv.ai's service, or another one's address and model, saved together. A
+ *  key saved here stays with its service: it goes to the new one only when
+ *  the box under the toggle is ticked. */
 function ServiceForm({ onSaved }: { onSaved: (said: string) => void }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const status = useAtomValue(speechKeyAtom)
   const setStatus = useSetAtom(speechKeyAtom)
   const urlId = useId()
   const modelId = useId()
+  const moveId = useId()
+  const [moveKey, setMoveKey] = useState(false)
+  const ownKey = status?.source === 'app'
   const [kind, setKind] = useState<'syv' | 'other'>(syv(status?.service) ? 'syv' : 'other')
   const [url, setUrl] = useState(status?.service.url ?? '')
   const [model, setModel] = useState(status?.service.model ?? '')
@@ -176,7 +182,7 @@ function ServiceForm({ onSaved }: { onSaved: (said: string) => void }): React.JS
     setBusy(true)
     setError(null)
     try {
-      setStatus(await meetingCap['service.set'](remote, next))
+      setStatus(await meetingCap['service.set'](remote, { ...next, moveKey: ownKey && moveKey }))
       onSaved(next.url === null ? 'Meetings are transcribed by syv.ai.' : 'Service saved.')
     } catch (e) {
       setError(message(e))
@@ -204,6 +210,17 @@ function ServiceForm({ onSaved }: { onSaved: (said: string) => void }): React.JS
         <ToggleGroupItem value="syv">syv.ai</ToggleGroupItem>
         <ToggleGroupItem value="other">Another service</ToggleGroupItem>
       </ToggleGroup>
+      {ownKey && (
+        <Field orientation="horizontal">
+          <Checkbox
+            id={moveId}
+            checked={moveKey}
+            disabled={busy}
+            onCheckedChange={(next) => setMoveKey(next === true)}
+          />
+          <FieldLabel htmlFor={moveId}>Send this Mac’s saved key to the new service too</FieldLabel>
+        </Field>
+      )}
       {kind === 'other' && (
         <>
           <Field data-invalid={error !== null || undefined}>
@@ -288,9 +305,11 @@ export function SpeechKeyDialog({
         ? 'A key is set on this Mac.'
         : status.source === 'vault'
           ? 'The key comes from SYV_API_KEY in the vault’s .env.local. A key saved here takes its place.'
-          : syv(status.service)
-            ? 'No key is set.'
-            : 'No key is set: the service is asked without one.'
+          : status.elsewhere
+            ? 'The key saved on this Mac is for another speech service, so it is not sent to this one.'
+            : syv(status.service)
+              ? 'No key is set.'
+              : 'No key is set: the service is asked without one.'
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

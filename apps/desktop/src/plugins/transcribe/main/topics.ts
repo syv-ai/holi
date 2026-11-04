@@ -51,7 +51,10 @@ const TOPIC_FIELDS: readonly TopicField[] = [
   'questions',
 ]
 
-const GROUP_KEYS = new Set(['startIndex', ...TOPIC_FIELDS, 'suggestions'])
+const GROUP_KEYS = new Set(['startIndex', ...TOPIC_FIELDS, 'suggestions', 'people'])
+/** At most this many people a group names, each a name of at most `MAX_NAME`. */
+const MAX_PEOPLE = 20
+const MAX_NAME = 80
 const SUGGESTION_KEYS = new Set(['kind', 'title', 'why', 'segments'])
 
 /** A suggestion as the scribe gives it: code gives its id. */
@@ -66,6 +69,7 @@ export interface GroupInput {
   decisions?: string[]
   questions?: string[]
   suggestions?: SuggestionInput[]
+  people?: string[]
 }
 
 const EXAMPLE =
@@ -175,6 +179,7 @@ export function parseGroup(json: string): GroupInput {
     out.questions = texts(p['questions'], 'questions', MAX_ITEMS, MAX_ITEM)
   }
   if (p['suggestions'] !== undefined) out.suggestions = suggestions(p['suggestions'])
+  if (p['people'] !== undefined) out.people = texts(p['people'], 'people', MAX_PEOPLE, MAX_NAME)
   return out
 }
 
@@ -369,6 +374,10 @@ export function applyGroup(
   if (input.suggestions !== undefined) {
     written.suggestions = suggestionsFor(input.suggestions, topic.suggestions, list, opts.sent)
   }
+  if (input.people !== undefined) {
+    if (input.people.length === 0) delete written.people
+    else written.people = input.people
+  }
   // Written as it stands: a closed group the scribe wrote is current.
   if (!written.open) delete written.stale
   list.splice(k, 1, written)
@@ -439,6 +448,9 @@ export function mergeTopic(
     decisions: union(a.decisions, b.decisions),
     questions: union(a.questions, b.questions),
     suggestions: [...a.suggestions, ...b.suggestions],
+    ...(a.people !== undefined || b.people !== undefined
+      ? { people: union(a.people ?? [], b.people ?? []) }
+      : {}),
     ...(edited.length === 0 ? {} : { edited }),
     ...(editedAt === 0 ? {} : { editedAt }),
   }

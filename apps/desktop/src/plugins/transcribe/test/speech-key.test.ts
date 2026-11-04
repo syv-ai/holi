@@ -3,7 +3,7 @@
  * `userData` exactly as Google's own-client store is, never written in
  * plaintext, and resolved before the vault's `SYV_API_KEY`.
  */
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -19,6 +19,8 @@ const storage = {
 }
 
 const KEY = 'hv_0123456789abcdefghijklmnopqrstuv'
+const SYV = { url: null, model: null }
+const LOCAL = { url: 'http://localhost:8000/v1', model: 'whisper-large-v3' }
 
 let dir: string
 let file: string
@@ -35,10 +37,10 @@ afterEach(async () => {
 describe('the store', () => {
   it('round-trips without the key greppable on disk, and null deletes it', async () => {
     const store = createSpeechKeyStore(file, storage)
-    await store.write(KEY)
+    await store.write({ key: KEY, service: LOCAL.url })
 
     expect(await readFile(file, 'utf8')).not.toContain(KEY)
-    expect(await store.read()).toBe(KEY)
+    expect(await store.read()).toEqual({ key: KEY, service: LOCAL.url })
 
     await store.write(null)
     expect(await store.read()).toBeNull()
@@ -48,14 +50,14 @@ describe('the store', () => {
   it('refuses to write when the platform cannot encrypt, leaving nothing behind', async () => {
     const store = createSpeechKeyStore(file, { ...storage, isEncryptionAvailable: () => false })
 
-    await expect(store.write(KEY)).rejects.toBeInstanceOf(CapabilityError)
+    await expect(store.write({ key: KEY, service: null })).rejects.toBeInstanceOf(CapabilityError)
     await expect(readFile(file, 'utf8')).rejects.toThrow()
     // Removing the key needs no keychain.
     await expect(store.write(null)).resolves.toBeUndefined()
   })
 
   it('reads a file the keychain can no longer decrypt as no key', async () => {
-    await createSpeechKeyStore(file, storage).write(KEY)
+    await createSpeechKeyStore(file, storage).write({ key: KEY, service: null })
     const rekeyed = createSpeechKeyStore(file, {
       ...storage,
       decryptString: () => {
@@ -64,21 +66,55 @@ describe('the store', () => {
     })
     expect(await rekeyed.read()).toBeNull()
   })
+
+  it('reads a key saved before services had addresses as syv.ai’s', async () => {
+    const data = storage.encryptString(KEY).toString('base64')
+    await writeFile(file, JSON.stringify({ v: 1, data }))
+    expect(await createSpeechKeyStore(file, storage).read()).toEqual({ key: KEY, service: null })
+  })
 })
 
 describe('the key in use', () => {
   function speechKey(vaultEnv: Record<string, string> = {}) {
     const fetch = vi.fn(async (_url: string, _init: RequestInit) => Response.json({ data: [] }))
     const changed = vi.fn()
+    let service: { url: string | null; model: string | null } = SYV
     const key = createSpeechKey({
       store: createSpeechKeyStore(file, storage),
       vaultEnv: async () => vaultEnv,
-      service: async () => ({ url: null, model: null }),
+      service: async () => service,
       fetch,
       changed,
     })
-    return { key, fetch, changed }
+    const choose = (next: typeof service) => void (service = next)
+    return { key, fetch, changed, choose }
   }
+
+  it('goes only to the service it was saved for, unless the person moves it', async () => {
+    const { key, choose } = speechKey({ SYV_API_KEY: 'hv_from_the_vault_env_local' })
+    await key.set(KEY)
+    choose(LOCAL)
+    // Another address: neither this Mac's key nor the vault's goes there.
+    expect(await key.resolve()).toBeNull()
+    expect(await key.status()).toEqual({
+      set: false,
+      source: null,
+      service: LOCAL,
+      ready: true,
+      elsewhere: true,
+    })
+    // Back to syv.ai's, the key applies again.
+    choose(SYV)
+    expect(await key.resolve()).toBe(KEY)
+
+    choose(LOCAL)
+    expect(await key.rebind()).toBe(true)
+    expect(await key.resolve()).toBe(KEY)
+    expect((await key.status()).elsewhere).toBe(false)
+    // And is no longer syv.ai's, whose vault key applies there now.
+    choose(SYV)
+    expect(await key.resolve()).toBe('hv_from_the_vault_env_local')
+  })
 
   it("is the app's key first, then the vault's SYV_API_KEY, then none", async () => {
     const { key } = speechKey({ SYV_API_KEY: 'hv_from_the_vault_env_local' })
@@ -88,6 +124,7 @@ describe('the key in use', () => {
       source: 'vault',
       service: { url: null, model: null },
       ready: true,
+      elsewhere: false,
     })
 
     await key.set(KEY)
@@ -97,6 +134,7 @@ describe('the key in use', () => {
       source: 'app',
       service: { url: null, model: null },
       ready: true,
+      elsewhere: false,
     })
 
     await key.clear()
@@ -105,6 +143,7 @@ describe('the key in use', () => {
       source: 'vault',
       service: { url: null, model: null },
       ready: true,
+      elsewhere: false,
     })
 
     const none = speechKey({ SYV_API_KEY: '' }).key
@@ -114,6 +153,7 @@ describe('the key in use', () => {
       source: null,
       service: { url: null, model: null },
       ready: false,
+      elsewhere: false,
     })
   })
 

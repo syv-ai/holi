@@ -131,6 +131,13 @@ const keyFailure = (c: ChunkInfo): boolean =>
 
 /** A chunk is seconds of audio: this is far past any. */
 const MAX_CHUNK_BYTES = 16 * 1024 * 1024
+/** How long a meeting's folder may be missing before the meeting counts as
+ *  deleted: a folder move removes its files before it writes them again. */
+const GONE_MS = 5000
+/** What `prepare` writes before a meeting records, which `start` may take. */
+const NOT_RECORDED = 'Not recorded yet: open this meeting and press Record.'
+/** The id at the top of a meeting's transcript. */
+const MARK = /^---\nmeeting: ([0-9a-f]{12})\n---\n/
 
 /** What `state.json` holds: the meeting, and what only main needs of it. */
 interface Stored {
@@ -146,6 +153,10 @@ interface Stored {
   pending: Record<number, ChunkSegment[]>
   /** What a person changed that the scribe has not been sent yet. */
   notes?: ScribeNotes
+  /** Its transcript in the vault carries its id (`transcriptMarkdown`), so
+   *  its folder is known by that wherever it is moved. A meeting saved before
+   *  that has none until its transcript is written again. */
+  marked?: true
 }
 
 interface Live {
@@ -171,6 +182,9 @@ interface Live {
   /** Finished again after it ended (`rescue`): its scribe is gone and is
    *  not started again. */
   rescued: boolean
+  /** Started in this run and not written yet: its folder may be made, or
+   *  take over the placeholder `prepare` wrote. */
+  fresh: boolean
 }
 
 interface TaskCalls {
@@ -210,7 +224,11 @@ export interface MeetingsDeps {
   writeFile(rel: string, text: string): Promise<void>
   /** Remove vault files, then `folder` if nothing else is left in it. */
   removeFiles(rels: readonly string[], folder: string): Promise<void>
-  emit(name: 'meeting' | 'meetings', payload: unknown): void
+  /** The start of a vault file, or null when there is none (`vault-write.ts`). */
+  readHead(rel: string): Promise<string | null>
+  /** The vault's folders as last scanned. */
+  folders(): readonly string[]
+  emit(name: 'meeting' | 'meetings' | 'meeting-removed', payload: unknown): void
   agent: AgentCalls & TaskCalls & HoliCalls
   /** The vault's chosen agent (Settings, General, Agents), read fresh. */
   provider(): Promise<AgentProviderId>
@@ -254,6 +272,14 @@ export interface Meetings {
   /** A person deletes a finished meeting: its state on this machine and the
    *  transcript and minutes it wrote; the tasks made from it stay. */
   remove(meetingId: string): Promise<void>
+  /**
+   * The vault changed: each meeting finds its folder again by the id its
+   * transcript carries. A folder renamed or moved takes its meeting with it;
+   * one deleted (missing for `GONE_MS`) deletes its meeting here, its
+   * recording stopped first (`meeting-removed`). A folder at a meeting's old
+   * path that is not that meeting's is never taken for it.
+   */
+  follow(): Promise<void>
   patchCard(meetingId: string, cardId: string, patch: CardPatch): Promise<Card>
   /** Send a card to an agent: a Claude session, or a Holi. */
   build(meetingId: string, cardId: string, opts?: SendOptions): Promise<{ sessionId: string }>
@@ -262,6 +288,10 @@ export interface Meetings {
   /** The person pressed Summarise now: the scribe's next batch goes as soon
    *  as it is idle. */
   summarise(meetingId: string): Promise<void>
+  /** A person starts the scribe of a recording meeting again, after it
+   *  stopped or could not start (on the agent chosen then): a new session,
+   *  sent the whole transcript with the groups so far. */
+  restartScribe(meetingId: string): Promise<void>
   /** A person makes a task from lines of the meeting, with what they want
    *  done; the scribe hears of it with its next batch. */
   createTask(meetingId: string, req: TaskRequest): Promise<Card>
@@ -359,6 +389,10 @@ function normalTopic(t: Topic): Topic {
 function transcriptMarkdown(m: MeetingState): string {
   const day = new Date(m.startedAt)
   const lines = [
+    '---',
+    `meeting: ${m.id}`,
+    '---',
+    '',
     `# ${m.title}`,
     '',
     `Transcript of the meeting on ${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}, transcribed automatically: words can be misheard.`,
@@ -407,6 +441,8 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     log: deps.log,
     now,
     provider: deps.provider,
+    // A tool-less scribe's answer, written as its `holi meeting group` would be.
+    group: (session, json) => api.group(session, json),
     host: {
       get: (id) => {
         const l = live.get(id)
@@ -424,6 +460,179 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
   })
 
   const notesOf = (l: Live): ScribeNotes => (l.stored.notes ??= { corrections: {} })
+
+  // --- where each meeting's folder is ---------------------------------------
+
+  /** Meetings whose folder is not where their record says, and that no
+   *  folder in the vault claims: listed, but no folder opens them. */
+  const away = new Set<string>()
+  /** When each meeting's transcript was first found missing. */
+  const missing = new Map<string, number>()
+  let followTimer: ReturnType<typeof setTimeout> | null = null
+  let following: Promise<void> = Promise.resolve()
+
+  const summarize = (m: MeetingState): MeetingSummary =>
+    away.has(m.id) ? { ...summaryOf(m), away: true } : summaryOf(m)
+
+  type Mark = { kind: 'meeting'; id: string } | { kind: 'absent' | 'placeholder' | 'unmarked' }
+
+  /** Whose the transcript in `folder` is, by the id it starts with. */
+  async function markAt(folder: string): Promise<Mark> {
+    const head = await deps.readHead(`${folder}/transcript.local.md`).catch(() => null)
+    if (head === null) return { kind: 'absent' }
+    const id = MARK.exec(head)?.[1]
+    if (id !== undefined) return { kind: 'meeting', id }
+    return { kind: head.includes(NOT_RECORDED) ? 'placeholder' : 'unmarked' }
+  }
+
+  /** Whether the meeting's folder is still its own to write. */
+  async function mayWrite(l: Live): Promise<boolean> {
+    const mark = await markAt(l.stored.meeting.folder)
+    if (mark.kind === 'meeting') return mark.id === l.stored.meeting.id
+    // Its transcript was written there, and is gone or replaced.
+    if (l.stored.marked === true) return false
+    // A meeting from before transcripts carried ids: its own transcript.
+    if (mark.kind === 'unmarked') return true
+    // A folder that is not there yet, or a placeholder: only for the meeting
+    // starting in it now.
+    return l.fresh
+  }
+
+  function followAfter(ms: number): void {
+    if (followTimer !== null || disposed) return
+    followTimer = setTimeout(() => {
+      followTimer = null
+      void follow()
+    }, ms)
+  }
+  const followSoon = () => followAfter(250)
+
+  function follow(): Promise<void> {
+    const run = following.then(followNow, followNow)
+    following = run.catch((err: unknown) =>
+      deps.log('error', `meeting: could not follow the vault: ${String(err)}`),
+    )
+    return run
+  }
+
+  function setAway(id: string, on: boolean): void {
+    if (away.has(id) === on) return
+    if (on) away.add(id)
+    else away.delete(id)
+    const s = summaries.get(id)
+    if (s !== undefined) {
+      const { away: _was, ...rest } = s
+      summaries.set(id, on ? { ...rest, away: true } : rest)
+    }
+    emitList()
+  }
+
+  async function followNow(): Promise<void> {
+    if (disposed) return
+    /** Every folder whose transcript carries an id, read once a pass and
+     *  only when a meeting is not where it was. */
+    let marked: Map<string, string> | null = null
+    const markedFolders = async (): Promise<Map<string, string>> => {
+      if (marked !== null) return marked
+      const found = new Map<string, string>()
+      for (const dir of deps.folders()) {
+        const mark = await markAt(dir)
+        if (mark.kind === 'meeting' && !found.has(mark.id)) found.set(mark.id, dir)
+      }
+      marked = found
+      return found
+    }
+    for (const [id, summary] of [...summaries]) {
+      if (deleted.has(id) || disposed) continue
+      const l = live.get(id)
+      if (l?.fresh === true) continue
+      const mark = await markAt(summary.folder)
+      if (mark.kind === 'meeting' && mark.id === id) {
+        missing.delete(id)
+        setAway(id, false)
+        continue
+      }
+      const moved = (await markedFolders()).get(id)
+      if (moved !== undefined) {
+        await relocate(id, moved)
+        continue
+      }
+      const stored = l?.stored ?? (await readStored(id))
+      if (stored === null) continue
+      if (stored.marked !== true) {
+        // From before transcripts carried ids: its own transcript is taken
+        // as it is, and anything else at its path is not it.
+        if (mark.kind === 'unmarked') {
+          setAway(id, false)
+          await writeFiles(await open(id))
+        } else setAway(id, true)
+        continue
+      }
+      // Its transcript is nowhere: deleted, or a move still under way.
+      const since = missing.get(id)
+      if (since === undefined) {
+        missing.set(id, now())
+        followAfter(GONE_MS)
+      } else if (now() - since >= GONE_MS) {
+        await gone(id)
+      } else {
+        followAfter(GONE_MS - (now() - since))
+      }
+    }
+  }
+
+  /** The meeting's folder is now `to`: its paths follow it. */
+  async function relocate(id: string, to: string): Promise<void> {
+    const l = await open(id)
+    const m = l.stored.meeting
+    const from = m.folder
+    const moved = (p: string): string =>
+      p === from || p.startsWith(`${from}/`) ? `${to}${p.slice(from.length)}` : p
+    m.folder = to
+    if (m.minutesPath !== undefined) m.minutesPath = moved(m.minutesPath)
+    m.cards = m.cards.map((c) =>
+      c.taskPath === undefined ? c : { ...c, taskPath: moved(c.taskPath) },
+    )
+    l.written = new Map([...l.written].map(([rel, text]) => [moved(rel), text]))
+    missing.delete(id)
+    away.delete(id)
+    deps.log('info', `meeting "${m.title}": its folder is now ${to}`)
+    changed(id)
+  }
+
+  /** The meeting's folder was deleted from the vault: so is the meeting, its
+   *  recording stopped first. */
+  async function gone(id: string): Promise<void> {
+    const l = live.get(id)
+    const title = l?.stored.meeting.title ?? summaries.get(id)?.title ?? id
+    const phase = l?.stored.meeting.phase ?? summaries.get(id)?.phase
+    if (phase === 'recording' || phase === 'finishing') {
+      deps.emit('meeting-removed', { meetingId: id })
+    }
+    await forget(id)
+    deps.log('info', `meeting "${title}": its folder was deleted, so the meeting was too`)
+  }
+
+  /** Everything of the meeting on this machine, and nothing in the vault. */
+  async function forget(id: string): Promise<void> {
+    const l = live.get(id)
+    if (l !== undefined) {
+      for (const timer of [l.persistTimer, l.filesTimer, l.emitTimer]) {
+        if (timer !== null) clearTimeout(timer)
+      }
+    }
+    deleted.add(id)
+    live.delete(id)
+    summaries.delete(id)
+    missing.delete(id)
+    away.delete(id)
+    // Machine state first: once it is gone the meeting is gone, even if a
+    // vault file cannot be removed. A save already under way finishes
+    // before the folder goes, so it cannot bring the meeting back.
+    await saving.get(id)?.catch(() => {})
+    await rm(dirOf(id), { recursive: true, force: true, maxRetries: 3 })
+    emitList()
+  }
 
   /** Whether the meeting's scribe may still hear something. */
   const scribeListens = (l: Live): boolean => {
@@ -480,6 +689,12 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     l.filesTimer = null
     if (deleted.has(l.stored.meeting.id)) return
     const { meeting, profile } = l.stored
+    // Only into its own folder: one moved or deleted is not made again at
+    // the old path, and another meeting's is never written over.
+    if (!(await mayWrite(l))) {
+      followSoon()
+      return
+    }
     const files: Array<[string, string]> = [
       [`${meeting.folder}/transcript.local.md`, transcriptMarkdown(meeting)],
     ]
@@ -491,6 +706,11 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       try {
         await deps.writeFile(rel, text)
         l.written.set(rel, text)
+        if (rel.endsWith('/transcript.local.md') && l.stored.marked !== true) {
+          l.stored.marked = true
+          l.fresh = false
+          persistSoon(l)
+        }
       } catch (err) {
         deps.log('error', `meeting: could not write ${rel}: ${String(err)}`)
       }
@@ -535,8 +755,8 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     // leaves no join pointing nowhere.
     m.topics = tidyJoins(m.topics)
     // A meeting saved before groups keeps the minutes its scribe wrote.
-    if (m.topics.length > 0) m.minutes = renderMinutes(m)
-    summaries.set(id, summaryOf(m))
+    if (m.topics.length > 0) m.minutes = renderMinutes(m, l.stored.profile.language)
+    summaries.set(id, summarize(m))
     persistSoon(l)
     filesSoon(l)
     emitMeeting(l)
@@ -558,6 +778,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       flushed: [],
       parked: new Set(),
       rescued: false,
+      fresh: false,
     }
   }
 
@@ -1043,7 +1264,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     return { sessionId }
   }
 
-  return {
+  const api: Meetings = {
     async load() {
       await mkdir(deps.dir, { recursive: true })
       const ids = (await readdir(deps.dir).catch(() => [] as string[])).filter((id) =>
@@ -1052,7 +1273,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       for (const id of ids) {
         const stored = await readStored(id)
         if (stored === null) continue
-        summaries.set(id, summaryOf(stored.meeting))
+        summaries.set(id, summarize(stored.meeting))
         const m = stored.meeting
         if (m.phase === 'recording' || m.phase === 'finishing') {
           const l = liveOf(stored)
@@ -1070,7 +1291,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       const path = await freeFolder(parent, name === '' ? defaultTitle(now()) : name, now())
       await deps.writeFile(
         `${path}/transcript.local.md`,
-        `# ${name === '' ? 'Meeting' : name}\n\nNot recorded yet: open this meeting and press Record.\n`,
+        `# ${name === '' ? 'Meeting' : name}\n\n${NOT_RECORDED}\n`,
       )
       return { path }
     },
@@ -1082,7 +1303,9 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
           : await deps.profiles.get(profileId)
       const at = now()
       const name = title?.trim() || defaultTitle(at)
-      if (path !== undefined && [...summaries.values()].some((s) => s.folder === path)) {
+      // A folder is a meeting's by the id in its transcript, not by a record
+      // that once had its path: that meeting moved or was deleted.
+      if (path !== undefined && (await markAt(path)).kind === 'meeting') {
         throw new CapabilityError('CONFLICT', 'that folder has a meeting already')
       }
       const folder = path ?? (await freeFolder(parent, name, at))
@@ -1104,8 +1327,12 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
         minutesPath: minutesFile(folder, profile),
       }
       const l = liveOf({ version: 1, remote: deps.remote, meeting, profile, next: 0, pending: {} })
+      l.fresh = true
       live.set(id, l)
       await persist(l)
+      // Its transcript, with its id, at once: the folder is this meeting's
+      // from the start, so no other can be started in it.
+      await writeFiles(l)
       changed(id)
       void scribe.launch(id)
       return { meetingId: id }
@@ -1189,7 +1416,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       if (name === '') throw new CapabilityError('BAD_REQUEST', 'a meeting needs a title')
       l.stored.meeting.title = name
       changed(meetingId)
-      return summaryOf(l.stored.meeting)
+      return summarize(l.stored.meeting)
     },
 
     async remove(meetingId) {
@@ -1198,17 +1425,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       if (m.phase === 'recording' || m.phase === 'finishing') {
         throw new CapabilityError('CONFLICT', 'stop the meeting before deleting it')
       }
-      for (const timer of [l.persistTimer, l.filesTimer, l.emitTimer]) {
-        if (timer !== null) clearTimeout(timer)
-      }
-      deleted.add(meetingId)
-      live.delete(meetingId)
-      summaries.delete(meetingId)
-      // Machine state first: once it is gone the meeting is gone, even if a
-      // vault file cannot be removed. A save already under way finishes
-      // before the folder goes, so it cannot bring the meeting back.
-      await saving.get(meetingId)?.catch(() => {})
-      await rm(dirOf(meetingId), { recursive: true, force: true, maxRetries: 3 })
+      await forget(meetingId)
       const files = new Set([
         `${m.folder}/transcript.local.md`,
         `${m.folder}/minutes.local.md`,
@@ -1219,7 +1436,6 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       } catch (err) {
         deps.log('warn', `meeting "${m.title}": could not remove its files: ${String(err)}`)
       }
-      emitList()
     },
 
     async patchCard(meetingId, cardId, patch) {
@@ -1291,7 +1507,11 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       if (await isSymlink(out)) throw new CapabilityError('BAD_REQUEST', `${out} is a symlink`)
       const day = new Date(meeting.startedAt)
       const date = `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`
-      const text = `# ${meeting.title}\n\n${date}\n\n${meeting.minutes.trim()}\n`
+      // Minutes rendered from groups carry their title and date; a meeting's
+      // from before them does not.
+      const text = meeting.minutes.startsWith('# ')
+        ? `${meeting.minutes.trim()}\n`
+        : `# ${meeting.title}\n\n${date}\n\n${meeting.minutes.trim()}\n`
       // The dialog may answer with the vault's real path (`/private/var` for
       // `/var`): either names the vault.
       const within = (root: string): string | null => {
@@ -1313,6 +1533,23 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     async tell(meetingId, text, kind) {
       await open(meetingId)
       await scribe.tell(meetingId, text, kind)
+    },
+
+    async restartScribe(meetingId) {
+      const l = await open(meetingId)
+      const m = l.stored.meeting
+      if (m.phase !== 'recording') {
+        throw new CapabilityError('CONFLICT', 'this meeting is not recording')
+      }
+      if (m.scribeState !== 'gone' && m.scribeState !== 'off') {
+        throw new CapabilityError('CONFLICT', 'the assistant is running')
+      }
+      delete m.scribeSessionId
+      delete m.scribeUnreachable
+      // A new session knows nothing yet: its first batch is the whole meeting.
+      m.scribeCursor = -1
+      changed(meetingId)
+      await scribe.launch(meetingId)
     },
 
     async summarise(meetingId) {
@@ -1419,8 +1656,11 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       release()
     },
 
+    follow,
+
     async dispose() {
       disposed = true
+      if (followTimer !== null) clearTimeout(followTimer)
       scribe.dispose()
       for (const timer of retryTimers) clearTimeout(timer)
       queue.length = 0
@@ -1433,6 +1673,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       await Promise.all(saves)
     },
   }
+  return api
 
   /** Let the transcript take chunks again from the first of `open`, which
    *  it had stitched past: a chunk before it is already in, and a done one

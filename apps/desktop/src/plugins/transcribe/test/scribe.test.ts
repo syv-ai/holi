@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CapabilityError } from '../../../main/capabilities/error'
 import { firstMessage, groupsChangeMessage, tellMessage } from '../shared/scribe-prompt'
-import { BATCH_TRANSCRIPT_S, type LaunchArgs } from '../main/scribe'
+import { BATCH_TRANSCRIPT_S, groupsInAnswer, type LaunchArgs } from '../main/scribe'
 import { chunkWav, engineRig, SCRIBE, until } from './engine-helpers'
 
 beforeEach(() => {
@@ -312,6 +312,43 @@ describe('the end of a meeting', () => {
     expect(meeting.phase).toBe('finishing')
   })
 
+  it('on Pi is a run with no tools that answers with its groups, which main writes', async () => {
+    let answer: string | null = '[]'
+    const rig = await meetingRig({
+      provider: async () => 'pi',
+      reply: async () => answer,
+      profile: { scribeModel: 'sonnet', mcpConfig: '/Users/me/mcp.json' },
+    })
+    // No rules to keep it in: it has nothing to break them with. Claude
+    // Code's model and MCP servers are not Pi's.
+    expect(rig.agent.launch).toHaveBeenCalledWith({
+      name: 'Meeting · Planning',
+      provider: 'pi',
+      tools: 'none',
+      keep: true,
+      system: expect.stringContaining('one JSON array per answer'),
+      prompt: firstMessage('reply'),
+    })
+    const system = rig.agent.launch.mock.calls[0]![0].system!
+    expect(system).not.toContain('holi meeting group')
+    expect(rig.meeting.scribeUnsupported).toBeUndefined()
+
+    rig.scribe.hearTurnEnd(SCRIBE)
+    await rig.say(0)
+    await rig.meetings.stop(rig.meetingId)
+    await until(() => rig.sentTo(SCRIBE).some((t) => t.includes('The meeting has ended')))
+    expect(rig.sentTo(SCRIBE).at(-1)).toMatch(/Answer with the JSON array only\.$/)
+    // Idle alone is not the end of its turn: its answer is.
+    rig.sessions('idle')
+    expect(rig.meeting.phase).toBe('finishing')
+    answer =
+      'Here:\n```json\n[{"startIndex":0,"title":"Exports","keywords":["csv","export"],"summary":["CSV export is wanted."]}]\n```'
+    rig.scribe.hearTurnEnd(SCRIBE)
+    await until(() => rig.meeting.phase === 'done')
+    expect(rig.meeting.topics[0]).toMatchObject({ title: 'Exports', keywords: ['csv', 'export'] })
+    expect(rig.agent.stop).toHaveBeenCalledWith(SCRIBE)
+  })
+
   it('is not started on an agent that cannot run it, and the meeting says why', async () => {
     const rig = await engineRig({
       launch: async () => ({ ok: true, sessionId: SCRIBE }),
@@ -333,5 +370,16 @@ describe('the end of a meeting', () => {
     await until(() => meeting.scribeState === 'gone')
     await rig.meetings.stop(meetingId)
     await until(() => meeting.phase === 'done', 5000)
+  })
+})
+
+describe('a tool-less scribe’s answer', () => {
+  it('is its JSON array, fenced or not; anything else holds no groups', () => {
+    expect(groupsInAnswer('[{"startIndex":0}]')).toEqual([{ startIndex: 0 }])
+    expect(groupsInAnswer('```json\n[]\n```')).toEqual([])
+    expect(groupsInAnswer('ok')).toBeNull()
+    expect(groupsInAnswer('[not json')).toBeNull()
+    expect(groupsInAnswer('{"startIndex":0}')).toBeNull()
+    expect(groupsInAnswer(null)).toBeNull()
   })
 })

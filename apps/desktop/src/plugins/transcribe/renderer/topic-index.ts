@@ -1,6 +1,6 @@
 /**
  * What the transcript views need of the topics: where each starts, which
- * lines are in one, and what a topic is called before Hviske has named it.
+ * lines are in one, and what a topic is called before the scribe has named it.
  */
 import type { MeetingState, Topic } from '../shared/meeting'
 

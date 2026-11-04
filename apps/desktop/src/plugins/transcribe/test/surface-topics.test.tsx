@@ -76,7 +76,7 @@ beforeEach(() => {
     const params = paramsJson === undefined ? {} : JSON.parse(paramsJson)
     switch (name) {
       case 'meeting.get':
-        return meeting
+        return shownState
       case 'meeting.related':
         return related()
       case 'meeting.group.edit': {
@@ -142,7 +142,11 @@ beforeEach(() => {
   })
 })
 
+/** What main has of the meeting shown, which `meeting.get` answers. */
+let shownState: MeetingState = meeting
+
 function show(state: MeetingState = meeting) {
+  shownState = state
   const store = createStore()
   store.set(activeRemoteAtom, 'syv/vault')
   store.set(profilesAtom, [profile])
@@ -195,7 +199,9 @@ test('a topic is edited in place: what changed goes to main, and it says it is t
   ])
   const saved = await screen.findByLabelText('Pilot budget', { selector: '[data-topic]' })
   expect(
-    within(saved).getByText(/Edited by you: title, summary, questions\. Hviske keeps your words\./),
+    within(saved).getByText(
+      /Edited by you: title, summary, questions\. The assistant keeps your words\./,
+    ),
   ).toBeInTheDocument()
 }, 15_000)
 
@@ -210,7 +216,7 @@ test('a caption line starts a new topic; a line that starts one cannot', async (
   // Main's groups are shown at once: the split-off part is closed and to be rewritten.
   const plan = await screen.findByLabelText('Release plan', { selector: '[data-topic]' })
   expect(
-    within(plan).getByText('Hviske will rewrite this topic in its next pass.'),
+    within(plan).getByText('The assistant will rewrite this topic in its next pass.'),
   ).toBeInTheDocument()
   expect(screen.getByRole('region', { name: 'Now' })).toHaveTextContent('from 1:40')
 }, 15_000)
@@ -225,12 +231,12 @@ test('Merge with the previous joins a topic to the one before it', async () => {
   expect(within(topicNamed('Budget')).getByText('0:00–1:18')).toBeInTheDocument()
 }, 15_000)
 
-test('Summarise now asks Hviske for its next batch, and says so until it writes', async () => {
+test('Summarise now asks the assistant for its next batch, and says so until it writes', async () => {
   const store = show()
   const now = screen.getByRole('region', { name: 'Now' })
   await userEvent.click(within(now).getByRole('button', { name: 'Summarise now' }))
   expect(calls('meeting.summarise')).toEqual([{ meetingId: 'm1' }])
-  expect(await within(now).findByText('Hviske is summarising…')).toBeInTheDocument()
+  expect(await within(now).findByText('The assistant is summarising…')).toBeInTheDocument()
   act(() =>
     transcribeEvents.meeting!(
       { remote: 'syv/vault', payload: { ...meeting, minutesAt: Date.now() } },
@@ -238,8 +244,31 @@ test('Summarise now asks Hviske for its next batch, and says so until it writes'
     ),
   )
   expect(
-    within(screen.getByRole('region', { name: 'Now' })).queryByText('Hviske is summarising…'),
+    within(screen.getByRole('region', { name: 'Now' })).queryByText(
+      'The assistant is summarising…',
+    ),
   ).toBeNull()
+}, 15_000)
+
+test('Summarise now waits for an assistant that can take it, saying why and what starts it', async () => {
+  show({ ...meeting, scribeState: 'gone' })
+  const now = screen.getByRole('region', { name: 'Now' })
+  expect(within(now).getByRole('button', { name: 'Summarise now' })).toBeDisabled()
+  const why = within(now).getByRole('status', { name: 'Assistant' })
+  expect(why).toHaveTextContent('The assistant stopped. Recording and captions go on.')
+  await userEvent.click(within(why).getByRole('button', { name: 'Start the assistant' }))
+  await waitFor(() => expect(calls('meeting.scribe.restart')).toEqual([{ meetingId: 'm1' }]))
+  expect(calls('meeting.summarise')).toEqual([])
+}, 15_000)
+
+test('on an agent that cannot write topics, Now says which agents can, with the setting', () => {
+  show({ ...meeting, scribeState: 'off', scribeUnsupported: 'codex' })
+  const why = within(screen.getByRole('region', { name: 'Now' })).getByRole('status', {
+    name: 'Assistant',
+  })
+  expect(why).toHaveTextContent('Topics need Claude Code or Pi')
+  expect(within(why).getByRole('button', { name: 'Agent settings' })).toBeInTheDocument()
+  expect(within(why).getByRole('button', { name: 'Start the assistant' })).toBeInTheDocument()
 }, 15_000)
 
 test('Send on a suggestion: prefilled, related lines unticked, ticked ones carried, then sent', async () => {

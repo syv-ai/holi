@@ -9,13 +9,13 @@ groups by code. A person presses **Send** on a group or a suggestion, says what 
 ticks what else in the meeting belongs with it, and Holi starts an agent run (the vault's chosen
 agent, or one of the vault's [Holis](holis.md)) with every one of those lines as its brief, while
 the meeting is still going. Everything on screen is the person's to correct: a caption's words, where a group
-starts, every field of a group. The tab calls the scribe **Hviske** and the work sent **Tasks**;
+starts, every field of a group. The tab calls the scribe **the assistant**, whichever agent runs it, and the work sent **Tasks**;
 this page keeps the code's words (a task is a `Card`).
 
 Meetings are the plugin `transcribe` (`src/plugins/transcribe/`), off until a vault turns it on.
 They require the `agent` and `tasks` plugins. Speech goes to the speech service this machine chose,
-syv.ai's by default; the scribe is a Claude Code session, and a sent task runs on the vault's chosen
-agent ([agent-sessions](agent-sessions.md)).
+syv.ai's by default; the scribe and a sent task run on the vault's chosen agent
+([agent-sessions](agent-sessions.md)).
 
 **The speech service** (`main/speech-service.ts`) is syv.ai's, or any service that answers OpenAI's
 `/audio/transcriptions` (a local Whisper server, a hosted one), named by its address (https, or
@@ -30,7 +30,11 @@ with the OS keychain (Electron `safeStorage`, as the GitHub token and Google's o
 ([auth](auth.md))), and is used for every vault on this machine. Main uses the key set in the
 Meetings tab, else, for syv.ai's service only, the vault's `SYV_API_KEY` (`.env.local`, then `.env`,
 read by core's one reader `readVaultEnv`), else none. syv.ai needs a key; another service may take
-requests without one. The key never reaches the renderer, which learns only whether one is set,
+requests without one. **A key is bound to the service it was saved for**: it is stored with that
+service's address and sent there alone. Choosing another service leaves it unused (it applies again
+if that service is chosen again) unless the person ticks **Send this Mac's saved key to the new
+service too** (`meeting.service.set` with `moveKey`); the dialog says when a saved key is for another
+service. The key never reaches the renderer, which learns only whether one is set,
 where it came from, the service, and whether meetings can be transcribed as things are
 (`meeting.key.status`'s `ready`); `meeting.key.set`, `meeting.key.clear` and `meeting.key.test` (for
 syv.ai the free `/v1/models`, spending no credits; for another service half a second of silence) are
@@ -51,7 +55,7 @@ groups ◄── 'meeting' event ◄──      MeetingState  ◄── holi mee
                                     minutes rendered from the groups (code)
 edits ─ segment.edit, group.* ────► corrections, locks, stale ── next batch ──► scribe session
 Summarise now ── summarise ───────► the next batch, as soon as it is idle ────► scribe session
-Ask Hviske ── tell (kind minutes) ─► at once ─────────────────────────────────► scribe session
+Ask the assistant ─ tell (minutes) ► at once ─────────────────────────────────► scribe session
 Send ── related (BM25), task.create, build ► tasks.create + the vault's agent ► build session
                                      or holis.send (the task) ──────────────► a Holi's run
 ```
@@ -135,13 +139,22 @@ line is judged on what came before it, as an answer is. Every dropped line goes 
 debug level (the Logs tab) with its reason.
 Chunk audio is deleted once transcribed unless the profile keeps it.
 
-**The scribe** runs on Claude Code alone: its safety is the deny rules below, which no other agent
-takes. On another agent the meeting records and captions without topics (`scribeUnsupported`), and
-the header says so with the fix, never running Claude behind the person's choice. A Stop while the
-scribe is still starting waits for it, up to a minute, before deciding the meeting has none, so a
-short meeting still gets its final pass.
+**The scribe** runs on the vault's agent, in the form that holds it to the meeting there. On Claude
+Code it is held by the deny rules below. On Pi it is a run with no tools at all (`agent.launch` with
+`tools: 'none'`: Pi's `--no-tools`, and no extensions, skills, prompt templates, context files, MCP
+servers or project settings), kept for the meeting (`keep`) and stopped when it is done; it answers
+each message with its groups as one JSON array (the prompt's `reply` form), which main reads at the
+turn's end (`agent.reply`) and writes as `holi meeting group` would, telling it in the next message
+which groups were refused and why. It has nothing to read a file or reach the web with, and the
+profile's model and MCP servers, which are Claude Code's, are not used. Codex has neither, so a
+meeting on it records and captions without topics (`scribeUnsupported`), and the header says so with
+the fix, never running another agent behind the person's choice. A Stop while the scribe is still
+starting waits for it, up to a minute, before deciding the meeting has none, so a short meeting
+still gets its final pass. **Start the assistant** under Now (`meeting.scribe.restart`) starts a new
+one for a recording meeting whose assistant stopped or could not start, on the agent chosen then,
+sent the whole transcript with the groups so far.
 
-It is one background session per meeting, launched at Start with the profile in its
+On Claude Code it is one background session per meeting, launched at Start with the profile in its
 system prompt (`shared/scribe-prompt.ts`), one allow rule, `Bash(holi meeting:*)`, and deny rules
 (`--disallowedTools`) that beat any allow, the vault's own included. It needs no file or web tools:
 the transcript comes by message and `holi meeting context` re-syncs it. So it has no `Read`, `Edit`,
@@ -198,11 +211,18 @@ Summarise now asks it to write the open one in full too. At Stop the final pass 
 last group, which closes once that pass is over. A meeting holds at most 60 groups and 60 tasks.
 
 **The minutes are code's.** On every change, `main/minutes.ts` renders `minutes.local.md` (or
-`minutes.md`, shared) from the groups: `## Topics` with a `### <title> (m:ss–m:ss)` per closed group,
-its bullets and a `Keywords:` line, the open group as `### Now (from m:ss)` with no summary;
-`## Decisions` and `## Open questions` gathered from the groups, each with its group's title; and
-`## Tasks`, the tasks sent or made with where they stand. A meeting saved before groups keeps the
-minutes its scribe wrote. Export writes these minutes.
+`minutes.md`, shared) from the groups, in the order minutes are read: the meeting's title, its date
+and time, and **Participants**, the names the scribe heard said (a group's `people`; none when no
+name was said, never a speaker label); then what came of it: **Decisions** and **Open questions**
+gathered from the groups, each with its group's title, and between them **Action points**, the
+tasks sent or made with where they stand and the to-dos the scribe heard someone take on that no
+task covers yet; then **Discussion**, a `### <title> (m:ss–m:ss)` per topic with its bullets and
+keywords, the open group as `### Now (from m:ss)`. While the meeting records, or a topic is still to
+be written, the minutes open with a line saying they are a draft, and an unwritten topic says
+"Not summarised yet." rather than stand empty. They are in the meeting's language, the headings
+included: the profile's, or for `auto` the one the transcript is mostly in (Danish or English, by
+their common words). A meeting saved before groups keeps the minutes its scribe wrote. Export writes
+these minutes.
 
 **A person reshapes the groups.** On a caption line, **Start a new topic here** splits the group at
 that line (`meeting.group.split {meetingId, i}`); on a group, **Merge with the previous**
@@ -281,12 +301,12 @@ line it is in and Replace all every one (`meeting.segment.replace`), each a corr
 line the replacement would empty is left as it was.
 
 **Asking the scribe to change the minutes.** While the meeting records, the topics' header has
-**Ask Hviske** ("drop the budget talk", "Simon owns the CI fix"). It is `meeting.tell` with
+**Ask the assistant** ("drop the budget talk", "Simon owns the CI fix"). It is `meeting.tell` with
 `kind: 'minutes'`, sent at once like any note, which main frames as a request to change the groups
-the minutes are built from: write the groups it is about again with `holi meeting group`, change
+the minutes are built from: write the groups it is about again, change
 what was asked and keep the rest, and keep to it later. It cannot move a closed group's start; the
 person splits and merges groups themselves. A plain `meeting.tell` (no kind, or `note`) is a
-standing instruction. The header says "Hviske is updating…" until a group next changes, or for a
+standing instruction. The header says "The assistant is updating…" until a group next changes, or for a
 minute.
 
 **A task from a stretch of the meeting.** **Custom range**, in the Tasks rail and on the review,
@@ -302,11 +322,11 @@ Computer audio as one pair of icon toggles named in their tooltips, then, while 
 chip with a dot and how the topics are doing ("Topics listening") that opens the details, each part
 named for what it is so a problem says which part to fix (what records, the transcription, how far
 the captions run behind, the topics, what to do about topics that stopped or cannot run, and
-**Open Hviske's session**), a badge for each problem (transcription needs a key or its key was
+**Open the assistant's session**), a badge for each problem (transcription needs a key or its key was
 refused, chunks not transcribed, topics unreachable, no topics with this agent), and an orange
 **Recording · tell everyone** pill that stays for as long as it records; on the right the level
 meter, the timer and Record or Stop. Under it an alert row, only while something is wrong: setting
-up transcription, a source that is not recorded, or Hviske not receiving the transcript.
+up transcription, a source that is not recorded, or the assistant not receiving the transcript.
 
 The middle is the minutes as topic sections, stacked, newest at the bottom, following the newest
 while recording unless the person scrolled up. They start folded, so a meeting reads at a glance: a
@@ -321,8 +341,11 @@ compact rows with Send (a sent one shows its run and Open session) and its keywo
 **Transcript**: the topic's own lines word for word, each correctable and able to start a new topic
 as in the whole transcript, with Copy. Send and a menu with Edit
 topic and Merge with the previous show on hover, on focus and while it is open; a stale one says
-Hviske will rewrite it. Last comes the open topic, **Now (from m:ss)**, with the last three caption lines,
-Send and **Summarise now** (`meeting.summarise`). The rail on the right, 300px, is **Tasks**: only
+the assistant will rewrite it. Last comes the open topic, **Now (from m:ss)**, with the last three caption lines,
+Send and **Summarise now** (`meeting.summarise`). Summarise now goes only while the assistant can
+take it; otherwise Now says why and what gets it going: it is starting, it waits for the person in
+its session (**Open its session**), it stopped or did not start (**Start the assistant**), or the
+vault's agent cannot write topics (**Agent settings**, then Start the assistant). The rail on the right, 300px, is **Tasks**: only
 what was sent or made, with its run and Open session, and **Custom range** in its header; empty, it
 says "Send a topic to <the agent> to start", named for the vault's agent. The captions start folded into a strip under the topics with
 the last two lines, quiet, and **Show transcript**, which opens the whole transcript as a column on
@@ -358,6 +381,17 @@ the meeting there (`meeting.start` with `path`); nothing records until a person 
 another machine the transcript is not there, so the folder is an ordinary one with the shared
 minutes. A meeting recorded before folders had the suffix keeps its folder, and opens from the
 Meetings tab.
+
+**A meeting is known by its id, not its path.** Its transcript starts with `meeting: <id>`
+frontmatter, written when it starts, and the engine checks it before every write and on every vault
+scan (`meetings.follow`). A folder renamed or moved in the tree takes its meeting with it: the
+meeting's paths (its minutes, its tasks) follow, and it writes there from then on. A folder deleted
+from the vault, gone for 5 s (a move removes its files before it writes them again), deletes the
+meeting here too, its recording stopped first (`meeting-removed`: the capture stops and what it
+still has goes nowhere); nothing writes the old path again. A folder at a meeting's old path that
+is not that meeting's is never taken for it: a stale record shows in the list as moved away
+(`away`), opens no folder, and `meeting.start` in a folder whose transcript carries another
+meeting's id is refused. A meeting from before ids takes the transcript at its path as its own.
 
 **Renaming and deleting.** Each meeting in the list has a **…** menu, on hover or focus, and so does
 its review beside the title: **Rename** edits the title in place (`meeting.rename`; Enter saves,
@@ -397,7 +431,7 @@ profile, and what the scribe is told from it, are unchanged.
 | MCP config                | A JSON file passed to the scribe and build runs as `--mcp-config`           |
 | share minutes, keep audio | See Files above                                                             |
 
-During a meeting, `meeting.tell` sends the scribe an instruction at once; the tab's **Ask Hviske**
+During a meeting, `meeting.tell` sends the scribe an instruction at once; the tab's **Ask the assistant**
 sends it as a change to the groups (above).
 
 ## Boundaries and rejected alternatives

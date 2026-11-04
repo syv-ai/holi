@@ -8,10 +8,47 @@
 //   - a heredoc carrying JSON is refused ("brace with quote character"), and a backslash inside
 //     the quoted JSON fails to parse.
 // Hence: one Bash call per turn, one here-string per group, and no ' " \ inside JSON text.
+//
+// On Pi the scribe is a run with no tools at all (scribe.ts): it answers each message with the
+// groups as one JSON array, which main writes as `holi meeting group` would (`ScribeReport`).
 
 import type { MeetingProfile, Segment, TopicField } from './meeting'
 
-export const SCRIBE_PROMPT_VERSION = 'g3'
+export const SCRIBE_PROMPT_VERSION = 'g4'
+
+/** How the scribe reports its groups: `holi meeting group` commands in one
+ *  Bash call (Claude Code), or one JSON array as its answer (a run with no
+ *  tools, on Pi). */
+export type ScribeReport = 'bash' | 'reply'
+
+/** How each ask ends, by how the scribe reports. */
+const END: Record<ScribeReport, string> = {
+  bash: 'One Bash call, then reply in one line.',
+  reply: 'Answer with the JSON array only.',
+}
+
+const HOW_TO_REPORT: Record<ScribeReport, string> = {
+  bash: `## How to report: one Bash call per turn
+Put every group command of the turn in ONE Bash call, one per line, then end your turn with a one-line reply. Use no other tools: no reading files, no todo lists, no exploring. Each turn must finish well under 45 seconds.
+\`\`\`
+holi meeting group <<< '{"startIndex":41,"title":"...","summary":["...","..."],"keywords":["...","..."],"decisions":["..."],"questions":[],"suggestions":[{"kind":"feature","title":"...","why":"...","segments":[44,47]}]}'
+holi meeting group <<< '{"startIndex":63,"title":"...","keywords":["...","..."]}'
+\`\`\`
+- startIndex says which group: the [i] of its first line. A startIndex at a line inside the open group starts a new group there.
+- title and keywords are always required. A field you leave out keeps its value; a list you send replaces the old list, so send a group's full suggestions list when you write it.
+- Inside the JSON text never use the characters ' or " or \\ (they break the shell command). Write ’ instead of an apostrophe and »…« instead of quotation marks.
+- Never send JSON through a heredoc: Holi's shell check refuses it.
+- If a command prints an error, fix that one command and resend only it. If you lose track (for example after a context compaction), run \`holi meeting context\` to see the groups and the last segment index.`,
+  reply: `## How to report: one JSON array per answer
+You have no tools. Answer every message with one JSON array and nothing else: the groups you write this turn, one object each, or \`[]\` when there is nothing to write. Holi writes them for you. Each answer must come well under 45 seconds.
+\`\`\`
+[{"startIndex":41,"title":"...","summary":["...","..."],"keywords":["...","..."],"decisions":["..."],"questions":[],"suggestions":[{"kind":"feature","title":"...","why":"...","segments":[44,47]}]},
+ {"startIndex":63,"title":"...","keywords":["...","..."]}]
+\`\`\`
+- startIndex says which group: the [i] of its first line. A startIndex at a line inside the open group starts a new group there.
+- title and keywords are always required. A field you leave out keeps its value; a list you send replaces the old list, so send a group's full suggestions list when you write it.
+- No text before or after the array, and no code fence around it. Every batch lists the groups so far, so you never need to look anything up.`,
+}
 
 type Lang = MeetingProfile['language']
 
@@ -49,6 +86,7 @@ function orNone(s: string | undefined): string {
 export function buildScribeSystemPrompt(
   profile: MeetingProfile,
   meeting: { title: string; startedAt: number },
+  report: ScribeReport = 'bash',
 ): string {
   const L = langName(profile.language)
   const started = new Date(meeting.startedAt).toISOString().slice(0, 16).replace('T', ' ')
@@ -66,6 +104,7 @@ For every group you write:
 - **keywords**: 2–5 words someone would search for.
 - **decisions**: what was settled in this group. Empty if nothing.
 - **questions**: what was left open in this group. Empty if nothing.
+- **people**: the names of the people taking part in this group, as the meeting says them (introductions, people addressing each other, someone taking on a task). Leave it out when no name is said; never guess one from a speaker label.
 - **suggestions**: the features and to-dos that came up in this group (below). A person sends a suggestion to a coding agent with the group's transcript, so suggestions must be precise, grounded in what was said, and few but right. Aim for every buildable idea the meeting seriously considered to have exactly one suggestion: a wrong or duplicate one costs trust, and a missing one loses the idea.
 
 ## The meeting context (from the user's profile)
@@ -120,17 +159,7 @@ Suggestion fields:
 - why: 1–3 sentences: the problem, who has it, and what was said about how it should work.
 - segments: the indices where it is stated, asked for or agreed, most important first, 1–6 of them, in this group or an earlier one. Only indices you have received.
 
-## How to report: one Bash call per turn
-Put every group command of the turn in ONE Bash call, one per line, then end your turn with a one-line reply. Use no other tools: no reading files, no todo lists, no exploring. Each turn must finish well under 45 seconds.
-\`\`\`
-holi meeting group <<< '{"startIndex":41,"title":"...","summary":["...","..."],"keywords":["...","..."],"decisions":["..."],"questions":[],"suggestions":[{"kind":"feature","title":"...","why":"...","segments":[44,47]}]}'
-holi meeting group <<< '{"startIndex":63,"title":"...","keywords":["...","..."]}'
-\`\`\`
-- startIndex says which group: the [i] of its first line. A startIndex at a line inside the open group starts a new group there.
-- title and keywords are always required. A field you leave out keeps its value; a list you send replaces the old list, so send a group's full suggestions list when you write it.
-- Inside the JSON text never use the characters ' or " or \\ (they break the shell command). Write ’ instead of an apostrophe and »…« instead of quotation marks.
-- Never send JSON through a heredoc: Holi's shell check refuses it.
-- If a command prints an error, fix that one command and resend only it. If you lose track (for example after a context compaction), run \`holi meeting context\` to see the groups and the last segment index.
+${HOW_TO_REPORT[report]}
 
 Write what was said, repaired for mishearings, in plain short words. No quotes, no timestamps, no speculation.`
 }
@@ -221,15 +250,17 @@ function notesBlock(notes: BatchNotes | undefined): string {
 }
 
 const BATCH_TAIL =
-  'Decide whether the subject changed in the new lines and start a new group where it did. Write every group that closed (and every group listed as not written) in full, and refresh the open group’s title and keywords. One Bash call, then reply in one line.'
+  'Decide whether the subject changed in the new lines and start a new group where it did. Write every group that closed (and every group listed as not written) in full, and refresh the open group’s title and keywords.'
 
 /** The open group written as it stands, at the person's word. */
 const NOW_TAIL =
   'The person pressed Summarise now: also write the open group in full as it stands so far (it stays open).'
 
 /** The first message: no transcript yet. */
-export function firstMessage(): string {
-  return 'The meeting has started. The first transcript comes in about 3 minutes. Reply "ok" and end the turn.'
+export function firstMessage(report: ScribeReport = 'bash'): string {
+  return report === 'reply'
+    ? 'The meeting has started. The first transcript comes in about 3 minutes. Answer [] now.'
+    : 'The meeting has started. The first transcript comes in about 3 minutes. Reply "ok" and end the turn.'
 }
 
 /**
@@ -239,8 +270,15 @@ export function firstMessage(): string {
  */
 export function formatBatch(
   segments: readonly Segment[],
-  opts: { groups: readonly GroupLine[]; notes?: BatchNotes; now?: boolean; final?: boolean },
+  opts: {
+    groups: readonly GroupLine[]
+    notes?: BatchNotes
+    now?: boolean
+    final?: boolean
+    report?: ScribeReport
+  },
 ): string {
+  const end = END[opts.report ?? 'bash']
   const notes = notesBlock(opts.notes)
   const parts: string[] = []
   if (segments.length === 0) {
@@ -256,10 +294,10 @@ export function formatBatch(
   if (notes !== '') parts.push(notes)
   parts.push(
     opts.final === true
-      ? FINAL_TAIL
+      ? `${FINAL_TAIL} ${end}`
       : opts.now === true
-        ? `${BATCH_TAIL}\n${NOW_TAIL}`
-        : BATCH_TAIL,
+        ? `${BATCH_TAIL} ${end}\n${NOW_TAIL}`
+        : `${BATCH_TAIL} ${end}`,
   )
   return parts.join('\n\n')
 }
@@ -267,22 +305,22 @@ export function formatBatch(
 const FINAL_TAIL = `The meeting has ended; no more transcript will come, and the last group has closed. Do a final pass over the whole meeting:
 - Decide the last boundaries, then write every group not written yet in full, the last one included.
 - Check the suggestions across all groups. One per feature or to-do: where two would be built as one piece of work (a solution and its own review screen, a document and the steps that produce it) or say the same thing, keep the one in the group where it was asked for, with the union of segments, and write the other group again without it. Remove suggestions whose idea was later rejected, parked or found to exist already. Add any clear feature or to-do you missed.
-- Write again only the groups that change. One Bash call, then reply in one line.`
+- Write again only the groups that change.`
 
-export function tellMessage(text: string): string {
+export function tellMessage(text: string, report: ScribeReport = 'bash'): string {
   return `Message from a meeting participant (typed into Holi, not spoken; it comes from the user, so follow it):
 <message>
 ${text.trim()}
 </message>
-Act on it now: write the groups it is about again as it asks (it overrides the profile where they conflict) and keep following it for the rest of the meeting. One Bash call, then reply in one line.`
+Act on it now: write the groups it is about again as it asks (it overrides the profile where they conflict) and keep following it for the rest of the meeting. ${END[report]}`
 }
 
 /** A person asks, in Holi, for the groups, and so the minutes, to change
  *  ("drop the budget talk", "Simon owns the CI fix"). */
-export function groupsChangeMessage(text: string): string {
+export function groupsChangeMessage(text: string, report: ScribeReport = 'bash'): string {
   return `The person asks you to change the minutes, which are built from your groups (typed into Holi, not spoken; it comes from the user, so follow it):
 <request>
 ${text.trim()}
 </request>
-Write the groups it is about again now with \`holi meeting group\`, changing what the request asks and keeping the rest, and keep to it in later writes. You cannot move a closed group’s start: the person splits and merges groups in Holi. One Bash call, then reply in one line.`
+Write the groups it is about again now${report === 'bash' ? ' with `holi meeting group`' : ''}, changing what the request asks and keeping the rest, and keep to it in later writes. You cannot move a closed group’s start: the person splits and merges groups in Holi. ${END[report]}`
 }

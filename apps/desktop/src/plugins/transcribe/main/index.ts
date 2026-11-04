@@ -27,7 +27,7 @@ import { createSpeechKey } from './speech-key'
 import { createSpeechServices, parseServiceFile } from './speech-service'
 import { createSileroVad, dataUrlBytes } from './silero'
 import SILERO_VAD from './assets/silero-vad.onnx?url&inline'
-import { removeVaultFiles, writeVaultText } from './vault-write'
+import { readVaultHead, removeVaultFiles, writeVaultText } from './vault-write'
 
 /** How long quitting, or turning the plugin off, waits for a recording to
  *  hand over its last audio. */
@@ -60,6 +60,8 @@ export const transcribeMain: MainPlugin = {
         for (const wake of wakers) wake()
       },
     })
+    /** The vault's folders as last scanned. */
+    let folders: readonly string[] = []
     const meetings = createMeetings({
       dir: join(ctx.userData, 'meetings'),
       remote: ctx.remote,
@@ -70,11 +72,16 @@ export const transcribeMain: MainPlugin = {
       service: () => services.get(),
       writeFile: (rel, text) => writeVaultText(ctx.root, rel, text),
       removeFiles: (rels, folder) => removeVaultFiles(ctx.root, rels, folder),
+      readHead: (rel) => readVaultHead(ctx.root, rel),
+      folders: () => folders,
       emit: (name, payload) => ctx.emit(ctx.remote, name, payload),
       agent: {
         launch: async (args) => (await ctx.call('agent.launch', args)) as Launched,
         start: async (args) => (await ctx.call('agent.start', args)) as Launched,
         message: (session, text) => ctx.call('agent.message', { session, text }),
+        reply: async (session) =>
+          ((await ctx.call('agent.reply', { session })) as { output: string | null }).output,
+        stop: (session) => ctx.call('agent.stop', { id: session }),
         createTask: async (args) => (await ctx.call('tasks.create', args)) as { path: string },
         updateTask: async ({ path, description }) => {
           await ctx.call('tasks.update', { path, patch: { description } })
@@ -93,6 +100,12 @@ export const transcribeMain: MainPlugin = {
         model: () => dataUrlBytes(SILERO_VAD),
         log: (level, message) => ctx.log(level, message),
       }),
+    })
+    // Each scan, the meetings find their folders again: renamed, moved or
+    // deleted in the vault (`meetings.follow`).
+    const unscanned = ctx.onSnapshot((snapshot) => {
+      folders = snapshot.dirs
+      void meetings.follow()
     })
     const wake = () => meetings.wake()
     wakers.add(wake)
@@ -130,6 +143,7 @@ export const transcribeMain: MainPlugin = {
       ctx.emit(ctx.remote, 'stop-recording', null)
       await meetings.drain(DRAIN_MS)
       wakers.delete(wake)
+      unscanned()
       unsessions()
       unturns()
       unregister()

@@ -1,9 +1,18 @@
 /**
- * The meeting's scribe: one Claude Code background session per meeting,
- * started through the agent (`agent.launch`) with a brief of its own, one
- * allow rule, `Bash(holi meeting:*)`, that cuts the meeting into groups and
- * writes them through `holi meeting group` (`capabilities.ts`), and no file
- * or web tools (`SCRIBE_DENY`).
+ * The meeting's scribe: one background session per meeting on the vault's
+ * agent, started through the agent (`agent.launch`) with a brief of its own,
+ * that cuts the meeting into groups. Each agent gets a scribe that can do
+ * nothing else:
+ *
+ * - **Claude Code**: one allow rule, `Bash(holi meeting:*)`, that writes the
+ *   groups through `holi meeting group` (`capabilities.ts`), and no file or
+ *   web tools (`SCRIBE_DENY`).
+ * - **Pi**: a run with no tools at all (`tools: 'none'`: no extensions,
+ *   skills, context files or MCP either), kept for the meeting, that answers
+ *   each message with the groups as JSON; main reads the answer at the turn's
+ *   end (`agent.reply`) and writes them as `holi meeting group` would.
+ * - Codex has neither a deny list nor a tool-less run, so a meeting on it
+ *   records and captions without topics and says why (`scribeUnsupported`).
  *
  * **It is fed per group, not per minute.** A batch goes when the session is
  * idle and either at least `BATCH_TRANSCRIPT_S` of new transcript waits, or
@@ -35,6 +44,7 @@ import {
   type BatchNotes,
   type GroupLine,
   type PersonTask,
+  type ScribeReport,
   buildScribeSystemPrompt,
   firstMessage,
   formatBatch,
@@ -103,6 +113,10 @@ export interface LaunchArgs {
   prompt: string
   /** The agent to run it; Claude Code when absent. */
   provider?: AgentProviderId
+  /** Pi only: no tools at all, so it can only answer. */
+  tools?: 'none'
+  /** Pi only: kept between turns until stopped. */
+  keep?: boolean
   system?: string
   allow?: string[]
   deny?: string[]
@@ -118,6 +132,10 @@ export interface AgentCalls {
    *  (`agent.start`): for an agent with no background runs. */
   start(args: { name: string; prompt: string; provider: AgentProviderId }): Promise<Launched>
   message(session: string, text: string): Promise<unknown>
+  /** What a Pi run's last turn answered (`agent.reply`). */
+  reply(session: string): Promise<string | null>
+  /** End a session (`agent.stop`): a kept Pi run, once its meeting is done. */
+  stop(session: string): Promise<unknown>
 }
 
 /**
@@ -192,6 +210,8 @@ export interface ScribeHost {
 interface SessionRow {
   id: string
   state: string
+  /** How its last turn ended: a Pi run's failed or aborted one ends it. */
+  outcome?: string
 }
 
 /** What a person's word to the scribe is: a standing note, or a change to
@@ -238,6 +258,30 @@ interface Runtime {
     sawWorking: boolean
     done: () => void
   } | null
+  /** How its scribe reports: commands (Claude Code) or its answer (Pi). */
+  report: ScribeReport
+  /** Why groups a tool-less scribe answered were not written, for its next
+   *  message: it sees no command fail, as one with Bash does. */
+  refused: string[]
+}
+
+/**
+ * The groups in a tool-less scribe's answer: one JSON array, perhaps in a
+ * code fence or with a word around it. Null when there is none.
+ *
+ * @public exported for its test
+ */
+export function groupsInAnswer(text: string | null): unknown[] | null {
+  if (text === null) return null
+  const from = text.indexOf('[')
+  const to = text.lastIndexOf(']')
+  if (from < 0 || to < from) return null
+  try {
+    const parsed: unknown = JSON.parse(text.slice(from, to + 1))
+    return Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
 }
 
 const errorCode = (err: unknown): string | undefined =>
@@ -254,6 +298,9 @@ export function createScribe(deps: {
   now?: () => number
   /** The vault's chosen agent; Claude Code when absent. */
   provider?: () => Promise<AgentProviderId>
+  /** Write a group a tool-less scribe answered, as `holi meeting group`
+   *  does for the session `session`. */
+  group?(session: string, json: string): Promise<unknown>
 }): Scribe {
   const now = deps.now ?? Date.now
   const runtimes = new Map<string, Runtime>()
@@ -264,7 +311,16 @@ export function createScribe(deps: {
   const rt = (id: string): Runtime => {
     let r = runtimes.get(id)
     if (r === undefined) {
-      r = { retryAt: 0, now: false, sending: false, inflight: null, timer: null, final: null }
+      r = {
+        retryAt: 0,
+        now: false,
+        sending: false,
+        inflight: null,
+        timer: null,
+        final: null,
+        report: 'bash',
+        refused: [],
+      }
       runtimes.set(id, r)
     }
     return r
@@ -324,7 +380,8 @@ export function createScribe(deps: {
     const edited = [...(notes.edits ?? [])]
     const edits = editsOf(meeting, edited)
     const asked = r.now
-    const text = formatBatch(fresh, {
+    const refused = [...r.refused]
+    const batch = formatBatch(fresh, {
       groups: groupLines(meeting, final),
       notes: {
         ...(corrections.length === 0 ? {} : { corrections }),
@@ -333,7 +390,12 @@ export function createScribe(deps: {
       },
       ...(asked ? { now: true } : {}),
       ...(final ? { final: true } : {}),
+      report: r.report,
     })
+    const text =
+      refused.length === 0
+        ? batch
+        : `Holi could not write some groups of your last answer; answer them again, fixed:\n${refused.map((x) => `- ${x}`).join('\n')}\n\n${batch}`
     r.sending = true
     r.inflight = last
     try {
@@ -357,6 +419,7 @@ export function createScribe(deps: {
           if (notes.edits.length === 0) delete notes.edits
         }
         if (asked) r.now = false
+        r.refused = r.refused.filter((x) => !refused.includes(x))
         meeting.scribeCursor = last
         reached(meeting)
         setState(meeting, 'working')
@@ -436,34 +499,62 @@ export function createScribe(deps: {
     if (turnEnded || state === 'gone' || (final.sawWorking && state === 'idle')) final.done()
   }
 
-  /** Start the meeting's scribe on the vault's agent. Only Claude Code
-   *  runs it: its session is locked to `holi meeting` by deny rules, which
-   *  no other agent takes, so on another the meeting records and captions
-   *  without topics and says why (`scribeUnsupported`), never on Claude
-   *  behind the person's choice. */
-  async function launch(id: string): Promise<void> {
-    const entry = deps.host.get(id)
-    if (entry === undefined) return
-    const { meeting, profile } = entry
-    setState(meeting, 'starting')
-    const provider = (await deps.provider?.().catch(() => 'claude' as const)) ?? 'claude'
-    if (provider !== 'claude') {
-      meeting.scribeUnsupported = provider
-      deps.log('info', `meeting "${meeting.title}": no scribe, ${provider} cannot run it`)
-      setState(meeting, 'off')
-      return
-    }
-    let res: Launched
-    try {
-      res = await deps.agent.launch({
-        name: `Meeting · ${meeting.title}`,
+  /** What starts the scribe on `provider`, or null for an agent that has no
+   *  way to hold it to the meeting. */
+  function launchArgs(
+    provider: AgentProviderId,
+    meeting: MeetingState,
+    profile: MeetingProfile,
+  ): LaunchArgs | null {
+    const name = `Meeting · ${meeting.title}`
+    if (provider === 'claude') {
+      return {
+        name,
         system: buildScribeSystemPrompt(profile, meeting),
         prompt: firstMessage(),
         allow: ['Bash(holi meeting:*)'],
         deny: [...SCRIBE_DENY],
         ...(profile.scribeModel === undefined ? {} : { model: profile.scribeModel }),
         ...(profile.mcpConfig === undefined ? {} : { mcpConfig: profile.mcpConfig }),
-      })
+      }
+    }
+    // The profile's model and MCP servers are Claude Code's: Pi's run uses
+    // its own default model, and has no tools for a server to add to.
+    if (provider === 'pi') {
+      return {
+        name,
+        provider: 'pi',
+        tools: 'none',
+        keep: true,
+        system: buildScribeSystemPrompt(profile, meeting, 'reply'),
+        prompt: firstMessage('reply'),
+      }
+    }
+    return null
+  }
+
+  /** Start the meeting's scribe on the vault's agent, in the form that holds
+   *  it to the meeting there (above); on an agent with none, the meeting
+   *  records and captions without topics and says why
+   *  (`scribeUnsupported`), never on Claude behind the person's choice. */
+  async function launch(id: string): Promise<void> {
+    const entry = deps.host.get(id)
+    if (entry === undefined) return
+    const { meeting, profile } = entry
+    setState(meeting, 'starting')
+    const provider = (await deps.provider?.().catch(() => 'claude' as const)) ?? 'claude'
+    const args = launchArgs(provider, meeting, profile)
+    if (args === null) {
+      meeting.scribeUnsupported = provider
+      deps.log('info', `meeting "${meeting.title}": no scribe, ${provider} cannot run it`)
+      setState(meeting, 'off')
+      return
+    }
+    delete meeting.scribeUnsupported
+    rt(id).report = args.tools === 'none' ? 'reply' : 'bash'
+    let res: Launched
+    try {
+      res = await deps.agent.launch(args)
     } catch (err) {
       res = { ok: false, message: String(err) }
     }
@@ -478,6 +569,28 @@ export function createScribe(deps: {
       'info',
       `meeting "${meeting.title}": scribe ${res.sessionId} started (prompt ${SCRIBE_PROMPT_VERSION})`,
     )
+  }
+
+  /** Write the groups a tool-less scribe answered with. */
+  async function answered(session: string, meeting: MeetingState): Promise<void> {
+    const text = await deps.agent.reply(session).catch(() => null)
+    const groups = groupsInAnswer(text)
+    if (groups === null) {
+      if (text !== null && text.trim() !== '' && text.trim().toLowerCase() !== 'ok') {
+        deps.log('warn', `meeting "${meeting.title}": the scribe answered without groups`)
+      }
+      return
+    }
+    for (const group of groups) {
+      try {
+        await deps.group?.(session, JSON.stringify(group))
+      } catch (err) {
+        const at = (group as { startIndex?: unknown } | null)?.startIndex
+        const why = err instanceof Error ? err.message : String(err)
+        rt(meeting.id).refused.push(`[${typeof at === 'number' ? at : '?'}] ${why}`)
+        deps.log('warn', `meeting "${meeting.title}": a group the scribe wrote: ${why}`)
+      }
+    }
   }
 
   const scribed = (sessionId: string): MeetingState | undefined =>
@@ -498,11 +611,20 @@ export function createScribe(deps: {
         if (session === undefined) continue
         const row = list.find((r) => r?.id === session)
         const state: ScribeState =
-          row === undefined
+          row === undefined || row.outcome === 'failed' || row.outcome === 'aborted'
             ? 'gone'
             : row.state === 'working' || row.state === 'idle' || row.state === 'needs-you'
               ? row.state
               : meeting.scribeState
+        // A tool-less scribe's turn is over once its answer is written, at
+        // the turn's end (`hearTurnEnd`), not when its run goes idle.
+        if (
+          state === 'idle' &&
+          rt(meeting.id).report === 'reply' &&
+          meeting.scribeState === 'working'
+        ) {
+          continue
+        }
         setState(meeting, state)
         settleFinal(meeting.id, state, false)
         if (state === 'idle' || state === 'gone') feed(meeting.id)
@@ -512,9 +634,15 @@ export function createScribe(deps: {
     hearTurnEnd(sessionId) {
       const meeting = scribed(sessionId)
       if (meeting === undefined) return
-      setState(meeting, 'idle')
-      settleFinal(meeting.id, 'idle', true)
-      feed(meeting.id)
+      const ended = () => {
+        setState(meeting, 'idle')
+        settleFinal(meeting.id, 'idle', true)
+        feed(meeting.id)
+      }
+      if (rt(meeting.id).report === 'bash') return ended()
+      // A tool-less scribe's groups are its answer: written before the turn
+      // counts as over, so the final pass ends with them in.
+      void answered(sessionId, meeting).finally(ended)
     },
 
     feed,
@@ -530,7 +658,9 @@ export function createScribe(deps: {
       if (meeting === undefined || session === undefined || meeting.scribeState === 'gone') {
         throw new CapabilityError('UNAVAILABLE', 'this meeting has no scribe running')
       }
-      const message = kind === 'minutes' ? groupsChangeMessage(text) : tellMessage(text)
+      const report = rt(id).report
+      const message =
+        kind === 'minutes' ? groupsChangeMessage(text, report) : tellMessage(text, report)
       if ((await deliver(session, message)) !== true) {
         throw new CapabilityError('UNAVAILABLE', 'the scribe did not take the message')
       }
@@ -564,7 +694,8 @@ export function createScribe(deps: {
         return Promise.resolve()
       }
       const r = rt(id)
-      return new Promise<void>((resolve) => {
+      const session = meeting.scribeSessionId
+      await new Promise<void>((resolve) => {
         const timer = setTimeout(() => done(), Math.max(0, deadline - now()))
         const done = () => {
           clearTimeout(timer)
@@ -574,6 +705,8 @@ export function createScribe(deps: {
         r.final = { sent: false, sawWorking: false, done }
         tryFinal(id)
       })
+      // A kept run is the meeting's alone: it ends with it.
+      if (r.report === 'reply') void deps.agent.stop(session).catch(() => {})
     },
 
     dispose() {

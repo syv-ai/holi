@@ -5,7 +5,7 @@
  * rarely changes (the repository, extra instructions, the speech and Claude
  * models, speaker numbers, sharing, audio, MCP) is folded under More
  * settings. The labels are a person's words; the fields keep their names
- * (`platform`, `focus`, `ignore`), so a saved profile and what Hviske is told
+ * (`platform`, `focus`, `ignore`), so a saved profile and what the scribe is told
  * stay as they were.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -428,7 +428,7 @@ export function ProfileDialog({
                   onChange={(on) => edit('keepAudio', on)}
                 />
                 <div className="flex flex-wrap gap-4">
-                  <Row label={`${SCRIBE_NAME} model`} help={`Writes the topics and minutes.`}>
+                  <Row label="Assistant model" help={`Writes the topics and minutes.`}>
                     {(id) => (
                       <ModelSelect
                         id={id}

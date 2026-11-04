@@ -128,8 +128,11 @@ export interface AgentCapabilitiesDeps {
       prompt: string
       model?: string
       system?: string
+      noTools?: boolean
+      keep?: boolean
     }): Promise<unknown>
     message(id: string, text: string): Promise<void>
+    reply(id: string): string | null
     stop(id: string): Promise<ActionResult>
   }
 }
@@ -404,7 +407,10 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
      * any scope, the vault's included), `system` (appended to Claude Code's
      * system prompt) and `mcpConfig` (an absolute path to an MCP JSON
      * config, `--mcp-config`, additive to the vault's own) are that
-     * approval's. The UI door alone, never
+     * approval's. A Pi run takes no rules; instead `tools: 'none'` runs it
+     * with no tools at all (`NO_TOOLS`), so it can only answer, and `keep`
+     * keeps it between turns until it is stopped, for a caller that reads
+     * each answer (`agent.reply`). The UI door alone, never
      * the CLI's: a session could otherwise start another with rules of its
      * own choosing.
      */
@@ -425,6 +431,14 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         }
         const allow = rules('allow')
         const deny = rules('deny')
+        const tools = p['tools']
+        if (tools !== undefined && tools !== 'none') {
+          throw new CapabilityError('BAD_REQUEST', "tools is 'none' or absent")
+        }
+        const keep = p['keep'] === true
+        if ((tools !== undefined || keep) && provider !== 'pi') {
+          throw new CapabilityError('BAD_REQUEST', 'tools and keep are for a Pi run')
+        }
         const mcpConfig = optionalStringParam(p, 'mcpConfig')
         if (mcpConfig !== undefined && !isAbsolute(mcpConfig)) {
           throw new CapabilityError('BAD_REQUEST', 'mcpConfig must be an absolute path')
@@ -441,9 +455,11 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
           ...(deny === undefined ? {} : { deny }),
           ...(system === undefined ? {} : { appendSystemPrompt: system }),
           ...(mcpConfig === undefined ? {} : { mcpConfig }),
+          ...(tools === undefined ? {} : { noTools: true }),
+          ...(keep ? { keep } : {}),
         }
       },
-      run: async (ctx, { provider = 'claude', ...args }) => {
+      run: async (ctx, { provider = 'claude', noTools, keep, ...args }) => {
         if (!live(ctx)) return notOpen
         if (provider === 'pi') {
           if (!deps.pi)
@@ -453,6 +469,8 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
             prompt: args.prompt,
             ...(args.model === undefined ? {} : { model: args.model }),
             ...(args.appendSystemPrompt === undefined ? {} : { system: args.appendSystemPrompt }),
+            ...(noTools === true ? { noTools } : {}),
+            ...(keep === true ? { keep } : {}),
           })
         }
         if (provider === 'codex') {
@@ -644,6 +662,23 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
           return started.ok ? deps.own.send(started.sessionId, args.text) : started
         }
         return deps.sessions.send(args)
+      },
+    }),
+
+    /**
+     * What a Pi run's last completed turn answered: how a plugin that runs
+     * one with no tools (`agent.launch` with `tools: 'none'`) hears it. Null
+     * before its first answer. The UI door alone, as the launch is.
+     */
+    'agent.reply': cap({
+      doors: ['ui'],
+      params: (raw) => ({ session: stringParam(paramsObject(raw), 'session') }),
+      run: async (ctx, { session }): Promise<{ output: string | null }> => {
+        if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', VAULT_NOT_OPEN)
+        if (!deps.pi?.sessions().some((item) => item.id === session)) {
+          throw new CapabilityError('NOT_FOUND', `no Pi run ${session}`)
+        }
+        return { output: deps.pi.reply(session) }
       },
     }),
 

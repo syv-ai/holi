@@ -1,11 +1,11 @@
 /**
- * The Meetings tab with a meeting mid-call: one header row with Hviske's
+ * The Meetings tab with a meeting mid-call: one header row with the assistant's
  * status, its problems and the recording reminder; the minutes as topics,
  * with the decisions and open questions above them and Now last; the
  * captions folded into a strip until the transcript is shown, which reads
  * under the topics' headings; the Tasks rail, whose rows open in a wide
  * panel to edit and send, to Claude or a Holi; a quote finding its line;
- * caption lines corrected in place; and asking Hviske to change the topics.
+ * caption lines corrected in place; and asking the assistant to change the topics.
  *
  * Each test renders the whole tab, so each has 15 s, as `file-view.test.tsx`
  * does: a loaded machine is slow, not wrong.
@@ -199,10 +199,10 @@ test('with no tasks the rail says how to start one', async () => {
   expect(within(rail).getByRole('button', { name: 'Custom range' })).toBeEnabled()
 }, 15_000)
 
-test('before any topic, the minutes say Hviske groups the meeting as it goes', async () => {
+test('before any topic, the minutes say the assistant groups the meeting as it goes', async () => {
   show([], { ...meeting, topics: [], minutes: '' })
   expect(
-    screen.getByText('Hviske groups the meeting into topics every few minutes, as it goes.'),
+    screen.getByText('The assistant groups the meeting into topics every few minutes, as it goes.'),
   ).toBeInTheDocument()
 }, 15_000)
 
@@ -223,20 +223,22 @@ test('the header is one row: the topics’ status and the orange recording remin
   expect(screen.queryByRole('alert')).toBeNull()
 }, 15_000)
 
-test('the topics’ chip opens how each part of the meeting is doing, and Hviske’s session', async () => {
+test('the topics’ chip opens how each part of the meeting is doing, and the assistant’s session', async () => {
   show()
   await userEvent.click(screen.getByRole('button', { name: /Topics writing/ }))
   const details = await screen.findByRole('dialog', { name: 'Meeting details' })
   expect(within(details).getByText('1 transcribing')).toBeInTheDocument()
   expect(within(details).getByText('2.1s behind')).toBeInTheDocument()
   expect(within(details).getByText('writing')).toBeInTheDocument()
-  await userEvent.click(within(details).getByRole('button', { name: 'Open Hviske’s session' }))
+  await userEvent.click(
+    within(details).getByRole('button', { name: 'Open the assistant’s session' }),
+  )
   expect(shown).toEqual([{ session: 'scribe-1', live: false }])
 }, 15_000)
 
 test('problems are loud: a badge in the header, and the fix under it', async () => {
   const store = show()
-  expect(screen.queryByText('Hviske isn’t receiving the transcript.')).toBeNull()
+  expect(screen.queryByText('The assistant isn’t receiving the transcript.')).toBeNull()
   act(() =>
     store.set(meetingStatesAtom, {
       m1: {
@@ -252,7 +254,7 @@ test('problems are loud: a badge in the header, and the fix under it', async () 
   const health = screen.getByLabelText('Meeting health')
   expect(within(health).getByText('1 not transcribed')).toHaveClass('bg-destructive/10')
   expect(within(health).getByText('Topics unreachable')).toHaveClass('bg-warning/10')
-  expect(screen.getByText('Hviske isn’t receiving the transcript.')).toBeInTheDocument()
+  expect(screen.getByText('The assistant isn’t receiving the transcript.')).toBeInTheDocument()
 }, 15_000)
 
 test('topics that stopped, or that the vault’s agent cannot write, say which part and what to do', async () => {
@@ -440,23 +442,28 @@ test('a caption line is corrected in place: Enter saves, Escape puts it back', a
   expect(within(card).getByRole('button', { name: /“Export, as said”/ })).toBeInTheDocument()
 }, 15_000)
 
-test('Ask Hviske asks for a change to the topics and waits for its next write', async () => {
+test('Ask the assistant asks for a change to the topics and waits for its next write', async () => {
   const store = show()
   const minutes = screen.getByRole('region', { name: 'Minutes' })
-  await userEvent.type(within(minutes).getByLabelText('Ask Hviske'), 'drop the budget talk{Enter}')
+  await userEvent.type(
+    within(minutes).getByLabelText('Ask the assistant'),
+    'drop the budget talk{Enter}',
+  )
   expect(calls('meeting.tell')).toEqual([
     { meetingId: 'm1', text: 'drop the budget talk', kind: 'minutes' },
   ])
-  expect(await within(minutes).findByText('Hviske is updating the topics…')).toBeInTheDocument()
-  expect(within(minutes).getByLabelText('Ask Hviske')).toHaveValue('')
-  // Hviske writing a topic ends the wait.
+  expect(
+    await within(minutes).findByText('The assistant is updating the topics…'),
+  ).toBeInTheDocument()
+  expect(within(minutes).getByLabelText('Ask the assistant')).toHaveValue('')
+  // The assistant writing a topic ends the wait.
   act(() =>
     transcribeEvents.meeting!(
       { remote: 'syv/vault', payload: { ...meeting, minutesAt: Date.now() } },
       store,
     ),
   )
-  expect(within(minutes).queryByText('Hviske is updating the topics…')).toBeNull()
+  expect(within(minutes).queryByText('The assistant is updating the topics…')).toBeNull()
 }, 15_000)
 
 test('a meeting event about the open vault updates what is shown', async () => {

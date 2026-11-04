@@ -109,7 +109,17 @@ describe('joining topics', () => {
 describe('the minutes of a joined topic', () => {
   it('write it once, under the earliest title, with every stretch’s time', () => {
     const topics = joinTopic(five(), 't6', 't0')
-    const minutes = renderMinutes({ topics, cards: [] } as unknown as MeetingState)
+    const minutes = renderMinutes(
+      {
+        title: 'Planning',
+        startedAt: 0,
+        phase: 'done',
+        segments: [],
+        topics,
+        cards: [],
+      } as unknown as MeetingState,
+      'en',
+    )
     expect(minutes).toContain(
       '### Budget (0:00–0:20, 1:00–1:20)\n\n- About budget\n- About licences\n\nKeywords: budget, licences',
     )

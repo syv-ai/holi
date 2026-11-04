@@ -179,6 +179,9 @@ export interface Topic {
   decisions: string[]
   questions: string[]
   suggestions: Suggestion[]
+  /** Who took part in it, by the names said in the meeting; absent when
+   *  none was. The minutes list them as the participants. */
+  people?: string[]
   /** When a person last edited it. */
   editedAt?: number
   /** The fields a person edited: theirs, which the scribe may not change. */
@@ -255,6 +258,9 @@ export interface MeetingSummary {
   phase: MeetingPhase
   cards: number
   folder: string
+  /** Its folder is not at `folder` any more, and no folder in the vault
+   *  carries its id: it is listed, but no folder opens it. */
+  away?: true
 }
 
 /** A closed stretch of captured audio: 16 kHz, 16-bit PCM WAV, stereo with the mic left and computer audio right. */

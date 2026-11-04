@@ -6,7 +6,7 @@
  * Enter saves and Escape puts it back. A corrected line says so, quietly. The correction
  * goes to main (`meeting.segment.edit`), which quotes it on the cards citing
  * the line and tells the scribe. A line inside a topic offers Start a new
- * topic here (`meeting.group.split`): the person draws a boundary Hviske
+ * topic here (`meeting.group.split`): the person draws a boundary the scribe
  * missed.
  */
 import { useAtomValue, useSetAtom } from 'jotai'

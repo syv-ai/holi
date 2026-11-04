@@ -783,7 +783,9 @@ async function main(): Promise<void> {
       members,
       reports: uiReports,
     }),
-    pluginEnabled: async (plugin, root) => (await plugins.enabled(root)).has(plugin),
+    // A plugin being turned off keeps its capabilities until its disposer is
+    // done, so what it finishes on the way out still reaches it.
+    pluginEnabled: async (plugin, root) => (await plugins.serving(root)).has(plugin),
     claims: (root) => plugins.scanClaimsFor(root),
   })
   const dispatch = capabilityHost.dispatch

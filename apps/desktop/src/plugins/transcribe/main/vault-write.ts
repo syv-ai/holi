@@ -8,6 +8,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
+import { open } from 'node:fs/promises'
 import { vaultRelPath } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
 import {
@@ -41,4 +42,24 @@ export async function removeVaultFiles(
     await withFileLock(abs, () => removeDocFile(root, rel))
   }
   await pruneEmptiedFolder(root, vaultRelPath(folder))
+}
+
+/** The first `bytes` of a vault file as text, or null when there is none:
+ *  enough to read the id a meeting's transcript starts with. */
+export async function readVaultHead(
+  root: string,
+  path: string,
+  bytes = 256,
+): Promise<string | null> {
+  const abs = await exactPath(root, vaultRelPath(path)).catch(() => null)
+  if (abs === null) return null
+  const file = await open(abs, 'r').catch(() => null)
+  if (file === null) return null
+  try {
+    const buf = Buffer.alloc(bytes)
+    const { bytesRead } = await file.read(buf, 0, bytes, 0)
+    return buf.subarray(0, bytesRead).toString('utf8')
+  } finally {
+    await file.close()
+  }
 }

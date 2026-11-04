@@ -1,5 +1,5 @@
 /**
- * Ask Hviske to change the minutes, in the minutes' own header: "drop the
+ * Ask the assistant to change the minutes, in the minutes' own header: "drop the
  * budget talk", "Simon owns the CI fix". It goes to the scribe at once as a
  * change to the topics the minutes are built from (`meeting.tell`, kind
  * `minutes`), which it writes again; editing a topic by hand is beside it.
@@ -15,16 +15,16 @@ import {
   InputGroupInput,
 } from '@/components/ui/input-group'
 import { meetingCap } from './meeting-cap'
-import { SCRIBE_NAME } from './names'
+import { SCRIBE_NAME, SCRIBE_TITLE } from './names'
 import { message } from './state'
 
-export function AskHviske({
+export function AskAssistant({
   meetingId,
   onAsked,
   onError,
 }: {
   meetingId: string
-  /** The request reached Hviske. */
+  /** The request reached the scribe. */
   onAsked: () => void
   /** It did not, and why; null as a new one goes. */
   onError: (error: string | null) => void
@@ -43,7 +43,7 @@ export function AskHviske({
       setText('')
       onAsked()
     } catch (e) {
-      onError(`${SCRIBE_NAME} didn’t get that: ${message(e)}`)
+      onError(`${SCRIBE_TITLE} didn’t get that: ${message(e)}`)
     } finally {
       setSending(false)
     }

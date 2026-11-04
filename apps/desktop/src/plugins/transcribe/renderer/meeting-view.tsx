@@ -7,7 +7,7 @@
  * transcript as a column on the left (the choice is kept on this machine). A
  * topic is sent from a panel on the right (`send-panel.tsx`), and a task
  * opens in one (`task-panel.tsx`). In a narrow window the three are tabs.
- * What stops the meeting working (no speech key, a Hviske that takes no
+ * What stops the meeting working (no speech key, a scribe that takes no
  * messages) shows under the header with what fixes it, and only then.
  */
 import type { PickableHoli } from '@holi/shared'
@@ -19,7 +19,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { MeetingState } from '../shared/meeting'
 import { GroupSections } from './group-sections'
 import { CaptionStrip, LiveCaptions } from './live-captions'
-import { SCRIBE_NAME, TASKS_NAME } from './names'
+import { SCRIBE_TITLE, TASKS_NAME } from './names'
 import { SendPanel } from './send-panel'
 import { SpeechKeyBlocked } from './speech-key'
 import { highlightAtom, showTranscriptAtom } from './state'
@@ -47,7 +47,7 @@ export function MeetingProblems({ meeting }: { meeting: MeetingState }): React.J
       {meeting.scribeUnreachable === true && (
         <Alert variant="warning">
           <MessageSquareOff aria-hidden />
-          <AlertTitle>{SCRIBE_NAME} isn’t receiving the transcript.</AlertTitle>
+          <AlertTitle>{SCRIBE_TITLE} isn’t receiving the transcript.</AlertTitle>
           <AlertDescription>
             Update this vault’s skills (account menu → Update skills), then start a new meeting.
           </AlertDescription>

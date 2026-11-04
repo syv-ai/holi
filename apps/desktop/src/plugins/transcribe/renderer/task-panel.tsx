@@ -99,7 +99,7 @@ function TaskEditor({
   const show = useSetAtom(showAgentSessionAtom)
   const openPath = useSetAtom(openPathAtom)
   const { sent, run } = useRun(card)
-  /** The person's edits; null while there are none, so Hviske's changes
+  /** The person's edits; null while there are none, so the scribe's changes
    *  show as they come. */
   const [draft, setDraft] = useState<CardDraft | null>(null)
   const [context, setContext] = useState('')

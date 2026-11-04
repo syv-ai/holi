@@ -3,7 +3,7 @@
  * for what it is, so a problem says which part needs fixing: a chip with a
  * dot and how the topics are doing, which opens the details (what records,
  * the transcription, how far the captions run behind, the topics and
- * Hviske's session, and what to do about a part that stopped); a loud badge
+ * the assistant's session, and what to do about a part that stopped); a loud badge
  * for each problem (transcription waiting for a key or refused one, failed
  * uploads, topics the vault's agent cannot write); and the recording reminder,
  * which stays for as long as the meeting records.
@@ -25,7 +25,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ChunkInfo, ChunkState, MeetingState, ScribeState } from '../shared/meeting'
 import { useAgentName } from './agent-name'
-import { SCRIBE_NAME } from './names'
+import { SCRIBE_NAME, SCRIBE_TITLE } from './names'
 import { recorderAtom } from './recorder'
 
 /** How the topics are doing: "Topics: listening". */
@@ -99,9 +99,9 @@ export function MeetingStatus({ meeting }: { meeting: MeetingState }): React.JSX
   /** What to do about topics that stopped or cannot run; the recording
    *  and the captions go on either way. */
   const fix = unsupported
-    ? `Topics need Claude Code, and this vault’s agent is ${agent}. Recording and captions go on. Choose Claude Code in Settings › General › Agents to get topics in the next meeting.`
+    ? `Topics need Claude Code or Pi, and this vault’s agent is ${agent}. Recording and captions go on. Choose one in Settings › General › Agents, then start the assistant under Now.`
     : state === 'gone'
-      ? `${SCRIBE_NAME}, the session that writes the topics, ended. Recording and captions go on; open its session to see why.`
+      ? `${SCRIBE_TITLE}, the session that writes the topics, ended. Recording and captions go on; open its session to see why.`
       : null
 
   return (
@@ -121,7 +121,7 @@ export function MeetingStatus({ meeting }: { meeting: MeetingState }): React.JSX
           <PopoverHeader>
             <PopoverTitle>How the meeting is doing</PopoverTitle>
             <PopoverDescription>
-              {SCRIBE_NAME} hears the transcript as it comes and groups it into the topics the
+              {SCRIBE_TITLE} hears the transcript as it comes and groups it into the topics the
               minutes are built from.
             </PopoverDescription>
           </PopoverHeader>

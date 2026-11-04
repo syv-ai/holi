@@ -18,6 +18,7 @@ import type { CaptureOptions } from '../shared/meeting'
 import { startCapture } from '../renderer/audio/capture'
 import { MeetingsSurface } from '../renderer/meetings-surface'
 import { RecordingStatusItem } from '../renderer/recording-status-item'
+import { transcribeRenderer } from '../renderer/index'
 import { recorderAtom, startRecordingAtom, stopRecordingAtom } from '../renderer/recorder'
 import { meetingsAtom, profilesAtom, shownMeetingIdAtom } from '../renderer/state'
 import { meeting, profile } from './meeting-fixture'
@@ -37,7 +38,13 @@ const calls = (name: string): unknown[] =>
 
 const wav = (...bytes: number[]) => new Uint8Array(bytes).buffer
 /** Main's answer to `meeting.key.status`: syv.ai's service with a key. */
-const READY = { set: true, source: 'app', service: { url: null, model: null }, ready: true }
+const READY = {
+  set: true,
+  source: 'app',
+  service: { url: null, model: null },
+  ready: true,
+  elsewhere: false,
+}
 let options: CaptureOptions | null = null
 const stopCapture = vi.fn(async () => {
   options?.onChunk({ n: 1, start: 6, duration: 2, wav: wav(4, 5) })
@@ -125,7 +132,7 @@ test('Record starts the meeting and the capture, chunks go to main, Stop closes 
   // Stop lands on the meeting's review.
   expect(await screen.findByRole('button', { name: 'Copy transcript' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Export minutes' })).toBeInTheDocument()
-  expect(screen.queryByLabelText('Ask Hviske')).toBeNull()
+  expect(screen.queryByLabelText('Ask the assistant')).toBeNull()
   expect(screen.queryByText('Recording · tell everyone')).toBeNull()
 }, 15_000)
 
@@ -183,7 +190,13 @@ test('a chunk that never reaches main is shown, and the recording goes on', asyn
 test('nothing records before transcription is set up', async () => {
   run.mockImplementation(async ({ name }: { name: string }) =>
     name === 'meeting.key.status'
-      ? { set: false, source: null, service: { url: null, model: null }, ready: false }
+      ? {
+          set: false,
+          source: null,
+          service: { url: null, model: null },
+          ready: false,
+          elsewhere: false,
+        }
       : { ok: true },
   )
   const store = storeFor()
@@ -295,6 +308,30 @@ test('a retried chunk that main already has counts as delivered', async () => {
   await vi.advanceTimersByTimeAsync(2_000)
   expect(calls('meeting.chunk')).toHaveLength(2)
   expect(store.get(recorderAtom)).toMatchObject({ failedUploads: 0, error: null })
+}, 15_000)
+
+test('a meeting deleted from the vault while it records stops, and sends nothing more', async () => {
+  const store = storeFor()
+  await store.set(startRecordingAtom, {
+    profileId: 'planning',
+    title: '',
+    microphone: true,
+    system: true,
+  })
+  expect(store.get(recorderAtom).phase).toBe('recording')
+  transcribeRenderer.events!['meeting-removed']!(
+    { remote: 'syv/vault', payload: { meetingId: 'm9' } },
+    store,
+  )
+  await waitFor(() => expect(stopCapture).toHaveBeenCalled())
+  // The capture's last chunk goes nowhere, and nothing stops a meeting main
+  // no longer has.
+  expect(calls('meeting.chunk')).toEqual([])
+  expect(calls('meeting.stop')).toEqual([])
+  expect(store.get(recorderAtom)).toMatchObject({
+    phase: 'idle',
+    error: 'The meeting’s folder was deleted from the vault, so its recording stopped.',
+  })
 }, 15_000)
 
 test('a capture Holi may not start closes the meeting and says what to do', async () => {

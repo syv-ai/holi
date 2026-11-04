@@ -142,6 +142,7 @@ describe('the doors', () => {
       'meeting.profiles.save',
       'meeting.related',
       'meeting.rename',
+      'meeting.scribe.restart',
       'meeting.segment.edit',
       'meeting.segment.replace',
       'meeting.service.set',
@@ -366,7 +367,7 @@ describe('a group from the scribe', () => {
       decisions: ['Go'],
     })
     expect(text).toContain('not changed: title, summary')
-    expect(r.meeting.minutes).toContain('### Now: CSV for finance')
+    expect(r.meeting.minutes).toContain('### Nu: CSV for finance')
   })
 })
 
@@ -607,7 +608,7 @@ describe('sending a task', () => {
     const task = r.agent.createTask.mock.calls[0]![0] as { description: string }
     expect(task.description).toContain('**Export** (0:00–0:18)')
     expect(r.meeting.cards[0]).toMatchObject({ status: 'building', buildSessionId: 'b0b0b0b0' })
-    expect(r.meeting.minutes).toContain('- [ ] Build the CSV export (feature): sent to Claude')
+    expect(r.meeting.minutes).toContain('- [ ] Build the CSV export (funktion): sendt til agenten')
     expect(
       await refusal(r.ui('meeting.build', { meetingId: r.meetingId, cardId: card.id })),
     ).toMatchObject({ code: 'CONFLICT' })

@@ -58,6 +58,9 @@ export async function until(
   throw new Error('timed out waiting')
 }
 
+/** What each fake vault holds, by its root. */
+const vaults = new Map<string, Map<string, string>>()
+
 export async function engineRig(
   opts: {
     profile?: Partial<MeetingProfile>
@@ -66,6 +69,8 @@ export async function engineRig(
     fetch?: Fetch
     launch?: (args: LaunchArgs) => Promise<Launched>
     message?: (session: string, text: string) => Promise<unknown>
+    /** What a Pi scribe's last turn answered. */
+    reply?: (session: string) => Promise<string | null>
     userData?: string
     root?: string
     /** The speech key in use; `test-key` unless given. */
@@ -80,7 +85,10 @@ export async function engineRig(
   const root = opts.root ?? (await mkdtemp(join(tmpdir(), 'holi-vault-')))
   const profile: MeetingProfile = { ...DEFAULT_PROFILE, ...opts.profile }
   const service = fakeService()
-  const writes = new Map<string, string>()
+  // One fake vault per root: an engine opened again on it finds what the
+  // last one wrote, as it would on disk.
+  const writes = vaults.get(root) ?? new Map<string, string>()
+  vaults.set(root, writes)
   const removed: Array<{ rels: string[]; folder: string }> = []
   const emitted: Array<[string, unknown, number]> = []
   const agent = {
@@ -90,6 +98,8 @@ export async function engineRig(
     message: vi.fn<(session: string, text: string) => Promise<unknown>>(
       opts.message ?? (async () => ({ ok: true })),
     ),
+    reply: vi.fn<(session: string) => Promise<string | null>>(opts.reply ?? (async () => null)),
+    stop: vi.fn(async (_session: string) => ({ ok: true })),
     createTask: vi.fn(
       async ({ title, folder }: { title: string; folder: string; description?: string }) => ({
         path: `${folder}/task.${title.toLowerCase().replace(/\W+/g, '-')}.local.md`,
@@ -117,6 +127,18 @@ export async function engineRig(
       for (const rel of rels) writes.delete(rel)
       removed.push({ rels: [...rels], folder })
     },
+    // The vault is what was written: its files, and the folders they are in.
+    readHead: async (rel) => writes.get(rel)?.slice(0, 256) ?? null,
+    folders: () => [
+      ...new Set(
+        [...writes.keys()].flatMap((rel) =>
+          rel
+            .split('/')
+            .slice(0, -1)
+            .map((_, k, parts) => parts.slice(0, k + 1).join('/')),
+        ),
+      ),
+    ],
     emit: (name, payload) => emitted.push([name, structuredClone(payload), Date.now()]),
     agent,
     log: () => {},

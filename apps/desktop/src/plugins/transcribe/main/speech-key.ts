@@ -13,6 +13,11 @@
  * the key still works, since that only deletes the file) and **a file it
  * cannot read is no key**, which falls back to the vault's.
  *
+ * **A key is bound to the service it was saved for**: it is stored with that
+ * service's address and sent to that service alone. Choosing another service
+ * leaves it unused (it applies again if that service is chosen again), unless
+ * the person confirms sending it to the new one (`rebind`).
+ *
  * The key stays in main. The renderer learns whether one is set and where
  * it came from, never the key.
  *
@@ -25,15 +30,23 @@ import type { SpeechService } from '../shared/meeting'
 import { checkService, type Fetch } from './asr'
 import { isSyv } from './speech-service'
 
-/** This machine's speech key on disk. */
-export interface SpeechKeyStore {
-  read(): Promise<string | null>
-  /** `null` removes it. */
-  write(key: string | null): Promise<void>
+/** A key as kept: the key, and the address of the service it is for
+ *  (`SpeechService.url`, null for syv.ai's). */
+interface SavedKey {
+  key: string
+  service: string | null
 }
 
-/** Bump when the stored shape changes; another value reads as no key. */
-const VERSION = 1
+/** This machine's speech key on disk. */
+export interface SpeechKeyStore {
+  read(): Promise<SavedKey | null>
+  /** `null` removes it. */
+  write(saved: SavedKey | null): Promise<void>
+}
+
+/** Bump when the stored shape changes; another value reads as no key. 1 had
+ *  no service: it was saved when syv.ai's was the only one. */
+const VERSION = 2
 
 export function createSpeechKeyStore(path: string, storage: SafeStorageLike): SpeechKeyStore {
   return {
@@ -42,15 +55,17 @@ export function createSpeechKeyStore(path: string, storage: SafeStorageLike): Sp
       if (text === null) return null
       try {
         const envelope: unknown = JSON.parse(text)
-        if (!isEnvelope(envelope) || envelope.v !== VERSION) return null
+        if (!isEnvelope(envelope) || (envelope.v !== VERSION && envelope.v !== 1)) return null
         const key = storage.decryptString(Buffer.from(envelope.data, 'base64'))
-        return key === '' ? null : key
+        const service = envelope.v === 1 ? null : envelope.service
+        if (service !== null && typeof service !== 'string') return null
+        return key === '' ? null : { key, service }
       } catch {
         return null
       }
     },
-    async write(key) {
-      if (key === null) {
+    async write(saved) {
+      if (saved === null) {
         await rm(path, { force: true })
         return
       }
@@ -63,7 +78,11 @@ export function createSpeechKeyStore(path: string, storage: SafeStorageLike): Sp
             'Holi does not write a secret to disk unencrypted',
         )
       }
-      const envelope = { v: VERSION, data: storage.encryptString(key).toString('base64') }
+      const envelope = {
+        v: VERSION,
+        data: storage.encryptString(saved.key).toString('base64'),
+        service: saved.service,
+      }
       await mkdir(dirname(path), { recursive: true })
       // Write-then-rename: a crash mid-write leaves the old key, not half a file.
       const tmp = `${path}.tmp`
@@ -73,7 +92,7 @@ export function createSpeechKeyStore(path: string, storage: SafeStorageLike): Sp
   }
 }
 
-function isEnvelope(value: unknown): value is { v: number; data: string } {
+function isEnvelope(value: unknown): value is { v: number; data: string; service?: unknown } {
   if (value === null || typeof value !== 'object') return false
   const e = value as Record<string, unknown>
   return typeof e.v === 'number' && typeof e.data === 'string'
@@ -90,14 +109,21 @@ export interface SpeechKeyStatus {
   /** Whether a meeting can be transcribed as things are: syv.ai's service
    *  with a key, or another service, which may need none. */
   ready: boolean
+  /** A key saved on this machine is for another service, so it is not sent
+   *  to this one. */
+  elsewhere: boolean
 }
 
 export interface SpeechKey {
   /** The key to upload with, or null. Main's alone. */
   resolve(): Promise<string | null>
   status(): Promise<SpeechKeyStatus>
+  /** Keep `key` for the service in use. */
   set(key: string): Promise<void>
   clear(): Promise<void>
+  /** Send this machine's saved key to the service in use from now on, as
+   *  the person confirmed. False when there is none. */
+  rebind(): Promise<boolean>
   /** The service and key in use, asked whether they work: syv.ai's
    *  without spending credits. */
   test(): Promise<{ result: 'ok' | 'invalid' | 'unreachable' }>
@@ -115,37 +141,49 @@ export interface SpeechKeyDeps {
 }
 
 export function createSpeechKey(deps: SpeechKeyDeps): SpeechKey {
-  async function current(): Promise<{ key: string; source: SpeechKeySource } | null> {
+  async function current(
+    service: SpeechService,
+  ): Promise<{ key: string; source: SpeechKeySource } | null> {
     const own = await deps.store.read()
-    if (own !== null) return { key: own, source: 'app' }
+    if (own !== null && own.service === service.url) return { key: own.key, source: 'app' }
     // The vault's key is syv.ai's: it is never sent to another service.
-    if (!isSyv(await deps.service())) return null
+    if (!isSyv(service)) return null
     const env = (await deps.vaultEnv().catch(() => ({}) as Record<string, string>))['SYV_API_KEY']
     const fromVault = env?.trim() ?? ''
     return fromVault === '' ? null : { key: fromVault, source: 'vault' }
   }
 
   return {
-    resolve: async () => (await current())?.key ?? null,
+    resolve: async () => (await current(await deps.service()))?.key ?? null,
     async status() {
-      const [now, service] = await Promise.all([current(), deps.service()])
+      const service = await deps.service()
+      const [now, own] = await Promise.all([current(service), deps.store.read()])
       return {
         set: now !== null,
         source: now?.source ?? null,
         service,
         ready: now !== null || !isSyv(service),
+        elsewhere: own !== null && own.service !== service.url,
       }
     },
     async set(key) {
-      await deps.store.write(key)
+      await deps.store.write({ key, service: (await deps.service()).url })
       deps.changed()
+    },
+    async rebind() {
+      const own = await deps.store.read()
+      if (own === null) return false
+      await deps.store.write({ key: own.key, service: (await deps.service()).url })
+      deps.changed()
+      return true
     },
     async clear() {
       await deps.store.write(null)
       deps.changed()
     },
     async test() {
-      const [now, service] = await Promise.all([current(), deps.service()])
+      const service = await deps.service()
+      const now = await current(service)
       if (now === null && isSyv(service)) {
         throw new CapabilityError('CONFLICT', 'no speech key is set')
       }

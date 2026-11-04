@@ -163,7 +163,13 @@ test('a meeting folder from the New menu opens as its setup, and Record starts i
       case 'meeting.prepare':
         return { path }
       case 'meeting.key.status':
-        return { set: true, source: 'app', service: { url: null, model: null }, ready: true }
+        return {
+          set: true,
+          source: 'app',
+          service: { url: null, model: null },
+          ready: true,
+          elsewhere: false,
+        }
       case 'meeting.start':
         return { meetingId: 'm9' }
       default:
@@ -216,4 +222,18 @@ test('a meeting folder opened from the tree shows that meeting', async () => {
   )
   expect(await screen.findByRole('heading', { name: done.title })).toBeInTheDocument()
   expect(screen.queryByRole('region', { name: 'Past meetings' })).toBeNull()
+}, 15_000)
+
+test('a folder at the path a moved or deleted meeting had is not that meeting', () => {
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv/vault')
+  store.set(profilesAtom, [profile])
+  store.set(meetingsAtom, [{ ...LIST[0]!, away: true }])
+  render(
+    <Provider store={store}>
+      <MeetingsSurface id={LIST[0]!.folder} />
+    </Provider>,
+  )
+  expect(screen.getByText(/is not recorded yet$/)).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: done.title })).toBeNull()
 }, 15_000)

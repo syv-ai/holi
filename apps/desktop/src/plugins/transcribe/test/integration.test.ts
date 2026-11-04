@@ -201,7 +201,7 @@ it('a recorded chunk becomes Me and Them lines in a group the scribe writes, and
   expect((await r.holi(['context'])).text).toContain('0\tExport to CSV\t(open)')
 
   let m = await r.client.get(REMOTE, { meetingId })
-  expect(m.minutes).toBe('## Topics\n\n### Now: Export to CSV (from 0:00)\n')
+  expect(m.minutes).toContain('## Drøftelse\n\n### Nu: Export to CSV (fra 0:00)\n')
   // The surface's fixture is a meeting mid-call: this one has its fields.
   expect(Object.keys(m).sort()).toEqual(Object.keys(uiMeeting).sort())
   expect(m.topics[0]!.suggestions).toEqual([

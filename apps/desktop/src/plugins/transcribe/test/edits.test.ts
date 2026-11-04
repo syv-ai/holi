@@ -218,7 +218,7 @@ describe('a group a person edits', () => {
       groupId: 't0',
       patch: { title: 'CSV for finance', decisions: ['CSV first'] },
     })
-    expect(r.meeting.minutes).toContain('### Now: CSV for finance')
+    expect(r.meeting.minutes).toContain('### Nu: CSV for finance')
     expect(r.meeting.minutes).toContain('- CSV first (CSV for finance)')
     expect([...r.writes.entries()].find(([k]) => k.endsWith('minutes.local.md'))?.[1]).toBe(
       r.meeting.minutes,
@@ -337,7 +337,7 @@ describe('sending a task', () => {
       buildSessionId: 'h0l1h0l1',
       target: { kind: 'holi', id: 'proposal' },
     })
-    expect(r.meeting.minutes).toContain('- [ ] Export to CSV (feature): sent to proposal')
+    expect(r.meeting.minutes).toContain('- [ ] Export to CSV (funktion): sendt til proposal')
   })
 
   it('that is a to-do asks the agent to do or prepare it, not to build software', async () => {
@@ -470,8 +470,10 @@ describe('exporting the minutes', () => {
     const { value } = await r.ui('meeting.export', { meetingId: r.meetingId, out })
     expect(value).toEqual({ path: out, vaultPath: 'Meetings/export.md' })
     const written = r.writes.get('Meetings/export.md')!
+    // Once, under the meeting's title, in the meeting's language.
     expect(written).toMatch(/^# Planning\n/)
-    expect(written).toContain('## Topics')
+    expect(written.match(/^# /gm)).toHaveLength(1)
+    expect(written).toContain('## Drøftelse')
     expect(written).toContain('- Decided')
     expect(
       await refusal(r.ui('meeting.export', { meetingId: r.meetingId, out: 'relative.md' })),
@@ -616,7 +618,7 @@ describe('renaming and deleting a meeting', () => {
     expect(r.meetings.list()[0]!.title).toBe('Roadmap review')
     await until(
       () =>
-        r.writes.get(`${folder}/transcript.local.md`)?.startsWith('# Roadmap review\n') === true,
+        r.writes.get(`${folder}/transcript.local.md`)?.includes('\n# Roadmap review\n') === true,
     )
     expect(
       await refusal(r.ui('meeting.rename', { meetingId: r.meetingId, title: '   ' })),

@@ -13,7 +13,7 @@ import {
   createCapabilityRegistry,
   type CapabilityContext,
 } from '../../../main/capabilities/registry'
-import type { MeetingState } from '../shared/meeting'
+import type { MeetingState, SpeechService } from '../shared/meeting'
 import type { Fetch } from '../main/asr'
 import { endpointOf, SYV_MODELS_URL as MODELS_URL, SYV_SERVICE } from '../main/speech-service'
 import { meetingCapabilities, MEETING_NAMESPACES } from '../main/capabilities'
@@ -53,10 +53,15 @@ async function rig(vaultEnv: Record<string, string> = {}) {
   const userData = await mkdtemp(join(tmpdir(), 'holi-key-'))
   let meetings: Meetings | null = null
   const fetch = vi.fn(service)
+  let chosen: SpeechService = SYV_SERVICE
+  const services = {
+    get: async () => chosen,
+    set: async (s: SpeechService) => (chosen = s),
+  }
   const speechKey = createSpeechKey({
     store: createSpeechKeyStore(join(userData, 'speech-key.enc'), storage),
     vaultEnv: async () => vaultEnv,
-    service: async () => SYV_SERVICE,
+    service: services.get,
     fetch,
     changed: () => meetings?.wake(),
   })
@@ -69,7 +74,7 @@ async function rig(vaultEnv: Record<string, string> = {}) {
       meetings: engine.meetings,
       profiles: { list: async () => [engine.profile] } as never,
       speechKey,
-      services: { get: async () => ({ url: null, model: null }), set: async (s) => s },
+      services,
       serviceChanged: () => {},
       remote: 'syv/vault',
     }),
@@ -128,6 +133,7 @@ describe('the key verbs', () => {
       source: null,
       service: { url: null, model: null },
       ready: false,
+      elsewhere: false,
     })
 
     // A key of another shape is the service's to judge, not Holi's.
@@ -138,6 +144,7 @@ describe('the key verbs', () => {
       source: 'app',
       service: { url: null, model: null },
       ready: true,
+      elsewhere: false,
     })
     expect(await r.ui('meeting.key.test')).toEqual({ result: 'ok' })
   })
@@ -149,6 +156,7 @@ describe('the key verbs', () => {
       source: 'vault',
       service: { url: null, model: null },
       ready: true,
+      elsewhere: false,
     })
     expect(await r.ui('meeting.key.test')).toEqual({ result: 'invalid' })
     await r.ui('meeting.key.set', { key: GOOD })
@@ -157,6 +165,7 @@ describe('the key verbs', () => {
       source: 'app',
       service: { url: null, model: null },
       ready: true,
+      elsewhere: false,
     })
     await r.ui('meeting.key.clear')
     expect(await r.ui('meeting.key.status')).toEqual({
@@ -164,6 +173,26 @@ describe('the key verbs', () => {
       source: 'vault',
       service: { url: null, model: null },
       ready: true,
+      elsewhere: false,
+    })
+  })
+})
+
+describe('choosing another service', () => {
+  it('keeps the saved key from it, unless the person sends it along', async () => {
+    const r = await rig()
+    await r.ui('meeting.key.set', { key: GOOD })
+    const local = { url: 'http://localhost:8000/v1', model: 'whisper-1' }
+    expect(await r.ui('meeting.service.set', local)).toMatchObject({
+      set: false,
+      service: local,
+      elsewhere: true,
+    })
+    await r.ui('meeting.service.set', { url: null })
+    expect(await r.ui('meeting.service.set', { ...local, moveKey: true })).toMatchObject({
+      set: true,
+      source: 'app',
+      elsewhere: false,
     })
   })
 })

@@ -72,8 +72,8 @@ export const showTranscriptAtom = atomWithStorage<boolean>(
   { getOnInit: true },
 )
 
-/** When Hviske was last asked to change a meeting's groups (Ask Hviske), and
- *  when it had last written one then: the minutes say Hviske is on it until
+/** When the scribe was last asked to change a meeting's groups (Ask the assistant), and
+ *  when it had last written one then: the minutes say the scribe is on it until
  *  it writes again. */
 export const minutesAskedAtom = atom<
   Readonly<Record<string, { at: number; minutesAt: number | undefined }>>

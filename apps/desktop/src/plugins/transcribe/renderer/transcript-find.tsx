@@ -4,7 +4,7 @@
  * speaker), and, opened, Replace corrects the first line it is in and
  * Replace all every line (`meeting.segment.replace`). Each changed line is a
  * correction, as one typed into the line is: quoted where it is cited, and
- * told to Hviske.
+ * told to the scribe.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Replace, Search } from 'lucide-react'

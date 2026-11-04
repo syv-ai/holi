@@ -251,3 +251,24 @@ export const stopRecordingAtom = atom(null, async (get, set): Promise<void> => {
   set(levelAtom, 0)
   set(recorderAtom, { ...IDLE, error })
 })
+
+/**
+ * The meeting recording here was deleted: its folder went from the vault
+ * (`meeting-removed`). The capture stops and what it still has goes nowhere,
+ * since main no longer has the meeting to take it.
+ */
+export const discardRecordingAtom = atom(null, async (get, set, meetingId: string) => {
+  const s = get(recorderAtom)
+  if (s.meetingId !== meetingId || s.phase === 'idle') return
+  // Every upload and start from before checks this and lets go.
+  generation++
+  const running = capture
+  capture = null
+  set(levelAtom, 0)
+  set(recorderAtom, {
+    ...IDLE,
+    error: 'The meeting’s folder was deleted from the vault, so its recording stopped.',
+  })
+  if (get(shownMeetingIdAtom) === meetingId) set(shownMeetingIdAtom, null)
+  await running?.stop().catch(() => {})
+})

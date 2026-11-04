@@ -27,7 +27,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import type { CardKind, MeetingState, Segment } from '../shared/meeting'
 import { clock } from './format'
 import { meetingCap } from './meeting-cap'
-import { SCRIBE_NAME, TASK_NAME } from './names'
+import { SCRIBE_TITLE, TASK_NAME } from './names'
 import { SpeakerBadge } from './speaker-badge'
 import { message, openTaskAtom, putCardAtom } from './state'
 
@@ -291,7 +291,7 @@ export function CustomRangeDialog({
         <DialogHeader>
           <DialogTitle>A {TASK_NAME.toLowerCase()} from a custom range</DialogTitle>
           <DialogDescription>
-            Pick a stretch of the meeting and say what should be done with it. {SCRIBE_NAME} hears
+            Pick a stretch of the meeting and say what should be done with it. {SCRIBE_TITLE} hears
             that you made it, and suggests nothing of its own for the same thing.
           </DialogDescription>
         </DialogHeader>

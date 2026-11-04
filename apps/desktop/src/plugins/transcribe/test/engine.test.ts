@@ -273,10 +273,12 @@ describe('the vault files', () => {
     )
     expect(rig.writes.get(`${meeting.folder}/transcript.local.md`)).toContain('## Now · 0:00')
     expect(rig.writes.get(`${meeting.folder}/transcript.local.md`)).toContain('said 1')
-    expect(rig.writes.get(`${meeting.folder}/minutes.local.md`)).toBe(
-      '## Topics\n\n### Now (from 0:00)\n',
+    // A draft while it records, in the profile's language.
+    expect(meeting.minutes).toMatch(
+      /^# Plan: Q1\/Q2\?\n\n\d{4}-\d\d-\d\d · fra \d\d:\d\d\n\n> Udkast: /,
     )
-    expect(meeting.minutes).toBe('## Topics\n\n### Now (from 0:00)\n')
+    expect(meeting.minutes).toContain('## Drøftelse\n\n### Nu (fra 0:00)\n')
+    expect(rig.writes.get(`${meeting.folder}/minutes.local.md`)).toBe(meeting.minutes)
   })
 
   it('share the minutes when the profile says so', async () => {
@@ -381,6 +383,91 @@ describe('where a meeting goes', () => {
     const { meetingId } = await rig.meetings.start({ title: 'Kickoff', path })
     expect((await rig.meetings.get(meetingId)).folder).toBe(path)
     await expect(rig.meetings.start({ path })).rejects.toMatchObject({ code: 'CONFLICT' })
+  })
+})
+
+/** Move every file under `from` to `to`, as the vault's rename or move does. */
+function moveFolder(writes: Map<string, string>, from: string, to: string): void {
+  for (const [rel, text] of [...writes]) {
+    if (!rel.startsWith(`${from}/`)) continue
+    writes.delete(rel)
+    writes.set(`${to}${rel.slice(from.length)}`, text)
+  }
+}
+
+describe('a meeting folder changed in the vault', () => {
+  it('renamed or moved takes its meeting with it, which writes there from then on', async () => {
+    const rig = await engineRig()
+    const { meetingId, meeting, send } = await started(rig)
+    const from = meeting.folder
+    await send(0)
+    await until(() => rig.writes.get(`${from}/transcript.local.md`)?.includes('said 1') === true)
+    expect(rig.writes.get(`${from}/transcript.local.md`)).toMatch(
+      new RegExp(`^---\nmeeting: ${meetingId}\n---\n`),
+    )
+
+    const to = 'Clients/Acme/Renamed.meeting'
+    moveFolder(rig.writes, from, to)
+    await rig.meetings.follow()
+    expect(meeting.folder).toBe(to)
+    expect(meeting.minutesPath).toBe(`${to}/minutes.local.md`)
+    expect(rig.meetings.list()[0]).toMatchObject({ id: meetingId, folder: to })
+
+    await send(1)
+    await until(() => rig.writes.get(`${to}/transcript.local.md`)?.includes('said 2') === true)
+    expect([...rig.writes.keys()].filter((rel) => rel.startsWith(`${from}/`))).toEqual([])
+  })
+
+  it('deleted while it records stops the recording and deletes the meeting, never made again', async () => {
+    const rig = await engineRig()
+    const { meetingId, meeting, dir, send } = await started(rig)
+    await send(0)
+    await until(
+      () => rig.writes.get(`${meeting.folder}/transcript.local.md`)?.includes('said 1') === true,
+    )
+    for (const rel of [...rig.writes.keys()]) rig.writes.delete(rel)
+
+    await rig.meetings.follow()
+    // Missing for a moment is a move under way, not a delete.
+    expect(rig.meetings.list().map((m) => m.id)).toEqual([meetingId])
+    await send(1)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(rig.writes.size).toBe(0)
+
+    await until(() => rig.meetings.list().length === 0)
+    expect(rig.emitted.filter(([name]) => name === 'meeting-removed').map(([, p]) => p)).toEqual([
+      { meetingId },
+    ])
+    await until(async () => !(await present(dir)))
+    await expect(send(2)).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    expect(rig.writes.size).toBe(0)
+  })
+
+  it('is never another meeting’s by its old path', async () => {
+    const rig = await engineRig()
+    const first = await started(rig, 'Test')
+    await first.send(0)
+    const folder = first.meeting.folder
+    await until(() => rig.writes.has(`${folder}/transcript.local.md`))
+    await rig.meetings.stop(first.meetingId)
+    await until(() => first.meeting.phase === 'done')
+
+    // Moved away, and a new meeting folder made where it was.
+    moveFolder(rig.writes, folder, 'Archive/Test.meeting')
+    rig.writes.set(
+      `${folder}/transcript.local.md`,
+      '# Test\n\nNot recorded yet: open this meeting and press Record.\n',
+    )
+    await rig.meetings.follow()
+    expect(rig.meetings.list().find((m) => m.id === first.meetingId)?.folder).toBe(
+      'Archive/Test.meeting',
+    )
+    const second = await rig.meetings.start({ title: 'Test', path: folder })
+    expect((await rig.meetings.get(second.meetingId)).folder).toBe(folder)
+    // A folder that holds a meeting is refused, whoever's record names it.
+    await expect(rig.meetings.start({ path: 'Archive/Test.meeting' })).rejects.toMatchObject({
+      code: 'CONFLICT',
+    })
   })
 })
 

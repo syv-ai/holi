@@ -147,6 +147,23 @@ describe('writing a group', () => {
     expect(again.topic).toMatchObject({ title: 'Budget talk', summary: ['Costs'] })
   })
 
+  it('names the people the meeting said took part, and an empty list forgets them', () => {
+    const g = parseGroup(
+      JSON.stringify({
+        startIndex: 0,
+        title: 'Budget',
+        keywords: ['a', 'b'],
+        people: ['Mette', ' mette ', 'Simon'],
+      }),
+    )
+    expect(g.people).toEqual(['Mette', 'Simon'])
+    const { topics, topic } = write(opened(), g)
+    expect(topic.people).toEqual(['Mette', 'Simon'])
+    expect(
+      write(topics, { startIndex: 0, title: 'Budget', keywords: [], people: [] }).topic.people,
+    ).toBeUndefined()
+  })
+
   it('at a line inside the open group cuts it: the earlier part closes, stale only unwritten', () => {
     const one = write(opened(), { startIndex: 4, title: 'Export' })
     expect(one.topics.map((t) => [t.id, t.lines, t.open, t.stale])).toEqual([

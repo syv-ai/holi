@@ -553,6 +553,18 @@ export const meetingCapabilities = (deps: MeetingCapabilitiesDeps) => {
     }),
 
     /** The scribe's next batch now, however little transcript waits. */
+    /** Start the assistant of a meeting that records again, after it
+     *  stopped or could not start: on the vault's agent as it is now. */
+    'meeting.scribe.restart': cap({
+      doors: ['ui'],
+      params: meetingParams,
+      run: async (ctx, { meetingId }): Promise<{ ok: true }> => {
+        here(ctx)
+        await meetings.restartScribe(meetingId)
+        return { ok: true }
+      },
+    }),
+
     'meeting.summarise': cap({
       doors: ['ui'],
       params: meetingParams,
@@ -734,12 +746,18 @@ export const meetingCapabilities = (deps: MeetingCapabilitiesDeps) => {
     }),
 
     /** Transcribe with syv.ai (`url` null) or another service that answers
-     *  `/audio/transcriptions`: its address and model, on this machine. */
+     *  `/audio/transcriptions`: its address and model, on this machine. A key
+     *  saved for the service before stays bound to it, and goes to the new
+     *  one only with `moveKey`, the person's confirmation. */
     'meeting.service.set': cap({
       doors: ['ui'],
-      params: (raw) => serviceParam(paramsObject(raw)),
-      run: async (_ctx, service): Promise<SpeechKeyStatus> => {
-        await deps.services.set(service)
+      params: (raw) => {
+        const o = paramsObject(raw)
+        return { ...serviceParam(o), moveKey: o['moveKey'] === true }
+      },
+      run: async (_ctx, { url, model, moveKey }): Promise<SpeechKeyStatus> => {
+        await deps.services.set({ url, model })
+        if (moveKey) await speechKey.rebind()
         deps.serviceChanged()
         return speechKey.status()
       },

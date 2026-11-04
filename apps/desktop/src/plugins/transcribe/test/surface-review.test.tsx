@@ -127,8 +127,8 @@ test('a stopped meeting opens on its review: title, length, actions, topics, tas
   const rollup = screen.getByRole('region', { name: 'Decisions and open questions' })
   await userEvent.click(within(rollup).getAllByRole('button')[0]!)
   expect(rollup).toHaveTextContent('Cap the pilot at ten seats')
-  // No live parts: no asking Hviske, no Summarise now, no recording reminder.
-  expect(screen.queryByLabelText('Ask Hviske')).toBeNull()
+  // No live parts: no asking the assistant, no Summarise now, no recording reminder.
+  expect(screen.queryByLabelText('Ask the assistant')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Summarise now' })).toBeNull()
   expect(screen.queryByText('Recording · tell everyone')).toBeNull()
   // A suggestion sent from it shows its run where it was suggested.

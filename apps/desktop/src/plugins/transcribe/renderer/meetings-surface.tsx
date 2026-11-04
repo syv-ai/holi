@@ -42,7 +42,9 @@ export function MeetingsSurface({ id }: { id?: string }): React.JSX.Element {
 function MeetingFolder({ path }: { path: string }): React.JSX.Element {
   const list = useAtomValue(meetingsAtom)
   const rec = useAtomValue(recorderAtom)
-  const meeting = list?.find((m) => m.folder === path)
+  // A meeting that moved away or was deleted is not this folder's, whatever
+  // path its record last had (main follows folders by the id in them).
+  const meeting = list?.find((m) => m.folder === path && m.away !== true)
   if (list === null) {
     return (
       <div role="status" aria-label="Loading the meeting" className="flex flex-col gap-2 p-4">
