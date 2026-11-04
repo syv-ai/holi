@@ -17,6 +17,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { agentCap } from './agent-cap'
 import { terminalKeyAction } from './lib/terminal-keys'
+import { preservePiMouseSelection } from './lib/pi-mouse-selection'
 import { vaultLinks } from './lib/terminal-links'
 import { registerSessionTerminal, resizeTerminal, typeIntoTerminal } from './lib/session-terminals'
 import { activeRemoteAtom, cn, openDocumentAtom, snapshotAtom, vaultsAtom } from '@/plugin-api'
@@ -198,6 +199,7 @@ export function SessionTerminal({
     })
 
     const typed = term.onData(type)
+    const mouseSelection = provider === 'pi' ? preservePiMouseSelection(term) : undefined
 
     // A vault path in the output opens the file in a pane.
     const links = term.registerLinkProvider({
@@ -241,6 +243,7 @@ export function SessionTerminal({
       clearTimeout(reHide)
       unregister()
       typed.dispose()
+      mouseSelection?.dispose()
       links.dispose()
       selection.dispose()
       observer.disconnect()
