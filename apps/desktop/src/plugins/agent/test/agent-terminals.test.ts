@@ -136,6 +136,56 @@ describe('agent terminals', () => {
     expect(sent).toContainEqual(['pty-data', { id, data: 'after' }])
   })
 
+  it('passes the final title to a session after removing its terminal', async () => {
+    const { terminals, spawns } = setup()
+    const onExit = vi.fn()
+    terminals.open({ ...on('1234abcd'), onExit })
+    spawns[0]!.pty.emit('\x1b]0;Pi plan\x07')
+    await vi.waitFor(() => expect(terminals.list()[0]?.title).toBe('Pi plan'))
+
+    spawns[0]!.pty.exit()
+    expect(terminals.list()).toEqual([])
+    expect(onExit).toHaveBeenCalledWith('Pi plan')
+  })
+
+  it('retains an exited Pi transcript until close and rejects further input', async () => {
+    const { terminals, spawns } = setup()
+    const onExit = vi.fn()
+    const res = terminals.open({ ...on('pi-session'), retainOnExit: true, onExit })
+    if (!res.ok) throw new Error(res.message)
+    spawns[0]!.pty.emit('final transcript')
+    spawns[0]!.pty.exit(0)
+
+    expect(terminals.list()).toEqual([
+      expect.objectContaining({ id: res.id, launchedFor: 'pi-session' }),
+    ])
+    expect(await terminals.attach(res.id)).toContain('final transcript')
+    terminals.write(res.id, 'ignored')
+    expect(terminals.paste(res.id, 'ignored')).toBe(false)
+    expect(spawns[0]!.pty.writes).toEqual([])
+    expect(onExit).toHaveBeenCalledOnce()
+
+    await terminals.close(res.id)
+    expect(terminals.list()).toEqual([])
+    expect(onExit).toHaveBeenCalledOnce()
+  })
+
+  it('does not retain a terminal whose spawn fails', () => {
+    const terminals = createAgentTerminals({
+      emit: () => {},
+      spawnPty: () => {
+        throw new Error('spawn failed')
+      },
+      probePid: () => 'gone',
+      log: () => {},
+    })
+    expect(terminals.open({ ...on('pi-session'), retainOnExit: true })).toEqual({
+      ok: false,
+      message: 'spawn failed',
+    })
+    expect(terminals.list()).toEqual([])
+  })
+
   it('drops a terminal whose client exits, and says so', () => {
     const { terminals, spawns, sent } = setup()
     const res = terminals.open(on('1234abcd'))

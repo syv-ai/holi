@@ -105,6 +105,15 @@ beforeEach(() => {
   setResolved.mockReset()
 })
 
+/**
+ * How long the view may take to mount: read the note, build the editor, list
+ * the threads. The first mount in a worker is cold and took ~2 s on a loaded
+ * machine, past Testing Library's 1 s default, so the first test failed with
+ * the toggle not found yet. It bounds a failure only; the wait ends the moment
+ * the element is there.
+ */
+const MOUNTED = { timeout: 5_000 }
+
 function open() {
   files.set(PATH, TEXT)
   const store = createStore()
@@ -130,7 +139,7 @@ test('open threads are counted, tinted in the text and listed; a lost passage is
     }),
   ]
   open()
-  const toggle = await screen.findByRole('button', { name: 'Comments, 2 open' })
+  const toggle = await screen.findByRole('button', { name: 'Comments, 2 open' }, MOUNTED)
   const box = await screen.findByRole('textbox', { name: 'Plan document' })
   await waitFor(() =>
     expect(box.querySelector("[data-comment-thread='t1']")).toHaveTextContent('the beta'),
@@ -154,7 +163,7 @@ test('a reply and a resolve go to the thread', async () => {
   reply.mockResolvedValue({ ok: true })
   setResolved.mockResolvedValue({ ok: true })
   open()
-  await user.click(await screen.findByRole('button', { name: 'Comments, 1 open' }))
+  await user.click(await screen.findByRole('button', { name: 'Comments, 1 open' }, MOUNTED))
   const panel = screen.getByRole('complementary', { name: 'Comments' })
   await user.click(within(panel).getByRole('button', { name: 'Reply' }))
   await user.type(within(panel).getByRole('combobox', { name: 'Reply' }), 'Agreed')
@@ -182,7 +191,7 @@ test('a selection becomes a thread quoting the file', async () => {
   const user = userEvent.setup()
   add.mockResolvedValue({ thread: 'new1' })
   open()
-  const box = await screen.findByRole('textbox', { name: 'Plan document' })
+  const box = await screen.findByRole('textbox', { name: 'Plan document' }, MOUNTED)
   await screen.findByRole('button', { name: 'Comments' })
   // Select "the beta" in the editor through its DOM.
   const text = [...box.querySelectorAll('p')].find((p) =>
@@ -218,6 +227,6 @@ test('a selection becomes a thread quoting the file', async () => {
 test('a file that takes no comments shows none', async () => {
   refuse = true
   open()
-  await screen.findByRole('textbox', { name: 'Plan document' })
+  await screen.findByRole('textbox', { name: 'Plan document' }, MOUNTED)
   await waitFor(() => expect(screen.queryByRole('button', { name: /^Comments/ })).toBeNull())
 })

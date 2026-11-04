@@ -1871,10 +1871,7 @@ export function createRouter(deps: RouterDeps) {
     download: t.procedure.mutation(
       async (): Promise<UpdateStatus> => (await deps.updates?.download()) ?? unsupported(),
     ),
-    install: t.procedure.mutation(() => {
-      deps.updates?.install()
-      return { ok: true as const }
-    }),
+    install: t.procedure.mutation(async () => (await deps.updates?.install()) ?? false),
     setChannel: t.procedure
       .input((raw: unknown): { channel: 'stable' | 'dev' } => {
         const channel = (raw as { channel?: unknown } | null)?.channel

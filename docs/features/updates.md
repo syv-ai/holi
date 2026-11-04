@@ -14,6 +14,14 @@ macOS with `electron-builder` (`apps/desktop/electron-builder.yml`) and publishe
 blockmaps and `latest-mac.yml`. Existing tags skip stable publication; concurrent builds cannot
 overwrite its assets. Every push keeps its own CI run.
 
+**Every `main` commit also gets a dev prerelease**, `<next patch>-dev.<run number>`, built by the
+same workflow. Each one contains every commit before it, so a commit whose build failed is covered
+by the next one that succeeds. Publishing retries a failed GitHub API call a few times before it
+gives up. When a commit's dev prerelease fails or is cancelled and no newer one exists, the
+workflow opens a single issue labelled `dev-release-failed` (a later failure updates it), and the
+next dev prerelease at least as new closes it. Without that the dev channel would fall behind
+`main` and nobody would notice.
+
 **Signing and notarizing happen inside `electron-builder`.** It signs with the Developer ID
 certificate in `CSC_LINK`/`CSC_KEY_PASSWORD` under the hardened runtime and
 `build/entitlements.mac.plist`, then notarizes and staples the `.app` (from `APPLE_ID`,
@@ -26,6 +34,8 @@ only. It checks ten seconds after launch, every four hours, on focus and on wake
 (`src/main/updates/state.ts`) enforces a five-minute cooldown and stops checks once an update is
 held. electron-updater downloads it automatically; main pushes status through `updates:status` and
 `trpc.updates.*`.
+
+**A ready update asks once.** When the window is visible and no other dialog is open, Holi shows a confirmation with **Restart now** and **Later**. The prompt waits behind another dialog and appears when it closes. Restart uses the guarded install path and stays pending while it runs; if the guard declines, the prompt stays open. **Later** dismisses this version on this release channel on this machine (`localStorage`). Escape closes the prompt temporarily; Holi offers it again the next time its native window becomes visible, or immediately for a newly ready candidate.
 
 **Installing is a quit.** A downloaded update installs on any quit. **Restart to update** runs the
 same path as ⌘Q first: the plugins' quit questions (a busy agent session asks), then the teardown

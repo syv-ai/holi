@@ -30,4 +30,4 @@ body:
     id: context
     attributes:
       label: Context
-      description: The skill, command or Holi feature involved, if one was. Claude Code version (claude --version).
+      description: The skill, command or Holi feature involved, if one was. Holi and Claude Code versions (holi agent version).

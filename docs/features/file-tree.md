@@ -20,27 +20,21 @@ The sidebar explorer shows the vault as the folders and files on disk. It reads 
 
 **Keyboard.** The tree is one tab stop. ↑/↓, Home and End move it, and the selection with it. → opens a folder and then steps into it; ← closes it and then steps out to the parent. Enter opens a file or toggles a folder. Letters typed in quick succession jump to the next row whose name begins with them. Escape collapses the selection to the focused row. F2, ⌫ and ⌘X/C/V/D do what the menu says. ⌥⌘C and ⌥⇧⌘C copy the focused row's absolute and relative path, VS Code's keys; with focus elsewhere outside text and the sidebar open, they copy the selected row's, as F2 renames it.
 
-**Toolbar.** The Files header holds two actions at its right, **+** and ⋯, each a dropdown. ⋯
-is the row menu of the selected row (below) above the New menu. **+** opens the New menu (`newActions` in
-`features/sidebar/file-menu-actions.tsx`, the one list the ⋯ and right-click menus show too): New
-document, New folder, then what each enabled claim makes (`PathClaim.create`: New task from the
-tasks plugin, New Link from links, New app from apps). Show task files, Show hidden files and
-Collapse all are the ⋯ menu's, below the New menu. The empty tree's New document button makes a
-document at the root and opens it, without the menu.
+**Toolbar.** The tree's top-right holds the [nav menu](nav-menu.md)'s morphing menu, anchored at
+that corner and opening downward: icons on the sidebar's own background, so rows scrolled under
+them do not show through, while the tree is hovered or the menu has focus, kept
+while it is open. **+** unfolds into New File, New Folder and what enabled claims make (`create`: New Task, New Link, New App); Collapse All, Show hidden files
+and each hideable claim's filter (Show task files) are shortcuts, the filters pressed while on. Every item has a
+shortcut, so there is no More. In a sidebar too narrow for the open menu, it grows rightward over
+the editor rather than past the window's edge.
 
-- **Where a new item goes** is one rule for the +, the ⋯ and the right-click menu (`newParent` in
-  `files-section.tsx`): inside the folder the menu is about (the row right-clicked, or the row
-  selected for + and ⋯), in the folder of a file, an app or a deck, and at the vault root when no
-  row is.
-- **It lands named in place.** A New document (`Untitled.md`), a New folder and a claim's item made
-  as Untitled (an app) land through `land` with the name field open, so typing names them; the
-  menu closing leaves focus alone so the field keeps it. An item whose claim asks its name first
-  (`ClaimCreate.asksName`: a link's address, a task's title) is named in that dialog instead, and
-  lands selected without the field.
-- **A task** is named by its title, which New task asks; the tasks plugin names the file, and it
-  opens pinned, as ⌘⇧T's does, whether or not the tree shows task files. **An app** is `holi apps
-init`'s scaffold (`index.html` and an `app.yaml`, never overwriting), and its `index.html` opens,
-  which expands the bundle. A typed `.app` is not doubled.
+- **Where a new item goes** is next to the focused row (`newItemPlace`): inside a focused folder as
+  its first row, right after a focused file or app in its folder, and at the root when nothing is
+  focused. The name field appears there as a row at that level.
+- **A task** is named by its title; the tasks plugin names the file, and it opens pinned, as ⌘⇧T's does, whether
+  or not the tree shows task files. **An app** is `holi apps init`'s scaffold (`index.html` and an
+  `app.yaml`, never overwriting), and its `index.html` opens, which expands the bundle. A typed
+  `.app` is not doubled.
 - **A row lands in view.** Whatever the tree makes, moves, renames, reorders, drops in or is
   asked to reveal goes through one place (`land` in `files-section.tsx`): once the snapshot
   has the row, its folders open, it is selected and focused, and headless-tree's `scrollTo`
@@ -54,7 +48,7 @@ init`'s scaffold (`index.html` and an `app.yaml`, never overwriting), and its `i
   request the shell and the tree both hear; the tree keeps the last one it answered, since it
   may mount after the ask).
 
-**Row menu.** Right-click on a row, or ⋯ with it focused, offers (`features/sidebar/file-menu-actions.tsx`): Open in split view (a file or an app, not a folder); Open in Finder (Explorer on Windows, the file manager elsewhere), Copy relative path (⌥⇧⌘C), Copy absolute path (⌥⌘C), and Copy Holi link on a file that is not local; Rename (F2), Move up, Move down and Move to a folder or the vault root; what a claim adds, each item shown when its `when` holds (Finish this app on an unfinished app); and Delete. Main resolves the absolute path and does the revealing (`files.absolutePath`, `files.reveal`), inside the vault and in the platform's separators, so no absolute path crosses from the renderer. Below the row's items, and alone on empty space, comes the New menu the + opens, made where a new item goes (above); then Show task files, Show hidden files and Collapse all.
+**Row menu.** Right-click on a row, or ⋯ with it focused, offers (`features/sidebar/file-menu-actions.tsx`): Open in split view (a file or an app, not a folder); Open in Finder (Explorer on Windows, the file manager elsewhere), Copy relative path (⌥⇧⌘C), Copy absolute path (⌥⌘C), and Copy Holi link on a file that is not local; Rename (F2), Move up, Move down and Move to a folder or the vault root; what a claim adds, each item shown when its `when` holds (Finish this app on an unfinished app); and Delete. A markdown note's row also has Create vault app, the document menu's own ([editor](editor.md)): it and Copy Holi link are one definition with the document menu's (`NOTE_ACTIONS`, `state/document-runs.ts`), with the same enable rule and the agent's mark on the agentic one; Create vault app opens the note, whose pill follows the run. Main resolves the absolute path and does the revealing (`files.absolutePath`, `files.reveal`), inside the vault and in the platform's separators, so no absolute path crosses from the renderer. Below the row's items, and alone on empty space, comes the New menu: New folder, New task and each claim's New item, made where a new item goes (above); then Show task files, Show hidden files and Collapse all.
 
 - Rename, cut-and-paste and drag are one batch move: a single-pass link rewrite over the whole `from → to` map, open tabs retargeted, and a commit before and after. A move that would change nothing, or put a folder inside itself, is refused.
 - Copy, paste and Duplicate make new files and leave links pointing at the originals. Duplicate appends ` copy`.
@@ -63,7 +57,7 @@ init`'s scaffold (`index.html` and an `app.yaml`, never overwriting), and its `i
 - A deleted folder goes with its documents: its `.gitkeep` and the folders left empty go too.
   A file the preview never listed (a `.local.` file) stays, and so does the folder holding it. A
   folder with no documents left goes without a preview.
-- The name field opens in place: a rename in the row, and a new document, a new folder, or a file a New item made as Untitled, in its own row as soon as the vault has it, selected and scrolled into view, so typing names it. Enter commits; Escape or leaving the field cancels. The field holds the whole name with the part before the extension selected, so typing over it keeps the extension (a new document's `.md`); a name typed without one is taken as typed.
+- The name field opens in place: a rename in the row, and a new folder, or a file a New item made as Untitled, in its own row as soon as the vault has it, selected and scrolled into view, so typing names it. Enter commits; Escape or leaving the field cancels. A note is renamed without its `.md`, which is added back, and New File appends `.md` when no extension is typed.
 
 **Drag and drop.** One mechanism. A row's drag is a native OS drag of the target files, so they can be dropped into other apps. Everything dropped on the tree arrives as files, except a web address dragged from a browser, which a claim that takes one saves (New Link: [links](links.md)); for files the path decides: a source inside this vault is a move through the move path, anything else is copied in. The destination is the folder under the pointer, a file's folder, or the root for empty space. The target folder is tinted while a drag is over it, and a closed folder opens after a short hover. A name clash is refused per file with an exclusive copy, and the skipped names stay listed until dismissed. A cloud placeholder that is not downloaded (`ETIMEDOUT`) is refused by name, and a folder from Finder is refused with a sentence. Dropping a row into Finder does not work, which is why Copy to Folder and Move to Folder exist; both auto-rename at the destination, and a move warns about dangling links and removes only the files whose copy landed.
 
@@ -77,7 +71,7 @@ kept order never conflicts with a teammate's. Placed children come first in thei
 never placed (new, or pulled in) follows in name order. A placed path that has gone is ignored rather
 than removed, so an undone rename finds its place again.
 
-**Folder documents.** A claim's `folder` (`{surface, entry, ready?}`) makes a matched directory that holds its entry file one document, and its `decorate` (`{icon, name, suffix}`) names and marks the row; a rename keeps the suffix. Vault apps are the one such claim, from the apps plugin. A vault app's bundle (a `<name>.app` folder) is a folder that behaves as a file. It shows as one row with an app glyph and its name without `.app`, sorts with the files, and opens the app with a note's gestures. →, Show App Files, or its chevron expands it so its files can be edited; the chevron sits where a folder's does, shown on hover or focus and while the files are open. ←, Hide App Files or that chevron closes it. A drop on it lands beside it, and New document or Paste on it land beside it too. It moves, renames, copies and deletes as a folder. It needs its `index.html` to be an app; before that, or for a macOS app copied in, it is a folder. Without its `app.yaml` it is dimmed, a click shows its files instead of opening it, and its menu offers Finish this app instead of Open. See [vault apps](vault-apps.md). A plugin's folder document (a community plugin's deck, `<name>.deck`) opens as its surface from a press on its row, and its chevron alone expands it to show the files inside, which open as files; its glyph is the presentation one, in colour. A folder document's row shows its kind's glyph, never the extension label, and its tab shows the same one (`FolderDocumentMark`).
+**Folder documents.** A claim's `folder` (`{surface, entry, ready?}`) makes a matched directory that holds its entry file one document, and its `decorate` (`{icon, name, suffix}`) names and marks the row; a rename keeps the suffix. Vault apps are the one such claim, from the apps plugin. A vault app's bundle (a `<name>.app` folder) is a folder that behaves as a file. It shows as one row with an app glyph and its name without `.app`, sorts with the files, and opens the app with a note's gestures. →, Show App Files, or its chevron expands it so its files can be edited; the chevron sits where a folder's does, shown on hover or focus and while the files are open. ←, Hide App Files or that chevron closes it. A drop on it lands beside it, and New File or Paste on it land beside it too. It moves, renames, copies and deletes as a folder. It needs its `index.html` to be an app; before that, or for a macOS app copied in, it is a folder. Without its `app.yaml` it is dimmed, a click shows its files instead of opening it, and its menu offers Finish this app instead of Open. See [vault apps](vault-apps.md). A plugin's folder document (a community plugin's deck, `<name>.deck`) opens as its surface from a press on its row, and its chevron alone expands it to show the files inside, which open as files; its glyph is the presentation one, in colour. A folder document's row shows its kind's glyph, never the extension label, and its tab shows the same one (`FolderDocumentMark`).
 
 **Reveal.** A command elsewhere (Edit Source on a vault app) can ask the tree to show a path. The tree opens down to it, selects it and scrolls it into view, even while it is hidden. A request made while a name is being typed is dropped.
 
