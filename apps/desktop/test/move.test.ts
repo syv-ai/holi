@@ -2,9 +2,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
+import { vaultRelPath } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
 import { moveNotes } from '../src/main/vault/move'
-import { withFileLock } from '../src/main/vault/vault-files'
+import { withFileLock, withFileLocks } from '../src/main/vault/vault-files'
 
 const dirs: string[] = []
 afterAll(async () => {
@@ -24,6 +25,30 @@ async function vault(files: Record<string, string>): Promise<string> {
 const read = (root: string, rel: string) => readFile(join(root, rel), 'utf8')
 
 describe('moveNotes', () => {
+  it('runs beside a delete that holds a note linking to it, and both finish', async () => {
+    const root = await vault({ 'c.md': 'see [[z.md]]', 'z.md': 'Z' })
+    const rels = ['c.md', 'z.md'].map((p) => vaultRelPath(p))
+    // A delete of both holds c.md, then waits for z.md, which the move holds.
+    const removal = withFileLocks(root, rels, () => new Promise((r) => setTimeout(r, 50)))
+    const move = moveNotes(root, [{ from: 'z.md', to: 'x/z.md' }])
+    const stuck = new Promise((r) => setTimeout(() => r('stuck'), 2000))
+    expect(await Promise.race([Promise.all([removal, move]).then(() => 'done'), stuck])).toBe(
+      'done',
+    )
+  })
+
+  it('runs beside another move of a note it links to, and both finish', async () => {
+    const root = await vault({ 'a.md': 'see [[c.md]]', 'c.md': 'see [[a.md]]' })
+    const both = Promise.all([
+      moveNotes(root, [{ from: 'a.md', to: 'x/a.md' }]),
+      moveNotes(root, [{ from: 'c.md', to: 'x/c.md' }]),
+    ])
+    const stuck = new Promise((r) => setTimeout(() => r('stuck'), 2000))
+    expect(await Promise.race([both.then(() => 'done'), stuck])).toBe('done')
+    expect(await read(root, 'x/a.md')).toBe('see [[x/c.md]]')
+    expect(await read(root, 'x/c.md')).toBe('see [[x/a.md]]')
+  })
+
   it('lets no writer that checks one moving file write another between the two', async () => {
     // A meeting's minutes are written only while its transcript is there.
     const root = await vault({ 'm/minutes.md': 'minutes', 'm/transcript.md': 'mine' })

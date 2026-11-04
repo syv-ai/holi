@@ -601,26 +601,28 @@ describe('notes', () => {
   })
 
   it('deleteMany lets no writer that checks one deleted file bring back another', async () => {
-    // A recording meeting writes its minutes only while its transcript is there.
+    // A recording meeting writes its minutes only while its transcript is
+    // there: it checked, and writes once the gate opens.
     const { caller, root } = await rig({ 'm/minutes.md': 'minutes', 'm/transcript.md': 'mine' })
-    const key = async (rel: string) => (await exactPath(root, rel))!
-    let release!: () => void
-    const held = withFileLock(
-      await key('m/transcript.md'),
-      () => new Promise<void>((r) => (release = r)),
-    )
+    let open!: () => void
+    const gate = new Promise<void>((r) => (open = r))
+    let checked = false
+    const write = withFileLock((await exactPath(root, 'm/minutes.md'))!, async () => {
+      const there = await readFile(join(root, 'm/transcript.md'), 'utf8').catch(() => null)
+      checked = true
+      await gate
+      if (there !== null) await writeFile(join(root, 'm/minutes.md'), 'written back')
+    })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(checked).toBe(true)
     const removal = caller.notes.deleteMany({
       remote: REMOTE,
       paths: ['m/minutes.md', 'm/transcript.md'],
       folders: ['m'],
     })
     await new Promise((r) => setTimeout(r, 50))
-    const write = withFileLock(await key('m/minutes.md'), async () => {
-      if ((await readFile(join(root, 'm/transcript.md'), 'utf8').catch(() => null)) === null) return
-      await writeFile(join(root, 'm/minutes.md'), 'written back')
-    })
-    release()
-    await Promise.all([held, removal, write])
+    open()
+    await Promise.all([write, removal])
     await expect(stat(join(root, 'm'))).rejects.toThrow()
   })
 
