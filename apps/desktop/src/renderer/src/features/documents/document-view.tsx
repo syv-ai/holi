@@ -407,6 +407,7 @@ function DocumentEditor({
     saveTimer.current = undefined
     // Capture the body while the editor is alive, but take frontmatter after
     // pending disk reads: task properties may have changed independently.
+    const capturedDirty = dirty.current
     const body = editor ? editor.getMarkdown() : splitDocument(lastText.current).body
     const done = writing.current
       .then(async () => {
@@ -424,7 +425,8 @@ function DocumentEditor({
           pending = reloadPending.current
           await pending
         } while (pending !== reloadPending.current)
-        await write(joinDocument(head.current, body), true)
+        // A clean snapshot has no local work to restore over a newer disk body.
+        if (capturedDirty) await write(joinDocument(head.current, body), true)
       })
       .catch((error: unknown) => {
         setSaveState('error')
@@ -441,8 +443,11 @@ function DocumentEditor({
       (!dirty.current && !captured) ||
       !differsBeyondTidy(lastText.current, text, path, claimsRef.current)
     ) {
-      dirty.current = false
-      setSaveState('saved')
+      dirty.current =
+        mounted.current && editor !== null && !editor.isDestroyed
+          ? differsBeyondTidy(lastText.current, markdown(), path, claimsRef.current)
+          : false
+      setSaveState(dirty.current ? 'saving' : 'saved')
       return
     }
     setSaveState('saving')

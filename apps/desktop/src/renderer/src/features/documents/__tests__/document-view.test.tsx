@@ -892,6 +892,42 @@ test('a failed metadata read blocks stale writes and the next flush retries it',
   expect(files.get(taskPath)).toContain('local')
 })
 
+test('a clean flush awaiting a reload never writes the old body over the new file', async () => {
+  open('# Plan\n\nOriginal\n')
+  const editor = ((await editorBox()) as WithEditor).editor
+  const latest = '# Plan\n\nExternal body\n'
+  const read = deferred<string>()
+  const reading = vi.fn(() => read.promise)
+  readOverride = reading
+  changeOnDisk(latest, '2026-10-23T10:00:05Z')
+  await waitFor(() => expect(reading).toHaveBeenCalledTimes(1))
+  const flushed = flushAllBuffers()
+  await Promise.resolve()
+  expect(write).not.toHaveBeenCalled()
+  read.resolve(latest)
+  await act(() => flushed)
+  expect(editor.getMarkdown()).toContain('External body')
+  expect(files.get(PATH)).toBe(latest)
+  expect(write).not.toHaveBeenCalled()
+})
+
+test('an edit after a clean flush snapshot remains pending for the next flush', async () => {
+  open('---\nstatus: todo\n---\n\nOriginal\n')
+  const editor = ((await editorBox()) as WithEditor).editor
+  const latest = '---\nstatus: doing\n---\n\nOriginal\n'
+  const read = deferred<string>()
+  readOverride = () => read.promise
+  changeOnDisk(latest, '2026-10-23T10:00:05Z')
+  const cleanFlush = flushAllBuffers()
+  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, ' local'))
+  read.resolve(latest)
+  await act(() => cleanFlush)
+  expect(write).not.toHaveBeenCalled()
+  await act(() => flushAllBuffers())
+  expect(files.get(PATH)).toContain('status: doing')
+  expect(files.get(PATH)).toContain('local')
+})
+
 test('the commit tidy leaves the caret, and the space before it, where they are', async () => {
   open('# Plan\n\nAlpha\n\nBeta\n')
   const editor = ((await editorBox()) as WithEditor).editor
@@ -953,6 +989,25 @@ test('flush waits for an in-flight autosave then writes an undo to the saved bas
   await concurrent
   expect(write).toHaveBeenCalledTimes(2)
   expect(write).toHaveBeenLastCalledWith(expect.objectContaining({ text: '# Plan\n\nO\n' }))
+})
+
+test('a duplicate queued snapshot cannot mark newer edits as clean', async () => {
+  open('# Plan\n\nOriginal\n')
+  const editor = ((await editorBox()) as WithEditor).editor
+  const pending = deferred<void>()
+  write.mockImplementationOnce(() => pending.promise)
+  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, ' first'))
+  const first = flushAllBuffers()
+  await waitFor(() => expect(write).toHaveBeenCalledTimes(1))
+  const duplicate = flushAllBuffers()
+  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, ' newer'))
+  pending.resolve()
+  await act(async () => {
+    await first
+    await duplicate
+  })
+  await act(() => flushAllBuffers())
+  expect(files.get(PATH)).toContain('newer')
 })
 
 test('a save freeze blocks document commands while allowing external reloads', async () => {
