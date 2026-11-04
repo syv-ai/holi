@@ -1425,9 +1425,18 @@ export async function openActiveVault(args: {
  */
 export interface VaultHost {
   active(): ActiveVault | null
-  /** Closes the current vault first. Idempotent for the vault already open. */
+  /** Open and select a vault, closing the previously selected runtime first. */
   open(remote: string): Promise<ActiveVault>
+  /** Get an existing runtime or start one without changing the selected vault. */
+  getOrOpen(remote: string): Promise<ActiveVault>
+  /** Look up a running runtime without starting it. */
+  get(remote: string): ActiveVault | null
+  /** Close the selected runtime, preserving switch/quit behavior. */
   close(): Promise<void>
+  /** Close one runtime without affecting another. */
+  close(remote: string): Promise<void>
+  /** Drain starts and close every runtime. */
+  closeAll(): Promise<void>
 }
 
 export function createVaultHost(args: {
@@ -1467,81 +1476,108 @@ export function createVaultHost(args: {
   timings?: Partial<SyncTimings>
 }): VaultHost {
   let current: ActiveVault | null = null
-  /**
-   * Opens are serialised through this chain rather than allowed to interleave.
-   * Two clicks in the switcher, or a click during a slow open, would otherwise
-   * run two `openActiveVault` calls and close only one, leaking the other's
-   * watcher and timers for the life of the process.
-   */
-  let queue: Promise<unknown> = Promise.resolve()
+  const runtimes = new Map<string, ActiveVault>()
+  const starts = new Map<string, Promise<ActiveVault>>()
+  const locks = new Map<string, Promise<unknown>>()
+  let selectionQueue: Promise<unknown> = Promise.resolve()
 
-  function serialise<T>(fn: () => Promise<T>): Promise<T> {
-    const run = queue.then(fn, fn)
-    // The chain must survive a rejected open, or one bad remote wedges the
-    // switcher permanently.
-    queue = run.catch(() => {})
+  function serialise<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const previous = locks.get(key) ?? Promise.resolve()
+    const run = previous.then(fn, fn)
+    locks.set(
+      key,
+      run.catch(() => {}),
+    )
+    return run
+  }
+  function serialiseSelection<T>(fn: () => Promise<T>): Promise<T> {
+    const run = selectionQueue.then(fn, fn)
+    selectionQueue = run.catch(() => {})
     return run
   }
 
-  /** The switch/quit push budget, shared with the vault's own timings so a test
-   *  can shrink it. `pushNow` never rejects, so the race only guards latency. */
   const pushBudgetMs = args.timings?.pushBudgetMs ?? DEFAULT_TIMINGS.pushBudgetMs
 
-  async function closeCurrent(): Promise<void> {
-    if (current === null) return
-    // First, and while this vault is still the active one: see `onLeave`.
-    await args.onLeave?.().catch((err) => console.error('[vault] leave hook failed:', err))
-    const vault = current
-    current = null
+  async function closeRuntime(remote: string): Promise<void> {
+    const vault = runtimes.get(remote)
+    if (vault === undefined) return
+    if (current === vault) {
+      await args.onLeave?.().catch((err) => console.error('[vault] leave hook failed:', err))
+      current = null
+    }
+    runtimes.delete(remote)
     args.activity?.({ channel: 'sync', message: `Closed ${vault.remote}`, remote: vault.remote })
-    // Flush before letting go. Nothing is watching this tree once the vault is
-    // closed, and a tree that is not clean is one the next pull cannot merge.
     await vault.commitNow().catch((err) => console.error('[vault] flush on switch failed:', err))
-    // A vault switch is a leave point: get the just-committed work to the remote
-    // before this vault stops running. Budgeted, because switching must not hang
-    // on an unreachable remote: the work is committed on disk regardless, and
-    // the next open of this vault drains whatever did not make it out.
     await Promise.race([vault.pushNow(), new Promise((r) => setTimeout(r, pushBudgetMs))])
     await vault.close()
   }
 
+  async function start(remote: string): Promise<ActiveVault> {
+    const existing = runtimes.get(remote)
+    if (existing !== undefined) return existing
+    const pending = starts.get(remote)
+    if (pending !== undefined) return pending
+    const opening = (async () => {
+      await args.beforeOpen?.()
+      const entry = (await args.registry.list()).find((e) => e.remote === remote)
+      if (!entry) throw new Error(`no such vault: ${remote}`)
+      const vault = await openActiveVault({
+        remote,
+        repo: openRepo(entry.path, args.gitDeps),
+        claims: () => args.claims(entry.path),
+        onSnapshot: args.onSnapshot,
+        onSyncState: args.onSyncState,
+        onHeldBack: args.onHeldBack,
+        onCommitted: args.onCommitted,
+        onPulled: (range) => args.onPulled?.({ remote, root: entry.path }, range),
+        onSyncFailing: (text) => args.onSyncFailing?.(remote, text),
+        bridgeEnv: args.bridgeEnv,
+        ...(args.activity === undefined ? {} : { activity: args.activity }),
+        timings: args.timings,
+      })
+      runtimes.set(remote, vault)
+      args.activity?.({ channel: 'sync', message: `Opened ${remote}`, remote })
+      return vault
+    })()
+    starts.set(remote, opening)
+    try {
+      return await opening
+    } finally {
+      if (starts.get(remote) === opening) starts.delete(remote)
+    }
+  }
+
   return {
     active: () => current,
-
+    get: (remote) => runtimes.get(remote) ?? null,
+    getOrOpen: (remote) => serialise(remote, () => start(remote)),
     open: (remote) =>
-      serialise(async () => {
+      serialiseSelection(async () => {
         if (current?.remote === remote) {
-          // Idempotent, but not silent. Re-opening the vault that is already
-          // open is how the renderer asks for a fresh picture of it (after its
-          // own reload, say); silence would leave it showing another vault's
-          // state or an empty atom's `up-to-date`.
           args.onSyncState(current.syncState())
           return current
         }
-        await args.beforeOpen?.()
-        await closeCurrent()
-
-        const entry = (await args.registry.list()).find((e) => e.remote === remote)
-        if (!entry) throw new Error(`no such vault: ${remote}`)
-
-        current = await openActiveVault({
-          remote,
-          repo: openRepo(entry.path, args.gitDeps),
-          claims: () => args.claims(entry.path),
-          onSnapshot: args.onSnapshot,
-          onSyncState: args.onSyncState,
-          onHeldBack: args.onHeldBack,
-          onCommitted: args.onCommitted,
-          onPulled: (range) => args.onPulled?.({ remote, root: entry.path }, range),
-          onSyncFailing: (text) => args.onSyncFailing?.(remote, text),
-          bridgeEnv: args.bridgeEnv,
-          ...(args.activity === undefined ? {} : { activity: args.activity }),
-          timings: args.timings,
-        })
-        args.activity?.({ channel: 'sync', message: `Opened ${remote}`, remote })
-        return current
+        await closeRuntime(current?.remote ?? '')
+        const vault = await serialise(remote, () => start(remote))
+        current = vault
+        args.onSyncState(vault.syncState())
+        return vault
       }),
-
-    close: () => serialise(closeCurrent),
+    close: (remote?: string) =>
+      remote === undefined
+        ? serialiseSelection(() => closeRuntime(current?.remote ?? ''))
+        : serialise(remote, () => closeRuntime(remote)),
+    closeAll: () =>
+      serialiseSelection(async () => {
+        await Promise.allSettled([...starts.values()])
+        const remotes = [...runtimes.keys()]
+        const results = await Promise.allSettled(
+          remotes.map((remote) => serialise(remote, () => closeRuntime(remote))),
+        )
+        const failed = results.find(
+          (result): result is PromiseRejectedResult => result.status === 'rejected',
+        )
+        if (failed) throw failed.reason
+      }),
   }
 }
