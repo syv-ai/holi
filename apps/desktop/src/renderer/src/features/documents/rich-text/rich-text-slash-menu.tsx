@@ -1,4 +1,4 @@
-import type { ReactNode, Ref } from 'react'
+import { useSyncExternalStore, type ReactNode, type Ref } from 'react'
 import { IconTile } from '@/components/ui/icon-tile'
 import { PluginKey } from '@tiptap/pm/state'
 import { Extension, type Editor, type Range } from '@tiptap/react'
@@ -180,13 +180,28 @@ function groupItems(items: RichTextSlashItem[]) {
   return groups
 }
 
-type SlashMenuProps = SuggestionProps<RichTextSlashItem, RichTextSlashItem> & {
-  ref?: Ref<RichTextSuggestionHandle>
+export interface SlashAgentLabelSource {
+  get: () => string
+  subscribe: (listener: () => void) => () => void
 }
 
-function SlashMenu({ ref, editor, items, loading, command }: SlashMenuProps) {
+type SlashMenuProps = SuggestionProps<RichTextSlashItem, RichTextSlashItem> & {
+  ref?: Ref<RichTextSuggestionHandle>
+  labelSource?: SlashAgentLabelSource
+}
+
+function SlashMenu({ ref, editor, items, loading, command, labelSource, query }: SlashMenuProps) {
+  const agentLabel = useSyncExternalStore(
+    labelSource?.subscribe ?? (() => () => undefined),
+    labelSource?.get ?? (() => 'AI'),
+    labelSource?.get ?? (() => 'AI'),
+  )
   // The first lookup is still running: nothing to show yet.
   if (loading && items.length === 0) return null
+  const needle = query.trim().toLowerCase()
+  const visibleItems = items
+    .map((item) => (item.id === 'ask-ai' ? { ...item, title: `Ask ${agentLabel}` } : item))
+    .filter((item) => matches(item, needle))
 
   return (
     <RichTextSuggestionMenu
@@ -194,7 +209,7 @@ function SlashMenu({ ref, editor, items, loading, command }: SlashMenuProps) {
       editor={editor}
       label="Insert block"
       empty="No matching blocks"
-      groups={groupItems(items)}
+      groups={groupItems(visibleItems)}
       getKey={(item) => item.id}
       onSelect={command}
       renderItem={(item) => (
@@ -217,6 +232,7 @@ const RICH_TEXT_SLASH_KEY = new PluginKey('richTextSlash')
 
 interface RichTextSlashOptions {
   items: readonly RichTextSlashItem[]
+  labelSource?: SlashAgentLabelSource
   /** Items that come and go while the editor is open (a plugin's
    *  commands), asked on every query and listed after `items`. */
   more?: () => readonly RichTextSlashItem[]
@@ -233,7 +249,7 @@ export const RichTextSlashCommand = Extension.create<RichTextSlashOptions>({
   },
 
   addProseMirrorPlugins() {
-    const { items, more } = this.options
+    const { items, more, labelSource } = this.options
 
     return [
       Suggestion<RichTextSlashItem, RichTextSlashItem>({
@@ -243,14 +259,11 @@ export const RichTextSlashCommand = Extension.create<RichTextSlashOptions>({
         // The placeholder already paints .is-empty lines.
         decorationEmptyClass: 'is-query-empty',
         allow: ({ state, range }) => !state.doc.resolve(range.from).parent.type.spec.code,
-        items: ({ query, editor }) => {
-          const needle = query.trim().toLowerCase()
-          return [...items, ...(more?.() ?? [])].filter(
-            (item) => matches(item, needle) && item.can(editor),
-          )
-        },
+        items: ({ editor }) => [...items, ...(more?.() ?? [])].filter((item) => item.can(editor)),
         command: ({ editor, range, props }) => props.run(editor, range),
-        render: createRichTextSuggestionRender(SlashMenu),
+        render: createRichTextSuggestionRender((props) => (
+          <SlashMenu {...props} labelSource={labelSource} />
+        )),
       }),
     ]
   },
