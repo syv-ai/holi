@@ -1002,7 +1002,7 @@ async function main(): Promise<void> {
       }
       // `close()` commits the open vault again (a clean no-op) before letting
       // go of it.
-      await host.close()
+      await host.closeAll()
     } catch (err) {
       console.error('[quit] teardown failed; quit cancelled so edits remain available:', err)
       channel.cancel?.()

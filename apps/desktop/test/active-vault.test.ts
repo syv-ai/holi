@@ -1942,7 +1942,7 @@ describe('VaultHost', () => {
 
   const hosts: VaultHost[] = []
   afterEach(async () => {
-    for (const h of hosts.splice(0)) await h.close().catch(() => {})
+    for (const h of hosts.splice(0)) await h.closeAll().catch(() => {})
   })
 
   function host(registry: VaultRegistry, timings: Partial<SyncTimings> = {}) {
@@ -2157,6 +2157,31 @@ describe('VaultHost', () => {
 
     expect(snaps.count).toBe(before)
     expect(h.active()).toBeNull()
+  })
+
+  it('opens runtimes independently and closes only the requested remote', async () => {
+    const { registry, a } = await twoVaults()
+    const { h, snaps } = host(registry, { rescanDebounceMs: 30 })
+    const first = await h.getOrOpen('syv-ai/a')
+    const second = await h.getOrOpen('syv-ai/b')
+    expect(h.active()).toBeNull()
+    expect(h.get('syv-ai/a')).toBe(first)
+    expect(h.get('syv-ai/b')).toBe(second)
+    await h.close('syv-ai/a')
+    const before = snaps.count
+    await writeFile(join(a, 'orphan.md'), 'closed runtime\\n', 'utf8')
+    await sleep(SETTLE)
+    expect(snaps.count).toBe(before)
+    expect(h.get('syv-ai/a')).toBeNull()
+    expect(h.get('syv-ai/b')).toBe(second)
+  })
+
+  it('coalesces concurrent starts for the same remote', async () => {
+    const { registry } = await twoVaults()
+    const { h } = host(registry)
+    const [first, second] = await Promise.all([h.getOrOpen('syv-ai/a'), h.getOrOpen('syv-ai/a')])
+    expect(first).toBe(second)
+    expect(h.get('syv-ai/a')).toBe(first)
   })
 
   it('serialises concurrent opens rather than racing two vaults into one slot', async () => {
