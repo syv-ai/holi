@@ -1225,10 +1225,21 @@ describe('ActiveVault — sync', () => {
     const dir = await makeClone(origin)
     await sleep(QUIESCE)
     const real = openRepo(dir)
-    // Whether a pull had got through when each alert fired: the alert must
-    // come after it, or the test would not show that the pull left the run
-    // failing. The clock starts at the first refused push, so it has to
-    // outlast a real push and pull.
+    // Keep real filesystem, git and watcher timing, but hold only the failure
+    // alert until the real push and pull have completed. This proves the pull
+    // did not clear the permission failure without racing its three-second
+    // alert timer against fixture IO.
+    let alertTimeout: (() => void) | undefined
+    const realSetTimeout = globalThis.setTimeout.bind(globalThis)
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation((handler, timeout, ...args) => {
+        if (timeout === 3_000 && typeof handler === 'function') {
+          alertTimeout = handler
+          return realSetTimeout(handler, 60_000, ...args)
+        }
+        return realSetTimeout(handler, timeout, ...args)
+      })
     const alerts: { text: string; afterPull: boolean }[] = []
     let pulled = false
     const active = await openActiveVault({
@@ -1253,7 +1264,9 @@ describe('ActiveVault — sync', () => {
     await active.pushNow()
     await active.retry()
     expect(pulled).toBe(true)
-    await waitFor('the permission alert', () => alerts.length > 0)
+    expect(alertTimeout).toBeDefined()
+    alertTimeout!()
+    setTimeoutSpy.mockRestore()
     expect(alerts).toHaveLength(1)
     expect(alerts[0].afterPull).toBe(true)
     expect(alerts[0].text).toContain('Sync has failed')
