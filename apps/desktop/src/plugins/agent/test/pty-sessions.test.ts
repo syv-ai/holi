@@ -219,6 +219,21 @@ describe('sessions Holi runs', () => {
     expect(t.sessions.send(res.sessionId, 'hello').ok).toBe(false)
   })
 
+  it('clears an exited Pi turn without leaving a working state or bracket', async () => {
+    const t = setup('pi')
+    const started = await t.sessions.start('pi', { prompt: 'Do work' })
+    if (!started.ok) throw new Error(started.message)
+    expect(t.sessions.sessions()[0]?.state).toBe('working')
+    expect(t.edges).toEqual([`begin:${started.sessionId}`])
+
+    t.opened[0]?.onExit?.()
+    expect(t.sessions.sessions()[0]?.state).toBe('idle')
+    expect(t.edges).toEqual([`begin:${started.sessionId}`, `forget:${started.sessionId}`])
+    t.opened[0]?.onInput?.('\r')
+    expect(t.sessions.sessions()[0]?.state).toBe('idle')
+    expect(t.edges).toEqual([`begin:${started.sessionId}`, `forget:${started.sessionId}`])
+  })
+
   it('keeps Pi conversation UUIDs separate from Holi PTY ids', async () => {
     const t = setup('pi')
     const result = await t.sessions.start('pi', {})
@@ -240,7 +255,7 @@ describe('sessions Holi runs', () => {
     const first = setup('pi', store)
     const started = await first.sessions.start('pi', {})
     if (!started.ok) throw new Error(started.message)
-    first.opened[0]!.onExit?.()
+    await first.sessions.stop(started.sessionId)
     await first.sessions.past()
     expect(history[0]).toMatchObject({ id: started.sessionId, provider: 'pi' })
     const conversationId = history[0]?.conversationId
@@ -263,14 +278,14 @@ describe('sessions Holi runs', () => {
     const first = setup('pi', store)
     const started = await first.sessions.start('pi', { name: 'Original' })
     if (!started.ok) throw new Error(started.message)
-    first.opened[0]!.onExit?.()
+    await first.sessions.stop(started.sessionId)
     await first.sessions.past()
 
     const reopened = setup('pi', store)
     const opening = reopened.sessions.reopen(started.sessionId, {})
     for (let i = 0; i < 10 && reopened.opened.length === 0; i++) await Promise.resolve()
     expect(reopened.opened).toHaveLength(1)
-    reopened.opened[0]!.onExit?.()
+    await reopened.sessions.stop(started.sessionId)
     expect(await opening).toMatchObject({ ok: true })
     expect(await reopened.sessions.past()).toEqual([
       expect.objectContaining({ id: started.sessionId, name: 'Original' }),
@@ -282,9 +297,29 @@ describe('sessions Holi runs', () => {
     const started = await t.sessions.start('pi', {})
     if (!started.ok) throw new Error(started.message)
     t.opened[0]!.onExit?.('Pi plan')
+    expect(t.sessions.has(started.sessionId)).toBe(true)
+    await t.sessions.stop(started.sessionId)
     expect(await t.sessions.past()).toEqual([
       expect.objectContaining({ id: started.sessionId, name: 'Pi plan' }),
     ])
+  })
+
+  it('keeps an exited Pi session open with its terminal attached until explicitly stopped', async () => {
+    const t = setup('pi')
+    const started = await t.sessions.start('pi', {})
+    if (!started.ok) throw new Error(started.message)
+
+    t.opened[0]!.onExit?.('Pi terminal title')
+
+    expect(t.sessions.has(started.sessionId)).toBe(true)
+    expect(t.sessions.terminalOf(started.sessionId)).toBe(started.terminalId)
+    expect(t.sessions.sessions()).toEqual([
+      expect.objectContaining({ id: started.sessionId, provider: 'pi', name: 'Pi terminal title' }),
+    ])
+    expect(await t.sessions.past()).toEqual([])
+
+    await t.sessions.stop(started.sessionId)
+    expect(t.sessions.has(started.sessionId)).toBe(false)
   })
 
   it('forks a live Pi conversation under a new UUID and does not persist native picker sessions', async () => {
@@ -450,6 +485,63 @@ describe('sessions Holi runs', () => {
     })
     await t.sessions.leave()
     expect(t.sessions.sessions()).toEqual([])
+  })
+
+  it('does not stop a fenced session before its final copy resolves', async () => {
+    const t = setup('codex', undefined, { fenced: 'sandbox' })
+    let finish!: (result: FenceCopy) => void
+    const fence = {
+      dir: '/scratch/abc',
+      state: '/scratch/abc.agent',
+      turnEnded: async () => ({}),
+      exited: () => new Promise<FenceCopy>((resolve) => (finish = resolve)),
+    }
+    const started = await t.sessions.start('codex', { prompt: 'Make the app', fence })
+    if (!started.ok) throw new Error(started.message)
+    t.opened[0]?.onInput?.('\r')
+
+    const stopping = t.sessions.stop(started.sessionId)
+    await stopping
+    expect(t.sessions.has(started.sessionId)).toBe(true)
+    expect(t.sessions.sessions()[0]).toMatchObject({ id: started.sessionId, copying: true })
+    expect(t.edges).toEqual([`begin:${started.sessionId}`])
+
+    finish({ error: 'Final copy failed.' })
+    await vi.waitFor(() =>
+      expect(t.sessions.sessions()[0]).toMatchObject({
+        id: started.sessionId,
+        closed: true,
+        error: 'Final copy failed.',
+      }),
+    )
+    expect(t.sessions.has(started.sessionId)).toBe(false)
+    expect(t.edges).toEqual([`begin:${started.sessionId}`, `forget:${started.sessionId}`])
+  })
+
+  it('persists active and already-exited Pi sessions when leaving the vault', async () => {
+    let history: import('../main/claude/listing').SessionSummary[] = []
+    const store = {
+      read: async () => history,
+      write: async (rows: typeof history) => {
+        history = rows
+      },
+    }
+    const t = setup('pi', store)
+    const active = await t.sessions.start('pi', { prompt: 'Still working' })
+    const exited = await t.sessions.start('pi', { name: 'Already finished' })
+    if (!active.ok || !exited.ok) throw new Error('Pi session did not start')
+    t.opened[1]?.onExit?.()
+    await t.sessions.leave()
+
+    expect(history).toHaveLength(2)
+    expect(history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: active.sessionId, name: 'Still working' }),
+        expect.objectContaining({ id: exited.sessionId, name: 'Already finished' }),
+      ]),
+    )
+    expect(t.sessions.sessions()).toEqual([])
+    expect(t.edges).toContain(`forget:${active.sessionId}`)
   })
 
   it('retains final omissions but expires a clean final copy', async () => {

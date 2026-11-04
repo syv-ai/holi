@@ -5,7 +5,12 @@
  */
 import { atom } from 'jotai'
 import type { AgentProviderId } from '@holi/shared'
-import { activeRemoteAtom, agentProviderSettingAtom, type PluginEventHandler } from '@/plugin-api'
+import {
+  activeRemoteAtom,
+  agentProviderSettingAtom,
+  forgetAgentLabelsAtom,
+  type PluginEventHandler,
+} from '@/plugin-api'
 import { agentCap } from '../agent-cap'
 
 /** Mirrors `ProviderSummary` in main/host/capabilities.ts. */
@@ -73,9 +78,11 @@ export const defaultMissingAtom = atom((get): boolean => {
 })
 
 /** Main changed this machine's harnesses (Settings, General, Agents): the
- *  list is asked for again. */
+ *  list is asked for again, and core's agent names (Ask AI, Create vault
+ *  app) are forgotten so the next one wanted is asked for too. */
 export const providerEvents: Readonly<Record<string, PluginEventHandler>> = {
   providers: ({ remote }, store) => {
+    store.set(forgetAgentLabelsAtom)
     if (remote === store.get(activeRemoteAtom)) void store.set(loadProvidersAtom)
   },
 }
