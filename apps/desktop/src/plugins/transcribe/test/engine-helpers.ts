@@ -6,7 +6,8 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { vi } from 'vitest'
-import type { MeetingProfile } from '../shared/meeting'
+import type { AgentProviderId } from '@holi/shared'
+import type { MeetingProfile, SpeechService } from '../shared/meeting'
 import type { Fetch } from '../main/asr'
 import { createMeetings } from '../main/engine'
 import { DEFAULT_PROFILE, type Profiles } from '../main/profiles'
@@ -61,7 +62,7 @@ export async function engineRig(
   opts: {
     profile?: Partial<MeetingProfile>
     /** This machine's profiles; else every id reads as `profile`. */
-    profiles?: Pick<Profiles, 'get'>
+    profiles?: Pick<Profiles, 'get' | 'list'>
     fetch?: Fetch
     launch?: (args: LaunchArgs) => Promise<Launched>
     message?: (session: string, text: string) => Promise<unknown>
@@ -69,6 +70,10 @@ export async function engineRig(
     root?: string
     /** The speech key in use; `test-key` unless given. */
     apiKey?: () => Promise<string | null>
+    /** The speech service; syv.ai's unless given. */
+    service?: () => Promise<SpeechService>
+    /** The vault's agent; Claude Code unless given. */
+    provider?: () => Promise<AgentProviderId>
   } = {},
 ) {
   const userData = opts.userData ?? (await mkdtemp(join(tmpdir(), 'holi-meetings-')))
@@ -92,14 +97,19 @@ export async function engineRig(
     ),
     updateTask: vi.fn(async (_args: { path: string; description: string }) => {}),
     sendToHoli: vi.fn(async (_args: { holi: string; path: string }) => ({ sessionId: 'h0l1h0l1' })),
+    start: vi.fn<
+      (args: { name: string; prompt: string; provider: AgentProviderId }) => Promise<Launched>
+    >(async () => ({ ok: true, sessionId: 'c0dex000' })),
   }
   const meetings = createMeetings({
     dir: join(userData, 'meetings'),
     remote: 'syv/vault',
     root,
-    profiles: opts.profiles ?? { get: async () => profile },
+    profiles: opts.profiles ?? { get: async () => profile, list: async () => [profile] },
     fetch: opts.fetch ?? service.fetch,
     apiKey: opts.apiKey ?? (async () => 'test-key'),
+    service: opts.service ?? (async () => ({ url: null, model: null })),
+    provider: opts.provider ?? (async () => 'claude'),
     writeFile: async (rel, text) => {
       writes.set(rel, text)
     },

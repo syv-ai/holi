@@ -1,10 +1,12 @@
 /**
- * How a recording meeting is doing, in the header's one row: a chip with a
- * dot and what Hviske is doing, which opens the details (audio transcribed,
- * waiting or failed, how far the captions run behind, Hviske's state and its
- * session); a loud badge for each problem (no speech key or a refused one,
- * failed uploads, a Hviske that takes no messages); and the recording
- * reminder, which stays for as long as the meeting records.
+ * How a recording meeting is doing, in the header's one row, each part named
+ * for what it is, so a problem says which part needs fixing: a chip with a
+ * dot and how the topics are doing, which opens the details (what records,
+ * the transcription, how far the captions run behind, the topics and
+ * Hviske's session, and what to do about a part that stopped); a loud badge
+ * for each problem (transcription waiting for a key or refused one, failed
+ * uploads, topics the vault's agent cannot write); and the recording reminder,
+ * which stays for as long as the meeting records.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Circle, SquareArrowOutUpRight } from 'lucide-react'
@@ -22,15 +24,17 @@ import {
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ChunkInfo, ChunkState, MeetingState, ScribeState } from '../shared/meeting'
+import { useAgentName } from './agent-name'
 import { SCRIBE_NAME } from './names'
+import { recorderAtom } from './recorder'
 
-/** What the scribe is doing, after its name: "Hviske listening". */
+/** How the topics are doing: "Topics: listening". */
 const DOING: Record<ScribeState, string> = {
   off: 'off',
   starting: 'starting',
   working: 'writing',
   idle: 'listening',
-  'needs-you': 'needs you',
+  'needs-you': 'need you',
   gone: 'stopped',
 }
 
@@ -75,13 +79,30 @@ function Detail({ label, children }: { label: string; children: React.ReactNode 
 /** The chip, its details, and the problem badges beside it. */
 export function MeetingStatus({ meeting }: { meeting: MeetingState }): React.JSX.Element {
   const show = useSetAtom(showAgentSessionAtom)
+  const rec = useAtomValue(recorderAtom)
+  const agent = useAgentName()
   const { waiting, failed, lag, scribe, live, state } = useHealth(meeting)
-  const audio =
+  const transcription =
     waiting.length === 0
       ? 'All transcribed'
       : meeting.blocked !== undefined
         ? `${waiting.length} waiting for a key`
         : `${waiting.length} transcribing`
+  const sources =
+    rec.meetingId === meeting.id && rec.sources !== null
+      ? [rec.sources.microphone && 'Microphone', rec.sources.system && 'Computer audio']
+          .filter(Boolean)
+          .join(' and ')
+      : null
+  const unsupported = meeting.scribeUnsupported !== undefined
+  const topics = unsupported ? 'off' : DOING[state]
+  /** What to do about topics that stopped or cannot run; the recording
+   *  and the captions go on either way. */
+  const fix = unsupported
+    ? `Topics need Claude Code, and this vault’s agent is ${agent}. Recording and captions go on. Choose Claude Code in Settings › General › Agents to get topics in the next meeting.`
+    : state === 'gone'
+      ? `${SCRIBE_NAME}, the session that writes the topics, ended. Recording and captions go on; open its session to see why.`
+      : null
 
   return (
     <div aria-label="Meeting health" className="flex min-w-0 items-center gap-1">
@@ -93,7 +114,7 @@ export function MeetingStatus({ meeting }: { meeting: MeetingState }): React.JSX
             ) : (
               <span aria-hidden className={cn('size-2 shrink-0 rounded-full', DOT[state])} />
             )}
-            {SCRIBE_NAME} {DOING[state]}
+            Topics {topics}
           </Button>
         </PopoverTrigger>
         <PopoverContent align="start" aria-label="Meeting details">
@@ -105,7 +126,8 @@ export function MeetingStatus({ meeting }: { meeting: MeetingState }): React.JSX
             </PopoverDescription>
           </PopoverHeader>
           <div className="flex flex-col gap-1.5">
-            <Detail label="Audio">{audio}</Detail>
+            {sources !== null && <Detail label="Recording">{sources}</Detail>}
+            <Detail label="Transcription">{transcription}</Detail>
             {failed.length > 0 && (
               <Detail label="Failed">
                 {failed.map((c) => `Chunk ${c.n}: ${c.error ?? 'failed'}`).join(' · ')}
@@ -114,8 +136,9 @@ export function MeetingStatus({ meeting }: { meeting: MeetingState }): React.JSX
             {lag?.latencyMs !== undefined && (
               <Detail label="Captions">{(lag.latencyMs / 1000).toFixed(1)}s behind</Detail>
             )}
-            <Detail label={SCRIBE_NAME}>{DOING[state]}</Detail>
+            <Detail label="Topics">{topics}</Detail>
           </div>
+          {fix !== null && <p className="text-sm text-muted-foreground">{fix}</p>}
           {scribe !== undefined && (
             <Button
               size="sm"
@@ -128,15 +151,17 @@ export function MeetingStatus({ meeting }: { meeting: MeetingState }): React.JSX
           )}
         </PopoverContent>
       </Popover>
-      {meeting.blocked === 'no-key' && <Badge variant="warning-light">No speech key</Badge>}
+      {meeting.blocked === 'no-key' && (
+        <Badge variant="warning-light">Transcription needs a key</Badge>
+      )}
       {meeting.blocked === 'bad-key' && (
-        <Badge variant="destructive-light">Speech key refused</Badge>
+        <Badge variant="destructive-light">Transcription key refused</Badge>
       )}
       {failed.length > 0 && (
         <Tooltip>
           <TooltipTrigger asChild>
             <Badge variant="destructive-light" tabIndex={0}>
-              {failed.length} failed
+              {failed.length} not transcribed
             </Badge>
           </TooltipTrigger>
           <TooltipContent>
@@ -145,8 +170,9 @@ export function MeetingStatus({ meeting }: { meeting: MeetingState }): React.JSX
         </Tooltip>
       )}
       {meeting.scribeUnreachable === true && (
-        <Badge variant="warning-light">{SCRIBE_NAME} unreachable</Badge>
+        <Badge variant="warning-light">Topics unreachable</Badge>
       )}
+      {unsupported && <Badge variant="warning-light">No topics with this agent</Badge>}
     </div>
   )
 }

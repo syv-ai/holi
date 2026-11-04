@@ -95,19 +95,31 @@ export interface TaskRequest {
   title?: string
   /** The group, and suggestion, it was made from. */
   from?: { topicId: string; suggestionId?: string }
+  /** A task of this meeting not sent yet, made again from this request in
+   *  its place: the retry of a send that failed, with the form as it is now. */
+  cardId?: string
 }
 
 /** A task a person made, at once: its title given or the ask's first line,
  *  its why the ask, its segments the lines (sorted, the first
  *  `MAX_TASK_LINES`), quoted by code, accepted. Pushed onto
- *  `meeting.cards`. */
+ *  `meeting.cards`, or, given `cardId`, put in that unsent task's place,
+ *  keeping its id, its task file and when it was made. */
 export function taskCard(meeting: MeetingState, req: TaskRequest, now: number): Card {
+  const at = req.cardId === undefined ? -1 : meeting.cards.findIndex((c) => c.id === req.cardId)
+  if (req.cardId !== undefined && at < 0) bad(`no task ${req.cardId} in this meeting`)
+  const old = at < 0 ? undefined : meeting.cards[at]!
+  if (old?.status === 'building') {
+    throw new CapabilityError('CONFLICT', 'this task was sent already')
+  }
   const prompt = req.prompt.trim()
   if (prompt === '') bad('say what should be done')
   if (prompt.length > MAX_PROMPT) bad(`the ask is over ${MAX_PROMPT} characters`)
   const lines = [...new Set(req.lines)].sort((a, b) => a - b)
   if (lines.length === 0) bad('a task needs lines of the meeting')
-  if (meeting.cards.length >= MAX_CARDS) bad(`this meeting already has ${MAX_CARDS} tasks`)
+  if (old === undefined && meeting.cards.length >= MAX_CARDS) {
+    bad(`this meeting already has ${MAX_CARDS} tasks`)
+  }
   const segments = lines.slice(0, MAX_TASK_LINES)
   const quotes = quotesFor(meeting, segments)
   const first = prompt.split('\n', 1)[0]!.trim()
@@ -118,9 +130,9 @@ export function taskCard(meeting: MeetingState, req: TaskRequest, now: number): 
       : first.length > PROMPT_TITLE
         ? `${first.slice(0, PROMPT_TITLE - 1).trimEnd()}…`
         : first
-  const at = new Map(meeting.segments.map((s) => [s.i, s]))
+  const byI = new Map(meeting.segments.map((s) => [s.i, s]))
   const card: Card = {
-    id: `c${meeting.cards.length + 1}`,
+    id: old?.id ?? `c${meeting.cards.length + 1}`,
     kind: req.kind,
     title,
     why: prompt,
@@ -131,15 +143,17 @@ export function taskCard(meeting: MeetingState, req: TaskRequest, now: number): 
     status: 'accepted',
     origin: 'person',
     range: {
-      start: at.get(lines[0]!)!.start,
-      end: Math.max(...lines.map((i) => at.get(i)?.end ?? 0)),
+      start: byI.get(lines[0]!)!.start,
+      end: Math.max(...lines.map((i) => byI.get(i)?.end ?? 0)),
       lines: lines.length,
     },
     ...(req.from === undefined ? {} : { from: req.from }),
-    createdAt: now,
+    ...(old?.taskPath === undefined ? {} : { taskPath: old.taskPath }),
+    createdAt: old?.createdAt ?? now,
     updatedAt: now,
   }
-  meeting.cards.push(card)
+  if (old === undefined) meeting.cards.push(card)
+  else meeting.cards[at] = card
   return card
 }
 

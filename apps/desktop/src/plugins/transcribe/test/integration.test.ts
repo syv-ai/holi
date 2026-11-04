@@ -82,6 +82,8 @@ async function rig() {
       meetings: engine.meetings,
       profiles,
       speechKey: {} as never,
+      services: {} as never,
+      serviceChanged: () => {},
       remote: REMOTE,
     }),
   )

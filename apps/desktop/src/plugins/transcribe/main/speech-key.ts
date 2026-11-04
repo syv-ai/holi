@@ -1,7 +1,9 @@
 /**
- * The syv.ai speech key (docs/features/meetings.md), and **the one rule for
- * resolving it**: the key set in the Meetings tab, else the vault's
- * `SYV_API_KEY` (`.env.local`, then `.env`), else none.
+ * The speech key (docs/features/meetings.md): the key of the speech service
+ * in use (`speech-service.ts`), and **the one rule for resolving it**: the
+ * key set in the Meetings tab, else, for syv.ai's service, the vault's
+ * `SYV_API_KEY` (`.env.local`, then `.env`), else none. syv.ai's service
+ * needs one; another may take requests without.
  *
  * The key is the person's, not the vault's: it is kept on this machine,
  * keychain-encrypted in `userData`, exactly as Google's own-client store
@@ -19,7 +21,9 @@
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { CapabilityError, type SafeStorageLike } from '../../../main/plugin-api'
-import { checkKey, type Fetch } from './asr'
+import type { SpeechService } from '../shared/meeting'
+import { checkService, type Fetch } from './asr'
+import { isSyv } from './speech-service'
 
 /** This machine's speech key on disk. */
 export interface SpeechKeyStore {
@@ -81,6 +85,11 @@ type SpeechKeySource = 'app' | 'vault'
 export interface SpeechKeyStatus {
   set: boolean
   source: SpeechKeySource | null
+  /** The service the key is for. */
+  service: SpeechService
+  /** Whether a meeting can be transcribed as things are: syv.ai's service
+   *  with a key, or another service, which may need none. */
+  ready: boolean
 }
 
 export interface SpeechKey {
@@ -89,7 +98,8 @@ export interface SpeechKey {
   status(): Promise<SpeechKeyStatus>
   set(key: string): Promise<void>
   clear(): Promise<void>
-  /** The key in use, asked of the service without spending credits. */
+  /** The service and key in use, asked whether they work: syv.ai's
+   *  without spending credits. */
   test(): Promise<{ result: 'ok' | 'invalid' | 'unreachable' }>
 }
 
@@ -97,6 +107,8 @@ export interface SpeechKeyDeps {
   store: SpeechKeyStore
   /** The vault's `.env` and `.env.local`, read fresh. */
   vaultEnv(): Promise<Record<string, string>>
+  /** The speech service in use. */
+  service(): Promise<SpeechService>
   fetch: Fetch
   /** The key was set or removed: wake what waits for one. */
   changed(): void
@@ -106,6 +118,8 @@ export function createSpeechKey(deps: SpeechKeyDeps): SpeechKey {
   async function current(): Promise<{ key: string; source: SpeechKeySource } | null> {
     const own = await deps.store.read()
     if (own !== null) return { key: own, source: 'app' }
+    // The vault's key is syv.ai's: it is never sent to another service.
+    if (!isSyv(await deps.service())) return null
     const env = (await deps.vaultEnv().catch(() => ({}) as Record<string, string>))['SYV_API_KEY']
     const fromVault = env?.trim() ?? ''
     return fromVault === '' ? null : { key: fromVault, source: 'vault' }
@@ -114,8 +128,13 @@ export function createSpeechKey(deps: SpeechKeyDeps): SpeechKey {
   return {
     resolve: async () => (await current())?.key ?? null,
     async status() {
-      const now = await current()
-      return { set: now !== null, source: now?.source ?? null }
+      const [now, service] = await Promise.all([current(), deps.service()])
+      return {
+        set: now !== null,
+        source: now?.source ?? null,
+        service,
+        ready: now !== null || !isSyv(service),
+      }
     },
     async set(key) {
       await deps.store.write(key)
@@ -126,9 +145,11 @@ export function createSpeechKey(deps: SpeechKeyDeps): SpeechKey {
       deps.changed()
     },
     async test() {
-      const now = await current()
-      if (now === null) throw new CapabilityError('CONFLICT', 'no speech key is set')
-      const result = await checkKey(deps.fetch, now.key)
+      const [now, service] = await Promise.all([current(), deps.service()])
+      if (now === null && isSyv(service)) {
+        throw new CapabilityError('CONFLICT', 'no speech key is set')
+      }
+      const result = await checkService(deps.fetch, service, now?.key ?? null)
       // It works now: whatever waited on a refused key may go.
       if (result === 'ok') deps.changed()
       return { result }
@@ -155,7 +176,7 @@ export function speechKeyParam(raw: Record<string, unknown>): string {
     throw new CapabilityError('BAD_REQUEST', 'the key has spaces or characters a key never has')
   }
   if (key.length < MIN_KEY || key.length > MAX_KEY) {
-    throw new CapabilityError('BAD_REQUEST', 'that does not look like a syv.ai speech key')
+    throw new CapabilityError('BAD_REQUEST', 'that does not look like a speech service key')
   }
   return key
 }

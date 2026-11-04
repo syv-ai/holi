@@ -16,10 +16,12 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import { activeRemoteAtom, agentSessionRowsAtom, type AgentSessionRow } from '@/plugin-api'
 import type { MeetingState } from '../shared/meeting'
 import { MeetingsSurface } from '../renderer/meetings-surface'
-import { SEND_TO_CLAUDE } from '../renderer/send-button'
 import { meetingStatesAtom, profilesAtom, shownMeetingIdAtom } from '../renderer/state'
 import { transcriptText } from '../renderer/transcript-text'
 import { meeting, profile } from './meeting-fixture'
+
+/** The send button's words while main has not named the vault's agent. */
+const SEND_TO_AGENT = 'Send to the agent'
 
 const run = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/trpc', () => ({
@@ -142,9 +144,9 @@ test('a stopped meeting opens on its review: title, length, actions, topics, tas
   const unsent = within(from).getByLabelText('Export to CSV', { selector: '[data-card]' })
   await userEvent.click(within(unsent).getAllByRole('button')[0]!)
   const panel = await screen.findByRole('dialog', { name: 'Export to CSV' })
-  await userEvent.click(within(panel).getByRole('button', { name: SEND_TO_CLAUDE }))
+  await userEvent.click(within(panel).getByRole('button', { name: SEND_TO_AGENT }))
   expect(calls('meeting.build')).toEqual([
-    { meetingId: 'm1', cardId: 'export', target: { kind: 'claude' } },
+    { meetingId: 'm1', cardId: 'export', target: { kind: 'agent' } },
   ])
 
   await userEvent.click(screen.getByRole('button', { name: 'Open in vault' }))

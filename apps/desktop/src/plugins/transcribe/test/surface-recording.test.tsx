@@ -1,8 +1,10 @@
 /**
  * Recording a meeting: Record starts it in main and starts the capture, each
  * chunk goes to main as it closes, Stop hands over the last one before the
- * meeting stops; failures show without stopping the recording, and leaving
- * the tab keeps it going.
+ * meeting stops; failures show without stopping the recording, a chunk given
+ * up on is told to main, a source that could not be had is said, a Stop
+ * while it starts cancels it, nothing records before transcription is set
+ * up, and leaving the tab keeps it going.
  *
  * Each test renders the whole tab, so each has 15 s, as `file-view.test.tsx`
  * does: a loaded machine is slow, not wrong.
@@ -34,6 +36,8 @@ const calls = (name: string): unknown[] =>
     .map((c) => (c.paramsJson === undefined ? undefined : JSON.parse(c.paramsJson)))
 
 const wav = (...bytes: number[]) => new Uint8Array(bytes).buffer
+/** Main's answer to `meeting.key.status`: syv.ai's service with a key. */
+const READY = { set: true, source: 'app', service: { url: null, model: null }, ready: true }
 let options: CaptureOptions | null = null
 const stopCapture = vi.fn(async () => {
   options?.onChunk({ n: 1, start: 6, duration: 2, wav: wav(4, 5) })
@@ -45,13 +49,18 @@ beforeEach(() => {
   run.mockReset()
   run.mockImplementation(async ({ name }: { name: string }) => {
     if (name === 'meeting.start') return { meetingId: 'm9' }
+    if (name === 'meeting.key.status') return READY
     if (name === 'meeting.get') return { ...meeting, id: 'm9', segments: [], cards: [], chunks: [] }
     return { ok: true }
   })
   vi.mocked(startCapture).mockReset()
   vi.mocked(startCapture).mockImplementation(async (o) => {
     options = o
-    return { stop: stopCapture }
+    return {
+      stop: stopCapture,
+      sources: { microphone: o.microphone, system: o.system },
+      problems: [],
+    }
   })
 })
 
@@ -103,7 +112,9 @@ test('Record starts the meeting and the capture, chunks go to main, Stop closes 
   await waitFor(() => expect(store.get(recorderAtom).phase).toBe('idle'))
   expect(stopCapture).toHaveBeenCalledOnce()
   // The last partial chunk reaches main before the meeting stops.
-  expect(names().filter((n) => n !== 'meeting.get')).toEqual([
+  expect(names().filter((n) => n.startsWith('meeting.') && n !== 'meeting.get')).toEqual([
+    // Whether it can be transcribed, before anything starts.
+    'meeting.key.status',
     'meeting.start',
     'meeting.chunk',
     'meeting.chunk',
@@ -165,6 +176,104 @@ test('a chunk that never reaches main is shown, and the recording goes on', asyn
     failedUploads: 1,
     error: expect.stringContaining('Chunk 4 didn’t reach Holi: main is busy'),
   })
+  // Main hears it is lost, so the captions after it are not held back.
+  expect(calls('meeting.chunk.lost')).toEqual([{ meetingId: 'm9', n: 4, start: 24, duration: 6 }])
+}, 15_000)
+
+test('nothing records before transcription is set up', async () => {
+  run.mockImplementation(async ({ name }: { name: string }) =>
+    name === 'meeting.key.status'
+      ? { set: false, source: null, service: { url: null, model: null }, ready: false }
+      : { ok: true },
+  )
+  const store = storeFor()
+  await store.set(startRecordingAtom, {
+    profileId: null,
+    title: '',
+    microphone: true,
+    system: true,
+  })
+  expect(calls('meeting.start')).toEqual([])
+  expect(startCapture).not.toHaveBeenCalled()
+  expect(store.get(recorderAtom)).toMatchObject({
+    phase: 'idle',
+    error: expect.stringContaining('Set up transcription before recording'),
+  })
+}, 15_000)
+
+test('without a profile, the meeting records with this machine’s default', async () => {
+  const store = storeFor()
+  await store.set(startRecordingAtom, {
+    profileId: null,
+    title: '',
+    microphone: true,
+    system: true,
+  })
+  expect(calls('meeting.start')).toEqual([{}])
+  expect(store.get(recorderAtom).phase).toBe('recording')
+  await act(() => store.set(stopRecordingAtom))
+}, 15_000)
+
+test('a source that could not be had is said, and the other records', async () => {
+  vi.mocked(startCapture).mockImplementation(async (o) => {
+    options = o
+    return {
+      stop: stopCapture,
+      sources: { microphone: true, system: false },
+      problems: ['Holi may not record the computer’s sound. Allow it in System Settings'],
+    }
+  })
+  const store = storeFor()
+  render(
+    <Provider store={store}>
+      <MeetingsSurface />
+    </Provider>,
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Record' }))
+  const alert = await screen.findByRole('alert', { name: 'Not recorded' })
+  expect(alert).toHaveTextContent('Only the microphone is recording')
+  expect(alert).toHaveTextContent('Allow it in System Settings')
+  // The toggles show what records, not what was asked for.
+  expect(screen.getByRole('button', { name: 'Computer audio' })).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  )
+  await act(() => store.set(stopRecordingAtom))
+}, 15_000)
+
+test('a Stop while Record starts cancels it: the capture and the meeting are let go', async () => {
+  let resolveCapture: (() => void) | undefined
+  vi.mocked(startCapture).mockImplementation(
+    (o) =>
+      new Promise((resolve) => {
+        options = o
+        resolveCapture = () =>
+          resolve({
+            stop: stopCapture,
+            sources: { microphone: true, system: true },
+            problems: [],
+          })
+      }),
+  )
+  const store = storeFor()
+  const started = store.set(startRecordingAtom, {
+    profileId: 'planning',
+    title: '',
+    microphone: true,
+    system: true,
+  })
+  await waitFor(() => expect(resolveCapture).toBeDefined())
+  expect(store.get(recorderAtom).phase).toBe('starting')
+  await store.set(stopRecordingAtom)
+  expect(store.get(recorderAtom).phase).toBe('idle')
+  resolveCapture!()
+  await started
+  // The capture that came after the stop is stopped, its last chunk is not
+  // sent, and the meeting is closed.
+  expect(stopCapture).toHaveBeenCalled()
+  expect(calls('meeting.chunk')).toEqual([])
+  await waitFor(() => expect(calls('meeting.stop')).toEqual([{ meetingId: 'm9' }]))
+  expect(store.get(recorderAtom).phase).toBe('idle')
 }, 15_000)
 
 test('a retried chunk that main already has counts as delivered', async () => {

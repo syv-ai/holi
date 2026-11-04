@@ -54,7 +54,7 @@ function show() {
 
 test('a new profile is saved with its glossary, speech model and speaker numbers', async () => {
   const store = show()
-  await userEvent.click(screen.getByRole('button', { name: 'Profiles and speech key' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Profiles and speech service' }))
   await userEvent.click(await screen.findByRole('menuitem', { name: 'New profile…' }))
   const dialog = await screen.findByRole('dialog')
   await fill(within(dialog).getByLabelText('Name'), 'Design review')
@@ -95,7 +95,7 @@ test('a new profile is saved with its glossary, speech model and speaker numbers
 
 test('an edited profile keeps its id and saves what changed', async () => {
   show()
-  await userEvent.click(screen.getByRole('button', { name: 'Profiles and speech key' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Profiles and speech service' }))
   await userEvent.click(await screen.findByRole('menuitem', { name: 'Edit profile…' }))
   const dialog = await screen.findByRole('dialog')
   await userEvent.click(within(dialog).getByRole('button', { name: 'More settings' }))

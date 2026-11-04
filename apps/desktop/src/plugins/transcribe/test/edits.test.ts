@@ -28,12 +28,13 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-async function rig() {
+async function rig(opts: Parameters<typeof engineRig>[0] = {}) {
   const engine = await engineRig({
     launch: async (args) => ({
       ok: true,
       sessionId: args.name.includes(' · ') && !args.name.startsWith('Meeting') ? BUILD : SCRIBE,
     }),
+    ...opts,
   })
   const profiles: Profiles = {
     list: async () => [engine.profile],
@@ -48,6 +49,8 @@ async function rig() {
       meetings: engine.meetings,
       profiles,
       speechKey: {} as never,
+      services: { get: async () => ({ url: null, model: null }), set: async (s) => s },
+      serviceChanged: () => {},
       remote: 'syv/vault',
     }),
   )
@@ -61,7 +64,8 @@ async function rig() {
   const { value } = await ui('meeting.start', { title: 'Planning', profileId: 'default' })
   const meetingId = (value as { meetingId: string }).meetingId
   const meeting = (await ui('meeting.get', { meetingId })).value as MeetingState
-  await until(() => meeting.scribeSessionId === SCRIBE)
+  // Started, or, on an agent that cannot run it, not.
+  await until(() => meeting.scribeSessionId === SCRIBE || meeting.scribeUnsupported !== undefined)
   const say = async (n: number) => {
     await ui('meeting.chunk', {
       meetingId,
@@ -178,6 +182,32 @@ describe('a corrected transcript line', () => {
   })
 })
 
+describe('a correction while a batch is on its way', () => {
+  it('reaches the scribe with the next batch, though the batch carried the old words', async () => {
+    let deliver: (() => void) | undefined
+    let holding = true
+    const r = await rig({
+      message: (_s, _t) =>
+        holding
+          ? new Promise((resolve) => {
+              deliver = () => resolve({ ok: true })
+            })
+          : Promise.resolve({ ok: true }),
+    })
+    await r.say(0)
+    r.idle()
+    await r.ui('meeting.summarise', { meetingId: r.meetingId })
+    await until(() => deliver !== undefined)
+    // The batch with line 0 is on its way; the person corrects line 0.
+    await r.ui('meeting.segment.edit', { meetingId: r.meetingId, i: 0, text: 'corrected words' })
+    holding = false
+    deliver!()
+    await until(() => r.meeting.scribeCursor === 0)
+    r.scribe.hearSessions([{ id: SCRIBE, state: 'working' }])
+    expect(await r.batch()).toContain('[0] now reads: corrected words')
+  })
+})
+
 describe('a group a person edits', () => {
   it('is in the minutes and the file at once, and reaches the scribe with its next batch', async () => {
     const r = await rig()
@@ -241,7 +271,7 @@ describe('sending a task', () => {
       meetingId: r.meetingId,
       cardId: c.id,
       context: 'Use the existing export menu; no new dependencies.',
-      target: { kind: 'claude' },
+      target: { kind: 'agent' },
     })
     expect(value).toEqual({ sessionId: BUILD })
     const args = r.agent.launch.mock.calls.at(-1)![0]
@@ -255,7 +285,7 @@ describe('sending a task', () => {
     expect(r.meeting.cards[0]).toMatchObject({
       status: 'building',
       buildSessionId: BUILD,
-      target: { kind: 'claude' },
+      target: { kind: 'agent' },
     })
   })
 
@@ -319,6 +349,98 @@ describe('sending a task', () => {
     expect(args.name).toBe('Action · Send the offer')
     expect(args.prompt).toMatch(/^Do or prepare this to-do/)
     expect(args.prompt).not.toContain('## Where')
+  })
+
+  it('runs on the vault’s chosen agent: Pi’s background run, or a session of its own', async () => {
+    let provider: 'pi' | 'codex' = 'pi'
+    const r = await rig({ provider: async () => provider })
+    await r.say(0)
+    const pi = await r.card({ lines: [0] })
+    await r.ui('meeting.build', { meetingId: r.meetingId, cardId: pi.id })
+    // Pi gets its own background run, without Claude Code's model or MCP.
+    expect(r.agent.launch.mock.calls.at(-1)![0]).toEqual({
+      name: 'Build · Export to CSV',
+      prompt: expect.any(String),
+      provider: 'pi',
+    })
+    provider = 'codex'
+    const codex = await r.card({ lines: [0], prompt: 'Rename the board' })
+    const { value } = await r.ui('meeting.build', { meetingId: r.meetingId, cardId: codex.id })
+    expect(value).toEqual({ sessionId: 'c0dex000' })
+    expect(r.agent.start).toHaveBeenCalledWith({
+      name: 'Build · Rename the board',
+      prompt: expect.any(String),
+      provider: 'codex',
+    })
+  })
+
+  it('says what the agent cannot do, never running it on another', async () => {
+    const r = await rig({ provider: async () => 'codex' })
+    r.agent.start.mockResolvedValue({ ok: false, message: 'Codex is not on this machine' })
+    await r.say(0)
+    const c = await r.card({ lines: [0] })
+    expect(await refusal(r.ui('meeting.build', { meetingId: r.meetingId, cardId: c.id }))).toEqual({
+      code: 'UNAVAILABLE',
+      message: 'Codex is not on this machine',
+    })
+    expect(r.agent.launch.mock.calls.filter(([a]) => a.name.startsWith('Build'))).toEqual([])
+  })
+
+  it('is one send at a time per card: an overlapping one is refused, and nothing runs twice', async () => {
+    const r = await rig()
+    await r.say(0)
+    const c = await r.card({ lines: [0] })
+    const send = () => r.ui('meeting.build', { meetingId: r.meetingId, cardId: c.id })
+    const [a, b] = await Promise.allSettled([send(), send()])
+    expect([a.status, b.status].sort()).toEqual(['fulfilled', 'rejected'])
+    expect(r.agent.createTask).toHaveBeenCalledTimes(1)
+    expect(r.agent.launch.mock.calls.filter(([x]) => x.name.startsWith('Build'))).toHaveLength(1)
+  })
+
+  it('stops when the task’s file cannot be updated, so nothing runs what it said before', async () => {
+    const r = await rig()
+    await r.say(0)
+    const c = await r.card({ lines: [0] })
+    await r.ui('meeting.card', {
+      meetingId: r.meetingId,
+      cardId: c.id,
+      patch: { status: 'accepted' },
+    })
+    r.agent.updateTask.mockRejectedValue(new Error('the disk is full'))
+    const refused = await refusal(
+      r.ui('meeting.build', {
+        meetingId: r.meetingId,
+        cardId: c.id,
+        target: { kind: 'holi', id: 'proposal' },
+      }),
+    )
+    expect(refused.code).toBe('UNAVAILABLE')
+    expect(refused.message).toContain('nothing was sent')
+    expect(r.agent.sendToHoli).not.toHaveBeenCalled()
+    expect(r.meeting.cards[0]!.status).not.toBe('building')
+  })
+
+  it('after a send that failed, is made again in place from the form as it is now', async () => {
+    const r = await rig()
+    await r.say(0)
+    await r.say(1)
+    const c = await r.card({ lines: [0] })
+    const again = (
+      await r.ui('meeting.task.create', {
+        meetingId: r.meetingId,
+        lines: [0, 1],
+        prompt: 'Export to Excel',
+        kind: 'action',
+        cardId: c.id,
+      })
+    ).value as Card
+    expect(again).toMatchObject({
+      id: c.id,
+      why: 'Export to Excel',
+      kind: 'action',
+      segments: [0, 1],
+    })
+    expect(r.meeting.cards).toHaveLength(1)
   })
 
   it('refuses a context over 2000 characters, or a target it does not know', async () => {

@@ -7,7 +7,7 @@
  * (`meeting.related`, BM25), each unticked until the person ticks it,
  * re-asked as they type. Send makes the task with the topic's lines (and a
  * suggestion's), plus the ticked ones (`meeting.task.create`), and sends it
- * to Claude or a Holi (`meeting.build`), so the brief carries every one of
+ * to the vault's agent or a Holi (`meeting.build`), so the brief carries every one of
  * those lines. Like the task panel it leaves the meeting usable beside it.
  */
 import type { PickableHoli } from '@holi/shared'
@@ -31,6 +31,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import type { Related } from '../main/related'
 import { asOne } from '../shared/joins'
 import type { Card, CardKind, MeetingState, SendTarget, Suggestion, Topic } from '../shared/meeting'
+import { useAgentName } from './agent-name'
 import { clock } from './format'
 import { meetingCap } from './meeting-cap'
 import { SendButton } from './send-button'
@@ -113,6 +114,7 @@ function SendForm({
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const put = useSetAtom(putCardAtom)
+  const agent = useAgentName()
   const promptId = useId()
   const [prompt, setPrompt] = useState(() =>
     suggestion === undefined ? '' : `${suggestion.title}\n${suggestion.why}`.trim(),
@@ -120,7 +122,8 @@ function SendForm({
   const [kind, setKind] = useState<CardKind>(suggestion?.kind ?? 'feature')
   /** The related stretches ticked, kept while the list changes under them. */
   const [picked, setPicked] = useState<Related[]>([])
-  /** The task made, when sending it failed after: a retry sends it again. */
+  /** The task made, when sending it failed after: a retry remakes it from
+   *  the form. */
   const [made, setMade] = useState<Card | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -145,18 +148,19 @@ function SendForm({
           ...picked.flatMap((w) => w.lines),
         ]),
       ].sort((a, b) => a - b)
-      const card =
-        made ??
-        (await meetingCap['task.create'](remote, {
-          meetingId: meeting.id,
-          lines,
-          prompt: prompt.trim(),
-          kind,
-          from: {
-            topicId: topic.id,
-            ...(suggestion === undefined ? {} : { suggestionId: suggestion.id }),
-          },
-        }))
+      // A retry after a send that failed makes the task again from the form
+      // as it is now, in place of the one made then.
+      const card = await meetingCap['task.create'](remote, {
+        meetingId: meeting.id,
+        lines,
+        prompt: prompt.trim(),
+        kind,
+        from: {
+          topicId: topic.id,
+          ...(suggestion === undefined ? {} : { suggestionId: suggestion.id }),
+        },
+        ...(made === null ? {} : { cardId: made.id }),
+      })
       setMade(card)
       put(meeting.id, card)
       const { sessionId } = await meetingCap.build(remote, {
@@ -173,9 +177,7 @@ function SendForm({
         updatedAt: Date.now(),
       })
       const to =
-        target.kind === 'claude'
-          ? 'Claude'
-          : (holis.find((h) => h.id === target.id)?.name ?? target.id)
+        target.kind === 'holi' ? (holis.find((h) => h.id === target.id)?.name ?? target.id) : agent
       toast(`Sent “${card.title}” to ${to}`)
       onDone()
     } catch (e) {

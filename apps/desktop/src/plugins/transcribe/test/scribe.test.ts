@@ -261,6 +261,71 @@ describe('the end of a meeting', () => {
     expect(rig.sentTo(SCRIBE)).toEqual([])
   })
 
+  it('gets its whole three minutes from when the last upload is done', async () => {
+    // Transcription that takes four minutes, longer than the final pass's time.
+    const slow = () =>
+      new Promise<Response>((resolve) =>
+        setTimeout(
+          () => resolve(Response.json({ segments: [{ start: 0.5, end: 2.5, text: 'late' }] })),
+          4 * 60_000,
+        ),
+      )
+    const rig = await meetingRig({ fetch: slow })
+    rig.sessions('idle')
+    await rig.meetings.chunk({
+      meetingId: rig.meetingId,
+      n: 0,
+      start: 0,
+      duration: 8,
+      audio: chunkWav(8),
+    })
+    await rig.meetings.stop(rig.meetingId)
+    await until(() => rig.meeting.segments.length === 1, 300_000)
+    // Past the three minutes from the stop, yet the pass is still to come.
+    await until(() => rig.sentTo(SCRIBE).length === 1)
+    expect(rig.meeting.phase).toBe('finishing')
+    rig.sessions('working')
+    rig.scribe.hearTurnEnd(SCRIBE)
+    await until(() => rig.meeting.phase === 'done')
+  })
+
+  it('waits for a scribe still starting, then gives it the final pass', async () => {
+    let started: (() => void) | undefined
+    const rig = await engineRig({
+      launch: () =>
+        new Promise((resolve) => {
+          started = () => resolve({ ok: true, sessionId: SCRIBE })
+        }),
+    })
+    const { meetingId } = await rig.meetings.start({ title: 'Quick', profileId: 'default' })
+    const meeting = await rig.meetings.get(meetingId)
+    await rig.meetings.chunk({ meetingId, n: 0, start: 0, duration: 8, audio: chunkWav(8) })
+    await rig.meetings.stop(meetingId)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(meeting.scribeState).toBe('starting')
+    started!()
+    await until(() => meeting.scribeSessionId === SCRIBE)
+    rig.meetings.scribe.hearSessions([{ id: SCRIBE, state: 'idle' }])
+    await until(() =>
+      rig.agent.message.mock.calls.some(([, text]) => text.includes('The meeting has ended')),
+    )
+    expect(meeting.phase).toBe('finishing')
+  })
+
+  it('is not started on an agent that cannot run it, and the meeting says why', async () => {
+    const rig = await engineRig({
+      launch: async () => ({ ok: true, sessionId: SCRIBE }),
+      provider: async () => 'codex',
+    })
+    const { meetingId } = await rig.meetings.start({ title: 'Solo', profileId: 'default' })
+    const meeting = await rig.meetings.get(meetingId)
+    await until(() => meeting.scribeState === 'off')
+    expect(meeting.scribeUnsupported).toBe('codex')
+    expect(rig.agent.launch).not.toHaveBeenCalled()
+    await rig.meetings.stop(meetingId)
+    await until(() => meeting.phase === 'done', 5000)
+  })
+
   it('is done at once without a scribe', async () => {
     const rig = await engineRig()
     const { meetingId } = await rig.meetings.start({ title: 'Solo', profileId: 'default' })

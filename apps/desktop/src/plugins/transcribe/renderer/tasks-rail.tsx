@@ -8,6 +8,7 @@ import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import type { Card, MeetingState } from '../shared/meeting'
+import { useAgentName } from './agent-name'
 import { CustomRangeDialog } from './custom-range-dialog'
 import { TASKS_NAME } from './names'
 import { TaskRow } from './task-row'
@@ -39,6 +40,7 @@ const tasksOf = (meeting: MeetingState): Card[] =>
 
 export function TasksRail({ meeting }: { meeting: MeetingState }): React.JSX.Element {
   const tasks = tasksOf(meeting)
+  const agent = useAgentName()
   return (
     <section aria-label={TASKS_NAME} className="flex flex-col gap-2">
       <div className="flex items-center gap-2 ps-2">
@@ -51,7 +53,7 @@ export function TasksRail({ meeting }: { meeting: MeetingState }): React.JSX.Ele
         </div>
       </div>
       {tasks.length === 0 ? (
-        <p className="px-2 text-sm text-muted-foreground">Send a topic to Claude to start.</p>
+        <p className="px-2 text-sm text-muted-foreground">Send a topic to {agent} to start.</p>
       ) : (
         <ul className="flex flex-col divide-y divide-divider">
           {tasks.map((c) => (

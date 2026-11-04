@@ -20,7 +20,6 @@ import { activeRemoteAtom, agentSessionRowsAtom, type AgentSessionRow } from '@/
 import type { Related } from '../main/related'
 import type { Card, MeetingState, Topic } from '../shared/meeting'
 import { MeetingsSurface } from '../renderer/meetings-surface'
-import { SEND_TO_CLAUDE } from '../renderer/send-button'
 import { transcriptText } from '../renderer/transcript-text'
 import {
   meetingStatesAtom,
@@ -29,6 +28,9 @@ import {
   transcribeEvents,
 } from '../renderer/state'
 import { meeting, profile, topics } from './meeting-fixture'
+
+/** The send button's words while main has not named the vault's agent. */
+const SEND_TO_AGENT = 'Send to the agent'
 
 const run = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/trpc', () => ({
@@ -267,7 +269,7 @@ test('Send on a suggestion: prefilled, related lines unticked, ticked ones carri
   await userEvent.click(nine)
   expect(nine).toBeChecked()
 
-  await userEvent.click(within(panel).getByRole('button', { name: SEND_TO_CLAUDE }))
+  await userEvent.click(within(panel).getByRole('button', { name: SEND_TO_AGENT }))
   await waitFor(() => expect(calls('meeting.build')).toHaveLength(1))
   expect(calls('meeting.task.create')).toEqual([
     {
@@ -279,7 +281,7 @@ test('Send on a suggestion: prefilled, related lines unticked, ticked ones carri
     },
   ])
   expect(calls('meeting.build')).toEqual([
-    { meetingId: 'm1', cardId: 'c9', target: { kind: 'claude' } },
+    { meetingId: 'm1', cardId: 'c9', target: { kind: 'agent' } },
   ])
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   // The task is in the rail, sent; the suggestion shows its run.
@@ -292,6 +294,32 @@ test('Send on a suggestion: prefilled, related lines unticked, ticked ones carri
   ).toHaveTextContent('Sent')
 }, 15_000)
 
+test('Send names the vault’s agent, and a retry after a failed send uses the form as it is now', async () => {
+  const base = run.getMockImplementation()!
+  let builds = 0
+  run.mockImplementation(async (c: { name: string }) => {
+    if (c.name === 'agent.providers') return [{ id: 'claude', label: 'Claude Code' }]
+    if (c.name === 'meeting.build' && ++builds === 1) throw new Error('the agent is busy')
+    return base(c)
+  })
+  show()
+  await userEvent.click(within(topicNamed('Budget')).getByRole('button', { name: 'Send topic' }))
+  const panel = await screen.findByRole('dialog', { name: /^Send: / })
+  const ask = within(panel).getByLabelText('What should be done?')
+  await userEvent.type(ask, 'Ask finance')
+  await userEvent.click(await within(panel).findByRole('button', { name: 'Send to Claude Code' }))
+  expect(
+    await within(panel).findByText(/Sending didn’t work: the agent is busy/),
+  ).toBeInTheDocument()
+
+  await userEvent.type(ask, ' for the quote')
+  await userEvent.click(within(panel).getByRole('button', { name: 'Send to Claude Code' }))
+  await waitFor(() => expect(calls('meeting.build')).toHaveLength(2))
+  const made = calls('meeting.task.create') as Array<{ prompt: string; cardId?: string }>
+  expect(made).toHaveLength(2)
+  expect(made[1]).toMatchObject({ prompt: 'Ask finance for the quote', cardId: 'c9' })
+}, 15_000)
+
 test('Send on a topic needs an ask, re-asks the related lines, and goes to a picked Holi', async () => {
   caps.add('holis.send')
   show()
@@ -299,7 +327,7 @@ test('Send on a topic needs an ask, re-asks the related lines, and goes to a pic
   const panel = await screen.findByRole('dialog', { name: 'Send: Budget' })
   const ask = within(panel).getByLabelText('What should be done?')
   expect(ask).toHaveValue('')
-  expect(within(panel).getByRole('button', { name: SEND_TO_CLAUDE })).toBeDisabled()
+  expect(within(panel).getByRole('button', { name: SEND_TO_AGENT })).toBeDisabled()
   await within(panel).findByRole('checkbox', { name: /Line 9 of the call/ })
   const before = calls('meeting.related').length
   await userEvent.type(ask, 'Draft the licence request')
@@ -440,7 +468,7 @@ test('a topic joins another from its menu: one topic, its lists across both part
   const panel = await screen.findByRole('dialog', { name: 'Send: Budget' })
   expect(panel).toHaveTextContent('2 stretches of the meeting, 8 lines')
   await userEvent.type(within(panel).getByLabelText('What should be done?'), 'Plan it')
-  await userEvent.click(within(panel).getByRole('button', { name: SEND_TO_CLAUDE }))
+  await userEvent.click(within(panel).getByRole('button', { name: SEND_TO_AGENT }))
   await waitFor(() => expect(calls('meeting.task.create')).toHaveLength(1))
   expect((calls('meeting.task.create')[0] as { lines: number[] }).lines).toEqual([
     0, 1, 2, 3, 4, 5, 6, 7,

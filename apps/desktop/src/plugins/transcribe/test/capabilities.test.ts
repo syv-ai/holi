@@ -48,6 +48,8 @@ async function rig() {
       meetings: engine.meetings,
       profiles,
       speechKey: {} as never,
+      services: { get: async () => ({ url: null, model: null }), set: async (s) => s },
+      serviceChanged: () => {},
       remote: 'syv/vault',
     }),
   )
@@ -111,6 +113,8 @@ describe('the doors', () => {
         meetings: {} as never,
         profiles: {} as never,
         speechKey: {} as never,
+        services: {} as never,
+        serviceChanged: () => {},
         remote: 'syv/vault',
       }),
     )
@@ -118,6 +122,7 @@ describe('the doors', () => {
       'meeting.build',
       'meeting.card',
       'meeting.chunk',
+      'meeting.chunk.lost',
       'meeting.delete',
       'meeting.export',
       'meeting.get',
@@ -131,6 +136,7 @@ describe('the doors', () => {
       'meeting.key.status',
       'meeting.key.test',
       'meeting.list',
+      'meeting.prepare',
       'meeting.profiles.delete',
       'meeting.profiles.list',
       'meeting.profiles.save',
@@ -138,6 +144,7 @@ describe('the doors', () => {
       'meeting.rename',
       'meeting.segment.edit',
       'meeting.segment.replace',
+      'meeting.service.set',
       'meeting.start',
       'meeting.stop',
       'meeting.summarise',
@@ -634,7 +641,17 @@ describe('the UI’s params', () => {
     expect(await refusal(r.ui('meeting.get', { meetingId: 'nope' }))).toMatchObject({
       code: 'NOT_FOUND',
     })
-    expect(await refusal(r.ui('meeting.start', {}))).toMatchObject({ code: 'BAD_REQUEST' })
+    // A meeting needs no profile, but goes in no folder outside the vault,
+    // and in no other meeting.
+    expect(await refusal(r.ui('meeting.start', { folder: '../out' }))).toMatchObject({
+      code: 'BAD_REQUEST',
+    })
+    expect(
+      await refusal(r.ui('meeting.start', { folder: 'Clients/A.meeting/inside' })),
+    ).toMatchObject({ code: 'BAD_REQUEST' })
+    expect(await refusal(r.ui('meeting.start', { path: 'Clients/no-suffix' }))).toMatchObject({
+      code: 'BAD_REQUEST',
+    })
     expect(await refusal(r.ui('meeting.profiles.save', { profile: { name: '' } }))).toMatchObject({
       code: 'BAD_REQUEST',
     })

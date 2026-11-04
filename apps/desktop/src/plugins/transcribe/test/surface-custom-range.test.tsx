@@ -134,7 +134,7 @@ test('presets set the slider, the preview counts the lines, and Create makes the
   // It opens in the task panel, ready to send, and sits in the rail.
   const panel = await screen.findByRole('dialog', { name: 'Turn this into a spec' })
   expect(within(panel).getByText('To-do from 1:20 to 1:58, 4 lines')).toBeInTheDocument()
-  expect(within(panel).getByRole('button', { name: 'Send to Claude' })).toBeInTheDocument()
+  expect(within(panel).getByRole('button', { name: 'Send to the agent' })).toBeInTheDocument()
   expect(screen.queryByRole('dialog', { name: 'A task from a custom range' })).toBeNull()
   const rail = screen.getByRole('region', { name: 'Tasks' })
   expect(

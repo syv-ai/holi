@@ -1,6 +1,7 @@
 /**
  * Send a card to an agent: a primary button that sends, and beside it, when
- * the vault has Holis, a picker of who it goes to: Claude, or a Holi. A Holi
+ * the vault has Holis, a picker of who it goes to: the vault's agent, or a
+ * Holi. A Holi
  * this machine has not approved is listed, but cannot be picked until it is.
  * The pick is remembered for the next card.
  */
@@ -18,16 +19,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import type { SendTarget } from '../shared/meeting'
+import { useAgentName } from './agent-name'
 import { sendTargetAtom } from './state'
 
-/**
- * The send button's words for a plain Claude session.
- *
- * @public exported for its test
- */
-export const SEND_TO_CLAUDE = 'Send to Claude'
-
-const valueOf = (t: SendTarget): string => (t.kind === 'claude' ? 'claude' : `holi:${t.id}`)
+const valueOf = (t: SendTarget): string => (t.kind === 'holi' ? `holi:${t.id}` : 'agent')
 
 export function SendButton({
   holis,
@@ -39,13 +34,14 @@ export function SendButton({
   onSend: (target: SendTarget) => void
 }): React.JSX.Element {
   const [picked, setPicked] = useAtom(sendTargetAtom)
-  // A Holi picked before that is gone, or no longer approved, is Claude again.
+  const agent = useAgentName()
+  // A Holi picked before that is gone, or no longer approved, is the agent again.
   const holi =
     picked.kind === 'holi'
       ? holis.find((h) => h.id === picked.id && h.status === 'approved')
       : undefined
-  const target: SendTarget = holi === undefined ? { kind: 'claude' } : picked
-  const label = holi === undefined ? SEND_TO_CLAUDE : `Send to ${holi.name}`
+  const target: SendTarget = holi === undefined ? { kind: 'agent' } : picked
+  const label = `Send to ${holi === undefined ? agent : holi.name}`
   const send = (
     <Button size="sm" disabled={busy} onClick={() => onSend(target)}>
       <SendHorizontal aria-hidden />
@@ -67,10 +63,10 @@ export function SendButton({
           <DropdownMenuRadioGroup
             value={valueOf(target)}
             onValueChange={(v) =>
-              setPicked(v === 'claude' ? { kind: 'claude' } : { kind: 'holi', id: v.slice(5) })
+              setPicked(v === 'agent' ? { kind: 'agent' } : { kind: 'holi', id: v.slice(5) })
             }
           >
-            <DropdownMenuRadioItem value="claude">Claude</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="agent">{agent}</DropdownMenuRadioItem>
             {holis.map((h) => (
               <HoliItem key={h.id} holi={h} />
             ))}

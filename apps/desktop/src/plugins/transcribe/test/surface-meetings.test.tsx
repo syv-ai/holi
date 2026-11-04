@@ -2,18 +2,23 @@
  * A meeting renamed and deleted: from the list, each row's menu renames it in
  * place (Enter saves, Escape keeps the old title) and deletes it once asked;
  * from its review, the same, and a deleted meeting goes back to the list. A
- * meeting that records cannot be deleted.
+ * meeting that records cannot be deleted. And a meeting as a folder of the
+ * vault's tree: the New menu makes one and opens its setup, Record starts it
+ * there, and an existing one opens as itself.
  *
  * Each test renders the whole tab, so each has 15 s, as `file-view.test.tsx`
  * does: a loaded machine is slow, not wrong.
  */
-import { render, screen, waitFor, within } from '@/test/render'
+import { act, cleanup, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { activeRemoteAtom } from '@/plugin-api'
 import type { MeetingState, MeetingSummary } from '../shared/meeting'
+import { startCapture } from '../renderer/audio/capture'
+import { MEETING_CLAIM } from '../renderer/meeting-claim'
 import { MeetingsSurface } from '../renderer/meetings-surface'
+import { stopRecordingAtom } from '../renderer/recorder'
 import {
   meetingsAtom,
   meetingStatesAtom,
@@ -149,4 +154,66 @@ test('from its review a meeting is renamed, and deleted back to the list', async
   await waitFor(() => expect(store.get(shownMeetingIdAtom)).toBeNull())
   expect(store.get(meetingStatesAtom)).toEqual({})
   expect(screen.getByRole('region', { name: 'Past meetings' })).toBeInTheDocument()
+}, 15_000)
+
+test('a meeting folder from the New menu opens as its setup, and Record starts it there', async () => {
+  const path = 'Clients/Acme/2026-11-04 Kickoff.meeting'
+  run.mockImplementation(async ({ name }: { name: string }) => {
+    switch (name) {
+      case 'meeting.prepare':
+        return { path }
+      case 'meeting.key.status':
+        return { set: true, source: 'app', service: { url: null, model: null }, ready: true }
+      case 'meeting.start':
+        return { meetingId: 'm9' }
+      default:
+        return { ok: true }
+    }
+  })
+  vi.mocked(startCapture).mockResolvedValue({
+    stop: async () => {},
+    sources: { microphone: true, system: true },
+    problems: [],
+  })
+  // The New menu makes the folder and opens it as the meeting.
+  const opened = await MEETING_CLAIM.create!.run({
+    remote: 'syv/vault',
+    parent: 'Clients/Acme',
+    name: 'Kickoff',
+  })
+  expect(calls('meeting.prepare')).toEqual([{ folder: 'Clients/Acme', title: 'Kickoff' }])
+  expect(opened).toBe(`${path}/transcript.local.md`)
+  expect(MEETING_CLAIM.match(path)).toBe(true)
+  expect(MEETING_CLAIM.decorate!.name(path)).toBe('2026-11-04 Kickoff')
+
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv/vault')
+  store.set(profilesAtom, [profile])
+  store.set(meetingsAtom, LIST)
+  render(
+    <Provider store={store}>
+      <MeetingsSurface id={path} />
+    </Provider>,
+  )
+  expect(screen.getByText('2026-11-04 Kickoff is not recorded yet')).toBeInTheDocument()
+  expect(screen.getByLabelText('Meeting title')).toHaveValue('Kickoff')
+  // No list to go back to: this tab is the meeting.
+  expect(screen.queryByRole('button', { name: 'All meetings' })).toBeNull()
+  await userEvent.click(screen.getByRole('button', { name: 'Record' }))
+  await waitFor(() =>
+    expect(calls('meeting.start')).toEqual([{ profileId: 'planning', title: 'Kickoff', path }]),
+  )
+  await act(() => store.set(stopRecordingAtom))
+}, 15_000)
+
+test('a meeting folder opened from the tree shows that meeting', async () => {
+  const store = show()
+  cleanup()
+  render(
+    <Provider store={store}>
+      <MeetingsSurface id={LIST[0]!.folder} />
+    </Provider>,
+  )
+  expect(await screen.findByRole('heading', { name: done.title })).toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: 'Past meetings' })).toBeNull()
 }, 15_000)

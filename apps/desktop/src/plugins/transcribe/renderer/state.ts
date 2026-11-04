@@ -89,8 +89,9 @@ export const sendPanelAtom = atom<{
   suggestionId?: string
 } | null>(null)
 
-/** Who Send sends a card to: the last one picked, Claude to begin with. */
-export const sendTargetAtom = atom<SendTarget>({ kind: 'claude' })
+/** Who Send sends a card to: the last one picked, the vault's agent to
+ *  begin with. */
+export const sendTargetAtom = atom<SendTarget>({ kind: 'agent' })
 
 export const loadMeetingsAtom = atom(null, async (get, set): Promise<void> => {
   const remote = get(activeRemoteAtom)
@@ -225,6 +226,6 @@ export function meetingsVault(_remote: string, store: PluginStore): () => void {
     store.set(openTaskAtom, null)
     store.set(minutesAskedAtom, {})
     store.set(sendPanelAtom, null)
-    store.set(sendTargetAtom, { kind: 'claude' })
+    store.set(sendTargetAtom, { kind: 'agent' })
   }
 }

@@ -1,8 +1,8 @@
 /**
  * Start meeting and Stop meeting, in the command menu and as commands. Start
- * records with the picked profile, both audio sources and no title, and
- * brings the Meetings tab forward; with no profile yet it only opens the tab,
- * where one is made.
+ * records with the picked profile (the Default without one), both audio
+ * sources and no title, and brings the Meetings tab forward, where it says
+ * so if transcription is not set up yet.
  */
 import { atom, type Getter, type Setter } from 'jotai'
 import { AudioLines, Square } from 'lucide-react'
@@ -12,9 +12,12 @@ import { MEETINGS_SURFACE, selectedProfileIdAtom } from './state'
 
 function startMeeting(get: Getter, set: Setter): void {
   set(openSurfaceAtom, MEETINGS_SURFACE)
-  const profileId = get(selectedProfileIdAtom)
-  if (profileId === null) return
-  void set(startRecordingAtom, { profileId, title: '', microphone: true, system: true })
+  void set(startRecordingAtom, {
+    profileId: get(selectedProfileIdAtom),
+    title: '',
+    microphone: true,
+    system: true,
+  })
 }
 
 function stopMeeting(_get: Getter, set: Setter): void {

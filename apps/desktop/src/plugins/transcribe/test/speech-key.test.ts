@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CapabilityError } from '../../../main/capabilities/error'
-import { MODELS_URL } from '../main/asr'
+import { SYV_MODELS_URL as MODELS_URL } from '../main/speech-service'
 import { createSpeechKey, createSpeechKeyStore } from '../main/speech-key'
 
 /** `safeStorage`'s shape, with encryption that is just a reversible marker. */
@@ -73,6 +73,7 @@ describe('the key in use', () => {
     const key = createSpeechKey({
       store: createSpeechKeyStore(file, storage),
       vaultEnv: async () => vaultEnv,
+      service: async () => ({ url: null, model: null }),
       fetch,
       changed,
     })
@@ -82,18 +83,38 @@ describe('the key in use', () => {
   it("is the app's key first, then the vault's SYV_API_KEY, then none", async () => {
     const { key } = speechKey({ SYV_API_KEY: 'hv_from_the_vault_env_local' })
     expect(await key.resolve()).toBe('hv_from_the_vault_env_local')
-    expect(await key.status()).toEqual({ set: true, source: 'vault' })
+    expect(await key.status()).toEqual({
+      set: true,
+      source: 'vault',
+      service: { url: null, model: null },
+      ready: true,
+    })
 
     await key.set(KEY)
     expect(await key.resolve()).toBe(KEY)
-    expect(await key.status()).toEqual({ set: true, source: 'app' })
+    expect(await key.status()).toEqual({
+      set: true,
+      source: 'app',
+      service: { url: null, model: null },
+      ready: true,
+    })
 
     await key.clear()
-    expect(await key.status()).toEqual({ set: true, source: 'vault' })
+    expect(await key.status()).toEqual({
+      set: true,
+      source: 'vault',
+      service: { url: null, model: null },
+      ready: true,
+    })
 
     const none = speechKey({ SYV_API_KEY: '' }).key
     expect(await none.resolve()).toBeNull()
-    expect(await none.status()).toEqual({ set: false, source: null })
+    expect(await none.status()).toEqual({
+      set: false,
+      source: null,
+      service: { url: null, model: null },
+      ready: false,
+    })
   })
 
   it('says when it changed, so the uploads waiting for it go', async () => {

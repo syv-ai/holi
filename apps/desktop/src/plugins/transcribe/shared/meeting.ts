@@ -1,5 +1,7 @@
 // The shapes a meeting has, shared by the transcribe plugin's main and renderer sides.
 
+import type { AgentProviderId } from '@holi/shared'
+
 /** One transcribed stretch of speech. `i` is stable for the whole meeting and is what cards cite. */
 export interface Segment {
   i: number
@@ -73,9 +75,21 @@ export interface Quote {
   text: string
 }
 
-/** Who a task is sent to: a plain Claude Code session, or one of the
- *  vault's Holis (docs/features/holis.md). */
-export type SendTarget = { kind: 'claude' } | { kind: 'holi'; id: string }
+/** What makes a vault folder a meeting the tree opens as one document:
+ *  `Meetings/2026-11-02 Planning.meeting/`. */
+export const MEETING_SUFFIX = '.meeting'
+
+/** The speech service meetings are transcribed with (`speech-service.ts`):
+ *  `url` null is syv.ai's; else any service that answers OpenAI's
+ *  `/audio/transcriptions`, asked for `model`. */
+export interface SpeechService {
+  url: string | null
+  model: string | null
+}
+
+/** Who a task is sent to: the vault's chosen agent (Settings, General,
+ *  Agents), or one of the vault's Holis (docs/features/holis.md). */
+export type SendTarget = { kind: 'agent' } | { kind: 'holi'; id: string }
 
 /** The stretch of a meeting a task's lines span, in seconds from its start. */
 export interface CardRange {
@@ -115,7 +129,7 @@ export interface Card {
   taskPath?: string
   /** The session the card was sent to. */
   buildSessionId?: string
-  /** Who it was sent to; absent on a card sent before targets, a Claude run. */
+  /** Who it was sent to; absent on a card sent before targets, an agent run. */
   target?: SendTarget
   createdAt: number
   updatedAt: number
@@ -224,6 +238,10 @@ export interface MeetingState {
   /** The scribe was never reached: its session never said where it takes
    *  messages (a vault hook from before inbox channels). Sends go on, slowly. */
   scribeUnreachable?: boolean
+  /** The vault's agent cannot run the scribe (only Claude Code takes its
+   *  locked-down session): the meeting records and captions without
+   *  topics. */
+  scribeUnsupported?: AgentProviderId
   /** Vault-relative folder, e.g. "Meetings/2026-11-02 Planning". */
   folder: string
   /** The vault path the minutes are written to, in that folder. */
@@ -262,13 +280,19 @@ export interface CaptureOptions {
 export interface Capture {
   /** Stops capturing and emits the last partial chunk through onChunk. */
   stop: () => Promise<void>
+  /** What it records: a source asked for that could not be had is false. */
+  sources: { microphone: boolean; system: boolean }
+  /** Why a source asked for is not recorded, in words the person can act on. */
+  problems: readonly string[]
 }
 
 /*
 Capabilities (namespace "meeting"):
   ui door:
-    meeting.start   {title?: string, profileId: string}           -> {meetingId}
+    meeting.start   {title?, profileId?, folder?, path?}           -> {meetingId}   (no profile: this machine's first; no folder: Meetings; path: a prepared folder)
+    meeting.prepare {folder, title}                                -> {path}        (the New menu's meeting folder, nothing recorded yet)
     meeting.chunk   {meetingId, n: number, start: number, duration: number, audio: string /* base64 WAV *\/} -> {ok: true}
+    meeting.chunk.lost {meetingId, n, start, duration}             -> {ok: true}   (the renderer gave up on chunk n)
     meeting.stop    {meetingId}                                    -> {ok: true}
     meeting.get     {meetingId}                                    -> MeetingState
     meeting.list    {}                                             -> MeetingSummary[]
@@ -277,7 +301,7 @@ Capabilities (namespace "meeting"):
     meeting.delete  {meetingId}                                    -> {ok: true}       (refused while it records or finishes)
     meeting.card    {meetingId, cardId, patch: {status?: 'accepted'|'dismissed', title?, why?, acceptance?, openQuestions?, owner?}} -> Card
     meeting.build   {meetingId, cardId, context?, target?: SendTarget} -> {sessionId}   (the UI's Send)
-    meeting.task.create {meetingId, lines: number[], prompt, kind, title?, from?: {topicId, suggestionId?}} -> Card (a person's task)
+    meeting.task.create {meetingId, lines: number[], prompt, kind, title?, from?: {topicId, suggestionId?}, cardId?} -> Card (a person's task; cardId remakes an unsent one in its place)
     meeting.related {meetingId, query, exclude: number[]}          -> Related[]     (BM25 windows outside `exclude`)
     meeting.group.split {meetingId, i}                             -> Topic[]       (a new group starts at line i)
     meeting.group.merge {meetingId, groupId}                       -> Topic[]       (the group joins the one before it)
@@ -289,8 +313,9 @@ Capabilities (namespace "meeting"):
     meeting.export  {meetingId, out}                               -> {path, vaultPath} (the minutes as a .md file)
     meeting.tell    {meetingId, text, kind?: 'note'|'minutes'}     -> {ok: true}   (message to the scribe; 'minutes' asks it to change the groups)
     meeting.profiles.list {} -> MeetingProfile[]; meeting.profiles.save {profile} -> MeetingProfile; meeting.profiles.delete {id}
-    meeting.key.status {} -> {set, source: 'app'|'vault'|null}; meeting.key.set {key} -> {ok}; meeting.key.clear {} -> {ok}
+    meeting.key.status {} -> {set, source: 'app'|'vault'|null, service, ready}; meeting.key.set {key} -> {ok}; meeting.key.clear {} -> {ok}
     meeting.key.test {} -> {result: 'ok'|'invalid'|'unreachable'}   (the key itself never comes back)
+    meeting.service.set {url: string|null, model?} -> key status     (null url: syv.ai; else any /audio/transcriptions service)
   cli door (job: 'session' — only the meeting's scribe):
     holi meeting group              stdin: GroupInput JSON    -> the group as saved, and any field it kept
     holi meeting context            -> profile, groups (start, title, open, stale, edited), person tasks, last segment index

@@ -28,6 +28,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
+import type { AgentProviderId } from '@holi/shared'
 import { CapabilityError } from '../../../main/plugin-api'
 import type { MeetingProfile, MeetingState, ScribeState, TopicField } from '../shared/meeting'
 import {
@@ -91,6 +92,8 @@ const FAILED_RETRY_MS = 45_000
 const MESSAGE_RETRY_MS = [1000, 2000, 4000, 8000, 15_000] as const
 /** How often a scribe that was never reached is tried again. */
 const UNREACHABLE_RETRY_MS = 60_000
+/** How long a final pass waits for a scribe that is still starting. */
+const LAUNCH_WAIT_MS = 60_000
 
 export type Launched = { ok: true; sessionId: string } | { ok: false; message: string }
 
@@ -98,6 +101,8 @@ export type Launched = { ok: true; sessionId: string } | { ok: false; message: s
 export interface LaunchArgs {
   name: string
   prompt: string
+  /** The agent to run it; Claude Code when absent. */
+  provider?: AgentProviderId
   system?: string
   allow?: string[]
   deny?: string[]
@@ -107,7 +112,11 @@ export interface LaunchArgs {
 
 /** The agent's verbs the scribe and builds use (`ctx.call`). */
 export interface AgentCalls {
+  /** A background session (`agent.launch`): Claude Code's, or Pi's run. */
   launch(args: LaunchArgs): Promise<Launched>
+  /** A session in its own terminal, which the person watches
+   *  (`agent.start`): for an agent with no background runs. */
+  start(args: { name: string; prompt: string; provider: AgentProviderId }): Promise<Launched>
   message(session: string, text: string): Promise<unknown>
 }
 
@@ -206,8 +215,12 @@ export interface Scribe {
   tell(meetingId: string, text: string, kind?: TellKind): Promise<void>
   /** The meeting stopped and its transcript is complete: send the final
    *  pass, and resolve when the scribe's turn on it ends, or at `deadline`
-   *  (epoch ms), whichever is first. Resolves at once with no scribe. */
+   *  (epoch ms), whichever is first. A scribe still starting is waited for,
+   *  within `LAUNCH_WAIT_MS`; with none, it resolves at once. */
   finish(meetingId: string, deadline: number): Promise<void>
+  /** The last line the scribe has, or is being sent: a correction to one
+   *  at or before it must reach the scribe as a correction. */
+  through(meetingId: string): number
   dispose(): void
 }
 
@@ -217,6 +230,8 @@ interface Runtime {
   /** The person pressed Summarise now, and that batch has not gone yet. */
   now: boolean
   sending: boolean
+  /** The last line of the batch on its way, while one is. */
+  inflight: number | null
   timer: ReturnType<typeof setTimeout> | null
   final: {
     sent: boolean
@@ -237,15 +252,19 @@ export function createScribe(deps: {
   host: ScribeHost
   log(level: 'info' | 'warn' | 'error', message: string): void
   now?: () => number
+  /** The vault's chosen agent; Claude Code when absent. */
+  provider?: () => Promise<AgentProviderId>
 }): Scribe {
   const now = deps.now ?? Date.now
   const runtimes = new Map<string, Runtime>()
+  /** Each meeting's scribe launch while it is under way. */
+  const launching = new Map<string, Promise<void>>()
   let disposed = false
 
   const rt = (id: string): Runtime => {
     let r = runtimes.get(id)
     if (r === undefined) {
-      r = { retryAt: 0, now: false, sending: false, timer: null, final: null }
+      r = { retryAt: 0, now: false, sending: false, inflight: null, timer: null, final: null }
       runtimes.set(id, r)
     }
     return r
@@ -316,6 +335,7 @@ export function createScribe(deps: {
       ...(final ? { final: true } : {}),
     })
     r.sending = true
+    r.inflight = last
     try {
       // Once known unreachable, one try a time: the background retry is slow.
       const sent = await deliver(
@@ -369,6 +389,7 @@ export function createScribe(deps: {
       return false
     } finally {
       r.sending = false
+      r.inflight = null
     }
   }
 
@@ -415,40 +436,58 @@ export function createScribe(deps: {
     if (turnEnded || state === 'gone' || (final.sawWorking && state === 'idle')) final.done()
   }
 
+  /** Start the meeting's scribe on the vault's agent. Only Claude Code
+   *  runs it: its session is locked to `holi meeting` by deny rules, which
+   *  no other agent takes, so on another the meeting records and captions
+   *  without topics and says why (`scribeUnsupported`), never on Claude
+   *  behind the person's choice. */
+  async function launch(id: string): Promise<void> {
+    const entry = deps.host.get(id)
+    if (entry === undefined) return
+    const { meeting, profile } = entry
+    setState(meeting, 'starting')
+    const provider = (await deps.provider?.().catch(() => 'claude' as const)) ?? 'claude'
+    if (provider !== 'claude') {
+      meeting.scribeUnsupported = provider
+      deps.log('info', `meeting "${meeting.title}": no scribe, ${provider} cannot run it`)
+      setState(meeting, 'off')
+      return
+    }
+    let res: Launched
+    try {
+      res = await deps.agent.launch({
+        name: `Meeting · ${meeting.title}`,
+        system: buildScribeSystemPrompt(profile, meeting),
+        prompt: firstMessage(),
+        allow: ['Bash(holi meeting:*)'],
+        deny: [...SCRIBE_DENY],
+        ...(profile.scribeModel === undefined ? {} : { model: profile.scribeModel }),
+        ...(profile.mcpConfig === undefined ? {} : { mcpConfig: profile.mcpConfig }),
+      })
+    } catch (err) {
+      res = { ok: false, message: String(err) }
+    }
+    if (!res.ok) {
+      deps.log('error', `meeting "${meeting.title}": the scribe did not start: ${res.message}`)
+      setState(meeting, 'gone')
+      return
+    }
+    meeting.scribeSessionId = res.sessionId
+    deps.host.changed(id)
+    deps.log(
+      'info',
+      `meeting "${meeting.title}": scribe ${res.sessionId} started (prompt ${SCRIBE_PROMPT_VERSION})`,
+    )
+  }
+
   const scribed = (sessionId: string): MeetingState | undefined =>
     deps.host.live().find((m) => m.scribeSessionId === sessionId)
 
   return {
-    async launch(id) {
-      const entry = deps.host.get(id)
-      if (entry === undefined) return
-      const { meeting, profile } = entry
-      setState(meeting, 'starting')
-      let res: Launched
-      try {
-        res = await deps.agent.launch({
-          name: `Meeting · ${meeting.title}`,
-          system: buildScribeSystemPrompt(profile, meeting),
-          prompt: firstMessage(),
-          allow: ['Bash(holi meeting:*)'],
-          deny: [...SCRIBE_DENY],
-          ...(profile.scribeModel === undefined ? {} : { model: profile.scribeModel }),
-          ...(profile.mcpConfig === undefined ? {} : { mcpConfig: profile.mcpConfig }),
-        })
-      } catch (err) {
-        res = { ok: false, message: String(err) }
-      }
-      if (!res.ok) {
-        deps.log('error', `meeting "${meeting.title}": the scribe did not start: ${res.message}`)
-        setState(meeting, 'gone')
-        return
-      }
-      meeting.scribeSessionId = res.sessionId
-      deps.host.changed(id)
-      deps.log(
-        'info',
-        `meeting "${meeting.title}": scribe ${res.sessionId} started (prompt ${SCRIBE_PROMPT_VERSION})`,
-      )
+    launch(id) {
+      const run = launch(id).finally(() => launching.delete(id))
+      launching.set(id, run)
+      return run
     },
 
     hearSessions(rows) {
@@ -499,7 +538,22 @@ export function createScribe(deps: {
       setState(meeting, 'working')
     },
 
-    finish(id, deadline) {
+    through(id) {
+      const cursor = deps.host.get(id)?.meeting.scribeCursor ?? -1
+      return Math.max(cursor, runtimes.get(id)?.inflight ?? -1)
+    },
+
+    async finish(id, deadline) {
+      const pending = launching.get(id)
+      if (pending !== undefined) {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const wait = Math.min(LAUNCH_WAIT_MS, Math.max(0, deadline - now()))
+        await Promise.race([
+          pending,
+          new Promise<void>((resolve) => (timer = setTimeout(resolve, wait))),
+        ])
+        clearTimeout(timer)
+      }
       const meeting = deps.host.get(id)?.meeting
       if (
         meeting === undefined ||

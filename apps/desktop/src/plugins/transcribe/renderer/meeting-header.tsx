@@ -1,12 +1,15 @@
 /**
  * The meetings surface's top row, one line: back to the list while a meeting
- * is shown, the profile the next meeting starts with and a menu for the
- * profiles and the speech key, the title (the recording meeting's own while
- * it records), which audio it records, how a recording meeting is doing
+ * is shown, the profile the next meeting starts with (this machine's first
+ * unless another is picked; none is needed) and a menu for the profiles and
+ * the speech service, the title (the recording meeting's own while it
+ * records), which audio it records, how a recording meeting is doing
  * (`meeting-status.tsx`) with the reminder that it records, and on the right
  * the level, the timer and Record or Stop. While a meeting records, the
- * choices it started with are fixed. Under the row, only while something is
- * wrong: the notice when no speech key is set, and a recording that failed.
+ * audio toggles show what is actually recorded. Record with transcription
+ * not set up opens the speech service instead. Under the row, only while
+ * something is wrong: the notice when transcription is not set up, a source
+ * asked for that is not recorded, and a recording that failed.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import {
@@ -19,11 +22,12 @@ import {
   Plus,
   Settings2,
   Square,
+  TriangleAlert,
   X,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useNow } from '@/plugin-api'
-import { Alert, AlertAction, AlertDescription } from '@/components/ui/alert'
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -46,6 +50,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { IconButton } from '@/composites/icon-button'
 import { clock } from './format'
+import { meetingName } from './meeting-claim'
 import { MeetingStatus, RecordingPill } from './meeting-status'
 import { ProfileDialog } from './profile-dialog'
 import {
@@ -56,7 +61,13 @@ import {
   stopRecordingAtom,
 } from './recorder'
 import { SpeechKeyDialog, SpeechKeyNotice } from './speech-key'
-import { meetingStatesAtom, profilesAtom, selectedProfileIdAtom, shownMeetingIdAtom } from './state'
+import {
+  meetingStatesAtom,
+  profilesAtom,
+  selectedProfileIdAtom,
+  shownMeetingIdAtom,
+  speechKeyAtom,
+} from './state'
 
 type Source = 'microphone' | 'system'
 
@@ -85,7 +96,18 @@ function LevelMeter(): React.JSX.Element {
   )
 }
 
-export function MeetingHeader(): React.JSX.Element {
+/**
+ * `path` is a meeting folder opened from the vault's tree: Record starts the
+ * meeting there, under the folder's name, and there is no list to go back
+ * to. `meetingId` is that folder's meeting once it records.
+ */
+export function MeetingHeader({
+  path,
+  meetingId,
+}: {
+  path?: string
+  meetingId?: string
+}): React.JSX.Element {
   const profiles = useAtomValue(profilesAtom)
   const [profileId, setProfileId] = useAtom(selectedProfileIdAtom)
   const rec = useAtomValue(recorderAtom)
@@ -96,22 +118,35 @@ export function MeetingHeader(): React.JSX.Element {
   const states = useAtomValue(meetingStatesAtom)
   const recording = states[rec.meetingId ?? '']
   // The meeting the person is looking at, else the one recording.
-  const watched = (shown === null ? undefined : states[shown]) ?? recording
+  const looked = meetingId ?? (path === undefined ? shown : null)
+  const watched = (looked === null ? undefined : states[looked]) ?? recording
   const live = watched?.phase === 'recording' ? watched : undefined
-  const [title, setTitle] = useState('')
+  const [title, setTitle] = useState(() =>
+    path === undefined ? '' : meetingName(path).replace(/^\d{4}-\d{2}-\d{2} /, ''),
+  )
   const [sources, setSources] = useState<Source[]>(['microphone', 'system'])
   const [editing, setEditing] = useState<'new' | 'edit' | null>(null)
   const [keyOpen, setKeyOpen] = useState(false)
+  const speech = useAtomValue(speechKeyAtom)
   const busy = rec.phase !== 'idle'
   const profile = profiles?.find((p) => p.id === profileId)
   const microphone = sources.includes('microphone')
   const system = sources.includes('system')
-  const canRecord = profileId !== null && sources.length > 0
+  const canRecord = sources.length > 0
+  // While it records, what is: a source the system refused is not shown on.
+  const shownSources: Source[] =
+    busy && rec.sources !== null
+      ? SOURCES.map((s) => s.value).filter((v) => rec.sources![v])
+      : sources
+  const record = () => {
+    if (speech?.ready === false) return setKeyOpen(true)
+    void start({ profileId, title, microphone, system, ...(path === undefined ? {} : { path }) })
+  }
 
   return (
     <div className="flex shrink-0 flex-col gap-2 border-b border-divider px-4 py-2">
       <div className="flex min-w-0 items-center gap-2">
-        {shown !== null && (
+        {shown !== null && path === undefined && (
           <IconButton label="All meetings" onClick={() => setShown(null)}>
             <ArrowLeft aria-hidden />
           </IconButton>
@@ -123,7 +158,7 @@ export function MeetingHeader(): React.JSX.Element {
             disabled={busy || profiles === null || profiles.length === 0}
           >
             <SelectTrigger size="sm" className="w-40" aria-label="Profile">
-              <SelectValue placeholder={profiles === null ? 'Loading…' : 'No profile yet'} />
+              <SelectValue placeholder={profiles === null ? 'Loading…' : 'Default'} />
             </SelectTrigger>
             <SelectContent>
               {(profiles ?? []).map((p) => (
@@ -137,12 +172,12 @@ export function MeetingHeader(): React.JSX.Element {
             <Tooltip>
               <TooltipTrigger asChild>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" aria-label="Profiles and speech key">
+                  <Button variant="ghost" size="icon-sm" aria-label="Profiles and speech service">
                     <Ellipsis aria-hidden />
                   </Button>
                 </DropdownMenuTrigger>
               </TooltipTrigger>
-              <TooltipContent>Profiles and speech key</TooltipContent>
+              <TooltipContent>Profiles and speech service</TooltipContent>
             </Tooltip>
             <DropdownMenuContent align="start">
               {profile !== undefined && (
@@ -158,7 +193,7 @@ export function MeetingHeader(): React.JSX.Element {
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => setKeyOpen(true)}>
                 <KeyRound aria-hidden />
-                Speech key…
+                Speech service…
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -181,7 +216,7 @@ export function MeetingHeader(): React.JSX.Element {
           size="sm"
           spacing={0}
           aria-label="Audio to record"
-          value={sources}
+          value={shownSources}
           disabled={busy}
           onValueChange={(v) => setSources(v as Source[])}
           className="shrink-0"
@@ -211,13 +246,7 @@ export function MeetingHeader(): React.JSX.Element {
             </>
           )}
           {rec.phase === 'idle' ? (
-            <Button
-              size="sm"
-              disabled={!canRecord}
-              onClick={() =>
-                profileId !== null && void start({ profileId, title, microphone, system })
-              }
-            >
+            <Button size="sm" disabled={!canRecord} onClick={record}>
               <Circle aria-hidden className="fill-current text-destructive" />
               Record
             </Button>
@@ -238,7 +267,22 @@ export function MeetingHeader(): React.JSX.Element {
           )}
         </div>
       </div>
-      <SpeechKeyNotice />
+      <SpeechKeyNotice onSetUp={() => setKeyOpen(true)} />
+      {rec.warning !== null && (
+        <Alert variant="warning" aria-label="Not recorded">
+          <TriangleAlert aria-hidden />
+          <AlertTitle>
+            Only the {rec.sources?.microphone === true ? 'microphone' : 'computer audio'} is
+            recording
+          </AlertTitle>
+          <AlertDescription>{rec.warning}</AlertDescription>
+          <AlertAction>
+            <IconButton label="Dismiss" size="icon-xs" onClick={() => clearError()}>
+              <X aria-hidden />
+            </IconButton>
+          </AlertAction>
+        </Alert>
+      )}
       {rec.error !== null && (
         <Alert variant="destructive">
           <AlertDescription>{rec.error}</AlertDescription>

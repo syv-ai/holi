@@ -6,25 +6,37 @@ subject, each with a title, a short summary, keywords, its decisions and open qu
 **suggestions** (features and to-dos that came up in it). A background agent session, the
 **scribe**, draws the groups and writes them every few minutes; the minutes are rendered from the
 groups by code. A person presses **Send** on a group or a suggestion, says what should be done,
-ticks what else in the meeting belongs with it, and Holi starts an agent run (Claude, or one of
-the vault's [Holis](holis.md)) with every one of those lines as its brief, while the meeting is
-still going. Everything on screen is the person's to correct: a caption's words, where a group
+ticks what else in the meeting belongs with it, and Holi starts an agent run (the vault's chosen
+agent, or one of the vault's [Holis](holis.md)) with every one of those lines as its brief, while
+the meeting is still going. Everything on screen is the person's to correct: a caption's words, where a group
 starts, every field of a group. The tab calls the scribe **Hviske** and the work sent **Tasks**;
 this page keeps the code's words (a task is a `Card`).
 
 Meetings are the plugin `transcribe` (`src/plugins/transcribe/`), off until a vault turns it on.
-They require the `agent` and `tasks` plugins. Speech goes to syv.ai's speech-to-text API with the person's speech
-key; the scribe and build runs are Claude Code sessions ([agent-sessions](agent-sessions.md)).
+They require the `agent` and `tasks` plugins. Speech goes to the speech service this machine chose,
+syv.ai's by default; the scribe is a Claude Code session, and a sent task runs on the vault's chosen
+agent ([agent-sessions](agent-sessions.md)).
+
+**The speech service** (`main/speech-service.ts`) is syv.ai's, or any service that answers OpenAI's
+`/audio/transcriptions` (a local Whisper server, a hosted one), named by its address (https, or
+http on this machine only, so meeting audio does not cross a network unencrypted) and the model to
+ask for. It is this machine's, in `userData/speech-service.json`, chosen in the header's **Speech
+service** dialog (`meeting.service.set`). syv.ai gets its own fields (`diarize`, `vocab`) and a key;
+another service gets OpenAI's fields, the glossary as its `prompt`, and no `Authorization` without a
+key. A profile's speech model is one of syv.ai's, so another service is asked for its own model.
 
 **The speech key** is the person's, not the vault's: it lives in `userData/speech-key.enc`, encrypted
 with the OS keychain (Electron `safeStorage`, as the GitHub token and Google's own client are
 ([auth](auth.md))), and is used for every vault on this machine. Main uses the key set in the
-Meetings tab, else the vault's `SYV_API_KEY` (`.env.local`, then `.env`), else none. The key never
-reaches the renderer, which learns only whether one is set and where it came from
-(`meeting.key.status`); `meeting.key.set`, `meeting.key.clear` and `meeting.key.test` (which asks
-the free `/v1/models`, spending no credits) are UI-door only. Without a key the tab shows a notice
-above Record with a password field; recording still works. The header's key button replaces, tests
-or removes it.
+Meetings tab, else, for syv.ai's service only, the vault's `SYV_API_KEY` (`.env.local`, then `.env`,
+read by core's one reader `readVaultEnv`), else none. syv.ai needs a key; another service may take
+requests without one. The key never reaches the renderer, which learns only whether one is set,
+where it came from, the service, and whether meetings can be transcribed as things are
+(`meeting.key.status`'s `ready`); `meeting.key.set`, `meeting.key.clear` and `meeting.key.test` (for
+syv.ai the free `/v1/models`, spending no credits; for another service half a second of silence) are
+UI-door only. **Nothing records before transcription is set up**: while it is not, the tab shows
+**Set up transcription before you record** above Record, and Record opens the Speech service dialog
+instead of recording, so a person learns before the meeting, not after it.
 
 ## How it works
 
@@ -32,7 +44,7 @@ or removes it.
 renderer                          main                                   Claude Code
 mic ─┐                            meeting.chunk ─► chunk-<n>.wav (disk)
      ├─ stereo, 16 kHz ─ chunk ─►   Silero VAD per channel: speech only
-sys ─┘   cut at a pause (6–12 s)    upload mono, or L and R apart ─► platform.syv.ai /v1/audio/…
+sys ─┘   cut at a pause (6–12 s)    upload mono, or L and R apart ─► the service's /audio/transcriptions
                                     label Me/Them by channel, stitch in order
                                     segments [i] ── idle and 3 min of new lines ──► scribe session
 groups ◄── 'meeting' event ◄──      MeetingState  ◄── holi meeting group / context
@@ -40,7 +52,7 @@ groups ◄── 'meeting' event ◄──      MeetingState  ◄── holi mee
 edits ─ segment.edit, group.* ────► corrections, locks, stale ── next batch ──► scribe session
 Summarise now ── summarise ───────► the next batch, as soon as it is idle ────► scribe session
 Ask Hviske ── tell (kind minutes) ─► at once ─────────────────────────────────► scribe session
-Send ── related (BM25), task.create, build ► tasks.create + agent.launch ───► build session
+Send ── related (BM25), task.create, build ► tasks.create + the vault's agent ► build session
                                      or holis.send (the task) ──────────────► a Holi's run
 ```
 
@@ -50,18 +62,27 @@ sound, and refuses a frame's) on the right, resampled
 to 16 kHz. A chunk closes at the first pause after 6 s and always by 12 s; a chunk with almost no
 sound above the room's noise floor is dropped there already. That loudness test is crude: a fan or a
 keyboard passes it, and speech models invent words in silence and noise, so main judges speech again
-with a real voice activity detector before anything is uploaded (below). Recording lives outside the
-tab, so leaving the tab keeps it going; the status bar shows a timer. The tab is reached from ⌘K:
-**Meetings** under Go to, or **Start meeting**, which also starts recording with the picked profile.
+with a real voice activity detector before anything is uploaded (below). When one source cannot be
+had (the system refused the computer's sound, say), the other records: the audio toggles show what
+actually records, and the header says which source is missing and how to fix it, so half a
+conversation is not lost unseen. Recording lives outside the tab, so leaving the tab keeps it going;
+the status bar shows a timer. A Stop while Record is still starting cancels it: whatever the start
+gets after that (the meeting, the capture) is let go as it arrives. The tab is reached from ⌘K:
+**Meetings** under Go to, or **Start meeting**, which also starts recording with the picked profile
+(the Default without one); and from the vault's tree (**Files**, below).
 
 **Transcription** happens in main, per chunk. The WAV is written to
 `userData/meetings/<id>/chunk-<n>.wav` before anything else, so a crash or a failed upload loses no
 audio; uploads retry with backoff and once more at Stop, and a meeting left recording by a crash is
-finished at the next start. A missing key, or one the service refuses (401, 403), is no retry's to
+finished at the next start. A chunk the renderer gave up on (three tries) is told to main
+(`meeting.chunk.lost`), which stitches past it at once: otherwise every later caption and batch
+would wait for it until Stop. Quitting Holi, or turning the plugin off, asks the renderer to stop a
+recording first (the capture's last chunk, its uploads, then the stop), and main keeps its verbs for
+up to 15 s while it does. A missing key, or one the service refuses (401, 403), is no retry's to
 fix: the chunk stays queued and untried, the meeting shows `blocked` (`no-key`, `bad-key`) as a badge
 in the header with the fix under it, and saving a key sends what waited, in every vault here. A meeting does
-not finish past a chunk waiting for its key, and the scribe's 3 minutes count from when the key
-came. A meeting that ended with chunks failed for the key alone, their audio still on disk, is
+not finish past a chunk waiting for its key, and the scribe's final pass gets its 3 minutes from when
+the last upload is done, so slow transcription or a wait for the key never eats the pass. A meeting that ended with chunks failed for the key alone, their audio still on disk, is
 transcribed again at the next start, without its scribe, and finishes again.
 
 Before upload, main runs Silero VAD v5 (`main/vad.ts`, `main/silero.ts`: the model the backend runs,
@@ -114,7 +135,13 @@ line is judged on what came before it, as an answer is. Every dropped line goes 
 debug level (the Logs tab) with its reason.
 Chunk audio is deleted once transcribed unless the profile keeps it.
 
-**The scribe** is one background session per meeting, launched at Start with the profile in its
+**The scribe** runs on Claude Code alone: its safety is the deny rules below, which no other agent
+takes. On another agent the meeting records and captions without topics (`scribeUnsupported`), and
+the header says so with the fix, never running Claude behind the person's choice. A Stop while the
+scribe is still starting waits for it, up to a minute, before deciding the meeting has none, so a
+short meeting still gets its final pass.
+
+It is one background session per meeting, launched at Start with the profile in its
 system prompt (`shared/scribe-prompt.ts`), one allow rule, `Bash(holi meeting:*)`, and deny rules
 (`--disallowedTools`) that beat any allow, the vault's own included. It needs no file or web tools:
 the transcript comes by message and `holi meeting context` re-syncs it. So it has no `Read`, `Edit`,
@@ -209,15 +236,21 @@ suggestion, its title and why); Feature or To-do; **Related from elsewhere in th
 five ~20 s stretches outside the group that best match the ask with the group's title and keywords
 (`meeting.related {meetingId, query, exclude}`, BM25 in `main/related.ts`: lowercase words, Danish
 stopwords, each cut to five letters), asked again as the person types, each a checkbox, unticked;
-and who it goes to (Claude, or a Holi). Sending makes a task (`meeting.task.create {meetingId,
+and who it goes to (the vault's agent, named, or a Holi). Sending makes a task (`meeting.task.create {meetingId,
 lines, prompt, kind, title?, from?}`) with the group's lines, the suggestion's, and the ticked ones,
 then sends it (`meeting.build`). A task carries at most 400 lines and says how many it had; its
 title is the ask's first line (80 characters) unless given; it is the person's, accepted, with
-`from: {topicId, suggestionId?}`. The scribe's next batch says the person made it.
+`from: {topicId, suggestionId?}`. The scribe's next batch says the person made it. When the task
+was made but sending it failed, a retry makes it again in place from the form as it is now
+(`cardId`), so edits to the ask, the kind or the ticked lines are what goes.
 
 `meeting.build` (the name is kept) creates the task's file in the meeting's folder, or writes it
-again from the task as it now reads, and starts a session named `Build · <title>` (`Action ·` for a
-to-do) with a brief: what the person asks, the group it came from (title, time, bullets), how they
+again from the task as it now reads (when that write fails nothing is sent: a Holi reads the file
+as its instructions, and would carry out what it said before), and starts a session named
+`Build · <title>` (`Action ·` for a to-do) on the vault's chosen agent: Claude Code as a background
+session with the profile's model and MCP config, Pi as its background run, any other in a session
+of its own the person watches (`agent.start`); what that agent cannot do is the error, never a run
+on another. One send runs at a time per task, whichever panel or caller asks. The brief: what the person asks, the group it came from (title, time, bullets), how they
 want it done if said, and what was said, every line of the task up to 100,000 characters, under its
 times or, when the lines are not one stretch, under each stretch's; then the profile's platform and
 repository and the minutes' path. A to-do's session is asked to do or prepare it (draft the email,
@@ -225,8 +258,8 @@ gather the material) and to ask before sending anything, not to build software. 
 becomes `building`, and the UI shows its run from the agent's sessions: **Sent**, **Running**,
 **Needs you** or **Done**, with **Open session**.
 
-**Sending to a Holi.** Beside Send, a picker lists Claude and the vault's Holis, while the Holis
-plugin offers `holis.send` (`useHasCapability`); without it Send goes to Claude alone. A Holi takes
+**Sending to a Holi.** Beside Send, a picker lists the vault's agent and its Holis, while the Holis
+plugin offers `holis.send` (`useHasCapability`); without it Send goes to the agent alone. A Holi takes
 work as a document, so main writes how the person wants it done into the task and calls
 `holis.send` with the task's path; the Holi's own soul, rules, model and approval apply, and the
 task records the session that answers. A Holi this machine has not approved, or approved before it
@@ -238,8 +271,9 @@ a plugin cannot read another's flag, and the capability is the seam. The pick is
 **Corrections.** A caption's words open for editing at a click: Enter saves, Escape puts it back,
 and a corrected line is marked `edited` (`meeting.segment.edit`, at most 2000 characters). Main
 stores the words, quotes them on every task citing the line (a quote is still copied from the
-transcript by code) and writes the transcript file again. A line the scribe has already been sent
-reaches it as a correction in its next batch, under "Corrections from the person", as
+transcript by code) and writes the transcript file again. A line the scribe has already been sent,
+or that is in the batch on its way (which carries the old words), reaches it as a correction in its
+next batch, under "Corrections from the person", as
 `[i] now reads: …`; its prompt says these are authoritative. A line it has not been sent yet goes
 as corrected. **Replace** fixes a misheard word everywhere at once: in the review's transcript the
 search finds lines with the words in any case and marks them, and, opened, Replace corrects the first
@@ -263,14 +297,16 @@ a preview of the lines in range, what should be done, and Feature or To-do. It c
 its words can still be edited (`meeting.card`) and it can be dismissed.
 
 **The tab.** One header row: back to the list, the profile with a **…** menu (Edit profile, New
-profile, Speech key), the title (the recording meeting's own while it records), Microphone and
+profile, Speech service), the title (the recording meeting's own while it records), Microphone and
 Computer audio as one pair of icon toggles named in their tooltips, then, while a meeting records, a
-chip with a dot and what Hviske is doing ("Hviske listening") that opens the details (audio
-transcribed, waiting or failed, how far the captions run behind, Hviske's state and **Open Hviske's
-session**), a badge for each problem (no speech key, a refused key, failed uploads, Hviske
-unreachable), and an orange **Recording · tell everyone** pill that stays for as long as it records;
-on the right the level meter, the timer and Record or Stop. Under it an alert row, only while
-something is wrong: the speech key's fix, or Hviske not receiving the transcript.
+chip with a dot and how the topics are doing ("Topics listening") that opens the details, each part
+named for what it is so a problem says which part to fix (what records, the transcription, how far
+the captions run behind, the topics, what to do about topics that stopped or cannot run, and
+**Open Hviske's session**), a badge for each problem (transcription needs a key or its key was
+refused, chunks not transcribed, topics unreachable, no topics with this agent), and an orange
+**Recording · tell everyone** pill that stays for as long as it records; on the right the level
+meter, the timer and Record or Stop. Under it an alert row, only while something is wrong: setting
+up transcription, a source that is not recorded, or Hviske not receiving the transcript.
 
 The middle is the minutes as topic sections, stacked, newest at the bottom, following the newest
 while recording unless the person scrolled up. They start folded, so a meeting reads at a glance: a
@@ -288,7 +324,7 @@ topic and Merge with the previous show on hover, on focus and while it is open; 
 Hviske will rewrite it. Last comes the open topic, **Now (from m:ss)**, with the last three caption lines,
 Send and **Summarise now** (`meeting.summarise`). The rail on the right, 300px, is **Tasks**: only
 what was sent or made, with its run and Open session, and **Custom range** in its header; empty, it
-says "Send a topic to Claude to start". The captions start folded into a strip under the topics with
+says "Send a topic to <the agent> to start", named for the vault's agent. The captions start folded into a strip under the topics with
 the last two lines, quiet, and **Show transcript**, which opens the whole transcript as a column on
 the left (about two sevenths of the width, following the newest line, under topic headings); the
 choice is kept on this machine. A quote clicked on a task shows the transcript for that once. Under
@@ -306,11 +342,22 @@ Custom range, and the whole transcript under topic headings, searchable, with Re
 copied from its own header too. Every transcript view reads a speaker's run of lines under their name
 once, the time beside each line, as a transcript editor does, rather than a badge on every line. While the scribe's final pass runs the review says it is finishing the minutes.
 
-**Files.** A meeting writes `Meetings/<YYYY-MM-DD> <title>/transcript.local.md` and
-`minutes.local.md` into the vault (`.local.`, so they never sync); a profile's **Share minutes**
-writes `minutes.md` instead, and the meeting says which (`minutesPath`). State is kept in
-`userData/meetings/<id>/state.json`, with what a person changed that the scribe has not been sent
-yet.
+**Files.** A meeting is a folder, `<folder>/<YYYY-MM-DD> <title>.meeting/` (`Meetings` when none is
+chosen), holding `transcript.local.md` and `minutes.local.md` (`.local.`, so they never sync), and
+the tasks made from it; a profile's **Share minutes** writes `minutes.md` instead, and the meeting
+says which (`minutesPath`). State is kept in `userData/meetings/<id>/state.json`, with what a person
+changed that the scribe has not been sent yet.
+
+**In the vault's tree.** The `.meeting` suffix makes the folder one document (`meeting-claim.ts`, a
+folder claim whose entry is the transcript), named without it, that opens as the meeting in a tab of
+the Meetings surface: its transcript, topics and minutes, and Stop while it records. So a customer's
+or a project's meeting lives beside that customer's or project's documents, and is found the way
+they are. The tree's **New** menu has **New meeting**: it makes the folder where it was opened
+(`meeting.prepare`, with a placeholder transcript) and opens it as its setup, where Record starts
+the meeting there (`meeting.start` with `path`); nothing records until a person presses it. On
+another machine the transcript is not there, so the folder is an ordinary one with the shared
+minutes. A meeting recorded before folders had the suffix keeps its folder, and opens from the
+Meetings tab.
 
 **Renaming and deleting.** Each meeting in the list has a **…** menu, on hover or focus, and so does
 its review beside the title: **Rename** edits the title in place (`meeting.rename`; Enter saves,
@@ -324,7 +371,9 @@ to. A meeting that records or finishes cannot be deleted: stop it first.
 ## Profiles
 
 A profile tells the scribe what this kind of meeting is about, and is how a person tunes away
-irrelevant points and mis-transcriptions. Profiles live on this machine in
+irrelevant points and mis-transcriptions. None is needed: a meeting records with this machine's
+first profile, the Default unless another was made. **What do you build?** is context for the tasks
+sent and for the topics, not for transcription, and is optional. Profiles live on this machine in
 `userData/meeting-profiles.json`, not in the vault: a profile can hand sessions an MCP config, and
 anything in the vault can be rewritten by an agent. A meeting copies its profile at Start.
 
@@ -335,18 +384,18 @@ instructions, the speech model, in-room speaker numbers, share minutes, keep aud
 and the MCP config. Only the labels are a person's words; the fields keep their names, so a saved
 profile, and what the scribe is told from it, are unchanged.
 
-| Field                     | Effect                                                                    |
-| ------------------------- | ------------------------------------------------------------------------- |
-| platform, repository      | What features are built on; build runs are told to work in the repository |
-| focus, ignore             | What counts as a feature here, and what to drop                           |
-| glossary (term, heard as) | Terms go to speech recognition as vocabulary; mishearings to the scribe   |
-| instructions              | Extra standing instructions for the scribe                                |
-| language                  | `da`, `en` or `auto`                                                      |
-| speech model              | Accurate (`syv-transcribe`, default) or Fast (`syvai/hviske-v5.3`)        |
-| in-room speaker numbers   | One microphone in a room: the backend numbers speakers instead of Me/Them |
-| scribe model, build model | Claude model for each                                                     |
-| MCP config                | A JSON file passed to the scribe and build runs as `--mcp-config`         |
-| share minutes, keep audio | See Files above                                                           |
+| Field                     | Effect                                                                      |
+| ------------------------- | --------------------------------------------------------------------------- |
+| platform, repository      | What features are built on; build runs are told to work in the repository   |
+| focus, ignore             | What counts as a feature here, and what to drop                             |
+| glossary (term, heard as) | Terms go to speech recognition as vocabulary; mishearings to the scribe     |
+| instructions              | Extra standing instructions for the scribe                                  |
+| language                  | `da`, `en` or `auto`                                                        |
+| speech model              | syv.ai's Accurate (`syv-transcribe`, default) or Fast (`syvai/hviske-v5.3`) |
+| in-room speaker numbers   | One microphone in a room: the backend numbers speakers instead of Me/Them   |
+| scribe model, build model | Claude model for each (another agent runs on its own default)               |
+| MCP config                | A JSON file passed to the scribe and build runs as `--mcp-config`           |
+| share minutes, keep audio | See Files above                                                             |
 
 During a meeting, `meeting.tell` sends the scribe an instruction at once; the tab's **Ask Hviske**
 sends it as a change to the groups (above).

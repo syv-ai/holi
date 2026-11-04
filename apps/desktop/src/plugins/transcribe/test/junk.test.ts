@@ -72,6 +72,7 @@ describe('loops', () => {
         segments: [{ start: 0, end: 2, text: 'Hej med dig', compression_ratio: 0.8 }],
       })
     const segs = await transcribe(fetch, {
+      service: { url: null, model: null },
       wav: new Uint8Array(),
       apiKey: 'test',
       model: 'm',

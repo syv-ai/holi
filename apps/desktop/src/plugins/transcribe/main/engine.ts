@@ -42,6 +42,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
+import type { AgentProviderId } from '@holi/shared'
 import { randomBytes } from 'node:crypto'
 import {
   lstat,
@@ -65,18 +66,20 @@ import type {
   MeetingSummary,
   Segment,
   SendTarget,
+  SpeechService,
   Topic,
   TopicField,
 } from '../shared/meeting'
 import { tidyJoins } from '../shared/joins'
-import { speakerName } from '../shared/meeting'
 import { clock } from '../shared/scribe-prompt'
 import { keyRefused, transcribe, type Fetch } from './asr'
 import { buildBrief, cardSpec } from './build'
 import { applyPatch, requote, taskCard, type CardPatch, type TaskRequest } from './cards'
 import { renderMinutes } from './minutes'
-import { DEFAULT_ASR_MODEL, type Profiles } from './profiles'
+import { MEETING_SUFFIX, speakerName } from '../shared/meeting'
+import { DEFAULT_ASR_MODEL, DEFAULT_PROFILE, type Profiles } from './profiles'
 import { relatedWindows, type Related } from './related'
+import { isSyv, SYV_SERVICE } from './speech-service'
 import {
   createScribe,
   type AgentCalls,
@@ -113,6 +116,8 @@ const FILES_MS = 2000
 /** What a chunk that failed for want of a key said before keys were Holi's. */
 const LEGACY_NO_KEY = "SYV_API_KEY is not set in the vault's .env.local"
 const NO_KEY = 'no speech key is set'
+/** What a chunk the renderer gave up on says. */
+const LOST = 'never reached Holi'
 const BAD_KEY = 'the speech key was refused'
 
 /** Whether a chunk failed for the key and nothing else. */
@@ -163,9 +168,6 @@ interface Live {
   flushed: Array<() => void>
   /** Chunks waiting, untried, for a speech key that works. */
   parked: Set<number>
-  /** When the meeting last stopped waiting for the key: a final pass gets
-   *  its full time from then. */
-  unblockedAt: number
   /** Finished again after it ended (`rescue`): its scribe is gone and is
    *  not started again. */
   rescued: boolean
@@ -188,7 +190,7 @@ interface HoliCalls {
 interface SendOptions {
   /** How they want it done, in their words. */
   context?: string
-  /** Claude, unless a Holi is named. */
+  /** The vault's agent, unless a Holi is named. */
   target?: SendTarget
 }
 
@@ -198,16 +200,20 @@ export interface MeetingsDeps {
   remote: string
   /** The vault clone. */
   root: string
-  profiles: Pick<Profiles, 'get'>
+  profiles: Pick<Profiles, 'get' | 'list'>
   fetch: Fetch
   /** The speech key in use (`speech-key.ts`), or null. */
   apiKey(): Promise<string | null>
+  /** The speech service in use (`speech-service.ts`). */
+  service(): Promise<SpeechService>
   /** Write a vault file (`vault-write.ts`). */
   writeFile(rel: string, text: string): Promise<void>
   /** Remove vault files, then `folder` if nothing else is left in it. */
   removeFiles(rels: readonly string[], folder: string): Promise<void>
   emit(name: 'meeting' | 'meetings', payload: unknown): void
   agent: AgentCalls & TaskCalls & HoliCalls
+  /** The vault's chosen agent (Settings, General, Agents), read fresh. */
+  provider(): Promise<AgentProviderId>
   log(level: 'debug' | 'info' | 'warn' | 'error', message: string): void
   now?: () => number
   /** Voice detection before upload (`vad.ts`); absent, chunks go up whole. */
@@ -217,7 +223,16 @@ export interface MeetingsDeps {
 export interface Meetings {
   /** Read this vault's meetings from disk and pick up any left unfinished. */
   load(): Promise<void>
-  start(args: { title?: string; profileId: string }): Promise<{ meetingId: string }>
+  /** A meeting starts recording: with a profile, else this machine's
+   *  first; in `folder` (a vault folder, '' the root), else `Meetings`, or
+   *  at `path`, a meeting folder `prepare` made. */
+  start(args: { title?: string; profileId?: string; folder?: string; path?: string }): Promise<{
+    meetingId: string
+  }>
+  /** The New menu's meeting: its folder in `folder`, made now with a
+   *  placeholder transcript so the tree opens it as the meeting, where Record
+   *  starts it (`start` with `path`). Nothing records until then. */
+  prepare(args: { folder: string; title: string }): Promise<{ path: string }>
   chunk(args: {
     meetingId: string
     n: number
@@ -225,7 +240,13 @@ export interface Meetings {
     duration: number
     audio: Uint8Array
   }): Promise<void>
+  /** The renderer gave up on chunk `n`: it never arrives, so the
+   *  transcript stitches past it rather than wait for it until the stop. */
+  lose(args: { meetingId: string; n: number; start: number; duration: number }): Promise<void>
   stop(meetingId: string): Promise<void>
+  /** Resolves once no meeting records, or after `ms`: what a recording
+   *  still has to hand over arrives before the engine goes. */
+  drain(ms: number): Promise<void>
   get(meetingId: string): Promise<MeetingState>
   list(): MeetingSummary[]
   /** A person renames a meeting: its title, not its folder. */
@@ -283,6 +304,8 @@ export interface Meetings {
 }
 
 const pad = (n: number) => String(n).padStart(2, '0')
+/** Where a meeting goes when no folder is chosen. */
+const DEFAULT_PARENT = 'Meetings'
 /** The longest title a person may give a meeting. */
 const MAX_TITLE = 120
 
@@ -383,6 +406,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     agent: deps.agent,
     log: deps.log,
     now,
+    provider: deps.provider,
     host: {
       get: (id) => {
         const l = live.get(id)
@@ -410,6 +434,9 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       (m.phase === 'recording' || m.phase === 'finishing')
     )
   }
+
+  /** Whoever `drain` has waiting for a meeting to stop recording. */
+  const stopped: Array<() => void> = []
 
   /** Meetings a person deleted: nothing of them is saved or written again. */
   const deleted = new Set<string>()
@@ -530,7 +557,6 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       inflight: new Set(),
       flushed: [],
       parked: new Set(),
-      unblockedAt: 0,
       rescued: false,
     }
   }
@@ -551,18 +577,52 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     }
   }
 
-  /** A meeting in memory, read from disk when it is an older one. */
-  async function open(id: string): Promise<Live> {
-    const known = live.get(id)
-    if (known !== undefined) return known
-    if (!/^[0-9a-f]{12}$/.test(id) || !summaries.has(id)) {
-      throw new CapabilityError('NOT_FOUND', `no meeting ${id}`)
+  /** A meeting's default title: the time it started. */
+  const defaultTitle = (at: number): string => {
+    const d = new Date(at)
+    return `Meeting ${pad(d.getHours())}.${pad(d.getMinutes())}`
+  }
+
+  /** A meeting folder for `name` in `parent` ('' the root) that no meeting
+   *  and no file has: `<parent>/<date> <name>.meeting`, numbered when taken.
+   *  The suffix makes the vault's tree open it as one document. */
+  async function freeFolder(parent: string, name: string, at: number): Promise<string> {
+    const d = new Date(at)
+    const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    const base = `${parent === '' ? '' : `${parent}/`}${day} ${folderTitle(name)}`
+    let folder = `${base}${MEETING_SUFFIX}`
+    const taken = new Set([...summaries.values()].map((s) => s.folder))
+    for (let k = 2; taken.has(folder) || (await exists(join(deps.root, folder))); k++) {
+      folder = `${base} (${k})${MEETING_SUFFIX}`
     }
-    const stored = await readStored(id)
-    if (stored === null) throw new CapabilityError('NOT_FOUND', `no meeting ${id}`)
-    const l = liveOf(stored)
-    live.set(id, l)
-    return l
+    return folder
+  }
+
+  /** Each older meeting's read from disk while it is under way: callers
+   *  share it, so two cannot each load a copy and the later one replace an
+   *  edit already made to the first. */
+  const loading = new Map<string, Promise<Live>>()
+
+  /** A meeting in memory, read from disk when it is an older one. */
+  function open(id: string): Promise<Live> {
+    const known = live.get(id)
+    if (known !== undefined) return Promise.resolve(known)
+    const pending = loading.get(id)
+    if (pending !== undefined) return pending
+    if (!/^[0-9a-f]{12}$/.test(id) || !summaries.has(id)) {
+      return Promise.reject(new CapabilityError('NOT_FOUND', `no meeting ${id}`))
+    }
+    const load = (async () => {
+      const stored = await readStored(id)
+      if (stored === null || deleted.has(id)) {
+        throw new CapabilityError('NOT_FOUND', `no meeting ${id}`)
+      }
+      const l = live.get(id) ?? liveOf(stored)
+      live.set(id, l)
+      return l
+    })().finally(() => loading.delete(id))
+    loading.set(id, load)
+    return load
   }
 
   // --- uploads ---------------------------------------------------------------
@@ -612,10 +672,14 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     if (l === undefined || chunk === undefined || chunk.state === 'done') return
     const { meeting, profile } = l.stored
     const epoch = keyEpoch
-    const apiKey = await deps.apiKey().catch(() => null)
+    const [apiKey, service] = await Promise.all([
+      deps.apiKey().catch(() => null),
+      deps.service().catch(() => SYV_SERVICE),
+    ])
     if (disposed) return
-    const missing = apiKey === null || apiKey === ''
-    if (missing || apiKey === badKey) {
+    // syv.ai's service needs a key; another may take requests without.
+    const missing = isSyv(service) && (apiKey === null || apiKey === '')
+    if (missing || (apiKey !== null && apiKey === badKey)) {
       if (epoch !== keyEpoch) enqueue(id, n)
       else park(l, chunk, missing ? 'no-key' : 'bad-key')
       return
@@ -638,9 +702,12 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     try {
       const ask = (wav: Uint8Array) =>
         transcribe(deps.fetch, {
+          service,
           wav,
           apiKey,
-          model: profile.asrModel ?? DEFAULT_ASR_MODEL,
+          // A profile's speech model is one of syv.ai's: another service
+          // is asked for the model it was set up with.
+          model: isSyv(service) ? (profile.asrModel ?? DEFAULT_ASR_MODEL) : (service.model ?? ''),
           language: profile.language,
           diarize: profile.roomDiarize === true,
           vocab: profile.glossary.map((g) => g.term),
@@ -724,10 +791,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       if (l.parked.size === 0 && meeting.blocked === undefined) continue
       const parked = [...l.parked].sort((a, b) => a - b)
       l.parked.clear()
-      if (meeting.blocked !== undefined) {
-        delete meeting.blocked
-        l.unblockedAt = now()
-      }
+      delete meeting.blocked
       for (const n of parked) {
         const c = meeting.chunks.find((x) => x.n === n)
         if (c?.state !== 'queued') continue
@@ -760,14 +824,14 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
 
   // --- the end of a meeting --------------------------------------------------
 
-  async function finish(id: string, startedFinishingAt: number): Promise<void> {
+  async function finish(id: string): Promise<void> {
     const l = live.get(id)
     if (l === undefined) return
     const { meeting } = l.stored
     // What failed is tried once more, from the start of its backoff; a
     // rescued meeting tried what it could when it was rescued.
     for (const c of meeting.chunks) {
-      if (c.state === 'failed' && !l.rescued) {
+      if (c.state === 'failed' && !l.rescued && c.error !== LOST) {
         c.state = 'queued'
         c.tries = 0
         enqueue(id, c.n)
@@ -782,9 +846,9 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     restitch(l, true)
     changed(id)
     await writeFiles(l)
-    // Time spent waiting for a key is not the scribe's: its final pass gets
-    // the whole cap from when the key came.
-    const deadline = Math.max(startedFinishingAt, l.unblockedAt) + FINISH_MS
+    // The final pass gets its whole time from here, once every upload is
+    // done: slow transcription, or a wait for the key, is not the scribe's.
+    const deadline = now() + FINISH_MS
     if (!l.rescued) await scribe.finish(id, deadline)
     if (disposed) return
     // The last group closes with the meeting: after the final pass, which
@@ -848,7 +912,8 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
 
   /** The card's task, saying what the card says now: made if it is not yet,
    *  else its text written again from the card a person may have edited
-   *  since. A task that cannot be written keeps what it said. */
+   *  since. A task that cannot be written is not sent: a Holi reads the file
+   *  as its instructions, and would carry out what it said before. */
   async function sendableTask(l: Live, card: Card, context?: string): Promise<string> {
     if (card.taskPath === undefined) return ensureTask(l, card, context)
     try {
@@ -858,6 +923,10 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       })
     } catch (err) {
       deps.log('warn', `meeting: could not update the task ${card.taskPath}: ${String(err)}`)
+      throw new CapabilityError(
+        'UNAVAILABLE',
+        `the task’s file could not be updated, so nothing was sent: ${err instanceof Error ? err.message : String(err)}`,
+      )
     }
     return card.taskPath
   }
@@ -883,19 +952,95 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
   }
 
   /** A person's correction of the line at `at`: quoted where it is cited,
-   *  and told to the scribe if it has read the line already (one it has not
-   *  reaches it as it now reads). */
+   *  and told to the scribe if it has read the line already or it is in the
+   *  batch on its way, which carries the old words (one it has not reaches
+   *  it as it now reads). */
   function correct(l: Live, at: number, text: string): Segment {
     const { meeting } = l.stored
     const seg = meeting.segments[at]!
     const edited: Segment = { ...seg, text, edited: true }
     meeting.segments[at] = edited
     requote(meeting, seg.i, now())
-    if (scribeListens(l) && seg.i <= meeting.scribeCursor) {
+    if (scribeListens(l) && seg.i <= scribe.through(meeting.id)) {
       notesOf(l).corrections[seg.i] = text
       scribe.feed(meeting.id)
     }
     return edited
+  }
+
+  /**
+   * A sent task, run by the vault's chosen agent: Claude Code as a background
+   * session with the profile's model and MCP config (Claude Code's alone),
+   * Pi as its background run, and any other in a session of its own that
+   * the person watches. Whatever the agent cannot do it says, as the error;
+   * it never falls back to another agent.
+   */
+  async function runOnAgent(
+    name: string,
+    prompt: string,
+    profile: MeetingProfile,
+  ): Promise<string> {
+    const provider = await deps.provider()
+    const res =
+      provider === 'claude'
+        ? await deps.agent.launch({
+            name,
+            prompt,
+            ...(profile.buildModel === undefined ? {} : { model: profile.buildModel }),
+            ...(profile.mcpConfig === undefined ? {} : { mcpConfig: profile.mcpConfig }),
+          })
+        : provider === 'pi'
+          ? await deps.agent.launch({ name, prompt, provider })
+          : await deps.agent.start({ name, prompt, provider })
+    if (!res.ok) throw new CapabilityError('UNAVAILABLE', res.message)
+    return res.sessionId
+  }
+
+  /** Cards being sent, by meeting and card: one send at a time each, from
+   *  whichever panel or caller, so two cannot both make a task or start a
+   *  run. */
+  const sends = new Set<string>()
+
+  async function send(
+    meetingId: string,
+    cardId: string,
+    opts: SendOptions,
+  ): Promise<{ sessionId: string }> {
+    const l = await open(meetingId)
+    const { meeting, profile } = l.stored
+    const at = cardOf(l, cardId)
+    const before = meeting.cards[at]!
+    if (before.status === 'building' && before.buildSessionId !== undefined) {
+      throw new CapabilityError('CONFLICT', 'this card was sent already')
+    }
+    const { context } = opts
+    const target: SendTarget = opts.target ?? { kind: 'agent' }
+    const taskPath = await sendableTask(l, before, context)
+    const card: Card = { ...meeting.cards[at]!, taskPath }
+    meeting.cards[at] = card
+    changed(meetingId)
+    let sessionId: string
+    if (target.kind === 'holi') {
+      // The Holi reads its work from the document it is sent: the task,
+      // which now says how the person wants it done.
+      ;({ sessionId } = await deps.agent.sendToHoli({ holi: target.id, path: taskPath }))
+    } else {
+      sessionId = await runOnAgent(
+        `${card.kind === 'action' ? 'Action' : 'Build'} · ${card.title}`,
+        buildBrief(card, { ...specOf(l, card, context), taskPath, profile }),
+        profile,
+      )
+    }
+    const building: Card = {
+      ...meeting.cards[at]!,
+      status: 'building',
+      buildSessionId: sessionId,
+      target,
+      updatedAt: now(),
+    }
+    meeting.cards[at] = building
+    changed(meetingId)
+    return { sessionId }
   }
 
   return {
@@ -920,23 +1065,32 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       emitList()
     },
 
-    async start({ title, profileId }) {
-      const profile = await deps.profiles.get(profileId)
+    async prepare({ folder: parent, title }) {
+      const name = title.replace(/\s+/g, ' ').trim().slice(0, MAX_TITLE)
+      const path = await freeFolder(parent, name === '' ? defaultTitle(now()) : name, now())
+      await deps.writeFile(
+        `${path}/transcript.local.md`,
+        `# ${name === '' ? 'Meeting' : name}\n\nNot recorded yet: open this meeting and press Record.\n`,
+      )
+      return { path }
+    },
+
+    async start({ title, profileId, folder: parent = DEFAULT_PARENT, path }) {
+      const profile =
+        profileId === undefined
+          ? ((await deps.profiles.list())[0] ?? DEFAULT_PROFILE)
+          : await deps.profiles.get(profileId)
       const at = now()
-      const d = new Date(at)
-      const name = title?.trim() || `Meeting ${pad(d.getHours())}.${pad(d.getMinutes())}`
-      const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-      const base = `Meetings/${day} ${folderTitle(name)}`
-      let folder = base
-      const taken = new Set([...summaries.values()].map((s) => s.folder))
-      for (let k = 2; taken.has(folder) || (await exists(join(deps.root, folder))); k++) {
-        folder = `${base} (${k})`
+      const name = title?.trim() || defaultTitle(at)
+      if (path !== undefined && [...summaries.values()].some((s) => s.folder === path)) {
+        throw new CapabilityError('CONFLICT', 'that folder has a meeting already')
       }
+      const folder = path ?? (await freeFolder(parent, name, at))
       const id = randomBytes(6).toString('hex')
       const meeting: MeetingState = {
         id,
         title: name,
-        profileId,
+        profileId: profile.id,
         startedAt: at,
         phase: 'recording',
         segments: [],
@@ -981,17 +1135,48 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       enqueue(meetingId, n)
     },
 
+    async lose({ meetingId, n, start, duration }) {
+      const l = await open(meetingId)
+      const { meeting } = l.stored
+      // It got through after all, or the meeting is long over.
+      if (meeting.chunks.some((c) => c.n === n)) return
+      if (meeting.phase !== 'recording' && meeting.phase !== 'finishing') return
+      meeting.chunks.push({ n, start, duration, state: 'failed', tries: 0, error: LOST })
+      meeting.chunks.sort((a, b) => a.n - b.n)
+      l.skip.add(n)
+      restitch(l, false)
+      deps.log('warn', `meeting "${meeting.title}": chunk ${n} never reached Holi`)
+      changed(meetingId)
+      await persist(l)
+      if (!l.rescued) scribe.feed(meetingId)
+      settled(meetingId)
+    },
+
     async stop(meetingId) {
       const l = await open(meetingId)
       const { meeting } = l.stored
       if (meeting.phase !== 'recording') return
       meeting.phase = 'finishing'
       meeting.endedAt = now()
+      for (const resolve of stopped.splice(0)) resolve()
       changed(meetingId)
       await persist(l)
-      void finish(meetingId, meeting.endedAt).catch((err: unknown) =>
+      void finish(meetingId).catch((err: unknown) =>
         deps.log('error', `meeting "${meeting.title}": could not finish: ${String(err)}`),
       )
+    },
+
+    async drain(ms) {
+      const recording = () => [...live.values()].some((l) => l.stored.meeting.phase === 'recording')
+      if (!recording()) return
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const late = new Promise<void>((resolve) => (timer = setTimeout(resolve, ms)))
+      const quiet = (async () => {
+        while (recording()) await new Promise<void>((resolve) => stopped.push(resolve))
+      })()
+      await Promise.race([late, quiet])
+      clearTimeout(timer)
+      for (const resolve of stopped.splice(0)) resolve()
     },
 
     get: async (meetingId) => (await open(meetingId)).stored.meeting,
@@ -1051,44 +1236,14 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     },
 
     async build(meetingId, cardId, opts = {}) {
-      const l = await open(meetingId)
-      const { meeting, profile } = l.stored
-      const at = cardOf(l, cardId)
-      const before = meeting.cards[at]!
-      if (before.status === 'building' && before.buildSessionId !== undefined) {
-        throw new CapabilityError('CONFLICT', 'this card was sent already')
+      const key = `${meetingId}/${cardId}`
+      if (sends.has(key)) throw new CapabilityError('CONFLICT', 'this card is being sent')
+      sends.add(key)
+      try {
+        return await send(meetingId, cardId, opts)
+      } finally {
+        sends.delete(key)
       }
-      const { context } = opts
-      const target: SendTarget = opts.target ?? { kind: 'claude' }
-      const taskPath = await sendableTask(l, before, context)
-      const card: Card = { ...meeting.cards[at]!, taskPath }
-      meeting.cards[at] = card
-      changed(meetingId)
-      let sessionId: string
-      if (target.kind === 'holi') {
-        // The Holi reads its work from the document it is sent: the task,
-        // which now says how the person wants it done.
-        ;({ sessionId } = await deps.agent.sendToHoli({ holi: target.id, path: taskPath }))
-      } else {
-        const res = await deps.agent.launch({
-          name: `${card.kind === 'action' ? 'Action' : 'Build'} · ${card.title}`,
-          prompt: buildBrief(card, { ...specOf(l, card, context), taskPath, profile }),
-          ...(profile.buildModel === undefined ? {} : { model: profile.buildModel }),
-          ...(profile.mcpConfig === undefined ? {} : { mcpConfig: profile.mcpConfig }),
-        })
-        if (!res.ok) throw new CapabilityError('UNAVAILABLE', res.message)
-        sessionId = res.sessionId
-      }
-      const building: Card = {
-        ...meeting.cards[at]!,
-        status: 'building',
-        buildSessionId: sessionId,
-        target,
-        updatedAt: now(),
-      }
-      meeting.cards[at] = building
-      changed(meetingId)
-      return { sessionId }
     },
 
     async editSegment(meetingId, i, text) {
@@ -1177,8 +1332,11 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     async createTask(meetingId, req) {
       const l = await open(meetingId)
       const { meeting } = l.stored
+      if (req.cardId !== undefined && sends.has(`${meetingId}/${req.cardId}`)) {
+        throw new CapabilityError('CONFLICT', 'this task is being sent')
+      }
       const card = taskCard(meeting, req, now())
-      if (scribeListens(l)) {
+      if (scribeListens(l) && req.cardId === undefined) {
         const notes = notesOf(l)
         notes.tasks = [
           ...(notes.tasks ?? []),
@@ -1320,7 +1478,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     meeting.phase = 'finishing'
     deps.log('info', `meeting "${meeting.title}": transcribing ${again.length} chunks again`)
     changed(id)
-    void finish(id, now()).catch((err: unknown) =>
+    void finish(id).catch((err: unknown) =>
       deps.log('error', `meeting "${meeting.title}": could not finish: ${String(err)}`),
     )
   }
@@ -1357,7 +1515,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       meeting.endedAt = meeting.endedAt ?? now()
     }
     changed(meeting.id)
-    void finish(meeting.id, now()).catch((err: unknown) =>
+    void finish(meeting.id).catch((err: unknown) =>
       deps.log('error', `meeting "${meeting.title}": could not finish: ${String(err)}`),
     )
   }

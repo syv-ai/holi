@@ -14,7 +14,8 @@ import {
   type CapabilityContext,
 } from '../../../main/capabilities/registry'
 import type { MeetingState } from '../shared/meeting'
-import { ASR_URL, MODELS_URL, type Fetch } from '../main/asr'
+import type { Fetch } from '../main/asr'
+import { endpointOf, SYV_MODELS_URL as MODELS_URL, SYV_SERVICE } from '../main/speech-service'
 import { meetingCapabilities, MEETING_NAMESPACES } from '../main/capabilities'
 import type { Meetings } from '../main/engine'
 import { createSpeechKey, createSpeechKeyStore } from '../main/speech-key'
@@ -43,7 +44,8 @@ const service: Fetch = async (url, init) => {
     return new Response('{"error":{"message":"Invalid API key"}}', { status: 401 })
   }
   if (url === MODELS_URL) return Response.json({ object: 'list', data: [] })
-  if (url === ASR_URL) return Response.json({ segments: [{ start: 0, end: 2, text: 'Hej' }] })
+  if (url === endpointOf(SYV_SERVICE))
+    return Response.json({ segments: [{ start: 0, end: 2, text: 'Hej' }] })
   return new Response('', { status: 404 })
 }
 
@@ -54,6 +56,7 @@ async function rig(vaultEnv: Record<string, string> = {}) {
   const speechKey = createSpeechKey({
     store: createSpeechKeyStore(join(userData, 'speech-key.enc'), storage),
     vaultEnv: async () => vaultEnv,
+    service: async () => SYV_SERVICE,
     fetch,
     changed: () => meetings?.wake(),
   })
@@ -66,6 +69,8 @@ async function rig(vaultEnv: Record<string, string> = {}) {
       meetings: engine.meetings,
       profiles: { list: async () => [engine.profile] } as never,
       speechKey,
+      services: { get: async () => ({ url: null, model: null }), set: async (s) => s },
+      serviceChanged: () => {},
       remote: 'syv/vault',
     }),
   )
@@ -118,23 +123,48 @@ describe('the key verbs', () => {
     ]) {
       expect(await refusal(r.ui('meeting.key.set', { key }))).toBe('BAD_REQUEST')
     }
-    expect(await r.ui('meeting.key.status')).toEqual({ set: false, source: null })
+    expect(await r.ui('meeting.key.status')).toEqual({
+      set: false,
+      source: null,
+      service: { url: null, model: null },
+      ready: false,
+    })
 
     // A key of another shape is the service's to judge, not Holi's.
     await r.ui('meeting.key.set', { key: 'sk-some-other-shape-0123' })
     await r.ui('meeting.key.set', { key: `  ${GOOD}\n` })
-    expect(await r.ui('meeting.key.status')).toEqual({ set: true, source: 'app' })
+    expect(await r.ui('meeting.key.status')).toEqual({
+      set: true,
+      source: 'app',
+      service: { url: null, model: null },
+      ready: true,
+    })
     expect(await r.ui('meeting.key.test')).toEqual({ result: 'ok' })
   })
 
   it('say where the key comes from, the vault’s env after the app’s', async () => {
     const r = await rig({ SYV_API_KEY: REVOKED })
-    expect(await r.ui('meeting.key.status')).toEqual({ set: true, source: 'vault' })
+    expect(await r.ui('meeting.key.status')).toEqual({
+      set: true,
+      source: 'vault',
+      service: { url: null, model: null },
+      ready: true,
+    })
     expect(await r.ui('meeting.key.test')).toEqual({ result: 'invalid' })
     await r.ui('meeting.key.set', { key: GOOD })
-    expect(await r.ui('meeting.key.status')).toEqual({ set: true, source: 'app' })
+    expect(await r.ui('meeting.key.status')).toEqual({
+      set: true,
+      source: 'app',
+      service: { url: null, model: null },
+      ready: true,
+    })
     await r.ui('meeting.key.clear')
-    expect(await r.ui('meeting.key.status')).toEqual({ set: true, source: 'vault' })
+    expect(await r.ui('meeting.key.status')).toEqual({
+      set: true,
+      source: 'vault',
+      service: { url: null, model: null },
+      ready: true,
+    })
   })
 })
 

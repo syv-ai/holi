@@ -2,7 +2,7 @@
  * A task open for editing, in a panel from the right, wide enough for its
  * fields: every word on it is editable, every line it carries finds its line
  * in the transcript, and one not sent yet can be sent to an agent with a note
- * on how the person wants it done: Send to Claude, or to a Holi. The panel
+ * on how the person wants it done: Send to the vault's agent, or to a Holi. The panel
  * leaves the meeting usable beside it: a click on the minutes or the
  * transcript does not close it.
  */
@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import type { Card, MeetingState, Quote, SendTarget } from '../shared/meeting'
+import { useAgentName } from './agent-name'
 import { CardFields, draftOf, type CardDraft } from './card-fields'
 import { clock } from './format'
 import { meetingCap, type CardPatch } from './meeting-cap'
@@ -92,6 +93,7 @@ function TaskEditor({
   onClose: () => void
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
+  const agent = useAgentName()
   const put = useSetAtom(putCardAtom)
   const highlight = useSetAtom(highlightSegmentAtom)
   const show = useSetAtom(showAgentSessionAtom)
@@ -110,7 +112,7 @@ function TaskEditor({
   const sentTo =
     card.target?.kind === 'holi'
       ? (holis.find((h) => h.id === (card.target as { id: string }).id)?.name ?? card.target.id)
-      : 'Claude'
+      : agent
 
   const act = async (what: string, work: (remote: string) => Promise<void>): Promise<boolean> => {
     if (remote === null) return false

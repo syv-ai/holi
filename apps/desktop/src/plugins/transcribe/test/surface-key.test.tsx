@@ -1,8 +1,9 @@
 /**
- * The speech key in the Meetings tab: the notice without a key, Save sending
- * the key to main through a password field, the fix beside a meeting that
- * waits on its key, and the header's control, which shows where the key
- * comes from and never the key.
+ * The speech service in the Meetings tab: the notice while meetings cannot
+ * be transcribed, Record opening the setup instead of recording, Save sending
+ * the key to main through a password field, another service set by its
+ * address and model, the fix beside a meeting that waits on its key, and the
+ * header's control, which shows where the key comes from and never the key.
  *
  * Each test renders the whole tab, so each has 15 s, as `file-view.test.tsx`
  * does: a loaded machine is slow, not wrong.
@@ -23,6 +24,8 @@ import {
 } from '../renderer/state'
 import { meeting, profile } from './meeting-fixture'
 
+const SYV = { url: null, model: null }
+
 const run = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/trpc', () => ({
   trpc: { cap: { run: { mutate: (input: unknown) => run(input) } } },
@@ -38,20 +41,25 @@ const calls = (name: string): unknown[] =>
     .map((c) => (c.paramsJson === undefined ? undefined : JSON.parse(c.paramsJson)))
 
 /** Main's answer to `meeting.key.status`, as the test moves it along. */
-let status: SpeechKeyStatus = { set: false, source: null }
+let status: SpeechKeyStatus = { set: false, source: null, service: SYV, ready: false }
 
 beforeEach(() => {
-  status = { set: false, source: null }
+  status = { set: false, source: null, service: SYV, ready: false }
   run.mockReset()
-  run.mockImplementation(async ({ name }: { name: string }) => {
+  run.mockImplementation(async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
     switch (name) {
       case 'meeting.key.status':
         return status
+      case 'meeting.service.set': {
+        const service = JSON.parse(paramsJson ?? '{}') as SpeechKeyStatus['service']
+        status = { ...status, service, ready: status.set || service.url !== null }
+        return status
+      }
       case 'meeting.key.set':
-        status = { set: true, source: 'app' }
+        status = { set: true, source: 'app', service: SYV, ready: true }
         return { ok: true }
       case 'meeting.key.clear':
-        status = { set: false, source: null }
+        status = { set: false, source: null, service: SYV, ready: false }
         return { ok: true }
       case 'meeting.get':
         return meeting
@@ -80,43 +88,66 @@ function show(opts: { key: SpeechKeyStatus; blocked?: 'no-key' | 'bad-key' }) {
   return store
 }
 
-test('without a key, a notice above Record takes one in a password field', async () => {
-  show({ key: { set: false, source: null } })
-  const notice = screen.getByRole('alert', { name: 'Speech key' })
-  expect(within(notice).getByText('Add your syv.ai speech key to transcribe')).toBeInTheDocument()
-  expect(
-    within(notice).getByText('Stored encrypted on this Mac, never in the vault or git.'),
-  ).toBeInTheDocument()
-  // Record stays possible.
-  expect(screen.getByRole('button', { name: 'Record' })).toBeEnabled()
+test('without a key, Record opens the speech service, where the key is saved', async () => {
+  show({ key: { set: false, source: null, service: SYV, ready: false } })
+  const notice = screen.getByRole('alert', { name: 'Speech service' })
+  expect(within(notice).getByText('Set up transcription before you record')).toBeInTheDocument()
 
-  const field = within(notice).getByLabelText('syv.ai speech key')
+  // Record sets up first: nothing starts recording without transcription.
+  await userEvent.click(screen.getByRole('button', { name: 'Record' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Speech service' })
+  expect(calls('meeting.start')).toEqual([])
+  expect(
+    within(dialog).getByText('Stored encrypted on this Mac, never in the vault or git.'),
+  ).toBeInTheDocument()
+  const field = within(dialog).getByLabelText('syv.ai speech key')
   expect(field).toHaveAttribute('type', 'password')
   await userEvent.click(field)
   await userEvent.paste(KEY)
-  await userEvent.click(within(notice).getByRole('button', { name: 'Save' }))
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
 
   await waitFor(() => expect(calls('meeting.key.set')).toEqual([{ key: KEY }]))
-  await waitFor(() => expect(screen.queryByRole('alert', { name: 'Speech key' })).toBeNull())
+  await waitFor(() => expect(screen.queryByRole('alert', { name: 'Speech service' })).toBeNull())
+}, 15_000)
+
+test('another speech service is set by its address and model, and needs no key', async () => {
+  show({ key: { set: false, source: null, service: SYV, ready: false } })
+  await userEvent.click(screen.getByRole('button', { name: 'Set up…' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Speech service' })
+  await userEvent.click(within(dialog).getByRole('radio', { name: 'Another service' }))
+  await userEvent.type(within(dialog).getByLabelText('Address'), 'http://localhost:8000/v1')
+  await userEvent.type(within(dialog).getByLabelText('Model'), 'whisper-large-v3')
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Save service' }))
+  await waitFor(() =>
+    expect(calls('meeting.service.set')).toEqual([
+      { url: 'http://localhost:8000/v1', model: 'whisper-large-v3' },
+    ]),
+  )
+  expect(await within(dialog).findByText('Service saved.')).toBeInTheDocument()
+  expect(
+    within(dialog).getByText('No key is set: the service is asked without one.'),
+  ).toBeInTheDocument()
+  expect(within(dialog).getByLabelText('API key')).toHaveAttribute('type', 'password')
+  await waitFor(() => expect(screen.queryByRole('alert', { name: 'Speech service' })).toBeNull())
 }, 15_000)
 
 test('with a key, there is no notice', () => {
-  show({ key: { set: true, source: 'vault' } })
-  expect(screen.queryByRole('alert', { name: 'Speech key' })).toBeNull()
+  show({ key: { set: true, source: 'vault', service: SYV, ready: true } })
+  expect(screen.queryByRole('alert', { name: 'Speech service' })).toBeNull()
 }, 15_000)
 
 test('a meeting waiting on a refused key says so, with the fix beside it, once', async () => {
-  show({ key: { set: true, source: 'app' }, blocked: 'bad-key' })
-  expect(screen.getByLabelText('Meeting health')).toHaveTextContent('Speech key refused')
+  show({ key: { set: true, source: 'app', service: SYV, ready: true }, blocked: 'bad-key' })
+  expect(screen.getByLabelText('Meeting health')).toHaveTextContent('Transcription key refused')
   const fixes = screen.getAllByRole('alert', { name: 'Speech key' })
   expect(fixes).toHaveLength(1)
-  expect(within(fixes[0]!).getByText('syv.ai refused the speech key')).toBeInTheDocument()
+  expect(within(fixes[0]!).getByText('The speech service refused the key')).toBeInTheDocument()
   expect(within(fixes[0]!).getByLabelText('syv.ai speech key')).toHaveAttribute('type', 'password')
 }, 15_000)
 
 test('a meeting waiting for a key shows its own fix instead of the notice', () => {
-  show({ key: { set: false, source: null }, blocked: 'no-key' })
-  expect(screen.getByLabelText('Meeting health')).toHaveTextContent('No speech key')
+  show({ key: { set: false, source: null, service: SYV, ready: false }, blocked: 'no-key' })
+  expect(screen.getByLabelText('Meeting health')).toHaveTextContent('Transcription needs a key')
   const fixes = screen.getAllByRole('alert', { name: 'Speech key' })
   expect(fixes).toHaveLength(1)
   expect(
@@ -125,9 +156,9 @@ test('a meeting waiting for a key shows its own fix instead of the notice', () =
 }, 15_000)
 
 test('the header’s control says where the key comes from, and removes this Mac’s', async () => {
-  show({ key: { set: true, source: 'app' } })
-  await userEvent.click(screen.getByRole('button', { name: 'Profiles and speech key' }))
-  await userEvent.click(await screen.findByRole('menuitem', { name: 'Speech key…' }))
+  show({ key: { set: true, source: 'app', service: SYV, ready: true } })
+  await userEvent.click(screen.getByRole('button', { name: 'Profiles and speech service' }))
+  await userEvent.click(await screen.findByRole('menuitem', { name: 'Speech service…' }))
   const dialog = await screen.findByRole('dialog')
   expect(within(dialog).getByText('A key is set on this Mac.')).toBeInTheDocument()
   expect(dialog.textContent).not.toContain('hv_')

@@ -1,6 +1,6 @@
 /**
  * The vault's Holis a card can be sent to, while the Holis plugin offers
- * `holis.send`; none otherwise, and Send goes to Claude alone. Asked once per
+ * `holis.send`; none otherwise, and Send goes to the vault's agent alone. Asked once per
  * view.
  */
 import type { PickableHoli } from '@holi/shared'

@@ -10,14 +10,13 @@
  * Each test renders the whole tab, so each has 15 s, as `file-view.test.tsx`
  * does: a loaded machine is slow, not wrong.
  */
-import { act, render, screen, waitFor, within } from '@/test/render'
+import { act, cleanup, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore, type PrimitiveAtom } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { activeRemoteAtom, agentSessionRowsAtom, type AgentSessionRow } from '@/plugin-api'
 import type { Card, MeetingState } from '../shared/meeting'
 import { MeetingsSurface } from '../renderer/meetings-surface'
-import { SEND_TO_CLAUDE } from '../renderer/send-button'
 import {
   meetingStatesAtom,
   profilesAtom,
@@ -25,6 +24,9 @@ import {
   transcribeEvents,
 } from '../renderer/state'
 import { meeting, profile } from './meeting-fixture'
+
+/** The send button's words while main has not named the vault's agent. */
+const SEND_TO_AGENT = 'Send to the agent'
 
 const run = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/trpc', () => ({
@@ -193,7 +195,7 @@ test('a meeting shows its topics as the minutes, its last lines in a strip, and 
 test('with no tasks the rail says how to start one', async () => {
   show([], { ...meeting, cards: [] })
   const rail = screen.getByRole('region', { name: 'Tasks' })
-  expect(within(rail).getByText('Send a topic to Claude to start.')).toBeInTheDocument()
+  expect(within(rail).getByText('Send a topic to the agent to start.')).toBeInTheDocument()
   expect(within(rail).getByRole('button', { name: 'Custom range' })).toBeEnabled()
 }, 15_000)
 
@@ -204,10 +206,10 @@ test('before any topic, the minutes say Hviske groups the meeting as it goes', a
   ).toBeInTheDocument()
 }, 15_000)
 
-test('the header is one row: Hviske’s status and the orange recording reminder, nothing to copy', async () => {
+test('the header is one row: the topics’ status and the orange recording reminder, nothing to copy', async () => {
   show()
   const row = header()
-  expect(within(row).getByRole('button', { name: /Hviske writing/ })).toBeInTheDocument()
+  expect(within(row).getByRole('button', { name: /Topics writing/ })).toBeInTheDocument()
   const pill = within(row).getByText('Recording · tell everyone')
   // Solid warning orange, not a quiet line.
   expect(pill).toHaveClass('bg-warning')
@@ -221,9 +223,9 @@ test('the header is one row: Hviske’s status and the orange recording reminder
   expect(screen.queryByRole('alert')).toBeNull()
 }, 15_000)
 
-test('Hviske’s chip opens how the meeting is doing, and its session', async () => {
+test('the topics’ chip opens how each part of the meeting is doing, and Hviske’s session', async () => {
   show()
-  await userEvent.click(screen.getByRole('button', { name: /Hviske writing/ }))
+  await userEvent.click(screen.getByRole('button', { name: /Topics writing/ }))
   const details = await screen.findByRole('dialog', { name: 'Meeting details' })
   expect(within(details).getByText('1 transcribing')).toBeInTheDocument()
   expect(within(details).getByText('2.1s behind')).toBeInTheDocument()
@@ -248,9 +250,32 @@ test('problems are loud: a badge in the header, and the fix under it', async () 
     }),
   )
   const health = screen.getByLabelText('Meeting health')
-  expect(within(health).getByText('1 failed')).toHaveClass('bg-destructive/10')
-  expect(within(health).getByText('Hviske unreachable')).toHaveClass('bg-warning/10')
+  expect(within(health).getByText('1 not transcribed')).toHaveClass('bg-destructive/10')
+  expect(within(health).getByText('Topics unreachable')).toHaveClass('bg-warning/10')
   expect(screen.getByText('Hviske isn’t receiving the transcript.')).toBeInTheDocument()
+}, 15_000)
+
+test('topics that stopped, or that the vault’s agent cannot write, say which part and what to do', async () => {
+  // The meeting as main has it, when the view loads it again.
+  let state: MeetingState = { ...meeting, scribeState: 'gone' }
+  const base = run.getMockImplementation()!
+  run.mockImplementation(async (c: { name: string }) =>
+    c.name === 'meeting.get' ? state : base(c),
+  )
+  show([], state)
+  await userEvent.click(screen.getByRole('button', { name: /Topics stopped/ }))
+  const details = await screen.findByRole('dialog', { name: 'Meeting details' })
+  expect(details).toHaveTextContent('Recording and captions go on')
+  cleanup()
+
+  state = { ...meeting, scribeState: 'off', scribeUnsupported: 'codex' }
+  show([], state)
+  const health = screen.getByLabelText('Meeting health')
+  expect(within(health).getByText('No topics with this agent')).toBeInTheDocument()
+  await userEvent.click(within(health).getByRole('button', { name: /Topics off/ }))
+  expect(await screen.findByRole('dialog', { name: 'Meeting details' })).toHaveTextContent(
+    'Topics need Claude Code',
+  )
 }, 15_000)
 
 test('Show transcript opens the captions column, and the choice is kept on this machine', async () => {
@@ -315,7 +340,7 @@ test('a task’s fields are edited and saved, lists gaining and losing items', a
   ])
 }, 15_000)
 
-test(`${SEND_TO_CLAUDE} saves the task’s edits, then sends it with how it should be done`, async () => {
+test(`${SEND_TO_AGENT} saves the task’s edits, then sends it with how it should be done`, async () => {
   show()
   const card = await expand('Export to CSV')
   expect(within(card).queryByRole('button', { name: 'Choose who it goes to' })).toBeNull()
@@ -324,7 +349,7 @@ test(`${SEND_TO_CLAUDE} saves the task’s edits, then sends it with how it shou
     within(card).getByLabelText('How should it be done?'),
     'Reuse the export menu',
   )
-  await userEvent.click(within(card).getByRole('button', { name: SEND_TO_CLAUDE }))
+  await userEvent.click(within(card).getByRole('button', { name: SEND_TO_AGENT }))
   expect(calls('meeting.card')).toEqual([
     { meetingId: 'm1', cardId: 'export', patch: { why: 'People asked for it. Finance too.' } },
   ])
@@ -333,7 +358,7 @@ test(`${SEND_TO_CLAUDE} saves the task’s edits, then sends it with how it shou
       meetingId: 'm1',
       cardId: 'export',
       context: 'Reuse the export menu',
-      target: { kind: 'claude' },
+      target: { kind: 'agent' },
     },
   ])
   await waitFor(() => expect(within(cardNamed('Export to CSV')).getByText('Sent')).toBeVisible())
@@ -385,8 +410,8 @@ test('a sent task shows its run, and its session opens from its row', async () =
   await userEvent.click(within(sent).getByRole('button', { name: 'Open session' }))
   expect(shown).toEqual([{ session: 'job-7', live: true }])
   const panel = await expand('Search in notes')
-  expect(within(panel).getByText('Sent to Claude to build.')).toBeInTheDocument()
-  expect(within(panel).queryByRole('button', { name: SEND_TO_CLAUDE })).toBeNull()
+  expect(within(panel).getByText('Sent to the agent to build.')).toBeInTheDocument()
+  expect(within(panel).queryByRole('button', { name: SEND_TO_AGENT })).toBeNull()
 }, 15_000)
 
 test('a caption line is corrected in place: Enter saves, Escape puts it back', async () => {

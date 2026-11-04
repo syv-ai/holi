@@ -278,7 +278,8 @@ export function ProfileDialog({
             {profile === undefined ? 'New profile' : `Profile: ${profile.name}`}
           </DialogTitle>
           <DialogDescription>
-            Tells {SCRIBE_NAME} what kind of meeting this is, so its topics and {TASKS_NAME} fit.
+            Optional: a meeting records with the Default profile. A profile says what kind of
+            meeting this is, so its topics and {TASKS_NAME} fit.
           </DialogDescription>
         </DialogHeader>
         <div className="-mx-4 flex max-h-140 flex-col gap-4 overflow-y-auto px-4">
@@ -295,7 +296,7 @@ export function ProfileDialog({
           </Row>
           <Row
             label="What do you build?"
-            help={`${SCRIBE_NAME} and the agents you send ${TASKS_NAME} to read this.`}
+            help={`Optional. Context for the ${TASKS_NAME} you send and for the topics; transcription does not use it.`}
           >
             {(id) => (
               <Textarea

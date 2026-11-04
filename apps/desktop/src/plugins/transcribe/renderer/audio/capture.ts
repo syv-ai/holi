@@ -154,6 +154,8 @@ export async function startCapture(options: CaptureOptions): Promise<Capture> {
 
     let stopping: Promise<void> | undefined
     return {
+      sources: { microphone: mic !== undefined, system: system !== undefined },
+      problems,
       stop() {
         stopping ??= (async () => {
           // The worklet's last block, then its 'flushed' (messages arrive in order).

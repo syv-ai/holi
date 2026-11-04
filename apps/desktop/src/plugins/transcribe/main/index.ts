@@ -12,16 +12,26 @@
  * vault's Meetings tab wakes every vault's waiting uploads.
  */
 import { join } from 'node:path'
-import { jsonFileStore, readVaultEnv, type MainPlugin } from '../../../main/plugin-api'
+import {
+  jsonFileStore,
+  readVaultEnv,
+  readVaultSettings,
+  type MainPlugin,
+} from '../../../main/plugin-api'
 import { TRANSCRIBE_INFO } from '../info'
 import { meetingCapabilities, MEETING_NAMESPACES } from './capabilities'
 import { createMeetings } from './engine'
 import { createProfiles, parseProfilesFile } from './profiles'
 import type { Launched } from './scribe'
 import { createSpeechKey } from './speech-key'
+import { createSpeechServices, parseServiceFile } from './speech-service'
 import { createSileroVad, dataUrlBytes } from './silero'
 import SILERO_VAD from './assets/silero-vad.onnx?url&inline'
 import { removeVaultFiles, writeVaultText } from './vault-write'
+
+/** How long quitting, or turning the plugin off, waits for a recording to
+ *  hand over its last audio. */
+const DRAIN_MS = 15_000
 
 /** Each running vault's engine, woken when the machine's speech key changes. */
 const wakers = new Set<() => void>()
@@ -38,9 +48,13 @@ export const transcribeMain: MainPlugin = {
     // `whenReady`), so the module stays importable under plain Node.
     const { speechKeyStore } = await import('./electron')
     const fetchImpl = (url: string, init: RequestInit) => fetch(url, init)
+    const services = createSpeechServices(
+      jsonFileStore(join(ctx.userData, 'speech-service.json'), parseServiceFile),
+    )
     const speechKey = createSpeechKey({
       store: speechKeyStore(ctx.userData),
       vaultEnv: () => readVaultEnv(ctx.root),
+      service: () => services.get(),
       fetch: fetchImpl,
       changed: () => {
         for (const wake of wakers) wake()
@@ -53,11 +67,13 @@ export const transcribeMain: MainPlugin = {
       profiles,
       fetch: fetchImpl,
       apiKey: () => speechKey.resolve(),
+      service: () => services.get(),
       writeFile: (rel, text) => writeVaultText(ctx.root, rel, text),
       removeFiles: (rels, folder) => removeVaultFiles(ctx.root, rels, folder),
       emit: (name, payload) => ctx.emit(ctx.remote, name, payload),
       agent: {
         launch: async (args) => (await ctx.call('agent.launch', args)) as Launched,
+        start: async (args) => (await ctx.call('agent.start', args)) as Launched,
         message: (session, text) => ctx.call('agent.message', { session, text }),
         createTask: async (args) => (await ctx.call('tasks.create', args)) as { path: string },
         updateTask: async ({ path, description }) => {
@@ -67,6 +83,7 @@ export const transcribeMain: MainPlugin = {
         // Holis for one this machine has not approved.
         sendToHoli: async (args) => (await ctx.call('holis.send', args)) as { sessionId: string },
       },
+      provider: async () => (await readVaultSettings(ctx.root)).agentProvider,
       // The activity log is what Holi did; what the transcript left out, and
       // why, is for diagnosis: main's console, the Logs tab at debug.
       log: (level, message) =>
@@ -86,7 +103,17 @@ export const transcribeMain: MainPlugin = {
     })
     const unregister = ctx.register(
       MEETING_NAMESPACES,
-      meetingCapabilities({ meetings, profiles, speechKey, remote: ctx.remote }),
+      meetingCapabilities({
+        meetings,
+        profiles,
+        speechKey,
+        services,
+        remote: ctx.remote,
+        // Every vault's waiting uploads go again with the new service.
+        serviceChanged: () => {
+          for (const w of wakers) w()
+        },
+      }),
     )
     await meetings.load()
     // The list as it is now, for a meeting picked up from before: the
@@ -96,6 +123,12 @@ export const transcribeMain: MainPlugin = {
       .then((list) => meetings.scribe.hearSessions(list))
       .catch(() => {})
     return async () => {
+      // A meeting recording here hands over its last audio first: the
+      // renderer stops it (the capture's last chunk, then every upload, then
+      // the stop), and these capabilities stay until it has, or for
+      // `DRAIN_MS` at most.
+      ctx.emit(ctx.remote, 'stop-recording', null)
+      await meetings.drain(DRAIN_MS)
       wakers.delete(wake)
       unsessions()
       unturns()

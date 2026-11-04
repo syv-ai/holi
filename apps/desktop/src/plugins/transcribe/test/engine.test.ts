@@ -7,7 +7,8 @@ import { access, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MeetingState } from '../shared/meeting'
-import { ASR_URL, type Fetch } from '../main/asr'
+import type { Fetch } from '../main/asr'
+import { endpointOf, SYV_SERVICE } from '../main/speech-service'
 import { parseWav } from '../main/wav'
 import { chunkWav, engineRig, SCRIBE, settle, settleUntil, until } from './engine-helpers'
 
@@ -69,7 +70,7 @@ describe('a chunk', () => {
     const { send, meeting } = await started(rig)
     await send(0)
     await until(() => meeting.chunks[0]?.state === 'done')
-    expect(rig.service.fetch).toHaveBeenCalledWith(ASR_URL, expect.anything())
+    expect(rig.service.fetch).toHaveBeenCalledWith(endpointOf(SYV_SERVICE), expect.anything())
     const init = rig.service.fetch.mock.calls[0]![1]
     expect(init.headers).toEqual({ Authorization: 'Bearer test-key' })
     const form = rig.service.forms[0]!
@@ -261,7 +262,7 @@ describe('the vault files', () => {
       launch: async () => ({ ok: true, sessionId: SCRIBE }),
     })
     const { send, meeting } = await started(rig, 'Plan: Q1/Q2?')
-    expect(meeting.folder).toMatch(/^Meetings\/\d{4}-\d\d-\d\d Plan Q1 Q2$/)
+    expect(meeting.folder).toMatch(/^Meetings\/\d{4}-\d\d-\d\d Plan Q1 Q2\.meeting$/)
     await send(0)
     await until(() => meeting.segments.length === 1)
     // The first line opens the first group, and the minutes show it as Now.
@@ -345,7 +346,7 @@ describe('the vault files', () => {
     const rig = await engineRig()
     const a = await started(rig, 'Standup')
     const b = await started(rig, 'Standup')
-    expect(b.meeting.folder).toBe(`${a.meeting.folder} (2)`)
+    expect(b.meeting.folder).toBe(a.meeting.folder.replace(/\.meeting$/, ' (2).meeting'))
   })
 
   it('the renderer hears the meeting, at most four times a second, and the list', async () => {
@@ -363,12 +364,100 @@ describe('the vault files', () => {
   })
 })
 
+describe('where a meeting goes', () => {
+  it('starts in the folder chosen, with this machine’s first profile when none is named', async () => {
+    const rig = await engineRig()
+    const { meetingId } = await rig.meetings.start({ title: 'Kickoff', folder: 'Clients/Acme' })
+    const meeting = await rig.meetings.get(meetingId)
+    expect(meeting.folder).toMatch(/^Clients\/Acme\/\d{4}-\d\d-\d\d Kickoff\.meeting$/)
+    expect(meeting.profileId).toBe('default')
+  })
+
+  it('is a folder the New menu makes first, where Record then starts it', async () => {
+    const rig = await engineRig()
+    const { path } = await rig.meetings.prepare({ folder: 'Clients/Acme', title: 'Kickoff' })
+    expect(path).toMatch(/^Clients\/Acme\/\d{4}-\d\d-\d\d Kickoff\.meeting$/)
+    expect(rig.writes.get(`${path}/transcript.local.md`)).toContain('Not recorded yet')
+    const { meetingId } = await rig.meetings.start({ title: 'Kickoff', path })
+    expect((await rig.meetings.get(meetingId)).folder).toBe(path)
+    await expect(rig.meetings.start({ path })).rejects.toMatchObject({ code: 'CONFLICT' })
+  })
+})
+
+describe('a chunk the renderer gave up on', () => {
+  it('is stitched past at once, so the lines after it are not held until the stop', async () => {
+    const rig = await engineRig()
+    const { meetingId, meeting, send } = await started(rig)
+    await send(1)
+    await until(() => meeting.chunks[0]?.state === 'done')
+    // Chunk 0 never came: the transcript waits for it.
+    expect(meeting.segments).toEqual([])
+    await rig.meetings.lose({ meetingId, n: 0, start: 0, duration: 8 })
+    expect(meeting.segments.map((s) => s.chunk)).toEqual([1])
+    expect(meeting.chunks[0]).toMatchObject({ n: 0, state: 'failed', error: 'never reached Holi' })
+    // It is not tried again at the stop: there is no audio to try.
+    await rig.meetings.stop(meetingId)
+    await until(() => meeting.phase === 'done')
+    expect(rig.service.fetch).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('going away while a meeting records', () => {
+  it('waits for the stop, or for at most the time it was given', async () => {
+    const rig = await engineRig()
+    const { meetingId } = await started(rig)
+    let drained = false
+    void rig.meetings.drain(10_000).then(() => (drained = true))
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(drained).toBe(false)
+    await rig.meetings.stop(meetingId)
+    await until(() => drained)
+
+    const other = await started(rig, 'Second')
+    let late = false
+    void rig.meetings.drain(10_000).then(() => (late = true))
+    await vi.advanceTimersByTimeAsync(10_000)
+    await until(() => late)
+    expect((await rig.meetings.get(other.meetingId)).phase).toBe('recording')
+  })
+})
+
+describe('an older meeting', () => {
+  it('is read from disk once, however many ask for it at once', async () => {
+    const rig = await engineRig()
+    const { meetingId } = await started(rig)
+    await rig.meetings.stop(meetingId)
+    await until(async () => (await rig.meetings.get(meetingId)).phase === 'done')
+    await rig.meetings.dispose()
+    const again = await engineRig({ userData: rig.userData, root: rig.root })
+    const [a, b] = await Promise.all([again.meetings.get(meetingId), again.meetings.get(meetingId)])
+    expect(a).toBe(b)
+  })
+})
+
 describe('starting', () => {
   it('names an untitled meeting by the time it started', async () => {
     const rig = await engineRig()
     await mkdir(join(rig.userData, 'meetings'), { recursive: true })
     const { meetingId } = await rig.meetings.start({ profileId: 'default' })
     expect((await rig.meetings.get(meetingId)).title).toMatch(/^Meeting \d\d\.\d\d$/)
+  })
+})
+
+describe('another speech service', () => {
+  it('is asked for its model, at its address, without a key when there is none', async () => {
+    const rig = await engineRig({
+      apiKey: async () => null,
+      service: async () => ({ url: 'http://localhost:8000/v1', model: 'whisper-large-v3' }),
+      profile: { asrModel: 'syv-transcribe' },
+    })
+    const { meeting, send } = await started(rig)
+    await send(0)
+    await until(() => meeting.chunks[0]?.state === 'done')
+    expect(meeting.blocked).toBeUndefined()
+    const [url, init] = rig.service.fetch.mock.calls[0]!
+    expect(url).toBe('http://localhost:8000/v1/audio/transcriptions')
+    expect((init.body as FormData).get('model')).toBe('whisper-large-v3')
   })
 })
 

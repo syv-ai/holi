@@ -21,6 +21,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
+import { vaultRelPath } from '@holi/shared'
 import {
   cap,
   CapabilityError,
@@ -42,12 +43,14 @@ import type {
   Topic,
   TopicField,
 } from '../shared/meeting'
+import { MEETING_SUFFIX } from '../shared/meeting'
 import { cardPatchParam, kindOf } from './cards'
 import type { Meetings } from './engine'
 import { profileParam, type Profiles } from './profiles'
 import type { Related } from './related'
 import type { TellKind } from './scribe'
 import { speechKeyParam, type SpeechKey, type SpeechKeyStatus } from './speech-key'
+import { serviceParam, type SpeechServices } from './speech-service'
 import { topicPatchParam } from './topics'
 
 export const MEETING_NAMESPACES = ['meeting'] as const
@@ -61,6 +64,8 @@ const MAX_QUERY = 4000
 const MAX_LINES = 5000
 /** How the person wants a card done: a note, not a document. */
 const MAX_CONTEXT = 2000
+/** The longest title a meeting may be given. */
+const MAX_TITLE = 120
 /** A transcript line's words, as a person corrects them. */
 const MAX_LINE = 2000
 /** A Holi's id: its folder's name. */
@@ -70,6 +75,9 @@ export interface MeetingCapabilitiesDeps {
   meetings: Meetings
   profiles: Profiles
   speechKey: SpeechKey
+  services: SpeechServices
+  /** The speech service changed: wake every vault's waiting uploads. */
+  serviceChanged(): void
   /** The vault this plugin runs in: every verb acts there alone. */
   remote: string
 }
@@ -97,18 +105,19 @@ function sessionParam(raw: Record<string, unknown>): string {
   return session
 }
 
-/** Who a card goes to: Claude, or a Holi by its id. */
+/** Who a card goes to: the vault's agent, or a Holi by its id. */
 function targetParam(raw: unknown): SendTarget | undefined {
   if (raw === undefined || raw === null) return undefined
   if (typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new CapabilityError('BAD_REQUEST', 'target is {kind: claude} or {kind: holi, id}')
+    throw new CapabilityError('BAD_REQUEST', 'target is {kind: agent} or {kind: holi, id}')
   }
   const t = raw as Record<string, unknown>
-  if (t['kind'] === 'claude') return { kind: 'claude' }
+  // `claude` is what a send said before the vault's agent was chosen.
+  if (t['kind'] === 'agent' || t['kind'] === 'claude') return { kind: 'agent' }
   if (t['kind'] === 'holi' && typeof t['id'] === 'string' && HOLI_ID.test(t['id'])) {
     return { kind: 'holi', id: t['id'] }
   }
-  throw new CapabilityError('BAD_REQUEST', 'target is {kind: claude} or {kind: holi, id}')
+  throw new CapabilityError('BAD_REQUEST', 'target is {kind: agent} or {kind: holi, id}')
 }
 
 const meetingParams = (raw: unknown) => ({
@@ -126,6 +135,36 @@ function linesParam(raw: Record<string, unknown>, key: string): number[] {
     throw new CapabilityError('BAD_REQUEST', `${key} is a list of line numbers`)
   }
   return lines as number[]
+}
+
+/** The vault folder a meeting goes in: '' the root, else a safe vault
+ *  path, never inside another meeting. */
+function folderParam(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return undefined
+  if (typeof raw !== 'string') throw new CapabilityError('BAD_REQUEST', 'folder must be a path')
+  if (raw === '') return ''
+  let folder: string
+  try {
+    folder = vaultRelPath(raw)
+  } catch (err) {
+    throw new CapabilityError('BAD_REQUEST', err instanceof Error ? err.message : String(err))
+  }
+  if (folder.split('/').some((part) => part.endsWith(MEETING_SUFFIX))) {
+    throw new CapabilityError('BAD_REQUEST', 'a meeting cannot go inside another meeting')
+  }
+  return folder
+}
+
+/** A meeting folder to start in: a safe vault path ending in `.meeting`,
+ *  never inside another meeting. */
+function meetingPathParam(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return undefined
+  const bad = () =>
+    new CapabilityError('BAD_REQUEST', 'path is a meeting folder, ending in .meeting')
+  if (typeof raw !== 'string' || !raw.endsWith(MEETING_SUFFIX)) throw bad()
+  const stem = folderParam(raw.slice(0, -MEETING_SUFFIX.length))
+  if (stem === undefined || stem === '' || stem.endsWith('/')) throw bad()
+  return raw
 }
 
 /** The group, and suggestion, a task was made from. */
@@ -173,11 +212,36 @@ export const meetingCapabilities = (deps: MeetingCapabilitiesDeps) => {
       params: (raw) => {
         const p = paramsObject(raw)
         const title = optionalStringParam(p, 'title')
-        return { profileId: stringParam(p, 'profileId'), ...(title === undefined ? {} : { title }) }
+        const profileId = optionalStringParam(p, 'profileId')
+        const folder = folderParam(p['folder'])
+        const path = meetingPathParam(p['path'])
+        return {
+          ...(profileId === undefined ? {} : { profileId }),
+          ...(title === undefined ? {} : { title }),
+          ...(folder === undefined ? {} : { folder }),
+          ...(path === undefined ? {} : { path }),
+        }
       },
       run: async (ctx, args): Promise<{ meetingId: string }> => {
         here(ctx)
         return meetings.start(args)
+      },
+    }),
+
+    /** The New menu's meeting: its folder, made for Record to start in. */
+    'meeting.prepare': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const title = optionalStringParam(p, 'title') ?? ''
+        if (title.length > MAX_TITLE) {
+          throw new CapabilityError('BAD_REQUEST', `title is over ${MAX_TITLE} characters`)
+        }
+        return { folder: folderParam(p['folder']) ?? '', title }
+      },
+      run: async (ctx, args): Promise<{ path: string }> => {
+        here(ctx)
+        return meetings.prepare(args)
       },
     }),
 
@@ -201,6 +265,25 @@ export const meetingCapabilities = (deps: MeetingCapabilitiesDeps) => {
       run: async (ctx, { audio, ...args }): Promise<{ ok: true }> => {
         here(ctx)
         await meetings.chunk({ ...args, audio: new Uint8Array(Buffer.from(audio, 'base64')) })
+        return { ok: true }
+      },
+    }),
+
+    /** The renderer gave up on a chunk: the transcript goes on past it. */
+    'meeting.chunk.lost': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        return {
+          meetingId: stringParam(p, 'meetingId'),
+          n: number(p, 'n', true),
+          start: number(p, 'start'),
+          duration: number(p, 'duration'),
+        }
+      },
+      run: async (ctx, args): Promise<{ ok: true }> => {
+        here(ctx)
+        await meetings.lose(args)
         return { ok: true }
       },
     }),
@@ -489,6 +572,7 @@ export const meetingCapabilities = (deps: MeetingCapabilitiesDeps) => {
         const p = paramsObject(raw)
         const title = optionalStringParam(p, 'title')
         const from = fromParam(p['from'])
+        const cardId = optionalStringParam(p, 'cardId')
         return {
           meetingId: stringParam(p, 'meetingId'),
           lines: linesParam(p, 'lines'),
@@ -496,6 +580,7 @@ export const meetingCapabilities = (deps: MeetingCapabilitiesDeps) => {
           kind: kindOf(p['kind']),
           ...(title === undefined ? {} : { title }),
           ...(from === undefined ? {} : { from }),
+          ...(cardId === undefined ? {} : { cardId }),
         }
       },
       run: async (ctx, { meetingId, ...req }): Promise<Card> => {
@@ -645,6 +730,18 @@ export const meetingCapabilities = (deps: MeetingCapabilitiesDeps) => {
       run: async (): Promise<{ ok: true }> => {
         await speechKey.clear()
         return { ok: true }
+      },
+    }),
+
+    /** Transcribe with syv.ai (`url` null) or another service that answers
+     *  `/audio/transcriptions`: its address and model, on this machine. */
+    'meeting.service.set': cap({
+      doors: ['ui'],
+      params: (raw) => serviceParam(paramsObject(raw)),
+      run: async (_ctx, service): Promise<SpeechKeyStatus> => {
+        await deps.services.set(service)
+        deps.serviceChanged()
+        return speechKey.status()
       },
     }),
 
