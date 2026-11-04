@@ -32,6 +32,8 @@ export function ConfirmDialog({
   size,
   children,
   onCloseAutoFocus,
+  onOpenAutoFocus,
+  onCancel,
   onConfirm,
 }: {
   open: boolean
@@ -47,6 +49,8 @@ export function ConfirmDialog({
   children?: ReactNode
   /** Where focus goes when it closes, for a caller whose trigger has gone. */
   onCloseAutoFocus?: (event: Event) => void
+  onOpenAutoFocus?: (event: Event) => void
+  onCancel?: () => void
   onConfirm: () => void | Promise<unknown>
 }): React.JSX.Element {
   const [pending, setPending] = useState(false)
@@ -66,9 +70,9 @@ export function ConfirmDialog({
     setPending(true)
     setError(null)
     result.then(
-      () => {
+      (outcome) => {
         setPending(false)
-        onOpenChange(false)
+        if (outcome !== false) onOpenChange(false)
       },
       (err: unknown) => {
         setPending(false)
@@ -79,7 +83,11 @@ export function ConfirmDialog({
 
   return (
     <AlertDialog open={open} onOpenChange={change}>
-      <AlertDialogContent size={size} onCloseAutoFocus={onCloseAutoFocus}>
+      <AlertDialogContent
+        size={size}
+        onOpenAutoFocus={onOpenAutoFocus}
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           {description !== undefined && (
@@ -93,7 +101,9 @@ export function ConfirmDialog({
         </AlertDialogHeader>
         {children}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={pending}>{cancelLabel}</AlertDialogCancel>
+          <AlertDialogCancel disabled={pending} onClick={onCancel}>
+            {cancelLabel}
+          </AlertDialogCancel>
           <AlertDialogAction
             variant={destructive ? 'destructive' : 'default'}
             disabled={pending}

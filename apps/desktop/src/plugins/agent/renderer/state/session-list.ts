@@ -15,6 +15,7 @@
  * user looks at them", MonoCode's `sessionDone.ts`).
  */
 import { atom } from 'jotai'
+import { HistoryIcon, InboxIcon } from 'lucide-react'
 import { atomWithStorage } from 'jotai/utils'
 import {
   agentsSelectionAtom,
@@ -45,8 +46,9 @@ export interface SessionRow {
 // ------------------------------------------------------------------ pure
 
 /** `claude-opus-5-5` or `opus` as a person says it: `Opus 5.5`, `Opus`. */
-export function modelLabel(model: string | undefined): string {
-  if (model === undefined || model.trim() === '') return 'Claude'
+export function modelLabel(model: string | undefined, agent?: AgentsSessionItem['agent']): string {
+  if (model === undefined || model.trim() === '')
+    return agent === 'pi' ? 'Pi' : agent === 'codex' ? 'Codex' : 'Claude'
   const m = /^(?:claude-)?(opus|sonnet|haiku)(?:-(\d+)(?:-(\d{1,2}))?)?(?:-\d{8})?(\[1m\])?$/i.exec(
     model.trim(),
   )
@@ -54,6 +56,14 @@ export function modelLabel(model: string | undefined): string {
   const family = m[1]!.charAt(0).toUpperCase() + m[1]!.slice(1).toLowerCase()
   const version = m[2] === undefined ? '' : ` ${m[2]}${m[3] === undefined ? '' : `.${m[3]}`}`
   return `${family}${version}`
+}
+
+/** A token count as a person reads it: `850 tokens`, `12.4k tokens`. */
+export function tokensLabel(tokens: number | undefined): string | undefined {
+  if (tokens === undefined || tokens <= 0) return undefined
+  if (tokens < 1000) return `${tokens} tokens`
+  const k = tokens / 1000
+  return k < 100 ? `${k.toFixed(1).replace(/\.0$/, '')}k tokens` : `${Math.round(k)}k tokens`
 }
 
 /** The agent's own live session as a row. */
@@ -66,6 +76,7 @@ function liveItem(s: AgentSession): AgentsSessionItem {
     agent: s.provider,
     updatedAt: s.startedAt ?? 0,
     ...(s.model === undefined ? {} : { model: s.model }),
+    ...(s.usage?.total === undefined ? {} : { tokens: s.usage.total }),
     ...(s.waitingFor === undefined ? {} : { waitingFor: s.waitingFor }),
   }
 }
@@ -103,6 +114,7 @@ export function mergeSessionItems(
           agent: s.provider,
           updatedAt: Math.max(item.updatedAt, s.startedAt ?? 0),
           ...((s.model ?? item.model) === undefined ? {} : { model: s.model ?? item.model }),
+          ...(s.usage?.total === undefined ? {} : { tokens: s.usage.total }),
           ...(s.waitingFor === undefined ? {} : { waitingFor: s.waitingFor }),
         })
         continue
@@ -238,7 +250,7 @@ export function rowMatches(row: SessionRow, query: string, filter: SessionFilter
   }
   const q = query.trim().toLowerCase()
   if (q === '') return true
-  return [item.title, item.by?.name, item.location, modelLabel(item.model)].some(
+  return [item.title, item.by?.name, item.location, modelLabel(item.model, item.agent)].some(
     (text) => text !== undefined && text.toLowerCase().includes(q),
   )
 }
@@ -392,8 +404,8 @@ export const sessionTabLookAtom = atom((get) => {
   const rows = get(sessionRowsAtom)
   return (selection: { owner: string; id: string }): AgentsTabLook | undefined => {
     const view = agentsViewOf(selection)
-    if (view.kind === 'inbox') return { title: 'Inbox', state: 'idle' }
-    if (view.kind === 'history') return { title: 'History', state: 'idle' }
+    if (view.kind === 'inbox') return { title: 'Inbox', state: 'idle', icon: InboxIcon }
+    if (view.kind === 'history') return { title: 'History', state: 'idle', icon: HistoryIcon }
     if (view.kind === 'memory') return { title: 'Memory', state: 'idle' }
     const jobId = view.kind === 'session' ? view.id : null
     const row = rows.find((r) => isCurrent(r.item, selection, jobId))

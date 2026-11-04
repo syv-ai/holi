@@ -30,6 +30,8 @@ const REMOTE = 'syv-ai/notes'
 let root: string
 let data: string
 let launched: Parameters<HolisDeps['launch']>[0][]
+let selectedProvider: 'claude' | 'codex' | 'pi'
+let onProviderRead: (() => void) | undefined
 let emitted: string[]
 let asked: NeedsYou[]
 let holis: Holis
@@ -57,10 +59,17 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'holi-holis-'))
   data = await mkdtemp(join(tmpdir(), 'holi-holis-data-'))
   launched = []
+  selectedProvider = 'claude'
+  onProviderRead = undefined
   emitted = []
   asked = []
   holis = createHolis({
     store: jsonFileStore(join(data, 'holis.json'), parseHolisFile),
+    provider: async () => {
+      const provider = selectedProvider
+      onProviderRead?.()
+      return provider
+    },
     async launch(args) {
       launched.push(args)
       return { ok: true, sessionId: `job${launched.length}` }
@@ -130,6 +139,13 @@ describe('approval', () => {
 })
 
 describe('sending a document', () => {
+  it('requires approval again when the configured provider changes', async () => {
+    await approved()
+    selectedProvider = 'pi'
+    expect((await holis.list(vault()))[0]!.status).toBe('changed')
+    await expect(holis.send(vault(), 'proposal', 'kunder/a.md')).rejects.toThrow(/Approve it again/)
+  })
+
   it('starts a session with its rules, model, soul and memory, naming the document', async () => {
     await approved()
     await writeHoli({ memory: '- 2026-10-01 · Prices in DKK\n' })
@@ -140,6 +156,7 @@ describe('sending a document', () => {
     expect(run).toMatchObject({
       name: 'Proposal · nordlys',
       prompt: 'Work on kunder/nordlys.md.',
+      provider: 'claude',
       model: 'sonnet',
     })
     expect(run.allow).toEqual(
@@ -161,6 +178,52 @@ describe('sending a document', () => {
     expect(emitted).toContain('holis')
   })
 
+  it('launches with the provider whose approval was checked, even if settings change mid-send', async () => {
+    selectedProvider = 'pi'
+    await writeHoli({ yaml: PROPOSAL, soul: SOUL })
+    const [entry] = await holis.list(vault())
+    await holis.approve(vault(), 'proposal', entry!.fingerprint!)
+    onProviderRead = () => {
+      selectedProvider = 'claude'
+      onProviderRead = undefined
+    }
+
+    await holis.send(vault(), 'proposal', 'kunder/a.md')
+
+    expect(launched).toHaveLength(1)
+    expect(launched[0]!.provider).toBe('pi')
+  })
+
+  it('selects Pi, uses its configured default for Claude aliases, and accepts explicit model ids', async () => {
+    selectedProvider = 'pi'
+    await writeHoli({ yaml: PROPOSAL, soul: SOUL })
+    const [initial] = await holis.list(vault())
+    await holis.approve(vault(), 'proposal', initial!.fingerprint!)
+    await holis.send(vault(), 'proposal', 'kunder/a.md')
+    expect(launched[0]!.model).toBeUndefined()
+
+    await writeHoli({ yaml: PROPOSAL.replace('sonnet', 'anthropic/claude-sonnet'), soul: SOUL })
+    const [changed] = await holis.list(vault())
+    await holis.approve(vault(), 'proposal', changed!.fingerprint!)
+    await holis.send(vault(), 'proposal', 'kunder/b.md')
+    expect(launched[1]).toMatchObject({ model: 'anthropic/claude-sonnet', provider: 'pi' })
+    expect(launched[1]!.allow).toBeUndefined()
+  })
+
+  it('selects Pi, keeps the Holi system prompt, and does not send Claude allow rules', async () => {
+    selectedProvider = 'pi'
+    await writeHoli({ yaml: PROPOSAL.replace('model: sonnet\n', ''), soul: SOUL })
+    const [p] = await holis.list(vault())
+    await holis.approve(vault(), 'proposal', p!.fingerprint!)
+
+    await holis.send(vault(), 'proposal', 'kunder/nordlys.md')
+
+    expect(launched[0]).toMatchObject({ provider: 'pi', name: 'Proposal · nordlys' })
+    expect(launched[0]!.model).toBeUndefined()
+    expect(launched[0]!.allow).toBeUndefined()
+    expect(launched[0]!.system).toContain('Write a proposal laid out as Templates/proposal.typ.')
+  })
+
   it('takes only the documents it accepts', async () => {
     await approved()
     await expect(holis.send(vault(), 'proposal', 'Notes/a.md')).rejects.toThrow(/does not take/)
@@ -172,6 +235,7 @@ describe('sending a document', () => {
     expect(ctx.system).toContain('An automation on this machine')
     expect(ctx.system).not.toContain('holis report')
     expect(ctx.allow).toContain('Bash(holi holis remember:*)')
+    expect(ctx.provider).toBe('claude')
     expect(ctx.approval).toContain('Templates/proposal.typ')
   })
 })

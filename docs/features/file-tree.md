@@ -8,7 +8,7 @@ The sidebar explorer shows the vault as the folders and files on disk. It reads 
 
 **Folders are real.** A folder row comes from `snapshot.dirs`, which lists every directory holding a file, so a folder whose contents are all filtered out still shows. New Folder writes a `.gitkeep` so the empty folder persists and syncs; a keep-file is a folder signal and never shown as a leaf. A folder still being named exists only in client state.
 
-**The look.** The app's one tree (`components/ui/tree.tsx`, ReUI's `tree`, here driven by headless-tree in `features/sidebar/files-section.tsx`; see [ui-system](../ui-system.md#page-baseline)). Every row is the same size at every level: a folder's chevron, an icon and the name, with a flat indent per level and nothing drawn between levels. The open file is bold. Nothing moves except a row's hover fill: a folder opens and closes at once, the chevron turns without a transition, and rows that appear (a pull, a new file) are simply there. It replaced a tree with connector rails, a brand-lit path to the open file, a brand bar sliding between roots, folders sliding open and rows fading in, which was too much motion for the thing you look at most.
+**The look.** The app's one tree (`components/ui/tree.tsx`, ReUI's `tree`, here driven by headless-tree in `features/sidebar/files-section.tsx`; see [ui-system](../ui-system.md#page-baseline)). Every row is the same size at every level: a folder's chevron, an icon and the name, with a flat indent per level and nothing drawn between levels. The open file is bold. Little moves: a folder opens and closes at once, and a row appearing by itself (a pull, the agent's file) is simply there. A row the tree put somewhere (made, moved, renamed, dropped in, revealed) rises in once (`TreeItem`'s `arrived`, `motion-in-rise`), so the eye finds where it went. It replaced a tree with connector rails, a brand-lit path to the open file, a brand bar sliding between roots and folders sliding open, which was too much motion for the thing you look at most.
 
 - A folder leads with its chevron and a folder glyph (open or closed). A file has no chevron, and its icon sits in the folder glyph's column, so a root file lines up with the root folders: its type glyph, a note's included (no `.md` in its name), a task's status, or the vault icon map's emoji, which also replaces a folder's glyph.
 - `expansion` is `single` by default: opening a folder closes the other branches, so one path is open. `multi` lets folders stay open. The open file's branch always opens.
@@ -35,12 +35,20 @@ the editor rather than past the window's edge.
   or not the tree shows task files. **An app** is `holi apps init`'s scaffold (`index.html` and an
   `app.yaml`, never overwriting), and its `index.html` opens, which expands the bundle. A typed
   `.app` is not doubled.
+- **A row lands in view.** Whatever the tree makes, moves, renames, reorders, drops in or is
+  asked to reveal goes through one place (`land` in `files-section.tsx`): once the snapshot
+  has the row, its folders open, it is selected and focused, and headless-tree's `scrollTo`
+  brings it into view (`block: 'nearest'`, so a visible row does not jump, and clear of the
+  fade at the tree's foot). Several rows landing together are all selected; the first shown is
+  the one scrolled to. A row the tree does not show (a dotfile while hidden files are off, a
+  task file while task files are hidden) is let go once a newer snapshot still lacks it, rather
+  than shown whenever it next appears.
 - **Reveal in Files**, from outside the tree (an app's card on the Apps page), brings the
-  Vault sidebar forward and open, expands the row's folders, then selects, focuses and
-  scrolls to the row (`state/reveal-in-files.ts`, a numbered request the shell and the tree
-  both hear; the tree keeps the last one it answered, since it may mount after the ask).
+  Vault sidebar forward and open and lands the row (`state/reveal-in-files.ts`, a numbered
+  request the shell and the tree both hear; the tree keeps the last one it answered, since it
+  may mount after the ask).
 
-**Row menu.** Right-click on a row, or ⋯ with it focused, offers (`features/sidebar/file-menu-actions.tsx`): Open in split view (a file or an app, not a folder); Open in Finder (Explorer on Windows, the file manager elsewhere), Copy relative path (⌥⇧⌘C), Copy absolute path (⌥⌘C), and Copy Holi link on a file that is not local; Rename (F2), Move up, Move down and Move to a folder or the vault root; what a claim adds, each item shown when its `when` holds (Finish this app on an unfinished app); and Delete. Main resolves the absolute path and does the revealing (`files.absolutePath`, `files.reveal`), inside the vault and in the platform's separators, so no absolute path crosses from the renderer. Below the row's items, and alone on empty space, comes the New menu: New folder, New task and each claim's New item, made where a new item goes (above); then Show task files, Show hidden files and Collapse all.
+**Row menu.** Right-click on a row, or ⋯ with it focused, offers (`features/sidebar/file-menu-actions.tsx`): Open in split view (a file or an app, not a folder); Open in Finder (Explorer on Windows, the file manager elsewhere), Copy relative path (⌥⇧⌘C), Copy absolute path (⌥⌘C), and Copy Holi link on a file that is not local; Rename (F2), Move up, Move down and Move to a folder or the vault root; what a claim adds, each item shown when its `when` holds (Finish this app on an unfinished app); and Delete. A markdown note's row also has Create vault app, the document menu's own ([editor](editor.md)): it and Copy Holi link are one definition with the document menu's (`NOTE_ACTIONS`, `state/document-runs.ts`), with the same enable rule and the agent's mark on the agentic one; Create vault app opens the note, whose pill follows the run. Main resolves the absolute path and does the revealing (`files.absolutePath`, `files.reveal`), inside the vault and in the platform's separators, so no absolute path crosses from the renderer. Below the row's items, and alone on empty space, comes the New menu: New folder, New task and each claim's New item, made where a new item goes (above); then Show task files, Show hidden files and Collapse all.
 
 - Rename, cut-and-paste and drag are one batch move: a single-pass link rewrite over the whole `from → to` map, open tabs retargeted, and a commit before and after. A move that would change nothing, or put a folder inside itself, is refused.
 - Copy, paste and Duplicate make new files and leave links pointing at the originals. Duplicate appends ` copy`.
@@ -91,7 +99,7 @@ than removed, so an undone rename finds its place again.
 ## Rejected
 
 - Letting headless-tree run the tree (as an earlier version did): it captured handlers once, so every action read state through refs; its click handling had to be overridden for the modifier clicks; and its drop and focus handling needed workarounds to stop a refused drop opening a window and a first drop throwing. It is back only to flatten and indent for ReUI's component, with its state controlled and none of its selection, hotkey or drag-and-drop features; the rules stay in `lib/tree-view.ts`.
-- Connector rails, a brand-lit path, a sliding root bar, a disclose slide and row arrivals: each was a motion or a line to read past on the surface looked at most. The tree is calm now and is the ReUI component the rest of the app's design system already uses.
+- Connector rails, a brand-lit path, a sliding root bar and a disclose slide: each was a motion or a line to read past on the surface looked at most. The tree is calm now and is the ReUI component the rest of the app's design system already uses.
 - Two drag mechanisms (native for files, the web drag for folders): two drop paths for one move.
 - ⌘-click as the selection toggle: ⌘-click already opens a file in a new pane, as it does on a link in the editor.
 - An icon in the note's frontmatter: it cannot serve folders, binaries, agent instructions or local markdown, and two sources need a precedence rule.

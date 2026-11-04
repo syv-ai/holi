@@ -26,13 +26,12 @@ declare global {
         onCommitted(cb: (paths: string[] | null) => void): () => void
         /**
          * Main is quitting and wants the buffer on disk before it commits.
-         * Write every dirty buffer, then call `flushDone()`.
-         *
-         * The only push that expects a reply. Main waits one second and then
-         * quits regardless.
+         * Freeze editors and write every dirty buffer, then acknowledge the
+         * request. Failed or timed-out saves cancel quit and release the lock.
          */
-        onFlushRequest(cb: () => void): () => void
-        flushDone(): void
+        onFlushRequest(cb: (request: { id: string }) => void): () => void
+        onFlushCancelled(cb: (request: { id: string }) => void): () => void
+        flushDone(id: string, error?: string): void
         /** What the skills update the vault ran on open changed. */
         onSkillsUpdated(cb: (notice: SkillsUpdated & { remote: string }) => void): () => void
         /** Main asks for a vault path in a tab: a clicked reminder's task,
@@ -89,6 +88,9 @@ declare global {
        *  traffic lights. Returns its unsubscribe. */
       window: {
         onFullScreen(cb: (fullScreen: boolean) => void): () => void
+        /** Native visibility, including a window created hidden at login. */
+        onVisible(cb: (visible: boolean) => void): () => void
+        isVisible(): Promise<boolean>
       }
       /** The activity log, a line at a time as main writes it. Returns its
        *  unsubscribe. */

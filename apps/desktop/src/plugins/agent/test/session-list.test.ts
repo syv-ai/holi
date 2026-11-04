@@ -4,6 +4,8 @@
  * search and filter, the groups.
  */
 import { expect, test, vi } from 'vitest'
+import { createStore } from 'jotai'
+import { HistoryIcon, InboxIcon } from 'lucide-react'
 import type { AgentsSessionItem } from '@/plugin-api'
 import {
   groupRows,
@@ -13,6 +15,8 @@ import {
   NO_FILTER,
   rowMatches,
   rowState,
+  sessionTabLookAtom,
+  tokensLabel,
   type SessionRow,
 } from '../renderer/state/session-list'
 import type { AgentSession } from '../renderer/state/sessions'
@@ -30,12 +34,47 @@ const item = (over: Partial<AgentsSessionItem> = {}): AgentsSessionItem => ({
 
 const seen = (since = 0, map: Record<string, number> = {}) => ({ since, seen: map })
 
+test('Inbox and History have their own tab icons instead of provider marks', () => {
+  const look = createStore().get(sessionTabLookAtom)
+  expect(look({ owner: 'agent', id: 'inbox' })).toMatchObject({
+    title: 'Inbox',
+    icon: InboxIcon,
+  })
+  expect(look({ owner: 'agent', id: 'history' })).toMatchObject({
+    title: 'History',
+    icon: HistoryIcon,
+  })
+})
+
 test('model names read as a person says them', () => {
   expect(modelLabel(undefined)).toBe('Claude')
+  expect(modelLabel(undefined, 'pi')).toBe('Pi')
+  expect(modelLabel(undefined, 'codex')).toBe('Codex')
+  expect(modelLabel('gpt-6-sol', 'pi')).toBe('gpt-6-sol')
   expect(modelLabel('opus')).toBe('Opus')
   expect(modelLabel('claude-opus-5-5')).toBe('Opus 5.5')
   expect(modelLabel('claude-sonnet-4-5-20250929')).toBe('Sonnet 4.5')
   expect(modelLabel('Opus 5.5')).toBe('Opus 5.5')
+})
+
+test('a token count reads as a count, never a share', () => {
+  expect(tokensLabel(undefined)).toBeUndefined()
+  expect(tokensLabel(850)).toBe('850 tokens')
+  expect(tokensLabel(12_400)).toBe('12.4k tokens')
+  expect(tokensLabel(2_000)).toBe('2k tokens')
+  expect(tokensLabel(250_400)).toBe('250k tokens')
+})
+
+test('a live session carries what its tokens were into its row', () => {
+  const live: AgentSession = {
+    id: 'j0123456789ab',
+    provider: 'codex',
+    name: 'Proposal',
+    state: 'idle',
+    usage: { total: 2_000 },
+  }
+  expect(mergeSessionItems([item({ jobId: live.id })], [live])[0]).toMatchObject({ tokens: 2_000 })
+  expect(mergeSessionItems([], [live])[0]).toMatchObject({ agent: 'codex', tokens: 2_000 })
 })
 
 test('working and needs you are the session own; a finished turn is done until opened', () => {
@@ -149,6 +188,8 @@ test('search reads the title, who ran it, where and the model', () => {
   for (const q of ['inbox', 'SCOUT', 'kickoff', 'opus'])
     expect(rowMatches(r, q, NO_FILTER)).toBe(true)
   expect(rowMatches(r, 'nothing', NO_FILTER)).toBe(false)
+  expect(rowMatches(row({ agent: 'pi' }), 'pi', NO_FILTER)).toBe(true)
+  expect(rowMatches(row({ agent: 'pi' }), 'claude', NO_FILTER)).toBe(false)
 })
 
 test('the filter keeps states, who started it, and archived on request', () => {

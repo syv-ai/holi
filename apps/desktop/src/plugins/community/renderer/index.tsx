@@ -5,8 +5,8 @@
  * so under the file tree.
  */
 import { atom, useAtomValue, useSetAtom, useStore } from 'jotai'
-import { useState } from 'react'
-import { Puzzle } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Puzzle, X } from 'lucide-react'
 import { isPluginFolder, opensPath } from '@holi/shared'
 import {
   activeRemoteAtom,
@@ -18,12 +18,14 @@ import {
   type Surface,
 } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
+import { IconButton } from '@/composites/icon-button'
 import { COMMUNITY_INFO } from '../info'
 import { askToRun, installAndAsk, updatePlugin, type InstallFlow } from './install-flow'
 import { PluginFrame } from './plugin-frame'
 import { PluginsSettings } from './plugins-settings'
 import { communityCap } from './community-cap'
 import {
+  dismissedNoticesAtom,
   followRows,
   refreshRows,
   rowsAtom,
@@ -88,10 +90,14 @@ const DOCUMENT_SURFACE: Surface = {
   unlisted: true,
 }
 
-/** Plugins the vault turns on that cannot run here yet. */
-const waitingAtom = atom((get): readonly PluginRow[] =>
-  (get(rowsAtom)?.rows ?? []).filter((r) => r.on && r.status !== 'ready'),
-)
+/** Plugins the vault turns on that cannot run here yet, less those whose
+ *  notice this machine dismissed for the vault. */
+const waitingAtom = atom((get): readonly PluginRow[] => {
+  const read = get(rowsAtom)
+  if (read === null) return []
+  const dismissed = get(dismissedNoticesAtom)[read.remote] ?? []
+  return read.rows.filter((r) => r.on && r.status !== 'ready' && !dismissed.includes(r.id))
+})
 
 /** Plugins the vault runs here whose readiness check fails. */
 const notWorkingAtom = atom((get): readonly PluginRow[] =>
@@ -111,18 +117,34 @@ const updatableAtom = atom((get): readonly { row: PluginRow; version: string }[]
 /**
  * The notice a vault's plugins raise under the file tree, one line per plugin
  * and its next step: one this machine cannot run yet, one whose readiness
- * check fails, with the plugin's hint, and one with a newer release. It stays until acted on, as Holi's own update offer does, since a
- * passing toast could be missed. Never an install by itself; the dialog asks.
+ * check fails, with the plugin's hint, and one with a newer release. It stays
+ * until acted on, as Holi's own update offer does, since a passing toast could
+ * be missed. Never an install by itself; the dialog asks. The first kind can
+ * be dismissed for this vault on this machine: the person may not want the
+ * plugin here, and Settings still installs it.
  */
 function WaitingNotice(): React.JSX.Element | null {
   const waiting = useAtomValue(waitingAtom)
   const notWorking = useAtomValue(notWorkingAtom)
   const updatable = useAtomValue(updatableAtom)
   const remote = useAtomValue(activeRemoteAtom)
+  const read = useAtomValue(rowsAtom)
   const store = useStore()
   const openDialog = useSetAtom(openDialogAtom)
+  const setDismissed = useSetAtom(dismissedNoticesAtom)
   const [error, setError] = useState<string | null>(null)
   const [checking, setChecking] = useState<string | null>(null)
+  // A plugin ready in the vault owes no dismissal: drop it, so a later pin
+  // this machine cannot run yet raises its line again.
+  useEffect(() => {
+    if (read === null) return
+    const ready = (id: string) => read.rows.some((r) => r.id === id && r.status === 'ready')
+    setDismissed((all) =>
+      all[read.remote]?.some(ready)
+        ? { ...all, [read.remote]: all[read.remote]!.filter((id) => !ready(id)) }
+        : all,
+    )
+  }, [read, setDismissed])
   if (
     (waiting.length === 0 && notWorking.length === 0 && updatable.length === 0) ||
     remote === null
@@ -146,6 +168,12 @@ function WaitingNotice(): React.JSX.Element | null {
       )
     else askToRun(flow, row)
   }
+  // Under the rows' vault, the key `waitingAtom` reads: the active remote can
+  // run ahead of them for a moment after a vault switch.
+  const dismiss = (row: PluginRow) => {
+    if (read === null) return
+    setDismissed((all) => ({ ...all, [read.remote]: [...(all[read.remote] ?? []), row.id] }))
+  }
   const checkAgain = async (row: PluginRow) => {
     setError(null)
     setChecking(row.id)
@@ -166,11 +194,21 @@ function WaitingNotice(): React.JSX.Element | null {
             This vault uses <span className="text-foreground">{row.name}</span>
             {row.pin !== null && <> {row.pin.version}</>}
           </span>
-          {(row.pin !== null || row.install !== null) && (
-            <Button size="xs" variant="secondary" onClick={() => void next(row)}>
-              {row.status === 'not-installed' ? 'Install…' : 'Set up…'}
-            </Button>
-          )}
+          <div className="flex shrink-0 items-center gap-1">
+            {(row.pin !== null || row.install !== null) && (
+              <Button size="xs" variant="secondary" onClick={() => void next(row)}>
+                {row.status === 'not-installed' ? 'Install…' : 'Set up…'}
+              </Button>
+            )}
+            <IconButton
+              label={`Dismiss ${row.name}`}
+              tooltip="Dismiss on this machine. Settings can still install it."
+              size="icon-xs"
+              onClick={() => dismiss(row)}
+            >
+              <X />
+            </IconButton>
+          </div>
         </div>
       ))}
       {notWorking.map((row) => (

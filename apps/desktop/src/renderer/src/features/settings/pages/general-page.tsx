@@ -4,8 +4,6 @@ import {
   formatRepoSize,
   REPO_SIZE_LIMIT_KB,
   repoUsagePercent,
-  VAULT_SETTING_DEFAULTS,
-  type AgentProviderId,
   syncLabel,
   type SyncLabel,
 } from '@holi/shared'
@@ -13,13 +11,12 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { useAgentService } from '@/state/agent-service'
-import { AgentMark } from '@/composites/marks'
 import { claudeFirstRunAtom } from '@/state/claude-first-run'
 import { useRepoSize } from '@/state/repo-usage'
 import { activeRemoteAtom, retrySyncAtom, syncStateAtom, vaultsAtom } from '@/state/vaults'
 import { ExternalLinkIcon, FolderOpenIcon, ShieldCheckIcon } from 'lucide-react'
 import { SettingsGroup, SettingsFieldRow, SettingsRowsLoading } from '../settings-kit'
-import { useVaultSettings } from '../use-vault-settings'
+import { AgentsCard } from './agents-card'
 import { openExternal } from '@/lib/open-external'
 
 const githubUrl = (path: string) => `https://github.com/${path}`
@@ -28,64 +25,6 @@ const SYNC_BADGE: Record<SyncLabel['tone'], 'success-light' | 'info-light' | 'wa
   quiet: 'success-light',
   busy: 'info-light',
   warn: 'warning-light',
-}
-
-/** The coding agents a session can run, as the Agents card lists them. */
-const AGENTS: readonly {
-  id: AgentProviderId
-  label: string
-  description: string
-}[] = [
-  {
-    id: 'claude',
-    label: 'Claude Code',
-    description:
-      "Anthropic's agent. Its sessions keep running in the background, and Holis and automations run on it.",
-  },
-  {
-    id: 'codex',
-    label: 'Codex',
-    description:
-      "OpenAI's agent, signed in as on the command line. Its sessions run while Holi is open.",
-  },
-]
-
-/** Which agent a new session starts in, on this machine: a row per agent,
- *  the default marked and the others a click from being it. */
-function AgentsCard() {
-  const { resolved, write } = useVaultSettings()
-  const current = resolved?.agentProvider ?? VAULT_SETTING_DEFAULTS.agentProvider
-  return (
-    <SettingsGroup
-      title="Agents"
-      description="A new session starts in the default one, on this machine. Hover the Sessions + to start another."
-    >
-      {resolved === null ? (
-        <SettingsRowsLoading rows={2} label="Reading the settings" />
-      ) : (
-        AGENTS.map((agent) => (
-          <SettingsFieldRow
-            key={agent.id}
-            title={agent.label}
-            description={agent.description}
-            mark={<AgentMark agent={agent.id} size="lg" />}
-          >
-            {agent.id === current ? (
-              <Badge variant="success-light">Default</Badge>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void write('agentProvider', agent.id, 'local')}
-              >
-                Make default
-              </Button>
-            )}
-          </SettingsFieldRow>
-        ))
-      )}
-    </SettingsGroup>
-  )
 }
 
 /**
