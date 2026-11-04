@@ -27,7 +27,7 @@ import { createSpeechKey } from './speech-key'
 import { createSpeechServices, parseServiceFile } from './speech-service'
 import { createSileroVad, dataUrlBytes } from './silero'
 import SILERO_VAD from './assets/silero-vad.onnx?url&inline'
-import { readVaultHead, removeVaultFiles, writeVaultText } from './vault-write'
+import { readVaultHead, removeVaultFiles, vaultFolderExists, writeVaultText } from './vault-write'
 
 /** How long quitting, or turning the plugin off, waits for a recording to
  *  hand over its last audio. */
@@ -68,9 +68,10 @@ export const transcribeMain: MainPlugin = {
       root: ctx.root,
       profiles,
       fetch: fetchImpl,
-      apiKey: () => speechKey.resolve(),
+      apiKey: (service) => speechKey.resolve(service),
       service: () => services.get(),
-      writeFile: (rel, text) => writeVaultText(ctx.root, rel, text),
+      writeFile: (rel, text, guard) => writeVaultText(ctx.root, rel, text, guard),
+      folderExists: (rel) => vaultFolderExists(ctx.root, rel),
       removeFiles: (rels, folder) => removeVaultFiles(ctx.root, rels, folder),
       readHead: (rel) => readVaultHead(ctx.root, rel),
       folders: () => folders,

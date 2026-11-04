@@ -115,8 +115,9 @@ export interface SpeechKeyStatus {
 }
 
 export interface SpeechKey {
-  /** The key to upload with, or null. Main's alone. */
-  resolve(): Promise<string | null>
+  /** The key to upload to `service` with (the one in use when absent), or
+   *  null. Main's alone. */
+  resolve(service?: SpeechService): Promise<string | null>
   status(): Promise<SpeechKeyStatus>
   /** Keep `key` for the service in use. */
   set(key: string): Promise<void>
@@ -154,7 +155,7 @@ export function createSpeechKey(deps: SpeechKeyDeps): SpeechKey {
   }
 
   return {
-    resolve: async () => (await current(await deps.service()))?.key ?? null,
+    resolve: async (service) => (await current(service ?? (await deps.service())))?.key ?? null,
     async status() {
       const service = await deps.service()
       const [now, own] = await Promise.all([current(service), deps.store.read()])

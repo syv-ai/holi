@@ -65,7 +65,7 @@ async function rig(vaultEnv: Record<string, string> = {}) {
     fetch,
     changed: () => meetings?.wake(),
   })
-  const engine = await engineRig({ userData, fetch, apiKey: () => speechKey.resolve() })
+  const engine = await engineRig({ userData, fetch, apiKey: (s) => speechKey.resolve(s) })
   meetings = engine.meetings
   const registry = createCapabilityRegistry()
   registry.register(

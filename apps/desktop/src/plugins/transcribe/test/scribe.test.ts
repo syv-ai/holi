@@ -373,6 +373,26 @@ describe('the end of a meeting', () => {
   })
 })
 
+describe('a person’s word to a Pi assistant', () => {
+  it('waits for the turn under way, so its answer is not run into the next', async () => {
+    const rig = await meetingRig({ provider: async () => 'pi', reply: async () => '[]' })
+    rig.scribe.hearTurnEnd(SCRIBE)
+    await until(() => rig.meeting.scribeState === 'idle')
+    // A batch is out: the run is working.
+    rig.scribe.summarise(rig.meetingId)
+    await until(() => rig.meeting.scribeState === 'working')
+    const before = rig.sentTo(SCRIBE).length
+    let told = false
+    void rig.scribe.tell(rig.meetingId, 'drop the budget talk', 'minutes').then(() => (told = true))
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(rig.sentTo(SCRIBE)).toHaveLength(before)
+    rig.scribe.hearTurnEnd(SCRIBE)
+    await until(() => told)
+    expect(rig.sentTo(SCRIBE).at(-1)).toContain('drop the budget talk')
+    expect(rig.meeting.scribeState).toBe('working')
+  })
+})
+
 describe('a tool-less scribe’s answer', () => {
   it('is its JSON array, fenced or not; anything else holds no groups', () => {
     expect(groupsInAnswer('[{"startIndex":0}]')).toEqual([{ startIndex: 0 }])
@@ -380,6 +400,11 @@ describe('a tool-less scribe’s answer', () => {
     expect(groupsInAnswer('ok')).toBeNull()
     expect(groupsInAnswer('[not json')).toBeNull()
     expect(groupsInAnswer('{"startIndex":0}')).toBeNull()
+    // Two answers run together: both count, brackets inside text do not.
+    expect(groupsInAnswer('[{"title":"a [b]"}]\n[{"startIndex":2}]')).toEqual([
+      { title: 'a [b]' },
+      { startIndex: 2 },
+    ])
     expect(groupsInAnswer(null)).toBeNull()
   })
 })

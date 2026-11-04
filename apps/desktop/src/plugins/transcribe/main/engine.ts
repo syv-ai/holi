@@ -216,12 +216,15 @@ export interface MeetingsDeps {
   root: string
   profiles: Pick<Profiles, 'get' | 'list'>
   fetch: Fetch
-  /** The speech key in use (`speech-key.ts`), or null. */
-  apiKey(): Promise<string | null>
+  /** The speech key bound to `service` (`speech-key.ts`), or null. */
+  apiKey(service: SpeechService): Promise<string | null>
   /** The speech service in use (`speech-service.ts`). */
   service(): Promise<SpeechService>
-  /** Write a vault file (`vault-write.ts`). */
-  writeFile(rel: string, text: string): Promise<void>
+  /** Write a vault file (`vault-write.ts`), unless `guard`, asked under the
+   *  file's lock, says no. Whether it wrote. */
+  writeFile(rel: string, text: string, guard?: () => Promise<boolean>): Promise<boolean | void>
+  /** Whether `rel` is a folder in the vault now. */
+  folderExists(rel: string): Promise<boolean>
   /** Remove vault files, then `folder` if nothing else is left in it. */
   removeFiles(rels: readonly string[], folder: string): Promise<void>
   /** The start of a vault file, or null when there is none (`vault-write.ts`). */
@@ -485,11 +488,15 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     return { kind: head.includes(NOT_RECORDED) ? 'placeholder' : 'unmarked' }
   }
 
-  /** Whether the meeting's folder is still its own to write. */
-  async function mayWrite(l: Live): Promise<boolean> {
+  /** Whether the meeting's folder is still its own to write. `adopt`: its
+   *  transcript has been missing past `GONE_MS` while its folder stayed
+   *  (cloned again, the file deleted by hand), so it is written again. */
+  async function mayWrite(l: Live, adopt = false): Promise<boolean> {
     const mark = await markAt(l.stored.meeting.folder)
     if (mark.kind === 'meeting') return mark.id === l.stored.meeting.id
-    // Its transcript was written there, and is gone or replaced.
+    if (adopt) return mark.kind === 'absent' || mark.kind === 'unmarked'
+    // Its transcript was written there, and is gone or replaced: moved or
+    // deleted, or a move under way, which `follow` settles.
     if (l.stored.marked === true) return false
     // A meeting from before transcripts carried ids: its own transcript.
     if (mark.kind === 'unmarked') return true
@@ -574,7 +581,14 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
         missing.set(id, now())
         followAfter(GONE_MS)
       } else if (now() - since >= GONE_MS) {
-        await gone(id)
+        // The folder stayed and only its transcript went (a clone has none,
+        // being a machine-local file): the meeting is still there, and its
+        // transcript is written again. Only a folder gone is a delete.
+        const stayed =
+          (mark.kind === 'absent' || mark.kind === 'unmarked') &&
+          (await deps.folderExists(summary.folder))
+        if (stayed) await adopt(id)
+        else await gone(id)
       } else {
         followAfter(GONE_MS - (now() - since))
       }
@@ -593,11 +607,30 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     m.cards = m.cards.map((c) =>
       c.taskPath === undefined ? c : { ...c, taskPath: moved(c.taskPath) },
     )
-    l.written = new Map([...l.written].map(([rel, text]) => [moved(rel), text]))
+    // Written again in full where it is now: the move may have carried an
+    // older copy of what was last written.
+    l.written = new Map()
     missing.delete(id)
     away.delete(id)
     deps.log('info', `meeting "${m.title}": its folder is now ${to}`)
     changed(id)
+    // A write that raced the move may have left its minutes behind at the
+    // old path, beside no transcript: they go, and the folder with them if
+    // that empties it.
+    if ((await markAt(from)).kind === 'absent' && (await deps.folderExists(from))) {
+      await deps
+        .removeFiles([`${from}/minutes.local.md`, `${from}/minutes.md`], from)
+        .catch(() => {})
+    }
+  }
+
+  /** The meeting's transcript went while its folder stayed: written again. */
+  async function adopt(id: string): Promise<void> {
+    missing.delete(id)
+    const l = await open(id)
+    l.written = new Map()
+    deps.log('info', `meeting "${l.stored.meeting.title}": its transcript is written again`)
+    await writeFiles(l, true)
   }
 
   /** The meeting's folder was deleted from the vault: so is the meeting, its
@@ -622,6 +655,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       }
     }
     deleted.add(id)
+    scribe.end(id, l?.stored.meeting.scribeSessionId)
     live.delete(id)
     summaries.delete(id)
     missing.delete(id)
@@ -684,14 +718,16 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     }, PERSIST_MS)
   }
 
-  async function writeFiles(l: Live): Promise<void> {
+  async function writeFiles(l: Live, adopt = false): Promise<void> {
     if (l.filesTimer !== null) clearTimeout(l.filesTimer)
     l.filesTimer = null
     if (deleted.has(l.stored.meeting.id)) return
     const { meeting, profile } = l.stored
     // Only into its own folder: one moved or deleted is not made again at
-    // the old path, and another meeting's is never written over.
-    if (!(await mayWrite(l))) {
+    // the old path, and another meeting's is never written over. Asked
+    // again under each file's lock, which a vault move takes too.
+    const own = () => mayWrite(l, adopt)
+    if (!(await own())) {
       followSoon()
       return
     }
@@ -704,7 +740,13 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     for (const [rel, text] of files) {
       if (l.written.get(rel) === text) continue
       try {
-        await deps.writeFile(rel, text)
+        // The transcript first, and the rest only beside one that is this
+        // meeting's (after it is written, no longer the adoption's).
+        const guard = rel.endsWith('/transcript.local.md') ? own : () => mayWrite(l)
+        if ((await deps.writeFile(rel, text, guard)) === false) {
+          followSoon()
+          return
+        }
         l.written.set(rel, text)
         if (rel.endsWith('/transcript.local.md') && l.stored.marked !== true) {
           l.stored.marked = true
@@ -893,10 +935,10 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     if (l === undefined || chunk === undefined || chunk.state === 'done') return
     const { meeting, profile } = l.stored
     const epoch = keyEpoch
-    const [apiKey, service] = await Promise.all([
-      deps.apiKey().catch(() => null),
-      deps.service().catch(() => SYV_SERVICE),
-    ])
+    // The key for the very service the chunk goes to: read apart, a service
+    // changed between the two would get the other's key.
+    const service = await deps.service().catch(() => SYV_SERVICE)
+    const apiKey = await deps.apiKey(service).catch(() => null)
     if (disposed) return
     // syv.ai's service needs a key; another may take requests without.
     const missing = isSyv(service) && (apiKey === null || apiKey === '')

@@ -20,7 +20,7 @@
 import { readFile } from 'node:fs/promises'
 import { rewriteWikiLinksMulti, vaultRelPath } from '@holi/shared'
 import { moveNoteComments } from './note-comments'
-import { absPathFor, listFiles, removeDocFile, writeAtomic } from './vault-files'
+import { absPathFor, listFiles, removeDocFile, withFileLock, writeAtomic } from './vault-files'
 
 export async function moveNotes(
   root: string,
@@ -48,8 +48,17 @@ export async function moveNotes(
     if (to !== path || count > 0) planned.push({ dest: to, data: next })
   }
 
-  for (const from of map.keys()) await removeDocFile(root, vaultRelPath(from))
-  for (const p of planned) await writeAtomic(root, vaultRelPath(p.dest), p.data)
+  // Each under its file's lock, as every main-side writer takes it: a writer
+  // that checks a file before writing beside it (a meeting's, which checks
+  // its transcript) never writes into a folder this move has just emptied.
+  for (const from of map.keys()) {
+    const rel = vaultRelPath(from)
+    await withFileLock(absPathFor(root, rel), () => removeDocFile(root, rel))
+  }
+  for (const p of planned) {
+    const rel = vaultRelPath(p.dest)
+    await withFileLock(absPathFor(root, rel), () => writeAtomic(root, rel, p.data))
+  }
   const comments = await moveNoteComments(root, moves)
 
   return { rewritten: rewritten.sort((a, b) => a.path.localeCompare(b.path)), comments }

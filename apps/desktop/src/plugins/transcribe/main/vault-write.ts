@@ -8,7 +8,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { open } from 'node:fs/promises'
+import { open, stat } from 'node:fs/promises'
 import { vaultRelPath } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
 import {
@@ -18,11 +18,35 @@ import {
   writeAtomic,
 } from '../../../main/plugin-api'
 
-export async function writeVaultText(root: string, path: string, text: string): Promise<void> {
+/**
+ * Write a vault file, unless `guard`, asked under the file's lock, says no:
+ * a check made outside it could pass just before a move takes the file away.
+ * Whether it wrote.
+ */
+export async function writeVaultText(
+  root: string,
+  path: string,
+  text: string,
+  guard?: () => Promise<boolean>,
+): Promise<boolean> {
   const rel = vaultRelPath(path)
   const abs = await exactPath(root, rel)
   if (abs === null) throw new Error(`refused to write ${path}: not a plain vault path`)
-  await withFileLock(abs, () => writeAtomic(root, rel, text))
+  return withFileLock(abs, async () => {
+    if (guard !== undefined && !(await guard())) return false
+    await writeAtomic(root, rel, text)
+    return true
+  })
+}
+
+/** Whether `path` is a folder in the vault. */
+export async function vaultFolderExists(root: string, path: string): Promise<boolean> {
+  const abs = await exactPath(root, vaultRelPath(path)).catch(() => null)
+  if (abs === null) return false
+  return stat(abs).then(
+    (s) => s.isDirectory(),
+    () => false,
+  )
 }
 
 /**

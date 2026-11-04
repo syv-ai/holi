@@ -241,6 +241,9 @@ export interface Scribe {
   /** The last line the scribe has, or is being sent: a correction to one
    *  at or before it must reach the scribe as a correction. */
   through(meetingId: string): number
+  /** The meeting is gone: what waits for its scribe is dropped, and a kept
+   *  run (`session`) is stopped. */
+  end(meetingId: string, session: string | undefined): void
   dispose(): void
 }
 
@@ -263,6 +266,9 @@ interface Runtime {
   /** Why groups a tool-less scribe answered were not written, for its next
    *  message: it sees no command fail, as one with Bash does. */
   refused: string[]
+  /** A person's words for a tool-less scribe whose turn is still running:
+   *  sent into it, they would end it as one answer run into the next. */
+  waiting: Array<{ text: string; sent: (ok: boolean) => void }>
 }
 
 /**
@@ -273,15 +279,33 @@ interface Runtime {
  */
 export function groupsInAnswer(text: string | null): unknown[] | null {
   if (text === null) return null
-  const from = text.indexOf('[')
-  const to = text.lastIndexOf(']')
-  if (from < 0 || to < from) return null
-  try {
-    const parsed: unknown = JSON.parse(text.slice(from, to + 1))
-    return Array.isArray(parsed) ? parsed : null
-  } catch {
-    return null
+  // Every top-level array, so two answers run together both count.
+  const arrays: unknown[][] = []
+  let depth = 0
+  let start = -1
+  let quoted = false
+  for (let k = 0; k < text.length; k++) {
+    const c = text[k]
+    if (quoted) {
+      if (c === '\\') k++
+      else if (c === '"') quoted = false
+    } else if (c === '"' && depth > 0) quoted = true
+    else if (c === '[') {
+      if (depth === 0) start = k
+      depth++
+    } else if (c === ']' && depth > 0) {
+      depth--
+      if (depth === 0) {
+        try {
+          const parsed: unknown = JSON.parse(text.slice(start, k + 1))
+          if (Array.isArray(parsed)) arrays.push(parsed)
+        } catch {
+          // Not JSON: words in brackets, say.
+        }
+      }
+    }
   }
+  return arrays.length === 0 ? null : arrays.flat()
 }
 
 const errorCode = (err: unknown): string | undefined =>
@@ -320,6 +344,7 @@ export function createScribe(deps: {
         final: null,
         report: 'bash',
         refused: [],
+        waiting: [],
       }
       runtimes.set(id, r)
     }
@@ -639,10 +664,19 @@ export function createScribe(deps: {
         settleFinal(meeting.id, 'idle', true)
         feed(meeting.id)
       }
-      if (rt(meeting.id).report === 'bash') return ended()
+      const r = rt(meeting.id)
+      if (r.report === 'bash') return ended()
       // A tool-less scribe's groups are its answer: written before the turn
-      // counts as over, so the final pass ends with them in.
-      void answered(sessionId, meeting).finally(ended)
+      // counts as over, so the final pass ends with them in. A person's word
+      // that waited for the turn goes next, before any batch.
+      void answered(sessionId, meeting).finally(() => {
+        const next = r.waiting.shift()
+        if (next === undefined) return ended()
+        void deliver(sessionId, next.text).then((ok) => {
+          next.sent(ok === true)
+          if (ok !== true) ended()
+        })
+      })
     },
 
     feed,
@@ -658,9 +692,19 @@ export function createScribe(deps: {
       if (meeting === undefined || session === undefined || meeting.scribeState === 'gone') {
         throw new CapabilityError('UNAVAILABLE', 'this meeting has no scribe running')
       }
-      const report = rt(id).report
+      const r = rt(id)
+      const report = r.report
       const message =
         kind === 'minutes' ? groupsChangeMessage(text, report) : tellMessage(text, report)
+      if (report === 'reply' && (meeting.scribeState === 'working' || r.sending)) {
+        // Into a running turn it would join that turn's answer: it waits.
+        if (!(await new Promise<boolean>((sent) => r.waiting.push({ text: message, sent })))) {
+          throw new CapabilityError('UNAVAILABLE', 'the scribe did not take the message')
+        }
+        reached(meeting)
+        setState(meeting, 'working')
+        return
+      }
       if ((await deliver(session, message)) !== true) {
         throw new CapabilityError('UNAVAILABLE', 'the scribe did not take the message')
       }
@@ -709,11 +753,25 @@ export function createScribe(deps: {
       if (r.report === 'reply') void deps.agent.stop(session).catch(() => {})
     },
 
+    end(id, session) {
+      const r = runtimes.get(id)
+      if (r === undefined) return
+      if (r.timer !== null) clearTimeout(r.timer)
+      r.final?.done()
+      for (const w of r.waiting.splice(0)) w.sent(false)
+      runtimes.delete(id)
+      // A kept run is the meeting's alone: it ends with it.
+      if (r.report === 'reply' && session !== undefined) {
+        void deps.agent.stop(session).catch(() => {})
+      }
+    },
+
     dispose() {
       disposed = true
       for (const r of runtimes.values()) {
         if (r.timer !== null) clearTimeout(r.timer)
         r.final?.done()
+        for (const w of r.waiting.splice(0)) w.sent(false)
       }
       runtimes.clear()
     },

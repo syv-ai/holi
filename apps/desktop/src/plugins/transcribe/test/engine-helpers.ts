@@ -74,7 +74,7 @@ export async function engineRig(
     userData?: string
     root?: string
     /** The speech key in use; `test-key` unless given. */
-    apiKey?: () => Promise<string | null>
+    apiKey?: (service: SpeechService) => Promise<string | null>
     /** The speech service; syv.ai's unless given. */
     service?: () => Promise<SpeechService>
     /** The vault's agent; Claude Code unless given. */
@@ -120,8 +120,10 @@ export async function engineRig(
     apiKey: opts.apiKey ?? (async () => 'test-key'),
     service: opts.service ?? (async () => ({ url: null, model: null })),
     provider: opts.provider ?? (async () => 'claude'),
-    writeFile: async (rel, text) => {
+    writeFile: async (rel, text, guard) => {
+      if (guard !== undefined && !(await guard())) return false
       writes.set(rel, text)
+      return true
     },
     removeFiles: async (rels, folder) => {
       for (const rel of rels) writes.delete(rel)
@@ -129,6 +131,7 @@ export async function engineRig(
     },
     // The vault is what was written: its files, and the folders they are in.
     readHead: async (rel) => writes.get(rel)?.slice(0, 256) ?? null,
+    folderExists: async (rel) => [...writes.keys()].some((k) => k.startsWith(`${rel}/`)),
     folders: () => [
       ...new Set(
         [...writes.keys()].flatMap((rel) =>

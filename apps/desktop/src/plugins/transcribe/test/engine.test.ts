@@ -443,6 +443,57 @@ describe('a meeting folder changed in the vault', () => {
     expect(rig.writes.size).toBe(0)
   })
 
+  it('whose transcript alone went, as in a fresh clone, writes it again and loses nothing', async () => {
+    const rig = await engineRig()
+    const { meetingId, meeting, dir, send } = await started(rig)
+    await send(0)
+    const transcript = `${meeting.folder}/transcript.local.md`
+    await until(() => rig.writes.get(transcript)?.includes('said 1') === true)
+    await rig.meetings.stop(meetingId)
+    await until(() => meeting.phase === 'done')
+    rig.writes.set(`${meeting.folder}/minutes.md`, '# shared\n')
+    rig.writes.delete(transcript)
+
+    await rig.meetings.follow()
+    await until(() => rig.writes.get(transcript)?.includes('said 1') === true)
+    expect(rig.meetings.list().map((m) => m.id)).toEqual([meetingId])
+    expect(await present(join(dir, 'state.json'))).toBe(true)
+  })
+
+  it('moved while a write raced it leaves nothing behind at the old path', async () => {
+    const rig = await engineRig()
+    const { meeting, send } = await started(rig)
+    const from = meeting.folder
+    await send(0)
+    await until(() => rig.writes.has(`${from}/minutes.local.md`))
+    moveFolder(rig.writes, from, 'Moved.meeting')
+    // What a write racing the move made again beside no transcript.
+    rig.writes.set(`${from}/minutes.local.md`, 'stale\n')
+    await rig.meetings.follow()
+    expect(meeting.folder).toBe('Moved.meeting')
+    expect(rig.removed.at(-1)).toEqual({
+      rels: [`${from}/minutes.local.md`, `${from}/minutes.md`],
+      folder: from,
+    })
+  })
+
+  it('deleted while a Pi assistant writes its topics stops that run too', async () => {
+    const rig = await engineRig({
+      provider: async () => 'pi',
+      launch: async () => ({ ok: true, sessionId: SCRIBE }),
+    })
+    const { meetingId, meeting, send } = await started(rig)
+    await until(() => meeting.scribeSessionId === SCRIBE)
+    await send(0)
+    await until(
+      () => rig.writes.get(`${meeting.folder}/transcript.local.md`)?.includes('said 1') === true,
+    )
+    for (const rel of [...rig.writes.keys()]) rig.writes.delete(rel)
+    await rig.meetings.follow()
+    await until(() => !rig.meetings.list().some((m) => m.id === meetingId))
+    expect(rig.agent.stop).toHaveBeenCalledWith(SCRIBE)
+  })
+
   it('is never another meeting’s by its old path', async () => {
     const rig = await engineRig()
     const first = await started(rig, 'Test')
