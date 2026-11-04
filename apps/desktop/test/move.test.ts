@@ -27,14 +27,20 @@ const read = (root: string, rel: string) => readFile(join(root, rel), 'utf8')
 describe('moveNotes', () => {
   it('runs beside a delete that holds a note linking to it, and both finish', async () => {
     const root = await vault({ 'c.md': 'see [[z.md]]', 'z.md': 'Z' })
-    const rels = ['c.md', 'z.md'].map((p) => vaultRelPath(p))
-    // A delete of both holds c.md, then waits for z.md, which the move holds.
-    const removal = withFileLocks(root, rels, () => new Promise((r) => setTimeout(r, 50)))
+    let open!: () => void
+    const gate = new Promise<void>((r) => (open = r))
+    // Someone holds c.md; a delete of both queues behind it, then the move
+    // takes z.md, which the delete wants next.
+    const holder = withFileLock((await exactPath(root, 'c.md'))!, () => gate)
+    const removal = withFileLocks(root, ['c.md', 'z.md'].map(vaultRelPath), async () => {})
+    await new Promise((r) => setTimeout(r, 20))
     const move = moveNotes(root, [{ from: 'z.md', to: 'x/z.md' }])
+    await new Promise((r) => setTimeout(r, 50))
+    open()
     const stuck = new Promise((r) => setTimeout(() => r('stuck'), 2000))
-    expect(await Promise.race([Promise.all([removal, move]).then(() => 'done'), stuck])).toBe(
-      'done',
-    )
+    const all = Promise.all([holder, removal, move]).then(() => 'done')
+    expect(await Promise.race([all, stuck])).toBe('done')
+    expect(await read(root, 'c.md')).toBe('see [[x/z.md]]')
   })
 
   it('runs beside another move of a note it links to, and both finish', async () => {

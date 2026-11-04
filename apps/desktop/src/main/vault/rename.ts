@@ -11,8 +11,16 @@
 import { readFile } from 'node:fs/promises'
 import { isLocalOnlyPath, rewriteWikiLinks, vaultRelPath } from '@holi/shared'
 import { scanBackrefs } from './backrefs'
+import { oneMoveAtATime } from './move'
 import { moveNoteComments } from './note-comments'
-import { absPathFor, moveDocFile, withFileLocks, writeAtomic } from './vault-files'
+import {
+  absPathFor,
+  lockPath,
+  moveDocFile,
+  withFileLock,
+  withFileLocks,
+  writeAtomic,
+} from './vault-files'
 
 /** Move `from`→`to`, rewriting every inbound `[[link]]` in one pass. The rewrite
  *  runs before the move, so a mid-run failure leaves the source in place and
@@ -29,14 +37,28 @@ export async function renameNote(
   to: string,
   { localLinksOnly = false }: { localLinksOnly?: boolean } = {},
 ): Promise<{ rewritten: { path: string; count: number }[] }> {
+  return oneMoveAtATime(() => renameNow(root, from, to, localLinksOnly))
+}
+
+async function renameNow(
+  root: string,
+  from: string,
+  to: string,
+  localLinksOnly: boolean,
+): Promise<{ rewritten: { path: string; count: number }[] }> {
   const referrers = (await scanBackrefs(root, from)).filter(
     (ref) => !localLinksOnly || isLocalOnlyPath(ref.path),
   )
+  // Each under its own lock, read again there, and with no other lock held:
+  // a save made meanwhile is kept, and a note gone meanwhile is skipped.
   for (const ref of referrers) {
     const rel = vaultRelPath(ref.path)
-    const text = await readFile(absPathFor(root, rel), 'utf8')
-    const { text: rewritten } = rewriteWikiLinks(text, from, to)
-    await writeAtomic(root, rel, rewritten)
+    await withFileLock(await lockPath(root, rel), async () => {
+      const text = await readFile(absPathFor(root, rel), 'utf8').catch(() => null)
+      if (text === null) return
+      const { text: rewritten } = rewriteWikiLinks(text, from, to)
+      if (rewritten !== text) await writeAtomic(root, rel, rewritten)
+    })
   }
   // Under both names' locks, as every main-side writer takes a file: one
   // that checked the old name does not write it again beside the new.

@@ -32,15 +32,20 @@ import {
 
 type Moved = { rewritten: { path: string; count: number }[]; comments: string[] }
 
-/** The move under way: moves run one at a time, so one never reads a file
- *  another is moving and writes its old text, or its links, over the
- *  other's. A person's drag and the archive step are rare enough to wait. */
+/** The move or rename under way: they run one at a time, so one never reads
+ *  a file another is moving and writes its old text, or its links, over the
+ *  other's. A person's drag and the archive step are rare enough to wait.
+ *  `work` must not start another move or rename, which would wait on it. */
 let moving: Promise<unknown> = Promise.resolve()
 
-export function moveNotes(root: string, moves: { from: string; to: string }[]): Promise<Moved> {
-  const run = moving.then(() => moveNow(root, moves))
+export function oneMoveAtATime<T>(work: () => Promise<T>): Promise<T> {
+  const run = moving.then(work)
   moving = run.catch(() => {})
   return run
+}
+
+export function moveNotes(root: string, moves: { from: string; to: string }[]): Promise<Moved> {
+  return oneMoveAtATime(() => moveNow(root, moves))
 }
 
 async function moveNow(root: string, moves: { from: string; to: string }[]): Promise<Moved> {
