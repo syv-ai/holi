@@ -5,7 +5,8 @@ import { createRoot } from 'react-dom/client'
 import { App } from '@/App'
 import { ReadyUpdateDialog } from '@/features/shell/ready-update-dialog'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { flushAllBuffers } from '@/lib/buffer-registry'
+import { saveBuffersOnBlur } from '@/lib/buffer-registry'
+import { listenForQuitFlush } from '@/lib/quit-flush'
 import { stampPlatform } from '@/lib/platform'
 import { hostPluginVaults, installedPluginsAtom } from '@/state/plugins'
 import { reportUiToMain } from '@/state/ui-report'
@@ -38,12 +39,12 @@ reportUiToMain(store)
 
 /**
  * Main is quitting and wants buffers on disk before it commits. Subscribed
- * here, not in the editor, so it answers with no editor open. The ack fires
- * unconditionally: main quits after a second either way.
+ * here, not in the editor, so it answers with no editor open. Main receives a
+ * correlated success or failure response before deciding whether to quit.
  */
-window.holi.vault.onFlushRequest(() => {
-  void flushAllBuffers().finally(() => window.holi.vault.flushDone())
-})
+listenForQuitFlush(window.holi.vault)
+// Leaving the window saves too, syntax-gated (`docs/features/editor.md`).
+saveBuffersOnBlur()
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
