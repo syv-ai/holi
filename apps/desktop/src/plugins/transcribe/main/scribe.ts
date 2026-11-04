@@ -825,10 +825,16 @@ export function createScribe(deps: {
 
     dispose() {
       disposed = true
-      for (const r of runtimes.values()) {
+      for (const [id, r] of runtimes) {
         if (r.timer !== null) clearTimeout(r.timer)
         r.final?.done()
         dropWaiting(r)
+        // A kept run is this engine's alone: one started again would not know
+        // it answers rather than runs tools, so it goes with the engine.
+        const session = deps.host.get(id)?.meeting.scribeSessionId
+        if (r.report === 'reply' && session !== undefined) {
+          void deps.agent.stop(session).catch(() => {})
+        }
       }
       runtimes.clear()
     },

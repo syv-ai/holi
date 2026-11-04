@@ -145,7 +145,7 @@ test('a key saved for syv.ai goes to another service only when the box is ticked
   const dialog = await screen.findByRole('dialog', { name: 'Speech service' })
   await userEvent.click(within(dialog).getByRole('radio', { name: 'Another service' }))
   const move = within(dialog).getByRole('checkbox', {
-    name: 'Send this Mac’s saved key to the new service too',
+    name: 'Move this Mac’s saved key to the new service',
   })
   expect(move).not.toBeChecked()
   await userEvent.click(move)

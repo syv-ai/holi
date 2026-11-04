@@ -384,6 +384,15 @@ describe('where a meeting goes', () => {
     expect((await rig.meetings.get(meetingId)).folder).toBe(path)
     await expect(rig.meetings.start({ path })).rejects.toMatchObject({ code: 'CONFLICT' })
   })
+
+  it('is refused in a folder whose transcript is someone’s own file', async () => {
+    const rig = await engineRig()
+    const path = 'Clients/Acme/Notes.meeting'
+    rig.writes.set(`${path}/transcript.local.md`, 'my own notes\n')
+    await expect(rig.meetings.start({ path })).rejects.toMatchObject({ code: 'CONFLICT' })
+    expect(rig.writes.get(`${path}/transcript.local.md`)).toBe('my own notes\n')
+    expect(rig.meetings.list()).toEqual([])
+  })
 })
 
 /** Move every file under `from` to `to`, as the vault's rename or move does. */
@@ -396,6 +405,29 @@ function moveFolder(writes: Map<string, string>, from: string, to: string): void
 }
 
 describe('a meeting folder changed in the vault', () => {
+  it('whose transcript alone is dragged into another folder stays where it is', async () => {
+    const rig = await engineRig()
+    const { meetingId, meeting, send } = await started(rig)
+    const from = meeting.folder
+    const transcript = `${from}/transcript.local.md`
+    await send(0)
+    await until(() => rig.writes.get(transcript)?.includes('said 1') === true)
+    await rig.meetings.stop(meetingId)
+    await until(() => meeting.phase === 'done')
+    rig.writes.set(`${from}/minutes.md`, '# shared minutes\n')
+    rig.writes.set('notes/minutes.md', '# my notes\n')
+    rig.writes.set('notes/transcript.local.md', rig.writes.get(transcript)!)
+    rig.writes.delete(transcript)
+
+    await rig.meetings.follow()
+    await vi.advanceTimersByTimeAsync(6000)
+    await rig.meetings.follow()
+    await until(() => rig.writes.get(transcript)?.includes('said 1') === true)
+    expect(meeting.folder).toBe(from)
+    expect(rig.writes.get(`${from}/minutes.md`)).toBe('# shared minutes\n')
+    expect(rig.writes.get('notes/minutes.md')).toBe('# my notes\n')
+  })
+
   it('renamed or moved takes its meeting with it, which writes there from then on', async () => {
     const rig = await engineRig()
     const { meetingId, meeting, send } = await started(rig)

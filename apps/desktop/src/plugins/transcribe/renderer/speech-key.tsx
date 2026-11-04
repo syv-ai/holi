@@ -218,7 +218,7 @@ function ServiceForm({ onSaved }: { onSaved: (said: string) => void }): React.JS
             disabled={busy}
             onCheckedChange={(next) => setMoveKey(next === true)}
           />
-          <FieldLabel htmlFor={moveId}>Send this Mac’s saved key to the new service too</FieldLabel>
+          <FieldLabel htmlFor={moveId}>Move this Mac’s saved key to the new service</FieldLabel>
         </Field>
       )}
       {kind === 'other' && (

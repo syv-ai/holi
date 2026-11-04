@@ -520,8 +520,9 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     // Its transcript was written there, and is gone or replaced: moved or
     // deleted, or a move under way, which `follow` settles.
     if (l.stored.marked === true) return false
-    // A meeting from before transcripts carried ids: its own transcript.
-    if (mark.kind === 'unmarked') return true
+    // A meeting from before transcripts carried ids: its own transcript. A
+    // meeting starting now never takes one: it is someone's file.
+    if (mark.kind === 'unmarked') return !l.fresh
     // A folder that is not there yet, or a placeholder: only for the meeting
     // starting in it now.
     return l.fresh
@@ -581,8 +582,15 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
         setAway(id, false)
         continue
       }
+      // Its folder was renamed or moved: the meeting follows. A transcript
+      // dragged out on its own into a folder that is not a meeting's is not
+      // the meeting moving (its folder and minutes are where they were), so
+      // the meeting stays and writes its transcript again.
       const moved = (await markedFolders()).get(id)
-      if (moved !== undefined) {
+      if (
+        moved !== undefined &&
+        (moved.endsWith(MEETING_SUFFIX) || !(await deps.folderExists(summary.folder)))
+      ) {
         await relocate(id, moved)
         continue
       }
@@ -1385,8 +1393,13 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       const name = title?.trim() || defaultTitle(at)
       // A folder is a meeting's by the id in its transcript, not by a record
       // that once had its path: that meeting moved or was deleted.
-      if (path !== undefined && (await markAt(path)).kind === 'meeting') {
+      const there = path === undefined ? null : (await markAt(path)).kind
+      if (there === 'meeting') {
         throw new CapabilityError('CONFLICT', 'that folder has a meeting already')
+      }
+      // A transcript with no meeting's id is a file someone put there.
+      if (there === 'unmarked') {
+        throw new CapabilityError('CONFLICT', 'that folder holds a transcript of its own')
       }
       const folder = path ?? (await freeFolder(parent, name, at))
       const id = randomBytes(6).toString('hex')

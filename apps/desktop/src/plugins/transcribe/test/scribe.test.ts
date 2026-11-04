@@ -349,6 +349,13 @@ describe('the end of a meeting', () => {
     expect(rig.agent.stop).toHaveBeenCalledWith(SCRIBE)
   })
 
+  it('on Pi is stopped when the plugin shuts down with the meeting still recording', async () => {
+    const rig = await meetingRig({ provider: async () => 'pi', reply: async () => '[]' })
+    expect(rig.meeting.phase).toBe('recording')
+    await rig.meetings.dispose()
+    expect(rig.agent.stop).toHaveBeenCalledWith(SCRIBE)
+  })
+
   it('started for a meeting deleted meanwhile is stopped, not left running', async () => {
     let started: ((v: { ok: true; sessionId: string }) => void) | undefined
     const rig = await engineRig({

@@ -32,9 +32,9 @@ Meetings tab, else, for syv.ai's service only, the vault's `SYV_API_KEY` (`.env.
 read by core's one reader `readVaultEnv`), else none. syv.ai needs a key; another service may take
 requests without one. **A key is bound to the service it was saved for**: it is stored with that
 service's address and sent there alone. Choosing another service leaves it unused (it applies again
-if that service is chosen again) unless the person ticks **Send this Mac's saved key to the new
-service too** (`meeting.service.set` with `moveKey`); the dialog says when a saved key is for another
-service. The key never reaches the renderer, which learns only whether one is set,
+if that service is chosen again) unless the person ticks **Move this Mac's saved key to the new
+service** (`meeting.service.set` with `moveKey`): there is one saved key, so it is then the new
+service's and no longer the old one's. The dialog says when a saved key is for another service. The key never reaches the renderer, which learns only whether one is set,
 where it came from, the service, and whether meetings can be transcribed as things are
 (`meeting.key.status`'s `ready`); `meeting.key.set`, `meeting.key.clear` and `meeting.key.test` (for
 syv.ai the free `/v1/models`, spending no credits; for another service half a second of silence) are
@@ -142,7 +142,7 @@ Chunk audio is deleted once transcribed unless the profile keeps it.
 **The scribe** runs on the vault's agent, in the form that holds it to the meeting there. On Claude
 Code it is held by the deny rules below. On Pi it is a run with no tools at all (`agent.launch` with
 `tools: 'none'`: Pi's `--no-tools`, and no extensions, skills, prompt templates, context files, MCP
-servers or project settings), kept for the meeting (`keep`) and stopped when it is done; it answers
+servers or project settings), kept for the meeting (`keep`) and stopped when it is done, or when the plugin stops; it answers
 each message with its groups as one JSON array (the prompt's `reply` form), which main reads at the
 turn's end (`agent.reply`) and writes as `holi meeting group` would, telling it in the next message
 which groups were refused and why. A person's note waits for the turn under way rather than join
@@ -387,7 +387,9 @@ Meetings tab.
 **A meeting is known by its id, not its path.** Its transcript starts with `meeting: <id>`
 frontmatter, written when it starts, and the engine checks it before every write and on every vault
 scan (`meetings.follow`). A folder renamed or moved in the tree takes its meeting with it: the
-meeting's paths (its minutes, its tasks) follow, and it writes there from then on. A folder deleted
+meeting's paths (its minutes, its tasks) follow, and it writes there from then on. A transcript
+dragged out on its own into a folder that is not a meeting's is not the meeting moving: the meeting
+stays in its folder and writes its transcript there again. A folder deleted
 from the vault, gone for 5 s (a move removes its files before it writes them again), deletes the
 meeting here too, its recording stopped first (`meeting-removed`: the capture stops and what it
 still has goes nowhere); nothing writes the old path again. What this machine had of it (state,
@@ -397,7 +399,7 @@ that stayed while only its transcript went, as in a fresh clone (the transcript 
 gets it written again. A folder at a meeting's path that is not that meeting's is never taken for
 it, nor is a file someone put in its transcript's place overwritten: a stale record shows in the
 list as moved away (`away`), opens no folder, and `meeting.start` in a folder whose transcript carries another
-meeting's id is refused. A meeting from before ids takes the transcript at its path as its own.
+meeting's id, or no id at all (a file of someone's own), is refused. A meeting from before ids takes the transcript at its path as its own.
 
 **Renaming and deleting.** Each meeting in the list has a **…** menu, on hover or focus, and so does
 its review beside the title: **Rename** edits the title in place (`meeting.rename`; Enter saves,
