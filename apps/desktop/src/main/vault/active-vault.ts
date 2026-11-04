@@ -1,11 +1,7 @@
 /**
- * The open vault: one at a time, and the owner of everything that runs while a
- * vault is on screen: its `GitRepo`, its watcher, its cached snapshot, and the
- * sync loop. See `docs/features/vaults-sync.md`.
- *
- * One at a time keeps a vault switch a teardown rather than a leak. The cost is
- * that a background vault neither pulls nor reports a sync state; `VaultHost`
- * is the only seam that assumes the singleton.
+ * A vault runtime: its `GitRepo`, watcher, cached snapshot, and sync loop.
+ * `VaultHost` may keep several runtimes alive, while the renderer sees only the
+ * selected runtime. See `docs/features/vaults-sync.md`.
  *
  * Two rules the loop is built on, both of which cost data if broken:
  *
@@ -1035,7 +1031,17 @@ export async function openActiveVault(args: {
   let heal: NodeJS.Timeout | null = null
   let pullTimer: NodeJS.Timeout | null = null
   try {
-    await args.bridgeEnv?.attach(args.remote, root)
+    try {
+      await args.bridgeEnv?.attach(args.remote, root)
+    } catch (err) {
+      console.error('[vault] bridge attach failed:', err)
+      // Attach may have made some contributions before failing.
+      await args.bridgeEnv
+        ?.detach(args.remote)
+        .catch((cleanupError) =>
+          console.error('[vault] bridge detach after failed attach:', cleanupError),
+        )
+    }
     watcher = await watchVault({
       root,
       debounceMs: timings.rescanDebounceMs,
@@ -1474,10 +1480,10 @@ export function createVaultHost(args: {
   gitDeps?: GitDeps
   /** What the scanner claims in the vault at `root` (`openActiveVault`). */
   claims: (root: string) => Promise<readonly ScanClaim[]>
-  onSnapshot: (snapshot: VaultSnapshot) => void
-  onSyncState: (state: SyncState) => void
-  onHeldBack?: (files: HeldBackFile[]) => void
-  onCommitted?: (paths: string[] | null) => void
+  onSnapshot: (remote: string, snapshot: VaultSnapshot) => void
+  onSyncState: (remote: string, state: SyncState) => void
+  onHeldBack?: (remote: string, files: HeldBackFile[]) => void
+  onCommitted?: (remote: string, paths: string[] | null) => void
   /** A pull merged commits into the open vault `remote`, at `root`. */
   onPulled?: (vault: { remote: string; root: string }, range: { from: string; to: string }) => void
   /** Sync in the open vault `remote` has kept failing (`openActiveVault`). */
@@ -1500,7 +1506,7 @@ export function createVaultHost(args: {
    * Not called on a re-open of the vault that is already open: that is the
    * renderer asking for a fresh picture, not a switch.
    */
-  onLeave?: () => Promise<void>
+  onLeave?: (remote: string) => Promise<void>
   timings?: Partial<SyncTimings>
 }): VaultHost {
   let current: ActiveVault | null = null
@@ -1543,7 +1549,7 @@ export function createVaultHost(args: {
     const errors: unknown[] = []
     if (current === vault) {
       try {
-        await args.onLeave?.()
+        await args.onLeave?.(remote)
       } catch (err) {
         console.error('[vault] leave hook failed:', err)
       }
@@ -1582,23 +1588,23 @@ export function createVaultHost(args: {
     if (errors.length > 0) throw new AggregateError(errors, `Could not cleanly close ${remote}`)
   }
 
-  async function start(remote: string): Promise<ActiveVault> {
+  async function start(remote: string, prepared = false): Promise<ActiveVault> {
     const existing = runtimes.get(remote)
     if (existing !== undefined) return existing
     const pending = starts.get(remote)
     if (pending !== undefined) return pending
     const opening = (async () => {
-      await args.beforeOpen?.()
+      if (!prepared) await args.beforeOpen?.()
       const entry = (await args.registry.list()).find((e) => e.remote === remote)
       if (!entry) throw new Error(`no such vault: ${remote}`)
       const vault = await openActiveVault({
         remote,
         repo: openRepo(entry.path, args.gitDeps),
         claims: () => args.claims(entry.path),
-        onSnapshot: args.onSnapshot,
-        onSyncState: args.onSyncState,
-        onHeldBack: args.onHeldBack,
-        onCommitted: args.onCommitted,
+        onSnapshot: (snapshot) => args.onSnapshot(remote, snapshot),
+        onSyncState: (state) => args.onSyncState(remote, state),
+        onHeldBack: (files) => args.onHeldBack?.(remote, files),
+        onCommitted: (paths) => args.onCommitted?.(remote, paths),
         onPulled: (range) => args.onPulled?.({ remote, root: entry.path }, range),
         onSyncFailing: (text) => args.onSyncFailing?.(remote, text),
         bridgeEnv: args.bridgeEnv,
@@ -1625,14 +1631,22 @@ export function createVaultHost(args: {
       admit(() =>
         serialiseSelection(async () => {
           if (current?.remote === remote) {
-            args.onSyncState(current.syncState())
+            args.onSnapshot(remote, current.snapshot())
+            args.onSyncState(remote, current.syncState())
+            args.onHeldBack?.(remote, current.heldBack())
             return current
           }
+          // Keep the selected runtime usable until startup prerequisites succeed.
+          await args.beforeOpen?.()
           const previous = current?.remote
           if (previous !== undefined) await serialise(previous, () => closeRuntime(previous))
-          const vault = await serialise(remote, () => start(remote))
+          const vault = await serialise(remote, () => start(remote, true))
           current = vault
-          args.onSyncState(vault.syncState())
+          // Startup callbacks can precede the runtime's insertion into `runtimes`.
+          // Replay its authoritative view after selection so those first updates survive.
+          args.onSnapshot(remote, vault.snapshot())
+          args.onSyncState(remote, vault.syncState())
+          args.onHeldBack?.(remote, vault.heldBack())
           return vault
         }),
       ),
