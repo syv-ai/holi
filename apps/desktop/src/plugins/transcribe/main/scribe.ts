@@ -628,6 +628,14 @@ export function createScribe(deps: {
       'info',
       `meeting "${meeting.title}": scribe ${res.sessionId} started (prompt ${SCRIBE_PROMPT_VERSION})`,
     )
+    // A tool-less run is in its first turn already, and the news of it went
+    // out before its session was known here: it is working, so a person's
+    // word waits for that turn. One that has answered already is heard now.
+    if (rt(id).report === 'reply') {
+      setState(meeting, 'working')
+      const answer = await deps.agent.reply(res.sessionId).catch(() => null)
+      if (answer !== null) scribe.hearTurnEnd(res.sessionId)
+    }
   }
 
   /** Write the groups a tool-less scribe answered with. */
@@ -655,7 +663,7 @@ export function createScribe(deps: {
   const scribed = (sessionId: string): MeetingState | undefined =>
     deps.host.live().find((m) => m.scribeSessionId === sessionId)
 
-  return {
+  const scribe: Scribe = {
     launch(id) {
       const run = launch(id).finally(() => launching.delete(id))
       launching.set(id, run)
@@ -722,7 +730,12 @@ export function createScribe(deps: {
     async tell(id, text, kind = 'note') {
       const meeting = deps.host.get(id)?.meeting
       const session = meeting?.scribeSessionId
-      if (meeting === undefined || session === undefined || meeting.scribeState === 'gone') {
+      if (
+        meeting === undefined ||
+        session === undefined ||
+        meeting.scribeState === 'gone' ||
+        (meeting.phase !== 'recording' && meeting.phase !== 'finishing')
+      ) {
         throw new CapabilityError('UNAVAILABLE', 'this meeting has no scribe running')
       }
       const r = rt(id)
@@ -811,4 +824,5 @@ export function createScribe(deps: {
       runtimes.clear()
     },
   }
+  return scribe
 }

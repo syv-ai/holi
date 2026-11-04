@@ -19,6 +19,7 @@ import {
   vaultRelPath,
   type VaultRelPath,
 } from '@holi/shared'
+import { exactPath } from '@holi/shared/path-safety-node'
 
 const TMP_MARKER = '.holi-tmp-'
 /** The `.gitignore` line for those files, at any depth. One killed mid-write
@@ -28,6 +29,14 @@ const JUNK = new Set(OS_JUNK_FILES)
 
 export function absPathFor(root: string, rel: VaultRelPath): string {
   return join(root, rel)
+}
+
+/** The key a file is locked by (`withFileLock`): its canonical path, the one
+ *  `exactPath` gives every checked write, so two writers of one file wait on
+ *  each other even when the vault is reached through a link; the lexical
+ *  path for a name `exactPath` refuses. */
+export async function lockPath(root: string, rel: VaultRelPath): Promise<string> {
+  return (await exactPath(root, rel)) ?? absPathFor(root, rel)
 }
 
 /** abs → validated vault-relative ('/'-separated), or null when outside/unsafe. */

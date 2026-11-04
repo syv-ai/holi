@@ -330,6 +330,7 @@ export { gitignoreWith } from './vault/seed/core'
 export {
   absPathFor,
   listFiles,
+  lockPath,
   pruneEmptiedFolder,
   removeDocFile,
   withFileLock,

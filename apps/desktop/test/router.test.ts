@@ -1111,7 +1111,8 @@ describe('tasks.move', () => {
     // a field another writer set while the move waited is kept.
     const { caller, root } = await rig({ 'task.foo.md': '---\ntitle: Foo\nstatus: todo\n---\n' })
     let release!: () => void
-    const held = withFileLock(join(root, 'task.foo.md'), async () => {
+    // Held by its canonical key, as every writer takes it (`lockPath`).
+    const held = withFileLock((await exactPath(root, 'task.foo.md'))!, async () => {
       await new Promise<void>((r) => (release = r))
       await writeFile(join(root, 'task.foo.md'), '---\nstatus: todo\ndue: 2026-08-01\n---\n')
     })

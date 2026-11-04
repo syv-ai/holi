@@ -39,6 +39,7 @@ import {
   removeDocFile,
   renameNote,
   stringParam,
+  lockPath,
   withFileLock,
   writableFile,
   writablePath,
@@ -170,7 +171,9 @@ async function createTaskFile(
     // land on the other.
     const twin = safe(taskFilePath(folder, name, !shared))
     const abs =
-      ctx.bundle !== null ? await writableFile(ctx, appTaskPath(rel)) : absPathFor(ctx.root, rel)
+      ctx.bundle !== null
+        ? await writableFile(ctx, appTaskPath(rel))
+        : await lockPath(ctx.root, rel)
     const created = await withFileLock(abs, async () => {
       if ((await readFile(abs, 'utf8').catch(() => null)) !== null) return false
       if ((await readFile(absPathFor(ctx.root, twin), 'utf8').catch(() => null)) !== null) {
@@ -322,7 +325,7 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
         const abs =
           ctx.bundle !== null
             ? await writableFile(ctx, appTaskPath(rel))
-            : absPathFor(ctx.root, rel)
+            : await lockPath(ctx.root, rel)
         const result = await withFileLock(abs, () => taskDoneOp(ctx.root, rel, deps.today()))
         if (!result.ok) throw new CapabilityError('BAD_REQUEST', result.error)
         return result
@@ -365,7 +368,7 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
           abs = await writableFile(ctx, rel)
         } else {
           rel = safe(path)
-          abs = absPathFor(ctx.root, rel)
+          abs = await lockPath(ctx.root, rel)
         }
         return withFileLock(abs, async () => {
           const next = await patched(ctx.root, await readTask(ctx.root, rel), patch)
@@ -428,7 +431,7 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
         if (hasPatch) {
           // Under the file's lock, as `tasks.update` writes: a field change
           // made meanwhile is read here rather than written over.
-          await withFileLock(absPathFor(ctx.root, from), async () => {
+          await withFileLock(await lockPath(ctx.root, from), async () => {
             const next = await patched(
               ctx.root,
               await readTask(ctx.root, from),

@@ -18,15 +18,16 @@
  * byte above 0x7f. Non-markdown files are only READ when they are moving.
  */
 import { readFile } from 'node:fs/promises'
-import { rewriteWikiLinksMulti, vaultRelPath, type VaultRelPath } from '@holi/shared'
-import { exactPath } from '@holi/shared/path-safety-node'
+import { rewriteWikiLinksMulti, vaultRelPath } from '@holi/shared'
 import { moveNoteComments } from './note-comments'
-import { absPathFor, listFiles, removeDocFile, withFileLock, writeAtomic } from './vault-files'
-
-/** The key other writers lock a file by: its canonical path, as the
- *  router's and the plugins' writes take it, so a move waits on them. */
-const lockKey = async (root: string, rel: VaultRelPath): Promise<string> =>
-  (await exactPath(root, rel)) ?? absPathFor(root, rel)
+import {
+  absPathFor,
+  listFiles,
+  lockPath,
+  removeDocFile,
+  withFileLock,
+  writeAtomic,
+} from './vault-files'
 
 export async function moveNotes(
   root: string,
@@ -59,11 +60,11 @@ export async function moveNotes(
   // its transcript) never writes into a folder this move has just emptied.
   for (const from of map.keys()) {
     const rel = vaultRelPath(from)
-    await withFileLock(await lockKey(root, rel), () => removeDocFile(root, rel))
+    await withFileLock(await lockPath(root, rel), () => removeDocFile(root, rel))
   }
   for (const p of planned) {
     const rel = vaultRelPath(p.dest)
-    await withFileLock(await lockKey(root, rel), () => writeAtomic(root, rel, p.data))
+    await withFileLock(await lockPath(root, rel), () => writeAtomic(root, rel, p.data))
   }
   const comments = await moveNoteComments(root, moves)
 

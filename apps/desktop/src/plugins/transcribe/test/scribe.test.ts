@@ -412,6 +412,73 @@ describe('a person’s word to a Pi assistant', () => {
   })
 })
 
+describe('a person’s word to a Pi assistant, at the edges', () => {
+  /** What became of a note: still waiting, taken, or refused. */
+  const watch = (p: Promise<void>) => {
+    const o = { now: 'pending' as 'pending' | 'taken' | 'refused' }
+    void p.then(
+      () => (o.now = 'taken'),
+      () => (o.now = 'refused'),
+    )
+    return o
+  }
+
+  it('waits for the first turn, which is running from the moment it starts', async () => {
+    let answer: string | null = null
+    const rig = await meetingRig({ provider: async () => 'pi', reply: async () => answer })
+    expect(rig.meeting.scribeState).toBe('working')
+    const before = rig.sentTo(SCRIBE).length
+    const note = watch(rig.scribe.tell(rig.meetingId, 'drop the budget talk'))
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(rig.sentTo(SCRIBE)).toHaveLength(before)
+    answer = '[]'
+    rig.scribe.hearTurnEnd(SCRIBE)
+    await until(() => note.now !== 'pending')
+    expect(note.now).toBe('taken')
+    expect(rig.sentTo(SCRIBE).at(-1)).toContain('drop the budget talk')
+  })
+
+  it('goes once a batch that never reached the run is given up', async () => {
+    let fail: ((err: Error) => void) | null = null
+    const rig = await meetingRig({
+      provider: async () => 'pi',
+      reply: async () => '[]',
+      message: (_s, text) =>
+        text.includes('drop the budget talk')
+          ? Promise.resolve({ ok: true })
+          : new Promise((_, reject) => (fail = reject)),
+    })
+    await until(() => rig.meeting.scribeState === 'idle')
+    rig.scribe.summarise(rig.meetingId)
+    await until(() => fail !== null)
+    const note = watch(rig.scribe.tell(rig.meetingId, 'drop the budget talk'))
+    await vi.advanceTimersByTimeAsync(10)
+    expect(note.now).toBe('pending')
+    fail!(new Error('the run is not there'))
+    await until(() => note.now !== 'pending')
+    expect(note.now).toBe('taken')
+    expect(rig.sentTo(SCRIBE).at(-1)).toContain('drop the budget talk')
+  })
+
+  it('is refused when the meeting ends before the turn under way does', async () => {
+    const rig = await meetingRig({ provider: async () => 'pi', reply: async () => '[]' })
+    await until(() => rig.meeting.scribeState === 'idle')
+    await rig.say(0)
+    rig.scribe.summarise(rig.meetingId)
+    await until(() => rig.meeting.scribeState === 'working')
+    await rig.meetings.stop(rig.meetingId)
+    const note = watch(rig.scribe.tell(rig.meetingId, 'drop the budget talk'))
+    // No turn ever ends: the final pass runs out of time.
+    await vi.advanceTimersByTimeAsync(4 * 60_000)
+    await until(() => rig.meeting.phase === 'done')
+    await until(() => note.now !== 'pending')
+    expect(note.now).toBe('refused')
+    await expect(rig.scribe.tell(rig.meetingId, 'too late')).rejects.toMatchObject({
+      code: 'UNAVAILABLE',
+    })
+  })
+})
+
 describe('a tool-less scribe’s answer', () => {
   it('is its JSON array, fenced or not; anything else holds no groups', () => {
     expect(groupsInAnswer('[{"startIndex":0}]')).toEqual([{ startIndex: 0 }])

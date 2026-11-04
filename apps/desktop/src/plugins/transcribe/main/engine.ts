@@ -451,7 +451,10 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     for (const name of await readdir(dir).catch(() => [] as string[])) {
       const at = Number(/^[0-9a-f]{12}-(\d+)$/.exec(name)?.[1])
       if (Number.isFinite(at) && at < cutoff) {
-        await rm(join(dir, name), { recursive: true, force: true, maxRetries: 3 })
+        // One that cannot go now goes at a later start; the meetings load.
+        await rm(join(dir, name), { recursive: true, force: true, maxRetries: 3 }).catch(
+          (err: unknown) => deps.log('warn', `meetings: could not erase ${name}: ${String(err)}`),
+        )
       }
     }
   }
