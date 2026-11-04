@@ -127,4 +127,5 @@ jobs:
           git config --global init.defaultBranch main
 
       - name: Test
-        run: pnpm test
+        # Leave CPU capacity for the serial filesystem/git suite beside jsdom.
+        run: pnpm test --maxWorkers=2
