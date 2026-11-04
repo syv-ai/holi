@@ -3,7 +3,9 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const CSS = resolve(process.cwd(), 'src/renderer/src/index.css')
+const SESSION_CARD = resolve(process.cwd(), 'src/plugins/agent/renderer/sessions/session-card.tsx')
 const css = await readFile(CSS, 'utf8')
+const sessionCard = await readFile(SESSION_CARD, 'utf8')
 
 type RGB = [number, number, number]
 
@@ -87,6 +89,12 @@ const darkMac = declarations("[data-platform='mac'][data-theme='dark']")
 const clear = declarations("[data-platform='mac'][data-glass='clear']")
 const solid = declarations("[data-platform='mac'][data-glass='solid']")
 const darkSolid = declarations("[data-platform='mac'][data-theme='dark'][data-glass='solid']")
+const drawerGlass = css.match(
+  /\[data-platform='mac'\] \[data-drawer\]\[data-glass-ground\]:not\(main \*\) \{\s*--muted-foreground:\s*([^;]+);/,
+)?.[1]
+const darkDrawerGlass = css.match(
+  /\[data-platform='mac'\]\[data-theme='dark'\] \[data-drawer\]\[data-glass-ground\]:not\(main \*\) \{\s*--muted-foreground:\s*([^;]+);/,
+)?.[1]
 
 describe('macOS glass text contrast from the production CSS cascade', () => {
   it('uses calibrated encoded-sRGB compositing and WCAG luminance', () => {
@@ -172,6 +180,54 @@ describe('macOS glass text contrast from the production CSS cascade', () => {
       }
     }
   }
+
+  it('keeps selected session metadata at full foreground ink over its actual fills', () => {
+    expect(sessionCard).toMatch(/current \? 'text-foreground' : 'text-muted-foreground'/)
+    const black: RGB = [0, 0, 0]
+    const white: RGB = [1, 1, 1]
+    const selectedCard = sessionCard.match(/current && 'bg-foreground\/10 hover:bg-foreground\/12'/)
+    expect(selectedCard).not.toBeNull()
+    const fillAlphas = [...selectedCard![0].matchAll(/bg-foreground\/(\d+)/g)].map(
+      ([, alpha]) => Number(alpha) / 100,
+    )
+    expect(fillAlphas).toEqual([0.1, 0.12])
+    for (const theme of [light, dark]) {
+      const ink = oklch(theme['--foreground']!)
+      const ground = oklch(theme['--sidebar']!)
+      for (const glassAlpha of [1, 0.9, 0.82]) {
+        for (const alpha of fillAlphas) {
+          for (const backdrop of [black, white]) {
+            const glassGround = composite(ground, backdrop, glassAlpha)
+            const selectedGround = composite(oklch(theme['--foreground']!), glassGround, alpha)
+            expect(contrast(ink, selectedGround)).toBeGreaterThanOrEqual(4.5)
+          }
+        }
+      }
+    }
+  })
+
+  it('grounds the rendered Last turn drawer with the shared glass ground', () => {
+    expect(css).toMatch(
+      /\[data-platform='mac'\] \[data-drawer\]\[data-glass-ground\]:not\(main \*\) \{\s*background: color-mix\(in oklab, var\(--background\) var\(--glass-view\), transparent\);/,
+    )
+    expect(css).toMatch(
+      /\[data-platform='mac'\] \[data-drawer\]\[data-glass-ground\] \{\s*background: transparent;/,
+    )
+    expect(drawerGlass).toBe('oklch(0.44 0 0)')
+    expect(darkDrawerGlass).toBe('oklch(0.8 0 0)')
+    expect(sessionCard).toContain("current ? 'text-foreground' : 'text-muted-foreground'")
+    const black: RGB = [0, 0, 0]
+    const white: RGB = [1, 1, 1]
+    for (const theme of [light, dark]) {
+      const drawerInk = oklch(theme === dark ? darkDrawerGlass! : drawerGlass!)
+      for (const alpha of [percentage(mac['--glass-view']!), percentage(clear['--glass-view']!)]) {
+        for (const backdrop of [black, white]) {
+          const ground = composite(oklch(theme['--background']!), backdrop, alpha)
+          expect(contrast(drawerInk, ground)).toBeGreaterThanOrEqual(4.5)
+        }
+      }
+    }
+  })
 
   it('proves the prior frosted, clear, and onboarding mixes are under AA', () => {
     const black: RGB = [0, 0, 0]
