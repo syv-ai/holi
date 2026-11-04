@@ -34,7 +34,12 @@ import {
 } from './state/sessions'
 import { openSessionAtom, showAgentsAtom } from './state/send'
 import { agentMenuEntriesAtom, runAgentMenuEntryAtom } from './state/command-menu'
-import { loadProvidersAtom, pickedProviderAtom, providersAtom } from './state/providers'
+import {
+  loadProvidersAtom,
+  pickedProviderAtom,
+  providerEvents,
+  providersAtom,
+} from './state/providers'
 import { startConversationViewAtom } from './state/session-view'
 import { TurnReview } from './turn-review'
 import { AgentStatusItem } from './sessions/agent-status-item'
@@ -85,7 +90,7 @@ const COMMANDS: readonly Command[] = [
 
 export const agentRenderer: RendererPlugin = {
   info: AGENT_INFO,
-  events: { ...agentEvents, ...inboxEvents },
+  events: { ...agentEvents, ...inboxEvents, ...providerEvents },
   surfaces: [
     {
       kind: AGENT_SURFACE,

@@ -34,8 +34,6 @@ vi.mock('../renderer/agent-cap', () => ({
   },
 }))
 
-vi.mock('@/lib/buffer-registry', () => ({ flushAllBuffers: () => Promise.resolve() }))
-
 const TURN: Turn = { base: 'aaa', end: 'bbb', at: '2026-09-09T10:00:00Z' }
 const TWO: TurnFile[] = [
   { path: 'notes/plan.md', status: 'M', added: 4, removed: 2 },

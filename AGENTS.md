@@ -160,10 +160,11 @@ are no barrels; check `components/ui` and `composites/` before writing a compone
   machine; Holis (`src/plugins/holis/`, `docs/features/holis.md`) are agents
   with a soul and a memory that a person sends a document to, or that carry
   out an automation, once this machine approved what the Holi says. Both are
-  plugins built on the agent: they start sessions through `agent.launch` and
-  hear it through `ctx.hear`; core reaches them only through plugin slots.
-  Their runs need a provider whose sessions run unwatched, so they run Claude
-  Code.
+  plugins built on the agent: they start runs on this machine's default
+  agent, which their approval is bound to (Claude Code as a background
+  session and Pi as a Holi-managed RPC run, through `agent.launch`; Codex as
+  a job in the vault, through `agent.job`), and hear it through `ctx.hear`;
+  core reaches them only through plugin slots.
 - Use system `git` and parse plumbing/porcelain output, not human-readable git
   output. Holi-managed clones autosave, pull, merge, and push; do not assume a
   user-maintained checkout or a dirty working tree.

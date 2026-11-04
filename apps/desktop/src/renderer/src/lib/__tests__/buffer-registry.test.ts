@@ -7,7 +7,58 @@
  * file the parsers will then refuse.
  */
 import { describe, expect, it } from 'vitest'
-import { registerBuffer, saveAllBuffers } from '@/lib/buffer-registry'
+import {
+  flushAllBuffers,
+  freezeBuffers,
+  registerBuffer,
+  saveAllBuffers,
+} from '@/lib/buffer-registry'
+
+describe('flushAllBuffers', () => {
+  it('waits for every buffer and rejects when any write fails', async () => {
+    const calls: string[] = []
+    const bad = registerBuffer(async () => {
+      calls.push('bad')
+      throw new Error('disk is full')
+    })
+    const good = registerBuffer(async () => void calls.push('good'))
+    await expect(flushAllBuffers()).rejects.toThrow('disk is full')
+    expect(calls.sort()).toEqual(['bad', 'good'])
+    bad()
+    good()
+  })
+})
+
+describe('freezeBuffers', () => {
+  it('freezes current and newly registered buffers until nested releases finish', () => {
+    const states: boolean[] = []
+    const release = registerBuffer(
+      async () => {},
+      async () => {},
+      (frozen) => states.push(frozen),
+    )
+    const first = freezeBuffers()
+    const second = freezeBuffers()
+    const lateStates: boolean[] = []
+    const late = registerBuffer(
+      async () => {},
+      async () => {},
+      (frozen) => lateStates.push(frozen),
+    )
+
+    expect(states).toEqual([true])
+    expect(lateStates).toEqual([true])
+    first()
+    first()
+    expect(states).toEqual([true])
+    second()
+    expect(states).toEqual([true, false])
+    expect(lateStates).toEqual([true, false])
+    second()
+    release()
+    late()
+  })
+})
 
 describe('saveAllBuffers', () => {
   it('saves every open buffer, not just the focused one', async () => {

@@ -14,7 +14,8 @@
  *
  * `parse` validates what is on disk and is handed `null` for a file that is
  * missing or not JSON, so each store decides what its empty state is and what
- * a hand edit gone wrong costs.
+ * a hand edit gone wrong costs. Its second argument is the file's text (null
+ * when there is no file), for a store that tells a broken file from none.
  *
  * Read from disk every time unless `cache` is set: these are files a developer
  * may open and fix, and a read that ignores the fix is a confusing bug. Main is
@@ -35,7 +36,7 @@ export interface JsonFileStore<T> {
 
 export function jsonFileStore<T>(
   path: string,
-  parse: (raw: unknown) => T,
+  parse: (raw: unknown, text: string | null) => T,
   options: { cache?: boolean } = {},
 ): JsonFileStore<T> {
   let cached: { value: T } | null = null
@@ -47,7 +48,10 @@ export function jsonFileStore<T>(
   const read = async (): Promise<T> => {
     if (cached !== null) return cached.value
     const began = writes
-    const text = await readFile(path, 'utf8').catch(() => null)
+    const text = await readFile(path, 'utf8').catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
     let raw: unknown = null
     if (text !== null) {
       try {
@@ -56,7 +60,7 @@ export function jsonFileStore<T>(
         raw = null
       }
     }
-    const value = parse(raw)
+    const value = parse(raw, text)
     if (options.cache === true && cached === null && writes === began) cached = { value }
     return value
   }

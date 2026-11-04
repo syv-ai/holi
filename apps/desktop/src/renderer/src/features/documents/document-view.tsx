@@ -8,7 +8,8 @@
  *
  * The agent is part of the page: Space on an empty line asks it to write
  * there, the format bubble's Ask AI rewrites a selection, and the menu's
- * Turn into an Artifact makes a vault app of the document. While a run edits
+ * Create vault app makes a vault app of the document beside it, and opens it
+ * when it is done if the document is still in front. While a run edits
  * the document the page is locked (nothing in it can be pressed) and the
  * status pill at its foot says what it is doing and offers Stop.
  *
@@ -18,10 +19,12 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { toast } from 'sonner'
 import { differsBeyondTidy, holiLink, isHoliLinkable, isResolved } from '@holi/shared'
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { findNext, findPrev } from 'prosemirror-search'
-import { EditorContent, useEditor } from '@tiptap/react'
+import { EditorContent, Extension, useEditor } from '@tiptap/react'
+import { Plugin } from '@tiptap/pm/state'
 
 import { DeleteTableDialog } from '@/features/documents/rich-text/delete-table-dialog'
 import { RichTextBlockActions } from '@/features/documents/rich-text/rich-text-block-actions'
@@ -32,6 +35,7 @@ import { RichTextLinkBubble } from '@/features/documents/rich-text/rich-text-lin
 import {
   RICH_TEXT_BASIC_SLASH_ITEMS,
   RichTextSlashCommand,
+  type SlashAgentLabelSource,
   type RichTextSlashItem,
 } from '@/features/documents/rich-text/rich-text-slash-menu'
 import { useRichTextSelector } from '@/features/documents/rich-text/rich-text-state'
@@ -42,17 +46,24 @@ import {
   RichTextTableBubble,
 } from '@/features/documents/rich-text/rich-text-table'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { registerBuffer } from '@/lib/buffer-registry'
 import { cn } from '@/lib/cn'
 import { TaskProperties } from '@/features/planning/task-properties'
 import { trpc } from '@/lib/trpc'
 import { sawText } from '@/state/doc-changes'
+import { canStartConversationAtom, startConversationAtom } from '@/state/agents-slots'
+import { isRunLive, useAgentLabel } from '@/state/document-runs'
+import { agentProviderSettingAtom } from '@/state/settings'
 import { claimsAtom } from '@/state/plugins'
+import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { focusedTab } from '@/state/shell-workspace'
+import { tabPath } from '@/state/tab-descriptor'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 import { AgentPrompt, AgentStatus } from './agent-prompt'
 import { askAiSlashItem } from './ask-ai-slash'
 import { applyReload } from './apply-reload'
-import { artifactPathFor, isRunLive, locksDocument, useDocumentAgent } from './document-agent'
+import { locksDocument, useDocumentAgent } from './document-agent'
 import { parentOf } from '@/lib/tree-paths'
 import { CommentsPanel } from './comments-panel'
 import { DocumentComments } from './document-comments'
@@ -165,6 +176,24 @@ function DocumentEditor({
   onMoved?: (from: string, to: string) => void
 }) {
   const agent = useDocumentAgent(path)
+  const agentLabel = useAgentLabel(useAtomValue(agentProviderSettingAtom)) ?? 'AI'
+  const agentLabelRef = useRef(agentLabel)
+  agentLabelRef.current = agentLabel
+  const labelListeners = useRef(new Set<() => void>())
+  const labelSource = useMemo<SlashAgentLabelSource>(
+    () => ({
+      get: () => agentLabelRef.current,
+      subscribe: (listener) => {
+        labelListeners.current.add(listener)
+        return () => labelListeners.current.delete(listener)
+      },
+    }),
+    [],
+  )
+  useEffect(() => {
+    for (const listener of labelListeners.current) listener()
+  }, [agentLabel])
+  const store = useStore()
   const locked = locksDocument(agent.run)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [linkOpen, setLinkOpen] = useState(false)
@@ -185,6 +214,12 @@ function DocumentEditor({
   /** The file as last read or written: what a change on disk is compared to. */
   const lastText = useRef(initial.text)
   const saveTimer = useRef<number | undefined>(undefined)
+  const dirty = useRef(false)
+  /** Writes are serialized so each one compares against the prior completed write. */
+  const writing = useRef<Promise<void>>(Promise.resolve())
+  const frozen = useRef(false)
+  const lockedRef = useRef(locked)
+  lockedRef.current = locked
 
   // Callbacks the extensions hold, read through refs so the extensions are
   // made once per document.
@@ -201,6 +236,17 @@ function DocumentEditor({
 
   const extensions = useMemo(
     () => [
+      Extension.create({
+        name: 'saveFreeze',
+        addProseMirrorPlugins: () => [
+          new Plugin({
+            filterTransaction: (transaction) =>
+              !frozen.current ||
+              !transaction.docChanged ||
+              transaction.getMeta('preventUpdate') === true,
+          }),
+        ],
+      }),
       ...createDocumentExtensions({
         folder: parentOf(path),
         placeholder: 'Type / for commands, or Space to ask AI',
@@ -217,12 +263,13 @@ function DocumentEditor({
         items: [
           ...RICH_TEXT_BASIC_SLASH_ITEMS,
           RICH_TEXT_TABLE_SLASH_ITEM,
-          askAiSlashItem((pos) => handlers.current.trigger(pos)),
+          askAiSlashItem((pos) => handlers.current.trigger(pos), agentLabelRef.current),
         ],
         more: () => handlers.current.pluginItems(),
+        labelSource,
       }),
     ],
-    [path, promptBox],
+    [path, promptBox, labelSource],
   )
 
   const editor = useEditor(
@@ -239,10 +286,14 @@ function DocumentEditor({
         },
       },
       onUpdate: ({ transaction }) => {
-        if (!transaction.docChanged) return
+        if (!transaction.docChanged || transaction.getMeta('preventUpdate')) return
+        dirty.current = true
         setSaveState('saving')
         window.clearTimeout(saveTimer.current)
-        saveTimer.current = window.setTimeout(() => void save(), SAVE_DELAY_MS)
+        saveTimer.current = window.setTimeout(
+          () => void save().catch(() => undefined),
+          SAVE_DELAY_MS,
+        )
       },
     },
     [extensions],
@@ -250,7 +301,7 @@ function DocumentEditor({
 
   const editable = useRichTextSelector(editor, (current) => current?.isEditable ?? true)
 
-  const { promptOpen, promptInitial, closePrompt, sendPrompt, quickCommand, turnIntoArtifact } =
+  const { promptOpen, promptInitial, closePrompt, sendPrompt, quickCommand, createVaultApp } =
     useDocumentAgentPrompt({ editor, path, agent, handlers, save })
 
   const comments = useDocumentComments({ editor, path, docs, head, save })
@@ -304,35 +355,72 @@ function DocumentEditor({
     return editor ? joinDocument(head.current, editor.getMarkdown()) : lastText.current
   }
 
-  async function save(): Promise<void> {
+  function save(): Promise<void> {
     window.clearTimeout(saveTimer.current)
     saveTimer.current = undefined
-    if (!editor || editor.isDestroyed) return
+    // Snapshot while the editor is alive. The queued write may run after this
+    // component unmounts (for example, closing a tab during an earlier write).
     const text = markdown()
+    const done = writing.current.then(() => write(text, true))
+    writing.current = done.catch(() => undefined)
+    return done
+  }
+
+  async function write(text: string, captured = false): Promise<void> {
     // Differing only by what the commit tidies away is nothing to save:
     // writing it would just be tidied again.
-    if (!differsBeyondTidy(lastText.current, text, path, claimsRef.current)) {
+    if (
+      (!dirty.current && !captured) ||
+      !differsBeyondTidy(lastText.current, text, path, claimsRef.current)
+    ) {
+      dirty.current = false
       setSaveState('saved')
       return
     }
+    setSaveState('saving')
     try {
       await trpc.notes.write.mutate({ remote, path, text })
       lastText.current = text
-      setSaveState('saved')
+      dirty.current =
+        editor !== null && !editor.isDestroyed
+          ? differsBeyondTidy(text, markdown(), path, claimsRef.current)
+          : dirty.current && !captured
+      setSaveState(dirty.current ? 'saving' : 'saved')
       placeRef.current()
-    } catch {
+    } catch (error) {
       setSaveState('error')
+      throw error
     }
   }
+
+  /** The latest `save`, for the flush, which outlives the render that made it. */
+  const saveRef = useRef(save)
+  saveRef.current = save
+
+  // A rename, move, delete, branch switch, vault switch or quit writes what
+  // is pending first, to the path it was typed at; after that the unmount
+  // below has nothing left to write.
+  useEffect(
+    () =>
+      registerBuffer(
+        () => saveRef.current(),
+        undefined,
+        (value) => {
+          frozen.current = value
+          editor?.setEditable(!value && !lockedRef.current)
+        },
+      ),
+    [editor],
+  )
 
   // Leaving the document writes what is pending, and leaves what it showed
   // for its tab to be compared to (`doc-changes.ts`).
   useEffect(
     () => () => {
-      const pending = saveTimer.current !== undefined
+      const pending = dirty.current
       const live = editor !== null && !editor.isDestroyed
       sawText(remote, path, pending && live ? markdown() : lastText.current)
-      if (pending) void save()
+      if (pending) void save().catch(() => undefined)
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [editor],
@@ -353,14 +441,19 @@ function DocumentEditor({
           lastText.current = text
           return
         }
-        if (saveTimer.current !== undefined && !locked) return
+        if (dirty.current && !locked) return
         const next = splitDocument(text)
-        // The refs follow only once the buffer took the file: a reload that
-        // throws leaves both on what the buffer still holds.
-        applyReload(editor, next.body)
-        head.current = next.head
-        lastText.current = text
-        placeRef.current()
+        try {
+          const changed = applyReload(editor, next.body)
+          head.current = next.head
+          lastText.current = text
+          if (changed) placeRef.current()
+          setSaveState('saved')
+        } catch {
+          // Keep the last-known file snapshot unchanged so a later disk update
+          // can retry; dispatch failures must not be mistaken for a successful reload.
+          setSaveState('error')
+        }
       })
       .catch(() => undefined)
     return () => {
@@ -373,17 +466,28 @@ function DocumentEditor({
   // A run that edits the document locks it; done, the lock lifts.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
-    editor.setEditable(!locked)
+    editor.setEditable(!locked && !frozen.current)
   }, [editor, locked])
 
-  // A finished edit clears its pill on its own; an artifact waits to be
-  // opened or dismissed.
+  // A finished edit clears its pill on its own. A finished vault app opens
+  // when the document is still the tab in front and was never left while it
+  // ran; otherwise it waits on the pill's Open.
   useEffect(() => {
     const run = agent.run
-    if (!run || run.status !== 'done' || run.kind === 'artifact') return
+    if (!run || run.status !== 'done') return
+    if (run.kind === 'vault-app') {
+      // A partial copy stays on the pill until the person has seen what was left out.
+      if (run.away || run.opened || run.appPath === undefined || run.message !== undefined) return
+      if (tabPath(focusedTab(store.get(shellWorkspaceAtom))) !== path) return
+      agent.markOpened()
+      onOpen(run.appPath)
+      return
+    }
     const timer = window.setTimeout(agent.dismiss, 1500)
     return () => window.clearTimeout(timer)
-  }, [agent.run, agent.dismiss])
+    // `onOpen` is the shell's, new each render; the run is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent.run, agent.dismiss, path, store])
 
   /**
    * The whole page takes a press. Below the last line it starts a new one
@@ -451,6 +555,19 @@ function DocumentEditor({
   }
 
   const canAsk = agent.available && !isRunLive(agent.run)
+  const canStartChat = useAtomValue(canStartConversationAtom)
+  const startConversation = useSetAtom(startConversationAtom)
+
+  /** A new agent session beside the document, the passage in its input as
+   *  context, for the person to ask about it. */
+  async function startChat(passage: string) {
+    const res = await startConversation({
+      text: '',
+      context: [{ kind: 'passage', path, text: passage }],
+      beside: true,
+    })
+    if (!res.ok) toast.error(`Couldn't start the chat. ${res.message}`)
+  }
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -474,7 +591,7 @@ function DocumentEditor({
             smallText={smallText}
             onFullWidthChange={setFullWidth}
             onSmallTextChange={setSmallText}
-            onTurnIntoArtifact={canAsk ? () => void turnIntoArtifact() : null}
+            onCreateVaultApp={canAsk && agent.appable ? () => void createVaultApp() : null}
             holiLinks={holiLinks}
             comments={
               commentable
@@ -550,8 +667,11 @@ function DocumentEditor({
                       linkOpen={linkOpen}
                       onLinkOpenChange={setLinkOpen}
                       onQuickCommand={
-                        canAsk ? (verb, passage) => void quickCommand(verb, passage) : null
+                        canAsk
+                          ? (instruction, passage) => void quickCommand(instruction, passage)
+                          : null
                       }
+                      onStartChat={canStartChat ? (passage) => void startChat(passage) : null}
                       onComment={commentable ? () => void commentOnSelection() : null}
                     />
                     <RichTextLinkBubble editor={editor} onEdit={openLinkEditor} />
@@ -620,16 +740,23 @@ function DocumentEditor({
           </div>
         </div>
 
-        {agent.run ? (
+        {agent.run &&
+        !(
+          agent.run.kind === 'vault-app' &&
+          agent.run.status === 'done' &&
+          agent.run.opened &&
+          agent.run.message === undefined
+        ) ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex justify-center px-4">
             <div className="pointer-events-auto">
               <AgentStatus
                 run={agent.run}
                 onStop={() => void agent.stop()}
                 onDismiss={agent.dismiss}
-                onOpenArtifact={() => {
-                  agent.dismiss()
-                  onOpen(artifactPathFor(path))
+                onOpenApp={() => {
+                  const app = agent.run?.appPath
+                  agent.markOpened()
+                  if (app !== undefined) onOpen(app)
                 }}
               />
             </div>

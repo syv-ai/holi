@@ -45,6 +45,7 @@ import { AGENTS_HOME_KEY, parseTabKey, tabKey, tabPath } from '@/state/tab-descr
 import { shellTabForPathAtom } from '@/state/surfaces'
 import { activeRemoteAtom } from '@/state/vaults'
 import type { Move } from '@/lib/tree-actions'
+import { saveBeforeClosing } from '@/lib/buffer-registry'
 import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
 import { useActivityLog } from '@/state/activity'
 import { useDocChangeMarks } from '@/state/doc-changes'
@@ -168,11 +169,11 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   }
 
   function closeTab(key: string) {
-    setWs((w) => closeTabIn(w, key))
+    void saveBeforeClosing(() => setWs((w) => closeTabIn(w, key)))
   }
 
   function closeAllTabs() {
-    setWs(closeAllTabsIn)
+    void saveBeforeClosing(() => setWs(closeAllTabsIn))
   }
 
   /** Open a vault path, the board, or any tab key: as a tab, or in the

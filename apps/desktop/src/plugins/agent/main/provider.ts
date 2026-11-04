@@ -19,18 +19,29 @@
  *   and automations need it, since their runs start with no terminal.
  * - `turns`: hook routes that report a turn's start and end.
  * - `status`: how full a session's context is, and its model.
+ * - `jobs`: a prompt run with nobody watching, sandboxed by the agent's own
+ *   rules, its output read as events (`host/jobs.ts`). Codex's `codex exec`.
+ *   Either in a scratch folder Holi owns, what it may write copied back when
+ *   it succeeds, or in the vault with only named folders writable (a Holi's
+ *   or an automation's run), and resumed for a follow-up.
+ * - `fenced`: a session Holi runs whose terminal can be fenced to a folder
+ *   of Holi's (`TerminalOpts.fence`): its cwd, and with `sandbox` its writes
+ *   sandboxed there (Codex); with `folder` only its cwd, the agent free to
+ *   reach past it with the person's own permissions (Pi). Either way what it
+ *   may write is copied back at each turn's end (`host/fenced.ts`).
  */
-import { AGENT_PROVIDER_IDS, type AgentProviderId } from '@holi/shared'
+import { isAgentId, type AgentProviderId } from '@holi/shared'
 import type { BridgeRoute, SeedContribution } from '../../../main/plugin-api'
 import type { ClaudeCli, VaultCliTarget } from './claude/cli'
 import type { ClaudeRow, SessionSummary, StatusReading } from './claude/listing'
 import type { SessionChannel } from './claude/messaging'
 
-/** Which agent a session runs: the vault setting's own list. */
+/** Which agent a session runs: one of this machine's harnesses, by its id
+ *  (`harness/registry.ts`). The shape is checked here; whether it names one,
+ *  against the registry. */
 export type ProviderId = AgentProviderId
 
-export const isProviderId = (value: unknown): value is ProviderId =>
-  typeof value === 'string' && (AGENT_PROVIDER_IDS as readonly string[]).includes(value)
+export const isProviderId = (value: unknown): value is ProviderId => isAgentId(value)
 
 /** A vault the provider is asked about. */
 export interface VaultRef {
@@ -63,6 +74,13 @@ export interface TerminalOpts {
   prompt?: string
   /** Holi's id for a session it runs itself, which its hooks name. */
   session?: string
+  /** Holi's stable conversation id for providers that can reopen a session. */
+  conversation?: string
+  /** A folder of Holi's the session is fenced to (`fenced` only): its cwd
+   *  (`dir`), its writes sandboxed to it, with no network, MCP servers or web
+   *  search, and the agent's own approvals in its terminal; and a folder of
+   *  Holi's outside it for the agent's own state (`state`). */
+  fence?: { dir: string; state: string }
 }
 
 /** Where the provider's hook routes are served (the bridge). */
@@ -113,8 +131,50 @@ interface BackgroundCapability {
   message(channel: SessionChannel, text: string): Promise<void>
 }
 
+/** What a job's output said, one line of it at a time. */
+export type JobEvent =
+  | { kind: 'thread'; id: string }
+  | { kind: 'turn-started' }
+  /** `tokens`: what the turn used, input and output, when it says. */
+  | { kind: 'turn-completed'; tokens?: number }
+  | { kind: 'turn-failed'; message: string }
+  | { kind: 'error'; message: string }
+
+/** How one turn of a job runs (`host/jobs.ts`). */
+export interface JobRun {
+  /** Where it runs, and the one folder it may write unless `readOnly`. */
+  cwd: string
+  /** The vault's root, which a scratch job does not run in. */
+  root: string
+  prompt: string
+  model?: string
+  /** Other folders it may write, absolute. */
+  writable?: readonly string[]
+  /** It may write nothing at all. */
+  readOnly?: boolean
+  /** The agent's thread to add this turn to: a follow-up. */
+  resume?: string
+  /** A folder of Holi's outside what it may write, for the agent's own
+   *  state (its own home, say), which goes with the job. */
+  state: string
+}
+
+/** A prompt run unwatched, sandboxed by the agent (`host/jobs.ts`). */
+interface JobsCapability {
+  /** What runs one turn of the job. Null when the agent is not installed.
+   *  Throws with a sentence when it cannot run. */
+  command(run: JobRun): TerminalCommand | null
+  /** One line of the job's standard output, or null when it says nothing
+   *  the host reads. Another program's output: never throws. */
+  event(line: string): JobEvent | null
+}
+
 interface ProviderCapabilities {
   background?: BackgroundCapability
+  jobs?: JobsCapability
+  /** `terminal` runs in `TerminalOpts.fence`'s folder: sandboxed there
+   *  (`sandbox`), or with nothing holding it to it (`folder`). */
+  fenced?: 'sandbox' | 'folder'
   /** Serve the hook routes that report turns. Returns the undo. */
   turns?: { routes(server: RouteServer, deps: TurnRouteDeps): () => void }
   status?: {
@@ -136,6 +196,8 @@ export interface AgentProvider {
   /** Provision the vault's directory for it. Null leaves the vault without
    *  this provider. */
   configure(vault: VaultRef): Promise<{ dir: string } | null>
+  /** Whether Holi can name new conversations and reopen them by that id. */
+  namesConversation?: boolean
   /** What a terminal runs. Null when the agent is not installed. */
   terminal(target: VaultCliTarget, opts?: TerminalOpts): TerminalCommand | null
   /** A directory that needs its own sign-in: true the first time Holi opens
@@ -143,7 +205,31 @@ export interface AgentProvider {
   firstSpawn?: { take(configDir: string): Promise<boolean>; notice: string }
   /** What the provider writes into a vault. */
   seed?: SeedContribution
+  /** A process Holi ran on one of its state folders (a job's, a fenced
+   *  session's) has exited: take back what the agent keeps of the person's,
+   *  such as a sign-in it refreshed there. Never throws. */
+  release?(state: string): Promise<void>
+  /** Why a terminal cannot open on `opts`, in words, or null when it can:
+   *  a harness a person added that was given no way to start on a message
+   *  or to pick up a conversation. Absent: it takes every option. */
+  refuses?(opts: TerminalOpts): string | null
+  /** Why it runs nothing unattended, when it has neither `background` nor
+   *  `jobs`: said instead of running the work on another agent. */
+  unattended?: string
+  /** It is a harness a person added (`harness/`), not a built-in agent. */
+  custom?: boolean
   capabilities: ProviderCapabilities
+}
+
+/** What a terminal on `configDir` prints first: the provider's sign-in
+ *  notice, the first time Holi opens one there (`firstSpawn`). */
+export async function firstSpawnNotice(
+  provider: Pick<AgentProvider, 'firstSpawn'>,
+  configDir: string,
+): Promise<string | undefined> {
+  const first = provider.firstSpawn
+  if (first === undefined) return undefined
+  return (await first.take(configDir).catch(() => false)) ? first.notice : undefined
 }
 
 /** A provider whose sessions its own supervisor runs. */
@@ -153,3 +239,10 @@ export type BackgroundProvider = AgentProvider & {
 
 export const hasBackground = (p: AgentProvider): p is BackgroundProvider =>
   p.capabilities.background !== undefined
+
+/** A provider that runs jobs. */
+export type JobsProvider = AgentProvider & {
+  capabilities: ProviderCapabilities & { jobs: JobsCapability }
+}
+
+export const hasJobs = (p: AgentProvider): p is JobsProvider => p.capabilities.jobs !== undefined

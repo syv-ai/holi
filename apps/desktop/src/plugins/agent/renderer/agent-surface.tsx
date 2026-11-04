@@ -5,7 +5,7 @@
  * mirror.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
-import { agentGeometryAtom, agentTerminalsAtom } from './state/sessions'
+import { agentGeometryAtom, agentSessionsAtom, agentTerminalsAtom } from './state/sessions'
 import { SessionTerminal } from './session-terminal'
 import { TurnChip } from './turn-chip'
 
@@ -36,11 +36,19 @@ export function AgentSurface({
   /** The last geometry a visible terminal measured, for sessions spawned
    *  without a tab of their own to measure. */
   const setGeometry = useSetAtom(agentGeometryAtom)
+  const terminals = useAtomValue(agentTerminalsAtom)
+  const sessions = useAtomValue(agentSessionsAtom)
   if (id === undefined) return null
   return (
     <>
       <SessionTerminal
         terminalId={id}
+        provider={
+          sessions.find(
+            (session) =>
+              session.id === terminals.find((terminal) => terminal.id === id)?.launchedFor,
+          )?.provider as 'pi' | 'claude' | 'codex' | undefined
+        }
         visible={visible}
         onGeometry={(cols, rows) => setGeometry({ cols, rows })}
       />
