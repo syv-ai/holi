@@ -1419,10 +1419,22 @@ export async function openActiveVault(args: {
         pushTimer = null
         if (failingTimer !== null) clearTimeout(failingTimer)
         failingTimer = null
-        await watcher?.close()
+        const cleanupErrors: unknown[] = []
+        try {
+          await watcher?.close()
+        } catch (error) {
+          cleanupErrors.push(error)
+        }
         // Leave no stale port behind: a terminal commit after Holi quits would
         // otherwise spend its curl timeout on a socket nobody is listening to.
-        await args.bridgeEnv?.detach(args.remote).catch(() => {})
+        try {
+          await args.bridgeEnv?.detach(args.remote)
+        } catch (error) {
+          cleanupErrors.push(error)
+        }
+        if (cleanupErrors.length > 0) {
+          throw new AggregateError(cleanupErrors, `Could not fully close ${args.remote}`)
+        }
       },
     }
     return api
@@ -1454,8 +1466,8 @@ export async function openActiveVault(args: {
 }
 
 /**
- * Which vault is open. "One at a time" lives here and nowhere else, so this is
- * the single seam an N-vault future would change.
+ * The host owns multiple open vault runtimes; the UI has one selected runtime.
+ * Selection ordering and per-vault lifecycle work live here.
  */
 export interface VaultHost {
   active(): ActiveVault | null
@@ -1517,6 +1529,8 @@ export function createVaultHost(args: {
   let closingAll: Promise<void> | null = null
   let rejectingStarts = false
   const admitted = new Set<Promise<unknown>>()
+  const inFlightCloses = new Set<Promise<unknown>>()
+  const stopCallbacks = new Map<string, () => void>()
 
   function serialise<T>(key: string, fn: () => Promise<T>): Promise<T> {
     const previous = locks.get(key) ?? Promise.resolve()
@@ -1534,6 +1548,18 @@ export function createVaultHost(args: {
     admitted.add(run)
     void run.finally(() => admitted.delete(run)).catch(() => {})
     return run
+  }
+  function trackClose<T>(run: Promise<T>): Promise<T> {
+    inFlightCloses.add(run)
+    void run.finally(() => inFlightCloses.delete(run)).catch(() => {})
+    return run
+  }
+  function notify(callback: () => void): void {
+    try {
+      callback()
+    } catch (error) {
+      console.error('[vault] observer failed:', error)
+    }
   }
   function serialiseSelection<T>(fn: () => Promise<T>): Promise<T> {
     const run = selectionQueue.then(fn, fn)
@@ -1556,6 +1582,8 @@ export function createVaultHost(args: {
       current = null
     }
     runtimes.delete(remote)
+    stopCallbacks.get(remote)?.()
+    stopCallbacks.delete(remote)
     try {
       args.activity?.({ channel: 'sync', message: `Closed ${vault.remote}`, remote: vault.remote })
     } catch (err) {
@@ -1597,22 +1625,51 @@ export function createVaultHost(args: {
       if (!prepared) await args.beforeOpen?.()
       const entry = (await args.registry.list()).find((e) => e.remote === remote)
       if (!entry) throw new Error(`no such vault: ${remote}`)
+      let callbacksEnabled = true
+      const safely = (callback: () => void) => {
+        try {
+          callback()
+        } catch (error) {
+          console.error('[vault] observer failed:', error)
+        }
+      }
       const vault = await openActiveVault({
         remote,
         repo: openRepo(entry.path, args.gitDeps),
         claims: () => args.claims(entry.path),
-        onSnapshot: (snapshot) => args.onSnapshot(remote, snapshot),
-        onSyncState: (state) => args.onSyncState(remote, state),
-        onHeldBack: (files) => args.onHeldBack?.(remote, files),
-        onCommitted: (paths) => args.onCommitted?.(remote, paths),
-        onPulled: (range) => args.onPulled?.({ remote, root: entry.path }, range),
-        onSyncFailing: (text) => args.onSyncFailing?.(remote, text),
+        onSnapshot: (snapshot) => {
+          if (callbacksEnabled) safely(() => args.onSnapshot(remote, snapshot))
+        },
+        onSyncState: (state) => {
+          if (callbacksEnabled) safely(() => args.onSyncState(remote, state))
+        },
+        onHeldBack: (files) => {
+          if (callbacksEnabled) safely(() => args.onHeldBack?.(remote, files))
+        },
+        onCommitted: (paths) => {
+          if (callbacksEnabled) safely(() => args.onCommitted?.(remote, paths))
+        },
+        onPulled: (range) => {
+          if (callbacksEnabled) safely(() => args.onPulled?.({ remote, root: entry.path }, range))
+        },
+        onSyncFailing: (text) => {
+          if (callbacksEnabled) safely(() => args.onSyncFailing?.(remote, text))
+        },
         bridgeEnv: args.bridgeEnv,
         ...(args.activity === undefined ? {} : { activity: args.activity }),
         timings: args.timings,
       })
+      stopCallbacks.set(remote, () => {
+        callbacksEnabled = false
+      })
       runtimes.set(remote, vault)
-      args.activity?.({ channel: 'sync', message: `Opened ${remote}`, remote })
+      try {
+        args.activity?.({ channel: 'sync', message: `Opened ${remote}`, remote })
+      } catch (error) {
+        // Reporting is observational; it must not turn a live runtime into a
+        // rejected start that callers cannot subsequently close.
+        console.error('[vault] open activity failed:', error)
+      }
       return vault
     })()
     starts.set(remote, opening)
@@ -1631,9 +1688,9 @@ export function createVaultHost(args: {
       admit(() =>
         serialiseSelection(async () => {
           if (current?.remote === remote) {
-            args.onSnapshot(remote, current.snapshot())
-            args.onSyncState(remote, current.syncState())
-            args.onHeldBack?.(remote, current.heldBack())
+            notify(() => args.onSnapshot(remote, current!.snapshot()))
+            notify(() => args.onSyncState(remote, current!.syncState()))
+            notify(() => args.onHeldBack?.(remote, current!.heldBack()))
             return current
           }
           // Keep the selected runtime usable until startup prerequisites succeed.
@@ -1644,19 +1701,23 @@ export function createVaultHost(args: {
           current = vault
           // Startup callbacks can precede the runtime's insertion into `runtimes`.
           // Replay its authoritative view after selection so those first updates survive.
-          args.onSnapshot(remote, vault.snapshot())
-          args.onSyncState(remote, vault.syncState())
-          args.onHeldBack?.(remote, vault.heldBack())
+          notify(() => args.onSnapshot(remote, vault.snapshot()))
+          notify(() => args.onSyncState(remote, vault.syncState()))
+          notify(() => args.onHeldBack?.(remote, vault.heldBack()))
           return vault
         }),
       ),
     close: (remote?: string) =>
-      remote === undefined
-        ? serialiseSelection(async () => {
-            const selected = current?.remote
-            if (selected !== undefined) await serialise(selected, () => closeRuntime(selected))
-          })
-        : serialise(remote, () => closeRuntime(remote)),
+      trackClose(
+        remote === undefined
+          ? serialiseSelection(async () => {
+              const selected = current?.remote
+              if (selected !== undefined) await serialise(selected, () => closeRuntime(selected))
+            })
+          : // Use selection ordering so this close follows visible opens already
+            // waiting on preparation, and later opens cannot overtake it.
+            serialiseSelection(() => serialise(remote, () => closeRuntime(remote))),
+      ),
     closeAll: () => {
       if (closingAll !== null) return closingAll
       rejectingStarts = true
@@ -1664,6 +1725,7 @@ export function createVaultHost(args: {
         // Operations are registered at admission, before they can queue behind a
         // remote lock. Drain that fixed cohort before taking the runtime snapshot.
         await Promise.allSettled([...admitted])
+        await Promise.allSettled([...inFlightCloses])
         await serialiseSelection(async () => {})
         const remotes = [...runtimes.keys()]
         const results = await Promise.allSettled(
