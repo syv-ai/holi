@@ -206,6 +206,52 @@ describe('macOS glass text contrast from the production CSS cascade', () => {
     }
   })
 
+  it('keeps unselected session metadata at AA contrast over hover fills', () => {
+    expect(sessionCard).toMatch(/current \? 'text-foreground' : 'text-muted-foreground'/)
+    const hoverFill = sessionCard.match(/hover:bg-foreground\/(\d+)/)
+    expect(hoverFill).not.toBeNull()
+    const fillAlpha = Number(hoverFill![1]!) / 100
+    const backdrops: RGB[] = [
+      [0, 0, 0],
+      [1, 1, 1],
+    ]
+
+    for (const theme of themes) {
+      const darkTheme = theme === 'dark'
+      const themeCss = darkTheme ? dark : light
+      const glassTheme = darkTheme ? darkMac : mac
+      const foreground = oklch(themeCss['--foreground']!)
+      const sidebar = oklch(themeCss['--sidebar']!)
+      const ink = oklch(
+        darkTheme
+          ? token("[data-platform='mac'][data-theme='dark']", '--muted-foreground')
+          : token("[data-platform='mac']", '--muted-foreground'),
+      )
+
+      for (const mode of modes) {
+        const modeCss = mode === 'Clear' ? clear : mode === 'Solid' ? solid : {}
+        const alpha = percentage(modeCss['--glass-chrome'] ?? mac['--glass-chrome']!)
+        const modeInk = mode === 'Solid'
+          ? oklch(token(
+              darkTheme
+                ? "[data-platform='mac'][data-theme='dark'][data-glass='solid']"
+                : "[data-platform='mac'][data-glass='solid']",
+              '--muted-foreground',
+            ))
+          : ink
+        expect(glassTheme['--muted-foreground']).toBeDefined()
+        for (const backdrop of backdrops) {
+          const glassGround = composite(sidebar, backdrop, alpha)
+          const hoveredGround = composite(foreground, glassGround, fillAlpha)
+          expect(
+            contrast(modeInk, hoveredGround),
+            `${theme}/${mode} over ${backdrop[0] === 0 ? 'black' : 'white'}`,
+          ).toBeGreaterThanOrEqual(4.5)
+        }
+      }
+    }
+  })
+
   it('grounds the rendered Last turn drawer with the shared glass ground', () => {
     expect(css).toMatch(
       /\[data-platform='mac'\] \[data-drawer\]\[data-glass-ground\]:not\(main \*\) \{\s*background: color-mix\(in oklab, var\(--background\) var\(--glass-view\), transparent\);/,
