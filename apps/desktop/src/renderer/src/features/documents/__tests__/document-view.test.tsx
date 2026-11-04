@@ -1138,6 +1138,26 @@ test.each([
   expect(askAi).toHaveTextContent(`Ask ${label}`)
 })
 
+test('custom instruction close restores focus only while its editor is mounted', async () => {
+  const user = userEvent.setup()
+  open('Ship the beta.\\n')
+  const { editor, askAi } = await selectForAskAi('Ship the beta')
+  const focus = vi.spyOn(editor.view, 'focus')
+
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Custom instruction…' }))
+  await screen.findByRole('textbox', { name: 'What should the agent do?' })
+  await user.keyboard('{Escape}')
+  expect(focus).toHaveBeenCalled()
+
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Custom instruction…' }))
+  await screen.findByRole('textbox', { name: 'What should the agent do?' })
+  act(() => editor.unmount())
+  await user.keyboard('{Escape}')
+  expect(focus).toHaveBeenCalledTimes(1)
+})
+
 test("Ask AI's own instruction rewrites only the passage selected when it opened", async () => {
   const user = userEvent.setup()
   open('# Plan\n\nShip the beta on Friday.\n\nKeep this line.\n')
@@ -1161,7 +1181,8 @@ test("Ask AI's own instruction rewrites only the passage selected when it opened
     editor.commands.setTextSelection({ from: keep, to: keep + 'Keep this line'.length })
   })
   expect(selected()).toBe('Keep this line')
-  await user.type(prompt, 'Translate it into Danish{Enter}')
+  await user.paste('Translate it into Danish')
+  await user.keyboard('{Enter}')
 
   await waitFor(() =>
     expect(cap).toHaveBeenCalledWith(expect.objectContaining({ name: 'agent.launch' })),
