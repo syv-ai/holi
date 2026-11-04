@@ -16,7 +16,7 @@ function chord(over: Partial<KeyChord>): KeyChord {
 }
 
 describe('the newline chord', () => {
-  test('⇧⏎ writes ESC CR, which the Ink input reads as a line break', () => {
+  test('⇧⏎ writes CSI u, which the Pi input reads as a line break', () => {
     expect(terminalKeyAction(chord({ key: 'Enter', shiftKey: true }), false, 'pi')).toEqual({
       kind: 'write',
       seq: '\x1b[13;2u',

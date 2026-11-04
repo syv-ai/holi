@@ -287,9 +287,13 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
       if (terminals.get(id) === t) {
         drop(t)
         t.mirror.dispose()
-        deps.emit(t.remote, 'pty-exit', { id, code: -1 })
+        // A retained terminal already emitted its real exit and called the
+        // session once. Closing it only releases its transcript resources.
+        if (!t.exited) {
+          deps.emit(t.remote, 'pty-exit', { id, code: -1 })
+          t.onExit?.(t.title)
+        }
         pushList(t.remote)
-        t.onExit?.(t.title)
       }
     },
 

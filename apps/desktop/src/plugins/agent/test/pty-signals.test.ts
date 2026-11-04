@@ -90,12 +90,13 @@ describe('turn signals', () => {
     expect(edges).toEqual(['begin', 'attention'])
   })
 
-  it('goes quiet once disposed', () => {
+  it('clears an active turn without callbacks when disposed', () => {
     const { signals, edges } = rig()
     signals.begin()
     signals.dispose()
     vi.advanceTimersByTime(500)
     signals.input('\r')
+    expect(signals.inTurn).toBe(false)
     expect(edges).toEqual(['begin'])
   })
 })
