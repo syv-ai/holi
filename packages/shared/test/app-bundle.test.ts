@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appBundleOf, appSuffix, isAppBundlePath } from '../src/app-bundle'
+import { appBundleOf, appSuffix, isAppBundlePath, isAppFencedPath } from '../src/app-bundle'
 
 describe('isAppBundlePath', () => {
   it('is a directory named *.app anywhere in the vault', () => {
@@ -53,5 +53,34 @@ describe('appSuffix', () => {
   it('is what a rename must keep, so renaming never publishes a personal app', () => {
     expect(appSuffix('Finance/Budget.app')).toBe('.app')
     expect(appSuffix('Me/Home.local.app')).toBe('.local.app')
+  })
+})
+
+describe('isAppFencedPath', () => {
+  it('fences the agent surface, machine state, secrets and app records', () => {
+    for (const path of [
+      'AGENTS.md',
+      'CLAUDE.md',
+      '.claude/settings.json',
+      '.holi/memory/user.md',
+      '.holi/schedules/daily.md',
+      '.holi/state/bridge.json',
+      '.env',
+      'Budget.app/data/rows/a.json',
+      'Budget.app/log.local.txt',
+    ]) {
+      expect(isAppFencedPath(path), path).toBe(true)
+    }
+  })
+
+  it('leaves ordinary notes and app files', () => {
+    for (const path of [
+      'notes/AGENTS.md',
+      'Ideas.md',
+      'notes/memory/x.md',
+      'Budget.app/index.html',
+    ]) {
+      expect(isAppFencedPath(path), path).toBe(false)
+    }
   })
 })

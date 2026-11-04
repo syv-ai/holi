@@ -6,6 +6,7 @@
  */
 import { atom } from 'jotai'
 import { agentsSlotsAtom, type AgentsStatus } from '@/plugin-api'
+import { inboxAtom } from './inbox'
 import { agentSessionsAtom } from './sessions'
 
 export const agentsStatusAtom = atom((get): AgentsStatus => {
@@ -24,10 +25,20 @@ export const agentsStatusAtom = atom((get): AgentsStatus => {
   return { needsYou, working }
 })
 
-/** What the Inbox holds: the sessions waiting on the person, and what the
- *  slots count as needing them. */
+/** What the Inbox holds: the sessions waiting on the person, the inbox's
+ *  unread entries (less a waiting session's own "needs you", counted once),
+ *  and what the slots count as needing them. */
 export const inboxCountAtom = atom((get): number => {
-  let n = get(agentSessionsAtom).filter((s) => s.state === 'needs-you').length
+  const waiting = new Set(
+    get(agentSessionsAtom)
+      .filter((s) => s.state === 'needs-you')
+      .map((s) => s.id),
+  )
+  const { entries, unread } = get(inboxAtom)
+  let n = waiting.size
+  n += entries
+    .slice(0, unread)
+    .filter((e) => e.session === undefined || !waiting.has(e.session)).length
   for (const slot of get(agentsSlotsAtom)) {
     if (slot.inbox !== undefined && slot.status !== undefined) n += get(slot.status).needsYou
   }

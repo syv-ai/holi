@@ -26,6 +26,7 @@ export interface SearchHit {
   snippet?: string
 }
 
+/** @public exported for its test */
 export const SEARCH_LIMIT = 50
 const SNIPPET_RADIUS = 60
 

@@ -17,3 +17,8 @@ export const HOLIS_INFO: PluginInfo = {
   whenOff:
     'Holis leave the Agents view and the Agent menu. Their folders stay in .holi/holis/, and come back when this is on again.',
 }
+
+/** Until Holis are finished, the Agents sidebar shows a locked Holis row (In
+ *  progress) in place of their section, and ⌘K and a document's Agent menu
+ *  leave them out. Set it to bring them back. */
+export const HOLIS_READY: boolean = false

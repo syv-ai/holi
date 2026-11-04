@@ -20,10 +20,12 @@
  * anyone approves. It goes into a run inside a `<memory>` block that says what
  * it is: facts the Holi wrote earlier.
  *
- * **A send is a session like any other**: a background session (`claude
- * --bg`), started through the agent (`agent.launch`). Who the Holi is goes in
- * with Claude Code's own `--append-system-prompt`; its first turn is one line
- * naming the document. **What came of it is the Holi's to say**, with `holi
+ * **A send is a session like any other**, started through the agent on
+ * this machine's default agent, which its approval is bound to: a background
+ * session on Claude Code (`claude --bg`) or a Holi-managed RPC run on Pi
+ * (`agent.launch`), a job in the vault on Codex (`agent.job`). Who the Holi is
+ * goes in as its system text; its first turn is one line naming the
+ * document. **What came of it is the Holi's to say**, with `holi
  * holis report`, on the run's record. A report that asks for the person
  * (`--needs-you`) is told where they are.
  *
@@ -32,11 +34,13 @@
 import { createHash } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { AgentProviderId } from '@holi/shared'
 import {
   editHoliText,
   HOLI_COLOURS,
   HOLI_FILE,
   HOLI_MASCOTS,
+  HOLI_MASCOT_LABELS,
   holiAccepts,
   holiApprovalText,
   holiFolder,
@@ -68,7 +72,7 @@ const REPORT_MAX = 2_000
 const REPORT_RULE = 'Bash(holi holis report:*)'
 
 /** What the Holi said came of a run (`holi holis report`). */
-export interface RunReport {
+interface RunReport {
   text: string
   at: string
   /** The Holi asked the person to act. */
@@ -85,7 +89,7 @@ export interface HoliRun {
   report?: RunReport
 }
 
-export interface HoliState {
+interface HoliState {
   /** sha256 of `holiApprovalText` when this machine approved it. */
   approved?: string
   /** Newest first. */
@@ -97,7 +101,7 @@ export type HolisFile = Record<string, Record<string, HoliState>>
 
 /** `approved`: sends run at once. `new`: never approved here. `changed`:
  *  approved, but the files say something else now. `invalid`: does not parse. */
-export type HoliStatus = 'approved' | 'new' | 'changed' | 'invalid'
+type HoliStatus = 'approved' | 'new' | 'changed' | 'invalid'
 
 export interface HoliSummary {
   /** Its `holi.yaml`, or an older Holi's one file. */
@@ -112,6 +116,8 @@ export interface HoliSummary {
   folder: boolean
   name: string
   status: HoliStatus
+  /** Provider this machine will use; approval is scoped to it. */
+  provider: AgentProviderId
   /** Why it does not parse. */
   error?: string
   mascot?: HoliMascot
@@ -135,6 +141,7 @@ export interface HoliSummary {
 export interface HoliContext {
   id: string
   name: string
+  provider: AgentProviderId
   /** `holiApprovalText`, for the automation's own fingerprint. */
   approval: string
   model?: string
@@ -174,7 +181,7 @@ export function parseHolisFile(raw: unknown): HolisFile {
   return out
 }
 
-export interface HolisVault {
+interface HolisVault {
   remote: string
   root: string
 }
@@ -189,10 +196,14 @@ export interface NeedsYou {
 
 export interface HolisDeps {
   store: JsonFileStore<HolisFile>
-  /** A background session through the agent (`agent.launch`). */
+  /** This machine's agent for the vault (`agentProvider`). */
+  provider(root: string): Promise<AgentProviderId>
+  /** A run through the agent on that agent: `agent.launch` on Claude Code or
+   *  Pi, `agent.job` on Codex. */
   launch(args: {
     name: string
     prompt: string
+    provider: AgentProviderId
     model?: string
     allow?: readonly string[]
     system?: string
@@ -244,9 +255,10 @@ type ValidEntry = Entry & { parsed: { ok: true; def: HoliDef } }
 
 const soulOf = (entry: ValidEntry): string => holiSoul(entry.parsed.def, entry.soulText)
 
-const fingerprintOf = (entry: ValidEntry): string =>
+const fingerprintOf = (entry: ValidEntry, provider: AgentProviderId): string =>
   createHash('sha256')
     .update(holiApprovalText(entry.parsed.def, soulOf(entry)))
+    .update(`\nprovider:${provider}`)
     .digest('hex')
 
 /** A Holi's folder, whichever form it is: its soul and memory live there. */
@@ -275,10 +287,14 @@ async function readHolis(root: string): Promise<Entry[]> {
   return out
 }
 
-function statusOf(entry: Entry, state: HoliState | undefined): HoliStatus {
+function statusOf(
+  entry: Entry,
+  state: HoliState | undefined,
+  provider: AgentProviderId,
+): HoliStatus {
   if (!entry.parsed.ok) return 'invalid'
   if (state?.approved === undefined) return 'new'
-  return state.approved === fingerprintOf(entry as ValidEntry) ? 'approved' : 'changed'
+  return state.approved === fingerprintOf(entry as ValidEntry, provider) ? 'approved' : 'changed'
 }
 
 /** One Holi by its path or its id. An id two Holis share (`x/` and
@@ -311,7 +327,7 @@ function valid(entry: Entry): ValidEntry {
  * id, its folder and its soul), never its name or description, which anyone
  * may change without asking. The memory is marked as notes it wrote.
  */
-export function holiSystemPrompt(args: {
+function holiSystemPrompt(args: {
   def: HoliDef
   dir: string
   soul: string
@@ -363,16 +379,16 @@ export function holiSystemPrompt(args: {
 }
 
 /** What every run of a Holi may do without asking: keep its memory. */
-export const memoryRules = (): string[] =>
+const memoryRules = (): string[] =>
   ['remember', 'revise', 'forget', 'recall', 'search'].map((v) => `Bash(holi holis ${v}:*)`)
 
 /** The send's first turn: the one line naming the document. */
-export function sendPrompt(path: string): string {
+function sendPrompt(path: string): string {
   return `Work on ${path}.`
 }
 
-/** A name for a new Holi, from its face: "Crab", "Rocket". */
-const faceName = (mascot: string): string => mascot.charAt(0).toUpperCase() + mascot.slice(1)
+/** A name for a new Holi, from its face: "Captain", "Scout". */
+const faceName = (mascot: HoliMascot): string => HOLI_MASCOT_LABELS[mascot]
 
 export function createHolis(deps: HolisDeps): Holis {
   const now = deps.now ?? (() => new Date())
@@ -396,14 +412,19 @@ export function createHolis(deps: HolisDeps): Holis {
 
   const changed = (remote: string): void => deps.emit(remote, 'holis', null)
 
-  function summarise(entry: Entry, state: HoliState | undefined): HoliSummary {
+  function summarise(
+    entry: Entry,
+    state: HoliState | undefined,
+    provider: AgentProviderId,
+  ): HoliSummary {
     const id = holiIdOf(entry.path)
     const base = {
       path: entry.path,
       dir: dirOf(entry.path),
       id,
       local: entry.path.includes('.local.'),
-      status: statusOf(entry, state),
+      status: statusOf(entry, state, provider),
+      provider,
       runs: state?.runs ?? [],
     }
     if (!entry.parsed.ok) {
@@ -428,13 +449,17 @@ export function createHolis(deps: HolisDeps): Holis {
       allow: def.allow,
       soul: soulOf(ok),
       unknownKeys: def.unknownKeys,
-      fingerprint: fingerprintOf(ok),
+      fingerprint: fingerprintOf(ok, provider),
     }
   }
 
   async function list(vault: HolisVault): Promise<HoliSummary[]> {
-    const [entries, state] = await Promise.all([readHolis(vault.root), stateOf(vault.remote)])
-    return entries.map((e) => summarise(e, state[e.path]))
+    const [entries, state, provider] = await Promise.all([
+      readHolis(vault.root),
+      stateOf(vault.remote),
+      deps.provider(vault.root),
+    ])
+    return entries.map((e) => summarise(e, state[e.path], provider))
   }
 
   async function one(vault: HolisVault, path: string): Promise<HoliSummary> {
@@ -443,9 +468,13 @@ export function createHolis(deps: HolisDeps): Holis {
     return found
   }
 
-  async function approvedEntry(vault: HolisVault, ref: string): Promise<ValidEntry> {
+  async function approvedEntry(
+    vault: HolisVault,
+    ref: string,
+  ): Promise<{ entry: ValidEntry; provider: AgentProviderId }> {
     const entry = valid(find(await readHolis(vault.root), ref))
-    const status = statusOf(entry, (await stateOf(vault.remote))[entry.path])
+    const provider = await deps.provider(vault.root)
+    const status = statusOf(entry, (await stateOf(vault.remote))[entry.path], provider)
     if (status !== 'approved') {
       const name = entry.parsed.def.name
       throw new CapabilityError(
@@ -455,7 +484,7 @@ export function createHolis(deps: HolisDeps): Holis {
           : `${name} is not approved on this machine yet.`,
       )
     }
-    return entry
+    return { entry, provider }
   }
 
   async function systemFor(vault: HolisVault, entry: ValidEntry, sent: boolean): Promise<string> {
@@ -479,7 +508,8 @@ export function createHolis(deps: HolisDeps): Holis {
 
     async approve(vault, ref, seen) {
       const entry = valid(find(await readHolis(vault.root), ref))
-      if (seen !== fingerprintOf(entry)) {
+      const provider = await deps.provider(vault.root)
+      if (seen !== fingerprintOf(entry, provider)) {
         throw new CapabilityError(
           'BAD_REQUEST',
           `${entry.parsed.def.name} changed since you looked. Read it again before approving it.`,
@@ -491,7 +521,7 @@ export function createHolis(deps: HolisDeps): Holis {
     },
 
     async send(vault, ref, path) {
-      const entry = await approvedEntry(vault, ref)
+      const { entry, provider } = await approvedEntry(vault, ref)
       const def = entry.parsed.def
       if (!holiAccepts(def, path)) {
         throw new CapabilityError('BAD_REQUEST', `${def.name} does not take ${path}.`)
@@ -502,11 +532,19 @@ export function createHolis(deps: HolisDeps): Holis {
       sending.add(entry.path)
       try {
         const base = path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/, '')
+        // Keep the provider whose fingerprint was checked above; resolving
+        // settings again here could switch to an unapproved provider.
+        // Legacy Holi model aliases are Claude-specific; Pi accepts explicit
+        // provider/model-id values and otherwise uses its configured default.
+        const model = provider === 'pi' && !def.model?.includes('/') ? undefined : def.model
         const res = await deps.launch({
           name: `${def.name} · ${base}`,
           prompt: sendPrompt(path),
-          ...(def.model === undefined ? {} : { model: def.model }),
-          allow: [...def.allow, ...memoryRules(), REPORT_RULE],
+          provider,
+          ...(model === undefined ? {} : { model }),
+          // Pi does not enforce them; Codex's job in the vault takes its
+          // writable folders from them.
+          ...(provider === 'pi' ? {} : { allow: [...def.allow, ...memoryRules(), REPORT_RULE] }),
           system: await systemFor(vault, entry, true),
         })
         if (!res.ok) throw new CapabilityError('UNAVAILABLE', res.message)
@@ -611,10 +649,12 @@ export function createHolis(deps: HolisDeps): Holis {
     async context(vault, ref) {
       const entry = valid(find(await readHolis(vault.root), ref))
       const def = entry.parsed.def
+      const provider = await deps.provider(vault.root)
       return {
         id: def.id,
         name: def.name,
-        approval: holiApprovalText(def, soulOf(entry)),
+        provider,
+        approval: `${holiApprovalText(def, soulOf(entry))}\nprovider:${provider}${provider === 'pi' ? "\nPi runs with the user's normal filesystem permissions, not a document sandbox." : ''}`,
         ...(def.model === undefined ? {} : { model: def.model }),
         allow: [...def.allow, ...memoryRules()],
         system: await systemFor(vault, entry, false),

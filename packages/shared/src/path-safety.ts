@@ -42,6 +42,30 @@ export function vaultRelPath(raw: string): VaultRelPath {
   return segments.join('/') as VaultRelPath
 }
 
+/** Directories that are never vault content, matched on any path segment: the
+ *  vault store never walks them, and a Holi link never names a file in one.
+ *
+ *  `.git` is the load-bearing one: left unignored it would fire the watcher on
+ *  every commit Holi itself makes (an autosave loop), and a stray `.md` under
+ *  `.git/` would surface as a note. */
+export const IGNORED_DIRS: ReadonlySet<string> = new Set(['.git', 'node_modules'])
+
+/** Whether any folder on `path` is one of `IGNORED_DIRS`. */
+export function isInIgnoredDir(path: string): boolean {
+  return path.split('/').some((segment) => IGNORED_DIRS.has(segment))
+}
+
+/** A vault's identity, `owner/repo`: the form the GitHub API and `git clone`
+ *  both speak, and what a Holi link names a vault by. */
+const REMOTE_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
+
+export function isRemote(value: string): boolean {
+  // Guard the separator cases the regex would otherwise wave through: a leading,
+  // trailing or doubled slash still has two non-empty-looking sides to a lazy
+  // check, and the value ends up in a filesystem path.
+  return REMOTE_RE.test(value) && !value.includes('..')
+}
+
 /** A secret file's name, in any folder: `.env`, `.env.local`, `.env.<x>`,
  *  `.secrets`, `.secrets.<x>`. The names people already keep secrets under,
  *  and nothing a note could be called (`env.md`, `secrets.md`). */
@@ -83,6 +107,19 @@ export const LOCAL_ONLY_IGNORE_LINES: readonly string[] = [
   '.secrets',
   '.secrets.*',
 ]
+
+/**
+ * Files an operating system drops into folders on its own: Finder's
+ * `.DS_Store`, Explorer's `Thumbs.db`. Never vault content, and never
+ * committed.
+ *
+ * **A different kind of rule from `LOCAL_ONLY_IGNORE_LINES`**, so a separate
+ * list: those are a person's files kept on one machine, these are nobody's.
+ * Each is a bare file name, which as a `.gitignore` line matches it in every
+ * folder, so this one list is both the vault store's filter and the lines the
+ * seeded `.gitignore` carries.
+ */
+export const OS_JUNK_FILES: readonly string[] = ['.DS_Store', 'Thumbs.db']
 
 /**
  * The sentinel that says a clone IS a Holi vault, and the durable on-disk twin
@@ -209,4 +246,23 @@ export const MACHINE_STATE_DIR = '.holi/state'
  *  code drive Holi as the agent does. Root-anchored, like the agent surface. */
 export function isMachineStatePath(path: string): boolean {
   return path.startsWith(`${MACHINE_STATE_DIR}/`)
+}
+
+/**
+ * `raw` as a vault path a person may be shown in a tab, or null: a real vault
+ * path, not this machine's state (`.holi/state/` holds the bridge's tokens)
+ * and not a secret file. Folded to lower case as well, since macOS opens
+ * `.holi/State/x` as `.holi/state/x`. Main's `shownPath` refuses on it, and
+ * the renderer checks it before opening what an app or a notice names.
+ */
+export function shownPathOrNull(raw: string): VaultRelPath | null {
+  let rel: VaultRelPath
+  try {
+    rel = vaultRelPath(raw)
+  } catch {
+    return null
+  }
+  const folded = rel.toLowerCase()
+  if (isMachineStatePath(rel) || isMachineStatePath(folded) || isSecretPath(rel)) return null
+  return rel
 }

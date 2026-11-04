@@ -2,21 +2,22 @@ import { describe, expect, it } from 'vitest'
 import {
   TaskFileError,
   assigneesInTitle,
-  cleanLogins,
-  hasLogin,
   isAssignedTo,
+  isPrivateTask,
   isTaskFilePath,
+  privateTaskPath,
   remindsViewer,
-  sameLogin,
-  toggleLogin,
   parseTaskFile,
   parseTaskPatch,
   serializeTaskFile,
+  sharedTaskPath,
+  taskClaim,
   taskFileName,
   taskFilePath,
   taskSlug,
   titleFromTaskPath,
 } from '../src/task-file'
+import { taskArea } from '../src/types'
 
 const parse = (text: string, path = 'task.a.md') => parseTaskFile(text, path)
 
@@ -40,11 +41,46 @@ describe('taskSlug', () => {
 
 describe('taskFilePath', () => {
   it('is `task.<slug>.md` inside the folder the task belongs to', () => {
-    expect(taskFilePath('projects/q2', 'Fix login')).toBe('projects/q2/task.fix-login.md')
+    expect(taskFilePath('projects/q2', 'Fix login', true)).toBe('projects/q2/task.fix-login.md')
   })
 
   it('drops the folder segment at the vault root', () => {
-    expect(taskFilePath('', 'Fix login')).toBe('task.fix-login.md')
+    expect(taskFilePath('', 'Fix login', true)).toBe('task.fix-login.md')
+  })
+
+  it('names a private task `task.<slug>.local.md`, which git keeps on this machine', () => {
+    const path = taskFilePath('projects/q2', 'Fix login', false)
+    expect(path).toBe('projects/q2/task.fix-login.local.md')
+    expect(isTaskFilePath(path)).toBe(true)
+    expect(isPrivateTask(path)).toBe(true)
+  })
+})
+
+describe('sharing a task is a rename', () => {
+  it('drops the marker to share and adds it to make private', () => {
+    expect(sharedTaskPath('ops/task.fix-login.local.md')).toBe('ops/task.fix-login.md')
+    expect(privateTaskPath('ops/task.fix-login.md')).toBe('ops/task.fix-login.local.md')
+  })
+
+  it('offers neither where a rename of the file cannot do it', () => {
+    expect(sharedTaskPath('ops/task.fix-login.md')).toBeNull()
+    expect(privateTaskPath('ops/task.fix-login.local.md')).toBeNull()
+    expect(sharedTaskPath('mine.local.d/task.a.local.md')).toBeNull()
+    expect(privateTaskPath('mine.local.d/task.a.md')).toBeNull()
+  })
+
+  it('takes a private task onto the board, but no task file in a local folder', () => {
+    expect(taskClaim.match('ops/task.a.local.md')).toBe(true)
+    expect(taskClaim.match('ops/task.a.md')).toBe(true)
+    // Only the file's own name makes a task private; a local folder is a
+    // personal space of plain files.
+    expect(isPrivateTask('mine.local.d/task.a.local.md')).toBe(false)
+    expect(taskClaim.match('mine.local.d/task.a.md')).toBe(false)
+    expect(taskClaim.match('mine.local.d/task.a.local.md')).toBe(false)
+  })
+
+  it('keeps the marker out of the fallback title', () => {
+    expect(titleFromTaskPath('task.fix-login.local.md')).toBe('Fix login')
   })
 })
 
@@ -148,9 +184,42 @@ describe('parseTaskFile', () => {
     expect(() => parse('---\ntitle: "unterminated\n---\n')).toThrow(TaskFileError)
   })
 
-  it('rejects an out-of-vocabulary status or priority', () => {
-    expect(() => parse('---\nstatus: blocked\n---\n')).toThrow(/status must be one of/)
-    expect(() => parse('---\npriority: urgent\n---\n')).toThrow(/priority must be one of/)
+  it('rejects an out-of-vocabulary priority', () => {
+    expect(() => parse('---\npriority: critical\n---\n')).toThrow(/priority must be one of/)
+  })
+
+  it('keeps any status word, listed by the vault or not, and never rewrites it', () => {
+    // Which words are columns is `.holi/statuses.yaml`'s business; the file
+    // only has to say a word.
+    const text = '---\nstatus: blocked\n---\n'
+    const task = parse(text)
+    expect(task.status).toBe('blocked')
+    expect(serializeTaskFile(task)).toBe(text)
+    expect(() => parse('---\nstatus: ""\n---\n')).toThrow(/status must be a word/)
+    expect(() => parse('---\nstatus: [a]\n---\n')).toThrow(/status must be a word/)
+  })
+
+  it('reads urgent, start and estimate, and writes them back in place', () => {
+    const text =
+      '---\nstatus: todo\nstart: 2026-10-01\ndue: 2026-10-20\npriority: urgent\nestimate: 2d\n---\n'
+    const task = parse(text)
+    expect(task).toMatchObject({ priority: 'urgent', start: '2026-10-01', estimate: '2d' })
+    expect(serializeTaskFile(task)).toBe(text)
+  })
+
+  it('writes start before due and estimate after priority, whatever order the file had', () => {
+    const task = parse(
+      '---\nestimate: 30m\npriority: low\ndue: 2026-10-20\nstart: 2026-10-01\n---\n',
+    )
+    expect(serializeTaskFile(task)).toBe(
+      '---\nstatus: todo\nstart: 2026-10-01\ndue: 2026-10-20\npriority: low\nestimate: 30m\n---\n',
+    )
+  })
+
+  it('rejects a start that is not a date and an estimate without a unit', () => {
+    expect(() => parse('---\nstart: soon\n---\n')).toThrow(/start must be YYYY-MM-DD/)
+    expect(() => parse('---\nestimate: 2\n---\n')).toThrow(/estimate must be/)
+    expect(() => parse('---\nestimate: 0d\n---\n')).toThrow(/estimate must be/)
   })
 
   it('rejects a due date that is not YYYY-MM-DD', () => {
@@ -288,8 +357,14 @@ describe('parseTaskPatch', () => {
   })
 
   it('rejects a value outside the vocabulary, exactly as the parser does', () => {
-    expect(() => parseTaskPatch({ status: 'blocked' })).toThrow(/status must be one of/)
-    expect(() => parseTaskPatch({ priority: 'urgent' })).toThrow(/priority must be one of/)
+    expect(() => parseTaskPatch({ status: '' })).toThrow(/status must be a word/)
+    expect(() => parseTaskPatch({ priority: 'critical' })).toThrow(/priority must be one of/)
+    expect(() => parseTaskPatch({ estimate: 'a while' })).toThrow(/estimate must be/)
+    expect(parseTaskPatch({ status: 'review', priority: 'urgent', start: null })).toEqual({
+      status: 'review',
+      priority: 'urgent',
+      start: undefined,
+    })
     expect(() => parseTaskPatch({ due: 'Friday' })).toThrow(/due must be YYYY-MM-DD/)
     expect(() => parseTaskPatch({ tags: 'finance' })).toThrow(/tags must be a list/)
     expect(() => parseTaskPatch({ recurrence: { frequency: 'fortnightly' } })).toThrow(
@@ -307,7 +382,7 @@ describe('parseTaskPatch', () => {
 
 describe('taskFileName', () => {
   it('is the filename half of taskFilePath', () => {
-    expect(taskFileName('Fix login')).toBe('task.fix-login.md')
+    expect(taskFileName('Fix login', true)).toBe('task.fix-login.md')
   })
 })
 
@@ -433,23 +508,6 @@ describe('assignees', () => {
   })
 })
 
-describe('one rule for a login', () => {
-  it('is the same person whatever the case', () => {
-    expect(sameLogin('Ada', 'ada')).toBe(true)
-    expect(sameLogin('ada', 'adam')).toBe(false)
-    expect(hasLogin(['Ada'], 'ADA')).toBe(true)
-  })
-
-  it('makes a clean list: no @, no blanks, each person once in the spelling given first', () => {
-    expect(cleanLogins(['Ada', ' @ada ', '', '@', 'bo', 'BO'])).toEqual(['Ada', 'bo'])
-  })
-
-  it('toggles a person by any spelling of their name', () => {
-    expect(toggleLogin(['Ada', 'bo'], 'ada')).toEqual(['bo'])
-    expect(toggleLogin(['bo'], 'Ada')).toEqual(['bo', 'Ada'])
-  })
-})
-
 describe('assigneesInTitle', () => {
   const members = ['ada', 'bo']
 
@@ -467,5 +525,15 @@ describe('assigneesInTitle', () => {
   it('leaves an @ that is no member, and an address, as written', () => {
     expect(assigneesInTitle('Work @home', members)).toEqual({ title: 'Work @home', assignees: [] })
     expect(assigneesInTitle('Mail ada@syv.ai', members).assignees).toEqual([])
+  })
+})
+
+describe('taskArea', () => {
+  it('is the containing folder — the lane', () => {
+    expect(taskArea({ path: 'projects/q2/task.a.md' })).toBe('projects/q2')
+  })
+
+  it('is the empty root lane for a task at the vault root', () => {
+    expect(taskArea({ path: 'task.a.md' })).toBe('')
   })
 })

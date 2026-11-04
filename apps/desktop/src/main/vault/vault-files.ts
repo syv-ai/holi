@@ -2,7 +2,7 @@
  * directory so the agent's Read never sees a torn file; every path from disk
  * re-validates through vaultRelPath. */
 import { randomBytes } from 'node:crypto'
-import { mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
 import {
   GITKEEP,
@@ -10,22 +10,21 @@ import {
   SETTINGS_LOCAL_FILE,
   PLUGINS_LOCAL_FILE,
   THEME_LOCAL_FILE,
+  IGNORED_DIRS,
   appBundleOf,
   isAppBundlePath,
+  isInIgnoredDir,
   isLocalOnlyPath,
+  OS_JUNK_FILES,
   vaultRelPath,
   type VaultRelPath,
 } from '@holi/shared'
 
-export const TMP_MARKER = '.holi-tmp-'
-const JUNK = new Set(['.DS_Store', 'Thumbs.db'])
-
-/** Directories that are never vault content, matched on any path segment.
- *
- * `.git` is the load-bearing one: left unignored it would fire the
- * watcher on every commit Holi itself makes (an autosave loop), and a stray
- * `.md` under `.git/` would surface as a note. */
-const IGNORED_DIRS = new Set(['.git', 'node_modules'])
+const TMP_MARKER = '.holi-tmp-'
+/** The `.gitignore` line for those files, at any depth. One killed mid-write
+ *  outlives its rename, and `git add -A` would publish it. */
+export const TMP_IGNORE_LINE = `${TMP_MARKER}*`
+const JUNK = new Set(OS_JUNK_FILES)
 
 export function absPathFor(root: string, rel: VaultRelPath): string {
   return join(root, rel)
@@ -51,9 +50,8 @@ export function toVaultRel(root: string, absPath: string): VaultRelPath | null {
  * reach the snapshot; git is what keeps them out of a commit.
  */
 export function isNonContentPath(rel: string): boolean {
-  const segments = rel.split('/')
-  const base = segments.at(-1)!
-  if (segments.some((s) => IGNORED_DIRS.has(s))) return true
+  const base = rel.slice(rel.lastIndexOf('/') + 1)
+  if (isInIgnoredDir(rel)) return true
   return base.startsWith(TMP_MARKER) || JUNK.has(base)
 }
 
@@ -62,6 +60,7 @@ export function isNonContentPath(rel: string): boolean {
  * (`isWatchIgnoredPath`). A change to `.holi/state/context.local.json`
  * (rewritten every agent turn) must not storm the rescan loop. The snapshot uses `isNonContentPath` instead, so those files
  * still appear in the tree — refreshed on the periodic heal rather than live.
+ * @public exported for its test
  */
 export function isIgnoredPath(rel: string): boolean {
   return isNonContentPath(rel) || isLocalOnlyPath(rel)
@@ -97,6 +96,12 @@ export function isWatchIgnoredPath(rel: string): boolean {
   return isLocalOnlyPath(rel)
 }
 
+/** A fresh path for a file Holi writes and nobody else sees: the watcher, the
+ *  scanner and the snapshot all skip the marker (`isNonContentPath`). */
+export function tmpPathIn(dir: string): string {
+  return join(dir, `${TMP_MARKER}${randomBytes(6).toString('hex')}`)
+}
+
 export async function writeAtomic(
   root: string,
   rel: VaultRelPath,
@@ -104,11 +109,34 @@ export async function writeAtomic(
 ): Promise<void> {
   const abs = absPathFor(root, rel)
   await mkdir(dirname(abs), { recursive: true })
-  const tmp = join(dirname(abs), `${TMP_MARKER}${randomBytes(6).toString('hex')}`)
+  const tmp = tmpPathIn(dirname(abs))
   // A string still defaults to utf8; a Uint8Array/Buffer writes bytes verbatim —
   // the branded templates seed binary fonts + logo through this same writer.
   await writeFile(tmp, data)
   await rename(tmp, abs)
+}
+
+/** abs → the tail of the work queued on that file; gone once it drains. */
+const fileQueues = new Map<string, Promise<void>>()
+
+/**
+ * Run `work` after every earlier `withFileLock` on the same file has settled,
+ * so a check of a file and the write that depends on it are not split by
+ * another caller doing the same (two app writes over one base). It orders
+ * only the writers that take it: the editor's save does, a pull does not, so
+ * it narrows the race with a pull rather than closing it.
+ */
+export function withFileLock<T>(abs: string, work: () => Promise<T>): Promise<T> {
+  const run = (fileQueues.get(abs) ?? Promise.resolve()).then(work)
+  const tail = run.then(
+    () => {},
+    () => {},
+  )
+  fileQueues.set(abs, tail)
+  void tail.then(() => {
+    if (fileQueues.get(abs) === tail) fileQueues.delete(abs)
+  })
+  return run
 }
 
 export async function removeDocFile(root: string, rel: VaultRelPath): Promise<void> {
@@ -137,6 +165,36 @@ export async function pruneEmptiedFolder(root: string, rel: VaultRelPath): Promi
     return empty
   }
   await prune(absPathFor(root, rel))
+}
+
+/**
+ * Finish a folder move (`notes.move`): what the document moves did not carry
+ * follows the folder to `to`, then the emptied source goes. That is its
+ * `.gitkeep`s, its empty subfolders, and its machine-local and ignored files,
+ * such as a deck's `node_modules`. A move takes the whole folder, as Finder
+ * would, and loses nothing, so unlike a delete there is nothing to leave
+ * behind. An entry whose destination is taken stays rather than clobber, and
+ * keeps its folder with it.
+ */
+export async function carryFolder(
+  root: string,
+  from: VaultRelPath,
+  to: VaultRelPath,
+): Promise<void> {
+  if (to === from || to.startsWith(`${from}/`)) return
+  const carry = async (src: string, dest: string): Promise<void> => {
+    const entries = await readdir(src, { withFileTypes: true }).catch(() => null)
+    if (entries === null) return
+    await mkdir(dest, { recursive: true })
+    for (const e of entries) {
+      const taken = await stat(join(dest, e.name)).catch(() => null)
+      if (taken === null) await rename(join(src, e.name), join(dest, e.name))
+      else if (e.isDirectory() && taken.isDirectory())
+        await carry(join(src, e.name), join(dest, e.name))
+    }
+  }
+  await carry(absPathFor(root, from), absPathFor(root, to))
+  await pruneEmptiedFolder(root, from)
 }
 
 export async function moveDocFile(

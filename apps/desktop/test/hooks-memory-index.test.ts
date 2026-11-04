@@ -36,6 +36,7 @@ async function write(rel: string, text: string): Promise<void> {
 }
 
 const read = (rel: string) => readFile(join(repo, rel), 'utf8').catch(() => null)
+const stageMemories = () => plainGit(repo, ['add', '-A', '--', '.holi/memory'])
 
 describe('memory-index', () => {
   it('writes the index in the same pass as the memory that was added', async () => {
@@ -44,6 +45,7 @@ describe('memory-index', () => {
       memory('environment', 'Shell quirks', 'bare node is broken'),
     )
 
+    await stageMemories()
     const result = await memoryIndex(repo, added('.holi/memory/shell.md'))
 
     expect(result.changed).toEqual([MEMORY_INDEX])
@@ -74,6 +76,7 @@ describe('memory-index', () => {
     await write('.holi/memory/a.md', memory('convention', 'A', 'the first'))
     await write('.holi/memory/b.md', memory('convention', 'B', 'the second'))
 
+    await stageMemories()
     await memoryIndex(repo, added('.holi/memory/b.md'))
 
     const index = (await read(MEMORY_INDEX))!
@@ -86,6 +89,7 @@ describe('memory-index', () => {
     await write('.holi/memory/shared.md', memory('convention', 'Shared', 'everyone sees this'))
     await write('.holi/memory/salary.local.md', memory('person', 'Salary', 'nobody else sees this'))
 
+    await stageMemories()
     await memoryIndex(repo, added('.holi/memory/shared.md'))
 
     const index = (await read(MEMORY_INDEX))!
@@ -107,6 +111,7 @@ describe('memory-index', () => {
     // A `changed` entry the runner restages for a file nothing rewrote is an
     // empty commit, on every memory edit that did not move a title.
     await write('.holi/memory/a.md', memory('convention', 'A', 'the first'))
+    await stageMemories()
     await memoryIndex(repo, added('.holi/memory/a.md'))
     const before = await read(MEMORY_INDEX)
 
@@ -116,12 +121,29 @@ describe('memory-index', () => {
     expect(await read(MEMORY_INDEX)).toBe(before)
   })
 
+  it('leaves out a memory past its expires, without deleting it', async () => {
+    const expiring = (stamp: string, title: string) =>
+      `---\ntype: project\ntitle: ${title}\nexpires: ${stamp}\n---\n\nThe fact.\n`
+    await write('.holi/memory/old.md', expiring('2026-10-20', 'Old'))
+    await write('.holi/memory/live.md', expiring('2026-10-22', 'Live'))
+
+    await stageMemories()
+    await memoryIndex(repo, added('.holi/memory/live.md'), new Date(2026, 9, 21, 12, 0))
+
+    const index = (await read(MEMORY_INDEX))!
+    expect(index).toContain('[[.holi/memory/live.md|Live]] (expires 2026-10-22)')
+    expect(index).not.toContain('.holi/memory/old.md')
+    expect(await read('.holi/memory/old.md')).not.toBeNull()
+  })
+
   it('re-indexes under the new path after a rename', async () => {
     await write('.holi/memory/old.md', memory('convention', 'A', 'the first'))
+    await stageMemories()
     await memoryIndex(repo, added('.holi/memory/old.md'))
     await rm(join(repo, '.holi/memory/old.md'))
     await write('.holi/memory/new.md', memory('convention', 'A', 'the first'))
 
+    await stageMemories()
     const result = await memoryIndex(repo, {
       ...NOTHING,
       renamed: [{ from: '.holi/memory/old.md', to: '.holi/memory/new.md' }],
@@ -139,10 +161,12 @@ describe('memory-index', () => {
     // away is nothing to them; this one's output is a list of what EXISTS.
     await write('.holi/memory/a.md', memory('convention', 'A', 'the first'))
     await write('.holi/memory/b.md', memory('convention', 'B', 'the second'))
+    await stageMemories()
     await memoryIndex(repo, added('.holi/memory/a.md', '.holi/memory/b.md'))
     expect(await read(MEMORY_INDEX)).toContain('.holi/memory/b.md')
 
     await rm(join(repo, '.holi/memory/b.md'))
+    await stageMemories()
     const result = await memoryIndex(repo, { ...NOTHING, deleted: ['.holi/memory/b.md'] })
 
     expect(result.changed).toEqual([MEMORY_INDEX])
@@ -153,8 +177,10 @@ describe('memory-index', () => {
 
   it('returns to the empty form when the last memory goes', async () => {
     await write('.holi/memory/only.md', memory('convention', 'Only', 'the last one standing'))
+    await stageMemories()
     await memoryIndex(repo, added('.holi/memory/only.md'))
     await rm(join(repo, '.holi/memory/only.md'))
+    await stageMemories()
 
     await memoryIndex(repo, { ...NOTHING, deleted: ['.holi/memory/only.md'] })
 
@@ -166,6 +192,7 @@ describe('memory-index', () => {
   it('indexes a memory whose frontmatter is broken rather than refusing it', async () => {
     await write('.holi/memory/half.md', '---\ntype: [unclosed\n---\n\nA fact mid-edit.\n')
 
+    await stageMemories()
     const result = await memoryIndex(repo, added('.holi/memory/half.md'))
 
     expect(result.changed).toEqual([MEMORY_INDEX])
@@ -191,6 +218,30 @@ describe('memory-index inside the runner', () => {
     // commit is about to record.
     const staged = await plainGit(repo, ['diff', '--cached', '--name-only'])
     expect(staged).toContain(MEMORY_INDEX)
+  })
+
+  it('defers an index when a mixed-size autosave holds shared memory back', async () => {
+    await write('.holi/memory/small.md', memory('convention', 'Small', 'committable'))
+    await write(
+      '.holi/memory/large.md',
+      `${memory('convention', 'Held back', 'must not leak')}${'x'.repeat(2000)}`,
+    )
+    await plainGit(repo, ['add', '--', '.holi/memory/small.md'])
+
+    const run = await runPreCommit(repo, added('.holi/memory/small.md'), {
+      settings,
+      transforms: [{ name: 'memory-index', run: memoryIndex }],
+    })
+
+    expect(run.changed).toEqual([])
+    expect(run.failed).toEqual([])
+    expect(await read(MEMORY_INDEX)).toBeNull()
+    expect(await plainGit(repo, ['diff', '--cached', '--name-only'])).toContain(
+      '.holi/memory/small.md',
+    )
+    expect(await plainGit(repo, ['diff', '--cached', '--name-only'])).not.toContain(
+      '.holi/memory/large.md',
+    )
   })
 
   it('lets the commit through when the indexer throws', async () => {

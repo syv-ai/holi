@@ -18,7 +18,10 @@ import { useEffect } from 'react'
 import { EDITOR_FONT_STACKS, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { vaultSettingsAtom } from './settings'
 
-/** The custom property `notesFontTheme` reads. */
+/**
+ * The custom property `notesFontTheme` reads.
+ * @public exported for its test
+ */
 export const EDITOR_FONT_VAR = '--editor-font'
 
 /** Keep `:root` carrying the active vault's editor font. Call once, from the

@@ -14,12 +14,18 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { appBundleOf, isAppBundlePath } from '@holi/shared'
-import { type AppLogLevel } from '../shared/store'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { appBundleOf, isAppBundlePath, vaultRelPath } from '@holi/shared'
+import { APP_MANIFEST_FILE, parseAppManifest, setManifestArchived } from '../shared/manifest'
+import { APP_LOG_LEVELS, appLogEntries, appLogSinceLoad } from '../shared/store'
 import {
   cap,
   CapabilityError,
+  flagParam,
+  noParams,
   paramsObject,
+  writeAtomic,
   pathParams,
   stringParam,
   type PluginCtx,
@@ -33,8 +39,9 @@ import {
   type AppGrants,
   type BundleCommit,
 } from './grants'
-import { writeAppLog } from './log'
+import { readAppLog, writeAppLog } from './log'
 import { initAppOp, openAppOp } from './ops'
+import type { AppPreviews } from './previews'
 import { storeCheck, storeDelete, storeGet, storeList, storePut } from './store'
 
 /**
@@ -73,8 +80,6 @@ function valueParam(value: unknown): unknown {
 
 const compact = (value: unknown) => JSON.stringify(value)
 
-const LOG_LEVELS: readonly AppLogLevel[] = ['error', 'warn', 'info']
-
 export interface AppCapabilitiesDeps {
   /** The apps' events: `open` asks the renderer to open (or reload) a
    *  bundle's tab in the active pane, if that vault is the one on screen. */
@@ -83,7 +88,54 @@ export interface AppCapabilitiesDeps {
   appDoor(): AppDoor
   /** This machine's approvals of apps' `dangerously-allow` reads. */
   grants: AppGrants
+  /** This machine's pictures of its apps, for their cards. */
+  previews: AppPreviews
+  /** The window's pixels inside `rect` (CSS pixels from the top left of the
+   *  page), as a small JPEG; null when there is nothing to take, such as a
+   *  hidden window. Electron's, injected so this file loads under Node. */
+  capture(rect: PreviewRect): Promise<Buffer | null>
 }
+
+/** Where on the page an app's frame is, in CSS pixels. */
+export interface PreviewRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** The frame's rect from the renderer: whole, non-negative and of a size a
+ *  window can have. */
+function rectParam(raw: unknown): PreviewRect {
+  const r = raw !== null && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  const out: Record<string, number> = {}
+  for (const key of ['x', 'y', 'width', 'height'] as const) {
+    const v = r[key]
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 20_000) {
+      throw new CapabilityError('BAD_REQUEST', `rect.${key} must be a size in pixels`)
+    }
+    out[key] = Math.round(v)
+  }
+  if (out.width! < 16 || out.height! < 16) {
+    throw new CapabilityError('BAD_REQUEST', 'the frame is too small to picture')
+  }
+  return out as unknown as PreviewRect
+}
+
+/** The finished apps the snapshot lists: an entry document and a manifest
+ *  at the bundle's root. */
+function finishedApps(files: readonly { path: string }[]): string[] {
+  const has = new Set(files.map((f) => f.path))
+  const bundles = new Set<string>()
+  for (const { path } of files) {
+    const bundle = appBundleOf(path)
+    if (bundle !== null && path === `${bundle}/${APP_MANIFEST_FILE}`) bundles.add(bundle)
+  }
+  return [...bundles].filter((b) => has.has(`${b}/index.html`)).sort()
+}
+
+const readManifest = (root: string, bundle: string) =>
+  readFile(join(root, vaultRelPath(`${bundle}/${APP_MANIFEST_FILE}`)), 'utf8').catch(() => null)
 
 export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
   /**
@@ -122,6 +174,95 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
     },
   }),
 
+  /** The app's `description` from its manifest, for its card on the Apps
+   *  page; null when it gives none. */
+  'apps.describe': cap({
+    doors: ['ui'],
+    params: (raw) => ({ bundle: bundleParam(paramsObject(raw)) }),
+    run: async (ctx, { bundle }) => ({
+      description: (await manifestOf(ctx.root, bundle))?.description ?? null,
+    }),
+  }),
+
+  /** The finished apps whose manifest says `archived: true`: the ones the
+   *  launchers leave out and the Apps page lists under Archived. */
+  'apps.archived': cap({
+    doors: ['ui'],
+    params: noParams,
+    run: async (ctx) => {
+      const bundles = finishedApps((await ctx.snapshot()).files)
+      const archived = await Promise.all(
+        bundles.map(async (bundle) => {
+          const text = await readManifest(ctx.root, bundle)
+          return text !== null && parseAppManifest(text)?.archived === true
+        }),
+      )
+      return { bundles: bundles.filter((_, i) => archived[i]) }
+    },
+  }),
+
+  /** Archive an app, or bring it back: `archived: true` in its manifest, or
+   *  the key gone, every other line kept. A write like any other edit, so it
+   *  syncs through autosave; nothing is moved or deleted. */
+  'apps.archive': cap({
+    doors: ['ui'],
+    writes: true,
+    params: (raw) => {
+      const p = paramsObject(raw)
+      return { bundle: bundleParam(p), archived: flagParam(p, 'archived') }
+    },
+    run: async (ctx, { bundle, archived }) => {
+      const text = await readManifest(ctx.root, bundle)
+      if (text === null)
+        throw new CapabilityError('NOT_FOUND', `${bundle} has no ${APP_MANIFEST_FILE}`)
+      const next = setManifestArchived(text, archived)
+      if (next === null) {
+        throw new CapabilityError('BAD_REQUEST', `${bundle}/${APP_MANIFEST_FILE} is not a mapping`)
+      }
+      if (next !== text) {
+        await writeAtomic(ctx.root, vaultRelPath(`${bundle}/${APP_MANIFEST_FILE}`), next)
+      }
+      return { archived }
+    },
+  }),
+
+  /** The app's preview for its card, a `data:` URL; null when this machine
+   *  has none that is still current. */
+  'apps.preview': cap({
+    doors: ['ui'],
+    params: (raw) => ({ bundle: bundleParam(paramsObject(raw)) }),
+    run: async (ctx, { bundle }) => ({
+      dataUrl: await deps.previews.read(ctx.remote, ctx.root, bundle),
+    }),
+  }),
+
+  /** Take the app's preview from its frame, where it sits on the page now:
+   *  `AppFrame` asks once the app has loaded and settled. False when the
+   *  window had nothing to give. */
+  'apps.capturePreview': cap({
+    doors: ['ui'],
+    params: (raw) => {
+      const p = paramsObject(raw)
+      return { bundle: bundleParam(p), rect: rectParam(p.rect) }
+    },
+    run: async (ctx, { bundle, rect }) => {
+      const jpeg = await deps.capture(rect)
+      if (jpeg === null) return { saved: false }
+      await deps.previews.save(ctx.remote, ctx.root, bundle, jpeg)
+      return { saved: true }
+    },
+  }),
+
+  /** Let the app's preview go: its card shows the icon until it runs again. */
+  'apps.forgetPreview': cap({
+    doors: ['ui'],
+    params: (raw) => ({ bundle: bundleParam(paramsObject(raw)) }),
+    run: async (ctx, { bundle }) => {
+      await deps.previews.forget(ctx.remote, bundle)
+      return true
+    },
+  }),
+
   /** The person approved the dialog. UI door only, so an app can never
    *  approve itself. False: the app changed since the dialog was shown, so
    *  ask again. */
@@ -152,13 +293,42 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
     doors: ['ui'],
     params: (raw) => {
       const p = paramsObject(raw)
-      const level = LOG_LEVELS.find((l) => l === p.level)
+      const level = APP_LOG_LEVELS.find((l) => l === p.level)
       if (level === undefined) throw new CapabilityError('BAD_REQUEST', 'not a log entry')
       return { bundle: bundleParam(p), level, text: typeof p.text === 'string' ? p.text : '' }
     },
     run: async (ctx, { bundle, level, text }) => {
       await writeAppLog(ctx.root, bundle, { level, text })
       return true
+    },
+  }),
+
+  /**
+   * The slash commands of `bundles` (the finished apps the renderer knows),
+   * from each manifest: what the notes editor's slash menu lists. A bundle
+   * with no manifest, or none it can read, adds nothing.
+   */
+  'apps.commands': cap({
+    doors: ['ui'],
+    params: (raw) => {
+      const bundles = paramsObject(raw).bundles
+      if (!Array.isArray(bundles) || !bundles.every((b) => typeof b === 'string')) {
+        throw new CapabilityError('BAD_REQUEST', 'bundles must be strings')
+      }
+      return { bundles: (bundles as string[]).filter(isAppBundlePath) }
+    },
+    run: async (ctx, { bundles }) => {
+      const each = await Promise.all(
+        bundles.map(async (bundle) => {
+          const commands = (await manifestOf(ctx.root, bundle))?.commands ?? {}
+          return Object.entries(commands).map(([name, spec]) => ({
+            bundle,
+            name,
+            ...(spec.description === undefined ? {} : { description: spec.description }),
+          }))
+        }),
+      )
+      return each.flat()
     },
   }),
 
@@ -182,9 +352,41 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
     text: ({ bundle }) => `opened ${bundle}`,
   }),
 
+  /**
+   * The app's log (`log.local.txt`), from its last load on: what its console
+   * said, what went wrong and what Holi refused, since `holi apps open` last
+   * (re)loaded it. `--all` prints the whole day the log keeps.
+   */
+  'apps.console': cap({
+    doors: ['cli'],
+    cli: {
+      args: ['path'],
+      flags: ['all'],
+      summary: "an app's console and errors since it last loaded (--all: the last day)",
+    },
+    params: (raw) => {
+      const p = paramsObject(raw)
+      const named = stringParam(p, 'path').replace(/\/+$/, '')
+      let path: string
+      try {
+        path = vaultRelPath(named)
+      } catch (err) {
+        throw new CapabilityError('BAD_REQUEST', (err as Error).message)
+      }
+      if (!isAppBundlePath(path)) throw new CapabilityError('BAD_REQUEST', `not an app: ${path}`)
+      return { bundle: path, all: p.all === true || p.all === 'true' }
+    },
+    run: async (ctx, { bundle, all }) => {
+      const log = await readAppLog(ctx.root, bundle)
+      return { bundle, entries: all ? appLogEntries(log) : appLogSinceLoad(log) }
+    },
+    text: ({ bundle, entries }) =>
+      entries.length === 0 ? `nothing in ${bundle}'s log` : entries.join('\n'),
+  }),
+
   /** Scaffold a bundle, or finish one by writing its manifest: the agent's
-   *  `holi apps init` and the tree's "Finish this app". Never overwrites, so
-   *  it is safe to run twice. */
+   *  `holi apps init`, the explorer's New App and the tree's "Finish this
+   *  app". Never overwrites, so it is safe to run twice. */
   'apps.init': cap({
     doors: ['ui', 'cli'],
     cli: { args: ['path'], summary: 'scaffold <path>, a folder ending in .app' },

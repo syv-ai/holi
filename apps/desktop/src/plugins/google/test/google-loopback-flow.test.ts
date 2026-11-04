@@ -129,7 +129,11 @@ describe('the redirect', () => {
 
   it('sends the PKCE verifier and the same redirect_uri at the exchange', async () => {
     const fetchImpl = tokenFetch(GRANT)
-    const { flow } = await flowWith({ redirect: { code: 'auth-code' }, fetch: fetchImpl, port: 51999 })
+    const { flow } = await flowWith({
+      redirect: { code: 'auth-code' },
+      fetch: fetchImpl,
+      port: 51999,
+    })
 
     await flow.wait()
 

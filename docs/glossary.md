@@ -31,10 +31,17 @@ A `.md` file in the vault, named by its vault-relative path. The file is the doc
 
 ### Task
 
-A file named `task.<name>.md` in the folder it is about. Frontmatter carries `status`, `due`,
-`priority`, `tags`, `assignees` (GitHub logins), `reminder`, `recurrence`; the body is the
-description. The path is its identity
+A file named `task.<name>.md` in the folder it is about. Frontmatter carries `status`, `start`,
+`due`, `priority`, `estimate`, `tags`, `assignees` (GitHub logins), `reminder`, `recurrence`; the
+body is the description. The path is its identity
 and the filename prefix is what makes it a task. See [tasks](features/tasks.md).
+
+### Private task
+
+A task named `task.<name>.local.md`: a [local file](#local-file), on the board of the machine that
+holds it and no one else's. New tasks are private by default; sharing one renames it to
+`task.<name>.md`, a **shared task**, which syncs. Only the file's own name makes a task private: a
+task file inside a `.local.` folder is a plain local file. See [tasks](features/tasks.md).
 
 ### Lane
 
@@ -43,7 +50,15 @@ lanes moves the file.
 
 ### Status
 
-A task's state: `todo`, `doing` or `done`.
+A task's state: one of the vault's statuses in `.holi/statuses.yaml`, by default `backlog`,
+`todo`, `doing`, `review` or `done`. Each has a **category** (`backlog`, `unstarted`, `started`,
+`review`, `completed`) that says what it means; a task is **open** unless its status is
+`completed`. See [planning](features/planning.md).
+
+### Project
+
+The vault itself, seen as one ongoing piece of work: `.holi/project.md` holds its name, status,
+lead, dates, milestones and About. There is one per vault. See [planning](features/planning.md).
 
 ### Autosave commit
 
@@ -77,8 +92,15 @@ reconcile.
 
 ### Wiki-link
 
-`[[folder/note.md]]`, optionally `[[path|Label]]`. The only link grammar, for notes and tasks alike.
-Renaming a file rewrites inbound links. See [wiki-links](features/wiki-links.md).
+`[[folder/note.md]]`, optionally `[[path|Label]]`. The only link grammar inside the vault, for notes
+and tasks alike (a **Holi link** points in from outside). Renaming a file rewrites inbound links. See
+[wiki-links](features/wiki-links.md).
+
+### Holi link
+
+`holi://open?vault=<owner/repo>&path=<path>&heading=<slug>`: a link from chat or email that opens
+Holi on that vault and note, at the heading when it names one. See
+[holi-links](features/holi-links.md).
 
 ### Reminder
 
@@ -101,16 +123,25 @@ One Claude Code background session in a vault, named by its job id: one conversa
 by the supervisor whether or not a window shows it. Holi's **agent tabs** are terminals onto
 sessions: the agent list, or one session attached. Its name and its state (`needs-you`, `working`,
 `idle`) come from Claude Code itself. Closing a tab detaches; Stop, a vault switch or quitting stops
-it, and it stays in the agent list. See [agent-sessions](features/agent-sessions.md).
+it, and it stays in the agent list. Holi adds a **message** to a running session through its inbox
+socket, never through a terminal. See [agent-sessions](features/agent-sessions.md).
 
 ### Schedule
 
-Also **automation**. A file in `.holi/schedules/` whose frontmatter says when (`cron`, one or more,
-or `at`, local time), which Holi carries it out (`holi`) and what the run may do without asking,
-and whose body is a prompt. Holi starts it as a session at those times
-while the vault is open, on a machine that turned it on: **on** approves its current prompt, model
-and `allow` list and its Holi's soul and rules, and any change to those reads **changed** until
-approved again. See
+Also **automation**. One person's `.local.md` file in `.holi/schedules/` whose frontmatter says
+when (`cron`, one or more, or `at`, local time, or `on`, its **triggers**), which Holi carries it out
+(`holi`) and what the run may do without asking, and whose body is a prompt. Holi starts it as a
+session at those times, or when one of its triggers hears an event, while the vault is open, on a
+machine that turned it on: **on** approves its current prompt, model, `allow` list and triggers and
+its Holi's soul and rules, and any change to those reads **changed** until approved again. See
+[scheduled-agents](features/scheduled-agents.md).
+
+### Trigger
+
+One entry in a schedule's `on` list: something that starts a run when it happens rather than at a
+time. A `file` added (or changed) under a glob, a `task` due or overdue, a `calendar` event about to
+start, or a `mail` that a query finds. Each source is a plugin's; the automations plugin's trigger
+router dedupes and batches their events into runs. See
 [scheduled-agents](features/scheduled-agents.md).
 
 ### Holi
@@ -123,23 +154,62 @@ name it. The first run on a machine, and the first after its soul or rules chang
 machine's person to approve it. See
 [holis](features/holis.md).
 
+### Inbox
+
+Where the agent asks for the person's attention: `.holi/state/inbox.local.json`, machine-local,
+filled by `holi agent notify`, needs-you and mentions, and shown as the Inbox at the top of the
+sidebar's Agents mode. See
+[agent-inbox](features/agent-inbox.md).
+
+### Work log
+
+`.holi/state/log/<YYYY-MM-DD>.local.md`: one line per thing the agent did that day, written by
+`holi agent log`, `holi agent notify` and the scheduler. Machine-local, kept 30 days. See
+[agent-inbox](features/agent-inbox.md).
+
+### Expiring memory
+
+A memory with an `expires` stamp (a date, or a local `YYYY-MM-DDTHH:MM`): true for a while. Past
+it, it is hidden from the index and the session overview; a personal one is then deleted by Holi,
+and a shared one is proposed for deletion by the memory lint. See
+[agent-memory](features/agent-memory.md).
+
+### Comment thread
+
+A conversation about a passage of a note, anchored to a quote of it, open until resolved. A note's
+threads live in its **sidecar**, `.holi/comments/<note path>.json`, committed and synced beside the
+note, never in its text. See [note-comments](features/note-comments.md).
+
 ### Ask
 
 Text sent from Holi to a session (a selection, a task, a mail thread). It lands in the input as a
 bracketed paste with no Enter, so Holi never submits a draft the user was typing. A reconcile or a
 stuck push is the exception: it submits its instruction as the first turn of its own session.
 
-### Chat session
+### Provider
 
-Claude Code run on its structured channel (`stream-json`) by the optional chat plugin, drawn as a
-conversation in the Agents view, its permission prompts Claude Code's own as cards. Named by a UUID;
-its transcript is kept on this machine, never in the vault. See [chat](features/chat.md).
+A coding agent Holi can run a session in: Claude Code, Codex, or Pi. Its core is the command a
+terminal runs; what else it can do (sessions its own supervisor runs, hooks that report turns, a
+context reading) are its capabilities, and the UI offers only what a session's provider has. See
+[agent-sessions](features/agent-sessions.md), Providers.
+
+### Session Holi runs
+
+A session of a provider with no supervisor of its own (Codex or Pi): its CLI in a PTY Holi owns,
+named by Holi's id (`p` and twelve hex digits), alive as long as that process. Its turns are read from its
+hooks and its terminal's signals, never its text.
 
 ### Agent surface
 
-The files that configure the agent rather than hold content: `AGENTS.md`, `CLAUDE.md`, `.holi/memory/`,
-`.holi/schedules/`, `.holi/holis/`, `USER.local.md`, and all of `.claude/`. Writing them changes what the agent does next, so anything
+The files that configure the agent rather than hold content: `AGENTS.md`, `CLAUDE.md`, `MEMORY.md`,
+`.holi/memory/`, `.holi/schedules/`, `.holi/holis/`, `USER.local.md`, and all of `.claude/`. Writing them changes what the agent does next, so anything
 less trusted than the user (a vault app, a hook) is kept off them.
+
+### Link file
+
+A web address saved in the vault as `link.<name>.md`: `url` in its frontmatter, what it is in its
+body, its name the page's title as a file name. The page itself is never stored; its preview is fetched live. See
+[links](features/links.md).
 
 ### Local file
 
@@ -172,5 +242,14 @@ plus the repository, the plugin's folder in it and the commit every member is of
 
 ### Per-turn context
 
-What the `UserPromptSubmit` hook adds to every prompt: the note focused in the editor, and nothing
-else the agent could find itself.
+What the `UserPromptSubmit` hook adds to every prompt: the note focused in the editor with the
+lines selected in it, and what changed since the session's last turn that the session did not
+change. Nothing else the agent could find itself. See [agent-config](features/agent-config.md).
+
+### Renderer names
+
+The suffix says what a renderer component is: **Dialog** is a modal, **Sheet** a side panel,
+**View** the content of a tab, **Page** a settings page, **Section** a sidebar group. A **feature**
+is a folder of `features/` (one screen or area); a **composite** is one of Holi's own reusable
+components, built only from stock ones; a **ReUI block** is a page-sized layout installed with the
+shadcn CLI and then moved into the feature it becomes. See [renderer](renderer.md).

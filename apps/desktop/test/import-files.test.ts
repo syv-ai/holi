@@ -80,9 +80,7 @@ describe('importFiles', () => {
     const result = await importFiles(root, [join(outside, 'a-folder')], '')
 
     expect(result.imported).toEqual([])
-    expect(result.skipped).toEqual([
-      { name: 'a-folder', reason: 'folders are not imported yet' },
-    ])
+    expect(result.skipped).toEqual([{ name: 'a-folder', reason: 'folders are not imported yet' }])
   })
 
   it('says so when the source has not been downloaded to this Mac', () => {

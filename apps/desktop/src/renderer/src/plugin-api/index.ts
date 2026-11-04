@@ -1,52 +1,91 @@
 /**
  * The only core module a plugin's renderer side imports, besides
- * `@/primitives` and `@/composites` (docs/architecture.md, Plugins).
+ * `@/components` and `@/composites` (docs/architecture.md, Plugins).
  *
  * One reviewable list of what plugins may reach in core, re-exported from
  * where it lives. ESLint holds plugins to it, and holds core to never
  * importing a plugin (only `main.tsx` installs the list).
  */
 export type {
-  AgentRunFile,
-  AgentRunsSource,
-  AgentService,
+  /** @public */ AgentRunFile,
+  ArcadeCastMember,
+  /** @public */ AgentRunsSource,
+  /** @public */ AgentService,
   AgentServiceSource,
-  AgentsMode,
-  AgentsSlot,
+  /** @public */ AgentsMode,
+  AgentsSessionItem,
+  AgentsSessionsSource,
+  /** @public */ AgentsSlot,
   AgentsStatus,
+  AgentsTabLook,
   AgentSessionRow,
-  AskResult,
+  /** @public */ AskResult,
   AskTargets,
-  ClaimCreate,
-  ClaimDecoration,
-  ClaimMenuItem,
-  FolderClaim,
+  /** @public */ ClaimCreate,
+  /** @public */ ClaimDecoration,
+  /** @public */ ClaimMenuItem,
+  ConversationContext,
+  ConversationStart,
+  /** @public */ FolderClaim,
   PathClaim,
   PluginEventHandler,
   PluginStore,
   RailItem,
   RendererPlugin,
-  SettingsSection,
-  SettingsSectionHeading,
-  PaletteItem,
+  /** @public */ SettingsSection,
+  /** @public */ SettingsSectionHeading,
+  SidebarApp,
+  SlashCommand,
+  /** @public */ SlashInput,
+  SlashResult,
+  /** @public */ StatusItem,
+  CommandMenuEntry,
+  /** @public */ PaletteItem,
   Surface,
   SurfaceTabLook,
 } from './types'
 export type { Command } from '@/state/commands'
-export type { PluginInfo } from '@holi/shared'
+export type { /** @public */ PluginInfo } from '@holi/shared'
 
 export { trpc } from '@/lib/trpc'
-export { capClient, type CapClient, type UiCapability } from '@/lib/cap-client'
+export { capClient, /** @public */ type CapClient, type UiCapability } from '@/lib/cap-client'
 export { useHasCapability } from '@/state/capabilities'
 export { cn } from '@/lib/cn'
-export { useAck } from '@/lib/use-ack'
+export { /** @public */ openExternal } from '@/lib/open-external'
+export { /** @public */ vaultAssetUrl } from '@/lib/vault-asset'
+export { useAck } from '@/hooks/use-ack'
+export { useNow } from '@/hooks/use-now'
 export { DRAWER_WIDTH } from '@/lib/drawer'
-export { activeRemoteAtom, historyEpochsAtom, snapshotAtom, syncStateAtom } from '@/state/vaults'
+export {
+  activeRemoteAtom,
+  historyEpochsAtom,
+  snapshotAtom,
+  /** @public */ snapshotLoadedAtom,
+  syncStateAtom,
+  vaultsAtom,
+} from '@/state/vaults'
+export { openDocumentAtom } from '@/state/open-document'
+export { openTabAtom } from '@/state/shell-tabs'
+// A sidebar row drags as the tab it opens (docs/features/tabs-panes.md, Drag targets).
+export { useTabDrag } from '@/features/shell/use-tab-drag'
+export { StatusBarItem } from '@/features/status-bar/status-bar'
+export { /** @public */ type TabDescriptor } from '@/state/tab-descriptor'
+export { /** @public */ arcadeCastAtom, /** @public */ gridArcadeAtom } from '@/state/grid-arcade'
+export {
+  /** @public */ ArcadeTakeControl,
+  /** @public */ HoliArcade,
+} from '@/composites/arcade/holi-arcade'
 export { sessionAtom } from '@/state/session'
-export { usePluginSetting } from '@/state/settings'
+export { forgetAgentLabelsAtom } from '@/state/document-runs'
+export { agentProviderSettingAtom, usePluginSetting } from '@/state/settings'
 export { activeModeAtom } from '@/state/color-scheme'
-export { appModeAtom, type AppMode } from '@/state/app-mode'
-export { agentsSelectionAtom, agentsSlotsAtom, type AgentsSelection } from '@/state/agents-slots'
+export { appModeAtom, /** @public */ type AppMode } from '@/state/app-mode'
+export {
+  agentsSelectionAtom,
+  agentsSlotsAtom,
+  /** @public */ type AgentsSelection,
+} from '@/state/agents-slots'
+export { openNextBeside } from '@/state/alt-open'
 export { openNoteTabAtom } from '@/state/panes'
 export { openSettingsSectionAtom } from '@/state/settings-section'
 export {
@@ -56,7 +95,7 @@ export {
   openPathAtom,
   openSurfaceAtom,
   surfaceTabIdsAtom,
-  tabForPathAtom,
+  /** @public */ tabForPathAtom,
 } from '@/state/surfaces'
 export {
   agentRunFilesAtom,
@@ -72,8 +111,13 @@ export {
 export { surfacesAtom } from '@/state/plugins'
 export { byRecency, recentsAtom } from '@/state/recents'
 export { openCommitInHistoryAtom } from '@/state/history'
-export { openDialogAtom, type ActiveDialog, type PluginDialog } from '@/state/dialogs'
-export { askPrompt } from '@/editor/askAgent'
+export {
+  openDialogAtom,
+  /** @public */ type ActiveDialog,
+  /** @public */ type PluginDialog,
+} from '@/state/dialogs'
+export { askPrompt } from '@/lib/ask-agent'
 export { useGlobalPanelLayout } from '@/state/preferences'
 export { matchHotkey } from '@/lib/hotkey'
+export { DiffView } from '@/composites/diff-view'
 export { plainMarkdownExtensions } from '@/editor/extensions'

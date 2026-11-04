@@ -2,6 +2,8 @@ import { resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
 
+// `@` is declared in tsconfig.json (`paths`, the source of truth) and repeated in
+// electron.vite.config.ts; the three have to agree.
 const alias = { '@': resolve(__dirname, 'src/renderer/src') }
 
 export default defineConfig({
@@ -13,11 +15,7 @@ export default defineConfig({
         resolve: { alias },
         test: {
           name: 'node',
-          include: [
-            'test/**/*.test.ts',
-            'src/plugins/*.test.ts',
-            'src/plugins/*/test/**/*.test.ts',
-          ],
+          include: ['test/**/*.test.ts', 'src/plugins/*/test/**/*.test.ts'],
           environment: 'node',
           passWithNoTests: true,
           // Vitest swaps every CSS import for an empty string unless it is
@@ -73,7 +71,14 @@ export default defineConfig({
         plugins: [react()],
         test: {
           name: 'dom',
-          include: ['src/renderer/**/*.test.tsx', 'src/plugins/**/*.test.tsx'],
+          // `.test.ts` too: pure renderer modules (the empty view's arcade)
+          // test without a component, and nothing else picks them up.
+          include: [
+            'src/renderer/**/*.test.tsx',
+            'src/renderer/**/*.test.ts',
+            'src/plugins/**/*.test.tsx',
+            'test/**/*.test.tsx',
+          ],
           environment: 'jsdom',
           setupFiles: ['test/setup.dom.ts'],
           // `codemirror-markdown-tables` depends on `@mobily/ts-belt`, whose ESM

@@ -6,6 +6,7 @@
 import type { EditorState, TransactionSpec } from '@codemirror/state'
 import { keymap } from '@codemirror/view'
 
+/** @public exported for its test */
 export function toggleInline(state: EditorState, marker: string): TransactionSpec | null {
   const sel = state.selection.main
   let { from, to } = sel
@@ -46,6 +47,7 @@ export function toggleInline(state: EditorState, marker: string): TransactionSpe
   }
 }
 
+/** @public exported for its test */
 export function toggleLink(state: EditorState): TransactionSpec | null {
   const sel = state.selection.main
   if (sel.empty) return null
@@ -87,98 +89,3 @@ export const formattingKeymap = keymap.of([
     },
   },
 ])
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Links, as the bubble's link field edits them (after ReUI's `rich-text-link`)
-// ─────────────────────────────────────────────────────────────────────────────
-
-const BARE_DOMAIN = /^[\w-]+(\.[\w-]+)+(:\d+)?([/?#]\S*)?$/
-
-/** A typed address as an href, or null when it is not a web, mail or phone
- *  link. A bare domain gets `https://`. */
-export function normalizeHref(value: string): string | null {
-  const href = value.trim()
-  if (/^(https?:\/\/|mailto:|tel:)\S+$/i.test(href)) return href
-  if (BARE_DOMAIN.test(href)) return `https://${href}`
-  return null
-}
-
-/** A markdown `[text](url)` around a position: its range, its text and its address. */
-export interface LinkRange {
-  from: number
-  to: number
-  textFrom: number
-  textTo: number
-  urlFrom: number
-  urlTo: number
-  url: string
-}
-
-const INLINE_LINK = /\[((?:[^\]\\]|\\.)*)\]\(([^()\s]*)\)/g
-
-/** The inline link holding `[from, to]`, read off the line rather than the tree
- *  so a link inside a table cell's source reads the same. */
-export function linkAt(state: EditorState, from: number, to = from): LinkRange | null {
-  const line = state.doc.lineAt(from)
-  if (to > line.to) return null
-  for (const m of line.text.matchAll(INLINE_LINK)) {
-    const start = line.from + m.index
-    const end = start + m[0].length
-    if (start > from || end < to) continue
-    // `![alt](src)` is an image, not a link.
-    if (m.index > 0 && line.text[m.index - 1] === '!') continue
-    const textFrom = start + 1
-    const textTo = textFrom + m[1]!.length
-    const urlFrom = textTo + 2
-    return {
-      from: start,
-      to: end,
-      textFrom,
-      textTo,
-      urlFrom,
-      urlTo: urlFrom + m[2]!.length,
-      url: m[2]!,
-    }
-  }
-  return null
-}
-
-/**
- * Applies an address from the link field: a link the selection is in gets the
- * new address; selected text becomes a link; with nothing selected the address
- * is written as its own link text. `href` is already normalized.
- */
-export function setLink(state: EditorState, href: string, typed = href): TransactionSpec {
-  const sel = state.selection.main
-  const link = linkAt(state, sel.from, sel.to)
-  if (link !== null) {
-    return {
-      changes: { from: link.urlFrom, to: link.urlTo, insert: href },
-      selection: { anchor: link.textFrom, head: link.textTo },
-    }
-  }
-  if (sel.empty) {
-    const insert = `[${typed}](${href})`
-    return {
-      changes: { from: sel.from, insert },
-      selection: { anchor: sel.from + insert.length },
-    }
-  }
-  const text = state.sliceDoc(sel.from, sel.to)
-  return {
-    changes: { from: sel.from, to: sel.to, insert: `[${text}](${href})` },
-    selection: { anchor: sel.from + 1, head: sel.from + 1 + text.length },
-  }
-}
-
-/** Takes the link away and keeps its text, selected. */
-export function removeLink(state: EditorState): TransactionSpec | null {
-  const sel = state.selection.main
-  const link = linkAt(state, sel.from, sel.to)
-  if (link === null) return null
-  const text = state.sliceDoc(link.textFrom, link.textTo)
-  return {
-    changes: { from: link.from, to: link.to, insert: text },
-    selection: { anchor: link.from, head: link.from + text.length },
-  }
-}

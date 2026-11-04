@@ -1,0 +1,170 @@
+---
+name: using-tasks
+description: Read and write this vault's tasks: the frontmatter a task file holds, due dates and reminders, recurrence, where a task lives, and private versus shared tasks. Use when asked to add, find, change, schedule, remind about, or complete a task, or when writing a task file by hand.
+---
+
+# Tasks in this vault
+
+**A task is a file.** There is no database and no task id: `task.<slug>.md`, ordinary
+markdown with frontmatter, living anywhere in the vault. Create one by writing the
+file; change one by editing it. The board reads the files.
+
+## Private and shared tasks
+
+**A new task is private unless the user says to share it.** A private task is
+`task.<slug>.local.md`: the `.local.` marker keeps the file on this machine. Git
+ignores it, so it is never committed, never synced, and never on a teammate's board.
+On this machine it is a task like any other: the board shows it (with a small lock),
+its reminder fires, it recurs, and it triggers schedules.
+
+A shared task is `task.<slug>.md`. It is committed and syncs to everyone in the vault.
+
+- Write `task.<slug>.local.md` when creating a task, unless the user asks for a task
+  the team should see ("add it to the team board", "for Bo", "share it"). A task
+  assigned to someone else only reaches them if it is shared, so ask before writing
+  a private task with another person in `assignees`.
+- Or create it with `holi tasks create "<title>" [folder]`, which writes the private
+  file and prints its path; add `--shared` for a shared one.
+- **Sharing a task is renaming its file** to drop `.local.`, and making it private is
+  renaming it to add `.local.`. Ask for the rename (or use the card's Share with vault
+  and Make private) rather than `mv`, so the links to it follow. Making a shared task
+  private takes it off every teammate's board on their next sync, git history still
+  holds the shared version, and links to it from shared notes stop resolving (they are
+  left at the shared path, not rewritten): say all three before doing it.
+- Only the file's own name makes a task private. A task file inside a `.local.` folder
+  is not a task at all, just a local file.
+- Never give a private and a shared task the same name (`task.x.local.md` beside
+  `task.x.md`): neither could then be renamed into the other.
+- `holi tasks list` ends a private task's line with `private`.
+
+## The file
+
+```markdown
+---
+status: todo
+due: 2026-08-25
+priority: high
+tags: [music, admin]
+assignees: [ada]
+reminder: 2026-08-24T18:00
+recurrence:
+  frequency: weekly
+  interval: 1
+  weekdays: [mon, thu]
+  endDate: 2026-12-31
+---
+
+# Book the rehearsal room
+
+Anything below the frontmatter is the task's body. It is ordinary markdown, so
+[[wiki-links]] work — that is how a task links to a note, a person, or another task.
+```
+
+**The title is the body's first heading** (`# Book the rehearsal room`), at any level.
+There is no `title:` key; without a heading the title falls back to the filename.
+
+Every field is optional, and `status` defaults to `todo`. A field you leave out is simply
+absent — do not write `due:` with nothing after it and do not write `null`.
+
+| field | what it holds |
+|-------|---------------|
+| `status` | an `id` from `.holi/statuses.yaml`; without that file `backlog`, `todo`, `doing`, `review` or `done` |
+| `start` | when work on it begins, as a **stamp** |
+| `due` | when it is due, as a **stamp** (below) |
+| `priority` | `urgent`, `high`, `medium` or `low` |
+| `estimate` | how much work it is: a number and `m`, `h`, `d` or `w` (`30m`, `2d`) |
+| `tags` | a list of strings, your own vocabulary |
+| `assignees` | who it is for: a list of the vault's members by **GitHub username**, without the `@` |
+| `reminder` | when to notify, as a **stamp** — a moment, not an offset |
+| `recurrence` | a map, see below |
+
+**Assignees are GitHub usernames.** `holi vault members` lists the vault's members;
+use their logins exactly. When the user says "give this to Bo" or "@bo",
+that is `assignees: [bo]`. A task with assignees reminds only them; one
+without reminds everyone who has the vault open in Holi. "My tasks" are the ones
+whose `assignees` include the user's own login: ask which member they are rather
+than guessing it. Leave `assignees` out rather than writing an empty list.
+
+Anything else you put in the frontmatter is **carried through untouched**. Holi does
+not understand it and does not delete it.
+
+## Stamps: `due` and `reminder`
+
+Both hold the same shape — a local date, and optionally a time:
+
+```
+2026-08-25          a day
+2026-08-25T18:00    a day and a minute
+```
+
+No timezone, ever. It is wall-clock time on the machine.
+
+**The time is optional and its absence means something.** A task due `2026-08-25` is
+due *that day* — it does not go overdue until the day has passed. A task due
+`2026-08-25T14:00` goes overdue at 14:01.
+
+**A reminder is an absolute moment.** It is not "two days before the due date". If
+you want to remind someone two days before something due on the 25th, work out the
+date and write it:
+
+```yaml
+due: 2026-08-25
+reminder: 2026-08-23T09:00
+```
+
+A reminder with no time fires at **09:00**. A reminder that is not a stamp — `1d`,
+`2w`, `next tuesday` — is **inert**: the file stays valid, the value is preserved,
+and nothing ever fires. That is deliberate, so a typo costs a notification rather
+than a task; but it means a reminder you invent the format for silently does
+nothing. Write a stamp.
+
+A `due` that is not a stamp is a different matter: it is an **error**, and the task
+shows up in the board's "could not be read" strip until you fix it.
+
+## Recurrence
+
+A map, not a string — there is no text grammar for it:
+
+```yaml
+recurrence:
+  frequency: daily | weekly | monthly | yearly
+  interval: 1          # every N of those
+  weekdays: [mon, wed] # weekly only; omit for "same weekday as due"
+  endDate: 2026-12-31  # optional, a date — never a datetime
+```
+
+**Roll-forward happens when the task is completed**, not on a schedule. Completing a
+recurring task advances `due` by the rule, moves `reminder` by the same number of
+days (keeping its own time of day), and sets `status` back to `todo`. A recurring
+task with no `due` never rolls — there is nothing to advance from.
+
+**Complete a task with `holi tasks complete <path>`**, never by writing `done` into the
+file. On a recurring task, writing `done` by hand ends the series instead of
+rolling it forward; the command applies the same rule as the board's checkbox
+and prints what it wrote. On any other task it simply sets `status: done`.
+
+The `holi tasks` commands are there only while the Tasks plugin is on. Outside
+Holi, or with the plugin off, where the command is not there, roll it forward by hand: `due` to
+the rule's next date on or after today, `reminder` moved by the same number of
+days, `status` left at `todo`.
+
+## Where a task lives
+
+**The folder is the lane.** A task in `music/` shows in the `music` swim lane; one at
+the vault root shows under `(vault root)`. To move a task between lanes, move the
+file — but a plain `mv` leaves every `[[wiki-link]]` pointing at it dangling. Ask for
+the move, or use the file tree's rename, both of which rewrite the inbound links in
+the same pass.
+
+## Tips
+
+- **Finding tasks is a grep.** They are files: `task.*.md` with `status: todo` in the
+  frontmatter, private ones included (`task.*.local.md` matches the same glob). Your
+  search tool may skip gitignored files, so look for private tasks explicitly, or use
+  `holi tasks list`. There is no index to query.
+- Writing a whole task file at once is fine and is the fastest way to create one.
+  Use the title's slug for the filename: lowercase, dashes for spaces, æ ø å written as
+  ae oe aa, other accents dropped, no punctuation ("Møde med Bo" is
+  `task.moede-med-bo`), then `.local.md` for a private task or `.md` for a shared one.
+- After changing a `due` or `reminder`, check the value you wrote is a stamp. It is
+  the one field where a wrong format fails quietly.

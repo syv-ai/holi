@@ -121,11 +121,20 @@ describe('moveNotes', () => {
       'ref.md': 'see [[notes/logo.svg]]',
     })
 
-    const { rewritten } = await moveNotes(root, [
-      { from: 'notes/logo.svg', to: 'assets/logo.svg' },
-    ])
+    const { rewritten } = await moveNotes(root, [{ from: 'notes/logo.svg', to: 'assets/logo.svg' }])
 
     expect(await read(root, 'ref.md')).toBe('see [[assets/logo.svg]]')
     expect(rewritten).toEqual([{ path: 'ref.md', count: 1 }])
+  })
+
+  it("moves each note's comment threads with it, and reports the sidecars it changed", async () => {
+    const root = await vault({
+      'projects/a.md': 'A',
+      '.holi/comments/projects/a.md.json': '{"threads":{}}\n',
+    })
+    const { comments } = await moveNotes(root, [{ from: 'projects/a.md', to: 'done/a.md' }])
+    expect(comments).toEqual(['.holi/comments/projects/a.md.json', '.holi/comments/done/a.md.json'])
+    expect(await read(root, '.holi/comments/done/a.md.json')).toBe('{"threads":{}}\n')
+    await expect(read(root, '.holi/comments/projects/a.md.json')).rejects.toThrow()
   })
 })

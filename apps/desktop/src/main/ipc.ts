@@ -7,6 +7,7 @@
  */
 import type { AnyRouter } from '@trpc/server'
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, shell } from 'electron'
+import { isDockIconPng } from './dock-icon'
 import { basename, dirname, join } from 'node:path'
 import { vaultRelPath } from '@holi/shared'
 import { callProcedure, toEnvelope, type TrpcEnvelope, type TrpcOp } from './trpc-call'
@@ -32,7 +33,10 @@ export function registerIpc(deps: {
   // The SYSTEM browser, not a window: the sign-in page has to reuse the user's
   // existing GitHub session, and no credential should ever enter the app's web
   // context.
-  ipcMain.handle('holi:openExternal', async (_event, url: string) => {
+  ipcMain.handle('holi:openExternal', async (_event, url: unknown) => {
+    // A web page or a mail draft only, whatever the renderer sends: a `file:`
+    // or another app's scheme would run something rather than show it.
+    if (typeof url !== 'string' || !/^(https?:\/\/|mailto:)/i.test(url)) return
     await shell.openExternal(url)
   })
 
@@ -64,6 +68,15 @@ export function registerIpc(deps: {
     if (scheme === 'light' || scheme === 'dark' || scheme === 'system') {
       nativeTheme.themeSource = scheme
     }
+  })
+
+  // The dock's icon follows the theme: the window draws it in the theme's
+  // colours (`renderer/src/lib/app-icon.ts`) and sends it as a PNG. Only a PNG
+  // data URL of a sane size is taken; anything else leaves the icon as it is.
+  ipcMain.on('holi:dockIcon', (_event, pngDataUrl: unknown) => {
+    if (!app.dock || !isDockIconPng(pngDataUrl)) return
+    const image = nativeImage.createFromDataURL(pngDataUrl)
+    if (!image.isEmpty()) app.dock.setIcon(image)
   })
 
   ipcMain.on('holi:startDrag', (event, paths: string[]) => {

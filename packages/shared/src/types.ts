@@ -3,9 +3,19 @@
  * are no generated ids.
  */
 
-export type TaskStatus = 'todo' | 'doing' | 'done'
-export type Priority = 'low' | 'medium' | 'high'
+/** A status id from the vault's statuses (`statuses.ts`): `todo`, `doing`
+ *  and `done` are three of the defaults. Any word a file says is kept, listed
+ *  or not; `columnFor` says where it shows. */
+export type TaskStatus = string
+export type Priority = 'low' | 'medium' | 'high' | 'urgent'
 export type DocKind = 'note' | 'daily'
+
+/** Lines of a note, 1-based and inclusive: a selection, as the agent is told it
+ *  and as `Read` numbers them. */
+export interface LineRange {
+  startLine: number
+  endLine: number
+}
 
 /**
  * A vault: a GitHub repo cloned under the Holi-managed root.
@@ -92,7 +102,11 @@ export interface Task {
    *  time. The absence of a time is meaningful: due that day, not at midnight
    *  on it. */
   due?: string
+  /** When work on it begins: a stamp like `due`. */
+  start?: string
   priority?: Priority
+  /** How much work it is: `30m`, `2h`, `1.5d`, `1w` (`estimate.ts`). */
+  estimate?: string
   tags: string[]
   /**
    * Who the task is for: GitHub logins of the vault's members, without the
@@ -130,6 +144,12 @@ export interface Task {
   extra?: Record<string, unknown>
 }
 
+/** The lane a task sits in: its containing folder, '' for the vault root. */
+export function taskArea(task: Pick<Task, 'path'>): string {
+  const cut = task.path.lastIndexOf('/')
+  return cut === -1 ? '' : task.path.slice(0, cut)
+}
+
 /** A claimed file that would not parse. */
 export interface BrokenFile {
   path: string
@@ -164,6 +184,13 @@ export interface SnapshotClaim {
   match(path: string): boolean
   parse(text: string, path: string): ClaimedItem
   normalize?(text: string): string
+  /**
+   * A whole-text write to one of its files from outside the plugin (a vault
+   * app's `docs.write`), checked before it lands: throws, saying why, when
+   * the write would change what only the plugin's own capabilities may (a
+   * task's fields). `current` is the file's text, null for one not there yet.
+   */
+  checkNoteWrite?(path: string, current: string | null, next: string): void
 }
 
 /**
@@ -222,10 +249,4 @@ export const emptyVaultSnapshot = (): VaultSnapshot => ({
 /** What the plugin `id` claimed in `snapshot`; empty when it claims nothing. */
 export function claimedFiles(snapshot: VaultSnapshot, id: string): ClaimedFiles {
   return snapshot.claimed[id] ?? { items: [], broken: [] }
-}
-
-/** The lane a task sits in: its containing folder, '' for the vault root. */
-export function taskArea(task: Pick<Task, 'path'>): string {
-  const cut = task.path.lastIndexOf('/')
-  return cut === -1 ? '' : task.path.slice(0, cut)
 }

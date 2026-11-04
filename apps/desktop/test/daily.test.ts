@@ -57,7 +57,9 @@ describe('sweepDaily', () => {
     expect(await exists(root, '20-07-2026.md')).toBe(false) // deleted stub
     expect(await exists(root, 'journal/19-07-2026.md')).toBe(true) // archived
     expect(await exists(root, 'journal/18-07-2026.md')).toBe(true) // archived, not deleted (backref)
-    expect(await readFile(join(root, 'ref.md'), 'utf8')).toBe('anchored to [[journal/18-07-2026.md]]')
+    expect(await readFile(join(root, 'ref.md'), 'utf8')).toBe(
+      'anchored to [[journal/18-07-2026.md]]',
+    )
     expect(await exists(root, '21-07-2026.md')).toBe(true) // today left at root
     expect(await exists(root, '31-12-1999.md')).toBe(true) // hand-authored, untouched
   })

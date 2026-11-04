@@ -1,13 +1,20 @@
 /**
  * The agent's capabilities (docs/features/agent-sessions.md).
  *
- * **Sessions** are Claude Code's background sessions, named by their job id:
- * listed, started, stopped, respawned, duplicated, sent an ask. **Terminals**
- * are Holi's windows onto them, named by a terminal id: listed, attached,
- * detached. Every verb acts in the open vault, and one asked about any other
+ * **Sessions** are of two kinds, one list (docs/features/agent-sessions.md,
+ * Providers): Claude Code's background sessions, named by their job id, and
+ * the sessions Holi runs itself for a provider with no supervisor
+ * (`pty-sessions.ts`), named by Holi's id. Each verb goes to the kind the id
+ * names; one a kind cannot do is refused in words. **Terminals** are Holi's
+ * PTYs, named by a terminal id: listed, attached, detached. Every verb acts in the open vault, and one asked about any other
  * vault is refused. What changes is pushed as the agent's events
  * (`sessions`, `terminals`, `pty-data`, `pty-exit`), and keystrokes and
  * resizes come back as events too, because they must keep their order.
+ *
+ * **Jobs** (`jobs.ts`) are a third kind, for a provider that runs a prompt
+ * unattended without a supervisor: named by Holi's id, with no terminal.
+ * **Fenced sessions** (`fenced.ts`) are sessions Holi runs in a folder of
+ * its own, the same kind as the rest of its sessions.
  *
  * **Turns** are what the agent's last turns changed: a commit range each, so
  * the file list is asked of git every time rather than stored. A revert is a
@@ -16,31 +23,51 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { vaultRelPath, type VaultRelPath } from '@holi/shared'
+import { readFile } from 'node:fs/promises'
+import { merge3, vaultRelPath, type VaultRelPath } from '@holi/shared'
 import {
   cap,
   CapabilityError,
   noParams,
   optionalStringParam,
   paramsObject,
+  readableOrNull,
   removeDocFile,
   stringParam,
+  VAULT_NOT_OPEN,
+  withFileLock,
+  writableFile,
   writeAtomic,
   type CapabilityContext,
   type RangeFile,
 } from '../../../../main/plugin-api'
 import type { ActionResult, AgentSessions, Geometry, OpenResult, StartResult } from './sessions'
 import type { AgentTerminals, TerminalSummary } from './terminals'
-import type { SessionSummary } from '../claude/listing'
+import { JOB_ID, type SessionSummary } from '../claude/listing'
+import {
+  hasBackground,
+  hasJobs,
+  isProviderId,
+  type AgentProvider,
+  type ProviderId,
+} from '../provider'
+import type { FencedSessions } from './fenced'
+import { jobMayRead, type JobResult, type Jobs, type JobScope } from './jobs'
 import { openTurnLog, type TurnRecord } from './turn-log'
-import { cliEnv, resolveClaudeBin } from '../claude/cli'
+import type { PtySessions } from './pty-sessions'
 
-/** Where and how a process runs Claude Code in the open vault. */
-export interface CommandTarget {
-  root: string
-  env: Record<string, string>
-  /** The `claude` binary, or null when it is not on this machine. */
-  claude: string | null
+/** One of the agents a session can run, as the new-session menu lists it. */
+export interface ProviderSummary {
+  id: ProviderId
+  label: string
+  /** Its CLI is on this machine. */
+  installed: boolean
+  /** Its sessions can run with nobody watching (Holis, automations). */
+  background: boolean
+  /** It can run a job: one prompt, unwatched, in a folder of Holi's. */
+  jobs: boolean
+  /** It has a picker of its earlier conversations to resume. */
+  resumePicker: boolean
 }
 
 export const AGENT_NAMESPACES = ['agent'] as const
@@ -51,25 +78,66 @@ export interface AgentCapabilitiesDeps {
     AgentSessions,
     | 'ensure'
     | 'sessions'
+    | 'past'
     | 'open'
     | 'start'
     | 'launch'
     | 'watched'
     | 'send'
+    | 'message'
     | 'stop'
     | 'respawn'
     | 'duplicate'
-    | 'bracket'
-    | 'target'
   >
+  /** The sessions Holi runs itself. */
+  own: Pick<
+    PtySessions,
+    | 'sessions'
+    | 'past'
+    | 'hasPast'
+    | 'reopen'
+    | 'duplicate'
+    | 'has'
+    | 'ownsTerminal'
+    | 'terminalOf'
+    | 'start'
+    | 'send'
+    | 'stop'
+  >
+  /** The jobs Holi runs for a provider with `jobs`. */
+  jobs: Pick<Jobs, 'sessions' | 'has' | 'start' | 'message' | 'stop'>
+  /** Sessions Holi runs fenced to a folder, for a provider with `fenced`. */
+  fenced: Pick<FencedSessions, 'start'>
+  /** This machine's agent for the vault (`agentProvider`): what a job runs
+   *  on when its caller does not say. */
+  defaultProvider(): Promise<ProviderId>
+  /** Every provider, the background one first: this machine's harnesses,
+   *  read per call (`../harness/registry.ts`). */
+  providers(): readonly AgentProvider[]
   terminals: Pick<AgentTerminals, 'list' | 'attach' | 'close'>
   /** The open vault's remote, or null with none open. */
   liveRemote(): string | null
   /** Commit the open vault now. */
   commitNow(): Promise<unknown>
+  /** Pi's per-job RPC supervisor; unlike Claude it is managed by Holi. */
+  pi?: {
+    sessions(): SessionSummary[]
+    launch(args: {
+      name: string
+      prompt: string
+      model?: string
+      system?: string
+    }): Promise<unknown>
+    message(id: string, text: string): Promise<void>
+    stop(id: string): Promise<ActionResult>
+  }
 }
 
-const notOpen = { ok: false as const, message: 'That vault is not open.' }
+const notOpen = { ok: false as const, message: VAULT_NOT_OPEN }
+
+/** Far under Claude Code's own cap of about a million characters: a message
+ *  is a note to a session, not a document. */
+const MAX_MESSAGE = 100_000
 
 /** An optional whole number, such as a terminal's columns. */
 function countParam(raw: Record<string, unknown>, key: string): number | undefined {
@@ -91,11 +159,74 @@ function geometry(raw: Record<string, unknown>): Geometry {
   }
 }
 
+/** An optional provider id. */
+function providerParam(raw: Record<string, unknown>): ProviderId | undefined {
+  const value = raw['provider']
+  if (value === undefined || value === null) return undefined
+  if (!isProviderId(value))
+    throw new CapabilityError('BAD_REQUEST', 'provider is not an agent Holi knows')
+  return value
+}
+
 const idParams = (raw: unknown): { id: string } => ({ id: stringParam(paramsObject(raw), 'id') })
 
 const rangeParams = (raw: unknown): { base: string; end: string } => {
   const p = paramsObject(raw)
   return { base: stringParam(p, 'base'), end: stringParam(p, 'end') }
+}
+
+/** The most paths a job's scope names. */
+const MAX_SCOPE = 50
+
+/**
+ * A job's scope: vault paths it reads, and paths or `folder/**` it writes.
+ * Each must be a path a capability may read (never the agent surface, an
+ * app's records, a secret or this machine's state) in no hidden folder
+ * (`jobMayRead`: `.codex/` would configure the run), and a write names no
+ * other wildcard.
+ */
+function scopeParam(raw: Record<string, unknown>): JobScope {
+  const scope = raw['scope']
+  if (scope === null || typeof scope !== 'object') {
+    throw new CapabilityError('BAD_REQUEST', 'scope must say what the job reads and writes')
+  }
+  const list = (key: 'read' | 'write'): string[] => {
+    const value = (scope as Record<string, unknown>)[key]
+    if (
+      !Array.isArray(value) ||
+      value.length > MAX_SCOPE ||
+      value.some((p) => typeof p !== 'string')
+    ) {
+      throw new CapabilityError('BAD_REQUEST', `scope.${key} must be a list of vault paths`)
+    }
+    return value as string[]
+  }
+  const checked = (path: string, glob: boolean): string => {
+    const base = glob && path.endsWith('/**') ? path.slice(0, -3) : path
+    const rel = base.includes('*') ? null : readableOrNull(base)
+    if (rel === null || !jobMayRead(rel)) {
+      throw new CapabilityError(
+        'FORBIDDEN',
+        `A job cannot touch ${path}: it is not a vault file an agent may be given.`,
+      )
+    }
+    return base === path ? rel : `${rel}/**`
+  }
+  return {
+    read: list('read').map((p) => checked(p, false)),
+    write: list('write').map((p) => checked(p, true)),
+  }
+}
+
+/** A job's scope as Claude Code's permission rules: what a background
+ *  session started for it is allowed without asking.
+ * @public exported for its test
+ */
+export function scopeRules(scope: JobScope): string[] {
+  return [
+    ...scope.read.map((p) => `Read(./${p})`),
+    ...scope.write.flatMap((p) => [`Read(./${p})`, `Edit(./${p})`, `Write(./${p})`]),
+  ]
 }
 
 /** A vault path, checked. The params keep it a plain string, as the renderer
@@ -110,6 +241,23 @@ function relPath(path: string): VaultRelPath {
 
 export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
   const live = (ctx: CapabilityContext): boolean => deps.liveRemote() === ctx.remote
+  /** Whether a provider's sessions are the background kind. None named is
+   *  the background provider, which every caller before providers meant; one
+   *  named that is not on this machine is not, so it is refused where it is
+   *  started rather than run on Claude Code. */
+  const isBackground = (id: ProviderId | undefined): boolean => {
+    if (id === undefined) return true
+    const p = deps.providers().find((x) => x.id === id)
+    return p !== undefined && hasBackground(p)
+  }
+  const jobOnly = {
+    ok: false as const,
+    message: 'A job runs with no terminal: what it did shows where it was started.',
+  }
+  const ownOnly = (verb: string) => ({
+    ok: false as const,
+    message: `Only a Claude Code session can be ${verb} from Holi.`,
+  })
 
   return {
     'agent.sessions': cap({
@@ -121,9 +269,41 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         // Asked as the renderer mounts, and the vault may only just have
         // opened: finish attaching to it first.
         await deps.sessions.ensure()
-        return deps.sessions.sessions()
+        return [
+          ...deps.sessions.sessions(),
+          ...(deps.pi?.sessions() ?? []),
+          ...deps.own.sessions(),
+          ...deps.jobs.sessions(),
+        ]
       },
       text: (sessions) => sessions.map((s) => `${s.state}\t${s.name}`).join('\n'),
+    }),
+
+    /** The vault's stopped background sessions, which History lists and
+     *  opening brings back. */
+    'agent.history': cap({
+      doors: ['ui'],
+      params: noParams,
+      run: async (ctx): Promise<SessionSummary[]> => {
+        if (!live(ctx)) return []
+        await deps.sessions.ensure()
+        return [...deps.sessions.past(), ...(await deps.own.past())]
+      },
+    }),
+
+    /** The agents a session can run, and which are on this machine. */
+    'agent.providers': cap({
+      doors: ['ui'],
+      params: noParams,
+      run: async (): Promise<ProviderSummary[]> =>
+        deps.providers().map((p) => ({
+          id: p.id,
+          label: p.label,
+          installed: p.installed(),
+          background: p.id === 'pi' || hasBackground(p),
+          jobs: hasJobs(p),
+          resumePicker: !hasBackground(p) && (p.refuses?.({ resume: 'pick' }) ?? null) === null,
+        })),
     }),
 
     'agent.terminals': cap({
@@ -134,7 +314,8 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
 
     /** A terminal on the agents list, on one session with `attach`, on a
      *  copy of a conversation (Claude Code's session id) with `fork`, or on
-     *  Claude Code's `/login` for the vault with `login`. */
+     *  Claude Code's `/login` for the vault with `login`: a session Holi
+     *  runs, since once signed in it is a working one (`pty-sessions.ts`). */
     'agent.open': cap({
       doors: ['ui'],
       params: (raw) => {
@@ -148,26 +329,69 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
           ...(p['login'] === true ? { login: true } : {}),
         }
       },
-      run: async (ctx, args): Promise<OpenResult> =>
-        live(ctx) ? deps.sessions.open(args) : notOpen,
+      run: async (ctx, args): Promise<OpenResult> => {
+        if (!live(ctx)) return notOpen
+        if (args.login === true) {
+          const { login: _login, attach: _attach, fork: _fork, ...size } = args
+          const claude = deps.providers().find(hasBackground)
+          if (claude === undefined) return { ok: false, message: 'No agent here signs in.' }
+          const started = await deps.own.start(claude.id, { ...size, login: true })
+          return started.ok ? { ok: true, terminalId: started.terminalId } : started
+        }
+        if (args.attach !== undefined && deps.jobs.has(args.attach)) return jobOnly
+        // A session Holi runs is its own terminal: that one, never a second.
+        if (
+          args.attach !== undefined &&
+          deps.pi?.sessions().some((session) => session.id === args.attach)
+        ) {
+          return { ok: false, message: 'Pi background sessions have no TUI to attach to.' }
+        }
+        if (args.attach !== undefined && deps.own.has(args.attach)) {
+          const terminalId = deps.own.terminalOf(args.attach)
+          return terminalId === null
+            ? { ok: false, message: 'That session has ended.' }
+            : { ok: true, terminalId }
+        }
+        if (args.attach !== undefined && (await deps.own.hasPast(args.attach))) {
+          const reopened = await deps.own.reopen(args.attach, args)
+          return reopened.ok ? { ok: true, terminalId: reopened.terminalId } : reopened
+        }
+        // Anything else is a background session's job id, which reaches
+        // `claude attach` as an argument: nothing else gets that far.
+        if (args.attach !== undefined && !JOB_ID.test(args.attach)) {
+          throw new CapabilityError('BAD_REQUEST', `not a session id: ${args.attach}`)
+        }
+        return deps.sessions.open(args)
+      },
     }),
 
-    /** A new background session and a terminal on it. A `prompt` is its
-     *  first turn; without one it waits for yours. */
+    /** A new session of `provider` (the background one when omitted) and
+     *  its terminal. A `prompt` is its first turn; without one it waits for
+     *  yours. `resume` picks up one of the provider's conversations, by its
+     *  id or `pick` for the provider's own picker. */
     'agent.start': cap({
       doors: ['ui'],
       params: (raw) => {
         const p = paramsObject(raw)
         const name = optionalStringParam(p, 'name')
         const prompt = optionalStringParam(p, 'prompt')
+        const resume = optionalStringParam(p, 'resume')
+        const provider = providerParam(p)
         return {
           ...geometry(p),
           ...(name === undefined ? {} : { name }),
           ...(prompt === undefined ? {} : { prompt }),
+          ...(resume === undefined ? {} : { resume }),
+          ...(provider === undefined ? {} : { provider }),
         }
       },
-      run: async (ctx, args): Promise<StartResult> =>
-        live(ctx) ? deps.sessions.start(args) : notOpen,
+      run: async (ctx, { provider, resume, ...args }): Promise<StartResult> => {
+        if (!live(ctx)) return notOpen
+        if (provider !== undefined && !isBackground(provider)) {
+          return deps.own.start(provider, { ...args, ...(resume === undefined ? {} : { resume }) })
+        }
+        return deps.sessions.start(args)
+      },
     }),
 
     /**
@@ -185,6 +409,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         const p = paramsObject(raw)
         const model = optionalStringParam(p, 'model')
         const system = optionalStringParam(p, 'system')
+        const provider = providerParam(p)
         const allow = p['allow']
         if (
           allow !== undefined &&
@@ -195,12 +420,173 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         return {
           name: stringParam(p, 'name'),
           prompt: stringParam(p, 'prompt'),
+          ...(provider === undefined ? {} : { provider }),
           ...(model === undefined ? {} : { model }),
           ...(allow === undefined ? {} : { allow: allow as string[] }),
           ...(system === undefined ? {} : { appendSystemPrompt: system }),
         }
       },
-      run: async (ctx, args) => (live(ctx) ? deps.sessions.launch(args) : notOpen),
+      run: async (ctx, { provider = 'claude', ...args }) => {
+        if (!live(ctx)) return notOpen
+        if (provider === 'pi') {
+          if (!deps.pi)
+            return { ok: false as const, message: 'Pi background runs are unavailable.' }
+          return deps.pi.launch({
+            name: args.name,
+            prompt: args.prompt,
+            ...(args.model === undefined ? {} : { model: args.model }),
+            ...(args.appendSystemPrompt === undefined ? {} : { system: args.appendSystemPrompt }),
+          })
+        }
+        if (provider === 'codex') {
+          return { ok: false as const, message: 'Codex cannot run unattended jobs in Holi yet.' }
+        }
+        if (provider !== 'claude') {
+          const selected = deps.providers().find((p) => p.id === provider)
+          return {
+            ok: false as const,
+            message:
+              selected === undefined
+                ? `${provider} is not an agent on this machine. Choose the default in Settings, General, Agents.`
+                : (selected.unattended ?? `${selected.label} cannot run with nobody watching.`),
+          }
+        }
+        return deps.sessions.launch(args)
+      },
+    }),
+
+    /**
+     * One prompt run with nobody watching, by `provider` (this machine's
+     * agent when omitted), touching either its `scope` (the files it reads
+     * and the paths, or `folder/**`, it writes) or the vault under `allow`,
+     * Claude Code permission rules (a Holi's or an automation's run). A
+     * provider with `background` runs it as a background session allowed
+     * exactly that; one with `jobs` runs it sandboxed (`jobs.ts`), in a folder
+     * of Holi's whose writes are copied back, or in the vault with only the
+     * folders `allow` names writable, refused when a rule is not one. Any
+     * other provider is refused, never run on another agent. The UI door
+     * alone, as `agent.launch`.
+     */
+    'agent.job': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const model = optionalStringParam(p, 'model')
+        const system = optionalStringParam(p, 'system')
+        const provider = providerParam(p)
+        const allow = p['allow']
+        if (allow !== undefined && p['scope'] !== undefined) {
+          throw new CapabilityError('BAD_REQUEST', 'a job has a scope or allow, not both')
+        }
+        if (
+          allow !== undefined &&
+          (!Array.isArray(allow) || allow.some((r) => typeof r !== 'string'))
+        ) {
+          throw new CapabilityError('BAD_REQUEST', 'allow must be a list of rules')
+        }
+        return {
+          name: stringParam(p, 'name'),
+          prompt: stringParam(p, 'prompt'),
+          where: (allow === undefined
+            ? { scope: scopeParam(p) }
+            : { allow: allow as readonly string[] }) as
+            { scope: JobScope } | { allow: readonly string[] },
+          ...(model === undefined ? {} : { model }),
+          ...(system === undefined ? {} : { system }),
+          ...(provider === undefined ? {} : { provider }),
+        }
+      },
+      run: async (ctx, { provider: id, where, system, model, ...args }): Promise<JobResult> => {
+        if (!live(ctx)) return notOpen
+        const wanted = id ?? (await deps.defaultProvider())
+        const provider = deps.providers().find((p) => p.id === wanted)
+        if (provider === undefined) {
+          return {
+            ok: false,
+            message: `${wanted} is not an agent on this machine. Choose the default in Settings, General, Agents.`,
+          }
+        }
+        if (hasBackground(provider)) {
+          return deps.sessions.launch({
+            ...args,
+            ...(model === undefined ? {} : { model }),
+            allow: 'scope' in where ? scopeRules(where.scope) : [...where.allow],
+            ...(system === undefined ? {} : { appendSystemPrompt: system }),
+          })
+        }
+        if (hasJobs(provider)) {
+          return deps.jobs.start({
+            provider,
+            ...args,
+            // A run in the vault names a model for Claude Code (a Holi's
+            // `model`): another agent runs on its own default.
+            ...(model === undefined || !('scope' in where) ? {} : { model }),
+            ...where,
+            ...(system === undefined ? {} : { system }),
+          })
+        }
+        return {
+          ok: false,
+          message:
+            provider.unattended ?? `${provider.label} cannot run a job with nobody watching.`,
+        }
+      },
+    }),
+
+    /**
+     * A session the person can watch, answer and add to, whose first turn is
+     * `prompt`, touching only its `scope` (as `agent.job`): Create vault
+     * app's. A provider with `background` runs it as a background session
+     * allowed exactly that scope; one with `fenced` runs it in its terminal
+     * in a folder of Holi's (sandboxed there on Codex, not on Pi, which runs
+     * with the person's own permissions), and what it wrote is copied back as each turn
+     * ends and when it exits (`fenced.ts`). Any other is refused, never run
+     * on another agent. The UI door alone, as `agent.launch`.
+     */
+    'agent.scoped': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const model = optionalStringParam(p, 'model')
+        const system = optionalStringParam(p, 'system')
+        const provider = providerParam(p)
+        return {
+          ...geometry(p),
+          name: stringParam(p, 'name'),
+          prompt: stringParam(p, 'prompt'),
+          scope: scopeParam(p),
+          ...(model === undefined ? {} : { model }),
+          ...(system === undefined ? {} : { system }),
+          ...(provider === undefined ? {} : { provider }),
+        }
+      },
+      run: async (ctx, { provider: id, scope, system, model, ...args }): Promise<JobResult> => {
+        if (!live(ctx)) return notOpen
+        const provider =
+          id === undefined ? deps.providers()[0] : deps.providers().find((p) => p.id === id)
+        if (provider === undefined) return { ok: false, message: 'No agent can run this.' }
+        if (hasBackground(provider)) {
+          return deps.sessions.launch({
+            name: args.name,
+            prompt: args.prompt,
+            allow: scopeRules(scope),
+            ...(model === undefined ? {} : { model }),
+            ...(system === undefined ? {} : { appendSystemPrompt: system }),
+          })
+        }
+        if (provider.capabilities.fenced !== undefined) {
+          return deps.fenced.start({
+            provider,
+            ...args,
+            scope,
+            ...(system === undefined ? {} : { system }),
+          })
+        }
+        return {
+          ok: false,
+          message: `${provider.label} cannot run a session fenced to what it may touch.`,
+        }
+      },
     }),
 
     /** Whether Holi has a terminal open on the session: someone may be
@@ -208,35 +594,138 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
     'agent.watched': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (ctx, { id }): Promise<boolean> => live(ctx) && deps.sessions.watched(id),
+      run: async (ctx, { id }): Promise<boolean> =>
+        live(ctx) && (deps.own.has(id) || deps.sessions.watched(id)),
     }),
 
-    /** Put text in a session's input, unsent: a live one by id, or `'new'`.
-     *  Refused, back to the sender with the text still in the box, when that
-     *  session ended between being picked and being sent to. */
+    /** Put text in a session's input, unsent: a live one by id, or `'new'`,
+     *  a new session of `provider`. Refused, back to the sender with the text
+     *  still in the box, when that session ended between being picked and
+     *  being sent to. */
     'agent.send': cap({
       doors: ['ui'],
       params: (raw) => {
         const p = paramsObject(raw)
-        return { ...geometry(p), text: stringParam(p, 'text'), target: stringParam(p, 'target') }
+        const provider = providerParam(p)
+        return {
+          ...geometry(p),
+          text: stringParam(p, 'text'),
+          target: stringParam(p, 'target'),
+          ...(provider === undefined ? {} : { provider }),
+        }
       },
-      run: async (ctx, args): Promise<OpenResult> =>
-        live(ctx) ? deps.sessions.send(args) : notOpen,
+      run: async (ctx, { provider, ...args }): Promise<OpenResult> => {
+        if (!live(ctx)) return notOpen
+        if (deps.jobs.has(args.target)) return jobOnly
+        if (deps.own.has(args.target)) return deps.own.send(args.target, args.text)
+        if (args.target === 'new' && provider !== undefined && !isBackground(provider)) {
+          const started = await deps.own.start(provider, {
+            name: args.text,
+            ...(args.cols === undefined ? {} : { cols: args.cols }),
+            ...(args.rows === undefined ? {} : { rows: args.rows }),
+          })
+          return started.ok ? deps.own.send(started.sessionId, args.text) : started
+        }
+        return deps.sessions.send(args)
+      },
+    }),
+
+    /**
+     * Add a message to a running session's conversation through its inbox
+     * socket (`claude/messaging.ts`): it starts a turn when the session is
+     * idle, and is read after the tool call in flight when it is working.
+     * Nothing is typed into a terminal, so a person's half-written prompt is
+     * left alone. Sent once, never retried. A job in the vault (`jobs.ts`)
+     * takes it as its next turn on the agent's thread, queued while a turn
+     * runs: it cannot be read mid-turn.
+     */
+    'agent.message': cap({
+      doors: ['ui', 'cli'],
+      cli: {
+        args: ['session', 'text'],
+        summary:
+          "add a message to a running session's conversation: a turn when it is idle, read after its current step when it is working",
+      },
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const session = stringParam(p, 'session')
+        if (!JOB_ID.test(session) && !deps.own.has(session) && !deps.jobs.has(session)) {
+          throw new CapabilityError('BAD_REQUEST', `not a session id: ${session}`)
+        }
+        const text = stringParam(p, 'text')
+        if (text.trim() === '') throw new CapabilityError('BAD_REQUEST', 'text is empty')
+        if (text.length > MAX_MESSAGE) {
+          throw new CapabilityError('BAD_REQUEST', `text is over ${MAX_MESSAGE} characters`)
+        }
+        return { session, text }
+      },
+      run: async (ctx, { session, text }): Promise<{ ok: true }> => {
+        if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', VAULT_NOT_OPEN)
+        // A job takes it as its next turn, queued while one runs.
+        if (deps.jobs.has(session)) {
+          deps.jobs.message(session, text)
+          return { ok: true }
+        }
+        // A session Holi runs in a terminal has no inbox, and typing into
+        // the person's terminal is not this.
+        if (deps.own.has(session)) {
+          throw new CapabilityError(
+            'UNAVAILABLE',
+            'This session takes messages in its terminal only.',
+          )
+        }
+        if (deps.pi?.sessions().some((item) => item.id === session)) {
+          await deps.pi.message(session, text)
+        } else {
+          await deps.sessions.message(session, text)
+        }
+        return { ok: true }
+      },
+      text: () => 'sent',
     }),
 
     'agent.stop': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (ctx, { id }): Promise<ActionResult> =>
-        live(ctx) ? deps.sessions.stop(id) : notOpen,
+      run: async (ctx, { id }): Promise<ActionResult> => {
+        if (!live(ctx)) return notOpen
+        if (deps.jobs.has(id)) return deps.jobs.stop(id)
+        return deps.own.has(id)
+          ? deps.own.stop(id)
+          : deps.pi?.sessions().some((item) => item.id === id)
+            ? deps.pi.stop(id)
+            : deps.sessions.stop(id)
+      },
     }),
 
-    /** A fresh process for the same conversation (`claude respawn`). */
+    /** A fresh process for the same conversation (`claude respawn`), or a
+     *  closed session Holi ran brought back on its conversation (`codex
+     *  resume`) under the same id. A live one of those is not restarted. */
     'agent.respawn': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (ctx, { id }): Promise<ActionResult> =>
-        live(ctx) ? deps.sessions.respawn(id) : notOpen,
+      run: async (ctx, { id }): Promise<ActionResult> => {
+        if (!live(ctx)) return notOpen
+        if (deps.jobs.has(id)) return jobOnly
+        if (deps.pi?.sessions().some((session) => session.id === id)) {
+          return { ok: false, message: 'Pi background sessions cannot be restarted from a TUI.' }
+        }
+        if (deps.own.has(id)) {
+          const signIn = deps.own.sessions().some((s) => s.id === id && s.signIn === true)
+          return signIn
+            ? {
+                ok: false,
+                message:
+                  'The sign-in terminal is not a background session, so Claude Code cannot restart it. Start a session from the Agents tab.',
+              }
+            : ownOnly('restarted')
+        }
+        if (await deps.own.hasPast(id)) {
+          const res = await deps.own.reopen(id, {})
+          return res.ok ? { ok: true } : res
+        }
+        return deps.sessions.respawn(id)
+      },
     }),
 
     /** A background copy of the conversation, and a terminal on it. */
@@ -246,8 +735,14 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         const p = paramsObject(raw)
         return { ...geometry(p), id: stringParam(p, 'id') }
       },
-      run: async (ctx, { id, ...size }): Promise<StartResult> =>
-        live(ctx) ? deps.sessions.duplicate(id, size) : notOpen,
+      run: async (ctx, { id, ...size }): Promise<StartResult> => {
+        if (!live(ctx)) return notOpen
+        if (deps.jobs.has(id)) return jobOnly
+        if (deps.pi?.sessions().some((session) => session.id === id)) {
+          return { ok: false, message: 'Pi background sessions cannot be duplicated from a TUI.' }
+        }
+        return deps.own.has(id) ? deps.own.duplicate(id, size) : deps.sessions.duplicate(id, size)
+      },
     }),
 
     /** A renderer is taking over a terminal: its replayable state, and its
@@ -258,49 +753,14 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       run: async (ctx, { id }): Promise<string> => (live(ctx) ? deps.terminals.attach(id) : ''),
     }),
 
-    /** Detach: ends the window, never the session. */
+    /** Detach: ends the window, never the session. A session Holi runs is
+     *  its terminal, so its stays open until the session is stopped. */
     'agent.detach': cap({
       doors: ['ui'],
       params: idParams,
       run: async (ctx, { id }): Promise<null> => {
-        if (live(ctx)) await deps.terminals.close(id)
+        if (live(ctx) && !deps.own.ownsTerminal(id)) await deps.terminals.close(id)
         return null
-      },
-    }),
-
-    /**
-     * A turn edge from a driver that runs its own process in the vault and
-     * knows its turns without a hook: sync pauses for it and the turn is
-     * recorded like a session's. The id is the driver's own, never a job id.
-     */
-    'agent.turn': cap({
-      doors: ['ui'],
-      params: (raw) => {
-        const p = paramsObject(raw)
-        const edge = p['edge']
-        if (edge !== 'begin' && edge !== 'end' && edge !== 'forget') {
-          throw new CapabilityError('BAD_REQUEST', 'edge is begin, end or forget')
-        }
-        return { id: stringParam(p, 'id'), edge: edge as 'begin' | 'end' | 'forget' }
-      },
-      run: async (ctx, { id, edge }): Promise<null> => {
-        if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', 'That vault is not open.')
-        deps.sessions.bracket(id, edge)
-        return null
-      },
-    }),
-
-    /** How to run Claude Code in the open vault as a session runs: in its
-     *  clone, with the environment every session gets (its config directory,
-     *  Holi's commands first on `PATH`), and the binary, null when it is not
-     *  installed. Null with no vault attached. */
-    'agent.target': cap({
-      doors: ['ui'],
-      params: noParams,
-      run: async (ctx): Promise<CommandTarget | null> => {
-        const target = live(ctx) ? await deps.sessions.target() : null
-        if (target === null) return null
-        return { root: target.root, env: cliEnv(process.env, target), claude: resolveClaudeBin() }
       },
     }),
 
@@ -339,24 +799,59 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
     }),
 
-    /** Write the text the reviewer resolved to, and commit it; or, with
-     *  `delete`, remove a file the turn created: taking a turn back leaves
-     *  the vault as it was before it, not with an empty file in its place. */
+    /**
+     * Write the text the reviewer resolved to, and commit it; or, with
+     * `delete`, remove a file the turn created: taking a turn back leaves the
+     * vault as it was before it, not with an empty file in its place.
+     *
+     * `base`, when given, is the text the review was built from (the file at
+     * the turn's end). The file may have changed since (the person typing, a
+     * teammate's pull, the agent's next turn): those changes are kept by a
+     * three-way merge, and when they overlap what the reviewer kept nothing
+     * is written (CONFLICT), so a revert never takes back work the review
+     * never showed.
+     */
     'agent.revert': cap({
       doors: ['ui'],
       writes: true,
-      params: (raw): { path: string; text: string } | { path: string; delete: true } => {
+      params: (
+        raw,
+      ): { path: string; text: string; base?: string } | { path: string; delete: true } => {
         const p = paramsObject(raw)
         const path: string = relPath(stringParam(p, 'path'))
         if (p['delete'] === true) return { path, delete: true }
-        const text = p['text']
+        const { text, base } = p
         if (typeof text !== 'string') throw new CapabilityError('BAD_REQUEST', 'text is required')
-        return { path, text }
+        if (base !== undefined && typeof base !== 'string') {
+          throw new CapabilityError('BAD_REQUEST', 'base must be the text the review showed')
+        }
+        return { path, text, ...(base === undefined ? {} : { base }) }
       },
       run: async (ctx, args): Promise<{ ok: true }> => {
-        if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', 'That vault is not open.')
-        if ('delete' in args) await removeDocFile(ctx.root, relPath(args.path))
-        else await writeAtomic(ctx.root, relPath(args.path), args.text)
+        if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', VAULT_NOT_OPEN)
+        const rel = relPath(args.path)
+        if ('delete' in args) {
+          await removeDocFile(ctx.root, rel)
+        } else {
+          const { text, base } = args
+          const abs = await writableFile(ctx, rel)
+          await withFileLock(abs, async () => {
+            // A file the turn deleted is absent on disk and empty in the review.
+            const current = (await readFile(abs, 'utf8').catch(() => null)) ?? ''
+            let next = text
+            if (base !== undefined && current !== base) {
+              const merged = merge3(base, text, current)
+              if (merged.kind === 'conflict') {
+                throw new CapabilityError(
+                  'CONFLICT',
+                  `${rel} has changed since this turn, where you are changing it. Nothing was written: open the file to see what changed.`,
+                )
+              }
+              next = merged.text
+            }
+            await writeAtomic(ctx.root, rel, next)
+          })
+        }
         await deps.commitNow()
         return { ok: true }
       },

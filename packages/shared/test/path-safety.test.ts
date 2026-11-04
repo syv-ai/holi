@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  shownPathOrNull,
   AGENT_SURFACE_FILES,
   GITKEEP,
   LOCAL_ONLY_IGNORE_LINES,
@@ -240,7 +241,7 @@ describe('isAgentSurfacePath (what a vault app may never touch)', () => {
     expect(isAgentSurfacePath('.holi/memory/salary.local.md')).toBe(true)
   })
 
-  it('covers scheduled agents\' prompts, which the agent runs unattended', () => {
+  it("covers scheduled agents' prompts, which the agent runs unattended", () => {
     expect(isAgentSurfacePath('.holi/schedules/inbox-triage.md')).toBe(true)
     expect(isAgentSurfacePath('.holi/schedules/mine.local.md')).toBe(true)
     expect(isAgentSurfacePath('notes/.holi/schedules/x.md')).toBe(false)
@@ -269,5 +270,20 @@ describe('isAgentSurfacePath (what a vault app may never touch)', () => {
     // rule would be needed for a hook seeded into the tracked tree, which is
     // one of the reasons there isn't one.
     expect(isAgentSurfacePath('.holi/git-hooks/pre-commit')).toBe(false)
+  })
+})
+
+describe('shownPathOrNull (what a person may be shown in a tab)', () => {
+  it('refuses machine state, in any case macOS would open, and secret files', () => {
+    for (const path of ['.holi/state/bridge.local.json', '.Holi/STATE/x', '.env', 'a/.secrets/k']) {
+      expect(shownPathOrNull(path)).toBeNull()
+    }
+  })
+
+  it('refuses what is not a vault path, and normalises what is', () => {
+    expect(shownPathOrNull('../x.md')).toBeNull()
+    expect(shownPathOrNull('/etc/passwd')).toBeNull()
+    expect(shownPathOrNull('./notes//a.md')).toBe('notes/a.md')
+    expect(shownPathOrNull('.holi/memory/x.md')).toBe('.holi/memory/x.md')
   })
 })

@@ -31,7 +31,7 @@ import {
 import { vaultRelPath } from '@holi/shared'
 import { resolveRelative } from '@holi/shared/path-safety-node'
 
-export type PdfCommentsResult =
+type PdfCommentsResult =
   | { ok: true; threads: PdfCommentThread[] }
   | { ok: false; reason: 'not-found' | 'not-pdf' | 'password' }
 
@@ -72,6 +72,7 @@ const flat = (r: Rect) => ({
 const codeOf = (error: unknown): number | undefined =>
   (error as { reason?: { code?: unknown } } | null)?.reason?.code as number | undefined
 
+/** @public exported for its test */
 export async function readPdfComments(absPath: string): Promise<PdfCommentsResult> {
   let bytes: Buffer
   try {

@@ -21,11 +21,12 @@ import {
   PLUGINS_LOCAL_FILE,
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
+  VAULT_SETTING_DEFAULTS,
   pluginSettingValue,
   type PluginInfo,
   type ResolvedVaultSettings,
 } from '@holi/shared'
-import { trpc } from '../lib/trpc'
+import { trpc } from '@/lib/trpc'
 import { activeRemoteAtom, snapshotAtom } from './vaults'
 
 /** The cache. Holds the remote it was read for, so a stale vault's answer can
@@ -74,7 +75,7 @@ const settingsFilesAtom = atom((get): string =>
     .join('|'),
 )
 
-/** Re-read the settings when any of the files changes on disk. Mounted once, in Shell. */
+/** Re-read the settings when any of the files changes on disk. Mounted once, in the app shell. */
 export function useSettingsFollowDisk(): void {
   const files = useAtomValue(settingsFilesAtom)
   const load = useSetAtom(loadVaultSettingsAtom)
@@ -97,3 +98,18 @@ export function usePluginSetting(info: PluginInfo, key: string): unknown {
   const values = cached !== null && cached.remote === remote ? cached.settings.pluginValues : {}
   return pluginSettingValue(values, info, key)
 }
+
+/** This machine's `agentProvider`, or null until the vault's settings are
+ *  read: for a run that must not start on the default by mistake. */
+export const loadedAgentProviderAtom = atom((get) => {
+  const cached = get(vaultSettingsAtom)
+  return cached !== null && cached.remote === get(activeRemoteAtom)
+    ? cached.settings.agentProvider
+    : null
+})
+
+/** The agent a new session runs on this machine (`agentProvider`): its
+ *  default until the vault's settings are read. */
+export const agentProviderSettingAtom = atom(
+  (get) => get(loadedAgentProviderAtom) ?? VAULT_SETTING_DEFAULTS.agentProvider,
+)

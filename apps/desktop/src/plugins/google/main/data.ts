@@ -49,6 +49,9 @@ import { listContacts } from './people'
 export interface GoogleData {
   /** The agenda, fetched and then cached for the next launch's first paint. */
   agenda(window: AgendaWindow, overrides: CalendarOverrides): Promise<CalendarEvent[]>
+  /** The agenda, fetched and not cached: for a background look no view
+   *  paints, whose window moves with the clock and would only pile up rows. */
+  fetchAgenda(window: AgendaWindow, overrides: CalendarOverrides): Promise<CalendarEvent[]>
   /** The last agenda for this exact question, or `null`. Never a request. */
   cachedAgenda(window: AgendaWindow, overrides: CalendarOverrides): CalendarEvent[] | null
   /** Threads, served from the cache and brought up to date by a delta. */
@@ -190,6 +193,10 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       const events = await listAgenda(api(), window, { overrides })
       cache.writeAgenda(agendaKey(window, overrides), events)
       return events
+    },
+
+    fetchAgenda(window, overrides) {
+      return listAgenda(api(), window, { overrides })
     },
 
     cachedAgenda(window, overrides) {
@@ -336,7 +343,7 @@ async function write<T>(send: () => Promise<T>, record: () => void): Promise<T> 
  * Keyed on the *overrides* rather than the resolved calendar ids on purpose:
  * resolving ids costs a request, and the key must be computable offline.
  */
-export function agendaKey(window: AgendaWindow, overrides: CalendarOverrides): string {
+function agendaKey(window: AgendaWindow, overrides: CalendarOverrides): string {
   const choices = Object.keys(overrides)
     .sort()
     .map((id) => `${id}=${overrides[id]! ? '1' : '0'}`)
@@ -344,4 +351,5 @@ export function agendaKey(window: AgendaWindow, overrides: CalendarOverrides): s
   return `${window.timeMin}|${window.timeMax}|${choices}`
 }
 
+/** @public exported for its test */
 export { cacheKey as threadsCacheKey }

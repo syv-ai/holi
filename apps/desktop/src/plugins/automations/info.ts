@@ -18,3 +18,7 @@ export const AUTOMATIONS_INFO: PluginInfo = {
   whenOff:
     'Nothing runs on a schedule, and automations leave the Agents view. Their files stay in .holi/schedules/, and what each was approved for here stays too.',
 }
+
+/** Until automations are finished, their row in the Agents sidebar is locked
+ *  (In progress) and ⌘K leaves them out. Set it to bring both back. */
+export const AUTOMATIONS_READY: boolean = false

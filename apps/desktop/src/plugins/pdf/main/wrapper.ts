@@ -1,7 +1,9 @@
 import type { TemplateField, TemplateFieldType } from '../shared/template-fields'
 
 /** Escape a JS string for a Typst double-quoted string literal. Backslash first,
- * then quote, so the escape characters themselves aren't re-escaped. */
+ * then quote, so the escape characters themselves aren't re-escaped.
+ * @public exported for its test
+ */
 export function typstString(s: string): string {
   return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 }
@@ -12,6 +14,7 @@ export function typstString(s: string): string {
  * field's type. A blank optional value is omitted (the template reads
  * `meta.at(key, default: none)`); a checkbox is always present. Empty → `(:)`.
  * Keys are assumed valid Typst identifiers — they are a template's declared keys.
+ * @public exported for its test
  */
 export function coerceMeta(fields: TemplateField[], values: Record<string, string>): string {
   const entries: string[] = []

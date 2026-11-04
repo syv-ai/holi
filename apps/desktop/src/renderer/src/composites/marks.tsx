@@ -14,8 +14,10 @@
  */
 import type { ReactNode } from 'react'
 import { SiClaude } from '@icons-pack/react-simple-icons'
-import { Blocks, Plug, Puzzle } from 'lucide-react'
-import { FileType, Icon } from '@/primitives'
+import { Astroid, Blocks, Plug, Puzzle, SquareTerminal } from 'lucide-react'
+import { cn } from '@/lib/cn'
+import { FileType, getFileType } from '@/components/ui/file-type'
+import type { IconGlyph } from '@/lib/icon-glyph'
 
 /** Google's four-colour G. simple-icons draws it in one colour, which reads as
  *  a generic G; the four are the mark. */
@@ -42,15 +44,85 @@ function GoogleG({ className }: { className?: string }) {
   )
 }
 
+/** OpenAI's mark, for Codex. simple-icons no longer ships it. */
+function OpenAIMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden="true">
+      <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z" />
+    </svg>
+  )
+}
+
+/** The coding agents' marks (`agentProvider`): Pi and Codex keep their own;
+ *  Claude outside General Settings, and an agent a person added in Settings,
+ *  get a terminal. */
+const AGENT_MARKS: Record<string, { glyph: IconGlyph; className?: string }> = {
+  codex: { glyph: OpenAIMark, className: 'text-foreground' },
+  pi: { glyph: PiMark },
+}
+
+const CLAUDE_SETTINGS_MARK = {
+  glyph: SiClaude,
+  className: 'text-orange-500 dark:text-orange-400',
+}
+
+/** Pi's 4x4 staircase mark, drawn in the current foreground colour. */
+function PiMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M0 0h6v6H0zm6 0h6v6H6zm6 0h6v6h-6zM0 6h6v6H0zm12 0h6v6h-6zM0 12h6v6H0zm6 0h6v6H6zm12 0h6v6h-6zM0 18h6v6H0zm18 0h6v6h-6z"
+      />
+    </svg>
+  )
+}
+
+/** The mark of the agent a session runs, at a row's or a tab's size. */
+export function AgentMark({
+  agent,
+  size = 'sm',
+  className,
+  brandClaude = false,
+}: {
+  agent: string | undefined
+  size?: 'sm' | 'lg'
+  className?: string
+  /** Only the Claude Code choice in General Settings uses its brand mark. */
+  brandClaude?: boolean
+}) {
+  const mark: { glyph: IconGlyph; className?: string } =
+    agent === 'claude' && brandClaude
+      ? CLAUDE_SETTINGS_MARK
+      : (AGENT_MARKS[agent ?? ''] ?? { glyph: SquareTerminal })
+  const Glyph = mark.glyph
+  return (
+    <Glyph
+      aria-hidden
+      className={cn('shrink-0', size === 'lg' ? 'size-5' : 'size-3.5', mark.className, className)}
+    />
+  )
+}
+
 const PLUGIN_MARKS: Record<string, () => ReactNode> = {
-  agent: () => <Icon icon={SiClaude} size="lg" className="text-orange-500 dark:text-orange-400" />,
+  agent: () => <Astroid aria-hidden className="size-5" />,
   pdf: () => <FileType type="pdf" size="xs" />,
-  google: () => <Icon icon={GoogleG} size="lg" />,
-  apps: () => <Icon icon={Blocks} size="lg" />,
-  community: () => <Icon icon={Puzzle} size="lg" />,
+  google: () => <GoogleG className="size-5" />,
+  apps: () => <Blocks aria-hidden className="size-5" />,
+  community: () => <Puzzle aria-hidden className="size-5" />,
 }
 
 /** The mark for a plugin, by id. */
 export function pluginMark(id: string): ReactNode {
-  return (PLUGIN_MARKS[id] ?? (() => <Icon icon={Plug} size="lg" />))()
+  return (PLUGIN_MARKS[id] ?? (() => <Plug aria-hidden className="size-5" />))()
+}
+
+/** A folder document's mark (a deck, an app), by its name: its kind's glyph
+ *  on ReUI's file-type page rather than a label. At a row's or a tab's size a
+ *  label is a coloured band too small to read, and a deck's red one passed for
+ *  a PDF's orange. The tree's row and the document's tab both draw this. */
+export function FolderDocumentMark({ name }: { name: string }) {
+  return (
+    <FileType type={getFileType(name)} size="mini" glyph aria-hidden="true" className="shrink-0" />
+  )
 }

@@ -26,6 +26,7 @@ import type { BrowserWindow } from 'electron'
  *
  * Anything unparseable is refused. A guard that throws inside an Electron event
  * handler fails **open**, which is the one outcome worth engineering against.
+ * @public exported for its test
  */
 export function isAllowedNavigation(loaded: string, next: string): boolean {
   let from: URL
@@ -43,6 +44,7 @@ export function isAllowedNavigation(loaded: string, next: string): boolean {
 /**
  * A URL Holi hands to the system (the default browser, the mail client), or
  * null. Only these schemes: anything else a page asks to open stays unopened.
+ * @public exported for its test
  */
 export function externalUrl(url: string): string | null {
   try {
@@ -61,6 +63,7 @@ const schemeOf = (url: string): string => url.slice(0, Math.max(0, url.indexOf('
  * meant to follow, so it opens in their browser rather than replacing the app
  * inside its tab. Null for a navigation within the frame's own scheme, or of a
  * frame on no such scheme.
+ * @public exported for its test
  */
 export function appFrameExit(
   frameUrl: string,
@@ -85,6 +88,7 @@ const originOf = (url: string): string | null => {
  * local server (`http://127.0.0.1:3040`): it may move within that origin, and
  * a link out of it opens in the browser. Null for a frame on no such origin,
  * including one still loading its first page.
+ * @public exported for its test
  */
 export function originFrameExit(
   frameUrl: string,

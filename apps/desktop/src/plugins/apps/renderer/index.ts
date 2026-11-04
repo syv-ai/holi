@@ -1,0 +1,39 @@
+/**
+ * Vault apps' renderer side (docs/features/vault-apps.md): the `app` surface
+ * with a tab per bundle, the claim that makes a bundle one document in the
+ * tree, the nav's Apps group, the agent's `holi apps open`, and the apps'
+ * commands in the document editor's slash menu.
+ */
+import { activeRemoteAtom, openSurfaceAtom, type RendererPlugin } from '@/plugin-api'
+import { APPS_INFO } from '../info'
+import { appOpensAtom } from './apps'
+import { appSlashCommandsAtom, commandsChangedAtom, followAppCommands } from './commands'
+import { APP_CLAIM, APP_RAIL, APP_SURFACE } from './surface'
+
+export const appsRenderer: RendererPlugin = {
+  info: APPS_INFO,
+  surfaces: [APP_SURFACE],
+  claims: [APP_CLAIM],
+  rail: [APP_RAIL],
+  slashCommands: appSlashCommandsAtom,
+  vault: followAppCommands,
+  events: {
+    /**
+     * The agent's `holi apps open`: open the app, or reload it when it is
+     * open. Local authorship only: apps sync, so opening a tab whenever one
+     * appears would let a teammate's finished app decide what is on your
+     * screen. An event about another vault is dropped.
+     */
+    open: ({ remote, payload }, store) => {
+      if (remote !== store.get(activeRemoteAtom)) return
+      const { bundle } = payload as { bundle: string }
+      store.set(openSurfaceAtom, 'app', bundle)
+      store.set(appOpensAtom, (n) => ({ ...n, [bundle]: (n[bundle] ?? 0) + 1 }))
+    },
+    /** Main's `apps.commands` answers in this vault: read the commands again. */
+    'commands-changed': ({ remote }, store) => {
+      if (remote !== store.get(activeRemoteAtom)) return
+      store.set(commandsChangedAtom, (n) => n + 1)
+    },
+  },
+}

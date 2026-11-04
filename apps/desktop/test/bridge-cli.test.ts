@@ -6,7 +6,7 @@
  * a quoting bug in it does not fail loudly, it sends a different argument.
  */
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -15,6 +15,9 @@ import { agentCapabilities } from '../src/plugins/agent/main/host/capabilities'
 import { appsCapabilities, storeCapabilities } from '../src/plugins/apps/main/capabilities'
 import { installHoliCli } from '../src/main/bridge/cli'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
+import { SPILL_BYTES } from '../src/main/bridge/spill'
+import { OUT_DIR } from '../src/main/vault/out-files'
+import { CapabilityError, NEXT_STEP } from '../src/main/capabilities/error'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import {
   cap,
@@ -24,7 +27,7 @@ import {
 import { noCoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities } from '../src/main/capabilities/vault-caps'
 import { pdfCapabilities } from '../src/plugins/pdf/main/capabilities'
-import { taskCapabilities } from '../src/main/vault/task-capabilities'
+import { taskCapabilities } from '../src/plugins/tasks/main/capabilities'
 import { bridgeLines, writeVaultEnv } from './helpers/bridge-env'
 
 const execFileAsync = promisify(execFile)
@@ -58,6 +61,8 @@ function recording(called: Called): Record<string, AnyCapability> {
     ...vaultCapabilities({
       updateSkills: async () => ({ summary: '', conflicts: null }),
       pendingSkills: async () => [],
+      open: () => {},
+      screenshot: async () => new Uint8Array(),
     }),
     ...appsCapabilities({
       events: { emit: () => {} },
@@ -71,6 +76,7 @@ function recording(called: Called): Record<string, AnyCapability> {
     ...pdfCapabilities({
       signatures: { read: async () => '[]', write: async () => {} },
       typst: async () => null,
+      diagrams: async () => [],
     }),
     ...agentCapabilities({
       sessions: {} as never,
@@ -113,6 +119,7 @@ function bridge(table: Record<string, AnyCapability>, namespaces: string[]): Bri
         claims: async () => [],
       }).dispatch,
       commands: () => registry.commands(),
+      rootFor: async () => dir,
     },
   })
 }
@@ -283,6 +290,105 @@ describe('a command', () => {
     expect(res.stdout).toBe('')
     expect(res.stderr).toBe('holi store delete: no such record\n')
   })
+
+  it('names a refusal code and the next step, the thrower one when it gave one', async () => {
+    capability.mockRejectedValueOnce(new CapabilityError('UNAUTHORIZED', 'expired', 'reconnect X'))
+    const own = await run(bin, ['store', 'get', 'T.app', 'items', 'a'], env)
+    expect(own.code).toBe(1)
+    expect(own.stderr).toBe('holi store get: UNAUTHORIZED: expired\nnext: reconnect X\n')
+
+    capability.mockRejectedValueOnce(new CapabilityError('BAD_REQUEST', 'bad id'))
+    const generic = await run(bin, ['store', 'get', 'T.app', 'items', 'a'], env)
+    expect(generic.stderr).toBe(
+      `holi store get: BAD_REQUEST: bad id\nnext: ${NEXT_STEP.BAD_REQUEST}\n` +
+        'usage: holi store get <bundle> <collection> <id>\n',
+    )
+  })
+})
+
+describe('an answer too long to print', () => {
+  const rows = Array.from({ length: 400 }, (_, i) => ({ id: `t${i}`, subject: 'x'.repeat(40) }))
+
+  it('is written to a local file under machine state, and the path printed', async () => {
+    const text = JSON.stringify(rows)
+    expect(Buffer.byteLength(text)).toBeGreaterThan(SPILL_BYTES)
+    capability.mockResolvedValueOnce({ text })
+    const res = await run(bin, ['store', 'list', 'T.app', 'items'], env)
+    expect(res.code).toBe(0)
+    const path = /\n {2}(\S+)\n/.exec(res.stdout)?.[1]
+    expect(path).toMatch(new RegExp(`^${OUT_DIR}/.*store-list.*\\.local\\.json$`))
+    expect(res.stdout).toContain('a JSON array of 400 items, each with keys id, subject')
+    expect(await readFile(join(dir, path!), 'utf8')).toBe(text)
+  })
+
+  it('stays JSON when asked for --json, so it still parses', async () => {
+    capability.mockResolvedValueOnce({ text: JSON.stringify(rows) })
+    const res = await run(bin, ['store', 'list', 'T.app', 'items', '--json'], env)
+    expect(res.code).toBe(0)
+    const notice = JSON.parse(res.stdout) as { spilled: string; bytes: number; shape: string }
+    expect(notice.spilled).toMatch(new RegExp(`^${OUT_DIR}/.*store-list.*\\.local\\.json$`))
+    const written = await readFile(join(dir, notice.spilled), 'utf8')
+    expect(notice.bytes).toBe(Buffer.byteLength(written))
+    expect(notice.shape).toMatch(/^a JSON object with keys /)
+  })
+
+  it('keeps only the newest spills', async () => {
+    const text = JSON.stringify(rows)
+    for (let i = 0; i < 52; i++) {
+      capability.mockResolvedValueOnce({ text })
+      await run(bin, ['store', 'list', 'T.app', 'items'], env)
+    }
+    const names = await readdir(join(dir, OUT_DIR))
+    expect(names.filter((n) => n.startsWith('spill-')).length).toBe(50)
+  })
+})
+
+describe('a pending docs mutation receipt', () => {
+  const result =
+    vi.fn<(params: Record<string, string>) => { path: string; revision: string; pushed: boolean }>()
+  let pushed = false
+  const mutation = cap({
+    doors: ['cli'],
+    writes: true,
+    cli: { args: ['path'], summary: 'create note from stdin', stdin: 'body' },
+    cliSucceeded: (value) =>
+      typeof value === 'object' && value !== null && 'pushed' in value && value.pushed === true,
+    params: (raw) => raw as Record<string, string>,
+    run: async (_ctx, params) => {
+      result(params)
+      return { path: params.path!, revision: 'a'.repeat(64), pushed }
+    },
+  })
+
+  beforeEach(async () => {
+    await server.stop()
+    result.mockClear()
+    pushed = false
+    server = bridge({ 'docs.create': mutation }, ['docs'])
+    await server.start()
+    await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
+  })
+
+  it('exits 1 with the JSON receipt on stderr and writes stdin only once', async () => {
+    const res = await run(bin, ['docs', 'create', 'draft.md'], env, '# Draft\n')
+    expect(res.code).toBe(1)
+    expect(res.stdout).toBe('')
+    expect(JSON.parse(res.stderr)).toEqual({
+      path: 'draft.md',
+      revision: 'a'.repeat(64),
+      pushed: false,
+    })
+    expect(result).toHaveBeenCalledTimes(1)
+    expect(result).toHaveBeenCalledWith({ path: 'draft.md', body: '# Draft\n' })
+  })
+
+  it('exits 0 when the receipt confirms the push', async () => {
+    pushed = true
+    const res = await run(bin, ['docs', 'create', 'draft.md'], env, '# Draft\n')
+    expect(res.code).toBe(0)
+    expect(res.stdout).toContain('"pushed": true')
+    expect(result).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('a command that reads stdin', () => {
@@ -307,12 +413,12 @@ describe('a command that reads stdin', () => {
     await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
   })
 
-  it('runs once, with stdin, when the body is not an argument', async () => {
-    const res = await run(bin, ['x', 'echo', 'ada'], env, 'hello\nthere\n')
+  it('runs once, with stdin, preserving paths with spaces', async () => {
+    const res = await run(bin, ['x', 'echo', 'My notes/a b.md'], env, 'hello\nthere\n')
     expect(res).toMatchObject({ code: 0, stdout: 'hello\nthere\n\n' })
     // The first leg ran nothing: a write never runs without its body.
     expect(ran).toHaveBeenCalledTimes(1)
-    expect(ran).toHaveBeenCalledWith({ to: 'ada', body: 'hello\nthere\n' })
+    expect(ran).toHaveBeenCalledWith({ to: 'My notes/a b.md', body: 'hello\nthere\n' })
   })
 
   it('never reads stdin when the body is given', async () => {

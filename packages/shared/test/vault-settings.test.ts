@@ -32,10 +32,9 @@ describe('VAULT_SETTING_DEFAULTS', () => {
     expect(VAULT_SETTING_DEFAULTS.colorScheme).toBe('system')
   })
 
-  it('keeps archive-done opt-in, because it rearranges someone’s work', () => {
+  it("turns core's transforms on", () => {
     expect(VAULT_SETTING_DEFAULTS.hooks).toEqual({
       relink: true,
-      'archive-done': false,
       'normalize-md': true,
       'shrink-images': true,
       // On for relink's reason: it only ever rewrites a file it generated
@@ -53,7 +52,6 @@ describe('VAULT_SETTING_DEFAULTS', () => {
 
   it('names every transform the hooks block can carry', () => {
     expect(CORE_TRANSFORMS.map((t) => t.name).sort()).toEqual([
-      'archive-done',
       'memory-index',
       'normalize-md',
       'relink',
@@ -272,11 +270,19 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
     }
   })
 
-  it('keeps appearance and the Space-to-ask key machine-local, everything else in the vault', () => {
-    // A teammate's committed choice flipping your app to light mode, or taking
-    // your Space key, is exactly the failure the `.local` layer exists to prevent.
+  it('keeps appearance, the arcade, the Space-to-ask key and the agent machine-local, everything else in the vault', () => {
+    // A teammate's committed choice flipping your app to light mode, taking
+    // your Space key, or starting your sessions in an agent this machine does
+    // not have, is exactly the failure the `.local` layer exists to prevent.
     const local = VAULT_SETTING_DESCRIPTORS.filter((d) => d.target === 'local').map((d) => d.key)
-    expect(local).toEqual(['colorScheme', 'spaceAsksAgent'])
+    expect(local).toEqual([
+      'colorScheme',
+      'windowGlass',
+      'gridArcade',
+      'foldSidebarForApps',
+      'spaceAsksAgent',
+      'agentProvider',
+    ])
   })
 
   it('names no key twice', () => {
@@ -345,13 +351,12 @@ describe('seedSettings', () => {
     expect(Object.keys(seeded).sort()).toEqual(['dailyNotes', 'home', 'hooks'])
   })
 
-  it('still declares every transform the hooks expect, with archive-done off', () => {
+  it('still declares every transform the hooks expect', () => {
     // The seed used to be a hand-written literal. If a descriptor drops a
     // transform, the seed silently stops declaring it and the vault inherits a
     // default it never stated.
     expect(seedSettings('committed').hooks).toEqual({
       relink: true,
-      'archive-done': false,
       'normalize-md': true,
       'shrink-images': true,
       'memory-index': true,
@@ -392,6 +397,16 @@ describe('parseSettingsPatch — the write-side trust boundary', () => {
   it('keeps the keys it was given and invents none', () => {
     const { patch } = parseSettingsPatch(JSON.stringify({ dailyNotes: false }), CORE_TRANSFORMS)
     expect(patch).toEqual({ dailyNotes: false })
+  })
+
+  it('accepts Pi as a machine-local agent provider and reads it back', () => {
+    const { patch, warnings } = parseSettingsPatch('{"agentProvider":"pi"}', CORE_TRANSFORMS)
+    expect(warnings).toEqual([])
+    expect(patch).toEqual({ agentProvider: 'pi' })
+    expect(resolveAppSettings(null, committed(patch))).toMatchObject({
+      agentProvider: 'pi',
+      warnings: [],
+    })
   })
 
   it('normalises a home exactly as a read does', () => {

@@ -3,9 +3,6 @@
  * beside this module) and the `.claude/settings.json` it owns and merges
  * (`settings.ts`). It owns `.claude/`, so every other plugin's files and
  * fragments there wait until the agent runs.
- *
- * The tasks settings ride here too for now, as their own fragment, until
- * tasks becomes its own plugin.
  */
 import {
   seedFolder,
@@ -24,7 +21,7 @@ const folder = seedFolder(
   }),
 )
 
-export const SETTINGS = '.claude/settings.json'
+const SETTINGS = '.claude/settings.json'
 
 /**
  * The status line: one inline command, as Claude Code's own docs show, so a
@@ -36,6 +33,7 @@ export const SETTINGS = '.claude/settings.json'
  * (parsed, never sourced) and keyed by the job id, the way `turn-signal.mjs`
  * does it. The post is detached with its output discarded, so a slow or absent
  * Holi never holds up the footer, and outside Holi the command only prints.
+ * @public exported for its test
  */
 export const STATUS_LINE = [
   'input=$(cat)',
@@ -142,6 +140,10 @@ const AGENT_SETTINGS: SettingsFragment = {
     // AND compact: after a compact the agent has just forgotten it has
     // memory at all.
     { event: 'SessionStart', script: 'memory-overview' },
+    // Where the session takes messages, as soon as it runs: Holi can then add
+    // one to a session that has not had a turn yet. The turn's start says it
+    // again, which covers a script older than this entry.
+    { event: 'SessionStart', script: 'turn-signal', args: ['session'] },
     // `.holi/memory/index.md` is regenerated on every commit, so an edit to it is
     // always lost. Refused up front, with the reason.
     { event: 'PreToolUse', matcher: 'Write|Edit|MultiEdit', script: 'memory-index-guard' },
@@ -150,6 +152,19 @@ const AGENT_SETTINGS: SettingsFragment = {
     // Network egress: the user still approves each one, it just does not
     // slip through unasked. The automations plugin adds its own rules.
     ask: ['Bash(curl:*)', 'Bash(wget:*)'],
+    // The memory lint, `holi comments list` and `holi agent version` only
+    // read, so they run unasked.
+    // `holi agent notify` is an inbox entry, a banner and a log line on this
+    // machine, `holi agent log` the line alone. Asking first would stop an
+    // unattended run at a prompt nobody sees, which is the opposite of telling
+    // them. Writing a comment asks, since teammates see it.
+    allow: [
+      'Bash(node .claude/skills/memory/lint.mjs:*)',
+      'Bash(holi agent notify:*)',
+      'Bash(holi agent log:*)',
+      'Bash(holi agent version:*)',
+      'Bash(holi comments list:*)',
+    ],
     // Claude Code tools with no job in a vault: notebooks, plan mode,
     // worktrees (one working tree is what sync assumes), code-review
     // reporting, and SendFeedback, which reaches Anthropic rather than Holi
@@ -168,14 +183,10 @@ const AGENT_SETTINGS: SettingsFragment = {
   },
 }
 
-/** Tasks: Claude Code's todo tools, whose "tasks" are not the vault's
- *  `task.*.md`. TaskStop stays: it stops background shells. */
-const TASKS_SETTINGS: SettingsFragment = {
-  permissions: { deny: ['TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate'] },
-}
-
 /** The agent's `settings.json` for what is on disk, given every
- *  contribution's fragments and which hook scripts the vault has. */
+ *  contribution's fragments and which hook scripts the vault has.
+ * @public exported for its test
+ */
 export const agentSettings = (
   existing: string | null,
   fragments: readonly SettingsFragment[],
@@ -187,7 +198,7 @@ export const claudeSeed: SeedContribution = {
   owns: ['.claude/'],
   once: folder.once,
   shipped: folder.shipped,
-  fragments: { [SETTINGS]: [AGENT_SETTINGS, TASKS_SETTINGS] },
+  fragments: { [SETTINGS]: [AGENT_SETTINGS] },
   merge: {
     [SETTINGS]: async (existing, fragments, has) => {
       const all = fragments as SettingsFragment[]

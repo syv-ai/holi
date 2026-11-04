@@ -32,13 +32,37 @@ async function file(rel: string, text: string): Promise<void> {
 
 const read = (rel: string) => readFile(join(root, rel), 'utf8')
 
-const staged = (renamed: { from: string; to: string }[]): StagedChanges => ({
+const staged = (
+  renamed: { from: string; to: string }[],
+  deleted: string[] = [],
+): StagedChanges => ({
   added: [],
   modified: [],
   renamed,
+  deleted,
 })
 
+const exists = (rel: string) =>
+  read(rel).then(
+    () => true,
+    () => false,
+  )
+
 describe('relink', () => {
+  it("moves a moved note's comment threads with it, and keeps a deleted note's", async () => {
+    // A deletion may be a rename git did not pair (moved and rewritten in one
+    // commit): deleting the threads then would delete every comment on it.
+    await file('sub/b.md', '# moved\n')
+    await file('.holi/comments/a.md.json', '{"threads":{}}\n')
+    await file('.holi/comments/gone.md.json', '{"threads":{}}\n')
+
+    const result = await relink(root, staged([{ from: 'a.md', to: 'sub/b.md' }], ['gone.md']))
+    expect(result.changed).toEqual(['.holi/comments/a.md.json', '.holi/comments/sub/b.md.json'])
+    expect(await read('.holi/comments/sub/b.md.json')).toBe('{"threads":{}}\n')
+    expect(await exists('.holi/comments/a.md.json')).toBe(false)
+    expect(await exists('.holi/comments/gone.md.json')).toBe(true)
+  })
+
   it('rewrites an inbound link to the new path', async () => {
     await file('c.md', 'see [[a.md]] for details\n')
     await file('sub/b.md', '# moved\n')
@@ -64,7 +88,13 @@ describe('relink', () => {
     await file('b.md', '# was a\n')
     await file('c.md', '# was b\n')
 
-    await relink(root, staged([{ from: 'a.md', to: 'b.md' }, { from: 'b.md', to: 'c.md' }]))
+    await relink(
+      root,
+      staged([
+        { from: 'a.md', to: 'b.md' },
+        { from: 'b.md', to: 'c.md' },
+      ]),
+    )
     expect(await read('notes.md')).toBe('[[b.md]] and [[c.md]]\n')
   })
 

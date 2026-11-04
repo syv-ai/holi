@@ -44,3 +44,15 @@ test('an inert reminder is carried as it is', () => {
     ).reminder,
   ).toBe('1d')
 })
+
+test("a vault's own statuses: completion writes its completed one, a roll-forward its opening one", () => {
+  const statuses = { done: 'shipped', reopen: 'next' }
+  expect(completeTask({}, TODAY, statuses)).toEqual({ status: 'shipped' })
+  expect(
+    completeTask(
+      { due: '2026-09-20', recurrence: { frequency: 'daily', interval: 1 } },
+      TODAY,
+      statuses,
+    ),
+  ).toEqual({ status: 'next', due: TODAY })
+})

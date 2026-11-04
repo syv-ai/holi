@@ -1,12 +1,14 @@
 /**
  * `relink`: rewrite inbound `[[links]]` for a file that moved outside Holi
- * (a `git mv`, or the agent's own move), so links never dangle silently.
+ * (a `git mv`, or the agent's own move), so links never dangle silently, and
+ * move a moved note's comment threads along with it (`followNoteComments`).
  *
- * **It does not move anything.** Git already did. `moveNotes` shares the
+ * **It does not move notes.** Git already did. `moveNotes` shares the
  * rewrite and owns the move.
  */
 import { readFile } from 'node:fs/promises'
 import { rewriteWikiLinksMulti, vaultRelPath } from '@holi/shared'
+import { followNoteComments } from '../note-comments'
 import { absPathFor, listFiles, writeAtomic } from '../vault-files'
 import type { StagedChanges } from './staged'
 
@@ -18,6 +20,15 @@ export interface TransformResult {
 }
 
 export async function relink(root: string, staged: StagedChanges): Promise<TransformResult> {
+  const links = await relinkLinks(root, staged)
+  const comments = await followNoteComments(root, staged)
+  return {
+    changed: [...new Set([...links.changed, ...comments.changed])].sort(),
+    notes: [...links.notes, ...comments.notes],
+  }
+}
+
+async function relinkLinks(root: string, staged: StagedChanges): Promise<TransformResult> {
   // No renames means nothing to do, and it must cost nothing: this runs on
   // every commit, and most commits are edits.
   if (staged.renamed.length === 0) return { changed: [], notes: [] }

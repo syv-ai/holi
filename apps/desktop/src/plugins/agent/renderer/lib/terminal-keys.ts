@@ -26,13 +26,18 @@ export type KeyChord = Pick<
   'type' | 'key' | 'code' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'
 >
 
-export function terminalKeyAction(e: KeyChord, hasSelection: boolean): TerminalKeyAction {
+export function terminalKeyAction(
+  e: KeyChord,
+  hasSelection: boolean,
+  provider?: 'pi' | 'claude' | 'codex',
+): TerminalKeyAction {
   if (e.type !== 'keydown') return null
   const mod = e.metaKey || e.ctrlKey
 
   // ⇧⏎ → ESC CR, what Claude Code's own `/terminal-setup` configures. Ahead of
   // the `mod` gate, which this chord does not pass.
-  if (e.key === 'Enter' && e.shiftKey && !mod) return { kind: 'write', seq: '\x1b\r' }
+  if (e.key === 'Enter' && e.shiftKey && !mod)
+    return { kind: 'write', seq: provider === 'pi' ? '\x1b[13;2u' : '\x1b\r' }
 
   // ⌥←/→/⌫ — word motion and word delete, the readline meta bindings.
   if (e.altKey && !mod) {

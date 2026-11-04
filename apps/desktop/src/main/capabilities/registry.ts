@@ -27,7 +27,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import type { VaultSnapshot } from '@holi/shared'
+import type { SnapshotClaim, VaultSnapshot } from '@holi/shared'
 import { CapabilityError } from './error'
 import type { CoreServices } from './services'
 
@@ -40,6 +40,10 @@ export interface CapabilityContext {
   /** The calling app's bundle at the app door; null at every other door. */
   bundle: string | null
   snapshot(): Promise<VaultSnapshot>
+  /** The path claims of the plugins the vault runs (`MainPlugin.claims`): a
+   *  core entry asks a claimed file's plugin about it rather than naming the
+   *  plugin. */
+  claims(): Promise<readonly SnapshotClaim[]>
   /** What the running app knows beyond the files, for core's entries: one
    *  factory builds these for every door (`services.ts`). A feature's entries
    *  close over their own dependencies instead. */
@@ -49,6 +53,8 @@ export interface CapabilityContext {
 /**
  * How an entry reads as a `holi <namespace> <verb>` command: required at the
  * CLI door, where the bridge resolves argv against it (`bridge/cli.ts`).
+ *
+ * @public Plugins write these through `plugin-api.ts`.
  */
 export interface CliSpec {
   /** Positional params, in order. A trailing `?` marks an optional one, and
@@ -67,6 +73,10 @@ export interface CliSpec {
    *  bridge never asks for stdin and the script never waits on it
    *  (`holi google send --draft <id>`). */
   stdinUnless?: string
+  /** A param that, left out, is the calling session's Claude Code job id:
+   *  the script sends it from `$CLAUDE_JOB_DIR` when that is set, as a
+   *  background session's status line does. */
+  job?: string
 }
 
 export interface Capability<P = unknown, R = unknown> {
@@ -81,11 +91,18 @@ export interface Capability<P = unknown, R = unknown> {
   /** Reads untrusted params, or throws a `CapabilityError('BAD_REQUEST')`. */
   params(raw: unknown): P
   run(ctx: CapabilityContext, params: P): Promise<R>
+  /** The result as the CLI door answers it, before `text` and for `--json`
+   *  alike: the agent's view of what the other doors get as it is. Google
+   *  fences the text other people wrote here (`fenceUntrusted`). */
+  cliValue?(result: R): R
   /** The CLI's readable form of a result. Absent: pretty JSON. */
   text?(result: R): string
+  /** Whether the CLI operation completed successfully; false preserves its receipt with failure status. */
+  cliSucceeded?(result: R): boolean
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+/** @public exported for its test */
 export type AnyCapability = Capability<any, any>
 
 /** One owner's entries, by full name. */
@@ -111,6 +128,7 @@ export interface CapabilityResult {
 export interface CliCommand {
   name: string
   cli: CliSpec
+  succeeded?(result: unknown): boolean
 }
 
 export interface CapabilityRegistry {
@@ -199,7 +217,9 @@ export function createCapabilityRegistry(): CapabilityRegistry {
 
     commands: () =>
       [...entries]
-        .flatMap(([name, entry]) => (entry.cli === undefined ? [] : [{ name, cli: entry.cli }]))
+        .flatMap(([name, entry]) =>
+          entry.cli === undefined ? [] : [{ name, cli: entry.cli, succeeded: entry.cliSucceeded }],
+        )
         .sort((a, b) => a.name.localeCompare(b.name)),
 
     async run(name, door, ctx, rawParams, admit) {
@@ -214,7 +234,8 @@ export function createCapabilityRegistry(): CapabilityRegistry {
         if (admit === undefined) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
         await admit(ctx, entry.appGrant)
       }
-      const value = await entry.run(ctx, params)
+      const result = await entry.run(ctx, params)
+      const value = door === 'cli' && entry.cliValue !== undefined ? entry.cliValue(result) : result
       return {
         value,
         text: entry.text !== undefined ? entry.text(value) : JSON.stringify(value, null, 2),

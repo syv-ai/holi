@@ -15,7 +15,9 @@
  * Main reads this grammar when it installs and pins; the renderer reads it to
  * know which files a plugin opens. Pure and browser-safe.
  */
+import { PLUGINS_FILE, PLUGINS_LOCAL_FILE } from './plugin-settings'
 import { isPluginId } from './plugins'
+import type { FileMeta } from './types'
 
 /** The manifest's name, in the plugin's folder. */
 export const PLUGIN_MANIFEST_FILE = 'holi-plugin.json'
@@ -53,6 +55,22 @@ export function parseReleaseTag(tag: string): { path: string; version: string } 
 
 /** Where a vault keeps its pins. */
 export const PLUGIN_PINS_DIR = '.holi/plugins'
+
+/**
+ * What on disk decides which community plugins run in a vault, as one string
+ * that changes when it does: the pins and the two plugins settings files.
+ */
+export function communityPluginsSignature(files: readonly FileMeta[]): string {
+  return files
+    .filter(
+      (f) =>
+        f.path.startsWith(`${PLUGIN_PINS_DIR}/`) ||
+        f.path === PLUGINS_FILE ||
+        f.path === PLUGINS_LOCAL_FILE,
+    )
+    .map((f) => `${f.path}@${f.updatedAt}`)
+    .join('|')
+}
 
 /** A pin's path in the vault. */
 export function pluginPinPath(id: string): string {
@@ -98,6 +116,40 @@ export interface PluginManifest {
    *  `SKILL.md` and what it references), copied to the vault's
    *  `.claude/skills/<folder name>/` when the vault turns the plugin on. */
   skills?: string[]
+  /** Commands for the vault's agent, by name: each an executable file in the
+   *  plugin, linked into `PLUGIN_COMMANDS_DIR` while the plugin runs in the
+   *  vault. That folder comes last on the agent's `PATH`, so a plugin can add
+   *  a command but never stand in for one the machine already has. */
+  bin?: Record<string, string>
+  /** Whether the plugin can do its work now, beyond being set up: `run` is an
+   *  argv run in the plugin's folder, with `{vault}` its one placeholder, passing when it exits 0, and `hint` is
+   *  what to tell the person when it fails ("Switch on Let other agents
+   *  control Dash in Dash"). A failing check does not stop the plugin. */
+  check?: PluginCheck
+}
+
+export interface PluginCheck {
+  run: string[]
+  hint: string
+}
+
+/** The longest a check's hint may be: one short line in a settings row. */
+export const CHECK_HINT_MAX = 200
+
+/** Where a vault links its running plugins' commands, on the agent's `PATH`:
+ *  machine state, and `.local.` so it never syncs, since each link points at
+ *  this machine's copy of the plugin. */
+export const PLUGIN_COMMANDS_DIR = '.holi/state/commands.local.d'
+
+/** Holi's own command, which no plugin may name one of its own. */
+const RESERVED_COMMANDS = ['holi']
+
+/** A name fit for a command on `PATH`: lowercase, no path, no shell meaning. */
+const COMMAND_NAME = /^[a-z0-9][a-z0-9._-]*$/
+
+/** Can a plugin's command be called `name`? */
+export function isCommandName(name: unknown): name is string {
+  return typeof name === 'string' && COMMAND_NAME.test(name) && !RESERVED_COMMANDS.includes(name)
 }
 
 export interface PluginPin extends PluginManifest {
@@ -141,7 +193,12 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 const isStringList = (v: unknown): v is string[] =>
   Array.isArray(v) && v.every((s) => typeof s === 'string')
 
-function commandProblems(field: string, argv: unknown, required: readonly string[]): string[] {
+function commandProblems(
+  field: string,
+  argv: unknown,
+  required: readonly string[],
+  allowed: readonly string[] = COMMAND_PLACEHOLDERS,
+): string[] {
   if (!isStringList(argv) || argv.length === 0 || argv.some((s) => s.length === 0))
     return [`${field} must be a non-empty list of arguments`]
   const problems: string[] = []
@@ -149,10 +206,8 @@ function commandProblems(field: string, argv: unknown, required: readonly string
     problems.push(`${field} is an argv, not a shell string: split "${argv[0]}" into its arguments`)
   for (const arg of argv)
     for (const found of arg.match(PLACEHOLDER) ?? [])
-      if (!(COMMAND_PLACEHOLDERS as readonly string[]).includes(found))
-        problems.push(
-          `${field} uses ${found}; only ${COMMAND_PLACEHOLDERS.join(', ')} are filled in`,
-        )
+      if (!allowed.includes(found))
+        problems.push(`${field} uses ${found}; Holi fills in only ${allowed.join(', ')} here`)
   for (const placeholder of required)
     if (!argv.some((arg) => arg.includes(placeholder)))
       problems.push(`${field} must pass ${placeholder}`)
@@ -183,6 +238,8 @@ export function parsePluginManifest(json: unknown, path = ''): Parsed<PluginMani
     skills,
     folder,
     apps,
+    bin,
+    check,
   } = json
   const opens = json.opens ?? []
 
@@ -220,8 +277,10 @@ export function parsePluginManifest(json: unknown, path = ''): Parsed<PluginMani
     problems.push(
       'apps must be a list of folders inside the plugin ending in .app, like apps/Notes.app',
     )
-  if (!opensSomething && apps === undefined && skills === undefined)
-    problems.push('the plugin must do something: list opens, give a folder, or ship apps or skills')
+  if (!opensSomething && apps === undefined && skills === undefined && bin === undefined)
+    problems.push(
+      'the plugin must do something: list opens, give a folder, or ship apps, skills or commands',
+    )
   if (setup !== undefined) problems.push(...commandProblems('setup', setup, []))
   if (opensSomething || serve !== undefined)
     problems.push(...commandProblems('serve', serve, ['{port}']))
@@ -235,6 +294,41 @@ export function parsePluginManifest(json: unknown, path = ''): Parsed<PluginMani
     (!isStringList(skills) || skills.some((p) => !isPluginRelativePath(p)))
   )
     problems.push('skills must be a list of folders inside the plugin, like skills/prezzi')
+  if (bin !== undefined) {
+    if (!isRecord(bin) || Object.keys(bin).length === 0)
+      problems.push(
+        'bin must map command names to files in the plugin, like {"dashctl": "bin/dashctl"}',
+      )
+    else
+      for (const [name, file] of Object.entries(bin)) {
+        if (!isCommandName(name))
+          problems.push(
+            name === 'holi'
+              ? "bin: holi is Holi's own command"
+              : `bin: "${name}" is not a command name (lowercase letters, digits, . _ -)`,
+          )
+        if (typeof file !== 'string' || !isPluginRelativePath(file))
+          problems.push(`bin: ${name} must name a file inside the plugin, like bin/${name}`)
+      }
+  }
+
+  if (check !== undefined) {
+    if (!isRecord(check))
+      problems.push('check must be an object, like {"run": ["tool", "version"], "hint": "..."}')
+    else {
+      // A check runs for the plugin, not for a file or a server: only
+      // `{vault}` has a value then.
+      problems.push(...commandProblems('check.run', check.run, [], ['{vault}']))
+      const hint = check.hint
+      if (
+        typeof hint !== 'string' ||
+        hint.trim() === '' ||
+        /\p{Cc}/u.test(hint) ||
+        hint.length > CHECK_HINT_MAX
+      )
+        problems.push(`check.hint must be one line of text, at most ${CHECK_HINT_MAX} characters`)
+    }
+  }
 
   if (problems.length > 0) return { ok: false, problems }
   const manifest: PluginManifest = {
@@ -250,6 +344,11 @@ export function parsePluginManifest(json: unknown, path = ''): Parsed<PluginMani
   if (setup !== undefined) manifest.setup = setup as string[]
   if (ignore !== undefined) manifest.ignore = ignore as string[]
   if (skills !== undefined) manifest.skills = skills as string[]
+  if (bin !== undefined) manifest.bin = { ...(bin as Record<string, string>) }
+  if (check !== undefined) {
+    const c = check as { run: string[]; hint: string }
+    manifest.check = { run: [...c.run], hint: c.hint.trim() }
+  }
   if (folder !== undefined) {
     const f = folder as { suffix: string; entry: string }
     manifest.folder = { suffix: f.suffix, entry: f.entry }

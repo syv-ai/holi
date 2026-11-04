@@ -1,13 +1,15 @@
 import { useAtomValue, useSetAtom } from 'jotai'
+import { useWindowGlass } from '@/state/window-glass'
 import { useEffect, useState } from 'react'
-import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
-import { SignIn } from './features/auth/SignIn'
-import { Shell } from './components/Shell'
-import { Splash } from './components/Splash'
-import { useColorScheme } from './state/color-scheme'
-import { useEditorFont } from './state/editor-font'
-import { loadSessionAtom, sessionAtom } from './state/session'
-import { loadVaultsAtom, vaultsAtom, vaultsLoadedAtom } from './state/vaults'
+import { OnboardingRitual } from '@/features/onboarding/onboarding-ritual'
+import { SignIn } from '@/features/auth/sign-in'
+import { VaultHost } from '@/features/shell/vault-host'
+import { Splash } from '@/features/shell/splash'
+import { useDockIcon } from '@/lib/app-icon'
+import { useColorScheme } from '@/state/color-scheme'
+import { useEditorFont } from '@/state/editor-font'
+import { loadSessionAtom, sessionAtom } from '@/state/session'
+import { loadVaultsAtom, vaultsAtom, vaultsLoadedAtom } from '@/state/vaults'
 
 export function App() {
   const session = useAtomValue(sessionAtom)
@@ -19,7 +21,9 @@ export function App() {
   // Stamped from the root, not from Shell: the sign-in screen and the ritual are
   // outside Shell and should still follow the OS rather than being stuck dark.
   useColorScheme()
+  useWindowGlass()
   useEditorFont()
+  useDockIcon()
 
   useEffect(() => {
     void loadSession()
@@ -42,10 +46,10 @@ export function App() {
   if (dryRunOnboarding) {
     return (
       <>
-        <Shell />
+        <VaultHost />
         <OnboardingRitual mode="first-run" dryRun onDismiss={() => setDryRunOnboarding(false)} />
       </>
     )
   }
-  return <Shell />
+  return <VaultHost />
 }

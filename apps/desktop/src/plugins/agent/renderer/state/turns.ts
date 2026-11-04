@@ -70,19 +70,36 @@ export const turnDiffAtom = atom<TurnDiff | null>(null)
 
 // ------------------------------------------------------------------- write atoms
 
-/** The newest record for each session. The log is already newest-first and is
- *  never re-sorted here, so the first record naming a session is that session's
- *  latest. */
+/** The newest record for each session that changed something. The log is
+ *  already newest-first and is never re-sorted here, so the first record naming
+ *  a session is that session's latest. */
 export const loadLatestTurnsAtom = atom(null, async (get, set) => {
   const remote = get(activeRemoteAtom)
   if (remote === null) return
   const turns = await agentCap.turns(remote)
   const latest: Record<string, Turn> = {}
   for (const turn of turns) {
-    if (turn.sessionId === undefined) continue
+    // A turn that changed nothing has nothing to review: the chip keeps showing
+    // the session's last one that did.
+    if (turn.sessionId === undefined || turn.base === turn.end) continue
     latest[turn.sessionId] ??= turn
   }
   set(latestTurnsAtom, latest)
+})
+
+/**
+ * Open the review on a session's last turn: a row's Review last turn, which
+ * the Agents view needs because its session view is the terminal alone. Read
+ * fresh, since the record lands as the turn ends. False when the session has
+ * no turn on record.
+ */
+export const reviewSessionTurnAtom = atom(null, async (get, set, sessionId: string) => {
+  await set(loadLatestTurnsAtom)
+  const turn = get(latestTurnsAtom)[sessionId]
+  if (turn === undefined) return false
+  set(reviewTurnAtom, turn)
+  set(turnReviewOpenAtom, true)
+  return true
 })
 
 /**
@@ -136,15 +153,18 @@ export const loadTurnDiffAtom = atom(null, async (get, set, path: string) => {
  * `decideReload` runs (clean buffer reloads, dirty one 3-way merges, an overlap
  * routes to reconcile).
  *
+ * `base` is the text the diff showed: main merges in whatever changed since,
+ * or refuses with a message the panel shows.
+ *
  * The file list is then re-asked: the revert has just minted a commit inside the
  * range being looked at.
  */
 export const revertFileAtom = atom(
   null,
-  async (get, set, { path, text }: { path: string; text: string }) => {
+  async (get, set, { path, text, base }: { path: string; text: string; base: string }) => {
     const remote = get(activeRemoteAtom)
     if (remote === null) return
-    await agentCap.revert(remote, { path, text })
+    await agentCap.revert(remote, { path, text, base })
     await set(loadTurnFilesAtom)
   },
 )

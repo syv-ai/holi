@@ -22,10 +22,11 @@
  *
  * NOTE: no `electron` import, so this loads under vitest.
  */
-import type { PluginCtx } from '../../../../main/plugin-api'
+import { CapabilityError, type PluginCtx } from '../../../../main/plugin-api'
 import type { VaultCliTarget } from '../claude/cli'
 import type { ClaudeRow, SessionSummary } from '../claude/listing'
-import type { AgentProvider, VaultRef } from '../provider'
+import type { SessionChannel } from '../claude/messaging'
+import { firstSpawnNotice, type BackgroundProvider } from '../provider'
 import type { AgentTerminals } from './terminals'
 import { ContextSnapshot, type FocusInput } from './context-snapshot'
 import { createTurnCoordinator, type TurnCoordinator, type TurnVault } from './turn-coordinator'
@@ -42,15 +43,17 @@ export type ActionResult = { ok: true } | { ok: false; message: string }
 export type OpenResult = { ok: true; terminalId: string } | { ok: false; message: string }
 export type StartResult =
   { ok: true; sessionId: string; terminalId: string } | { ok: false; message: string }
+type LaunchResult = { ok: true; sessionId: string } | { ok: false; message: string }
 
 export interface Geometry {
   cols?: number
   rows?: number
 }
 
-export type { VaultRef }
-
-/** The vault the sessions run in, as its activation hands it over. */
+/**
+ * The vault the sessions run in, as its activation hands it over.
+ * @public exported for its test
+ */
 export type AgentVault = Pick<PluginCtx, 'remote' | 'root'> & TurnVault
 
 export interface AgentSessionsDeps {
@@ -59,23 +62,17 @@ export interface AgentSessionsDeps {
   /** Tell the plugins built on the agent, in main: the session list as it is
    *  pushed (`sessions`) and each turn's end (`turn-end`). */
   publish?(name: string, payload: unknown): void
+  /** The provider whose supervisor runs these sessions. */
   provider: Pick<
-    AgentProvider,
-    | 'cli'
-    | 'parseListing'
-    | 'isLive'
-    | 'summarise'
-    | 'readContextPercent'
-    | 'readModelName'
-    | 'watch'
-    | 'configure'
-    | 'takeFirstSpawn'
-    | 'signInNotice'
+    BackgroundProvider,
+    'id' | 'notInstalled' | 'configure' | 'terminal' | 'firstSpawn' | 'capabilities'
   >
   terminals: AgentTerminals
   /** Holi's generated commands, first on every session's `PATH`. */
   binDir(): string | null
   turnLogFor?: (vaultRoot: string) => TurnLog
+  /** See `TurnCoordinatorDeps.snapshot`. */
+  snapshot?: (vaultRoot: string) => Promise<string | null>
   turnSafetyMs?: number
   idleRecheckMs?: number
   /** Forwarded to the turn coordinator. */
@@ -91,12 +88,15 @@ export interface AgentSessions {
   ensure(vault?: AgentVault): Promise<void>
   /** The vault's live sessions, in listing order. */
   sessions(): SessionSummary[]
+  /** The ones the listing still has but whose process is gone: stopped, or
+   *  retired by the supervisor. Opening one brings it back (`respawn`). */
+  past(): SessionSummary[]
   /** Re-read the listing now. Never rejects. */
   refresh(): Promise<void>
-  /** A terminal on the list (no `attach`), on one session, on a copy of a
-   *  conversation by Claude Code's session id (`fork`), or running Claude
-   *  Code's `/login` for the vault's config directory (`login`). */
-  open(args: Geometry & { attach?: string; fork?: string; login?: boolean }): Promise<OpenResult>
+  /** A terminal on the list (no `attach`), on one session, or on a copy of
+   *  a conversation by Claude Code's session id (`fork`). Its sign-in is a
+   *  session Holi runs (`pty-sessions.ts`). */
+  open(args: Geometry & { attach?: string; fork?: string }): Promise<OpenResult>
   /** A new background session, and a terminal on it. With a prompt, that
    *  prompt is its first turn (reconcile); without, it waits for one. */
   start(
@@ -118,13 +118,16 @@ export interface AgentSessions {
     allow?: readonly string[]
     /** A Holi's soul and memory, when one carries the run out. */
     appendSystemPrompt?: string
-  }): Promise<{ ok: true; sessionId: string } | { ok: false; message: string }>
+  }): Promise<LaunchResult>
   /** Whether Holi has a terminal open on the session. */
   watched(id: string): boolean
   /** Hear each session's turn end, by job id, with how much its Stop said
    *  was still pending (null when no Stop said: a confirmed idle, the safety
    *  cap, an older hook script). Returns the undo. */
   onTurnEnd(listener: (id: string, pending: number | null) => void): () => void
+  /** Hear the live sessions each time the list told to the renderer
+   *  changes. Returns the undo. */
+  onSessions(listener: (sessions: SessionSummary[]) => void): () => void
   /** Put text in a session's input, unsent: a live one by id, or a new one
    *  named from the text. Opens a terminal on it when Holi has none. */
   send(args: Geometry & { text: string; target: string | 'new' }): Promise<OpenResult>
@@ -136,15 +139,17 @@ export interface AgentSessions {
   /** A session's status line fired: Claude Code's status JSON, by vault and
    *  job id. */
   noteStatus(remote: string, jobId: string, status: unknown): void
+  /** A session's hook said where it takes messages, by vault and job id. */
+  noteChannel(remote: string, jobId: string, channel: SessionChannel): void
+  /** Add `text` to a running session's conversation: a turn when it is idle,
+   *  read after the tool call in flight when it is working. Never typed into
+   *  a terminal. Throws a `CapabilityError` when it cannot be delivered. */
+  message(id: string, text: string): Promise<void>
   /** The focus file is the vault's, so this names no session. */
   setFocus(focus: FocusInput): void
-  /** Where the open vault's commands run: its clone, config directory and
-   *  `PATH`. Null with no vault attached. For a process another driver runs
-   *  in the vault, so it reads what a session reads. */
-  target(): Promise<VaultCliTarget | null>
   /**
-   * A turn edge from a driver outside the listing, which knows its turns
-   * without a hook: the same working set, sync pause and turn record as a
+   * A turn edge from a driver outside the listing (the sessions Holi runs
+   * itself, `pty-sessions.ts`), which knows its turns without the listing: the same working set, sync pause and turn record as a
    * session's. `forget` is its process gone mid-turn: nothing recorded. The
    * listing never names such an id, so its reconcile leaves these alone.
    */
@@ -170,6 +175,8 @@ interface Current {
 export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const log = deps.log ?? ((msg: string) => console.log(`[agent] ${msg}`))
   const provider = deps.provider
+  const bg = provider.capabilities.background
+  const statusReader = provider.capabilities.status
   let current: Current | null = null
   /** The vault `ensure` attached to, until `leave`. */
   let attached: AgentVault | null = null
@@ -180,6 +187,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   /** The latest listing for the current vault, live or not. */
   let rows: ClaudeRow[] = []
   let lastPushed = ''
+  let lastPast = ''
   let idleRecheck: ReturnType<typeof setTimeout> | null = null
   let focusWriter: { root: string; snapshot: ContextSnapshot } | null = null
   /**
@@ -204,8 +212,19 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const contextPercent = new Map<string, number>()
   /** Each live session's model, in Claude Code's words, from its status line. */
   const modelName = new Map<string, string>()
+  /**
+   * Where each session takes messages, by job id, as its hooks reported it.
+   * In memory only: the token is the session's, and a file would outlive it.
+   * Dropped when the session leaves the live listing, when a write to it
+   * fails, and when Holi lets go of the vault. A session is told apart
+   * from one not yet listed by `listedLive`: a `SessionStart` report can
+   * arrive before the listing shows the session at all.
+   */
+  const channels = new Map<string, SessionChannel>()
+  let listedLive = new Set<string>()
 
   const turnEnds = new Set<(id: string, pending: number | null) => void>()
+  const sessionListeners = new Set<(sessions: SessionSummary[]) => void>()
   /** What the Stop that is ending a turn said was pending, until the end is
    *  told. */
   const stopPending = new Map<string, number>()
@@ -213,6 +232,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const coordinator: TurnCoordinator = createTurnCoordinator({
     vault: () => current?.vault ?? null,
     ...(deps.turnLogFor === undefined ? {} : { turnLogFor: deps.turnLogFor }),
+    ...(deps.snapshot === undefined ? {} : { snapshot: deps.snapshot }),
     ...(deps.turnSafetyMs === undefined ? {} : { turnSafetyMs: deps.turnSafetyMs }),
     ...(deps.idleConfirmMs === undefined ? {} : { idleConfirmMs: deps.idleConfirmMs }),
     onChange: () => push(),
@@ -225,15 +245,22 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     log,
   })
 
-  const live = (): ClaudeRow[] => rows.filter((row) => provider.isLive(row))
+  const live = (): ClaudeRow[] => rows.filter((row) => bg.isLive(row))
+  const past = (): SessionSummary[] =>
+    rows
+      .filter((row) => !bg.isLive(row))
+      .map((row) => ({ provider: provider.id, ...bg.summarise(row, new Set()) }))
   const summaries = (): SessionSummary[] =>
     live().map((row) => {
       const percent = contextPercent.get(row.id)
       const model = modelName.get(row.id)
-      return provider.summarise(row, coordinator.working, {
-        ...(percent === undefined ? {} : { contextPercent: percent }),
-        ...(model === undefined ? {} : { model }),
-      })
+      return {
+        provider: provider.id,
+        ...bg.summarise(row, coordinator.working, {
+          ...(percent === undefined ? {} : { contextPercent: percent }),
+          ...(model === undefined ? {} : { model }),
+        }),
+      }
     })
 
   /** Tell the renderer the list, when it changed: the vault's, or `remote`'s
@@ -246,6 +273,17 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     lastPushed = encoded
     deps.emit(remote, 'sessions', next)
     if (remote === current?.remote) deps.publish?.('sessions', next)
+    for (const listener of sessionListeners) listener(next)
+  }
+
+  /** Tell the renderer the stopped sessions, when they changed. */
+  function pushPast(remote = current?.remote): void {
+    if (remote === undefined) return
+    const next = past()
+    const encoded = JSON.stringify(next)
+    if (encoded === lastPast) return
+    lastPast = encoded
+    deps.emit(remote, 'history', next)
   }
 
   const targetOf = (c: Current): VaultCliTarget => ({
@@ -271,7 +309,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       unwatch: () => {},
       seeded: false,
     }
-    next.unwatch = provider.watch(config.dir, () => void refresh(), log)
+    next.unwatch = bg.watch(config.dir, () => void refresh(), log)
     return next
   }
 
@@ -306,9 +344,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   async function readOnce(): Promise<void> {
     const c = current
     if (c === null) return
-    const stdout = await provider.cli.list(targetOf(c))
+    const stdout = await bg.cli.list(targetOf(c))
     if (current !== c) return // the vault moved while we read
-    rows = provider.parseListing(stdout, c.root)
+    rows = bg.parseListing(stdout, c.root)
     const liveRows = live()
     const liveIds = new Set(liveRows.map((r) => r.id))
 
@@ -329,6 +367,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     // Nor use any more context; resumed, it says so again at its first event.
     for (const id of contextPercent.keys()) if (!liveIds.has(id)) contextPercent.delete(id)
     for (const id of modelName.keys()) if (!liveIds.has(id)) modelName.delete(id)
+    // Nor take messages: a resumed process binds a new inbox and says so.
+    for (const id of channels.keys())
+      if (listedLive.has(id) && !liveIds.has(id)) channels.delete(id)
+    listedLive = liveIds
 
     let wantsRecheck = false
     for (const row of liveRows) {
@@ -351,6 +393,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       }, deps.idleRecheckMs ?? IDLE_RECHECK_MS)
     }
     push()
+    pushPast()
   }
 
   async function refresh(): Promise<void> {
@@ -377,22 +420,25 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
 
   async function openOn(
     c: Current,
-    args: Geometry & { attach?: string; fork?: string; login?: boolean },
+    args: Geometry & { attach?: string; fork?: string },
   ): Promise<OpenResult> {
     // Taken here, at a terminal, not at vault open: a run that opens no
     // terminal must leave the notice for the one that does.
-    let firstSpawn = false
+    let notice: string | undefined
     if (!c.spawnChecked) {
       c.spawnChecked = true
-      firstSpawn = await provider.takeFirstSpawn(c.configDir).catch(() => false)
+      notice = await firstSpawnNotice(provider, c.configDir)
     }
-    const notice = firstSpawn ? provider.signInNotice : undefined
+    const target = targetOf(c)
     const res = deps.terminals.open({
       remote: c.remote,
-      target: targetOf(c),
+      cwd: target.root,
+      command: provider.terminal(target, {
+        ...(args.attach === undefined ? {} : { attach: args.attach }),
+        ...(args.fork === undefined ? {} : { fork: args.fork }),
+      }),
+      notInstalled: provider.notInstalled,
       ...(args.attach === undefined ? {} : { attach: args.attach }),
-      ...(args.fork === undefined ? {} : { fork: args.fork }),
-      ...(args.login === true ? { login: true } : {}),
       ...(args.cols === undefined ? {} : { cols: args.cols }),
       ...(args.rows === undefined ? {} : { rows: args.rows }),
       ...(notice === undefined ? {} : { notice }),
@@ -409,6 +455,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
 
     sessions: summaries,
+    past,
     refresh,
 
     async open(args) {
@@ -420,7 +467,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     async start({ name, prompt, model, allow, appendSystemPrompt, cols, rows: r }) {
       const c = await ensureCurrent()
       if (c === null) return noVault
-      const res = await provider.cli.startBg(targetOf(c), {
+      const res = await bg.cli.startBg(targetOf(c), {
         ...(name === undefined ? {} : { name }),
         ...(prompt === undefined ? {} : { prompt }),
         ...(model === undefined ? {} : { model }),
@@ -437,7 +484,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     async launch({ name, prompt, model, allow, appendSystemPrompt }) {
       const c = await ensureCurrent()
       if (c === null) return noVault
-      const res = await provider.cli.startBg(targetOf(c), {
+      const res = await bg.cli.startBg(targetOf(c), {
         name,
         prompt,
         ...(model === undefined ? {} : { model }),
@@ -445,6 +492,13 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt }),
       })
       if (!res.ok) return res
+      if (current !== c) {
+        // The leave read the sessions to stop before this one was listed, so
+        // it would go on running in the vault left while its caller is told
+        // it failed: stop it here.
+        await bg.cli.stop(targetOf(c), res.id)
+        return { ok: false, message: 'The vault closed as the session started.' }
+      }
       await refresh()
       return { ok: true, sessionId: res.id }
     },
@@ -454,6 +508,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     onTurnEnd(listener) {
       turnEnds.add(listener)
       return () => turnEnds.delete(listener)
+    },
+    onSessions(listener) {
+      sessionListeners.add(listener)
+      return () => void sessionListeners.delete(listener)
     },
 
     async send({ text, target, cols, rows: r }) {
@@ -484,7 +542,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     async stop(id) {
       const c = await ensureCurrent()
       if (c === null) return noVault
-      const res = await provider.cli.stop(targetOf(c), id)
+      const res = await bg.cli.stop(targetOf(c), id)
       await refresh()
       return res
     },
@@ -492,7 +550,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     async respawn(id) {
       const c = await ensureCurrent()
       if (c === null) return noVault
-      const res = await provider.cli.respawn(targetOf(c), id)
+      const res = await bg.cli.respawn(targetOf(c), id)
       await refresh()
       return res
     },
@@ -504,9 +562,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       if (row?.sessionId === undefined) {
         return { ok: false, message: 'Claude Code has not said which conversation this is yet.' }
       }
-      const label = provider.summarise(row, coordinator.working).name
+      const label = bg.summarise(row, coordinator.working).name
       const name = label === 'New session' ? undefined : `${label} (copy)`
-      const res = await provider.cli.forkBg(targetOf(c), row.sessionId, name)
+      const res = await bg.cli.forkBg(targetOf(c), row.sessionId, name)
       if (!res.ok) return res
       await refresh()
       const opened = await openOn(c, { attach: res.id, ...geometry })
@@ -526,15 +584,45 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       void refresh()
     },
 
-    noteStatus(remote, jobId, status) {
+    noteStatus(remote, jobId, report) {
       // Only the vault Holi is showing has rows to put a number on.
       if (current?.remote !== remote) return
-      const percent = provider.readContextPercent(status)
+      const percent = statusReader?.contextPercent(report) ?? null
       if (percent === null) contextPercent.delete(jobId)
       else contextPercent.set(jobId, percent)
-      const model = provider.readModelName(status)
+      const model = statusReader?.model(report) ?? null
       if (model !== null) modelName.set(jobId, model)
       push()
+    },
+
+    noteChannel(remote, jobId, channel) {
+      if (current?.remote !== remote) return
+      channels.set(jobId, channel)
+    },
+
+    async message(id, text) {
+      const c = await ensureCurrent()
+      if (c === null) throw new CapabilityError('UNAVAILABLE', noVault.message)
+      if (!live().some((row) => row.id === id)) {
+        throw new CapabilityError('NOT_FOUND', `no running session ${id}`)
+      }
+      const channel = channels.get(id)
+      if (channel === undefined) {
+        throw new CapabilityError(
+          'UNAVAILABLE',
+          `session ${id} has not said where it takes messages`,
+          "it says so as it starts and at each turn through the vault's turn-signal hook; " +
+            'run `holi skills update` if the vault predates it',
+        )
+      }
+      try {
+        await bg.message(channel, text)
+      } catch (error) {
+        // Not tried again until the session reports it anew, at its next turn
+        // or its next process: a gone socket stays gone.
+        if (channels.get(id) === channel) channels.delete(id)
+        throw error
+      }
     },
 
     setFocus(focus) {
@@ -545,11 +633,6 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         focusWriter = { root: vault.root, snapshot: new ContextSnapshot({ workRoot: vault.root }) }
       }
       focusWriter.snapshot.setFocus(focus)
-    },
-
-    async target() {
-      const c = await ensureCurrent()
-      return c === null ? null : targetOf(c)
     },
 
     bracket(id, edge) {
@@ -584,8 +667,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       // Stop, then remove the ones that never had a turn (`unprompted`).
       const stops = Promise.all(
         live().map(async (row) => {
-          const stopped = await provider.cli.stop(targetOf(c), row.id)
-          if (stopped.ok && unprompted.has(row.id)) await provider.cli.rm(targetOf(c), row.id)
+          const stopped = await bg.cli.stop(targetOf(c), row.id)
+          if (stopped.ok && unprompted.has(row.id)) await bg.cli.rm(targetOf(c), row.id)
         }),
       )
       await Promise.race([
@@ -599,6 +682,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     unprompted.clear()
     contextPercent.clear()
     modelName.clear()
+    channels.clear()
+    listedLive = new Set()
     if (idleRecheck !== null) {
       clearTimeout(idleRecheck)
       idleRecheck = null
@@ -609,6 +694,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     rows = []
     await release(c)
     push(c.remote)
+    pushPast(c.remote)
   }
   return api
 }

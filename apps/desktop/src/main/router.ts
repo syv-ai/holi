@@ -6,27 +6,30 @@
  * with no server, a check running on the machine of the person it restricts is
  * theatre. GitHub decides what leaves, at push time (docs/features/auth.md).
  */
-import { readFile, rm, stat } from 'node:fs/promises'
+import { readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
+import { exactPath, resolveRelative } from '@holi/shared/path-safety-node'
 import {
-  completeTask,
-  isAgentSurfacePath,
-  parseTaskFile,
-  parseTaskPatch,
+  commentThreads,
+  isCommentableNote,
   sameLogin,
-  serializeTaskFile,
   vaultRelPath,
   withIcon,
   ICONS_FILE,
-  type Task,
-  type TaskPatch,
   type VaultEntry,
   type VaultRelPath,
   parseThemePatch,
   RECENTS_CAP,
+  type LineRange,
   type RecentEntry,
   VAULT_MARKER_FILE,
+  isRemote,
+  type CommentAnchor,
+  type CommentThread,
+  MEMORY_DIR,
+  MEMORY_INDEX,
+  isHiddenPath,
 } from '@holi/shared'
 import type { SeedResult } from './vault/seed/types'
 import { searchBodies, type SearchHit } from './vault/search'
@@ -34,7 +37,7 @@ import { CapabilityError, trpcCodeOf } from './capabilities/error'
 import { createCapabilityHost, type CapabilityHost } from './capabilities/dispatch'
 import { createCapabilityRegistry } from './capabilities/registry'
 import { noCoreServices, type UiReport } from './capabilities/services'
-import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
+import { buildLinkGraph, scanBackrefs, scanBackrefsMany, scanLinks } from './vault/backrefs'
 import { fileHistory, type FileHistory } from './vault/file-facts'
 import { fileCards, type FileCard } from './vault/file-cards'
 import { copyNotes } from './vault/copy'
@@ -42,25 +45,60 @@ import { importFiles } from './vault/import-files'
 import { exportFiles } from './vault/export-files'
 import { moveNotes } from './vault/move'
 import { getOrCreateDaily, sweepDaily } from './vault/daily'
-import { openRepo, remoteUrl, type Commit } from './git'
-import { GitHubApiError, type Repo } from './github/api'
+import {
+  BranchRefusedError,
+  openRepo,
+  remoteUrl,
+  validBranchName,
+  type BranchList,
+  type Commit,
+} from './git'
+import { GitHubApiError, type Contributor, type Repo } from './github/api'
 import type { DeviceFlow } from './github/device-flow'
 import { createMembersCache, type MembersCache } from './github/members-cache'
 import type { GitHubSession } from './github/session'
-import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
+import type { ActiveVault, SyncInfo, SyncState, VaultHost } from './vault/active-vault'
+import type { ActivityEntry, ActivityLog } from './activity/log'
+import type { AppLog, AppLogEntry } from './logs/app-log'
+import type { TerminalInfo, TerminalOpened, Terminals } from './terminal/terminals'
 import { ensureClone } from './vault/clone'
-import { pruneEmptiedFolder, removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
+import {
+  absPathFor,
+  carryFolder,
+  pruneEmptiedFolder,
+  removeDocFile,
+  withFileLock,
+  writeAtomic,
+} from './vault/vault-files'
+import { vaultReadme } from './vault/readme'
 import { renameNote } from './vault/rename'
+import {
+  addReply,
+  addThread,
+  commentBody,
+  readNoteComments,
+  setResolved,
+  UnreadableComments,
+} from './vault/note-comments'
 import { scanVault, type ScanClaim, type VaultSnapshot } from './vault/vault-store'
 import { holiTheme, readVaultTheme, resetVaultTheme, writeVaultTheme } from './vault/theme'
 import { readVaultSettings, writeVaultSettings } from './vault/settings'
-import { knownTransforms, parsePluginSettingsPatch, parseSettingsPatch } from '@holi/shared'
+import {
+  knownTransforms,
+  localDate,
+  parsePluginSettingsPatch,
+  parseSettingsPatch,
+} from '@holi/shared'
 import { installedInfos } from './plugin-host/installed'
 import type { PreCommitStatus, ResolvedTheme, ResolvedVaultSettings } from '@holi/shared'
 import type { VaultPreCommit } from './vault/hooks/pre-commit'
-import { isRemote, repoName, type VaultRegistry } from './vault/registry'
+import { repoName, type VaultRegistry } from './vault/registry'
 import type { UpdateStatus } from './updates/state'
 import type { Updater } from './updates/updater'
+import { isReleaseVersion, type ReleaseNotesAnswer } from './updates/release-notes'
+
+/** The longest answer to "What is this vault for?", as the onboarding field caps it. */
+const PURPOSE_MAX = 300
 
 const t = initTRPC.create()
 
@@ -104,13 +142,21 @@ export interface RouterDeps {
    * Start the plugins the vault at `root` enables (`plugin-host/host.ts`).
    * Run after the seed on add and open, and after a write to its plugins.
    * `opened` activates them in the vault once it is open. `scanClaimsFor`
-   * is what the scanner claims in the vault at `root`.
+   * is what the scanner claims in the vault at `root`. `syncBackground`
+   * looks again at what runs across vaults, after a vault leaves the registry.
    */
   plugins: {
     reconcile(why: 'open' | 'settings' | 'snapshot'): Promise<void>
+    syncBackground(): Promise<void>
     failures(remote: string): Record<string, string>
     scanClaimsFor(root: string): Promise<readonly ScanClaim[]>
   }
+  /**
+   * The vault `remote` finished opening: seeded, opened and its plugins
+   * started. What has to follow the whole open starts here, such as the skills
+   * update on open (`vault/seed/update-on-open.ts`). Not awaited.
+   */
+  opened?: (remote: string) => void
   /** The managed root clones live under — `~/Holi` in the app, a tmpdir in
    *  tests. Passed in rather than read from `vaultRoot()` here so the router
    *  has no ambient dependency on the environment. */
@@ -142,6 +188,12 @@ export interface RouterDeps {
    * destructive account action should be undoable.
    */
   trashItem: (path: string) => Promise<void>
+  /**
+   * Show a file in the system's file manager (Electron's
+   * `shell.showItemInFolder`), injected for the same reason as `openExternal`.
+   * Handed only a path `files.reveal` resolved inside the vault.
+   */
+  showItemInFolder: (path: string) => void
   /** The vault's own `.pre-commit-config.yaml`: its status here, and this
    *  person's allowance (`vault/hooks/pre-commit.ts`). Absent in tests that do
    *  not reach it. */
@@ -173,18 +225,21 @@ export interface RouterDeps {
   /** Updating Holi itself (`updates/updater.ts`). Optional: absent, as in
    *  tests, the app reads as a build that cannot update. */
   updates?: Omit<Updater, 'dispose'>
+  /** A release's notes from its GitHub release (`updates/release-notes.ts`).
+   *  Optional: absent, as in tests, no release has any. */
+  releaseNotes?: (version: string) => Promise<ReleaseNotesAnswer>
   /** Whether Holi opens at login, this machine's login item. Optional: absent,
    *  as in tests, it reads as off and cannot be set. */
   loginItem?: { get(): boolean; set(open: boolean): void }
-}
-
-/** `YYYY-MM-DD` in the machine's own timezone. `toISOString().slice(0, 10)`
- * would be the UTC date, which is a different day for much of the world for
- * much of the day. */
-export function localToday(): string {
-  const d = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  /** The activity log the bottom panel's Output shows (`activity/log.ts`).
+   *  Optional: absent, as in tests, it reads as empty. */
+  activity?: Pick<ActivityLog, 'entries' | 'clear'>
+  /** Everything Holi prints, for the bottom panel's Logs (`logs/app-log.ts`).
+   *  Optional: absent, as in tests, it reads as empty. */
+  logs?: Pick<AppLog, 'entries' | 'clear'>
+  /** The bottom panel's shells (`terminal/terminals.ts`). Optional: absent,
+   *  a terminal cannot be opened. */
+  terminals?: Terminals
 }
 
 /** Whether a clone carries the `.holi/vault` marker — i.e. it is a Holi vault
@@ -241,7 +296,10 @@ function fields<T extends Record<string, FieldKind>>(spec: T) {
 /** Batch inputs the `fields` helper cannot express. Each throws on a
  *  bad shape; tRPC turns that into a BAD_REQUEST. The RETURN type is the client's
  *  input contract (tRPC infers it), so the keys here are what callers pass. */
-function pairsOf(raw: unknown, key: 'moves' | 'copies'): { from: string; to: string }[] {
+function pairsOf(
+  raw: unknown,
+  key: 'moves' | 'copies' | 'folders',
+): { from: string; to: string }[] {
   if (raw === null || typeof raw !== 'object') throw new Error('input must be an object')
   const arr = (raw as Record<string, unknown>)[key]
   if (!Array.isArray(arr)) throw new Error(`${key} must be an array`)
@@ -255,12 +313,45 @@ function pairsOf(raw: unknown, key: 'moves' | 'copies'): { from: string; to: str
   })
 }
 
-function movesInput(raw: unknown): { remote: string; moves: { from: string; to: string }[] } {
-  return { ...fields({ remote: 'string' })(raw), moves: pairsOf(raw, 'moves') }
+/** A comment's anchor as the panel sends it: the passage and its context. */
+function anchorInput(raw: unknown): CommentAnchor {
+  if (raw === null || typeof raw !== 'object') throw new Error('anchor must be an object')
+  const a = raw as Record<string, unknown>
+  const { quote, prefix, suffix, line } = a
+  if (typeof quote !== 'string' || quote === '') throw new Error('anchor.quote is required')
+  if (typeof prefix !== 'string' || typeof suffix !== 'string') {
+    throw new Error('anchor.prefix and anchor.suffix must be strings')
+  }
+  if (typeof line !== 'number' || !Number.isInteger(line) || line < 1) {
+    throw new Error('anchor.line must be a positive integer')
+  }
+  return { quote, prefix, suffix, line }
+}
+
+function movesInput(raw: unknown): {
+  remote: string
+  moves: { from: string; to: string }[]
+  folders: { from: string; to: string }[]
+} {
+  const folders = (raw as Record<string, unknown>).folders
+  return {
+    ...fields({ remote: 'string' })(raw),
+    moves: pairsOf(raw, 'moves'),
+    folders: folders === undefined ? [] : pairsOf(raw, 'folders'),
+  }
 }
 
 function copiesInput(raw: unknown): { remote: string; copies: { from: string; to: string }[] } {
   return { ...fields({ remote: 'string' })(raw), copies: pairsOf(raw, 'copies') }
+}
+
+/** A selection's lines, 1-based and inclusive, or null for anything else. */
+function lineRange(raw: unknown): LineRange | null {
+  if (raw === null || typeof raw !== 'object') return null
+  const { startLine, endLine } = raw as Record<string, unknown>
+  const line = (n: unknown): n is number => Number.isInteger(n) && (n as number) >= 1
+  if (!line(startLine) || !line(endLine) || endLine < startLine) return null
+  return { startLine, endLine }
 }
 
 /** A list of strings from an untrusted input. Shared by the drop-import, whose
@@ -301,7 +392,7 @@ const ACTIVITY_FILES = 5
 
 export function createRouter(deps: RouterDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
-  const today = deps.today ?? localToday
+  const today = deps.today ?? (() => localDate(new Date()))
   const cloneUrlFor = deps.cloneUrlFor ?? remoteUrl
   const capabilities =
     deps.capabilities ??
@@ -368,7 +459,7 @@ export function createRouter(deps: RouterDeps) {
   async function addVault(
     remote: string,
     url: string | undefined,
-    opts: { requireVault?: boolean } = {},
+    opts: { requireVault?: boolean; readme?: string } = {},
   ): Promise<VaultSnapshot> {
     const { repo, outcome } = await ensureClone({
       root: deps.vaultRoot,
@@ -390,6 +481,16 @@ export function createRouter(deps: RouterDeps) {
       )
     }
     await deps.seed(repo.root)
+    // A new vault's README, beside the seed so it lands in the first commit.
+    // Not a once-seed file: it is written from this vault's own answer. Never
+    // over one that is already there (`wx`).
+    if (opts.readme !== undefined) {
+      await writeFile(join(repo.root, 'README.md'), opts.readme, { flag: 'wx' }).catch(
+        (err: NodeJS.ErrnoException) => {
+          if (err.code !== 'EEXIST') throw err
+        },
+      )
+    }
     await deps.registry.add({
       remote,
       path: repo.root,
@@ -398,6 +499,7 @@ export function createRouter(deps: RouterDeps) {
     })
     const active = await deps.host.open(remote)
     await deps.plugins.reconcile('open')
+    deps.opened?.(remote)
     return active.snapshot()
   }
 
@@ -429,12 +531,14 @@ export function createRouter(deps: RouterDeps) {
     }
   }
 
-  /** Field edits are validated by the module that owns the format, not by a
-   * second vocabulary here that could drift from it. */
-  function patchOrThrow(raw: unknown): TaskPatch {
+  /** `path` on this machine: canonicalised, proven inside the vault, in the
+   * platform's own separators. Only main builds one; the renderer asks. */
+  async function onDisk(remote: string, path: string): Promise<string> {
+    const root = await rootFor(remote)
     try {
-      return parseTaskPatch(raw)
+      return await resolveRelative(root, safe(path))
     } catch (err) {
+      if (err instanceof TRPCError) throw err
       throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message })
     }
   }
@@ -546,6 +650,7 @@ export function createRouter(deps: RouterDeps) {
     if (deps.host.active()?.remote === remote) await deps.host.close()
     await deps.trashItem(root)
     await deps.registry.remove(remote)
+    await deps.plugins.syncBackground()
   }
 
   /** The remote is interpolated into a URL, so it is validated before it is. */
@@ -626,6 +731,35 @@ export function createRouter(deps: RouterDeps) {
       }),
     ),
 
+    /**
+     * Who has written a file, for the document header. GitHub's answer where
+     * it has one (accounts and avatars); offline, signed out, or for commits
+     * not pushed yet, the local log's author names.
+     */
+    fileContributors: t.procedure
+      .input(fields({ remote: 'string', path: 'string' }))
+      .query(async ({ input }): Promise<Contributor[]> => {
+        const remote = safeRemote(input.remote)
+        const path = safe(input.path)
+        try {
+          const found = await gh(() => deps.session.api.fileContributors(remote, path))
+          if (found.length > 0) return found
+        } catch {
+          // Fall through to the local history.
+        }
+        const commits = await activeOrThrow()
+          .repo.log({ path })
+          .catch(() => [])
+        const names = [...new Set(commits.map((commit) => commit.author))]
+        return names.map((name) => ({ login: null, name, avatarUrl: null }))
+      }),
+    /** What the vault's repo weighs on GitHub, for its usage reading. */
+    repoSize: t.procedure.input(fields({ remote: 'string' })).query(({ input }) =>
+      gh(async () => ({
+        sizeKb: (await deps.session.api.repo(safeRemote(input.remote))).sizeKb,
+      })),
+    ),
+
     openCollaboratorSettings: t.procedure
       .input(fields({ remote: 'string' }))
       .mutation(async ({ input }) => {
@@ -667,6 +801,7 @@ export function createRouter(deps: RouterDeps) {
         await deps.registry.touch(input.remote, now())
         const active = await deps.host.open(input.remote)
         await deps.plugins.reconcile('open')
+        deps.opened?.(input.remote)
         return active.snapshot()
       }),
 
@@ -679,13 +814,23 @@ export function createRouter(deps: RouterDeps) {
       ),
 
     create: t.procedure
-      .input(fields({ name: 'string', owner: 'string?', url: 'string?' }))
-      // A private repo, seeded, committed, pushed, opened.
+      .input(fields({ name: 'string', owner: 'string?', url: 'string?', purpose: 'string?' }))
+      // A private repo, seeded, committed, pushed, opened. `purpose` is the
+      // answer to "What is this vault for?": the README's paragraph and the
+      // repo's description on GitHub.
       .mutation(async ({ input }): Promise<VaultSnapshot> => {
+        // The renderer caps the answer; this caps a raw call the same way.
+        const purpose = [...(input.purpose?.trim() ?? '')].slice(0, PURPOSE_MAX).join('')
         const repo = await gh(() =>
-          deps.session.api.createRepo({ name: input.name, owner: repoOwner(input.owner) }),
+          deps.session.api.createRepo({
+            name: input.name,
+            owner: repoOwner(input.owner),
+            ...(purpose === '' ? {} : { description: purpose }),
+          }),
         )
-        const snapshot = await addVault(repo.remote, input.url)
+        const snapshot = await addVault(repo.remote, input.url, {
+          readme: vaultReadme(repoName(repo.remote), purpose),
+        })
         // The seed is the repo's first commit, and it has to leave the machine:
         // a "vault" that exists only locally is not one anybody can be invited
         // to. A brand-new repo should not wait out the coalesce timer to become
@@ -711,7 +856,10 @@ export function createRouter(deps: RouterDeps) {
       .input(fields({ remote: 'string' }))
       // Deregisters the vault; the clone stays on disk. Deleting someone's files
       // — which may hold unpushed commits — is never a side effect here.
-      .mutation(({ input }) => deps.registry.remove(input.remote)),
+      .mutation(async ({ input }) => {
+        await deps.registry.remove(input.remote)
+        await deps.plugins.syncBackground()
+      }),
 
     // What "also delete local clones" would throw away. One
     // entry per registered clone with commits that never reached the remote, so
@@ -752,6 +900,7 @@ export function createRouter(deps: RouterDeps) {
           console.error(`[vaults] could not trash clone ${e.remote}:`, err)
         }
       }
+      await deps.plugins.syncBackground()
       return { ok: true as const }
     }),
 
@@ -884,111 +1033,6 @@ export function createRouter(deps: RouterDeps) {
     return (await readFile(absPathFor(root, rel), 'utf8').catch(() => null)) !== null
   }
 
-  /** The task at `rel`, or a 404. An unparseable task file throws too: a field
-   * edit has nothing to merge into, and the honest place to fix bad frontmatter
-   * is the editor, on the text itself. */
-  async function readTask(root: string, rel: VaultRelPath): Promise<Task> {
-    const text = await readFile(absPathFor(root, rel), 'utf8').catch(() => null)
-    if (text === null) throw new TRPCError({ code: 'NOT_FOUND', message: rel })
-    try {
-      return parseTaskFile(text, rel)
-    } catch (err) {
-      throw new TRPCError({ code: 'BAD_REQUEST', message: `${rel}: ${(err as Error).message}` })
-    }
-  }
-
-  const tasks = t.router({
-    update: vaultMutation
-      .input((raw: unknown) => ({
-        ...fields({ remote: 'string', path: 'string' })(raw),
-        patch: patchOrThrow((raw as { patch?: unknown }).patch ?? {}),
-      }))
-      .mutation(async ({ input }): Promise<Task> => {
-        const root = await rootFor(input.remote)
-        const rel = safe(input.path)
-        // Read-modify-write: the file is the task, so an edit is a parse, a
-        // merge and a full rewrite.
-        const next = patched(await readTask(root, rel), input.patch)
-        await writeAtomic(root, rel, serializeTaskFile(next))
-        return next
-      }),
-
-    /**
-     * The horizontal drag axis: moving a card to another lane moves the
-     * `task.<name>.md` file into that folder and rewrites inbound `[[wiki-links]]`.
-     * A task's path is its identity, so a lane change IS a rename, reusing
-     * `renameNote`'s link-rewriting pass, never a second.
-     *
-     * A `status` rides along for a DIAGONAL drop (lane + column in one gesture):
-     * it is written in place first, so the single `renameNote` carries the final
-     * content to the destination and a card is never half-dropped
-     * (docs/features/tasks.md). `done` is completion (`patched`), so a
-     * recurring task advances instead of persisting done.
-     *
-     * The basename rides along unchanged (identity slug preserved, not re-slugged
-     * from `title`), and a destination that already exists is refused rather than
-     * silently suffixed, which would change an existing task's identity.
-     */
-    move: vaultMutation
-      .input((raw: unknown) => {
-        const base = fields({
-          remote: 'string',
-          path: 'string',
-          folder: 'string',
-          status: 'string?',
-        })(raw)
-        // Validated by `patchOrThrow` with the status.
-        const order = (raw as { order?: number }).order
-        return order === undefined ? base : { ...base, order }
-      })
-      .mutation(async ({ input }): Promise<Task> => {
-        const root = await rootFor(input.remote)
-        const from = safe(input.path)
-        const basename = from.slice(from.lastIndexOf('/') + 1)
-        const to = safe(input.folder ? `${input.folder}/${basename}` : basename)
-        // The card's place in its new cell rides along like the status: a drop
-        // lands where it was aimed, and is still one write.
-        const fieldPatch = {
-          ...(input.status !== undefined ? { status: input.status } : {}),
-          ...('order' in input ? { order: input.order } : {}),
-        }
-        const hasPatch = Object.keys(fieldPatch).length > 0
-
-        if (to === from && !hasPatch) return readTask(root, to)
-        if (to !== from && (await exists(root, to))) {
-          throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${to}` })
-        }
-
-        if (hasPatch) {
-          const task = await readTask(root, from)
-          const next = patched(task, patchOrThrow(fieldPatch))
-          await writeAtomic(root, from, serializeTaskFile(next))
-        }
-
-        if (to !== from) await renameNote(root, from, to)
-        return readTask(root, to)
-      }),
-
-    delete: vaultMutation
-      .input(fields({ remote: 'string', path: 'string' }))
-      .mutation(async ({ input }) => {
-        await removeDocFile(await rootFor(input.remote), safe(input.path))
-        return { ok: true as const }
-      }),
-  })
-
-  /**
-   * A patch applied to a task. **Done is completion**, wherever it comes from
-   * (a field edit, a drop into Done, the card's checkbox): on a recurring task
-   * it is the next occurrence, not the end of the series (`completeTask`).
-   * The merge SPREADS rather than testing for undefined: a key
-   * present-and-undefined is how `parseTaskPatch` spells "clear this field".
-   */
-  function patched(task: Task, patch: TaskPatch): Task {
-    const next = { ...task, ...patch }
-    return patch.status === 'done' ? { ...next, ...completeTask(next, today()) } : next
-  }
-
   /**
    * Bytes for a file the renderer renders itself (the PDF viewer). The
    * `holi-vault://` protocol serves the same bytes to `<img>`, but a renderer
@@ -999,6 +1043,20 @@ export function createRouter(deps: RouterDeps) {
    * structured clone carries verbatim.
    */
   const files = t.router({
+    /** Where a vault file lives on this machine, for the row menu's Copy
+     *  absolute path. */
+    absolutePath: t.procedure
+      .input(fields({ remote: 'string', path: 'string' }))
+      .query(({ input }): Promise<string> => onDisk(input.remote, input.path)),
+
+    /** Show a vault file in Finder, Explorer or the file manager. */
+    reveal: t.procedure
+      .input(fields({ remote: 'string', path: 'string' }))
+      .mutation(async ({ input }) => {
+        deps.showItemInFolder(await onDisk(input.remote, input.path))
+        return { ok: true as const }
+      }),
+
     read: t.procedure
       .input(fields({ remote: 'string', path: 'string' }))
       .query(async ({ input }): Promise<Uint8Array> => {
@@ -1105,7 +1163,13 @@ export function createRouter(deps: RouterDeps) {
     write: vaultMutation
       .input(fields({ remote: 'string', path: 'string', text: 'string' }))
       .mutation(async ({ input }) => {
-        await writeAtomic(await rootFor(input.remote), safe(input.path), input.text)
+        const root = await rootFor(input.remote)
+        const rel = safe(input.path)
+        // Under the file's lock, keyed as an app's `docs.write` keys it (the
+        // canonical path), so an app's check of the text it read and its
+        // write are never split by this save.
+        const abs = (await exactPath(root, rel)) ?? absPathFor(root, rel)
+        await withFileLock(abs, () => writeAtomic(root, rel, input.text))
         return { ok: true as const }
       }),
 
@@ -1140,13 +1204,35 @@ export function createRouter(deps: RouterDeps) {
         return scanBackrefs(await rootFor(input.remote), safe(input.path))
       }),
 
+    // Both directions of one note's links, for the links drawer: what it links
+    // to (resolved or not) and each line elsewhere that links to it. A grep per
+    // call, like `backrefs`: there is no link index.
+    links: t.procedure
+      .input(fields({ remote: 'string', path: 'string' }))
+      .query(async ({ input }) => scanLinks(await rootFor(input.remote), safe(input.path))),
+
+    // The vault's notes and the links between them, for the graph view. Hidden
+    // files only when the tree shows them; memory always, and never its
+    // generated index, which links every memory and would only draw a hub.
+    graph: t.procedure
+      .input(fields({ remote: 'string', hidden: 'boolean' }))
+      .query(async ({ input }) =>
+        buildLinkGraph(
+          await rootFor(input.remote),
+          (p) =>
+            p !== MEMORY_INDEX &&
+            (input.hidden || !isHiddenPath(p) || p.startsWith(`${MEMORY_DIR}/`)),
+        ),
+      ),
+
     // Move the file AND rewrite every inbound [[link]] in one pass. The
     // move-half alone silently breaks links, so the two are one procedure. The
     // rewrite runs before the move, so a mid-run failure leaves the source in
     // place and visible in `git status` (there is no transaction).
     // Commits are the renderer's job (it flushes and commits around this call).
+    // `localLinksOnly` leaves committed notes' links alone (`renameNote`).
     rename: vaultMutation
-      .input(fields({ remote: 'string', from: 'string', to: 'string' }))
+      .input(fields({ remote: 'string', from: 'string', to: 'string', localLinksOnly: 'boolean?' }))
       .mutation(async ({ input }): Promise<{ rewritten: { path: string; count: number }[] }> => {
         const root = await rootFor(input.remote)
         const from = safe(input.from)
@@ -1154,14 +1240,16 @@ export function createRouter(deps: RouterDeps) {
         if (await exists(root, to)) {
           throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${to}` })
         }
-        return renameNote(root, from, to)
+        return renameNote(root, from, to, { localLinksOnly: input.localLinksOnly === true })
       }),
 
     // Batch move: one commit-pair from the renderer, one single-pass link
     // rewrite here. The renderer expands a folder to its file list before
     // calling; each `to` outside the moved set must be free (a swap-shaped chain,
     // where a `to` IS another move's `from`, is allowed, which is why it is one
-    // procedure).
+    // procedure). `folders` are the folders the move was aimed at: once their
+    // documents have moved, the rest of each follows it (`carryFolder`), or
+    // the source would stay behind on its `.gitkeep` and ignored files.
     move: vaultMutation
       .input(movesInput)
       .mutation(async ({ input }): Promise<{ rewritten: { path: string; count: number }[] }> => {
@@ -1174,7 +1262,9 @@ export function createRouter(deps: RouterDeps) {
             throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${m.to}` })
           }
         }
-        return moveNotes(root, input.moves)
+        const { rewritten } = await moveNotes(root, input.moves)
+        for (const f of input.folders) await carryFolder(root, safe(f.from), safe(f.to))
+        return { rewritten }
       }),
 
     // Batch copy: verbatim, no link rewrite. Refuses to clobber
@@ -1275,6 +1365,80 @@ export function createRouter(deps: RouterDeps) {
     /** The push channel carries changes; this is the initial read. */
     state: t.procedure.query((): SyncState => activeOrThrow().syncState()),
 
+    /**
+     * What the status bar shows beside the state: the branch, whether the
+     * tree has uncommitted changes, ahead and behind, and when the remote
+     * last answered. Read live (one `git status`), on the bar's own schedule.
+     */
+    info: t.procedure.query(
+      async (): Promise<
+        | (SyncInfo & {
+            remote: string
+            branch: string
+            dirty: boolean
+            ahead: number
+            behind: number
+          })
+        | null
+      > => {
+        const active = deps.host.active()
+        if (active === null) return null
+        const status = await active.repo.status().catch(() => null)
+        if (status === null) return null
+        return {
+          remote: active.remote,
+          branch: status.branch,
+          dirty: status.dirty,
+          ahead: status.ahead,
+          behind: status.behind,
+          ...active.syncInfo(),
+        }
+      },
+    ),
+
+    /** The status bar's sync item: commit, pull and push now. */
+    now: t.procedure.mutation(async () => {
+      await activeOrThrow().syncNow()
+      return { ok: true as const }
+    }),
+
+    /** The status bar's branch picker: local and remote branches, as the
+     *  clone knows them. `fetchBranches` brings the remote side up to date. */
+    branches: t.procedure.query((): Promise<BranchList> => activeOrThrow().branches()),
+
+    /** Fetch for the picker as it opens; debounced in the vault. */
+    fetchBranches: t.procedure.mutation(async () => {
+      await activeOrThrow().fetchBranches()
+      return { ok: true as const }
+    }),
+
+    /** Is this a name `git check-ref-format --branch` accepts as written?
+     *  Asked as the person types a new branch's name. */
+    branchNameValid: t.procedure
+      .input(fields({ name: 'string' }))
+      .query(async ({ input }): Promise<boolean> =>
+        validBranchName(activeOrThrow().root, input.name),
+      ),
+
+    /**
+     * Switch the vault to a branch, or create one at HEAD (`create`). A
+     * refusal (a conflict, a pause, an uncommittable file, a bad name) comes
+     * back as PRECONDITION_FAILED carrying the words to show.
+     */
+    switchBranch: t.procedure
+      .input(fields({ name: 'string', create: 'boolean?' }))
+      .mutation(async ({ input }) => {
+        try {
+          await activeOrThrow().switchBranch(input.name, { create: input.create === true })
+        } catch (err) {
+          if (err instanceof BranchRefusedError) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: err.message })
+          }
+          throw err
+        }
+        return { ok: true as const }
+      }),
+
     /** ⌘S: a real commit point rather than a placebo. */
     commitNow: t.procedure.mutation(() => activeOrThrow().commitNow()),
 
@@ -1309,6 +1473,76 @@ export function createRouter(deps: RouterDeps) {
   // store, git's object store is the timeline. `--follow` (in `repo.log`) tracks a
   // file through renames; `HISTORY_LIMIT` caps a long-lived file's timeline.
   const HISTORY_LIMIT = 200
+  /** A note's comment threads, for its comments panel. Written as the
+   *  signed-in person; the agent's door is `holi comments`. */
+  async function commentNote(remote: string, path: string): Promise<{ root: string; rel: string }> {
+    const rel = safe(path)
+    const root = await rootFor(remote)
+    if (!isCommentableNote(rel, await deps.plugins.scanClaimsFor(root))) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: `${rel} takes no comments` })
+    }
+    return { root, rel }
+  }
+
+  function commentText(raw: string): string {
+    const body = commentBody(raw)
+    if (typeof body !== 'string')
+      throw new TRPCError({ code: 'BAD_REQUEST', message: body.refused })
+    return body
+  }
+
+  const noThread = (thread: string) =>
+    new TRPCError({ code: 'NOT_FOUND', message: `no thread ${thread}` })
+
+  const comments = t.router({
+    /** The note's threads as stored; the panel places them in its buffer. */
+    list: t.procedure
+      .input(fields({ remote: 'string', path: 'string' }))
+      .query(async ({ input }): Promise<CommentThread[]> => {
+        const { root, rel } = await commentNote(input.remote, input.path)
+        try {
+          return commentThreads(await readNoteComments(root, rel))
+        } catch (err) {
+          if (!(err instanceof UnreadableComments)) throw err
+          throw new TRPCError({ code: 'UNPROCESSABLE_CONTENT', message: err.message })
+        }
+      }),
+
+    add: vaultMutation
+      .input((raw) => ({
+        ...fields({ remote: 'string', path: 'string', body: 'string' })(raw),
+        anchor: anchorInput((raw as Record<string, unknown>).anchor),
+      }))
+      .mutation(async ({ input }) => {
+        const { root, rel } = await commentNote(input.remote, input.path)
+        const author = { login: viewerLogin(), agent: false }
+        const thread = await addThread(root, rel, input.anchor, author, commentText(input.body))
+        return { thread }
+      }),
+
+    reply: vaultMutation
+      .input(fields({ remote: 'string', path: 'string', thread: 'string', body: 'string' }))
+      .mutation(async ({ input }) => {
+        const { root, rel } = await commentNote(input.remote, input.path)
+        const author = { login: viewerLogin(), agent: false }
+        if (!(await addReply(root, rel, input.thread, author, commentText(input.body)))) {
+          throw noThread(input.thread)
+        }
+        return { ok: true as const }
+      }),
+
+    /** Resolve, or reopen with `resolved: false`. */
+    setResolved: vaultMutation
+      .input(fields({ remote: 'string', path: 'string', thread: 'string', resolved: 'boolean' }))
+      .mutation(async ({ input }) => {
+        const { root, rel } = await commentNote(input.remote, input.path)
+        if (!(await setResolved(root, rel, input.thread, input.resolved, viewerLogin()))) {
+          throw noThread(input.thread)
+        }
+        return { ok: true as const }
+      }),
+  })
+
   const history = t.router({
     /** The open file's commits, newest-first, following renames. Empty for a
      *  file with no commits yet (new/untracked). */
@@ -1522,15 +1756,20 @@ export function createRouter(deps: RouterDeps) {
   /** What the renderer, and only it, knows about the person's attention. */
   const ui = t.router({
     /**
-     * The focused note, the open notes and the recents, for one vault: main
-     * writes the agent's per-turn focus file from it and answers
-     * `holi vault recents` / `holi.recents()` with it. One report, sent whenever any
-     * of it changes; main keeps only the last, in memory.
+     * The focused note and its selected lines, the open notes and the recents,
+     * for one vault: main writes the agent's per-turn focus file from it and
+     * answers `holi vault recents` / `holi.recents()` with it. One report, sent
+     * whenever any of it changes; main keeps only the last, in memory.
      */
     report: t.procedure
       .input((raw: unknown): UiReport & { remote: string } => {
         const { remote } = fields({ remote: 'string' })(raw)
-        const r = raw as { focusedPath?: unknown; openPaths?: unknown; recents?: unknown }
+        const r = raw as {
+          focusedPath?: unknown
+          selection?: unknown
+          openPaths?: unknown
+          recents?: unknown
+        }
         const strings = (v: unknown) =>
           Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
         const recents = (Array.isArray(r.recents) ? r.recents : [])
@@ -1543,9 +1782,11 @@ export function createRouter(deps: RouterDeps) {
           )
           .slice(0, RECENTS_CAP)
           .map(({ kind, key, id }) => (typeof id === 'string' ? { kind, key, id } : { kind, key }))
+        const focusedPath = typeof r.focusedPath === 'string' ? r.focusedPath : null
         return {
           remote,
-          focusedPath: typeof r.focusedPath === 'string' ? r.focusedPath : null,
+          focusedPath,
+          selection: focusedPath === null ? null : lineRange(r.selection),
           openPaths: strings(r.openPaths),
           recents,
         }
@@ -1630,10 +1871,7 @@ export function createRouter(deps: RouterDeps) {
     download: t.procedure.mutation(
       async (): Promise<UpdateStatus> => (await deps.updates?.download()) ?? unsupported(),
     ),
-    install: t.procedure.mutation(() => {
-      deps.updates?.install()
-      return { ok: true as const }
-    }),
+    install: t.procedure.mutation(async () => (await deps.updates?.install()) ?? false),
     setChannel: t.procedure
       .input((raw: unknown): { channel: 'stable' | 'dev' } => {
         const channel = (raw as { channel?: unknown } | null)?.channel
@@ -1650,6 +1888,97 @@ export function createRouter(deps: RouterDeps) {
         async ({ input }): Promise<UpdateStatus> =>
           (await deps.updates?.setEnabled(input.enabled)) ?? unsupported(),
       ),
+    /** The notes of the running release or the one found. */
+    notes: t.procedure
+      .input(fields({ version: 'string' }))
+      .query(async ({ input }): Promise<ReleaseNotesAnswer> => {
+        if (!isReleaseVersion(input.version)) throw new TRPCError({ code: 'BAD_REQUEST' })
+        return (await deps.releaseNotes?.(input.version)) ?? { kind: 'none' }
+      }),
+  })
+
+  /** The bottom panel's Output: what Holi did in the background. The push
+   *  channel (`activity:entry`) carries each new line; this is the first read. */
+  const activity = t.router({
+    entries: t.procedure.query((): ActivityEntry[] => deps.activity?.entries() ?? []),
+    /** Clear it in main too, so a reload does not bring the lines back. */
+    clear: t.procedure.mutation(() => {
+      deps.activity?.clear()
+      return { ok: true as const }
+    }),
+  })
+
+  /** The bottom panel's Logs: main's console and the window's, raw. The push
+   *  channel (`logs:entry`) carries each new line; this is the first read. */
+  const logs = t.router({
+    entries: t.procedure.query((): AppLogEntry[] => deps.logs?.entries() ?? []),
+    clear: t.procedure.mutation(() => {
+      deps.logs?.clear()
+      return { ok: true as const }
+    }),
+  })
+
+  /**
+   * The bottom panel's shells (docs/features/status-bar.md): a login shell in
+   * a PTY in the open vault's clone. Each call names the vault, and one about
+   * any vault but the open one is refused or dropped; output arrives on the
+   * `terminal:data` push.
+   */
+  const terminalInput = (raw: unknown) => fields({ remote: 'string', id: 'string' })(raw)
+  const sizeOf = (raw: unknown): { cols: number; rows: number } => {
+    const { cols, rows } = (raw ?? {}) as Record<string, unknown>
+    const ok = (n: unknown): n is number =>
+      typeof n === 'number' && Number.isInteger(n) && n > 0 && n < 10_000
+    if (!ok(cols) || !ok(rows)) throw new Error('cols and rows must be positive integers')
+    return { cols, rows }
+  }
+  const terminalsOrThrow = (): Terminals => {
+    if (deps.terminals === undefined) throw new TRPCError({ code: 'PRECONDITION_FAILED' })
+    return deps.terminals
+  }
+  const terminal = t.router({
+    list: t.procedure
+      .input(fields({ remote: 'string' }))
+      .query(({ input }): TerminalInfo[] => deps.terminals?.list(input.remote) ?? []),
+    create: t.procedure
+      .input((raw: unknown) => ({ ...fields({ remote: 'string' })(raw), ...sizeOf(raw) }))
+      .mutation(({ input }): TerminalOpened => {
+        const active = deps.host.active()
+        if (active === null || active.remote !== input.remote) {
+          return { ok: false, message: 'That vault is not open.' }
+        }
+        return terminalsOrThrow().create({
+          remote: active.remote,
+          root: active.root,
+          cols: input.cols,
+          rows: input.rows,
+        })
+      }),
+    /** What it printed so far, for an xterm built after the output. */
+    replay: t.procedure
+      .input(terminalInput)
+      .query(({ input }): string => deps.terminals?.replay(input.remote, input.id) ?? ''),
+    write: t.procedure
+      .input((raw: unknown) => {
+        const base = terminalInput(raw)
+        const data = (raw as Record<string, unknown>).data
+        if (typeof data !== 'string' || data.length > 1_000_000) throw new Error('bad data')
+        return { ...base, data }
+      })
+      .mutation(({ input }) => {
+        deps.terminals?.write(input.remote, input.id, input.data)
+        return { ok: true as const }
+      }),
+    resize: t.procedure
+      .input((raw: unknown) => ({ ...terminalInput(raw), ...sizeOf(raw) }))
+      .mutation(({ input }) => {
+        deps.terminals?.resize(input.remote, input.id, input.cols, input.rows)
+        return { ok: true as const }
+      }),
+    kill: t.procedure.input(terminalInput).mutation(async ({ input }) => {
+      await deps.terminals?.kill(input.remote, input.id)
+      return { ok: true as const }
+    }),
   })
 
   /** This machine's app: whether it opens at login, so the reminders and
@@ -1671,8 +2000,8 @@ export function createRouter(deps: RouterDeps) {
     github,
     vaults,
     notes,
+    comments,
     files,
-    tasks,
     sync,
     history,
     theme,
@@ -1681,6 +2010,9 @@ export function createRouter(deps: RouterDeps) {
     cap,
     updates,
     app,
+    activity,
+    logs,
+    terminal,
   })
 }
 

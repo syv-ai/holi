@@ -2,15 +2,7 @@
  * What a session's indicators say in words, kept pure so it can be tested
  * without an xterm.
  */
-import {
-  AppWindow,
-  CircleAlert,
-  Hand,
-  MessageCircleQuestionMark,
-  ShieldAlert,
-  Target,
-  type LucideIcon,
-} from 'lucide-react'
+import { fillColour } from '@holi/shared'
 
 /** How one session is doing, in the form every place that shows it uses. */
 export interface AgentIndicator {
@@ -66,28 +58,6 @@ export function agentIndicator(args: {
   }
 }
 
-/**
- * Claude Code's `waitingFor` values, as `claude agents --json` reports them.
- * Plan approval is a tool permission, so it reads `permission prompt` too.
- */
-const WAITING_FOR_ICONS = new Map<string, LucideIcon>([
-  ['permission prompt', Hand],
-  // The question tool, and other input dialogs.
-  ['input needed', MessageCircleQuestionMark],
-  ['dialog open', AppWindow],
-  ['goal proposal', Target],
-  ['sandbox request', ShieldAlert],
-])
-
-/**
- * The icon for what a session waits on. The value can be free text (a remote
- * worker reports the question itself), so anything unknown gets a generic
- * icon, never its words: the words are in the tooltip.
- */
-export function needsYouIcon(waitingFor: string | undefined): LucideIcon {
-  return (waitingFor !== undefined && WAITING_FOR_ICONS.get(waitingFor)) || CircleAlert
-}
-
 /** One session as the helpers below read it. */
 export interface FleetSession {
   state: 'needs-you' | 'working' | 'idle'
@@ -105,22 +75,8 @@ export function sessionsWorthAsking<T extends FleetSession>(sessions: T[]): T[] 
   return sessions.filter((s) => s.state === 'working' || s.state === 'needs-you')
 }
 
-/** Below this, a session's context reading is muted, like its name. */
-export const CONTEXT_WARM_AT = 60
-/** Where the ramp reaches full red. */
-const CONTEXT_FULL_AT = 99
-
-/**
- * The colour of a session's context reading, or null for the row's own muted
- * text.
- *
- * From 60% it ramps smoothly from `--context-warm` to `--context-full`,
- * mixed rather than stepped so a reading that climbs a point at a time never
- * jumps. Text colour only, on no background.
+/** The colour of a session's context reading, or null for the row's own muted
+ *  text: the shared percent-full ramp (`fillColour`).
+ * @public exported for its test
  */
-export function contextColour(percent: number): string | null {
-  if (percent < CONTEXT_WARM_AT) return null
-  const span = CONTEXT_FULL_AT - CONTEXT_WARM_AT
-  const t = Math.round((Math.min(percent - CONTEXT_WARM_AT, span) / span) * 100)
-  return `color-mix(in oklab, var(--context-full) ${t}%, var(--context-warm))`
-}
+export const contextColour = fillColour

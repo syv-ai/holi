@@ -18,7 +18,16 @@ import { markdownLanguage } from '@codemirror/lang-markdown'
 import { yaml } from '@codemirror/lang-yaml'
 import { StreamLanguage, type Language, type StreamParser } from '@codemirror/language'
 import { clojure } from '@codemirror/legacy-modes/mode/clojure'
-import { c, cpp, csharp, dart, java, kotlin, objectiveC, scala } from '@codemirror/legacy-modes/mode/clike'
+import {
+  c,
+  cpp,
+  csharp,
+  dart,
+  java,
+  kotlin,
+  objectiveC,
+  scala,
+} from '@codemirror/legacy-modes/mode/clike'
 import { cmake } from '@codemirror/legacy-modes/mode/cmake'
 import { diff } from '@codemirror/legacy-modes/mode/diff'
 import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile'
@@ -48,9 +57,15 @@ import { toml } from '@codemirror/legacy-modes/mode/toml'
  * The fence's language token: the first word of the info string, lowercased.
  * Handles ` ```js title="a.js" `, ` ```python {1,3} `, ` ```{r setup} ` and
  * ` ```.ts `.
+ * @public exported for its test
  */
 export function fenceLanguageId(info: string): string {
-  return (info.trim().split(/[\s,{}]+/).find((w) => w !== '') ?? '')
+  return (
+    info
+      .trim()
+      .split(/[\s,{}]+/)
+      .find((w) => w !== '') ?? ''
+  )
     .replace(/^\./, '')
     .toLowerCase()
 }

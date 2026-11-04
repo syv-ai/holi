@@ -9,7 +9,7 @@ import { atomWithStorage } from 'jotai/utils'
 import { activeRemoteAtom } from './vaults'
 
 /** Remote → folder path ('' for the root) → its children's ids, in order. */
-export const treeOrderByVaultAtom = atomWithStorage<Record<string, Record<string, string[]>>>(
+const treeOrderByVaultAtom = atomWithStorage<Record<string, Record<string, string[]>>>(
   'holi:treeOrder',
   {},
 )

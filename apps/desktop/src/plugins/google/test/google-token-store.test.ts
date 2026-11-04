@@ -8,6 +8,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createClientStore } from '../main/credentials'
 import { EncryptionUnavailableError, GoogleTokenStore } from '../main/token-store'
 
 const storage = {
@@ -113,5 +114,40 @@ describe('an unreadable file is a disconnect, not a crash', () => {
     })
 
     expect(await store.read()).toEqual({ 'sub-1': AUTH })
+  })
+})
+
+describe("the person's own client, kept the same way", () => {
+  const CLIENT = { id: 'own.apps.googleusercontent.com', secret: 'own-secret' }
+
+  it('round-trips without the secret greppable on disk, and null deletes it', async () => {
+    const clients = createClientStore(file, storage)
+    await clients.write(CLIENT)
+
+    expect(await readFile(file, 'utf8')).not.toContain('own-secret')
+    expect(await clients.read()).toEqual(CLIENT)
+
+    await clients.write(null)
+    expect(await clients.read()).toBeNull()
+  })
+
+  it('refuses to write when the platform cannot encrypt, leaving nothing behind', async () => {
+    const clients = createClientStore(file, { ...storage, isEncryptionAvailable: () => false })
+
+    await expect(clients.write(CLIENT)).rejects.toBeInstanceOf(EncryptionUnavailableError)
+    await expect(readFile(file, 'utf8')).rejects.toThrow()
+    // Going back to the default client needs no keychain.
+    await expect(clients.write(null)).resolves.toBeUndefined()
+  })
+
+  it('reads a file the keychain can no longer decrypt as no client', async () => {
+    await createClientStore(file, storage).write(CLIENT)
+    const rekeyed = createClientStore(file, {
+      ...storage,
+      decryptString: () => {
+        throw new Error('keychain re-keyed')
+      },
+    })
+    expect(await rekeyed.read()).toBeNull()
   })
 })

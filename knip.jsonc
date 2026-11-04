@@ -1,0 +1,75 @@
+// Dead files, unused exports and unused/unlisted dependencies. Run: `pnpm knip`
+// (everything, tests count as users) and `pnpm knip:production` (only what the app
+// itself reaches from its entries; this is the one that finds code kept alive by
+// its own tests). Registered in .agents/skills/holi-rules/SKILL.md.
+//
+// An entry ending in `!` is also an entry in production mode. Exempt one export
+// with a `/** @public */` tag, or add a path to a workspace's `ignore` with a
+// comment saying why. A package installed ahead of the code that imports it goes
+// in `ignoreDependencies`, one line saying which change deletes it again.
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/*.mjs"],
+      "project": ["scripts/**/*.mjs"],
+      // Run by the pre-commit hook that scripts/install-hooks.mjs writes, as a string
+      // knip cannot follow.
+      "ignoreDependencies": ["lint-staged"],
+      // scripts/ui-add.mjs runs the shadcn CLI from apps/desktop, which lists it.
+      "ignoreBinaries": ["shadcn"],
+    },
+    "apps/desktop": {
+      "entry": [
+        // electron-vite's three targets (main, preload, renderer main.tsx) come
+        // from its knip plugin; only the HTML shell is named here.
+        "src/renderer/index.html!",
+        // Plugin lists, imported by the composition roots above; named here so a
+        // plugin that is dropped from the list shows as dead.
+        "src/plugins/main.ts!",
+        "src/plugins/renderer.ts!",
+        // Loaded with `new Worker(new URL(...))`, which the import graph cannot see.
+        "src/**/*.worker.ts!",
+        "scripts/*.{mjs,cjs,mts}",
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,css}!",
+        "test/**/*.ts",
+        "scripts/**",
+        // Left out of the project, so production mode does not report them as
+        // unreached: test helpers, which only tests import, and the seeded theme,
+        // which is read through `import.meta.glob` with `?raw` and imported by
+        // `index.css`, neither an import knip follows in production mode.
+        "!src/renderer/src/test/**",
+        "!src/main/vault/seed/vault/once/.holi/settings/theme.css",
+      ],
+      // The gate self-test lints these on purpose; they are inputs, not code.
+      "ignore": ["test/fixtures/**"],
+      // plugin-api.ts is the facade plugins import core through. It re-exports
+      // more than any one plugin uses today, deliberately.
+      "ignoreIssues": {
+        "src/main/plugin-api.ts": ["exports", "types"],
+        // Stock shadcn and ReUI files, installed by the CLI and edited in place:
+        // they export a component's whole API whether or not Holi uses it yet.
+        "src/renderer/src/components/ui/**": ["exports", "types"],
+      },
+      // A system binary one community-plugin test shells out to.
+      "ignoreBinaries": ["pgrep"],
+      "ignoreDependencies": [
+        // Loaded at runtime with createRequire (a lazy, optional require), which
+        // knip's import graph cannot see.
+        "mermaid",
+      ],
+    },
+    "packages/shared": {
+      "project": ["src/**/*.ts!", "test/**/*.ts"],
+    },
+  },
+  // Every finding is an error: a dead file, dependency, export, type or
+  // duplicate export fails the gate.
+  "rules": {
+    "exports": "error",
+    "types": "error",
+    "duplicates": "error",
+  },
+}

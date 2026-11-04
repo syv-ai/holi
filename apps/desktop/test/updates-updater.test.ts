@@ -169,6 +169,44 @@ describe('updater channel switching', () => {
     updater.dispose()
   })
 
+  it('keeps the ready update when the guarded restart is cancelled', async () => {
+    const beforeInstall = vi.fn(async () => false)
+    const updater = createUpdater({ send: vi.fn(), beforeInstall })
+    await tick()
+    mocks.updater.emit('update-available', { version: '1.1.0' })
+    mocks.updater.emit('update-downloaded')
+
+    await expect(updater.install()).resolves.toBe(false)
+
+    expect(beforeInstall).toHaveBeenCalledOnce()
+    expect(updater.status()).toMatchObject({ state: 'ready', availableVersion: '1.1.0' })
+    expect(mocks.updater.quitAndInstall).not.toHaveBeenCalled()
+    updater.dispose()
+  })
+
+  it('waits for the guarded install outcome before reporting success', async () => {
+    let allowInstall!: (go: boolean) => void
+    const beforeInstall = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          allowInstall = resolve
+        }),
+    )
+    const updater = createUpdater({ send: vi.fn(), beforeInstall })
+    await tick()
+    mocks.updater.emit('update-available', { version: '1.1.0' })
+    mocks.updater.emit('update-downloaded')
+
+    const installing = updater.install()
+    await tick()
+    expect(beforeInstall).toHaveBeenCalledOnce()
+    expect(mocks.updater.quitAndInstall).not.toHaveBeenCalled()
+    allowInstall(true)
+    await expect(installing).resolves.toBe(true)
+    expect(mocks.updater.quitAndInstall).toHaveBeenCalledOnce()
+    updater.dispose()
+  })
+
   it('does not install a ready candidate staged on the previous channel', async () => {
     const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
     await tick()

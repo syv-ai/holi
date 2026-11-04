@@ -23,7 +23,10 @@ import {
 } from '@holi/shared'
 import { bundleFromAppHost } from '../shared/bundle'
 import { mimeFor, readVaultTheme, type PluginScheme } from '../../../main/plugin-api'
-import { BRIDGE_JS } from './bridge-script'
+import { COMMAND_PARAM } from '../shared/commands'
+import { COMMAND_NAME } from '../shared/manifest'
+import { BRIDGE_JS, COMMAND_JS } from './bridge-script'
+import { manifestOf } from './grants'
 import { appBaseTokens, paletteFor } from './tokens'
 
 /**
@@ -32,10 +35,11 @@ import { appBaseTokens, paletteFor } from './tokens'
  *
  * A bare host means the entry document, the same way a web server resolves `/`
  * to `index.html`.
+ * @public exported for its test
  */
 export function parseAppUrl(
   url: string,
-): { bundle: string; rel: string; mode: 'light' | 'dark' } | null {
+): { bundle: string; rel: string; mode: 'light' | 'dark'; command: string | null } | null {
   let parsed: URL
   try {
     parsed = new URL(url)
@@ -53,7 +57,9 @@ export function parseAppUrl(
   }
   // The renderer's mode in force, which main cannot know: the frame's URL says it.
   const mode = parsed.searchParams.get('mode') === 'light' ? 'light' : 'dark'
-  return { bundle, rel: rel === '' ? 'index.html' : rel, mode }
+  // `?command=` on the bare host is the runner for one of its slash commands.
+  const command = rel === '' ? parsed.searchParams.get(COMMAND_PARAM) : null
+  return { bundle, rel: rel === '' ? 'index.html' : rel, mode, command }
 }
 
 /**
@@ -65,6 +71,7 @@ export function parseAppUrl(
  * rejects the residue — an absolute path, an empty one, or a surviving `..`.
  * The root it joins under is the app's own bundle, which is the difference
  * that matters.
+ * @public exported for its test
  */
 export function appFileAbsPath(vaultRoot: string, bundle: string, rel: string): string | null {
   if (!isAppBundlePath(bundle)) return null
@@ -86,6 +93,7 @@ export function appFileAbsPath(vaultRoot: string, bundle: string, rel: string): 
  * reached through a symlink, nothing opened by a case alias. The lexical checks
  * above hold for the name; a committed `lib -> ../../.holi/memory` would otherwise
  * serve whatever the link points at, in the vault or out of it.
+ * @public exported for its test
  */
 export async function servableAppFile(
   vaultRoot: string,
@@ -120,7 +128,7 @@ const APP_MIME: Record<string, string> = {
   ttf: 'font/ttf',
 }
 
-export function appMimeFor(path: string): string {
+function appMimeFor(path: string): string {
   const ext = path.split('.').pop()?.toLowerCase() ?? ''
   return APP_MIME[ext] ?? mimeFor(path)
 }
@@ -143,6 +151,7 @@ function cssSafe(value: string): string {
  * The theme arrives this way rather than through a `holi.theme()` call because
  * it is **ambient**: an app styles with `var(--primary)` and inherits a vault's
  * palette without knowing there is such a thing as a theme.
+ * @public exported for its test
  */
 export function appHeadHtml(block: ThemeBlock, mode: ThemeMode): string {
   // Base first, the vault's overrides second, so the later declaration wins. A
@@ -163,12 +172,27 @@ export function appHeadHtml(block: ThemeBlock, mode: ThemeMode): string {
  * Only ever applied to the entry document. Every other file an app ships is
  * served byte-for-byte — an injected script in someone's `.js` would be a
  * genuinely confusing thing to debug.
+ * @public exported for its test
  */
 export function injectAppHead(html: string, head: string): string {
   const open = /<head[^>]*>/i.exec(html)
   if (open === null) return `${head}${html}`
   const at = open.index + open[0].length
   return `${html.slice(0, at)}${head}${html.slice(at)}`
+}
+
+/**
+ * The document a slash command runs in: the theme, the bridge, the runner
+ * (`COMMAND_JS`) and the command's own script, by its path in the bundle, so it
+ * is fetched through this scheme like any file of the app. A classic script,
+ * not a module: the frame's origin is opaque, so a module would be a
+ * cross-origin fetch this scheme could allow only with a CORS header, and a
+ * header that lets one opaque origin read lets every app read every other's
+ * code.
+ */
+function commandRunnerHtml(head: string, script: string): string {
+  const src = script.split('/').map(encodeURIComponent).join('/')
+  return `<!doctype html><html><head><meta charset="utf-8">${head}<script>${COMMAND_JS}</script><script src="${src}"></script></head></html>`
 }
 
 /**
@@ -198,6 +222,22 @@ export const appScheme: PluginScheme = {
     if (vault === null) return new Response(null, { status: 404 })
     const parsed = parseAppUrl(request.url)
     if (parsed === null) return new Response(null, { status: 400 })
+
+    // A command's runner is made here, not read: only the app's manifest says
+    // which script it is. Its own entries only: `constructor` is a name too.
+    if (parsed.command !== null) {
+      const commands = (await manifestOf(vault.root, parsed.bundle))?.commands
+      const name = parsed.command
+      if (commands === undefined || !COMMAND_NAME.test(name) || !Object.hasOwn(commands, name)) {
+        return new Response(null, { status: 404 })
+      }
+      const spec = commands[name]!
+      const theme = await readVaultTheme(vault.root)
+      const head = appHeadHtml(theme[parsed.mode], parsed.mode)
+      return new Response(commandRunnerHtml(head, spec.script), {
+        headers: { 'content-type': appMimeFor('runner.html') },
+      })
+    }
     const abs = await servableAppFile(vault.root, parsed.bundle, parsed.rel)
     if (abs === null) return new Response(null, { status: 403 })
 

@@ -2,13 +2,14 @@
  * The agenda: Google Calendar, flattened into the shape the panel renders, plus
  * the agent's attendee-free calendar writes at the bottom.
  */
+import { fenceUntrusted } from '@holi/shared'
 import type { GoogleApi } from './api'
 import { fetchEventColors } from './event-colors'
 
 const BASE = 'https://www.googleapis.com/calendar/v3'
 
 /** The user's own answer to an invitation. */
-export type RsvpStatus = 'needsAction' | 'tentative' | 'accepted' | 'declined'
+type RsvpStatus = 'needsAction' | 'tentative' | 'accepted' | 'declined'
 
 /**
  * What kind of block this is.
@@ -17,7 +18,7 @@ export type RsvpStatus = 'needsAction' | 'tentative' | 'accepted' | 'declined'
  * working day and they are a setting rather than an event, so they are filtered
  * out entirely.
  */
-export type EventKind = 'default' | 'outOfOffice' | 'focusTime' | 'birthday' | 'fromGmail'
+type EventKind = 'default' | 'outOfOffice' | 'focusTime' | 'birthday' | 'fromGmail'
 
 export interface CalendarEvent {
   id: string
@@ -65,7 +66,10 @@ export interface CalendarEvent {
   description: string | null
   /** People, not rooms: a booked room is an `attendee` to Google. */
   attendeeCount: number
+  /** The organizer's display name, or their address when Google has none. */
   organizer: string | null
+  /** The organizer's address, or `null`. */
+  organizerEmail: string | null
   /** Meet, Zoom or Teams. `conferenceData`'s video entry point, then
    *  `hangoutLink` (Meet-only), then a join link recognised in the invite's own
    *  body. See `conferenceUrlOf` for why the third is needed. */
@@ -105,7 +109,7 @@ interface RawEvent {
   }[]
 }
 
-export interface CalendarListEntry {
+interface CalendarListEntry {
   id: string
   summary: string
   /** The name *the user* gave this calendar. Google Calendar displays it in
@@ -144,6 +148,7 @@ export type CalendarOverrides = Record<string, boolean>
  * **`selected` is honoured**: it is the checkbox state in the user's own
  * Google Calendar UI, so Holi starts from the set they already curated rather
  * than every calendar they have ever been added to.
+ * @public exported for its test
  */
 export async function listCalendars(api: GoogleApi): Promise<CalendarListEntry[]> {
   const items = await api.getAll<CalendarListEntry>(
@@ -186,11 +191,6 @@ export async function resolveCalendars(
     color: calendar.backgroundColor ?? null,
     enabled: overrides[calendar.id] ?? isMine(calendar),
   }))
-}
-
-/** The ids an agenda should actually fetch. */
-export function enabledCalendarIds(calendars: CalendarChoice[]): string[] {
-  return calendars.filter((c) => c.enabled).map((c) => c.id)
 }
 
 export interface AgendaWindow {
@@ -405,6 +405,7 @@ function toCalendarEvent(
     // Rooms and equipment are attendees to Google.
     attendeeCount: attendees.filter((a) => a.resource !== true).length,
     organizer,
+    organizerEmail: event.organizer?.email ?? null,
     conferenceUrl: conferenceUrlOf(event),
     recurring: event.recurringEventId !== undefined,
   }
@@ -504,10 +505,15 @@ async function assertNobodyIsInvited(api: GoogleApi, eventId: string): Promise<v
   const event = await api.get<RawAttendees>(`${PRIMARY_EVENTS}/${encodeURIComponent(eventId)}`)
   if (Array.isArray(event.attendees) && event.attendees.length > 0) {
     // Read by the agent, so it says what to do instead rather than only what
-    // went wrong.
+    // went wrong. The title is the organizer's words, so it is fenced like
+    // everything else `holi google` prints.
+    const named =
+      event.summary === undefined || event.summary === ''
+        ? `Event ${eventId}`
+        : `Event ${eventId} (${fenceUntrusted(event.summary, 'calendar')})`
     throw new Error(
-      `"${event.summary ?? eventId}" has attendees, so changing it would email them. ` +
-        'Holi does not let me do that — ask the user to make this change in Google Calendar.',
+      `${named} has attendees, so changing it would email them. ` +
+        'Holi does not let me do that: ask the user to make this change in Google Calendar.',
     )
   }
 }

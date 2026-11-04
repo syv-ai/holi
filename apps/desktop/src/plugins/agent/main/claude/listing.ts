@@ -16,12 +16,16 @@
  * No Electron import: this loads under plain Node like the rest of the plugin.
  */
 import { watch, type FSWatcher } from 'node:fs'
-import { join } from 'node:path'
+import type { ProviderId } from '../provider'
+
+/** A Claude Code job id: eight hex characters, the name of its `jobs/` dir.
+ *  Never a flag, so it is safe as `claude attach`'s argument. */
+export const JOB_ID = /^[0-9a-f]{8}$/
 
 /** Claude Code's live statuses. `waiting` is the one Holi shows as needs-you;
  *  `shell` is a shell command running, which is working. */
 const STATUSES = ['busy', 'waiting', 'idle', 'shell'] as const
-export type ClaudeStatus = (typeof STATUSES)[number]
+type ClaudeStatus = (typeof STATUSES)[number]
 
 export interface ClaudeRow {
   /** The short job id: the key. */
@@ -48,19 +52,41 @@ export type SessionState = 'needs-you' | 'working' | 'idle'
 
 export interface SessionSummary {
   id: string
+  /** Which agent runs it (`provider.ts`). */
+  provider: ProviderId
   /** Claude Code's name, else 'New session'. */
   name: string
   state: SessionState
+  /** Holi-managed run result. An idle run is not necessarily a successful one. */
+  outcome?: 'completed' | 'failed' | 'aborted'
+  /** A failed managed run's error, when known. */
+  error?: string
   /** Present only for 'needs-you', when Claude Code says why. */
   waitingFor?: string
   /** How much of its context window is used, 0 to 100, from its status line.
    *  Absent until Claude Code has said, and again after a `/clear`. */
   contextPercent?: number
-  /** The model it runs on, in Claude Code's words (`Opus 5.5`), from its
-   *  status line. Absent until Claude Code has said. */
+  /** The model it runs on, in the provider's words. */
   model?: string
+  /** Pi usage reported by its RPC API; missing fields remain absent. */
+  usage?: { input?: number; output?: number; total?: number; cost?: number }
   /** When it started, epoch ms, from the listing. */
   startedAt?: number
+  /** Claude Code's conversation id (its transcript's name), once it has
+   *  said: what a read-only view of the conversation reads. */
+  conversationId?: string
+  /** What a job that completed left out (`host/jobs.ts`), in words; why one
+   *  failed is its `error`. */
+  message?: string
+  /** A fenced turn's copy is still in progress, or its terminal is gone. */
+  copying?: boolean
+  closed?: boolean
+  /** It is the terminal that signs its provider in (`host/pty-sessions.ts`):
+   *  live like any session, with no turns to review, restart or copy. */
+  signIn?: boolean
+  /** Tokens its turns used, input and output, when its agent reports them
+   *  (a Codex job's `turn.completed`). A count, never a share of a window. */
+  tokens?: number
 }
 
 /** What a session's status line says: its context use and its model. */
@@ -136,7 +162,7 @@ export function summarise(
   row: ClaudeRow,
   working: ReadonlySet<string>,
   reading: StatusReading = {},
-): SessionSummary {
+): Omit<SessionSummary, 'provider'> {
   let state: SessionState = 'idle'
   if (row.status === 'waiting') state = 'needs-you'
   else if (row.status === 'busy' || row.status === 'shell' || working.has(row.id)) state = 'working'
@@ -151,6 +177,7 @@ export function summarise(
     ...(reading.contextPercent === undefined ? {} : { contextPercent: reading.contextPercent }),
     ...(reading.model === undefined ? {} : { model: reading.model }),
     ...(row.startedAt === undefined ? {} : { startedAt: row.startedAt }),
+    ...(row.sessionId === undefined ? {} : { conversationId: row.sessionId }),
   }
 }
 
@@ -181,7 +208,7 @@ export function readModelName(status: unknown): string | null {
 }
 
 /** The directories Claude Code keeps session state in, under the config dir. */
-export const WATCHED_DIRS = ['sessions', 'jobs'] as const
+const WATCHED_DIRS = ['sessions', 'jobs'] as const
 
 /** Bursts are normal: rows carry heartbeat fields that move on their own. */
 const WATCH_DEBOUNCE_MS = 150

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isCommandName,
   isCommunityPluginId,
   opensPath,
   parsePluginManifest,
@@ -69,6 +70,48 @@ describe('parsePluginManifest', () => {
     expect(problems({ ...notes, apps: ['apps/notes'] })).toHaveLength(1)
     expect(problems({ ...notes, apps: undefined })).toHaveLength(1)
     expect(problems({ ...prezzi, serve: undefined })).toHaveLength(1)
+  })
+
+  it('ships commands for the agent, by name, as files inside the plugin', () => {
+    const dash = { id: 'dash', name: 'Dash', version: '0.1.0', bin: { dashctl: 'bin/dashctl' } }
+    expect(parsePluginManifest(dash)).toEqual({ ok: true, value: { ...dash, opens: [] } })
+    expect(problems({ ...dash, bin: {} })).toHaveLength(1)
+    expect(problems({ ...dash, bin: { dashctl: '../dashctl' } })).toHaveLength(1)
+    expect(problems({ ...dash, bin: { dashctl: '/usr/bin/env' } })).toHaveLength(1)
+    expect(problems({ ...dash, bin: { 'Dash Ctl': 'bin/x' } })).toHaveLength(1)
+    expect(problems({ ...dash, bin: { holi: 'bin/holi' } })).toEqual([
+      "bin: holi is Holi's own command",
+    ])
+    expect(problems({ ...dash, bin: ['bin/dashctl'] })).toHaveLength(1)
+  })
+
+  it('reads a readiness check: an argv like setup, and a one-line hint', () => {
+    const dash = { id: 'dash', name: 'Dash', version: '0.1.0', bin: { dashctl: 'bin/dashctl' } }
+    const check = { run: ['dashctl', 'version'], hint: 'Switch it on in Dash' }
+    expect(parsePluginManifest({ ...dash, check })).toEqual({
+      ok: true,
+      value: { ...dash, opens: [], check },
+    })
+    expect(problems({ ...dash, check: ['dashctl', 'version'] })).toHaveLength(1)
+    expect(problems({ ...dash, check: { ...check, run: ['dashctl version'] } })).toHaveLength(1)
+    expect(problems({ ...dash, check: { ...check, run: ['x', '{home}'] } })).toHaveLength(1)
+    expect(problems({ ...dash, check: { ...check, run: ['x', '{vault}'] } })).toEqual([])
+    expect(problems({ ...dash, check: { ...check, run: ['x', '{file}'] } })).toHaveLength(1)
+    expect(problems({ ...dash, check: { ...check, run: ['x', '--port', '{port}'] } })).toHaveLength(
+      1,
+    )
+    expect(problems({ ...dash, check: { ...check, run: [] } })).toHaveLength(1)
+    expect(problems({ ...dash, check: { run: check.run } })).toHaveLength(1)
+    expect(problems({ ...dash, check: { ...check, hint: 'two\nlines' } })).toHaveLength(1)
+    expect(problems({ ...dash, check: { ...check, hint: 'a\ttab' } })).toHaveLength(1)
+    expect(problems({ ...dash, check: { ...check, hint: 'x'.repeat(201) } })).toHaveLength(1)
+  })
+
+  it('names a command without a path or shell meaning, and never holi', () => {
+    for (const name of ['dashctl', 'gh2', 'my-tool', 'x.y_z'])
+      expect(isCommandName(name)).toBe(true)
+    for (const name of ['holi', 'a/b', '-x', 'Dash', 'a b', '$(x)', ''])
+      expect(isCommandName(name)).toBe(false)
   })
 
   it('needs semver and a kebab-case id', () => {

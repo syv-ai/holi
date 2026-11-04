@@ -1,6 +1,7 @@
 {
   "name": "Memo",
   "description": "Branded syv.ai internal memo: To/From/Re/Date header, no letterhead.",
+  "language": "da",
   "fields": [
     { "key": "to", "label": "To", "type": "text", "required": false },
     { "key": "from", "label": "From", "type": "text", "required": false },

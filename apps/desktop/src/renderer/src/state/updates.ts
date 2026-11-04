@@ -1,6 +1,6 @@
 import { atom, type createStore } from 'jotai'
 import type { UpdateStatus } from '../../../main/updates/state'
-import { trpc } from '../lib/trpc'
+import { trpc } from '@/lib/trpc'
 
 /**
  * Updating Holi itself (docs/features/updates.md). `null` until main first
@@ -30,9 +30,7 @@ export const retryUpdateDownloadAtom = atom(null, async (_get, set) => {
   set(updateStatusAtom, await trpc.updates.download.mutate())
 })
 
-export const installUpdateAtom = atom(null, async () => {
-  await trpc.updates.install.mutate()
-})
+export const installUpdateAtom = atom(null, async () => trpc.updates.install.mutate())
 
 export const setAutoUpdateAtom = atom(null, async (_get, set, enabled: boolean) => {
   set(updateStatusAtom, await trpc.updates.setEnabled.mutate({ enabled }))

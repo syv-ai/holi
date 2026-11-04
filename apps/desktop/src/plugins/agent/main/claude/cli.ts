@@ -17,7 +17,9 @@
  */
 import { execFile } from 'node:child_process'
 import { accessSync, constants } from 'node:fs'
-import { resolveBin } from '../../../../main/plugin-api'
+import { join } from 'node:path'
+import { PLUGIN_COMMANDS_DIR } from '@holi/shared'
+import { nodeFallbackDir, resolveBin, toolPath } from '../../../../main/plugin-api'
 import type { TerminalCommand } from '../provider'
 
 /**
@@ -35,6 +37,13 @@ export interface AgentEnvOpts {
    * *text*: with `holi` on `PATH` the agent types the bare name.
    */
   binDir?: string | null
+  /**
+   * The vault's community plugin commands (`PLUGIN_COMMANDS_DIR`), **appended
+   * to `PATH`**: last, so a plugin adds a command but never stands in for one
+   * the machine has. Linking refuses a name already on `PATH`, so nothing
+   * there goes unreached.
+   */
+  commandsDir?: string | null
   /**
    * Holi's own Claude Code config directory, as `$CLAUDE_CONFIG_DIR`.
    *
@@ -94,11 +103,21 @@ export function buildAgentEnv(
   // back on the machine's `~/.claude`.
   delete env.CLAUDE_CONFIG_DIR
   if (opts.configDir) env.CLAUDE_CONFIG_DIR = opts.configDir
-  // Prepended, never appended: an earlier `holi` on the
-  // inherited PATH would otherwise win under a name the gate trusts.
-  if (opts.binDir) {
-    env.PATH = env.PATH ? `${opts.binDir}:${env.PATH}` : opts.binDir
-  }
+  // `holi` is prepended, never appended: an earlier `holi` on the inherited
+  // PATH would otherwise win under a name the gate trusts. What follows the
+  // inherited PATH is what a Dock-launched Holi lacks and every hook needs:
+  // the usual tool directories, then Holi's own `node` as the last resort, so
+  // a `node` the machine has always wins (`main/bridge/node-fallback.ts`).
+  // The plugin commands come last of all, so a plugin adds a command but
+  // never stands in for one the machine or Holi has.
+  env.PATH = [
+    opts.binDir,
+    toolPath(env),
+    opts.binDir ? nodeFallbackDir(opts.binDir) : undefined,
+    opts.commandsDir,
+  ]
+    .filter((dir): dir is string => !!dir)
+    .join(':')
   return env
 }
 
@@ -134,6 +153,7 @@ export interface VaultCliTarget {
   binDir: string | null
 }
 
+/** @public exported for its test */
 export interface RunOptions {
   cwd: string
   env: Record<string, string>
@@ -147,8 +167,8 @@ export interface ClaudeCliDeps {
   log?: (msg: string) => void
 }
 
-export type ActionResult = { ok: true } | { ok: false; message: string }
-export type StartResult = { ok: true; id: string } | { ok: false; message: string }
+type ActionResult = { ok: true } | { ok: false; message: string }
+type StartResult = { ok: true; id: string } | { ok: false; message: string }
 
 export interface ClaudeCli {
   /** `claude agents --json`, raw. Null for every failure: no binary, a
@@ -168,7 +188,7 @@ export interface ClaudeCli {
   forkBg(target: VaultCliTarget, sessionId: string, name?: string): Promise<StartResult>
 }
 
-export interface StartBgOptions {
+interface StartBgOptions {
   name?: string
   prompt?: string
   model?: string
@@ -183,6 +203,7 @@ const MAX_NAME = 60
 /**
  * A name fit for argv, or null. First line only, whitespace collapsed, capped:
  * a newline would split the argument in two.
+ * @public exported for its test
  */
 export function sessionName(raw: string | undefined): string | null {
   if (raw === undefined) return null
@@ -191,19 +212,34 @@ export function sessionName(raw: string | undefined): string | null {
   return clean === '' ? null : clean
 }
 
-// eslint-disable-next-line no-control-regex -- stripping the terminal's own colour codes
 const ANSI = /\x1b\[[0-9;]*m/g
 
-/** The id out of `backgrounded · <id> · <name>`, or null. */
+/**
+ * The id out of `backgrounded · <id> · <name>`, or null.
+ * @public exported for its test
+ */
 export function parseBackgrounded(stdout: string): string | null {
   const plain = stdout.replace(ANSI, '')
   const match = /^backgrounded\s+·\s+([0-9a-f]{8})\b/m.exec(plain)
   return match?.[1] ?? null
 }
 
-/** The environment every `claude` Holi runs for a vault gets. */
-export function cliEnv(base: NodeJS.ProcessEnv, target: VaultCliTarget): Record<string, string> {
-  return buildAgentEnv(base, { configDir: target.configDir, binDir: target.binDir })
+/**
+ * A prompt as the last arguments: after `--`, so one that starts with a dash
+ * (`- tidy the list`) is the prompt and not an unknown option.
+ */
+function promptArgs(prompt: string | undefined): string[] {
+  return prompt ? ['--', prompt] : []
+}
+
+/** The environment every `claude` Holi runs for a vault gets. It is also the
+ *  vault's supervisor's, which its background sessions inherit. */
+function cliEnv(base: NodeJS.ProcessEnv, target: VaultCliTarget): Record<string, string> {
+  return buildAgentEnv(base, {
+    configDir: target.configDir,
+    binDir: target.binDir,
+    commandsDir: join(target.root, PLUGIN_COMMANDS_DIR),
+  })
 }
 
 /** The binary when it is not on the machine. */
@@ -322,7 +358,7 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
             ? ['--name', 'Scheduled run']
             : []
           : ['--name', label]),
-        ...(prompt ? [prompt] : []),
+        ...promptArgs(prompt),
       ])
     },
     forkBg(target, sessionId, name) {

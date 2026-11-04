@@ -17,7 +17,7 @@
  *
  * ```yaml
  * name: Proposal
- * mascot: rocket
+ * mascot: captain
  * description: Turns a customer note into a PDF proposal
  * model: sonnet
  * accepts:
@@ -56,22 +56,68 @@ export const SOUL_SEED = `# Soul
 `
 
 /**
- * The pixel figures a Holi can be drawn as (after MonoCode's project mascots).
- * The sprites themselves are the renderer's; the names are the file's grammar.
+ * The pixel characters a Holi can be drawn as: syv.ai's website personas,
+ * named by their character rather than by anyone. The sprites themselves are
+ * the renderer's (`composites/pixel-persona/`); the names are the file's
+ * grammar, in the order a new Holi is given them.
  */
 export const HOLI_MASCOTS = [
-  'invader',
-  'ghost',
-  'robot',
-  'cat',
-  'skull',
-  'crab',
-  'mushroom',
-  'rocket',
-  'dino',
-  'frog',
+  'captain',
+  'strategist',
+  'skipper',
+  'spy',
+  'professor',
+  'operator',
+  'starter',
+  'scout',
+  'champion',
+  'benchmarker',
 ] as const
 export type HoliMascot = (typeof HOLI_MASCOTS)[number]
+
+/** Each character's name as a person reads it: a new Holi without a name is
+ *  called after its face. */
+export const HOLI_MASCOT_LABELS: Record<HoliMascot, string> = {
+  captain: 'Captain',
+  strategist: 'Strategist',
+  skipper: 'Skipper',
+  spy: 'Spy',
+  professor: 'Professor',
+  operator: 'Operator',
+  starter: 'Starter',
+  scout: 'Scout',
+  champion: 'Champion',
+  benchmarker: 'Benchmarker',
+}
+
+/**
+ * The arcade figures Holis were drawn as before the personas, each mapped to
+ * the character that now stands in for it. An older file's `mascot:` still
+ * reads, so an existing Holi only changes its look; nothing writes these.
+ */
+export const LEGACY_HOLI_MASCOTS: Readonly<Record<string, HoliMascot>> = {
+  invader: 'spy',
+  ghost: 'strategist',
+  robot: 'operator',
+  cat: 'scout',
+  skull: 'benchmarker',
+  crab: 'skipper',
+  mushroom: 'starter',
+  rocket: 'captain',
+  dino: 'professor',
+  frog: 'champion',
+}
+
+/** A `mascot:` value as a character: one of `HOLI_MASCOTS`, an older name
+ *  mapped onto its stand-in, or undefined for anything else. */
+export function holiMascotOf(value: unknown): HoliMascot | undefined {
+  if (typeof value !== 'string') return undefined
+  if ((HOLI_MASCOTS as readonly string[]).includes(value)) return value as HoliMascot
+  return Object.hasOwn(LEGACY_HOLI_MASCOTS, value) ? LEGACY_HOLI_MASCOTS[value] : undefined
+}
+
+/** The grey of a Holi that has no colour yet. */
+export const DEFAULT_HOLI_COLOUR = '#8f8f94'
 
 /** Soft identity colours a new Holi is given in turn: categorical, the one
  *  place hue is a Holi's own. */
@@ -112,7 +158,7 @@ export interface HoliDef {
 export type HoliParse = { ok: true; def: HoliDef } | { ok: false; error: string }
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,47}$/
-const MODEL_RE = /^[A-Za-z0-9][\w.:[\]-]*$/
+const MODEL_RE = /^[A-Za-z0-9][\w.:[\]-]*(?:\/[A-Za-z0-9][\w.:[\]-]*)?$/
 const COLOR_RE = /^#[0-9a-f]{6}$/i
 
 /** The keys a Holi file has today. Any other is a later setting: kept. */
@@ -137,6 +183,18 @@ const PERMISSION_KEY = /permission|bypass|skip|danger|dontask|yolo/i
 /** A rule that would let a run write anywhere: the agent's surface included,
  *  so a run could be talked into changing every later one. */
 const BARE_WRITE = /^(?:Edit|Write|MultiEdit)(?:\(\s*(?:\*\*?(?:\/\*\*?)*)?\s*\))?$/
+
+/** Why one `allow` rule is refused, or null when it reads: the check the
+ *  file's parse makes, so a form can say it before anything is written. */
+export function holiRuleError(rule: string): string | null {
+  if (rule.trim() === '' || /[\n\r]/.test(rule)) {
+    return '`allow` holds one permission rule per item, as text'
+  }
+  if (BARE_WRITE.test(rule.trim())) {
+    return `\`${rule.trim()}\` lets a run write anywhere, its own instructions included. Name the folders it writes: \`Edit(tilbud/**)\`.`
+  }
+  return null
+}
 
 /** Whether a vault path is a Holi's file: `<id>/holi.yaml`, or an older
  *  single `<id>.yaml` directly inside `HOLIS_DIR` (`.local.yaml` is a Holi only
@@ -222,7 +280,8 @@ export function parseHoliFile(text: string, path: string): HoliParse {
     return { ok: false, error: '`name` must be text' }
   }
   const rawMascot = f['mascot']
-  if (rawMascot !== undefined && !(HOLI_MASCOTS as readonly unknown[]).includes(rawMascot)) {
+  const mascot = holiMascotOf(rawMascot)
+  if (rawMascot !== undefined && mascot === undefined) {
     return { ok: false, error: `\`mascot\` is one of ${HOLI_MASCOTS.join(', ')}` }
   }
   const rawColor = f['color']
@@ -235,7 +294,7 @@ export function parseHoliFile(text: string, path: string): HoliParse {
   }
   const rawModel = f['model']
   if (rawModel !== undefined && (typeof rawModel !== 'string' || !MODEL_RE.test(rawModel))) {
-    return { ok: false, error: '`model` must be one model name, like `sonnet`' }
+    return { ok: false, error: '`model` must be a model name like `sonnet` or `provider/model-id`' }
   }
   if (f['cron'] !== undefined || f['at'] !== undefined) {
     return {
@@ -258,15 +317,11 @@ export function parseHoliFile(text: string, path: string): HoliParse {
   if (!Array.isArray(rawAllow)) return { ok: false, error: '`allow` must be a list of rules' }
   const allow: string[] = []
   for (const rule of rawAllow) {
-    if (typeof rule !== 'string' || rule.trim() === '' || /[\n\r]/.test(rule)) {
+    if (typeof rule !== 'string') {
       return { ok: false, error: '`allow` holds one permission rule per item, as text' }
     }
-    if (BARE_WRITE.test(rule.trim())) {
-      return {
-        ok: false,
-        error: `\`${rule.trim()}\` lets a run write anywhere, its own instructions included. Name the folders it writes: \`Edit(tilbud/**)\`.`,
-      }
-    }
+    const refused = holiRuleError(rule)
+    if (refused !== null) return { ok: false, error: refused }
     allow.push(rule.trim())
   }
   // A folder Holi's soul is its SOUL.md; an older file's is `instructions`.
@@ -285,7 +340,7 @@ export function parseHoliFile(text: string, path: string): HoliParse {
     def: {
       id,
       name: typeof rawName === 'string' ? rawName.trim() : id,
-      mascot: (rawMascot as HoliMascot | undefined) ?? pick(HOLI_MASCOTS, id),
+      mascot: mascot ?? pick(HOLI_MASCOTS, id),
       color: typeof rawColor === 'string' ? rawColor.toLowerCase() : pick(HOLI_COLOURS, id),
       description: typeof rawDescription === 'string' ? rawDescription.trim() : '',
       ...(typeof rawModel === 'string' ? { model: rawModel } : {}),

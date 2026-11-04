@@ -12,6 +12,7 @@
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+/** @public exported for its test */
 export const HOOKS_LOG_FILE = '.holi/state/hooks.local.log'
 
 /** Roughly a few hundred commits' worth of transform notes. */
@@ -37,6 +38,7 @@ export async function appendHookLog(root: string, notes: string[]): Promise<void
   }
 }
 
+/** @public exported for its test */
 export async function readHookLog(root: string): Promise<string> {
   return readFile(join(root, HOOKS_LOG_FILE), 'utf8').catch(() => '')
 }

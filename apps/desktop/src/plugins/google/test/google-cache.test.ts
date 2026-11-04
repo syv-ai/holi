@@ -72,6 +72,7 @@ function event(id: string): CalendarEvent {
     description: null,
     attendeeCount: 0,
     organizer: null,
+    organizerEmail: null,
     conferenceUrl: null,
     recurring: false,
   }

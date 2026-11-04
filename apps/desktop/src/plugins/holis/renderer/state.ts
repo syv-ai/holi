@@ -18,16 +18,17 @@ import {
   appModeAtom,
   showAgentSessionAtom,
   type AgentSessionRow,
+  type AgentsSessionItem,
+  type ArcadeCastMember,
   type AgentsStatus,
   type PluginEventHandler,
   type PluginStore,
 } from '@/plugin-api'
-import { globToRegExp, type HoliDraft } from '@holi/shared'
+import { globToRegExp, HOLI_COLOURS, type HabitDraft, type HoliDraft } from '@holi/shared'
+import { habitsCap } from './habits-cap'
 import { holiCap, type HoliEdits, type HoliRun, type HoliSummary } from './holis-cap'
 
 export type { HoliRun, HoliSummary }
-
-export { holiCap }
 
 /** The plugin's id: the owner of its rows in the Agents view. */
 export const HOLIS_OWNER = 'holis'
@@ -42,7 +43,7 @@ export const holisEpochAtom = atom(0)
  *  report that asked for them before then has been seen. This machine's. */
 export const holiSeenAtom = atomWithStorage<Record<string, string>>('holi.agents.seen', {})
 
-export type HoliState = 'needs-you' | 'working' | 'idle'
+type HoliState = 'needs-you' | 'working' | 'idle'
 
 /** A run's own state: its session's while it is live, else done. */
 export type RunState = 'needs-you' | 'working' | 'done'
@@ -55,7 +56,7 @@ export function runState(run: HoliRun, sessions: readonly AgentSessionRow[]): Ru
 }
 
 /** Whether a run's report asked for the person and they have not seen it. */
-export function reportNeedsYou(run: HoliRun, seen: string | undefined): boolean {
+function reportNeedsYou(run: HoliRun, seen: string | undefined): boolean {
   const report = run.report
   return report?.needsYou === true && (seen === undefined || report.at > seen)
 }
@@ -103,6 +104,60 @@ export const holisStatusAtom = atom((get): AgentsStatus => ({
   needsYou: get(holiAsksAtom).length,
   working: 0,
 }))
+
+/** How many of each Holi's runs the session list shows, newest first. */
+const LISTED_RUNS = 10
+
+/** A document's name without its folder or `.md`: what a run is about. */
+const docName = (path: string): string => (path.split('/').pop() ?? path).replace(/\.md$/i, '')
+
+/**
+ * Each Holi's recent runs as rows of the agent's session list (the slot's
+ * `sessions`), wearing the Holi's face. A run is its session (`jobId`): the
+ * agent puts the live session's state on it, and opening it opens that
+ * session. A run whose report asked for the person and that they have not
+ * seen needs them, like the Inbox says.
+ */
+export const holiSessionItemsAtom = atom((get): AgentsSessionItem[] => {
+  const seen = get(holiSeenAtom)
+  return get(holisAtom).flatMap((h) =>
+    h.runs.slice(0, LISTED_RUNS).map((run): AgentsSessionItem => {
+      const ended = run.report === undefined ? undefined : Date.parse(run.report.at)
+      const asks = reportNeedsYou(run, seen[h.id])
+      return {
+        key: `${HOLIS_OWNER}:${run.jobId}`,
+        jobId: run.jobId,
+        title: docName(run.path),
+        state: asks ? 'needs-you' : 'idle',
+        ...(asks ? { waitingFor: 'Its report asks for you' } : {}),
+        updatedAt: ended ?? Date.parse(run.at),
+        ...(ended === undefined ? {} : { endedAt: ended }),
+        location: run.path,
+        by: {
+          kind: 'holi',
+          name: h.name,
+          mascot: h.mascot ?? 'strategist',
+          color: h.color ?? HOLI_COLOURS[0],
+        },
+      }
+    }),
+  )
+})
+
+export const holiSessionsStatusAtom = atom((get) => get(holisLoadedAtom))
+
+/** The vault's Holis as the empty view's arcade draws them: every one that
+ *  parses, by its persona and colour. */
+export const holisArcadeCastAtom = atom((get): readonly ArcadeCastMember[] =>
+  get(holisAtom)
+    .filter((h) => h.status !== 'invalid')
+    .map((h) => ({
+      id: h.id,
+      name: h.name,
+      mascot: h.mascot ?? 'strategist',
+      color: h.color ?? HOLI_COLOURS[0],
+    })),
+)
 
 /** The Holi a page shows, by id; the selection is core's. */
 export const selectedHoliAtom = atom((get) => {
@@ -267,22 +322,58 @@ export const approvePendingAtom = atom(null, async (get, set): Promise<Result> =
   }
 })
 
-/** Make a Holi, after MonoCode's `onCreateMono`: the next free face, then
- *  its page with its settings open, which is the setup. */
+/**
+ * The new-Holi wizard (docs/features/holis.md, The wizard): `create` walks
+ * from what a Holi is to making one, starting from `draft` (a document's
+ * folder as what it takes); `learn` is only the steps that explain.
+ */
+export interface HoliWizard {
+  mode: 'create' | 'learn'
+  draft?: Partial<HoliDraft>
+  /** Start at making it: the person has just read how a Holi works. */
+  skipIntro?: boolean
+}
+export const holiWizardAtom = atom<HoliWizard | null>(null)
+
+/**
+ * Make a Holi from the wizard, after MonoCode's `onCreateMono`: its folder
+ * through `holis.create` (main's validation is the last word), then its first
+ * habit, if one was asked for, through the automations' own `schedules.save`,
+ * written off. Then its page, and the approval as for any new Holi: nothing
+ * runs until this machine approved what it says.
+ */
 export const createHoliAtom = atom(
   null,
-  async (get, set, draft: Partial<HoliDraft> = {}): Promise<Result> => {
+  async (
+    get,
+    set,
+    args: { draft: Partial<HoliDraft>; habit?: Omit<HabitDraft, 'holi'> },
+  ): Promise<{ ok: true; warning?: string } | { ok: false; message: string }> => {
     const remote = get(activeRemoteAtom)
     if (remote === null) return noVault
+    let made: HoliSummary
     try {
-      const made = await holiCap.create(remote, draft)
-      set(holisAtom, (list) => [...list.filter((h) => h.id !== made.id), made])
-      set(openHoliAtom, made.id)
-      set(holiSettingsAtom, { id: made.id, section: 'general' })
-      return { ok: true }
+      made = await holiCap.create(remote, args.draft)
     } catch (err) {
       return failed(err)
     }
+    set(holisAtom, (list) => [...list.filter((h) => h.id !== made.id), made])
+    set(openHoliAtom, made.id)
+    let habitError: string | null = null
+    if (args.habit !== undefined) {
+      try {
+        await habitsCap.save(remote, { draft: { ...args.habit, holi: made.id } })
+      } catch (err) {
+        habitError = failed(err).message
+      }
+    }
+    set(holiWizardAtom, null)
+    if (made.status !== 'approved' && made.fingerprint !== undefined) {
+      set(pendingApprovalAtom, { holi: made })
+    }
+    return habitError === null
+      ? { ok: true }
+      : { ok: true, warning: `${made.name} is made, but its habit is not: ${habitError}` }
   },
 )
 

@@ -5,11 +5,10 @@
  */
 import { readFile } from 'node:fs/promises'
 import {
-  appBundleOf,
   isAgentSurfacePath,
-  isAppPrivatePath,
-  isMachineStatePath,
-  isSecretPath,
+  isAppFencedPath,
+  isAppWritablePath,
+  shownPathOrNull,
   vaultRelPath,
   type VaultRelPath,
 } from '@holi/shared'
@@ -18,29 +17,58 @@ import { CapabilityError } from './error'
 import type { CapabilityContext } from './registry'
 
 /**
- * The note a read may reach, or a refusal: not the agent surface, a real
- * vault path, not this machine's state under `.holi/state/` (it holds the
- * bridge's tokens), not a secret file (`.env`: an app gets only the keys it
- * declares, through `holi.env`), and not any app's records, its own included
- * (the store is the only way in, so one app cannot read another's data, a
- * personal app's least of all). `docs.read`, `docs.render` and `tasks.complete` share it.
+ * The one refusal for "Holi does not have this vault open": a command that acts
+ * on what the person sees (`docs.open`, `docs.screenshot`) or writes the vault
+ * (`docs.write`, and the CLI's note writes) needs this clone to be the vault
+ * Holi has open. An agent session outlives a vault switch, and its open must
+ * not switch the person away from what they are working in. The message is a
+ * stable reason, `vault-not-open`, which a write's receipt also carries.
  */
-export function readablePath(path: string): VaultRelPath {
-  if (isAgentSurfacePath(path)) throw new CapabilityError('FORBIDDEN', path)
-  let rel
+export const VAULT_NOT_OPEN = 'vault-not-open'
+
+export function vaultNotOpen(): CapabilityError {
+  return new CapabilityError(
+    'UNAVAILABLE',
+    VAULT_NOT_OPEN,
+    'Holi does not have this vault open; tell the person, do not retry',
+  )
+}
+
+/** Refuse unless Holi has `ctx`'s vault open (`vaultNotOpen`). */
+export function requireOpen(ctx: CapabilityContext): void {
+  if (ctx.core.syncState() === null) throw vaultNotOpen()
+}
+
+/**
+ * The vault path a person may be shown, or a refusal: a real vault path, not
+ * this machine's state under `.holi/state/` (it holds the bridge's tokens) and
+ * not a secret file. Every read starts here; `docs.open` stops here, since the
+ * agent may show the person its own surface.
+ */
+export function shownPath(path: string): VaultRelPath {
   try {
-    rel = vaultRelPath(path)
+    vaultRelPath(path)
   } catch (err) {
     throw new CapabilityError('BAD_REQUEST', (err as Error).message)
   }
+  const rel = shownPathOrNull(path)
+  if (rel === null) throw new CapabilityError('FORBIDDEN', path)
+  return rel
+}
+
+/**
+ * The note a read may reach, or a refusal: `shownPath`, and not the agent
+ * surface, and not any app's records, its own included (the store is the only
+ * way in, so one app cannot read another's data, a personal app's least of
+ * all). A secret file is refused because an app gets only the keys it
+ * declares, through `holi.env`. `docs.read`, `docs.render` and
+ * `tasks.complete` share it.
+ */
+export function readablePath(path: string): VaultRelPath {
+  if (isAgentSurfacePath(path)) throw new CapabilityError('FORBIDDEN', path)
+  const rel = shownPath(path)
   // Checked again on the normalised path: `./.holi/memory/x.md` is `.holi/memory/x.md`.
-  if (isAgentSurfacePath(rel) || isMachineStatePath(rel) || isSecretPath(rel)) {
-    throw new CapabilityError('FORBIDDEN', path)
-  }
-  const bundle = appBundleOf(rel)
-  if (bundle !== null && isAppPrivatePath(rel.slice(bundle.length + 1))) {
-    throw new CapabilityError('FORBIDDEN', path)
-  }
+  if (isAppFencedPath(rel)) throw new CapabilityError('FORBIDDEN', path)
   return rel
 }
 
@@ -61,7 +89,16 @@ export function readableOrNull(path: string): VaultRelPath | null {
  * the refusals see the real name.
  */
 export async function knownPath(ctx: CapabilityContext, path: string): Promise<VaultRelPath> {
-  const rel = readablePath(path)
+  return inSnapshot(ctx, readablePath(path), path)
+}
+
+/** `rel` if the vault's snapshot holds it exactly (see `knownPath`), else a
+ *  NOT_FOUND naming `path` as the caller gave it. */
+export async function inSnapshot(
+  ctx: CapabilityContext,
+  rel: VaultRelPath,
+  path: string,
+): Promise<VaultRelPath> {
   const snapshot = await ctx.snapshot()
   const known =
     snapshot.docs.some((d) => d.path === rel) ||
@@ -81,4 +118,25 @@ export async function readNote(ctx: CapabilityContext, path: string): Promise<st
   const text = await readFile(abs, 'utf8').catch(() => null)
   if (text === null) throw new CapabilityError('NOT_FOUND', path)
   return text
+}
+
+/**
+ * What an app may write, or a refusal: whatever a read refuses, and then the
+ * one app write rule (`isAppWritablePath`).
+ */
+export function writablePath(path: string): VaultRelPath {
+  const rel = readablePath(path)
+  if (!isAppWritablePath(rel)) throw new CapabilityError('FORBIDDEN', path)
+  return rel
+}
+
+/**
+ * The file a write opens, only when it is `rel` as named: no symlink on the
+ * way and the case it has on disk (`exactPath`), so the name the fences
+ * checked is the file that changes. The file need not exist.
+ */
+export async function writableFile(ctx: CapabilityContext, rel: VaultRelPath): Promise<string> {
+  const abs = await exactPath(ctx.root, rel)
+  if (abs === null) throw new CapabilityError('FORBIDDEN', rel)
+  return abs
 }

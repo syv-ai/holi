@@ -11,14 +11,21 @@
  * No `electron` value import (types only): plugins load under plain Node in
  * the tests.
  */
-import type { Privileges } from 'electron'
-import type { PluginInfo, SnapshotClaim } from '@holi/shared'
+import type { BrowserWindow, Privileges } from 'electron'
+import type {
+  CommentMention,
+  PluginInfo,
+  SnapshotClaim,
+  VaultEvent,
+  VaultSnapshot,
+} from '@holi/shared'
 import type { AppDoor, AppDoorOpener } from './capabilities/dispatch'
 import type { CapabilityTable } from './capabilities/registry'
 import type { SeedContribution } from './vault/seed/types'
 import type { Route } from './bridge/server'
 import type { UiReport } from './capabilities/services'
 import type { Transform } from './vault/hooks/runner'
+import type { ActivityLevel } from './activity/log'
 
 /** Undoes what an activation started, when the plugin stops: turned off,
  *  the vault left, or Holi quitting. */
@@ -132,6 +139,13 @@ export interface PluginCtx extends LiveVault, SchemeContext {
    */
   call(name: string, params: unknown): Promise<unknown>
   /**
+   * Write a line to the activity log, the bottom panel's Output
+   * (docs/features/status-bar.md): something this plugin did in the
+   * background that someone may want to read later. State changes, not
+   * ticks, and never a credential (the log scrubs what it can).
+   */
+  log(level: ActivityLevel, message: string, detail?: string): void
+  /**
    * Tell the main side of every plugin that requires this one something about
    * the open vault, as it happens: the agent's session list, a turn ending.
    * Nobody hearing it is not an error.
@@ -142,6 +156,74 @@ export interface PluginCtx extends LiveVault, SchemeContext {
    * Throws for a plugin it does not require. Returns the undo.
    */
   hear(from: string, name: string, handler: (payload: unknown) => void): () => void
+  /**
+   * Hear about a comment a pull brought into this vault that mentions the
+   * person signed in, written by someone else (docs/features/note-comments.md).
+   * Only on a pull: there is no server to say so sooner. Returns the undo.
+   */
+  onMention(cb: (mention: NoteMention) => void): () => void
+  /**
+   * A native notification, the one the reminders use. Raised only while no
+   * Holi window has focus: Holi's banners never cover Holi. True when it was
+   * raised. Clicking it brings Holi's window forward, opening one if none is
+   * open, then runs `onClick`.
+   */
+  notify(notice: Notice): boolean
+  /** Whether a Holi window has focus now. */
+  focused(): boolean
+  /** Holi's window, or null while none is open: for a plugin that draws
+   *  into it from main (the browser's pages). */
+  window(): BrowserWindow | null
+  /** Hear each scan of this vault, the latest one first, at once. Returns
+   *  the undo. */
+  onSnapshot(cb: (snapshot: VaultSnapshot) => void): () => void
+  /**
+   * What the plugins started in this vault tell each other: the events that
+   * start scheduled agents (`VaultEvent`, `packages/shared/src/triggers.ts`).
+   * `emit` reaches every listener in the vault, the emitter's own included,
+   * after the emitter's step; `on` returns the undo. Nothing is kept: a
+   * plugin that starts later hears only what is said after, which is why the
+   * sources and the agent say theirs again on every check.
+   */
+  events: {
+    emit(event: VaultEvent): void
+    on(cb: (event: VaultEvent) => void): () => void
+  }
+}
+
+/** A comment on the note `notePath` that mentions the person (`PluginCtx.onMention`). */
+export interface NoteMention extends CommentMention {
+  notePath: string
+}
+
+/** A native notification (`PluginCtx.notify`). */
+export interface Notice {
+  title: string
+  body: string
+  onClick?: () => void
+}
+
+/**
+ * What a plugin's work across vaults gets (`MainPlugin.background`), for as
+ * long as it runs: not bound to any one vault, and not to the open one.
+ */
+export interface AppCtx {
+  /** Holi's own data directory on this machine. */
+  userData: string
+  /** The registered vaults on this machine that run the plugin, read fresh. */
+  vaults(): Promise<LiveVault[]>
+  /** The vault at `root` as scanned, with the claims of what it runs. */
+  scan(root: string): Promise<VaultSnapshot>
+  /** Show `path` of the vault `remote` in a tab: the window brought forward,
+   *  or made when there is none, and the vault switched to when it is not
+   *  the open one. */
+  open(remote: string, path: string): void
+  /** The GitHub login this machine is signed in as, or null. */
+  viewerLogin(): string | null
+  /** A native notification, `PluginCtx.notify`'s kind, but raised whether or
+   *  not a Holi window has focus: work across vaults says what is due now,
+   *  whatever the person is looking at. */
+  notify(notice: Notice): void
 }
 
 /** What a quit guard asks. */
@@ -178,6 +260,18 @@ export interface MainPlugin {
    * before it and stops after it.
    */
   activate?(ctx: PluginCtx): Disposer | Promise<Disposer>
+  /**
+   * Work it does across every registered vault that runs it, whether or not
+   * that vault is open, for as long as Holi runs: reminders. It starts at
+   * launch while some registered vault runs the plugin, and stops when none
+   * does any more (looked at again on each settings write). While any
+   * plugin's runs, Holi stays in the menu bar with its window closed, and the
+   * tray says `why` it does.
+   */
+  background?: {
+    why: string
+    start(ctx: AppCtx): Disposer | Promise<Disposer>
+  }
 }
 
 export type BridgeRoute = Route
@@ -200,7 +294,16 @@ export {
 } from './capabilities/registry'
 export type { AppDoor, AppDoorOpener } from './capabilities/dispatch'
 export { CapabilityError } from './capabilities/error'
-export { knownPath } from './capabilities/fences'
+export {
+  knownPath,
+  readableOrNull,
+  requireOpen,
+  shownPath,
+  VAULT_NOT_OPEN,
+  vaultNotOpen,
+  writableFile,
+  writablePath,
+} from './capabilities/fences'
 export {
   flagParam,
   limitParam,
@@ -212,11 +315,29 @@ export {
 } from './capabilities/params'
 export { seedFolder } from './vault/seed/folder'
 export { jsonFileStore, type JsonFileStore } from './json-file-store'
-export { resolveBin, toolPath } from './bin'
+export { nodeFallbackDir, resolveBin, toolPath } from './bin'
 export { defaultProbePid, type PidState } from './process-group'
+export { writeScreenshot } from './screenshot-files'
+export {
+  defaultSpawnPty,
+  type PtyProcess,
+  type SpawnPty,
+  type SpawnPtyOptions,
+} from './terminal/pty'
+export type { ActivityChannel, ActivityLevel } from './activity/log'
 export { remoteUrl, runGit, type RangeFile } from './git'
 export { gitignoreWith } from './vault/seed/core'
-export { removeDocFile, writeAtomic } from './vault/vault-files'
+export {
+  absPathFor,
+  listFiles,
+  removeDocFile,
+  withFileLock,
+  writeAtomic,
+} from './vault/vault-files'
+export { moveNotes } from './vault/move'
+// The vault's own task statuses, which decide what completes a task.
+export { completionStatuses, readVaultStatuses } from './vault/statuses'
+export { renameNote } from './vault/rename'
 export { holiTheme, readVaultTheme } from './vault/theme'
 export { readVaultSettings, writePluginSettings } from './vault/settings'
 export { installedInfos } from './plugin-host/installed'

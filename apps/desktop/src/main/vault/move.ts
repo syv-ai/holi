@@ -10,18 +10,22 @@
  * file we have not yet read. There is no transaction: a mid-apply crash leaves
  * a partial move visible in `git status`, same contract as rename.
  *
+ * A moved note's comment threads go with it (`moveNoteComments`), and the
+ * sidecars it changed are returned for a caller that stages what it wrote.
+ *
  * **A non-markdown file is carried across as bytes**, since the removal pass
  * deletes every `from` unconditionally. A utf8 round-trip would corrupt every
  * byte above 0x7f. Non-markdown files are only READ when they are moving.
  */
 import { readFile } from 'node:fs/promises'
 import { rewriteWikiLinksMulti, vaultRelPath } from '@holi/shared'
+import { moveNoteComments } from './note-comments'
 import { absPathFor, listFiles, removeDocFile, writeAtomic } from './vault-files'
 
 export async function moveNotes(
   root: string,
   moves: { from: string; to: string }[],
-): Promise<{ rewritten: { path: string; count: number }[] }> {
+): Promise<{ rewritten: { path: string; count: number }[]; comments: string[] }> {
   const map = new Map(moves.map((m) => [m.from, m.to]))
   const rewritten: { path: string; count: number }[] = []
   const planned: { dest: string; data: string | Uint8Array }[] = []
@@ -46,6 +50,7 @@ export async function moveNotes(
 
   for (const from of map.keys()) await removeDocFile(root, vaultRelPath(from))
   for (const p of planned) await writeAtomic(root, vaultRelPath(p.dest), p.data)
+  const comments = await moveNoteComments(root, moves)
 
-  return { rewritten: rewritten.sort((a, b) => a.path.localeCompare(b.path)) }
+  return { rewritten: rewritten.sort((a, b) => a.path.localeCompare(b.path)), comments }
 }

@@ -1,0 +1,785 @@
+/**
+ * A vault PDF in a pane, through embedpdf's ready-made viewer. The one
+ * module that imports embedpdf, loaded lazily by `PdfViewer` so the main chunk
+ * never pays for the viewer, its worker or the PDFium wasm.
+ *
+ * - **Bytes.** `files.read` brings the file over IPC and it becomes a blob URL.
+ *   A renderer `fetch` of `holi-vault://` fails on CORS (see `main/router.ts`
+ *   above `files`).
+ * - **Marks are saved into the file** after a quiet timer, via the export
+ *   plugin and `files.write`. The returned mtime is remembered so the snapshot
+ *   tick it causes is not taken for a foreign edit; any other mtime refetches
+ *   the bytes (skipped while a save is pending).
+ * - **Its keys reach it only from itself.** The commands plugin listens on
+ *   `document` and would take `h`, the arrows or ⌘= from the file tree. The
+ *   guard below is a layout effect, which React runs before any child's
+ *   effect, so it can `stopImmediatePropagation` a key that did not start
+ *   inside the viewer. A disabled command (print on ⌘P) is not claimed, so
+ *   Holi's palette still opens. A page is not focusable, so the host is
+ *   (`tabIndex={-1}`); closing a sidebar hands focus back to it rather than
+ *   letting it fall to `<body>`.
+ * - **Theme.** `pdfViewerTheme` speaks in `var(--token)` strings that cross the
+ *   shadow boundary; a mode flip goes through `setTheme`, not a remount. The
+ *   blank-page white is overridden by a `<style>` in the shadow root, a sibling
+ *   of Preact's render so a re-render leaves it alone.
+ * - **It arrives once, whole.** The viewer's loading stages are not
+ *   configurable, so it is laid out invisible and fades in when the first
+ *   page image loads, with a timer so an error or password prompt still shows.
+ * - **Signatures outlive the PDF**: loaded from main (`userData`, never
+ *   a vault) and saved on every change. Signature only: with initials too, Save
+ *   stays disabled until both are filled, with no hint why.
+ * - **It opens at 150%, or fit-width if narrower** (`openingZoomCap`), both
+ *   before the first paint.
+ */
+import { atom, useAtomValue } from 'jotai'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import {
+  PDFViewer,
+  SignatureMode,
+  ZoomMode,
+  deserializeEntries,
+  serializeEntries,
+  type PDFViewerRef,
+  type PluginRegistry,
+  type SerializedSignatureEntry,
+  type SignatureEntry,
+} from '@embedpdf/react-pdf-viewer'
+import pdfiumWasmUrl from '@embedpdf/pdfium/pdfium.wasm?url'
+// The typed-signature faces, bundled so the viewer never fetches them from
+// Google Fonts (`PDF_FONTS`). Here, in the lazy chunk, so the main one never
+// carries them; a face's file loads only when a signature is typed in it.
+import '@fontsource/caveat/400.css'
+import '@fontsource/dancing-script/400.css'
+import '@fontsource/great-vibes/400.css'
+import '@fontsource/pacifico/400.css'
+import { formatCommentThreads, pdfAskHeader } from '../shared/pdf-comments'
+import { AskAgentPopover } from '@/composites/ask-agent-popover'
+import { FileWarning } from 'lucide-react'
+import { EmptyState } from '@/composites/empty-state'
+import {
+  ASK_AGENT_PDF,
+  ASK_AGENT_THREAD,
+  selectedAnnotationId,
+  threadOf,
+  threadsForAsk,
+  threadsInViewer,
+  type GlyphEngine,
+} from './pdf-comments'
+import { PdfCommentField } from './pdf-comment-field'
+import { playSidebarLeaves } from './pdf-sidebar-leave'
+import {
+  ADD_COMMENT,
+  PDF_DISABLED_CATEGORIES,
+  PDF_FONTS,
+  PDF_ICONS,
+  PDF_SHADOW_CSS,
+  PDF_SIDEBAR_LEAVING,
+  PDF_SIDEBAR_WIDTHS,
+  PDF_SIGNATURE_FONT_FAMILIES,
+  PDF_SIGNATURE_NOTE,
+  hexOfRgb,
+  openingZoomCap,
+  withHoliButtons,
+  type PdfToolbarItem,
+  pdfViewerTheme,
+  shortcutOf,
+  commentToolActive,
+  themedToolDefaults,
+  withoutMovedTools,
+  type PdfTool,
+} from './pdf-viewer-config'
+import {
+  MAKE_EDITABLE,
+  MAKE_READ_ONLY,
+  isLockable,
+  marksIn,
+  readOnlyState,
+  withReadOnly,
+  withoutReadOnly,
+} from './pdf-read-only'
+import {
+  activeModeAtom,
+  activeRemoteAtom,
+  askPrompt,
+  cn,
+  sessionAtom,
+  snapshotAtom,
+  useAgentService,
+  type AskTargets,
+} from '@/plugin-api'
+import { pdfCap, readPdf, writePdf } from './pdf-cap'
+
+/** Read in place of the agent's targets while there is no agent. */
+const NO_TARGETS = atom<AskTargets>({ sessions: [], default: 'new' })
+
+/** How long the marks have to be quiet before the file is rewritten. A file
+ *  write the autosave commit then picks up, not a commit itself. */
+const SAVE_QUIET_MS = 1000
+
+/** How long the viewer may stay invisible waiting for a page. Measured opens
+ *  paint the first page in about 300 ms; this only matters when none comes. */
+const REVEAL_AFTER_MS = 1500
+
+/** The search panel's field, found by the `data-sidebar-id` the library tags
+ *  each sidebar with rather than by its placeholder, which is translated. */
+const SEARCH_FIELD = `[data-sidebar-id="search-panel"]:not(.${PDF_SIDEBAR_LEAVING}) input[type="text"]`
+
+/** The Signatures panel's column: header, then the list, which scrolls. The
+ *  note is portalled in after them, so it stays in view as the list grows. */
+const SIGNATURE_PANEL_COLUMN = `[data-sidebar-id="signature-panel"]:not(.${PDF_SIDEBAR_LEAVING}) > .min-h-0 > .flex-col`
+
+/** The comments panel, whose one-line fields `PdfCommentField` stands in for. */
+const COMMENT_PANEL = `[data-sidebar-id="comment-panel"]:not(.${PDF_SIDEBAR_LEAVING})`
+
+/** A comment row the viewer rendered: its field and, beside it, its send button. */
+interface CommentRow {
+  row: Element
+  input: HTMLInputElement
+  send: HTMLButtonElement
+}
+
+/** Each comment row in the panel, in order; none while it is closed. */
+function commentRowsIn(root: ShadowRoot): CommentRow[] {
+  const panel = root.querySelector(COMMENT_PANEL)
+  if (panel === null) return []
+  return [...panel.querySelectorAll<HTMLInputElement>('input[type="text"]')].flatMap((input) => {
+    const send = input.nextElementSibling
+    const row = input.parentElement
+    return send instanceof HTMLButtonElement && row !== null ? [{ row, input, send }] : []
+  })
+}
+
+/** A stable key per row element, so a portal keeps its field as rows come and go. */
+const rowKeys = new WeakMap<Element, string>()
+let nextRowKey = 0
+function rowKey(row: Element): string {
+  let key = rowKeys.get(row)
+  if (key === undefined) {
+    key = `comment-row-${nextRowKey++}`
+    rowKeys.set(row, key)
+  }
+  return key
+}
+
+/**
+ * The slices of the viewer's plugins this file touches, typed structurally.
+ * The plugin packages are transitive dependencies of the snippet, so their
+ * types are not importable here, and these methods are all that is used.
+ */
+interface Task<T> {
+  toPromise(): Promise<T>
+}
+interface ViewerPlugins {
+  annotation: {
+    onAnnotationEvent(cb: () => void): () => void
+    updateAnnotation(pageIndex: number, id: string, patch: { flags: string[] }): void
+    getTools(): PdfTool[]
+    setToolDefaults(toolId: string, patch: Record<string, string>): void
+    getColorPresets(): string[]
+    addColorPreset(color: string): void
+  }
+  export: { saveAsCopy(): Task<ArrayBuffer> }
+  zoom: {
+    onZoomChange(
+      cb: (event: { documentId: string; level: string | number; newZoom: number }) => void,
+    ): () => void
+    forDocument(documentId: string): { requestZoom(level: number): void }
+  }
+  ui: {
+    onSidebarChanged(cb: (event: { sidebarId: string }) => void): () => void
+    getSchema(): { toolbars: Record<string, { items: PdfToolbarItem[] } | undefined> }
+    mergeSchema(partial: {
+      toolbars?: Record<string, { items: PdfToolbarItem[] }>
+      sidebars?: Record<string, { width: string }>
+    }): void
+  }
+  signature: {
+    loadEntries(entries: SignatureEntry[]): void
+    onEntriesChange(cb: (entries: SignatureEntry[]) => void): () => void
+  }
+  commands: {
+    getCommandByShortcut(shortcut: string): { id: string } | undefined
+    resolve(id: string, documentId?: string): { disabled: boolean; visible: boolean }
+    execute(id: string, documentId?: string): void
+    registerCommand(command: ViewerCommand): void
+  }
+}
+/** A command as the viewer's commands plugin takes one, as far as Holi uses it:
+ *  the dynamic fields are handed the viewer's store and the document. */
+interface CommandContext {
+  state: unknown
+  documentId: string
+}
+interface ViewerCommand {
+  id: string
+  label: string
+  icon: string
+  action(context: CommandContext): void
+  visible?(context: CommandContext): boolean
+  disabled?(context: CommandContext): boolean
+  active?(context: CommandContext): boolean
+}
+
+/**
+ * A theme token's colour as a hex, for what the viewer writes into a PDF,
+ * where a token means nothing; null when it cannot be resolved. The computed
+ * colour is `rgb()` for a hex or `rgb()` theme and itself for `oklch()` and
+ * the like, which a canvas then converts by painting one pixel.
+ */
+function themeHex(token: string): string | null {
+  const probe = document.createElement('span')
+  probe.style.color = `var(--${token})`
+  document.body.append(probe)
+  const computed = getComputedStyle(probe).color
+  probe.remove()
+  const direct = hexOfRgb(computed)
+  if (direct !== null || computed === '' || computed.includes('var(')) return direct
+  const context = document.createElement('canvas').getContext('2d', { willReadFrequently: true })
+  if (context === null) return null
+  context.fillStyle = computed
+  context.fillRect(0, 0, 1, 1)
+  const [r, g, b] = context.getImageData(0, 0, 1, 1).data
+  return hexOfRgb(`rgb(${r}, ${g}, ${b})`)
+}
+
+function provided<K extends keyof ViewerPlugins>(
+  registry: PluginRegistry,
+  id: K,
+): ViewerPlugins[K] | null {
+  const plugin = registry.getPlugin(id) as { provides(): ViewerPlugins[K] } | null
+  return plugin === null ? null : plugin.provides()
+}
+
+export function PdfDocument({
+  path,
+  quietMs = SAVE_QUIET_MS,
+  revealAfterMs = REVEAL_AFTER_MS,
+}: {
+  path: string
+  quietMs?: number
+  revealAfterMs?: number
+}) {
+  const remote = useAtomValue(activeRemoteAtom)
+  const mode = useAtomValue(activeModeAtom)
+  const snapshot = useAtomValue(snapshotAtom)
+  // Marks and comments are signed with the GitHub login, the identity Holi
+  // shows everywhere else, rather than the viewer's default "Guest". Read at
+  // mount, like the rest of the config; signed out, `App` renders only the
+  // sign-in screen, so a pane never exists without a session.
+  const author = useAtomValue(sessionAtom)?.login
+  const fileUpdatedAt = snapshot.files.find((f) => f.path === path)?.updatedAt ?? null
+
+  const [src, setSrc] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  // Bumped to fetch the bytes again; the viewer is keyed on the URL, so a new
+  // URL is a fresh viewer over the new document.
+  const [generation, setGeneration] = useState(0)
+  /** The `src` whose viewer has painted a page (or given up waiting for one).
+   *  Keyed on the URL, so a reload after a foreign change arrives again too. */
+  const [revealedSrc, setRevealedSrc] = useState<string | null>(null)
+  /** The open Signatures panel's column, where `PDF_SIGNATURE_NOTE` is
+   *  portalled; null while the panel is closed. */
+  const [signatureColumn, setSignatureColumn] = useState<Element | null>(null)
+  /** The comment rows Holi's field is portalled into (`PdfCommentField`). */
+  const [commentRows, setCommentRows] = useState<CommentRow[]>([])
+  /** An open Ask agent popover: where its button is, and what it asks
+   *  about, one thread by its mark's id or every thread. */
+  const [ask, setAsk] = useState<{
+    anchor: DOMRect
+    documentId: string
+    threadId: string | null
+    /** The label of the button that opened it, for a screen reader. */
+    label: string
+  } | null>(null)
+  // Ask agent shows only while a plugin provides an agent. The viewer's
+  // commands read it through the ref, since they are registered once.
+  const agent = useAgentService()
+  const agentRef = useRef(agent)
+  agentRef.current = agent
+  const askTargets = useAtomValue(agent?.targets ?? NO_TARGETS)
+
+  const hostRef = useRef<HTMLDivElement>(null)
+  const viewerRef = useRef<PDFViewerRef>(null)
+  const registryRef = useRef<PluginRegistry | null>(null)
+  /** The mtime of the last state this viewer knows the file to be in: what the
+   *  snapshot said at first sight, then what each of our writes produced. */
+  const knownMtimeRef = useRef<string | null>(null)
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Focus is taken once, when the PDF opens; a reload after a foreign change
+   *  (an agent's re-export, say) must not pull it out of wherever you are. */
+  const tookFocusRef = useRef(false)
+  const savePendingRef = useRef(false)
+
+  useEffect(() => {
+    if (remote === null) return
+    let cancelled = false
+    let url: string | null = null
+    readPdf(remote, path).then(
+      (bytes) => {
+        if (cancelled) return
+        // tRPC's inferred output for a `Uint8Array` is a JSON-shaped stand-in;
+        // structured clone delivered the real thing (see `files.read`).
+        const part = bytes as unknown as Uint8Array<ArrayBuffer>
+        url = URL.createObjectURL(new Blob([part], { type: 'application/pdf' }))
+        setError(null)
+        setSrc(url)
+      },
+      (err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+      },
+    )
+    return () => {
+      cancelled = true
+      if (url !== null) URL.revokeObjectURL(url)
+    }
+  }, [remote, path, generation])
+
+  // A foreign change to the file on disk. The first sighting is the baseline;
+  // our own write's mtime is stored by `save` before the snapshot carrying it
+  // can arrive, so it matches and nothing happens.
+  useEffect(() => {
+    if (fileUpdatedAt === null) return
+    if (knownMtimeRef.current === null) {
+      knownMtimeRef.current = fileUpdatedAt
+      return
+    }
+    if (fileUpdatedAt === knownMtimeRef.current || savePendingRef.current) return
+    knownMtimeRef.current = fileUpdatedAt
+    setGeneration((g) => g + 1)
+  }, [fileUpdatedAt])
+
+  const save = useCallback(async () => {
+    const registry = registryRef.current
+    const exporter = registry === null ? null : provided(registry, 'export')
+    if (exporter === null || remote === null) {
+      savePendingRef.current = false
+      return
+    }
+    try {
+      const buffer = await exporter.saveAsCopy().toPromise()
+      const { updatedAt } = await writePdf(remote, path, new Uint8Array(buffer))
+      knownMtimeRef.current = updatedAt
+    } catch (err) {
+      console.error(`[pdf] could not save marks into ${path}:`, err)
+    } finally {
+      savePendingRef.current = false
+    }
+  }, [remote, path])
+
+  const scheduleSave = useCallback(() => {
+    savePendingRef.current = true
+    if (saveTimerRef.current !== null) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null
+      void save()
+    }, quietMs)
+  }, [save, quietMs])
+
+  // A tab closed inside the quiet window still gets its marks written: the
+  // timer is dropped and the save runs at once, while the registry is alive.
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current === null) return
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+      void save()
+    }
+  }, [save])
+
+  // Per container, as the wrapper creates it: in development StrictMode builds
+  // and discards one before the one that stays, so a ref read from an effect
+  // can be the discarded one. `load` does not bubble, but it does travel the
+  // capture phase, so one listener on the shadow root hears every page image.
+  const onInit = useCallback(
+    (container: HTMLElement) => {
+      const root = container.shadowRoot
+      if (root === null) return
+      const style = document.createElement('style')
+      style.textContent = PDF_SHADOW_CSS
+      root.append(style)
+      // Escape in the search field closes the search, and is consumed so no
+      // Holi Escape handler acts on it as well. The viewer has no binding of
+      // its own for it.
+      root.addEventListener('keydown', (event) => {
+        if (!(event instanceof KeyboardEvent) || event.key !== 'Escape') return
+        if (!(event.target instanceof Element) || !event.target.matches(SEARCH_FIELD)) return
+        const registry = registryRef.current
+        const commands = registry === null ? null : provided(registry, 'commands')
+        if (commands === null) return
+        event.stopPropagation()
+        commands.execute('panel:toggle-search')
+      })
+      // The root is watched for two things. A sidebar the viewer unmounts is
+      // put back as a stand-in that slides out (`pdf-sidebar-leave.ts`); the
+      // callback runs before the next paint, so the panel is never seen gone.
+      // And comment rows: pages repaint through the root constantly, so rows
+      // are looked for once per frame at most, and state changes only when
+      // they did.
+      let pendingFrame = false
+      new MutationObserver((records) => {
+        playSidebarLeaves(records)
+        if (pendingFrame) return
+        pendingFrame = true
+        requestAnimationFrame(() => {
+          pendingFrame = false
+          const rows = commentRowsIn(root)
+          setCommentRows((prev) =>
+            prev.length === rows.length && prev.every((p, i) => p.input === rows[i]!.input)
+              ? prev
+              : rows,
+          )
+        })
+      }).observe(root, { childList: true, subtree: true })
+      root.addEventListener(
+        'load',
+        (event) => {
+          if (event.target instanceof HTMLImageElement) setRevealedSrc(src)
+        },
+        true,
+      )
+    },
+    [src],
+  )
+
+  const onReady = useCallback(
+    (registry: PluginRegistry) => {
+      registryRef.current = registry
+      provided(registry, 'annotation')?.onAnnotationEvent(scheduleSave)
+      // The read-only toggle (`pdf-read-only.ts`): two commands, one per
+      // direction, each computed from the annotations in the viewer's store so
+      // the button follows every change without Holi keeping any state.
+      const annotation = provided(registry, 'annotation')
+      // The viewer marks in its red by default; Holi's marks are the theme's
+      // primary colour, resolved once as the viewer opens, and offered in the
+      // style picker. Once: a colour chosen there is a tool default too, and
+      // is not overwritten later.
+      const primary = themeHex('primary')
+      if (annotation !== null && primary !== null) {
+        for (const { toolId, patch } of themedToolDefaults(annotation.getTools(), primary)) {
+          annotation.setToolDefaults(toolId, patch)
+        }
+        if (!annotation.getColorPresets().includes(primary)) annotation.addColorPreset(primary)
+      }
+      const commands = provided(registry, 'commands')
+      if (annotation !== null && commands !== null) {
+        const counts = ({ state, documentId }: CommandContext) =>
+          readOnlyState(marksIn(state, documentId))
+        commands.registerCommand({
+          id: MAKE_READ_ONLY,
+          label: 'Make marks read-only',
+          icon: 'holi-lock-open',
+          visible: (c) => {
+            const { editable, readOnly } = counts(c)
+            return editable > 0 || readOnly === 0
+          },
+          disabled: (c) => counts(c).editable === 0,
+          action: ({ state, documentId }) => {
+            for (const mark of marksIn(state, documentId)) {
+              if (!isLockable(mark.type) || mark.flags?.includes('readOnly')) continue
+              annotation.updateAnnotation(mark.pageIndex, mark.id, {
+                flags: withReadOnly(mark.flags),
+              })
+            }
+          },
+        })
+        commands.registerCommand({
+          id: MAKE_EDITABLE,
+          label: 'Make marks editable',
+          icon: 'holi-lock',
+          visible: (c) => {
+            const { editable, readOnly } = counts(c)
+            return editable === 0 && readOnly > 0
+          },
+          active: () => true,
+          action: ({ state, documentId }) => {
+            for (const mark of marksIn(state, documentId)) {
+              if (!isLockable(mark.type) || !mark.flags?.includes('readOnly')) continue
+              annotation.updateAnnotation(mark.pageIndex, mark.id, {
+                flags: withoutReadOnly(mark.flags),
+              })
+            }
+          },
+        })
+      }
+
+      // The viewer's comment tool on the top bar, as "Add comment" (the
+      // viewer calls it "Comment", like the comments panel's button). It is
+      // the viewer's command underneath: the same tool, toggled the same way.
+      if (commands !== null) {
+        commands.registerCommand({
+          id: ADD_COMMENT,
+          label: 'Add comment',
+          icon: 'message',
+          action: ({ documentId }) => commands.execute('annotation:add-comment', documentId),
+          active: ({ state, documentId }) => commentToolActive(state, documentId),
+          disabled: ({ documentId }) =>
+            commands.resolve('annotation:add-comment', documentId).disabled,
+        })
+      }
+
+      // Ask agent: about the selected comment's thread, or with none
+      // selected about the PDF itself. Two commands whose `visible` swaps, like
+      // the read-only pair, because a command's label is fixed. Each opens
+      // Holi's popover under its own button, found by the toolbar CSS's id.
+      if (commands !== null) {
+        const selected = ({ state, documentId }: CommandContext) =>
+          threadOf(threadsInViewer(state, documentId), selectedAnnotationId(state, documentId))
+        const openAsk = (
+          documentId: string,
+          buttonId: string,
+          threadId: string | null,
+          label: string,
+        ) => {
+          const item = viewerRef.current?.container?.shadowRoot?.querySelector(
+            `[data-epdf-i="${buttonId}"]`,
+          )
+          const box = (
+            item?.querySelector('button') ??
+            item ??
+            hostRef.current
+          )?.getBoundingClientRect()
+          if (box !== undefined) setAsk({ anchor: box, documentId, threadId, label })
+        }
+        commands.registerCommand({
+          id: ASK_AGENT_THREAD,
+          label: 'Ask agent about this comment',
+          icon: 'holi-sparkles',
+          visible: (c) => agentRef.current !== null && selected(c) !== null,
+          action: (c) =>
+            openAsk(
+              c.documentId,
+              'ask-agent-thread-button',
+              selected(c)?.id ?? null,
+              'Ask agent about this comment',
+            ),
+        })
+        commands.registerCommand({
+          id: ASK_AGENT_PDF,
+          label: 'Ask agent about this PDF',
+          icon: 'holi-sparkles',
+          visible: (c) => agentRef.current !== null && selected(c) === null,
+          action: (c) =>
+            openAsk(c.documentId, 'ask-agent-pdf-button', null, 'Ask agent about this PDF'),
+        })
+      }
+
+      const ui = provided(registry, 'ui')
+      // Signatures, Add comment and the read-only toggle on the top bar,
+      // merged after the commands exist so the buttons can
+      // resolve them; the comment tool off the Annotate bar; and the wider
+      // comments panel.
+      if (ui != null) {
+        const { toolbars } = ui.getSchema()
+        const mainToolbar = toolbars['main-toolbar']
+        const annotationToolbar = toolbars['annotation-toolbar']
+        ui.mergeSchema({
+          toolbars: {
+            ...(mainToolbar !== undefined && {
+              'main-toolbar': { items: withHoliButtons(mainToolbar.items) },
+            }),
+            ...(annotationToolbar !== undefined && {
+              'annotation-toolbar': { items: withoutMovedTools(annotationToolbar.items) },
+            }),
+          },
+          sidebars: PDF_SIDEBAR_WIDTHS,
+        })
+      }
+      // A sidebar opening or closing. Closing reports an empty `sidebarId`, and
+      // whatever held focus in the panel is gone with it; after the render,
+      // focus goes to the search field if that is what opened, or back to the
+      // host if it fell to <body>.
+      ui?.onSidebarChanged((event) => {
+        // Before a signature can be typed, so its canvas never draws one in a
+        // fallback face (`PDF_SIGNATURE_FONT_FAMILIES`). Local files, cheap.
+        if (event.sidebarId === 'signature-panel' && 'fonts' in document) {
+          for (const family of PDF_SIGNATURE_FONT_FAMILIES) {
+            document.fonts.load(`16px "${family}"`).catch(() => {})
+          }
+        }
+        requestAnimationFrame(() => {
+          const root = viewerRef.current?.container?.shadowRoot
+          // Asked on every change, whichever side moved: the Signatures panel
+          // docks left and search right, so either can open or close alone.
+          setSignatureColumn(root?.querySelector(SIGNATURE_PANEL_COLUMN) ?? null)
+          const field =
+            event.sidebarId === 'search-panel'
+              ? root?.querySelector<HTMLInputElement>(SEARCH_FIELD)
+              : null
+          if (field != null) field.focus()
+          else if (document.activeElement === document.body) hostRef.current?.focus()
+        })
+      })
+      const signatures = provided(registry, 'signature')
+      if (signatures !== null && remote !== null) {
+        // Subscribed only once the saved list is in, so loading it is never
+        // taken for a change and written straight back.
+        void pdfCap
+          .signatures(remote)
+          .then((json) => {
+            signatures.loadEntries(
+              deserializeEntries(JSON.parse(json) as SerializedSignatureEntry[]),
+            )
+          })
+          .catch((err: unknown) => console.error('[pdf] could not load signatures:', err))
+          .finally(() => {
+            signatures.onEntriesChange((entries) => {
+              const entriesJson = JSON.stringify(serializeEntries(entries))
+              void pdfCap
+                .saveSignatures(remote, { entriesJson })
+                .catch((err: unknown) => console.error('[pdf] could not save signatures:', err))
+            })
+          })
+      }
+      const zoom = provided(registry, 'zoom')
+      const opened = new Set<string>()
+      zoom?.onZoomChange((event) => {
+        if (opened.has(event.documentId)) return
+        opened.add(event.documentId)
+        const cap = openingZoomCap(event.level, event.newZoom)
+        if (cap !== null) zoom.forDocument(event.documentId).requestZoom(cap)
+      })
+    },
+    [scheduleSave, remote],
+  )
+
+  useLayoutEffect(() => {
+    const guard = (event: KeyboardEvent) => {
+      const host = hostRef.current
+      if (host === null || event.composedPath().includes(host)) return
+      const registry = registryRef.current
+      const commands = registry === null ? null : provided(registry, 'commands')
+      const shortcut = shortcutOf(event)
+      if (commands === null || shortcut === null) return
+      const command = commands.getCommandByShortcut(shortcut)
+      if (command === undefined) return
+      const state = commands.resolve(command.id)
+      if (!state.disabled && state.visible) event.stopImmediatePropagation()
+    }
+    document.addEventListener('keydown', guard)
+    return () => document.removeEventListener('keydown', guard)
+  }, [])
+
+  useEffect(() => {
+    viewerRef.current?.container?.setTheme(pdfViewerTheme(mode))
+  }, [mode, src])
+
+  useEffect(() => {
+    if (src === null || tookFocusRef.current) return
+    tookFocusRef.current = true
+    hostRef.current?.focus({ preventScroll: true })
+  }, [src])
+
+  // The fallback: a viewer that never paints a page still arrives.
+  useEffect(() => {
+    if (src === null) return
+    const timer = setTimeout(() => setRevealedSrc(src), revealAfterMs)
+    return () => clearTimeout(timer)
+  }, [src, revealAfterMs])
+
+  return (
+    <div
+      ref={hostRef}
+      tabIndex={-1}
+      className="flex min-h-0 flex-1 flex-col bg-background outline-none"
+    >
+      {error !== null ? (
+        <EmptyState
+          icon={FileWarning}
+          role="alert"
+          title="This PDF didn’t open"
+          description={error}
+          action={{
+            label: 'Try again',
+            onClick: () => {
+              setError(null)
+              setGeneration((g) => g + 1)
+            },
+          }}
+        />
+      ) : src === null ? (
+        // The bytes are on their way: a page's shape where the page will be.
+        <div
+          role="status"
+          aria-label="Loading PDF"
+          className="flex min-h-0 flex-1 justify-center p-6"
+        >
+          <span className="block aspect-3/4 w-full max-w-xl rounded-md motion-shimmer" />
+        </div>
+      ) : (
+        <PDFViewer
+          key={src}
+          ref={viewerRef}
+          className={cn(
+            'h-full min-h-0 flex-1',
+            revealedSrc === src ? 'motion-in-fade' : 'opacity-0',
+          )}
+          onInit={onInit}
+          onReady={onReady}
+          config={{
+            src,
+            // Absolute on purpose: a root-relative URL resolved against the
+            // engine worker's `blob:` base hangs on "Loading PDF…".
+            wasmUrl: new URL(pdfiumWasmUrl, window.location.href).href,
+            worker: true,
+            // No CDN fonts: the vault's PDFs embed theirs, and the app is offline-first.
+            fontFallback: null,
+            // Nor Google Fonts for its own UI or signatures: Holi's font, and
+            // the script faces bundled above.
+            fonts: PDF_FONTS,
+            // Holi's lock glyphs for the read-only toggle.
+            icons: PDF_ICONS,
+            // Rubber stamps are disabled, but without this the plugin still
+            // fetches its default manifest and stamps from jsDelivr on open.
+            stamp: { manifests: [] },
+            tabBar: 'never',
+            zoom: { defaultZoomLevel: ZoomMode.FitWidth },
+            annotations: { annotationAuthor: author },
+            signature: { mode: SignatureMode.SignatureOnly },
+            disabledCategories: [...PDF_DISABLED_CATEGORIES],
+            theme: pdfViewerTheme(mode),
+          }}
+        />
+      )}
+      {commentRows.map(({ row, input, send }) =>
+        createPortal(<PdfCommentField input={input} send={send} />, row, rowKey(row)),
+      )}
+      {agent !== null && (
+        <AskAgentPopover
+          anchor={ask?.anchor ?? null}
+          label={ask?.label ?? ''}
+          targets={{ sessions: [...askTargets.sessions], initial: askTargets.default }}
+          onClose={() => setAsk(null)}
+          onSend={async (instruction, target) => {
+            const registry = registryRef.current
+            if (ask === null || registry === null)
+              return { ok: false, message: 'The PDF is closed.' }
+            const state = registry.getStore().getState()
+            // Nothing selected: the PDF and its comment count, not the comments
+            // themselves; the agent reads them when the ask is about them.
+            if (ask.threadId === null) {
+              const count = threadsInViewer(state, ask.documentId).length
+              return agent.ask({ text: askPrompt(instruction, pdfAskHeader(path, count)), target })
+            }
+            // Read now, from the viewer's store, so a mark made a moment ago is
+            // in the ask before its save.
+            const threads = (
+              await threadsForAsk(
+                state,
+                ask.documentId,
+                registry.getEngine() as unknown as GlyphEngine,
+              )
+            ).filter((t) => t.id === ask.threadId)
+            if (threads.length === 0) {
+              return { ok: false, message: 'That comment is not in the PDF any more.' }
+            }
+            const text = askPrompt(instruction, formatCommentThreads(path, threads))
+            return agent.ask({ text, target })
+          }}
+        />
+      )}
+      {signatureColumn !== null &&
+        createPortal(<p data-signature-note="">{PDF_SIGNATURE_NOTE}</p>, signatureColumn)}
+    </div>
+  )
+}

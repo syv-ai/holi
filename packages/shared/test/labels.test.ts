@@ -106,3 +106,15 @@ describe('virtualLabels — unparseable input', () => {
     expect(virtualLabels(task({ due: '1d', priority: 'high' }), NOW)).toEqual(['p1'])
   })
 })
+
+describe('urgent and the vault’s own done', () => {
+  const TODAY_NOW = '2026-09-27T12:00'
+  it('urgent is p0, above p1', () => {
+    expect(virtualLabels({ status: 'todo', priority: 'urgent' }, TODAY_NOW)).toEqual(['p0'])
+  })
+  it('a task in a status the vault calls finished is never overdue', () => {
+    const shipped = { status: 'shipped', due: '2026-01-01' }
+    expect(virtualLabels(shipped, TODAY_NOW)).toEqual(['overdue'])
+    expect(virtualLabels(shipped, TODAY_NOW, (s) => s === 'shipped')).toEqual([])
+  })
+})

@@ -14,7 +14,7 @@ import {
 } from '../src/schedule'
 
 const at = (y: number, mo: number, d: number, h = 0, mi = 0) => new Date(y, mo - 1, d, h, mi)
-const PATH = '.holi/schedules/inbox-triage.md'
+const PATH = '.holi/schedules/inbox-triage.local.md'
 
 const file = (frontmatter: string, body = 'Check my mail.') => `---\n${frontmatter}\n---\n${body}\n`
 
@@ -31,16 +31,16 @@ function error(text: string): string {
 }
 
 describe('schedule paths', () => {
-  it('is a markdown file directly in .holi/schedules', () => {
+  it('is a local markdown file directly in .holi/schedules', () => {
     expect(isScheduleFilePath(PATH)).toBe(true)
-    expect(isScheduleFilePath('.holi/schedules/mine.local.md')).toBe(true)
-    expect(isScheduleFilePath('.holi/schedules/sub/x.md')).toBe(false)
+    expect(isScheduleFilePath('.holi/schedules/shared.md')).toBe(false)
+    expect(isScheduleFilePath('.holi/schedules/.local.md')).toBe(false)
+    expect(isScheduleFilePath('.holi/schedules/sub/x.local.md')).toBe(false)
     expect(isScheduleFilePath('.holi/schedules/notes.txt')).toBe(false)
     expect(isScheduleFilePath('notes/.holi/schedules/x.md')).toBe(false)
   })
 
   it('names itself by its file, without the local marker', () => {
-    expect(scheduleSlug('.holi/schedules/mine.local.md')).toBe('mine')
     expect(scheduleSlug(PATH)).toBe('inbox-triage')
   })
 })
@@ -64,7 +64,7 @@ describe('parseScheduleFile', () => {
     expect(d.model).toBe('sonnet')
     expect(d.allow).toEqual(['Bash(holi google search:*)', 'Edit'])
     expect(d.prompt).toBe('Look through my unread mail.\n\nDraft replies.')
-    expect(describeScheduleWhen(d.when)).toBe('Every 30 minutes, 07:00–18:59, weekdays')
+    expect(describeScheduleWhen(d.when!)).toBe('Every 30 minutes, 07:00–18:59, weekdays')
   })
 
   it('falls back to the file for a name, and to no rules', () => {
@@ -77,7 +77,7 @@ describe('parseScheduleFile', () => {
   it('reads a one-off as a local minute', () => {
     const d = def(file('at: "2026-10-09T15:00"'))
     expect(d.when).toEqual({ kind: 'at', stamp: '2026-10-09T15:00', local: at(2026, 10, 9, 15) })
-    expect(describeScheduleWhen(d.when)).toBe('Once, at 2026-10-09 15:00')
+    expect(describeScheduleWhen(d.when!)).toBe('Once, at 2026-10-09 15:00')
   })
 
   it('refuses what it cannot run, and says why', () => {
@@ -112,7 +112,7 @@ describe('scheduleApprovalText', () => {
 })
 
 describe('dueRun and nextRun', () => {
-  const every30 = def(file('cron: "*/30 * * * *"')).when
+  const every30 = def(file('cron: "*/30 * * * *"')).when!
 
   it('is nothing until a moment passes', () => {
     expect(dueRun(every30, at(2026, 10, 8, 10, 0), at(2026, 10, 8, 10, 29))).toBeNull()
@@ -126,7 +126,7 @@ describe('dueRun and nextRun', () => {
   })
 
   it('runs a one-off once', () => {
-    const once = def(file('at: "2026-10-09T15:00"')).when
+    const once = def(file('at: "2026-10-09T15:00"')).when!
     expect(dueRun(once, at(2026, 10, 9, 14), at(2026, 10, 9, 15))).toEqual(at(2026, 10, 9, 15))
     expect(dueRun(once, at(2026, 10, 9, 15), at(2026, 10, 9, 16))).toBeNull()
     expect(nextRun(once, at(2026, 10, 9, 16))).toBeNull()
@@ -146,9 +146,9 @@ describe('automations', () => {
       "---\ncron:\n  - '0 9 * * 1-5'\n  - '0 16 * * 5'\nholi: assistant\ncatch-up: 2h\n---\nDo it.\n",
     )
     expect(def).toMatchObject({ holi: 'assistant', catchUpMinutes: 120 })
-    expect(describeScheduleWhen(def.when)).toBe('Weekdays at 09:00 · Fridays at 16:00')
+    expect(describeScheduleWhen(def.when!)).toBe('Weekdays at 09:00 · Fridays at 16:00')
     // Friday 10:00: the next is Friday 16:00, the earlier of the two.
-    expect(nextRun(def.when, new Date(2026, 9, 23, 10, 0))).toEqual(new Date(2026, 9, 23, 16, 0))
+    expect(nextRun(def.when!, new Date(2026, 9, 23, 10, 0))).toEqual(new Date(2026, 9, 23, 16, 0))
     expect(parseScheduleFile("---\ncron: '0 9 * * *'\ncatch-up: soon\n---\nx\n", 'x').ok).toBe(
       false,
     )

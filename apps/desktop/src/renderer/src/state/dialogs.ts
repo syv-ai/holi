@@ -1,11 +1,15 @@
 import { atom } from 'jotai'
 import type { ReactNode } from 'react'
-import type { DialogSize } from '@/primitives'
+
+/** How wide a plugin's dialog asks to be; the host maps it to the stock dialog's width. */
+export type DialogSize = 'sm' | 'md' | 'lg' | 'full' | 'bare'
 
 /**
- * The dialog registry, as a discriminated union (`docs/ui-system.md`). A dialog
- * is a content block plus one entry here: `id` selects the block in DialogHost
- * and `size` is the guarded prop the shell reads.
+ * The dialogs that can be asked for, as a discriminated union: `id` names the
+ * dialog and `size` the width it asks for. `openDialogAtom` records the ask in
+ * `activeDialogAtom`, and the shell's `DialogHost` draws it. It draws a
+ * plugin's dialog; the core entries have no component in this shell yet, so
+ * asking for one still shows nothing.
  *
  * `closable` rides alongside the union: it means the same thing for every
  * dialog, and an entry sets it only to opt OUT, when its own footer already
@@ -41,15 +45,19 @@ export type ActiveDialog = { closable?: boolean } & (
 export type PluginDialog = Extract<ActiveDialog, { id: 'plugin' }>
 
 /** Leave a vault, delete it, or let go of one GitHub no longer shows. */
-export type RemoveVaultIntent = 'leave' | 'delete' | 'forget'
+type RemoveVaultIntent = 'leave' | 'delete' | 'forget'
 
-/** Null when nothing is open. The host is mounted once by the app shell. */
-export const activeDialogAtom = atom<ActiveDialog | null>(null)
+/** Null when nothing is open. */
+const activeDialogAtom = atom<ActiveDialog | null>(null)
+
+/** The dialog asked for, for the host to draw. */
+export const shownDialogAtom = atom((get) => get(activeDialogAtom))
+
+/** Close whatever dialog is open. */
+export const closeDialogAtom = atom(null, (_get, set) => {
+  set(activeDialogAtom, null)
+})
 
 export const openDialogAtom = atom(null, (_get, set, dialog: ActiveDialog) => {
   set(activeDialogAtom, dialog)
-})
-
-export const closeDialogAtom = atom(null, (_get, set) => {
-  set(activeDialogAtom, null)
 })

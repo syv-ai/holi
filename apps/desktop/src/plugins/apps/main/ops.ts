@@ -18,7 +18,6 @@ import { writeAtomic } from '../../../main/plugin-api'
 
 const ENTRY_FILE = 'index.html'
 
-export type AppOpResult = { ok: true } | { ok: false; error: string }
 export type AppInitResult = { ok: true; created: string[] } | { ok: false; error: string }
 
 const BUNDLE_RULE =
@@ -99,7 +98,13 @@ function entryFor(rawName: string): string {
 <title>${name}</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; }
-  body { font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 1rem; }
+  body {
+    font: 16px/1.5 system-ui, sans-serif;
+    margin: 0;
+    padding: 1rem;
+    background: var(--background);
+    color: var(--foreground);
+  }
 </style>
 <p>Scaffolded by <code>holi apps init</code>. Replace this with the app.</p>
 `

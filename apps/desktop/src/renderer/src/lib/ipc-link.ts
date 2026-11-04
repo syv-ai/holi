@@ -15,7 +15,8 @@ export interface TrpcOpWire {
   input: unknown
 }
 
-export type TrpcEnvelope = { ok: true; data: unknown } | { ok: false; message: string; code?: string }
+export type TrpcEnvelope =
+  { ok: true; data: unknown } | { ok: false; message: string; code?: string }
 
 export type TrpcInvoke = (op: TrpcOpWire) => Promise<TrpcEnvelope>
 

@@ -1,0 +1,16 @@
+# Installed by the shadcn CLI (double quotes, semicolons) and edited in place; its
+# style is upstream's, so `prettier --check` on a staged file must not fail on it.
+apps/desktop/src/renderer/src/components/ui/
+
+pnpm-lock.yaml
+patches/
+out/
+dist/
+release/
+
+# Vault seed files are written into users' vaults byte for byte, and shipped ones
+# are matched by content hash (shipped-history.json): never reformat them.
+**/vault/once/
+**/vault/shipped/
+# Written by the ReUI installer; a re-run would undo any formatting.
+.agents/skills/reui/

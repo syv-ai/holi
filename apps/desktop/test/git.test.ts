@@ -321,7 +321,7 @@ describe('pull', () => {
     const { ours, theirs } = await pair()
     await publish(theirs, 'theirs.md', 'their note\n')
 
-    expect(await openRepo(ours).pull()).toEqual({ kind: 'merged', commits: 1 })
+    expect(await openRepo(ours).pull()).toMatchObject({ kind: 'merged', commits: 1 })
     expect(await readFile(join(ours, 'theirs.md'), 'utf8')).toBe('their note\n')
   })
 
@@ -337,7 +337,14 @@ describe('pull', () => {
 
   /** A task's frontmatter, with one field swapped. */
   const taskFile = (over: Partial<Record<string, string>> = {}) => {
-    const f = { title: 'A', status: 'todo', due: '2026-08-01', tags: '[x]', priority: 'low', ...over }
+    const f = {
+      title: 'A',
+      status: 'todo',
+      due: '2026-08-01',
+      tags: '[x]',
+      priority: 'low',
+      ...over,
+    }
     return `---\ntitle: ${f.title}\nstatus: ${f.status}\ndue: ${f.due}\ntags: ${f.tags}\npriority: ${f.priority}\n---\n`
   }
 
@@ -434,6 +441,110 @@ describe('pull', () => {
     expect((await openRepo(ours).remerge()).kind).toBe('merged')
     expect((await openRepo(ours).status()).merging).toBe(false)
   })
+
+  it('keeps a comment sidecar one side changed and the other deleted, and merges', async () => {
+    // A modify/delete never reaches the comments merge driver: the note was
+    // deleted on one side and commented on on the other. The comment is kept.
+    const { ours, theirs } = await pair()
+    const sidecar = '.holi/comments/a.md.json'
+    for (const repo of [ours, theirs]) {
+      await mkdir(join(repo, '.holi/comments'), { recursive: true })
+    }
+    await publish(theirs, sidecar, '{"threads":{}}\n')
+    await openRepo(ours).pull()
+
+    await plainGit(theirs, ['rm', '-q', sidecar])
+    await plainGit(theirs, ['commit', '-qm', 'delete'])
+    await plainGit(theirs, ['push', 'origin', 'main'])
+    await commitFile(ours, sidecar, '{"threads":{"t":{}}}\n')
+
+    const repo = openRepo(ours)
+    expect((await repo.pull()).kind).toBe('merged')
+    expect((await repo.status()).merging).toBe(false)
+    expect(await readFile(join(ours, sidecar), 'utf8')).toBe('{"threads":{"t":{}}}\n')
+  })
+
+  it('keeps a note deleted here and edited by a teammate, and merges', async () => {
+    // The modify/delete has one answer: keeping the edit loses nothing.
+    const { ours, theirs } = await pair()
+    await publish(theirs, 'note.md', 'one\n')
+    await openRepo(ours).pull()
+    await publish(theirs, 'note.md', 'two\n')
+    await plainGit(ours, ['rm', '-q', 'note.md'])
+    await plainGit(ours, ['commit', '-qm', 'delete'])
+
+    const repo = openRepo(ours)
+    expect((await repo.pull()).kind).toBe('merged')
+    expect((await repo.status()).dirty).toBe(false)
+    expect(await readFile(join(ours, 'note.md'), 'utf8')).toBe('two\n')
+  })
+
+  it('regenerates a conflicting memory index from the merged memories', async () => {
+    // The index is generated, so the two sides' versions of it never need a
+    // person: the memories both sides wrote are listed, in one index.
+    const { ours, theirs } = await pair()
+    const memory = (title: string) => `---\ntype: note\ndescription: ${title}\n---\n\nFact.\n`
+    for (const repo of [ours, theirs]) {
+      await mkdir(join(repo, '.holi/memory'), { recursive: true })
+    }
+    await publish(theirs, '.holi/memory/index.md', '# Index\n\n- a\n')
+    await openRepo(ours).pull()
+    await writeFile(join(theirs, '.holi/memory/theirs.md'), memory('Theirs'), 'utf8')
+    await publish(theirs, '.holi/memory/index.md', '# Index\n\n- a\n- theirs\n')
+    await writeFile(join(ours, '.holi/memory/ours.md'), memory('Ours'), 'utf8')
+    await commitFile(ours, '.holi/memory/index.md', '# Index\n\n- a\n- ours\n')
+
+    const repo = openRepo(ours)
+    expect((await repo.pull()).kind).toBe('merged')
+    expect((await repo.status()).dirty).toBe(false)
+    const index = await readFile(join(ours, '.holi/memory/index.md'), 'utf8')
+    expect(index).toContain('[[.holi/memory/ours.md|')
+    expect(index).toContain('[[.holi/memory/theirs.md|')
+    expect(index).not.toContain('<<<<<<<')
+  })
+
+  it('does not index a held-back shared memory edit while settling an index conflict', async () => {
+    const { ours, theirs } = await pair()
+    const memory = (description: string) => `---\ntype: note\ndescription: ${description}\n---\n`
+    for (const repo of [ours, theirs]) {
+      await mkdir(join(repo, '.holi/memory'), { recursive: true })
+    }
+    await writeFile(join(ours, '.holi/memory/local.md'), memory('base'), 'utf8')
+    await publish(theirs, '.holi/memory/index.md', '# Index\n\n- base\n')
+    await openRepo(ours).pull()
+    await writeFile(join(theirs, '.holi/memory/remote.md'), memory('remote'), 'utf8')
+    await publish(theirs, '.holi/memory/index.md', '# Index\n\n- base\n- remote\n')
+    await commitFile(ours, '.holi/memory/index.md', '# Index\n\n- base\n- local\n')
+    await writeFile(join(ours, '.holi/memory/local.md'), memory('held back'), 'utf8')
+
+    const result = await openRepo(ours).remerge()
+    expect(result).toEqual({ kind: 'conflict', paths: ['.holi/memory/index.md'] })
+    expect(await readFile(join(ours, '.holi/memory/local.md'), 'utf8')).toContain('held back')
+    expect((await openRepo(ours).status()).dirtyPaths).toContain('.holi/memory/local.md')
+  })
+
+  it('leaves the memory index a conflict while a memory still holds markers', async () => {
+    // The index is read from the tree, so rebuilding it now would list a
+    // memory's conflict markers and mark the index resolved.
+    const { ours, theirs } = await pair()
+    const memory = (description: string) => `---\ntype: note\ndescription: ${description}\n---\n`
+    for (const repo of [ours, theirs]) {
+      await mkdir(join(repo, '.holi/memory'), { recursive: true })
+    }
+    await writeFile(join(theirs, '.holi/memory/m.md'), memory('base'), 'utf8')
+    await publish(theirs, '.holi/memory/index.md', '# Index\n\n- base\n')
+    await openRepo(ours).pull()
+    await writeFile(join(theirs, '.holi/memory/m.md'), memory('theirs'), 'utf8')
+    await publish(theirs, '.holi/memory/index.md', '# Index\n\n- theirs\n')
+    await writeFile(join(ours, '.holi/memory/m.md'), memory('ours'), 'utf8')
+    await commitFile(ours, '.holi/memory/index.md', '# Index\n\n- ours\n')
+
+    const result = await openRepo(ours).remerge()
+    expect(result).toEqual({
+      kind: 'conflict',
+      paths: ['.holi/memory/index.md', '.holi/memory/m.md'],
+    })
+  })
 })
 
 describe('push', () => {
@@ -442,7 +553,7 @@ describe('push', () => {
     const dir = await makeClone(remote)
     await commitFile(dir, 'ours.md', 'ours\n')
 
-    expect(await openRepo(dir).push()).toEqual({ kind: 'pushed', commits: 1 })
+    expect(await openRepo(dir).push()).toEqual({ kind: 'pushed', commits: 1, branch: 'main' })
     // The remote really moved: a fresh clone sees the file.
     const check = await makeClone(remote, 'check')
     expect(await readFile(join(check, 'ours.md'), 'utf8')).toBe('ours\n')
@@ -465,7 +576,7 @@ describe('push', () => {
     const dir = await makeClone(bare)
     await commitFile(dir, 'seed.md', 'seed\n')
 
-    expect(await openRepo(dir).push()).toEqual({ kind: 'pushed', commits: 1 })
+    expect(await openRepo(dir).push()).toEqual({ kind: 'pushed', commits: 1, branch: 'main' })
     // The remote really received it — a fresh clone sees the seed.
     const check = await makeClone(bare, 'check')
     expect(await readFile(join(check, 'seed.md'), 'utf8')).toBe('seed\n')
@@ -523,7 +634,10 @@ describe('classifyPushFailure', () => {
 
   it('reads a revoked or expired token as permission, not as a network failure', () => {
     expect(
-      classifyPushFailure('', "remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/syv-ai/1brain.git/'\n"),
+      classifyPushFailure(
+        '',
+        "remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/syv-ai/1brain.git/'\n",
+      ),
     ).toBe('permission')
   })
 
@@ -545,7 +659,9 @@ describe('classifyPushFailure', () => {
         'error: remote unpack failed: unable to create temporary object directory\n',
       ),
     ).toBeNull()
-    expect(classifyPushFailure('', 'fatal: unable to access: Could not resolve host: github.com\n')).toBeNull()
+    expect(
+      classifyPushFailure('', 'fatal: unable to access: Could not resolve host: github.com\n'),
+    ).toBeNull()
   })
 })
 

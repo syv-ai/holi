@@ -1,34 +1,30 @@
 /**
- * Closing panes and tabs, as atoms, so a key, the menu and the palette all
- * close the same way.
- *
- * **A close lands at once.** Closing a split's pane used to wait for an exit
- * animation; ⌘W is a keyboard action, nothing animates a pane opening, and an
- * exit only the closing side has reads as lag rather than as a place
- * (docs/ui-system.md, Motion).
+ * Closing panes and tabs as atoms: a key, the menu and the palette all wait
+ * for pending text to reach disk before destroying its editor.
  */
 import { atom } from 'jotai'
-import { closePane, closeTab, focusPane, workspaceAtom } from './panes'
+import { saveBeforeClosing } from '@/lib/buffer-registry'
+import { closeTab, focusPane, workspaceAtom } from './panes'
 
-export const closePaneAtom = atom(null, (_get, set, index: number): void => {
-  set(workspaceAtom, (w) => closePane(w, index))
-})
-
-/** Close one tab; closing a split pane's last tab takes the pane too
- *  (`closeTab`). A plugin that must hear its tab closed watches
- *  `surfaceTabIdsAtom`. */
-export const closeTabAtom = atom(null, (_get, set, paneIndex: number, tabIndex: number): void => {
-  set(workspaceAtom, (w) => closeTab(focusPane(w, paneIndex), tabIndex))
-})
-
-/**
- * ⌘W: the focused pane's active tab. With a single pane the last tab leaves
- * it empty; with nothing open at all, `closeTab` at `-1` is a no-op. An EMPTY
- * pane in a split does go, which is what ⌘\ then ⌘W should do.
+/** Close one tab only after saving; failures keep the editor available for retry.
+ * @public exported for its test
  */
-export const closeActiveTabAtom = atom(null, (get, set): void => {
+export const closeTabAtom = atom(
+  null,
+  async (get, set, paneIndex: number, tabIndex: number): Promise<void> => {
+    const before = get(workspaceAtom)
+    await saveBeforeClosing(() => {
+      // Never close a different tab that inherited these indexes while saving.
+      if (get(workspaceAtom) !== before) return
+      set(workspaceAtom, closeTab(focusPane(before, paneIndex), tabIndex))
+    })
+  },
+)
+
+/** ⌘W closes the focused pane's active tab, including an empty split pane. */
+export const closeActiveTabAtom = atom(null, async (get, set): Promise<void> => {
   const w = get(workspaceAtom)
   const focused = w.panes[w.active]
   if (focused === undefined) return
-  set(closeTabAtom, w.active, focused.active)
+  await set(closeTabAtom, w.active, focused.active)
 })

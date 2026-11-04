@@ -23,7 +23,9 @@ them push access to. The same ritual, minus the greeting, is how any later vault
      path. Left empty, the name is `holi-vault` (the field's placeholder, and the path says so),
      so the act never opens on a blank; a typed name that slugifies to nothing blocks instead.
      While a control or its menu has focus, Enter and Escape are that control's, never the
-     act's. Continue goes on to the questions; nothing exists on GitHub yet.
+     act's. Under them, an optional "What is this vault for?" field: its answer becomes the
+     README's paragraph and the repo's description on GitHub, on one line and cut at 300
+     characters. Continue goes on to the questions; nothing exists on GitHub yet.
   3. Plugins: "What this vault runs", a card per plugin in the build, two to a row (`OptionCard`,
      after ReUI's `settings-1`): its mark (Claude, Google, a PDF page, Holi's own glyph for vault
      apps and community plugins), its description, an "Optional" badge on one that is off by
@@ -69,12 +71,26 @@ them push access to. The same ritual, minus the greeting, is how any later vault
 
 - The vault name is the repo name. The slug is what is submitted and what the app shows
   everywhere; there is no separate display name, which would diverge from the switcher.
+- A new vault gets a `README.md` in its first commit, from a plain template with no AI: the vault
+  name as its heading, the answer to "What is this vault for?" as a paragraph (left out when
+  blank), and a `## Folders` section to fill in. It is written beside the seed rather than in the
+  once folder, because the seed takes no per-vault input, and never over a README already there.
+  After that it is the vault's. The agent reads its top at every session start
+  ([agent-memory](agent-memory.md)) and Home shows it ([home](home.md)). Joining a vault
+  writes no README.
 - A team vault is an org-owned repo. There is no team concept beyond the owner picker.
 - Nothing is created until the last question is answered. Backing out of any act before
   "Create vault" leaves nothing on GitHub, and the answers land straight after the seed rather
   than over a repo someone could already have cloned.
 - The new vault is activated at the threshold, not at creation, so it opens after its settings
   are written rather than on the seeded defaults.
+- Opening the new vault also owes Claude Code its first run there (`state/claude-first-run.ts`).
+  Each vault has its own Claude Code config directory, so a background session in a new one is
+  refused as an untrusted workspace. Once the vault is open and its agent is running, the shell
+  opens a terminal on `claude /login` in it as a tab: Claude Code shows its own trust prompt, then
+  its login. Holi answers neither for the person. A colleague who cloned the vault, or anyone
+  whose run was refused, starts the same thing from Settings → General → Claude Code, "Trust and
+  sign in", or from a refused document run's "Trust in Claude Code".
 - A plugin is written to the vault only when turned away from its default, so a vault that keeps
   the default follows it.
 - Joining never asks the plugin or settings questions. An adopted vault's committed answers already speak,
@@ -106,15 +122,18 @@ them push access to. The same ritual, minus the greeting, is how any later vault
 ## Code
 
 - `apps/desktop/src/renderer/src/App.tsx`: the gate and the dry-run hook.
-- `apps/desktop/src/renderer/src/features/onboarding/OnboardingRitual.tsx`: the frame and the flow;
-  each act is its own component beside it (`GreetingAct`, `NamingAct` and `JoinPicker`,
-  `PluginsAct`, `VaultSettingsAct`, `ThresholdAct`).
+- `apps/desktop/src/renderer/src/features/onboarding/onboarding-ritual.tsx`: the frame and the flow
+  (`ritual-steps.tsx` the stepper, `ritual-footer.tsx` the foot, `build-beat.ts` the build pacing);
+  each act is its own component beside it (`greeting-act.tsx`, `naming-act.tsx` and `join-picker.tsx`,
+  `plugins-act.tsx`, `vault-settings-act.tsx`, `threshold-act.tsx`).
 - `apps/desktop/src/renderer/src/features/onboarding/actions.ts`: what the ritual does to the world,
   real or dry.
-- `PluginsAct.tsx`: act 3, from the installed plugins' `PluginInfo`, each with its mark from
+- `plugins-act.tsx`: act 3, from the installed plugins' `PluginInfo`, each with its mark from
   `composites/marks.tsx`.
-- `VaultSettingsAct.tsx`: act 4, the descriptors
+- `vault-settings-act.tsx`: act 4, the descriptors
   asked at birth with the kept plugins' transforms.
 - `apps/desktop/src/renderer/src/state/onboarding-flow.ts`: the reducer, slugify, act gating.
 - `apps/desktop/src/renderer/src/state/vaults.ts`: `createVaultAtom`, `addVaultAtom`.
 - `apps/desktop/src/main/github/api.ts`: repos, orgs, the `holi-vault` topic.
+- `apps/desktop/src/main/vault/readme.ts`: the new vault's README template, written by
+  `vaults.create` in `router.ts`.

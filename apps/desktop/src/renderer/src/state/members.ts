@@ -23,7 +23,7 @@ const fetchedMembersAtom = atom<{ remote: string; logins: string[] } | null>(nul
 
 /** Logins as a list of people to show: each once, the signed-in person
  *  (`me`) first, then the rest by name. */
-export function peopleList(logins: Iterable<string>, me: string | null): string[] {
+function peopleList(logins: Iterable<string>, me: string | null): string[] {
   const isMe = (login: string) => me !== null && sameLogin(login, me)
   return cleanLogins(logins).sort((a, b) =>
     isMe(a) ? -1 : isMe(b) ? 1 : a.localeCompare(b, undefined, { sensitivity: 'base' }),
@@ -46,7 +46,7 @@ export const memberLoginsAtom = atom((get): string[] => {
 })
 
 /** Ask main for the open vault's collaborators whenever the vault changes.
- *  Mounted once, in Shell. A refusal (offline, not listable) leaves the
+ *  Mounted once, in the app shell. A refusal (offline, not listable) leaves the
  *  extras, which is the most that can be known. */
 export function useVaultMembers(): void {
   const remote = useAtomValue(activeRemoteAtom)

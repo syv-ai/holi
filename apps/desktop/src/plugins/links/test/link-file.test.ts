@@ -1,0 +1,65 @@
+/**
+ * The link file format (docs/features/links.md).
+ */
+import { describe, expect, it } from 'vitest'
+import {
+  isLinkFilePath,
+  linkFilePath,
+  linkFileText,
+  linkTitle,
+  parseLinkFile,
+} from '../shared/link-file'
+
+describe('isLinkFilePath', () => {
+  it('is the name that decides', () => {
+    expect(isLinkFilePath('link.Q3 deck.md')).toBe(true)
+    expect(isLinkFilePath('decks/link.Q3 deck.local.md')).toBe(true)
+    expect(isLinkFilePath('Q3 deck.md')).toBe(false)
+    expect(isLinkFilePath('links/notes.md')).toBe(false)
+    expect(isLinkFilePath('link..md')).toBe(false)
+  })
+})
+
+describe('linkFilePath', () => {
+  it('names a link by the shared file-name rule', () => {
+    expect(linkFilePath('', 'Q3 Strategy Deck')).toBe('link.q3-strategy-deck.md')
+    expect(linkFilePath('decks', 'Møde: næste skridt')).toBe('decks/link.moede-naeste-skridt.md')
+    expect(linkFilePath('', '../..')).toBe('link.link.md')
+    expect(linkFilePath('', 'notes.local')).toBe('link.notes-local.md')
+  })
+
+  it('reads a name back with spaces', () => {
+    expect(linkTitle(linkFilePath('a', 'Q3 deck'))).toBe('q3 deck')
+    expect(linkTitle('link.q3-deck.local.md')).toBe('q3 deck')
+  })
+
+  it('numbers a second of a name after cutting it to length', () => {
+    const long = 'word '.repeat(40)
+    expect(linkFilePath('', long, 2)).not.toBe(linkFilePath('', long))
+    expect(linkFilePath('', long, 2).endsWith('-2.md')).toBe(true)
+  })
+})
+
+describe('parseLinkFile', () => {
+  it('reads what a new file holds back', () => {
+    const text = linkFileText('https://example.com/a?b=1#c')
+    expect(parseLinkFile(text, 'link.a.md')).toEqual({
+      path: 'link.a.md',
+      url: 'https://example.com/a?b=1#c',
+      tags: [],
+    })
+    expect(text.endsWith('---\n')).toBe(true)
+  })
+
+  it('reads tags', () => {
+    const text = '---\nurl: https://x.org\ntags: [a, b]\n---\n'
+    expect(parseLinkFile(text, 'link.x.md').tags).toEqual(['a', 'b'])
+  })
+
+  it('refuses a file with no web address, so the scan reports it', () => {
+    expect(() => parseLinkFile('just text', 'link.x.md')).toThrow(/needs a `url`/)
+    expect(() => parseLinkFile('---\nurl: file:///etc/passwd\n---\n', 'link.x.md')).toThrow(
+      /http\(s\)/,
+    )
+  })
+})

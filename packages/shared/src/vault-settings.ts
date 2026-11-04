@@ -51,8 +51,7 @@ export interface TransformToggle {
 }
 
 /** Core's transforms, in the order a commit runs them, `relink` first because
- *  plugins' transforms run right after it (`knownTransforms`). `archive-done`
- *  is the tasks core part's, listed here until tasks is a plugin. */
+ *  plugins' transforms run right after it (`knownTransforms`). */
 export const CORE_TRANSFORMS: readonly TransformToggle[] = [
   {
     name: 'relink',
@@ -60,14 +59,6 @@ export const CORE_TRANSFORMS: readonly TransformToggle[] = [
     explanation:
       'When git or the agent moves a file, rewrites the links pointing at it. Moves made in Holi fix their links already.',
     default: true,
-  },
-  {
-    // Off: a transform that rearranges someone's work is opt-in.
-    name: 'archive-done',
-    label: 'File finished tasks away',
-    explanation:
-      'Moves tasks finished more than two weeks ago into archive/, links and all. Off by default, because it changes what your board shows.',
-    default: false,
   },
   {
     name: 'normalize-md',
@@ -123,6 +114,12 @@ export type ColorScheme = 'dark' | 'light' | 'system'
 
 export const COLOR_SCHEMES: readonly ColorScheme[] = ['dark', 'light', 'system']
 
+/** How much of the window's glass shows through (macOS): `clear` lets most of
+ *  it through, `solid` none. Only the chrome's tint changes; nothing moves. */
+export type WindowGlass = 'clear' | 'frosted' | 'solid'
+
+export const WINDOW_GLASSES: readonly WindowGlass[] = ['clear', 'frosted', 'solid']
+
 /**
  * The font the **notes editor** sets prose in. Code, frontmatter and the
  * plain/code editor are never affected — see `notesFontTheme`.
@@ -136,6 +133,20 @@ export const COLOR_SCHEMES: readonly ColorScheme[] = ['dark', 'light', 'system']
 export type EditorFont = 'mono' | 'sans' | 'serif'
 
 export const EDITOR_FONTS: readonly EditorFont[] = ['mono', 'sans', 'serif']
+
+/**
+ * Which coding agent a new session runs (docs/features/agent-sessions.md,
+ * Harnesses): one of this machine's agent harnesses, by its id. The built-in
+ * ones are `claude`, `codex` and `pi`; a person adds others in Settings, so
+ * whether an id names one is the agent's to check, on this machine.
+ */
+export type AgentProviderId = string
+
+/** What an agent harness's id looks like: a short lowercase slug. */
+export const AGENT_ID = /^[a-z][a-z0-9-]{1,31}$/
+
+export const isAgentId = (value: unknown): value is AgentProviderId =>
+  typeof value === 'string' && AGENT_ID.test(value)
 
 /**
  * What each name means, and the only place it means anything.
@@ -206,11 +217,21 @@ export interface ResolvedAppSettings {
   home: string
   dailyNotes: boolean
   colorScheme: ColorScheme
+  windowGlass: WindowGlass
   editorFont: EditorFont
   /** Space on an empty line opens an ask for a new agent session. */
   spaceAsksAgent: boolean
+  /** The agent a new session runs unless the person picks another. */
+  agentProvider: AgentProviderId
+  /** The Holis' game plays behind the empty view (a New tab). */
+  gridArcade: boolean
+  /** Mail or Calendar in front folds the files sidebar to its rail. */
+  foldSidebarForApps: boolean
   hooks: VaultHooks
   maxCommittedFileBytes: number
+  /** Whether Holi brings a release's newer skills and hooks in when the vault
+   *  opens, rather than offering them (docs/features/updates.md). */
+  autoUpdateSkills: boolean
   /** Human-readable notes about dropped keys/values, surfaced so a typo is
    *  diagnosable rather than silent. Mirrors `ResolvedTheme.warnings`. */
   warnings: string[]
@@ -374,9 +395,14 @@ export type VaultSettingKey =
   | 'home'
   | 'hooks'
   | 'colorScheme'
+  | 'windowGlass'
   | 'editorFont'
   | 'spaceAsksAgent'
+  | 'agentProvider'
+  | 'gridArcade'
+  | 'foldSidebarForApps'
   | 'maxCommittedFileBytes'
+  | 'autoUpdateSkills'
 
 export interface VaultSettingDescriptor {
   /** A key of `app.yaml`, or `plugins` for the plugins row, whose answer is
@@ -447,6 +473,11 @@ export type SettingType =
    * be Home and the vault's apps to the options.
    */
   | { kind: 'home'; options: readonly VaultSettingOption[] }
+  /**
+   * An agent harness's id (`AGENT_ID`): one of `options`, the built-in ones,
+   * or one this machine added, which the agent checks against its harnesses.
+   */
+  | { kind: 'agent'; options: readonly VaultSettingOption[] }
 
 /**
  * One setting, declared once.
@@ -605,6 +636,54 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     section: 'appearance',
   },
   {
+    key: 'windowGlass',
+    label: 'Transparency',
+    explanation: 'How much of the desktop shows through the window, on a Mac.',
+    type: {
+      kind: 'enum',
+      options: [
+        { value: 'clear', label: 'Clear' },
+        { value: 'frosted', label: 'Frosted' },
+        { value: 'solid', label: 'Solid' },
+      ],
+    },
+    default: 'frosted' as WindowGlass,
+    // Machine-local, like Appearance: how see-through your window is is
+    // nobody else's business.
+    target: 'local',
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'appearance',
+  },
+  {
+    key: 'gridArcade',
+    label: 'Arcade on the New tab',
+    explanation:
+      'The vault’s Holis play a small game behind an empty tab, filing papers in the outbox. Take control with the arrow keys.',
+    type: { kind: 'boolean' },
+    default: true,
+    // Machine-local, like Appearance: a game in the background is one
+    // person's taste, not the vault's.
+    target: 'local',
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'appearance',
+  },
+  {
+    key: 'foldSidebarForApps',
+    label: 'Fold the sidebar in Mail and Calendar',
+    explanation:
+      'Mail or Calendar in front folds the files sidebar to its rail, and leaving gives it back. ⌘B opens it either way.',
+    type: { kind: 'boolean' },
+    default: true,
+    // Machine-local, like Appearance: how much room one person's mail gets
+    // is their own layout, not the vault's.
+    target: 'local',
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'appearance',
+  },
+  {
     key: 'editorFont',
     label: 'Notes are set in',
     explanation:
@@ -639,6 +718,41 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     whereToChange: LOCAL_FILE_HINT,
     section: 'editor',
   },
+  {
+    key: 'agentProvider',
+    label: 'New sessions run',
+    explanation:
+      'The coding agent for new sessions, Holis, and automations. On Codex, Holis and automations run only once this machine lets Codex run unattended in the vault, in Settings.',
+    type: {
+      kind: 'agent',
+      options: [
+        { value: 'claude', label: 'Claude Code' },
+        { value: 'codex', label: 'Codex' },
+        { value: 'pi', label: 'Pi' },
+      ],
+    },
+    default: 'claude' as AgentProviderId,
+    // Machine-local: which agent is installed and signed in is this
+    // machine's, not the vault's.
+    target: 'local',
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'general',
+  },
+  {
+    key: 'autoUpdateSkills',
+    label: 'Update skills automatically',
+    // Committed, so the whole team gets the same answer: a vault whose skills
+    // move with Holi, or one whose skills move only when someone asks.
+    explanation:
+      'When this vault opens, bring in the newer skills and hooks a Holi release ships, merged with this vault’s own changes, and say what changed. Off, Holi offers them and waits for you.',
+    type: { kind: 'boolean' },
+    default: false,
+    target: 'committed',
+    askedAtBirth: false,
+    whereToChange: SETTINGS_FILE_HINT,
+    section: 'updates',
+  },
 ]
 
 /**
@@ -648,8 +762,6 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
  * Typed by `ResolvedVaultSettings` rather than by inference, so consumers get
  * `ColorScheme` and not `unknown`.
  *
- * `archive-done` is off: it moves task files, which changes what the board
- * shows, and a transform that rearranges someone's work is opt-in.
  * `memory-index` is on: it only ever rewrites `.holi/memory/index.md`, a file it
  * generated. The 10 MB cap is read by `main/vault/large-files.ts`; notes-vault
  * assets sit well under it, and GitHub warns at 50.
@@ -716,6 +828,7 @@ function controlFor(type: SettingType): VaultSettingControl {
     case 'flags':
       return { kind: 'group', toggles: type.flags }
     case 'home':
+    case 'agent':
       return { kind: 'choice', options: type.options, openEnded: true }
     // enum and number are both "pick one of these", and differ only in
     // what ELSE is legal, which is the validator's business, not the control's.
@@ -762,6 +875,10 @@ function readValue(
         ? { ok: false, expected: "recents, daily, a view's name, or a path in the vault" }
         : { ok: true, value: home }
     }
+    case 'agent':
+      return isAgentId(value)
+        ? { ok: true, value }
+        : { ok: false, expected: "an agent's id: lowercase letters, digits and dashes" }
   }
 }
 

@@ -35,6 +35,10 @@ const onHeldBack = pushChannel<unknown>('vault:heldback')
  * file may have). The disk does not change on a commit, so no snapshot says so. */
 const onCommitted = pushChannel<unknown>('vault:committed')
 
+/** What the skills update a vault runs on open changed (`{remote, summary,
+ * changed, conflicts}`), pushed once it is through. */
+const onSkillsUpdated = pushChannel<unknown>('vault:skills')
+
 /**
  * The one thing main ASKS the renderer, rather than telling it.
  *
@@ -42,15 +46,26 @@ const onCommitted = pushChannel<unknown>('vault:committed')
  * commit (`docs/glossary.md` §Flush). The renderer starts that itself everywhere
  * except quit, which only main knows is happening.
  *
- * Main gives up after a second, so `flushDone()` is a courtesy, not a lock: a
- * renderer that never answers delays a quit, it does not prevent one.
+ * Each reply carries the request id so an old completion cannot approve a
+ * later quit. Failure and timeout keep main from closing the app.
  */
-const onFlushRequest = pushChannel<void>('vault:flush')
+const onFlushRequest = pushChannel<{ id: string }>('vault:flush')
+const onFlushCancelled = pushChannel<{ id: string }>('vault:flush-cancel')
 
-/** A reminder fired and its notification was clicked: open this task, switching
- * vaults first if it lives in another one. Carries `remote` so the renderer's
- * switch keeps `activeRemoteAtom` truthful (a main-side switch could not). */
-const onReminderOpen = pushChannel<{ remote: string; path: string }>('reminders:open')
+/** Main asks for a vault path in a tab: a clicked reminder's task,
+ * `holi docs open`, or a Holi link, which may name a heading to scroll to.
+ * Carries `remote` so the renderer switches vaults first when the path lives
+ * in another one, keeping `activeRemoteAtom` truthful (a main-side switch could
+ * not). Main holds them until `openReady`. `focus: false` (`holi docs
+ * screenshot`) opens it without moving the caret into it. */
+const onOpen = pushChannel<{ remote: string; path: string; heading?: string; focus?: boolean }>(
+  'vault:open',
+)
+
+/** Main's other question, for `holi docs screenshot`: where on the page a
+ * path's tab is, once it has finished drawing. Answered with `located`, by
+ * the request's id; main gives up after a few seconds. */
+const onLocate = pushChannel<{ id: string; path: string }>('vault:locate')
 
 /** Each plugin's events (`plugin:<id>`), one fan-out per plugin, made the
  *  first time that plugin is subscribed. */
@@ -76,9 +91,22 @@ const onMenuCommand = pushChannel<string>('menu:command')
 /** Updating Holi itself: the updater's whole status, on every change. */
 const onUpdateStatus = pushChannel<unknown>('updates:status')
 
+/** A line of the activity log (the bottom panel's Output), as it is written. */
+const onActivityEntry = pushChannel<unknown>('activity:entry')
+/** A line of the application log (the bottom panel's Logs), as it is kept. */
+const onLogEntry = pushChannel<unknown>('logs:entry')
+
+/** The bottom panel's shells: their output and their exit. Keystrokes and
+ *  sizes go back over tRPC, each naming the vault and the terminal. */
+const onTerminalData = pushChannel<unknown>('terminal:data')
+const onTerminalExit = pushChannel<unknown>('terminal:exit')
+/** Where a shell is and the git work there, for the panel's context chips. */
+const onTerminalContext = pushChannel<unknown>('terminal:context')
+
 /** The window went in or out of fullscreen. macOS hides the traffic lights
  *  there, so the band the sidebar keeps for them can go. */
 const onFullScreen = pushChannel<boolean>('window:fullscreen')
+const onVisible = pushChannel<boolean>('window:visible')
 
 /** The ONE seam between renderer and main (architecture §3). */
 contextBridge.exposeInMainWorld('holi', {
@@ -88,11 +116,14 @@ contextBridge.exposeInMainWorld('holi', {
     onSyncState,
     onHeldBack,
     onCommitted,
+    onSkillsUpdated,
     onFlushRequest,
-    flushDone: () => ipcRenderer.send('vault:flush-done'),
-  },
-  reminders: {
-    onOpen: onReminderOpen,
+    onFlushCancelled,
+    flushDone: (id: string, error?: string) => ipcRenderer.send('vault:flush-done', id, error),
+    onOpen,
+    openReady: () => ipcRenderer.send('vault:open-ready'),
+    onLocate,
+    located: (answer: unknown) => ipcRenderer.send('vault:located', answer),
   },
   /** Plugin events: main pushes `{remote, name, payload}` on `plugin:<id>`,
    *  and the renderer sends the same shape back, in order and unanswered. */
@@ -112,6 +143,19 @@ contextBridge.exposeInMainWorld('holi', {
   },
   window: {
     onFullScreen,
+    onVisible,
+    isVisible: (): Promise<boolean> => ipcRenderer.invoke('window:is-visible'),
+  },
+  activity: {
+    onEntry: onActivityEntry,
+  },
+  logs: {
+    onEntry: onLogEntry,
+  },
+  terminal: {
+    onData: onTerminalData,
+    onExit: onTerminalExit,
+    onContext: onTerminalContext,
   },
   openExternal: (url: string) => ipcRenderer.invoke('holi:openExternal', url),
   openPath: (path: string) => ipcRenderer.invoke('holi:openPath', path),
@@ -128,6 +172,9 @@ contextBridge.exposeInMainWorld('holi', {
   startDrag: (paths: string[]) => ipcRenderer.send('holi:startDrag', paths),
   setAppearance: (scheme: 'light' | 'dark' | 'system') =>
     ipcRenderer.send('holi:appearance', scheme),
+  /** The dock's icon, drawn by the window in the theme's colours: a PNG data
+   *  URL (`lib/app-icon.ts`). */
+  setDockIcon: (pngDataUrl: string) => ipcRenderer.send('holi:dockIcon', pngDataUrl),
   showSaveDialog: (input: {
     remote: string
     path: string

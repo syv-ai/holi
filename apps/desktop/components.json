@@ -13,7 +13,7 @@
   "iconLibrary": "lucide",
   "aliases": {
     "components": "@/components",
-    "ui": "@/primitives",
+    "ui": "@/components/ui",
     "utils": "@/lib/cn",
     "lib": "@/lib",
     "hooks": "@/hooks"

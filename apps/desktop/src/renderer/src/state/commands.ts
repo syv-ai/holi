@@ -18,11 +18,9 @@
  * the focused widget already handled (`defaultPrevented`) is not a command:
  * that is how the editor's ⌘B bold beats the sidebar's ⌘B.
  */
-import { atom, useSetAtom, useStore, type Getter, type Setter } from 'jotai'
-import { useEffect } from 'react'
-import { saveAllBuffers } from '../lib/buffer-registry'
-import { matchHotkey } from '../lib/hotkey'
-import { trpc } from '../lib/trpc'
+import { atom, type Getter, type Setter } from 'jotai'
+import { saveAllBuffers } from '@/lib/buffer-registry'
+import { trpc } from '@/lib/trpc'
 import { openHomeAtom } from './home'
 import { openTodaysDailyAtom } from './daily'
 import { openDialogAtom } from './dialogs'
@@ -57,7 +55,10 @@ export interface Command {
   run: (get: Getter, set: Setter) => void | Promise<void>
 }
 
-/** `Untitled.md`, then `Untitled 2.md` and so on, at the vault root. */
+/**
+ * `Untitled.md`, then `Untitled 2.md` and so on, at the vault root.
+ * @public exported for its test
+ */
 export function untitledPath(taken: ReadonlySet<string>): string {
   if (!taken.has('Untitled.md')) return 'Untitled.md'
   for (let n = 2; ; n++) {
@@ -176,7 +177,10 @@ export const STATIC_COMMANDS: readonly Command[] = [
   },
 ]
 
-/** The table: the static rows, then one "switch to" per other vault. */
+/**
+ * The table: the static rows, then one "switch to" per other vault.
+ * @public exported for its test
+ */
 export const commandsAtom = atom<Command[]>((get) => {
   const opens = [...get(surfacesAtom).values()]
     .filter((s) => s.kind !== 'home' && s.unlisted !== true)
@@ -200,6 +204,7 @@ export const commandsAtom = atom<Command[]>((get) => {
  * The only way a command runs, from the key dispatcher, the palette and the
  * menu alike. Unknown ids and rows whose `when` is false are refused quietly:
  * a menu built for a vault that has since closed may still send one.
+ * @public exported for its test
  */
 export const runCommandAtom = atom(null, async (get, set, id: string): Promise<void> => {
   const command = get(commandsAtom).find((c) => c.id === id)
@@ -208,29 +213,3 @@ export const runCommandAtom = atom(null, async (get, set, id: string): Promise<v
   if (command.hidden === undefined) set(touchRecentAtom, { kind: 'command', key: id })
   await command.run(get, set)
 })
-
-/**
- * One `keydown` listener over the table, installed once by Shell. It reads the
- * table through the store rather than closing over it, so a vault switch
- * changing the rows never re-subscribes it.
- */
-export function useCommandHotkeys(): void {
-  const store = useStore()
-  const run = useSetAtom(runCommandAtom)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      // A focused widget that took the key wins: CodeMirror's keymap marks a
-      // key it ran as handled, so ⌘B in the editor is bold, not the sidebar.
-      if (e.isComposing || e.defaultPrevented) return
-      const match = store
-        .get(commandsAtom)
-        .find((c) => c.boundBy === undefined && c.hotkey !== undefined && matchHotkey(e, c.hotkey))
-      if (match === undefined) return
-      if (match.when !== undefined && !match.when(store.get)) return
-      e.preventDefault()
-      void run(match.id)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [run, store])
-}

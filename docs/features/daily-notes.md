@@ -19,7 +19,7 @@ vault opens and filed into `journal/` once the day is over. Whether a vault does
   seeded heading) that nothing links to is deleted. Anything else is moved to `journal/` through
   the standard rename, so links follow it. If anything changed, the sweep ends in one commit.
 - **In the tree**, today's row carries a `today` marker, plus the count of open tasks whose body
-  wiki-links to today's note. No file, no marker.
+  wiki-links to today's note (the tasks plugin's path mark). No file, no marker.
 - The onboarding ritual asks both settings at vault creation ([settings](settings.md)).
 
 ## Rules
@@ -51,6 +51,6 @@ vault opens and filed into `journal/` once the day is over. Whether a vault does
 - `packages/shared/src/daily-note.ts`: filename, seed, the untouched-stub test, marker predicates.
 - `apps/desktop/src/main/vault/daily.ts`: `getOrCreateDaily`, `sweepDaily`.
 - `apps/desktop/src/renderer/src/state/daily.ts`: `ensureTodaysDailyAtom`,
-  `openTodaysDailyAtom`, `sweepDailyAtom`, `todayDailyPathAtom`.
+  `openTodaysDailyAtom`, `todayDailyPathAtom`.
 - `apps/desktop/src/renderer/src/state/home.ts` and `lib/home-target.ts`: opening Home.
-- `apps/desktop/src/renderer/src/components/Shell.tsx`: the open, Home, sweep effect.
+- `apps/desktop/src/renderer/src/features/shell/vault-host.tsx`: the open, Home, sweep effect.

@@ -13,16 +13,16 @@ import { atom } from 'jotai'
 import {
   activeRemoteAtom,
   agentsSelectionAtom,
+  type AgentsSessionItem,
   type PluginEventHandler,
   type PluginStore,
 } from '@/plugin-api'
 import { schedulesCap, type ScheduleSummary } from './schedules-cap'
 
 export type { ScheduleSummary }
-export { schedulesCap }
 
 /** The plugin's id: the owner of its rows in the Agents view. */
-export const AUTOMATIONS_OWNER = 'automations'
+const AUTOMATIONS_OWNER = 'automations'
 
 export const automationsAtom = atom<ScheduleSummary[]>([])
 export const automationsLoadedAtom = atom<'loading' | 'ready' | 'error'>('loading')
@@ -36,6 +36,36 @@ export const openAutomationAtom = atom((get) => {
 
 export const selectAutomationAtom = atom(null, (_get, set, id: string) =>
   set(agentsSelectionAtom, { owner: AUTOMATIONS_OWNER, id }),
+)
+
+/** How many of each automation's runs the session list shows, newest first. */
+const LISTED_RUNS = 5
+
+/**
+ * Each automation's recent runs that started a session, as rows of the
+ * agent's session list (the slot's `sessions`). A run is its session
+ * (`jobId`): the agent puts the live session's state on it, and a Holi's row
+ * for the same session wins over this one.
+ */
+export const automationSessionItemsAtom = atom((get): AgentsSessionItem[] =>
+  get(automationsAtom).flatMap((s) =>
+    s.runs
+      .filter((r) => r.outcome === 'started' && r.jobId !== undefined)
+      .slice(0, LISTED_RUNS)
+      .map((r): AgentsSessionItem => {
+        const ended = r.finishedAt === undefined ? undefined : Date.parse(r.finishedAt)
+        return {
+          key: `${AUTOMATIONS_OWNER}:${r.jobId!}`,
+          jobId: r.jobId!,
+          title: s.name,
+          state: 'idle',
+          updatedAt: ended ?? Date.parse(r.at),
+          ...(ended === undefined ? {} : { endedAt: ended }),
+          ...(s.model === undefined ? {} : { model: s.model }),
+          by: { kind: 'automation', name: s.holiName ?? 'Automation' },
+        }
+      }),
+  ),
 )
 
 async function reload(remote: string, store: PluginStore): Promise<void> {

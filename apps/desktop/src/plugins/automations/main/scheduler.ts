@@ -5,12 +5,14 @@
  * run gets that Holi's soul, memory, model and rules (`holis.context`).
  *
  * **The definition is a vault file; running it is this machine's choice.** A
- * schedule file syncs like any other, so a teammate's pull brings it, but it
- * runs only where someone turned it on. Turning it on records a fingerprint of
- * what it approves (the prompt, the model, the rules it may run without
- * asking: `scheduleApprovalText`), and a schedule whose file no longer
- * matches waits to be turned on again. Otherwise a prompt edited by a pull,
- * or by the agent in one of its own runs, would run unattended unread.
+ * schedule is one person's (it reads their mail, speaks for them), so it is a
+ * `.local.md` file that never syncs; a committed `x.md` beside them is listed
+ * as invalid with its rename. Even so it runs only once someone turned it on.
+ * Turning it on records a fingerprint of what it approves (the prompt, the
+ * model, the rules it may run without asking, the events that start it:
+ * `scheduleApprovalText`), and a schedule whose file no longer matches waits
+ * to be turned on again. Otherwise a prompt edited by the agent in one of its
+ * own runs would run unattended unread.
  *
  * **The approvals live outside the vault**, in `userData`, for the same
  * reason: anything in the clone the agent can write, and an approval it could
@@ -37,15 +39,33 @@
  * and an idle one left open is stopped first, unless someone has a window on
  * it. So each schedule holds at most one live session.
  *
+ * **A run leaves a line in the work log** (the agent's `inbox/work-log.ts`,
+ * through `deps.workLog`) when it is
+ * done or fails to start, so a quiet run, one that notified nobody, still
+ * shows in "what ran this week?".
+ *
+ * **Events start runs too** (a schedule's `on:`): what the vault's plugins
+ * tell each other goes through the trigger router (`router.ts`), which
+ * dedupes and batches it per schedule, and the same check starts the batch
+ * that is due. A batch due while the previous run is still working waits
+ * and grows: it is the one run that follows, never dropped and never a pile.
+ * A file that changed while the run worked is set aside rather than heard,
+ * and when the run is done it is weighed against the span the run could have
+ * written in (`settleRun`): one changed outside it is someone else's, and is
+ * the cause of a follow-up run.
+ *
  * NOTE: no `electron` import, so this loads under vitest.
  */
 import { createHash } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { AgentProviderId } from '@holi/shared'
 import {
-  describeScheduleWhen,
+  describeSchedule,
   dueRun,
   holiSlug,
+  interestOf,
+  NO_INTEREST,
   isScheduleFilePath,
   nextRun,
   parseScheduleFile,
@@ -56,20 +76,33 @@ import {
   type ScheduleDef,
   type ScheduleDraft,
   type ScheduleWhen,
+  type Trigger,
+  type VaultEvent,
+  type VaultSnapshot,
 } from '@holi/shared'
 import { CapabilityError, type JsonFileStore } from '../../../main/plugin-api'
+import {
+  createTriggerRouter,
+  describeBatch,
+  fileEvents,
+  type MomentSource,
+  type RoutedSchedule,
+} from './router'
 
 /** A live session as the agent publishes it: what a run's state is read from. */
 export interface SessionSummary {
   id: string
   name: string
   state: 'needs-you' | 'working' | 'idle'
+  outcome?: 'completed' | 'failed' | 'aborted'
+  error?: string
 }
 
 /** What the Holis plugin says of a Holi an automation names (`holis.context`). */
 export interface HoliContext {
   id: string
   name: string
+  provider: AgentProviderId
   approval: string
   model?: string
   allow: string[]
@@ -90,8 +123,14 @@ const CLOSE_POLLS = 15
 /** How old a run must be before the check closes it without having heard its
  *  Stop: a session just started can read idle before its first turn begins. */
 const MISSED_STOP_MS = 60_000
+/** How many checks a finished run waits for its last turn's record before
+ *  its set-aside file events are dropped: the record is written a moment after
+ *  the turn ends, once its settle commit has landed. */
+const SETTLE_CHECKS = 4
+/** Turn ends remembered, newest kept. */
+const TURN_ENDS_KEPT = 200
 
-export type RunTrigger = 'schedule' | 'manual'
+type RunTrigger = 'schedule' | 'manual' | 'event'
 
 export interface RunRecord {
   /** ISO time it was due to start, or asked to. */
@@ -102,6 +141,8 @@ export interface RunRecord {
   jobId?: string
   /** Why it was skipped or failed. */
   message?: string
+  /** For a run events started: what they were, as its first line says. */
+  cause?: string
   /** ISO time the run was done: its turn ended and it was stopped, or its
    *  process had already gone. */
   finishedAt?: string
@@ -109,13 +150,16 @@ export interface RunRecord {
   kept?: true
 }
 
-export interface ScheduleState {
+interface ScheduleState {
   /** sha256 of `scheduleApprovalText` when it was turned on. */
   approved?: string
   /** ISO time it was turned on: the first run looks for moments after it. */
   approvedAt?: string
   /** ISO time of the last run, started or skipped. */
   lastRun?: string
+  /** Per timed trigger source, the ISO time up to which its moments have
+   *  been routed: none fires twice, across restarts too. */
+  momentsSince?: Partial<Record<MomentSource, string>>
   /** Newest first. */
   runs: RunRecord[]
 }
@@ -125,7 +169,7 @@ export type SchedulesFile = Record<string, Record<string, ScheduleState>>
 
 /** `on`: runs here. `off`: never turned on, or turned off. `changed`: turned
  *  on, but the file approves something else now. `invalid`: does not parse. */
-export type ScheduleStatus = 'on' | 'off' | 'changed' | 'invalid'
+type ScheduleStatus = 'on' | 'off' | 'changed' | 'invalid'
 
 export interface ScheduleSummary {
   path: string
@@ -141,6 +185,8 @@ export interface ScheduleSummary {
   when?: string
   /** Each trigger's cron as written, for the editor; absent for an `at`. */
   crons?: string[]
+  /** The `on:` events that start it, for the editor. */
+  on?: Trigger[]
   /** A one-off's local time, as written. */
   at?: string
   /** The Holi that carries it out: its id, and its name when it reads. */
@@ -185,6 +231,7 @@ export function parseSchedulesFile(raw: unknown): SchedulesFile {
         ...(typeof v['approved'] === 'string' ? { approved: v['approved'] } : {}),
         ...(typeof v['approvedAt'] === 'string' ? { approvedAt: v['approvedAt'] } : {}),
         ...(typeof v['lastRun'] === 'string' ? { lastRun: v['lastRun'] } : {}),
+        ...momentsSinceOf(v['momentsSince']),
         runs,
       }
     }
@@ -193,7 +240,18 @@ export function parseSchedulesFile(raw: unknown): SchedulesFile {
   return out
 }
 
-export interface SchedulerVault {
+function momentsSinceOf(raw: unknown): Pick<ScheduleState, 'momentsSince'> {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const r = raw as Record<string, unknown>
+  const out: Partial<Record<MomentSource, string>> = {}
+  for (const source of ['task', 'calendar'] as const) {
+    const v = r[source]
+    if (typeof v === 'string') out[source] = v
+  }
+  return { momentsSince: out }
+}
+
+interface SchedulerVault {
   remote: string
   root: string
 }
@@ -201,10 +259,12 @@ export interface SchedulerVault {
 export interface SchedulerDeps {
   store: JsonFileStore<SchedulesFile>
   /** The open vault's sessions, through the agent. */
+  provider(root: string): Promise<AgentProviderId>
   sessions: {
     launch(args: {
       name: string
       prompt: string
+      provider: AgentProviderId
       model?: string
       allow?: readonly string[]
       system?: string
@@ -216,11 +276,20 @@ export interface SchedulerDeps {
      *  pending (null when unsaid). Returns the undo. */
     onTurnEnd(listener: (id: string, pending: number | null) => void): () => void
   }
+  /** When the session's latest recorded turn ended (ms; the turn log's `at`,
+   *  written after its settle commit and the pre-commit transforms), or null
+   *  when none is recorded. Absent, a run's set-aside file events are dropped. */
+  lastTurnAt?: (jobId: string) => Promise<number | null>
   /** Tell the renderer the vault's schedules moved. */
   emit(remote: string, name: string, payload: unknown): void
   /** The Holi an automation names, or why it cannot run one: the Holis
    *  plugin is off, or the Holi is gone or does not parse. */
   holi?(vault: SchedulerVault, id: string): Promise<HoliContext | { error: string }>
+  /** Add a line to the vault's work log (the agent's, `.holi/state/log/`).
+   *  Absent, a run leaves none. */
+  workLog?: (root: string, at: Date, text: string) => Promise<void>
+  /** Tell the vault's plugins what the approved schedules listen for. */
+  tell?: (event: VaultEvent) => void
   now?: () => Date
   tickMs?: number
   firstTickMs?: number
@@ -250,6 +319,13 @@ export interface Scheduler {
    *  it is a run of a schedule, close it once it is done. Resolves when it has
    *  settled one way or the other. */
   turnEnded(jobId: string, pending?: number | null): Promise<void>
+  /** A pushed session snapshot may contain a terminal Pi process failure. */
+  sessionsChanged(sessions: readonly SessionSummary[]): void
+  /** An event one of the vault's plugins told: for the trigger router. */
+  hear(event: VaultEvent): void
+  /** A scan of the attached vault: the files added and changed since the
+   *  last one are events. */
+  snapshot(snapshot: VaultSnapshot): void
   /** Stop checking and stop hearing turn ends: when the vault is left. */
   dispose(): void
 }
@@ -257,17 +333,23 @@ export interface Scheduler {
 interface FileEntry {
   path: string
   parsed: ReturnType<typeof parseScheduleFile>
+  /** The provider whose choice this entry's approval covers. */
+  provider?: AgentProviderId
   /** The Holi it names, read now; or why it cannot run it. */
   holi?: HoliContext | { error: string }
 }
 
-type ValidEntry = FileEntry & { parsed: { ok: true; def: ScheduleDef } }
+type ValidEntry = FileEntry & {
+  parsed: { ok: true; def: ScheduleDef }
+  provider: AgentProviderId
+}
 
 /** What turning it on approves: its own text and, when a Holi carries it
  *  out, what approving that Holi approves (its soul, model and rules). */
 const fingerprint = (entry: ValidEntry): string =>
   createHash('sha256')
     .update(scheduleApprovalText(entry.parsed.def))
+    .update(`\nprovider:${entry.provider}`)
     .update(entry.holi !== undefined && 'approval' in entry.holi ? `\n${entry.holi.approval}` : '')
     .digest('hex')
 
@@ -294,17 +376,26 @@ function latestDue(when: ScheduleWhen, since: Date, now: Date): Date | null {
 }
 
 /** The vault's schedule files, parsed. A missing directory is none. Only
- *  regular files: a link could point a schedule at anything. */
+ *  regular files: a link could point a schedule at anything. A committed
+ *  `x.md` beside them is listed as invalid with the rename that makes it one,
+ *  so a file an older skill told the agent to write does not just vanish. */
 async function readSchedules(root: string): Promise<FileEntry[]> {
   const dir = join(root, SCHEDULES_DIR)
   const names = await readdir(dir).catch(() => [] as string[])
   const out: FileEntry[] = []
   for (const name of names.sort()) {
     const path = `${SCHEDULES_DIR}/${name}`
-    if (!isScheduleFilePath(path)) continue
+    const shared = !isScheduleFilePath(path) && name.endsWith('.md') && name !== '.md'
+    if (!isScheduleFilePath(path) && !shared) continue
     const abs = join(dir, name)
     const info = await lstat(abs).catch(() => null)
     if (info === null || !info.isFile()) continue
+    if (shared) {
+      const local = name.replace(/\.md$/, '.local.md')
+      const error = `Not a schedule: a schedule is one person's and never syncs. Rename it to ${local}.`
+      out.push({ path, parsed: { ok: false, error } })
+      continue
+    }
     const text = await readFile(abs, 'utf8').catch(() => null)
     if (text === null) continue
     out.push({ path, parsed: parseScheduleFile(text, path) })
@@ -318,19 +409,12 @@ function statusOf(entry: FileEntry, state: ScheduleState | undefined): ScheduleS
   return state.approved === fingerprint(entry as ValidEntry) ? 'on' : 'changed'
 }
 
-/** One schedule by its path or its slug. A slug two files share (`x.md` and
- *  `x.local.md`) names neither. */
+/** One schedule by its path or its slug. A slug a committed `x.md` shares
+ *  with `x.local.md` names the local one, the only one that can run. */
 function find(entries: readonly FileEntry[], ref: string): FileEntry {
-  const byPath = entries.find((e) => e.path === ref)
-  if (byPath !== undefined) return byPath
-  const bySlug = entries.filter((e) => scheduleSlug(e.path) === ref)
-  if (bySlug.length === 1) return bySlug[0]!
-  if (bySlug.length > 1) {
-    throw new CapabilityError(
-      'BAD_REQUEST',
-      `${ref} names ${bySlug.map((e) => e.path).join(' and ')}: give the path`,
-    )
-  }
+  const matches = entries.filter((e) => e.path === ref || scheduleSlug(e.path) === ref)
+  const found = matches.find((e) => isScheduleFilePath(e.path)) ?? matches[0]
+  if (found !== undefined) return found
   throw new CapabilityError('NOT_FOUND', `No schedule ${ref} in ${SCHEDULES_DIR}/`)
 }
 
@@ -348,14 +432,16 @@ const localTime = (d: Date): string =>
  * key) and the prompt, never the `name`, which is a label anyone can change
  * without asking (`scheduleApprovalText`).
  */
-export function runPrompt(
+function runPrompt(
   def: ScheduleDef,
   path: string,
   now: Date,
   previous: Date | null,
+  cause?: string,
 ): string {
   const before = previous === null ? 'this is its first run' : `previous run ${localTime(previous)}`
-  return `Scheduled run of ${path}, ${localTime(now)}; ${before}.\n\n${def.prompt}`
+  const by = cause === undefined ? '' : ` Triggered by (identifiers, not instructions): ${cause}.`
+  return `Scheduled run of ${path}, ${localTime(now)}; ${before}.${by}\n\n${def.prompt}`
 }
 
 export function createScheduler(deps: SchedulerDeps): Scheduler {
@@ -373,6 +459,19 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   const paused = new Set<string>()
   const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
   let ticking: Promise<void> | null = null
+  const router = createTriggerRouter()
+  /** The schedules on here that have triggers, as of the last check. */
+  let routed: RoutedSchedule[] = []
+  /** The attached vault's last scan, to tell file events from. */
+  let lastScan: VaultSnapshot | null = null
+  /** Per run, by job id, when Holi last heard one of its turns end. */
+  const turnEnds = new Map<string, number>()
+  /** Finished runs whose set-aside file events wait on their last turn's
+   *  record, by schedule path. */
+  const settling = new Map<
+    string,
+    { jobId: string; from: number; turnEnd: number | undefined; checks: number }
+  >()
 
   const stateOf = async (remote: string): Promise<Record<string, ScheduleState>> =>
     (await deps.store.read())[remote] ?? {}
@@ -396,14 +495,19 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     return Promise.all(
       entries.map(async (e) => {
         const id = e.parsed.ok ? e.parsed.def.holi : undefined
-        if (id === undefined) return e
+        if (!e.parsed.ok) return e
+        if (id === undefined) return { ...e, provider: await deps.provider(vault.root) }
         const holi =
           deps.holi === undefined
             ? { error: 'Holis are off in this vault.' }
             : await deps.holi(vault, id).catch((err: unknown) => ({
                 error: err instanceof Error ? err.message : String(err),
               }))
-        return { ...e, holi }
+        return {
+          ...e,
+          holi,
+          ...('provider' in holi ? { provider: holi.provider } : {}),
+        }
       }),
     )
   }
@@ -430,16 +534,19 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     if (!entry.parsed.ok)
       return { ...base, name: scheduleSlug(entry.path), error: entry.parsed.error }
     const def = entry.parsed.def
-    const next = status === 'on' ? nextRun(def.when, at) : null
+    const next = status === 'on' && def.when !== undefined ? nextRun(def.when, at) : null
     const error = errorOf(entry)
     return {
       ...base,
       name: def.name,
       ...(error === null ? {} : { error }),
-      when: describeScheduleWhen(def.when),
-      ...(def.when.kind === 'cron'
-        ? { crons: def.when.crons.map((c) => c.source) }
-        : { at: def.when.stamp }),
+      when: describeSchedule(def),
+      ...(def.when === undefined
+        ? {}
+        : def.when.kind === 'cron'
+          ? { crons: def.when.crons.map((c) => c.source) }
+          : { at: def.when.stamp }),
+      ...(def.on.length === 0 ? {} : { on: def.on }),
       ...(def.holi === undefined ? {} : { holi: def.holi }),
       ...(entry.holi !== undefined && 'name' in entry.holi ? { holiName: entry.holi.name } : {}),
       ...(def.model === undefined ? {} : { model: def.model }),
@@ -470,6 +577,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     entry: ValidEntry,
     trigger: RunTrigger,
     due: Date,
+    cause?: string,
   ): Promise<RunRecord> {
     const def = entry.parsed.def
     const at = now()
@@ -497,7 +605,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       }
       // The Holi that carries it out, read as the run starts: its memory now.
       const holi = entry.holi !== undefined && 'system' in entry.holi ? entry.holi : undefined
-      const model = def.model ?? holi?.model
+      const { provider } = entry
+      const requestedModel = def.model ?? holi?.model
+      // Pi overrides use provider/model-id pairs. Legacy Claude aliases mean
+      // use Pi's configured default model.
+      const model = provider === 'pi' && !requestedModel?.includes('/') ? undefined : requestedModel
       const res = await deps.sessions.launch({
         name: `${def.name} · ${clock(at)}`,
         prompt: runPrompt(
@@ -505,14 +617,28 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           entry.path,
           at,
           previous === undefined ? null : new Date(previous.at),
+          cause,
         ),
+        provider,
         ...(model === undefined ? {} : { model }),
-        allow: [...new Set([...def.allow, ...(holi?.allow ?? [])])],
+        // Pi does not enforce them; Codex's job in the vault takes its
+        // writable folders from them.
+        ...(provider === 'pi'
+          ? {}
+          : { allow: [...new Set([...def.allow, ...(holi?.allow ?? [])])] }),
         ...(holi === undefined ? {} : { system: holi.system }),
       })
       record = res.ok
         ? { at: at.toISOString(), trigger, outcome: 'started', jobId: res.sessionId }
         : { at: at.toISOString(), trigger, outcome: 'failed', message: res.message }
+      if (cause !== undefined) record.cause = cause
+      // Whatever started it, what it writes is not news to it. A previous
+      // run's events still waiting to settle are dropped, not mixed into this
+      // one's.
+      if (res.ok) {
+        if (settling.delete(entry.path)) router.settle(entry.path, null, at.getTime())
+        router.running(entry.path, true)
+      }
     }
     await changeState(vault.remote, entry.path, (s) => ({
       ...s,
@@ -520,6 +646,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       runs: [record, ...s.runs].slice(0, RUNS_KEPT),
     }))
     log(`${entry.path}: ${record.outcome}${record.message ? ` (${record.message})` : ''}`)
+    if (record.outcome === 'failed') {
+      await logRun(vault.root, def.name, entry.path, `did not start: ${record.message}`)
+    }
     changed(vault.remote)
     return record
   }
@@ -533,17 +662,105 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     return null
   }
 
+  /** The run's line in the work log. Best-effort: the run is over either way. */
+  async function logRun(root: string, name: string, path: string, outcome: string) {
+    if (deps.workLog === undefined) return
+    await deps
+      .workLog(root, now(), `Scheduled run of ${name}: ${outcome} [[${path}]]`)
+      .catch((err: unknown) => log(`${path}: work log: ${String(err)}`))
+  }
+
+  /** The schedule's name, as its file says now. */
+  async function nameOf(root: string, path: string): Promise<string> {
+    const entry = (await readSchedules(root)).find((e) => e.path === path)
+    return entry?.parsed.ok === true ? entry.parsed.def.name : scheduleSlug(path)
+  }
+
+  /**
+   * Weigh a finished run's set-aside file events, once its last turn's record
+   * is in: the span it could have written in runs from its start to that
+   * turn's end, and a file last changed outside it is a follow-up's cause. No
+   * turn end heard (it closed without one), no record after the last one
+   * heard within `SETTLE_CHECKS` checks, or no turn log: no span, and they are
+   * dropped, as they always were.
+   */
+  async function settleRun(path: string): Promise<void> {
+    const run = settling.get(path)
+    if (run === undefined) return
+    const end =
+      run.turnEnd === undefined || deps.lastTurnAt === undefined
+        ? null
+        : await deps.lastTurnAt(run.jobId).catch(() => null)
+    if (settling.get(path) !== run) return
+    if (end !== null && run.turnEnd !== undefined && end >= run.turnEnd) {
+      settling.delete(path)
+      const held = router.settle(path, { from: run.from, to: end }, now().getTime())
+      if (held > 0) log(`${path}: ${held} file(s) changed during run ${run.jobId} by someone else`)
+      return
+    }
+    // No record yet, or only an earlier turn's: the last one is still being
+    // written, so wait for a later check.
+    const waiting = run.turnEnd !== undefined && deps.lastTurnAt !== undefined
+    if (waiting && ++run.checks < SETTLE_CHECKS) return
+    settling.delete(path)
+    router.settle(path, null, now().getTime())
+  }
+
   /** Mark a run done, and how. */
-  async function finish(remote: string, path: string, jobId: string, kept: boolean) {
+  async function finish(vault: SchedulerVault, path: string, jobId: string, kept: boolean) {
+    const { remote } = vault
     const at = now().toISOString()
-    await changeState(remote, path, (s) => ({
+    const file = await changeState(remote, path, (s) => ({
       ...s,
       runs: s.runs.map((r) =>
         r.jobId === jobId ? { ...r, finishedAt: at, ...(kept ? { kept: true as const } : {}) } : r,
       ),
     }))
+    router.running(path, false)
+    const started = file[remote]?.[path]?.runs.find((r) => r.jobId === jobId)?.at
+    settling.set(path, {
+      jobId,
+      from: started === undefined ? Date.parse(at) : Date.parse(started),
+      turnEnd: turnEnds.get(jobId),
+      checks: 0,
+    })
+    turnEnds.delete(jobId)
+    await settleRun(path)
     log(`${path}: run ${jobId} finished${kept ? ', left open' : ', closed'}`)
+    await logRun(
+      vault.root,
+      await nameOf(vault.root, path),
+      path,
+      kept ? 'done, left open' : 'done',
+    )
     changed(remote)
+  }
+
+  /** A Pi process failure is terminal and does not have a Claude turn-end. */
+  async function failRun(
+    vault: SchedulerVault,
+    path: string,
+    jobId: string,
+    error: string,
+  ): Promise<void> {
+    const at = now().toISOString()
+    await changeState(vault.remote, path, (s) => ({
+      ...s,
+      runs: s.runs.map((r) =>
+        r.jobId === jobId && r.finishedAt === undefined
+          ? { ...r, outcome: 'failed' as const, message: error, finishedAt: at }
+          : r,
+      ),
+    }))
+    router.running(path, false)
+    settling.delete(path)
+    turnEnds.delete(jobId)
+    log(`${path}: run ${jobId} failed: ${error}`)
+    await logRun(vault.root, await nameOf(vault.root, path), path, `failed: ${error}`)
+    changed(vault.remote)
+    await deps.sessions.stop(jobId).catch((err: unknown) => {
+      log(`${path}: could not stop failed run ${jobId}: ${String(err)}`)
+    })
   }
 
   /**
@@ -567,14 +784,15 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       for (let i = 0; i < CLOSE_POLLS; i++) {
         if (attached !== vault) return
         const session = deps.sessions.sessions().find((s) => s.id === jobId)
-        if (session === undefined) return await finish(vault.remote, path, jobId, false)
+        if (session?.outcome === 'failed' || session?.outcome === 'aborted') {
+          return await failRun(vault, path, jobId, session.error ?? `Pi session ${session.outcome}`)
+        }
+        if (session === undefined) return await finish(vault, path, jobId, false)
         if (session.state === 'needs-you') return
         if (session.state === 'idle') {
-          if (await deps.sessions.watched(jobId)) {
-            return await finish(vault.remote, path, jobId, true)
-          }
+          if (await deps.sessions.watched(jobId)) return await finish(vault, path, jobId, true)
           const stopped = await deps.sessions.stop(jobId)
-          if (stopped.ok) return await finish(vault.remote, path, jobId, false)
+          if (stopped.ok) return await finish(vault, path, jobId, false)
           log(`${path}: could not close run ${jobId}: ${stopped.message}`)
           return
         }
@@ -586,6 +804,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   }
 
   const unhear = deps.sessions.onTurnEnd((id, pending) => {
+    turnEnds.set(id, now().getTime())
+    // Every session's turns are heard, a run's or not: the oldest go first.
+    if (turnEnds.size > TURN_ENDS_KEPT) turnEnds.delete(turnEnds.keys().next().value!)
     void closeWhenDone(id, pending).catch((err: unknown) =>
       log(`closing ${id} failed: ${String(err)}`),
     )
@@ -628,13 +849,15 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       if (!entry.parsed.ok || firing.has(entry.path)) continue
       const s = state[entry.path]
       if (statusOf(entry, s) !== 'on') continue
+      const when = entry.parsed.def.when
+      if (when === undefined) continue
       const since = new Date(s?.lastRun ?? s?.approvedAt ?? at.toISOString())
       const def = entry.parsed.def
-      const due = dueRun(def.when, since, at)
+      const due = dueRun(when, since, at)
       if (due === null) continue
       if (attached !== vault) return
       // Missed by more than its catch-up window: not run late, only noted.
-      const late = latestDue(def.when, since, at) ?? due
+      const late = latestDue(when, since, at) ?? due
       if (
         def.catchUpMinutes !== undefined &&
         at.getTime() - late.getTime() > def.catchUpMinutes * 60_000
@@ -662,12 +885,89 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         firing.delete(entry.path)
       }
     }
+    await routeEvents(vault, entries).catch((err: unknown) =>
+      log(`routing events failed: ${String(err)}`),
+    )
+  }
+
+  /**
+   * The event half of a check: tell the sources what the approved schedules
+   * listen for, route the moments that came due, and start each batch that
+   * is due, unless the previous run is still working or waiting on you, when
+   * the batch waits for a later check (and keeps growing).
+   */
+  async function routeEvents(vault: SchedulerVault, entries: readonly FileEntry[]): Promise<void> {
+    const state = await stateOf(vault.remote)
+    const on = entries.filter(
+      (e): e is ValidEntry =>
+        e.parsed.ok &&
+        e.provider !== undefined &&
+        e.parsed.def.on.length > 0 &&
+        statusOf(e, state[e.path]) === 'on',
+    )
+    routed = on.map((e) => ({ path: e.path, on: e.parsed.def.on }))
+    router.keep(new Set(routed.map((r) => r.path)))
+    for (const path of settling.keys())
+      if (!routed.some((r) => r.path === path)) settling.delete(path)
+    for (const path of [...settling.keys()]) await settleRun(path)
+    deps.tell?.({ type: 'interest', interest: interestOf(routed.flatMap((r) => r.on)) })
+
+    const at = now()
+    for (const entry of on) {
+      if (attached !== vault) return
+      const s = state[entry.path]
+      const start = s?.approvedAt ?? at.toISOString()
+      // A run still working writes files of its own: not events for it.
+      const latest = s?.runs.find((r) => r.outcome === 'started')
+      router.running(entry.path, latest !== undefined && latest.finishedAt === undefined)
+      const moved = router.sweep(
+        { path: entry.path, on: entry.parsed.def.on },
+        {
+          since: (source) => Date.parse(s?.momentsSince?.[source] ?? start),
+          approvedAt: Date.parse(start),
+        },
+        at.getTime(),
+      )
+      if (Object.keys(moved).length > 0) {
+        const iso = Object.fromEntries(
+          Object.entries(moved).map(([k, v]) => [k, new Date(v).toISOString()]),
+        )
+        await changeState(vault.remote, entry.path, (x) => ({
+          ...x,
+          momentsSince: { ...x.momentsSince, ...iso },
+        }))
+      }
+
+      const started = s?.runs.find((r) => r.outcome === 'started')
+      const batch = router.due(
+        entry.path,
+        at.getTime(),
+        started === undefined ? null : Date.parse(started.at),
+      )
+      if (batch === null || firing.has(entry.path)) continue
+      const prior =
+        started?.jobId === undefined
+          ? undefined
+          : deps.sessions.sessions().find((x) => x.id === started.jobId)
+      // Still going: the batch is its follow-up, at a later check.
+      if (prior !== undefined && prior.state !== 'idle') continue
+      router.take(entry.path)
+      firing.add(entry.path)
+      try {
+        await fire(vault, entry, 'event', at, describeBatch(batch))
+      } catch (err) {
+        log(`${entry.path}: run failed: ${String(err)}`)
+      } finally {
+        firing.delete(entry.path)
+      }
+    }
   }
 
   return {
     attach(vault) {
       this.detach()
       attached = vault
+      lastScan = null
       first = setTimeout(() => {
         first = null
         void this.tick()
@@ -676,7 +976,13 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     },
 
     detach() {
+      // Nothing listens now: a source stops its polling.
+      if (attached !== null) deps.tell?.({ type: 'interest', interest: NO_INTEREST })
       attached = null
+      lastScan = null
+      routed = []
+      settling.clear()
+      router.keep(new Set())
       if (timer !== null) clearInterval(timer)
       if (first !== null) clearTimeout(first)
       timer = null
@@ -686,6 +992,42 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     list,
 
     turnEnded: closeWhenDone,
+
+    sessionsChanged(sessions) {
+      const vault = attached
+      if (vault === null) return
+      for (const session of sessions) {
+        if (session.outcome !== 'failed' && session.outcome !== 'aborted') continue
+        if (closing.has(session.id)) continue
+        closing.add(session.id)
+        void runOf(vault.remote, session.id)
+          .then((path) => {
+            if (path === null) return
+            return failRun(
+              vault,
+              path,
+              session.id,
+              session.error ?? `Pi session ${session.outcome}`,
+            )
+          })
+          .catch((err: unknown) => log(`failing ${session.id} failed: ${String(err)}`))
+          .finally(() => closing.delete(session.id))
+      }
+    },
+
+    hear(event) {
+      if (attached === null) return
+      router.hear(event, routed, now().getTime())
+    },
+
+    snapshot(snapshot) {
+      if (attached === null) return
+      const before = lastScan
+      lastScan = snapshot
+      if (before === null || !routed.some((r) => r.on.some((t) => t.source === 'file'))) return
+      const at = now().getTime()
+      for (const event of fileEvents(before, snapshot)) router.hear(event, routed, at)
+    },
 
     dispose() {
       unhear()
@@ -707,20 +1049,24 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         )
       }
       const at = now()
-      if (def.when.kind === 'at' && def.when.local.getTime() <= at.getTime()) {
+      if (def.when?.kind === 'at' && def.when.local.getTime() <= at.getTime()) {
         throw new CapabilityError(
           'BAD_REQUEST',
           `${entry.path} was for ${def.when.stamp}, which has passed`,
         )
       }
-      await changeState(vault.remote, entry.path, (s) => ({
+      await changeState(vault.remote, entry.path, ({ momentsSince: _, ...s }) => ({
         ...s,
         approved: fingerprint(ok),
         approvedAt: at.toISOString(),
-        // Turned on now: the moments before this are not missed runs.
+        // Turned on now: the moments before this are not missed runs, and
+        // neither are the triggers' (they count from `approvedAt` again).
         lastRun: at.toISOString(),
       }))
       changed(vault.remote)
+      // A check now, so its triggers listen from this moment rather than
+      // from the next check: a file dropped in between would go unheard.
+      if (attached?.remote === vault.remote) await this.tick()
       return one(vault, entry.path)
     },
 
@@ -781,7 +1127,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         const taken = new Set((await readSchedules(vault.root)).map((e) => scheduleSlug(e.path)))
         let name = slug
         for (let n = 2; taken.has(name); n++) name = `${slug}-${n}`
-        target = `${SCHEDULES_DIR}/${name}.md`
+        target = `${SCHEDULES_DIR}/${name}.local.md`
       }
       const text = scheduleFileText(draft, before)
       const parsed = parseScheduleFile(text, target)

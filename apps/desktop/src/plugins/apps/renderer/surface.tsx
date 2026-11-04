@@ -6,7 +6,7 @@
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { AppWindow, Logs, RotateCw } from 'lucide-react'
-import { APP_LOG_FILE, appSuffix, isAppBundlePath } from '@holi/shared'
+import { APP_LOG_FILE, APP_SUFFIX, appSuffix, isAppBundlePath } from '@holi/shared'
 import { APP_MANIFEST_FILE } from '../shared/manifest'
 import { appName } from '../shared/bundle'
 import {
@@ -16,21 +16,15 @@ import {
   type RailItem,
   type Surface,
 } from '@/plugin-api'
-import { IconButton, toast } from '@/primitives'
-import { AppFrame } from './AppFrame'
-import { AppIcon } from './AppIcon'
-import { appInstancesAtom, appOpensAtom } from './apps'
+import { IconButton } from '@/composites/icon-button'
+import { AppFrame } from './app-frame'
+import { AppIcon } from './app-icon'
+import { appInstancesAtom, appOpensAtom, archiveAppAtom, archivedAppsAtom } from './apps'
+import { previewVersionsAtom, refreshPreviewAtom } from './app-previews'
 import { appsCap } from './apps-cap'
 
 /** What makes a bundle an app at all: its entry document. */
 const ENTRY = 'index.html'
-
-/** A new app's first turn: where it goes and what it is for, in the person's
- *  words. The vault-apps skill holds the rest. */
-export const newAppPrompt = (parent: string, ask: string): string =>
-  `Build a vault app ${parent === '' ? 'at the root of this vault' : `in \`${parent}/\``}: ${ask}\n\n` +
-  'Use the vault-apps skill. Name it for what it does, and open it with ' +
-  '`holi apps open` once it is finished.'
 
 /** The app's reload, which remounts its frame, and its log
  *  (`log.local.txt`), opened in a pane beside it. The log button is disabled
@@ -46,18 +40,20 @@ function AppHeaderActions({ id }: { id?: string }): React.JSX.Element | null {
   return (
     <>
       <IconButton
-        icon={RotateCw}
         label="Reload this app"
         className="ml-1"
         onClick={() => setReloads((n) => ({ ...n, [id]: (n[id] ?? 0) + 1 }))}
-      />
+      >
+        <RotateCw className="size-3.5" />
+      </IconButton>
       <IconButton
-        icon={Logs}
         label={hasLog ? 'Open this app’s log' : 'No log yet'}
         className="ml-1"
         disabled={!hasLog}
         onClick={() => openPath(log, 'pane')}
-      />
+      >
+        <Logs className="size-3.5" />
+      </IconButton>
     </>
   )
 }
@@ -73,6 +69,15 @@ export const APP_SURFACE: Surface = {
   icon: AppIcon,
   render: AppSurface,
   instances: appInstancesAtom,
+  // The manifest's `description`, which is there for the launchers.
+  describe: (remote, id) => appsCap.describe(remote, { bundle: id }).then((r) => r.description),
+  // The picture `AppFrame` took the last time the app ran here.
+  preview: (remote, id) => appsCap.preview(remote, { bundle: id }).then((r) => r.dataUrl),
+  previewVersions: previewVersionsAtom,
+  refreshPreview: refreshPreviewAtom,
+  // `archived: true` in the manifest: out of the launchers, never deleted.
+  archived: archivedAppsAtom,
+  archive: archiveAppAtom,
   headerActions: AppHeaderActions,
 }
 
@@ -102,20 +107,23 @@ export const APP_CLAIM: PathClaim = {
         void appsCap.init(remote, { path }).catch((e: unknown) => console.warn('[apps]', e)),
     },
   ],
-  // The person says what the app is for and the agent writes it, named by
-  // it: an empty scaffold is a page nobody knows how to fill. The session
-  // comes forward, and the agent opens the app once it is finished.
+  // `holi apps init`'s scaffold. Opening its entry expands the bundle.
   create: {
     id: 'app',
-    label: 'New app…',
+    label: 'New app',
     icon: AppWindow,
-    placeholder: 'What should the app do?',
-    agent: true,
-    run: async ({ parent, name, agent }) => {
-      if (agent === null) return null
-      const res = await agent.start({ name, prompt: newAppPrompt(parent, name) })
-      if (!res.ok) toast(res.message)
-      return null
+    placeholder: 'App name',
+    run: async ({ remote, parent, name }) => {
+      const file = name.endsWith(APP_SUFFIX) ? name : `${name}${APP_SUFFIX}`
+      const bundle = parent === '' ? file : `${parent}/${file}`
+      // A refusal (a name that is no app) opens nothing.
+      return appsCap.init(remote, { path: bundle }).then(
+        () => `${bundle}/${ENTRY}`,
+        (e: unknown) => {
+          console.warn('[apps]', e)
+          return null
+        },
+      )
     },
   },
 }

@@ -22,7 +22,10 @@ import {
 import { HOLI_THEME_TEXT } from './seed/core'
 
 /** The local one is gitignored (`*.local.*`); the watcher is taught to see it
- *  despite the local-only filter. */
+ *  despite the local-only filter.
+ * @public exported for its test
+ * @public exported for its test
+ */
 export { THEME_FILE, THEME_LOCAL_FILE }
 
 async function readOrNull(abs: string): Promise<string | null> {

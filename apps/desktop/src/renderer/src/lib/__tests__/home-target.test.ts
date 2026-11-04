@@ -1,0 +1,97 @@
+/**
+ * Where Home goes, once the `home` setting has met the vault as it really is.
+ *
+ * Pure and on plain values, for the reason the whole `lib/` split exists: the
+ * decision is arithmetic over "what does the vault hold", and the atom that
+ * dispatches it is not the place to test whether a deleted note is reported.
+ */
+import { describe, expect, test } from 'vitest'
+import { resolveHome } from '@/lib/home-target'
+
+/** A vault holding one note, one other file and one app (a folder document
+ *  in the surface `app`), with the board as the one view that can be Home. */
+const vault = {
+  filePaths: new Set(['Notes/Standup.md', 'plan.pdf']),
+  homeable: new Set(['board']),
+  documentSurface: (path: string) => (path === 'retro.app' ? 'app' : null),
+}
+
+const on = (home: string) => ({ home, dailyNotes: true })
+const off = (home: string) => ({ home, dailyNotes: false })
+
+describe('the recents', () => {
+  test('are shown in the Home tab, whatever the vault holds', () => {
+    const empty = {
+      filePaths: new Set<string>(),
+      homeable: new Set<string>(),
+      documentSurface: () => null,
+    }
+    expect(resolveHome(off('recents'), empty)).toEqual({
+      reach: 'tab',
+      target: { kind: 'recents' },
+    })
+  })
+})
+
+describe('a folder document (an app)', () => {
+  test('is shown in the Home tab, in its surface, when the vault holds it', () => {
+    expect(resolveHome(on('retro.app'), vault)).toEqual({
+      reach: 'tab',
+      target: { kind: 'file', path: 'retro.app' },
+      surface: 'app',
+    })
+  })
+
+  test('is reported missing when the vault does not', () => {
+    expect(resolveHome(on('gone.app'), vault)).toEqual({
+      reach: 'missing',
+      target: { kind: 'file', path: 'gone.app' },
+    })
+  })
+})
+
+describe('a file', () => {
+  test.each(['Notes/Standup.md', 'plan.pdf'])('opens %s when it exists', (path) => {
+    expect(resolveHome(on(path), vault)).toEqual({ reach: 'open', target: { kind: 'file', path } })
+  })
+
+  test('is reported missing once deleted', () => {
+    expect(resolveHome(on('deleted.md'), vault)).toEqual({
+      reach: 'missing',
+      target: { kind: 'file', path: 'deleted.md' },
+    })
+  })
+})
+
+describe('the daily', () => {
+  test('opens when the vault keeps one', () => {
+    expect(resolveHome(on('daily'), vault)).toEqual({ reach: 'open', target: { kind: 'daily' } })
+  })
+
+  test('is reported missing when the vault keeps no daily', () => {
+    expect(resolveHome(off('daily'), vault)).toEqual({
+      reach: 'missing',
+      target: { kind: 'daily' },
+    })
+  })
+})
+
+describe('a view', () => {
+  // Nothing on disk for it to point at, so `dailyNotes` has no bearing.
+  test('opens when it is registered and can be Home', () => {
+    expect(resolveHome(off('board'), vault)).toEqual({
+      reach: 'open',
+      target: { kind: 'surface', surface: 'board' },
+    })
+  })
+
+  test.each(['mail', 'settings'])(
+    '%s is reported missing when it is off or cannot be Home',
+    (name) => {
+      expect(resolveHome(on(name), vault)).toEqual({
+        reach: 'missing',
+        target: { kind: 'surface', surface: name },
+      })
+    },
+  )
+})

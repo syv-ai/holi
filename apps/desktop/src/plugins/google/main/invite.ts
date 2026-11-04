@@ -46,6 +46,7 @@ function unfold(ics: string): string {
  *
  * The first is the right one: a recurring series and its exceptions share a UID,
  * so a file with several VEVENTs still describes one meeting.
+ * @public exported for its test
  */
 export function icsUid(ics: string): string | null {
   for (const line of unfold(ics).split(/\r?\n/)) {

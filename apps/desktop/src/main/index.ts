@@ -8,32 +8,38 @@
  * `electron-vite` resolves imports without typechecking, so an unresolvable
  * import anywhere on this path stops the window opening at all.
  */
-import { readFile, writeFile } from 'node:fs/promises'
+import { applyLiquidGlass, wantsLiquidGlass } from './liquid-glass'
+import { stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import {
   app,
   BrowserWindow,
   dialog,
   ipcMain,
   nativeImage,
+  net,
   protocol,
   session as electronSession,
   shell,
   type Tray,
 } from 'electron'
-import { snapshotTasks } from '@holi/shared'
+import { HOLI_LINK_SCHEME, holiLinkInArgv, parseHoliLink } from '@holi/shared'
+import { exactPath } from '@holi/shared/path-safety-node'
 import { requestFlush, type FlushChannel } from './flush'
-import { guardNavigation } from './window-guard'
+import { captureTab } from './tab-capture'
 import { vaultScheme } from './vault/asset-protocol'
 import { createSession } from './github/electron'
 import { createMembersCache } from './github/members-cache'
 import { installHoliCli } from './bridge/cli'
+import { installNodeFallback } from './bridge/node-fallback'
+import { loadLoginPath } from './bin'
 import { createCapabilityHost } from './capabilities/dispatch'
 import { CapabilityError } from './capabilities/error'
+import { vaultNotOpen } from './capabilities/fences'
 import { createCapabilityRegistry } from './capabilities/registry'
-import { vaultCapabilities, VAULT_NAMESPACES } from './capabilities/vault-caps'
-import { taskCapabilities, TASK_NAMESPACES, TASKS_PART } from './vault/task-capabilities'
+import { vaultCapabilities, VAULT_NAMESPACES, type SkillsUpdated } from './capabilities/vault-caps'
+import { commentCapabilities, COMMENT_NAMESPACES } from './vault/comment-capabilities'
+import { pulledMentions } from './vault/note-comments'
 import { coreSeed } from './vault/seed/core'
 import { MAIN_PLUGINS } from '../plugins/main'
 import { install } from './plugin-host/installed'
@@ -41,22 +47,31 @@ import { createPluginHost } from './plugin-host/host'
 import type { PluginEventsDeps } from './plugin-host/events'
 import { frameSchemes, schemeEntries, serveScheme } from './plugin-host/schemes'
 import {
+  changedBy,
   describeUpdate,
   pendingShipped,
   updateConflictPrompt,
   updateShipped,
+  type UpdateReport,
 } from './vault/seed/update'
+import { updateOnOpen } from './vault/seed/update-on-open'
+import { readSeedState } from './vault/seed/state'
+import { readVaultSettings } from './vault/settings'
+import { createReleaseNotes } from './updates/release-notes'
 import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
 import { registerIpc } from './ipc'
-import { createRouter, localToday } from './router'
+import { createActivityLog, scrubSecrets } from './activity/log'
+import { captureConsole, createAppLog, rendererLevel, type AppLogEntry } from './logs/app-log'
+import { createTerminals } from './terminal/terminals'
+import { pathToFileURL } from 'node:url'
+import { guardNavigation } from './window-guard'
+import { createRouter } from './router'
 import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
-import { createDeliveredLog, createReminderRuntime } from './reminders/runtime'
-import { createNotifier } from './reminders/notify'
-import type { VaultTasks } from './reminders/sweep'
+import { showNotification, type NativeNotice } from './notifications'
 import { createTray } from './tray'
 import { createUpdater, type Updater } from './updates/updater'
 import { installAppMenu } from './menu'
@@ -79,8 +94,13 @@ const CORE_SEEDS = [coreSeed(MAIN_PLUGINS.map((p) => p.info))]
 let mainWindow: BrowserWindow | null = null
 
 // Held at module scope, not inside `main()`: a `Tray` that gets garbage-collected
-// vanishes from the menu bar, so it must outlive the setup closure.
+// vanishes from the menu bar, so it must outlive the setup closure. It exists
+// only while some plugin works in the background (`MainPlugin.background`).
 let tray: Tray | null = null
+
+/** Why Holi stays open with its window closed: what each plugin working in
+ *  the background says. Empty, closing the last window quits, as in any app. */
+let inBackground: readonly string[] = []
 
 // Every scheme this build serves, core's then each plugin's: vault assets,
 // and whatever plugins add (vault apps' `holi-app:`). Electron takes them only before
@@ -91,9 +111,52 @@ protocol.registerSchemesAsPrivileged(
 )
 const FRAME_SCHEMES = frameSchemes(SCHEMES)
 
+/** A path main asks the renderer to show in a tab (`vault:open`). */
+interface OpenRequest {
+  remote: string
+  path: string
+  heading?: string
+  /** False when the tab opens without the caret moving into it. */
+  focus?: false
+}
+
+/**
+ * The renderer that said it can take an open (`vault:open-ready`, sent once its
+ * vault has landed), or null while none has: a fresh window's page has not
+ * loaded, or is still opening its vault, whose landing would bury the tab.
+ * Opens asked for meanwhile wait in `heldOpens`.
+ */
+let openTarget: Electron.WebContents | null = null
+const heldOpens: OpenRequest[] = []
+
+/**
+ * Holi links (docs/features/holi-links.md), clicked anywhere on this machine.
+ * macOS hands them to `open-url`, which can fire before the app is ready, so
+ * the listener goes on at once and a link waits in `heldLinks` until `main()`
+ * can answer it (`openLink`). Windows and Linux pass a link in argv instead:
+ * at launch, and to the running Holi through `second-instance`.
+ */
+const heldLinks: string[] = []
+let openLink: ((url: string) => void) | null = null
+const takeLink = (url: string): void => {
+  if (openLink === null) heldLinks.push(url)
+  else openLink(url)
+}
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  takeLink(url)
+})
+
 // A second launch must not happen at all: one Holi process owns every vault,
 // so excluding a second app excludes a second writer on every clone, without a
 // per-clone lockfile's stale-lock handling. Must be claimed BEFORE `whenReady`.
+// Everything Holi prints, for the bottom panel's Logs
+// (docs/features/status-bar.md). Listening from the first line main prints,
+// so a launch's own lines are kept before there is a window to send them to.
+let pushLog: (entry: AppLogEntry) => void = () => {}
+const appLog = createAppLog({ onEntry: (entry) => pushLog(entry) })
+captureConsole(appLog)
+
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
@@ -102,7 +165,15 @@ if (!app.requestSingleInstanceLock()) {
 
 /** The main window. `show: false` for a launch at login: its page still loads
  *  and opens the vault, out of sight until the tray's Open Holi or the dock. */
+/** Restore, show and focus `win`: out of the dock, the tray or behind others. */
+function bringForward(win: BrowserWindow): void {
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+}
+
 function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
+  const liquid = wantsLiquidGlass()
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -113,13 +184,16 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
     // On macOS the window is glass (after MonoCode's): transparent, with the
     // system's blur of what is behind it, which the shell's ground tints
     // (index.css, Window). Elsewhere the ground is opaque.
+    // On macOS 26 and later the glass is the system's liquid glass instead
+    // (`liquid-glass.ts`), which wants a transparent window and no vibrancy.
     ...(process.platform === 'darwin'
       ? {
           titleBarStyle: 'hiddenInset' as const,
           trafficLightPosition: { x: 14, y: 12 },
-          vibrancy: 'under-window' as const,
-          visualEffectState: 'active' as const,
           backgroundColor: '#00000000',
+          ...(liquid
+            ? { transparent: true }
+            : { vibrancy: 'under-window' as const, visualEffectState: 'active' as const }),
         }
       : {}),
     webPreferences: {
@@ -129,14 +203,28 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
     },
   })
   mainWindow = win
+  if (liquid) applyLiquidGlass(win)
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
   })
+  // The window's console joins main's in the Logs tab.
+  win.webContents.on('console-message', (details) =>
+    appLog.write({
+      source: 'renderer',
+      level: rendererLevel(details.level),
+      text: details.message,
+    }),
+  )
   // Fullscreen hides the traffic lights, so the sidebar's band for them goes.
   const sendFullScreen = () => win.webContents.send('window:fullscreen', win.isFullScreen())
   win.on('enter-full-screen', sendFullScreen)
   win.on('leave-full-screen', sendFullScreen)
   win.webContents.on('did-finish-load', sendFullScreen)
+  // DOM visibility alone is not a reliable signal for a window created hidden
+  // at login. The ready-update prompt uses the real native window state.
+  const sendVisibility = () => win.webContents.send('window:visible', win.isVisible())
+  win.on('show', sendVisibility)
+  win.on('hide', sendVisibility)
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) {
@@ -156,11 +244,22 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
     FRAME_SCHEMES,
     FRAME_ORIGINS,
   )
+  // A reload is a new page, which has not landed its vault yet.
+  win.webContents.on('did-navigate', () => {
+    if (openTarget === win.webContents) openTarget = null
+  })
   return win
 }
 
 async function main(): Promise<void> {
-  app.on('second-instance', () => {
+  // The login shell's PATH, for every tool Holi starts (`main/bin.ts`). Read
+  // while the app gets ready and awaited before anything can start an agent.
+  const loginPath = loadLoginPath()
+  app.on('second-instance', (_event, argv) => {
+    // A link clicked on Windows or Linux launches Holi again with the link in
+    // argv; `openLink` brings the window forward itself.
+    const link = holiLinkInArgv(argv)
+    if (link !== null) return takeLink(link)
     // Someone tried to launch Holi again: show them the one they have.
     if (mainWindow === null) return
     if (mainWindow.isMinimized()) mainWindow.restore()
@@ -181,6 +280,19 @@ async function main(): Promise<void> {
   const registry = new VaultRegistry(join(app.getPath('userData'), 'vaults.json'))
 
   const send = (channel: string, payload: unknown) => mainWindow?.webContents.send(channel, payload)
+
+  // What Holi does in the background, for the bottom panel's Output
+  // (docs/features/status-bar.md). Kept from launch, so it holds what
+  // happened before the panel was ever opened.
+  const activity = createActivityLog({ onEntry: (entry) => send('activity:entry', entry) })
+  pushLog = (entry) => send('logs:entry', entry)
+  activity.write({ channel: 'app', message: `Holi ${app.getVersion()} started` })
+  // The bottom panel's shells. `binDir` is read lazily: the `holi` command is
+  // installed below, long before anyone opens a terminal.
+  const terminals = createTerminals({
+    send: (event) => send(`terminal:${event.kind}`, event),
+    binDir: () => binDir,
+  })
 
   const bridgeEnv = createBridgeEnv()
   /** remote → the undo of what the open vault's env file carries. */
@@ -204,6 +316,24 @@ async function main(): Promise<void> {
     return () => undo.forEach((u) => u())
   }
 
+  /**
+   * A native notification kept off a Holi that has focus: Holi's banners never
+   * cover Holi. A click brings the window forward before `onClick` acts. The
+   * plugins' `notify` and the sync alert both come through here.
+   */
+  const notifyUnfocused = ({ title, body, onClick }: NativeNotice): boolean => {
+    if (BrowserWindow.getFocusedWindow() !== null) return false
+    showNotification({
+      title,
+      body,
+      onClick: () => {
+        openWindow()
+        onClick?.()
+      },
+    })
+    return true
+  }
+
   /** Plugin events, both ways, over the one window. */
   const eventsDeps: PluginEventsDeps = {
     send,
@@ -221,10 +351,10 @@ async function main(): Promise<void> {
   const capabilities = createCapabilityRegistry()
   const plugins = createPluginHost({
     plugins: MAIN_PLUGINS,
-    core: [TASKS_PART],
     registry: capabilities,
     userData: userDataDir,
     coreSeeds: CORE_SEEDS,
+    release: app.getVersion(),
     active: () => host.active(),
     rootFor: (remote) => rootFor(remote),
     events: eventsDeps,
@@ -242,10 +372,41 @@ async function main(): Promise<void> {
     // would use. `capabilityHost` is built below, before any vault opens.
     call: async (remote, name, params) =>
       (await capabilityHost.dispatch({ door: 'ui', remote, name, params })).value,
+    activity: activity.write,
+    // A plugin's notification is the reminders' kind, kept off a Holi that
+    // has focus. A click brings the window forward before the plugin acts.
+    focused: () => BrowserWindow.getFocusedWindow() !== null,
+    window: () => (mainWindow === null || mainWindow.isDestroyed() ? null : mainWindow),
+    notify: notifyUnfocused,
+    background: {
+      registered: async () =>
+        (await registry.list()).map((e) => ({ remote: e.remote, root: e.path })),
+      scan: async (root) => scanVault(root, await plugins.scanClaimsFor(root)),
+      open: (remote, path) => showPath(remote, path),
+      viewerLogin: () => session.viewer?.login ?? null,
+      notify: (notice) => showNotification(notice),
+      // The tray is the way back in (Open Holi) and the way out (Quit, since
+      // ⌘W is not) for as long as something runs in the background.
+      onChange: (whys) => {
+        inBackground = whys
+        if (whys.length === 0) {
+          tray?.destroy()
+          tray = null
+        } else if (tray === null) {
+          tray = createTray({ openWindow: () => openWindow(), tooltip: whys.join('; ') })
+        } else {
+          tray.setToolTip(whys.join('; '))
+        }
+      },
+    },
   })
 
   const host = createVaultHost({
     registry,
+    // Do not initialise vault tools or agent sessions until the login shell's
+    // PATH has settled. This promise is started at launch; the window is not
+    // held behind it.
+    beforeOpen: () => loginPath,
     // A GETTER, not a string. Read lazily on every git operation, so a sign-out
     // takes effect on the next pull rather than the next restart.
     gitDeps: { token: () => session.token() },
@@ -260,6 +421,9 @@ async function main(): Promise<void> {
       void plugins.reconcile('snapshot')
       const active = host.active()
       if (active === null) return
+      // What the started plugins read off the files: file triggers, tasks'
+      // due moments.
+      plugins.snapshot(active.remote, snapshot)
       void plugins.scanClaimsFor(active.root).then((claims) => {
         const now = new Set(claims.map((c) => c.plugin))
         const was = Object.keys(snapshot.claimed)
@@ -269,6 +433,10 @@ async function main(): Promise<void> {
       })
     },
     onSyncState: (state) => send('vault:sync', state),
+    // Sync that keeps failing says so outside Holi too; inside, the activity
+    // log's error line marks the Output (docs/features/vaults-sync.md).
+    onSyncFailing: (remote, text) =>
+      void notifyUnfocused({ title: `${remote}: sync is failing`, body: scrubSecrets(text) }),
     // How everything inside the vault reaches us: its `bridge.local.env`,
     // with what each part of Holi contributes while the vault is open. Made
     // at open, so the file names this run's ports, which move on restart.
@@ -288,9 +456,30 @@ async function main(): Promise<void> {
     // every commit tick and once at open, so a vault switch resets it.
     onHeldBack: (files) => send('vault:heldback', files),
     onCommitted: (paths) => send('vault:committed', paths),
+    activity: activity.write,
+    // A merge (a pull, or a reconcile landing) is the only way a teammate's
+    // comment arrives, so it is where a mention of the person signed in is
+    // found and handed to the plugins
+    // (the agent's inbox). Best-effort: a mention missed is still in the panel.
+    onPulled: ({ remote, root }, { from, to }) => {
+      const login = session.viewer?.login
+      if (!login) return
+      void pulledMentions(root, from, to, login)
+        .then((found) =>
+          plugins.mentioned(
+            remote,
+            found.map(({ notePath, mention }) => ({ notePath, ...mention })),
+          ),
+        )
+        .catch((err) => console.error('[comments] mentions after pull:', err))
+    },
     // What plugins run in the vault stops here, the only place that still
-    // holds the vault they ran in.
-    onLeave: () => plugins.stop(),
+    // holds the vault they ran in. The panel's shells were started in its
+    // clone too, and stop with it.
+    onLeave: async () => {
+      await terminals.closeAll().catch((err) => console.error('[terminal] close failed:', err))
+      await plugins.stop()
+    },
   })
 
   // Serve every scheme. A plugin's answers 404 while the open vault has it off.
@@ -337,45 +526,232 @@ async function main(): Promise<void> {
     return (await registry.list()).find((e) => e.remote === remote)?.path ?? null
   }
 
+  /**
+   * Show a vault path in a tab: a clicked reminder's task, `holi docs open`, a
+   * Holi link. Brings the window forward and hands the path to the renderer,
+   * which owns the vault switch (so `activeRemoteAtom` stays truthful). The
+   * window may be gone entirely (tray-resident), so recreate it; either way the
+   * open waits until a renderer has landed its vault (`openTarget`), or the
+   * push arrives before anything can hear it, or under the vault's Home.
+   * Returns the window it was shown in.
+   *
+   * `focus: false` (`holi docs screenshot`) shows the window without taking
+   * focus, and the renderer opens the tab without moving the caret into it:
+   * the person may be typing to the agent that asked. A minimised window is
+   * still restored, since there is no restoring one without focus and a
+   * minimised page does not draw.
+   */
+  const showPath = (
+    remote: string,
+    path: string,
+    { heading, focus = true }: { heading?: string; focus?: boolean } = {},
+  ): BrowserWindow => {
+    const request: OpenRequest = { remote, path }
+    if (heading !== undefined) request.heading = heading
+    if (!focus) request.focus = false
+    let win = mainWindow
+    if (win === null || win.isDestroyed()) {
+      win = createWindow({ show: focus })
+      win.on('focus', () => host.active()?.onFocus())
+      if (!focus) win.showInactive()
+    } else if (focus) {
+      bringForward(win)
+    } else {
+      if (win.isMinimized()) win.restore()
+      win.showInactive()
+    }
+    if (openTarget !== null && !openTarget.isDestroyed()) openTarget.send('vault:open', request)
+    else heldOpens.push(request)
+    return win
+  }
+  /** Who waits for a window's renderer to take opens (`openReadyIn`). */
+  const readyWaiters: { contents: Electron.WebContents; resolve: () => void }[] = []
+  ipcMain.on('vault:open-ready', (event) => {
+    openTarget = event.sender
+    for (const request of heldOpens.splice(0)) event.sender.send('vault:open', request)
+    for (const w of readyWaiters.filter((w) => w.contents === event.sender)) {
+      readyWaiters.splice(readyWaiters.indexOf(w), 1)
+      w.resolve()
+    }
+  })
+  /** Settles once `win`'s renderer has taken the opens main held for it, so
+   *  what is asked of it next (`vault:locate`) comes after them. */
+  const openReadyIn = (win: BrowserWindow): Promise<void> =>
+    openTarget === win.webContents
+      ? Promise.resolve()
+      : new Promise((resolve) => {
+          readyWaiters.push({ contents: win.webContents, resolve })
+          // A window closed first never sends it; the ask is then refused.
+          win.webContents.once('destroyed', () => {
+            const i = readyWaiters.findIndex((w) => w.resolve === resolve)
+            if (i >= 0) readyWaiters.splice(i, 1)
+            resolve()
+          })
+        })
+
+  /**
+   * A Holi link from outside, untrusted: its shape is checked by
+   * `parseHoliLink`, then the vault must be one this machine has cloned and the
+   * file one that is in it. Anything else is said in a dialog and opens
+   * nothing. A link only ever opens a tab: it runs nothing.
+   */
+  const openHoliLink = async (url: string): Promise<void> => {
+    // A sheet on a minimised or tray-hidden window is a dialog nobody sees, so
+    // the window comes forward first, as it does for a link that opens; with
+    // no window at all the dialog stands alone.
+    const tell = (message: string, detail: string): void => {
+      const options = { type: 'info' as const, message, detail, buttons: ['OK'] }
+      const win = mainWindow
+      if (win === null || win.isDestroyed()) return void dialog.showMessageBox(options)
+      bringForward(win)
+      void dialog.showMessageBox(win, options)
+    }
+    const parsed = parseHoliLink(url)
+    if (!parsed.ok) return tell('This link cannot be opened.', parsed.reason)
+    const { remote, path, heading } = parsed.link
+    // GitHub names are case-insensitive, so a link typed or pasted with
+    // another case still names the vault.
+    const entry = (await registry.list()).find(
+      (e) => e.remote.toLowerCase() === remote.toLowerCase(),
+    )
+    if (entry === undefined) {
+      return tell(
+        `${remote} is not on this computer.`,
+        'Add the vault with Add vault… in the vault menu, then open the link again.',
+      )
+    }
+    // `exactPath` refuses a name that reaches outside the clone through a link
+    // or a case alias, so what is shown is what was named.
+    const abs = await exactPath(entry.path, path)
+    const isFile =
+      abs !== null &&
+      (await stat(abs).then(
+        (s) => s.isFile(),
+        () => false,
+      ))
+    if (!isFile) {
+      return tell(
+        `${path} is not in ${remote}.`,
+        'It may have been moved or deleted, or it has not synced to this computer yet.',
+      )
+    }
+    showPath(entry.remote, path, { heading })
+  }
+
+  /** `holi docs open` and `holi docs screenshot` show a path only in the vault
+   *  Holi has open (`requireOpen`), asked again here since a switch can land
+   *  between the check and the show. */
+  const showInActive = (remote: string, path: string, focus: boolean): BrowserWindow => {
+    if (host.active()?.remote !== remote) throw vaultNotOpen()
+    return showPath(remote, path, { focus })
+  }
+  /** One screenshot at a time, open and capture together: a second one's tab
+   *  would take the screen from the first while it waits to settle. */
+  let screenshots: Promise<unknown> = Promise.resolve()
+
+  /** One skills update at a time, asked for or run on open: both write the
+   *  vault's skills and its seed state. */
+  let skillsQueue: Promise<unknown> = Promise.resolve()
+  const skillsExclusive = <T>(job: () => Promise<T>): Promise<T> => {
+    const run = skillsQueue.then(job, job)
+    skillsQueue = run.catch(() => {})
+    return run
+  }
+  /** An update's report as the renderer and the CLI are told it. */
+  const skillsUpdated = async (root: string, report: UpdateReport): Promise<SkillsUpdated> => ({
+    summary: describeUpdate(report, false),
+    changed: changedBy(report),
+    conflicts:
+      report.conflicts.length === 0
+        ? null
+        : {
+            prompt: await updateConflictPrompt(root, report.conflicts),
+            summary: describeUpdate(report, true),
+          },
+  })
+  /**
+   * A vault that asks for its skills to update on open gets that once the open
+   * is through and its first pull has caught up; what it changed is pushed to
+   * the renderer, which only shows it.
+   */
+  const updateSkillsOnOpen = (remote: string): void => {
+    const vault = host.active()
+    if (vault === null || vault.remote !== remote) return
+    const stillOpen = (): boolean => host.active() === vault
+    void updateOnOpen({
+      root: vault.root,
+      release: app.getVersion(),
+      caughtUp: () => vault.caughtUp(),
+      stillOpen,
+      wanted: async () => (await readVaultSettings(vault.root)).autoUpdateSkills,
+      contributions: () => plugins.contributions(vault.root),
+      exclusive: skillsExclusive,
+    })
+      .then(async (report) => {
+        if (report === null || !stillOpen()) return
+        const updated = await skillsUpdated(vault.root, report)
+        if (updated.changed.length === 0 && updated.conflicts === null) return
+        send('vault:skills', { remote, ...updated })
+      })
+      .catch((err) => console.error('[skills] update on open failed:', err))
+  }
+
   // What a vault app and the agent can ask for: core's capabilities, then
   // each feature's, under the namespaces each owns. A feature's table closes
   // over what it needs from the running app.
   const vaultCaps = vaultCapabilities({
+    open: (remote, path) => void showInActive(remote, path, true),
+    // Opened the same way first, so what is captured is what the person sees,
+    // but without taking focus from whatever they are doing.
+    screenshot: (remote, path) => {
+      const run = () => {
+        const win = showInActive(remote, path, false)
+        return captureTab(win, path, openReadyIn(win))
+      }
+      const shot = screenshots.then(run, run)
+      screenshots = shot.catch(() => {})
+      return shot
+    },
     // `holi skills update` and the palette's Update skills: bring this
     // release's skills and hooks to a vault. A conflict is answered with the
     // first turn of a session that would resolve it, which the renderer
     // starts through the agent service.
-    pendingSkills: async (remote) => {
+    skillsStatus: async (remote) => {
       const root = await rootFor(remote)
       if (root === null) throw new CapabilityError('UNAVAILABLE', 'No vault is open.')
-      return pendingShipped(root, await plugins.contributions(root))
+      const [pending, state, settings] = await Promise.all([
+        pendingShipped(root, await plugins.contributions(root)),
+        readSeedState(root),
+        readVaultSettings(root),
+      ])
+      return { pending, release: state.release ?? null, autoUpdate: settings.autoUpdateSkills }
     },
     updateSkills: async (remote) => {
       const root = await rootFor(remote)
       if (root === null) throw new CapabilityError('UNAVAILABLE', 'No vault is open.')
-      const report = await updateShipped(root, await plugins.contributions(root))
-      return {
-        summary: describeUpdate(report, false),
-        conflicts:
-          report.conflicts.length === 0
-            ? null
-            : {
-                prompt: await updateConflictPrompt(root, report.conflicts),
-                summary: describeUpdate(report, true),
-              },
-      }
+      const report = await skillsExclusive(async () =>
+        updateShipped(root, await plugins.contributions(root), { release: app.getVersion() }),
+      )
+      return skillsUpdated(root, report)
     },
   })
-  const taskCaps = taskCapabilities({ today: localToday })
   capabilities.register(VAULT_NAMESPACES, vaultCaps)
-  capabilities.register(TASK_NAMESPACES, taskCaps)
+  // Comment threads on notes, for the agent: written as the signed-in person.
+  capabilities.register(
+    COMMENT_NAMESPACES,
+    commentCapabilities({ login: () => session.viewer?.login ?? null }),
+  )
   // The one way every door runs a capability: the renderer's UI door (the
   // router) and the agent's `holi` CLI (the bridge server, below).
   const capabilityHost = createCapabilityHost({
     registry: capabilities,
     rootFor,
     active: () => host.active(),
-    core: createCoreServices({ active: () => host.active(), members, reports: uiReports }),
+    core: createCoreServices({
+      active: () => host.active(),
+      members,
+      reports: uiReports,
+    }),
     pluginEnabled: async (plugin, root) => (await plugins.enabled(root)).has(plugin),
     claims: (root) => plugins.scanClaimsFor(root),
   })
@@ -386,22 +762,55 @@ async function main(): Promise<void> {
 
   // Updating Holi itself. Installing is a quit, so it runs the quit's confirm
   // and teardown first and then lets the updater's own quit through.
+  /** The update's state as the log last heard it, so a check that finds
+   *  nothing every few hours is not a line each time. */
+  let loggedUpdate = ''
   const updater: Updater = createUpdater({
-    send: (status) => send('updates:status', status),
+    send: (status) => {
+      send('updates:status', status)
+      const line =
+        status.lastError !== null
+          ? `error:${status.lastError}`
+          : status.state === 'available' || status.state === 'ready'
+            ? `${status.state}:${status.availableVersion ?? ''}`
+            : ''
+      if (line !== '' && line !== loggedUpdate) {
+        activity.write(
+          status.lastError !== null
+            ? {
+                channel: 'app',
+                level: 'warn',
+                message: 'Update check failed',
+                detail: status.lastError,
+              }
+            : {
+                channel: 'app',
+                message:
+                  status.state === 'ready'
+                    ? `Holi ${status.availableVersion ?? ''} is ready to install`
+                    : `Holi ${status.availableVersion ?? ''} is available`,
+              },
+        )
+      }
+      loggedUpdate = line
+    },
     beforeInstall: async () => {
       if (quitting || confirmingQuit) return false
       confirmingQuit = true
-      const go = await confirmQuit().catch(() => true)
+      const go = await confirmQuit().catch(() => false)
+      const ready = go && (await teardown())
+      quitting = ready
       confirmingQuit = false
-      if (!go) return false
-      quitting = true
-      await teardown()
-      return true
+      return ready
     },
   })
 
   const router = createRouter({
     updates: updater,
+    activity,
+    logs: appLog,
+    terminals,
+    releaseNotes: createReleaseNotes({ fetch: (url, init) => net.fetch(url, init) }),
     loginItem: {
       get: () => app.getLoginItemSettings().openAtLogin,
       set: (open) => app.setLoginItemSettings({ openAtLogin: open }),
@@ -410,6 +819,7 @@ async function main(): Promise<void> {
     preCommit,
     seed: (root) => plugins.seed(root),
     plugins,
+    opened: updateSkillsOnOpen,
     members,
     reportUi: (remote, report) => {
       uiReports.set(remote, report)
@@ -427,108 +837,72 @@ async function main(): Promise<void> {
       const { shell } = await import('electron')
       await shell.trashItem(path)
     },
+    showItemInFolder: (path) => {
+      void import('electron').then(({ shell }) => shell.showItemInFolder(path))
+    },
   })
 
   registerIpc({ router, rootFor: (remote) => rootFor(remote) })
+  ipcMain.handle('window:is-visible', (event) =>
+    mainWindow !== null && event.sender === mainWindow.webContents ? mainWindow.isVisible() : false,
+  )
 
   const holiCliPath = await installHoliCli(app.getPath('userData'))
+  await installNodeFallback(app.getPath('userData'), process.execPath)
 
   // The bridge: what runs inside a vault (the `holi` command, the agent's
   // hooks, git's hook and merge driver) reaching this Holi on loopback.
   const bridge = createBridgeServer({
-    cli: { dispatch, commands: () => capabilities.commands() },
+    cli: { dispatch, commands: () => capabilities.commands(), rootFor },
   })
   registerGitRoutes(bridge, {
     rootFor,
     claims: (root) => plugins.scanClaimsFor(root),
     transforms: (root) => plugins.transformsFor(root),
     preCommit,
+    // The agent's `agent.message`, through the one dispatch: refused as no
+    // such method in a vault that has the agent off.
+    tellSession: (remote, job, text) =>
+      dispatch({ door: 'ui', remote, name: 'agent.message', params: { session: job, text } }),
   })
   await bridge.start()
   const binDir = dirname(holiCliPath)
 
-  /**
-   * Reminders: a tray-resident evaluator sweeps every registered vault each
-   * minute (and once at launch, the catch-up for fires missed while quit) and
-   * raises native notifications.
-   *
-   * `clonePaths` is refreshed at the head of every `corpus.all()`, before `sweep`
-   * reads or the runtime marks the watermark, so the sync `DeliveredLog` resolver
-   * always sees the same clones the sweep just scanned. A vault whose `scanVault`
-   * throws (a stale registry entry, a missing clone) is skipped, never a stall.
-   */
-  const clonePaths = new Map<string, string>()
-  const corpus = {
-    async all(): Promise<VaultTasks[]> {
-      const entries = await registry.list()
-      clonePaths.clear()
-      for (const e of entries) clonePaths.set(e.remote, e.path)
-      const scans = await Promise.all(
-        entries.map(async (e) => {
-          const snap = await plugins
-            .scanClaimsFor(e.path)
-            .then((claims) => scanVault(e.path, claims))
-            .catch(() => null)
-          return snap ? { remote: e.remote, tasks: snapshotTasks(snap).items } : null
-        }),
-      )
-      return scans.filter((v): v is VaultTasks => v !== null)
-    },
-  }
-  const delivered = createDeliveredLog((remote) => clonePaths.get(remote) ?? null)
-  /**
-   * A clicked reminder brings the window forward and hands the task to the
-   * renderer, which owns the vault switch (so `activeRemoteAtom` stays truthful).
-   * The window may be gone entirely (tray-resident), so recreate it and
-   * deliver on `did-finish-load`, or the push arrives before any renderer can
-   * hear it.
-   */
-  const focusTask = (remote: string, path: string): void => {
-    const payload = { remote, path }
-    const win = mainWindow
-    if (win === null || win.isDestroyed()) {
-      const fresh = createWindow()
-      fresh.on('focus', () => host.active()?.onFocus())
-      fresh.webContents.once('did-finish-load', () =>
-        fresh.webContents.send('reminders:open', payload),
-      )
-      return
-    }
-    if (win.isMinimized()) win.restore()
-    win.show()
-    win.focus()
-    win.webContents.send('reminders:open', payload)
-  }
-  const notifier = createNotifier((remote, path) => focusTask(remote, path))
-  const reminders = createReminderRuntime({
-    corpus,
-    notifier,
-    delivered,
-    // An assigned task reminds only its assignees (docs/features/tasks.md).
-    viewerLogin: () => session.viewer?.login ?? null,
-  })
-  reminders.start()
-
-  // Opened at login, Holi starts in the menu bar: the window loads (so the
-  // vault opens) without showing.
+  // Opened at login, Holi starts out of sight: the window loads (so the
+  // vault opens) without showing, until the dock or the tray's Open Holi.
   const atLogin = process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin
   const win = createWindow({ show: !atLogin })
+  // What works across vaults (reminders) starts once the login shell's PATH
+  // is read (begun at launch, settled within its timeout), so a tool it
+  // starts is found; the window does not wait for it. Its launch catch-up
+  // comes with it, whichever vault opens.
+  void loginPath.then(() => plugins.syncBackground())
   // Pull on focus. The interval exists for the case where the window never
   // loses focus at all.
   win.on('focus', () => host.active()?.onFocus())
 
+  // Holi links, from now on and those that came before the window did. Only a
+  // packaged app claims the scheme: a dev build would take every `holi:` link
+  // on the machine from an installed Holi, and on macOS it is the bare
+  // Electron.app that would be registered, not this app.
+  if (app.isPackaged) app.setAsDefaultProtocolClient(HOLI_LINK_SCHEME)
+  openLink = (url) => void openHoliLink(url)
+  const launchLink = holiLinkInArgv(process.argv)
+  if (launchLink !== null) heldLinks.push(launchLink)
+  for (const url of heldLinks.splice(0)) openLink(url)
+
   // Create-or-focus the one window: the dock/`activate` path and the tray's
-  // Open Holi both funnel through here.
-  const openWindow = (): void => {
+  // Open Holi both funnel through here. The window it made, or null when it
+  // brought the open one forward.
+  const openWindow = (): BrowserWindow | null => {
     const existing = mainWindow
     if (existing !== null && !existing.isDestroyed()) {
-      if (existing.isMinimized()) existing.restore()
-      existing.show()
-      existing.focus()
-      return
+      bringForward(existing)
+      return null
     }
     const fresh = createWindow()
     fresh.on('focus', () => host.active()?.onFocus())
+    return fresh
   }
 
   // The dock: the main window, opened if it was closed and brought out if a
@@ -537,48 +911,9 @@ async function main(): Promise<void> {
     if (mainWindow === null || mainWindow.isDestroyed() || !mainWindow.isVisible()) openWindow()
   })
 
-  // Tray-resident: the sweep keeps running with the window closed, and the tray
-  // is the way back in (Open Holi) and the way out (Quit, since ⌘W is not).
-  tray = createTray({ openWindow })
   // After the first window: the Developer menu sends to whatever window is
   // current, and there has to be one for the send to land.
   installAppMenu(() => mainWindow)
-
-  /**
-   * First-run only: ask once whether to launch Holi at login, since reminders
-   * fire only while it is running. The "asked" flag lives in userData (never a
-   * vault), so a later launch never re-asks. Fire-and-forget so the modal does
-   * not hold up startup.
-   */
-  const appSettingsFile = join(app.getPath('userData'), 'settings.json')
-  void (async () => {
-    let settings: Record<string, unknown> = {}
-    try {
-      const parsed = JSON.parse(await readFile(appSettingsFile, 'utf8'))
-      if (parsed && typeof parsed === 'object') settings = parsed as Record<string, unknown>
-    } catch {
-      settings = {}
-    }
-    if (settings['launchPrompted'] === true) return
-    const { response } = await dialog.showMessageBox({
-      type: 'question',
-      buttons: ['Enable', 'Not now'],
-      defaultId: 0,
-      cancelId: 1,
-      message: 'Launch Holi at login?',
-      detail: 'Reminders only fire while Holi is running. Launch it automatically when you log in?',
-    })
-    app.setLoginItemSettings({ openAtLogin: response === 0 })
-    try {
-      await writeFile(
-        appSettingsFile,
-        JSON.stringify({ ...settings, launchPrompted: true }, null, 2) + '\n',
-        'utf8',
-      )
-    } catch (err) {
-      console.error('[login-prompt] failed to persist the asked flag:', err)
-    }
-  })()
 
   /**
    * Quit has to WAIT for the flush.
@@ -618,59 +953,62 @@ async function main(): Promise<void> {
     if (confirmingQuit) return
     confirmingQuit = true
     void confirmQuit()
-      .catch(() => true)
-      .then((go) => {
+      .catch(() => false)
+      .then(async (go) => {
+        if (go) await teardownAndQuit()
         confirmingQuit = false
-        if (!go) return
-        quitting = true
-        void teardownAndQuit()
       })
   })
 
   async function teardownAndQuit(): Promise<void> {
-    await teardown()
+    if (!(await teardown())) {
+      quitting = false
+      return
+    }
+    quitting = true
     // Only install a candidate downloaded from the selected channel. Squirrel
     // may have staged a different channel's candidate during its check.
     if (updater.installOnQuit()) return
-    // Always quit, even if the flush threw: a failed teardown must not trap
-    // someone in an app they are trying to leave.
     app.quit()
   }
 
   /** Everything a quit does before the process goes: by ⌘Q, the tray, or an
    *  update's restart. Never throws. */
-  async function teardown(): Promise<void> {
-    updater.dispose()
-    reminders.close() // stop the sweep timer at once: no tick into a teardown
-    tray?.destroy() // let go of the menu-bar item as we leave
-    tray = null
-    await (async () => {
-      try {
-        // Stop what runs in the vault (the agent's sessions and terminals)
-        // before we flush and commit: nothing a session was mid-writing
-        // should race the teardown.
-        await plugins.stop().catch((err) => console.error('[quit] plugins stop failed:', err))
-        await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
-        // A flush point is a flush THEN a commit, and only the renderer can do
-        // the first half: the editor's newest words are not on disk until it
-        // writes them. Quit is the one flush point main starts, so it asks.
-        await requestFlush(flushChannel(mainWindow))
-        // Quit is a leave point: commit the flushed buffer, then get it
-        // off-machine before the window closes. Best-effort with a 1s budget:
-        // an unreachable remote must not hang quit, and the next launch drains
-        // what did not make it out. Order is flush -> commit -> push -> close.
-        const vault = host.active()
-        if (vault !== null) {
-          await vault.commitNow().catch((err) => console.error('[quit] commit failed:', err))
-          await Promise.race([vault.pushNow(), new Promise((r) => setTimeout(r, 1_000))])
-        }
-        // `close()` commits the open vault again (a clean no-op) before letting
-        // go of it.
-        await host.close()
-      } catch (err) {
-        console.error('[quit] teardown failed:', err)
+  async function teardown(): Promise<boolean> {
+    const channel = flushChannel(mainWindow)
+    try {
+      // Ask before tearing down anything: a failed flush must leave the app
+      // usable so the person can correct the problem and retry quit.
+      const result = await requestFlush(channel)
+      if (result !== 'flushed') {
+        console.error(`[quit] buffer flush ${result}; quit cancelled so edits remain available`)
+        return false
       }
-    })()
+      updater.dispose()
+      // Stop the work across vaults and in the active vault only after dirty
+      // buffers are safe on disk.
+      await plugins.stopBackground().catch((err) => console.error('[quit] background:', err))
+      await plugins.stop().catch((err) => console.error('[quit] plugins stop failed:', err))
+      await terminals.closeAll().catch((err) => console.error('[quit] terminals failed:', err))
+      await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
+      // Quit is a leave point: commit the flushed buffer, then get it
+      // off-machine before the window closes. Best-effort with a 1s budget:
+      // an unreachable remote must not hang quit, and the next launch drains
+      // what did not make it out. Order is flush -> commit -> push -> close.
+      const vault = host.active()
+      if (vault !== null) {
+        await vault.commitNow().catch((err) => console.error('[quit] commit failed:', err))
+        await Promise.race([vault.pushNow(), new Promise((r) => setTimeout(r, 1_000))])
+      }
+      // `close()` commits the open vault again (a clean no-op) before letting
+      // go of it.
+      await host.close()
+    } catch (err) {
+      console.error('[quit] teardown failed; quit cancelled so edits remain available:', err)
+      channel.cancel?.()
+      return false
+    }
+    return true
   }
 }
 
@@ -683,25 +1021,45 @@ async function main(): Promise<void> {
  */
 function flushChannel(win: BrowserWindow | null): FlushChannel {
   const target = win !== null && !win.isDestroyed() ? win : null
+  let requestId: string | undefined
+  let done: ((id: string, error?: string) => void) | undefined
   return {
-    send() {
-      target?.webContents.send('vault:flush')
-    },
     onDone(cb) {
-      if (target === null) {
-        queueMicrotask(cb)
-        return () => {}
+      done = cb
+      if (target === null)
+        return () => {
+          done = undefined
+        }
+      const listener = (event: Electron.IpcMainEvent, id: string, error?: string) => {
+        if (
+          event.sender !== target.webContents ||
+          event.senderFrame !== target.webContents.mainFrame
+        )
+          return
+        if (typeof id !== 'string' || (error !== undefined && typeof error !== 'string')) return
+        cb(id, error)
       }
-      ipcMain.once('vault:flush-done', cb)
-      return () => ipcMain.removeListener('vault:flush-done', cb)
+      ipcMain.on('vault:flush-done', listener)
+      return () => ipcMain.removeListener('vault:flush-done', listener)
+    },
+    send(id) {
+      requestId = id
+      if (target === null) queueMicrotask(() => done?.(id))
+      else target.webContents.send('vault:flush', { id })
+    },
+    cancel(id = requestId) {
+      if (target !== null && !target.isDestroyed() && id !== undefined) {
+        target.webContents.send('vault:flush-cancel', { id })
+      }
     },
   }
 }
 
-// Keep-alive on every platform: closing the last window does not quit, so the
-// reminder sweep keeps running tray-resident. A real quit is the tray's Quit or
-// ⌘Q → `before-quit`. The handler must stay registered and empty: with none,
-// Electron's default quits on Windows/Linux.
+// Closing the last window quits, as in any app, except on macOS, where an app
+// stays in the dock. While a plugin works in the background (reminders) Holi
+// stays open everywhere, in the tray: a real quit is then the tray's Quit or
+// ⌘Q → `before-quit`. The handler must stay registered: with none, Electron's
+// default quits on Windows and Linux whatever runs.
 app.on('window-all-closed', () => {
-  // intentionally does not quit
+  if (inBackground.length === 0 && process.platform !== 'darwin') app.quit()
 })

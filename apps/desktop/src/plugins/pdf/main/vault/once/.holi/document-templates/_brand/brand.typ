@@ -18,6 +18,27 @@
 #let accent-tint = rgb("F7F6F3") // tinted label column
 #let col-sep = rgb("DBDBDB") // fine vertical separators
 
+// ---- Language ----
+// The template's language, from `language` in its template.json (Holi passes
+// it as `--input lang=…`); Danish when it says none. It sets the text
+// language and picks the words the brand writes itself.
+#let sprog = sys.inputs.at("lang", default: "da")
+#let ord = if sprog == "da" {
+  (contents: "Indhold", party: "For", name: "Navn", title: "Titel", date: "Dato", to: "Til", from: "Fra", re: "Emne")
+} else {
+  (contents: "Contents", party: "For", name: "Name", title: "Title", date: "Date", to: "To", from: "From", re: "Re")
+}
+
+// A date in the template's language: "21. oktober 2026" in Danish, Typst's
+// own "21 October 2026" otherwise. Typst's `display` names months in English
+// whatever the language, so the Danish months are spelled out.
+#let maaneder = ("januar", "februar", "marts", "april", "maj", "juni", "juli", "august", "september", "oktober", "november", "december")
+#let dato(d) = if sprog == "da" {
+  str(d.day()) + ". " + maaneder.at(d.month() - 1) + " " + str(d.year())
+} else {
+  d.display("[day padding:none] [month repr:long] [year]")
+}
+
 // ---- Signature block (contracts): a write-on line with a small label under it.
 #let sig-felt(label) = {
   v(2.2em)
@@ -26,25 +47,31 @@
   text(size: 9pt, fill: muted, label)
 }
 
-// Two+ columns, one per party, Navn/Titel/Dato stacked. Used via @@SIG:a|b@@.
+// Two+ columns, one per party, name/title/date stacked. Used via @@SIG:a|b@@.
 #let underskrifter(parter) = {
   v(1.0em)
   grid(
     columns: parter.map(_ => 1fr),
     column-gutter: 1.8cm,
     ..parter.map(p => {
-      text(weight: 700, size: 11pt)[For #p:]
-      sig-felt("Navn")
-      sig-felt("Titel")
-      sig-felt("Dato")
+      text(weight: 700, size: 11pt)[#ord.party #p:]
+      sig-felt(ord.name)
+      sig-felt(ord.title)
+      sig-felt(ord.date)
     }),
   )
 }
 
+// A level-2 section's number, "1.", "2.", ..., at `loc`: how many level-2
+// headings there are up to and including it. Counted rather than kept in a
+// counter so a table of contents can number its entries too, and it runs
+// through the whole document, never restarting at a level-1 heading.
+#let sektion(loc) = str(query(heading.where(level: 2).before(loc)).len()) + "."
+
 // ---- Brand typography/tables, applied to `body` ----
 // Call as `with-brand(content)`; the set/show rules below wrap `content`.
 #let with-brand(body) = {
-  set text(font: "Raleway", size: 10.5pt, fill: ink, lang: "da")
+  set text(font: "Raleway", size: 10.5pt, fill: ink, lang: sprog)
   set par(justify: true, leading: 0.85em, spacing: 1.15em, first-line-indent: 0pt)
   set list(marker: text(fill: ink, size: 1.35em, baseline: 0.06em)[•], indent: 0.4em, body-indent: 0.5em)
   set enum(indent: 0.4em, body-indent: 0.5em)
@@ -54,7 +81,6 @@
   show quote.where(block: true): it => pad(left: 0.7em, it.body)
 
   set heading(numbering: none)
-  let seccount = counter("sektion")
   // Level 1 = document title.
   show heading.where(level: 1): it => {
     set text(size: 28pt, weight: 800, fill: ink)
@@ -63,11 +89,10 @@
   }
   // Level 2 = numbered sections (1., 2., ...).
   show heading.where(level: 2): it => {
-    seccount.step()
     set text(size: 22pt, weight: 800, fill: ink)
     set par(justify: false, leading: 0.3em)
     block(above: 1.5em, below: 1.0em)[
-      #context seccount.display("1"). #h(0.3em) #it.body
+      #context sektion(here()) #h(0.3em) #it.body
     ]
   }
   // Level 3 = subheadings.

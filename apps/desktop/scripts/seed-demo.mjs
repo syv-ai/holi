@@ -241,7 +241,7 @@ Done: Settings → Theme.`,
   // automation (docs/features/holis.md). Each is a folder.
   '.holi/holis/proposal/holi.yaml': `# Sent a customer note, writes a proposal next to it.
 name: Proposal
-mascot: rocket
+mascot: captain
 description: Turns a customer note into a proposal
 model: sonnet
 accepts:
@@ -261,7 +261,7 @@ allow:
 `,
   '.holi/holis/meeting/holi.yaml': `# Sent a meeting note, files its action items as tasks.
 name: Meeting
-mascot: frog
+mascot: champion
 description: Files a task for each action item in a meeting note
 accepts:
   - Meetings/**/*.md
@@ -279,7 +279,7 @@ allow:
 - Tick the item in the note once its task exists.
 `,
   '.holi/holis/housekeeping/holi.yaml': `name: Housekeeping
-mascot: robot
+mascot: operator
 description: Keeps the vault tidy
 allow:
   - Edit(**/task.*.md)

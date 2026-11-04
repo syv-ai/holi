@@ -22,7 +22,9 @@ import {
   type AgentTarget,
   type AgentTerminal,
 } from './sessions'
-import { activeRemoteAtom, openSurfaceAtom } from '@/plugin-api'
+import { activeRemoteAtom, appModeAtom, openSurfaceAtom } from '@/plugin-api'
+import { newSessionProviderAtom } from './providers'
+import { agentsViewAtom, viewTerminalsAtom } from './agents-view'
 
 /** What an action answers: done, or why not, in words the caller can print. */
 export type AgentResult = { ok: true } | { ok: false; message: string }
@@ -34,9 +36,6 @@ function land(set: Setter, terminalId: string): void {
   set(openSurfaceAtom, AGENT_SURFACE, terminalId)
   focusSessionTerminal(terminalId)
 }
-
-/** Show a terminal another flow opened (a Holi's send) in its agent tab. */
-export const landTerminalAtom = atom(null, (_get, set, terminalId: string) => land(set, terminalId))
 
 const geometry = (get: Getter) => get(agentGeometryAtom)
 
@@ -94,6 +93,23 @@ export const openOverviewAtom = atom(null, async (get, set): Promise<AgentResult
 })
 
 /**
+ * A conversation in a terminal of its own, by Claude Code's id for it:
+ * `claude --resume <id> --fork-session`, a copy, so it never fights the
+ * session's own process for the conversation.
+ */
+export const openConversationTerminalAtom = atom(
+  null,
+  async (get, set, conversationId: string): Promise<AgentResult> => {
+    const res = await inVault(get, (remote) =>
+      agentCap.open(remote, { fork: conversationId, ...geometry(get) }),
+    )
+    if (!res.ok) return res
+    land(set, res.terminalId)
+    return { ok: true }
+  },
+)
+
+/**
  * One session, from a sidebar row, an orb or the palette: a window whose title
  * names it (any tab, the list's included, may have attached it since), else the
  * window Holi opened for it, else a new `claude attach` window. An unnamed
@@ -142,13 +158,22 @@ export const startSessionAtom = atom(
  * half-typed draft. A `'new'` target starts a session named from the ask's
  * first line.
  *
+ * A `'new'` session runs the machine's default agent (`agentProvider`).
+ *
  * A target that ended between being picked and being sent to is **refused**,
  * not silently dropped, so the caller can keep the text.
  */
 export const sendToAgentAtom = atom(
   null,
   async (get, set, args: { text: string; target: AgentTarget }): Promise<AgentResult> => {
-    const res = await inVault(get, (remote) => agentCap.send(remote, { ...args, ...geometry(get) }))
+    const res = await inVault(get, (remote) =>
+      agentCap.send(remote, {
+        ...args,
+        // A new session runs the machine's default agent.
+        ...(args.target === 'new' ? { provider: get(newSessionProviderAtom) } : {}),
+        ...geometry(get),
+      }),
+    )
     if (!res.ok) return res
     land(set, res.terminalId)
     return { ok: true }
@@ -174,7 +199,10 @@ export const duplicateSessionAtom = atom(
   async (get, set, id: string): Promise<AgentResult> => {
     const res = await inVault(get, (remote) => agentCap.duplicate(remote, { id, ...geometry(get) }))
     if (!res.ok) return res
-    land(set, res.terminalId)
+    set(viewTerminalsAtom, (terminals) => ({ ...terminals, [res.sessionId]: res.terminalId }))
+    set(appModeAtom, 'agents')
+    set(agentsViewAtom, { kind: 'session', id: res.sessionId })
+    focusSessionTerminal(res.terminalId)
     return { ok: true }
   },
 )

@@ -53,7 +53,9 @@ export interface SafeStorageLike {
 
 /** The platform has no keychain to encrypt with. The message is advice — the
  * user can often fix this (install a keyring, unlock the login keychain) — so
- * it deserves its own type rather than a generic failure. */
+ * it deserves its own type rather than a generic failure.
+ * @public exported for its test
+ */
 export class EncryptionUnavailableError extends Error {
   constructor() {
     super(

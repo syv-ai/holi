@@ -19,6 +19,11 @@ asarUnpack:
   - '**/node_modules/@img/**'
   # The PDF plugin hands pdfium's wasm to the engine by path.
   - '**/node_modules/@embedpdf/pdfium/**'
+# Holi links (docs/features/holi-links.md): the OS hands a clicked `holi://`
+# link to the app.
+protocols:
+  - name: Holi link
+    schemes: [holi]
 publish:
   # CI selects channel=dev for prereleases; stable uses latest-mac.yml.
   provider: github
