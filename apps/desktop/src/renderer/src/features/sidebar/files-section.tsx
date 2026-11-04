@@ -60,7 +60,6 @@ import { closeTabsWhere } from '@/state/shell-workspace'
 import { parseTabKey, tabKey, tabPath } from '@/state/tab-descriptor'
 import { shellTabForPathAtom } from '@/state/surfaces'
 import { claimsAtom, folderClaimsAtom } from '@/state/plugins'
-import { createTaskAtom } from '@/state/tasks'
 import { setTreeOrderAtom, treeOrderAtom } from '@/state/tree-order'
 import {
   createFolderAtom,
@@ -138,7 +137,6 @@ export function FilesSection({
   const vaults = useAtomValue(vaultsAtom)
   const createNote = useSetAtom(createNoteAtom)
   const createFolder = useSetAtom(createFolderAtom)
-  const createTask = useSetAtom(createTaskAtom)
   const moveNotes = useSetAtom(moveNotesAtom)
   const deleteMany = useSetAtom(deleteManyAtom)
   const setWorkspace = useSetAtom(shellWorkspaceAtom)
@@ -670,19 +668,6 @@ export function FilesSection({
       remote: files.remote,
       on: {
         newNote: () => naming('create a document', () => newNote(parent, { name: true })),
-        newTask: () =>
-          void attempt('create the task', async () => {
-            const remote = files.remote
-            if (remote === null) return
-            const path = await createTask({
-              title: 'Untitled task',
-              status: 'todo',
-              folder: parent,
-            })
-            if (!path || !stillCurrent(remote)) return
-            land([path])
-            onOpen(path)
-          }),
         newFolder: () =>
           naming('create the folder', async () => {
             const name = joinPath(parent, freeName(files.taken, parent, 'New folder'))

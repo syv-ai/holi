@@ -10,7 +10,6 @@ import {
   FolderOpenIcon,
   FolderPlusIcon,
   HardDriveIcon,
-  ListChecksIcon,
   PencilIcon,
   SquareSplitHorizontalIcon,
   Trash2Icon,
@@ -223,7 +222,6 @@ export function newActions({
   on: {
     newNote: () => void
     newFolder: () => void
-    newTask: () => void
     make: (create: FileCreate) => void
   }
 }): MenuAction[] {
@@ -239,12 +237,6 @@ export function newActions({
       label: 'New folder',
       icon: <FolderPlusIcon aria-hidden="true" />,
       run: on.newFolder,
-    },
-    {
-      kind: 'item',
-      label: 'New task',
-      icon: <ListChecksIcon aria-hidden="true" />,
-      run: on.newTask,
     },
     ...creates.map((create): MenuAction => ({
       kind: 'item',

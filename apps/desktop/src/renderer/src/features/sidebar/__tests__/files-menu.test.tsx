@@ -25,6 +25,11 @@ import { FilesSection } from '../files-section'
 
 const deleteMany = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
 const createNote = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
+const createTask = vi.hoisted(() =>
+  vi.fn(async ({ parent }: { parent: string; name: string }) =>
+    parent === '' ? 'task.created.md' : `${parent}/task.created.md`,
+  ),
+)
 const writeNote = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
 const snapshotQuery = vi.hoisted(() =>
   vi.fn(async () => (await import('@holi/shared')).emptyVaultSnapshot()),
@@ -56,7 +61,7 @@ function KeyedFiles({ onOpen }: { onOpen: (path: string) => void }) {
   return <FilesSection key={remote} activeId={null} onOpen={onOpen} onMoved={() => undefined} />
 }
 
-function mount() {
+function mount({ tasks = true }: { tasks?: boolean } = {}) {
   const store = createStore()
   store.set(activeRemoteAtom, 'mara/notes')
   store.set(showHiddenByVaultAtom, {})
@@ -99,6 +104,21 @@ function mount() {
     surfaces: [],
     rail: [],
     claims: [
+      ...(tasks
+        ? [
+            {
+              match: (p: string) => p.startsWith('task.'),
+              create: {
+                id: 'task',
+                label: 'New task',
+                icon: () => null,
+                placeholder: 'Task title',
+                asksName: true as const,
+                run: createTask,
+              },
+            },
+          ]
+        : []),
       {
         match: (p: string) => p.endsWith('.app'),
         folder: { surface: 'app', entry: 'index.html' },
@@ -138,6 +158,32 @@ function mount() {
   )
   return { run, makeLink, onOpen, store }
 }
+
+test('the task plugin contributes one title-backed New task action', async () => {
+  const { makeLink } = mount()
+  fireEvent.contextMenu(await screen.findByText('kunder'))
+  const actions = await screen.findAllByRole('menuitem', { name: 'New task' })
+  expect(actions).toHaveLength(1)
+  fireEvent.click(actions[0]!)
+  const field = await screen.findByPlaceholderText('Task title')
+  expect(createTask).not.toHaveBeenCalled()
+  fireEvent.change(field, { target: { value: 'Review the brief' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(createTask).toHaveBeenCalledWith({
+      remote: 'mara/notes',
+      parent: 'kunder',
+      name: 'Review the brief',
+    }),
+  )
+  expect(makeLink).not.toHaveBeenCalled()
+})
+
+test('without the tasks plugin, the New menu has no task action', async () => {
+  mount({ tasks: false })
+  fireEvent.contextMenu(await screen.findByText('kunder'))
+  expect(screen.queryByRole('menuitem', { name: 'New task' })).toBeNull()
+})
 
 test("New app on a folder's menu makes the app in that folder", async () => {
   const { run, onOpen } = mount()
@@ -419,8 +465,8 @@ test('a delayed app creation cannot land in a different keyed vault', async () =
 
 test('a delayed task creation cannot land in a different keyed vault', async () => {
   const { store, onOpen } = mount()
-  let finish!: (value: never) => void
-  capRun.mockImplementationOnce(
+  let finish!: (value: string) => void
+  createTask.mockImplementationOnce(
     () =>
       new Promise((resolve) => {
         finish = resolve
@@ -428,8 +474,12 @@ test('a delayed task creation cannot land in a different keyed vault', async () 
   )
   fireEvent.contextMenu(await screen.findByText('kunder'))
   fireEvent.click(await screen.findByRole('menuitem', { name: 'New task' }))
+  fireEvent.change(await screen.findByPlaceholderText('Task title'), {
+    target: { value: 'Delayed task' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
   act(() => store.set(activeRemoteAtom, 'other/vault'))
-  await act(async () => finish({ path: 'task.created.md' } as never))
+  await act(async () => finish('task.created.md'))
   expect(onOpen).not.toHaveBeenCalled()
 })
 
@@ -531,9 +581,13 @@ test('New document beside a selected file skips an existing Untitled name and la
 
 test('a task created while hidden does not steal selection when task files are shown', async () => {
   const { store, onOpen } = mount()
-  capRun.mockResolvedValueOnce({ path: 'task.created.md' } as never)
+  createTask.mockResolvedValueOnce('task.created.md')
   fireEvent.contextMenu(await screen.findByText('kunder'))
   fireEvent.click(await screen.findByRole('menuitem', { name: 'New task' }))
+  fireEvent.change(await screen.findByPlaceholderText('Task title'), {
+    target: { value: 'Created' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() => expect(onOpen).toHaveBeenCalledWith('task.created.md'))
   await act(async () =>
     store.set(snapshotAtom, {
