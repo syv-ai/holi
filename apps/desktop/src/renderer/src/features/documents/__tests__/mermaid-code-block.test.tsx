@@ -1,5 +1,5 @@
 import { Editor, EditorContent } from '@tiptap/react'
-import { act, render, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, waitFor } from '@testing-library/react'
 import { createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -89,6 +89,37 @@ describe('Mermaid fences in a document editor', () => {
     expect(svg?.querySelector('a')).toBeNull()
     act(() => e.commands.setTextSelection(3))
     expect(e.view.dom.querySelector('[data-mermaid-diagram]')).not.toBeNull()
+  })
+
+  it('uses SVG-safe labels and suppresses Mermaid error SVG insertion', async () => {
+    makeEditor('```mermaid\nflowchart LR\n  A --> B\n```')
+    await settle()
+    expect(renderMermaid).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining('A --> B'),
+    )
+  })
+
+  it('uses the current node position when the preview is clicked after preceding edits', async () => {
+    const e = makeEditor('```mermaid\nflowchart LR\n  A --> B\n```\n\nAfter')
+    await settle()
+    const diagram = e.view.dom.querySelector('[data-mermaid-diagram]')
+    expect(diagram).not.toBeNull()
+    act(() => {
+      e.commands.insertContentAt(0, {
+        type: 'paragraph',
+        content: [{ type: 'text', text: 'x'.repeat(100) }],
+      })
+    })
+    await settle()
+    const movedDiagram = e.view.dom.querySelector('[data-mermaid-diagram]')
+    expect(movedDiagram).not.toBeNull()
+    act(() => {
+      fireEvent.mouseDown(movedDiagram!)
+    })
+    expect(e.state.selection.from).toBeGreaterThan(100)
+    expect(e.state.doc.textBetween(e.state.selection.from, e.state.selection.to)).toBe('')
+    expect(e.state.doc.resolve(e.state.selection.from).parent.type.name).toBe('codeBlock')
   })
 
   it('leaves other code fences unchanged', async () => {

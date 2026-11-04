@@ -10,24 +10,31 @@ import {
 } from '@tiptap/react'
 import { useEffect, useRef, useState } from 'react'
 
+import { useAtomValue } from 'jotai'
+
+import { activeModeAtom } from '@/state/color-scheme'
+
 let renderId = 0
 
-// Mermaid receives note-authored text. Strict mode disables HTML labels and
-// links; DOMPurify is still the final gate before SVG reaches the document.
-mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' })
+// Mermaid receives note-authored text. DOMPurify is still the final gate before
+// SVG reaches the document.
+mermaid.initialize({
+  startOnLoad: false,
+  securityLevel: 'strict',
+  htmlLabels: false,
+})
 
 function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
   const [svg, setSvg] = useState<string | null>(null)
   const [renderError, setRenderError] = useState(false)
   const [focused, setFocused] = useState(() => editor.view.hasFocus())
-  const [theme, setTheme] = useState<'dark' | 'default'>(() =>
-    document.documentElement.classList.contains('dark') ? 'dark' : 'default',
-  )
+  const activeMode = useAtomValue(activeModeAtom)
+  const theme = activeMode === 'dark' ? 'dark' : 'default'
   const svgHost = useRef<HTMLDivElement>(null)
   const source = node.textContent
   const isMermaid = String(node.attrs.language ?? '').toLowerCase() === 'mermaid'
   const editable = editor.isEditable
-  const position = typeof getPos === 'function' ? getPos() : undefined
+  const currentPosition = () => (typeof getPos === 'function' ? getPos() : undefined)
   useEffect(() => {
     const focus = () => setFocused(true)
     const blur = () => setFocused(false)
@@ -42,6 +49,7 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
   const active = useEditorState({
     editor,
     selector: ({ editor: current }) => {
+      const position = currentPosition()
       if (position === undefined) return false
       const { from, to } = current.state.selection
       return (
@@ -51,22 +59,19 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
   })
 
   useEffect(() => {
-    const root = document.documentElement
-    const observer = new MutationObserver(() =>
-      setTheme(root.classList.contains('dark') ? 'dark' : 'default'),
-    )
-    observer.observe(root, { attributes: true, attributeFilter: ['class'] })
-    return () => observer.disconnect()
-  }, [])
-
-  useEffect(() => {
     let current = true
     setSvg(null)
     setRenderError(false)
     if (!isMermaid || source.trim() === '' || active) return () => void (current = false)
 
     const id = `holi-mermaid-${++renderId}`
-    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme })
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      theme,
+      htmlLabels: false,
+      suppressErrorRendering: true,
+    })
     void mermaid
       .render(id, source)
       .then(({ svg: result }) => {
@@ -81,6 +86,8 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
         }
       })
       .catch(() => {
+        // Mermaid may append its own error SVG to the document before rejecting.
+        document.getElementById(id)?.remove()
         if (current) setRenderError(true)
       })
     return () => {
@@ -114,6 +121,7 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
           role={svg ? 'img' : 'status'}
           aria-label={svg ? 'Mermaid diagram' : 'Rendering diagram'}
           onMouseDown={(event) => {
+            const position = currentPosition()
             if (editable && typeof position === 'number') {
               event.preventDefault()
               editor.commands.setTextSelection(Math.min(position + 1, position + node.nodeSize - 1))
