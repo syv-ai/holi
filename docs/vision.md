@@ -12,7 +12,7 @@ An example of a shared vault (still work in progress and not refactored to work 
 
 ## Key design choices
 
-- The editor is CodeMirror 6 with live-preview (rendered as you type, raw when you click in).
+- Notes are edited in ReUI's rich-text editor (Tiptap) over plain markdown; other text files in CodeMirror 6.
 - Markdown-native, path-based links. `[[folder/note.md]]` stays readable and portable, for humans and the agent.
 - A vault assistant that reads and writes the vault like you do. The agent keeps its native file tools; it's just another collaborator in the doc.
 - Each vault stores its shared settings in `.holi/settings/app.yaml` and the user's machine-local ones in `.holi/settings/app.local.yaml`. Same pattern as `.claude` uses.

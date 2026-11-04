@@ -148,7 +148,9 @@ describe('GitHubApi.repos', () => {
     const t = api([
       {
         body: [repo({ full_name: 'nthomsencph/one' })],
-        headers: { link: `<${BASE}/user/repos?page=2>; rel="next", <${BASE}/user/repos?page=2>; rel="last"` },
+        headers: {
+          link: `<${BASE}/user/repos?page=2>; rel="next", <${BASE}/user/repos?page=2>; rel="last"`,
+        },
       },
       { body: [repo({ full_name: 'nthomsencph/two' })] },
     ])
@@ -165,7 +167,10 @@ describe('GitHubApi.repos', () => {
     const t = api([
       {
         body: [
-          repo({ full_name: 'syv-ai/1brain', owner: { login: 'syv-ai', id: 9, type: 'Organization' } }),
+          repo({
+            full_name: 'syv-ai/1brain',
+            owner: { login: 'syv-ai', id: 9, type: 'Organization' },
+          }),
           repo({ full_name: 'nthomsencph/notes' }),
         ],
       },
@@ -265,10 +270,23 @@ describe('GitHubApi.collaborators', () => {
     const t = api([
       {
         body: [
-          collaborator({ id: 1, permissions: { admin: true, maintain: true, push: true, triage: true, pull: true }, role_name: 'some_custom_role' }),
-          collaborator({ id: 2, permissions: { admin: false, maintain: true, push: true, triage: true, pull: true } }),
-          collaborator({ id: 3, permissions: { admin: false, maintain: false, push: false, triage: true, pull: true } }),
-          collaborator({ id: 4, permissions: { admin: false, maintain: false, push: false, triage: false, pull: true } }),
+          collaborator({
+            id: 1,
+            permissions: { admin: true, maintain: true, push: true, triage: true, pull: true },
+            role_name: 'some_custom_role',
+          }),
+          collaborator({
+            id: 2,
+            permissions: { admin: false, maintain: true, push: true, triage: true, pull: true },
+          }),
+          collaborator({
+            id: 3,
+            permissions: { admin: false, maintain: false, push: false, triage: true, pull: true },
+          }),
+          collaborator({
+            id: 4,
+            permissions: { admin: false, maintain: false, push: false, triage: false, pull: true },
+          }),
         ],
       },
     ])
@@ -371,7 +389,13 @@ describe('GitHubApi.createRepo', () => {
         status: 422,
         body: {
           message: 'Repository creation failed.',
-          errors: [{ resource: 'Repository', field: 'name', message: 'name already exists on this account' }],
+          errors: [
+            {
+              resource: 'Repository',
+              field: 'name',
+              message: 'name already exists on this account',
+            },
+          ],
         },
       },
     ])
@@ -411,7 +435,9 @@ describe('GitHubApi errors', () => {
     // The sharpest assertion in this file. A 403 is a repo you cannot read —
     // signing someone out for clicking one is a bug that looks like a feature.
     const onUnauthorized = vi.fn()
-    const t = api([{ status: 403, body: { message: 'Must have admin rights' } }], { onUnauthorized })
+    const t = api([{ status: 403, body: { message: 'Must have admin rights' } }], {
+      onUnauthorized,
+    })
 
     await expect(t.client.collaborators('syv-ai/1brain')).rejects.toMatchObject({
       status: 403,
@@ -441,10 +467,13 @@ describe('GitHubApi errors', () => {
   it('classifies 403 with X-GitHub-SSO as saml-required and extracts the url', async () => {
     // "403 Forbidden" is not actionable. "Authorize this token for your org",
     // with the link, is.
-    const sso =
-      'required; url=https://github.com/orgs/syv-ai/sso?authorization_request=AB4CkQ'
+    const sso = 'required; url=https://github.com/orgs/syv-ai/sso?authorization_request=AB4CkQ'
     const t = api([
-      { status: 403, body: { message: 'Resource protected by organization SAML enforcement' }, headers: { 'x-github-sso': sso } },
+      {
+        status: 403,
+        body: { message: 'Resource protected by organization SAML enforcement' },
+        headers: { 'x-github-sso': sso },
+      },
     ])
 
     await expect(t.client.repos()).rejects.toMatchObject({

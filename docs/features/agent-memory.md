@@ -6,6 +6,12 @@ the agent's notes to itself stay out of the user's notes: hidden in the tree lik
 `.holi/`, but committed and synced like any note, and readable and correctable once hidden files
 are shown.
 
+**Memory, in the Agents sidebar, lists every memory**, shared and personal, grouped by type, each
+with its description, and marked personal or with its `expires` (and expired once it has passed).
+It reads the files, not `index.md`, which leaves out personal memories and changes only on commit.
+A personal memory shows after the next rescan, since the watcher ignores `.local.` files
+(`isWatchIgnoredPath`). A row opens its file.
+
 ## How it works
 
 **A memory is one file.** Frontmatter carries `type` (short and free-form), a one-line
@@ -40,7 +46,7 @@ proposes deleting it and the person decides.
 the same commit as the memory it describes, and a burst of writes in one turn is one commit. It is
 grouped by type, one `[[path|Title]]` line per memory with its description (and `(expires <stamp>)`
 after the link when it has one), sorted by path, under a "generated" header. A memory already past
-its `expires` when the index is written is left out. One sorted line per file is also why concurrent additions merge cleanly. It lists shared memories only, and says so in a line under the header. The transform runs last among the transforms, because it is
+its `expires` when the index is written is left out. One sorted line per file is also why concurrent additions merge cleanly, and when two sides' indexes still conflict, sync writes the index again from the merged memories instead of pausing ([vaults-sync.md](vaults-sync.md)). It lists shared memories only, and says so in a line under the header. The transform runs last among the transforms, because it is
 the only one that reads the whole tree rather than the staged set, and it returns at once when
 nothing under `.holi/memory/` is staged. The transform framework is in [vaults-sync.md](vaults-sync.md).
 
@@ -60,8 +66,27 @@ rewritten when a commit touches memory. Over
 the cap it drops descriptions first and keeps every title, then truncates with a pointer to the
 index. With memory files but no index yet, it says so and points at the directory. It needs no Holi
 port: local reads and one `git log` with a 2 s timeout. Its files are read in sorted order and it
-prints no clock time, so its text changes only when memory changes, a memory expires, or the day
-turns.
+prints no clock time, so its text changes only when memory or the README changes, a memory
+expires, or the day turns.
+
+**The overview opens with the vault's `README.md`**: its first 15 lines, leading blank lines
+skipped, under a budget of its own of 1,200 characters, with a line saying where the rest is when it
+cuts. The README says what the vault is for, so every session starts knowing that without working it
+out from folder names. The budget is separate from the memory's cap, so a long README never pushes a
+memory title out. With no README it prints one line saying so, and the agent can offer to write one.
+This part prints even when the vault has no memory. A new vault gets its README from the one
+question the [onboarding](onboarding.md) naming step asks.
+
+**The overview names the vault's community plugins too**, in one line near its heading: each pin in
+`.holi/plugins/`, whether the vault turns it on in `.holi/settings/plugins.yaml` and, when on, the
+commands it gives the agent, such as
+`Community plugins: dash (on, commands: dashctl), notes (off in this vault)`. So a question about a
+plugin's tool leads the agent to the plugin, not into another app's files. It reads only vault
+files, so "on" is what the vault says, not whether this machine has the plugin set up. As Holi
+reads them, `plugins.local.yaml` can turn off only `community` itself, which turns off every
+community plugin on this machine, so the line says so. It reads the
+`plugins:` block without a YAML parser, in the shape Holi writes it. It prints with no memory at
+all, and nothing when the vault pins no plugin. See [community-plugins.md](community-plugins.md).
 
 **A lint lists what looks wrong, as proposals.** `.claude/skills/memory/lint.mjs` reads every
 memory file, personal ones included, and prints findings of six kinds: `frontmatter` (none, no
@@ -162,3 +187,4 @@ only when the user asks.
 - `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/skills/memory/SKILL.md`: the memory contract given to the agent
 - `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/skills/memory/lint.mjs`: the memory lint, run by the agent and counted by the overview
 - `packages/shared/src/path-safety.ts`: `MEMORY_DIR`, `isAgentSurfacePath`
+- `apps/desktop/src/plugins/agent/renderer/agents/memory-list.tsx`: the Memory view's list

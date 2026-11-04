@@ -36,7 +36,7 @@ export interface PdfAnnotationInput {
   markedText?: string
 }
 
-export type PdfMarkKind =
+type PdfMarkKind =
   | 'highlight'
   | 'underline'
   | 'strikeout'
@@ -49,7 +49,7 @@ export type PdfMarkKind =
   | 'caret'
   | 'redaction'
 
-export interface PdfComment {
+interface PdfComment {
   id: string
   author: string | null
   created: Date | null

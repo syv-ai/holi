@@ -20,6 +20,14 @@ export interface PluginInfo {
   label: string
   /** Whether a vault that does not mention the plugin runs it. */
   default: boolean
+  /**
+   * A part of Holi written to the plugin contract rather than an option: it
+   * runs in every vault, the settings tab does not list it, and the plugins
+   * files never name it. A pin of its id in either file (an older Holi wrote
+   * `chat: false`) is ignored, and dropped the next time the file is written.
+   * It may require only other built-in parts.
+   */
+  builtIn?: boolean
   /** What it is, in a sentence, for the settings tab. What it adds to Holi
    *  (tabs, keys, settings) is listed from its contributions, not restated. */
   description?: string
@@ -100,11 +108,13 @@ export function resolvePlugins(
   const status = new Map<string, PluginStatus>()
   const running = new Set<string>()
   for (const p of known) {
-    const kind = !(settings.vault[p.id] ?? p.default)
-      ? 'off-vault'
-      : localOff.has(p.id)
-        ? 'off-here'
-        : 'on'
+    const kind = p.builtIn
+      ? 'on'
+      : !(settings.vault[p.id] ?? p.default)
+        ? 'off-vault'
+        : localOff.has(p.id)
+          ? 'off-here'
+          : 'on'
     status.set(p.id, { kind })
     if (kind === 'on') running.add(p.id)
   }
@@ -126,6 +136,22 @@ export function resolvePlugins(
     addingTo.set(id, live)
   }
   return { running, status, addingTo }
+}
+
+/** The plugins a vault can turn on or off: every one but the built-in parts.
+ *  What the settings tab and the onboarding act list. */
+export function optionalPlugins(known: readonly PluginInfo[]): PluginInfo[] {
+  return known.filter((p) => p.builtIn !== true)
+}
+
+/** Parts Holi had and no longer has: `chat`, whose conversations became
+ *  the agent's terminal sessions. An older Holi may have pinned them. */
+export const RETIRED_PLUGINS: readonly string[] = ['chat']
+
+/** Is `id` a built-in part's, or a retired one's, whose pins the plugins
+ *  files ignore and drop at their next write? */
+export function isBuiltInPlugin(id: string, known: readonly PluginInfo[]): boolean {
+  return RETIRED_PLUGINS.includes(id) || known.some((p) => p.id === id && p.builtIn === true)
 }
 
 /** Plugin ids as the settings tab names them, joined: "Vault apps and Agent". */

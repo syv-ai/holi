@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { MACHINE_STATE_DIR, vaultRelPath } from '@holi/shared'
 import { writeAtomic } from './vault-files'
 
+/** @public exported for its test */
 export const OUT_DIR = `${MACHINE_STATE_DIR}/out`
 
 /** How many are kept per vault: enough to outlast a busy stretch of a few

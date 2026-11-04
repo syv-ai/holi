@@ -72,4 +72,3 @@ export function createReminderRuntime(deps: ReminderRuntimeDeps): ReminderRuntim
 
 // Re-export so `index.ts` builds the real DeliveredLog from one module.
 export { createDeliveredLog }
-export type { DeliveredLog }

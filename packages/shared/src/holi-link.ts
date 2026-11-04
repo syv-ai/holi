@@ -41,6 +41,15 @@ const encode = (value: string): string => encodeURIComponent(value).replace(/%2F
  *  a filesystem or a chat app chose. NFC, the form git on macOS writes. */
 const nfc = (value: string): string => value.normalize('NFC')
 
+/**
+ * Whether `path` can have a link a teammate's Holi will open: not a local
+ * file or machine state, which never sync, nor something in a folder the
+ * vault never walks. The same rule `parseHoliLink` refuses by.
+ */
+export function isHoliLinkable(path: string): boolean {
+  return !isLocalOnlyPath(path) && !isMachineStatePath(path) && !isInIgnoredDir(path)
+}
+
 /** The link to `path` in `remote`, and to `heading` in it when given. */
 export function holiLink({ remote, path, heading }: HoliLink): string {
   const query = [`vault=${encode(remote)}`, `path=${encode(nfc(path))}`]

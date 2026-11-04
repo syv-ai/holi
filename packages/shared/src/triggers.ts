@@ -105,6 +105,22 @@ function parseOne(raw: unknown): Trigger | string {
   }
 }
 
+/** A trigger as the file writes it, the form `parseTriggers` reads: what
+ *  the editor saves, so the file and the editor say one thing. A lead of 0
+ *  and `changed: false` are the defaults, left out. */
+export function triggerYaml(t: Trigger): Record<string, string | number | boolean> {
+  switch (t.source) {
+    case 'file':
+      return t.changed ? { file: t.glob, changed: true } : { file: t.glob }
+    case 'task':
+      return t.when === 'due' && t.before > 0 ? { task: 'due', before: t.before } : { task: t.when }
+    case 'calendar':
+      return { calendar: t.before }
+    case 'mail':
+      return { mail: t.query }
+  }
+}
+
 /** Read a schedule's `on:`. Absent is no triggers. */
 export function parseTriggers(raw: unknown): TriggersParse {
   if (raw === undefined) return { ok: true, triggers: [] }

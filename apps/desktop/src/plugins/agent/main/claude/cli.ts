@@ -19,7 +19,7 @@ import { execFile } from 'node:child_process'
 import { accessSync, constants } from 'node:fs'
 import { join } from 'node:path'
 import { PLUGIN_COMMANDS_DIR } from '@holi/shared'
-import { resolveBin } from '../../../../main/plugin-api'
+import { nodeFallbackDir, resolveBin, toolPath } from '../../../../main/plugin-api'
 import type { TerminalCommand } from '../provider'
 
 /**
@@ -103,14 +103,21 @@ export function buildAgentEnv(
   // back on the machine's `~/.claude`.
   delete env.CLAUDE_CONFIG_DIR
   if (opts.configDir) env.CLAUDE_CONFIG_DIR = opts.configDir
-  // Prepended, never appended: an earlier `holi` on the
-  // inherited PATH would otherwise win under a name the gate trusts.
-  if (opts.binDir) {
-    env.PATH = env.PATH ? `${opts.binDir}:${env.PATH}` : opts.binDir
-  }
-  if (opts.commandsDir) {
-    env.PATH = env.PATH ? `${env.PATH}:${opts.commandsDir}` : opts.commandsDir
-  }
+  // `holi` is prepended, never appended: an earlier `holi` on the inherited
+  // PATH would otherwise win under a name the gate trusts. What follows the
+  // inherited PATH is what a Dock-launched Holi lacks and every hook needs:
+  // the usual tool directories, then Holi's own `node` as the last resort, so
+  // a `node` the machine has always wins (`main/bridge/node-fallback.ts`).
+  // The plugin commands come last of all, so a plugin adds a command but
+  // never stands in for one the machine or Holi has.
+  env.PATH = [
+    opts.binDir,
+    toolPath(env),
+    opts.binDir ? nodeFallbackDir(opts.binDir) : undefined,
+    opts.commandsDir,
+  ]
+    .filter((dir): dir is string => !!dir)
+    .join(':')
   return env
 }
 
@@ -146,6 +153,7 @@ export interface VaultCliTarget {
   binDir: string | null
 }
 
+/** @public exported for its test */
 export interface RunOptions {
   cwd: string
   env: Record<string, string>
@@ -159,8 +167,8 @@ export interface ClaudeCliDeps {
   log?: (msg: string) => void
 }
 
-export type ActionResult = { ok: true } | { ok: false; message: string }
-export type StartResult = { ok: true; id: string } | { ok: false; message: string }
+type ActionResult = { ok: true } | { ok: false; message: string }
+type StartResult = { ok: true; id: string } | { ok: false; message: string }
 
 export interface ClaudeCli {
   /** `claude agents --json`, raw. Null for every failure: no binary, a
@@ -171,26 +179,21 @@ export interface ClaudeCli {
   /** Remove a stopped session from Claude Code's list, conversation and all. */
   rm(target: VaultCliTarget, id: string): Promise<ActionResult>
   /** A new background session in the vault. With no prompt it waits for its
-   *  first one; with a prompt, that prompt is its first turn. `model` and
+   *  first one; with a prompt, that prompt is its first turn. `model`,
    *  `allow` (Claude Code permission rules it may use without asking) are a
-   *  scheduled run's; the permission mode, system prompt and settings are a
-   *  quick agent's (`quick.ts`). */
+   *  scheduled run's or a Holi's; `appendSystemPrompt` (Claude Code's own
+   *  flag) is a Holi's, who it is and its instructions. */
   startBg(target: VaultCliTarget, opts: StartBgOptions): Promise<StartResult>
   /** A background copy of a conversation, by Claude Code's full session id. */
   forkBg(target: VaultCliTarget, sessionId: string, name?: string): Promise<StartResult>
 }
 
-export interface StartBgOptions {
+interface StartBgOptions {
   name?: string
   prompt?: string
   model?: string
   allow?: readonly string[]
-  /** Claude Code's permission mode, instead of the vault's. */
-  permissionMode?: 'auto'
-  /** Lines after Claude Code's own system prompt. */
   appendSystemPrompt?: string
-  /** A settings JSON layered over the vault's for this session alone. */
-  settings?: string
 }
 
 /** The longest a session name is worth being: a row is narrow, and the source
@@ -200,6 +203,7 @@ const MAX_NAME = 60
 /**
  * A name fit for argv, or null. First line only, whitespace collapsed, capped:
  * a newline would split the argument in two.
+ * @public exported for its test
  */
 export function sessionName(raw: string | undefined): string | null {
   if (raw === undefined) return null
@@ -208,10 +212,12 @@ export function sessionName(raw: string | undefined): string | null {
   return clean === '' ? null : clean
 }
 
-// eslint-disable-next-line no-control-regex -- stripping the terminal's own colour codes
 const ANSI = /\x1b\[[0-9;]*m/g
 
-/** The id out of `backgrounded · <id> · <name>`, or null. */
+/**
+ * The id out of `backgrounded · <id> · <name>`, or null.
+ * @public exported for its test
+ */
 export function parseBackgrounded(stdout: string): string | null {
   const plain = stdout.replace(ANSI, '')
   const match = /^backgrounded\s+·\s+([0-9a-f]{8})\b/m.exec(plain)
@@ -222,13 +228,13 @@ export function parseBackgrounded(stdout: string): string | null {
  * A prompt as the last arguments: after `--`, so one that starts with a dash
  * (`- tidy the list`) is the prompt and not an unknown option.
  */
-export function promptArgs(prompt: string | undefined): string[] {
+function promptArgs(prompt: string | undefined): string[] {
   return prompt ? ['--', prompt] : []
 }
 
 /** The environment every `claude` Holi runs for a vault gets. It is also the
  *  vault's supervisor's, which its background sessions inherit. */
-export function cliEnv(base: NodeJS.ProcessEnv, target: VaultCliTarget): Record<string, string> {
+function cliEnv(base: NodeJS.ProcessEnv, target: VaultCliTarget): Record<string, string> {
   return buildAgentEnv(base, {
     configDir: target.configDir,
     binDir: target.binDir,
@@ -240,18 +246,29 @@ export function cliEnv(base: NodeJS.ProcessEnv, target: VaultCliTarget): Record<
 export const NOT_INSTALLED =
   'Claude CLI not found on PATH. Install it (https://claude.com/claude-code) and restart Holi.'
 
-/** What a terminal runs: `claude agents` (the list) or `claude attach <id>`.
- *  Null when the binary is not on this machine. */
+/** What a terminal runs: `claude agents` (the list), `claude attach <id>`,
+ *  a copy of a chat session's conversation (`--resume <id>
+ *  --fork-session`), or Claude Code's own `/login` for the vault's config
+ *  directory, which a chat session has no TUI to run. Null when the binary
+ *  is not on this machine. */
 export function terminalCommand(
   target: VaultCliTarget,
   attach?: string,
   resolveBin: () => string | null = () => resolveClaudeBin(),
+  fork?: string,
+  login?: boolean,
 ): TerminalCommand | null {
   const bin = resolveBin()
   if (bin === null) return null
   return {
     bin,
-    args: attach === undefined ? ['agents'] : ['attach', attach],
+    args: login
+      ? ['/login']
+      : fork !== undefined
+        ? ['--resume', fork, '--fork-session']
+        : attach === undefined
+          ? ['agents']
+          : ['attach', attach],
     env: cliEnv(process.env, target),
   }
 }
@@ -326,14 +343,12 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
     stop: (target, id) => action(target, ['stop', id]),
     respawn: (target, id) => action(target, ['respawn', id]),
     rm: (target, id) => action(target, ['rm', id]),
-    startBg(
-      target,
-      { name, prompt, model, allow = [], permissionMode, appendSystemPrompt, settings },
-    ) {
+    startBg(target, { name, prompt, model, allow = [], appendSystemPrompt }) {
       const label = sessionName(name)
       return start(target, [
         '--bg',
         ...(model === undefined ? [] : ['--model', model]),
+        ...(appendSystemPrompt === undefined ? [] : ['--append-system-prompt', appendSystemPrompt]),
         // `--allowedTools` takes any number of values, so each rule is one
         // `=` argument and a plain option always follows to end the list:
         // the name, which an allow list therefore always gets.
@@ -343,9 +358,6 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
             ? ['--name', 'Scheduled run']
             : []
           : ['--name', label]),
-        ...(permissionMode === undefined ? [] : ['--permission-mode', permissionMode]),
-        ...(appendSystemPrompt === undefined ? [] : ['--append-system-prompt', appendSystemPrompt]),
-        ...(settings === undefined ? [] : ['--settings', settings]),
         ...promptArgs(prompt),
       ])
     },

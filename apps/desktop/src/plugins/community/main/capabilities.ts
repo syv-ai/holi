@@ -35,6 +35,7 @@ import {
   writeAtomic,
   type CapabilityTable,
 } from '../../../main/plugin-api'
+import type { Checks, CheckResult } from './checks'
 import type { ConsentStore } from './consent'
 import {
   fetchRelease,
@@ -57,7 +58,7 @@ export const COMMUNITY_NAMESPACES = ['community'] as const
 
 /** Where a plugin stands, for this vault on this machine, in the order the
  *  settings tab walks someone through. */
-export type PluginStatus =
+type PluginStatus =
   /** The vault pins it and this machine has nothing of it. */
   | 'not-installed'
   /** This machine has another release than the one the vault pins. */
@@ -97,6 +98,9 @@ export interface PluginRow {
   /** Running, which of its commands the agent did not get and why, as the
    *  vault's last rebuild left them; null when it has them all. */
   commandsNote: string | null
+  /** Running, its readiness check's last answer (`checks.ts`); null when it
+   *  has none or it has not been asked. A failing one does not stop it. */
+  check: CheckResult | null
 }
 
 export interface CommunityDeps {
@@ -113,6 +117,8 @@ export interface CommunityDeps {
   bridgeScript(): string | null
   /** Staging for fetches. */
   scratch: string
+  /** The plugins' readiness checks' last answers. */
+  checks: Checks
   /** The `PATH` the vault's agent inherits, before Holi's own folders: a
    *  plugin's command may not take a name already on it. By default
    *  `toolPath()`: a Dock-launched Holi's own `PATH` lacks the folders the
@@ -121,7 +127,7 @@ export interface CommunityDeps {
 }
 
 /** The vault's pins, by id; an unreadable one is left out. */
-export async function readPins(root: string): Promise<Map<string, PluginPin>> {
+async function readPins(root: string): Promise<Map<string, PluginPin>> {
   const pins = new Map<string, PluginPin>()
   const dirs = await readdir(join(root, PLUGIN_PINS_DIR)).catch(() => [] as string[])
   for (const id of dirs) {
@@ -164,6 +170,7 @@ function rowOf(
   status: PluginStatus,
   on: boolean,
   linked: LinkedCommands | null,
+  check: CheckResult | null,
 ): PluginRow {
   const manifest: PluginManifest = (install?.manifest ?? pin)!
   return {
@@ -196,6 +203,7 @@ function rowOf(
     apps: manifest.apps ?? [],
     bin: Object.keys(manifest.bin ?? {}),
     commandsNote: on && status === 'ready' ? commandsNote(id, linked) : null,
+    check: on && status === 'ready' && manifest.check !== undefined ? check : null,
   }
 }
 
@@ -208,8 +216,13 @@ function commandsNote(id: string, linked: LinkedCommands | null): string | null 
 }
 
 /** Every plugin this vault pins or this machine has, as the settings tab
- *  lists them. */
-export async function listPlugins(root: string, deps: Pick<CommunityDeps, 'store' | 'consent'>) {
+ *  lists them.
+ * @public exported for its test
+ */
+export async function listPlugins(
+  root: string,
+  deps: Pick<CommunityDeps, 'store' | 'consent'> & { checks?: Checks },
+) {
   const [pins, installs, settings] = await Promise.all([
     readPins(root),
     deps.store.list(),
@@ -222,7 +235,8 @@ export async function listPlugins(root: string, deps: Pick<CommunityDeps, 'store
       const pin = pins.get(id) ?? null
       const status = await statusOf(install, pin, deps.consent)
       const on = settings.plugins.vault[id] === true
-      return rowOf(id, install, pin, status, on, linkedIn(root))
+      const check = deps.checks?.get(root, id) ?? null
+      return rowOf(id, install, pin, status, on, linkedIn(root), check)
     }),
   )
 }
@@ -287,6 +301,13 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         `${row.name} is not ready on this machine (${row.status})`,
       )
     return row
+  }
+
+  /** Set up afresh: what its check said before no longer holds. Asked now
+   *  when it runs in the vault; otherwise once it is turned on there. */
+  const checkAfterSetup = async (root: string, id: string) => {
+    deps.checks.forget(root, id)
+    await runChecks(root, deps, { ids: [id], fresh: true })
   }
 
   return {
@@ -373,6 +394,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           manifest: fetched.manifest,
           setup: 'none',
         })
+        deps.checks.forget(ctx.root, fetched.manifest.id)
         // A new release of a running plugin waits for consent: its commands go
         // until then.
         await linkRunningCommands(ctx.root, deps)
@@ -395,6 +417,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           manifest,
           setup: 'none',
         })
+        deps.checks.forget(ctx.root, manifest.id)
         await linkRunningCommands(ctx.root, deps)
         const rows = await listPlugins(ctx.root, deps)
         return rows.find((r) => r.id === manifest.id)!
@@ -429,6 +452,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           await deps.store.setSetup(id, 'ok')
           await seedRunningApps(ctx.root, deps)
           await linkRunningCommands(ctx.root, deps)
+          await checkAfterSetup(ctx.root, id)
           return true
         }
         deps.emit(ctx.remote, 'setup-log', { id, line: null })
@@ -444,8 +468,22 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         if (ok) {
           await seedRunningApps(ctx.root, deps)
           await linkRunningCommands(ctx.root, deps)
+          await checkAfterSetup(ctx.root, id)
         }
         return ok
+      },
+    }),
+
+    // Ask a running plugin's readiness check again, for its settings row and
+    // the vault notice. Resolves with the row as it stands after.
+    'community.check': cap({
+      doors: ['ui'],
+      params: idParams,
+      run: async (ctx, { id }) => {
+        await runChecks(ctx.root, deps, { ids: [id], fresh: true })
+        const row = (await listPlugins(ctx.root, deps)).find((r) => r.id === id)
+        if (row === undefined) throw new CapabilityError('NOT_FOUND', `${id} is not here`)
+        return row
       },
     }),
 
@@ -545,6 +583,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         await deps.supervisor.stopAll((key) => parseServerKey(key).id === id)
         const install = await deps.store.remove(id)
         await deps.consent.forget(id)
+        deps.checks.forget(ctx.root, id)
         await linkRunningCommands(ctx.root, deps)
         if (install?.source.kind === 'release')
           await rm(join(deps.store.releaseDir(id, install.source.commit), '..'), {
@@ -634,6 +673,41 @@ export async function seedRunningApps(
     written.push(...(await seedApps(install.manifest, deps.store.codeDir(install), root)))
   }
   return written
+}
+
+/**
+ * Run the readiness check of every plugin that runs in the vault at `root`
+ * and has one (`checks.ts`), or only of `ids`: those not asked yet, or all of
+ * them with `fresh`. A plugin that does not run has its answer forgotten.
+ * Resolves true when any was asked. Never throws.
+ */
+export async function runChecks(
+  root: string,
+  deps: Pick<CommunityDeps, 'store' | 'consent' | 'checks'>,
+  opts: { ids?: readonly string[]; fresh?: boolean } = {},
+): Promise<boolean> {
+  try {
+    const asked = []
+    for (const row of await listPlugins(root, deps)) {
+      // Turned off, or no longer ready: what its check said no longer holds,
+      // so turning it on again asks afresh.
+      if (!row.running) {
+        deps.checks.forget(root, row.id)
+        continue
+      }
+      if (opts.ids !== undefined && !opts.ids.includes(row.id)) continue
+      if (!opts.fresh && deps.checks.get(root, row.id) !== null) continue
+      const install = await deps.store.get(row.id)
+      const check = install?.manifest.check
+      if (install === null || check === undefined) continue
+      asked.push(deps.checks.run(root, row.id, check, deps.store.codeDir(install)))
+    }
+    await Promise.all(asked)
+    return asked.length > 0
+  } catch (err) {
+    console.error('[community] checks:', err)
+    return false
+  }
 }
 
 /**

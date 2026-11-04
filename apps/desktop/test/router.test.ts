@@ -2,11 +2,11 @@ import { parse as parseYaml } from 'yaml'
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { promisify } from 'node:util'
-import { parseTaskFile, taskClaim } from '../src/plugins/tasks/shared/task-file'
+import { parseTaskFile, privateTaskPath, sharedTaskPath, taskClaim } from '@holi/shared'
 import { SETTINGS_FILE, VAULT_SETTING_DEFAULTS } from '@holi/shared'
-import { afterAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
 import { seedVault } from './helpers/seed'
 import { makeClone, makeNonVaultRemote, makeRemote, plainGit } from './helpers/git-fixtures'
@@ -56,10 +56,16 @@ async function idleSession(base: string, auth?: StoredAuth): Promise<GitHubSessi
   })
 }
 
+/**
+ * Hosts the running test built, closed after EACH test. Closing one with a vault
+ * open commits, pushes and stops a watcher, about half a second; leaving them
+ * all to one `afterAll` closed nineteen live vaults in a row and ran that hook
+ * past its 10 s limit, with every one of them watching and ticking until then.
+ */
 const hosts: VaultHost[] = []
 
-afterAll(async () => {
-  for (const h of hosts) await h.close().catch(() => {})
+afterEach(async () => {
+  for (const h of hosts.splice(0)) await h.close().catch(() => {})
 })
 
 async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
@@ -98,6 +104,7 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   })
   hosts.push(host)
   const trashItem = vi.fn(async () => {})
+  const showItemInFolder = vi.fn()
   // Core's capabilities and the tasks', for `cap.run`.
   const capabilities = createCapabilityRegistry()
   capabilities.register(
@@ -134,10 +141,11 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     vaultRoot: join(base, 'Holi'),
     openExternal: async () => {},
     trashItem,
+    showItemInFolder,
     now: () => '2026-07-21T12:00:00Z',
     today: () => TODAY,
   }).createCaller({})
-  return { caller, root, registry, host, session, base, trashItem, capabilities }
+  return { caller, root, registry, host, session, base, trashItem, showItemInFolder, capabilities }
 }
 
 describe('settings', () => {
@@ -343,6 +351,20 @@ describe('files', () => {
     const { caller } = await rig()
     await expect(caller.files.read({ remote: REMOTE, path: '../etc/passwd' })).rejects.toThrow()
     await expect(caller.files.read({ remote: REMOTE, path: 'ghost.pdf' })).rejects.toThrow(/ghost/)
+  })
+
+  it('reveals and resolves only a path inside the vault, in the platform separators', async () => {
+    const { caller, root, showItemInFolder } = await rig()
+    await writeFile(join(root, 'case.pdf'), PDF)
+    await caller.files.reveal({ remote: REMOTE, path: 'case.pdf' })
+    const abs = await caller.files.absolutePath({ remote: REMOTE, path: 'case.pdf' })
+    expect(showItemInFolder).toHaveBeenCalledWith(abs)
+    expect(abs.endsWith(`${sep}case.pdf`)).toBe(true)
+    await expect(caller.files.reveal({ remote: REMOTE, path: '../etc/passwd' })).rejects.toThrow()
+    await expect(
+      caller.files.absolutePath({ remote: REMOTE, path: '../etc/passwd' }),
+    ).rejects.toThrow()
+    expect(showItemInFolder).toHaveBeenCalledTimes(1)
   })
 
   it('writes bytes atomically and reports the mtime the scanner will see', async () => {
@@ -672,6 +694,7 @@ describe('tasks', () => {
       folder: 'projects/q2',
       title: 'Review the Q2 doc',
       status: 'doing',
+      shared: true,
     })
     expect(path).toBe('projects/q2/task.review-the-q2-doc.md')
 
@@ -680,10 +703,12 @@ describe('tasks', () => {
     expect(task.status).toBe('doing')
   })
 
-  it('defaults to todo at the vault root', async () => {
+  it('defaults to a private todo at the vault root, which the board still shows', async () => {
     const { caller } = await rig()
     const { path } = await createTask(caller, { remote: REMOTE, title: 'Call the vendor' })
-    expect(path).toBe('task.call-the-vendor.md')
+    expect(path).toBe('task.call-the-vendor.local.md')
+    const snap = await caller.vaults.snapshot({ remote: REMOTE })
+    expect(snap.claimed.tasks!.items.map((t) => t.path)).toContain(path)
   })
 
   it('suffixes a colliding slug rather than refusing or clobbering', async () => {
@@ -692,11 +717,41 @@ describe('tasks', () => {
     const { caller } = await rig({
       'task.call-the-vendor.md': '---\ntitle: Call the vendor\n---\n',
     })
+    const shared = { remote: REMOTE, title: 'Call the vendor', shared: true }
+    expect((await createTask(caller, shared)).path).toBe('task.call-the-vendor-2.md')
+    expect((await createTask(caller, shared)).path).toBe('task.call-the-vendor-3.md')
+    // The private twin of a taken name is taken too, so either can be renamed
+    // into the other later.
     expect((await createTask(caller, { remote: REMOTE, title: 'Call the vendor' })).path).toBe(
-      'task.call-the-vendor-2.md',
+      'task.call-the-vendor-4.local.md',
     )
-    expect((await createTask(caller, { remote: REMOTE, title: 'Call the vendor' })).path).toBe(
-      'task.call-the-vendor-3.md',
+  })
+
+  it('shares and unshares a task by the rename every file takes', async () => {
+    const { caller, root } = await rig({
+      'ops/task.fix-login.local.md': '---\nstatus: todo\n---\n\n# Fix login\n',
+      'note.md': 'see [[ops/task.fix-login.local.md]]',
+      'mine.local.md': 'mine [[ops/task.fix-login.local.md]]',
+    })
+    const tasks = async () =>
+      (await caller.vaults.snapshot({ remote: REMOTE })).claimed.tasks!.items.map((t) => t.path)
+    const share = sharedTaskPath('ops/task.fix-login.local.md')!
+    await caller.notes.rename({ remote: REMOTE, from: 'ops/task.fix-login.local.md', to: share })
+    expect(await tasks()).toEqual(['ops/task.fix-login.md'])
+    expect(await readFile(join(root, 'note.md'), 'utf8')).toBe('see [[ops/task.fix-login.md]]')
+    expect(await readFile(join(root, 'mine.local.md'), 'utf8')).toBe(
+      'mine [[ops/task.fix-login.md]]',
+    )
+
+    // Making it private leaves the shared note's link at the shared path, which
+    // history holds: teammates never get a link to a file they cannot have.
+    // This machine's own local file follows.
+    const unshare = privateTaskPath(share)!
+    await caller.notes.rename({ remote: REMOTE, from: share, to: unshare, localLinksOnly: true })
+    expect(await tasks()).toEqual(['ops/task.fix-login.local.md'])
+    expect(await readFile(join(root, 'note.md'), 'utf8')).toBe('see [[ops/task.fix-login.md]]')
+    expect(await readFile(join(root, 'mine.local.md'), 'utf8')).toBe(
+      'mine [[ops/task.fix-login.local.md]]',
     )
   })
 })
@@ -757,9 +812,50 @@ describe('tasks.update', () => {
       tasksCall(caller, 'update', {
         remote: REMOTE,
         path: 'task.review.md',
-        patch: { status: 'blocked' },
+        patch: { priority: 'critical' },
       }),
-    ).rejects.toThrow(/status must be one of/)
+    ).rejects.toThrow(/priority must be one of/)
+  })
+
+  it("completes into the vault's own completed status and reopens into its first unstarted one", async () => {
+    const statuses = [
+      'statuses:',
+      '  - { id: next, name: Next, category: unstarted }',
+      '  - { id: qa, name: QA, category: review }',
+      '  - { id: shipped, name: Shipped, category: completed }',
+      '',
+    ].join('\n')
+    const { caller } = await rig({
+      '.holi/statuses.yaml': statuses,
+      'task.ship.md': '---\nstatus: next\n---\n',
+      'task.standup.md': [
+        '---',
+        'status: qa',
+        'due: 2026-07-20',
+        'recurrence: { frequency: weekly, interval: 1 }',
+        '---',
+      ].join('\n'),
+    })
+    const ship = await tasksCall(caller, 'update', {
+      remote: REMOTE,
+      path: 'task.ship.md',
+      patch: { status: 'shipped' },
+    })
+    expect(ship.status).toBe('shipped')
+    const standup = await tasksCall(caller, 'update', {
+      remote: REMOTE,
+      path: 'task.standup.md',
+      patch: { status: 'shipped' },
+    })
+    expect(standup.status).toBe('next')
+    expect(standup.due).toBe('2026-07-27')
+    // A word the vault does not list is kept as it is, open.
+    const qa = await tasksCall(caller, 'update', {
+      remote: REMOTE,
+      path: 'task.ship.md',
+      patch: { status: 'blocked' },
+    })
+    expect(qa.status).toBe('blocked')
   })
 
   it('reports a missing task rather than creating one', async () => {
@@ -926,7 +1022,7 @@ describe('tasks.create with fields', () => {
   it('refuses a field the board could not read back', async () => {
     const { caller } = await rig({})
     await expect(
-      createTask(caller, { remote: REMOTE, title: 'Bad', extra: { priority: 'urgent' } }),
+      createTask(caller, { remote: REMOTE, title: 'Bad', extra: { priority: 'critical' } }),
     ).rejects.toThrow()
   })
 })
@@ -1215,6 +1311,7 @@ async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
     vaultRoot: join(base, 'Holi'),
     openExternal,
     trashItem: async () => {},
+    showItemInFolder: () => {},
   }).createCaller({})
   return { caller, session, store, openExternal }
 }
@@ -1591,6 +1688,8 @@ describe('vaults.create', () => {
     // The new repo is stamped a vault, so it reads as one and passes the guard.
     expect(markVault).toHaveBeenCalledWith('syv-ai/fresh')
     expect(snap.docs.map((d) => d.path).sort()).toContain('AGENTS.md')
+    // The README is written from this vault's own answer, in the first commit.
+    expect(snap.docs.map((d) => d.path)).toContain('README.md')
     // Seeded, committed AND pushed, so the vault exists for everyone else.
     // The push is automatic (open-drain + the explicit kick in vaults.create),
     // and can land a moment after create() returns — so poll origin/main rather
@@ -1639,9 +1738,9 @@ describe('sync', () => {
     expect(host.active()).not.toBeNull()
 
     const state = await caller.sync.state()
-    // Resting ahead>0 is not surfaced now that push is automatic — a freshly
-    // added vault settles at up-to-date (or, briefly, pulling on the open fetch).
-    expect(['up-to-date', 'pulling']).toContain(state.kind)
+    // A freshly added vault settles at up-to-date (or, briefly, pulling on the
+    // open fetch, or ahead while an open-time commit waits for its push).
+    expect(['up-to-date', 'pulling', 'unsynced']).toContain(state.kind)
     expect(base).toBeTruthy()
   })
 
@@ -1669,17 +1768,6 @@ describe('sync', () => {
     await caller.notes.create({ remote: 'syv-ai/notes', path: 'ship.md', text: '# Ship\n' })
     await caller.sync.commitNow()
     expect(await caller.sync.pushNow()).toEqual({ ok: true })
-
-    // Wait until dest's commits are all on origin (nothing ahead) before cloning
-    // the checker — the explicit pushNow can no-op if the seed's open-drain push
-    // is still in flight, and the coalescer's retry lands a beat later.
-    for (let i = 0; i < 200; i++) {
-      const ahead = await plainGit(dest, ['rev-list', '--count', 'origin/main..HEAD']).catch(
-        () => '1',
-      )
-      if (ahead === '0') break
-      await new Promise((r) => setTimeout(r, 20))
-    }
 
     const check = await makeClone(origin, 'check')
     expect(await readFile(join(check, 'ship.md'), 'utf8')).toBe('# Ship\n')

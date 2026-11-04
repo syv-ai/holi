@@ -42,12 +42,12 @@ const RESULTS = 8
 /** The GitHub topic a plugin's repository carries, which is what makes it
  *  findable: search looks only at repositories with it, anyone's, and the
  *  private ones the person can read. */
-export const PLUGIN_TOPIC = 'holi-plugin'
+const PLUGIN_TOPIC = 'holi-plugin'
 
 /** The search for what has been typed, among repositories with the topic:
  *  `owner/name` within that owner's, `owner/` all of that owner's, anything
  *  else by name. */
-export function searchQuery(typed: string): string | null {
+function searchQuery(typed: string): string | null {
   const text = typed.trim()
   if (text === '') return null
   const topic = `topic:${PLUGIN_TOPIC}`
@@ -119,6 +119,7 @@ async function foldersOf(repo: string, get: Get): Promise<string[]> {
  * Read `repo` for plugins: the one at its root, or else one in each top-level
  * folder named after its id, each with its own newest release. One candidate
  * per plugin; a repository with none is one candidate saying so.
+ * @public exported for its test
  */
 export async function describeRepo(
   repo: string,

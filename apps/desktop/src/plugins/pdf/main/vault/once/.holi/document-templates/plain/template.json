@@ -1,6 +1,7 @@
 {
   "name": "Plain",
   "description": "A clean, unbranded document layout.",
+  "language": "en",
   "fields": [
     {
       "key": "date",

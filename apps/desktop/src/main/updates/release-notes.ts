@@ -11,9 +11,9 @@
  */
 
 /** Where releases are published: `publish` in `electron-builder.yml`. */
-export const RELEASES_REPO = 'syv-ai/holi'
+const RELEASES_REPO = 'syv-ai/holi'
 
-export interface ReleaseNotes {
+interface ReleaseNotes {
   version: string
   /** The release's title, as published. */
   name: string
@@ -34,7 +34,7 @@ const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 export const isReleaseVersion = (version: string): boolean => VERSION.test(version)
 
 /** A release's page, from the tag CI publishes rather than from the answer. */
-export const releaseUrl = (version: string): string =>
+const releaseUrl = (version: string): string =>
   `https://github.com/${RELEASES_REPO}/releases/tag/v${version}`
 
 /**

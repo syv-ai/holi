@@ -7,15 +7,16 @@
  *
  * | | |
  * |---|---|
- * | section title (the view's `h2`) | `text-sm font-medium` |
- * | group heading | `text-[10px] uppercase tracking-wider text-muted-foreground` |
- * | group blurb | `text-[11px] text-muted-foreground` |
- * | row label | `text-xs font-medium` |
- * | row description | `text-[11px] text-muted-foreground` |
- * | badges and other meta | `text-[10px]` |
+ * | page title (the view's `h1`) | `text-2xl font-semibold tracking-tight` |
+ * | group heading | `text-xs font-medium text-muted-foreground` |
+ * | group blurb | `text-xs text-muted-foreground` |
+ * | row label | `text-sm font-medium` |
+ * | row description | `text-sm text-muted-foreground` |
+ * | notes, badges and other meta | `text-xs` |
  *
- * A group heading is *smaller* than the rows it introduces (the settings
- * idiom); weight and case carry the hierarchy so it cannot read as a row.
+ * Body is `text-sm` and meta `text-xs`, as everywhere else, and nothing is
+ * smaller (docs/ui-system.md, Type). A group heading is the sidebar's section
+ * label: smaller and muted, so it cannot read as a row.
  *
  * **Buttons: `xs` in content, `sm` in a dialog footer**, where a settings
  * action is the primary thing on screen.
@@ -26,10 +27,9 @@
  */
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/cn'
-import { Button, Tooltip } from '@/primitives'
 
 /** A title to its anchor id. Lowercase, non-alphanumerics collapsed to `-`. */
-export function headingId(title: string): string {
+function headingId(title: string): string {
   return title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -53,11 +53,12 @@ export function SettingsHeading({
   return (
     // `scroll-mt` because the theme's mode and layer switches are sticky above
     // this: without it a jump parks the heading underneath them.
-    <div data-heading={headingId(title)} className="scroll-mt-14 pb-1 pt-5 first:pt-1">
-      <h3 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        {title}
-      </h3>
-      {blurb !== undefined && <p className="mt-0.5 text-[11px] text-muted-foreground">{blurb}</p>}
+    <div
+      data-heading={headingId(title)}
+      className="flex scroll-mt-14 flex-col gap-0.5 pt-6 pb-1 first:pt-1"
+    >
+      <h3 className="text-xs font-medium text-muted-foreground">{title}</h3>
+      {blurb !== undefined && <p className="text-xs text-muted-foreground">{blurb}</p>}
     </div>
   )
 }
@@ -111,13 +112,13 @@ export function SettingsRow({
   return (
     <div ref={ref} className={cn('flex flex-col gap-2 py-3', className)} {...rest}>
       <div className="flex flex-wrap items-start justify-end gap-x-3 gap-y-2">
-        <div className="min-w-0 grow basis-48">
+        <div className="flex min-w-0 grow basis-48 flex-col gap-0.5">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium">{label}</span>
+            <span className="text-sm font-medium">{label}</span>
             {meta}
           </div>
           {description !== undefined && (
-            <p className="mt-0.5 text-[11px] text-muted-foreground">{description}</p>
+            <p className="text-sm text-pretty text-muted-foreground">{description}</p>
           )}
         </div>
         {/* Shrinkable, not `shrink-0`: once it is alone on the second line and
@@ -137,85 +138,5 @@ export function SettingsNote({
   children: ReactNode
   className?: string
 }): React.JSX.Element {
-  return <p className={cn('text-[11px] text-muted-foreground', className)}>{children}</p>
-}
-
-/**
- * A link inside a sentence. A `Button` rather than an `<a>` because each one
- * acts (opens a tab, reveals a folder, opens the browser) and has no href. The
- * size override lets it sit on the text baseline instead of as a chip.
- */
-export function SettingsLink({
-  onClick,
-  className,
-  children,
-}: {
-  onClick: () => void
-  className?: string
-  children: ReactNode
-}): React.JSX.Element {
-  return (
-    <Button
-      variant="link"
-      onClick={onClick}
-      className={cn(
-        'h-auto max-w-full justify-start truncate p-0 align-baseline text-[11px] font-normal',
-        className,
-      )}
-    >
-      {children}
-    </Button>
-  )
-}
-
-/**
- * A link that leaves the app: a GitHub page, a folder in Finder. Unlike
- * `SettingsLink` it carries a tooltip with the full URL or path.
- */
-export function ExternalLink({
-  url,
-  onOpen,
-  block,
-  children,
-}: {
-  url: string
-  onOpen: () => void
-  block?: boolean
-  children: ReactNode
-}): React.JSX.Element {
-  return (
-    <Tooltip content={url}>
-      <Button
-        variant="link"
-        onClick={onOpen}
-        className={cn(
-          'h-auto max-w-full justify-start truncate p-0 text-xs font-normal text-muted-foreground hover:text-brand',
-          block && 'block',
-        )}
-      >
-        {children}
-      </Button>
-    </Tooltip>
-  )
-}
-
-/**
- * A key/value pair shown as a stacked micro-label over its value, so a long
- * value (a clone path) gets the full width before it truncates.
- */
-export function SettingsField({
-  label,
-  children,
-}: {
-  label: string
-  children: ReactNode
-}): React.JSX.Element {
-  return (
-    <div className="space-y-0.5">
-      <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        {label}
-      </div>
-      {children}
-    </div>
-  )
+  return <p className={cn('text-xs text-muted-foreground', className)}>{children}</p>
 }

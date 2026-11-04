@@ -51,6 +51,6 @@ vault opens and filed into `journal/` once the day is over. Whether a vault does
 - `packages/shared/src/daily-note.ts`: filename, seed, the untouched-stub test, marker predicates.
 - `apps/desktop/src/main/vault/daily.ts`: `getOrCreateDaily`, `sweepDaily`.
 - `apps/desktop/src/renderer/src/state/daily.ts`: `ensureTodaysDailyAtom`,
-  `openTodaysDailyAtom`, `sweepDailyAtom`, `todayDailyPathAtom`.
+  `openTodaysDailyAtom`, `todayDailyPathAtom`.
 - `apps/desktop/src/renderer/src/state/home.ts` and `lib/home-target.ts`: opening Home.
-- `apps/desktop/src/renderer/src/components/Shell.tsx`: the open, Home, sweep effect.
+- `apps/desktop/src/renderer/src/features/shell/vault-host.tsx`: the open, Home, sweep effect.

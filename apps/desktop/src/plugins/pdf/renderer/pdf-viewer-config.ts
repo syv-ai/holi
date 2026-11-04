@@ -96,7 +96,7 @@ export function pdfViewerTheme(mode: 'light' | 'dark') {
       errorLight: v('destructive'),
     },
     // Holi's tooltip is the popover surface, not an inverted chip
-    // (`primitives/Tooltip.tsx`). The scrollbar's shape is `PDF_SCROLLBAR_CSS`.
+    // (`components/ui/tooltip.tsx`). The scrollbar's shape is `PDF_SCROLLBAR_CSS`.
     tooltip: {
       background: v('popover'),
       foreground: v('popover-foreground'),
@@ -119,6 +119,7 @@ export function pdfViewerTheme(mode: 'light' | 'dark') {
  * PDFium's bitmap arrives tens of milliseconds later: a white flash on a dark
  * theme. The bitmap carries its own white paper, so the wrapper is only a
  * placeholder. `!important` beats the inline style.
+ * @public exported for its test
  */
 export const PDF_PAGE_PLACEHOLDER_CSS = `[style*="background-color: rgb(255, 255, 255)"] { background-color: ${v('muted')} !important; }`
 
@@ -128,6 +129,7 @@ export const PDF_PAGE_PLACEHOLDER_CSS = `[style*="background-color: rgb(255, 255
  * Otherwise the scrollbar appearing narrows the viewport and the viewer
  * recomputes fit-width 150 ms later: a visible second zoom. The scroller is
  * the element painted `bg-bg-app` with an inline `overflow: auto`.
+ * @public exported for its test
  */
 export const PDF_VIEWPORT_CSS = `.bg-bg-app[style*="overflow: auto"] { scrollbar-gutter: stable; }`
 
@@ -139,6 +141,7 @@ export const PDF_VIEWPORT_CSS = `.bg-bg-app[style*="overflow: auto"] { scrollbar
  * keep their shadow. Form controls (all on `bg-bg-input`) keep an outline
  * dimmed to `--divider`, except under `:focus`. Two-class selectors outrank
  * the utilities they override, so no `!important`.
+ * @public exported for its test
  */
 export const PDF_BORDERLESS_CSS = [
   ':is(.border-border-default, .border-border-subtle):not(.bg-bg-input) { border-color: transparent; }',
@@ -178,6 +181,7 @@ export const PDF_BORDERLESS_CSS = [
  * `index.css`'s scrollbar rule does not reach into a shadow root, so this
  * repeats Holi's shape against `:host *`, the viewer's own selector, and wins
  * by coming later.
+ * @public exported for its test
  */
 export const PDF_SCROLLBAR_CSS = [
   ':host *::-webkit-scrollbar { width: 10px; height: 10px; }',
@@ -198,6 +202,7 @@ export const PDF_SCROLLBAR_CSS = [
  * paper rule, because `:is()` takes its most specific argument.
  */
 const SIGNATURE_HEADER = '[data-sidebar-id="signature-panel"] .border-b.p-3:has(> h2)'
+/** @public exported for its test */
 export const PDF_SIGNATURE_DIALOG_CSS = [
   `.bg-bg-overlay > .bg-bg-surface { background-color: ${v('popover')}; }`,
   `.bg-bg-overlay :is(canvas.border-border-default, .border-dashed.border-border-default, .border-border-default:has(> input[type="text"])) { background-color: light-dark(${v('muted')}, white); }`,
@@ -209,7 +214,7 @@ export const PDF_SIGNATURE_DIALOG_CSS = [
   `${SIGNATURE_HEADER} > button { flex: none; width: 32px; height: 32px; margin: 0; padding: 0; border-radius: 6px; font-size: 0; background-color: transparent; background-image: linear-gradient(${v('foreground')}, ${v('foreground')}), linear-gradient(${v('foreground')}, ${v('foreground')}); background-size: 12px 1.5px, 1.5px 12px; background-position: center; background-repeat: no-repeat; }`,
   `${SIGNATURE_HEADER} > button:hover { background-color: ${v('accent')}; }`,
   // `PDF_SIGNATURE_NOTE`: Tailwind does not reach into the shadow root.
-  `.holi-signature-note { margin: 0; padding: 12px 16px; font-size: 12px; line-height: 1.5; color: ${v('muted-foreground')}; }`,
+  `[data-signature-note] { margin: 0; padding: 12px 16px; font-size: 12px; line-height: 1.5; color: ${v('muted-foreground')}; }`,
 ].join('\n')
 
 /**
@@ -360,13 +365,14 @@ export function withoutMovedTools(items: readonly PdfToolbarItem[]): PdfToolbarI
  * only Holi's items.
  */
 const TOOLBAR = '[data-epdf-i$="-toolbar"]'
+/** @public exported for its test */
 export const PDF_TOOLBAR_CSS = [
   `:is(${[...HOLI_BUTTONS, ...ASK_BUTTONS].map((b) => `[data-epdf-i="${b.id}"]`).join(', ')}):empty { display: none; }`,
   // One cluster in the middle of the bar, not three groups pushed to its ends
   // by the viewer's spacers, which keep only a little room between groups.
   `${TOOLBAR} { justify-content: center; }`,
   `${TOOLBAR} > [data-epdf-i^="spacer-"] { flex: 0 0 0.5rem; }`,
-  // Its icons are Holi's icons (`primitives/Icon.tsx`): the toolbar size and
+  // Its icons are Holi's icons (`--icon-md`, `--icon-stroke`): the toolbar size and
   // stroke, muted at rest and the foreground under the pointer or while on.
   `${TOOLBAR} button svg:is(.h-5, .h-4) { width: var(--icon-md); height: var(--icon-md); stroke-width: var(--icon-stroke); }`,
   `${TOOLBAR} button svg { color: ${v('muted-foreground')}; }`,
@@ -416,6 +422,7 @@ const VIEWER_SIDEBAR_WIDTH = `${DRAWER_WIDTH.default}px`
  * `!important` and one class more to outrank the borderless rule's.
  */
 const PDF_SIDEBAR_HEADER = ':is(.border-b.p-3, .border-b.p-4):has(> h2, > .flex > h2)'
+/** @public exported for its test */
 export const PDF_SIDEBAR_FORM_CSS = [
   `[data-sidebar-id] ${PDF_SIDEBAR_HEADER} { display: flex; align-items: center; min-height: 44px; padding-block: 0; padding-inline: 12px; border-bottom-color: ${v('drawer-edge')} !important; }`,
   `[data-sidebar-id] ${PDF_SIDEBAR_HEADER} > .flex { flex: 1; min-width: 0; }`,
@@ -435,6 +442,7 @@ export const PDF_SIDEBAR_FORM_CSS = [
  * one motion. The viewer unmounts a closing panel in the same render, so the
  * leave is played by a stand-in (`PDF_SIDEBAR_LEAVING`). Keyframe names do not
  * reach into a shadow root, so they are declared here.
+ * @public exported for its test
  */
 export const PDF_SIDEBAR_MOTION_CSS = [
   `[data-sidebar-id] { --holi-sidebar-width: ${VIEWER_SIDEBAR_WIDTH}; }`,
@@ -452,7 +460,7 @@ export const PDF_SIDEBAR_MOTION_CSS = [
 ].join('\n')
 
 /**
- * Holi's comment field (`PdfCommentField.tsx`) in the viewer's
+ * Holi's comment field (`pdf-comment-field.tsx`) in the viewer's
  * comment row, in place of the viewer's one-line input.
  *
  * The textarea is portalled in after the viewer's input and send button, so
@@ -460,13 +468,14 @@ export const PDF_SIDEBAR_MOTION_CSS = [
  * focusable but out of sight: selecting a comment focuses it, and Holi's field
  * takes that focus over. The field grows to about eight lines, then scrolls.
  */
-const COMMENT_ROW = '[data-sidebar-id="comment-panel"] div:has(> .holi-comment-field)'
+const COMMENT_ROW = '[data-sidebar-id="comment-panel"] div:has(> [data-comment-field])'
+/** @public exported for its test */
 export const PDF_COMMENT_FIELD_CSS = [
   `${COMMENT_ROW} { gap: 8px; }`,
   `${COMMENT_ROW} > * { margin: 0; }`,
   `${COMMENT_ROW} > input[type="text"] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }`,
-  `textarea.holi-comment-field { order: -1; flex: 1; min-width: 0; min-height: 36px; max-height: 176px; field-sizing: content; resize: none; box-sizing: border-box; padding: 7px 12px; border: 1px solid ${v('divider')}; border-radius: 8px; background-color: ${v('input')}; color: ${v('foreground')}; font: inherit; font-size: 14px; line-height: 20px; outline: none; box-shadow: none; }`,
-  `textarea.holi-comment-field::placeholder { color: ${v('muted-foreground')}; }`,
+  `textarea[data-comment-field] { order: -1; flex: 1; min-width: 0; min-height: 36px; max-height: 176px; field-sizing: content; resize: none; box-sizing: border-box; padding: 7px 12px; border: 1px solid ${v('divider')}; border-radius: 8px; background-color: ${v('input')}; color: ${v('foreground')}; font: inherit; font-size: 14px; line-height: 20px; outline: none; box-shadow: none; }`,
+  `textarea[data-comment-field]::placeholder { color: ${v('muted-foreground')}; }`,
 ].join('\n')
 
 /**
@@ -587,7 +596,7 @@ export function hexOfRgb(css: string): string | null {
 }
 
 /** The widest a PDF opens: 150%, where 100% is one CSS pixel per PDF point. */
-export const PDF_OPENING_ZOOM_MAX = 1.5
+const PDF_OPENING_ZOOM_MAX = 1.5
 
 /**
  * A PDF opens at 150%, or at fit-width when the page would overflow the pane

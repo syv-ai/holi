@@ -5,15 +5,18 @@
 // another human and cannot be undone. Everything else it can do to a mailbox or
 // a calendar, the user can put back with one click.
 //
-// So this returns `ask` for those two, and `defer` for everything else. `ask` is
-// the mechanism the whole design was chosen for: it overrides `permissions.allow`
-// AND a prior "don't ask again", which no permission rule does. The user still
-// decides — they just always get to. `defer` removes this hook's opinion and
-// restores the normal permission flow; returning `allow` instead would silently
-// widen every other command the agent runs.
+// So this returns `ask` for those two, and nothing at all for everything else.
+// `ask` is the mechanism the whole design was chosen for: it overrides
+// `permissions.allow` AND a prior "don't ask again", which no permission rule
+// does. The user still decides — they just always get to. Printing nothing and
+// exiting 0 is how a PreToolUse hook has no opinion, so the normal permission
+// flow decides; returning `allow` instead would silently widen every other
+// command the agent runs. Not `defer`: Claude Code reads that as "pause this
+// tool call for someone outside", and in a conversation run (`claude -p`) the
+// turn then ends with the command never run.
 //
 // **It fails closed.** Unparseable input, an unexpected shape, any internal
-// error — all `ask`. A gate that crashes into `defer` is a gate that opens, and
+// error — all `ask`. A gate that crashes into no opinion is a gate that opens, and
 // the cost of a needless prompt is a click while the cost of a missed one is an
 // email that has already gone.
 //
@@ -41,7 +44,8 @@ function decide(decision, reason) {
 }
 
 const ask = (reason) => decide('ask', reason)
-const defer = () => decide('defer', 'not a Holi send')
+/** No opinion: print nothing, exit 0, and the normal permission flow decides. */
+const pass = () => process.exit(0)
 
 function readStdin() {
   return new Promise((resolve) => {
@@ -160,11 +164,11 @@ if (typeof payload.tool_name === 'string' && payload.tool_name.startsWith('mcp__
   }
   // A read or a draft through the connector reaches nobody, so this hook has no
   // opinion — it gates what cannot be undone, not what it dislikes.
-  defer()
+  pass()
 }
 
 // Not a shell command at all — nothing here can send anything.
-if (payload.tool_name !== 'Bash') defer()
+if (payload.tool_name !== 'Bash') pass()
 
 const command = payload.tool_input?.command
 if (typeof command !== 'string') {
@@ -179,4 +183,4 @@ if (isSend(command)) {
   )
 }
 
-defer()
+pass()

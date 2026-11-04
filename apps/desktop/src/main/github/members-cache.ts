@@ -12,7 +12,9 @@
 import type { Collaborator } from '@holi/shared'
 
 /** Long enough that an app polling it does not spend the GitHub rate limit,
- *  short enough that an invite shows. */
+ *  short enough that an invite shows.
+ * @public exported for its test
+ */
 export const MEMBERS_TTL_MS = 10 * 60 * 1000
 
 export interface MembersCache {

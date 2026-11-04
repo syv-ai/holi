@@ -20,11 +20,16 @@ import { vaultSettingsAtom } from '../settings'
 
 const settings = (editorFont: ResolvedVaultSettings['editorFont']): ResolvedVaultSettings => ({
   home: VAULT_SETTING_DEFAULTS.home,
-  autoUpdateSkills: VAULT_SETTING_DEFAULTS.autoUpdateSkills,
   plugins: VAULT_SETTING_DEFAULTS.plugins,
   pluginValues: {},
   dailyNotes: true,
+  spaceAsksAgent: true,
+  agentProvider: 'claude',
+  gridArcade: true,
+  foldSidebarForApps: true,
+  autoUpdateSkills: false,
   colorScheme: 'system',
+  windowGlass: 'frosted',
   editorFont,
   hooks: VAULT_SETTING_DEFAULTS.hooks,
   maxCommittedFileBytes: 10 * 1024 * 1024,

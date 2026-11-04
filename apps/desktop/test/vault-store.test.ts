@@ -1,4 +1,4 @@
-import { emptyVaultSnapshot } from '@holi/shared'
+import { emptyVaultSnapshot, snapshotTasks, TASKS_CLAIM, taskClaim } from '@holi/shared'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -80,6 +80,17 @@ describe('scanVault', () => {
     expect(snap.docs[0]!.kind).toBe('note')
   })
 
+  it('surfaces an unparseable task instead of dropping it', async () => {
+    const root = await vault({ 'task.broken.md': '---\npriority: critical\n---\n' })
+    // Task files are the tasks plugin's claim.
+    const snap = await scan(root, [{ ...taskClaim, plugin: TASKS_CLAIM }])
+
+    expect(snapshotTasks(snap).items).toEqual([])
+    expect(snapshotTasks(snap).broken).toHaveLength(1)
+    expect(snapshotTasks(snap).broken[0]!.path).toBe('task.broken.md')
+    expect(snapshotTasks(snap).broken[0]!.error).toMatch(/priority must be one of/)
+  })
+
   it('surfaces a claimed file that will not parse instead of dropping it', async () => {
     const root = await vault({ 'card.broken.md': '---\ntitle: no kind\n---\n' })
     const snap = await scanVault(root)
@@ -116,6 +127,18 @@ describe('scanVault', () => {
       '.holi/settings/theme.local.css',
       'USER.local.md',
     ])
+  })
+
+  it('gives a local file a claim takes to its claim, and leaves the rest plain files', async () => {
+    // A private task (`task.<name>.local.md`) is a task on this machine's board.
+    const root = await vault({
+      'card.mine.local.md': '---\nkind: bug\n---\n',
+      'USER.local.md': '# private\n',
+    })
+    const snap = await scanVault(root)
+    expect(cards(snap).items).toEqual([{ path: 'card.mine.local.md', kind: 'bug' }])
+    expect(snap.files.map((f) => f.path)).toEqual(['USER.local.md'])
+    expect(snap.docs).toEqual([])
   })
 
   it('ignores non-markdown files', async () => {

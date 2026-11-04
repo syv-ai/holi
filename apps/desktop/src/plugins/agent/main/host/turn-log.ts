@@ -19,7 +19,9 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 /** Machine state, with the rest of it under `state/`. Gitignored by the
- *  `.local.` marker. */
+ *  `.local.` marker.
+ * @public exported for its test
+ */
 export const TURNS_FILE = '.holi/state/turns.local.json'
 
 export interface TurnRecord {

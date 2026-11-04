@@ -84,6 +84,7 @@ function rig(
     vault,
     log: () => {},
     now: () => clock,
+    settleRetryMs: 0,
     ...(opts.snapshot === undefined ? {} : { snapshot: opts.snapshot }),
     ...(opts.turnSafetyMs === undefined ? {} : { turnSafetyMs: opts.turnSafetyMs }),
     ...(opts.idleConfirmMs === undefined ? {} : { idleConfirmMs: opts.idleConfirmMs }),
@@ -382,6 +383,18 @@ describe('what is not recorded', () => {
     r.coordinator.end('a')
     await settle()
     expect(r.appended[0]).toMatchObject({ base: 'base-sha', end: 'base-sha' })
+  })
+
+  it("asks again when the resume's own commit held the tree", async () => {
+    // Resuming the vault starts a commit of its own, so the first ask can
+    // answer null with the turn's work still landing.
+    let asks = 0
+    const r = rig({ commitNow: () => Promise.resolve(asks++ === 0 ? null : 'settle-sha') })
+    r.coordinator.begin('a')
+    r.coordinator.end('a')
+    await settle()
+    await settle()
+    expect(r.appended[0]).toMatchObject({ base: 'base-sha', end: 'settle-sha' })
   })
 
   it('does nothing at all with no vault open', async () => {

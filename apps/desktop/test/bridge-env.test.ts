@@ -55,7 +55,7 @@ beforeEach(async () => {
   channels = []
   server = createBridgeServer({ log: () => {} })
   registerAgentRoutes(server, {
-    onJobTurn: (remote, job, active, pending) => {
+    onTurn: (remote, job, active, pending) => {
       turns.push([remote, job, active])
       if (!active) pendings.push(pending)
     },

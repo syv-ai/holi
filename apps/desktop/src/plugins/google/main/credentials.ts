@@ -27,6 +27,7 @@ import { EncryptionUnavailableError, type SafeStorageLike } from './token-store'
  * A person's own client, then `HOLI_GOOGLE_CLIENT_ID` /
  * `HOLI_GOOGLE_CLIENT_SECRET` in the environment, take its place
  * (`resolveClient`).
+ * @public exported for its test
  */
 export const GOOGLE_CLIENT_ID =
   '132910330015-4ror8qtmhh69d1ms1s3s99tot5gm551q.apps.googleusercontent.com'
@@ -43,6 +44,7 @@ export const GOOGLE_CLIENT_ID =
  *
  * This pair identifies *Holi*, not a user, and grants nothing on its own: every
  * token still requires the user to complete consent in their own browser.
+ * @public exported for its test
  */
 export const GOOGLE_CLIENT_SECRET = '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'
 

@@ -47,9 +47,15 @@ which main keeps current from the renderer's one report of what the person is lo
 and inclusive as `Read` numbers them, never its text: the agent reads the lines from the file, and
 nothing a person selected is written to disk. A caret is no selection, and a selection that ends at
 the start of a line (a triple-click, `Mod-L`) does not count that line. The renderer reports a selection once it has
-held still for a moment, and only when its lines change, so typing reports nothing. The editor that
+held still for a moment, and only when its lines change, so typing reports nothing. The document
+editor finds the file's lines by marking the selection's ends and writing the document out
+(`selectionLines`, the way a comment's quote is found, [note-comments](note-comments.md)); a code
+file's are CodeMirror's own line numbers. The editor that
 last changed its selection owns it, and it outlives that editor's unmount, so a selection still
-counts while the person types to the agent in the same pane; a vault switch clears it. Tasks, backlinks and sync state the
+counts while the person types to the agent in the same pane; a vault switch clears it. Typing to the
+agent focuses its own view (a session, the Agents home, a terminal), which keeps a note: in a split,
+the note beside it, the one last focused there when there are more; alone, the note focused before
+it. Any other view in front (the board, a browser tab) reports none. Tasks, backlinks and sync state the
 agent finds itself with `Glob`, `grep` and `git`. The line carries no time or count, so the same
 focus and selection print the same bytes and do not break the prompt cache.
 
@@ -89,9 +95,9 @@ reminder uses; the renderer switches vault when the path lives elsewhere and ope
 **Seeing a tab.** `holi docs screenshot <path>` is how the agent looks at what it made: a note's
 diagram, a vault app. It opens the path as `holi docs open` does (same refusals), but shows the
 window without focusing it and the tab without moving the caret into it (`focus: false` on
-`vault:open`, `quietOpenAtom`), since the person may be typing to the agent that asked; a
+`vault:open`; opening a tab never focuses its editor, which only a click does), since the person may be typing to the agent that asked; a
 minimised window is still restored. Screenshots run one at a time. It then asks the renderer where that tab is drawn over `vault:locate`, answered by id on
-`vault:located`. A pane's body carries its tab's `data-tab` (`tabKey`), and the renderer
+`vault:located`. A pane's body carries its tab's `data-tab` (a file's path, `features/shell/split-view.tsx`), and the renderer
 answers once that body is on screen, nothing inside it is `aria-busy` (an app frame is, until
 its document loads), the fonts and its arrival motion are done, and a short settle has passed
 (`lib/settled-rect.ts`), waiting on timers since a hidden page runs no animation frames. Main cuts
@@ -151,19 +157,23 @@ core's `.gitignore` gets its `*.local.*` line, line-wise, before anything else i
 
 **Updating skills and hooks**. A Holi release may ship newer versions; they reach a vault
 only when its user asks, with `holi skills update` or the palette's **Update skills**, or on open
-when the vault turned on `autoUpdateSkills` ([updates](updates.md)). Against the
-base Holi recorded when it wrote each file (`.holi/state/seed-state.local.json`, machine-local): an
-untouched file is replaced, one the vault changed elsewhere is 3-way merged, and a same-line
-conflict is left as it is with the shipped version (and the base) staged beside it as
-`*.shipped.local.*` and `*.base.local.*`. From the palette, conflicts get an agent session whose
+when the vault turned on `autoUpdateSkills` ([updates](updates.md)). A file that is exactly a
+version some release shipped is replaced: Holi carries the sha256 of every version of every shipped
+file it has ever shipped (`seed/shipped-history.json`), so an untouched copy is recognised on any
+machine. Any other file is 3-way merged against a base: the text Holi recorded when it wrote the
+file here (`.holi/state/seed-state.local.json`, machine-local), or, on a machine with no record
+(a clone made elsewhere), the newest version in the vault's git history whose hash is a shipped
+one. A same-line conflict is left as it is with the shipped version (and the base) staged beside it
+as `*.shipped.local.*` and `*.base.local.*`. From the palette, conflicts get an agent session whose
 submitted first turn merges them and deletes the staged files (`skills.update` answers that turn,
 and the renderer starts it through the agent service); until it does, the file stays a conflict.
-`holi skills update` and a vault without the agent leave the staged files for a person. A machine with
-no recorded base hands every changed file to the agent. The palette reports the outcome as a
+`holi skills update` and a vault without the agent leave the staged files for a person. Only a file
+with no base at all, neither recorded nor in git, goes to the agent without one. The palette reports the outcome as a
 native notification. Whether an update would bring anything is asked, writing nothing, whenever a
 vault opens (`skills.status`, also `holi skills status`): a file Holi has a newer version of than the
-one it last brought here, or one new to the vault. A diverged file with no recorded base is not
-counted, since nothing says whose change it is. While there are some, the nav menu's update item
+one it last brought here, one that is exactly an older shipped version, or one new to the vault.
+Any other diverged file with no recorded base is not counted, since nothing says whose change it
+is, and git is not read on every open. While there are some, the nav menu's update item
 offers Update skills ([updates](updates.md)). The seed state also records the Holi version that
 last wrote shipped files here (`release`), which `holi skills status` and Settings show. Holi's side of a hook is not kept compatible with older scripts: the update
 is how a vault gets the current ones.
@@ -186,19 +196,26 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   body from stdin and was not given one is answered 428 without running, and the script sends
   stdin once (`send --draft <id>` reads none). Today: `apps open|init|console`, `skills update|status`,
   `comments list|add|reply|resolve|reopen`, `community path`, `pdf comments|typst`, `google agenda|search|read|mark-read|star|archive|trash|draft|send|reply|schedule|reschedule|unschedule`, `tasks list|complete`,
-  `store list|get|put|delete|check`, `docs list|read|render|open|screenshot`, `sync status`, `agent sessions|notify|log|message`,
-  `schedules list|disable|run` (turning one on is Settings only),
+  `store list|get|put|delete|check`,
+  `docs list|read|inspect|render|open|screenshot|create|update|delete|settle`, `sync status`,
+  `agent sessions|notify|log|message|version`, `schedules list|disable|run` (turning one on is the
+  Automations editor's alone), `holis list|report`,
   `vault members|recents`. The registry's reads the agent already has as Grep, Read and git
-  (search, history, settings) stay app-only rather than grow a second way in. The script finds
-  the bridge through the vault's `bridge.local.env`. All reversible or read-only (a record write is a file
-  change in git history) except `google send` and `google reply`, which the send gate asks about.
+  (search, history, settings) stay app-only rather than grow a second way in. The script is
+  generated at `<Electron userData>/bin/holi`, and Holi supplies its path as `HOLI_BIN` to its
+  Claude sessions; it finds the bridge through the vault's `bridge.local.env`. A CLI document write exits 0 only when
+  pushed; exit 1 preserves a pending receipt (or reports a refusal), and exit 2 is a CLI usage error. All reversible
+  or read-only (a record write is a file change in git history) except `google send` and
+  `google reply`, which the send gate asks about.
 - `holi google <verb>`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
 - `holi pdf render` for PDF export, the same render as Convert to PDF, and `holi pdf typst`, which prints the Typst binary's path ([pdf.md](pdf.md)).
-- Shipped skills: the agent's `memory`, `scheduled-agents`, `notify`, `note-comments`,
-  `show-the-user` (`holi docs open` and `holi docs screenshot`), `theme` and `holi-feedback` (a
-  GitHub issue on syv-ai/holi, labelled `vault-assistant`, through
-  `.github/ISSUE_TEMPLATE/vault-assistant.yml`); the Tasks plugin's `using-tasks`, the apps
-  plugin's `vault-apps`, Google's `gmail-calendar`, and PDF's `md-to-pdf` and `pdf-comments`.
+- Shipped skills: the agent's `memory`, `notify`, `note-comments`, `show-the-user`
+  (`holi docs open` and `holi docs screenshot`), `theme` and `holi-feedback` (a GitHub issue on syv-ai/holi,
+  labelled `vault-assistant`, through `.github/ISSUE_TEMPLATE/vault-assistant.yml`, left
+  unassigned for the team to triage, its context from `holi agent version`); the Tasks
+  plugin's `using-tasks`, the automations plugin's `scheduled-agents`, the Holis plugin's `holis`,
+  the apps plugin's `vault-apps`, the links plugin's `using-links`, Google's `gmail-calendar`, and
+  PDF's `md-to-pdf` and `pdf-comments`.
 
 **What is taken away.** Claude Code tools and bundled skills with no job in a vault are off, from
 `settings.json`: `permissions.deny` holds `NotebookEdit`, plan mode, worktrees, `ReportFindings`,
@@ -211,18 +228,16 @@ the vault's machine (a vault's schedules are Holi's, [scheduled-agents](schedule
 outranks an allow in every scope, so getting a tool back means removing it from the vault's
 `settings.json`; a skill comes back by setting it to `"on"`, which the merge leaves alone.
 
-**Permissions.** Claude Code's native prompts are the permission UX. The seeded rules ask for
-`curl`, `wget`, `holi schedules run` and `holi google archive|trash|unschedule|send|reply` (one
-rule per verb), and allow `holi apps`, `holi store`, `holi pdf comments`, `holi pdf typst`,
-`holi community path`, `holi comments list`, `holi schedules list`, the read-only memory lint (`node .claude/skills/memory/lint.mjs`), `holi agent notify` and `holi agent
-log` (asking would stop an unattended run at a prompt nobody sees, [agent-inbox](agent-inbox.md)).
-Turning a schedule on is
-no command at all ([scheduled-agents](scheduled-agents.md)). Sending mail is
+**Permissions.** Each agent's native prompts are the permission UX, answered in its terminal.
+The seeded rules ask for `curl`, `wget`, `holi schedules run` and
+`holi google archive|trash|unschedule|send|reply` (one rule per verb), and allow `holi apps`,
+`holi store`, `holi pdf comments`, `holi pdf typst`, `holi community path`, `holi comments list`,
+`holi schedules list`, the read-only memory lint (`node .claude/skills/memory/lint.mjs`),
+`holi agent notify` and `holi agent log` (asking would stop an unattended run at a prompt nobody
+sees, [agent-inbox](agent-inbox.md)). Turning a schedule on is no command at all
+([scheduled-agents](scheduled-agents.md)), nor is approving a Holi ([holis](holis.md)). Sending mail is
 behind a seeded `PreToolUse` hook that always asks ([google.md](google.md)). The agent's commits pass
-the vault's pre-commit transforms like anyone's ([vaults-sync.md](vaults-sync.md)). A quick agent
-follows the vault's permission mode like any session unless the person chose auto mode for quick
-agents in Settings; its hooks, and that choice, are flags on its own launch, never in the vault
-([quick-agent.md](quick-agent.md)).
+the vault's pre-commit transforms like anyone's ([vaults-sync.md](vaults-sync.md)).
 
 ## Rules
 
@@ -253,6 +268,9 @@ agents in Settings; its hooks, and that choice, are flags on its own launch, nev
 
 - `apps/desktop/src/plugins/agent/main/claude/config-dir.ts`: per-vault config dir, first-spawn marker
 - `apps/desktop/src/main/vault/seed/`: the seeder (`seed.ts`), `holi skills update` (`update.ts`),
+  every shipped version's hash (`shipped-history.json`, added to by
+  `pnpm --filter @holi/desktop shipped-history` whenever a shipped file changes, which a test
+  enforces),
   seed folders (`folder.ts`), core's contribution (`core.ts`, `vault/once/AGENTS.md`), and
   `state.ts`: what Holi seeded, the base an update merges from
 - `apps/desktop/src/plugins/agent/main/claude/seed.ts`: the agent's contribution and its `settings.json`

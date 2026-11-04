@@ -44,12 +44,16 @@ burst lands in the inbox with only its first on screen. A banner never shows ove
 the entry is enough there.
 
 **The inbox.** `.holi/state/inbox.local.json`, machine-local, newest first, at most 50 entries:
-each has a time, a title, a line, and optionally a path or a session. It is the nav item Inbox
-([nav-menu](nav-menu.md)), there only while the inbox holds something, with a count of what came
-after the person last looked. Its tab lists the entries; a row opens its note or session, its X
-dismisses it, and looking at the tab reads everything in it. A note opens as any arrival main asks for does,
-beside the agent when it has the focus, and only when it passes the same `shownPathOrNull` check.
-A banner's click brings Holi forward and opens the entry the same way.
+each has a time, a title, a line, and optionally a path or a session. Main pushes it to the
+renderer as the agent's `inbox` event on every change (`state/inbox.ts`), which opens an entry's
+note or session: a note as any arrival main asks for does, beside the agent when it has the focus,
+and only when it passes the same `shownPathOrNull` check. A banner's click brings Holi forward and
+opens the entry the same way. The Inbox at the top of the sidebar's Agents mode
+([agent-sessions](agent-sessions.md)) lists them under **From your agents**, below the sessions
+waiting on the person (`agents/inbox-entries.tsx`): newest first, each opening its note or session,
+with an X that dismisses it. Being shown reads them all; the ones that were unread keep their mark
+while the Inbox stays open. The Inbox's count adds the unread entries to the waiting sessions,
+leaving out a waiting session's own "needs you" so it counts once.
 
 **The work log.** `.holi/state/log/<YYYY-MM-DD>.local.md`, one per local day, one line per thing
 done (`- 14:05 Offer drafted: Check the prices. [[tilbud/a.md]]`), so "what did you do this week?"
@@ -84,6 +88,6 @@ to notify twice for the same thing. `scheduled-agents` points a run's prompt at 
 - `apps/desktop/src/plugins/agent/main/inbox/inbox.ts`, `needs-you.ts`, `work-log.ts`,
   `capabilities.ts`: the inbox, the needs-you watch, the work log, `agent.notify` and the inbox's
   verbs
-- `apps/desktop/src/plugins/agent/renderer/InboxView.tsx`, `state/inbox.ts`: the tab and its state
+- `apps/desktop/src/plugins/agent/renderer/state/inbox.ts`: the renderer's copy and opening an entry
 - `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/skills/notify/SKILL.md`: the
   heuristic

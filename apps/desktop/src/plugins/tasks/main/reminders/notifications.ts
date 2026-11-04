@@ -20,7 +20,7 @@ export interface NotificationSpec {
 const when = (fireAt: string) => fireAt.replace('T', ' ')
 
 /** The vault as the vault switcher names it: the repo of `owner/repo`. */
-export const vaultName = (remote: string) => remote.slice(remote.indexOf('/') + 1)
+const vaultName = (remote: string) => remote.slice(remote.indexOf('/') + 1)
 
 const single = (f: ReminderFire): NotificationSpec => ({
   title: f.title,

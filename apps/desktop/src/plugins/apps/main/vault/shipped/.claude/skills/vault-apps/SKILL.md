@@ -147,10 +147,12 @@ trust each other's apps as they trust each other's edits.
   `null` clears `due`, `priority`, `reminder` or `recurrence`. A bad value or
   an unknown field rejects, naming it. Setting `status: 'done'` is completion,
   so it rolls a recurring task forward too. It resolves to the task as written.
-- `holi.tasks.create({ title, folder?, status?, description?, extra? })` makes
-  `task.<slug>.md` in `folder` (the vault root by default), `todo` unless
-  given; `extra` holds `due`, `priority`, `tags`, `assignees`, `reminder` and
-  `recurrence`. A repeated title gets a numbered name. It resolves to `{ path }`.
+- `holi.tasks.create({ title, folder?, status?, description?, extra?, shared? })`
+  makes a **private** task, `task.<slug>.local.md`, in `folder` (the vault root
+  by default): it stays on this machine and on no teammate's board. Pass
+  `shared: true` for `task.<slug>.md`, which syncs to the whole vault. `todo`
+  unless given; `extra` holds `due`, `priority`, `tags`, `assignees`, `reminder`
+  and `recurrence`. A repeated title gets a numbered name. It resolves to `{ path }`.
 - `holi.docs.write(path, text, base)` writes a whole `.md` note. `base` is the
   text you read with `holi.docs.read`, or `null` for a note that must not exist
   yet. If the note changed since you read it (a teammate's sync, the agent, the

@@ -1,5 +1,5 @@
 import { request } from 'node:http'
-import { taskClaim } from '../src/plugins/tasks/shared/task-file'
+import { taskClaim } from '@holi/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
 import { registerGitRoutes } from '../src/main/vault/git-routes'

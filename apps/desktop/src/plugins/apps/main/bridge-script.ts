@@ -115,7 +115,7 @@ export const BRIDGE_JS = `(() => {
       complete: (path) => call('tasks.complete', { path }),
       // Fields as the board sets them; null clears one. Done is completion.
       update: (path, patch) => call('tasks.update', { path, patch }),
-      // { title, folder?, status?, description?, extra?: { due, priority, ... } }
+      // { title, folder?, status?, description?, extra?: { due, priority, ... }, shared? }
       create: (task) => call('tasks.create', task),
     },
     // A note's path, or one of Holi's views by name (home, board, settings).

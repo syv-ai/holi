@@ -12,6 +12,8 @@
  * `Task.extra` promises. The schema adds controls; it does not take keys away.
  */
 import { isAgentSurfacePath, isHiddenPath } from './path-safety'
+import { isTaskFilePath } from './task-file'
+import { DEFAULT_STATUSES } from './statuses'
 
 /** How a value is edited. The renderer maps each of these to one control. */
 export type FieldKind =
@@ -25,6 +27,8 @@ export type FieldKind =
   | { readonly kind: 'list' }
   /** A list of the vault's members, by GitHub login. */
   | { readonly kind: 'people' }
+  /** The recurrence rule's nested map. */
+  | { readonly kind: 'recurrence' }
   /** Anything else, including every key the schema does not name. */
   | { readonly kind: 'text' }
 
@@ -41,6 +45,28 @@ export interface FieldSpec {
    *  when absent, so clearing it would only pretend to. */
   readonly required?: boolean
 }
+
+/** The default statuses (`statuses.ts`), and the rest of the task vocabulary: the same words
+ *  `task-file.ts` validates, in the shape a control needs. */
+const TASK_FIELDS: readonly FieldSpec[] = [
+  // DISPLAY order only: `serializeTaskFile` builds its own object, so changing
+  // it here rewrites no task file. `folder` is derived and rendered above these
+  // by the widget itself.
+  {
+    key: 'status',
+    kind: { kind: 'enum', options: DEFAULT_STATUSES.map((s) => s.id) },
+    required: true,
+  },
+  { key: 'priority', kind: { kind: 'enum', options: ['low', 'medium', 'high', 'urgent'] } },
+  { key: 'start', kind: { kind: 'stamp' } },
+  { key: 'due', kind: { kind: 'stamp' } },
+  { key: 'estimate', kind: { kind: 'text' } },
+  { key: 'reminder', kind: { kind: 'stamp' } },
+  { key: 'recurrence', kind: { kind: 'recurrence' } },
+  { key: 'tags', kind: { kind: 'list' } },
+  { key: 'assignees', kind: { kind: 'people' } },
+  { key: 'order', kind: { kind: 'text' }, hidden: true },
+]
 
 /** A note's one field. No `title`, since the path is its name, and no
  *  `created`: that is the file's first commit, shown as read-only metadata,
@@ -63,7 +89,7 @@ export function frontmatterSchema(
   if (!path.endsWith('.md')) return null
   if (isAgentSurfacePath(path)) return null
   if (isHiddenPath(path)) return null
-  return claimed ?? NOTE_FIELDS
+  return claimed ?? (isTaskFilePath(path) ? TASK_FIELDS : NOTE_FIELDS)
 }
 
 /**

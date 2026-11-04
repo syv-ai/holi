@@ -63,7 +63,7 @@ const manifestsSignatureAtom = atom((get) => {
  * Run `command` of `bundle` on `input` in a hidden frame and answer what it
  * returned, unchecked. Rejects when it failed, threw or took too long.
  */
-export function runInFrame(
+function runInFrame(
   store: PluginStore,
   remote: string,
   bundle: string,

@@ -270,11 +270,19 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
     }
   })
 
-  it('keeps appearance machine-local and everything else in the vault', () => {
-    // A teammate's committed choice flipping your app to light mode is exactly
-    // the failure the `.local` layer exists to prevent.
+  it('keeps appearance, the arcade, the Space-to-ask key and the agent machine-local, everything else in the vault', () => {
+    // A teammate's committed choice flipping your app to light mode, taking
+    // your Space key, or starting your sessions in an agent this machine does
+    // not have, is exactly the failure the `.local` layer exists to prevent.
     const local = VAULT_SETTING_DESCRIPTORS.filter((d) => d.target === 'local').map((d) => d.key)
-    expect(local).toEqual(['colorScheme'])
+    expect(local).toEqual([
+      'colorScheme',
+      'windowGlass',
+      'gridArcade',
+      'foldSidebarForApps',
+      'spaceAsksAgent',
+      'agentProvider',
+    ])
   })
 
   it('names no key twice', () => {
@@ -389,6 +397,16 @@ describe('parseSettingsPatch — the write-side trust boundary', () => {
   it('keeps the keys it was given and invents none', () => {
     const { patch } = parseSettingsPatch(JSON.stringify({ dailyNotes: false }), CORE_TRANSFORMS)
     expect(patch).toEqual({ dailyNotes: false })
+  })
+
+  it('accepts Pi as a machine-local agent provider and reads it back', () => {
+    const { patch, warnings } = parseSettingsPatch('{"agentProvider":"pi"}', CORE_TRANSFORMS)
+    expect(warnings).toEqual([])
+    expect(patch).toEqual({ agentProvider: 'pi' })
+    expect(resolveAppSettings(null, committed(patch))).toMatchObject({
+      agentProvider: 'pi',
+      warnings: [],
+    })
   })
 
   it('normalises a home exactly as a read does', () => {

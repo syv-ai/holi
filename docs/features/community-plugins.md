@@ -49,7 +49,7 @@ findable. The settings field searches GitHub's repositories with that topic as y
 within `owner/`), anyone's and the private ones the person can read, and reads each hit for its
 root manifest or else its top-level folders' (at most 20), then each plugin's newest release: one row
 per plugin, an installable one showing its name and version, anything else why it cannot be
-installed (no release yet, an invalid manifest). An exact `owner/repo` is read even when search
+installed (no release yet, an invalid manifest), wrapped in full rather than cut off, since it is the reason. An exact `owner/repo` is read even when search
 does not find it, so a plugin without the topic still installs by name. A local folder, used in
 place, is for developing a plugin.
 
@@ -59,6 +59,11 @@ the repository with the plugin in its folder there, one per id, listed in `userD
 plugin or its folder, and `commit`), and turns it on with
 `plugins: { community: true, <id>: true }` in `.holi/settings/plugins.yaml`, beside the first-party plugins. A folder
 install is never pinned.
+
+**Adding a plugin from settings uses it in the open vault.** Settings is always inside a vault, so
+a release added there under "Add a plugin" is pinned and turned on in that vault once it is allowed
+and set up, as its switch would. One the vault already has on stays as the vault has it. A folder
+added with "Use a folder" is only installed; its switch turns it on.
 
 **Vault apps.** A manifest's `apps` names folders in the plugin, each a vault app (`Notes.app`
 with its `index.html` and `app.yaml`). Each is copied to the vault's root once: when the vault
@@ -101,10 +106,26 @@ Holi learns it at its next start. The consent dialog lists the commands; a call 
 for permission like any other command, until the person allows it.
 
 **Nothing runs before consent.** A fetched release waits until the person allows that commit, in a
-dialog naming the repository, version, commit, both commands and the commands it gives the agent. Consent is per `(id, commit)` in
+dialog naming the repository, version, commit, both commands and the commands it gives the agent, in body text, as the vault-app consent is. Consent is per `(id, commit)` in
 `userData/plugin-consent.json`, with no expiry; a different commit asks again. Then setup runs once,
 its output streamed into the dialog and kept in `setup.log`. A folder install asks nothing: it is
 the person's own checkout.
+
+**A readiness check.** A plugin that needs something outside Holi before it can work, such as a
+setting switched on in a companion app, says how to tell in its manifest:
+
+```json
+"check": { "run": ["dashctl", "version"], "hint": "Switch on Let other agents control Dash in Dash" }
+```
+
+`run` is an argv like `setup`, with `{vault}` its only placeholder, run in the plugin's folder with no shell
+and on the same `PATH`; it passes when it exits 0 within 10 seconds, and is killed with what it
+started when it does not. `hint` is one short line for the person. Main asks it for each plugin that
+runs in the vault: when the vault opens, when a plugin is turned on there, right after its setup
+succeeds, and when the person clicks **Check again**, never on a timer. The last answer is kept in
+memory per vault and plugin, and leaving the vault drops it. A failing check does not stop the
+plugin: its skills and commands stay and it still counts as running. Its settings row and the
+vault notice show the hint in place of "Ready", with **Check again** beside it.
 
 **A row's status**, as settings and the vault notice show it: `not-installed` (pinned, absent here),
 `pin-differs` (this machine has another release), `needs-consent`, `needs-setup`, `setup-failed`,
@@ -131,7 +152,20 @@ release, asks in the consent dialog, sets it up and, where the vault pins the pl
 release, so its members are offered it in turn.
 
 **The vault notice.** A vault that turns on a plugin this machine cannot run says so under the file
-tree, with the one next step (install the pinned version, or allow and set up).
+tree, with the one next step (install the pinned version, or allow and set up). A running plugin
+whose readiness check fails is there too, with its hint and **Check again**.
+
+The person can dismiss the first kind of line for one plugin in one vault, on this machine only.
+The choice is kept by plugin id, not by version, so a newer pin stays dismissed until the plugin
+runs here: once it is ready in that vault the dismissal is dropped, so a later pin it cannot run
+yet shows its line again. It lives in the renderer's `localStorage` beside the tree's other per-vault view choices, and no vault file
+changes, so the vault's other members still see their own notice. Settings still lists the plugin
+and installs it. A failing readiness check and an update offer cannot be dismissed: they concern a
+plugin running here.
+
+**The agent knows the plugins.** The session overview the agent gets at each start names every
+plugin the vault pins, whether the vault turns it on, and the commands it gives the agent
+([agent-memory.md](agent-memory.md)), so it finds the plugin before it goes looking elsewhere.
 
 ## Rules
 
@@ -179,7 +213,7 @@ tree, with the one next step (install the pinned version, or allow and set up).
 - `packages/shared/src/community-plugin.ts`: the manifest and pin grammar, `opensPath`,
   `pluginServerOrigin`, `PLUGIN_COMMANDS_DIR`.
 - `apps/desktop/src/plugins/community/main/`: the install store, fetch, the topic search, setup,
-  consent, the supervisor, the agent's commands (`commands.ts`) and the `community.*` capabilities.
-- `apps/desktop/src/plugins/community/renderer/`: the tab (`PluginFrame`), the settings section, the
+  consent, the readiness checks (`checks.ts`), the supervisor, the agent's commands (`commands.ts`) and the `community.*` capabilities.
+- `apps/desktop/src/plugins/community/renderer/`: the tab (`PluginFrame`, `plugin-frame.tsx`), the settings section, the
   consent dialog and the vault notice.
 - `apps/desktop/src/main/window-guard.ts`: `originFrameExit`.

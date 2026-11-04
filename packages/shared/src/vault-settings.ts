@@ -114,6 +114,12 @@ export type ColorScheme = 'dark' | 'light' | 'system'
 
 export const COLOR_SCHEMES: readonly ColorScheme[] = ['dark', 'light', 'system']
 
+/** How much of the window's glass shows through (macOS): `clear` lets most of
+ *  it through, `solid` none. Only the chrome's tint changes; nothing moves. */
+export type WindowGlass = 'clear' | 'frosted' | 'solid'
+
+export const WINDOW_GLASSES: readonly WindowGlass[] = ['clear', 'frosted', 'solid']
+
 /**
  * The font the **notes editor** sets prose in. Code, frontmatter and the
  * plain/code editor are never affected — see `notesFontTheme`.
@@ -127,6 +133,20 @@ export const COLOR_SCHEMES: readonly ColorScheme[] = ['dark', 'light', 'system']
 export type EditorFont = 'mono' | 'sans' | 'serif'
 
 export const EDITOR_FONTS: readonly EditorFont[] = ['mono', 'sans', 'serif']
+
+/**
+ * Which coding agent a new session runs (docs/features/agent-sessions.md,
+ * Harnesses): one of this machine's agent harnesses, by its id. The built-in
+ * ones are `claude`, `codex` and `pi`; a person adds others in Settings, so
+ * whether an id names one is the agent's to check, on this machine.
+ */
+export type AgentProviderId = string
+
+/** What an agent harness's id looks like: a short lowercase slug. */
+export const AGENT_ID = /^[a-z][a-z0-9-]{1,31}$/
+
+export const isAgentId = (value: unknown): value is AgentProviderId =>
+  typeof value === 'string' && AGENT_ID.test(value)
 
 /**
  * What each name means, and the only place it means anything.
@@ -197,7 +217,16 @@ export interface ResolvedAppSettings {
   home: string
   dailyNotes: boolean
   colorScheme: ColorScheme
+  windowGlass: WindowGlass
   editorFont: EditorFont
+  /** Space on an empty line opens an ask for a new agent session. */
+  spaceAsksAgent: boolean
+  /** The agent a new session runs unless the person picks another. */
+  agentProvider: AgentProviderId
+  /** The Holis' game plays behind the empty view (a New tab). */
+  gridArcade: boolean
+  /** Mail or Calendar in front folds the files sidebar to its rail. */
+  foldSidebarForApps: boolean
   hooks: VaultHooks
   maxCommittedFileBytes: number
   /** Whether Holi brings a release's newer skills and hooks in when the vault
@@ -366,7 +395,12 @@ export type VaultSettingKey =
   | 'home'
   | 'hooks'
   | 'colorScheme'
+  | 'windowGlass'
   | 'editorFont'
+  | 'spaceAsksAgent'
+  | 'agentProvider'
+  | 'gridArcade'
+  | 'foldSidebarForApps'
   | 'maxCommittedFileBytes'
   | 'autoUpdateSkills'
 
@@ -439,6 +473,11 @@ export type SettingType =
    * be Home and the vault's apps to the options.
    */
   | { kind: 'home'; options: readonly VaultSettingOption[] }
+  /**
+   * An agent harness's id (`AGENT_ID`): one of `options`, the built-in ones,
+   * or one this machine added, which the agent checks against its harnesses.
+   */
+  | { kind: 'agent'; options: readonly VaultSettingOption[] }
 
 /**
  * One setting, declared once.
@@ -511,7 +550,7 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     type: {
       kind: 'home',
       options: [
-        { value: 'recents', label: 'Recently opened' },
+        { value: 'recents', label: 'Vault overview' },
         // Only on offer while the vault actually keeps one: a Home on a daily
         // note the vault does not make would read as a broken choice.
         {
@@ -589,10 +628,58 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
       ],
     },
     default: 'system' as ColorScheme,
-    // Machine-local, and the only row that is: a teammate's committed choice
+    // Machine-local: a teammate's committed choice
     // must not flip your app to light mode.
     target: 'local',
     askedAtBirth: true,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'appearance',
+  },
+  {
+    key: 'windowGlass',
+    label: 'Transparency',
+    explanation: 'How much of the desktop shows through the window, on a Mac.',
+    type: {
+      kind: 'enum',
+      options: [
+        { value: 'clear', label: 'Clear' },
+        { value: 'frosted', label: 'Frosted' },
+        { value: 'solid', label: 'Solid' },
+      ],
+    },
+    default: 'frosted' as WindowGlass,
+    // Machine-local, like Appearance: how see-through your window is is
+    // nobody else's business.
+    target: 'local',
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'appearance',
+  },
+  {
+    key: 'gridArcade',
+    label: 'Arcade on the New tab',
+    explanation:
+      'The vault’s Holis play a small game behind an empty tab, filing papers in the outbox. Take control with the arrow keys.',
+    type: { kind: 'boolean' },
+    default: true,
+    // Machine-local, like Appearance: a game in the background is one
+    // person's taste, not the vault's.
+    target: 'local',
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'appearance',
+  },
+  {
+    key: 'foldSidebarForApps',
+    label: 'Fold the sidebar in Mail and Calendar',
+    explanation:
+      'Mail or Calendar in front folds the files sidebar to its rail, and leaving gives it back. ⌘B opens it either way.',
+    type: { kind: 'boolean' },
+    default: true,
+    // Machine-local, like Appearance: how much room one person's mail gets
+    // is their own layout, not the vault's.
+    target: 'local',
+    askedAtBirth: false,
     whereToChange: LOCAL_FILE_HINT,
     section: 'appearance',
   },
@@ -616,6 +703,41 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     askedAtBirth: false,
     whereToChange: SETTINGS_FILE_HINT,
     section: 'editor',
+  },
+  {
+    key: 'spaceAsksAgent',
+    label: 'Space on an empty line asks the agent',
+    explanation:
+      'Press Space on an empty line to write an ask for a new agent session, with the note and the line as context. Off, Space is only a space.',
+    type: { kind: 'boolean' },
+    default: true,
+    // Machine-local: how one person's Space key behaves is not the vault's
+    // decision, and a teammate turning it off must not turn it off for you.
+    target: 'local',
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'editor',
+  },
+  {
+    key: 'agentProvider',
+    label: 'New sessions run',
+    explanation:
+      'The coding agent for new sessions, Holis, and automations. On Codex, Holis and automations run only once this machine lets Codex run unattended in the vault, in Settings.',
+    type: {
+      kind: 'agent',
+      options: [
+        { value: 'claude', label: 'Claude Code' },
+        { value: 'codex', label: 'Codex' },
+        { value: 'pi', label: 'Pi' },
+      ],
+    },
+    default: 'claude' as AgentProviderId,
+    // Machine-local: which agent is installed and signed in is this
+    // machine's, not the vault's.
+    target: 'local',
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'general',
   },
   {
     key: 'autoUpdateSkills',
@@ -706,6 +828,7 @@ function controlFor(type: SettingType): VaultSettingControl {
     case 'flags':
       return { kind: 'group', toggles: type.flags }
     case 'home':
+    case 'agent':
       return { kind: 'choice', options: type.options, openEnded: true }
     // enum and number are both "pick one of these", and differ only in
     // what ELSE is legal, which is the validator's business, not the control's.
@@ -752,6 +875,10 @@ function readValue(
         ? { ok: false, expected: "recents, daily, a view's name, or a path in the vault" }
         : { ok: true, value: home }
     }
+    case 'agent':
+      return isAgentId(value)
+        ? { ok: true, value }
+        : { ok: false, expected: "an agent's id: lowercase letters, digits and dashes" }
   }
 }
 

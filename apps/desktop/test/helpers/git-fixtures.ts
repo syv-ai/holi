@@ -73,6 +73,14 @@ export async function makeRemote(): Promise<string> {
   return bare
 }
 
+/** A newly created remote with no commits or remote-tracking branch yet. */
+export async function makeEmptyRemote(): Promise<string> {
+  const base = await tmp('holi-git-empty-')
+  const bare = join(base, 'origin.git')
+  await exec('git', ['init', '--bare', '-b', 'main', bare])
+  return bare
+}
+
 /** A bare remote that is NOT a Holi vault — a plain code repo, for the tests
  * that assert `vaults.add` refuses to adopt one. */
 export async function makeNonVaultRemote(): Promise<string> {

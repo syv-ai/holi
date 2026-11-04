@@ -21,7 +21,7 @@ const folder = seedFolder(
   }),
 )
 
-export const SETTINGS = '.claude/settings.json'
+const SETTINGS = '.claude/settings.json'
 
 /**
  * The status line: one inline command, as Claude Code's own docs show, so a
@@ -33,6 +33,7 @@ export const SETTINGS = '.claude/settings.json'
  * (parsed, never sourced) and keyed by the job id, the way `turn-signal.mjs`
  * does it. The post is detached with its output discarded, so a slow or absent
  * Holi never holds up the footer, and outside Holi the command only prints.
+ * @public exported for its test
  */
 export const STATUS_LINE = [
   'input=$(cat)',
@@ -149,20 +150,19 @@ const AGENT_SETTINGS: SettingsFragment = {
   ],
   permissions: {
     // Network egress: the user still approves each one, it just does not
-    // slip through unasked.
-    // A schedule's run starts an unattended session: the person says yes to
-    // each one. Turning a schedule on is no command at all (Settings only).
-    ask: ['Bash(curl:*)', 'Bash(wget:*)', 'Bash(holi schedules run:*)'],
-    // The memory lint and `holi comments list` only read, so they run unasked.
+    // slip through unasked. The automations plugin adds its own rules.
+    ask: ['Bash(curl:*)', 'Bash(wget:*)'],
+    // The memory lint, `holi comments list` and `holi agent version` only
+    // read, so they run unasked.
     // `holi agent notify` is an inbox entry, a banner and a log line on this
     // machine, `holi agent log` the line alone. Asking first would stop an
     // unattended run at a prompt nobody sees, which is the opposite of telling
     // them. Writing a comment asks, since teammates see it.
     allow: [
-      'Bash(holi schedules list:*)',
       'Bash(node .claude/skills/memory/lint.mjs:*)',
       'Bash(holi agent notify:*)',
       'Bash(holi agent log:*)',
+      'Bash(holi agent version:*)',
       'Bash(holi comments list:*)',
     ],
     // Claude Code tools with no job in a vault: notebooks, plan mode,
@@ -184,7 +184,9 @@ const AGENT_SETTINGS: SettingsFragment = {
 }
 
 /** The agent's `settings.json` for what is on disk, given every
- *  contribution's fragments and which hook scripts the vault has. */
+ *  contribution's fragments and which hook scripts the vault has.
+ * @public exported for its test
+ */
 export const agentSettings = (
   existing: string | null,
   fragments: readonly SettingsFragment[],

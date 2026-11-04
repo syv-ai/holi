@@ -6,6 +6,7 @@
 import type { EditorState, TransactionSpec } from '@codemirror/state'
 import { keymap } from '@codemirror/view'
 
+/** @public exported for its test */
 export function toggleInline(state: EditorState, marker: string): TransactionSpec | null {
   const sel = state.selection.main
   let { from, to } = sel
@@ -46,6 +47,7 @@ export function toggleInline(state: EditorState, marker: string): TransactionSpe
   }
 }
 
+/** @public exported for its test */
 export function toggleLink(state: EditorState): TransactionSpec | null {
   const sel = state.selection.main
   if (sel.empty) return null
@@ -69,12 +71,14 @@ function run(marker: string) {
   }
 }
 
-/** ⌘/Ctrl-B bold, ⌘I italic, ⌘E inline code, ⌘K link, ⌘⇧X strikethrough. */
+/** ⌘/Ctrl-B bold, ⌘I italic, ⌘E inline code, ⌘K link, ⌘⇧X or ⌘⇧S
+ *  strikethrough (⌘⇧S is ReUI's and Tiptap's). */
 export const formattingKeymap = keymap.of([
   { key: 'Mod-b', run: run('**') },
   { key: 'Mod-i', run: run('*') },
   { key: 'Mod-e', run: run('`') },
   { key: 'Mod-Shift-x', run: run('~~') },
+  { key: 'Mod-Shift-s', run: run('~~') },
   {
     key: 'Mod-k',
     run: (view) => {

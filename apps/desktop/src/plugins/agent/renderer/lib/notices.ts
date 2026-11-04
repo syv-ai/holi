@@ -2,15 +2,6 @@
  * What a session's indicators say in words, kept pure so it can be tested
  * without an xterm.
  */
-import {
-  AppWindow,
-  CircleAlert,
-  Hand,
-  MessageCircleQuestionMark,
-  ShieldAlert,
-  Target,
-  type LucideIcon,
-} from 'lucide-react'
 import { fillColour } from '@holi/shared'
 
 /** How one session is doing, in the form every place that shows it uses. */
@@ -41,7 +32,8 @@ export function agentIndicator(args: {
   // The loudest state: blocked on a dialog until you answer.
   if (state === 'needs-you') {
     return {
-      dot: 'bg-agent-needs-you',
+      // Steady, not breathing: waiting is a state, not work in flight.
+      dot: 'bg-amber-600 dark:bg-amber-400',
       state: 'needs you',
       title:
         waitingFor === undefined
@@ -52,39 +44,18 @@ export function agentIndicator(args: {
 
   if (state === 'working') {
     return {
-      dot: 'motion-pulse bg-agent-working',
+      // The one loop, in the foreground grey: amber is kept for needs you.
+      dot: 'motion-pulse bg-foreground',
       state: 'working…',
       title: 'Claude is working on your turn',
     }
   }
 
   return {
-    dot: 'bg-agent-done',
+    dot: 'bg-emerald-600 dark:bg-emerald-400',
     state: 'running',
-    title: 'session running, ready for your next message',
+    title: 'Session running, ready for your next message',
   }
-}
-
-/**
- * Claude Code's `waitingFor` values, as `claude agents --json` reports them.
- * Plan approval is a tool permission, so it reads `permission prompt` too.
- */
-const WAITING_FOR_ICONS = new Map<string, LucideIcon>([
-  ['permission prompt', Hand],
-  // The question tool, and other input dialogs.
-  ['input needed', MessageCircleQuestionMark],
-  ['dialog open', AppWindow],
-  ['goal proposal', Target],
-  ['sandbox request', ShieldAlert],
-])
-
-/**
- * The icon for what a session waits on. The value can be free text (a remote
- * worker reports the question itself), so anything unknown gets a generic
- * icon, never its words: the words are in the tooltip.
- */
-export function needsYouIcon(waitingFor: string | undefined): LucideIcon {
-  return (waitingFor !== undefined && WAITING_FOR_ICONS.get(waitingFor)) || CircleAlert
 }
 
 /** One session as the helpers below read it. */
@@ -105,5 +76,7 @@ export function sessionsWorthAsking<T extends FleetSession>(sessions: T[]): T[] 
 }
 
 /** The colour of a session's context reading, or null for the row's own muted
- *  text: the shared percent-full ramp (`fillColour`). */
+ *  text: the shared percent-full ramp (`fillColour`).
+ * @public exported for its test
+ */
 export const contextColour = fillColour

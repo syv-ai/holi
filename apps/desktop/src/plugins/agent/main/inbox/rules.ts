@@ -16,13 +16,21 @@ import type { SessionSummary } from '../claude/listing'
 export const INBOX_FILE = '.holi/state/inbox.local.json'
 
 /** Enough for a day of an agent that notifies sparingly; the file is read and
- *  rewritten whole on every change. */
+ *  rewritten whole on every change.
+ * @public exported for its test
+ */
 export const INBOX_CAP = 50
 
-/** A notice equal to one the inbox got this recently is a repeat. */
+/**
+ * A notice equal to one the inbox got this recently is a repeat.
+ * @public exported for its test
+ */
 export const REPEAT_MS = 5 * 60_000
 
-/** The least time between two banners. */
+/**
+ * The least time between two banners.
+ * @public exported for its test
+ */
 export const BANNER_GAP_MS = 30_000
 
 /** What someone asked to tell the person. */
@@ -115,7 +123,10 @@ export const withoutEntry = (file: InboxFile, id: string): InboxFile => ({
   entries: file.entries.filter((e) => e.id !== id),
 })
 
-/** The entries that came after the person last looked. */
+/**
+ * The entries that came after the person last looked.
+ * @public exported for its test
+ */
 export function unreadCount(file: InboxFile): number {
   if (file.seen === null) return file.entries.length
   const seen = Date.parse(file.seen)

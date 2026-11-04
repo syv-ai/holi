@@ -16,7 +16,10 @@ export const COMMAND_PARAM = 'command'
 /** How long a command may take before it is given up on. */
 export const COMMAND_TIMEOUT_MS = 10_000
 
-/** The most text a command may put in a note. */
+/**
+ * The most text a command may put in a note.
+ * @public exported for its test
+ */
 export const MAX_COMMAND_TEXT = 1_000_000
 
 /** What a command is given: the selection it was typed over (or empty), the

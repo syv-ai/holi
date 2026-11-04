@@ -24,7 +24,6 @@ import {
   requireOpen,
   shownPath,
   stringParam,
-  type CapabilityContext,
 } from '../../../../main/plugin-api'
 import { JOB_ID } from '../claude/listing'
 import type { Inbox, RaiseResult } from './inbox'

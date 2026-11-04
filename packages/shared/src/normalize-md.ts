@@ -1,16 +1,18 @@
 /**
  * The commit-time tidy, as pure text, shared because two places must agree.
  *
- * The hook applies it; the editor must *recognise* it. A transform rewrites the
- * file after the editor's save, breaking `editor-reload.ts`'s invariant that
- * `disk === base` after a save, so Holi's own tidy would read as a foreign (and
- * unmergeable) edit. `decideReload` asks whether `disk` is merely what
- * normalization would make of `base`, and treats that as its own write.
+ * The hook applies it; the editor must *recognise* it. The tidy rewrites the
+ * file after the editor's save, so the file no longer matches what the editor
+ * wrote, and Holi's own tidy would read as a foreign edit: the document view
+ * would reload it under the caret, taking the space just typed with it.
+ * `differsBeyondTidy` is how the editor tells the two apart, both when a
+ * change on disk comes in and when it decides whether there is anything to
+ * save.
  *
  * That only works because everything here is **idempotent and re-derivable**:
  * discarding it in favour of the buffer loses nothing, since the next commit
  * applies it again. A transform that carries real content (`relink`) is
- * deliberately NOT recognised this way — it still goes through the merge.
+ * deliberately NOT recognised this way: it comes in as a change on disk.
  */
 import type { SnapshotClaim } from './types'
 
@@ -31,6 +33,22 @@ export function normalizeText(
   const tidied = tidyWhitespace(text)
   const claim = normalizers.find((c) => c.normalize !== undefined && c.match(path))
   return claim?.normalize !== undefined ? claim.normalize(tidied) : tidied
+}
+
+/**
+ * Whether `next` holds anything `base` does not, the commit tidy aside. The
+ * tidy only touches markdown (`normalize-md` skips other files), so anywhere
+ * else every difference counts: in a `.env` a trailing space is content.
+ */
+export function differsBeyondTidy(
+  base: string,
+  next: string,
+  path: string,
+  normalizers: readonly Normalizer[] = [],
+): boolean {
+  if (base === next) return false
+  if (!path.endsWith('.md')) return true
+  return normalizeText(base, path, normalizers) !== normalizeText(next, path, normalizers)
 }
 
 /** A line that is only block markup waiting for its text: a bullet, number or

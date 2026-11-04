@@ -9,8 +9,8 @@
  */
 import { ANCHOR_HOUR, DAY_MS, parseStamp, type Moment, type VaultSnapshot } from '@holi/shared'
 import type { Disposer, PluginCtx } from '../../../main/plugin-api'
-import { snapshotTasks } from '../shared/task-file'
-import type { Task } from '../shared/types'
+import { snapshotTasks } from '@holi/shared'
+import type { Task } from '@holi/shared'
 
 /** A naive wall-clock epoch (`parseStamp`'s) as this machine's local instant. */
 function local(naive: number): Date {
@@ -30,7 +30,7 @@ function local(naive: number): Date {
  * fires, and overdue the next morning at the same hour: a day-only task is
  * not late until its day is over, and a run at midnight helps nobody.
  */
-export function taskMoments(tasks: readonly Task[]): Moment[] {
+function taskMoments(tasks: readonly Task[]): Moment[] {
   const out: Moment[] = []
   for (const t of tasks) {
     if (t.status === 'done' || t.due === undefined) continue

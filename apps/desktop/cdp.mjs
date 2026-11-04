@@ -18,7 +18,10 @@ import { writeFileSync } from 'node:fs'
 const list = await (await fetch('http://127.0.0.1:9333/json/list')).json()
 // Not `about:blank`: that is the hidden window the PDF plugin draws mermaid in.
 const page = list.find((t) => t.type === 'page' && t.url !== 'about:blank')
-if (!page) { console.error('no page'); process.exit(1) }
+if (!page) {
+  console.error('no page')
+  process.exit(1)
+}
 const ws = new WebSocket(page.webSocketDebuggerUrl)
 const [arg, arg2] = process.argv.slice(2)
 await new Promise((r) => (ws.onopen = r))
@@ -26,25 +29,48 @@ const done = new Promise((resolve) => {
   ws.onmessage = (m) => {
     const msg = JSON.parse(m.data)
     if (msg.id !== 1) return
-    if (arg === '--focus') { console.log('focused'); return resolve() }
+    if (arg === '--focus') {
+      console.log('focused')
+      return resolve()
+    }
     if (arg === '--shot') {
       writeFileSync(arg2, Buffer.from(msg.result.data, 'base64'))
       console.log('wrote ' + arg2)
       return resolve()
     }
-    if (arg === '--type') { console.log('typed'); return resolve() }
+    if (arg === '--type') {
+      console.log('typed')
+      return resolve()
+    }
     const r = msg.result?.result
     if (msg.result?.exceptionDetails) {
       console.log('EXCEPTION:', msg.result.exceptionDetails.exception?.description ?? '?')
     } else {
-      console.log(typeof r?.value === 'string' ? r.value : JSON.stringify(r?.value ?? r?.description ?? null))
+      console.log(
+        typeof r?.value === 'string' ? r.value : JSON.stringify(r?.value ?? r?.description ?? null),
+      )
     }
     resolve()
   }
 })
 if (arg === '--focus') ws.send(JSON.stringify({ id: 1, method: 'Page.bringToFront' }))
-else if (arg === '--shot') ws.send(JSON.stringify({ id: 1, method: 'Page.captureScreenshot', params: { format: 'png', captureBeyondViewport: false } }))
-else if (arg === '--type') ws.send(JSON.stringify({ id: 1, method: 'Input.insertText', params: { text: arg2 } }))
-else ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: arg, awaitPromise: true, returnByValue: true } }))
+else if (arg === '--shot')
+  ws.send(
+    JSON.stringify({
+      id: 1,
+      method: 'Page.captureScreenshot',
+      params: { format: 'png', captureBeyondViewport: false },
+    }),
+  )
+else if (arg === '--type')
+  ws.send(JSON.stringify({ id: 1, method: 'Input.insertText', params: { text: arg2 } }))
+else
+  ws.send(
+    JSON.stringify({
+      id: 1,
+      method: 'Runtime.evaluate',
+      params: { expression: arg, awaitPromise: true, returnByValue: true },
+    }),
+  )
 await done
 ws.close()

@@ -1,0 +1,51 @@
+diff --git a/dist/codemirror-markdown-tables.js b/dist/codemirror-markdown-tables.js
+index cc9e0e76c5e68a1cfb51f0cad684fc7aa71ca3d9..c6cf4dbee6a434bbc81360ef3c98faf4c8ea51ad 100644
+--- a/dist/codemirror-markdown-tables.js
++++ b/dist/codemirror-markdown-tables.js
+@@ -7820,6 +7820,19 @@ const zf = (e, t) => !t || !de(e).tables.some((n) => n.containsSelection()) ? nu
+ function Df(e) {
+   return Rs(e) > 0 || As(e) > 0;
+ }
++function holiUserTouched(o) {
++  const ranges = [];
++  o.forEach((a, k) => {
++    if (a.annotation(Ds.userEvent) === void 0 || !a.docChanged) return;
++    a.changes.iterChangedRanges((fA, tA, fB, tB) => {
++      let f = fB, x = tB;
++      for (let j = k + 1; j < o.length; j++)
++        f = o[j].changes.mapPos(f, -1), x = o[j].changes.mapPos(x, 1);
++      ranges.push([f, x]);
++    });
++  });
++  return ranges;
++}
+ const If = ({
+   state: e,
+   docChanged: t,
+@@ -7828,7 +7841,14 @@ const If = ({
+   view: i
+ }) => {
+   if (!t && !n && Df(e) || o.some((a) => fi(a))) return;
+-  const { formatting: r } = de(e);
++  // Holi: format only the tables a user's own edit in this update touched.
++  // Opening a document, moving the caret and a programmatic change (an
++  // external write landing in the buffer) never rewrite a table.
++  const touched = holiUserTouched(o);
++  if (touched.length === 0) return;
++  const r = de(e).formatting.filter(
++    (c) => touched.some(([f, x]) => f <= (c.to ?? c.from) && x >= c.from)
++  );
+   if (no(r)) return;
+   const l = xr.of(r, e.doc.length, e.lineBreak), s = e.selection.map(l);
+   i.dispatch({
+@@ -7837,7 +7857,9 @@ const If = ({
+     selection: s
+   });
+ }, Pf = (e) => {
+-  if (!e.docChanged || fi(e)) return e;
++  // Holi: only a user's own edit is corrected; a programmatic change (an
++  // external write landing in the buffer) is applied as written.
++  if (!e.docChanged || fi(e) || e.annotation(Ds.userEvent) === void 0) return e;
+   const t = e.changes, { tables: n } = de(e.startState), o = [];
+   for (const l of n)
+     if (t.touchesRange(l.from - 1, l.from) !== !1 || t.touchesRange(l.to, l.to + 1) !== !1) {

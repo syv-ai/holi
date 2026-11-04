@@ -36,6 +36,8 @@ import {
   setThreadRead,
   setThreadStarred,
   trashThread,
+  unarchiveThread,
+  untrashThread,
   type ListThreadsOptions,
   type MailAddress,
   type MailPage,
@@ -70,6 +72,13 @@ export interface GoogleData {
   setStarred(id: string, starred: boolean): Promise<void>
   archive(id: string): Promise<void>
   trash(id: string): Promise<void>
+  /**
+   * The inverses, for the view's Undo. Nothing is put back into the cache:
+   * `INBOX` added and `TRASH` removed both come back through `history.list`,
+   * so the next list read finds the thread where it was.
+   */
+  unarchive(id: string): Promise<void>
+  untrash(id: string): Promise<void>
   /**
    * The composer's writes, on the same Google-first ordering.
    *
@@ -241,6 +250,20 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       )
     },
 
+    unarchive(id) {
+      return write(
+        () => unarchiveThread(api(), id),
+        () => undefined,
+      )
+    },
+
+    untrash(id) {
+      return write(
+        () => untrashThread(api(), id),
+        () => undefined,
+      )
+    },
+
     sendMail(input) {
       const { draftId, threadId } = input
       return write(
@@ -320,7 +343,7 @@ async function write<T>(send: () => Promise<T>, record: () => void): Promise<T> 
  * Keyed on the *overrides* rather than the resolved calendar ids on purpose:
  * resolving ids costs a request, and the key must be computable offline.
  */
-export function agendaKey(window: AgendaWindow, overrides: CalendarOverrides): string {
+function agendaKey(window: AgendaWindow, overrides: CalendarOverrides): string {
   const choices = Object.keys(overrides)
     .sort()
     .map((id) => `${id}=${overrides[id]! ? '1' : '0'}`)
@@ -328,4 +351,5 @@ export function agendaKey(window: AgendaWindow, overrides: CalendarOverrides): s
   return `${window.timeMin}|${window.timeMax}|${choices}`
 }
 
+/** @public exported for its test */
 export { cacheKey as threadsCacheKey }

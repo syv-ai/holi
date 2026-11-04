@@ -2,7 +2,7 @@
  * The send gate — run as a real child process, over real stdin.
  *
  * This is the one piece of the design that has no second layer behind it. If it
- * returns `defer` for something it should have caught, mail leaves the building
+ * has no opinion on something it should have caught, mail leaves the building
  * with no prompt; if it crashes, the same. So the cases here are chosen for the
  * two ways a gate fails **open**: something it should match that it does not,
  * and an input it did not expect.
@@ -51,7 +51,9 @@ const bash = (command: string) => ({
   tool_input: { command },
 })
 
-const decisionOf = (d: Decision) => d.hookSpecificOutput?.permissionDecision
+/** The hook's decision, or `none` when it printed nothing: no opinion, so the
+ *  normal permission flow decides. */
+const decisionOf = (d: Decision) => d.hookSpecificOutput?.permissionDecision ?? 'none'
 
 describe('the send gate asks', () => {
   it('asks for a bare-name send', async () => {
@@ -149,10 +151,11 @@ describe('the send gate asks', () => {
   })
 })
 
-describe('the send gate defers', () => {
-  // `defer` removes the hook's opinion and restores the normal permission flow.
+describe('the send gate has no opinion', () => {
+  // No output is no opinion, and the normal permission flow decides. Not
+  // `defer`, which Claude Code reads as "pause for someone outside".
   // Returning `allow` here would silently widen every other command the agent runs.
-  it('defers the undoable writes', async () => {
+  it('passes on the undoable writes', async () => {
     for (const command of [
       'holi google archive t1',
       'holi google trash t1',
@@ -160,24 +163,24 @@ describe('the send gate defers', () => {
       'holi google mark-read t1',
       'holi google unschedule ev-1',
     ]) {
-      expect(decisionOf(await decide(bash(command)))).toBe('defer')
+      expect(decisionOf(await decide(bash(command)))).toBe('none')
     }
   })
 
-  it('defers the reads', async () => {
-    expect(decisionOf(await decide(bash("holi google search 'is:unread'")))).toBe('defer')
-    expect(decisionOf(await decide(bash('holi google agenda')))).toBe('defer')
+  it('passes on the reads', async () => {
+    expect(decisionOf(await decide(bash("holi google search 'is:unread'")))).toBe('none')
+    expect(decisionOf(await decide(bash('holi google agenda')))).toBe('none')
   })
 
-  it('defers an unrelated command that merely contains the word send', async () => {
+  it('passes on an unrelated command that merely contains the word send', async () => {
     // The obvious substring match. `grep send notes.md` is not a send, and a
     // gate that prompts on it teaches the user to click through prompts.
-    expect(decisionOf(await decide(bash('grep send notes.md')))).toBe('defer')
-    expect(decisionOf(await decide(bash('git send-email --help')))).toBe('defer')
-    expect(decisionOf(await decide(bash('echo "I will send this later"')))).toBe('defer')
+    expect(decisionOf(await decide(bash('grep send notes.md')))).toBe('none')
+    expect(decisionOf(await decide(bash('git send-email --help')))).toBe('none')
+    expect(decisionOf(await decide(bash('echo "I will send this later"')))).toBe('none')
   })
 
-  it('defers a non-Bash tool', async () => {
+  it('passes on a non-Bash tool', async () => {
     expect(
       decisionOf(
         await decide({
@@ -186,12 +189,12 @@ describe('the send gate defers', () => {
           tool_input: { file_path: '/tmp/holi google send' },
         }),
       ),
-    ).toBe('defer')
+    ).toBe('none')
   })
 })
 
 describe('the send gate fails closed', () => {
-  // A gate that crashes into `defer` is a gate that opens. Every unexpected
+  // A gate that crashes into no opinion is a gate that opens. Every unexpected
   // input has to land on `ask`, because the cost of a needless prompt is a
   // click and the cost of a missed one is an email.
   it('asks when stdin is not JSON', async () => {
@@ -250,7 +253,7 @@ describe('sending an existing draft', () => {
 
   it('does not fire on a draft subcommand, which reaches nobody', async () => {
     expect(decisionOf(await decide(bash('holi google draft --to ada@syv.ai --subject x')))).toBe(
-      'defer',
+      'none',
     )
   })
 })
@@ -289,15 +292,15 @@ describe('the claude.ai Gmail connector', () => {
 
   it('has no opinion on a connector draft, which reaches nobody', async () => {
     // This gates what cannot be undone, not what it dislikes.
-    expect(decisionOf(await decide(mcp('mcp__claude_ai_Gmail__create_draft')))).toBe('defer')
+    expect(decisionOf(await decide(mcp('mcp__claude_ai_Gmail__create_draft')))).toBe('none')
   })
 
   it('has no opinion on reading mail through a connector', async () => {
-    expect(decisionOf(await decide(mcp('mcp__claude_ai_Gmail__search_threads')))).toBe('defer')
+    expect(decisionOf(await decide(mcp('mcp__claude_ai_Gmail__search_threads')))).toBe('none')
   })
 
   it('ignores an unrelated MCP server entirely', async () => {
-    expect(decisionOf(await decide(mcp('mcp__azure_devops__create_pr')))).toBe('defer')
+    expect(decisionOf(await decide(mcp('mcp__azure_devops__create_pr')))).toBe('none')
   })
 
   /**
@@ -324,7 +327,7 @@ describe('the claude.ai Gmail connector', () => {
     // The prompt this gate raises is about mail reaching a person. Asking it of
     // a chat message would be a confusing lie, not a cautious win.
     for (const name of ['mcp__slack__send_message', 'mcp__azure_devops__resend_webhook']) {
-      expect(decisionOf(await decide(mcp(name))), name).toBe('defer')
+      expect(decisionOf(await decide(mcp(name))), name).toBe('none')
     }
   })
 })

@@ -16,6 +16,8 @@
  * Shell's add-vault gesture.
  */
 import { atom } from 'jotai'
+import { flushSync } from 'react-dom'
+import { flushAllBuffers, freezeBuffers } from '@/lib/buffer-registry'
 import { emptyWorkspace, workspaceAtom } from './panes'
 import { leaveReasonsAtom } from './plugins'
 import { activeRemoteAtom } from './vaults'
@@ -25,19 +27,31 @@ export type LeavingVault = { kind: 'switch'; remote: string } | { kind: 'add' } 
 /** The departure awaiting confirmation, or null. */
 export const leavingVaultAtom = atom<LeavingVault>(null)
 
-/** The switch itself, once confirmed or when nothing needed asking. */
-export const applyVaultSwitchAtom = atom(null, (_get, set, remote: string): void => {
+/**
+ * The switch itself, once confirmed or when nothing needed asking. What was
+ * typed goes to disk first, in the vault it was typed in: emptying the
+ * workspace unmounts the editors, and after that they can no longer be asked.
+ */
+export const applyVaultSwitchAtom = atom(null, async (_get, set, remote: string): Promise<void> => {
   set(leavingVaultAtom, null)
-  set(workspaceAtom, emptyWorkspace())
-  set(activeRemoteAtom, remote)
+  const release = freezeBuffers()
+  try {
+    await flushAllBuffers()
+    flushSync(() => {
+      set(workspaceAtom, emptyWorkspace())
+      set(activeRemoteAtom, remote)
+    })
+  } finally {
+    release()
+  }
 })
 
 /** Switch to `remote`, asking first when leaving would cost something. */
-export const switchVaultAtom = atom(null, (get, set, remote: string): void => {
+export const switchVaultAtom = atom(null, async (get, set, remote: string): Promise<void> => {
   if (remote === get(activeRemoteAtom)) return
   if (get(leaveReasonsAtom).length > 0) {
     set(leavingVaultAtom, { kind: 'switch', remote })
     return
   }
-  set(applyVaultSwitchAtom, remote)
+  await set(applyVaultSwitchAtom, remote)
 })

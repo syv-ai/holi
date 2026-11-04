@@ -17,6 +17,11 @@ if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => 
 // top, `scrollIntoView` to jump to a heading — and without these a section
 // change throws instead of scrolling nowhere.
 if (!Element.prototype.scrollTo) Element.prototype.scrollTo = () => {}
+// jsdom has no canvas without the native `canvas` package, and says so on
+// every `getContext` with a logged "Not implemented" error; anything that asks
+// for one must already cope with "no context", so answer that quietly.
+HTMLCanvasElement.prototype.getContext = (() =>
+  null) as typeof HTMLCanvasElement.prototype.getContext
 globalThis.ResizeObserver ??= class {
   observe() {}
   unobserve() {}

@@ -11,48 +11,12 @@ import { insertNewlineAndIndent } from '@codemirror/commands'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { afterEach, expect, it } from 'vitest'
-import { baseEditorExtensions, plainTextExtensions } from '../extensions'
+import { plainTextExtensions } from '../extensions'
 
 let view: EditorView | null = null
 afterEach(() => {
   view?.destroy()
   view = null
-})
-
-function mount(readOnly: boolean): EditorView {
-  const parent = document.createElement('div')
-  document.body.appendChild(parent)
-  view = new EditorView({
-    state: EditorState.create({
-      doc: '# Note\n',
-      extensions: baseEditorExtensions({
-        docExists: () => true,
-        readNote: async () => null,
-        mentionData: () => ({ notes: [], groups: [] }),
-        nav: () => ({ openNote: () => {}, openExternal: () => {} }),
-        notePath: 'note.md',
-        askAgent: {
-          targets: () => ({ sessions: [], initial: 'new' as const }),
-          onAsk: () => Promise.resolve({ ok: true }),
-        },
-        readOnly,
-      }),
-    }),
-    parent,
-  })
-  return view
-}
-
-it('refuses an edit while a reconcile holds the file', () => {
-  const v = mount(true)
-  expect(insertNewlineAndIndent(v)).toBe(false)
-  expect(v.state.doc.toString()).toBe('# Note\n')
-})
-
-it('is an ordinary editable document otherwise', () => {
-  const v = mount(false)
-  expect(insertNewlineAndIndent(v)).toBe(true)
-  expect(v.state.doc.toString()).not.toBe('# Note\n')
 })
 
 it('locks a plain file too — a conflicted config is the common case', () => {

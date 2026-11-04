@@ -41,6 +41,7 @@ export function vaultTransforms(
  * Taken from `VAULT_SETTING_DEFAULTS` so the seed, onboarding and this const
  * cannot disagree. `archive-done` is **off**: a transform that rearranges
  * someone's work is opt-in.
+ * @public exported for its test
  */
 export const DEFAULT_HOOKS: HookSettings = { ...VAULT_SETTING_DEFAULTS.hooks }
 

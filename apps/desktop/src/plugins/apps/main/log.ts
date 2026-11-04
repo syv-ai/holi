@@ -62,7 +62,10 @@ export function writeAppLog(
   return batch.written
 }
 
-/** Write what is gathering for the app's log now; resolves once written. */
+/**
+ * Write what is gathering for the app's log now; resolves once written.
+ * @public exported for its test
+ */
 export function flushAppLog(root: string, bundle: string): Promise<void> {
   const batch = batches.get(join(root, `${bundle}/${APP_LOG_FILE}`))
   if (batch === undefined) return Promise.resolve()

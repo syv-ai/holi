@@ -7,12 +7,8 @@
  */
 import { fileKind } from '@holi/shared'
 import { atom } from 'jotai'
-import { flushAllBuffers } from '../lib/buffer-registry'
-import { trpc } from '../lib/trpc'
-import { fileHistoryAtom } from './file-history'
+import { trpc } from '@/lib/trpc'
 import { openSurface, workspaceAtom } from './panes'
-import { drawerOpenAtom } from './right-drawer'
-import { activeRemoteAtom } from './vaults'
 
 /** One commit that touched the open file: the git `Commit` shape. */
 export interface Version {
@@ -37,6 +33,7 @@ export interface Version {
  * Keyed off the workspace's active tab, NOT `activeDocAtom`: that atom follows a
  * note being *opened*, not a tab being *focused*, so switching between open tabs
  * would leave the panel stale.
+ * @public exported for its test
  */
 export const historyTargetPathAtom = atom<string | null>((get) => {
   const w = get(workspaceAtom)
@@ -48,75 +45,10 @@ export const historyTargetPathAtom = atom<string | null>((get) => {
 })
 
 /** A file's before/after at a commit, fed to the merge view as a diff. */
-export interface FileDiff {
+interface FileDiff {
   before: string
   after: string
 }
-
-/** History's drawer, one of the right edge's (`right-drawer.ts`). */
-export const historyOpenAtom = drawerOpenAtom('history')
-
-export const versionsAtom = atom<Version[]>([])
-/**
- * How many commits touched the file, for the panel header. Not
- * `versions.length`: the list is capped (`HISTORY_LIMIT`). It is the frontmatter
- * header's `v.N`, read from the same `fileHistoryAtom`, so the two agree. Null
- * until it arrives.
- */
-export const revisionCountAtom = atom<number | null>((get) => {
-  const path = get(historyTargetPathAtom)
-  if (path === null) return null
-  const history = get(fileHistoryAtom(path))
-  return history === undefined ? null : (history?.revisions ?? 0)
-})
-export const selectedShaAtom = atom<string | null>(null)
-/** The selected commit's diff for the focused file, or null while none is picked
- *  / still loading. */
-export const diffAtom = atom<FileDiff | null>(null)
-
-// ------------------------------------------------------------------- write atoms
-
-export const loadVersionsAtom = atom(null, async (get, set) => {
-  const path = get(historyTargetPathAtom)
-  if (!path) return
-  const versions = await trpc.history.list.query({ path })
-  // Focus may have moved to another file while this was in flight.
-  if (get(historyTargetPathAtom) !== path) return
-  set(versionsAtom, versions)
-})
-
-/** Load the diff a commit made to the focused file (vs its parent). */
-export const loadDiffAtom = atom(null, async (get, set, sha: string) => {
-  const path = get(historyTargetPathAtom)
-  if (!path) return
-  set(selectedShaAtom, sha)
-  set(diffAtom, null)
-  const diff = await trpc.history.fileDiff.query({ path, sha })
-  // The file or the selection may have changed while this was in flight.
-  if (get(selectedShaAtom) === sha && get(historyTargetPathAtom) === path) set(diffAtom, diff)
-})
-
-/**
- * Restore writes the old content back as a **new commit**, never a rewrite of
- * history. Flush the live buffer first so the editor's external-write reconcile
- * reloads the restored text cleanly (clean buffer → silent reload) rather than
- * 3-way-merging it. The list is refetched: the restore just minted a commit.
- */
-export const restoreVersionAtom = atom(null, async (get, set, sha: string) => {
-  const path = get(historyTargetPathAtom)
-  const remote = get(activeRemoteAtom)
-  if (!path || !remote) return
-  await flushAllBuffers()
-  await trpc.history.restore.mutate({ remote, path, sha })
-  await set(loadVersionsAtom)
-})
-
-/** Opening a different note must not leave the last one's versions on screen. */
-export const resetHistoryAtom = atom(null, (_get, set) => {
-  set(versionsAtom, [])
-  set(selectedShaAtom, null)
-  set(diffAtom, null)
-})
 
 // -------------------------------------------------- the whole-vault history tab
 // Every commit in the vault, and for the selected one every file it changed
@@ -126,40 +58,15 @@ export const resetHistoryAtom = atom(null, (_get, set) => {
 // collapsible, so several are on screen at once. Keyed by path within the
 // commit, and dropped wholesale when the commit changes.
 
-export const vaultCommitsAtom = atom<Version[]>([])
-export const selectedCommitShaAtom = atom<string | null>(null)
-export const commitFilesAtom = atom<string[]>([])
+const vaultCommitsAtom = atom<Version[]>([])
+const selectedCommitShaAtom = atom<string | null>(null)
+const commitFilesAtom = atom<string[]>([])
 /** Path → diff, for the selected commit only. A path absent from it is one whose
  *  diff has not arrived yet. */
-export const commitDiffsAtom = atom<Record<string, FileDiff>>({})
-
-export const loadVaultLogAtom = atom(null, async (get, set) => {
-  const commits = await trpc.history.log.query()
-  set(vaultCommitsAtom, commits)
-  // Opened on a commit: select it now the log holds it. One older than the
-  // log reaches stays unselected rather than guessed at.
-  const focus = get(historyFocusShaAtom)
-  if (focus === null) return
-  set(historyFocusShaAtom, null)
-  const match = commitNamed(commits, focus)
-  if (match !== undefined) await set(selectCommitAtom, match.sha)
-})
-
-/** One file's diff within the selected commit. Each collapsible asks for its
- *  own, so a commit touching thirty files fetches thirty times in parallel
- *  rather than serially through a selection. */
-export const loadCommitDiffAtom = atom(null, async (get, set, path: string) => {
-  const sha = get(selectedCommitShaAtom)
-  if (sha === null) return
-  const diff = await trpc.history.fileDiff.query({ path, sha })
-  // The commit may have changed while this was in flight; its diffs are gone and
-  // this one belongs to none of them.
-  if (get(selectedCommitShaAtom) !== sha) return
-  set(commitDiffsAtom, (byPath) => ({ ...byPath, [path]: diff }))
-})
+const commitDiffsAtom = atom<Record<string, FileDiff>>({})
 
 /** Pick a commit: list its files and drop the last commit's diffs. */
-export const selectCommitAtom = atom(null, async (_get, set, sha: string) => {
+const selectCommitAtom = atom(null, async (_get, set, sha: string) => {
   set(selectedCommitShaAtom, sha)
   set(commitFilesAtom, [])
   set(commitDiffsAtom, {})
@@ -186,11 +93,4 @@ export const openCommitInHistoryAtom = atom(null, (get, set, sha: string) => {
   const match = open ? commitNamed(get(vaultCommitsAtom), sha) : undefined
   if (match !== undefined) void set(selectCommitAtom, match.sha)
   else set(historyFocusShaAtom, sha)
-})
-
-export const resetVaultLogAtom = atom(null, (_get, set) => {
-  set(vaultCommitsAtom, [])
-  set(selectedCommitShaAtom, null)
-  set(commitFilesAtom, [])
-  set(commitDiffsAtom, {})
 })

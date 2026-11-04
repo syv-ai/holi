@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { holiLink, holiLinkInArgv, parseHoliLink } from '../src/holi-link'
+import { holiLink, holiLinkInArgv, isHoliLinkable, parseHoliLink } from '../src/holi-link'
 
 const parsed = (raw: string) => {
   const result = parseHoliLink(raw)
@@ -75,5 +75,18 @@ describe('holiLinkInArgv', () => {
       'HOLI://open?vault=a/b',
     )
     expect(holiLinkInArgv(['/Applications/Holi', '.'])).toBeNull()
+  })
+})
+
+describe('isHoliLinkable', () => {
+  test('offers a link only where a teammate could open one', () => {
+    expect(isHoliLinkable('notes/plan.md')).toBe(true)
+    expect(isHoliLinkable('task.fix.local.md')).toBe(false)
+    expect(isHoliLinkable('.env')).toBe(false)
+    expect(isHoliLinkable('.holi/state/inbox.local.json')).toBe(false)
+    expect(isHoliLinkable('node_modules/x/readme.md')).toBe(false)
+    for (const path of ['notes/plan.md', 'task.fix.local.md', '.env']) {
+      expect(isHoliLinkable(path)).toBe(parseHoliLink(holiLink({ remote: 'a/b', path })).ok)
+    }
   })
 })

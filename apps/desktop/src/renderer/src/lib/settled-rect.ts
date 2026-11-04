@@ -2,7 +2,8 @@
  * Where a tab is drawn, once it has finished drawing: `holi docs screenshot`'s
  * question to the renderer (main captures the rect it gets back).
  *
- * A pane's body carries the `data-tab` of the tab it shows (`PaneView`). The
+ * A pane's body carries the `data-tab` of the tab it shows (`split-view.tsx`),
+ * which for a file is its path. The
  * tab counts as drawn when that body is on screen, nothing inside it says
  * `aria-busy` (a vault app's frame does until its document has loaded), the
  * fonts are in and its arrival motion has run, and then a short settle more,

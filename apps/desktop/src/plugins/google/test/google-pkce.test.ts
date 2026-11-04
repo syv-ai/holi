@@ -34,9 +34,7 @@ describe('challengeFor', () => {
   it('is the base64url SHA-256 of the verifier', () => {
     const verifier = createVerifier()
 
-    expect(challengeFor(verifier)).toBe(
-      createHash('sha256').update(verifier).digest('base64url'),
-    )
+    expect(challengeFor(verifier)).toBe(createHash('sha256').update(verifier).digest('base64url'))
   })
 
   it('is url-safe and unpadded — no +, / or = to corrupt a query parameter', () => {

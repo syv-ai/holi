@@ -6,7 +6,7 @@
  * The gate matches Bash broadly and decides for itself, rather than relying on
  * an `if` condition: the agent can spell the command three ways, and a
  * condition that misses one fails OPEN while still reading like protection.
- * The hook defers on everything it does not recognise, so the cost is one
+ * The hook has no opinion on anything it does not recognise, so the cost is one
  * child process per Bash call. The same gate covers Gmail's MCP tools, for a
  * vault whose user re-enables a claude.ai connector.
  *

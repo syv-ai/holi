@@ -24,7 +24,7 @@ export interface Updater {
   /** Quit and install the downloaded update after the normal quit teardown. */
   installOnQuit(): boolean
   /** Quit and install the downloaded update after explicit restart confirmation. */
-  install(): void
+  install(): Promise<boolean>
   setEnabled(enabled: boolean): Promise<UpdateStatus>
   setChannel(channel: UpdateChannel): Promise<UpdateStatus>
   dispose(): void
@@ -157,21 +157,21 @@ export function createUpdater(deps: {
       autoUpdater.quitAndInstall()
       return true
     },
-    install() {
-      if (!status.supported || status.state !== 'ready') return
+    async install() {
+      if (!status.supported || status.state !== 'ready') return false
       // The person clicked "Restart to update": that is the confirmation. The
       // vault is flushed, committed and pushed first, as on any quit.
-      void deps
-        .beforeInstall()
-        .catch((err) => {
-          console.error('[updates] teardown before install failed:', err)
-          return true
-        })
-        .then((go) => {
-          if (go && status.state === 'ready' && installChannel === status.channel) {
-            autoUpdater.quitAndInstall()
-          }
-        })
+      let go: boolean
+      try {
+        go = await deps.beforeInstall()
+      } catch (err) {
+        console.error('[updates] teardown before install failed:', err)
+        go = true
+      }
+      if (!go || switching || status.state !== 'ready' || installChannel !== status.channel)
+        return false
+      autoUpdater.quitAndInstall()
+      return true
     },
     setChannel(channel) {
       const request = channelQueue.then(() => switchChannel(channel))

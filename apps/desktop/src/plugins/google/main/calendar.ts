@@ -9,7 +9,7 @@ import { fetchEventColors } from './event-colors'
 const BASE = 'https://www.googleapis.com/calendar/v3'
 
 /** The user's own answer to an invitation. */
-export type RsvpStatus = 'needsAction' | 'tentative' | 'accepted' | 'declined'
+type RsvpStatus = 'needsAction' | 'tentative' | 'accepted' | 'declined'
 
 /**
  * What kind of block this is.
@@ -18,7 +18,7 @@ export type RsvpStatus = 'needsAction' | 'tentative' | 'accepted' | 'declined'
  * working day and they are a setting rather than an event, so they are filtered
  * out entirely.
  */
-export type EventKind = 'default' | 'outOfOffice' | 'focusTime' | 'birthday' | 'fromGmail'
+type EventKind = 'default' | 'outOfOffice' | 'focusTime' | 'birthday' | 'fromGmail'
 
 export interface CalendarEvent {
   id: string
@@ -109,7 +109,7 @@ interface RawEvent {
   }[]
 }
 
-export interface CalendarListEntry {
+interface CalendarListEntry {
   id: string
   summary: string
   /** The name *the user* gave this calendar. Google Calendar displays it in
@@ -148,6 +148,7 @@ export type CalendarOverrides = Record<string, boolean>
  * **`selected` is honoured**: it is the checkbox state in the user's own
  * Google Calendar UI, so Holi starts from the set they already curated rather
  * than every calendar they have ever been added to.
+ * @public exported for its test
  */
 export async function listCalendars(api: GoogleApi): Promise<CalendarListEntry[]> {
   const items = await api.getAll<CalendarListEntry>(
@@ -190,11 +191,6 @@ export async function resolveCalendars(
     color: calendar.backgroundColor ?? null,
     enabled: overrides[calendar.id] ?? isMine(calendar),
   }))
-}
-
-/** The ids an agenda should actually fetch. */
-export function enabledCalendarIds(calendars: CalendarChoice[]): string[] {
-  return calendars.filter((c) => c.enabled).map((c) => c.id)
 }
 
 export interface AgendaWindow {

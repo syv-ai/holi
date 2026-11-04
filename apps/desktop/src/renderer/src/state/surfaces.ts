@@ -2,13 +2,13 @@
  * Opening a surface by name, and closing the tabs of surfaces that are gone
  * (docs/features/tabs-panes.md). The registry itself is `state/plugins.ts`.
  */
-import { atom, useAtomValue, useSetAtom, type Atom } from 'jotai'
-import { useEffect } from 'react'
-import { tabForPath } from '@/lib/folder-documents'
+import { atom, type Atom } from 'jotai'
+import { tabForPath } from '@/state/folder-documents'
 import { openHomeAtom } from './home'
+import { openTabAtom } from './shell-tabs'
+import { tabForPath as shellTabForPath, type TabDescriptor } from './tab-descriptor'
 import {
   activeTab,
-  closeSurfaceTabs,
   closeSurfaceTabsExcept,
   closeTab,
   openInNewPane,
@@ -20,7 +20,7 @@ import {
   workspaceAtom,
   type Tab,
 } from './panes'
-import { folderClaimsAtom, surfacesAtom } from './plugins'
+import { folderClaimsAtom } from './plugins'
 import { snapshotAtom } from './vaults'
 
 /**
@@ -29,9 +29,19 @@ import { snapshotAtom } from './vaults'
  * land wherever `home` says.
  */
 export const openSurfaceAtom = atom(null, (_get, set, surface: string, id?: string): void => {
-  if (surface === 'home') void set(openHomeAtom)
-  else set(workspaceAtom, (w) => openSurface(w, surface, id))
+  if (surface === 'home') return void set(openHomeAtom)
+  set(workspaceAtom, (w) => openSurface(w, surface, id))
+  // The tabs the shell draws are `shell-tabs.ts`'s: a vault app by its bundle,
+  // any other surface by name. `workspaceAtom` above is the pane workspace
+  // `surfaceTabIdsAtom` reads; this is what a person sees open.
+  set(openTabAtom, shellSurfaceTab(surface, id))
 })
+
+/** The shell tab a surface opens as. */
+function shellSurfaceTab(surface: string, id?: string): TabDescriptor {
+  if (surface === 'app' && id !== undefined) return { kind: 'vault-app', path: id }
+  return id === undefined ? { kind: 'surface', surface } : { kind: 'surface', surface, id }
+}
 
 /** Close the active pane's tab onto `surface` with `id`, if it has one: an
  *  app's "close tab" once its bundle is gone. */
@@ -90,24 +100,30 @@ export function activeSurfaceIdAtom(surface: string): Atom<string | null> {
   return made
 }
 
-/** A surface's tabs close when it leaves the registry, as when its plugin is
- *  turned off. Mounted once, in the shell. */
-export function useSurfaceTabs(): void {
-  const surfaces = useAtomValue(surfacesAtom)
-  const setWorkspace = useSetAtom(workspaceAtom)
-  useEffect(() => {
-    const live = new Set(surfaces.keys())
-    setWorkspace((w) => closeSurfaceTabs(w, live))
-  }, [surfaces, setWorkspace])
-}
-
 /** The tab a vault path opens as: a folder document's surface tab (a vault
- *  app), or a note tab. */
+ *  app), or a note tab.
+ *
+ * @public
+ */
 export const tabForPathAtom = atom((get): ((path: string) => Tab) => {
   const claims = get(folderClaimsAtom)
   const snapshot = get(snapshotAtom)
   const paths = new Set([...snapshot.docs, ...snapshot.files].map((f) => f.path))
   return (path) => tabForPath(claims, path, (p) => paths.has(p))
+})
+
+/** The shell tab a vault path opens as: a plugin's folder document (a
+ *  community plugin's deck) as its surface, a vault app as its app, anything
+ *  else as the document. A vault app keeps its own tab kind, which draws its
+ *  header around the surface. */
+export const shellTabForPathAtom = atom((get): ((path: string) => TabDescriptor) => {
+  const toTab = get(tabForPathAtom)
+  return (path) => {
+    const tab = toTab(path)
+    return tab.kind === 'surface' && tab.surface !== 'app' && tab.id !== undefined
+      ? { kind: 'surface', surface: tab.surface, id: tab.id }
+      : shellTabForPath(path)
+  }
 })
 
 /**
@@ -119,6 +135,8 @@ export const openPathAtom = atom(
   null,
   (get, set, path: string, how: 'preview' | 'pinned' | 'pane' = 'pinned'): void => {
     const tab = get(tabForPathAtom)(path)
+    // The shell's tabs, as for a surface; `pane` is beside the focused one.
+    set(openTabAtom, get(shellTabForPathAtom)(path), { beside: how === 'pane' })
     set(workspaceAtom, (w) =>
       how === 'pane'
         ? openInNewPane(w, tab)

@@ -7,16 +7,11 @@
 import { useAtomValue } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
 import { releaseTag } from '@holi/shared'
-import { activeRemoteAtom, type PluginStore } from '@/plugin-api'
-import { Button, Dialog } from '@/primitives'
-import {
-  communityCap,
-  refreshRows,
-  refreshUpdates,
-  rowsAtom,
-  setupLogsAtom,
-  type PluginRow,
-} from './state'
+import { activeRemoteAtom, cn, type PluginStore } from '@/plugin-api'
+import { Button } from '@/components/ui/button'
+import { DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { communityCap } from './community-cap'
+import { refreshRows, refreshUpdates, rowsAtom, setupLogsAtom, type PluginRow } from './state'
 
 /** The command as a person would type it. */
 const shown = (argv: readonly string[]) =>
@@ -30,7 +25,7 @@ type Step =
  * and the two commands it runs. "Allow and set up" consents and runs setup,
  * its output shown as it comes.
  */
-export function ConsentDialog({
+function ConsentDialog({
   row,
   store,
   onClose,
@@ -44,17 +39,21 @@ export function ConsentDialog({
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const log = useAtomValue(setupLogsAtom)[row.id] ?? []
-  // Which of its commands the agent did not get, once the rows are read again.
-  const commandsNote =
-    useAtomValue(rowsAtom)?.rows.find((r) => r.id === row.id)?.commandsNote ?? null
+  // Which of its commands the agent did not get, and what its readiness check
+  // said, once the rows are read again.
+  const current = useAtomValue(rowsAtom)?.rows.find((r) => r.id === row.id)
+  const commandsNote = current?.commandsNote ?? null
+  const failedCheck = current?.check?.ok === false ? current.check.hint : null
   const [step, setStep] = useState<Step>({ kind: 'ask' })
-  const logEnd = useRef<HTMLDivElement>(null)
+  const logBox = useRef<HTMLPreElement>(null)
   const install = row.install
 
-  // Braced: Chromium's scrollIntoView now returns a promise, and an effect
-  // that returns anything but a cleanup function breaks the tree.
+  // The log follows its newest line by scrolling itself, never with
+  // scrollIntoView: that scrolls every ancestor too, the window included,
+  // and slides the whole app up behind the dialog.
   useEffect(() => {
-    void logEnd.current?.scrollIntoView({ block: 'end' })
+    const box = logBox.current
+    if (box !== null) box.scrollTop = box.scrollHeight
   }, [log.length])
 
   const allow = async () => {
@@ -68,7 +67,17 @@ export function ConsentDialog({
         setStep({ kind: 'failed', message: 'Setup did not finish.' })
         return
       }
-      await onReady?.()
+      try {
+        await onReady?.()
+      } catch (err) {
+        // Setup did finish: only the step after it, in this vault, did not.
+        const why = err instanceof Error ? err.message : String(err)
+        setStep({
+          kind: 'failed',
+          message: `${row.name} is set up, but could not be turned on in this vault: ${why}`,
+        })
+        return
+      }
       setStep({ kind: 'done' })
     } catch (err) {
       setStep({ kind: 'failed', message: err instanceof Error ? err.message : String(err) })
@@ -79,12 +88,14 @@ export function ConsentDialog({
 
   return (
     <>
-      <Dialog.Header>
-        {step.kind === 'ask' ? `Run ${row.name} on this machine?` : `Setting up ${row.name}`}
-      </Dialog.Header>
-      <Dialog.Body>
+      <DialogHeader>
+        <DialogTitle>
+          {step.kind === 'ask' ? `Run ${row.name} on this machine?` : `Setting up ${row.name}`}
+        </DialogTitle>
+      </DialogHeader>
+      <div className="flex min-w-0 flex-col gap-4">
         {step.kind === 'ask' ? (
-          <div className="grid gap-3 text-xs leading-relaxed text-muted-foreground">
+          <div className="grid gap-3 text-sm text-pretty text-muted-foreground">
             <p>
               {install?.kind === 'release' ? (
                 <>
@@ -106,7 +117,7 @@ export function ConsentDialog({
             {row.setup !== null && (
               <div>
                 <p>Once now, to set it up:</p>
-                <pre className="mt-1 whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-[11px] text-foreground">
+                <pre className="mt-1 whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-xs text-foreground">
                   {shown(row.setup)}
                 </pre>
               </div>
@@ -121,7 +132,7 @@ export function ConsentDialog({
                   ].join(' or ')}
                   :
                 </p>
-                <pre className="mt-1 whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-[11px] text-foreground">
+                <pre className="mt-1 whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-xs text-foreground">
                   {shown(row.serve)}
                 </pre>
               </div>
@@ -145,22 +156,33 @@ export function ConsentDialog({
           </div>
         ) : (
           <div className="grid gap-2">
-            <p className="text-xs text-muted-foreground">
+            <p
+              role={step.kind === 'failed' ? 'alert' : 'status'}
+              className={cn(
+                'text-xs text-pretty break-words',
+                step.kind === 'failed' ? 'text-destructive' : 'text-muted-foreground',
+              )}
+            >
               {step.kind === 'setup' && 'Running setup…'}
-              {step.kind === 'done' && `${row.name} is ready.`}
+              {step.kind === 'done' &&
+                (failedCheck === null
+                  ? `${row.name} is ready.`
+                  : `${row.name} is set up, but cannot work yet. ${failedCheck}`)}
               {step.kind === 'done' && commandsNote !== null && ` ${commandsNote}`}
               {step.kind === 'failed' && step.message}
             </p>
             {log.length > 0 && (
-              <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+              <pre
+                ref={logBox}
+                className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-xs leading-relaxed text-muted-foreground"
+              >
                 {log.join('\n')}
-                <div ref={logEnd} />
               </pre>
             )}
           </div>
         )}
-      </Dialog.Body>
-      <Dialog.Footer>
+      </div>
+      <DialogFooter>
         {step.kind === 'ask' ? (
           <>
             <Button variant="ghost" size="sm" onClick={onClose}>
@@ -175,7 +197,7 @@ export function ConsentDialog({
             {step.kind === 'failed' ? 'Close' : 'Done'}
           </Button>
         )}
-      </Dialog.Footer>
+      </DialogFooter>
     </>
   )
 }
@@ -188,12 +210,12 @@ export interface InstallFlow {
 }
 
 /** Fetch the plugin at `path` in `repo` at `version` (the newest when
- *  absent), then ask. Resolves to an error message, or null when the dialog is
- *  up. */
+ *  absent), then ask, running `onReady` with the fetched row once it is set
+ *  up. Resolves to an error message, or null when the dialog is up. */
 export async function installAndAsk(
   flow: InstallFlow,
   args: { repo: string; path: string; version?: string; id?: string },
-  onReady?: () => Promise<unknown>,
+  onReady?: (row: PluginRow) => Promise<unknown>,
 ): Promise<string | null> {
   try {
     const version =
@@ -208,7 +230,7 @@ export async function installAndAsk(
       ...(args.id === undefined ? {} : { expectId: args.id }),
     })
     await refreshRows(flow.remote, flow.store)
-    askToRun(flow, row, onReady)
+    askToRun(flow, row, onReady === undefined ? undefined : () => onReady(row))
     return null
   } catch (err) {
     return err instanceof Error ? err.message : String(err)
@@ -222,7 +244,7 @@ export async function installAndAsk(
 export function updatePlugin(flow: InstallFlow, row: PluginRow, version: string) {
   const from = row.install?.kind === 'release' ? row.install : row.pin
   if (from === null || from === undefined)
-    return Promise.resolve('this plugin is not from a release')
+    return Promise.resolve('This plugin is not from a release.')
   const pinned = row.pin !== null
   return installAndAsk(
     flow,

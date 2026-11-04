@@ -135,8 +135,7 @@ export interface ConflictRegion {
  * into. The editor keeps the buffer, stops autosaving it, and shows the banner.
  */
 export type Merge3Result =
-  | { kind: 'merged'; text: string }
-  | { kind: 'conflict'; regions: ConflictRegion[] }
+  { kind: 'merged'; text: string } | { kind: 'conflict'; regions: ConflictRegion[] }
 
 /**
  * `base` is the text last loaded or saved, `mine` is the buffer, `theirs` is
@@ -182,7 +181,7 @@ export function merge3(base: string, mine: string, theirs: string): Merge3Result
   let driftMine = 0
   let driftTheirs = 0
 
-  for (let i = 0; i < all.length; ) {
+  for (let i = 0; i < all.length;) {
     // Greedily grow a group while the next hunk overlaps anything already in
     // it. Two hunks from the same side never overlap, so a group spans both
     // sides exactly when they genuinely disagree about the same lines.

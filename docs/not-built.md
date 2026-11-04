@@ -17,6 +17,51 @@ it.
 
 **A cap on concurrent sessions.** A vault can run any number.
 
+**Shared automations in the cloud.** An automation is one person's and runs on their machine. Work
+that should run once for everyone, with every laptop shut, would be Claude Code's scheduled cloud
+runs against the vault's GitHub repository, its outcome read from its commit. Claude Code drives
+those from its `/schedule` skill against claude.ai, which Holi has no interface to yet
+([scheduled-agents](features/scheduled-agents.md)).
+
+**More ways to send a Holi work.** Only a document, from its Agent menu, today. Each further trigger
+would start the same session under the same per-machine approval:
+
+- **the selection's lines** with the document, which the pane header's slot does not carry yet;
+- **a Claude Code hook**, a session handing work to a Holi, as `holi holis send <holi> <path>`
+  behind a seeded `ask` rule, the person answering in the tab it opens;
+- **the CLI with a prompt** (`holi holis ask <holi> "…"`) and the same as an **MCP tool** for other
+  agents, returning the run's id, its report read in Holi;
+- **a connection**, such as a new mail matching a filter, offered as a notification the person
+  accepts rather than a run that starts unattended.
+
+**A Holi from another vault.** A file here that only names another of the person's vaults and a
+Holi in it (`from: owner/repo#id`), read from that vault each time, its approval still this
+vault's.
+
+**More of Codex.** Codex runs Holis and automations as jobs in the vault
+([agent-sessions](features/agent-sessions.md), Jobs), but not all of what Claude Code's runs do:
+
+- **Codex's app-server** (`codex app-server`): live steering of a running turn (`turn/steer`),
+  thread listing and fork, approvals answered from Holi, and a run that outlives Holi quitting. A
+  follow-up to a job waits for its turn to end and resumes the thread with `codex exec resume`.
+- **Duplicate** of a Codex session, until Holi knows a CLI verb that copies a conversation.
+- **Holi's own commands in a Codex run**: `holi holis report` and the memory commands reach Holi
+  over the bridge, which the run's sandbox, having no network, cannot. A Holi run on Codex works
+  and its turns are recorded, but it cannot report or keep its memory. Any other `Bash(holi …)`
+  rule refuses the run.
+- **Tokens of an interactive Codex session**: its `notify` payload carries none, so only a job's
+  row counts them.
+- **The model of an interactive Codex session**: nothing Codex reports to Holi names it, so its row
+  says Codex, not the model.
+
+**More providers.** opencode, as its core and whatever its hooks allow. Any CLI can be added as a
+harness today, but only as a basic terminal agent: a harness a person adds has no way to declare
+background sessions, jobs or a sandbox, so Holis, automations and Create vault app never run on one,
+and its Duplicate is not offered. Its `holi-signal` reports a turn's end and status, not a turn's
+start (the terminal gives that) nor a question for the person. Test runs only a saved harness, not
+the form's draft. Resume by id works only for CLIs whose conversation ids are UUIDs, since that is
+all `holi-signal --conversation` takes.
+
 **The rest of the inbox.** A banner clicked while Holi had no window open opens Holi, but not the
 entry: the renderer is not listening yet when the click lands, so the entry waits in the inbox. A
 needs-you entry stays after the session is answered, until dismissed. A session that outlives a
@@ -59,8 +104,8 @@ it does not hold back while they are in a session of their own or one waits on t
 and no schedule outranks another.
 
 **More task triggers.** A status change (`doing`, `done`) and a task newly assigned to this
-machine's person. Today `task` is due and overdue only, and an assigned task triggers on every
-machine that runs the schedule, not only its assignee's.
+machine's person. Today `task` is due and overdue only, and an assigned task triggers every
+schedule with a task trigger, not only its assignee's.
 
 ## Vault apps
 
@@ -93,12 +138,6 @@ the editor's link chips, `@` completion, the relink transform and backrefs all m
 existing links need a one-time rewrite, and a relative link breaks when its source file moves where
 a vault-rooted `[[path]]` does not. Undesigned.
 
-**Live preview inside an unfocused table cell.** Cells read as prose (bold, code, links coloured),
-but a wiki-link is not a chip and an image is not drawn. `codemirror-markdown-tables` renders an
-unfocused cell itself from a highlighter, with no decorations, and everything live preview does
-beyond colour is a decoration. Fixing it means patching the package or owning the table widget.
-Worth it only if tables become a common place for links.
-
 **A binary with an unknown extension opens as text.** A `.ttf` shows as replacement characters and
 looks like corruption. Probably a byte sniff rather than a longer extension list.
 
@@ -117,6 +156,49 @@ dialog says to add it first), a copy action in the editor itself (there is no ed
 the palette has it), and telling apart two headings with the same words, which GitHub does with a
 `-1` suffix and a link does not. See [holi-links](features/holi-links.md).
 
+## On the current shell
+
+Main's half of each of these is built and documented on its page; the screens that used it were
+drawn on the previous shell and are not rebuilt yet.
+
+**The links drawer.** `notes.links` (`scanLinks`) answers a note's links in both directions, but
+nothing shows them: there is no "Links to" and "Linked from" beside a note. See
+[wiki-links](features/wiki-links.md).
+
+**The rest of saved links.** The card over a web address written in a note, and a link file's chip
+in the editor. See [links](features/links.md).
+
+**The rest of the browser.** Open in Holi for a saved link, toasts drawn over a page, and find in
+page. See [browser](features/browser.md).
+
+**The frontmatter block.** The summary bar and typed rows above a note, and the raw YAML fallback
+([frontmatter](features/frontmatter.md)). The rich-text editor keeps the block byte for byte and does
+not show it; the schema per file kind (`frontmatterSchema`) is built.
+
+**The Home library.** The tabs and table of recent files, notes, tasks and activity, and the nav
+menu that listed the places that are not files ([home](features/home.md),
+[nav-menu](features/nav-menu.md)). The `home` setting resolves, and an empty pane shows the New tab.
+
+**Vault history and Restore.** The right-hand file drawer, the vault history tab and restoring an
+old version ([history](features/history.md)). A file's history opens as a dialog.
+
+**The rest of the sidebar and the tree.** The Pinned group, the collapsed icon rail, a folder's
+colour and file count, and the emoji icon map on a row and its tab
+([sidebar](features/sidebar.md), [file-tree](features/file-tree.md)).
+
+**The rest of wiki-link chips.** A task's status orb and title, the missing-file tint, an image
+target drawn inline and the hover preview card ([wiki-links](features/wiki-links.md)).
+
+**Merging an outside write into a dirty note.** A change on disk is read back unless local edits are
+pending, which win; the 3-way merge and the conflict banner are not built for notes ([editor](features/editor.md)).
+
+**A vault's theme on screen.** `.holi/settings/theme.css` is seeded, parsed and written, but the
+renderer runs on shadcn's neutral theme and the settings have no Appearance page
+([ui-system](ui-system.md#per-vault-theming)).
+
+**The rest.** The repo's size in the vault picker and the sync panel
+([vaults-sync](features/vaults-sync.md)).
+
 ## Sync
 
 **Git LFS setup.** The large-file hook's message mentions LFS; nothing configures it.
@@ -128,7 +210,7 @@ during a reconcile; the lock covers note tabs only.
 
 **A time-grouped board view** ("Today / This week / Later"), as an option, never a mode to configure.
 
-**A renumber pass** for exhausted ranks. `needsRenumber` exists in the tasks plugin's `shared/rank.ts`;
+**A renumber pass** for exhausted ranks. `needsRenumber` exists in the shared package's `rank.ts`;
 nothing calls it.
 
 **Mail and calendar chips on a board card**, for the Gmail and Calendar links in a task's body.
@@ -136,10 +218,6 @@ nothing calls it.
 **A task that lights up for a recurring event series**, tying reminders to the agenda.
 
 ## PDF
-
-**Note-relative images in a PDF.** cmarker resolves a markdown image's path inside its own
-package, absolute paths included, so no image file exports. Mermaid diagrams do, as raw Typst
-([pdf.md](features/pdf.md)).
 
 **Template distribution across vaults.** Templates are per-vault; a shared brand repo is the
 obvious answer and is not designed.

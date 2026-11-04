@@ -59,7 +59,7 @@ export function openTarget(store: PluginStore, params: unknown): { ok: true } {
 
 /** One bridge call from `bundle`'s code, answered: `open` here, every other
  *  method by main through the app door. */
-export async function answerCall(
+async function answerCall(
   store: PluginStore,
   remote: string | null,
   bundle: string,

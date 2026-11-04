@@ -13,7 +13,7 @@
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
-import { isTaskFilePath, parseTaskFile } from '../shared/task-file'
+import { isTaskFilePath, parseTaskFile } from '@holi/shared'
 import { vaultRelPath } from '@holi/shared'
 import {
   absPathFor,
@@ -27,7 +27,7 @@ const exec = promisify(execFile)
 
 /** Where finished work goes. A prefix rather than a sibling folder per area, so
  *  the original path survives inside it and a task can be found where it was. */
-export const ARCHIVE_DIR = 'archive'
+const ARCHIVE_DIR = 'archive'
 
 /** A task done this morning is still what the user is looking at. Two weeks is
  *  long enough that nobody is mid-thought about it, and short enough that the

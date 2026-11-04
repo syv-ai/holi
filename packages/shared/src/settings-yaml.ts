@@ -16,7 +16,7 @@
  * YAML is a superset of JSON, so a `.json` settings file also parses here.
  */
 import { parseDocument, stringify as stringifyYaml } from 'yaml'
-import type { PluginInfo } from './plugins'
+import { isBuiltInPlugin, type PluginInfo } from './plugins'
 import { PLUGINS_FILE, PLUGINS_LOCAL_FILE, type PluginSettingType } from './plugin-settings'
 import {
   SETTINGS_FILE,
@@ -70,6 +70,9 @@ function legalValues(type: SettingType): string[] {
     return [`Any positive number of bytes. What the pane offers: ${shown}`]
   }
   if (type.kind === 'enum') return [`One of: ${shown}`]
+  if (type.kind === 'agent') {
+    return [`One of: ${shown}`, 'Or the id of an agent added in Settings, General, Agents.']
+  }
   // `home`: the options, a view's name, and any app or file the vault holds.
   return [
     `One of: ${shown}`,
@@ -221,8 +224,7 @@ function pluginLegalValues(type: PluginSettingType): string {
 /** `key: value` at `indent`, as one line or a nested block, each line marked
  *  commented or not: uncommenting is the whole edit. */
 function entryLines(key: string, value: unknown, indent: string, mark: string): string[] {
-  const isEmpty =
-    typeof value === 'object' && value !== null && Object.keys(value).length === 0
+  const isEmpty = typeof value === 'object' && value !== null && Object.keys(value).length === 0
   if (typeof value !== 'object' || value === null || isEmpty) {
     return [`${mark}${indent}${key}: ${inline(value)}`]
   }
@@ -318,14 +320,20 @@ function pluginLines(
 ): string[] {
   const has = Object.prototype.hasOwnProperty.call(values, 'plugins')
   const value = values.plugins
+  // An older Holi's pin of a built-in or retired part is dropped, as if
+  // never written.
   const answered =
     has && typeof value === 'object' && value !== null && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
+      ? Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).filter(
+            ([id]) => !isBuiltInPlugin(id, known),
+          ),
+        )
       : null
   const out: string[] = ['', '# ── Plugins']
 
   if (target === 'local') {
-    if (!has) return []
+    if (!has || (answered !== null && Object.keys(answered).length === 0)) return []
     out.push(
       ...wrap(
         `false turns a plugin off on this machine alone. Only ${PLUGINS_FILE} turns one on.`,
@@ -351,7 +359,9 @@ function pluginLines(
   const unset = (id: string, on: boolean) =>
     live ? `  # ${id}: ${inline(on)}` : `#   ${id}: ${inline(on)}`
   const entries: string[] = []
-  for (const plugin of target === 'committed' ? known : []) {
+  // A built-in part is not listed: it is not a plugin to turn on or off.
+  const optional = known.filter((p) => p.builtIn !== true)
+  for (const plugin of target === 'committed' ? optional : []) {
     if (answered === null || !(plugin.id in answered))
       entries.push(unset(plugin.id, plugin.default))
     else entries.push(`  ${plugin.id}: ${inline(answered[plugin.id])}`)

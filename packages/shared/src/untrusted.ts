@@ -18,9 +18,9 @@
 
 export const UNTRUSTED_TAG = 'untrusted'
 
-/** Where fenced text came from: the agent may weigh a mail and an invite
- *  differently, and the skills name both. */
-export type UntrustedSource = 'mail' | 'calendar'
+/** Where fenced text came from: the agent may weigh a mail, an invite and a
+ *  web page differently, and the skills name each. */
+export type UntrustedSource = 'mail' | 'calendar' | 'web'
 
 /** Any opening or closing fence tag, spaced or cased however. */
 const MARKER = /<(\s*\/?\s*untrusted)/gi

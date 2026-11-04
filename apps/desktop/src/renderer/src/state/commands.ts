@@ -18,21 +18,18 @@
  * the focused widget already handled (`defaultPrevented`) is not a command:
  * that is how the editor's ⌘B bold beats the sidebar's ⌘B.
  */
-import { atom, useSetAtom, useStore, type Getter, type Setter } from 'jotai'
-import { useEffect } from 'react'
-import { saveAllBuffers } from '../lib/buffer-registry'
-import { matchHotkey } from '../lib/hotkey'
-import { trpc } from '../lib/trpc'
+import { atom, type Getter, type Setter } from 'jotai'
+import { saveAllBuffers } from '@/lib/buffer-registry'
+import { trpc } from '@/lib/trpc'
 import { openHomeAtom } from './home'
 import { openTodaysDailyAtom } from './daily'
-import { commentOnSelectionAtom, commentsTargetPathAtom, toggleCommentsAtom } from './comments'
 import { openDialogAtom } from './dialogs'
-import { copyHoliLinkAtom, linkableHeadingAtom, linkableNoteAtom } from './holi-link'
-import { closeActiveTabWithExitAtom } from './pane-exit'
+import { closeActiveTabAtom } from './pane-exit'
 import { openPaletteAtom } from './palette'
 import { navOpenAtom } from './preferences'
 import { touchRecentAtom } from './recents'
 import { updateSkillsAtom } from './skills'
+import { openQuickAddAtom } from './tasks'
 import { openPinned, openSurface, splitPane, workspaceAtom } from './panes'
 import { pluginCommandsAtom, surfacesAtom } from './plugins'
 import { activeRemoteAtom, createNoteAtom, snapshotAtom, vaultsAtom } from './vaults'
@@ -58,7 +55,10 @@ export interface Command {
   run: (get: Getter, set: Setter) => void | Promise<void>
 }
 
-/** `Untitled.md`, then `Untitled 2.md` and so on, at the vault root. */
+/**
+ * `Untitled.md`, then `Untitled 2.md` and so on, at the vault root.
+ * @public exported for its test
+ */
 export function untitledPath(taken: ReadonlySet<string>): string {
   if (!taken.has('Untitled.md')) return 'Untitled.md'
   for (let n = 2; ; n++) {
@@ -109,28 +109,28 @@ export const STATIC_COMMANDS: readonly Command[] = [
     hotkey: '⌘B',
     run: (_get, set) => set(navOpenAtom, (open) => !open),
   },
-  // A note's comment threads (docs/features/note-comments.md). ⌘⌥M, as in
-  // the document editors people already know; the selection's own Comment
-  // button is the other way in.
-  {
-    id: 'comments.add',
-    label: 'Comment on selection',
-    hotkey: '⌘⌥M',
-    when: (get) => get(commentsTargetPathAtom) !== null,
-    run: (_get, set) => set(commentOnSelectionAtom),
-  },
-  {
-    id: 'comments.toggle',
-    label: 'Toggle comments',
-    when: (get) => get(commentsTargetPathAtom) !== null,
-    run: (_get, set) => set(toggleCommentsAtom),
-  },
   // The skills and hooks a vault was seeded with are its own; a newer
   // release's reach it only when asked for, here or with `holi skills update`.
   {
     id: 'skills.update',
     label: 'Update skills',
     run: (_get, set) => void set(updateSkillsAtom),
+  },
+  // Create a task in any folder, including one that is not yet a lane. ⌘T is
+  // quick add, the card it will make, in the board's dock or centred; ⌘⇧T is
+  // the full dialog, which opens the task to fill in the rest.
+  {
+    id: 'task.new',
+    label: 'New task',
+    hotkey: '⌘T',
+    firstKey: 2,
+    run: (_get, set) => set(openQuickAddAtom),
+  },
+  {
+    id: 'task.new.full',
+    label: 'New task with details',
+    hotkey: '⌘⇧T',
+    run: (_get, set) => set(openDialogAtom, { id: 'create-task', size: 'md' }),
   },
   // The focused pane's active tab. A menu accelerator, so the glyph is for
   // display and main sends the id (`main/menu.ts`).
@@ -139,7 +139,7 @@ export const STATIC_COMMANDS: readonly Command[] = [
     label: 'Close tab',
     hotkey: '⌘W',
     boundBy: 'menu',
-    run: (_get, set) => set(closeActiveTabWithExitAtom),
+    run: (_get, set) => set(closeActiveTabAtom),
   },
   // Home is wherever the vault's `home` setting says, not always its tab. The
   // other surfaces' rows come from the registry (`commandsAtom`).
@@ -160,27 +160,6 @@ export const STATIC_COMMANDS: readonly Command[] = [
       set(workspaceAtom, (w) => openPinned(w, path))
     },
   },
-  // A link a teammate can click to land on this note, or on the heading the
-  // caret is on (docs/features/holi-links.md).
-  {
-    id: 'link.copy',
-    label: 'Copy Holi link',
-    when: (get) => get(linkableNoteAtom) !== null,
-    run: async (get, set) => {
-      const path = get(linkableNoteAtom)
-      if (path !== null) await set(copyHoliLinkAtom, path)
-    },
-  },
-  {
-    id: 'link.copy-heading',
-    label: 'Copy Holi link to this heading',
-    when: (get) => get(linkableHeadingAtom) !== null,
-    run: async (get, set) => {
-      const path = get(linkableNoteAtom)
-      const heading = get(linkableHeadingAtom)
-      if (path !== null && heading !== null) await set(copyHoliLinkAtom, path, heading)
-    },
-  },
   {
     id: 'palette.open',
     hidden: true,
@@ -198,7 +177,10 @@ export const STATIC_COMMANDS: readonly Command[] = [
   },
 ]
 
-/** The table: the static rows, then one "switch to" per other vault. */
+/**
+ * The table: the static rows, then one "switch to" per other vault.
+ * @public exported for its test
+ */
 export const commandsAtom = atom<Command[]>((get) => {
   const opens = [...get(surfacesAtom).values()]
     .filter((s) => s.kind !== 'home' && s.unlisted !== true)
@@ -222,6 +204,7 @@ export const commandsAtom = atom<Command[]>((get) => {
  * The only way a command runs, from the key dispatcher, the palette and the
  * menu alike. Unknown ids and rows whose `when` is false are refused quietly:
  * a menu built for a vault that has since closed may still send one.
+ * @public exported for its test
  */
 export const runCommandAtom = atom(null, async (get, set, id: string): Promise<void> => {
   const command = get(commandsAtom).find((c) => c.id === id)
@@ -230,29 +213,3 @@ export const runCommandAtom = atom(null, async (get, set, id: string): Promise<v
   if (command.hidden === undefined) set(touchRecentAtom, { kind: 'command', key: id })
   await command.run(get, set)
 })
-
-/**
- * One `keydown` listener over the table, installed once by Shell. It reads the
- * table through the store rather than closing over it, so a vault switch
- * changing the rows never re-subscribes it.
- */
-export function useCommandHotkeys(): void {
-  const store = useStore()
-  const run = useSetAtom(runCommandAtom)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      // A focused widget that took the key wins: CodeMirror's keymap marks a
-      // key it ran as handled, so ⌘B in the editor is bold, not the sidebar.
-      if (e.isComposing || e.defaultPrevented) return
-      const match = store
-        .get(commandsAtom)
-        .find((c) => c.boundBy === undefined && c.hotkey !== undefined && matchHotkey(e, c.hotkey))
-      if (match === undefined) return
-      if (match.when !== undefined && !match.when(store.get)) return
-      e.preventDefault()
-      void run(match.id)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [run, store])
-}

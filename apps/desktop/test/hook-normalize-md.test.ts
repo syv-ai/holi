@@ -9,7 +9,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { taskClaim } from '../src/plugins/tasks/shared/task-file'
+import { taskClaim } from '@holi/shared'
 import { normalizeMd as run } from '../src/main/vault/hooks/normalize-md'
 import type { StagedChanges } from '../src/main/vault/hooks/staged'
 
@@ -164,10 +164,7 @@ describe('what it must never touch', () => {
 
 describe('task files', () => {
   it('canonicalizes frontmatter key order through the task round-trip', async () => {
-    await file(
-      'task.fix-login.md',
-      '---\npriority: high\nstatus: todo\n---\n\nbody\n',
-    )
+    await file('task.fix-login.md', '---\npriority: high\nstatus: todo\n---\n\nbody\n')
     const result = await normalizeMd(root, staging(['task.fix-login.md']))
     expect(result.changed).toEqual(['task.fix-login.md'])
     const text = await read('task.fix-login.md')

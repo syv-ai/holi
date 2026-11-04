@@ -28,7 +28,7 @@ export interface NeedsYouDeps {
 }
 
 /** What the inbox says about a session waiting on you. */
-export const needsYouNotice = (s: SessionSummary): InboxNotice => ({
+const needsYouNotice = (s: SessionSummary): InboxNotice => ({
   title: `${s.name} needs you`,
   line:
     s.waitingFor === undefined

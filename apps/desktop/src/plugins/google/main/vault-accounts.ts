@@ -15,7 +15,7 @@
 import { jsonFileStore } from '../../../main/plugin-api'
 
 /** `owner/repo` → Google's stable account id (`sub`). */
-export type VaultAccounts = Record<string, string>
+type VaultAccounts = Record<string, string>
 
 export interface VaultAccountsStore {
   /** The account this vault uses, or null for one that has never connected. */

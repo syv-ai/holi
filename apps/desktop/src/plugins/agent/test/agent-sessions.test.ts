@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ClaudeCli } from '../main/claude/cli'
 import { SIGN_IN_NOTICE } from '../main/claude/config-dir'
-import { isLive, parseListing, readContextPercent, summarise } from '../main/claude/listing'
+import {
+  isLive,
+  parseListing,
+  readContextPercent,
+  readModelName,
+  summarise,
+} from '../main/claude/listing'
 import type { SessionChannel } from '../main/claude/messaging'
 import { createAgentSessions, type AgentVault } from '../main/host/sessions'
 import type { AgentTerminals, OpenArgs } from '../main/host/terminals'
@@ -22,7 +28,7 @@ const row = (id: string, over: Row = {}): Row => ({
   ...over,
 })
 
-function setup(initial: Row[] = [], held: ReadonlySet<string> = new Set()) {
+function setup(initial: Row[] = []) {
   let listing: Row[] = initial
   const cli = {
     list: vi.fn(async () => JSON.stringify(listing)),
@@ -90,20 +96,18 @@ function setup(initial: Row[] = [], held: ReadonlySet<string> = new Set()) {
   const sessions = createAgentSessions({
     emit: (_remote: string, name: string, payload: unknown) => sent.push([name, payload]),
     provider: {
-      cli,
-      parseListing,
-      isLive,
-      summarise,
-      readContextPercent,
-      watch: () => () => {},
+      id: 'claude',
+      notInstalled: 'not installed',
       configure: async () => ({ dir: '/cfg/vault' }),
-      takeFirstSpawn: async () => true,
-      signInNotice: SIGN_IN_NOTICE,
-      message,
+      terminal: () => ({ bin: '/usr/local/bin/claude', args: [], env: {} }),
+      firstSpawn: { take: async () => true, notice: SIGN_IN_NOTICE },
+      capabilities: {
+        background: { cli, parseListing, isLive, summarise, watch: () => () => {}, message },
+        status: { contextPercent: readContextPercent, model: readModelName },
+      },
     },
     terminals,
     binDir: () => '/holi/bin',
-    pendingQuestion: (job) => held.has(job),
     idleRecheckMs: 5,
     idleConfirmMs: 10,
     leaveCapMs: 50,
@@ -132,9 +136,27 @@ describe('agent sessions', () => {
     await t.attach()
 
     expect(t.sessions.sessions().map((s) => s.id)).toEqual(['aaaaaaaa'])
-    expect(t.sent.at(-1)).toEqual([
+    expect(t.sent.filter(([name]) => name === 'sessions').at(-1)).toEqual([
       'sessions',
-      [{ id: 'aaaaaaaa', name: 'Session aaaaaaaa', state: 'idle' }],
+      [
+        {
+          provider: 'claude',
+          id: 'aaaaaaaa',
+          name: 'Session aaaaaaaa',
+          state: 'idle',
+          conversationId: 'aaaaaaaa-uuid',
+        },
+      ],
+    ])
+  })
+
+  it('tells the stopped sessions apart, for History', async () => {
+    const t = setup([row('aaaaaaaa'), row('bbbbbbbb', { pid: undefined, status: undefined })])
+    await t.attach()
+
+    expect(t.sessions.past().map((s) => [s.id, s.state])).toEqual([['bbbbbbbb', 'idle']])
+    expect(t.sent.find(([name]) => name === 'history')?.[1]).toEqual([
+      expect.objectContaining({ id: 'bbbbbbbb', provider: 'claude', name: 'Session bbbbbbbb' }),
     ])
   })
 
@@ -157,6 +179,22 @@ describe('agent sessions', () => {
     expect(t.sessions.sessions()[0]?.state).toBe('idle')
     t.sessions.noteTurn(REMOTE, 'aaaaaaaa', true)
     expect(t.sessions.sessions()[0]?.state).toBe('working')
+  })
+
+  it('holds sync for a turn an outside driver brackets, which the listing never forgets', async () => {
+    const t = setup([row('aaaaaaaa')])
+    await t.attach()
+    t.sessions.bracket('p00000000000a', 'begin')
+    expect(t.pauses).toEqual(['the assistant is working'])
+    // The listing never names a bracketed id: a reread must not drop its
+    // turn, or the next turn would take the pause a second time.
+    await t.sessions.refresh()
+    t.sessions.bracket('p00000000000b', 'begin')
+    expect(t.pauses).toHaveLength(1)
+    t.sessions.bracket('p00000000000a', 'end')
+    t.sessions.bracket('p00000000000b', 'forget')
+    t.sessions.bracket('p00000000000c', 'begin')
+    expect(t.pauses).toHaveLength(2)
   })
 
   it("puts a session's context reading on its row, by job id and for this vault only", async () => {
@@ -328,7 +366,7 @@ describe('launched sessions', () => {
   it('start with their options and no terminal', async () => {
     const { sessions, cli, opened, attach } = setup()
     await attach()
-    const args = { name: 'Tidy', prompt: 'tidy the inbox', settings: '{}' }
+    const args = { name: 'Tidy', prompt: 'tidy the inbox', model: 'opus' }
     expect(await sessions.launch(args)).toEqual({ ok: true, sessionId: 'launch00' })
     expect(cli.startBg).toHaveBeenCalledWith(expect.anything(), args)
     expect(opened).toEqual([])
@@ -344,7 +382,7 @@ describe('launched sessions', () => {
       await new Promise<void>((r) => (release = r))
       return started(t, opts)
     })
-    const launching = sessions.launch({ prompt: 'go' })
+    const launching = sessions.launch({ name: 'Go', prompt: 'go' })
     await vi.waitFor(() => expect(cli.startBg).toHaveBeenCalled())
     await sessions.leave()
     release()
@@ -353,26 +391,5 @@ describe('launched sessions', () => {
       message: 'The vault closed as the session started.',
     })
     expect(cli.stop).toHaveBeenCalledWith(expect.anything(), 'launch00')
-  })
-
-  it('needs you while Holi holds its question, though the listing says busy', async () => {
-    const { sessions, attach } = setup(
-      [row('aaaa0001', { status: 'busy', state: 'working' })],
-      new Set(['aaaa0001']),
-    )
-    await attach()
-    expect(sessions.sessions()).toEqual([
-      expect.objectContaining({ id: 'aaaa0001', state: 'needs-you', waitingFor: 'input needed' }),
-    ])
-  })
-
-  it('tells its listeners about every read', async () => {
-    const { sessions, attach } = setup()
-    await attach()
-    const heard = vi.fn()
-    sessions.onRows(heard)
-    await sessions.launch({ prompt: 'go' })
-    expect(heard).toHaveBeenCalled()
-    expect(sessions.row('launch00')?.status).toBe('busy')
   })
 })

@@ -106,6 +106,56 @@ describe('the plugins block in the plugins file', () => {
   })
 })
 
+describe('a built-in part', () => {
+  const WITH_CORE: PluginInfo[] = [
+    { id: 'talk', label: 'Talk', default: true, builtIn: true },
+    { id: 'reader', label: 'Reader', default: true, requires: ['talk'] },
+  ]
+
+  it('runs whatever either file pins for it, and so does what requires it', () => {
+    const settings = resolvePluginSettings(
+      'plugins:\n  talk: false\n',
+      'plugins:\n  talk: false\n',
+      WITH_CORE,
+    )
+    expect(settings.warnings).toEqual([])
+    expect(settings.plugins).toEqual({ vault: {}, localOff: [] })
+    const resolved = resolvePlugins({ vault: { talk: false }, localOff: ['talk'] }, WITH_CORE)
+    expect([...resolved.running].sort()).toEqual(['reader', 'talk'])
+  })
+
+  it('is never written to either file, and a stale pin is dropped at the next write', () => {
+    const committed = writePluginSettingsText(
+      { plugins: { talk: false, reader: false } },
+      'committed',
+      WITH_CORE,
+    )
+    expect(committed).not.toContain('talk')
+    expect(parseSettingsText(committed).plugins).toEqual({ reader: false })
+    expect(writePluginSettingsText({ plugins: { talk: false } }, 'local', WITH_CORE)).not.toMatch(
+      /talk|plugins:/,
+    )
+  })
+
+  it('is refused in a write', () => {
+    const { patch, warnings } = parsePluginSettingsPatch(
+      JSON.stringify({ plugins: { talk: false, reader: true } }),
+      WITH_CORE,
+    )
+    expect(patch).toEqual({ plugins: { reader: true } })
+    expect(warnings).toHaveLength(1)
+  })
+
+  it('may not require an optional plugin', () => {
+    expect(() =>
+      checkPluginCatalogue([
+        { id: 'opt', label: 'Opt', default: true },
+        { id: 'core', label: 'Core', default: true, builtIn: true, requires: ['opt'] },
+      ]),
+    ).toThrow(/optional/)
+  })
+})
+
 // A plugin with one setting of each file, for the settings below.
 const MAIL: PluginInfo = {
   id: 'mail',

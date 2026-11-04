@@ -52,13 +52,14 @@ export const APP_METHODS = [
 export type AppMethod = (typeof APP_METHODS)[number]
 
 /** The methods the renderer answers itself, because only it can do them
- *  (open a tab). Every other method is a main-side capability. */
+ *  (open a tab). Every other method is a main-side capability.
+ * @public exported for its test
+ */
 export const RENDERER_METHODS = ['open'] as const satisfies readonly AppMethod[]
 
-export type MainAppMethod = Exclude<AppMethod, (typeof RENDERER_METHODS)[number]>
-
 /** One call, from the app's shim to the renderer. `id` is the app's own
- *  correlation token and means nothing outside the frame's pending map. */
+ *  correlation token and means nothing outside the frame's pending map.
+ *  @public the wire shape of the bridge, documented here for the shim. */
 export interface AppRequest {
   id: string
   method: AppMethod
@@ -72,29 +73,11 @@ export interface AppRequest {
 export type AppResponse =
   { id: string; ok: true; value: unknown } | { id: string; ok: false; error: string; code?: string }
 
-/**
- * What `holi.on(topic, fn)` can hear, besides `store:<collection>`. A push
- * says only that something changed: the app reads it again through the
- * bridge, so every refusal still applies, and there is no second read path.
- */
-export const APP_TOPICS = ['docs', 'tasks', 'sync', 'agent', 'recents', 'history'] as const
-
-export type AppTopic = (typeof APP_TOPICS)[number]
-
 const STORE_TOPIC = 'store:'
 
 /** The topic a collection's changes are pushed on. */
 export function storeTopic(collection: string): string {
   return `${STORE_TOPIC}${collection}`
-}
-
-export function isAppTopic(value: unknown): value is string {
-  if (typeof value !== 'string') return false
-  if ((APP_TOPICS as readonly string[]).includes(value)) return true
-  return (
-    value.startsWith(STORE_TOPIC) &&
-    /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(value.slice(STORE_TOPIC.length))
-  )
 }
 
 /** A push, from the renderer to the frame. It has no `id`, which is how the

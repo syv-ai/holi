@@ -11,9 +11,9 @@
  * fire-once watermark comparison; `sweep` composes it across all vaults and
  * decides coalescing.
  */
-import { pendingFireTime } from '../../shared/reminder'
-import { remindsViewer } from '../../shared/task-file'
-import type { Task } from '../../shared/types'
+import { pendingFireTime } from '@holi/shared'
+import { remindsViewer } from '@holi/shared'
+import type { Task } from '@holi/shared'
 import type { ReminderFire, RemindersEvent } from './types'
 
 export interface VaultTasks {
@@ -25,7 +25,7 @@ export interface VaultTasks {
 export type Delivered = Record<string, string>
 
 /** Above this many fires in one sweep, `notificationsFor` shows a summary instead. */
-export const COALESCE_THRESHOLD = 3
+const COALESCE_THRESHOLD = 3
 
 export interface SweepMark {
   remote: string

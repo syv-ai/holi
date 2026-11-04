@@ -11,7 +11,6 @@ import { GoogleApi } from '../main/api'
 import {
   createEvent,
   deleteEvent,
-  enabledCalendarIds,
   listAgenda,
   listCalendars,
   resolveCalendars,
@@ -192,18 +191,6 @@ describe('resolveCalendars', () => {
     // `listCalendars` already drops it; the point here is that "yours" does not
     // override an explicit untick in Google's own UI.
     expect(await resolveCalendars(api, {})).toEqual([])
-  })
-})
-
-describe('enabledCalendarIds', () => {
-  it('is the ids the agenda should ask for, and nothing else', () => {
-    const ids = enabledCalendarIds([
-      { id: 'primary', name: 'Me', mine: true, color: null, enabled: true },
-      { id: 'jane', name: 'Jane', mine: false, color: null, enabled: false },
-      { id: 'team', name: 'Team', mine: false, color: null, enabled: true },
-    ])
-
-    expect(ids).toEqual(['primary', 'team'])
   })
 })
 

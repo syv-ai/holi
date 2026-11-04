@@ -1,4 +1,5 @@
 import { atom } from 'jotai'
+import type { AgentProviderId } from '@holi/shared'
 import { agentCap } from '../agent-cap'
 import { sessionsWorthAsking } from '../lib/notices'
 import { receivePtyData } from '../lib/session-terminals'
@@ -10,8 +11,6 @@ import {
   type PluginEventHandler,
   type PluginStore,
 } from '@/plugin-api'
-import type { PendingQuestion } from '../../shared/questions'
-import { agentQuestionsAtom, pendingOpenAtom } from './questions'
 import { resetTurnReviewAtom, turnReviewOpenAtom } from './turns'
 
 /**
@@ -26,25 +25,47 @@ import { resetTurnReviewAtom, turnReviewOpenAtom } from './turns'
 export const AGENT_SURFACE = 'agent'
 
 /** What a session is doing. Claude Code's own answer, read by main. */
-export type SessionState = 'needs-you' | 'working' | 'idle'
+type SessionState = 'needs-you' | 'working' | 'idle'
 
 /**
- * One of the vault's live Claude Code background sessions, by its job id.
- * Mirrors `SessionSummary` in main/claude/listing.ts, pushed as a list
- * in the agent's `sessions` event. Only live ones: a stopped or finished session lives in
- * Claude Code's own agent list.
+ * One of the vault's live sessions: a Claude Code background session by its
+ * job id, or one Holi runs itself (Codex) by Holi's id. Mirrors
+ * `SessionSummary` in main/claude/listing.ts, pushed as a list in the agent's
+ * `sessions` event. Only live ones: a stopped or finished session lives in
+ * its agent's own history.
  */
 export interface AgentSession {
   id: string
+  /** Which agent runs it. */
+  provider: AgentProviderId
   /** Claude Code's name for it (`--name`, `/rename`, Ctrl+R, or the one it
    *  writes itself), else 'New session'. */
   name: string
   state: SessionState
+  /** Result of a Holi-managed background run after it settles. */
+  outcome?: 'completed' | 'failed' | 'aborted'
+  error?: string
   /** Only for 'needs-you': why, e.g. 'permission prompt'. */
   waitingFor?: string
   /** How much of its context window is used, 0 to 100, from its status line.
    *  Absent before its first message and after a `/clear`. */
   contextPercent?: number
+  /** Its model in the provider's words, when reported. */
+  model?: string
+  /** Pi RPC's reported token and cost totals. */
+  usage?: { input?: number; output?: number; total?: number; cost?: number }
+  /** When it started, epoch ms. */
+  startedAt?: number
+  /** Claude Code's conversation id, once it has said. */
+  conversationId?: string
+  /** What a job that completed left out, in words; why one failed is its
+   *  `error`. */
+  message?: string
+  copying?: boolean
+  closed?: boolean
+  /** The terminal that signs its agent in: no turns to review, restart or
+   *  copy. */
+  signIn?: boolean
 }
 
 /**
@@ -63,12 +84,12 @@ export interface AgentTerminal {
 /** The vault's live sessions, in Claude Code's order. */
 export const agentSessionsAtom = atom<AgentSession[]>([])
 
+/** The vault's stopped background sessions, which History lists. Opening
+ *  one brings it back (`claude respawn`). */
+export const agentHistoryAtom = atom<AgentSession[]>([])
+
 /** Holi's open terminals, in the order they were opened. */
 export const agentTerminalsAtom = atom<AgentTerminal[]>([])
-
-/** The terminal behind an agent tab, if it is still open. */
-export const agentTerminalAtom = (id: string) =>
-  atom((get) => get(agentTerminalsAtom).find((t) => t.id === id) ?? null)
 
 /**
  * The session the app is on: the one the active tab was opened for, while it
@@ -79,7 +100,7 @@ export const agentTerminalAtom = (id: string) =>
  * nothing Claude Code publishes says which. So this is only ever a
  * default for an ask, never an identity.
  */
-export const activeSessionAtom = atom<AgentSession | null>((get) => {
+const activeSessionAtom = atom<AgentSession | null>((get) => {
   const sessions = get(agentSessionsAtom)
   const terminals = get(agentTerminalsAtom)
   const byId = (id: string | null) =>
@@ -100,7 +121,7 @@ export const activeSessionAtom = atom<AgentSession | null>((get) => {
 export const NEW_SESSION = 'New session'
 
 /** A terminal's title less the state glyph Claude Code puts in front of it. */
-export const titleText = (terminal: AgentTerminal): string =>
+const titleText = (terminal: AgentTerminal): string =>
   terminal.title.replace(/^[^\p{L}\p{N}]+\s+/u, '').trim()
 
 /** Claude Code titles its list `… claude agents`. */
@@ -196,7 +217,7 @@ export const agentLeaveGuardAtom = atom((get): string | null => {
         ? `${one.name} is waiting for you to answer something.`
         : `${one.name} is part way through a turn.`
   return (
-    `${why} Leaving this vault, or turning the agent off, stops every session in it. ` +
+    `${why} Leaving this vault stops every session in it. ` +
     'What they have already ' +
     'written stays in it, and each conversation stays in the agents list, where it ' +
     'picks up where it left off.'
@@ -214,21 +235,14 @@ export const agentEvents: Readonly<Record<string, PluginEventHandler>> = {
     if (remote === store.get(activeRemoteAtom))
       store.set(agentSessionsAtom, payload as AgentSession[])
   },
+  history: ({ remote, payload }, store) => {
+    if (remote === store.get(activeRemoteAtom))
+      store.set(agentHistoryAtom, payload as AgentSession[])
+  },
   terminals: ({ remote, payload }, store) => {
     if (remote === store.get(activeRemoteAtom)) {
       store.set(agentTerminalsAtom, payload as AgentTerminal[])
     }
-  },
-  questions: ({ remote, payload }, store) => {
-    if (remote === store.get(activeRemoteAtom)) {
-      store.set(agentQuestionsAtom, payload as PendingQuestion[])
-    }
-  },
-  // The quick panel's ⏎ on a finished agent: its session, in the main window.
-  // Opened by `agentVault` once its vault is the one showing.
-  'open-session': ({ remote, payload }, store) => {
-    const id = (payload as { id?: unknown } | null)?.id
-    if (typeof id === 'string') store.set(pendingOpenAtom, { remote, id })
   },
 }
 
@@ -246,15 +260,15 @@ export function agentVault(remote: string, store: PluginStore): () => void {
   // announced. Every event is a new list, so an unchanged one means none came.
   const sessionsAsked = store.get(agentSessionsAtom)
   const terminalsAsked = store.get(agentTerminalsAtom)
+  const historyAsked = store.get(agentHistoryAtom)
+  void agentCap.history(remote).then((list) => {
+    if (store.get(agentHistoryAtom) === historyAsked) store.set(agentHistoryAtom, list)
+  })
   void agentCap.sessions(remote).then((list) => {
     if (store.get(agentSessionsAtom) === sessionsAsked) store.set(agentSessionsAtom, list)
   })
   void agentCap.terminals(remote).then((list) => {
     if (store.get(agentTerminalsAtom) === terminalsAsked) store.set(agentTerminalsAtom, list)
-  })
-  const questionsAsked = store.get(agentQuestionsAtom)
-  void agentCap.questions(remote).then((list) => {
-    if (store.get(agentQuestionsAtom) === questionsAsked) store.set(agentQuestionsAtom, list)
   })
 
   // A terminal leaves main's list when its client exits: a detach, `/exit`,
@@ -282,11 +296,11 @@ export function agentVault(remote: string, store: PluginStore): () => void {
   return () => {
     offGone()
     offTabs()
-    store.set(agentQuestionsAtom, [])
     // Both lists and the turn record are per vault: left as they are, the
     // next vault would show this one's sessions until its own answer came,
     // and the review would ask its git for a range it has never heard of.
     store.set(agentSessionsAtom, [])
+    store.set(agentHistoryAtom, [])
     store.set(agentTerminalsAtom, [])
     store.set(resetTurnReviewAtom)
     store.set(turnReviewOpenAtom, false)

@@ -26,51 +26,124 @@ import { toml } from '@codemirror/legacy-modes/mode/toml'
 import { parse as parseYaml, YAMLParseError } from 'yaml'
 
 /** `ini` covers the whole properties/env family (`.env`, `.ini`, `.conf`). */
-export type LangId = 'json' | 'yaml' | 'toml' | 'ini' | 'shell' | 'javascript' | 'html' | 'css'
+type LangId = 'json' | 'yaml' | 'toml' | 'ini' | 'shell' | 'javascript' | 'html' | 'css'
 
-const BY_EXT: Record<string, LangId> = {
-  json: 'json',
-  jsonc: 'json',
-  yaml: 'yaml',
-  yml: 'yaml',
-  toml: 'toml',
-  ini: 'ini',
-  cfg: 'ini',
-  conf: 'ini',
-  env: 'ini',
-  properties: 'ini',
-  sh: 'shell',
-  bash: 'shell',
-  zsh: 'shell',
-  js: 'javascript',
-  mjs: 'javascript',
-  cjs: 'javascript',
-  html: 'html',
-  htm: 'html',
-  css: 'css',
+/**
+ * What each extension is, once, for both questions asked of a path: `cm`, the
+ * CodeMirror grammar the plain-text editor loads (a narrow set, on purpose),
+ * and `shiki`, the grammar name the read-only code view highlights with (a
+ * wide one). An entry with only one of them is a format only that side knows.
+ */
+interface Lang {
+  cm?: LangId
+  shiki?: string
+}
+const lang = (shiki: string | undefined, cm?: LangId): Lang => ({ shiki, cm })
+
+const BY_EXT: Record<string, Lang> = {
+  astro: lang('astro'),
+  bash: lang('shell', 'shell'),
+  c: lang('c'),
+  cc: lang('cpp'),
+  cfg: lang(undefined, 'ini'),
+  cjs: lang('javascript', 'javascript'),
+  conf: lang(undefined, 'ini'),
+  cpp: lang('cpp'),
+  cs: lang('csharp'),
+  css: lang('css', 'css'),
+  cts: lang('typescript'),
+  diff: lang('diff'),
+  env: lang(undefined, 'ini'),
+  go: lang('go'),
+  gql: lang('graphql'),
+  graphql: lang('graphql'),
+  h: lang('c'),
+  hpp: lang('cpp'),
+  htm: lang('html', 'html'),
+  html: lang('html', 'html'),
+  ini: lang('ini', 'ini'),
+  java: lang('java'),
+  js: lang('javascript', 'javascript'),
+  json: lang('json', 'json'),
+  jsonc: lang('json', 'json'),
+  json5: lang('json'),
+  jsx: lang('jsx'),
+  kt: lang('kotlin'),
+  kts: lang('kotlin'),
+  less: lang('less'),
+  mjs: lang('javascript', 'javascript'),
+  mts: lang('typescript'),
+  patch: lang('diff'),
+  php: lang('php'),
+  properties: lang(undefined, 'ini'),
+  py: lang('python'),
+  rb: lang('ruby'),
+  rs: lang('rust'),
+  scss: lang('scss'),
+  sh: lang('shell', 'shell'),
+  sql: lang('sql'),
+  svelte: lang('svelte'),
+  svg: lang('xml'),
+  swift: lang('swift'),
+  toml: lang('toml', 'toml'),
+  ts: lang('typescript'),
+  tsx: lang('tsx'),
+  vue: lang('vue'),
+  xml: lang('xml'),
+  yaml: lang('yaml', 'yaml'),
+  yml: lang('yaml', 'yaml'),
+  zsh: lang('shell', 'shell'),
+}
+
+/** Files known by their whole name, which have no extension worth reading. */
+const BY_NAME: Record<string, Lang> = {
+  dockerfile: lang('docker'),
+  makefile: lang('makefile'),
+  gnumakefile: lang('makefile'),
+  '.npmrc': lang('ini'),
+  '.editorconfig': lang('ini'),
+  '.gitconfig': lang('ini'),
+  '.zshrc': lang('shell', 'shell'),
+  '.bashrc': lang('shell', 'shell'),
+  '.profile': lang('shell'),
+}
+
+/** A path's last segment, lower-cased. */
+const baseName = (path: string): string => path.slice(path.lastIndexOf('/') + 1).toLowerCase()
+
+/**
+ * Which grammars a path has. Dotfiles (`.env`, `.bashrc`) have no extension in
+ * the `name.ext` sense and are matched by name; `.env.local` is caught by the
+ * `.env` prefix.
+ */
+function langOf(path: string): Lang {
+  const base = baseName(path)
+  const named = BY_NAME[base]
+  if (named !== undefined) return named
+  if (base === '.env' || base.startsWith('.env.')) return lang('dotenv', 'ini')
+  if (base.endsWith('.dockerfile')) return lang('docker')
+  if (base.startsWith('.')) {
+    // A dotfile's only dot is its name, not an extension (`.gitignore`).
+    return base.endsWith('rc') &&
+      (base.includes('bash') || base.includes('zsh') || base.includes('sh'))
+      ? lang(undefined, 'shell')
+      : {}
+  }
+  const dot = base.lastIndexOf('.')
+  return dot > 0 ? (BY_EXT[base.slice(dot + 1)] ?? {}) : {}
 }
 
 /**
- * Which language a vault path is, or `null` for plain text. Dotfiles (`.env`,
- * `.bashrc`) have no extension in the `name.ext` sense and are matched by name;
- * `.env.local` is caught by the `.env` prefix.
+ * Which CodeMirror language a vault path is, or `null` for plain text.
+ * @public exported for its test
  */
 export function languageIdForPath(path: string): LangId | null {
-  const base = path.slice(path.lastIndexOf('/') + 1).toLowerCase()
+  return langOf(path).cm ?? null
+}
 
-  if (base.startsWith('.')) {
-    if (base === '.env' || base.startsWith('.env.')) return 'ini'
-    if (
-      base.endsWith('rc') &&
-      (base.includes('bash') || base.includes('zsh') || base.includes('sh'))
-    )
-      return 'shell'
-    return null
-  }
-
-  const dot = base.lastIndexOf('.')
-  const ext = dot > 0 ? base.slice(dot + 1) : ''
-  return BY_EXT[ext] ?? null
+/** Which grammar the code view highlights a vault file with; undefined is plain text. */
+export function codeLanguage(path: string): string | undefined {
+  return langOf(path).shiki
 }
 
 const LEGACY: Record<'toml' | 'ini' | 'shell', StreamLanguage<unknown>> = {

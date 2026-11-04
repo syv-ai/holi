@@ -7,7 +7,7 @@
  * hosts untrusted app code, and the process rendering untrusted code must not
  * also be the process deciding what it may read.
  */
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -35,6 +35,8 @@ async function rig() {
     'USER.local.md': '# Ada Holm\n\nada@syv.ai\n',
     'Tracker.app/index.html': '<p>tracker</p>\n',
     'Tracker.app/app.yaml': '',
+    'Budget.app/index.html': '<p>budget</p>\n',
+    'Budget.app/app.yaml': 'description: What the month cost, by category\n',
   })) {
     await mkdir(dirname(join(root, rel)), { recursive: true })
     await writeFile(join(root, rel), text)
@@ -56,6 +58,8 @@ async function rig() {
       events: { emit: () => {} },
       appDoor: () => door!,
       grants: { status: async () => ({ codeHash: '', affordances: [] }), grant: async () => true },
+      previews: { read: async () => null, save: async () => {}, forget: async () => {} },
+      capture: async () => null,
     }),
   )
   registry.register(['store'], storeCapabilities())
@@ -79,7 +83,10 @@ async function rig() {
         params: { bundle, method, params },
       })
     ).value
-  return { call, door }
+  /** One of Holi's own UI calls, as the renderer's `appsCap` makes it. */
+  const ui = async (name: string, params?: unknown) =>
+    (await host.dispatch({ door: 'ui', remote: REMOTE, name, params })).value
+  return { call, door, ui, root }
 }
 
 describe('apps.call', () => {
@@ -151,9 +158,77 @@ describe('apps.call', () => {
     // names `apps.call` cannot call as another app, and one that names
     // `apps.grant` cannot approve itself.
     const { call, door } = await rig()
-    for (const method of ['apps.call', 'apps.grant', 'apps.grants', 'apps.log']) {
+    for (const method of [
+      'apps.call',
+      'apps.grant',
+      'apps.grants',
+      'apps.describe',
+      'apps.log',
+      'apps.archive',
+      'apps.capturePreview',
+    ]) {
       await expect(door.call(REMOTE, 'Tracker.app', method, {})).rejects.toThrow(/no such method/)
       await expect(call(method, {})).rejects.toThrow(/no such method/)
     }
+  })
+})
+
+describe('apps.describe', () => {
+  it("reads the manifest's description for the Apps page, and null without one", async () => {
+    const { ui } = await rig()
+    expect(await ui('apps.describe', { bundle: 'Budget.app' })).toEqual({
+      description: 'What the month cost, by category',
+    })
+    expect(await ui('apps.describe', { bundle: 'Tracker.app' })).toEqual({ description: null })
+  })
+
+  it('refuses a path that is no app', async () => {
+    const { ui } = await rig()
+    await expect(ui('apps.describe', { bundle: 'inbox.md' })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    })
+  })
+})
+
+describe('apps.archive', () => {
+  it('sets archived in the manifest, keeping every other line, and undoes it', async () => {
+    const { ui, root } = await rig()
+    const manifest = join(root, 'Budget.app/app.yaml')
+    await writeFile(manifest, '# Budget\ndescription: What the month cost, by category\n')
+
+    expect(await ui('apps.archive', { bundle: 'Budget.app', archived: true })).toEqual({
+      archived: true,
+    })
+    expect(await readFile(manifest, 'utf8')).toBe(
+      '# Budget\ndescription: What the month cost, by category\narchived: true\n',
+    )
+    expect(await ui('apps.archived')).toEqual({ bundles: ['Budget.app'] })
+    // Still an app with its description: archiving hides, it does not delete.
+    expect(await ui('apps.describe', { bundle: 'Budget.app' })).toEqual({
+      description: 'What the month cost, by category',
+    })
+
+    // Undo: the key goes, and the file is as it was.
+    await ui('apps.archive', { bundle: 'Budget.app', archived: false })
+    expect(await readFile(manifest, 'utf8')).toBe(
+      '# Budget\ndescription: What the month cost, by category\n',
+    )
+    expect(await ui('apps.archived')).toEqual({ bundles: [] })
+  })
+
+  it('archives an app whose manifest is empty', async () => {
+    const { ui, root } = await rig()
+    await ui('apps.archive', { bundle: 'Tracker.app', archived: true })
+    expect(await readFile(join(root, 'Tracker.app/app.yaml'), 'utf8')).toBe('archived: true\n')
+    expect(await ui('apps.archived')).toEqual({ bundles: ['Tracker.app'] })
+  })
+
+  it('refuses a manifest it cannot edit, and leaves it alone', async () => {
+    const { ui, root } = await rig()
+    await writeFile(join(root, 'Budget.app/app.yaml'), '- a list\n')
+    await expect(
+      ui('apps.archive', { bundle: 'Budget.app', archived: true }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    expect(await readFile(join(root, 'Budget.app/app.yaml'), 'utf8')).toBe('- a list\n')
   })
 })
