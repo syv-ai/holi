@@ -6,18 +6,29 @@
  * plugin's folder document (a deck) opens from its row and expands from its
  * chevron. A note's menu has Create vault app, as the document's own does.
  */
-import { Provider, createStore } from 'jotai'
+import { Provider, createStore, useAtomValue } from 'jotai'
 import { expect, test, vi } from 'vitest'
-import { emptyVaultSnapshot, VAULT_SETTING_DEFAULTS } from '@holi/shared'
-import { fireEvent, render, screen, waitFor } from '@/test/render'
+import { emptyVaultSnapshot, TASKS_CLAIM, VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import { coreContributionAtom, installedPluginsAtom } from '@/state/plugins'
 import { vaultSettingsAtom } from '@/state/settings'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
-import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
+import {
+  activeRemoteAtom,
+  showHiddenByVaultAtom,
+  showTasksByVaultAtom,
+  snapshotAtom,
+  vaultsAtom,
+} from '@/state/vaults'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { FilesSection } from '../files-section'
 
 const deleteMany = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
+const createNote = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
+const writeNote = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
+const snapshotQuery = vi.hoisted(() =>
+  vi.fn(async () => (await import('@holi/shared')).emptyVaultSnapshot()),
+)
 const capRun = vi.hoisted(() =>
   vi.fn(async ({ name }: { name: string; paramsJson: string }) =>
     name === 'agent.providers' ? [] : { ok: true, sessionId: 'abc12345' },
@@ -26,19 +37,31 @@ const capRun = vi.hoisted(() =>
 vi.mock('@/lib/trpc', () => ({
   trpc: {
     sync: { commitNow: { mutate: async () => undefined } },
-    notes: { deleteMany: { mutate: deleteMany } },
+    notes: {
+      deleteMany: { mutate: deleteMany },
+      create: { mutate: createNote },
+      write: { mutate: writeNote },
+    },
     cap: { run: { mutate: capRun } },
     vaults: {
       snapshot: {
-        query: async () => (await import('@holi/shared')).emptyVaultSnapshot(),
+        query: snapshotQuery,
       },
     },
   },
 }))
 
+function KeyedFiles({ onOpen }: { onOpen: (path: string) => void }) {
+  const remote = useAtomValue(activeRemoteAtom)
+  return <FilesSection key={remote} activeId={null} onOpen={onOpen} onMoved={() => undefined} />
+}
+
 function mount() {
   const store = createStore()
   store.set(activeRemoteAtom, 'mara/notes')
+  store.set(showHiddenByVaultAtom, {})
+  store.set(showTasksByVaultAtom, {})
+  snapshotQuery.mockImplementation(async () => store.get(snapshotAtom))
   store.set(vaultsAtom, [
     {
       remote: 'mara/notes',
@@ -109,7 +132,7 @@ function mount() {
   render(
     <Provider store={store}>
       <SidebarProvider>
-        <FilesSection activeId={null} onOpen={onOpen} onMoved={() => undefined} />
+        <KeyedFiles onOpen={onOpen} />
       </SidebarProvider>
     </Provider>,
   )
@@ -243,6 +266,75 @@ test('a web address dropped from a browser is saved as a link', async () => {
   )
 })
 
+test('a made app keeps landing through snapshots that precede its row', async () => {
+  const { run, store } = mount()
+  let finish!: (path: string) => void
+  run.mockImplementationOnce(
+    () =>
+      new Promise<string>((resolve) => {
+        finish = resolve
+      }),
+  )
+  fireEvent.contextMenu(await screen.findByText('kunder'))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'New app' }))
+  const original = store.get(snapshotAtom)!
+  store.set(snapshotAtom, {
+    ...original,
+    docs: [
+      ...original.docs,
+      { path: 'kunder/other.md', title: 'other', updatedAt: '2026-10-23T10:00:00Z' },
+    ] as never,
+  })
+  await act(async () => finish('kunder/Untitled.app/index.html'))
+  store.set(snapshotAtom, {
+    ...original,
+    docs: [
+      ...original.docs,
+      { path: 'kunder/unrelated.md', title: 'unrelated', updatedAt: '2026-10-23T10:00:00Z' },
+    ] as never,
+  })
+  // Show the parent so the intervening scan's unrelated row proves the
+  // snapshot has rendered before the target arrives.
+  fireEvent.click(await screen.findByText('kunder'))
+  await screen.findByText('unrelated')
+  expect(screen.queryByText('Untitled.app')).toBeNull()
+  store.set(snapshotAtom, {
+    ...original,
+    docs: [
+      ...original.docs,
+      { path: 'kunder/Untitled.app/index.html', title: 'index', updatedAt: '2026-10-23T10:00:00Z' },
+    ] as never,
+  })
+  expect(await screen.findByLabelText('Rename Untitled.app')).toBeTruthy()
+  expect(screen.getByRole('treeitem', { name: 'Untitled.app' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+})
+
+test('New document creates inside the selected folder', async () => {
+  const { store } = mount()
+  createNote.mockClear()
+  const folder = await screen.findByText('kunder')
+  fireEvent.click(folder)
+  fireEvent.click(folder)
+  fireEvent.click(screen.getByRole('button', { name: 'New document' }))
+  await waitFor(() =>
+    expect(createNote).toHaveBeenLastCalledWith({
+      remote: 'mara/notes',
+      path: 'kunder/Untitled.md',
+      text: '',
+    }),
+  )
+  store.set(snapshotAtom, {
+    ...store.get(snapshotAtom)!,
+    docs: [
+      ...store.get(snapshotAtom)!.docs,
+      { path: 'kunder/Untitled.md', title: 'Untitled', updatedAt: '2026-10-23T10:00:00Z' },
+    ] as never,
+  })
+})
+
 test('a made app opens its name field once the vault has it', async () => {
   const { store } = mount()
   fireEvent.contextMenu(await screen.findByText('kunder'))
@@ -309,4 +401,189 @@ test("a folder's menu has no Create vault app", async () => {
   fireEvent.contextMenu(await screen.findByText('kunder'))
   await screen.findByRole('menuitem', { name: 'New app' })
   expect(screen.queryByRole('menuitem', { name: 'Create vault app' })).toBeNull()
+})
+
+test('a delayed app creation cannot land in a different keyed vault', async () => {
+  const { run, onOpen, store } = mount()
+  let finish!: (path: string) => void
+  run.mockImplementationOnce(() => new Promise<string>((resolve) => (finish = resolve)))
+  fireEvent.contextMenu(await screen.findByText('kunder'))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'New app' }))
+  act(() => store.set(activeRemoteAtom, 'other/vault'))
+  await act(async () => finish('kunder/Untitled.app/index.html'))
+  expect(onOpen).not.toHaveBeenCalled()
+  expect(screen.queryByLabelText('Rename Untitled.app')).toBeNull()
+  expect(screen.getByRole('treeitem', { name: 'kunder' })).toHaveAttribute('aria-selected', 'false')
+})
+
+test('a delayed task creation cannot land in a different keyed vault', async () => {
+  const { store, onOpen } = mount()
+  let finish!: (value: never) => void
+  capRun.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+  )
+  fireEvent.contextMenu(await screen.findByText('kunder'))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'New task' }))
+  act(() => store.set(activeRemoteAtom, 'other/vault'))
+  await act(async () => finish({ path: 'task.created.md' } as never))
+  expect(onOpen).not.toHaveBeenCalled()
+})
+
+test('a delayed New document cannot land in a different keyed vault', async () => {
+  const { store, onOpen } = mount()
+  let finish!: () => void
+  createNote.mockImplementationOnce(
+    () =>
+      new Promise<undefined>((resolve) => {
+        finish = () => resolve(undefined)
+      }),
+  )
+  fireEvent.click(await screen.findByRole('button', { name: 'New document' }))
+  act(() => store.set(activeRemoteAtom, 'other/vault'))
+  await act(async () => finish())
+  expect(onOpen).not.toHaveBeenCalled()
+  expect(screen.queryByLabelText('Rename Untitled.md')).toBeNull()
+})
+
+test.each([true, false])(
+  'New document from a selected folder (expanded=%s) lands and selects its row',
+  async (expanded) => {
+    const { store } = mount()
+    const folder = await screen.findByText('kunder')
+    fireEvent.click(folder)
+    if (!expanded) fireEvent.click(folder)
+    expect(screen.getByRole('treeitem', { name: 'kunder' })).toHaveAttribute(
+      'aria-expanded',
+      String(expanded),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'New document' }))
+    await waitFor(() =>
+      expect(createNote).toHaveBeenLastCalledWith({
+        remote: 'mara/notes',
+        path: 'kunder/Untitled.md',
+        text: '',
+      }),
+    )
+    act(() =>
+      store.set(snapshotAtom, {
+        ...store.get(snapshotAtom)!,
+        docs: [
+          ...store.get(snapshotAtom)!.docs,
+          { path: 'kunder/Untitled.md', title: 'Untitled', updatedAt: '2026-10-23T10:00:00Z' },
+        ] as never,
+      }),
+    )
+    expect(await screen.findByRole('treeitem', { name: 'Untitled.md' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    expect(screen.getByRole('treeitem', { name: 'kunder' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+  },
+)
+
+test('New document beside a selected file skips an existing Untitled name and lands', async () => {
+  const { store } = mount()
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom)!,
+      docs: [
+        ...store.get(snapshotAtom)!.docs,
+        { path: 'kunder/Untitled.md', title: 'Untitled', updatedAt: '2026-10-23T10:00:00Z' },
+      ] as never,
+    }),
+  )
+  fireEvent.click(await screen.findByText('kunder'))
+  fireEvent.click(await screen.findByText('brief'))
+  fireEvent.click(screen.getByRole('button', { name: 'New document' }))
+  await waitFor(() =>
+    expect(createNote).toHaveBeenLastCalledWith({
+      remote: 'mara/notes',
+      path: 'kunder/Untitled 2.md',
+      text: '',
+    }),
+  )
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom)!,
+      docs: [
+        ...store.get(snapshotAtom)!.docs,
+        { path: 'kunder/Untitled 2.md', title: 'Untitled 2', updatedAt: '2026-10-23T10:00:00Z' },
+      ] as never,
+    }),
+  )
+  expect(await screen.findByRole('treeitem', { name: 'Untitled 2.md' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+})
+
+test('a task created while hidden does not steal selection when task files are shown', async () => {
+  const { store, onOpen } = mount()
+  capRun.mockResolvedValueOnce({ path: 'task.created.md' } as never)
+  fireEvent.contextMenu(await screen.findByText('kunder'))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'New task' }))
+  await waitFor(() => expect(onOpen).toHaveBeenCalledWith('task.created.md'))
+  await act(async () =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom),
+      claimed: {
+        [TASKS_CLAIM]: { items: [{ path: 'task.created.md', title: 'Created' }], broken: [] },
+      } as never,
+    }),
+  )
+  fireEvent.click(await screen.findByText('kunder'))
+  fireEvent.click(await screen.findByText('brief'))
+  fireEvent.contextMenu(screen.getByText('brief'))
+  fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: 'Show task files' }))
+  await screen.findByRole('treeitem', { name: 'task.created.md' })
+  expect(screen.getByRole('treeitem', { name: 'brief.md' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+  expect(screen.getByRole('treeitem', { name: 'task.created.md' })).toHaveAttribute(
+    'aria-selected',
+    'false',
+  )
+})
+
+test('a newly hidden folder does not rename or steal selection when revealed later', async () => {
+  const { store } = mount()
+  let finish!: () => void
+  writeNote.mockImplementationOnce(
+    () =>
+      new Promise<undefined>((resolve) => {
+        finish = () => resolve(undefined)
+      }),
+  )
+  await act(async () => {
+    store.set(showHiddenByVaultAtom, { 'mara/notes': true })
+    store.set(snapshotAtom, { ...store.get(snapshotAtom), dirs: ['kunder', '.secret'] })
+  })
+  fireEvent.contextMenu(await screen.findByText('.secret'))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'New folder' }))
+  act(() => store.set(showHiddenByVaultAtom, {}))
+  await act(async () => finish())
+  await act(async () =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom),
+      dirs: ['kunder', '.secret', '.secret/New folder'],
+    }),
+  )
+  fireEvent.click(await screen.findByText('kunder'))
+  fireEvent.click(await screen.findByText('brief'))
+  fireEvent.contextMenu(screen.getByText('brief'))
+  fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: 'Show hidden files' }))
+  fireEvent.click(await screen.findByText('.secret'))
+  await screen.findByText('New folder')
+  expect(screen.queryByLabelText('Rename New folder')).toBeNull()
+  expect(screen.getByRole('treeitem', { name: 'New folder' })).toHaveAttribute(
+    'aria-selected',
+    'false',
+  )
 })

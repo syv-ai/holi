@@ -35,6 +35,7 @@ import { RichTextLinkBubble } from '@/features/documents/rich-text/rich-text-lin
 import {
   RICH_TEXT_BASIC_SLASH_ITEMS,
   RichTextSlashCommand,
+  type SlashAgentLabelSource,
   type RichTextSlashItem,
 } from '@/features/documents/rich-text/rich-text-slash-menu'
 import { useRichTextSelector } from '@/features/documents/rich-text/rich-text-state'
@@ -51,7 +52,8 @@ import { TaskProperties } from '@/features/planning/task-properties'
 import { trpc } from '@/lib/trpc'
 import { sawText } from '@/state/doc-changes'
 import { canStartConversationAtom, startConversationAtom } from '@/state/agents-slots'
-import { isRunLive } from '@/state/document-runs'
+import { isRunLive, useAgentLabel } from '@/state/document-runs'
+import { agentProviderSettingAtom } from '@/state/settings'
 import { claimsAtom } from '@/state/plugins'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { focusedTab } from '@/state/shell-workspace'
@@ -174,6 +176,23 @@ function DocumentEditor({
   onMoved?: (from: string, to: string) => void
 }) {
   const agent = useDocumentAgent(path)
+  const agentLabel = useAgentLabel(useAtomValue(agentProviderSettingAtom)) ?? 'AI'
+  const agentLabelRef = useRef(agentLabel)
+  agentLabelRef.current = agentLabel
+  const labelListeners = useRef(new Set<() => void>())
+  const labelSource = useMemo<SlashAgentLabelSource>(
+    () => ({
+      get: () => agentLabelRef.current,
+      subscribe: (listener) => {
+        labelListeners.current.add(listener)
+        return () => labelListeners.current.delete(listener)
+      },
+    }),
+    [],
+  )
+  useEffect(() => {
+    for (const listener of labelListeners.current) listener()
+  }, [agentLabel])
   const store = useStore()
   const locked = locksDocument(agent.run)
   const [saveState, setSaveState] = useState<SaveState>('saved')
@@ -244,12 +263,13 @@ function DocumentEditor({
         items: [
           ...RICH_TEXT_BASIC_SLASH_ITEMS,
           RICH_TEXT_TABLE_SLASH_ITEM,
-          askAiSlashItem((pos) => handlers.current.trigger(pos)),
+          askAiSlashItem((pos) => handlers.current.trigger(pos), agentLabelRef.current),
         ],
         more: () => handlers.current.pluginItems(),
+        labelSource,
       }),
     ],
-    [path, promptBox],
+    [path, promptBox, labelSource],
   )
 
   const editor = useEditor(

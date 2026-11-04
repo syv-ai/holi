@@ -1,0 +1,52 @@
+name: Assign pull request author
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  issues: write
+
+jobs:
+  assign-author:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assign author
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const pullRequest = context.payload.pull_request;
+            if (!pullRequest) {
+              throw new Error('pull_request_target event has no pull request payload');
+            }
+
+            const author = pullRequest.user?.login;
+            const pullNumber = pullRequest.number;
+            if (!author || !Number.isInteger(pullNumber)) {
+              throw new Error('Pull request payload is missing its author or number');
+            }
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const current = await github.rest.issues.get({ owner, repo, issue_number: pullNumber });
+            const alreadyAssigned = (current.data.assignees ?? []).some((assignee) => assignee.login === author);
+
+            if (!alreadyAssigned) {
+              try {
+                await github.rest.issues.addAssignees({
+                  owner,
+                  repo,
+                  issue_number: pullNumber,
+                  assignees: [author],
+                });
+              } catch (error) {
+                if (error.status !== 422) throw error;
+                core.warning(`GitHub could not assign pull request author ${author}: ${error.message}`);
+              }
+            }
+
+            const verified = await github.rest.issues.get({ owner, repo, issue_number: pullNumber });
+            const assigned = (verified.data.assignees ?? []).some((assignee) => assignee.login === author);
+            if (!assigned) {
+              core.warning(`Pull request author ${author} is not assignable; assignment was not applied.`);
+            }
