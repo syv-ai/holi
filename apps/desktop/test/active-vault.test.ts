@@ -1220,26 +1220,30 @@ describe('ActiveVault — sync', () => {
     expect(alerts).toEqual([])
   })
 
-  it('keeps a permission rejection failing after a successful pull', async () => {
+  it('keeps a permission rejection failing after a successful pull', async ({ onTestFinished }) => {
     const origin = await makeRemote()
     const dir = await makeClone(origin)
     await sleep(QUIESCE)
     const real = openRepo(dir)
     // Keep real filesystem, git and watcher timing, but hold only the failure
     // alert until the real push and pull have completed. This proves the pull
-    // did not clear the permission failure without racing its three-second
-    // alert timer against fixture IO.
+    // did not clear the permission failure without racing its alert timer
+    // against fixture IO. Use a distinct delay to leave the commit timer alone.
+    const failingAlertMs = 12_345
     let alertTimeout: (() => void) | undefined
     const realSetTimeout = globalThis.setTimeout.bind(globalThis)
     const setTimeoutSpy = vi
       .spyOn(globalThis, 'setTimeout')
       .mockImplementation((handler, timeout, ...args) => {
-        if (timeout === 3_000 && typeof handler === 'function') {
+        if (timeout === failingAlertMs && typeof handler === 'function') {
           alertTimeout = handler
           return realSetTimeout(handler, 60_000, ...args)
         }
         return realSetTimeout(handler, timeout, ...args)
       })
+    onTestFinished(() => {
+      setTimeoutSpy.mockRestore()
+    })
     const alerts: { text: string; afterPull: boolean }[] = []
     let pulled = false
     const active = await openActiveVault({
@@ -1257,7 +1261,7 @@ describe('ActiveVault — sync', () => {
       onSnapshot: () => {},
       onSyncState: () => {},
       onSyncFailing: (text) => alerts.push({ text, afterPull: pulled }),
-      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, failingAlertMs: 3_000 },
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, failingAlertMs },
     })
     open.push(active)
 
@@ -1266,7 +1270,6 @@ describe('ActiveVault — sync', () => {
     expect(pulled).toBe(true)
     expect(alertTimeout).toBeDefined()
     alertTimeout!()
-    setTimeoutSpy.mockRestore()
     expect(alerts).toHaveLength(1)
     expect(alerts[0].afterPull).toBe(true)
     expect(alerts[0].text).toContain('Sync has failed')
