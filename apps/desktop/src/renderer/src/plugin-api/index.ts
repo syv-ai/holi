@@ -74,6 +74,7 @@ export {
   /** @public */ HoliArcade,
 } from '@/composites/arcade/holi-arcade'
 export { sessionAtom } from '@/state/session'
+export { forgetAgentLabelsAtom } from '@/state/document-runs'
 export { agentProviderSettingAtom, usePluginSetting } from '@/state/settings'
 export { activeModeAtom } from '@/state/color-scheme'
 export { appModeAtom, /** @public */ type AppMode } from '@/state/app-mode'

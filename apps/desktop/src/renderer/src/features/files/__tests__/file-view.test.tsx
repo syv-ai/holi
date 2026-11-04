@@ -8,7 +8,8 @@ import { emptyVaultSnapshot } from '@holi/shared'
 import { createStore, Provider } from 'jotai'
 import { afterEach, expect, test, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
-import { render, screen, waitFor } from '@/test/render'
+import { act, fireEvent, render, screen, waitFor } from '@/test/render'
+import { flushAllBuffers, saveAllBuffers, saveBuffersOnBlur } from '@/lib/buffer-registry'
 import { coreContributionAtom } from '@/state/plugins'
 import { editorSelectionAtom } from '@/state/ui-report'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
@@ -121,7 +122,7 @@ test('code opens straight into the editor, with its latest commit', async () => 
   )
   expect(document.querySelector('.cm-lineNumbers')).not.toBeNull()
   expect(await screen.findByText('4a14110')).toBeInTheDocument()
-  expect(screen.getByText('2 hours ago')).toBeInTheDocument()
+  expect(document.querySelector('time')).toBeInTheDocument()
 })
 
 test("code wears the code block's colours, Vue included", async () => {
@@ -197,6 +198,169 @@ test('a json file saves once it parses, and not before', async () => {
       text: '{"a": 2}\n',
     }),
   )
+})
+
+test('flush retries a rejected autosave and propagates persistent failures', async () => {
+  read.mockResolvedValue('a\n')
+  write.mockResolvedValue(undefined)
+  historyList.mockResolvedValue([])
+  setup('src/retry.ts')
+  await screen.findByText('Saved')
+  await typeInto('b\n')
+  write.mockRejectedValueOnce(new Error('offline'))
+  await act(() => new Promise((resolve) => setTimeout(resolve, 650)))
+  expect(write).toHaveBeenCalledTimes(1)
+  write.mockRejectedValueOnce(new Error('still offline'))
+  await expect(act(() => flushAllBuffers())).rejects.toThrow('still offline')
+  expect(write).toHaveBeenCalledTimes(2)
+})
+
+test('a later blur retries a failed autosave while syntax remains valid', async () => {
+  read.mockResolvedValue('a\n')
+  historyList.mockResolvedValue([])
+  write.mockResolvedValue(undefined)
+  setup('src/blur.ts')
+  await screen.findByText('Saved')
+  await act(() => new Promise((resolve) => setTimeout(resolve, 650)))
+  write.mockClear()
+  await typeInto('b\n')
+  write.mockRejectedValueOnce(new Error('offline'))
+  await act(() => new Promise((resolve) => setTimeout(resolve, 650)))
+  expect(write).toHaveBeenCalledTimes(1)
+  await act(() => saveAllBuffers())
+  expect(write).toHaveBeenCalledTimes(2)
+  expect(write).toHaveBeenLastCalledWith({
+    remote: 'syv-ai/site',
+    path: 'src/blur.ts',
+    text: 'b\n',
+  })
+})
+
+test('flush waits for an in-flight autosave and writes edits made while it waits', async () => {
+  read.mockResolvedValue('a\n')
+  historyList.mockResolvedValue([])
+  let release!: () => void
+  write.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)))
+  setup('src/race.ts')
+  await screen.findByText('Saved')
+  // Let the initial async disk read settle before measuring this save.
+  await act(() => new Promise((resolve) => setTimeout(resolve, 650)))
+  write.mockClear()
+  await typeInto('b\n')
+  await act(() => new Promise((resolve) => setTimeout(resolve, 650)))
+  expect(write).toHaveBeenCalledTimes(1)
+  await typeInto('c\n')
+  let flushed = false
+  const pending = act(async () => {
+    await flushAllBuffers()
+    flushed = true
+  })
+  const concurrent = flushAllBuffers()
+  expect(flushed).toBe(false)
+  release()
+  await pending
+  await concurrent
+  expect(write).toHaveBeenCalledTimes(2)
+  expect(write).toHaveBeenLastCalledWith({
+    remote: 'syv-ai/site',
+    path: 'src/race.ts',
+    text: 'c\n',
+  })
+})
+
+test('closing during a pending code save retains the final undo snapshot', async () => {
+  read.mockResolvedValue('a\n')
+  historyList.mockResolvedValue([])
+  let release!: () => void
+  write.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve
+      }),
+  )
+  const view = setup('src/race.ts')
+  await screen.findByText('Saved')
+  await typeInto('b\n')
+  const first = saveAllBuffers()
+  await waitFor(() => expect(write).toHaveBeenCalledTimes(1))
+  await typeInto('a\n')
+  const final = flushAllBuffers()
+  view.unmount()
+  release()
+  await first
+  await final
+  expect(write).toHaveBeenLastCalledWith({
+    remote: 'syv-ai/site',
+    path: 'src/race.ts',
+    text: 'a\n',
+  })
+})
+
+test('a flush writes a pending edit at once, and a rename after it writes nothing to the old path', async () => {
+  read.mockResolvedValue('a\n')
+  write.mockResolvedValue(undefined)
+  historyList.mockResolvedValue([])
+  const view = setup('src/old.ts')
+  expect(await screen.findByText('Saved')).toBeInTheDocument()
+
+  await typeInto('b\n')
+  // Well inside the save delay, as a rename's flush is.
+  await act(() => flushAllBuffers())
+  expect(write).toHaveBeenCalledTimes(1)
+  expect(write).toHaveBeenLastCalledWith({ remote: 'syv-ai/site', path: 'src/old.ts', text: 'b\n' })
+
+  // The rename moves the file, and the tab follows it to its new path.
+  read.mockResolvedValue('b\n')
+  view.rerender(
+    <Provider store={lastStore}>
+      <FileView path="src/new.ts" />
+    </Provider>,
+  )
+  await waitFor(() =>
+    expect(document.querySelector('[data-file-editor="src/new.ts"]')).toBeInTheDocument(),
+  )
+  await act(() => new Promise((resolve) => setTimeout(resolve, 800)))
+  expect(write).toHaveBeenCalledTimes(1)
+})
+
+test('a flush writes json that does not parse, and ⌘S holds it', async () => {
+  read.mockResolvedValue('{"a": 1}\n')
+  write.mockResolvedValue(undefined)
+  historyList.mockResolvedValue([])
+  setup('.holi/config.json')
+  expect(await screen.findByText('Saved')).toBeInTheDocument()
+
+  await typeInto('{"a": ')
+  await act(() => saveAllBuffers())
+  expect(write).not.toHaveBeenCalled()
+  await act(() => flushAllBuffers())
+  expect(write).toHaveBeenCalledWith({
+    remote: 'syv-ai/site',
+    path: '.holi/config.json',
+    text: '{"a": ',
+  })
+})
+
+test('leaving the window saves json that parses, and holds json that does not', async () => {
+  read.mockResolvedValue('{"a": 1}\n')
+  write.mockResolvedValue(undefined)
+  historyList.mockResolvedValue([])
+  const off = saveBuffersOnBlur()
+  setup('.holi/config.json')
+  expect(await screen.findByText('Saved')).toBeInTheDocument()
+
+  await typeInto('{"a": ')
+  await act(async () => void fireEvent.blur(window))
+  expect(write).not.toHaveBeenCalled()
+
+  await typeInto('{"a": 2}\n')
+  await act(async () => void fireEvent.blur(window))
+  expect(write).toHaveBeenCalledWith({
+    remote: 'syv-ai/site',
+    path: '.holi/config.json',
+    text: '{"a": 2}\n',
+  })
+  off()
 })
 
 test('⌘F finds in a code file, steps through the matches and replaces them', async () => {

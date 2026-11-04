@@ -6,7 +6,7 @@ import { atom, createStore } from 'jotai'
 import { describe, expect, it } from 'vitest'
 
 import { installedPluginsAtom } from '@/state/plugins'
-import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
+import { openTabAtom, shellWorkspaceAtom, workspaceOfAtom } from '@/state/shell-tabs'
 import { allTabs } from '@/state/shell-workspace'
 import { activeRemoteAtom } from '@/state/vaults'
 import { applyVaultSwitchAtom, leavingVaultAtom, switchVaultAtom } from '@/state/vault-switch'
@@ -32,26 +32,26 @@ describe('switching vault', () => {
     expect(store.get(activeRemoteAtom)).toBe('o/a')
   })
 
-  it('switches at once with nothing to ask about, to that vault’s own tabs', () => {
+  it('switches at once with nothing to ask about, preserving each vault’s tabs', async () => {
     const store = createStore()
     store.set(activeRemoteAtom, 'o/a')
     store.set(openTabAtom, { kind: 'doc', path: 'a.md' })
 
-    store.set(switchVaultAtom, 'o/b')
+    await store.set(switchVaultAtom, 'o/b')
 
     expect(store.get(activeRemoteAtom)).toBe('o/b')
     expect(allTabs(store.get(shellWorkspaceAtom))).toEqual([])
     expect(store.get(leavingVaultAtom)).toBeNull()
-    store.set(switchVaultAtom, 'o/a')
-    expect(allTabs(store.get(shellWorkspaceAtom))).toEqual(['a.md'])
+    await store.set(switchVaultAtom, 'o/a')
+    expect(allTabs(store.get(workspaceOfAtom)('o/a'))).toEqual(['a.md'])
   })
 
-  it('confirming applies the pending switch and clears the question', () => {
+  it('confirming applies the pending switch and clears the question', async () => {
     const store = createStore()
     store.set(activeRemoteAtom, 'o/a')
     store.set(leavingVaultAtom, { kind: 'switch', remote: 'o/b' })
 
-    store.set(applyVaultSwitchAtom, 'o/b')
+    await store.set(applyVaultSwitchAtom, 'o/b')
 
     expect(store.get(activeRemoteAtom)).toBe('o/b')
     expect(store.get(leavingVaultAtom)).toBeNull()
