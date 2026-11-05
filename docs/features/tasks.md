@@ -228,8 +228,8 @@ the [planning](planning.md) view shows every task in the vault by them.
   across vaults (`start.ts`); `main/archive-done.ts`, `main/task-done.ts`, `main/seed.ts` and
   `main/vault/shipped/`, the commit transform, completing one file, and the seeded `using-tasks`
   skill with its deny rules; `main/triggers.ts`, the task trigger source
-  ([scheduled-agents](scheduled-agents.md)); `renderer/index.ts`, which adds nothing to the window
-  yet.
+  ([scheduled-agents](scheduled-agents.md)); `renderer/index.ts`, the task-file claim whose
+  `create` is New task in the [file tree](file-tree.md)'s New menu, asking the title first.
 - `apps/desktop/src/main/tray.ts`: the tray, core's.
 - `apps/desktop/src/renderer/src/state/tasks.ts`: task set, filter, drops, writes.
 - `apps/desktop/src/renderer/src/state/clock.ts`: `nowAtom` and `todayAtom`, the minute the overdue labels and the daily note read.
