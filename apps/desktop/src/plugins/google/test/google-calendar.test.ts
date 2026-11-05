@@ -14,6 +14,7 @@ import {
   listAgenda,
   listCalendars,
   resolveCalendars,
+  respondToEvent,
   updateEvent,
 } from '../main/calendar'
 
@@ -850,5 +851,60 @@ describe('calendar writes', () => {
     await deleteEvent(api, 'ev-1')
 
     expect(writes).toHaveLength(1)
+  })
+
+  describe('answering an invitation', () => {
+    const INVITE = {
+      id: 'ev-3',
+      summary: 'Q2 review',
+      organizer: { email: 'bo@syv.ai' },
+      attendees: [
+        { email: 'bo@syv.ai', organizer: true, responseStatus: 'accepted' },
+        { email: 'ada@syv.ai', self: true, responseStatus: 'needsAction', additionalGuests: 1 },
+        { email: 'cy@syv.ai', responseStatus: 'declined' },
+      ],
+    }
+
+    it("patches only the person's own entry, and tells the organizer", async () => {
+      const { writes, api } = writable(INVITE)
+
+      await respondToEvent(api, 'ev-3', 'tentative', 'can we move to 14:00?')
+
+      expect(writes).toEqual([
+        {
+          method: 'PATCH',
+          url: `${PRIMARY}/ev-3?sendUpdates=all`,
+          body: {
+            attendeesOmitted: true,
+            attendees: [
+              {
+                email: 'ada@syv.ai',
+                self: true,
+                responseStatus: 'tentative',
+                additionalGuests: 1,
+                comment: 'can we move to 14:00?',
+              },
+            ],
+          },
+        },
+      ])
+    })
+
+    it('refuses an event the person is not invited to', async () => {
+      const { writes, api } = writable(WITH_ATTENDEES)
+
+      await expect(respondToEvent(api, 'ev-2', 'accepted')).rejects.toThrow(/guest/)
+      expect(writes).toHaveLength(0)
+    })
+
+    it('refuses an event the person organises', async () => {
+      const { writes, api } = writable({
+        ...INVITE,
+        organizer: { email: 'ada@syv.ai', self: true },
+      })
+
+      await expect(respondToEvent(api, 'ev-3', 'declined')).rejects.toThrow(/organises/)
+      expect(writes).toHaveLength(0)
+    })
   })
 })
