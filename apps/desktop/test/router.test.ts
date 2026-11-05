@@ -1849,6 +1849,58 @@ describe('history', () => {
     expect(commits[0]!.subject).toBe('Update note.md')
   })
 
+  it('lists exact Unicode bundle paths through history.changed', async () => {
+    const { caller, root } = await rig()
+    await mkdir(join(root, 'Demo.app'), { recursive: true })
+    await mkdir(join(root, 'Æble.app'), { recursive: true })
+    await writeFile(join(root, 'Demo.app', 'æ.js'), 'export {}\n', 'utf8')
+    await writeFile(join(root, 'Æble.app', 'index.html'), '<main />\n', 'utf8')
+    await plainGit(root, ['init', '-b', 'main'])
+    await plainGit(root, ['add', '-A'])
+    await plainGit(root, ['commit', '-m', 'create unicode apps'])
+    await caller.vaults.open({ remote: REMOTE })
+    const [commit] = await caller.history.log()
+    const changed = await caller.history.changed({ sha: commit!.sha })
+    expect(changed.filter((path) => path.startsWith('Demo.app/'))).toEqual(['Demo.app/æ.js'])
+    expect(changed.filter((path) => path.startsWith('Æble.app/'))).toEqual(['Æble.app/index.html'])
+  })
+
+  it('looks up a named commit even when it is outside the recent cap', async () => {
+    const { caller, root } = await rig()
+    await mkdir(join(root, 'Demo.app', 'data'), { recursive: true })
+    await writeFile(join(root, 'Demo.app', 'index.html'), 'app\n', 'utf8')
+    await plainGit(root, ['init', '-b', 'main'])
+    await plainGit(root, ['add', '-A'])
+    await plainGit(root, ['commit', '-m', 'create demo app'])
+    const target = (await plainGit(root, ['rev-parse', 'HEAD'])).trim()
+    for (let i = 0; i < 201; i++) {
+      await writeFile(join(root, 'Demo.app', 'data', 'records.json'), `${i}\n`, 'utf8')
+      await plainGit(root, ['add', '-A'])
+      await plainGit(root, ['commit', '-m', `data ${i}`])
+    }
+    await caller.vaults.open({ remote: REMOTE })
+    const recent = await caller.history.list({ path: 'Demo.app' })
+    expect(recent).toHaveLength(200)
+    expect(recent.some((commit) => commit.sha === target)).toBe(false)
+    expect(await caller.history.commit({ sha: target })).toMatchObject({
+      sha: target,
+      subject: 'create demo app',
+      added: expect.any(Number),
+    })
+    expect(await caller.history.commit({ sha: target.slice(0, 12) })).toMatchObject({
+      sha: target,
+      subject: 'create demo app',
+    })
+    const blob = (await plainGit(root, ['rev-parse', 'HEAD:Demo.app/index.html'])).trim()
+    expect(await caller.history.commit({ sha: blob })).toBeNull()
+    await expect(caller.history.commit({ sha: target.slice(0, 3) })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    })
+    await expect(caller.history.commit({ sha: 'not-a-sha' })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    })
+  })
+
   it('lists the files a commit changed', async () => {
     const { caller } = await withHistory()
     const top = (await caller.history.log())[0]! // 'Update note.md'

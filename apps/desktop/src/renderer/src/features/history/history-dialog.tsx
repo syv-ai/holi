@@ -6,7 +6,7 @@
  * bundle) is every commit under it, and a commit shows the changes to each
  * of its files there; a folder has no "file at this commit".
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAtomValue } from 'jotai'
 import {
   ArrowLeftIcon,
@@ -52,6 +52,7 @@ import { snapshotAtom } from '@/state/vaults'
 import { initials, shortSha } from './commit-format'
 import { authorFor, type FileAuthor, type FileCommit, type FileHistory } from './use-file-history'
 import { EmptyState, ErrorState } from '@/composites/empty-state'
+import { trpc } from '@/lib/trpc'
 
 const ALL_USERS = '__all__'
 
@@ -87,18 +88,64 @@ export function HistoryDialog({
   const [opening, setOpening] = useState<string | null>(sha ?? null)
   // Each opening starts on `sha` again: the dialog stays mounted between them.
   const [openedFor, setOpenedFor] = useState({ open, sha })
+  const [target, setTarget] = useState<
+    | { key: string; kind: 'loading' }
+    | { key: string; kind: 'error'; message: string }
+    | { key: string; kind: 'ready'; commit: FileCommit }
+    | { key: string; kind: 'unavailable' }
+    | null
+  >(null)
+  const [targetAttempt, setTargetAttempt] = useState(0)
   if (openedFor.open !== open || openedFor.sha !== sha) {
     setOpenedFor({ open, sha })
     if (open) {
       setOpening(sha ?? null)
       setPicked(null)
+      setTarget(null)
     }
   }
   const named =
     opening !== null && history.kind === 'ready'
       ? history.commits.find((c) => c.sha === opening || c.sha.startsWith(opening))
       : undefined
-  const detail: Detail = picked ?? (named === undefined ? null : { commit: named, show: 'diff' })
+  const targetKey = opening === null ? null : `${path}:${opening}`
+  useEffect(() => {
+    if (
+      !open ||
+      targetKey === null ||
+      opening === null ||
+      named !== undefined ||
+      history.kind !== 'ready'
+    )
+      return
+    let live = true
+    setTarget({ key: targetKey, kind: 'loading' })
+    trpc.history.commit
+      .query({ sha: opening })
+      .then((commit) => {
+        if (live)
+          setTarget(
+            commit
+              ? { key: targetKey, kind: 'ready', commit }
+              : { key: targetKey, kind: 'unavailable' },
+          )
+      })
+      .catch((err: unknown) => {
+        if (live)
+          setTarget({
+            key: targetKey,
+            kind: 'error',
+            message: err instanceof Error ? err.message : String(err),
+          })
+      })
+    return () => {
+      live = false
+    }
+  }, [open, targetKey, opening, named, history.kind, targetAttempt])
+  const exactTarget = targetKey !== null && target?.key === targetKey ? target : null
+  const namedCommit = named ?? (exactTarget?.kind === 'ready' ? exactTarget.commit : undefined)
+  const detail: Detail =
+    picked ?? (namedCommit === undefined ? null : { commit: namedCommit, show: 'diff' })
   const setDetail = (next: Detail) => {
     setOpening(null)
     setPicked(next)
@@ -189,6 +236,32 @@ export function HistoryDialog({
                 />
               )}
             </div>
+          </div>
+        ) : opening !== null && history.kind === 'ready' && named === undefined ? (
+          <div className="flex min-h-0 flex-col gap-3">
+            <Button variant="outline" size="sm" onClick={() => setDetail(null)}>
+              <ArrowLeftIcon data-icon="inline-start" aria-hidden="true" />
+              All commits
+            </Button>
+            {exactTarget === null || exactTarget.kind === 'loading' ? (
+              <div
+                className="flex flex-col gap-2.5 py-2"
+                role="status"
+                aria-label="Loading the commit"
+              >
+                <Skeleton className="h-4 w-1/2" />
+                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-4 w-2/5" />
+              </div>
+            ) : exactTarget.kind === 'error' ? (
+              <ErrorState
+                title="This commit could not be read"
+                message={exactTarget.message}
+                onRetry={() => setTargetAttempt((n) => n + 1)}
+              />
+            ) : (
+              <EmptyState title="This commit is no longer available." />
+            )}
           </div>
         ) : (
           <CommitList

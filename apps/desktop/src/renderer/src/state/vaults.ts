@@ -30,6 +30,10 @@ export const vaultsLoadedAtom = atom(false)
  * identity, and the clone's path is machine-local. */
 export const activeRemoteAtom = atom<string | null>(null)
 
+/** The remote whose main-process `vaults.open` has completed. Plugin vault
+ * hooks must not run until main has finished opening that vault. */
+export const openedRemoteAtom = atom<string | null>(null)
+
 /**
  * Per-vault "show hidden files" preference, persisted across launches. One
  * localStorage key holds a `{ [remote]: boolean }` map; a vault absent from it
@@ -142,6 +146,7 @@ export const openVaultAtom = atom(null, async (_get, set, remote: string) => {
   const snapshot = await trpc.vaults.open.mutate({ remote })
   set(activeRemoteAtom, remote)
   set(snapshotAtom, snapshot)
+  set(openedRemoteAtom, remote)
 })
 
 /**

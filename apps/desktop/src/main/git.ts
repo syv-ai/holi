@@ -213,6 +213,9 @@ export interface GitRepo {
    * e.g. a commit from before the file was renamed (`show` reads the given name,
    * it does not `--follow`). */
   show(sha: string, path: string): Promise<string>
+  /** One commit's exact metadata and churn, even when it is outside a recent
+   * history listing. Null when the object is unavailable. */
+  commit(sha: string): Promise<Commit | null>
   /** The paths a commit changed vs its (first) parent — the file list for a
    * commit's diff view. `--root` so the initial commit lists its files. */
   changedFiles(sha: string): Promise<string[]>
@@ -705,16 +708,54 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return res.stdout
   }
 
-  async function changedFiles(sha: string): Promise<string[]> {
-    const out = await runGit(
+  async function commit(sha: string): Promise<Commit | null> {
+    if (!/^[0-9a-f]{4,64}$/i.test(sha)) throw new Error('Invalid commit SHA')
+    // Resolve the input specifically as a commit. Git rejects ambiguous
+    // abbreviations here; peeling also refuses blobs and trees. Passing only
+    // validated hex keeps the revision expression out of option injection.
+    const resolved = await tryGit(
       root,
-      ['diff-tree', '--no-commit-id', '--name-only', '-r', '--root', sha],
+      ['rev-parse', '--verify', '--end-of-options', `${sha}^{commit}`],
       opts,
     )
-    return out
-      .split('\n')
-      .map((s) => s.trim())
-      .filter((s) => s !== '')
+    if (!resolved.ok || !/^[0-9a-f]{40,64}$/i.test(resolved.stdout.trim())) return null
+    const fullSha = resolved.stdout.trim()
+    const raw = await runGit(
+      root,
+      ['log', '--no-walk', '--numstat', '--format=%H%x1f%s%x1f%aI%x1f%an', fullSha],
+      opts,
+    )
+    const [header = '', ...stats] = raw.split('\n')
+    if (!header) return null
+    const [actualSha = '', subject = '', date = '', author = ''] = header.split('\x1f')
+    if (actualSha.toLowerCase() !== fullSha.toLowerCase()) return null
+    let added = 0
+    let removed = 0
+    for (const line of stats) {
+      const [a, r] = line.split('\t')
+      if (a !== undefined && r !== undefined) {
+        added += Number(a) || 0
+        removed += Number(r) || 0
+      }
+    }
+    return { sha: actualSha, subject, date, author, added, removed }
+  }
+
+  async function changedFiles(sha: string): Promise<string[]> {
+    if (!/^[0-9a-f]{40,64}$/i.test(sha)) throw new Error('Invalid commit SHA')
+    const result = await tryGit(
+      root,
+      ['diff-tree', '--no-commit-id', '--name-only', '-z', '-r', '--root', sha],
+      opts,
+    )
+    if (!result.ok) {
+      throw new GitError(
+        `git diff-tree failed (${result.code}): ${result.stderr.split('\n')[0] ?? ''}`,
+        result.code,
+        result.stderr,
+      )
+    }
+    return result.stdout.split('\0').filter((path) => path !== '')
   }
 
   async function commitFiles(limit: number): Promise<{ sha: string; files: string[] }[]> {
@@ -1142,6 +1183,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     log,
     show,
     changedFiles,
+    commit,
     commitFiles,
     head,
     rangeFiles,
