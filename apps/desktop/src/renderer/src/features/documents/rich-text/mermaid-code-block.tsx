@@ -8,21 +8,30 @@ import {
   useEditorState,
   type ReactNodeViewProps,
 } from '@tiptap/react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { activeRemoteAtom } from '@/plugin-api'
+import { getDefaultStore } from 'jotai'
 
 import { useAtomValue } from 'jotai'
 
 import { activeModeAtom } from '@/state/color-scheme'
 
 function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
+  // Surface plan: operational document surface; record-detail/editor archetype; no added frame/card; dense actions, default field; drawing actions then anchored label field; empty-source fallback, render skeleton and inline error/retry; no new motion.
   const [svg, setSvg] = useState<string | null>(null)
   const [renderError, setRenderError] = useState(false)
+  const [retry, setRetry] = useState(0)
   const [focused, setFocused] = useState(() => editor.view.hasFocus())
   const [targets, setTargets] = useState<MermaidTarget[]>([])
   const [editing, setEditing] = useState(false)
   const [selected, setSelected] = useState<MermaidTarget | null>(null)
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null)
+  const [validating, setValidating] = useState(false)
+  const session = useRef(0)
   const [draft, setDraft] = useState('')
   const [editError, setEditError] = useState('')
   const activeMode = useAtomValue(activeModeAtom)
@@ -32,6 +41,13 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
   const isMermaid = String(node.attrs.language ?? '').toLowerCase() === 'mermaid'
   const editable = editor.isEditable
   const currentPosition = () => (typeof getPos === 'function' ? getPos() : undefined)
+  const closeEditor = useCallback(() => {
+    session.current++
+    setSelected(null)
+    setAnchor(null)
+    setEditError('')
+    setValidating(false)
+  }, [])
   useEffect(() => {
     const focus = () => setFocused(true)
     const blur = () => setFocused(false)
@@ -75,7 +91,7 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
     return () => {
       current = false
     }
-  }, [active, isMermaid, source, theme])
+  }, [active, isMermaid, source, theme, retry])
 
   useEffect(() => {
     const host = svgHost.current
@@ -89,46 +105,101 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
       return
     }
     host.replaceChildren(document.importNode(root, true))
-  }, [svg])
+    const targetsById = new Map(targets.map((target) => [target.domId, target]))
+    root.querySelectorAll('[id]').forEach((targetEl) => {
+      const target = targetsById.get(targetEl.id)
+      if (!target || !editing) return
+      targetEl.setAttribute('tabindex', '0')
+      targetEl.setAttribute('role', 'button')
+      targetEl.setAttribute('aria-label', `${target.label} (${target.id})`)
+      targetEl.setAttribute('data-label-target', '')
+      targetEl.addEventListener('click', () => {
+        setSelected(target)
+        setDraft(target.label)
+        setAnchor(targetEl as HTMLElement)
+        setEditError('')
+      })
+      targetEl.addEventListener('keydown', (event) => {
+        const key = (event as KeyboardEvent).key
+        if (key === 'Enter' || key === ' ') {
+          event.preventDefault()
+          targetEl.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        }
+      })
+    })
+  }, [editing, svg, targets])
 
   useEffect(() => {
     if (!editable || active) {
       setEditing(false)
-      setSelected(null)
-      setEditError('')
+      closeEditor()
     }
-  }, [active, editable])
+  }, [active, editable, closeEditor])
 
   const showDiagram = isMermaid && !active && source.trim() !== '' && !renderError
-  function applyLabel() {
-    if (!selected || !editable) return
-    const patched = patchMermaidLabel(source, selected.id, draft)
+  async function applyLabel() {
+    if (!selected || !editable || !editor.isEditable) return
+    const id = session.current
+    const capturedSource = source
+    const capturedId = selected.id
+    const remote = getDefaultStore().get(activeRemoteAtom)
+    const patched = patchMermaidLabel(capturedSource, capturedId, draft)
     if ('error' in patched) {
       setEditError(patched.error)
       return
     }
-    const position = currentPosition()
-    if (typeof position !== 'number' || editor.state.doc.nodeAt(position)?.textContent !== source) {
-      setSelected(null)
+    if (patched.source === capturedSource) {
+      closeEditor()
       return
     }
-    let start = 0
-    while (start < source.length && source[start] === patched.source[start]) start++
-    let end = 0
-    while (
-      end < source.length - start &&
-      source[source.length - 1 - end] === patched.source[patched.source.length - 1 - end]
-    )
-      end++
-    const transaction = editor.state.tr.insertText(
-      patched.source.slice(start, patched.source.length - end),
-      position + 1 + start,
-      position + 1 + source.length - end,
-    )
-    editor.view.dispatch(transaction)
-    setSelected(null)
-    setEditing(false)
-    editor.view.focus()
+    setValidating(true)
+    try {
+      const checked = await renderMermaid(patched.source, theme)
+      const livePosition = currentPosition()
+      if (
+        session.current !== id ||
+        !editor.isEditable ||
+        typeof livePosition !== 'number' ||
+        editor.state.doc.nodeAt(livePosition)?.textContent !== capturedSource ||
+        getDefaultStore().get(activeRemoteAtom) !== remote ||
+        !svgHost.current?.isConnected
+      )
+        return
+      const oldTargets = new Set(targets.map((target) => target.id))
+      const checkedTargets = new Set(checked.targets.map((target) => target.id))
+      if (
+        oldTargets.size !== checkedTargets.size ||
+        [...oldTargets].some((target) => !checkedTargets.has(target)) ||
+        !checked.targets.some((target) => target.id === capturedId && target.label === draft)
+      ) {
+        setEditError('This label cannot be verified in the rendered diagram. Edit source instead.')
+        return
+      }
+      const old = capturedSource
+      const next = patched.source
+      let start = 0
+      while (start < old.length && old[start] === next[start]) start++
+      let end = 0
+      while (end < old.length - start && old[old.length - 1 - end] === next[next.length - 1 - end])
+        end++
+      const { closeHistory } = await import('@tiptap/pm/history')
+      const before = closeHistory(editor.state.tr)
+      editor.view.dispatch(before)
+      const transaction = editor.state.tr.insertText(
+        next.slice(start, next.length - end),
+        livePosition + 1 + start,
+        livePosition + 1 + old.length - end,
+      )
+      editor.view.dispatch(closeHistory(transaction))
+      closeEditor()
+      setEditing(false)
+      editor.view.focus()
+    } catch {
+      if (session.current === id)
+        setEditError('Could not validate this label. Retry or edit source.')
+    } finally {
+      if (session.current === id) setValidating(false)
+    }
   }
 
   return (
@@ -138,8 +209,10 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
           ref={svgHost}
           data-mermaid-diagram=""
           contentEditable={false}
-          role={svg ? 'img' : 'status'}
-          aria-label={svg ? 'Mermaid diagram' : 'Rendering diagram'}
+          role={editing ? 'group' : svg ? 'img' : 'status'}
+          aria-label={
+            editing ? 'Editable Mermaid diagram' : svg ? 'Mermaid diagram' : 'Rendering diagram'
+          }
           onMouseDown={(event) => {
             if ((event.target as Element).closest('[data-label-target]')) return
             const position = currentPosition()
@@ -155,11 +228,20 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
       ) : null}
       {showDiagram && editable ? (
         <div className="flex gap-2">
-          <Button type="button" variant="outline" onClick={() => setEditing((value) => !value)}>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setEditing((value) => !value)
+              closeEditor()
+            }}
+          >
             {editing ? 'Done' : 'Edit labels'}
           </Button>
           <Button
             type="button"
+            size="sm"
             variant="text"
             onClick={() => {
               const position = currentPosition()
@@ -173,69 +255,95 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
           </Button>
         </div>
       ) : null}
-      {editing ? (
-        <div className="flex flex-wrap gap-2" aria-label="Diagram labels">
-          {targets.length ? (
-            targets.map((target) => (
-              <Button
-                type="button"
-                key={target.id}
-                variant="outline"
-                data-label-target=""
-                onClick={() => {
-                  setSelected(target)
-                  setDraft(target.label)
-                  setEditError('')
-                }}
-              >
-                {target.label}
-              </Button>
-            ))
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Labels cannot be safely edited for this diagram. Edit source instead.
-            </p>
-          )}
-        </div>
+      {editing && targets.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Labels cannot be safely edited for this diagram. Edit source instead.
+        </p>
       ) : null}
-      {selected ? (
-        <div className="flex gap-2" role="group" aria-label={`Edit ${selected.id} label`}>
-          <Input
-            aria-label="Label"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                setSelected(null)
-                setEditError('')
-              }
-              if (event.key === 'Enter' && !event.nativeEvent.isComposing) applyLabel()
+      <Popover
+        open={Boolean(selected)}
+        onOpenChange={(open) => {
+          if (!open) closeEditor()
+        }}
+      >
+        {selected && anchor ? (
+          <PopoverAnchor
+            virtualRef={{
+              current: { getBoundingClientRect: () => anchor.getBoundingClientRect() },
             }}
           />
-          <Button type="button" onClick={applyLabel}>
-            Apply
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              setSelected(null)
-              setEditError('')
-            }}
-          >
-            Cancel
-          </Button>
-          {editError ? <p role="alert">{editError}</p> : null}
-        </div>
-      ) : null}
+        ) : null}
+        <PopoverContent onEscapeKeyDown={closeEditor} onInteractOutside={closeEditor}>
+          {selected ? (
+            <div
+              className="flex flex-col gap-2"
+              role="group"
+              aria-label={`Edit ${selected.id} label`}
+            >
+              <Label htmlFor="mermaid-label-input">
+                {selected.label} ({selected.id})
+              </Label>
+              <Input
+                id="mermaid-label-input"
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') closeEditor()
+                  if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                    event.preventDefault()
+                    void applyLabel()
+                  }
+                }}
+              />
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={validating}
+                  onClick={() => void applyLabel()}
+                >
+                  Apply
+                </Button>
+                <Button type="button" size="sm" variant="outline" onClick={closeEditor}>
+                  Cancel
+                </Button>
+              </div>
+              {editError ? <p role="alert">{editError}</p> : null}
+            </div>
+          ) : null}
+        </PopoverContent>
+      </Popover>
       <NodeViewContent
         className={showDiagram ? 'hidden' : undefined}
         data-mermaid-source={isMermaid ? '' : undefined}
       />
       {renderError && isMermaid ? (
-        <p role="status" className="text-muted-foreground text-sm">
-          Couldn&apos;t draw this diagram
-        </p>
+        <div role="status" className="flex gap-2 text-sm">
+          <span>Couldn&apos;t draw this diagram.</span>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setRenderError(false)
+              setSvg(null)
+              setRetry((value) => value + 1)
+            }}
+          >
+            Retry
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="text"
+            onClick={() => {
+              const position = currentPosition()
+              if (typeof position === 'number') editor.commands.setTextSelection(position + 1)
+            }}
+          >
+            Edit source
+          </Button>
+        </div>
       ) : null}
     </NodeViewWrapper>
   )
