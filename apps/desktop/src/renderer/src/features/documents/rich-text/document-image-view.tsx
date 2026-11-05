@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 
 import { RenderedMediaLightbox } from './rendered-media-lightbox'
+import { IMAGE_CLASS } from '../image-sizing'
 
 export function DocumentImageView({
   node,
@@ -14,7 +15,8 @@ export function DocumentImageView({
   const [failedSrc, setFailedSrc] = useState<string | null>(null)
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null)
   const src = resolveSrc(String(node.attrs.src ?? ''), folder)
-  const alt = String(node.attrs.alt ?? 'Image')
+  const alt = String(node.attrs.alt ?? '')
+  const title = alt.trim() || 'Image'
   useEffect(() => {
     setFailedSrc(null)
     setLoadedSrc(null)
@@ -24,7 +26,7 @@ export function DocumentImageView({
     <img
       src={src}
       alt={alt}
-      className={large ? 'max-h-full max-w-full object-contain' : 'max-w-full'}
+      className={large ? 'max-h-full max-w-full object-contain' : IMAGE_CLASS}
       onError={() => setFailedSrc(src)}
       onLoad={() => setLoadedSrc(src)}
     />
@@ -32,7 +34,7 @@ export function DocumentImageView({
   return (
     <NodeViewWrapper as="span" contentEditable={false}>
       <RenderedMediaLightbox
-        title={alt}
+        title={title}
         preview={
           failed ? (
             <p role="status" className="text-sm">

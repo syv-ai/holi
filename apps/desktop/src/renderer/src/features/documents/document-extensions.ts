@@ -10,6 +10,7 @@ import Image from '@tiptap/extension-image'
 import { createElement } from 'react'
 import { mergeAttributes, Node, ReactNodeViewRenderer } from '@tiptap/react'
 import { DocumentImageView } from './rich-text/document-image-view'
+import { IMAGE_CLASS } from './image-sizing'
 
 import { createRichTextExtensions } from '@/features/documents/rich-text/rich-text-extensions'
 import { vaultAssetUrl } from '@/lib/vault-asset'
@@ -41,9 +42,6 @@ function displaySrc(src: string, folder: string): string {
  *  widest (48rem, `max-w-3xl`), so a square figure always fills the column
  *  and only a tall portrait one is held to the screen; in a table cell it
  *  stays thumbnail-sized. */
-const IMAGE_CLASS =
-  'h-auto w-auto max-w-full max-h-[max(70vh,48rem)] rounded-md in-[td]:max-h-80 in-[th]:max-h-80'
-
 const DocumentImage = Image.extend<{ folder: string }>({
   addOptions() {
     return { ...this.parent!(), folder: '' }
