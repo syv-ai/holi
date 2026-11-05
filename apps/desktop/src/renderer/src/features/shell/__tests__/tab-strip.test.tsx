@@ -2,7 +2,7 @@ import { Provider, createStore } from 'jotai'
 import { expect, test, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@/test/render'
 import { TabStrip } from '../tab-strip'
-import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { shellWorkspaceAtom, updateWorkspaceAtom, workspaceOfAtom } from '@/state/shell-tabs'
 import { closeTab, combineOnStrip, emptyWorkspace, openTab } from '@/state/shell-workspace'
 import { activeRemoteAtom } from '@/state/vaults'
 import { tabDragAtom, tabDragVaultAtom, tabDragWasOpenAtom } from '../use-tab-drag'
@@ -62,6 +62,72 @@ function dragEvent(type: 'dragover' | 'drop', transfer: DataTransfer, x: number)
   Object.defineProperties(event, { clientX: { value: x }, dataTransfer: { value: transfer } })
   return event
 }
+
+test.each([
+  ['source closure', 'middle combine', 150],
+  ['source closure', 'leading edge', 105],
+  ['source closure', 'trailing edge', 195],
+  ['vault switch', 'middle combine', 150],
+  ['vault switch', 'leading edge', 105],
+  ['vault switch', 'trailing edge', 195],
+] as const)('same-tick %s rejects a %s drop and clears drag ownership', (change, _position, x) => {
+  const { store, list, transfer } = setup()
+  const original = store.get(shellWorkspaceAtom)
+  const otherRemote = 'other/vault'
+  const otherBefore = original
+  let closedWorkspace = original
+  act(() => {
+    store.set(updateWorkspaceAtom, otherRemote, otherBefore)
+    if (change === 'source closure') {
+      store.set(shellWorkspaceAtom, (workspace) => closeTab(workspace, 'A.md'))
+      closedWorkspace = store.get(shellWorkspaceAtom)
+    } else {
+      store.set(activeRemoteAtom, otherRemote)
+    }
+    fireEvent(list, dragEvent('drop', transfer, x))
+  })
+  expect(store.get(tabDragAtom)).toBeNull()
+  expect(store.get(tabDragVaultAtom)).toBeNull()
+  expect(store.get(tabDragWasOpenAtom)).toBe(false)
+  if (change === 'source closure') {
+    expect(store.get(shellWorkspaceAtom)).toBe(closedWorkspace)
+    expect(store.get(shellWorkspaceAtom).entries).toEqual(['B.md'])
+    expect(store.get(shellWorkspaceAtom).entries).not.toContain('A.md')
+    expect(store.get(workspaceOfAtom)(otherRemote)).toBe(otherBefore)
+  } else {
+    expect(store.get(shellWorkspaceAtom)).toBe(otherBefore)
+    expect(store.get(workspaceOfAtom)('owner/vault')).toBe(original)
+    act(() => store.set(activeRemoteAtom, 'owner/vault'))
+    expect(store.get(shellWorkspaceAtom)).toBe(original)
+    expect(store.get(shellWorkspaceAtom).entries).toEqual(['A.md', 'B.md'])
+  }
+})
+
+test('an immediately cancelled gesture rejects the stale drop and clears drag ownership', () => {
+  const { store, list, transfer } = setup()
+  const before = store.get(shellWorkspaceAtom)
+  act(() => {
+    store.set(tabDragAtom, null)
+    fireEvent(list, dragEvent('drop', transfer, 150))
+  })
+  expect(store.get(shellWorkspaceAtom)).toBe(before)
+  expect(store.get(tabDragAtom)).toBeNull()
+  expect(store.get(tabDragVaultAtom)).toBeNull()
+  expect(store.get(tabDragWasOpenAtom)).toBe(false)
+})
+
+test('a MIME identity mismatch rejects the drop and clears drag ownership', () => {
+  const { store, list, transfer } = setup()
+  const before = store.get(shellWorkspaceAtom)
+  act(() => {
+    transfer.setData(MIME, 'B.md')
+    fireEvent(list, dragEvent('drop', transfer, 150))
+  })
+  expect(store.get(shellWorkspaceAtom)).toBe(before)
+  expect(store.get(tabDragAtom)).toBeNull()
+  expect(store.get(tabDragVaultAtom)).toBeNull()
+  expect(store.get(tabDragWasOpenAtom)).toBe(false)
+})
 
 test('ordinary target hover renders the prospective target-first split without mutating workspace', () => {
   const { store, list, tabs, transfer } = setup()
