@@ -9,6 +9,9 @@ import {
 } from '@tiptap/react'
 import { useEffect, useRef, useState } from 'react'
 
+import { Button } from '@/components/ui/button'
+import { RenderedMediaLightbox } from './rendered-media-lightbox'
+
 import { useAtomValue } from 'jotai'
 
 import { activeModeAtom } from '@/state/color-scheme'
@@ -106,26 +109,35 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
   }, [svg])
 
   const showDiagram = isMermaid && !active && source.trim() !== '' && !renderError
+  const editSource = () => {
+    const position = currentPosition()
+    if (typeof position !== 'number') return
+    editor.commands.setTextSelection(Math.min(position + 1, position + node.nodeSize - 1))
+    editor.view.focus()
+  }
 
   return (
     <NodeViewWrapper className="tiptap-code-block">
       {showDiagram ? (
-        <div
-          ref={svgHost}
-          data-mermaid-diagram=""
-          contentEditable={false}
-          role={svg ? 'img' : 'status'}
-          aria-label={svg ? 'Mermaid diagram' : 'Rendering diagram'}
-          onMouseDown={(event) => {
-            const position = currentPosition()
-            if (editable && typeof position === 'number') {
-              event.preventDefault()
-              editor.commands.setTextSelection(Math.min(position + 1, position + node.nodeSize - 1))
-              editor.view.focus()
-            }
-          }}
-        >
-          {svg ? null : <span className="text-muted-foreground text-sm">Rendering diagram…</span>}
+        <div>
+          <RenderedMediaLightbox title="Mermaid diagram" preview={<SvgPreview svg={svg} />}>
+            <div
+              ref={svgHost}
+              data-mermaid-diagram=""
+              contentEditable={false}
+              role={svg ? 'img' : 'status'}
+              aria-label={svg ? 'Mermaid diagram' : 'Rendering diagram'}
+            >
+              {svg ? null : (
+                <span className="text-muted-foreground text-sm">Rendering diagram…</span>
+              )}
+            </div>
+          </RenderedMediaLightbox>
+          {editable ? (
+            <Button type="button" variant="link" onClick={editSource}>
+              Edit source
+            </Button>
+          ) : null}
         </div>
       ) : null}
       <NodeViewContent
@@ -138,6 +150,20 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
         </p>
       ) : null}
     </NodeViewWrapper>
+  )
+}
+
+function SvgPreview({ svg }: { svg: string | null }) {
+  const host = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!svg || !host.current) return
+    const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
+    if (parsed.documentElement.localName === 'svg' && !parsed.querySelector('parsererror')) {
+      host.current.replaceChildren(document.importNode(parsed.documentElement, true))
+    }
+  }, [svg])
+  return (
+    <div ref={host} className="max-w-full [&_svg]:h-auto [&_svg]:max-h-screen [&_svg]:max-w-full" />
   )
 }
 

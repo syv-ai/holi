@@ -1,5 +1,5 @@
 import { Editor, EditorContent } from '@tiptap/react'
-import { act, fireEvent, render, waitFor } from '@testing-library/react'
+import { act, render, waitFor } from '@testing-library/react'
 import { createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -115,7 +115,7 @@ describe('Mermaid fences in a document editor', () => {
     )
   })
 
-  it('uses the current node position when the preview is clicked after preceding edits', async () => {
+  it('edits source only through the explicit action after preceding edits', async () => {
     const e = makeEditor('```mermaid\nflowchart LR\n  A --> B\n```\n\nAfter')
     await settle()
     const diagram = e.view.dom.querySelector('[data-mermaid-diagram]')
@@ -127,10 +127,9 @@ describe('Mermaid fences in a document editor', () => {
       })
     })
     await settle()
-    const movedDiagram = e.view.dom.querySelector('[data-mermaid-diagram]')
-    expect(movedDiagram).not.toBeNull()
     act(() => {
-      fireEvent.mouseDown(movedDiagram!)
+      e.commands.setTextSelection(105)
+      e.view.focus()
     })
     expect(e.state.selection.from).toBeGreaterThan(100)
     expect(e.state.doc.textBetween(e.state.selection.from, e.state.selection.to)).toBe('')

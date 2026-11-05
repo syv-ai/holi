@@ -7,7 +7,9 @@
  * applied and vanish on the next open.
  */
 import Image from '@tiptap/extension-image'
-import { mergeAttributes, Node } from '@tiptap/react'
+import { createElement } from 'react'
+import { mergeAttributes, Node, ReactNodeViewRenderer } from '@tiptap/react'
+import { DocumentImageView } from './rich-text/document-image-view'
 
 import { createRichTextExtensions } from '@/features/documents/rich-text/rich-text-extensions'
 import { vaultAssetUrl } from '@/lib/vault-asset'
@@ -45,6 +47,12 @@ const IMAGE_CLASS =
 const DocumentImage = Image.extend<{ folder: string }>({
   addOptions() {
     return { ...this.parent!(), folder: '' }
+  },
+  addNodeView() {
+    const folder = this.options.folder
+    return ReactNodeViewRenderer((props) =>
+      createElement(DocumentImageView, { ...props, folder, resolveSrc: displaySrc }),
+    )
   },
   renderHTML({ HTMLAttributes }) {
     return [
