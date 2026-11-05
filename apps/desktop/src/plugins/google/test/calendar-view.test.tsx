@@ -230,6 +230,50 @@ describe('the calendar view', () => {
     })
   })
 
+  test('nested date picker Escape preserves the card; card Escape restores its event trigger', async () => {
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    const eventButton = (await screen.findAllByText('Focus block'))[0]!.closest('button')!
+    await user.click(eventButton)
+    expect(await screen.findByRole('dialog', { name: 'Focus block' })).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(eventButton).toHaveFocus()
+
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    await screen.findByRole('textbox', { name: 'Title' })
+    await user.click(screen.getByRole('button', { name: 'Starts' }))
+    expect(screen.getAllByRole('dialog')).toHaveLength(2)
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.getAllByRole('dialog')).toHaveLength(1))
+    expect(screen.getByRole('textbox', { name: 'Title' })).toBeInTheDocument()
+  })
+
+  test('a pending write is single-flight and keeps its anchored card open', async () => {
+    const user = userEvent.setup()
+    let resolve!: (value: { id: string }) => void
+    scheduleMock.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done
+      }),
+    )
+    render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    const trigger = screen.getByRole('button', { name: 'New event' })
+    await user.click(trigger)
+    const card = await screen.findByRole('dialog', { name: 'New event' })
+    const title = within(card).getByRole('textbox', { name: 'Title' })
+    expect(title).toHaveFocus()
+    await user.type(title, 'Deferred event')
+    await user.click(within(card).getByRole('button', { name: 'Add event' }))
+    expect(within(card).getByRole('button', { name: 'Saving…' })).toBeDisabled()
+    await user.click(trigger)
+    expect(scheduleMock).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('dialog', { name: 'New event' })).toBeInTheDocument()
+    resolve({ id: 'new' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
   test('a refused save says why and keeps the form', async () => {
     const user = userEvent.setup()
     scheduleMock.mockRejectedValue(new Error('Google said no'))
