@@ -9,6 +9,7 @@ import {
   closeTab,
   closeTabsToRight,
   closeTabsWhere,
+  combineOnStrip,
   dropOnStrip,
   dropTab,
   emptyWorkspace,
@@ -109,6 +110,60 @@ describe('the strip', () => {
     expect(strip(moveEntry(ws, C, 0))).toEqual([C, A, B])
     expect(strip(moveEntry(ws, A, 3))).toEqual([B, C, A])
     expect(moveEntry(ws, A, 1)).toBe(ws)
+  })
+
+  test('combines a dragged tab with an explicit inactive target', () => {
+    const ws = selectEntry(withTabs(A, B, C), C)
+    const combined = combineOnStrip(ws, A, B)
+    expect(strip(combined)).toEqual([[B, A], C])
+    expect(combined.active).toBe('holi:split:1')
+    expect(focusedTab(combined)).toBe(B)
+    expect(allTabs(combined)).toEqual([B, A, C])
+    expect(combined.entries[0]).toMatchObject({ shares: [0.5, 0.5] })
+  })
+
+  test('combines in either strip order without duplicating views', () => {
+    const ws = withTabs(A, B, C)
+    expect(strip(combineOnStrip(ws, C, A))).toEqual([[A, C], B])
+    expect(strip(combineOnStrip(ws, A, C))).toEqual([B, [C, A]])
+  })
+
+  test('a sidebar view can combine without opening a separate tab first', () => {
+    const ws = withTabs(A, B)
+    const combined = combineOnStrip(ws, D, A)
+    expect(strip(combined)).toEqual([[A, D], B])
+    expect(allTabs(combined)).toEqual([A, D, B])
+    expect(focusedTab(combined)).toBe(A)
+  })
+
+  test('dragging one split member combines only that member', () => {
+    const ws = pair()
+    const combined = combineOnStrip(ws, A, C)
+    expect(strip(combined)).toEqual([B, [C, A]])
+    expect(allTabs(combined)).toEqual([B, C, A])
+  })
+
+  test('combines eligible split groups while preserving target identity and members', () => {
+    const ws = openInSplit(openInSplit(withTabs(A, B, C, D), A), B)
+    const targetId = (ws.entries[1] as ShellSplit).id
+    const incoming = openInSplit(selectEntry(ws, C), D)
+    const incomingId = (incoming.entries[0] as ShellSplit).id
+    const combined = combineOnStrip(incoming, incomingId, targetId)
+    expect(strip(combined)).toEqual([[A, B, C, D]])
+    expect((combined.entries[0] as ShellSplit).id).toBe(targetId)
+    expect(allTabs(combined)).toEqual([A, B, C, D])
+    expect(focusedTab(combined)).toBe(B)
+  })
+
+  test('rejects self, unknown, and over-capacity combinations without changes', () => {
+    const ws = withTabs(A, B, C, D, E)
+    const full = openInSplit(openInSplit(openInSplit(withTabs(A, B, C, D, E), A), B), C)
+    expect(combineOnStrip(ws, A, A)).toBe(ws)
+    expect(combineOnStrip(ws, 'holi:unknown:entry', A)).toBe(ws)
+    expect(combineOnStrip(full, E, (full.entries[0] as ShellSplit).id)).toBe(full)
+    const combined = combineOnStrip(ws, A, B)
+    expect(allTabs(combined)).toHaveLength(5)
+    expect(new Set(allTabs(combined)).size).toBe(5)
   })
 })
 

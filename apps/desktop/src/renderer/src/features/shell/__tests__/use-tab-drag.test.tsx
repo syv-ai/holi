@@ -6,9 +6,31 @@
 import { Provider, createStore } from 'jotai'
 import { expect, test, vi } from 'vitest'
 
+import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { emptyWorkspace, openTab } from '@/state/shell-workspace'
+import { activeRemoteAtom } from '@/state/vaults'
 import { fireEvent, render, screen } from '@/test/render'
 
-import { insertPreview, slotAt, TAB_MIME, tabDragAtom, useTabDrag } from '../use-tab-drag'
+import {
+  insertPreview,
+  slotAt,
+  stripDropZone,
+  TAB_MIME,
+  tabDragAtom,
+  tabDragVaultAtom,
+  tabDragWasOpenAtom,
+  useTabDrag,
+} from '../use-tab-drag'
+
+test('the strip middle combines while the outer edges retain reorder behavior', () => {
+  expect(stripDropZone(0)).toBe('reorder')
+  expect(stripDropZone(0.24)).toBe('reorder')
+  expect(stripDropZone(0.25)).toBe('combine')
+  expect(stripDropZone(0.5)).toBe('combine')
+  expect(stripDropZone(0.75)).toBe('combine')
+  expect(stripDropZone(0.76)).toBe('reorder')
+  expect(stripDropZone(1)).toBe('reorder')
+})
 
 test('one view: each half opens a gap on its side, with no middle', () => {
   const edges = [0, 1000]
@@ -94,6 +116,8 @@ function Rows({ own }: { own: (event: React.DragEvent) => void }) {
 test("a sidebar row's drag carries its tab, beside a row's own drag", async () => {
   vi.useFakeTimers({ toFake: ['setTimeout'] })
   const store = createStore()
+  store.set(activeRemoteAtom, 'owner/vault')
+  store.set(shellWorkspaceAtom, openTab(emptyWorkspace(), 'Notes/A.md'))
   const own = vi.fn((event: React.DragEvent) => event.dataTransfer.setData('text/plain', 'tree'))
   render(
     <Provider store={store}>
@@ -105,8 +129,12 @@ test("a sidebar row's drag carries its tab, beside a row's own drag", async () =
   expect(session.getData(TAB_MIME)).toBe('holi:session:agent:session:7')
   await vi.runAllTimersAsync()
   expect(store.get(tabDragAtom)).toBe('holi:session:agent:session:7')
+  expect(store.get(tabDragVaultAtom)).toBe('owner/vault')
+  expect(store.get(tabDragWasOpenAtom)).toBe(false)
   fireEvent.dragEnd(screen.getByText('Session'))
   expect(store.get(tabDragAtom)).toBeNull()
+  expect(store.get(tabDragVaultAtom)).toBeNull()
+  expect(store.get(tabDragWasOpenAtom)).toBe(false)
 
   const file = transfer()
   fireEvent.dragStart(screen.getByText('File'), { dataTransfer: file })
@@ -115,5 +143,8 @@ test("a sidebar row's drag carries its tab, beside a row's own drag", async () =
   expect(own).toHaveBeenCalledOnce()
   await vi.runAllTimersAsync()
   expect(store.get(tabDragAtom)).toBe('Notes/A.md')
+  expect(store.get(tabDragWasOpenAtom)).toBe(true)
+  fireEvent.dragEnd(screen.getByText('File'))
+  expect(store.get(tabDragWasOpenAtom)).toBe(false)
   vi.useRealTimers()
 })
