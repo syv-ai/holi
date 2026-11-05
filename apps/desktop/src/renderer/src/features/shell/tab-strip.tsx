@@ -210,6 +210,14 @@ export function TabStrip({
     | null {
     if (!draggable || !event.dataTransfer.types.includes(TAB_MIME)) return null
     if (dragged === null || dragVault !== remote) return null
+    const sourceExists = ws.entries.some(
+      (entry) => entryId(entry) === dragged || (isSplit(entry) && entry.views.includes(dragged)),
+    )
+    if (!sourceExists && (dragWasOpen || !isViewKey(dragged))) {
+      setDropAt(null)
+      setCombinePreview(null)
+      return null
+    }
     const items = event.currentTarget.querySelectorAll<HTMLElement>('[data-entry-id]')
     for (const item of items) {
       const rect = item.getBoundingClientRect()
@@ -438,7 +446,7 @@ export function TabStrip({
                           className={cn(
                             'hover:bg-foreground/5',
                             'group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 dark:group-data-[variant=line]/tabs-list:data-active:bg-foreground/8',
-                            shownTab !== null ? 'w-56' : shownMembers!.length > 2 ? 'w-80' : 'w-64',
+                            tab !== null ? 'w-56' : members!.length > 2 ? 'w-80' : 'w-64',
                           )}
                         >
                           {shownTab !== null ? (

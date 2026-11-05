@@ -3,7 +3,7 @@ import { expect, test, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@/test/render'
 import { TabStrip } from '../tab-strip'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
-import { emptyWorkspace, openTab } from '@/state/shell-workspace'
+import { closeTab, emptyWorkspace, openTab } from '@/state/shell-workspace'
 import { activeRemoteAtom } from '@/state/vaults'
 import { tabDragAtom, tabDragVaultAtom, tabDragWasOpenAtom } from '../use-tab-drag'
 
@@ -70,6 +70,59 @@ test('ordinary target hover renders the prospective target-first split without m
   expect(screen.getByRole('tab', { name: 'Split view: B, A' })).toBeTruthy()
   expect(store.get(shellWorkspaceAtom)).toBe(before)
   expect(tabs[1]!.dataset.combinePreview).toBe('true')
+})
+
+test('combine preview preserves measured target geometry through repeated hover and drop', () => {
+  const { store, list, transfer } = setup()
+  const items = Array.from(list.querySelectorAll<HTMLElement>('[data-entry-id]'))
+  for (const [index, item] of items.entries()) {
+    vi.spyOn(item, 'getBoundingClientRect').mockImplementation(() => {
+      const widths = items.map((candidate) => {
+        const trigger = candidate.querySelector('[role="tab"]')!
+        return trigger.className.includes('w-80')
+          ? 320
+          : trigger.className.includes('w-64')
+            ? 256
+            : 224
+      })
+      const left = widths.slice(0, index).reduce((sum, width) => sum + width, 0)
+      const width = widths[index]!
+      return {
+        left,
+        right: left + width,
+        width,
+        top: 0,
+        bottom: 36,
+        height: 36,
+        x: left,
+        y: 0,
+        toJSON: () => ({}),
+      } as DOMRect
+    })
+  }
+  const targetCenterBoundary = 224 + 60
+  fireEvent(list, dragEvent('dragover', transfer, targetCenterBoundary))
+  expect(items[1]!.dataset.combinePreview).toBe('true')
+  expect(items[1]!.querySelector('[role="tab"]')!.className).toContain('w-56')
+  fireEvent(list, dragEvent('dragover', transfer, targetCenterBoundary))
+  expect(items[1]!.dataset.combinePreview).toBe('true')
+  fireEvent(list, dragEvent('drop', transfer, targetCenterBoundary))
+  expect(store.get(shellWorkspaceAtom).entries).toHaveLength(1)
+  expect(store.get(shellWorkspaceAtom).entries[0]).toMatchObject({ views: ['B.md', 'A.md'] })
+})
+
+test('a closed original source cannot be reopened by an edge drop', () => {
+  const { store, list, tabs, transfer } = setup()
+  fireEvent(list, dragEvent('dragover', transfer, 150))
+  expect(tabs[1]!.dataset.combinePreview).toBe('true')
+  act(() => store.set(shellWorkspaceAtom, (workspace) => closeTab(workspace, 'A.md')))
+  const afterClose = store.get(shellWorkspaceAtom)
+  expect(afterClose.entries).toEqual(['B.md'])
+  fireEvent(list, dragEvent('drop', transfer, 5))
+  expect(store.get(shellWorkspaceAtom)).toBe(afterClose)
+  expect(store.get(shellWorkspaceAtom).entries).toEqual(['B.md'])
+  expect(document.querySelector('[data-combine-preview="true"]')).toBeNull()
+  expect(document.querySelector('[data-drop-before="true"], [data-drop-after="true"]')).toBeNull()
 })
 
 test('dropping a valid ordinary target combines once and clears drag state', () => {
