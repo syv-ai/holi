@@ -12,6 +12,7 @@ import {
   dropOnStrip,
   dropTab,
   emptyWorkspace,
+  entriesByRecency,
   entryIds,
   focusedTab,
   focusMember,
@@ -31,6 +32,7 @@ import {
   setShares,
   splitActive,
   stepMember,
+  trackRecent,
   type ShellSplit,
   type ShellWorkspace,
 } from '../shell-workspace'
@@ -351,6 +353,20 @@ describe('closing and reopening', () => {
     const back = reopenClosed(ws)
     expect(strip(back)).toEqual([A])
     expect(back.closed).toHaveLength(1)
+  })
+})
+
+describe('recency', () => {
+  test('the tab in front comes first, then the one before it; a closed one drops out', () => {
+    // As the shell's atom does: every write passes through trackRecent.
+    const write = (ws: ShellWorkspace, change: (w: ShellWorkspace) => ShellWorkspace) =>
+      trackRecent(change(ws))
+    let ws = [A, B, C].reduce((w, key) => write(w, (x) => openTab(x, key)), emptyWorkspace())
+    ws = write(ws, (w) => selectEntry(w, A))
+    expect(entriesByRecency(ws)).toEqual([A, C, B])
+    ws = write(ws, (w) => closeTab(w, C))
+    expect(ws.recent).toEqual([A, B])
+    expect(write(ws, (w) => selectEntry(w, A))).toBe(ws)
   })
 })
 
