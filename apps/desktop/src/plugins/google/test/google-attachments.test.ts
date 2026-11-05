@@ -28,6 +28,7 @@ const FILES = [
   '.env',
   '.holi/memory/user.md',
   'linked.pdf',
+  'linked-dir/secret.pdf',
   'big.bin',
 ]
 
@@ -43,6 +44,7 @@ beforeEach(async () => {
   await writeFile(join(root, '.holi/memory/user.md'), 'memory')
   await writeFile(join(outside, 'secret.pdf'), 'not in the vault')
   await symlink(join(outside, 'secret.pdf'), join(root, 'linked.pdf'))
+  await symlink(outside, join(root, 'linked-dir'))
   await writeFile(join(root, 'big.bin'), '')
   await truncate(join(root, 'big.bin'), 26 * 1024 * 1024)
 })
@@ -130,6 +132,7 @@ describe('what never leaves the machine', () => {
     ['a local file', 'notes.local.md'],
     ['the agent surface', '.holi/memory/user.md'],
     ['a symlink out of the vault', 'linked.pdf'],
+    ['a symlinked parent directory', 'linked-dir/secret.pdf'],
   ])('refuses %s', async (_what, path) => {
     const { send, sent } = rig()
     expect(await refusal(send(['proposals/q2.pdf', path]))).toMatchObject({ code: 'FORBIDDEN' })

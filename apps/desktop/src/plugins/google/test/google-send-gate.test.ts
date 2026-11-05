@@ -181,10 +181,17 @@ describe('the send gate asks', () => {
     ).hookSpecificOutput?.permissionDecisionReason
     const reply = (await decide(bash('holi google reply t1 --attach=notes/plan.md')))
       .hookSpecificOutput?.permissionDecisionReason
+    const concatenated = 'holi google send --attach "Board"" deck.pptx" --attach "Møde résumé.pdf"'
 
     expect(send).toContain('q2.pdf')
     expect(send).toContain('Board deck.pptx')
     expect(reply).toContain('notes/plan.md')
+    for (const maintained of [false, true]) {
+      const reason = (await decide(bash(concatenated), maintained)).hookSpecificOutput
+        ?.permissionDecisionReason
+      expect(reason).toContain('Board deck.pptx')
+      expect(reason).toContain('Møde résumé.pdf')
+    }
 
     // An escaped space is one name; a body that mentions `--attach` is no file.
     const odd = (

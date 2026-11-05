@@ -46,13 +46,24 @@ process.stdin.on('data', chunk => input += chunk).on('end', () => {
         else if (c === '\\\\' && command[i + 1] === '\\n') i++
         else words += c === ' ' ? '\\uE000' : c
       } else if (c === '\\'' || c === '\"') quote = c
-      else if (c === '\\\\') { if (command[i + 1] === '\\n') i++; else words += command[++i] ?? '' }
+      else if (c === '\\\\') { if (command[i + 1] === '\\n') i++; else { const escaped = command[++i] ?? ''; words += escaped === ' ' ? '\\uE000' : escaped } }
       else words += c
     }
     const re = /(?:^|[|;&(\\n])\\s*(?:command[ \\t]+)?(?:\\$\\{?HOLI_BIN\\}?|\\/[^|;&(\\n]*?\\bholi|[^\\s|;&(\\n]*\\bholi)[ \\t]+google[ \\t]+([A-Za-z-]+)\\b(?:[ \\t]+([^\\s|;&(]*))?/g
     for (const match of words.matchAll(re)) {
       const verb = match[1], method = match[2]
-      if (['send','reply','forward','respond'].includes(verb) || (verb === 'api' && method !== 'GET')) { ask(); return }
+      if (['send','reply','forward','respond'].includes(verb) || (verb === 'api' && method !== 'GET')) {
+        const command = words.split('<<')[0] ?? ''
+        const tokens = command.split(/[\\s|;&()]+/).filter(Boolean)
+        const files = []
+        for (let i = 0; i < tokens.length; i++) {
+          const token = tokens[i] ?? ''
+          if (token === '--attach' && tokens[i + 1]) files.push(tokens[++i].replaceAll('\\uE000', ' '))
+          else if (token.startsWith('--attach=')) files.push(token.slice(9).replaceAll('\\uE000', ' '))
+        }
+        const reason = 'This Google action can reach another person; confirm it in the native permission prompt.' + (files.length ? ' It attaches: ' + files.join(', ') + '.' : '')
+        console.log(JSON.stringify({hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'ask',permissionDecisionReason:reason}})); return
+      }
     }
   } catch { ask() }
 })`
