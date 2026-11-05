@@ -126,7 +126,7 @@ interface EventCalendarCallbacks<TData = unknown> {
     }
   ) => void
   onSlotClick?: (slot: EventCalendarSlotInfo, e: React.MouseEvent) => void
-  onSelectSlot?: (slot: EventCalendarSlotDraft) => void
+  onSelectSlot?: (slot: EventCalendarSlotDraft, event?: PointerEvent) => void
   canSelectSlot?: (slot: EventCalendarSlotDraft) => boolean
   onRangeChange?: (info: EventCalendarRangeInfo) => void
   onViewChange?: (view: CalendarView) => void
