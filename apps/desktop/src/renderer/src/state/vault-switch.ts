@@ -19,7 +19,7 @@
 import { atom } from 'jotai'
 import { flushAllBuffers, freezeBuffers } from '@/lib/buffer-registry'
 import { leaveReasonsAtom } from './plugins'
-import { activeRemoteAtom } from './vaults'
+import { activeRemoteAtom, openedRemoteAtom } from './vaults'
 
 export type LeavingVault = { kind: 'switch'; remote: string } | { kind: 'add' } | null
 
@@ -38,6 +38,7 @@ export const applyVaultSwitchAtom = atom(null, async (_get, set, remote: string)
   const release = freezeBuffers()
   try {
     await flushAllBuffers()
+    set(openedRemoteAtom, null)
     set(activeRemoteAtom, remote)
   } finally {
     release()
