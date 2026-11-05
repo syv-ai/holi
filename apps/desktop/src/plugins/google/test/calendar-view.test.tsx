@@ -306,11 +306,13 @@ describe('the calendar view', () => {
   })
 
   test('a failed load says so inline, and Retry asks again', async () => {
-    agendaMock.mockRejectedValueOnce(new Error('Google is down'))
+    // The outage lasts through account initialization; only Retry recovers it.
+    agendaMock.mockRejectedValue(new Error('Google is down'))
     render(<CalendarView />)
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('Google is down')
-    agendaMock.mockClear()
+    expect(alert.isConnected).toBe(true)
+    agendaMock.mockResolvedValue([FOCUS, SYNC]).mockClear()
     fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(agendaMock).toHaveBeenCalled())
     expect((await screen.findAllByText('Focus block')).length).toBeGreaterThan(0)

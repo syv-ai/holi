@@ -4,11 +4,13 @@ import { useGoogleCalendar } from '../renderer/calendar-data'
 
 const agenda = vi.fn()
 const schedule = vi.fn()
+const setCalendar = vi.fn()
 const calendarMethods: Record<string, (params: Record<string, unknown>) => unknown> = {
   'google.agenda': (params) => agenda(params),
   'google.agendaCached': () => null,
   'google.calendars': () => [],
   'google.schedule': (params) => schedule(params),
+  'google.setCalendar': (params) => setCalendar(params),
   'google.reschedule': () => ({ ok: true }),
   'google.unschedule': () => ({ ok: true }),
 }
@@ -50,6 +52,7 @@ const range = { start: new Date(2026, 8, 7), end: new Date(2026, 8, 14) }
 afterEach(() => {
   agenda.mockReset().mockResolvedValue([])
   schedule.mockReset().mockResolvedValue({ id: 'new' })
+  setCalendar.mockReset().mockResolvedValue({ ok: true })
 })
 
 describe('useGoogleCalendar context fencing', () => {
@@ -88,6 +91,29 @@ describe('useGoogleCalendar context fencing', () => {
     })
     await waitFor(() => expect(agenda).toHaveBeenCalledTimes(currentCalls))
     expect(agenda.mock.calls.at(-1)?.[0]).toMatchObject({ remote: 'account-b' })
+  })
+
+  test('an old calendar toggle cannot invalidate the current remote’s pending read', async () => {
+    const toggle = deferred<{ ok: boolean }>()
+    const currentRead = deferred<{ id: string }[]>()
+    setCalendar.mockReturnValueOnce(toggle.promise)
+    agenda.mockImplementation((params: { remote: string }) =>
+      params.remote === 'account-a' ? Promise.resolve([{ id: 'old' }]) : currentRead.promise,
+    )
+    const { result, rerender } = renderHook(
+      ({ remote }: { remote: string }) => useGoogleCalendar(remote, remote),
+      { initialProps: { remote: 'account-a' } },
+    )
+    act(() => result.current.showRange(range))
+    await waitFor(() => expect(result.current.events).toEqual([{ id: 'old' }]))
+    act(() => result.current.setCalendarEnabled('primary', false))
+    rerender({ remote: 'account-b' })
+    await waitFor(() => expect(agenda).toHaveBeenCalledTimes(2))
+    await act(async () => toggle.resolve({ ok: true }))
+    expect(agenda).toHaveBeenCalledTimes(2)
+    await act(async () => currentRead.resolve([{ id: 'current' }]))
+    expect(result.current.events).toEqual([{ id: 'current' }])
+    expect(result.current.loading).toBe(false)
   })
 
   test('a response started for the prior account cannot replace current events', async () => {

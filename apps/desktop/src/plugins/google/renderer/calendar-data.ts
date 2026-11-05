@@ -200,6 +200,8 @@ export function useGoogleCalendar(
   }, [remote])
 
   const load = useCallback(() => {
+    if (context.current.generation !== contextGeneration || context.current.remote !== remote)
+      return
     const asked = ++latest.current
     const generation = contextGeneration
     const current = (): boolean =>
