@@ -161,6 +161,83 @@ test('lists the inbox from Gmail with its sender, subject, tab and labels', asyn
   expect(searchMock).toHaveBeenCalledWith({})
 })
 
+test('readable mail metadata uses opaque semantic colors for rows, drafts, and attachments', async () => {
+  searchMock.mockResolvedValue(
+    page([
+      summary({ id: 'unread', unread: true, category: 'primary', labels: [] }),
+      summary({
+        id: 'read',
+        unread: false,
+        subject: 'Filed report',
+        category: 'primary',
+        labels: [],
+      }),
+    ]),
+  )
+  draftsMock.mockResolvedValue([
+    {
+      draftId: 'd1',
+      threadId: null,
+      to: [{ name: 'Grace Hopper', email: 'grace@example.com' }],
+      subject: 'Compiler notes',
+      snippet: 'Still working on the draft',
+      date: '2026-08-04T09:00:00.000Z',
+    },
+  ])
+  const user = userEvent.setup()
+  render(<MailShell />)
+
+  const list = await screen.findByRole('list', { name: 'Inbox' })
+  const rows = within(list).getAllByRole('listitem')
+  expect(rows).toHaveLength(2)
+  const unreadRow = rows[0]!
+  const readRow = rows[1]!
+  for (const row of rows) {
+    expect(
+      [...row.querySelectorAll('*')].some((node) =>
+        [...node.classList].some((name) => /^opacity-\d+$/.test(name)),
+      ),
+    ).toBe(false)
+    expect(row.querySelector('[style*="opacity"]')).toBeNull()
+  }
+  const unread = within(unreadRow).getByText('Jane Doe')
+  const unreadDate = unreadRow.querySelector('time') ?? within(unreadRow).getByText(/Aug/)
+  expect(unread).toHaveClass('text-foreground')
+  expect(unreadDate).toHaveClass('text-foreground')
+  expect(within(unreadRow).getByText('Q2 budget')).toHaveClass('text-foreground')
+  expect(within(unreadRow).getByText('Numbers attached')).toHaveClass('text-muted-foreground')
+  expect(within(readRow).getByText('Jane Doe')).toHaveClass('text-foreground')
+  expect(within(readRow).getByText('Filed report')).toHaveClass('text-foreground')
+  expect(unreadRow.className).toContain('hover:bg-accent/60')
+  await user.hover(unreadRow)
+  expect(unreadRow.className).toContain('hover:bg-accent/60')
+
+  await user.click(screen.getByRole('button', { name: 'Mailbox: Inbox' }))
+  await user.click(await screen.findByRole('menuitemradio', { name: 'Drafts' }))
+  const draftList = await screen.findByRole('list', { name: 'Drafts' })
+  const draftRow = within(draftList).getByRole('listitem')
+  expect(within(draftRow).getByText('Grace Hopper')).toHaveClass('text-foreground')
+  expect(within(draftRow).getByText(/Aug/)).toHaveClass('text-muted-foreground')
+  expect(within(draftRow).getByText('Compiler notes')).toHaveClass('text-foreground')
+  expect(within(draftRow).getByText('Still working on the draft')).toHaveClass(
+    'text-muted-foreground',
+  )
+  expect(
+    [...draftRow.querySelectorAll('*')].some((node) =>
+      [...node.classList].some((name) => /^opacity-\d+$/.test(name)),
+    ),
+  ).toBe(false)
+  expect(draftRow.querySelector('[style*="opacity"]')).toBeNull()
+
+  await user.click(screen.getByRole('button', { name: 'Mailbox: Drafts' }))
+  await user.click(await screen.findByRole('menuitemradio', { name: 'Inbox' }))
+  await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+  const attachment = await screen.findByRole('button', { name: /^q2\.xlsx/ })
+  const size = within(attachment).getByText('(20 KB)')
+  expect(size).toHaveClass('text-muted-foreground')
+  expect([...size.parentElement!.classList].some((name) => /^opacity-\d+$/.test(name))).toBe(false)
+})
+
 test('opens a thread: marks it read, renders HTML in the sandboxed frame', async () => {
   const user = userEvent.setup()
   render(<MailShell />)

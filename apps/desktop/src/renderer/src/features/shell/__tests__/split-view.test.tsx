@@ -3,6 +3,7 @@
  * title band holds every tab, a split view being one pill of it; ⌘\\, a
  * tab's menu and a drag make a split; its members carry thin headers.
  */
+import { act } from '@testing-library/react'
 import { Provider, createStore } from 'jotai'
 import { expect, test, vi } from 'vitest'
 import {
@@ -13,7 +14,7 @@ import {
 
 import { createEvent, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
-import { activeSplit, focusedTab, isSplit, openTab } from '@/state/shell-workspace'
+import { activeSplit, focusedTab, isSplit, openTab, splitActive } from '@/state/shell-workspace'
 import { vaultSettingsAtom } from '@/state/settings'
 import { tabDragAtom } from '@/features/shell/use-tab-drag'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
@@ -118,7 +119,92 @@ function stripOf(): HTMLElement {
   return document.querySelector<HTMLElement>('[data-slot=site-header]')!
 }
 
-test('⌘\\ makes a split of the tab and a New tab: one pill, two views', async () => {
+class LayoutObserver {
+  static instances: LayoutObserver[] = []
+  readonly observed = new Set<Element>()
+  disconnected = false
+  constructor(private readonly callback: ResizeObserverCallback) {
+    LayoutObserver.instances.push(this)
+  }
+  observe(target: Element) {
+    this.observed.add(target)
+  }
+  unobserve(target: Element) {
+    this.observed.delete(target)
+  }
+  disconnect() {
+    this.disconnected = true
+    this.observed.clear()
+  }
+  deliver(target: Element) {
+    if (this.observed.has(target) && !this.disconnected) {
+      this.callback([{ target } as ResizeObserverEntry], this as unknown as ResizeObserver)
+    }
+  }
+}
+
+test('the tab count follows observed strip and entry layout changes', async () => {
+  const previous = globalThis.ResizeObserver
+  LayoutObserver.instances = []
+  globalThis.ResizeObserver = LayoutObserver as unknown as typeof ResizeObserver
+  try {
+    const store = mount()
+    const list = document.querySelector<HTMLElement>('[role="tablist"]')!
+    let clientWidth = 300
+    let scrollWidth = 900
+    Object.defineProperties(list, {
+      clientWidth: { configurable: true, get: () => clientWidth },
+      scrollWidth: { configurable: true, get: () => scrollWidth },
+    })
+    act(() => store.set(shellWorkspaceAtom, (ws) => openTab(openTab(ws, 'C.md'), 'D.md')))
+    await waitFor(() => expect(LayoutObserver.instances.length).toBeGreaterThan(0))
+    let observer = LayoutObserver.instances.find((candidate) => candidate.observed.has(list))!
+    expect(observer.observed.has(list)).toBe(true)
+    expect(observer.observed.size).toBe(5)
+    act(() => observer.deliver(list))
+    expect(stripOf().textContent).toContain('4 tabs')
+
+    clientWidth = 1000
+    act(() => observer.deliver(list))
+    expect(stripOf().textContent).not.toContain('4 tabs')
+    clientWidth = 300
+    act(() => observer.deliver(list))
+    expect(stripOf().textContent).toContain('4 tabs')
+
+    clientWidth = 920
+    act(() => observer.deliver(list))
+    expect(stripOf().textContent).not.toContain('4 tabs')
+
+    const previousObserver = observer
+    act(() => store.set(shellWorkspaceAtom, splitActive))
+    await waitFor(() =>
+      expect(
+        LayoutObserver.instances.some(
+          (candidate) => candidate !== previousObserver && candidate.observed.has(list),
+        ),
+      ).toBe(true),
+    )
+    observer = LayoutObserver.instances.find(
+      (candidate) => candidate !== previousObserver && candidate.observed.has(list),
+    )!
+    expect(previousObserver.disconnected).toBe(true)
+    expect(observer.observed.has(list)).toBe(true)
+    expect(observer.observed.size).toBe(5)
+    const split = activeSplit(store.get(shellWorkspaceAtom))!
+    const entry = list.querySelector<HTMLElement>(`[data-entry-id="${split.id}"]`)!
+    expect(observer.observed.has(entry)).toBe(true)
+    scrollWidth = 940
+    act(() => observer.deliver(entry))
+    expect(stripOf().textContent).toContain('4 tabs')
+    scrollWidth = 900
+    act(() => observer.deliver(entry))
+    expect(stripOf().textContent).not.toContain('4 tabs')
+  } finally {
+    globalThis.ResizeObserver = previous
+  }
+})
+
+test('⌘\\\\ makes a split of the tab and a New tab: one pill, two views', async () => {
   const store = mount()
   expect(views()).toHaveLength(1)
   fireEvent.keyDown(window, { key: '\\', ctrlKey: true })
