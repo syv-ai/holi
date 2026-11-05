@@ -16,7 +16,7 @@ import { createEvent, fireEvent, render, screen, waitFor, within } from '@/test/
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { activeSplit, focusedTab, isSplit, openTab, splitActive } from '@/state/shell-workspace'
 import { vaultSettingsAtom } from '@/state/settings'
-import { tabDragAtom } from '@/features/shell/use-tab-drag'
+import { tabDragAtom, tabDragVaultAtom, tabDragWasOpenAtom } from '@/features/shell/use-tab-drag'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 
 const write = vi.fn(async (_input: unknown) => ({
@@ -360,6 +360,8 @@ test('a view not open yet, dragged from the sidebar, opens in the gap', async ()
   const dataTransfer = transfer()
   dataTransfer.setData('application/x-holi-tab', 'C.md')
   store.set(tabDragAtom, 'C.md')
+  store.set(tabDragVaultAtom, 'mara/notes')
+  store.set(tabDragWasOpenAtom, false)
   const target = await catcher()
   fireEvent(target, at(createEvent.dragOver(target, { dataTransfer }), 50))
   await waitFor(() => expect(target.dataset.dropSlot).toBe('insert:0'))
