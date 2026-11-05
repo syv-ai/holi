@@ -20,22 +20,20 @@ export function RenderedMediaLightbox({
   preview: ReactNode
 }) {
   return (
-    <>
-      <Dialog>
-        <DialogTrigger asChild>
-          <Button type="button" variant="ghost" aria-label={`Open ${title}`}>
-            {children}
-          </Button>
-        </DialogTrigger>
-        <DialogContent size="6xl" aria-describedby={undefined}>
-          <DialogHeader>
-            <DialogTitle>{title}</DialogTitle>
-          </DialogHeader>
-          <div className="flex max-h-screen min-h-24 items-center justify-center overflow-auto">
-            {preview}
-          </div>
-        </DialogContent>
-      </Dialog>
-    </>
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button type="button" variant="ghost" size="media" aria-label={`Open ${title}`}>
+          {children}
+        </Button>
+      </DialogTrigger>
+      <DialogContent size="media" aria-describedby={undefined}>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+        <div className="flex min-h-24 min-w-0 items-center justify-center overflow-auto">
+          {preview}
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
