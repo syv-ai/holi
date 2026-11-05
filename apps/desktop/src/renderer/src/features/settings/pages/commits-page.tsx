@@ -64,7 +64,7 @@ export function CommitsPage() {
             label="Largest file to commit"
             value={current}
             choices={sizeChoices}
-            onChange={(bytes) => void write('maxCommittedFileBytes', Number(bytes), 'committed')}
+            onChange={(bytes) => void write('maxCommittedFileBytes', Number(bytes))}
           />
         </SettingsFieldRow>
       </SettingsGroup>
@@ -87,9 +87,7 @@ export function CommitsPage() {
                 checked={block[toggle.key] === true}
                 // The whole block: a patch naming one transform must not read
                 // as an answer about the others.
-                onCheckedChange={(on) =>
-                  void write('hooks', { ...block, [toggle.key]: on }, 'committed')
-                }
+                onCheckedChange={(on) => void write('hooks', { ...block, [toggle.key]: on })}
               />
             </SettingsFieldRow>
           )

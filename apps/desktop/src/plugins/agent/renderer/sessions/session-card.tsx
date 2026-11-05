@@ -19,7 +19,15 @@ import { DEFAULT_HOLI_COLOUR, relativeAge } from '@holi/shared'
 import { modelLabel, tokensLabel, type SessionRow } from '../state/session-list'
 
 /** The state or the age, right-aligned on the card's first line. */
-function CardStatus({ row, now }: { row: SessionRow; now: number }): React.JSX.Element {
+function CardStatus({
+  row,
+  now,
+  current,
+}: {
+  row: SessionRow
+  now: number
+  current: boolean
+}): React.JSX.Element {
   const { item, state } = row
   if (state === 'needs-you') {
     const badge = (
@@ -55,7 +63,16 @@ function CardStatus({ row, now }: { row: SessionRow; now: number }): React.JSX.E
       </span>
     )
   }
-  return <span className="text-xs text-muted-foreground tabular-nums">{when}</span>
+  return (
+    <span
+      className={cn(
+        'text-xs tabular-nums',
+        current ? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground',
+      )}
+    >
+      {when}
+    </span>
+  )
 }
 
 /** The mark on the first line: the Holi's face when one ran it, the
@@ -168,7 +185,7 @@ export function SessionCard({
       onClick={onOpen}
       onFocus={onFocus}
       className={cn(
-        'h-auto w-full min-w-0 justify-start text-start font-normal whitespace-normal',
+        'group h-auto w-full min-w-0 justify-start text-start font-normal whitespace-normal',
         // The sidebar's one fill scale, as the rows above and in Documents.
         'hover:bg-foreground/5',
         current && 'bg-foreground/10 hover:bg-foreground/12',
@@ -189,10 +206,15 @@ export function SessionCard({
             <TooltipContent side="right">{item.title}</TooltipContent>
           </Tooltip>
           <span className="flex shrink-0 items-center">
-            <CardStatus row={row} now={now} />
+            <CardStatus row={row} now={now} current={current} />
           </span>
         </span>
-        <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <span
+          className={cn(
+            'flex min-w-0 items-center gap-1.5 text-xs',
+            current ? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground',
+          )}
+        >
           <CardMark row={row} />
           <span className="min-w-0 truncate">{meta}</span>
         </span>

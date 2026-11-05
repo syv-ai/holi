@@ -1,7 +1,9 @@
 /**
- * An open task's fields, above its body: the same chips as New task, each
- * change written to the file at once. Draws nothing for a document that is
- * not a task.
+ * An open task's properties: the same fields as New task, labelled, each
+ * change written to the file at once. Where they sit is the person's
+ * `propertiesLayout`: `inline`, a collapsible Properties section of two
+ * columns of rows above the text, or `sidebar`, stacked in a panel beside it.
+ * Draws nothing for a document that is not a task.
  *
  * Every write first saves what the editor has pending (`beforeWrite`): the
  * editor writes the file whole, frontmatter included, so a save still queued
@@ -11,10 +13,13 @@
  * asks first: it leaves every teammate's board (docs/features/tasks.md).
  */
 import { useState } from 'react'
-import { isPrivateTask, type Task } from '@holi/shared'
+import { isPrivateTask, type PropertiesLayout, type Task } from '@holi/shared'
+import { ChevronDownIcon } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { toast } from 'sonner'
 
+import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { ConfirmDialog } from '@/composites/confirm-dialog'
 import { cn } from '@/lib/cn'
 import { todayAtom } from '@/state/clock'
@@ -49,13 +54,20 @@ function patchOf(change: TaskFieldChange): Record<string, unknown> {
   return { [change.field]: change.value ?? null }
 }
 
+/** Whether a document has properties to show: whether it is a task. */
+export function useHasTaskProperties(path: string): boolean {
+  return useAtomValue(tasksAtom).has(path)
+}
+
 export function TaskProperties({
   path,
+  layout,
   beforeWrite,
   onMoved,
   className,
 }: {
   path: string
+  layout: PropertiesLayout
   beforeWrite: () => Promise<void>
   onMoved?: (from: string, to: string) => void
   className?: string
@@ -69,6 +81,8 @@ export function TaskProperties({
   const makePrivate = useSetAtom(makeTaskPrivateAtom)
   /** Make private, waiting for its answer. */
   const [asking, setAsking] = useState(false)
+  /** The inline section's fold, for as long as the document is open. */
+  const [open, setOpen] = useState(true)
   if (task === undefined) return null
 
   const fail = (err: unknown) =>
@@ -104,15 +118,49 @@ export function TaskProperties({
     }
   }
 
+  const fields = (
+    <TaskFields
+      values={valuesOf(task)}
+      statuses={statuses}
+      today={today}
+      onChange={(change) => void write(change)}
+      layout={layout === 'sidebar' ? 'stacked' : 'rows'}
+      // A row's tint reaches past the text's edge, and its words sit on it.
+      className={layout === 'sidebar' ? undefined : '-mx-2'}
+    />
+  )
+
   return (
     <>
-      <TaskFields
-        values={valuesOf(task)}
-        statuses={statuses}
-        today={today}
-        onChange={(change) => void write(change)}
-        className={cn(className)}
-      />
+      {layout === 'sidebar' ? (
+        <aside
+          aria-label="Properties"
+          className={cn(
+            'bg-sidebar flex w-72 shrink-0 flex-col gap-3 overflow-y-auto px-4 py-5',
+            className,
+          )}
+        >
+          <h2 className="text-muted-foreground text-xs font-medium">Properties</h2>
+          {fields}
+        </aside>
+      ) : (
+        <div className={className}>
+          <Collapsible open={open} onOpenChange={setOpen}>
+            <div className="mb-1 flex">
+              <CollapsibleTrigger asChild>
+                <Button variant="section" size="inline">
+                  <ChevronDownIcon
+                    aria-hidden="true"
+                    className="motion-respond group-data-[state=closed]/button:-rotate-90"
+                  />
+                  Properties
+                </Button>
+              </CollapsibleTrigger>
+            </div>
+            <CollapsibleContent>{fields}</CollapsibleContent>
+          </Collapsible>
+        </div>
+      )}
       <ConfirmDialog
         open={asking}
         onOpenChange={setAsking}
