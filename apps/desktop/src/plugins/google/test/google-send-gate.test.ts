@@ -66,6 +66,16 @@ describe('the send gate asks', () => {
     expect(decisionOf(await decide(bash('holi google reply t1')))).toBe('ask')
   })
 
+  it.each([
+    'holi google send --vault owner/repo --to ada@syv.ai',
+    'holi google reply t1 --vault=owner/repo',
+    'cat body.txt | "$HOLI_BIN" google send --vault owner/repo --to ada@syv.ai',
+    '${HOLI_BIN} google reply t1 --vault=owner/repo --all',
+    'cd /tmp && holi google send --vault owner/repo --draft d1',
+  ])('still asks with an explicit vault: %s', async (command) => {
+    expect(decisionOf(await decide(bash(command)))).toBe('ask')
+  })
+
   // The agent's env names the script as `$HOLI_BIN`. Missing this spelling is
   // how the gate would be believed in while never firing.
   it('asks for the $HOLI_BIN spelling', async () => {

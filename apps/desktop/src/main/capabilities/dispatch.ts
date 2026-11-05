@@ -29,6 +29,7 @@ export interface CapabilityHostDeps {
   /** The open vault, or null with none open. */
   active(): {
     remote: string
+    root: string
     snapshot(): VaultSnapshot
     refresh(): Promise<unknown>
   } | null
@@ -46,6 +47,7 @@ interface CapabilityCall {
   remote: string
   name: string
   params: unknown
+  beforeInvoke?: (target: { remote: string; root: string }) => Promise<void>
 }
 
 export type Dispatch = (call: CapabilityCall) => Promise<CapabilityResult>
@@ -91,6 +93,7 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
     name: string,
     params: unknown,
     admit?: Admit,
+    beforeInvoke?: CapabilityCall['beforeInvoke'],
   ): Promise<CapabilityResult> {
     const root = await rootOf(remote)
     if (!(await enabled(name, root))) {
@@ -105,7 +108,7 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
         bundle,
         snapshot: async () => {
           const active = deps.active()
-          return active?.remote === remote
+          return active?.remote === remote && active.root === root
             ? active.snapshot()
             : scanVault(root, await deps.claims(root))
         },
@@ -114,10 +117,11 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
       },
       params,
       admit,
+      beforeInvoke,
     )
     if (result.writes) {
       const active = deps.active()
-      if (active?.remote === remote) {
+      if (active?.remote === remote && active.root === root) {
         await active.refresh().catch((e) => console.error('[capabilities] post-write rescan:', e))
       }
     }
@@ -132,8 +136,10 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
   const docCommands = new Set(['docs.create', 'docs.update', 'docs.delete', 'docs.settle'])
 
   return {
-    dispatch: async ({ door, remote, name, params }) => {
-      if (door !== 'cli' || !docCommands.has(name)) return run(door, remote, null, name, params)
+    dispatch: async ({ door, remote, name, params, beforeInvoke }) => {
+      if (door !== 'cli' || !docCommands.has(name)) {
+        return run(door, remote, null, name, params, undefined, beforeInvoke)
+      }
       const previous = docQueues.get(remote) ?? Promise.resolve()
       let release!: () => void
       const pending = new Promise<void>((resolve) => {
@@ -142,7 +148,7 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
       docQueues.set(remote, pending)
       await previous
       try {
-        return await run(door, remote, null, name, params)
+        return await run(door, remote, null, name, params, undefined, beforeInvoke)
       } finally {
         release()
         if (docQueues.get(remote) === pending) docQueues.delete(remote)
