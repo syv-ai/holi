@@ -242,11 +242,10 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   useDocChangeMarks()
   useClaudeFirstRun(openTabKey)
   useShellShortcuts({
-    // Split tabs: the keys step over strip entries, and ⌘W closes the view
-    // in front (a split's focused member).
+    // Split tabs: ⌘1–9 go over strip entries, and ⌘W closes the view in
+    // front (a split's focused member).
     tabIds: entryIds(ws),
     activeTabId: focusedKey,
-    activeEntryId: ws.active,
     newTab: openNewTab,
     separate: split === null ? undefined : () => setWs((w) => separate(w, split.id)),
     stepMember: split === null ? undefined : (step) => setWs((w) => stepMember(w, step)),

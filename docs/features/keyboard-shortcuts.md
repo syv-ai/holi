@@ -18,9 +18,14 @@ Pasting a `holi://` link while focus is on the page opens it. Paste into an edit
 - **Live rows.** The ids with a handler are an atom. A key fires only a live row, and the dialog
   lists only live rows: Mail and Calendar appear once their account is connected, Show agents once
   the agent plugin runs, rename only while the sidebar is open to show the field.
-- **One dispatcher.** One `keydown` listener on the window, installed by the app shell, resolves a
-  key against the table with a pure function (`resolveShortcut`), so a test says exactly when a key
-  does and does not fire. The application menu's `menu:command` channel runs ids the same way.
+- **One dispatcher, two phases.** The app shell installs `keydown` listeners on the window that
+  resolve a key against the table with a pure function (`resolveShortcut`), so a test says exactly
+  when a key does and does not fire. The bubbling one runs most rows, so the focused widget goes
+  first. The capturing one runs only the rows marked `capture`, before the focused widget sees the
+  key, and keeps the key from it. Only ⌃Tab and ⌃⇧Tab are `capture`: the tab switcher has to work
+  from an editor or a terminal, which would take Tab. A handler is told the key event that ran it,
+  so it knows a key from the dialog. The application menu's `menu:command` channel runs ids the
+  same way.
 - **Platform keys.** On a Mac ⌘ is Command and ⌃ is Control, each only itself; elsewhere both are
   Ctrl, and the dialog says `Ctrl`, `Alt`, `Shift`. A Mac never takes Control's text-editing keys
   (⌃B, ⌃K, ⌃N) for a ⌘ shortcut. A symbol key such as `?` ignores the Shift that types it.
@@ -87,11 +92,11 @@ screen.
 
 - **Never while typing, unless the row says so.** In a text field, the editor or the terminal only
   rows marked `whileTyping` fire, which is every modified key except collapse all and the two path
-  copies; `?` and F2 are characters or the field's own there. In the terminal no Control key fires, with one exception:
+  copies; `?` and F2 are characters or the field's own there. In the terminal no Control key fires:
   those are the terminal's (Claude Code's own keys included), and on a Mac ⌘ is free because xterm
-  leaves Command alone. The exception is ⌃\`, which toggles the bottom panel
-  ([status bar](status-bar.md)) and is marked `inTerminal`, so the panel closes from inside the
-  shell it shows; the panel's xterm hands it back rather than typing it. The panel keys are VS
+  leaves Command alone. The exceptions are ⌃Tab (the tab switcher, below) and ⌃\`, which toggles
+  the bottom panel ([status bar](status-bar.md)) and is marked `inTerminal`, so the panel closes
+  from inside the shell it shows; the panel's xterm hands it back rather than typing it. The panel keys are VS
   Code's, registered by the panel itself, and clash with nothing in the menu or the table (⌘\` is
   macOS's window cycling, so the toggle is on Control).
 - **The focused widget wins.** A key it handled (`defaultPrevented`) is not a shortcut, which is how
@@ -106,8 +111,13 @@ screen.
 - **⌘W is the menu's.** It is the File menu's accelerator (`main/menu.ts`), which fires before the
   page sees the key, so its row is display only (`boundBy: 'menu'`) and main sends `tab.close`.
   Mail, Calendar and Settings are tabs, so ⌘W closes them like any other.
-- **The tab keys act on the one strip** ([tabs and split view](tabs-panes.md)): next, previous
-  and ⌘1–9 go over its entries, a split counting as one; ⌥⌘W closes them all. **⌘W closes the
+- **⌃Tab is a hold.** With ⌃ held, each Tab steps the tab switcher (⇧Tab back) and letting go
+  of ⌃ opens the tab selected; Escape cancels ([tabs and split view](tabs-panes.md)). It fires in
+  the terminal too (`inTerminal`) and before it (`capture`), so the agent never gets the Tab or the
+  Escape. The list is most recently used first, so a quick ⌃Tab goes back to the tab you were
+  just in. Run from the dialog it goes there at once.
+- **The tab keys act on the one strip** ([tabs and split view](tabs-panes.md)): the switcher
+  and ⌘1–9 go over its entries (the switcher most recently used first, ⌘1–9 in strip order), a split counting as one; ⌥⌘W closes them all. **⌘W closes the
   view in front:** the focused member inside a split (a 2-split turns back into a tab), the tab
   otherwise. ⌘T opens a New tab at the strip's end, or while the sidebar is on Agents starts a
   session in the default agent, as + does.

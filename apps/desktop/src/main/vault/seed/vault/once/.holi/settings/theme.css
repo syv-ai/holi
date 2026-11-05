@@ -43,7 +43,7 @@
   --secondary: var(--color-zinc-800);
   --secondary-foreground: var(--color-zinc-100);
   --muted: var(--color-zinc-800);
-  --muted-foreground: var(--color-zinc-400);
+  --muted-foreground: color-mix(in oklab, var(--color-zinc-400) 45%, var(--color-zinc-300));
   /* The subtle hover surface, not the brand. */
   --accent: color-mix(in oklab, var(--background) 89%, var(--color-white));
   --accent-foreground: var(--color-zinc-100);

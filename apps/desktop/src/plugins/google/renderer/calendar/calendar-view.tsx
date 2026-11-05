@@ -217,10 +217,6 @@ export function CalendarView(): React.JSX.Element {
     setSheet((prev) => (prev ? { mode: 'edit', draft: prev.draft } : prev))
   }, [])
 
-  const updateDraft = useCallback((draft: EventDraft) => {
-    setSheet((prev) => (prev ? { ...prev, draft } : prev))
-  }, [])
-
   const closeSheet = useCallback((open: boolean) => {
     if (!open) {
       setSheet(null)
@@ -228,9 +224,8 @@ export function CalendarView(): React.JSX.Element {
     }
   }, [])
 
-  const saveDraft = async (): Promise<void> => {
+  const saveDraft = async (draft: EventDraft): Promise<void> => {
     if (!sheet || saving) return
-    const draft = sheet.draft
     const title = draft.title.trim()
     if (title === '') return setError('Give it a title.')
     const start = draft.allDay ? toDate(draft.date, '00:00') : toDate(draft.date, draft.start)
@@ -528,9 +523,8 @@ export function CalendarView(): React.JSX.Element {
           saving={saving}
           canCreateTask={canCreateTask}
           onOpenChange={closeSheet}
-          onDraftChange={updateDraft}
           onEdit={startEdit}
-          onSave={() => void saveDraft()}
+          onSave={(draft) => void saveDraft(draft)}
           onDelete={() => void deleteDraft()}
           onCreateTask={() => void createTask()}
           onOpenExternal={(url) => openExternal(url)}
