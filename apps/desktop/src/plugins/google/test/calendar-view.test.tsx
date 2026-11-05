@@ -3,6 +3,7 @@
  * for, what it draws, and which writes it sends through which capability.
  */
 import { render, screen, waitFor, within } from '@/test/render'
+import { fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { getDefaultStore } from 'jotai'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -230,6 +231,22 @@ describe('the calendar view', () => {
     })
   })
 
+  test('Cancel and Close restore the connected origin', async () => {
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    const trigger = screen.getByRole('button', { name: 'New event' })
+    await user.click(trigger)
+    await screen.findByRole('textbox', { name: 'Title' })
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(trigger).toHaveFocus())
+
+    const event = (await screen.findAllByText('Focus block'))[0]!.closest('button')!
+    await user.click(event)
+    await user.click(await screen.findByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(event).toHaveFocus())
+  })
+
   test('nested date picker Escape preserves the card; card Escape restores its event trigger', async () => {
     const user = userEvent.setup()
     render(<CalendarView />)
@@ -289,13 +306,12 @@ describe('the calendar view', () => {
   })
 
   test('a failed load says so inline, and Retry asks again', async () => {
-    const user = userEvent.setup()
     agendaMock.mockRejectedValueOnce(new Error('Google is down'))
     render(<CalendarView />)
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('Google is down')
     agendaMock.mockClear()
-    await user.click(within(alert).getByRole('button', { name: 'Retry' }))
+    fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(agendaMock).toHaveBeenCalled())
     expect((await screen.findAllByText('Focus block')).length).toBeGreaterThan(0)
   })

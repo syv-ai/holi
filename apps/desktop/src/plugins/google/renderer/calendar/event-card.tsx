@@ -217,6 +217,7 @@ export function EventCard({
     [anchor?.rect],
   )
   const escapeClose = useRef(false)
+  const explicitClose = useRef(false)
   const isForm = state?.mode === 'edit' || state?.mode === 'create'
   const label = isForm ? (state?.mode === 'edit' ? 'Edit event' : 'New event') : state?.draft.title
   return (
@@ -241,11 +242,12 @@ export function EventCard({
           }}
           onCloseAutoFocus={(event) => {
             const target = anchor.element?.isConnected ? anchor.element : anchor.fallback
-            if (escapeClose.current && target?.isConnected) {
+            if ((escapeClose.current || explicitClose.current) && target?.isConnected) {
               event.preventDefault()
               target.focus()
             }
             escapeClose.current = false
+            explicitClose.current = false
           }}
         >
           {isForm ? (
@@ -257,7 +259,10 @@ export function EventCard({
               onChange={onDraftChange}
               onSave={onSave}
               onDelete={onDelete}
-              onClose={() => onOpenChange(false)}
+              onClose={() => {
+                explicitClose.current = true
+                onOpenChange(false)
+              }}
             />
           ) : (
             <EventView
@@ -269,7 +274,10 @@ export function EventCard({
               onDelete={onDelete}
               onCreateTask={onCreateTask}
               onOpenExternal={onOpenExternal}
-              onClose={() => onOpenChange(false)}
+              onClose={() => {
+                explicitClose.current = true
+                onOpenChange(false)
+              }}
             />
           )}
         </PopoverContent>
