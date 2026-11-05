@@ -37,9 +37,11 @@ import {
   optionalStringParam,
   paramsObject,
   stringParam,
+  type CapabilityContext,
   type CapabilityTable,
 } from '../../../main/plugin-api'
 import type { GoogleAccountsManager } from './accounts'
+import { vaultAttachments } from './attachments'
 import { GoogleApi, GoogleApiError, type GoogleErrorCode } from './api'
 import {
   createEvent,
@@ -275,6 +277,28 @@ function cliMail(p: Record<string, unknown>): OutgoingMail {
   }
 }
 
+/** `--attach`: vault paths, given once or more (`CliSpec.many`). */
+function attachParam(p: Record<string, unknown>): string[] {
+  const value = p.attach
+  if (value === undefined || value === null) return []
+  const paths = typeof value === 'string' ? [value] : value
+  if (!Array.isArray(paths) || !paths.every((v) => typeof v === 'string' && v !== '')) {
+    throw new CapabilityError('BAD_REQUEST', 'attach must be vault paths')
+  }
+  return paths as string[]
+}
+
+/** `mail` with the files at `attach` on it; unchanged when there are none, so
+ *  a mail without attachments keeps its single-part shape. */
+async function withAttachments(
+  ctx: CapabilityContext,
+  mail: OutgoingMail,
+  attach: readonly string[],
+): Promise<OutgoingMail> {
+  if (attach.length === 0) return mail
+  return { ...mail, attachments: await vaultAttachments(ctx, attach) }
+}
+
 /**
  * `send`'s params: the composer's payload from the UI, or the CLI's
  * `--draft <id>` or composed message.
@@ -285,7 +309,7 @@ function cliMail(p: Record<string, unknown>): OutgoingMail {
  * Gmail's `drafts.send`, which deletes it as it sends: a draft followed by a
  * composed send would be two messages and an orphaned draft.
  */
-function sendParams(raw: unknown): ComposeWrite {
+function sendParams(raw: unknown): ComposeWrite & { attach?: string[] } {
   const p = paramsObject(raw)
   if (p.mail !== undefined) return composeParams(raw)
   const draft = optionalStringParam(p, 'draft')
@@ -293,9 +317,14 @@ function sendParams(raw: unknown): ComposeWrite {
     if (p.to !== undefined) {
       throw new CapabilityError('BAD_REQUEST', '--draft and --to are alternatives')
     }
+    // The draft's attachments are the draft's: adding to them here would send
+    // a message nobody can see in Drafts first.
+    if (p.attach !== undefined) {
+      throw new CapabilityError('BAD_REQUEST', '--draft and --attach are alternatives')
+    }
     return { draftId: draft, mail: { to: [], subject: '', body: '' } }
   }
-  return { mail: cliMail(p) }
+  return { mail: cliMail(p), attach: attachParam(p) }
 }
 
 /** `schedule`'s and `reschedule`'s event fields. */
@@ -756,15 +785,23 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       doors: ['cli'],
       cli: {
         args: [],
-        summary: 'draft a message: --to, --subject, [--cc], [--thread]; the body on stdin',
+        summary:
+          'draft a message: --to, --subject, [--cc], [--thread], [--attach <path>]...; the body on stdin',
         stdin: 'body',
+        many: ['attach'],
       },
       params: (raw) => {
         const p = paramsObject(raw)
-        return { mail: cliMail(p), thread: optionalStringParam(p, 'thread') }
+        return {
+          mail: cliMail(p),
+          thread: optionalStringParam(p, 'thread'),
+          attach: attachParam(p),
+        }
       },
-      run: async (ctx, { mail, thread }) =>
-        google(() => createDraft(apiOf(ctx.remote), mail, thread)),
+      run: async (ctx, { mail, thread, attach }) => {
+        const attached = await withAttachments(ctx, mail, attach)
+        return google(() => createDraft(apiOf(ctx.remote), attached, thread))
+      },
     }),
 
     /**
@@ -778,14 +815,16 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       cli: {
         args: [],
         summary:
-          'send a message (--to, --subject, [--cc]; the body on stdin), or --draft <id>; asks first',
+          'send a message (--to, --subject, [--cc], [--attach <path>]...; the body on stdin), or --draft <id>; asks first',
         stdin: 'body',
         stdinUnless: 'draft',
+        many: ['attach'],
       },
       params: sendParams,
-      run: async (ctx, input) => {
+      run: async (ctx, { attach, ...input }) => {
+        const mail = await withAttachments(ctx, input.mail, attach ?? [])
         const data = await dataOf(ctx.remote)
-        return google(() => data.sendMail(input))
+        return google(() => data.sendMail({ ...input, mail }))
       },
     }),
 
@@ -800,8 +839,9 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         args: ['thread'],
         flags: ['all'],
         summary:
-          'reply to the sender (--all: everyone on the thread); the body on stdin; asks first',
+          'reply to the sender (--all: everyone on the thread), [--attach <path>]...; the body on stdin; asks first',
         stdin: 'body',
+        many: ['attach'],
       },
       params: (raw) => {
         const p = paramsObject(raw)
@@ -809,10 +849,18 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
           thread: stringParam(p, 'thread'),
           body: typeof p.body === 'string' ? p.body : '',
           all: flagParam(p, 'all'),
+          attach: attachParam(p),
         }
       },
-      run: async (ctx, { thread, body, all }) =>
-        google(() => replyToThread(apiOf(ctx.remote), thread, body, { all })),
+      run: async (ctx, { thread, body, all, attach }) => {
+        const attachments = attach.length === 0 ? [] : await vaultAttachments(ctx, attach)
+        return google(() =>
+          replyToThread(apiOf(ctx.remote), thread, body, {
+            all,
+            ...(attachments.length === 0 ? {} : { attachments }),
+          }),
+        )
+      },
     }),
 
     /** A solo event, the agent's and the agenda's alike. There is no way to

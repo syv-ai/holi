@@ -396,7 +396,13 @@ describe('a command that reads stdin', () => {
   const echo = cap({
     doors: ['cli'],
     writes: true,
-    cli: { args: ['to'], summary: 'echo a body', stdin: 'body', stdinUnless: 'draft' },
+    cli: {
+      args: ['to'],
+      summary: 'echo a body',
+      stdin: 'body',
+      stdinUnless: 'draft',
+      many: ['attach'],
+    },
     params: (raw) => raw as Record<string, string>,
     run: async (_ctx, p) => {
       ran(p)
@@ -431,6 +437,59 @@ describe('a command that reads stdin', () => {
     const res = await run(bin, ['x', 'echo', 'ada', '--draft', 'd1'], env, 'ignored')
     expect(res.code).toBe(0)
     expect(ran).toHaveBeenCalledWith({ to: 'ada', draft: 'd1' })
+  })
+
+  it('collects an option it may repeat into a list, in order', async () => {
+    const args = ['x', 'echo', 'ada', '--attach', 'a b.pdf', '--attach=c.pdf', '--body', 'hi']
+    expect((await run(bin, args, env)).code).toBe(0)
+    expect(ran).toHaveBeenCalledWith({ to: 'ada', attach: ['a b.pdf', 'c.pdf'], body: 'hi' })
+  })
+})
+
+describe('a command whose body is read from stdin only as `-`', () => {
+  const commands = [
+    { name: 'x.call', cli: { args: ['path'], summary: 'call', stdin: 'body', stdinOnDash: true } },
+  ] as const
+
+  it('has no body when it is left out, and never asks for stdin', () => {
+    expect(resolveArgv(['x', 'call', 'a'], commands, null)).toMatchObject({
+      kind: 'run',
+      params: { path: 'a' },
+    })
+  })
+
+  it('reads stdin for `--body -`, and takes any other value as it is', () => {
+    expect(resolveArgv(['x', 'call', 'a', '--body', '-'], commands, null)).toEqual({
+      kind: 'stdin',
+    })
+    expect(resolveArgv(['x', 'call', 'a', '--body', '-'], commands, '{}')).toMatchObject({
+      params: { path: 'a', body: '{}' },
+    })
+    expect(resolveArgv(['x', 'call', 'a', '--body', '{"a":1}'], commands, null)).toMatchObject({
+      params: { body: '{"a":1}' },
+    })
+  })
+})
+
+describe('a command whose arguments are positional only', () => {
+  const commands = [
+    { name: 'x.call', cli: { args: ['method', 'path'], summary: 'call', positionalOnly: true } },
+  ] as const
+
+  it('takes them in their place', () => {
+    expect(resolveArgv(['x', 'call', 'POST', 'a'], commands, null)).toMatchObject({
+      kind: 'run',
+      params: { method: 'POST', path: 'a' },
+    })
+  })
+
+  it('refuses one given as an option', () => {
+    expect(
+      resolveArgv(['x', 'call', '--method', 'POST', '--path', 'a'], commands, null),
+    ).toMatchObject({ kind: 'usage' })
+    expect(resolveArgv(['x', 'call', 'a', '--method=POST'], commands, null)).toMatchObject({
+      kind: 'usage',
+    })
   })
 })
 

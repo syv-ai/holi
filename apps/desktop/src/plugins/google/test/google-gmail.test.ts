@@ -1578,10 +1578,14 @@ describe('the composer surface', () => {
   }
 
   function headerIn(raw: string, name: string): string | undefined {
-    const line = raw
-      .split('\r\n\r\n')[0]!
-      .split('\r\n')
-      .find((l) => l.toLowerCase().startsWith(`${name.toLowerCase()}:`))
+    const lines = raw.split('\r\n\r\n')[0]!.split('\r\n')
+    const unfolded = lines.reduce<string[]>((headers, line) => {
+      if (/^[ \t]/.test(line) && headers.length > 0)
+        headers[headers.length - 1] += ` ${line.trim()}`
+      else headers.push(line)
+      return headers
+    }, [])
+    const line = unfolded.find((l) => l.toLowerCase().startsWith(`${name.toLowerCase()}:`))
     return line?.slice(line.indexOf(':') + 1).trim()
   }
 
@@ -1728,10 +1732,17 @@ describe('the composer surface', () => {
   function messageFromRaw(record: DraftRecord): Record<string, unknown> {
     const text = decode(record.raw)
     const [head = '', ...rest] = text.split('\r\n\r\n')
-    const headers = head.split('\r\n').map((line) => ({
-      name: line.slice(0, line.indexOf(':')),
-      value: line.slice(line.indexOf(':') + 1).trim(),
-    }))
+    const headers = head
+      .split('\r\n')
+      .reduce<string[]>((lines, line) => {
+        if (/^[ \t]/.test(line) && lines.length > 0) lines[lines.length - 1] += ` ${line.trim()}`
+        else lines.push(line)
+        return lines
+      }, [])
+      .map((line) => ({
+        name: line.slice(0, line.indexOf(':')),
+        value: line.slice(line.indexOf(':') + 1).trim(),
+      }))
     const contentType = headerIn(text, 'Content-Type') ?? ''
     const body = rest.join('\r\n\r\n')
 
@@ -1874,6 +1885,82 @@ describe('the composer surface', () => {
       expect(drafts.size).toBe(1)
       expect(calls.some((c) => c.method === 'PUT')).toBe(true)
       expect(calls.some((c) => c.method === 'POST')).toBe(false)
+    })
+
+    it('preserves nested inline and remote attachments through read and save', async () => {
+      const original = Buffer.from([0, 1, 2, 253])
+      const remote = Buffer.from([255, 254, 253])
+      let saved = ''
+      const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+        const path = new URL(url).pathname
+        if (path.endsWith('/drafts/d-attachment') && init?.method === 'PUT') {
+          const body = JSON.parse(String(init.body)) as { message: { raw: string } }
+          saved = decode(body.message.raw)
+          return ok({ id: 'd-attachment' })
+        }
+        if (path.endsWith('/drafts/d-attachment')) {
+          return ok({
+            id: 'd-attachment',
+            message: {
+              id: 'm-attachment',
+              payload: {
+                mimeType: 'multipart/mixed',
+                parts: [
+                  {
+                    mimeType: 'multipart/alternative',
+                    parts: [{ mimeType: 'text/plain', body: { data: 'old' } }],
+                  },
+                  {
+                    filename: 'inline.bin',
+                    mimeType: 'application/octet-stream',
+                    headers: [
+                      header('Content-Disposition', 'inline; filename="inline.bin"'),
+                      header('Content-ID', '<inline-image>'),
+                    ],
+                    body: { data: original.toString('base64url'), size: 4 },
+                  },
+                  {
+                    mimeType: 'multipart/related',
+                    parts: [
+                      {
+                        filename: 'remote.bin',
+                        mimeType: 'application/octet-stream',
+                        body: { attachmentId: 'a-remote', size: 3 },
+                      },
+                      {
+                        filename: 'empty.bin',
+                        mimeType: 'application/octet-stream',
+                        body: { data: '', size: 0 },
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          })
+        }
+        if (path.endsWith('/messages/m-attachment/attachments/a-remote')) {
+          return ok({ data: remote.toString('base64url'), size: remote.length })
+        }
+        return ok({})
+      })
+      const api = new GoogleApi({
+        accessToken: async () => 'at-1',
+        fetch: fetchImpl as unknown as typeof globalThis.fetch,
+      })
+
+      const read = await readDraft(api, 'd-attachment')
+      expect(read.draftId).toBe('d-attachment')
+      await saveDraft(api, { ...MAIL, subject: 'Edited subject' }, { draftId: read.draftId })
+
+      expect(saved).toContain('Edited subject')
+      expect(saved).toContain('filename="inline.bin"')
+      expect(saved).toContain('Content-Disposition: inline; filename="inline.bin"')
+      expect(saved).toContain('Content-ID: <inline-image>')
+      expect(saved).toContain('filename="remote.bin"')
+      expect(saved).toContain('filename="empty.bin"')
+      expect(saved).toContain(original.toString('base64'))
+      expect(saved).toContain(remote.toString('base64'))
     })
 
     it('carries the threading headers on every save, not only on send', async () => {
