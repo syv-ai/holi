@@ -11,6 +11,43 @@ import { activeRemoteAtom } from '@/plugin-api'
 import { CalendarView } from '../renderer/calendar/calendar-view'
 import { rangeWindow, toCalendarItem, type GoogleEvent } from '../renderer/calendar-data'
 
+const renderCounts = vi.hoisted(() => ({ calendar: 0, timeSelect: 0 }))
+
+vi.mock('@/components/ui/event-calendar/event-calendar', async (importOriginal) => {
+  const React = await import('react')
+  const actual =
+    await importOriginal<typeof import('@/components/ui/event-calendar/event-calendar')>()
+  return {
+    ...actual,
+    EventCalendar: (props: React.ComponentProps<typeof actual.EventCalendar>) =>
+      React.createElement(
+        React.Profiler,
+        { id: 'calendar-render-counter', onRender: () => renderCounts.calendar++ },
+        React.createElement(actual.EventCalendar, props),
+      ),
+  }
+})
+
+vi.mock('../renderer/calendar/event-fields', async (importOriginal) => {
+  const React = await import('react')
+  const actual = await importOriginal<typeof import('../renderer/calendar/event-fields')>()
+  const component = actual.TimeSelect
+  const implementation =
+    (component as { type?: React.ComponentType<React.ComponentProps<typeof component>> }).type ??
+    component
+  const isMemo = implementation !== component
+  const CountedTimeSelect = (props: React.ComponentProps<typeof component>) => {
+    renderCounts.timeSelect++
+    return React.createElement(implementation, props)
+  }
+  return {
+    ...actual,
+    // Preserve the production memo boundary exactly; if production loses it,
+    // this adapter counts every parent-driven render instead.
+    TimeSelect: isMemo ? React.memo(CountedTimeSelect) : CountedTimeSelect,
+  }
+})
+
 const ME = 'me@example.com'
 
 const at = (hour: number, minute = 0): string => {
@@ -171,6 +208,46 @@ describe('the calendar view', () => {
     // Read again, so the grid shows what Google holds.
     await waitFor(() => expect(agendaMock).toHaveBeenCalled())
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  test('typing in the event title does not re-render the calendar or unchanged time selects', async () => {
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Focus block'))[0]!)
+    const sheet = await screen.findByRole('dialog')
+    await user.click(within(sheet).getByRole('button', { name: 'Edit' }))
+    await screen.findByRole('textbox', { name: 'Title' })
+
+    renderCounts.calendar = 0
+    renderCounts.timeSelect = 0
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), ' title')
+
+    expect(renderCounts.calendar).toBe(0)
+    expect(renderCounts.timeSelect).toBe(0)
+  })
+
+  test('canceling edits discards the title and time when the same event is reopened', async () => {
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Focus block'))[0]!)
+    const sheet = await screen.findByRole('dialog')
+    await user.click(within(sheet).getByRole('button', { name: 'Edit' }))
+
+    const title = await screen.findByRole('textbox', { name: 'Title' })
+    await user.clear(title)
+    await user.type(title, 'Changed title')
+    await user.click(screen.getByRole('combobox', { name: 'From' }))
+    await user.keyboard('09.30{Enter}')
+    expect(screen.getByRole('combobox', { name: 'From' })).toHaveTextContent('09.30')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    await user.click((await screen.findAllByText('Focus block'))[0]!)
+    const reopened = await screen.findByRole('dialog')
+    expect(within(reopened).getByText('Focus block')).toBeInTheDocument()
+    await user.click(within(reopened).getByRole('button', { name: 'Edit' }))
+    expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('Focus block')
+    expect(screen.getByRole('combobox', { name: 'From' })).toHaveTextContent('09.00')
+    expect(rescheduleMock).not.toHaveBeenCalled()
   })
 
   test('deleting your own event unschedules it', async () => {
