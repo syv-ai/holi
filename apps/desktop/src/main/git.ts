@@ -205,13 +205,17 @@ export interface GitRepo {
    *  whose history is gone, which the caller reports rather than crashes on. */
   rangeFiles(from: string, to: string): Promise<RangeFile[]>
   /** The vault's history — which IS git history (`features/history.md`).
-   * `path` follows a file through renames. */
-  log(opts?: { path?: string; limit?: number }): Promise<Commit[]>
+   * `path` follows a file through renames; a `folder` is every commit under it,
+   * which `--follow` (one file only) cannot walk. */
+  log(opts?: { path?: string; folder?: boolean; limit?: number }): Promise<Commit[]>
   /** A file's content at a past commit, for the history preview/restore
    * (`features/history.md`). Rejects when `path` is absent at `sha` —
    * e.g. a commit from before the file was renamed (`show` reads the given name,
    * it does not `--follow`). */
   show(sha: string, path: string): Promise<string>
+  /** One commit's exact metadata and churn, even when it is outside a recent
+   * history listing. Null when the object is unavailable. */
+  commit(sha: string): Promise<Commit | null>
   /** The paths a commit changed vs its (first) parent — the file list for a
    * commit's diff view. `--root` so the initial commit lists its files. */
   changedFiles(sha: string): Promise<string[]>
@@ -627,7 +631,9 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
    * Fields are delimited with **US (0x1f)**, which nobody types into a commit
    * subject, so a commit message cannot corrupt the parse.
    */
-  async function log(o: { path?: string; limit?: number } = {}): Promise<Commit[]> {
+  async function log(
+    o: { path?: string; folder?: boolean; limit?: number } = {},
+  ): Promise<Commit[]> {
     // **RS (0x1e) leads each record, rather than `-z` separating them.**
     // `--numstat` writes its own newline-separated lines after each commit, and
     // under `-z` it NUL-terminates paths as well — so the record separator and
@@ -641,7 +647,9 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     if (o.limit !== undefined) args.push(`-n${o.limit}`)
     // `--follow` needs exactly one pathspec, and must precede the `--`.
     // `--raw` beside it, for the status letter that tells a copy from a rename.
-    if (o.path !== undefined) args.push('--raw', '--follow', '--', o.path)
+    // A folder is every commit under it, unfollowed.
+    if (o.path !== undefined && o.folder === true) args.push('--', o.path)
+    else if (o.path !== undefined) args.push('--raw', '--follow', '--', o.path)
 
     // A repo with no commits makes `git log` fail rather than print nothing.
     // That is not an error here: a brand-new vault simply has no history yet.
@@ -700,16 +708,54 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return res.stdout
   }
 
-  async function changedFiles(sha: string): Promise<string[]> {
-    const out = await runGit(
+  async function commit(sha: string): Promise<Commit | null> {
+    if (!/^[0-9a-f]{4,64}$/i.test(sha)) throw new Error('Invalid commit SHA')
+    // Resolve the input specifically as a commit. Git rejects ambiguous
+    // abbreviations here; peeling also refuses blobs and trees. Passing only
+    // validated hex keeps the revision expression out of option injection.
+    const resolved = await tryGit(
       root,
-      ['diff-tree', '--no-commit-id', '--name-only', '-r', '--root', sha],
+      ['rev-parse', '--verify', '--end-of-options', `${sha}^{commit}`],
       opts,
     )
-    return out
-      .split('\n')
-      .map((s) => s.trim())
-      .filter((s) => s !== '')
+    if (!resolved.ok || !/^[0-9a-f]{40,64}$/i.test(resolved.stdout.trim())) return null
+    const fullSha = resolved.stdout.trim()
+    const raw = await runGit(
+      root,
+      ['log', '--no-walk', '--numstat', '--format=%H%x1f%s%x1f%aI%x1f%an', fullSha],
+      opts,
+    )
+    const [header = '', ...stats] = raw.split('\n')
+    if (!header) return null
+    const [actualSha = '', subject = '', date = '', author = ''] = header.split('\x1f')
+    if (actualSha.toLowerCase() !== fullSha.toLowerCase()) return null
+    let added = 0
+    let removed = 0
+    for (const line of stats) {
+      const [a, r] = line.split('\t')
+      if (a !== undefined && r !== undefined) {
+        added += Number(a) || 0
+        removed += Number(r) || 0
+      }
+    }
+    return { sha: actualSha, subject, date, author, added, removed }
+  }
+
+  async function changedFiles(sha: string): Promise<string[]> {
+    if (!/^[0-9a-f]{40,64}$/i.test(sha)) throw new Error('Invalid commit SHA')
+    const result = await tryGit(
+      root,
+      ['diff-tree', '--no-commit-id', '--name-only', '-z', '-r', '--root', sha],
+      opts,
+    )
+    if (!result.ok) {
+      throw new GitError(
+        `git diff-tree failed (${result.code}): ${result.stderr.split('\n')[0] ?? ''}`,
+        result.code,
+        result.stderr,
+      )
+    }
+    return result.stdout.split('\0').filter((path) => path !== '')
   }
 
   async function commitFiles(limit: number): Promise<{ sha: string; files: string[] }[]> {
@@ -1137,6 +1183,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     log,
     show,
     changedFiles,
+    commit,
     commitFiles,
     head,
     rangeFiles,
