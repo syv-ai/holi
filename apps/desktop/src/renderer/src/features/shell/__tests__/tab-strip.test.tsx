@@ -3,7 +3,7 @@ import { expect, test, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@/test/render'
 import { TabStrip } from '../tab-strip'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
-import { closeTab, emptyWorkspace, openTab } from '@/state/shell-workspace'
+import { closeTab, combineOnStrip, emptyWorkspace, openTab } from '@/state/shell-workspace'
 import { activeRemoteAtom } from '@/state/vaults'
 import { tabDragAtom, tabDragVaultAtom, tabDragWasOpenAtom } from '../use-tab-drag'
 
@@ -18,10 +18,10 @@ vi.mock('@/lib/trpc', () => {
 })
 
 const MIME = 'application/x-holi-tab'
-function setup() {
+function setup(workspace = openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md')) {
   const store = createStore()
   store.set(activeRemoteAtom, 'owner/vault')
-  store.set(shellWorkspaceAtom, openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md'))
+  store.set(shellWorkspaceAtom, workspace)
   render(
     <Provider store={store}>
       <TabStrip onNewTab={() => {}} />
@@ -75,6 +75,7 @@ test('ordinary target hover renders the prospective target-first split without m
 test('combine preview keeps the hovered title connected so leaving clears it', () => {
   const { list, tabs, transfer } = setup()
   const title = screen.getByText('B')
+  expect(title.parentElement?.classList.contains('flex')).toBe(true)
   fireEvent(list, dragEvent('dragover', transfer, 150))
   expect(title.isConnected).toBe(true)
   expect(tabs[1]!.dataset.combinePreview).toBe('true')
@@ -83,6 +84,28 @@ test('combine preview keeps the hovered title connected so leaving clears it', (
   Object.defineProperty(leave, 'relatedTarget', { value: document.body })
   fireEvent(title, leave)
   expect(tabs[1]!.dataset.combinePreview).toBeUndefined()
+})
+
+test('split preview retains its hovered member and hides original labels until leaving', () => {
+  const workspace = combineOnStrip(
+    openTab(openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md'), 'C.md'),
+    'C.md',
+    'B.md',
+  )
+  const { store, list, tabs, transfer } = setup(workspace)
+  const before = store.get(shellWorkspaceAtom)
+  const title = screen.getByText('B')
+  fireEvent(list, dragEvent('dragover', transfer, 150))
+  expect(title.isConnected).toBe(true)
+  expect(title.closest('.invisible')).not.toBeNull()
+  expect(tabs[1]!.dataset.combinePreview).toBe('true')
+  expect(store.get(shellWorkspaceAtom)).toBe(before)
+
+  const leave = new Event('dragleave', { bubbles: true })
+  Object.defineProperty(leave, 'relatedTarget', { value: document.body })
+  fireEvent(title, leave)
+  expect(tabs[1]!.dataset.combinePreview).toBeUndefined()
+  expect(title.closest('.invisible')).toBeNull()
 })
 
 test('combine preview preserves measured target geometry through repeated hover and drop', () => {

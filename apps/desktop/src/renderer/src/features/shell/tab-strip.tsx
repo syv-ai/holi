@@ -449,23 +449,32 @@ export function TabStrip({
                             tab !== null ? 'w-56' : members!.length > 2 ? 'w-80' : 'w-64',
                           )}
                         >
-                          {tab !== null ? (
-                            <span className={targetPreview ? 'invisible' : undefined}>
-                              <TabMark tab={tab} dot={false} />
-                              <span className="truncate">{tab.title}</span>
-                              {tab.status !== undefined ? <TabStatus status={tab.status} /> : null}
-                            </span>
-                          ) : (
-                            <SplitMembers
-                              drag={draggable ? memberDrag : undefined}
-                              members={members!}
-                              focused={split?.id === id ? (entry as ShellSplit).focused : null}
-                            />
-                          )}
+                          <span
+                            className={cn(
+                              'flex min-w-0 flex-1 items-center gap-2',
+                              targetPreview && 'invisible',
+                            )}
+                          >
+                            {tab !== null ? (
+                              <>
+                                <TabMark tab={tab} dot={false} />
+                                <span className="truncate">{tab.title}</span>
+                                {tab.status !== undefined ? (
+                                  <TabStatus status={tab.status} />
+                                ) : null}
+                              </>
+                            ) : (
+                              <SplitMembers
+                                drag={draggable ? memberDrag : undefined}
+                                members={members!}
+                                focused={split?.id === id ? (entry as ShellSplit).focused : null}
+                              />
+                            )}
+                          </span>
                           {previewMembers !== null ? (
                             <span
                               aria-hidden="true"
-                              className="pointer-events-none absolute inset-0 flex items-center px-2"
+                              className="pointer-events-none absolute inset-0 flex items-center px-3 pe-8"
                             >
                               <SplitMembers members={previewMembers} focused={null} />
                             </span>
