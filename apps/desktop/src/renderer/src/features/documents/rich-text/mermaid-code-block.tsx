@@ -104,9 +104,10 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
       setRenderError(true)
       return
     }
-    host.replaceChildren(document.importNode(root, true))
+    const liveRoot = document.importNode(root, true)
+    host.replaceChildren(liveRoot)
     const targetsById = new Map(targets.map((target) => [target.domId, target]))
-    root.querySelectorAll('[id]').forEach((targetEl) => {
+    liveRoot.querySelectorAll('[id]').forEach((targetEl) => {
       const target = targetsById.get(targetEl.id)
       if (!target || !editing) return
       targetEl.setAttribute('tabindex', '0')
