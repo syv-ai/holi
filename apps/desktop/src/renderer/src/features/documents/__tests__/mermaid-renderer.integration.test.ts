@@ -120,6 +120,26 @@ describe('real Mermaid renderer', () => {
     }
   })
 
+  it.each([
+    'Ready, now!',
+    'A & B',
+    'literal &amp; &quot;',
+    'Hello ] (test) #hashtag',
+    'C:\\Users',
+    'clamp;',
+  ])('round-trips literal punctuation without entity drift: %s', async (label) => {
+    polyfillSvgLayout()
+    for (const quoted of [false, true]) {
+      const source = `flowchart LR\nA[${quoted ? '"' : ''}Old${quoted ? '"' : ''}] --> B[Keep]`
+      const edited = await renderMermaid(patch(source, 'A', label), 'default')
+      expect(edited.targets.map(({ id, label }) => [id, label])).toEqual([
+        ['A', label],
+        ['B', 'Keep'],
+      ])
+      expect(renderedSvg(edited.svg).querySelectorAll('g.node')).toHaveLength(2)
+    }
+  })
+
   it('maps Unicode labels and repeated references by vertex identity, not visible text', async () => {
     polyfillSvgLayout()
     const source = patch('flowchart LR\nA[Old] --> B[Same]\nA --> C[Same]', 'A', '🌻 新しい')

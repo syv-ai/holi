@@ -79,7 +79,12 @@ export function renderMermaid(source: string, theme: 'dark' | 'default'): Promis
         // root. Resolve it against that real root, then return the matched SVG id itself.
         const actualId = `${root.getAttribute('id')}-${vertex.domId}`
         const matches = nodes.filter((node) => node.getAttribute('id') === actualId)
-        if (matches.length !== 1 || vertex.text !== label.label) return { svg, targets: [] }
+        // The DB retains HTML entities; the SVG must still display the decoded literal label.
+        if (
+          matches.length !== 1 ||
+          (vertex.text !== label.label && vertex.text !== source.slice(label.from, label.to))
+        )
+          return { svg, targets: [] }
         const node = matches[0]!
         const labelElement = node.querySelector('.label')
         if (!labelElement || labelElement.textContent !== label.label) return { svg, targets: [] }

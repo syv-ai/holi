@@ -1,10 +1,10 @@
 import { Editor, EditorContent } from '@tiptap/react'
 import { act, fireEvent, render, screen, waitFor } from '@/test/render'
-import { createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { analyseMermaidLabels } from '@holi/shared'
 import { Provider, createStore } from 'jotai'
 import { activeRemoteAtom } from '@/state/vaults'
+import { colorSchemeAtom } from '@/state/color-scheme'
 
 const renderDiagram = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/mermaid-renderer', () => ({ renderMermaid: renderDiagram }))
@@ -12,6 +12,7 @@ vi.mock('@/lib/mermaid-renderer', () => ({ renderMermaid: renderDiagram }))
 import { createDocumentExtensions } from '../document-extensions'
 
 let editor: Editor | null = null
+const markdown = 'Before\n\n```mermaid\nflowchart LR\nA[Alpha] --> B[Beta]\n```\n\nAfter'
 
 function drawing(source: string) {
   const analysis = analyseMermaidLabels(source)
@@ -33,6 +34,66 @@ function drawing(source: string) {
   }
 }
 
+async function open(text = markdown) {
+  const store = createStore()
+  store.set(activeRemoteAtom, 'owner/first')
+  store.set(colorSchemeAtom, 'light')
+  const updates = vi.fn()
+  const e = new Editor({
+    extensions: createDocumentExtensions({
+      folder: 'notes',
+      placeholder: '',
+      onOpenLink: () => undefined,
+    }),
+    content: text,
+    contentType: 'markdown',
+    // jsdom has no caret layout; native checks exercise scrolling and keyboard undo.
+    editorProps: { handleScrollToSelection: () => true },
+    onUpdate: updates,
+  })
+  editor = e
+  const view = render(
+    <Provider store={store}>
+      <EditorContent editor={e} />
+    </Provider>,
+  )
+  await waitFor(() => expect(e.view.dom.querySelector('svg')).not.toBeNull())
+  updates.mockClear()
+  return { e, store, view, updates }
+}
+
+async function labelField(name = 'Alpha (A)') {
+  fireEvent.click(screen.getByRole('button', { name: 'Edit labels' }))
+  const target = await screen.findByRole('button', { name })
+  expect(target.namespaceURI).toBe('http://www.w3.org/2000/svg')
+  expect(target.isConnected).toBe(true)
+  fireEvent.click(target)
+  return await screen.findByRole('textbox', { name })
+}
+
+function blockPosition(e: Editor) {
+  let position = -1
+  e.state.doc.descendants((node, pos) => {
+    if (node.type.name === 'codeBlock') position = pos
+  })
+  if (position < 0) throw new Error('Missing diagram node')
+  return position
+}
+
+function pendingValidation() {
+  let resolve!: (value: ReturnType<typeof drawing>) => void
+  const promise = new Promise<ReturnType<typeof drawing>>((done) => {
+    resolve = done
+  })
+  renderDiagram.mockReturnValueOnce(promise)
+  return async () => {
+    const source = renderDiagram.mock.calls.at(-1)![0] as string
+    await act(async () => {
+      resolve(drawing(source))
+    })
+  }
+}
+
 beforeEach(() => {
   renderDiagram.mockReset().mockImplementation(async (source: string) => drawing(source))
 })
@@ -44,64 +105,212 @@ afterEach(() => {
 
 describe('editing labels in the rendered Mermaid drawing', () => {
   it('activates the connected SVG label and opens its anchored field', async () => {
-    editor = new Editor({
-      extensions: createDocumentExtensions({
-        folder: 'notes',
-        placeholder: '',
-        onOpenLink: () => undefined,
-      }),
-      content: 'Before\n\n```mermaid\nflowchart LR\nA[Alpha] --> B[Beta]\n```\n\nAfter',
-      contentType: 'markdown',
-    })
-    render(createElement(EditorContent, { editor }))
-    await waitFor(() => expect(editor?.view.dom.querySelector('svg')).not.toBeNull())
-    fireEvent.click(screen.getByRole('button', { name: 'Edit labels' }))
-    const target = await screen.findByRole('button', { name: 'Alpha (A)' })
-    expect(target.namespaceURI).toBe('http://www.w3.org/2000/svg')
-    expect(target.isConnected).toBe(true)
-    fireEvent.click(target)
-    expect(await screen.findByRole('textbox', { name: 'Alpha (A)' })).toHaveValue('Alpha')
-    expect(editor.getMarkdown()).toContain('A[Alpha] --> B[Beta]')
+    const { e } = await open()
+    expect(await labelField()).toHaveValue('Alpha')
+    expect(e.getMarkdown()).toContain('A[Alpha] --> B[Beta]')
   })
 
-  it('rejects a vault switch while label validation is pending', async () => {
-    const store = createStore()
-    store.set(activeRemoteAtom, 'owner/first')
-    let resolveValidation: ((value: ReturnType<typeof drawing>) => void) | undefined
-    renderDiagram.mockImplementation((source: string) => {
-      if (source.includes('Gamma'))
-        return new Promise((resolve) => {
-          resolveValidation = resolve
-        })
-      return Promise.resolve(drawing(source))
-    })
-    editor = new Editor({
-      extensions: createDocumentExtensions({
-        folder: 'notes',
-        placeholder: '',
-        onOpenLink: () => undefined,
-      }),
-      content: '```mermaid\nflowchart LR\nA[Alpha] --> B[Beta]\n```',
-      contentType: 'markdown',
-    })
-    render(
-      <Provider store={store}>
-        <EditorContent editor={editor} />
-      </Provider>,
-    )
-    await waitFor(() => expect(editor?.view.dom.querySelector('svg')).not.toBeNull())
-    fireEvent.click(screen.getByRole('button', { name: 'Edit labels' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Alpha (A)' }))
-    fireEvent.change(await screen.findByRole('textbox', { name: 'Alpha (A)' }), {
-      target: { value: 'Gamma' },
-    })
+  it('applies only the label, serializes Markdown and keeps the drawing visible', async () => {
+    const { e, updates } = await open()
+    const original = e.getMarkdown()
+    fireEvent.change(await labelField(), { target: { value: 'Gamma' } })
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
-    await waitFor(() => expect(resolveValidation).toBeDefined())
-    act(() => store.set(activeRemoteAtom, 'owner/second'))
-    await act(async () => {
-      resolveValidation?.(drawing('flowchart LR\nA[Gamma] --> B[Beta]'))
+    await waitFor(() => expect(e.getMarkdown()).toBe(original.replace('A[Alpha]', 'A[Gamma]')))
+    await waitFor(() => expect(e.view.dom.querySelector('svg')).not.toBeNull())
+    expect(updates).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('textbox', { name: 'Alpha (A)' })).not.toBeInTheDocument()
+  })
+
+  it('rejects a same-task Provider vault switch before Apply', async () => {
+    const { e, store, updates } = await open()
+    fireEvent.change(await labelField(), { target: { value: 'Gamma' } })
+    const original = e.state.doc
+    act(() => {
+      store.set(activeRemoteAtom, 'owner/second')
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
     })
-    expect(editor.getMarkdown()).toContain('A[Alpha] --> B[Beta]')
-    expect(editor.getMarkdown()).not.toContain('A[Gamma]')
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(e.state.doc).toBe(original)
+    expect(updates).not.toHaveBeenCalled()
+  })
+
+  it('rejects a vault switch while validation is pending', async () => {
+    const { e, store, updates } = await open()
+    fireEvent.change(await labelField(), { target: { value: 'Gamma' } })
+    const complete = pendingValidation()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    const original = e.state.doc
+    act(() => store.set(activeRemoteAtom, 'owner/second'))
+    await complete()
+    expect(e.state.doc).toBe(original)
+    expect(updates).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    'same-text replacement',
+    'source change',
+    'deletion',
+    'read-only',
+    'silent read-only',
+    'unmount',
+  ] as const)(
+    'discards pending validation after %s without a late update or focus',
+    async (change) => {
+      const { e, view, updates } = await open()
+      act(() => e.commands.setNodeSelection(blockPosition(e)))
+      fireEvent.change(await labelField(), { target: { value: 'Gamma' } })
+      const complete = pendingValidation()
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+      const position = blockPosition(e)
+      const node = e.state.doc.nodeAt(position)!
+      act(() => {
+        if (change === 'same-text replacement')
+          e.view.dispatch(
+            e.state.tr.replaceWith(
+              position,
+              position + node.nodeSize,
+              e.schema.nodeFromJSON(node.toJSON()),
+            ),
+          )
+        if (change === 'source change')
+          e.view.dispatch(e.state.tr.insertText(' changed', position + 1 + node.textContent.length))
+        if (change === 'deletion')
+          e.view.dispatch(e.state.tr.delete(position, position + node.nodeSize))
+        if (change === 'read-only') e.setEditable(false)
+        if (change === 'silent read-only') e.setEditable(false, false)
+        if (change === 'unmount') view.unmount()
+      })
+      if (change === 'same-text replacement') expect(e.state.doc.nodeAt(position)).not.toBe(node)
+      const expected = e.state.doc
+      updates.mockClear()
+      const focus = vi.spyOn(e.view, 'focus')
+      await complete()
+      expect(e.state.doc).toBe(expected)
+      expect(updates).not.toHaveBeenCalled()
+      expect(focus).not.toHaveBeenCalled()
+      expect(screen.queryByRole('textbox', { name: 'Alpha (A)' })).not.toBeInTheDocument()
+    },
+  )
+
+  it('allows an unchanged target to move after a preceding document edit', async () => {
+    const { e } = await open()
+    fireEvent.change(await labelField(), { target: { value: 'Gamma' } })
+    const complete = pendingValidation()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    const position = blockPosition(e)
+    const node = e.state.doc.nodeAt(position)
+    act(() => e.view.dispatch(e.state.tr.insertText('prefix ', 1)))
+    expect(e.state.doc.nodeAt(blockPosition(e))).toBe(node)
+    expect(blockPosition(e)).toBeGreaterThan(position)
+    await complete()
+    await waitFor(() => expect(e.getMarkdown()).toContain('A[Gamma] --> B[Beta]'))
+    expect(e.getMarkdown()).toContain('prefix Before')
+    expect(e.getMarkdown()).toContain('After')
+  })
+
+  it.each(['Cancel', 'Escape'] as const)('discards draft text on %s', async (action) => {
+    const { e, updates } = await open()
+    const original = e.state.doc
+    const field = await labelField()
+    fireEvent.change(field, { target: { value: 'Gamma' } })
+    if (action === 'Cancel') fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    else fireEvent.keyDown(field, { key: 'Escape' })
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Alpha (A)' })).not.toBeInTheDocument(),
+    )
+    expect(e.state.doc).toBe(original)
+    expect(updates).not.toHaveBeenCalled()
+  })
+
+  it.each(['Enter', ' '] as const)(
+    'opens a label with %s and returns focus on Escape',
+    async (key) => {
+      await open()
+      fireEvent.click(screen.getByRole('button', { name: 'Edit labels' }))
+      const target = await screen.findByRole('button', { name: 'Alpha (A)' })
+      target.focus()
+      fireEvent.keyDown(target, { key })
+      const field = await screen.findByRole('textbox', { name: 'Alpha (A)' })
+      fireEvent.keyDown(field, { key: 'Escape' })
+      await waitFor(() => expect(target).toHaveFocus())
+    },
+  )
+
+  it('edits the selected identity when two nodes have the same wording', async () => {
+    const { e } = await open(markdown.replace('B[Beta]', 'B[Alpha]'))
+    fireEvent.change(await labelField('Alpha (B)'), { target: { value: 'Gamma' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(e.getMarkdown()).toContain('A[Alpha] --> B[Gamma]'))
+  })
+
+  it('does not add an update/history step for an unchanged label', async () => {
+    const { e, updates } = await open()
+    const original = e.state.doc
+    await labelField()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    expect(e.state.doc).toBe(original)
+    expect(updates).not.toHaveBeenCalled()
+    expect(e.can().undo()).toBe(false)
+  })
+
+  it('does not apply a composing Enter but applies an ordinary Enter', async () => {
+    const { e } = await open()
+    const field = await labelField()
+    fireEvent.change(field, { target: { value: 'Gamma' } })
+    fireEvent.keyDown(field, { key: 'Enter', isComposing: true })
+    expect(e.getMarkdown()).toContain('A[Alpha]')
+    fireEvent.keyDown(field, { key: 'Enter' })
+    await waitFor(() => expect(e.getMarkdown()).toContain('A[Gamma]'))
+  })
+
+  it('invalidates an older draft validation when the field changes', async () => {
+    const { e } = await open()
+    const field = await labelField()
+    fireEvent.change(field, { target: { value: 'Gamma' } })
+    const complete = pendingValidation()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    fireEvent.change(field, { target: { value: 'Delta' } })
+    await complete()
+    expect(e.getMarkdown()).toContain('A[Alpha]')
+    expect(field).toHaveValue('Delta')
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(e.getMarkdown()).toContain('A[Delta]'))
+  })
+
+  it('closes an anchored field when the theme replaces its drawing', async () => {
+    const { store } = await open()
+    await labelField()
+    act(() => store.set(colorSchemeAtom, 'dark'))
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Alpha (A)' })).not.toBeInTheDocument(),
+    )
+  })
+
+  it('separates label undo/redo from preceding and subsequent typing', async () => {
+    const { e } = await open()
+    act(() => e.commands.insertContentAt(1, 'prior '))
+    fireEvent.change(await labelField(), { target: { value: 'GammaZ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(e.getMarkdown()).toContain('A[GammaZ]'))
+    const source = e.state.doc.nodeAt(blockPosition(e))!.textContent
+    const end = blockPosition(e) + 1 + source.indexOf('GammaZ') + 'GammaZ'.length
+    act(() => e.commands.insertContentAt(end, ' after'))
+    act(() => e.commands.undo())
+    expect(e.getMarkdown()).toContain('A[GammaZ]')
+    expect(e.getMarkdown()).not.toContain(' after')
+    act(() => e.commands.undo())
+    expect(e.getMarkdown()).toContain('A[Alpha]')
+    expect(e.getMarkdown()).toContain('prior Before')
+    act(() => e.commands.undo())
+    expect(e.getMarkdown()).not.toContain('prior ')
+    act(() => {
+      e.commands.redo()
+      e.commands.redo()
+      e.commands.redo()
+    })
+    expect(e.getMarkdown()).toContain('A[GammaZ after]')
+    expect(e.getMarkdown()).toContain('prior Before')
   })
 })

@@ -17,19 +17,19 @@ describe('Mermaid label source edits', () => {
   })
 
   it.each([
-    ['unquoted', 'A[Alpha]', 'A', '] --> Injected[new]', '#93; #45;#45;#62; Injected#91;new#93;'],
-    ['quoted', 'A["Alpha"]', 'A', '] --> Injected[new]', '#93; #45;#45;#62; Injected#91;new#93;'],
+    ['unquoted', 'A[Alpha]', 'A', '] --> Injected[new]', '] --#62; Injected[new]'],
+    ['quoted', 'A["Alpha"]', 'A', '] --> Injected[new]', '] --#62; Injected[new]'],
     [
       'punctuation',
       'A[Old]',
       'A',
       '`"\\!@#$%^&*()_+-={}[]|:;<>?,./~',
-      '#96;#34;#92;#33;#64;#35;#36;#37;#94;#38;#42;#40;#41;#95;#43;#45;#61;#123;#125;#91;#93;#124;#58;#59;#60;#62;#63;#44;#46;#47;#126;',
+      '#96;#34;\\!@#$%^&amp;*()_+-={}[]|:;#60;#62;?,./~',
     ],
   ])('encodes edited %s labels without changing structure', (_name, graph, id, draft, encoded) => {
     const result = patchMermaidLabel(`flowchart TD\n${graph}`, id, draft)
     expect(result).toEqual({
-      source: `flowchart TD\nA[${graph.includes('"') ? '"' : ''}${encoded}${graph.includes('"') ? '"' : ''}]`,
+      source: `flowchart TD\nA["${encoded}"]`,
     })
     if (!('source' in result)) throw new Error(result.error)
     expect(analyseMermaidLabels(result.source)).toMatchObject({
@@ -50,6 +50,22 @@ describe('Mermaid label source edits', () => {
     })
     expect(patchMermaidLabel(source, 'A', ']')).toEqual({ source })
     expect(patchMermaidLabel(source, 'B', '🚀 "')).toEqual({ source })
+  })
+
+  it('recognizes leading blank lines and decodes only prefixed entities, once', () => {
+    expect(
+      analyseMermaidLabels('\n\r\n %% comment\n graph TD\nA[clamp; &amp; #amp;]'),
+    ).toMatchObject({
+      supported: true,
+      labels: [{ id: 'A', label: 'clamp; & &' }],
+    })
+    const result = patchMermaidLabel('graph TD\nA[Old]', 'A', 'literal &amp;')
+    expect(result).toEqual({ source: 'graph TD\nA["literal &amp;amp;"]' })
+    if (!('source' in result)) throw new Error(result.error)
+    expect(analyseMermaidLabels(result.source)).toMatchObject({
+      supported: true,
+      labels: [{ id: 'A', label: 'literal &amp;' }],
+    })
   })
 
   it('uses UTF-16 offsets for Unicode labels and preserves all other bytes', () => {

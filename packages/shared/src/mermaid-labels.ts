@@ -20,7 +20,7 @@ const namedEntities: Record<string, string> = {
 
 function decodeMermaidLabel(value: string): string {
   return value.replace(
-    /(?:&?(?:#([0-9]+)|#x([0-9a-f]+)|(amp|quot|apos|lt|gt|nbsp));|#(?:([0-9]+)|x([0-9a-f]+));)/gi,
+    /(?:&(?:#([0-9]+)|#x([0-9a-f]+)|(amp|quot|apos|lt|gt|nbsp));|#(?:([0-9]+)|x([0-9a-f]+)|(amp|quot|apos|lt|gt|nbsp));)/gi,
     (entity, htmlDecimal, htmlHex, htmlName, decimal, hex, name: string | undefined) => {
       if (htmlDecimal || htmlHex || decimal || hex) {
         const digits = htmlDecimal ?? htmlHex ?? decimal ?? hex
@@ -35,9 +35,8 @@ function decodeMermaidLabel(value: string): string {
 }
 
 function encodeMermaidLabel(value: string): string {
-  return value.replace(
-    /[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/g,
-    (char) => `#${char.charCodeAt(0)};`,
+  return value.replace(/[&"<>`]|#(?=(?:[0-9]+|x[0-9a-f]+|[a-z]+);)|\*\*|__/gi, (token) =>
+    token === '&' ? '&amp;' : [...token].map((char) => `#${char.charCodeAt(0)};`).join(''),
   )
 }
 
@@ -68,6 +67,7 @@ export function analyseMermaidLabels(source: string): MermaidLabelAnalysis {
   // Comments may precede the one required header.
   while (i < source.length) {
     skipSpace()
+    if (lineBreak()) continue
     if (source.slice(i, i + 2) === '%%' && !source.startsWith('%%{', i)) {
       skipComment()
       lineBreak()
@@ -171,5 +171,9 @@ export function patchMermaidLabel(
   const item = result.labels.find((entry) => entry.id === id)
   if (!item) return { error: 'This node does not have an editable label.' }
   if (item.label === label) return { source }
-  return { source: source.slice(0, item.from) + encodeMermaidLabel(label) + source.slice(item.to) }
+  const encoded = encodeMermaidLabel(label)
+  const quoted = source[item.from - 1] === '"'
+  const token =
+    !quoted && /[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/.test(encoded) ? `"${encoded}"` : encoded
+  return { source: source.slice(0, item.from) + token + source.slice(item.to) }
 }
