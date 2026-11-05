@@ -27,7 +27,16 @@ import {
 import { RICH_TEXT_BASIC_SLASH_ITEMS } from './rich-text-slash-menu'
 import { RICH_TEXT_TABLE_SLASH_ITEM } from './rich-text-table'
 import { useShortcutLabel } from '@/composites/shortcut-keys'
-import { RefreshCwIcon, CopyIcon, ArrowUpIcon, ArrowDownIcon, Trash2Icon } from 'lucide-react'
+import {
+  RefreshCwIcon,
+  CopyIcon,
+  ArrowUpIcon,
+  ArrowDownIcon,
+  Trash2Icon,
+  CheckIcon,
+  HashIcon,
+} from 'lucide-react'
+import { useCopied } from '../use-copied'
 
 const TURN_INTO_IDS = new Set([
   'text',
@@ -94,6 +103,9 @@ export interface BlockMenuState {
   canDown: boolean
   /** Turn Into options the block accepts; empty for tables and atoms. */
   allowed: readonly string[]
+  /** A heading a Holi link can name: one at the top level, the only kind
+   *  written as a line GitHub's anchors see (`document-headings.ts`). */
+  heading: boolean
 }
 
 /** Where the caret goes when the menu opens: the first text, else the block. */
@@ -121,6 +133,7 @@ export function readBlockMenu(editor: Editor, target: BlockTarget): BlockMenuSta
     canUp: canMoveBlock(target, -1),
     canDown: canMoveBlock(target, 1),
     allowed,
+    heading: target.node.type.name === 'heading' && target.parent === editor.state.doc,
   }
 }
 
@@ -133,13 +146,19 @@ interface RichTextBlockMenuItemsProps {
   menu: BlockMenuState
   /** Tables confirm before they go. */
   onDeleteTable: () => void
+  /** The Holi link to the heading the caret is in (the menu put it there);
+   *  null for a file a teammate could not open. */
+  headingLink?: (() => string | null) | null
 }
 
 export function RichTextBlockMenuItems({
   editor,
   menu,
   onDeleteTable,
+  headingLink = null,
 }: RichTextBlockMenuItemsProps) {
+  const { copied, copy } = useCopied<'heading-link'>()
+
   function runOnBlock(action: Parameters<typeof blockCommand>[0]) {
     editor.chain().focus().command(blockCommand(action, menu.pos)).run()
   }
@@ -213,6 +232,20 @@ export function RichTextBlockMenuItems({
           Move Down
           <MenuShortcut keys={['mod', 'shift', '↓']} />
         </DropdownMenuItem>
+        {menu.heading && headingLink ? (
+          // Stays open, so the swap to Copied is seen where it was clicked.
+          <DropdownMenuItem
+            onSelect={(event) => event.preventDefault()}
+            onClick={() => void copy('heading-link', headingLink())}
+          >
+            {copied === 'heading-link' ? (
+              <CheckIcon aria-hidden="true" />
+            ) : (
+              <HashIcon aria-hidden="true" />
+            )}
+            {copied === 'heading-link' ? 'Copied' : 'Copy link to heading'}
+          </DropdownMenuItem>
+        ) : null}
       </DropdownMenuGroup>
       <DropdownMenuSeparator />
       <DropdownMenuItem variant="destructive" onClick={removeBlock}>

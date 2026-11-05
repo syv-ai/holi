@@ -124,8 +124,9 @@ export const WINDOW_GLASSES: readonly WindowGlass[] = ['clear', 'frosted', 'soli
  * The font the **notes editor** sets prose in. Code, frontmatter and the
  * plain/code editor are never affected — see `notesFontTheme`.
  *
- * **A name, never a CSS string.** `.holi/settings/app.yaml` is committed, so in a
- * shared vault this value was written by somebody else; a `font-family` taken
+ * **A name, never a CSS string.** Settings writes it to the local file, but a
+ * vault may commit a default in `.holi/settings/app.yaml`, so in a shared
+ * vault this value may have been written by somebody else; a `font-family` taken
  * from it verbatim would be arbitrary CSS crossing a trust boundary (the theme
  * whitelist argument). Three names resolve to three stacks this file owns, so
  * no sanitizer is needed.
@@ -133,6 +134,13 @@ export const WINDOW_GLASSES: readonly WindowGlass[] = ['clear', 'frosted', 'soli
 export type EditorFont = 'mono' | 'sans' | 'serif'
 
 export const EDITOR_FONTS: readonly EditorFont[] = ['mono', 'sans', 'serif']
+
+/** Where a task document's properties show: rows above the text, or a
+ *  sidebar beside it. */
+export type PropertiesLayout = 'inline' | 'sidebar'
+
+/** How a note's tables are drawn: alternate rows banded, or lines between. */
+export type TableStyle = 'banded' | 'lines'
 
 /**
  * Which coding agent a new session runs (docs/features/agent-sessions.md,
@@ -219,6 +227,10 @@ export interface ResolvedAppSettings {
   colorScheme: ColorScheme
   windowGlass: WindowGlass
   editorFont: EditorFont
+  /** Where a task document's properties show. */
+  propertiesLayout: PropertiesLayout
+  /** How a note's tables are drawn. */
+  tableStyle: TableStyle
   /** Space on an empty line opens an ask for a new agent session. */
   spaceAsksAgent: boolean
   /** The agent a new session runs unless the person picks another. */
@@ -353,7 +365,11 @@ function clone(value: unknown): unknown {
 // What a vault is asked at birth
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Which of the two files a row's answer is written to. */
+/**
+ * Which of the two files a Settings row writes. Either file may hold any
+ * setting: `app.yaml` the vault's value, `app.local.yaml` this machine's
+ * override of it. The target only says where the row's answer goes.
+ */
 export type SettingTarget = 'committed' | 'local'
 
 /** One option in a `choice`. `value` is whatever the key holds (a `home` string
@@ -397,6 +413,8 @@ export type VaultSettingKey =
   | 'colorScheme'
   | 'windowGlass'
   | 'editorFont'
+  | 'propertiesLayout'
+  | 'tableStyle'
   | 'spaceAsksAgent'
   | 'agentProvider'
   | 'gridArcade'
@@ -697,11 +715,48 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
       ],
     },
     default: 'serif' as EditorFont,
-    target: 'committed',
+    // How Holi looks for you: Settings writes your override to the local
+    // file, over the vault's value in `app.yaml`.
+    target: 'local',
     // Not asked at birth, deliberately: it has a good default and no
     // consequence at a vault's first moment.
     askedAtBirth: false,
-    whereToChange: SETTINGS_FILE_HINT,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'editor',
+  },
+  {
+    key: 'propertiesLayout',
+    label: 'Properties sit',
+    explanation:
+      'Where a task’s fields show in its document: as rows above the text, or in a sidebar beside it.',
+    type: {
+      kind: 'enum',
+      options: [
+        { value: 'inline', label: 'Above the text' },
+        { value: 'sidebar', label: 'In a sidebar' },
+      ],
+    },
+    default: 'inline' as PropertiesLayout,
+    target: 'local',
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'editor',
+  },
+  {
+    key: 'tableStyle',
+    label: 'Tables are drawn with',
+    explanation: 'Bands of colour on alternate rows, or thin lines between them.',
+    type: {
+      kind: 'enum',
+      options: [
+        { value: 'banded', label: 'Bands' },
+        { value: 'lines', label: 'Lines' },
+      ],
+    },
+    default: 'banded' as TableStyle,
+    target: 'local',
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
     section: 'editor',
   },
   {

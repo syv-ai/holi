@@ -1,11 +1,12 @@
 /**
  * The notes editor's prose font, stamped as a CSS custom property.
  *
- * The vault says `editorFont: 'mono' | 'sans' | 'serif'` in
- * `.holi/settings/app.yaml` (or per machine in `app.local.yaml`); the name
- * resolves to a stack in `@holi/shared` and lands on `:root` as `--editor-font`,
- * which `notesFontTheme` reads. A name rather than a font-family string, because
- * in a shared vault the committed file is written by someone else.
+ * You say `editorFont: 'mono' | 'sans' | 'serif'` in
+ * `.holi/settings/app.local.yaml` (a vault may commit a default in
+ * `app.yaml`); the name resolves to a stack in `@holi/shared` and lands on
+ * `:root` as `--editor-font`, which `notesFontTheme` reads. A name rather than
+ * a font-family string, because in a shared vault the committed file is
+ * written by someone else.
  *
  * **A variable rather than a CodeMirror compartment**: the setting only changes
  * on a vault switch, and one property restyles every open editor at once. The

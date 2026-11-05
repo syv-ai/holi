@@ -6,7 +6,7 @@
 import { emptyVaultSnapshot } from '@holi/shared'
 import userEvent from '@testing-library/user-event'
 import { atom, createStore, Provider } from 'jotai'
-import { expect, test, vi } from 'vitest'
+import { beforeEach, expect, test, vi } from 'vitest'
 
 import { render, screen, waitFor } from '@/test/render'
 import { installedPluginsAtom } from '@/state/plugins'
@@ -18,6 +18,10 @@ const search = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/trpc', () => ({
   trpc: { notes: { search: { query: search } } },
 }))
+
+beforeEach(() => {
+  search.mockReset()
+})
 
 function Live({ split }: { split: () => void }) {
   useShortcutHandlers({ 'pane.split': split })
@@ -136,8 +140,11 @@ test('a failed text search offers a retry', async () => {
   const retry = await screen.findByRole('option', {
     name: /Couldn’t search note text/,
   })
+  expect(search).toHaveBeenCalledTimes(1)
+  expect(search).toHaveBeenLastCalledWith({ remote: 'o/notes', q: 'zz' })
   await userEvent.click(retry)
   await waitFor(() => expect(search).toHaveBeenCalledTimes(2))
+  expect(search).toHaveBeenNthCalledWith(2, { remote: 'o/notes', q: 'zz' })
 })
 
 test('nothing matching says so and clears', async () => {

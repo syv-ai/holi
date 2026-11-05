@@ -258,7 +258,7 @@ function Attachments({ attachments, webUrl }: { attachments: MailAttachment[]; w
           <Button variant="outline" size="xs" onClick={open} className="max-w-60">
             <PaperclipIcon aria-hidden="true" />
             <span className="truncate">{attachment.filename}</span>
-            <span className="hidden shrink-0 opacity-50 md:inline-block">
+            <span className="text-muted-foreground hidden shrink-0 md:inline-block">
               ({fileSize(attachment.size)})
             </span>
           </Button>

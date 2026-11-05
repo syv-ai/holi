@@ -235,7 +235,7 @@
   letter-spacing: -0.03em;
 }
 .onboarding-ritual .obrit-name-stage > [data-slot='input']::placeholder {
-  color: color-mix(in srgb, var(--muted-foreground) 50%, transparent);
+  color: var(--muted-foreground);
 }
 .onboarding-ritual .obrit-name-stage > [data-slot='input']:focus-visible {
   box-shadow: none;
@@ -269,7 +269,7 @@
   color: var(--muted-foreground);
 }
 .onboarding-ritual .obrit-path-sep {
-  color: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+  color: var(--muted-foreground);
 }
 .onboarding-ritual .obrit-slug-out {
   overflow-wrap: anywhere;
@@ -287,7 +287,7 @@
   font-size: 0.75rem;
 }
 .onboarding-ritual .obrit-path .obrit-slug-out {
-  color: color-mix(in srgb, var(--foreground) 70%, transparent);
+  color: var(--foreground);
   transition: color 200ms var(--ease-settle);
 }
 .onboarding-ritual .obrit-name-stage:focus-within .obrit-slug-out {
@@ -545,7 +545,7 @@
   font-size: 0.75rem;
   line-height: 1.5;
   text-align: start;
-  color: color-mix(in srgb, var(--muted-foreground) 80%, transparent);
+  color: var(--muted-foreground);
 }
 .onboarding-ritual .obrit-settings-where code {
   font-family: var(--font-mono);
