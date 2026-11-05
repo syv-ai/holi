@@ -14,7 +14,7 @@
  *
  * No Electron import: this loads under plain Node like the rest of the plugin.
  */
-import { copyFile, mkdtemp, rm } from 'node:fs/promises'
+import { copyFile, mkdtemp, rm, stat, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runGit } from '../../../../main/plugin-api'
@@ -28,7 +28,20 @@ export async function worktreeEnd(root: string): Promise<string | null> {
     const real = await runGit(root, ['rev-parse', '--path-format=absolute', '--git-path', 'index'])
     // Starting from a copy of the real index means only files whose stat
     // changed are hashed again. None yet (an unborn branch) starts empty.
-    await copyFile(real, index).catch(() => {})
+    // copyFile gives the scratch index a fresh mtime. Git uses the index mtime
+    // to identify racy cached file stats, so that fresh time can make a
+    // same-size edit look unchanged. Restore a conservative source time: stat's
+    // millisecond value may round nanoseconds up, so truncate and step back a
+    // millisecond to keep the scratch index no newer than the real one.
+    const sourceStat = await stat(real, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    if (sourceStat) {
+      await copyFile(real, index)
+      const mtimeMs = Number(sourceStat.mtimeNs / 1_000_000n) - 1
+      await utimes(index, Number(sourceStat.atimeMs) / 1000, mtimeMs / 1000)
+    }
     const env = { GIT_INDEX_FILE: index }
     await runGit(root, ['add', '--all'], { env })
     const tree = await runGit(root, ['write-tree'], { env })
