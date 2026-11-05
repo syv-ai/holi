@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { localDate } from '@holi/shared'
 import { activeRemoteAtom } from '@/plugin-api'
 import { CalendarView } from '../renderer/calendar/calendar-view'
+import { clockLabel } from '../renderer/calendar/calendar-format'
 import { rangeWindow, toCalendarItem, type GoogleEvent } from '../renderer/calendar-data'
 
 const renderCounts = vi.hoisted(() => ({ calendar: 0, timeSelect: 0 }))
@@ -237,8 +238,8 @@ describe('the calendar view', () => {
     await user.clear(title)
     await user.type(title, 'Changed title')
     await user.click(screen.getByRole('combobox', { name: 'From' }))
-    await user.keyboard('09.30{Enter}')
-    expect(screen.getByRole('combobox', { name: 'From' })).toHaveTextContent('09.30')
+    await user.click(await screen.findByRole('option', { name: clockLabel('09:30') }))
+    expect(screen.getByRole('combobox', { name: 'From' })).toHaveTextContent(clockLabel('09:30'))
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
 
     await user.click((await screen.findAllByText('Focus block'))[0]!)
@@ -246,7 +247,7 @@ describe('the calendar view', () => {
     expect(within(reopened).getByText('Focus block')).toBeInTheDocument()
     await user.click(within(reopened).getByRole('button', { name: 'Edit' }))
     expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('Focus block')
-    expect(screen.getByRole('combobox', { name: 'From' })).toHaveTextContent('09.00')
+    expect(screen.getByRole('combobox', { name: 'From' })).toHaveTextContent(clockLabel('09:00'))
     expect(rescheduleMock).not.toHaveBeenCalled()
   })
 
