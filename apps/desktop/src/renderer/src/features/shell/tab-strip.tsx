@@ -164,8 +164,10 @@ export function TabStrip({
   const listRef = useRef<HTMLDivElement>(null)
   const [overflowing, setOverflowing] = useState(false)
   useEffect(() => {
-    if (dragged === null) setCombinePreview(null)
-  }, [dragged])
+    if (dragged !== null && dragVault === remote) return
+    setDropAt(null)
+    setCombinePreview(null)
+  }, [dragged, dragVault, remote])
 
   useEffect(() => {
     const cancel = (event: KeyboardEvent) => {
@@ -449,10 +451,11 @@ export function TabStrip({
                             tab !== null ? 'w-56' : members!.length > 2 ? 'w-80' : 'w-64',
                           )}
                         >
+                          {/* Transparent, not invisible: Chromium must keep the same native drag target. */}
                           <span
                             className={cn(
                               'flex min-w-0 flex-1 items-center gap-2',
-                              targetPreview && 'invisible',
+                              targetPreview && 'opacity-0',
                             )}
                           >
                             {tab !== null ? (

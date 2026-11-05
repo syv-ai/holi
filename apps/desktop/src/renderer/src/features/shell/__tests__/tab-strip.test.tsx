@@ -78,6 +78,7 @@ test('combine preview keeps the hovered title connected so leaving clears it', (
   expect(title.parentElement?.classList.contains('flex')).toBe(true)
   fireEvent(list, dragEvent('dragover', transfer, 150))
   expect(title.isConnected).toBe(true)
+  expect(title.closest('.opacity-0')).not.toBeNull()
   expect(tabs[1]!.dataset.combinePreview).toBe('true')
 
   const leave = new Event('dragleave', { bubbles: true })
@@ -97,7 +98,8 @@ test('split preview retains its hovered member and hides original labels until l
   const title = screen.getByText('B')
   fireEvent(list, dragEvent('dragover', transfer, 150))
   expect(title.isConnected).toBe(true)
-  expect(title.closest('.invisible')).not.toBeNull()
+  expect(title.closest('.opacity-0')).not.toBeNull()
+  expect(title.closest('.invisible')).toBeNull()
   expect(tabs[1]!.dataset.combinePreview).toBe('true')
   expect(store.get(shellWorkspaceAtom)).toBe(before)
 
@@ -105,7 +107,7 @@ test('split preview retains its hovered member and hides original labels until l
   Object.defineProperty(leave, 'relatedTarget', { value: document.body })
   fireEvent(title, leave)
   expect(tabs[1]!.dataset.combinePreview).toBeUndefined()
-  expect(title.closest('.invisible')).toBeNull()
+  expect(title.closest('.opacity-0')).toBeNull()
 })
 
 test('combine preview preserves measured target geometry through repeated hover and drop', () => {
@@ -178,6 +180,22 @@ test('Escape cancels the preview and leaves tabs unchanged', () => {
   expect(tabs[1]!.dataset.combinePreview).toBeUndefined()
   expect(store.get(shellWorkspaceAtom).entries).toEqual(['A.md', 'B.md'])
 })
+
+test.each(['end', 'vault change'])(
+  'a drag %s clears the reorder marker without mutation',
+  (reason) => {
+    const { store, list, tabs, transfer } = setup()
+    const before = store.get(shellWorkspaceAtom)
+    fireEvent(list, dragEvent('dragover', transfer, 195))
+    expect(tabs[1]!.dataset.dropAfter).toBe('true')
+    act(() => {
+      if (reason === 'end') store.set(tabDragAtom, null)
+      else store.set(tabDragVaultAtom, 'other/vault')
+    })
+    expect(document.querySelector('[data-drop-before="true"], [data-drop-after="true"]')).toBeNull()
+    expect(store.get(shellWorkspaceAtom)).toBe(before)
+  },
+)
 
 test('a cross-vault drag is rejected without mutation', () => {
   const { store, list, transfer } = setup()
