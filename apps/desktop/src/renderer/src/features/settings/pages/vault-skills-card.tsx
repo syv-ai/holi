@@ -95,7 +95,7 @@ export function VaultSkillsCard() {
           id="settings-auto-skills"
           disabled={resolved === null}
           checked={resolved?.autoUpdateSkills === true}
-          onCheckedChange={(on) => void write('autoUpdateSkills', on, 'committed')}
+          onCheckedChange={(on) => void write('autoUpdateSkills', on)}
         />
       </SettingsFieldRow>
     </SettingsGroup>

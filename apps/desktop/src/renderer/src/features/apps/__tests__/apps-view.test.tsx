@@ -255,6 +255,7 @@ test('Open beside opens the app in split view, as ⌥-click does', async () => {
     active: 'holi:apps',
     closed: [],
     seq: 0,
+    recent: [],
   })
   renderView(store)
   await userEvent.click(within(openMenu('Budget')).getByRole('menuitem', { name: 'Open beside' }))
@@ -320,6 +321,7 @@ test('Ask about this app opens a new chat beside the page, carrying the app', as
     active: 'holi:apps',
     closed: [],
     seq: 0,
+    recent: [],
   })
   // A chat slot as the chat plugin's is: with no text it opens its
   // new-session page, beside when asked, holding the context.

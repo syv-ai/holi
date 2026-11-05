@@ -44,20 +44,8 @@ function setSystemDark(next: boolean) {
 }
 
 const settings = (colorScheme: ResolvedVaultSettings['colorScheme']): ResolvedVaultSettings => ({
-  home: VAULT_SETTING_DEFAULTS.home,
-  plugins: VAULT_SETTING_DEFAULTS.plugins,
-  pluginValues: {},
-  dailyNotes: true,
-  spaceAsksAgent: true,
-  agentProvider: 'claude',
-  gridArcade: true,
-  foldSidebarForApps: true,
-  autoUpdateSkills: false,
+  ...VAULT_SETTING_DEFAULTS,
   colorScheme,
-  windowGlass: 'frosted',
-  editorFont: 'mono',
-  hooks: VAULT_SETTING_DEFAULTS.hooks,
-  maxCommittedFileBytes: 10 * 1024 * 1024,
   warnings: [],
 })
 

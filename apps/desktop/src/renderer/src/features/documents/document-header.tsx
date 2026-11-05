@@ -1,11 +1,11 @@
 /**
  * The document's band, after the rich-text block's page header: its
- * name and save state, who has written it (GitHub), undo and redo, and the
- * document menu.
+ * name and save state, who has written it (GitHub), the comments and
+ * properties toggles, undo and redo, and the document menu.
  */
 import { type Ref } from 'react'
 import type { Editor } from '@tiptap/react'
-import { MessagesSquareIcon } from 'lucide-react'
+import { MessagesSquareIcon, PanelRightIcon } from 'lucide-react'
 
 import { RichTextHistory } from '@/features/documents/rich-text/rich-text-controls'
 import { useRichTextState } from '@/features/documents/rich-text/rich-text-state'
@@ -87,6 +87,14 @@ interface DocumentHeaderProps extends Omit<DocumentActionsProps, 'editor'> {
     open: boolean
     onOpenChange: (open: boolean) => void
   } | null
+  /** Whether a document's properties sit in a sidebar (`propertiesLayout`);
+   *  null for a document that has none. */
+  properties?: {
+    disabled: boolean
+    sidebar: boolean
+    onSidebarChange: (sidebar: boolean) => void
+  } | null
+  compact?: boolean
 }
 
 export function DocumentHeader({
@@ -97,6 +105,8 @@ export function DocumentHeader({
   saveState,
   locked,
   comments = null,
+  properties = null,
+  compact = false,
   ...actions
 }: DocumentHeaderProps) {
   const state = useRichTextState(editor)
@@ -145,13 +155,30 @@ export function DocumentHeader({
           {comments.count > 0 ? <span className="tabular-nums">{comments.count}</span> : null}
         </Toggle>
       ) : null}
+      {properties ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Toggle
+              size="sm"
+              pressed={properties.sidebar}
+              disabled={properties.disabled}
+              onPressedChange={properties.onSidebarChange}
+              aria-label="Properties in a sidebar"
+              className="shrink-0"
+            >
+              <PanelRightIcon aria-hidden="true" />
+            </Toggle>
+          </TooltipTrigger>
+          <TooltipContent>Properties in a sidebar</TooltipContent>
+        </Tooltip>
+      ) : null}
 
       <div className="flex shrink-0 items-center gap-1">
         <div className="hidden items-center gap-1 @md/view-header:flex">
           <RichTextHistory editor={editor} state={state} />
           <RichTextToolbarSeparator />
         </div>
-        <DocumentActions editor={editor} {...actions} />
+        <DocumentActions editor={editor} compact={compact} {...actions} />
       </div>
     </ViewHeader>
   )
