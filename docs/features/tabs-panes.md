@@ -39,6 +39,17 @@ entry is recorded and a closed entry drops out. A plugin opens a tab through
 `openTabAtom` (`@/plugin-api`) with a descriptor, and `{beside: true}` makes a split of the active
 tab and it, or adds it to the active split.
 
+**A plugin hears its tabs from the same strip** (`state/surfaces.ts`): `surfaceTabIdsAtom(surface,
+remote)` lists the ids of a surface's open tabs (a vault app's tab is the `app` surface's, by its
+bundle), `activeSurfaceIdAtom(surface)` is the view in front when it is one of them, and
+`closeSurfaceTabsAtom` and `closeSurfaceTabAtom` close them. A plugin watching for closes reads its
+own vault's strip by passing its remote, because the strip changes with the vault before the
+plugin's `vault()` is torn down; read through the open vault instead, a switch would look like
+every tab closing. So closing an agent or browser tab from the strip or with ⌘W detaches its
+terminal or closes its page, an exited terminal's or a gone page's tab leaves the strip, and a
+vault switch does neither. A plugin opens a document through `openDocumentAtom`, which the shell
+answers.
+
 **The view in front** is the active tab, or the active split's focused member. It is what the
 sidebar marks, what Settings' nav and an app's folded sidebar follow, what `useSessionTabs` writes
 back as the Agents selection, and what ⌘W closes.
@@ -291,4 +302,4 @@ play ranked live. Sign-in and adding a vault run the same board as background on
   `hooks/use-session-tabs.ts`
 - `apps/desktop/src/renderer/src/components/ui/motion-panels.tsx`
 - `apps/desktop/src/main/menu.ts`: ⌘W and ⌘⇧W
-- `state/panes.ts` and `state/surfaces.ts` are the earlier shell's workspace and are only half retired: the fresh shell does not render `state/panes.ts`, so `openNoteTabAtom` (re-exported by `@/plugin-api`) and the plugin-facing `surfaceTabIdsAtom` open or list nothing on screen, while `state/surfaces.ts` now also calls `openTabAtom`. Which of them a plugin may rely on is a product question in [findings](../refactor/findings.md).
+- `state/surfaces.ts`: the plugin seam onto the shell's tabs. `state/panes.ts` is the earlier shell's workspace, which nothing on screen and nothing a plugin reads draws from; its removal is in [findings](../refactor/findings.md).
