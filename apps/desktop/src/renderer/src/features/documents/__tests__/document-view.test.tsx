@@ -284,14 +284,16 @@ test('Done closes only its member of a split', async () => {
 
 test('a failed Done keeps the task open, explains the error and allows retry', async () => {
   const user = userEvent.setup()
-  write.mockRejectedValueOnce(new Error('Invalid task frontmatter'))
+  const cause =
+    'Invalid task frontmatter: the status value does not match the supported task statuses. Please review the complete task details and try again.'
+  write.mockRejectedValueOnce(new Error(cause))
   openTask()
   const box = await editorBox(TASK_PATH)
   act(() => (box as WithEditor).editor.commands.insertContent('Pending edit'))
   await user.click(screen.getByRole('button', { name: 'Done' }))
   const error = await screen.findByRole('alert')
-  expect(error).toHaveTextContent('Invalid task frontmatter')
-  expect(error).toHaveTextContent('Task is still open')
+  expect(within(error).getByText('Could not finish editing')).toBeVisible()
+  expect(within(error).getByText(cause)).toBeVisible()
   expect(store.get(shellWorkspaceAtom).entries).toHaveLength(1)
   await user.click(within(error).getByRole('button', { name: 'Retry' }))
   await waitFor(() => expect(store.get(shellWorkspaceAtom).entries).toHaveLength(0))
