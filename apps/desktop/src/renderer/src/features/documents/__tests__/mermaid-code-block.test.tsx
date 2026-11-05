@@ -73,8 +73,11 @@ describe('Mermaid fences in a document editor', () => {
     await settle()
     expect(e.view.dom.querySelectorAll('[data-mermaid-source]')).toHaveLength(2)
     expect(e.view.dom.querySelector('[data-mermaid-diagram]')).toBeNull()
-    expect(e.view.dom.textContent).toContain("Couldn't draw this diagram")
+    expect(e.view.dom.querySelector('[role="status"]')?.textContent).toContain(
+      "Couldn't draw this diagram",
+    )
     expect(e.getMarkdown()).toContain('not valid')
+    expect(e.getMarkdown()).not.toContain("Couldn't draw this diagram")
   })
 
   it('recovers after a failed render when the source is corrected', async () => {

@@ -133,7 +133,9 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
         data-mermaid-source={isMermaid ? '' : undefined}
       />
       {renderError && isMermaid ? (
-        <p className="text-muted-foreground text-sm">Couldn&apos;t draw this diagram</p>
+        <p role="status" className="text-muted-foreground text-sm">
+          Couldn&apos;t draw this diagram
+        </p>
       ) : null}
     </NodeViewWrapper>
   )
