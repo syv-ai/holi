@@ -98,7 +98,9 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
 
   useEffect(() => {
     const host = svgHost.current
-    if (!host || !svg) return
+    if (!host) return
+    host.replaceChildren()
+    if (!svg) return
     // Parse the sanitized document and attach its SVG node, never interpreting
     // the original source as HTML or using React's unsafe HTML escape hatch.
     const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
@@ -123,6 +125,12 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
     <NodeViewWrapper className="tiptap-code-block">
       {showDiagram ? (
         <div>
+          {!svg ? (
+            <span role="status" className="flex items-center gap-2 text-muted-foreground text-sm">
+              <Skeleton aria-hidden="true" className="size-4" />
+              Rendering diagram…
+            </span>
+          ) : null}
           <RenderedMediaLightbox title="Mermaid diagram" preview={<SvgPreview svg={svg} />}>
             <div
               ref={svgHost}
@@ -130,17 +138,7 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
               contentEditable={false}
               role={svg ? 'img' : 'status'}
               aria-label={svg ? 'Mermaid diagram' : 'Rendering diagram'}
-            >
-              {svg ? null : (
-                <span
-                  role="status"
-                  className="flex items-center gap-2 text-muted-foreground text-sm"
-                >
-                  <Skeleton aria-hidden="true" className="size-4" />
-                  Rendering diagram…
-                </span>
-              )}
-            </div>
+            />
           </RenderedMediaLightbox>
           {editable ? (
             <Button type="button" variant="link" onClick={editSource}>
@@ -156,18 +154,16 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
       {renderError && isMermaid ? (
         <p role="status" className="text-muted-foreground text-sm">
           Couldn&apos;t draw this diagram{' '}
-          {editable ? (
-            <Button
-              type="button"
-              variant="link"
-              onClick={() => {
-                setRenderError(false)
-                setRetryVersion((version) => version + 1)
-              }}
-            >
-              Retry
-            </Button>
-          ) : null}
+          <Button
+            type="button"
+            variant="link"
+            onClick={() => {
+              setRenderError(false)
+              setRetryVersion((version) => version + 1)
+            }}
+          >
+            Retry
+          </Button>
         </p>
       ) : null}
     </NodeViewWrapper>
@@ -177,7 +173,9 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
 function SvgPreview({ svg }: { svg: string | null }) {
   const host = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    if (!svg || !host.current) return
+    if (!host.current) return
+    host.current.replaceChildren()
+    if (!svg) return
     const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
     if (parsed.documentElement.localName === 'svg' && !parsed.querySelector('parsererror')) {
       parsed.documentElement.style.removeProperty('max-width')
@@ -185,10 +183,18 @@ function SvgPreview({ svg }: { svg: string | null }) {
     }
   }, [svg])
   return (
-    <div
-      ref={host}
-      className="max-h-full max-w-full [&_svg]:h-auto [&_svg]:max-h-full [&_svg]:max-w-none"
-    />
+    <>
+      {!svg ? (
+        <span role="status" className="flex items-center gap-2 text-muted-foreground text-sm">
+          <Skeleton aria-hidden="true" className="size-4" />
+          Rendering diagram…
+        </span>
+      ) : null}
+      <div
+        ref={host}
+        className="flex min-h-24 w-full max-w-full items-center justify-center overflow-auto [&_svg]:h-auto [&_svg]:max-h-full [&_svg]:w-full [&_svg]:max-w-full"
+      />
+    </>
   )
 }
 

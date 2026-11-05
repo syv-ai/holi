@@ -49,6 +49,14 @@ describe('Mermaid fences in a document editor', () => {
     })
   })
 
+  it('opens a pending preview with an announced loading state', async () => {
+    renderMermaid.mockImplementationOnce(() => new Promise(() => undefined))
+    makeEditor('```mermaid\nflowchart LR\n```')
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Mermaid diagram' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.querySelector('[role="status"]')?.textContent).toContain('Rendering diagram…')
+  })
+
   it('renders valid fences at rest and returns to source while the caret is inside', async () => {
     const e = makeEditor('```mermaid\nflowchart LR\n  A --> B\n```\n\nAfter')
     await settle()
@@ -166,9 +174,8 @@ describe('Mermaid fences in a document editor', () => {
     renderMermaid.mockImplementationOnce(() => new Promise((resolve) => (resolveFirst = resolve)))
     const e = makeEditor('```mermaid\nflowchart LR\n```\n\nAfter')
     await waitFor(() => expect(renderMermaid).toHaveBeenCalledOnce())
-    expect(e.view.dom.querySelector('[data-mermaid-diagram]')?.textContent).toBe(
-      'Rendering diagram…',
-    )
+    expect(e.view.dom.querySelector('[data-mermaid-diagram]')).not.toBeNull()
+    expect(e.view.dom.querySelector('[role="status"]')?.textContent).toContain('Rendering diagram…')
     act(() => {
       e.commands.setTextSelection(3)
       e.view.focus()

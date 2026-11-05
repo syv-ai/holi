@@ -30,6 +30,12 @@ function mount(content: string) {
 }
 
 describe('document image node view', () => {
+  it('uses a meaningful trigger label for whitespace-only alt text', () => {
+    mount('![   ](photo.png)')
+    const trigger = screen.getByRole('button', { name: 'Open Image' })
+    expect(trigger.querySelector('img')?.getAttribute('alt')).toBe('   ')
+  })
+
   it('opens the image dialog by mouse and keyboard, then returns focus on close', async () => {
     mount('![Portrait](../assets/photo.png)')
     const trigger = screen.getByRole('button', { name: 'Open Portrait' })
