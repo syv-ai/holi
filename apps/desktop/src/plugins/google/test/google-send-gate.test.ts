@@ -31,12 +31,14 @@ const maintainedSettings = googleSeed.fragments?.['.claude/settings.json'] as
   { hooks?: { command?: string }[] }[] | undefined
 const maintainedCommand = maintainedSettings![0]!.hooks![0]!.command!
 const maintainedMatch = /data:text\/javascript;base64,([A-Za-z0-9+/=]+)/.exec(maintainedCommand)!
-const maintainedImport = `import('data:text/javascript;base64,${maintainedMatch[1]}')`
+const maintainedSource = Buffer.from(maintainedMatch[1]!, 'base64')
+  .toString('utf8')
+  .replace("const raw = process.env.HOLI_HOOK_STDIN ?? ''", 'const raw = await readStdin()')
 
 async function decide(payload: unknown, maintained = false): Promise<Decision & { code: number }> {
   return new Promise((resolve, reject) => {
     const child = maintained
-      ? spawn(process.execPath, ['-e', maintainedImport])
+      ? spawn(process.execPath, ['-e', maintainedSource])
       : spawn(process.execPath, [GATE])
     let stdout = ''
     child.stdout.on('data', (c: Buffer) => (stdout += c.toString('utf8')))
@@ -87,6 +89,8 @@ describe('both maintained and shipped gates cover shell spellings', () => {
     'if true; then holi google send --attach q2.pdf --to a@b.c; fi',
     'for x in once; do holi google respond e1 --yes; done',
     'if true; then holi google api POST gmail/v1/users/me/messages/send --body "{}"; fi',
+    'eval "holi google send --to a@b.c"',
+    'cmd=holi; $cmd google send --to a@b.c',
   ])('asks for risky syntax: %s', async (command) => {
     expect(decisionOf(await decide(bash(command)))).toBe('ask')
     expect(decisionOf(await decide(bash(command), true))).toBe('ask')

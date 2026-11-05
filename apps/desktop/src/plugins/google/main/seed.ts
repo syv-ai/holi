@@ -35,7 +35,12 @@ const folder = seedFolder(
 // parser and fail-closed policy without requiring a shipped-file update.
 const GATE_SOURCE = folder.shipped['.claude/hooks/google-send-gate.mjs']
 if (GATE_SOURCE === undefined) throw new Error('Google send gate seed is missing')
-const LEGACY_CONSENT_HOOK = `node -e "import('data:text/javascript;base64,${Buffer.from(GATE_SOURCE).toString('base64')}')"`
+const INLINE_GATE_SOURCE = GATE_SOURCE.replace(
+  'const raw = await readStdin()',
+  "const raw = process.env.HOLI_HOOK_STDIN ?? ''",
+)
+const INLINE_GATE_IMPORT = `data:text/javascript;base64,${Buffer.from(INLINE_GATE_SOURCE).toString('base64')}`
+const LEGACY_CONSENT_HOOK = `node -e "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{process.env.HOLI_HOOK_STDIN=s;import('${INLINE_GATE_IMPORT}')})"`
 
 const SETTINGS: SettingsFragment = {
   hooks: [

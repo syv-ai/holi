@@ -228,6 +228,15 @@ function reasonToAsk(command) {
   if (/\bholi\s+google\b/.test(words) && /\b(if|then|elif|else|fi|for|while|until|do|done|case|esac|select)\b/.test(words)) {
     return 'This Google action appears inside shell control flow. Review the command and confirm it in the native permission prompt.'
   }
+  if (/\bholi\b/.test(command) && /(\$\(|`|\$\{|\$[A-Za-z_])/.test(command)) {
+    return 'This command uses dynamic shell expansion near Holi. Review it and confirm in the native permission prompt.'
+  }
+  if (
+    /\b(?:eval|source)\b|\b(?:sh|bash|zsh)\s+-c\b/.test(command) &&
+    /holi\s+google/.test(words.replaceAll('\uE000', ' '))
+  ) {
+    return 'This command wraps a Google action in another shell. Review it and confirm in the native permission prompt.'
+  }
   // The command word, however it was spelled, then `google`, then the verb,
   // then the word after it. `[^\s|;&]*` keeps them adjacent within one
   // pipeline stage, so `holi google search x | grep send` does not match.
