@@ -92,15 +92,18 @@ function audienceOf(command, verb) {
 }
 
 const attachmentsOf = (command) => {
-  const words = asTheShellReads(command.split('<<')[0] ?? '')
+  // Private-use markers are parser syntax, not filename characters. Escape any
+  // literal occurrences before parsing so they can never be mistaken for it.
+  const safeCommand = command.replace(/[\uE000\uE100\uE101]/g, (char) => `%${char.charCodeAt(0)}%`)
+  const words = asTheShellReads(safeCommand.split('<<')[0] ?? '')
   const tokens = words.split(/[\s|;&()]+/).filter(Boolean)
   const paths = []
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i] ?? ''
     if (token === '--attach') {
-      if (tokens[i + 1]) paths.push(tokens[++i].replaceAll('\uE000', ' ').replace(/\uE100(\d+)\uE101/g, (_, code) => String.fromCharCode(Number(code))))
+      if (tokens[i + 1]) paths.push(tokens[++i].replaceAll('\uE000', ' ').replace(/\uE100(\d+)\uE101/g, (_, code) => String.fromCharCode(Number(code))).replace(/%(57344|57600|57601)%/g, (_, code) => String.fromCharCode(Number(code))))
     } else if (token.startsWith('--attach=')) {
-      paths.push(token.slice('--attach='.length).replaceAll('\uE000', ' ').replace(/\uE100(\d+)\uE101/g, (_, code) => String.fromCharCode(Number(code))))
+      paths.push(token.slice('--attach='.length).replaceAll('\uE000', ' ').replace(/\uE100(\d+)\uE101/g, (_, code) => String.fromCharCode(Number(code))).replace(/%(57344|57600|57601)%/g, (_, code) => String.fromCharCode(Number(code))))
     }
   }
   return paths.length ? ` It attaches: ${paths.join(', ')}.` : ''
@@ -155,22 +158,22 @@ function asTheShellReads(command) {
     const c = command[i]
     if (c === '\\') {
       const next = command[++i]
-      if (next !== undefined && next !== '\n') out += next === ' ' ? '\uE000' : next
+      if (next !== undefined && next !== '\n') out += /[;|&()]/.test(next) ? `\uE100${next.charCodeAt(0)}\uE101` : next === ' ' ? '\uE000' : next
     } else if (c === '$' && command[i + 1] === "'") {
       i += 2
       while (i < command.length && command[i] !== "'") {
         if (command[i] === '\\' && i + 1 < command.length) {
           const [char, used] = ansiEscape(command, i + 1)
-          out += /[;|&()]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char === ' ' ? '\uE000' : char
+          out += /[\t\r\n;|&()]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char === ' ' ? '\uE000' : char
           i += used + 1
         } else {
           const char = command[i++]
-          out += char === ' ' ? '\uE000' : /[;|&()]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char
+          out += char === ' ' ? '\uE000' : /[\t\r\n;|&()]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char
         }
       }
     } else if (c === "'") {
       const end = command.indexOf("'", i + 1)
-      out += (end < 0 ? command.slice(i + 1) : command.slice(i + 1, end)).replace(/ /g, '\uE000').replace(/[;|&()]/g, (x) => `\uE100${x.charCodeAt(0)}\uE101`)
+      out += (end < 0 ? command.slice(i + 1) : command.slice(i + 1, end)).replace(/ /g, '\uE000').replace(/[\t\r\n;|&()]/g, (x) => `\uE100${x.charCodeAt(0)}\uE101`)
       i = end < 0 ? command.length : end
     } else if (c === '"' || (c === '$' && command[i + 1] === '"')) {
       if (c === '$') i++
@@ -179,9 +182,13 @@ function asTheShellReads(command) {
         // a backslash or a newline; before anything else it stays.
         if (command[i] === '\\' && '$`"\\\n'.includes(command[i + 1] ?? '')) {
           i++
-          if (command[i] !== '\n') out += command[i] === ' ' ? '\uE000' : command[i]
+          if (command[i] !== '\n') {
+            const char = command[i]
+            out += char === ' ' ? '\uE000' : /[\t\r\n;|&()]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char
+          }
         } else {
-          out += command[i] === ' ' ? '\uE000' : command[i]
+          const char = command[i]
+          out += char === ' ' ? '\uE000' : /[\t\r\n;|&()]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char
         }
       }
     } else {
@@ -195,9 +202,11 @@ function asTheShellReads(command) {
  *  character it stands for, and how many characters it took. */
 function ansiEscape(text, at) {
   const c = text[at]
-  const hex = /^x([0-9a-fA-F]{1,2})/.exec(text.slice(at))
+  const hex = /^x([0-9a-fA-F]{1,2})(?![0-9a-fA-F])/.exec(text.slice(at))
   if (hex) return [String.fromCharCode(parseInt(hex[1], 16)), hex[0].length]
-  const uni = /^[uU]([0-9a-fA-F]{1,8})/.exec(text.slice(at))
+  const uni = text[at] === 'u'
+    ? /^u([0-9a-fA-F]{4})(?![0-9a-fA-F])/.exec(text.slice(at))
+    : /^U([0-9a-fA-F]{8})(?![0-9a-fA-F])/.exec(text.slice(at))
   if (uni) {
     const code = parseInt(uni[1], 16)
     return [code <= 0x10ffff ? String.fromCodePoint(code) : '', uni[0].length]
@@ -225,8 +234,8 @@ function ansiEscape(text, at) {
  */
 function reasonToAsk(command) {
   const words = asTheShellReads(command)
-  if (/\bholi\s+google\b/.test(words) && /\b(if|then|elif|else|fi|for|while|until|do|done|case|esac|select)\b/.test(words)) {
-    return 'This Google action appears inside shell control flow. Review the command and confirm it in the native permission prompt.'
+  if (/(?:\bholi\b|\$\{?HOLI_BIN\}?|\/[^\s|;&()]*\bholi)\s+google\b/i.test(words) && /\b(if|then|elif|else|fi|for|while|until|do|done|case|esac|select)\b/.test(words)) {
+    return `This Google action appears inside shell control flow.${attachmentsOf(command)} Review the command and confirm it in the native permission prompt.`
   }
   if (/\bholi\b/.test(command) && /(\$\(|`|\$\{|\$[A-Za-z_])/.test(command)) {
     return 'This command uses dynamic shell expansion near Holi. Review it and confirm in the native permission prompt.'
