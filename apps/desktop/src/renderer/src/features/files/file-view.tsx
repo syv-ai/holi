@@ -354,7 +354,11 @@ function TextEditor({
   }
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col" onKeyDownCapture={handleKeyDown}>
+    <div
+      className="relative flex min-h-0 flex-1 flex-col"
+      onKeyDownCapture={vimEnabled ? handleKeyDown : undefined}
+      onKeyDown={vimEnabled ? undefined : handleKeyDown}
+    >
       {view && find ? (
         <div className="absolute top-2 right-4 z-40">
           <CodeFindBar view={view} request={find} count={count} onClose={() => setFind(null)} />

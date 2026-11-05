@@ -7,7 +7,7 @@ type ModeChange = (mode: VimMode) => void
 
 // Leave normal-mode f unused for the later host-hints feature. Insert mode is
 // still handled by the Vim engine as ordinary text input.
-Vim.unmap('f', 'normal')
+Vim.map('f', '<Esc>', 'normal')
 
 /** Private adapter for Vim keys and per-view mode reporting. */
 function modeFor(view: EditorView): VimMode {
@@ -24,25 +24,36 @@ export function vimCodeEditor(onModeChange: ModeChange): Extension[] {
       class {
         private live = true
         private reported: VimMode | undefined
+        private pendingReport = 0
+        private readonly cm: ReturnType<typeof getCM>
+        private readonly handleModeChange = (event: { mode: string }) => {
+          this.report(
+            event.mode === 'insert' ? 'insert' : event.mode === 'visual' ? 'visual' : 'normal',
+          )
+        }
 
         constructor(private readonly view: EditorView) {
-          this.report()
+          this.cm = getCM(view)
+          this.report(modeFor(view))
+          this.cm?.on('vim-mode-change', this.handleModeChange)
         }
 
         update() {
-          this.report()
+          this.report(modeFor(this.view))
         }
 
         destroy() {
           this.live = false
+          this.pendingReport++
+          this.cm?.off('vim-mode-change', this.handleModeChange)
         }
 
-        private report() {
-          const mode = modeFor(this.view)
+        private report(mode: VimMode) {
           if (mode === this.reported) return
           this.reported = mode
+          const pendingReport = ++this.pendingReport
           queueMicrotask(() => {
-            if (this.live) onModeChange(mode)
+            if (this.live && pendingReport === this.pendingReport) onModeChange(mode)
           })
         }
       },

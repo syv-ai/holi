@@ -117,6 +117,7 @@ test('code opens straight into the editor, with its latest commit', async () => 
     {
       sha: '4a14110aaaa',
       subject: 'Update',
+      // The history fixture uses the current clock to exercise the relative timestamp.
       date: new Date(Date.now() - 2 * 3_600_000).toISOString(),
       author: 'Ana',
       added: 1,
@@ -387,14 +388,20 @@ test('Vim key events drive modes, motions, edits, yank, paste, undo and redo', a
 
   await user.keyboard('i')
   expect(await screen.findByLabelText('Vim insert mode')).toBeInTheDocument()
-  await user.keyboard('f')
+  await user.keyboard('{Control>}o{/Control}')
+  expect(await screen.findByLabelText('Vim normal mode')).toBeInTheDocument()
+  await user.keyboard('w')
+  expect(await screen.findByLabelText('Vim insert mode')).toBeInTheDocument()
+  await user.keyboard('{Escape}')
+  view.dispatch({ selection: { anchor: 0 } })
+  await user.keyboard('if')
   await user.keyboard('{Escape}')
   await user.keyboard('f')
   expect(view.state.doc.toString()).toBe('fone two\nthree four\n')
   expect(await screen.findByLabelText('Vim normal mode')).toBeInTheDocument()
 
   await user.keyboard('w')
-  expect(view.state.selection.main.head).toBe(6)
+  expect(view.state.selection.main.head).toBe(5)
   await user.keyboard('vll')
   expect(await screen.findByLabelText('Vim visual mode')).toBeInTheDocument()
   await user.keyboard('y')
@@ -656,11 +663,42 @@ test('frozen Vim editors reject edit commands and become editable after thaw', a
   })
   const { EditorView } = await import('@codemirror/view')
   const view = EditorView.findFromDOM(content)!
+  content.focus()
   const thaw = freezeBuffers()
-  await user.keyboard('iX{Escape}x')
+  expect(content).toHaveAttribute('contenteditable', 'false')
+  const deletion = new KeyboardEvent('keydown', {
+    key: 'x',
+    code: 'KeyX',
+    bubbles: true,
+    cancelable: true,
+  })
+  content.dispatchEvent(deletion)
+  expect(deletion.defaultPrevented).toBe(true)
+  expect(await screen.findByLabelText('Vim normal mode')).toBeInTheDocument()
   expect(view.state.doc.toString()).toBe('alpha beta\n')
   thaw()
-  content!.focus()
+  content.focus()
   await user.keyboard('iX{Escape}')
   expect(view.state.doc.toString()).toBe('Xalpha beta\n')
+})
+
+test('Vim-off find handling respects keys consumed inside CodeMirror', async () => {
+  const user = userEvent.setup()
+  read.mockResolvedValue('alpha beta\n')
+  historyList.mockResolvedValue([])
+  setup('src/find.txt')
+  const content = await waitFor(() => {
+    const node = document.querySelector<HTMLElement>('.cm-content')
+    if (node === null) throw new Error('no editor yet')
+    return node
+  })
+  content.focus()
+  await user.keyboard('{Meta>}f{/Meta}')
+  expect(await screen.findByRole('textbox', { name: 'Find' })).toBeInTheDocument()
+  content.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') event.preventDefault()
+  })
+  content.focus()
+  await user.keyboard('{Escape}')
+  expect(screen.getByRole('textbox', { name: 'Find' })).toBeInTheDocument()
 })
