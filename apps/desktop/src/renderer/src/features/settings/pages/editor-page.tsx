@@ -1,25 +1,18 @@
-/** Editor: how the vault's notes read. */
-import { EDITOR_FONTS, type EditorFont } from '@holi/shared'
+/** Editor: how notes read and behave for you. */
+import type { EditorFont, PropertiesLayout, TableStyle } from '@holi/shared'
 import { Switch } from '@/components/ui/switch'
 import {
+  choiceSetting,
   Segmented,
   SettingsGroup,
   SettingsFieldRow,
   SettingsRowsLoading,
-  type Choice,
 } from '../settings-kit'
 import { useVaultSettings } from '../use-vault-settings'
 
-const FONT_LABEL: Record<EditorFont, string> = {
-  serif: 'Serif',
-  sans: 'Sans',
-  mono: 'Mono',
-}
-
-const FONTS: readonly Choice<EditorFont>[] = EDITOR_FONTS.map((font) => ({
-  value: font,
-  label: FONT_LABEL[font],
-}))
+const FONTS = choiceSetting<EditorFont>('editorFont')
+const PROPERTIES = choiceSetting<PropertiesLayout>('propertiesLayout')
+const TABLES = choiceSetting<TableStyle>('tableStyle')
 
 export function EditorPage() {
   const { resolved, write } = useVaultSettings()
@@ -30,18 +23,31 @@ export function EditorPage() {
       description="How notes read and what the editor does as you type."
     >
       {resolved === null ? (
-        <SettingsRowsLoading rows={3} label="Reading the settings" />
+        <SettingsRowsLoading rows={5} label="Reading the settings" />
       ) : (
         <>
-          <SettingsFieldRow
-            title="Notes are set in"
-            description="Prose only. Code and frontmatter stay monospaced. Shared with the vault."
-          >
+          <SettingsFieldRow title={FONTS.title} description={FONTS.description}>
             <Segmented
-              label="Notes are set in"
+              label={FONTS.title}
               value={resolved.editorFont}
-              choices={FONTS}
-              onChange={(font) => void write('editorFont', font, 'committed')}
+              choices={FONTS.choices}
+              onChange={(font) => void write('editorFont', font)}
+            />
+          </SettingsFieldRow>
+          <SettingsFieldRow title={PROPERTIES.title} description={PROPERTIES.description}>
+            <Segmented
+              label={PROPERTIES.title}
+              value={resolved.propertiesLayout}
+              choices={PROPERTIES.choices}
+              onChange={(layout) => void write('propertiesLayout', layout)}
+            />
+          </SettingsFieldRow>
+          <SettingsFieldRow title={TABLES.title} description={TABLES.description}>
+            <Segmented
+              label={TABLES.title}
+              value={resolved.tableStyle}
+              choices={TABLES.choices}
+              onChange={(style) => void write('tableStyle', style)}
             />
           </SettingsFieldRow>
           <SettingsFieldRow
@@ -52,7 +58,7 @@ export function EditorPage() {
             <Switch
               id="settings-daily-notes"
               checked={resolved.dailyNotes}
-              onCheckedChange={(on) => void write('dailyNotes', on, 'committed')}
+              onCheckedChange={(on) => void write('dailyNotes', on)}
             />
           </SettingsFieldRow>
           <SettingsFieldRow
@@ -63,7 +69,7 @@ export function EditorPage() {
             <Switch
               id="settings-space-asks"
               checked={resolved.spaceAsksAgent}
-              onCheckedChange={(on) => void write('spaceAsksAgent', on, 'local')}
+              onCheckedChange={(on) => void write('spaceAsksAgent', on)}
             />
           </SettingsFieldRow>
         </>

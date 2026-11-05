@@ -100,7 +100,7 @@ function PluginSwitches() {
       return reason === undefined ? [] : [reason]
     })
     if (lost.length > 0) setAsking({ vault, off: info, reasons: lost })
-    else void write('plugins', vault, 'committed')
+    else void write('plugins', vault)
   }
 
   return (
@@ -168,7 +168,7 @@ function PluginSwitches() {
         destructive
         onConfirm={() => {
           if (asking !== null) {
-            void write('plugins', asking.vault, 'committed')
+            void write('plugins', asking.vault)
           }
           setAsking(null)
         }}

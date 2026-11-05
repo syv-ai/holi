@@ -146,6 +146,7 @@ export function DrawerShell({
       ref={ref}
       data-slot="drawer"
       data-drawer={id}
+      data-glass-ground=""
       data-side={side}
       data-state={open ? 'open' : 'closed'}
       // Slide in on mount, for a drawer that mounts BY opening. One that is
