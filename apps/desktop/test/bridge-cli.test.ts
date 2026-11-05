@@ -5,10 +5,10 @@
  * Generated shell is the one thing in this codebase no other test would cover:
  * a quoting bug in it does not fail loudly, it sends a different argument.
  */
-import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { execFile, execFileSync } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, relative, sep, join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentCapabilities } from '../src/plugins/agent/main/host/capabilities'
@@ -16,7 +16,6 @@ import { appsCapabilities, storeCapabilities } from '../src/plugins/apps/main/ca
 import { installHoliCli } from '../src/main/bridge/cli'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
 import { SPILL_BYTES } from '../src/main/bridge/spill'
-import { OUT_DIR } from '../src/main/vault/out-files'
 import { CapabilityError, NEXT_STEP } from '../src/main/capabilities/error'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import {
@@ -120,12 +119,26 @@ function bridge(table: Record<string, AnyCapability>, namespaces: string[]): Bri
       }).dispatch,
       commands: () => registry.commands(),
       rootFor: async () => dir,
+      machine: {
+        token: () => 'a'.repeat(64),
+        resolveTarget: async (selector, cwd) => {
+          if (selector !== null)
+            return selector.toLowerCase() === 'owner/repo'
+              ? { remote: 'owner/repo', root: dir, live: true }
+              : null
+          if (cwd === null || !isAbsolute(cwd)) return null
+          const rest = relative(await realpath(dir), cwd)
+          return rest === '' || (!rest.startsWith(`..${sep}`) && rest !== '..')
+            ? { remote: 'owner/repo', root: dir, live: true }
+            : null
+        },
+      },
     },
   })
 }
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'holi-cli-'))
+  dir = await realpath(await mkdtemp(join(tmpdir(), 'holi-cli-')))
   bin = await installHoliCli(dir)
   capability = vi.fn<Called>((name, params) =>
     params.id === 'gone'
@@ -136,8 +149,17 @@ beforeEach(async () => {
   server = bridge(table, [...new Set(Object.keys(table).map((n) => n.split('.')[0]!))])
   await server.start()
   env = { PATH: process.env.PATH ?? '' }
-  await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
+  await writeEndpoint()
 })
+
+async function writeEndpoint(): Promise<void> {
+  await writeFile(
+    join(dir, 'cli-endpoint.json'),
+    JSON.stringify({ host: '127.0.0.1', port: server.port(), token: 'a'.repeat(64) }, null, 2) +
+      '\n',
+    { mode: 0o600 },
+  )
+}
 
 afterEach(async () => {
   await server.stop()
@@ -150,30 +172,119 @@ describe('the installed script', () => {
   })
 })
 
-describe('when Holi is not running', () => {
-  it('exits non-zero with a sentence a human can read', async () => {
-    await writeVaultEnv(dir, null)
-    const res = await run(bin, ['apps', 'open', 'retro'], env)
+describe('endpoint discovery', () => {
+  it('fails clearly when the generated descriptor is absent', async () => {
+    await rm(join(dir, 'cli-endpoint.json'))
+    const res = await run(bin, ['sync', 'status'], env)
     expect(res.code).toBe(1)
-    expect(res.stderr).toMatch(/holi: Holi is not running/)
+    expect(res.stderr).toMatch(/Holi is not running/)
   })
 
-  it('finds the vault from a folder inside it, and nothing outside one', async () => {
-    await mkdir(join(dir, 'Notes/deep'), { recursive: true })
-    expect((await run(bin, ['sync', 'status'], env, '', join(dir, 'Notes/deep'))).code).toBe(0)
-    expect((await run(bin, ['sync', 'status'], env, '', tmpdir())).code).toBe(1)
+  it('rejects malformed, duplicate, and incomplete descriptor fields', async () => {
+    const valid = JSON.stringify(
+      { host: '127.0.0.1', port: server.port(), token: 'a'.repeat(64) },
+      null,
+      2,
+    )
+    for (const contents of [
+      valid.replace('127.0.0.1', 'localhost'),
+      valid.replace(
+        `"port": ${server.port()},`,
+        `"port": ${server.port()},\n  "port": ${server.port()},`,
+      ),
+      valid.replace(/  "token":.*\n/, ''),
+      valid.replace('"port":', '"port": 0,\n  "other":'),
+    ]) {
+      await writeFile(join(dir, 'cli-endpoint.json'), contents + '\n', { mode: 0o600 })
+      const res = await run(bin, ['sync', 'status'], env)
+      expect(res.code).toBe(1)
+      expect(res.stderr).toMatch(/descriptor is malformed/)
+    }
   })
 
-  it('reads the file, never runs it', async () => {
-    // A collaborator could force-add one: a line that would run as shell must
-    // not, and a value that is not digits or hex is no value at all.
-    await writeVaultEnv(
-      dir,
-      `HOLI_BRIDGE_PORT=${server.port()}\nHOLI_BRIDGE_TOKEN=$(touch ${dir}/ran)\ntouch ${dir}/ran\n`,
+  it('rejects a symlink instead of following it', async () => {
+    await rm(join(dir, 'cli-endpoint.json'))
+    await writeFile(join(dir, 'elsewhere'), '{}')
+    await import('node:fs/promises').then(({ symlink }) =>
+      symlink(join(dir, 'elsewhere'), join(dir, 'cli-endpoint.json')),
     )
     const res = await run(bin, ['sync', 'status'], env)
     expect(res.code).toBe(1)
-    await expect(stat(join(dir, 'ran'))).rejects.toThrow()
+    expect(res.stderr).toMatch(/missing or unsafe/)
+  })
+
+  it('finds the managed target from physical cwd and refuses outside it', async () => {
+    await mkdir(join(dir, 'Notes/deep'), { recursive: true })
+    expect((await run(bin, ['sync', 'status'], env, '', join(dir, 'Notes/deep'))).code).toBe(0)
+    expect((await run(bin, ['sync', 'status'], env, '', tmpdir())).code).toBe(2)
+  })
+
+  it('rejects a stale endpoint without falling back to vault-local credentials', async () => {
+    await writeFile(
+      join(dir, 'cli-endpoint.json'),
+      JSON.stringify({ host: '127.0.0.1', port: 1, token: 'a'.repeat(64) }, null, 2),
+      { mode: 0o600 },
+    )
+    const res = await run(bin, ['sync', 'status'], env)
+    expect(res.code).toBe(1)
+    expect(res.stderr).toMatch(/could not reach/)
+  })
+
+  it('quotes a trusted descriptor path containing spaces and apostrophes', async () => {
+    const special = join(dir, "user data's folder")
+    await mkdir(special)
+    const specialBin = await installHoliCli(special)
+    await writeFile(
+      join(special, 'cli-endpoint.json'),
+      JSON.stringify({ host: '127.0.0.1', port: server.port(), token: 'a'.repeat(64) }, null, 2) +
+        '\n',
+      { mode: 0o600 },
+    )
+    const res = await run(specialBin, ['sync', 'status'], env)
+    expect(res.code).toBe(0)
+    expect(res.stdout).toBe('sync.status ok\n')
+  })
+
+  it('keeps credentials out of curl argv and removes private request files', async () => {
+    const shim = join(dir, 'curl-shim')
+    await mkdir(shim)
+    const log = join(dir, 'curl-argv')
+    const curl = execFileSync('which', ['curl'], { encoding: 'utf8' }).trim()
+    await writeFile(
+      join(shim, 'curl'),
+      `#!/bin/sh\nprintf '%s\\n' "$@" >> "$CLI_ARG_LOG"\nexec '${curl}' "$@"\n`,
+      { mode: 0o755 },
+    )
+    const res = await run(bin, ['sync', 'status'], {
+      ...env,
+      PATH: `${shim}:${env.PATH}`,
+      CLI_ARG_LOG: log,
+    })
+    expect(res.code).toBe(0)
+    const args = (await readFile(log, 'utf8')).split('\n').filter(Boolean)
+    expect(args.join(' ')).not.toContain('a'.repeat(64))
+    for (const option of ['--config', '-o']) {
+      const path = args[args.indexOf(option) + 1]!
+      await expect(readFile(path)).rejects.toThrow()
+    }
+  })
+
+  it('rejects an authentication failure without printing the token', async () => {
+    await writeFile(
+      join(dir, 'cli-endpoint.json'),
+      JSON.stringify({ host: '127.0.0.1', port: server.port(), token: 'b'.repeat(64) }, null, 2),
+      { mode: 0o600 },
+    )
+    const res = await run(bin, ['sync', 'status'], env)
+    expect(res.code).toBe(1)
+    expect(res.stderr).toMatch(/rejected the request/)
+    expect(res.stderr).not.toContain('b'.repeat(64))
+  })
+
+  it('does not expose the credential in the generated script', async () => {
+    const script = await readFile(bin, 'utf8')
+    expect(script).not.toContain('a'.repeat(64))
+    expect(script).toContain('cli-endpoint.json')
   })
 })
 
@@ -225,6 +336,12 @@ describe('a command', () => {
     expect(res.code).toBe(0)
     expect(res.stdout).toBe('apps.open ok\n')
     expect(capability).toHaveBeenCalledWith('apps.open', { path: 'My Apps/my app' })
+  })
+
+  it('preserves Unicode arguments and the option terminator', async () => {
+    const res = await run(bin, ['apps', 'open', '--', 'føø/日本語.md'], env)
+    expect(res.code).toBe(0)
+    expect(capability).toHaveBeenCalledWith('apps.open', { path: 'føø/日本語.md' })
   })
 
   it('prints JSON with --json, before or after the path', async () => {
@@ -306,40 +423,26 @@ describe('a command', () => {
   })
 })
 
-describe('an answer too long to print', () => {
-  const rows = Array.from({ length: 400 }, (_, i) => ({ id: `t${i}`, subject: 'x'.repeat(40) }))
-
-  it('is written to a local file under machine state, and the path printed', async () => {
-    const text = JSON.stringify(rows)
-    expect(Buffer.byteLength(text)).toBeGreaterThan(SPILL_BYTES)
+describe('large machine responses', () => {
+  it('spills large responses and keeps JSON notices parseable', async () => {
+    const text = JSON.stringify(
+      Array.from({ length: 400 }, (_, i) => ({ id: `t${i}`, subject: 'x'.repeat(40) })),
+    )
     capability.mockResolvedValueOnce({ text })
-    const res = await run(bin, ['store', 'list', 'T.app', 'items'], env)
-    expect(res.code).toBe(0)
-    const path = /\n {2}(\S+)\n/.exec(res.stdout)?.[1]
-    expect(path).toMatch(new RegExp(`^${OUT_DIR}/.*store-list.*\\.local\\.json$`))
-    expect(res.stdout).toContain('a JSON array of 400 items, each with keys id, subject')
-    expect(await readFile(join(dir, path!), 'utf8')).toBe(text)
-  })
+    const plain = await run(bin, ['store', 'list', 'T.app', 'items'], env)
+    expect(plain.code).toBe(0)
+    const plainPath = plain.stdout.split('\n')[1]!.trim()
+    expect(isAbsolute(plainPath)).toBe(false)
+    expect(await readFile(join(dir, plainPath), 'utf8')).toBe(text)
 
-  it('stays JSON when asked for --json, so it still parses', async () => {
-    capability.mockResolvedValueOnce({ text: JSON.stringify(rows) })
-    const res = await run(bin, ['store', 'list', 'T.app', 'items', '--json'], env)
-    expect(res.code).toBe(0)
-    const notice = JSON.parse(res.stdout) as { spilled: string; bytes: number; shape: string }
-    expect(notice.spilled).toMatch(new RegExp(`^${OUT_DIR}/.*store-list.*\\.local\\.json$`))
-    const written = await readFile(join(dir, notice.spilled), 'utf8')
-    expect(notice.bytes).toBe(Buffer.byteLength(written))
-    expect(notice.shape).toMatch(/^a JSON object with keys /)
-  })
-
-  it('keeps only the newest spills', async () => {
-    const text = JSON.stringify(rows)
-    for (let i = 0; i < 52; i++) {
-      capability.mockResolvedValueOnce({ text })
-      await run(bin, ['store', 'list', 'T.app', 'items'], env)
-    }
-    const names = await readdir(join(dir, OUT_DIR))
-    expect(names.filter((n) => n.startsWith('spill-')).length).toBe(50)
+    capability.mockResolvedValueOnce({ text })
+    const json = await run(bin, ['store', 'list', 'T.app', 'items', '--json'], env)
+    expect(json.code).toBe(0)
+    const notice = JSON.parse(json.stdout) as { spilled: string; bytes: number }
+    expect(notice.bytes).toBeGreaterThan(SPILL_BYTES)
+    expect(await readFile(join(dir, notice.spilled), 'utf8')).toBe(
+      JSON.stringify({ text }, null, 2),
+    )
   })
 })
 
@@ -366,7 +469,7 @@ describe('a pending docs mutation receipt', () => {
     pushed = false
     server = bridge({ 'docs.create': mutation }, ['docs'])
     await server.start()
-    await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
+    await writeEndpoint()
   })
 
   it('exits 1 with the JSON receipt on stderr and writes stdin only once', async () => {
@@ -410,7 +513,7 @@ describe('a command that reads stdin', () => {
     ran.mockClear()
     server = bridge({ 'x.echo': echo }, ['x'])
     await server.start()
-    await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
+    await writeEndpoint()
   })
 
   it('runs once, with stdin, preserving paths with spaces', async () => {

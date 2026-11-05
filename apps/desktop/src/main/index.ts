@@ -9,7 +9,7 @@
  * import anywhere on this path stops the window opening at all.
  */
 import { applyLiquidGlass, wantsLiquidGlass } from './liquid-glass'
-import { stat } from 'node:fs/promises'
+import { realpath, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   app,
@@ -77,6 +77,8 @@ import { createUpdater, type Updater } from './updates/updater'
 import { installAppMenu } from './menu'
 import { createBridgeEnv } from './bridge/env-file'
 import { createBridgeServer } from './bridge/server'
+import { publishCliEndpoint, type CliEndpoint } from './bridge/cli-endpoint'
+import { createCliTargetResolver } from './bridge/cli-target'
 
 // The plugins this build has: the one place main imports them.
 install(MAIN_PLUGINS)
@@ -852,8 +854,33 @@ async function main(): Promise<void> {
 
   // The bridge: what runs inside a vault (the `holi` command, the agent's
   // hooks, git's hook and merge driver) reaching this Holi on loopback.
+  const targetResolver = createCliTargetResolver(registry, async (remote, root) => {
+    const active = host.active()
+    if (active?.remote !== remote) return false
+    const path = await realpath(active.root).catch(() => null)
+    return host.active() === active && path === root
+  })
+  let cliEndpoint: CliEndpoint | null = null
   const bridge = createBridgeServer({
-    cli: { dispatch, commands: () => capabilities.commands(), rootFor },
+    cli: {
+      dispatch,
+      commands: () => capabilities.commands(),
+      rootFor,
+      machine: {
+        token: () => cliEndpoint?.token ?? '',
+        listVaults: () => targetResolver.list(),
+        resolveTarget: async (selector, cwd) => {
+          const target = await targetResolver.resolve(selector, cwd)
+          return target === null
+            ? null
+            : {
+                remote: target.entry.remote,
+                root: target.entry.path,
+                live: target.live,
+              }
+        },
+      },
+    },
   })
   registerGitRoutes(bridge, {
     rootFor,
@@ -866,6 +893,14 @@ async function main(): Promise<void> {
       dispatch({ door: 'ui', remote, name: 'agent.message', params: { session: job, text } }),
   })
   await bridge.start()
+  try {
+    const port = bridge.port()
+    if (port === null) throw new Error('CLI bridge did not bind a port')
+    cliEndpoint = await publishCliEndpoint(join(app.getPath('userData'), 'cli-endpoint.json'), port)
+  } catch (error) {
+    await bridge.stop().catch(() => {})
+    throw error
+  }
   const binDir = dirname(holiCliPath)
 
   // Opened at login, Holi starts out of sight: the window loads (so the
@@ -990,7 +1025,6 @@ async function main(): Promise<void> {
       await plugins.stopBackground().catch((err) => console.error('[quit] background:', err))
       await plugins.stop().catch((err) => console.error('[quit] plugins stop failed:', err))
       await terminals.closeAll().catch((err) => console.error('[quit] terminals failed:', err))
-      await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
       // Quit is a leave point: commit the flushed buffer, then get it
       // off-machine before the window closes. Best-effort with a 1s budget:
       // an unreachable remote must not hang quit, and the next launch drains
@@ -1003,6 +1037,14 @@ async function main(): Promise<void> {
       // `close()` commits the open vault again (a clean no-op) before letting
       // go of it.
       await host.close()
+      // Final commits and their hooks still need the bridge. Revoke machine
+      // discovery only after settlement, then stop accepting bridge requests.
+      const endpoint = cliEndpoint
+      cliEndpoint = null
+      await endpoint
+        ?.dispose()
+        .catch((err) => console.error('[quit] CLI endpoint cleanup failed:', err))
+      await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
     } catch (err) {
       console.error('[quit] teardown failed; quit cancelled so edits remain available:', err)
       channel.cancel?.()

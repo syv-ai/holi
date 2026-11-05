@@ -21,8 +21,11 @@
  */
 import { createServer, type RequestListener, type Server } from 'node:http'
 import { randomBytes } from 'node:crypto'
+import { resolve as resolvePath } from 'node:path'
+import { realpath } from 'node:fs/promises'
 import type { Dispatch } from '../capabilities/dispatch'
 import type { CliCommand } from '../capabilities/registry'
+import { CapabilityError } from '../capabilities/error'
 import { refusalText, resolveArgv } from './cli'
 import { SPILL_BYTES, spillNotice, spillOutput } from './spill'
 
@@ -59,6 +62,15 @@ export interface BridgeServerDeps {
     /** The vault's clone, where an answer too long to print is spilled
      *  (`spill.ts`). Null prints it whole. */
     rootFor(remote: string): Promise<string | null>
+    /** Optional machine-only CLI composition. Never used by vault routes. */
+    machine?: {
+      token(): string
+      resolveTarget(
+        selector: string | null,
+        cwd: string | null,
+      ): Promise<{ remote: string; root: string; live: boolean } | null>
+      listVaults?(): Promise<readonly { remote: string; name: string; live: boolean }[]>
+    }
   }
   log?: (msg: string) => void
 }
@@ -92,6 +104,7 @@ const MAX_BODY_BYTES = 4 * 1024 * 1024
 const CLI_PATH = '/cli'
 
 const TEXT = 'text/plain; charset=utf-8'
+const CLOSED_READS = new Set(['docs.list', 'docs.read', 'docs.inspect', 'docs.render'])
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
@@ -118,24 +131,118 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
    * 422 with a refusal and its next step, 400 with usage, or 428, having run
    * nothing, when the command reads a param from stdin that was not given.
    */
-  async function runCli(remote: string, body: string): Promise<Reply> {
+  const MACHINE_LIST: CliCommand = {
+    name: 'vault.list',
+    cli: { args: [], summary: 'managed vaults' },
+  }
+
+  async function runCli(remote: string, body: string, machine = false): Promise<Reply> {
     const cli = deps.cli!
     const form = new URLSearchParams(body)
     const request = resolveArgv(
       form.getAll('argv'),
-      cli.commands(),
+      machine ? [...cli.commands(), MACHINE_LIST] : cli.commands(),
       form.get('stdin'),
       form.get('job'),
     )
     if (request.kind === 'usage') return { status: 400, body: request.text }
+    const selector = request.vault
+    const commandName =
+      request.kind === 'run' ? request.name : form.getAll('argv').slice(0, 2).join('.')
+    if (machine && request.kind === 'run' && request.name === MACHINE_LIST.name) {
+      if (selector !== null) return { status: 422, body: 'holi vault list: --vault is not allowed' }
+      try {
+        const vaults = await cli.machine!.listVaults?.()
+        if (!vaults) return { status: 403, body: 'holi: machine vault listing is unavailable' }
+        const json = request.json
+          ? JSON.stringify(vaults, null, 2)
+          : vaults
+              .map((vault) => `${vault.remote}\t${vault.name}\t${vault.live ? 'open' : 'closed'}`)
+              .join('\n')
+        return { status: 200, body: json }
+      } catch (error) {
+        return { status: 422, body: `holi vault list: ${message(error)}` }
+      }
+    }
+    let targetRemote = remote
+    let machineTarget: { remote: string; root: string; live: boolean } | null = null
+    let requestCwd: string | null = null
+    if (machine) {
+      if (!cli.machine) return { status: 403 }
+      let target: { remote: string; root: string; live: boolean } | null
+      try {
+        const cwd = form.get('cwd')
+        requestCwd = cwd
+        if (cwd !== null && (!cwd || (!cwd.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(cwd)))) {
+          return { status: 400, body: 'holi: cwd must be an absolute physical path' }
+        }
+        target = await cli.machine.resolveTarget(selector, cwd)
+      } catch (error) {
+        return { status: selector === null ? 400 : 422, body: `holi: ${message(error)}` }
+      }
+      if (!target)
+        return {
+          status: selector === null ? 400 : 422,
+          body:
+            selector === null
+              ? 'holi: target required; run inside a managed vault or pass --vault owner/repo'
+              : 'holi: unknown vault target; check --vault owner/repo',
+        }
+      targetRemote = target.remote
+      machineTarget = target
+      const readOnly = CLOSED_READS.has(commandName)
+      if (!target.live && !readOnly) {
+        return {
+          status: 422,
+          body: `holi ${commandName}: vault is closed; open it in Holi before running this command`,
+        }
+      }
+    } else if (selector !== null && selector.toLowerCase() !== remote.toLowerCase()) {
+      return { status: 422, body: 'holi: a vault-local credential cannot select another vault' }
+    }
     if (request.kind === 'stdin') return { status: 428 }
     let output: string
     try {
       const result = await cli.dispatch({
         door: 'cli',
-        remote,
+        remote: targetRemote,
         name: request.name,
         params: request.params,
+        ...(machine && machineTarget
+          ? {
+              beforeInvoke: async (invocation) => {
+                const invokedRoot =
+                  invocation.root === machineTarget!.root
+                    ? invocation.root
+                    : await realpath(invocation.root).catch(() => null)
+                if (
+                  invocation.remote !== machineTarget!.remote ||
+                  invokedRoot !== machineTarget!.root
+                ) {
+                  throw new CapabilityError(
+                    'UNAVAILABLE',
+                    'vault invocation does not match the resolved target',
+                  )
+                }
+                const current = await cli.machine!.resolveTarget(machineTarget!.remote, null)
+                if (
+                  !current ||
+                  current.remote.toLowerCase() !== machineTarget!.remote.toLowerCase() ||
+                  current.root !== machineTarget!.root
+                ) {
+                  throw new CapabilityError(
+                    'UNAVAILABLE',
+                    'vault target changed or is no longer available',
+                  )
+                }
+                if (!current.live && !CLOSED_READS.has(commandName))
+                  throw new CapabilityError(
+                    'UNAVAILABLE',
+                    'vault is closed; open it in Holi before running this command',
+                  )
+              },
+            }
+          : {}),
       })
       const succeeded = commandSucceeded(cli.commands(), request.name, result.value)
       // A command that answered with its own failure: 422, the answer whole.
@@ -145,7 +252,25 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
       return { status: 422, body: refusalText(request, error) }
     }
     if (Buffer.byteLength(output) <= SPILL_BYTES) return { status: 200, body: output }
-    const root = await cli.rootFor(remote)
+    let root: string | null = machine ? null : await cli.rootFor(remote)
+    let absoluteNotice = false
+    if (machine && machineTarget) {
+      try {
+        const current = await cli.machine!.resolveTarget(machineTarget.remote, null)
+        const valid =
+          current !== null &&
+          current.remote.toLowerCase() === machineTarget.remote.toLowerCase() &&
+          current.root === machineTarget.root
+        if (valid) {
+          root = machineTarget.root
+          absoluteNotice =
+            selector !== null ||
+            (requestCwd !== null && resolvePath(requestCwd) !== resolvePath(machineTarget.root))
+        }
+      } catch {
+        root = null
+      }
+    }
     // The command has already run, and may have written: a failed spill
     // prints the answer whole rather than turning a success into an error.
     const spilled =
@@ -157,16 +282,23 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
           })
     return {
       status: 200,
-      body: spilled === null ? output : spillNotice(request.label, spilled, request.json),
+      body:
+        spilled === null
+          ? output
+          : spillNotice(
+              request.label,
+              absoluteNotice ? { ...spilled, path: resolvePath(root!, spilled.path) } : spilled,
+              request.json,
+            ),
     }
   }
 
   /** The route for a path: a registered one, or the built-in CLI door. */
-  const routeFor = (pathname: string): Route | undefined => {
+  const routeFor = (pathname: string, machine = false): Route | undefined => {
     const exact = routes.get(pathname)
     if (exact !== undefined) return exact
     if (deps.cli === undefined || pathname !== CLI_PATH) return undefined
-    return { body: 'text', handle: (remote, _query, body) => runCli(remote, body) }
+    return { body: 'text', handle: (remote, _query, body) => runCli(remote, body, machine) }
   }
 
   const handle: RequestListener = (req, res) => {
@@ -180,13 +312,31 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
     // **The token is checked on the headers, before a byte of body is read.**
     // Draining first would mean an unauthenticated local process could make us
     // buffer up to the cap on every request just by being wrong about the token.
-    const remote = tokens.get(url.searchParams.get('t') ?? '')
+    const queryToken = url.searchParams.get('t')
+    const vaultRemote = tokens.get(queryToken ?? '')
+    const headerToken = req.headers['x-holi-cli-token']
+    const machineToken = deps.cli?.machine?.token()
+    const hasMachineCredential = Object.hasOwn(req.headers, 'x-holi-cli-token')
+    const machineAuth =
+      req.method === 'POST' &&
+      url.pathname === CLI_PATH &&
+      machineToken !== undefined &&
+      typeof headerToken === 'string' &&
+      headerToken.length > 0 &&
+      headerToken === machineToken &&
+      queryToken === null
+    if (hasMachineCredential && !machineAuth) {
+      req.resume()
+      res.writeHead(403).end()
+      return
+    }
+    const remote = machineAuth ? null : vaultRemote
     if (remote === undefined) {
       req.resume()
       res.writeHead(403).end()
       return
     }
-    const route = routeFor(url.pathname)
+    const route = routeFor(url.pathname, machineAuth)
     if (route === undefined) {
       req.resume()
       res.writeHead(404).end()
@@ -213,7 +363,9 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
 
     req.on('end', () => {
       void Promise.resolve()
-        .then(() => route.handle(remote, new URLSearchParams(url.search), body, hungUp.signal))
+        .then(() =>
+          route.handle(remote ?? '', new URLSearchParams(url.search), body, hungUp.signal),
+        )
         .then((reply) => {
           if (hungUp.signal.aborted) return
           if (reply.body === undefined || reply.body === '') {
