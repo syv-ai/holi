@@ -99,12 +99,12 @@ function fixture(
 
 beforeEach(() => {
   dispatch.mockReset()
+  const storage = new Map([['holi.browser.addresses', JSON.stringify({ p1: address })]])
   Object.defineProperty(globalThis, 'localStorage', {
     configurable: true,
     value: {
-      getItem: (key: string) =>
-        key === 'holi.browser.addresses' ? JSON.stringify({ p1: address }) : null,
-      setItem: () => undefined,
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
     },
   })
 })
@@ -149,6 +149,27 @@ test.each(['normally opened', 'restored'] as const)(
     stop()
   },
 )
+
+test('a CLI close after a fresh reveal stays closed after the queued tabs event', async () => {
+  const { backend, connect, run } = fixture([], { emitEvents: true })
+  const store = createStore()
+  connect(store)
+  store.set(activeRemoteAtom, remote)
+  const stop = browserVault(remote, store)
+  await vi.waitFor(() =>
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ name: 'browser.tabs' })),
+  )
+
+  const page = (await run('open', { url: address }, 'cli')) as PageInfo
+  await vi.waitFor(() => expect(store.get(pagesAtom).some(({ id }) => id === page.id)).toBe(true))
+  await vi.waitFor(() => expect(store.get(surfaceTabIdsAtom('browser', remote))).toContain(page.id))
+  await run('close', { tab: page.id })
+
+  await vi.waitFor(() => expect(backend.has(page.id)).toBe(false))
+  await vi.waitFor(() => expect(store.get(pagesAtom).some(({ id }) => id === page.id)).toBe(false))
+  expect(store.get(surfaceTabIdsAtom('browser', remote))).not.toContain(page.id)
+  stop()
+})
 
 test('a reveal before the queued tabs event keeps a new page open', async () => {
   const { backend, connect, run } = fixture([], { emitEvents: true })

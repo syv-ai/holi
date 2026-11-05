@@ -200,12 +200,15 @@ export function browserVault(remote: string, store: PluginStore): () => void {
       stopped ||
       pendingReveals.get(remote)?.has(id) ||
       !requested.has(id) ||
-      pages.has(id) ||
       !store.get(tabs).includes(id) ||
-      reopening.has(id) ||
       opened.has(id)
     )
       return
+    if (reopening.has(id)) return
+    if (pages.has(id)) {
+      if (!closing.has(id)) requested.delete(id)
+      return
+    }
     const url = addressFor(id)
     if (url === undefined) {
       requested.delete(id)
