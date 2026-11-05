@@ -175,8 +175,8 @@ export function DocumentHeader({
         <div className="max-w-3xl px-4 pt-3">
           <Alert>
             <AlertTriangleIcon aria-hidden="true" />
-            <AlertTitle>Could not finish editing</AlertTitle>
-            <AlertDescription>{taskDone.error}</AlertDescription>
+            <AlertTitle className="min-w-0">Could not finish editing</AlertTitle>
+            <AlertDescription className="min-w-0 wrap-anywhere">{taskDone.error}</AlertDescription>
             <AlertAction>
               <Button
                 type="button"

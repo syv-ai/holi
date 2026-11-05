@@ -282,10 +282,11 @@ test('Done closes only its member of a split', async () => {
   expect(entry).toBe('notes/Other.md')
 })
 
-test('a failed Done keeps the task open, explains the error and allows retry', async () => {
+test.each([
+  'Invalid task frontmatter: the status value does not match the supported task statuses. Please review the complete task details and try again.',
+  `EACCES: permission denied, open /vault/${'long-filename-'.repeat(18)}.md`,
+])('a failed Done keeps the task open, explains %s and allows retry', async (cause) => {
   const user = userEvent.setup()
-  const cause =
-    'Invalid task frontmatter: the status value does not match the supported task statuses. Please review the complete task details and try again.'
   write.mockRejectedValueOnce(new Error(cause))
   openTask()
   const box = await editorBox(TASK_PATH)
