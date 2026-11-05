@@ -39,12 +39,11 @@ function fillAbsent(target: Json, base: Json): void {
  * A malformed file returns `null`: it is the user's, and unparseable JSON is
  * not something to "fix" by overwriting. The cost is an ungated vault.
  *
- * **A hook goes in only where its script is** (`has`, by vault path). Scripts
- * are seeded at creation and updated on request, so a hook a later release adds
- * must not be wired before the update that brings its script: it would fail on
- * every prompt. A hook is present when its event has an entry with the same
- * matcher running the same script, so a vault that reordered or annotated the
- * entry does not get a duplicate.
+ * **A file-backed hook goes in only where its script is** (`has`, by vault
+ * path). Inline commands are maintained with the merged settings itself and
+ * need no shipped file. A hook is present when its event has an entry with the
+ * same matcher running the same command, so a vault that reordered or
+ * annotated the entry does not get a duplicate.
  */
 export function mergeClaudeSettings(
   existing: string | null,
@@ -66,22 +65,26 @@ export function mergeClaudeSettings(
 
   for (const fragment of fragments) {
     for (const hook of fragment.hooks ?? []) {
-      if (!has(hookScript(hook.script))) continue
+      const script = 'script' in hook ? hookScript(hook.script) : undefined
+      if (script !== undefined && !has(script)) continue
+      const command = 'command' in hook ? hook.command : hookCommand(hook.script, hook.args)
       if (!isObject(settings.hooks)) settings.hooks = {}
       const hooks = settings.hooks as Json
       const entries = Array.isArray(hooks[hook.event]) ? (hooks[hook.event] as unknown[]) : []
-      const present = entries.some(
-        (entry) =>
-          isObject(entry) &&
-          entry.matcher === hook.matcher &&
-          JSON.stringify(entry.hooks ?? []).includes(hookScript(hook.script)),
-      )
+      const present = entries.some((entry) => {
+        if (!isObject(entry) || entry.matcher !== hook.matcher || !Array.isArray(entry.hooks)) {
+          return false
+        }
+        return script === undefined
+          ? entry.hooks.some((item) => isObject(item) && item.command === command)
+          : JSON.stringify(entry.hooks).includes(script)
+      })
       if (present) continue
       hooks[hook.event] = [
         ...entries,
         {
           ...(hook.matcher === undefined ? {} : { matcher: hook.matcher }),
-          hooks: [{ type: 'command', command: hookCommand(hook.script, hook.args) }],
+          hooks: [{ type: 'command', command }],
         },
       ]
     }
