@@ -208,7 +208,8 @@ the note as it was, in a session the person can watch and add to ([editor](edito
   first. It quotes the app's reasons, and names who added the app's code and who last changed it
   (`bundleAuthorship`: the first and last commits to the bundle, records and log aside). A name
   links to the person's GitHub profile when their login is known (a GitHub noreply email, or a git
-  name that is a member's login), and a short hash opens that commit in History.
+  name that is a member's login), and a short hash opens the bundle's history, the commits
+  dialog a document's History opens (`FileHistoryDialog`).
 - **Links leave Holi.** A web or `mailto:` link from an app opens in the system browser or mail
   app, whether it is a plain link (main's `will-frame-navigate` stops the frame leaving its bundle)
   or `target=_blank`/`window.open` (the sandbox's `allow-popups` lets it reach

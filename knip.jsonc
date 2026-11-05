@@ -57,11 +57,6 @@
       },
       // A system binary one community-plugin test shells out to.
       "ignoreBinaries": ["pgrep"],
-      "ignoreDependencies": [
-        // Loaded at runtime with createRequire (a lazy, optional require), which
-        // knip's import graph cannot see.
-        "mermaid",
-      ],
     },
     "packages/shared": {
       "project": ["src/**/*.ts!", "test/**/*.ts"],

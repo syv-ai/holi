@@ -15,7 +15,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import {
   activeRemoteAtom,
   cn,
-  openNoteTabAtom,
+  openDocumentAtom,
   openSettingsSectionAtom,
   useAgentService,
   useHasCapability,
@@ -44,7 +44,7 @@ export function MailShell({ className }: { className?: string }) {
   const mail = useMail(currentSub)
   const remote = useAtomValue(activeRemoteAtom)
   const openSettingsSection = useSetAtom(openSettingsSectionAtom)
-  const openNote = useSetAtom(openNoteTabAtom)
+  const openNote = useSetAtom(openDocumentAtom)
   const agent = useAgentService()
   const store = useStore()
   const canLinkToTask = useHasCapability(TASKS_CREATE) && remote !== null

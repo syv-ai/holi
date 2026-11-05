@@ -154,6 +154,9 @@ importers:
       '@tanstack/react-virtual':
         specifier: ^3.14.22
         version: 3.14.22(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@tiptap/extension-code-block':
+        specifier: ^3.32.0
+        version: 3.32.0(@tiptap/core@3.32.0(@tiptap/pm@3.32.0))(@tiptap/pm@3.32.0)
       '@tiptap/extension-highlight':
         specifier: ^3.32.0
         version: 3.32.0(@tiptap/core@3.32.0(@tiptap/pm@3.32.0))

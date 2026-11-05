@@ -17,8 +17,15 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { agentCap } from './agent-cap'
 import { terminalKeyAction } from './lib/terminal-keys'
+import { createPiMouseSelectionFilter } from './lib/pi-mouse-selection'
 import { vaultLinks } from './lib/terminal-links'
-import { registerSessionTerminal, resizeTerminal, typeIntoTerminal } from './lib/session-terminals'
+import { terminalTheme, watchTerminalTheme, suppressTerminalColorQueries } from '@/plugin-api'
+import {
+  registerSessionTerminal,
+  resizeTerminal,
+  typeIntoTerminal,
+  updateTerminalAppearance,
+} from './lib/session-terminals'
 import { activeRemoteAtom, cn, openDocumentAtom, snapshotAtom, vaultsAtom } from '@/plugin-api'
 
 /** Claude Code is an Ink TUI: it draws its own cursor, so xterm's would blink a
@@ -128,10 +135,13 @@ export function SessionTerminal({
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace',
       scrollback: 10_000,
       cursorBlink: false, // Ink owns the cursor
-      // On the pane's own surface, in its text colour, so the terminal is no
-      // black box in a light or tinted theme. Read once, when it is built.
+      // Native providers can cache explicit RGB text across appearance changes.
+      // xterm adjusts glyph contrast without rewriting their cells or prompts.
+      minimumContrastRatio: 4.5,
+      // Inherit the pane's surface while using the same token-backed ANSI
+      // palette as Holi's other terminal.
       allowTransparency: true,
-      theme: { background: '#00000000', foreground: getComputedStyle(mount).color },
+      theme: terminalTheme(mount),
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
@@ -153,9 +163,14 @@ export function SessionTerminal({
     // Its output, and, so a paste into this session can be followed by the
     // keyboard, its focus: see `session-terminals.ts` for the case the
     // visible effect below misses.
+    const filterPiOutput = provider === 'pi' ? createPiMouseSelectionFilter() : undefined
+    const writeOutput = (data: string) => {
+      const filtered = filterPiOutput ? filterPiOutput(data) : data
+      if (filtered) term.write(filtered)
+    }
     const unregister = registerSessionTerminal(terminalId, {
       focus: () => term.focus(),
-      write: (data) => term.write(data),
+      write: writeOutput,
     })
 
     const selection = term.onSelectionChange(() => {
@@ -197,6 +212,7 @@ export function SessionTerminal({
       return false
     })
 
+    const stopColorQueries = suppressTerminalColorQueries(term)
     const typed = term.onData(type)
 
     // A vault path in the output opens the file in a pane.
@@ -224,7 +240,7 @@ export function SessionTerminal({
         remoteRef.current === null
           ? ''
           : await agentCap.attach(remoteRef.current, { id: terminalId })
-      if (state) term.write(state)
+      if (state) writeOutput(state)
       term.write(HIDE_CURSOR)
     })()
 
@@ -236,14 +252,30 @@ export function SessionTerminal({
 
     const observer = new ResizeObserver(() => syncSize())
     observer.observe(mount)
+    const syncAppearance = (theme: ReturnType<typeof terminalTheme>): void => {
+      term.options.theme = theme
+      const at = remoteRef.current
+      if (at !== null) {
+        const { foreground, background, ...palette } = theme
+        updateTerminalAppearance(at, terminalId, {
+          foreground,
+          background,
+          ...palette,
+        })
+      }
+    }
+    syncAppearance(terminalTheme(mount))
+    const stopWatchingTheme = watchTerminalTheme(mount, syncAppearance)
 
     disposeRef.current = () => {
       clearTimeout(reHide)
       unregister()
       typed.dispose()
+      stopColorQueries()
       links.dispose()
       selection.dispose()
       observer.disconnect()
+      stopWatchingTheme()
       term.dispose()
       termRef.current = null
       fitRef.current = null

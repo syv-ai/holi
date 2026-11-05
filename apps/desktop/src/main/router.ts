@@ -1552,18 +1552,37 @@ export function createRouter(deps: RouterDeps) {
   })
 
   const history = t.router({
-    /** The open file's commits, newest-first, following renames. Empty for a
-     *  file with no commits yet (new/untracked). */
+    /** The open file's commits, newest-first, following renames; a folder's
+     *  (a vault app's bundle) are every commit under it. Empty for a file with
+     *  no commits yet (new/untracked). */
     list: t.procedure
       .input(fields({ path: 'string' }))
-      .query(({ input }): Promise<Commit[]> =>
-        activeOrThrow().repo.log({ path: safe(input.path), limit: HISTORY_LIMIT }),
-      ),
+      .query(async ({ input }): Promise<Commit[]> => {
+        const repo = activeOrThrow().repo
+        const path = safe(input.path)
+        // A renamed or deleted bundle is no folder on disk, so it falls to the
+        // single-file walk, which likely finds nothing.
+        const folder = await stat(join(repo.root, path)).then(
+          (s) => s.isDirectory(),
+          () => false,
+        )
+        return repo.log({ path, folder, limit: HISTORY_LIMIT })
+      }),
 
     /** The whole vault's commit log, newest-first — the broad history dialog. */
     log: t.procedure.query((): Promise<Commit[]> =>
       activeOrThrow().repo.log({ limit: HISTORY_LIMIT }),
     ),
+
+    /** A named history target, which may predate the recent-list cap. */
+    commit: t.procedure
+      .input(fields({ sha: 'string' }))
+      .query(async ({ input }): Promise<Commit | null> => {
+        if (!/^[0-9a-f]{4,64}$/i.test(input.sha)) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid commit SHA' })
+        }
+        return activeOrThrow().repo.commit(input.sha)
+      }),
 
     /** What changed lately, for Home's feed: the newest commits, each with
      *  the paths it touched (at most `ACTIVITY_FILES` of them, and how many in

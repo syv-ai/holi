@@ -8,9 +8,8 @@ import '@xterm/xterm/css/xterm.css'
 
 import { cn } from '@/lib/cn'
 import { matchShortcutKey } from '@/lib/hotkey'
-import { terminalFont, terminalTheme } from '@/lib/terminal-theme'
+import { terminalFont, terminalTheme, watchTerminalTheme } from '@/lib/terminal-theme'
 import { trpc } from '@/lib/trpc'
-import { activeModeAtom } from '@/state/color-scheme'
 import { registerTerminalSink, type TerminalContext } from '@/state/panel-terminals'
 import { isMac } from '@/lib/platform'
 import { activeRemoteAtom } from '@/state/vaults'
@@ -57,7 +56,6 @@ export function PanelTerminal({
   const remote = useAtomValue(activeRemoteAtom)
   const remoteRef = useRef(remote)
   remoteRef.current = remote
-  const mode = useAtomValue(activeModeAtom)
 
   const syncSize = useCallback(() => {
     const term = termRef.current
@@ -145,6 +143,10 @@ export function PanelTerminal({
       live = true
     })
 
+    const stopWatchingTheme = watchTerminalTheme(mount, (theme) => {
+      const current = termRef.current
+      if (current) current.options.theme = theme
+    })
     const observer = new ResizeObserver(() => syncSize())
     observer.observe(mount)
 
@@ -152,6 +154,7 @@ export function PanelTerminal({
       unregister()
       typed.dispose()
       observer.disconnect()
+      stopWatchingTheme()
       term.dispose()
       termRef.current = null
       fitRef.current = null
@@ -187,17 +190,6 @@ export function PanelTerminal({
       cancelAnimationFrame(frame)
     }
   }, [visible, build, syncSize])
-
-  // Light and dark swap the text colour the terminal draws in.
-  useEffect(() => {
-    // A frame later: the theme's class lands on the root in its own effect.
-    const frame = requestAnimationFrame(() => {
-      const term = termRef.current
-      const mount = mountRef.current
-      if (term && mount) term.options.theme = terminalTheme(mount)
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [mode])
 
   return (
     <div
