@@ -30,8 +30,10 @@ interface Decision {
 const maintainedSettings = googleSeed.fragments?.['.claude/settings.json'] as
   { hooks?: { command?: string }[] }[] | undefined
 const maintainedCommand = maintainedSettings![0]!.hooks![0]!.command!
-const maintainedMatch = /Buffer\.from\('([^']+)'/.exec(maintainedCommand)!
-const maintainedSource = Buffer.from(maintainedMatch[1]!, 'base64').toString('utf8')
+const maintainedMatch = /data:text\/javascript;base64,([A-Za-z0-9+/=]+)/.exec(maintainedCommand)!
+const maintainedSource = Buffer.from(maintainedMatch[1]!, 'base64')
+  .toString('utf8')
+  .replace("const raw = process.env.HOLI_HOOK_STDIN ?? ''", 'const raw = await readStdin()')
 
 async function decide(payload: unknown, maintained = false): Promise<Decision & { code: number }> {
   return new Promise((resolve, reject) => {
@@ -75,6 +77,21 @@ describe('both maintained and shipped gates cover shell spellings', () => {
   ]
 
   it.each(commands)('asks for %s in either hook', async (command) => {
+    expect(decisionOf(await decide(bash(command)))).toBe('ask')
+    expect(decisionOf(await decide(bash(command), true))).toBe('ask')
+  })
+
+  it.each([
+    `holi google send --attach 'Board; deck.pptx' --to a@b.c`,
+    `holi google send --attach $'Board deck.pptx' --to a@b.c`,
+    `holi google $'respond' e1 --yes`,
+    `holi google $'api' POST gmail/v1/users/me/messages/send --body '{}'`,
+    'if true; then holi google send --attach q2.pdf --to a@b.c; fi',
+    'for x in once; do holi google respond e1 --yes; done',
+    'if true; then holi google api POST gmail/v1/users/me/messages/send --body "{}"; fi',
+    'eval "holi google send --to a@b.c"',
+    'cmd=holi; $cmd google send --to a@b.c',
+  ])('asks for risky syntax: %s', async (command) => {
     expect(decisionOf(await decide(bash(command)))).toBe('ask')
     expect(decisionOf(await decide(bash(command), true))).toBe('ask')
   })
@@ -169,6 +186,39 @@ describe('the send gate asks', () => {
 
     expect(reason).toMatch(/thread/i)
     expect(reason).toMatch(/sender/i)
+  })
+
+  // Files leave the machine too, and unlike the body they are on the command
+  // line, so the person sees which ones before they go.
+  it('names every attached file, on a send and on a reply', async () => {
+    const send = (
+      await decide(
+        bash(`holi google send --to ada@syv.ai --attach q2.pdf --attach "Board deck.pptx"`),
+      )
+    ).hookSpecificOutput?.permissionDecisionReason
+    const reply = (await decide(bash('holi google reply t1 --attach=notes/plan.md')))
+      .hookSpecificOutput?.permissionDecisionReason
+    const concatenated = 'holi google send --attach "Board"" deck.pptx" --attach "Møde résumé.pdf"'
+
+    expect(send).toContain('q2.pdf')
+    expect(send).toContain('Board deck.pptx')
+    expect(reply).toContain('notes/plan.md')
+    for (const maintained of [false, true]) {
+      const reason = (await decide(bash(concatenated), maintained)).hookSpecificOutput
+        ?.permissionDecisionReason
+      expect(reason).toContain('Board deck.pptx')
+      expect(reason).toContain('Møde résumé.pdf')
+    }
+
+    // An escaped space is one name; a body that mentions `--attach` is no file.
+    const odd = (
+      await decide(
+        bash(
+          "holi google send --to ada@syv.ai --attach Board\\ deck.pptx <<'EOF'\nuse --attach x\nEOF",
+        ),
+      )
+    ).hookSpecificOutput?.permissionDecisionReason
+    expect(odd).toContain('It attaches: Board deck.pptx.')
   })
 
   it('warns that reply --all widens the audience', async () => {

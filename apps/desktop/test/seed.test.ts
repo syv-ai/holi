@@ -736,12 +736,18 @@ describe('mergedSettings', () => {
       '"$HOLI_BIN" google api POST calendar/v3/freeBusy --body -',
       'holi google api',
     ]) {
-      const run = await runCommand(hook, JSON.stringify({ tool_input: { command } }))
+      const run = await runCommand(
+        hook,
+        JSON.stringify({ tool_name: 'Bash', tool_input: { command } }),
+      )
       expect(JSON.parse(run.stdout).hookSpecificOutput.permissionDecision, command).toBe('ask')
     }
     const get = await runCommand(
       hook,
-      JSON.stringify({ tool_input: { command: '"$HOLI_BIN" google api GET calendar/v3/colors' } }),
+      JSON.stringify({
+        tool_name: 'Bash',
+        tool_input: { command: '"$HOLI_BIN" google api GET calendar/v3/colors' },
+      }),
     )
     expect(get.stdout).toBe('')
   })

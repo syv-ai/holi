@@ -30,33 +30,17 @@ const folder = seedFolder(
   }),
 )
 
-// Kept inline in merged settings so an older vault's frozen hook gets the same
-// shell normalization and command-boundary handling for newly gated verbs.
-const LEGACY_CONSENT_SOURCE = `
-let input = ''
-process.stdin.on('data', chunk => input += chunk).on('end', () => {
-  const ask = () => console.log(JSON.stringify({hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'ask',permissionDecisionReason:'This Google action can reach another person; confirm it in the native permission prompt.'}}))
-  try {
-    const command = JSON.parse(input).tool_input?.command ?? ''
-    let words = '', quote = ''
-    for (let i = 0; i < command.length; i++) {
-      const c = command[i]
-      if (quote) {
-        if (c === quote) quote = ''
-        else if (c === '\\\\' && command[i + 1] === '\\n') i++
-        else words += c === ' ' ? '\\uE000' : c
-      } else if (c === '\\'' || c === '\"') quote = c
-      else if (c === '\\\\') { if (command[i + 1] === '\\n') i++; else words += command[++i] ?? '' }
-      else words += c
-    }
-    const re = /(?:^|[|;&(\\n])\\s*(?:command[ \\t]+)?(?:\\$\\{?HOLI_BIN\\}?|\\/[^|;&(\\n]*?\\bholi|[^\\s|;&(\\n]*\\bholi)[ \\t]+google[ \\t]+([A-Za-z-]+)\\b(?:[ \\t]+([^\\s|;&(]*))?/g
-    for (const match of words.matchAll(re)) {
-      const verb = match[1], method = match[2]
-      if (['send','reply','forward','respond'].includes(verb) || (verb === 'api' && method !== 'GET')) { ask(); return }
-    }
-  } catch { ask() }
-})`
-const LEGACY_CONSENT_HOOK = `node -e "eval(Buffer.from('${Buffer.from(LEGACY_CONSENT_SOURCE).toString('base64')}', 'base64').toString())"`
+// Existing vaults may have an older shipped hook. Embed the exact maintained
+// implementation into the merged settings so those vaults receive the same
+// parser and fail-closed policy without requiring a shipped-file update.
+const GATE_SOURCE = folder.shipped['.claude/hooks/google-send-gate.mjs']
+if (GATE_SOURCE === undefined) throw new Error('Google send gate seed is missing')
+const INLINE_GATE_SOURCE = GATE_SOURCE.replace(
+  'const raw = await readStdin()',
+  "const raw = process.env.HOLI_HOOK_STDIN ?? ''",
+)
+const INLINE_GATE_IMPORT = `data:text/javascript;base64,${Buffer.from(INLINE_GATE_SOURCE).toString('base64')}`
+const LEGACY_CONSENT_HOOK = `node -e "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{process.env.HOLI_HOOK_STDIN=s;import('${INLINE_GATE_IMPORT}')})"`
 
 const SETTINGS: SettingsFragment = {
   hooks: [
