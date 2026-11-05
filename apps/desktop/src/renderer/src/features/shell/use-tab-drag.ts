@@ -16,17 +16,29 @@
  * The keyboard's way to the same places is the menus: Open in split view,
  * Separate, Replace with…, Move out of split, and ⌥-click.
  */
-import { atom, useSetAtom } from 'jotai'
+import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, type DragEvent } from 'react'
 
 import { activeSplit, type ShellWorkspace } from '@/state/shell-workspace'
 import { tabKey, type TabDescriptor } from '@/state/tab-descriptor'
+import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { entryId, isSplit } from '@/state/shell-workspace'
+import { activeRemoteAtom } from '@/state/vaults'
 
 /** The drag's MIME type; its data is the tab's key or the split's id. */
 export const TAB_MIME = 'application/x-holi-tab'
 
+/** The pill's middle half combines; its outer quarters retain strip reorder. */
+export function stripDropZone(position: number): 'combine' | 'reorder' {
+  return position >= 0.25 && position <= 0.75 ? 'combine' : 'reorder'
+}
+
 /** The tab or split being dragged, or null. */
 export const tabDragAtom = atom<string | null>(null)
+/** Vault that owned a native drag when it began; a vault switch invalidates it. */
+export const tabDragVaultAtom = atom<string | null>(null)
+/** Whether the drag source was already an entry/member when it began. */
+export const tabDragWasOpenAtom = atom<boolean>(false)
 
 interface DragSourceProps {
   draggable: true
@@ -37,6 +49,10 @@ interface DragSourceProps {
 /** What a tab's element spreads to be draggable, by its key. */
 export function useTabDragSource(): (key: string) => DragSourceProps {
   const setDrag = useSetAtom(tabDragAtom)
+  const setDragVault = useSetAtom(tabDragVaultAtom)
+  const setWasOpen = useSetAtom(tabDragWasOpenAtom)
+  const remote = useAtomValue(activeRemoteAtom)
+  const ws = useAtomValue(shellWorkspaceAtom)
   return useCallback(
     (key: string) => ({
       draggable: true,
@@ -45,11 +61,23 @@ export function useTabDragSource(): (key: string) => DragSourceProps {
         event.dataTransfer.effectAllowed = 'move'
         // A frame later: changing the page under the pointer in dragstart
         // itself can cancel the drag.
-        window.setTimeout(() => setDrag(key), 0)
+        window.setTimeout(() => {
+          setDrag(key)
+          setDragVault(remote)
+          setWasOpen(
+            ws.entries.some(
+              (entry) => entryId(entry) === key || (isSplit(entry) && entry.views.includes(key)),
+            ),
+          )
+        }, 0)
       },
-      onDragEnd: () => setDrag(null),
+      onDragEnd: () => {
+        setDrag(null)
+        setDragVault(null)
+        setWasOpen(false)
+      },
     }),
-    [setDrag],
+    [remote, setDrag, setDragVault, setWasOpen, ws],
   )
 }
 
@@ -78,6 +106,10 @@ export function useTabDrag(): {
 } {
   const source = useTabDragSource()
   const setDrag = useSetAtom(tabDragAtom)
+  const setDragVault = useSetAtom(tabDragVaultAtom)
+  const setWasOpen = useSetAtom(tabDragWasOpenAtom)
+  const remote = useAtomValue(activeRemoteAtom)
+  const ws = useAtomValue(shellWorkspaceAtom)
   return useCallback(
     (tab: TabDescriptor | null, options?: { alongside: true }) => {
       if (tab === null) return {}
@@ -86,12 +118,24 @@ export function useTabDrag(): {
       return {
         onDragStartCapture: (event: DragEvent) => {
           event.dataTransfer.setData(TAB_MIME, key)
-          window.setTimeout(() => setDrag(key), 0)
+          window.setTimeout(() => {
+            setDrag(key)
+            setDragVault(remote)
+            setWasOpen(
+              ws.entries.some(
+                (entry) => entryId(entry) === key || (isSplit(entry) && entry.views.includes(key)),
+              ),
+            )
+          }, 0)
         },
-        onDragEndCapture: () => setDrag(null),
+        onDragEndCapture: () => {
+          setDrag(null)
+          setDragVault(null)
+          setWasOpen(false)
+        },
       }
     },
-    [setDrag, source],
+    [remote, setDrag, setDragVault, setWasOpen, source, ws],
   ) as ReturnType<typeof useTabDrag>
 }
 

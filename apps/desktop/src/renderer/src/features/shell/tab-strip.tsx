@@ -43,6 +43,7 @@ import { cn } from '@/lib/cn'
 import { saveBeforeClosing } from '@/lib/buffer-registry'
 import type { IconGlyph } from '@/lib/icon-glyph'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { activeRemoteAtom } from '@/state/vaults'
 import {
   activeSplit,
   closeAllTabs,
@@ -50,11 +51,13 @@ import {
   closeOtherTabs,
   closeTab,
   closeTabsToRight,
+  combineOnStrip,
   dropOnStrip,
   entriesByRecency,
   entryId,
   focusMember,
   isSplit,
+  isViewKey,
   MAX_SPLIT,
   moveOut,
   openInSplit,
@@ -69,7 +72,14 @@ import {
 
 import { useTabLook } from './tab-look'
 import { TabSwitcher, type SwitcherRow } from './tab-switcher'
-import { TAB_MIME, tabDragAtom, useTabDragSource } from './use-tab-drag'
+import {
+  TAB_MIME,
+  stripDropZone,
+  tabDragAtom,
+  tabDragVaultAtom,
+  tabDragWasOpenAtom,
+  useTabDragSource,
+} from './use-tab-drag'
 
 export type HeaderTab = {
   id: string
@@ -115,9 +125,20 @@ export function TabStrip({
   const look = useTabLook()
   const dragSource = useTabDragSource()
   const dragged = useAtomValue(tabDragAtom)
+  const dragVault = useAtomValue(tabDragVaultAtom)
+  const dragWasOpen = useAtomValue(tabDragWasOpenAtom)
+  const remote = useAtomValue(activeRemoteAtom)
   const setDrag = useSetAtom(tabDragAtom)
+  const clearDragVault = useSetAtom(tabDragVaultAtom)
   /** Where a drag along the strip would land: before entry `n`. */
   const [dropAt, setDropAt] = useState<number | null>(null)
+  const [combinePreview, setCombinePreview] = useState<{
+    source: string
+    target: string
+    sourceViews: string[]
+    targetViews: string[]
+    remote: string | null
+  } | null>(null)
   /** The member of a split's pill that was right-clicked, whose own
    *  actions its menu offers: a member has no header of its own. */
   const [menuMember, setMenuMember] = useState<string | null>(null)
@@ -143,6 +164,20 @@ export function TabStrip({
   const listRef = useRef<HTMLDivElement>(null)
   const [overflowing, setOverflowing] = useState(false)
   useEffect(() => {
+    if (dragged === null) setCombinePreview(null)
+  }, [dragged])
+
+  useEffect(() => {
+    const cancel = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setDropAt(null)
+      setCombinePreview(null)
+    }
+    window.addEventListener('keydown', cancel)
+    return () => window.removeEventListener('keydown', cancel)
+  }, [])
+
+  useEffect(() => {
     const list = listRef.current
     if (list === null) return
     // The list and each entry: a window resize, or an entry turning into a
@@ -167,12 +202,96 @@ export function TabStrip({
 
   /** Where a drag over the strip would land, or null when it would change
    *  nothing (an entry dropped where it is). */
-  function stripDrop(event: DragEvent<HTMLElement>): number | null {
+  function stripDrop(
+    event: DragEvent<HTMLElement>,
+  ):
+    | { kind: 'reorder'; index: number }
+    | { kind: 'combine'; target: string; next: ShellWorkspace }
+    | null {
     if (!draggable || !event.dataTransfer.types.includes(TAB_MIME)) return null
-    if (dragged === null) return null
+    if (dragged === null || dragVault !== remote) return null
+    const items = event.currentTarget.querySelectorAll<HTMLElement>('[data-entry-id]')
+    for (const item of items) {
+      const rect = item.getBoundingClientRect()
+      if (event.clientX < rect.left || event.clientX > rect.right) continue
+      const position = rect.width === 0 ? 0 : (event.clientX - rect.left) / rect.width
+      const id = item.dataset.entryId
+      if (id === undefined) return null
+      if (stripDropZone(position) === 'combine') {
+        const next = combineOnStrip(ws, dragged, id)
+        if (next === ws) {
+          setCombinePreview(null)
+          setDropAt(null)
+          return null
+        }
+        const source =
+          ws.entries.find((entry) => entryId(entry) === dragged) ??
+          ws.entries.find((entry) => isSplit(entry) && entry.views.includes(dragged))
+        const target = ws.entries.find((entry) => entryId(entry) === id)
+        if (
+          target === undefined ||
+          (source === undefined && (dragWasOpen || !isViewKey(dragged)))
+        ) {
+          setCombinePreview(null)
+          return null
+        }
+        const preview = {
+          source: dragged,
+          target: id,
+          sourceViews:
+            source !== undefined && isSplit(source) && entryId(source) === dragged
+              ? [...source.views]
+              : [dragged],
+          targetViews: isSplit(target) ? [...target.views] : [target],
+          remote,
+        }
+        setCombinePreview((current) =>
+          current !== null &&
+          current.source === preview.source &&
+          current.target === preview.target &&
+          current.remote === preview.remote &&
+          current.sourceViews.join('\\0') === preview.sourceViews.join('\\0') &&
+          current.targetViews.join('\\0') === preview.targetViews.join('\\0')
+            ? current
+            : preview,
+        )
+        return { kind: 'combine', target: id, next }
+      }
+      setCombinePreview(null)
+      setDropAt(indexAt(event))
+      const at = indexAt(event)
+      return dropOnStrip(ws, dragged, at) === ws ? null : { kind: 'reorder', index: at }
+    }
+    setCombinePreview(null)
     const at = indexAt(event)
-    return dropOnStrip(ws, dragged, at) === ws ? null : at
+    return dropOnStrip(ws, dragged, at) === ws ? null : { kind: 'reorder', index: at }
   }
+
+  const previewValid =
+    combinePreview !== null &&
+    combinePreview.remote === remote &&
+    dragVault === remote &&
+    (() => {
+      const source =
+        ws.entries.find((entry) => entryId(entry) === combinePreview.source) ??
+        ws.entries.find((entry) => isSplit(entry) && entry.views.includes(combinePreview.source))
+      const target = ws.entries.find((entry) => entryId(entry) === combinePreview.target)
+      if (
+        target === undefined ||
+        (source === undefined && (dragWasOpen || !isViewKey(combinePreview.source)))
+      ) {
+        return false
+      }
+      const sourceViews =
+        source !== undefined && isSplit(source) && entryId(source) === combinePreview.source
+          ? source.views
+          : [combinePreview.source]
+      const targetViews = isSplit(target) ? target.views : [target]
+      return (
+        sourceViews.join('\\0') === combinePreview.sourceViews.join('\\0') &&
+        targetViews.join('\\0') === combinePreview.targetViews.join('\\0')
+      )
+    })()
 
   /** An entry as the tab switcher lists it: a tab's mark and title, a
    *  split's members side by side, as in the strip. */
@@ -222,9 +341,10 @@ export function TabStrip({
               aria-label="Tabs"
               className="min-w-0 justify-start overflow-x-auto group-data-horizontal/tabs:h-9"
               onDragOver={(event) => {
-                const at = stripDrop(event)
+                const drop = stripDrop(event)
+                const at = drop?.kind === 'reorder' ? drop.index : null
                 if (at !== dropAt) setDropAt(at)
-                if (at === null) return
+                if (drop === null) return
                 event.preventDefault()
                 event.dataTransfer.dropEffect = 'move'
               }}
@@ -232,24 +352,49 @@ export function TabStrip({
                 const to = event.relatedTarget
                 if (!(to instanceof Node) || !event.currentTarget.contains(to)) {
                   setDropAt(null)
+                  setCombinePreview(null)
                 }
               }}
               onDrop={(event) => {
-                const at = stripDrop(event)
+                const drop = stripDrop(event)
                 const key = event.dataTransfer.getData(TAB_MIME) || dragged
+                const validPreview =
+                  previewValid &&
+                  combinePreview?.source === key &&
+                  drop?.kind === 'combine' &&
+                  combinePreview.target === drop.target
                 setDropAt(null)
+                setCombinePreview(null)
                 setDrag(null)
-                if (at === null || key === null) return
+                clearDragVault(null)
+                if (drop === null || key === null) return
                 event.preventDefault()
-                act((w) => dropOnStrip(w, key, at))
+                if (drop.kind === 'combine') {
+                  if (validPreview) act((w) => combineOnStrip(w, key, drop.target))
+                } else {
+                  act((w) => dropOnStrip(w, key, drop.index))
+                }
               }}
             >
               {ws.entries.map((entry, index) => {
                 const id = entryId(entry)
                 const members = isSplit(entry) ? entry.views.map(look) : null
                 const tab = members === null ? look(id) : null
+                const targetPreview = previewValid && combinePreview?.target === id
+                const combined =
+                  targetPreview && combinePreview !== null
+                    ? combineOnStrip(ws, combinePreview.source, id)
+                    : null
+                const combinedEntry = combined?.entries.find(
+                  (candidate) => entryId(candidate) === id,
+                )
+                const shownMembers =
+                  targetPreview && isSplit(combinedEntry) ? combinedEntry.views.map(look) : members
+                const shownTab = targetPreview ? null : tab
                 const label =
-                  tab !== null ? spoken(tab) : `Split view: ${members!.map(spoken).join(', ')}`
+                  shownTab !== null
+                    ? spoken(shownTab)
+                    : `Split view: ${shownMembers!.map(spoken).join(', ')}`
                 return (
                   <ContextMenu key={id}>
                     <ContextMenuTrigger asChild>
@@ -257,6 +402,8 @@ export function TabStrip({
                         cannot hold another button. */}
                       <div
                         data-entry-id={id}
+                        data-combine-preview={targetPreview || undefined}
+                        aria-description={targetPreview ? 'Split preview' : undefined}
                         data-tab-key={tab === null ? undefined : id}
                         data-drop-before={dropAt === index || undefined}
                         data-drop-after={(dropAt === count && index === count - 1) || undefined}
@@ -278,6 +425,7 @@ export function TabStrip({
                       >
                         <TabsTrigger
                           value={id}
+                          data-combine-preview={targetPreview || undefined}
                           aria-label={label}
                           onClick={(event) => {
                             // A member's part of the pill focuses that member.
@@ -290,20 +438,28 @@ export function TabStrip({
                           className={cn(
                             'hover:bg-foreground/5',
                             'group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 dark:group-data-[variant=line]/tabs-list:data-active:bg-foreground/8',
-                            tab !== null ? 'w-56' : members!.length > 2 ? 'w-80' : 'w-64',
+                            shownTab !== null ? 'w-56' : shownMembers!.length > 2 ? 'w-80' : 'w-64',
                           )}
                         >
-                          {tab !== null ? (
+                          {shownTab !== null ? (
                             <>
-                              <TabMark tab={tab} dot={false} />
-                              <span className="truncate">{tab.title}</span>
-                              {tab.status !== undefined ? <TabStatus status={tab.status} /> : null}
+                              <TabMark tab={shownTab} dot={false} />
+                              <span className="truncate">{shownTab.title}</span>
+                              {shownTab.status !== undefined ? (
+                                <TabStatus status={shownTab.status} />
+                              ) : null}
                             </>
                           ) : (
                             <SplitMembers
                               drag={draggable ? memberDrag : undefined}
-                              members={members!}
-                              focused={split?.id === id ? (entry as ShellSplit).focused : null}
+                              members={shownMembers!}
+                              focused={
+                                targetPreview
+                                  ? null
+                                  : split?.id === id
+                                    ? (entry as ShellSplit).focused
+                                    : null
+                              }
                             />
                           )}
                         </TabsTrigger>
