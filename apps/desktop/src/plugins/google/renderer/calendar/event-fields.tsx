@@ -7,7 +7,7 @@
  * never invites anyone (an invitation emails them, `docs/features/google.md`)
  * and writes only to the primary calendar.
  */
-import type { CSSProperties } from 'react'
+import { memo, type CSSProperties } from 'react'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -42,8 +42,9 @@ export function CalendarDot({ color }: { color: string }) {
 }
 
 /** Start/end 15-minute time picker (96 options), plus an off-grid value an
- *  event already has. */
-export function TimeSelect({
+ *  event already has. Memoised: its options are most of the form's render, so
+ *  typing a title must not redraw them (pass a stable `onChange`). */
+export const TimeSelect = memo(function TimeSelect({
   id,
   value,
   onChange,
@@ -77,7 +78,7 @@ export function TimeSelect({
       </SelectContent>
     </Select>
   )
-}
+})
 
 /** Calendar-date picker; value is a "yyyy-MM-dd" string. */
 export function DateField({

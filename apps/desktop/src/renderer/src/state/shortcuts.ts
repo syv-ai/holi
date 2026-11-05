@@ -10,8 +10,9 @@
  */
 import { atom } from 'jotai'
 
-/** `index` is which of the row's keys matched; 0 from the menu. */
-export type ShortcutHandler = (index: number) => void
+/** `index` is which of the row's keys matched; 0 from the menu. `key` is
+ *  the key event that ran it, absent from the menu or the shortcuts dialog. */
+export type ShortcutHandler = (index: number, key?: KeyboardEvent) => void
 
 export type Slot = { current: ShortcutHandler }
 

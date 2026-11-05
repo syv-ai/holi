@@ -12,7 +12,13 @@
  */
 import { atom } from 'jotai'
 
-import { emptyWorkspace, openInSplit, openTab, type ShellWorkspace } from './shell-workspace'
+import {
+  emptyWorkspace,
+  openInSplit,
+  openTab,
+  trackRecent,
+  type ShellWorkspace,
+} from './shell-workspace'
 import { openingBeside } from './alt-open'
 import { tabKey, type TabDescriptor } from './tab-descriptor'
 import { activeRemoteAtom } from './vaults'
@@ -36,7 +42,7 @@ export const updateWorkspaceAtom = atom(
   null,
   (get, set, remote: string, update: WorkspaceUpdate): void => {
     const current = get(workspacesAtom)[remote] ?? EMPTY
-    const next = typeof update === 'function' ? update(current) : update
+    const next = trackRecent(typeof update === 'function' ? update(current) : update)
     if (next === current) return
     set(workspacesAtom, (all) => ({ ...all, [remote]: next }))
   },

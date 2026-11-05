@@ -51,6 +51,7 @@ describe('ensureTodaysDailyAtom', () => {
 
     expect(await store.set(ensureTodaysDailyAtom)).toBe('21-07-2026.md')
     expect(holi.calls.map((c) => c.path)).toContain('vaults.snapshot')
+
     expect(holi.calls.map((c) => c.path)).toContain('notes.getOrCreateDaily')
   })
 
