@@ -1876,6 +1876,76 @@ describe('the composer surface', () => {
       expect(calls.some((c) => c.method === 'POST')).toBe(false)
     })
 
+    it('preserves nested inline and remote attachments through read and save', async () => {
+      const original = Buffer.from([0, 1, 2, 253])
+      const remote = Buffer.from([255, 254, 253])
+      let saved = ''
+      const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+        const path = new URL(url).pathname
+        if (path.endsWith('/drafts/d-attachment') && init?.method === 'PUT') {
+          const body = JSON.parse(String(init.body)) as { message: { raw: string } }
+          saved = decode(body.message.raw)
+          return ok({ id: 'd-attachment' })
+        }
+        if (path.endsWith('/drafts/d-attachment')) {
+          return ok({
+            id: 'd-attachment',
+            message: {
+              id: 'm-attachment',
+              payload: {
+                mimeType: 'multipart/mixed',
+                parts: [
+                  {
+                    mimeType: 'multipart/alternative',
+                    parts: [{ mimeType: 'text/plain', body: { data: 'old' } }],
+                  },
+                  {
+                    filename: 'inline.bin',
+                    mimeType: 'application/octet-stream',
+                    body: { data: original.toString('base64url'), size: 4 },
+                  },
+                  {
+                    mimeType: 'multipart/related',
+                    parts: [
+                      {
+                        filename: 'remote.bin',
+                        mimeType: 'application/octet-stream',
+                        body: { attachmentId: 'a-remote', size: 3 },
+                      },
+                      {
+                        filename: 'empty.bin',
+                        mimeType: 'application/octet-stream',
+                        body: { data: '', size: 0 },
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          })
+        }
+        if (path.endsWith('/messages/m-attachment/attachments/a-remote')) {
+          return ok({ data: remote.toString('base64url'), size: remote.length })
+        }
+        return ok({})
+      })
+      const api = new GoogleApi({
+        accessToken: async () => 'at-1',
+        fetch: fetchImpl as unknown as typeof globalThis.fetch,
+      })
+
+      const read = await readDraft(api, 'd-attachment')
+      expect(read.draftId).toBe('d-attachment')
+      await saveDraft(api, { ...MAIL, subject: 'Edited subject' }, { draftId: read.draftId })
+
+      expect(saved).toContain('Edited subject')
+      expect(saved).toContain('filename="inline.bin"')
+      expect(saved).toContain('filename="remote.bin"')
+      expect(saved).toContain('filename="empty.bin"')
+      expect(saved).toContain(original.toString('base64'))
+      expect(saved).toContain(remote.toString('base64'))
+    })
+
     it('carries the threading headers on every save, not only on send', async () => {
       // `drafts.update` REPLACES the draft, so a save that omits them strips
       // them — and a draft sent later from a phone starts a new thread.
