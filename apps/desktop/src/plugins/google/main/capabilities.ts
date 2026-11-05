@@ -934,6 +934,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
             new Set(
               calendars.filter((calendar) => calendar.enabled).map((calendar) => calendar.id),
             ),
+            calendars.find((calendar) => calendar.primary)?.id,
           )
         }
         const answer = await google(() => api.request(call.method, call.url, call.body))

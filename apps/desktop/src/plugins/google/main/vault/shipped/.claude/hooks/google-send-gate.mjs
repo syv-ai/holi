@@ -144,7 +144,7 @@ function asTheShellReads(command) {
       if (next !== undefined && next !== '\n') out += next
     } else if (c === "'") {
       const end = command.indexOf("'", i + 1)
-      out += end < 0 ? command.slice(i + 1) : command.slice(i + 1, end)
+      out += (end < 0 ? command.slice(i + 1) : command.slice(i + 1, end)).replace(/ /g, '\uE000')
       i = end < 0 ? command.length : end
     } else if (c === '$' && command[i + 1] === "'") {
       i += 2
@@ -164,9 +164,9 @@ function asTheShellReads(command) {
         // a backslash or a newline; before anything else it stays.
         if (command[i] === '\\' && '$`"\\\n'.includes(command[i + 1] ?? '')) {
           i++
-          if (command[i] !== '\n') out += command[i]
+          if (command[i] !== '\n') out += command[i] === ' ' ? '\uE000' : command[i]
         } else {
-          out += command[i]
+          out += command[i] === ' ' ? '\uE000' : command[i]
         }
       }
     } else {
@@ -214,11 +214,11 @@ function reasonToAsk(command) {
   // then the word after it. `[^\s|;&]*` keeps them adjacent within one
   // pipeline stage, so `holi google search x | grep send` does not match.
   const invocation = new RegExp(
-    String.raw`(?:^|[|;&]|\s)` + // start of a command
-      String.raw`(?:\$\{?HOLI_BIN\}?|[^\s|;&]*\bholi)` + // the binary
+    String.raw`(?:^|[|;&(\n])\s*` + // start of a command
+      String.raw`(?:command[ \t]+)?(?:\$\{?HOLI_BIN\}?|/[^|;&(\n]*?\bholi|[^\s|;&(\n]*\bholi)` + // the binary
       String.raw`[ \t]+google` + // the group; never cross a command boundary
       String.raw`[ \t]+([A-Za-z-]+)\b` + // the verb
-      String.raw`(?:[ \t]+([^\s|;&]*))?`, // the word after it
+      String.raw`(?:[ \t]+([^\s|;&(]*))?`, // the word after it
     'g',
   )
   for (const [, verb, next] of words.matchAll(invocation)) {

@@ -137,6 +137,8 @@ export interface CalendarChoice {
   /** Google's hex colour, or `null` when the entry carries none. */
   color: string | null
   enabled: boolean
+  /** Google's declared primary calendar, used to resolve the documented `primary` alias. */
+  primary: boolean
 }
 
 /** Per-calendar on/off, as the user has explicitly set it. Absent = the default
@@ -191,6 +193,7 @@ export async function resolveCalendars(
     mine: isMine(calendar),
     color: calendar.backgroundColor ?? null,
     enabled: overrides[calendar.id] ?? isMine(calendar),
+    primary: calendar.primary === true,
   }))
 }
 

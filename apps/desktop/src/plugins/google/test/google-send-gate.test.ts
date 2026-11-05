@@ -15,6 +15,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { googleSeed } from '../main/seed'
 
 const GATE = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -26,9 +27,17 @@ interface Decision {
 }
 
 /** Feed the hook a PreToolUse payload and read its decision. */
-async function decide(payload: unknown): Promise<Decision & { code: number }> {
+const maintainedSettings = googleSeed.fragments?.['.claude/settings.json'] as
+  { hooks?: { command?: string }[] }[] | undefined
+const maintainedCommand = maintainedSettings![0]!.hooks![0]!.command!
+const maintainedMatch = /Buffer\.from\('([^']+)'/.exec(maintainedCommand)!
+const maintainedSource = Buffer.from(maintainedMatch[1]!, 'base64').toString('utf8')
+
+async function decide(payload: unknown, maintained = false): Promise<Decision & { code: number }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [GATE])
+    const child = maintained
+      ? spawn(process.execPath, ['-e', maintainedSource])
+      : spawn(process.execPath, [GATE])
     let stdout = ''
     child.stdout.on('data', (c: Buffer) => (stdout += c.toString('utf8')))
     child.on('error', reject)
@@ -54,6 +63,32 @@ const bash = (command: string) => ({
 /** The hook's decision, or `none` when it printed nothing: no opinion, so the
  *  normal permission flow decides. */
 const decisionOf = (d: Decision) => d.hookSpecificOutput?.permissionDecision ?? 'none'
+
+describe('both maintained and shipped gates cover shell spellings', () => {
+  const commands = [
+    '"/Users/Ada/Library/Application Support/Holi/bin/holi" google respond e2 --yes',
+    '"$HOLI_BIN" google \\\nrespond e2 --yes',
+    'holi google re\\spond e2 --yes',
+    'command "$HOLI_BIN" google api POST gmail/v1/users/me/messages/send --body -',
+    '("$HOLI_BIN" google respond e2 --yes)',
+    '("$HOLI_BIN" google api POST gmail/v1/users/me/messages/send --body -)',
+  ]
+
+  it.each(commands)('asks for %s in either hook', async (command) => {
+    expect(decisionOf(await decide(bash(command)))).toBe('ask')
+    expect(decisionOf(await decide(bash(command), true))).toBe('ask')
+  })
+
+  it.each([
+    'holi google agenda today',
+    'holi google api GET calendar/v3/calendars/primary/events',
+    'holi google search x | grep send',
+    'echo holi google respond e2 --yes',
+  ])('does not ask for a safe/non-invocation command: %s', async (command) => {
+    expect(decisionOf(await decide(bash(command)))).toBe('none')
+    expect(decisionOf(await decide(bash(command), true))).toBe('none')
+  })
+})
 
 describe('the send gate asks', () => {
   it('asks for a bare-name send', async () => {
