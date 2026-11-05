@@ -44,13 +44,15 @@ function fixture(
     : null
   let changed: () => void = () => {}
   let sendTabs: (list: PageInfo[]) => void = () => {}
+  let sendReveal: (id: string) => void = () => {}
   const pages: Pages = {
     list: () => [...backend.values()],
     current: () => 'p1',
     has: (id) => backend.has(id),
-    open: async ({ url, id }) => {
+    open: async ({ url, id, reveal }) => {
       const page = makePage(id ?? `new-${backend.size + 1}`, url ?? '')
       backend.set(page.id, page)
+      if (reveal) sendReveal(page.id)
       changed()
       return page
     },
@@ -87,6 +89,7 @@ function fixture(
     resolveTabs: () => resolveTabs([...backend.values()]),
     connect: (store: ReturnType<typeof createStore>) => {
       sendTabs = (list) => browserEvents.tabs!({ remote, payload: list }, store)
+      sendReveal = (id) => browserEvents.reveal!({ remote, payload: { id } }, store)
     },
     notify: () => sendTabs(pages.list()),
     run: async (name: string, params: Record<string, unknown> = {}, door: 'cli' | 'ui' = 'cli') =>
@@ -146,6 +149,46 @@ test.each(['normally opened', 'restored'] as const)(
     stop()
   },
 )
+
+test('a reveal before the queued tabs event keeps a new page open', async () => {
+  const { backend, connect, run } = fixture([], { emitEvents: true })
+  const store = createStore()
+  connect(store)
+  store.set(activeRemoteAtom, remote)
+  const stop = browserVault(remote, store)
+  await vi.waitFor(() =>
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ name: 'browser.tabs' })),
+  )
+
+  const page = (await run('open', { url: address }, 'cli')) as PageInfo
+  await vi.waitFor(() => expect(store.get(pagesAtom).some(({ id }) => id === page.id)).toBe(true))
+  expect(backend.has(page.id)).toBe(true)
+  expect(store.get(surfaceTabIdsAtom('browser', remote))).toContain(page.id)
+  stop()
+})
+
+test('forgets a pending reveal when leaving its vault before the tabs event', async () => {
+  const { backend, connect, notify, resolveTabs } = fixture([], { deferTabs: true })
+  const store = createStore()
+  connect(store)
+  store.set(activeRemoteAtom, remote)
+  const stop = browserVault(remote, store)
+  browserEvents.reveal!({ remote, payload: { id: 'p1' } }, store)
+  expect(store.get(surfaceTabIdsAtom('browser', remote))).toEqual(['p1'])
+  stop()
+  store.set(activeRemoteAtom, 'o/other')
+  store.set(activeRemoteAtom, remote)
+  const stopAgain = browserVault(remote, store)
+  try {
+    resolveTabs()
+    await vi.waitFor(() => expect(backend.get('p1')?.url).toBe(address))
+    notify()
+    expect(store.get(surfaceTabIdsAtom('browser', remote))).toEqual(['p1'])
+    expect(store.get(pagesAtom)).toMatchObject([{ id: 'p1', url: address }])
+  } finally {
+    stopAgain()
+  }
+})
 
 test('startup tabs reconcile remembered shell tabs against a newer tabs event', async () => {
   const { backend, connect, resolveTabs, run } = fixture([], { deferTabs: true, emitEvents: true })

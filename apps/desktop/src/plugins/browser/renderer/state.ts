@@ -131,14 +131,27 @@ function replayKey(payload: unknown): void {
 
 let asks = 0
 
+const pendingReveals = new Map<string, Set<string>>()
+
 export const browserEvents: Readonly<Record<string, PluginEventHandler>> = {
   tabs: ({ remote, payload }, store) => {
-    if (remote === store.get(activeRemoteAtom)) store.set(pagesAtom, payload as PageInfo[])
+    if (remote === store.get(activeRemoteAtom)) {
+      const list = payload as PageInfo[]
+      const pending = pendingReveals.get(remote)
+      if (pending !== undefined) {
+        for (const id of pending) pending.delete(id)
+        if (pending.size === 0) pendingReveals.delete(remote)
+      }
+      store.set(pagesAtom, list)
+    }
   },
   // A page the agent opened, or one a page opened: shown where the person is.
   reveal: ({ remote, payload }, store) => {
     const id = (payload as { id?: unknown }).id
     if (remote === store.get(activeRemoteAtom) && typeof id === 'string') {
+      const pending = pendingReveals.get(remote) ?? new Set<string>()
+      pending.add(id)
+      pendingReveals.set(remote, pending)
       store.set(openSurfaceAtom, BROWSER_SURFACE, id)
     }
   },
@@ -185,6 +198,7 @@ export function browserVault(remote: string, store: PluginStore): () => void {
   const ensureOpen = (id: string): void => {
     if (
       stopped ||
+      pendingReveals.get(remote)?.has(id) ||
       !requested.has(id) ||
       pages.has(id) ||
       !store.get(tabs).includes(id) ||
@@ -307,6 +321,7 @@ export function browserVault(remote: string, store: PluginStore): () => void {
 
   return () => {
     stopped = true
+    pendingReveals.delete(remote)
     offPages()
     offTabs()
     store.set(pagesAtom, [])
