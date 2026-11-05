@@ -89,6 +89,10 @@ export async function vaultAttachments(
       // descriptor for both validation and reading. Recheck ancestors around the
       // open to reject directory replacement during path resolution.
       const before = await realpath(ctx.root)
+      const expectedTarget = await lstat(abs).catch(() => null)
+      if (expectedTarget === null || expectedTarget.isSymbolicLink() || !expectedTarget.isFile()) {
+        throw new CapabilityError('FORBIDDEN', path)
+      }
       const segments = rel.split('/')
       let cursor = before
       const ancestors: { path: string; dev: number; ino: number }[] = []
@@ -106,6 +110,10 @@ export async function vaultAttachments(
       if (!handle) throw new CapabilityError('NOT_FOUND', path)
       try {
         const info = await handle.stat()
+        // Verify the object reached by the kernel open, not only the current
+        // pathname. This catches ancestor ABA swaps where the path was restored
+        // before the pathname rechecks. Platforms without descriptor paths fail
+        // closed rather than attaching bytes whose ancestry cannot be proven.
         if (!info.isFile()) {
           throw new CapabilityError(
             'BAD_REQUEST',
@@ -114,6 +122,11 @@ export async function vaultAttachments(
         }
         const afterRoot = await realpath(ctx.root)
         const currentLeaf = await lstat(abs).catch(() => null)
+        // Compare the descriptor identity after pathname rechecks as well: this
+        // catches an ancestor ABA swap whose outside leaf was opened, then the
+        // original directory restored before the current path is inspected.
+        if (info.dev !== expectedTarget.dev || info.ino !== expectedTarget.ino)
+          throw new CapabilityError('FORBIDDEN', path)
         const unchanged =
           afterRoot === before &&
           currentLeaf !== null &&

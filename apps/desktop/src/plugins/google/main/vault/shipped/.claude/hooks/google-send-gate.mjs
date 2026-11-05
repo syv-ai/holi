@@ -98,9 +98,9 @@ const attachmentsOf = (command) => {
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i] ?? ''
     if (token === '--attach') {
-      if (tokens[i + 1]) paths.push(tokens[++i].replaceAll('\uE000', ' '))
+      if (tokens[i + 1]) paths.push(tokens[++i].replaceAll('\uE000', ' ').replace(/\uE100(\d+)\uE101/g, (_, code) => String.fromCharCode(Number(code))))
     } else if (token.startsWith('--attach=')) {
-      paths.push(token.slice('--attach='.length).replaceAll('\uE000', ' '))
+      paths.push(token.slice('--attach='.length).replaceAll('\uE000', ' ').replace(/\uE100(\d+)\uE101/g, (_, code) => String.fromCharCode(Number(code))))
     }
   }
   return paths.length ? ` It attaches: ${paths.join(', ')}.` : ''
@@ -156,21 +156,22 @@ function asTheShellReads(command) {
     if (c === '\\') {
       const next = command[++i]
       if (next !== undefined && next !== '\n') out += next === ' ' ? '\uE000' : next
-    } else if (c === "'") {
-      const end = command.indexOf("'", i + 1)
-      out += (end < 0 ? command.slice(i + 1) : command.slice(i + 1, end)).replace(/ /g, '\uE000')
-      i = end < 0 ? command.length : end
     } else if (c === '$' && command[i + 1] === "'") {
       i += 2
       while (i < command.length && command[i] !== "'") {
         if (command[i] === '\\' && i + 1 < command.length) {
           const [char, used] = ansiEscape(command, i + 1)
-          out += char
+          out += /[;|&()]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char === ' ' ? '\uE000' : char
           i += used + 1
         } else {
-          out += command[i++]
+          const char = command[i++]
+          out += char === ' ' ? '\uE000' : /[;|&()]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char
         }
       }
+    } else if (c === "'") {
+      const end = command.indexOf("'", i + 1)
+      out += (end < 0 ? command.slice(i + 1) : command.slice(i + 1, end)).replace(/ /g, '\uE000').replace(/[;|&()]/g, (x) => `\uE100${x.charCodeAt(0)}\uE101`)
+      i = end < 0 ? command.length : end
     } else if (c === '"' || (c === '$' && command[i + 1] === '"')) {
       if (c === '$') i++
       for (i++; i < command.length && command[i] !== '"'; i++) {
@@ -224,6 +225,18 @@ function ansiEscape(text, at) {
  */
 function reasonToAsk(command) {
   const words = asTheShellReads(command)
+  if (/\bholi\s+google\b/.test(words) && /\b(if|then|elif|else|fi|for|while|until|do|done|case|esac|select)\b/.test(words)) {
+    return 'This Google action appears inside shell control flow. Review the command and confirm it in the native permission prompt.'
+  }
+  if (/\bholi\b/.test(command) && /(\$\(|`|\$\{|\$[A-Za-z_])/.test(command)) {
+    return 'This command uses dynamic shell expansion near Holi. Review it and confirm in the native permission prompt.'
+  }
+  if (
+    /\b(?:eval|source)\b|\b(?:sh|bash|zsh)\s+-c\b/.test(command) &&
+    /holi\s+google/.test(words.replaceAll('\uE000', ' '))
+  ) {
+    return 'This command wraps a Google action in another shell. Review it and confirm in the native permission prompt.'
+  }
   // The command word, however it was spelled, then `google`, then the verb,
   // then the word after it. `[^\s|;&]*` keeps them adjacent within one
   // pipeline stage, so `holi google search x | grep send` does not match.

@@ -103,18 +103,18 @@ describe('a mail with vault files attached', () => {
     const { send, sent } = rig()
     await send(['proposals/q2.pdf', 'Møde referat.docx'])
     const raw = buildRfc822(sent[0]!.mail)
+    const unfolded = raw.replace(/\r\n[ \t]+/g, ' ')
 
-    expect(raw).toMatch(/^Content-Type: multipart\/mixed; boundary=/m)
+    expect(unfolded).toMatch(/^Content-Type: multipart\/mixed; boundary=/m)
     expect(raw).toContain(Buffer.from('Attached.').toString('base64'))
-    expect(raw).toContain('Content-Type: application/pdf; name="q2.pdf"')
+    expect(unfolded).toContain('Content-Type: application/pdf; name="q2.pdf"')
     expect(raw).toContain(Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00, 0xff]).toString('base64'))
-    // A non-ASCII name both ways: the RFC 2047 word Gmail reads, quoted, and
-    // RFC 2231's `filename*` for the clients that read that instead.
-    const word = `=?UTF-8?B?${Buffer.from('Møde referat.docx').toString('base64')}?=`
-    expect(raw).toContain(
-      `Content-Disposition: attachment; filename="${word}"; filename*=UTF-8''M%C3%B8de%20referat.docx`,
+    // RFC 2231 continuation carries the Unicode name without an overlong
+    // folded header; parser round-trip coverage lives in google-mime.test.ts.
+    expect(unfolded).toContain(
+      "Content-Disposition: attachment; filename*0*=UTF-8''M%C3%B8de%20referat.docx",
     )
-    expect(raw).toContain(
+    expect(unfolded).toContain(
       'Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     )
   })
