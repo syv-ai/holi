@@ -110,10 +110,8 @@ export async function vaultAttachments(
       if (!handle) throw new CapabilityError('NOT_FOUND', path)
       try {
         const info = await handle.stat()
-        // Verify the object reached by the kernel open, not only the current
-        // pathname. This catches ancestor ABA swaps where the path was restored
-        // before the pathname rechecks. Platforms without descriptor paths fail
-        // closed rather than attaching bytes whose ancestry cannot be proven.
+        // Verify the object reached by the kernel open against the identity
+        // captured before it, not only against the current pathname.
         if (!info.isFile()) {
           throw new CapabilityError(
             'BAD_REQUEST',
