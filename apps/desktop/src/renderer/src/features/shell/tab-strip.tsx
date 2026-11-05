@@ -1,7 +1,7 @@
 'use client'
 
 import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
-import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import {
   CheckIcon,
   CircleAlertIcon,
@@ -122,6 +122,7 @@ export function TabStrip({
   draggable?: boolean
 }) {
   const [ws, setWs] = useAtom(shellWorkspaceAtom)
+  const store = useStore()
   const look = useTabLook()
   const dragSource = useTabDragSource()
   const dragged = useAtomValue(tabDragAtom)
@@ -214,6 +215,18 @@ export function TabStrip({
     return () => observer.disconnect()
   }, [ws.entries])
 
+  /** The rendered gesture may outlive its workspace or drag ownership until
+   *  React commits. Read the store at event time before allowing its operation. */
+  function gestureContextCurrent(): boolean {
+    return (
+      store.get(activeRemoteAtom) === remote &&
+      store.get(shellWorkspaceAtom) === ws &&
+      store.get(tabDragAtom) === dragged &&
+      store.get(tabDragVaultAtom) === dragVault &&
+      store.get(tabDragWasOpenAtom) === dragWasOpen
+    )
+  }
+
   /** The insertion point under the pointer: before the first entry whose
    *  middle is right of it, else the end. */
   function indexAt(event: DragEvent<HTMLElement>): number {
@@ -234,7 +247,7 @@ export function TabStrip({
     | { kind: 'combine'; target: string; next: ShellWorkspace }
     | null {
     if (!draggable || !event.dataTransfer.types.includes(TAB_MIME)) return null
-    if (dragged === null || dragVault !== remote) return null
+    if (!gestureContextCurrent() || dragged === null || dragVault !== remote) return null
     const sourceExists = ws.entries.some(
       (entry) => entryId(entry) === dragged || (isSplit(entry) && entry.views.includes(dragged)),
     )
@@ -389,8 +402,10 @@ export function TabStrip({
                 }
               }}
               onDrop={(event) => {
-                const drop = stripDrop(event)
-                const key = event.dataTransfer.getData(TAB_MIME) || dragged
+                const currentGesture = gestureContextCurrent()
+                const drop = currentGesture ? stripDrop(event) : null
+                const key = event.dataTransfer.getData(TAB_MIME)
+                const ownsKey = key !== '' && key === dragged && key === store.get(tabDragAtom)
                 const validPreview =
                   previewValid &&
                   combinePreview?.source === key &&
@@ -401,7 +416,7 @@ export function TabStrip({
                 setDrag(null)
                 clearDragVault(null)
                 clearDragWasOpen(false)
-                if (drop === null || key === null) return
+                if (!currentGesture || !ownsKey || drop === null) return
                 event.preventDefault()
                 if (drop.kind === 'combine') {
                   if (validPreview) act((w) => combineOnStrip(w, key, drop.target))
