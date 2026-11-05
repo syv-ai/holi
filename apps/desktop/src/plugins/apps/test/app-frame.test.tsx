@@ -24,7 +24,10 @@ const approvalCommit = vi.hoisted(() => ({
   date: '2026-01-01T00:00:00Z',
   login: null as string | null,
 }))
-const approvalStatus = vi.hoisted(() => ({ needsApproval: false }))
+const approvalStatus = vi.hoisted(() => ({
+  needsApproval: false,
+  lastChange: null as typeof approvalCommit | null,
+}))
 let fakeHoli: FakeHoli
 
 /** Main's side of the app door, answering the way the registry would. */
@@ -44,7 +47,9 @@ vi.mock('../renderer/apps-cap', () => ({
       Promise.resolve({
         codeHash: 'h',
         affordances: approvalStatus.needsApproval ? [{ affordance: 'mail', granted: false }] : [],
-        ...(approvalStatus.needsApproval ? { added: approvalCommit, lastChange: null } : {}),
+        ...(approvalStatus.needsApproval
+          ? { added: approvalCommit, lastChange: approvalStatus.lastChange }
+          : {}),
       }),
     log: () => Promise.resolve(true),
   },
@@ -79,12 +84,13 @@ function withApps(...bundles: string[]) {
 beforeEach(() => {
   vi.clearAllMocks()
   approvalStatus.needsApproval = false
+  approvalStatus.lastChange = null
   fakeHoli?.restore()
   fakeHoli = installFakeHoli((op) => {
     if (op.path === 'history.list') return []
     if (op.path === 'history.commit') {
-      expect(op.input).toEqual({ sha: approvalCommit.sha })
-      return { ...approvalCommit, subject: 'create app', added: 1, removed: 0 }
+      const { sha } = op.input as { sha: string }
+      return { ...approvalCommit, sha, subject: 'create app', added: 1, removed: 0 }
     }
     if (op.path === 'github.fileContributors') return []
     return undefined
@@ -115,6 +121,22 @@ test('approval authorship opens its exact history target outside the recent list
   })
   await user.click(screen.getByRole('button', { name: /all commits/i }))
   expect(screen.getByRole('heading', { name: 'Commits' })).toBeTruthy()
+})
+
+test('approval Last changed by opens its exact history target', async () => {
+  approvalStatus.needsApproval = true
+  approvalStatus.lastChange = { ...approvalCommit, sha: 'c'.repeat(40), author: 'Bo' }
+  const user = userEvent.setup()
+  render(<AppFrame path="Team/Retro.app" />)
+  const commitLink = await screen.findByRole('button', {
+    name: approvalStatus.lastChange.sha.slice(0, 7),
+  })
+  await user.click(commitLink)
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'create app' })).toBeTruthy())
+  expect(fakeHoli.calls).toContainEqual({
+    path: 'history.commit',
+    input: { sha: approvalStatus.lastChange.sha },
+  })
 })
 
 /** A message as the frame itself would send it. */

@@ -1,0 +1,108 @@
+/** The renderer shell and the browser capability table share page identity. */
+import { createStore } from 'jotai'
+import { beforeEach, expect, test, vi } from 'vitest'
+import {
+  createCapabilityRegistry,
+  type CapabilityContext,
+} from '../../../main/capabilities/registry'
+import { browserCapabilities, BROWSER_NAMESPACES, type Pages } from '../main/capabilities'
+import type { PageInfo } from '../shared/page'
+import { browserEvents, browserVault, pagesAtom } from '../renderer/state'
+import {
+  activeRemoteAtom,
+  closeSurfaceTabAtom,
+  openSurfaceAtom,
+  surfaceTabIdsAtom,
+} from '@/plugin-api'
+
+const dispatch = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/trpc', () => ({
+  trpc: { cap: { run: { mutate: (input: unknown) => dispatch(input) } } },
+}))
+
+const remote = 'o/vault'
+const address = 'https://example.com/'
+const makePage = (id: string, url: string): PageInfo => ({
+  id,
+  url,
+  title: 'Example',
+  loading: false,
+  canGoBack: false,
+  canGoForward: false,
+  favicon: null,
+  error: null,
+})
+
+function fixture() {
+  const backend = new Map<string, PageInfo>([['p1', makePage('p1', address)]])
+  const pages: Pages = {
+    list: () => [...backend.values()],
+    current: () => 'p1',
+    has: (id) => backend.has(id),
+    open: async ({ url, id }) => {
+      const page = makePage(id ?? 'new', url ?? '')
+      backend.set(page.id, page)
+      return page
+    },
+    navigate: async (id, url) => ({ ...backend.get(id)!, url }),
+    back: async (id) => backend.get(id)!,
+    forward: async (id) => backend.get(id)!,
+    reload: async (id) => backend.get(id)!,
+    stop: (id) => backend.get(id)!,
+    close: (id) => void backend.delete(id),
+    read: async (id) => ({ id, url: backend.get(id)!.url, title: '', text: '', truncated: false }),
+    click: async (id) => backend.get(id)!,
+    type: async (id) => backend.get(id)!,
+    press: async (id) => backend.get(id)!,
+    scroll: async (id) => ({ ...backend.get(id)!, atEnd: false }),
+    screenshot: async () => new Uint8Array(),
+    still: async () => null,
+  }
+  const registry = createCapabilityRegistry()
+  registry.register(BROWSER_NAMESPACES, browserCapabilities(pages))
+  const context = { remote, root: '/tmp/vault', bundle: null } as CapabilityContext
+  dispatch.mockImplementation(({ name, paramsJson }: { name: string; paramsJson?: string }) =>
+    registry.run(name, 'ui', context, paramsJson === undefined ? {} : JSON.parse(paramsJson)),
+  )
+  return { backend }
+}
+
+beforeEach(() => {
+  dispatch.mockReset()
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (key: string) =>
+        key === 'holi.browser.addresses' ? JSON.stringify({ p1: address }) : null,
+      setItem: () => undefined,
+    },
+  })
+})
+
+test('shell close, undo and delayed tabs event reopen the same real capability page', async () => {
+  const { backend } = fixture()
+  const store = createStore()
+  store.set(activeRemoteAtom, remote)
+  store.set(pagesAtom, [makePage('p1', address)])
+  store.set(openSurfaceAtom, 'browser', 'p1')
+  const stop = browserVault(remote, store)
+  await vi.waitFor(() =>
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ name: 'browser.tabs' })),
+  )
+
+  store.set(closeSurfaceTabAtom, 'browser', 'p1')
+  await vi.waitFor(() => expect(backend.has('p1')).toBe(false))
+  store.set(openSurfaceAtom, 'browser', 'p1')
+  expect(backend.has('p1')).toBe(false)
+
+  // Deliver the delayed event from close only after undo restored the shell id.
+  browserEvents.tabs!({ remote, payload: [] }, store)
+  await vi.waitFor(() => expect(backend.get('p1')?.url).toBe(address))
+  const restored = backend.get('p1')!
+  browserEvents.tabs!({ remote, payload: [restored] }, store)
+
+  expect(store.get(surfaceTabIdsAtom('browser'))).toEqual(['p1'])
+  expect(store.get(pagesAtom)).toMatchObject([{ id: 'p1', url: address, loading: false }])
+  expect(backend.get('p1')).toMatchObject({ id: 'p1', url: address })
+  stop()
+})

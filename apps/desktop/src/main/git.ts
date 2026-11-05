@@ -709,18 +709,26 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   }
 
   async function commit(sha: string): Promise<Commit | null> {
-    if (!/^[0-9a-f]{40,64}$/i.test(sha)) throw new Error('Invalid commit SHA')
-    const exists = await tryGit(root, ['cat-file', '-e', `${sha}^{commit}`], opts)
-    if (!exists.ok) return null
+    if (!/^[0-9a-f]{4,64}$/i.test(sha)) throw new Error('Invalid commit SHA')
+    // Resolve the input specifically as a commit. Git rejects ambiguous
+    // abbreviations here; peeling also refuses blobs and trees. Passing only
+    // validated hex keeps the revision expression out of option injection.
+    const resolved = await tryGit(
+      root,
+      ['rev-parse', '--verify', '--end-of-options', `${sha}^{commit}`],
+      opts,
+    )
+    if (!resolved.ok || !/^[0-9a-f]{40,64}$/i.test(resolved.stdout.trim())) return null
+    const fullSha = resolved.stdout.trim()
     const raw = await runGit(
       root,
-      ['log', '--no-walk', '--numstat', '--format=%H%x1f%s%x1f%aI%x1f%an', sha],
+      ['log', '--no-walk', '--numstat', '--format=%H%x1f%s%x1f%aI%x1f%an', fullSha],
       opts,
     )
     const [header = '', ...stats] = raw.split('\n')
     if (!header) return null
     const [actualSha = '', subject = '', date = '', author = ''] = header.split('\x1f')
-    if (actualSha.toLowerCase() !== sha.toLowerCase()) return null
+    if (actualSha.toLowerCase() !== fullSha.toLowerCase()) return null
     let added = 0
     let removed = 0
     for (const line of stats) {

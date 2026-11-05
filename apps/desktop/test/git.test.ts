@@ -665,6 +665,23 @@ describe('classifyPushFailure', () => {
   })
 })
 
+describe('commit lookup', () => {
+  it('resolves full and unambiguous abbreviated commit ids, but not other objects', async () => {
+    const dir = await makeClone(await makeRemote())
+    await commitFile(dir, 'a.md', 'first\n')
+    const target = (await plainGit(dir, ['rev-parse', 'HEAD'])).trim()
+    const repo = openRepo(dir)
+
+    expect((await repo.commit(target))?.sha).toBe(target)
+    expect((await repo.commit(target.slice(0, 12)))?.sha).toBe(target)
+    expect(await repo.commit('f'.repeat(12))).toBeNull()
+    await expect(repo.commit('--help')).rejects.toThrow(/Invalid commit SHA/)
+
+    const blob = (await plainGit(dir, ['rev-parse', 'HEAD:a.md'])).trim()
+    expect(await repo.commit(blob)).toBeNull()
+  })
+})
+
 describe('commitFiles', () => {
   it("lists each commit's paths, newest first, a quote or a space kept as is", async () => {
     const dir = await makeClone(await makeRemote())

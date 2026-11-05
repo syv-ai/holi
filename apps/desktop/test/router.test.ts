@@ -1885,6 +1885,15 @@ describe('history', () => {
       subject: 'create demo app',
       added: expect.any(Number),
     })
+    expect(await caller.history.commit({ sha: target.slice(0, 12) })).toMatchObject({
+      sha: target,
+      subject: 'create demo app',
+    })
+    const blob = (await plainGit(root, ['rev-parse', 'HEAD:Demo.app/index.html'])).trim()
+    expect(await caller.history.commit({ sha: blob })).toBeNull()
+    await expect(caller.history.commit({ sha: target.slice(0, 3) })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    })
     await expect(caller.history.commit({ sha: 'not-a-sha' })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
     })

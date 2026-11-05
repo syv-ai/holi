@@ -1570,7 +1570,7 @@ export function createRouter(deps: RouterDeps) {
     commit: t.procedure
       .input(fields({ sha: 'string' }))
       .query(async ({ input }): Promise<Commit | null> => {
-        if (!/^[0-9a-f]{40,64}$/i.test(input.sha)) {
+        if (!/^[0-9a-f]{4,64}$/i.test(input.sha)) {
           throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid commit SHA' })
         }
         return activeOrThrow().repo.commit(input.sha)
