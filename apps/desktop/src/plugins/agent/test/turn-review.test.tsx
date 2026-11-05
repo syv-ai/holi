@@ -67,6 +67,7 @@ function setup(over: { turn?: Turn | null; files?: TurnFile[] } = {}) {
 test('lists each file the turn changed, with its counts', async () => {
   setup()
   const plan = await screen.findByRole('button', { name: /notes\/plan\.md/ })
+  expect(plan.closest('[data-drawer="turn-review"]')).toHaveAttribute('data-glass-ground', '')
   expect(within(plan).getByText('+4')).toBeInTheDocument()
   expect(within(plan).getByText('−2')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /notes\/new\.md/ })).toBeInTheDocument()

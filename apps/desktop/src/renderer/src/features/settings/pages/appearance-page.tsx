@@ -76,7 +76,7 @@ export function AppearancePage() {
           id="settings-grid-arcade"
           disabled={resolved === null}
           checked={resolved?.gridArcade ?? true}
-          onCheckedChange={(on) => void write('gridArcade', on, 'local')}
+          onCheckedChange={(on) => void write('gridArcade', on)}
         />
       </SettingsFieldRow>
       <SettingsFieldRow
@@ -88,7 +88,7 @@ export function AppearancePage() {
           id="settings-confirm-close-split-tabs"
           disabled={resolved === null}
           checked={resolved?.confirmCloseSplitTabs ?? true}
-          onCheckedChange={(on) => void write('confirmCloseSplitTabs', on, 'local')}
+          onCheckedChange={(on) => void write('confirmCloseSplitTabs', on)}
         />
       </SettingsFieldRow>
       <SettingsFieldRow
@@ -100,7 +100,7 @@ export function AppearancePage() {
           id="settings-fold-sidebar"
           disabled={resolved === null}
           checked={resolved?.foldSidebarForApps ?? true}
-          onCheckedChange={(on) => void write('foldSidebarForApps', on, 'local')}
+          onCheckedChange={(on) => void write('foldSidebarForApps', on)}
         />
       </SettingsFieldRow>
     </SettingsGroup>

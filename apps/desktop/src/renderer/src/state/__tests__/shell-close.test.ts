@@ -18,9 +18,10 @@ function splitIntent() {
   const workspace = openInSplit(openTab(emptyWorkspace(), 'Plan.md'), 'Ideas.md')
   store.set(activeRemoteAtom, remote)
   store.set(shellWorkspaceAtom, workspace)
+  const trackedWorkspace = store.get(shellWorkspaceAtom)
   const intent: EntryCloseIntent = {
     remote,
-    workspace,
+    workspace: trackedWorkspace,
     request: { kind: 'entry', id: workspace.active! },
   }
   return { store, intent }
@@ -66,8 +67,8 @@ test('a workspace changed while saving cannot be closed by an earlier confirmati
   const { store, intent } = splitIntent()
   const buffer = pendingBuffer()
   const closing = saveEntryClose(store, intent)
-  const changed = openNewTab(intent.workspace)
-  store.set(shellWorkspaceAtom, changed)
+  store.set(shellWorkspaceAtom, openNewTab(intent.workspace))
+  const changed = store.get(shellWorkspaceAtom)
   buffer.finish()
   await closing
   expect(store.get(shellWorkspaceAtom)).toBe(changed)
@@ -78,8 +79,8 @@ test('switching vaults while saving closes neither vault workspace', async () =>
   const buffer = pendingBuffer()
   const closing = saveEntryClose(store, intent)
   store.set(activeRemoteAtom, 'demo/second')
-  const second = openTab(emptyWorkspace(), 'Other.md')
-  store.set(shellWorkspaceAtom, second)
+  store.set(shellWorkspaceAtom, openTab(emptyWorkspace(), 'Other.md'))
+  const second = store.get(shellWorkspaceAtom)
   buffer.finish()
   await closing
   expect(store.get(shellWorkspaceAtom)).toBe(second)
@@ -91,8 +92,8 @@ test('an already stale confirmation does not start saving or change the workspac
   const { store, intent } = splitIntent()
   const flush = vi.fn(async () => {})
   cleanups.push(registerBuffer(flush))
-  const changed = openNewTab(intent.workspace)
-  store.set(shellWorkspaceAtom, changed)
+  store.set(shellWorkspaceAtom, openNewTab(intent.workspace))
+  const changed = store.get(shellWorkspaceAtom)
   await saveEntryClose(store, intent)
   expect(flush).not.toHaveBeenCalled()
   expect(store.get(shellWorkspaceAtom)).toBe(changed)

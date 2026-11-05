@@ -19,6 +19,8 @@ const buttonVariants = cva(
           "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
         link: "text-primary underline-offset-4 hover:underline",
         text: "text-foreground",
+        section:
+          "text-xs text-muted-foreground hover:text-foreground aria-expanded:text-foreground",
         dashed:
           "border-dashed border-border bg-background/70 text-muted-foreground hover:bg-muted hover:text-foreground",
       },
@@ -29,6 +31,8 @@ const buttonVariants = cva(
         sm: "h-7 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
         lg: "h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
         row: "h-auto justify-start gap-2.5 px-2 py-1.5 text-left font-normal",
+        field:
+          "h-auto w-full min-w-0 justify-start gap-2.5 px-2 py-1.5 text-left font-normal",
         inline:
           "h-auto gap-1 rounded-sm px-0 py-0 font-normal whitespace-normal",
         icon: "size-8",

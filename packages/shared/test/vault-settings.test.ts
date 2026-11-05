@@ -270,10 +270,22 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
     }
   })
 
-  it('keeps appearance, the arcade, the Space-to-ask key and the agent machine-local, everything else in the vault', () => {
-    // A teammate's committed choice flipping your app to light mode, taking
-    // your Space key, or starting your sessions in an agent this machine does
-    // not have, is exactly the failure the `.local` layer exists to prevent.
+  it('writes to the vault only what changes its content or sync, everything personal locally', () => {
+    // Personal by default: a teammate's committed choice flipping your app to
+    // light mode, taking your Space key or changing your editor is exactly the
+    // failure the `.local` layer exists to prevent. The vault may still commit
+    // a default by hand.
+    const committed = VAULT_SETTING_DESCRIPTORS.filter((d) => d.target === 'committed').map(
+      (d) => d.key,
+    )
+    expect(committed).toEqual([
+      'dailyNotes',
+      'home',
+      'hooks',
+      'maxCommittedFileBytes',
+      'autoUpdateSkills',
+      'plugins',
+    ])
     const local = VAULT_SETTING_DESCRIPTORS.filter((d) => d.target === 'local').map((d) => d.key)
     expect(local).toEqual([
       'colorScheme',
@@ -281,6 +293,9 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
       'gridArcade',
       'foldSidebarForApps',
       'confirmCloseSplitTabs',
+      'editorFont',
+      'propertiesLayout',
+      'tableStyle',
       'spaceAsksAgent',
       'agentProvider',
     ])

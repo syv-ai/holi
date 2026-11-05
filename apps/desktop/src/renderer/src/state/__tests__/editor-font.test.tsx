@@ -19,21 +19,8 @@ import { EDITOR_FONT_VAR, useEditorFont } from '../editor-font'
 import { vaultSettingsAtom } from '../settings'
 
 const settings = (editorFont: ResolvedVaultSettings['editorFont']): ResolvedVaultSettings => ({
-  home: VAULT_SETTING_DEFAULTS.home,
-  plugins: VAULT_SETTING_DEFAULTS.plugins,
-  pluginValues: {},
-  dailyNotes: true,
-  spaceAsksAgent: true,
-  agentProvider: 'claude',
-  gridArcade: true,
-  foldSidebarForApps: true,
-  confirmCloseSplitTabs: true,
-  autoUpdateSkills: false,
-  colorScheme: 'system',
-  windowGlass: 'frosted',
+  ...VAULT_SETTING_DEFAULTS,
   editorFont,
-  hooks: VAULT_SETTING_DEFAULTS.hooks,
-  maxCommittedFileBytes: 10 * 1024 * 1024,
   warnings: [],
 })
 
