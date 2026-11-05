@@ -14,7 +14,7 @@
  * the primary calendar, and the calls it writes through carry a title, times
  * and, on creation, a place.
  */
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
@@ -78,6 +78,7 @@ type EventCardMode = 'view' | 'edit' | 'create'
 export interface EventCardState {
   mode: EventCardMode
   draft: EventDraft
+  identity: number
 }
 
 export interface EventCardAnchor {
@@ -94,11 +95,11 @@ interface EventCardProps {
   /** Offered only in a vault that runs tasks. */
   canCreateTask: boolean
   onOpenChange: (open: boolean) => void
-  onDraftChange: (draft: EventDraft) => void
   onEdit: () => void
-  onSave: () => void
-  onDelete: () => Promise<void>
-  onCreateTask: () => Promise<void>
+  /** Save what the form holds: the draft it was opened with, as edited. */
+  onSave: (draft: EventDraft) => void
+  onDelete: () => void
+  onCreateTask: () => void
   onOpenExternal: (url: string) => void
 }
 
@@ -205,7 +206,6 @@ export function EventCard({
   saving,
   canCreateTask,
   onOpenChange,
-  onDraftChange,
   onEdit,
   onSave,
   onDelete,
@@ -277,13 +277,13 @@ export function EventCard({
           </span>
           {isForm ? (
             <EventForm
+              key={state.identity}
               draft={state.draft}
               mode={state.mode as 'edit' | 'create'}
               error={error}
               saving={saving}
-              onChange={onDraftChange}
               onSave={onSave}
-              onDelete={onDelete}
+              onDelete={async () => onDelete()}
               onClose={() => {
                 explicitClose.current = true
                 onOpenChange(false)
@@ -296,8 +296,8 @@ export function EventCard({
               canCreateTask={canCreateTask}
               saving={saving}
               onEdit={onEdit}
-              onDelete={onDelete}
-              onCreateTask={onCreateTask}
+              onDelete={async () => onDelete()}
+              onCreateTask={async () => onCreateTask()}
               onOpenExternal={onOpenExternal}
               onClose={() => {
                 explicitClose.current = true
@@ -528,13 +528,17 @@ function EventView({
   )
 }
 
+/**
+ * The form owns its edit buffer, so a keystroke re-renders the form and not
+ * the calendar behind it: held by the view, every key re-rendered the week
+ * grid and the rail.
+ */
 function EventForm({
-  draft,
+  draft: initial,
   mode,
   error,
   saving,
-  onChange,
-  onSave,
+  onSave: save,
   onDelete,
   onClose,
 }: {
@@ -542,12 +546,19 @@ function EventForm({
   mode: 'edit' | 'create'
   error: string | null
   saving: boolean
-  onChange: (draft: EventDraft) => void
-  onSave: () => void
+  onSave: (draft: EventDraft) => void
   onDelete: () => Promise<void>
   onClose: () => void
 }) {
-  const patch = (partial: Partial<EventDraft>) => onChange({ ...draft, ...partial })
+  const [draft, setDraft] = useState(initial)
+  const patch = useCallback(
+    (partial: Partial<EventDraft>) => setDraft((prev) => ({ ...prev, ...partial })),
+    [],
+  )
+  // Stable, so the memoised time selects skip a keystroke in the title.
+  const setStart = useCallback((start: string) => patch({ start }), [patch])
+  const setEnd = useCallback((end: string) => patch({ end }), [patch])
+  const onSave = () => save(draft)
   return (
     <TooltipProvider>
       {/* Header */}
@@ -665,7 +676,7 @@ function EventForm({
                     id="event-start-time"
                     value={draft.start}
                     disabled={saving}
-                    onChange={(start) => patch({ start })}
+                    onChange={setStart}
                   />
                 </Field>
                 <Field className="min-w-0 flex-1">
@@ -674,7 +685,7 @@ function EventForm({
                     id="event-end-time"
                     value={draft.end}
                     disabled={saving}
-                    onChange={(end) => patch({ end })}
+                    onChange={setEnd}
                   />
                 </Field>
               </div>
