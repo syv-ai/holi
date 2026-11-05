@@ -50,7 +50,7 @@ the [planning](planning.md) view shows every task in the vault by them.
   in this machine's local files (`localLinksOnly`), since a teammate's notes rewritten to point at
   a file they will never have would be a commit of dangling links for everyone. In the planning
   view a private task's card and row carry a muted lock (`PrivateMark`), and an open task's
-  Sharing chip does both: Shared with vault renames at once, Private asks first, in a dialog that
+  Sharing property does both: Shared with vault renames at once, Private asks first, in a dialog that
   says it leaves every teammate's board, that git history keeps the shared version and that
   links from shared notes stop resolving (`features/planning/task-properties.tsx`).
 - **A plugin.** Tasks' main side is the plugin `src/plugins/tasks/`, on by default. In a vault
@@ -66,8 +66,9 @@ the [planning](planning.md) view shows every task in the vault by them.
   `normalize`.
 - **Dates are stamps**: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`, local, no timezone. The time is
   optional on `due` and `reminder`, and its absence means "that day", not midnight.
-- **Editing a task is editing its file.** A card's title opens it as a tab, its fields drawn as a
-  row of chips above the body ([planning](planning.md)), each change a write to the file.
+- **Editing a task is editing its file.** A card's title opens it as a tab, its fields drawn as
+  labelled properties above the body or in a sidebar beside it ([editor](editor.md)), each change
+  a write to the file.
 - **Board.** ReUI's kanban (`components/ui/kanban.tsx`; the board is `features/planning/board/kanban-board.tsx`): Todo, Doing and Done are three column
   surfaces (`bg-muted`, rounded, full height, `gap-4` apart in `p-4`), each headed by its name, a
   count `Badge` and a + that opens quick add creating in that column. Inside a column the cards

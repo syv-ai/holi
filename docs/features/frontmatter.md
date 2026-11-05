@@ -2,7 +2,7 @@
 
 A markdown file's YAML frontmatter is meant to be drawn as one block at the top of the editor: a summary bar that opens into typed rows (or the raw YAML), so metadata is editable without typing YAML and without a markdown editor touching it.
 
-**Not built.** The block, its typed rows and the raw YAML fallback are not in the renderer today. The rich-text editor neither shows nor understands frontmatter: it keeps the block byte for byte and puts it back on save (`features/documents/markdown.ts`), and the document header shows name, folder, save state and history instead ([editor](editor.md)). What survives is the schema that says what each key is (`frontmatterSchema` in `packages/shared`). The design below is what a rebuild on the rich-text editor would honour; it is listed in [not-built](../not-built.md).
+**Not built.** The block, its typed rows and the raw YAML fallback are not in the renderer today. The rich-text editor neither shows nor understands frontmatter: it keeps the block byte for byte and puts it back on save (`features/documents/markdown.ts`), and the document header shows name, folder, save state and history instead ([editor](editor.md)). A task is the one exception: its fields show as labelled properties, read from the tasks claim rather than the YAML ([editor](editor.md)), with no raw YAML, no unknown keys and no adding a field; a plain note's frontmatter is not drawn at all. What survives is the schema that says what each key is (`frontmatterSchema` in `packages/shared`). The design below is what a rebuild on the rich-text editor would honour; it is listed in [not-built](../not-built.md).
 
 ## The design
 

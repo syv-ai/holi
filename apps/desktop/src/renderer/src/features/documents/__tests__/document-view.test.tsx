@@ -7,7 +7,13 @@
  * vault app runs on this machine's agent as a session the person can open, and
  * opens the app once its `app.yaml` lands.
  */
-import { emptyVaultSnapshot, normalizeText, VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import {
+  emptyVaultSnapshot,
+  normalizeText,
+  parseTaskFile,
+  TASKS_CLAIM,
+  VAULT_SETTING_DEFAULTS,
+} from '@holi/shared'
 import userEvent from '@testing-library/user-event'
 import { atom, createStore, Provider } from 'jotai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -38,6 +44,7 @@ Element.prototype.scrollIntoView ??= () => undefined
 document.elementFromPoint ??= () => null
 
 const files = new Map<string, string>()
+let readOverride: (() => Promise<string>) | null = null
 const write = vi.fn()
 const cap = vi.fn()
 const providers = vi.fn()
@@ -46,7 +53,8 @@ vi.mock('@/lib/trpc', () => ({
   trpc: {
     notes: {
       read: {
-        query: ({ path }: { path: string }) => Promise.resolve(files.get(path) ?? ''),
+        query: ({ path }: { path: string }) =>
+          readOverride ? readOverride() : Promise.resolve(files.get(path) ?? ''),
       },
       write: {
         mutate: async (input: { path: string; text: string }) => {
@@ -147,6 +155,7 @@ let store: ReturnType<typeof createStore>
 
 beforeEach(() => {
   files.clear()
+  readOverride = null
   write.mockReset()
   cap.mockReset()
   providers.mockReset().mockResolvedValue([])
@@ -286,6 +295,50 @@ test('opens the body in the editor, with its name and contributors', async () =>
   expect(box).not.toHaveTextContent('title: Plan')
   expect(await screen.findByRole('group', { name: 'Written by ada' })).toBeInTheDocument()
 })
+
+test.each(['banded', 'lines'] as const)(
+  'applies the %s table style to the rendered editor wrapper and updates it live',
+  async (style) => {
+    store.set(vaultSettingsAtom, {
+      remote: 'syv/vault',
+      settings: { ...VAULT_SETTING_DEFAULTS, tableStyle: style, warnings: [] },
+    })
+    open('| Name | Value |\n| --- | --- |\n| A | B |\n')
+    const box = await editorBox()
+    const editor = (box as WithEditor).editor
+    const table = box.querySelector('table')!
+    const styledAncestor = table.closest('[data-table-style]')
+
+    expect(styledAncestor).toHaveAttribute('data-table-style', style)
+    expect(styledAncestor).not.toBe(box)
+    expect(styledAncestor).not.toBe(box.parentElement)
+
+    act(() => {
+      editor.commands.insertContentAt(editor.state.doc.content.size, 'Keep this undoable')
+    })
+    const selection = editor.state.selection.from
+    act(() => {
+      store.set(vaultSettingsAtom, {
+        remote: 'syv/vault',
+        settings: {
+          ...VAULT_SETTING_DEFAULTS,
+          tableStyle: style === 'banded' ? 'lines' : 'banded',
+          warnings: [],
+        },
+      })
+    })
+
+    expect(table.closest('[data-table-style]')).toHaveAttribute(
+      'data-table-style',
+      style === 'banded' ? 'lines' : 'banded',
+    )
+    expect((await editorBox()) as WithEditor).toBe(box)
+    expect(editor.state.selection.from).toBe(selection)
+    expect(editor.getText()).toContain('Keep this undoable')
+    act(() => editor.commands.undo())
+    expect(editor.getText()).not.toContain('Keep this undoable')
+  },
+)
 
 test('⌘B is always claimed by the editor, never the sidebar toggle', async () => {
   open('Hello\n')
@@ -475,7 +528,7 @@ test('Stop ends the run', async () => {
   expect(await screen.findByText('Stopped')).toBeInTheDocument()
 })
 
-test("the menu copies the document's Holi link", async () => {
+test("the narrow document menu copies a heading's Holi link and disables it without one", async () => {
   const user = userEvent.setup()
   const writeText = vi.fn(() => Promise.resolve())
   Object.defineProperty(navigator, 'clipboard', {
@@ -483,11 +536,183 @@ test("the menu copies the document's Holi link", async () => {
     configurable: true,
   })
   open('# Plan\n\nBody\n')
-  await editorBox()
+  const box = await editorBox()
+  const editor = (box as WithEditor).editor
+  act(() => editor.commands.setTextSelection(textPos(editor, 'Body')))
   await user.click(screen.getByRole('button', { name: 'Document actions' }))
-  await user.click(await screen.findByRole('menuitem', { name: 'Copy Holi link' }))
-  expect(writeText).toHaveBeenCalledWith('holi://open?vault=syv/vault&path=notes/Plan.md')
+  const headingAction = await screen.findByRole('menuitem', { name: 'Copy link to heading' })
+  expect(headingAction).toHaveAttribute('aria-disabled', 'true')
+  await user.keyboard('{Escape}')
+
+  act(() => editor.commands.setTextSelection(textPos(editor, 'Plan')))
+  await user.click(screen.getByRole('button', { name: 'Document actions' }))
+  const action = await screen.findByRole('menuitem', { name: 'Copy link to heading' })
+  expect(action).toBeVisible()
+  expect(action).toBeEnabled()
+  await user.click(action)
+  expect(writeText).toHaveBeenCalledWith(
+    'holi://open?vault=syv/vault&path=notes/Plan.md&heading=plan',
+  )
   expect(screen.getByRole('menuitem', { name: 'Copied' })).toBeInTheDocument()
+})
+
+test('the narrow fallback tracks the document pane width without replacing its editor', async () => {
+  const originalObserver = globalThis.ResizeObserver
+  const originalBounds = HTMLElement.prototype.getBoundingClientRect
+  const originalWidth = window.innerWidth
+  Object.defineProperty(window, 'innerWidth', { value: 1200, configurable: true })
+  const user = userEvent.setup()
+  const writeText = vi.fn(() => Promise.resolve())
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+  let pane: HTMLElement | null = null
+  const resize: { current?: ResizeObserverCallback } = {}
+  globalThis.ResizeObserver = class extends ResizeObserver {
+    constructor(callback: ResizeObserverCallback) {
+      super(callback)
+      this.callback = callback
+    }
+    private callback: ResizeObserverCallback
+    observe(target: Element, options?: ResizeObserverOptions) {
+      if (target instanceof HTMLElement && target.className.includes('@container/document')) {
+        pane = target
+        resize.current = this.callback
+        return
+      }
+      super.observe(target, options)
+    }
+  }
+  HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this === pane) return new DOMRect(0, 0, paneWidth, 700)
+    return originalBounds.call(this)
+  }
+  let paneWidth = 1200
+  try {
+    open('# Plan\n\nBody\n')
+    const box = await editorBox()
+    pane = box.closest('[class*="@container/document"]') as HTMLElement
+    expect(pane).not.toBeNull()
+    act(() => resize.current?.([], {} as ResizeObserver))
+    const editor = (box as WithEditor).editor
+    act(() => {
+      editor.commands.insertContentAt(editor.state.doc.content.size, ' draft')
+      editor.commands.setTextSelection(textPos(editor, 'Plan'))
+    })
+    const caret = editor.state.selection.from
+    paneWidth = 390
+    act(() => {
+      resize.current?.([], {} as ResizeObserver)
+      editor.commands.setTextSelection(textPos(editor, 'Plan'))
+    })
+    await user.click(screen.getByRole('button', { name: 'Document actions' }))
+    const action = await screen.findByRole('menuitem', { name: 'Copy link to heading' })
+    expect(action).toBeVisible()
+    expect(action).toBeEnabled()
+    expect(window.innerWidth).toBe(1200)
+    await user.click(action)
+    expect(writeText).toHaveBeenCalledWith(
+      'holi://open?vault=syv/vault&path=notes/Plan.md&heading=plan',
+    )
+
+    paneWidth = 800
+    act(() => resize.current?.([], {} as ResizeObserver))
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('menuitem', { name: 'Copy link to heading' }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(box.isConnected).toBe(true)
+    expect((box as WithEditor).editor).toBe(editor)
+    expect(screen.queryByText('Copy link to heading')).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Copied' })).not.toBeInTheDocument()
+    expect(editor.getMarkdown()).toContain('draft')
+    expect(editor.state.selection.from).toBe(caret)
+
+    paneWidth = 390
+    act(() => resize.current?.([], {} as ResizeObserver))
+    expect(
+      await screen.findByRole('menuitem', { name: /^(Copy link to heading|Copied)$/ }),
+    ).toBeVisible()
+    act(() => editor.commands.undo())
+    expect(editor.getMarkdown()).not.toContain('draft')
+  } finally {
+    globalThis.ResizeObserver = originalObserver
+    HTMLElement.prototype.getBoundingClientRect = originalBounds
+    Object.defineProperty(window, 'innerWidth', { value: originalWidth, configurable: true })
+  }
+})
+
+test('duplicate top-level headings copy their disambiguated anchor', async () => {
+  const user = userEvent.setup()
+  const writeText = vi.fn(() => Promise.resolve())
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+  open('# Same\n\nFirst\n\n# Same\n\nSecond\n')
+  const box = await editorBox()
+  const editor = (box as WithEditor).editor
+  const secondHeading = editor.state.doc.child(0).nodeSize + editor.state.doc.child(1).nodeSize + 1
+  act(() => editor.commands.setTextSelection(secondHeading))
+  await user.click(screen.getByRole('button', { name: 'Document actions' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Copy link to heading' }))
+  expect(writeText).toHaveBeenCalledWith(
+    'holi://open?vault=syv/vault&path=notes/Plan.md&heading=same-1',
+  )
+})
+
+test('nested quoted headings do not copy a preceding top-level heading link', async () => {
+  const writeText = vi.fn(() => Promise.resolve())
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+  open('# Same\n\n> ## Quoted\n')
+  const box = await editorBox()
+  const editor = (box as WithEditor).editor
+  act(() => editor.commands.setTextSelection(textPos(editor, 'Quoted', 1)))
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Document actions' }))
+  const action = await screen.findByRole('menuitem', { name: 'Copy link to heading' })
+  expect(action).toHaveAttribute('aria-disabled', 'true')
+  expect(writeText).not.toHaveBeenCalled()
+})
+
+test('does not offer heading links for a non-linkable document', async () => {
+  const view = open('# Plan\n')
+  await editorBox()
+  view.rerender(
+    <Provider store={store}>
+      <DocumentView path="notes/Plan.local.md" onOpen={() => undefined} />
+    </Provider>,
+  )
+  await screen.findByRole('textbox', { name: 'Plan.local document' })
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Document actions' }))
+  expect(screen.queryByRole('menuitem', { name: 'Copy link to heading' })).not.toBeInTheDocument()
+})
+
+test('the wide block menu keeps its heading-link action', async () => {
+  const original = window.matchMedia
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches: query === '(pointer: fine)' || query === '(min-width: 40rem)',
+    media: query,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+    onchange: null,
+  }))
+  try {
+    open('# Plan\n\nBody\n')
+    const box = await editorBox()
+    const editor = (box as WithEditor).editor
+    act(() => editor.commands.setTextSelection(textPos(editor, 'Plan')))
+    fireEvent.keyDown(box, { key: '/', code: 'Slash', ctrlKey: true })
+    expect(
+      await screen.findByRole('menuitem', { name: 'Copy link to heading' }),
+    ).toBeInTheDocument()
+    await userEvent.setup().keyboard('{Escape}')
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('menuitem', { name: 'Copy link to heading' }),
+      ).not.toBeInTheDocument(),
+    )
+  } finally {
+    window.matchMedia = original
+  }
 })
 
 test("a Holi link's heading puts the caret on it when the document opens", async () => {
@@ -542,6 +767,166 @@ function changeOnDisk(text: string, updatedAt: string) {
     } as never),
   )
 }
+
+function taskSnapshot(text: string, path = 'task.plan.md') {
+  return {
+    ...emptyVaultSnapshot(),
+    claimed: { [TASKS_CLAIM]: { items: [parseTaskFile(text, path)], broken: [] } },
+  }
+}
+
+test.each([false, true])(
+  'a claimed task metadata update survives a body save with existing local edits: %s',
+  async (dirty) => {
+    const taskPath = 'task.plan.md'
+    const before = '---\nstatus: todo\n---\n\n# Plan\n\nOriginal\n'
+    const after = '---\nstatus: in-progress\n---\n\n# Plan\n\nOriginal\n'
+    files.set(taskPath, before)
+    store.set(snapshotAtom, taskSnapshot(before))
+    render(
+      <Provider store={store}>
+        <DocumentView path={taskPath} onOpen={() => undefined} />
+      </Provider>,
+    )
+    const box = await screen.findByRole('textbox', { name: 'task.plan document' })
+    const editor = (box as WithEditor).editor
+    act(() => {
+      editor.commands.setTextSelection(textPos(editor, 'Original', 3))
+      if (dirty) editor.commands.insertContent(' local')
+    })
+    const caret = editor.state.selection.from
+    const read = vi.fn(() => Promise.resolve(after))
+    readOverride = read
+    files.set(taskPath, after)
+    await act(async () => {
+      store.set(snapshotAtom, taskSnapshot(after))
+      await Promise.resolve()
+    })
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(store.get(snapshotAtom).docs).toEqual([])
+    expect(screen.getByRole('textbox', { name: 'task.plan document' })).toBe(box)
+    expect((box as WithEditor).editor).toBe(editor)
+    expect(editor.state.selection.from).toBe(caret)
+    if (!dirty) act(() => editor.commands.insertContent(' local'))
+    await act(() => flushAllBuffers())
+    expect(files.get(taskPath)).toContain('status: in-progress')
+    expect(files.get(taskPath)).toContain('Ori localginal')
+    act(() => editor.commands.undo())
+    expect(editor.getMarkdown()).not.toContain('local')
+    expect(editor.getMarkdown()).toContain('Original')
+  },
+)
+
+test.each([false, true])(
+  'flush reconciles a pending task read using its captured body, unmounted: %s',
+  async (unmount) => {
+    const taskPath = 'task.plan.md'
+    const initial = '---\nstatus: todo\n---\n\n# Plan\n\nOriginal\n'
+    const latest = '---\nstatus: in-progress\n---\n\n# Plan\n\nChanged externally\n'
+    files.set(taskPath, initial)
+    store.set(snapshotAtom, taskSnapshot(initial))
+    const view = render(
+      <Provider store={store}>
+        <DocumentView path={taskPath} onOpen={() => undefined} />
+      </Provider>,
+    )
+    const editor = (
+      (await screen.findByRole('textbox', { name: 'task.plan document' })) as WithEditor
+    ).editor
+    act(() => editor.commands.insertContentAt(editor.state.doc.content.size, ' local'))
+    const read = deferred<string>()
+    const reading = vi.fn(() => read.promise)
+    readOverride = reading
+    files.set(taskPath, latest)
+    act(() => store.set(snapshotAtom, taskSnapshot(latest)))
+    await waitFor(() => expect(reading).toHaveBeenCalledTimes(1))
+    const flushed = flushAllBuffers()
+    await Promise.resolve()
+    expect(write).not.toHaveBeenCalled()
+    if (unmount) view.unmount()
+    // A queued write must not access an editor after its owner has gone.
+    const getMarkdown = unmount
+      ? vi.spyOn(editor, 'getMarkdown').mockImplementation(() => {
+          throw new Error('editor no longer available')
+        })
+      : null
+    try {
+      read.resolve(latest)
+      await act(() => flushed)
+      expect(files.get(taskPath)).toContain('status: in-progress')
+      expect(files.get(taskPath)).toContain('Original')
+      expect(files.get(taskPath)).toContain('local')
+      expect(files.get(taskPath)).not.toContain('Changed externally')
+    } finally {
+      getMarkdown?.mockRestore()
+    }
+  },
+)
+
+test('a failed metadata read blocks stale writes and the next flush retries it', async () => {
+  const taskPath = 'task.plan.md'
+  const before = '---\nstatus: todo\n---\n\nOriginal\n'
+  const after = '---\nstatus: in-progress\n---\n\nOriginal\n'
+  files.set(taskPath, before)
+  store.set(snapshotAtom, taskSnapshot(before))
+  render(
+    <Provider store={store}>
+      <DocumentView path={taskPath} onOpen={() => undefined} />
+    </Provider>,
+  )
+  const editor = (
+    (await screen.findByRole('textbox', { name: 'task.plan document' })) as WithEditor
+  ).editor
+  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, ' local'))
+  files.set(taskPath, after)
+  readOverride = vi.fn().mockRejectedValue(new Error('metadata unavailable'))
+  await act(async () => {
+    store.set(snapshotAtom, taskSnapshot(after))
+    await Promise.resolve()
+  })
+  await expect(act(() => flushAllBuffers())).rejects.toThrow('metadata unavailable')
+  expect(write).not.toHaveBeenCalled()
+  readOverride = vi.fn().mockResolvedValue(after)
+  await act(() => flushAllBuffers())
+  expect(files.get(taskPath)).toContain('status: in-progress')
+  expect(files.get(taskPath)).toContain('local')
+})
+
+test('a clean flush awaiting a reload never writes the old body over the new file', async () => {
+  open('# Plan\n\nOriginal\n')
+  const editor = ((await editorBox()) as WithEditor).editor
+  const latest = '# Plan\n\nExternal body\n'
+  const read = deferred<string>()
+  const reading = vi.fn(() => read.promise)
+  readOverride = reading
+  changeOnDisk(latest, '2026-10-23T10:00:05Z')
+  await waitFor(() => expect(reading).toHaveBeenCalledTimes(1))
+  const flushed = flushAllBuffers()
+  await Promise.resolve()
+  expect(write).not.toHaveBeenCalled()
+  read.resolve(latest)
+  await act(() => flushed)
+  expect(editor.getMarkdown()).toContain('External body')
+  expect(files.get(PATH)).toBe(latest)
+  expect(write).not.toHaveBeenCalled()
+})
+
+test('an edit after a clean flush snapshot remains pending for the next flush', async () => {
+  open('---\nstatus: todo\n---\n\nOriginal\n')
+  const editor = ((await editorBox()) as WithEditor).editor
+  const latest = '---\nstatus: doing\n---\n\nOriginal\n'
+  const read = deferred<string>()
+  readOverride = () => read.promise
+  changeOnDisk(latest, '2026-10-23T10:00:05Z')
+  const cleanFlush = flushAllBuffers()
+  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, ' local'))
+  read.resolve(latest)
+  await act(() => cleanFlush)
+  expect(write).not.toHaveBeenCalled()
+  await act(() => flushAllBuffers())
+  expect(files.get(PATH)).toContain('status: doing')
+  expect(files.get(PATH)).toContain('local')
+})
 
 test('the commit tidy leaves the caret, and the space before it, where they are', async () => {
   open('# Plan\n\nAlpha\n\nBeta\n')
@@ -604,6 +989,25 @@ test('flush waits for an in-flight autosave then writes an undo to the saved bas
   await concurrent
   expect(write).toHaveBeenCalledTimes(2)
   expect(write).toHaveBeenLastCalledWith(expect.objectContaining({ text: '# Plan\n\nO\n' }))
+})
+
+test('a duplicate queued snapshot cannot mark newer edits as clean', async () => {
+  open('# Plan\n\nOriginal\n')
+  const editor = ((await editorBox()) as WithEditor).editor
+  const pending = deferred<void>()
+  write.mockImplementationOnce(() => pending.promise)
+  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, ' first'))
+  const first = flushAllBuffers()
+  await waitFor(() => expect(write).toHaveBeenCalledTimes(1))
+  const duplicate = flushAllBuffers()
+  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, ' newer'))
+  pending.resolve()
+  await act(async () => {
+    await first
+    await duplicate
+  })
+  await act(() => flushAllBuffers())
+  expect(files.get(PATH)).toContain('newer')
 })
 
 test('a save freeze blocks document commands while allowing external reloads', async () => {
@@ -734,6 +1138,30 @@ test.each([
   expect(askAi).toHaveTextContent(`Ask ${label}`)
 })
 
+test('custom instruction close restores focus only while its editor is mounted', async () => {
+  const user = userEvent.setup()
+  open('Ship the beta.\\n')
+  const { editor, askAi } = await selectForAskAi('Ship the beta')
+  const focus = vi.spyOn(editor.view, 'focus')
+  act(() => editor.view.focus())
+
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Custom instruction…' }))
+  expect(await screen.findByRole('textbox', { name: 'What should the agent do?' })).toHaveFocus()
+  focus.mockClear()
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(editor.view.hasFocus()).toBe(true))
+  expect(focus).toHaveBeenCalled()
+
+  await user.click(askAi)
+  await user.click(await screen.findByRole('menuitem', { name: 'Custom instruction…' }))
+  expect(await screen.findByRole('textbox', { name: 'What should the agent do?' })).toHaveFocus()
+  focus.mockClear()
+  act(() => editor.unmount())
+  await user.keyboard('{Escape}')
+  expect(focus).not.toHaveBeenCalled()
+})
+
 test("Ask AI's own instruction rewrites only the passage selected when it opened", async () => {
   const user = userEvent.setup()
   open('# Plan\n\nShip the beta on Friday.\n\nKeep this line.\n')
@@ -757,7 +1185,8 @@ test("Ask AI's own instruction rewrites only the passage selected when it opened
     editor.commands.setTextSelection({ from: keep, to: keep + 'Keep this line'.length })
   })
   expect(selected()).toBe('Keep this line')
-  await user.type(prompt, 'Translate it into Danish{Enter}')
+  await user.paste('Translate it into Danish')
+  await user.keyboard('{Enter}')
 
   await waitFor(() =>
     expect(cap).toHaveBeenCalledWith(expect.objectContaining({ name: 'agent.launch' })),

@@ -228,7 +228,7 @@ export function CommentsPanel({
     <aside
       aria-label="Comments"
       data-comments-panel
-      className="bg-background flex h-full w-80 shrink-0 flex-col border-l"
+      className="bg-sidebar flex h-full w-80 shrink-0 flex-col"
     >
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <MessagesSquareIcon className="text-muted-foreground size-4" aria-hidden="true" />

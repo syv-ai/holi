@@ -262,7 +262,13 @@ export function DocumentFormatBubble({
                   event.preventDefault()
                   // Back to the text, the passage still selected, unless the
                   // person clicked somewhere else.
-                  if (!dismissedOutsideRef.current) editor.view.focus()
+                  if (
+                    !dismissedOutsideRef.current &&
+                    !editor.isDestroyed &&
+                    editor.view.dom.isConnected
+                  ) {
+                    editor.view.focus()
+                  }
                 }}
               >
                 {/* Mounts per open, so the field always starts empty. */}
