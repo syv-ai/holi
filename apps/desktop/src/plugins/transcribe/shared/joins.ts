@@ -69,17 +69,23 @@ export function joinedSets(topics: readonly Topic[]): Topic[][] {
 
 /** A joined topic read as one group: the head's title and fields, every
  *  group's lines, bullets, keywords, decisions, questions and suggestions,
- *  from the first's start to the last's end. A group not joined is itself. */
+ *  each once, from the first's start to the last's end. A group not joined
+ *  is itself. */
 export function asOne(topics: readonly Topic[], t: Topic): Topic {
   const head = t.joinedTo ?? t.id
   const set = joinedSets(topics).find((s) => s[0]!.id === head)
-  if (set === undefined || set.length < 2) return t
-  const [first] = set as [Topic, ...Topic[]]
+  return set === undefined || set.length < 2 ? t : merged(set)
+}
+
+/** The groups of one set (`joinedSets`) read as one: how the topic, the
+ *  minutes and Send all read a joined topic. */
+export function merged(set: readonly Topic[]): Topic {
+  const [first] = set as readonly [Topic, ...Topic[]]
   const all = <T>(pick: (x: Topic) => readonly T[]): T[] => [...new Set(set.flatMap(pick))]
   return {
     ...first,
     lines: all((x) => x.lines).sort((a, b) => a - b),
-    summary: set.flatMap((x) => x.summary),
+    summary: all((x) => x.summary),
     keywords: all((x) => x.keywords),
     decisions: all((x) => x.decisions),
     questions: all((x) => x.questions),

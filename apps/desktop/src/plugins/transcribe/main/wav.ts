@@ -59,11 +59,7 @@ export function parseWav(bytes: Uint8Array): Pcm {
   return bad('no data chunk')
 }
 
-/**
- * A 16-bit PCM WAV of `channels` interleaved.
- *
- * @public exported for its test
- */
+/** A 16-bit PCM WAV of `channels` interleaved. */
 export function encodeWav(rate: number, channels: Int16Array[]): Uint8Array {
   const frames = channels[0]?.length ?? 0
   const n = channels.length

@@ -24,7 +24,7 @@ import { createMeetings } from './engine'
 import { createProfiles, parseProfilesFile } from './profiles'
 import type { Launched } from './scribe'
 import { createSpeechKey } from './speech-key'
-import { createSpeechServices, parseServiceFile } from './speech-service'
+import { parseServiceFile } from './speech-service'
 import { createSileroVad, dataUrlBytes } from './silero'
 import SILERO_VAD from './assets/silero-vad.onnx?url&inline'
 import { readVaultHead, removeVaultFiles, vaultFolderExists, writeVaultText } from './vault-write'
@@ -48,13 +48,11 @@ export const transcribeMain: MainPlugin = {
     // `whenReady`), so the module stays importable under plain Node.
     const { speechKeyStore } = await import('./electron')
     const fetchImpl = (url: string, init: RequestInit) => fetch(url, init)
-    const services = createSpeechServices(
-      jsonFileStore(join(ctx.userData, 'speech-service.json'), parseServiceFile),
-    )
+    const services = jsonFileStore(join(ctx.userData, 'speech-service.json'), parseServiceFile)
     const speechKey = createSpeechKey({
       store: speechKeyStore(ctx.userData),
       vaultEnv: () => readVaultEnv(ctx.root),
-      service: () => services.get(),
+      service: () => services.read(),
       fetch: fetchImpl,
       changed: () => {
         for (const wake of wakers) wake()
@@ -69,7 +67,7 @@ export const transcribeMain: MainPlugin = {
       profiles,
       fetch: fetchImpl,
       apiKey: (service) => speechKey.resolve(service),
-      service: () => services.get(),
+      service: () => services.read(),
       writeFile: (rel, text, guard) => writeVaultText(ctx.root, rel, text, guard),
       folderExists: (rel) => vaultFolderExists(ctx.root, rel),
       removeFiles: (rels, folder) => removeVaultFiles(ctx.root, rels, folder),

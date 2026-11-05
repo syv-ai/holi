@@ -49,7 +49,10 @@ async function rig(opts: Parameters<typeof engineRig>[0] = {}) {
       meetings: engine.meetings,
       profiles,
       speechKey: {} as never,
-      services: { get: async () => ({ url: null, model: null }), set: async (s) => s },
+      services: {
+        read: async () => ({ url: null, model: null }),
+        update: async (change) => change({ url: null, model: null }),
+      },
       serviceChanged: () => {},
       remote: 'syv/vault',
     }),
@@ -273,7 +276,7 @@ describe('sending a task', () => {
       context: 'Use the existing export menu; no new dependencies.',
       target: { kind: 'agent' },
     })
-    expect(value).toEqual({ sessionId: BUILD })
+    expect(value).toMatchObject({ sessionId: BUILD, card: { status: 'building' } })
     const args = r.agent.launch.mock.calls.at(-1)![0]
     expect(args.name).toBe('Build · Export to CSV')
     expect(args.prompt).toContain('How the person wants it done')
@@ -326,7 +329,7 @@ describe('sending a task', () => {
       context: 'Write it as a proposal',
       target: { kind: 'holi', id: 'proposal' },
     })
-    expect(value).toEqual({ sessionId: 'h0l1h0l1' })
+    expect(value).toMatchObject({ sessionId: 'h0l1h0l1', card: { status: 'building' } })
     const taskPath = r.meeting.cards[0]!.taskPath!
     expect(r.agent.sendToHoli).toHaveBeenCalledWith({ holi: 'proposal', path: taskPath })
     expect(r.agent.launch.mock.calls).toHaveLength(launches)
@@ -366,7 +369,7 @@ describe('sending a task', () => {
     provider = 'codex'
     const codex = await r.card({ lines: [0], prompt: 'Rename the board' })
     const { value } = await r.ui('meeting.build', { meetingId: r.meetingId, cardId: codex.id })
-    expect(value).toEqual({ sessionId: 'c0dex000' })
+    expect(value).toMatchObject({ sessionId: 'c0dex000', card: { status: 'building' } })
     expect(r.agent.start).toHaveBeenCalledWith({
       name: 'Build · Rename the board',
       prompt: expect.any(String),

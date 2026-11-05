@@ -10,7 +10,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { CapabilityError, type JsonFileStore } from '../../../main/plugin-api'
+import { CapabilityError } from '../../../main/plugin-api'
 import type { SpeechService } from '../shared/meeting'
 
 /** syv.ai's API, which the default service is. */
@@ -70,18 +70,6 @@ export function parseServiceFile(raw: unknown): SpeechService {
     return serviceParam(raw as Record<string, unknown>)
   } catch {
     return SYV_SERVICE
-  }
-}
-
-export interface SpeechServices {
-  get(): Promise<SpeechService>
-  set(service: SpeechService): Promise<SpeechService>
-}
-
-export function createSpeechServices(store: JsonFileStore<SpeechService>): SpeechServices {
-  return {
-    get: () => store.read(),
-    set: (service) => store.update(() => service),
   }
 }
 

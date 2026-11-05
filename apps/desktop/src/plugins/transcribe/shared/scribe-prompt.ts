@@ -203,7 +203,7 @@ export interface BatchNotes {
   edits?: ReadonlyArray<{ startIndex: number; fields: Partial<Record<TopicField, unknown>> }>
 }
 
-function groupsBlock(groups: readonly GroupLine[]): string {
+export function groupsBlock(groups: readonly GroupLine[]): string {
   if (groups.length === 0) return 'Groups so far: none yet.'
   const line = (g: GroupLine) => {
     const name = g.title.trim() === '' ? '(untitled)' : g.title.trim()

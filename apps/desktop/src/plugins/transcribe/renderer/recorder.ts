@@ -176,9 +176,7 @@ export const startRecordingAtom = atom(null, async (get, set, args: StartArgs): 
           await meetingCap.chunk(remote, params)
           return
         } catch (e) {
-          // Main refuses a chunk number it already has: an earlier try got
-          // there, though its answer did not get back.
-          if (attempt > 1 && /chunk \d+ is already in/.test(message(e))) return
+          // A chunk number main already has is taken as delivered.
           if (attempt >= TRIES) return lost(chunk, e)
           await wait(RETRY_MS * attempt)
         }

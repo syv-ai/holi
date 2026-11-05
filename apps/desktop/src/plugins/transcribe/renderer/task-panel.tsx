@@ -151,20 +151,15 @@ function TaskEditor({
         setDraft(null)
       }
       const note = context.trim()
-      const { sessionId } = await meetingCap.build(r, {
+      const sent = await meetingCap.build(r, {
         meetingId: meeting.id,
         cardId: card.id,
         ...(note === '' ? {} : { context: note }),
         target,
       })
-      put(meeting.id, {
-        ...card,
-        status: 'building',
-        buildSessionId: sessionId,
-        target,
-        // When it was sent, in the click: Sent until the agent lists its run.
-        updatedAt: Date.now(),
-      })
+      // Main's card, not one made here: it has the task, and any change
+      // main made meanwhile.
+      put(meeting.id, sent.card)
       setContext('')
     })
   const dismiss = async () => {

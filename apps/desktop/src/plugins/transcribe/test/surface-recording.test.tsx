@@ -289,7 +289,7 @@ test('a Stop while Record starts cancels it: the capture and the meeting are let
   expect(store.get(recorderAtom).phase).toBe('idle')
 }, 15_000)
 
-test('a retried chunk that main already has counts as delivered', async () => {
+test('a chunk tried again after a lost answer is sent again, and main takes it as delivered', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout'] })
   const store = storeFor()
   await store.set(startRecordingAtom, {
@@ -302,7 +302,8 @@ test('a retried chunk that main already has counts as delivered', async () => {
   let tries = 0
   run.mockImplementation(async ({ name }: { name: string }) => {
     if (name !== 'meeting.chunk') return { ok: true }
-    throw new Error(++tries === 1 ? 'the window was busy' : 'chunk 4 is already in')
+    if (++tries === 1) throw new Error('the window was busy')
+    return { ok: true }
   })
   options?.onChunk({ n: 4, start: 24, duration: 6, wav: wav(1) })
   await vi.advanceTimersByTimeAsync(2_000)

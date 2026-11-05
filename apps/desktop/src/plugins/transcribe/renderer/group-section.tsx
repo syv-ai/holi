@@ -43,6 +43,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { IconButton } from '@/composites/icon-button'
+import { merged } from '../shared/joins'
 import type { MeetingState, Suggestion, Topic, TopicField } from '../shared/meeting'
 import { CaptionLine } from './caption-line'
 import { ListField } from './card-fields'
@@ -54,14 +55,6 @@ import { message, putTopicAtom, putTopicsAtom, sendPanelAtom } from './state'
 import { KindIcon, OpenSession } from './task-row'
 import { topicName } from './topic-index'
 import { transcriptText } from './transcript-text'
-
-const FIELD_NAMES: Record<TopicField, string> = {
-  title: 'title',
-  summary: 'summary',
-  keywords: 'keywords',
-  decisions: 'decisions',
-  questions: 'questions',
-}
 
 export function Keywords({ topic }: { topic: Topic }): React.JSX.Element | null {
   if (topic.keywords.length === 0) return null
@@ -339,9 +332,8 @@ function TopicBody({
   meeting: MeetingState
   parts: readonly Topic[]
 }): React.JSX.Element {
-  const all = <T,>(pick: (t: Topic) => readonly T[]): T[] => [...new Set(parts.flatMap(pick))]
-  const edited = all((t) => t.edited ?? [])
-  const keywords = all((t) => t.keywords)
+  const one = merged(parts)
+  const edited = [...new Set(parts.flatMap((t) => t.edited ?? []))]
   const stale = parts.some((t) => t.stale === true)
   return (
     <div className="flex flex-col gap-3">
@@ -351,9 +343,9 @@ function TopicBody({
           its next pass.
         </p>
       )}
-      <Items items={all((t) => t.summary)} />
-      <Items title="Decisions" items={all((t) => t.decisions)} />
-      <Items title="Open questions" items={all((t) => t.questions)} />
+      <Items items={one.summary} />
+      <Items title="Decisions" items={one.decisions} />
+      <Items title="Open questions" items={one.questions} />
       {parts.some((t) => t.suggestions.length > 0) && (
         <div className="flex flex-col gap-1">
           <h4 className="text-xs font-medium text-muted-foreground">Suggestions</h4>
@@ -368,11 +360,10 @@ function TopicBody({
           </ul>
         </div>
       )}
-      <Keywords topic={{ ...parts[0]!, keywords }} />
+      <Keywords topic={one} />
       {edited.length > 0 && (
         <p className="text-xs text-muted-foreground">
-          Edited by you: {edited.map((f) => FIELD_NAMES[f]).join(', ')}. {SCRIBE_TITLE} keeps your
-          words.
+          Edited by you: {edited.join(', ')}. {SCRIBE_TITLE} keeps your words.
         </p>
       )}
     </div>

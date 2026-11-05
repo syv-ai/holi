@@ -44,6 +44,25 @@ export function oneMoveAtATime<T>(work: () => Promise<T>): Promise<T> {
   return run
 }
 
+/** Rewrite the links of a note that links to what moved: under its own
+ *  lock, read again there and with no other lock held, so a save made
+ *  meanwhile is kept and a note gone meanwhile is skipped. How many links
+ *  changed. */
+export async function relinkNote(
+  root: string,
+  path: string,
+  rewrite: (text: string) => { text: string; count: number },
+): Promise<number> {
+  const rel = vaultRelPath(path)
+  return withFileLock(await lockPath(root, rel), async () => {
+    const text = await readFile(absPathFor(root, rel), 'utf8').catch(() => null)
+    if (text === null) return 0
+    const { text: next, count } = rewrite(text)
+    if (count > 0) await writeAtomic(root, rel, next)
+    return count
+  })
+}
+
 export function moveNotes(root: string, moves: { from: string; to: string }[]): Promise<Moved> {
   return oneMoveAtATime(() => moveNow(root, moves))
 }
@@ -63,18 +82,10 @@ async function moveNow(root: string, moves: { from: string; to: string }[]): Pro
     () => moveLocked(root, map),
   )
   // The files that stay and only link to what moved, once the move holds
-  // nothing: each under its own lock, read again there, so no lock is taken
-  // while the move's are held (two moves of notes that link each other would
-  // each wait for the other) and a change made meanwhile is kept.
+  // nothing: no lock is taken while the move's are held (two moves of notes
+  // that link each other would each wait for the other).
   for (const path of linksOnly) {
-    const rel = vaultRelPath(path)
-    const count = await withFileLock(await lockPath(root, rel), async () => {
-      const text = await readFile(absPathFor(root, rel), 'utf8').catch(() => null)
-      if (text === null) return 0
-      const { text: next, count } = rewriteWikiLinksMulti(text, map)
-      if (count > 0) await writeAtomic(root, rel, next)
-      return count
-    })
+    const count = await relinkNote(root, path, (text) => rewriteWikiLinksMulti(text, map))
     if (count > 0) rewritten.push({ path, count })
   }
   const comments = await moveNoteComments(root, moves)

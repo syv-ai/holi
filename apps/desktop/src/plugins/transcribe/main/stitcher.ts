@@ -25,6 +25,13 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import type { Segment } from '../shared/meeting'
+import {
+  ECHO_RATIO,
+  FRAME_SECONDS,
+  MARGIN_DB,
+  MAX_THRESHOLD_DB,
+  MIN_THRESHOLD_DB,
+} from '../shared/speech'
 import { dropHallucinations, isAsrJunk, trimmed, type Dropped } from './junk'
 import { rms, type Pcm } from './wav'
 
@@ -124,15 +131,6 @@ export function speakerOf(pcm: Pcm, from: number, to: number): 'Me' | 'Them' {
   return them > me ? 'Them' : 'Me'
 }
 
-/** Speech, as the recorder judges it (`renderer/audio/chunker.ts`): a 20 ms
- *  frame this far above the channel's quietest, within these bounds. */
-const FRAME_SECONDS = 0.02
-const MARGIN_DB = 10
-const MIN_THRESHOLD_DB = -55
-const MAX_THRESHOLD_DB = -30
-/** The computer this much louder than the microphone: the microphone hears
- *  the speakers, not a person. */
-const ECHO_RATIO = 2
 /** Each side's share of a chunk's speech for both to count as speaking. */
 const BOTH_SHARE = 0.25
 /** Less speech than this (100 ms) on a side is none. */
@@ -281,10 +279,9 @@ export interface StitchState {
 export function stitch(
   state: StitchState,
   opts: { skip?: ReadonlySet<number>; final?: boolean } = {},
-): { state: StitchState; added: Segment[]; dropped: Dropped[] } {
+): { state: StitchState; dropped: Dropped[] } {
   const segments = [...state.segments]
   const pending = { ...state.pending }
-  const added: Segment[] = []
   const dropped: Dropped[] = []
   let next = state.next
   const take = (n: number) => {
@@ -292,9 +289,7 @@ export function stitch(
     const judged = dropHallucinations(lines, segments)
     dropped.push(...judged.dropped)
     for (const { speaker, start, end, text, chunk } of judged.kept) {
-      const s: Segment = { i: segments.length, speaker, start, end, text, chunk }
-      segments.push(s)
-      added.push(s)
+      segments.push({ i: segments.length, speaker, start, end, text, chunk })
     }
     delete pending[n]
   }
@@ -313,5 +308,5 @@ export function stitch(
       break
     }
   }
-  return { state: { segments, next, pending }, added, dropped }
+  return { state: { segments, next, pending }, dropped }
 }

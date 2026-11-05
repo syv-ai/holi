@@ -8,19 +8,11 @@
  * path; both commit around it (the renderer for rename, one batched commit for
  * the sweep).
  */
-import { readFile } from 'node:fs/promises'
 import { isLocalOnlyPath, rewriteWikiLinks, vaultRelPath } from '@holi/shared'
 import { scanBackrefs } from './backrefs'
-import { oneMoveAtATime } from './move'
+import { oneMoveAtATime, relinkNote } from './move'
 import { moveNoteComments } from './note-comments'
-import {
-  absPathFor,
-  lockPath,
-  moveDocFile,
-  withFileLock,
-  withFileLocks,
-  writeAtomic,
-} from './vault-files'
+import { moveDocFile, withFileLocks } from './vault-files'
 
 /** Move `from`→`to`, rewriting every inbound `[[link]]` in one pass. The rewrite
  *  runs before the move, so a mid-run failure leaves the source in place and
@@ -49,16 +41,8 @@ async function renameNow(
   const referrers = (await scanBackrefs(root, from)).filter(
     (ref) => !localLinksOnly || isLocalOnlyPath(ref.path),
   )
-  // Each under its own lock, read again there, and with no other lock held:
-  // a save made meanwhile is kept, and a note gone meanwhile is skipped.
   for (const ref of referrers) {
-    const rel = vaultRelPath(ref.path)
-    await withFileLock(await lockPath(root, rel), async () => {
-      const text = await readFile(absPathFor(root, rel), 'utf8').catch(() => null)
-      if (text === null) return
-      const { text: rewritten } = rewriteWikiLinks(text, from, to)
-      if (rewritten !== text) await writeAtomic(root, rel, rewritten)
-    })
+    await relinkNote(root, ref.path, (text) => rewriteWikiLinks(text, from, to))
   }
   // Under both names' locks, as every main-side writer takes a file: one
   // that checked the old name does not write it again beside the new.

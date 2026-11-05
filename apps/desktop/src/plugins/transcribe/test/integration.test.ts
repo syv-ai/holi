@@ -198,7 +198,7 @@ it('a recorded chunk becomes Me and Them lines in a group the scribe writes, and
     }),
   )
   expect(JSON.parse(written.text)).toMatchObject({ startIndex: 0, lines: [0, 1], open: true })
-  expect((await r.holi(['context'])).text).toContain('0\tExport to CSV\t(open)')
+  expect((await r.holi(['context'])).text).toMatch(/\[0\] Export to CSV \(.+–now, open\)/)
 
   let m = await r.client.get(REMOTE, { meetingId })
   expect(m.minutes).toContain('## Drøftelse\n\n### Nu: Export to CSV (fra 0:00)\n')

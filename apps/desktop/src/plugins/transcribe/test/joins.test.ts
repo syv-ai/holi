@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { CapabilityError } from '../../../main/capabilities/error'
-import { joinedSets, tidyJoins } from '../shared/joins'
+import { asOne, joinedSets, tidyJoins } from '../shared/joins'
 import type { MeetingState, Segment, Topic } from '../shared/meeting'
 import { renderMinutes } from '../main/minutes'
 import { joinTopic, mergeTopic, separateTopic, splitTopic } from '../main/topics'
@@ -125,5 +125,24 @@ describe('the minutes of a joined topic', () => {
     )
     expect(minutes).not.toContain('### Licences')
     expect(minutes).toContain('- Decided on licences (Budget)')
+  })
+
+  it('say a bullet two of its groups share once, as the topic and Send read it', () => {
+    const topics = joinTopic(five(), 't6', 't0').map((t) =>
+      t.id === 't6' ? { ...t, summary: [...t.summary, 'About budget'] } : t,
+    )
+    const minutes = renderMinutes(
+      {
+        title: 'Planning',
+        startedAt: 0,
+        phase: 'done',
+        segments: [],
+        topics,
+        cards: [],
+      } as unknown as MeetingState,
+      'en',
+    )
+    expect(minutes.match(/- About budget/g)).toHaveLength(1)
+    expect(asOne(topics, topics[0]!).summary).toEqual(['About budget', 'About licences'])
   })
 })

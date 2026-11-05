@@ -51,6 +51,14 @@ import { topicName } from './topic-index'
 
 /** How long the scribe is said to be on it, at most, if it writes nothing sooner. */
 const ASKED_MS = 60_000
+
+/** An ask of the assistant still waits on it: nothing new from it since,
+ *  and not for longer than `ASKED_MS`. */
+const waiting = (
+  asked: { at: number; minutesAt: number | undefined } | null,
+  meeting: MeetingState,
+  now: number,
+): boolean => asked !== null && meeting.minutesAt === asked.minutesAt && now - asked.at < ASKED_MS
 /** The open topic's last lines shown under it. */
 const TAIL = 3
 
@@ -253,8 +261,7 @@ function NowGroup({ meeting, topic }: { meeting: MeetingState; topic: Topic }): 
   const [asked, setAsked] = useState<{ at: number; minutesAt: number | undefined } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const readiness = useScribeReadiness(meeting)
-  const summarising =
-    asked !== null && meeting.minutesAt === asked.minutesAt && now - asked.at < ASKED_MS
+  const summarising = waiting(asked, meeting, now)
   const lines = new Set(topic.lines.slice(-TAIL))
   const tail = meeting.segments.filter((s) => lines.has(s.i))
 
@@ -349,8 +356,7 @@ export function GroupSections({
   const [allAsked, setAllAsked] = useAtom(minutesAskedAtom)
   const [askError, setAskError] = useState<string | null>(null)
   const asked = allAsked[meeting.id] ?? null
-  const updating =
-    asked !== null && meeting.minutesAt === asked.minutesAt && now - asked.at < ASKED_MS
+  const updating = waiting(asked, meeting, now)
   const { topics } = meeting
   const open = live ? topics.find((t) => t.open) : undefined
   const closed = topics.filter((t) => t !== open)

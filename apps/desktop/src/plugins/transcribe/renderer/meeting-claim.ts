@@ -12,11 +12,11 @@
  */
 import { AudioLines } from 'lucide-react'
 import type { PathClaim } from '@/plugin-api'
-import { MEETING_SUFFIX } from '../shared/meeting'
+import { MEETING_SUFFIX, TRANSCRIPT_FILE } from '../shared/meeting'
 import { meetingCap } from './meeting-cap'
 import { MEETINGS_SURFACE } from './state'
 
-const ENTRY = 'transcript.local.md'
+const ENTRY = TRANSCRIPT_FILE
 
 /** What the tree and the tab call a meeting folder: its name, no suffix. */
 export function meetingName(path: string): string {

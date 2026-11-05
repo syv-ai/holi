@@ -16,18 +16,13 @@
  * counts only the chunks handed back, while `start` stays true to the clock.
  */
 
+import { FRAME_SECONDS, MARGIN_DB, MAX_THRESHOLD_DB, MIN_THRESHOLD_DB } from '../../shared/speech'
 import { rms, toDb } from './rms'
 
-const FRAME_SECONDS = 0.02
 /** A pause is this many quiet frames in a row (300 ms). */
 const PAUSE_FRAMES = 15
 /** The noise floor is the quietest frame over this many (2 s). */
 const FLOOR_FRAMES = 100
-/** Speech is this far above the floor. */
-const MARGIN_DB = 10
-/** However quiet the room, a frame below this is not speech; however loud, one above this is. */
-const MIN_THRESHOLD_DB = -55
-const MAX_THRESHOLD_DB = -30
 /** A chunk with less speech than this (100 ms) is silence. */
 const MIN_SPEECH_FRAMES = 5
 /** A forced cut looks back this many frames (2 s) for the quietest place. */

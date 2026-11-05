@@ -160,7 +160,7 @@ On Claude Code it is one background session per meeting, launched at Start with 
 system prompt (`shared/scribe-prompt.ts`), one allow rule, `Bash(holi meeting:*)`, and deny rules
 (`--disallowedTools`) that beat any allow, the vault's own included. It needs no file or web tools:
 the transcript comes by message, and `holi meeting context` says where the meeting stands (its
-groups, the person's tasks and the last line sent). So it has no `Read`, `Edit`,
+groups, the person's tasks and the transcript's last line). So it has no `Read`, `Edit`,
 `Write`, `Glob`, `Grep`, `NotebookEdit`, `WebFetch`, `WebSearch`, subagents (`Agent`, `Task`) or
 `Monitor`, and `Read(//**)` and `Edit(//**)` deny every path, which Claude Code also applies to the
 file commands it recognises in Bash and to redirections: `cat .env.local`, `grep -r` and `< file`
@@ -195,11 +195,11 @@ refused. Identity is still cooperative, like all `holi` session verbs: a process
 in the vault can set that variable, as it can already message any session with `holi agent message`.
 
 **Groups.** A `Topic` is `{id, title, summary, keywords, lines, start, end, open, decisions,
-questions, suggestions, editedAt?, edited?, stale?}` (`shared/meeting.ts`): `summary` 2–4 bullets,
+questions, suggestions, people?, editedAt?, edited?, stale?, joinedTo?}` (`shared/meeting.ts`): `summary` 2–4 bullets,
 `keywords` 2–5, and a `Suggestion` `{id, kind, title, why, segments}`. The groups are contiguous and
 in order; the last is **open** while the meeting records, and new lines join it (the meeting's
 first line starts it). The scribe names a group by the `[i]` of its first line and sends
-`{startIndex, title, keywords, summary?, decisions?, questions?, suggestions?}`; `main/topics.ts`
+`{startIndex, title, keywords, summary?, decisions?, questions?, suggestions?, people?}`; `main/topics.ts`
 checks it. A `startIndex` that starts a group writes that group; one inside the open group cuts it
 there, the earlier part closing and the rest becoming the new open group; one inside a closed group
 is refused, since a closed group's start does not move. A field left out keeps its value and a list
@@ -490,7 +490,7 @@ sends it as a change to the groups (above).
 - **No Claes, measured.** syv.ai's Claes decision model was measured as a fast detector of feature
   requests (window AUC 0.63–0.72) and, for groups, on three jobs: related lines for a prompt,
   topic-change detection, and re-sorting lines into groups. It tied or lost to free baselines on
-  each ([not-built](../not-built.md) has the numbers), so related lines are BM25, the scribe draws
+  each (Quality has the numbers), so related lines are BM25, the scribe draws
   the boundaries, and groups stay contiguous.
 - **Quotes are never the model's text.** Suggestions and tasks cite segment numbers; main supplies
   the words, a person's correction included.
@@ -508,3 +508,21 @@ one; the cards scribe before it scored 0.82 / 0.82 and 0.89 / 0.57. Held-out rec
 one's. Every cited segment was valid. Turns take 14–16 s at the median on `sonnet`, and at a batch
 per three minutes of transcript the scribe takes about 24 turns a meeting-hour, where one batch every
 45 s took about 83. The meetings themselves are private and not in the repository.
+
+syv.ai's Claes classifier, measured on the same five meetings, ties or loses to a free baseline on
+every job tried, so none uses it:
+
+- **Waking the scribe early** on a feature request: window AUC 0.63–0.72, too close to chance to
+  drive placeholders or hints.
+- **Related lines for a person's prompt** (34 queries, ~20 s windows): held-out AUC 0.82 and
+  recall@5 0.61, against BM25's 0.84 and 0.65 (a hybrid, Claes re-ranking BM25's top 10: 0.82 and
+  0.62). Send uses BM25.
+- **Live topic-change detection** (~10 s chunks): AUC 0.50–0.52 on the pilot, held-out F1 at most
+  0.40 with an oracle threshold, the same as a random scorer (0.42). The scribe draws boundaries in
+  its three-minute batches instead (a second annotator agreed with the reference at F1 0.72–0.80).
+- **Re-sorting lines into groups** (8 options): accuracy 0.26 held out, below tf-idf against the
+  groups' text (0.43) and far from the 0.7 bar. Groups stay contiguous.
+
+A Claes fine-tuned on labelled meeting windows, or one whose scores separate above 0.6, could
+change the first verdict; the reference groups and queries were one agent's, so the ceiling is
+modest and the held-out sets small (11 queries, 13 boundaries, 100 lines).

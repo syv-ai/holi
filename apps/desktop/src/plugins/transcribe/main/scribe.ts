@@ -39,7 +39,13 @@
  */
 import type { AgentProviderId } from '@holi/shared'
 import { CapabilityError } from '../../../main/plugin-api'
-import type { MeetingProfile, MeetingState, ScribeState, TopicField } from '../shared/meeting'
+import {
+  lineAt,
+  type MeetingProfile,
+  type MeetingState,
+  type ScribeState,
+  type TopicField,
+} from '../shared/meeting'
 import {
   type BatchNotes,
   type GroupLine,
@@ -158,7 +164,7 @@ export interface ScribeNotes {
 /** The groups as a batch lists them. For the final pass the open one is
  *  shown closed: it closes with the meeting (the engine closes it once the
  *  pass is over, so the pass may still cut it). */
-function groupLines(meeting: MeetingState, final: boolean): GroupLine[] {
+export function groupLines(meeting: MeetingState, final = false): GroupLine[] {
   return meeting.topics.map((t) => {
     const open = t.open && !final
     return {
@@ -190,7 +196,7 @@ function transcriptDue(meeting: MeetingState): boolean {
   const fresh = meeting.segments.filter((s) => s.i > meeting.scribeCursor)
   const last = fresh.at(-1)
   if (last === undefined) return false
-  const from = meeting.segments.find((s) => s.i === meeting.scribeCursor)?.end ?? fresh[0]!.start
+  const from = lineAt(meeting.segments, meeting.scribeCursor)?.end ?? fresh[0]!.start
   return last.end - from >= BATCH_TRANSCRIPT_S
 }
 
@@ -358,13 +364,11 @@ export function createScribe(deps: {
     deps.host.changed(m.id)
   }
 
-  /** Deliver `text`, trying again while the session is not ready yet and,
-   *  given `wanted`, while that still holds. `'unavailable'` when the
-   *  session never became ready. */
+  /** Deliver `text`, trying again while the session is not ready yet.
+   *  `'unavailable'` when the session never became ready. */
   async function deliver(
     session: string,
     text: string,
-    wanted: () => boolean = () => true,
     retries: readonly number[] = MESSAGE_RETRY_MS,
   ): Promise<true | false | 'unavailable'> {
     for (let attempt = 0; ; attempt++) {
@@ -374,13 +378,12 @@ export function createScribe(deps: {
       } catch (err) {
         const wait = retries[attempt]
         const unavailable = errorCode(err) === 'UNAVAILABLE'
-        if (!unavailable || wait === undefined || disposed || !wanted()) {
+        if (!unavailable || wait === undefined || disposed) {
           deps.log('warn', `meeting: could not message session ${session}: ${String(err)}`)
           return unavailable ? 'unavailable' : false
         }
         await sleep(wait)
-        // The session may have stopped, or the meeting ended, meanwhile.
-        if (disposed || !wanted()) return false
+        if (disposed) return false
       }
     }
   }
@@ -430,7 +433,6 @@ export function createScribe(deps: {
       const sent = await deliver(
         session,
         text,
-        undefined,
         meeting.scribeUnreachable === true ? [] : MESSAGE_RETRY_MS,
       )
       if (sent === true) {

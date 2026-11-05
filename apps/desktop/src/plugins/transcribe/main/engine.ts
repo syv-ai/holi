@@ -23,7 +23,7 @@
  *   at load and finished again, without a scribe (`rescue`).
  * - **The transcript** is stitched in chunk order (`stitcher.ts`), and
  *   written to the meeting's folder in the vault with the minutes:
- *   `Meetings/<date> <title>.meeting/transcript.local.md` and `minutes.local.md`
+ *   `Meetings/<date> <title>.meeting/${TRANSCRIPT_FILE}` and `minutes.local.md`
  *   (`minutes.md` when the profile shares them). Machine-local by default:
  *   a client meeting is not the vault's to push.
  * - **The groups** (`topics.ts`) are the meeting's backbone: the scribe
@@ -76,7 +76,13 @@ import { keyRefused, transcribe, type Fetch } from './asr'
 import { buildBrief, cardSpec } from './build'
 import { applyPatch, requote, taskCard, type CardPatch, type TaskRequest } from './cards'
 import { renderMinutes } from './minutes'
-import { MEETING_SUFFIX, speakerName } from '../shared/meeting'
+import {
+  lineAt,
+  MEETING_SUFFIX,
+  MINUTES_FILES,
+  speakerName,
+  TRANSCRIPT_FILE,
+} from '../shared/meeting'
 import { DEFAULT_ASR_MODEL, DEFAULT_PROFILE, type Profiles } from './profiles'
 import { relatedWindows, type Related } from './related'
 import { isSyv, SYV_SERVICE } from './speech-service'
@@ -308,7 +314,12 @@ export interface Meetings {
   follow(): Promise<void>
   patchCard(meetingId: string, cardId: string, patch: CardPatch): Promise<Card>
   /** Send a card to an agent: a Claude session, or a Holi. */
-  build(meetingId: string, cardId: string, opts?: SendOptions): Promise<{ sessionId: string }>
+  /** The run's session, and the card as it is now: sent, with its task. */
+  build(
+    meetingId: string,
+    cardId: string,
+    opts?: SendOptions,
+  ): Promise<{ sessionId: string; card: Card }>
   /** A person's word to the scribe: a note, or a change to the groups. */
   tell(meetingId: string, text: string, kind?: TellKind): Promise<void>
   /** The person pressed Summarise now: the scribe's next batch goes as soon
@@ -394,7 +405,7 @@ const summaryOf = (m: MeetingState): MeetingSummary => ({
 
 /** The minutes file for a profile: shared minutes sync, the default stays here. */
 const minutesFile = (folder: string, profile: MeetingProfile): string =>
-  `${folder}/${profile.shareMinutes ? 'minutes.md' : 'minutes.local.md'}`
+  `${folder}/${profile.shareMinutes ? MINUTES_FILES.shared : MINUTES_FILES.local}`
 
 /** A group as this version keeps it, from one saved before groups had
  *  every field (its summary one sentence, no decisions or suggestions). */
@@ -527,7 +538,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
 
   /** Whose the transcript in `folder` is, by the id it starts with. */
   async function markAt(folder: string): Promise<Mark> {
-    const head = await deps.readHead(`${folder}/transcript.local.md`).catch(() => null)
+    const head = await deps.readHead(`${folder}/${TRANSCRIPT_FILE}`).catch(() => null)
     if (head === null) return { kind: 'absent' }
     const id = MARK.exec(head)?.[1]
     if (id !== undefined) return { kind: 'meeting', id }
@@ -694,7 +705,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     // that empties it.
     if ((await markAt(from)).kind === 'absent' && (await deps.folderExists(from))) {
       await deps
-        .removeFiles([`${from}/minutes.local.md`, `${from}/minutes.md`], from)
+        .removeFiles([`${from}/${MINUTES_FILES.local}`, `${from}/${MINUTES_FILES.shared}`], from)
         .catch(() => {})
     }
   }
@@ -873,7 +884,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       return
     }
     const files: Array<[string, string]> = [
-      [`${meeting.folder}/transcript.local.md`, transcriptMarkdown(meeting)],
+      [`${meeting.folder}/${TRANSCRIPT_FILE}`, transcriptMarkdown(meeting)],
     ]
     if (meeting.minutes.trim() !== '') {
       files.push([minutesFile(meeting.folder, profile), `${meeting.minutes.trimEnd()}\n`])
@@ -883,18 +894,18 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       try {
         // The transcript first, and the rest only beside one that is this
         // meeting's (after it is written, no longer the adoption's).
-        const guard = rel.endsWith('/transcript.local.md') ? own : () => mayWrite(l)
+        const guard = rel.endsWith(`/${TRANSCRIPT_FILE}`) ? own : () => mayWrite(l)
         if ((await deps.writeFile(rel, text, guard)) === false) {
           followSoon()
           return
         }
         l.written.set(rel, text)
-        if (rel.endsWith('/transcript.local.md') && l.stored.marked !== true) {
+        if (rel.endsWith(`/${TRANSCRIPT_FILE}`) && l.stored.marked !== true) {
           l.stored.marked = true
           l.fresh = false
           persistSoon(l)
         }
-        if (rel.endsWith('/transcript.local.md')) await noteClone(l.stored.meeting.id)
+        if (rel.endsWith(`/${TRANSCRIPT_FILE}`)) await noteClone(l.stored.meeting.id)
       } catch (err) {
         deps.log('error', `meeting: could not write ${rel}: ${String(err)}`)
       }
@@ -1411,7 +1422,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     meetingId: string,
     cardId: string,
     opts: SendOptions,
-  ): Promise<{ sessionId: string }> {
+  ): Promise<{ sessionId: string; card: Card }> {
     const l = await open(meetingId)
     const { meeting, profile } = l.stored
     const at = cardOf(l, cardId)
@@ -1446,7 +1457,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     }
     meeting.cards[at] = building
     changed(meetingId)
-    return { sessionId }
+    return { sessionId, card: building }
   }
 
   const api: Meetings = {
@@ -1478,7 +1489,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       const name = meetingTitle(title)
       const path = await freeFolder(parent, name === '' ? defaultTitle(now()) : name, now())
       await deps.writeFile(
-        `${path}/transcript.local.md`,
+        `${path}/${TRANSCRIPT_FILE}`,
         `${PLACEHOLDER_HEAD}# ${name === '' ? 'Meeting' : name}\n\n${NOT_RECORDED}\n`,
       )
       return { path }
@@ -1534,11 +1545,11 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     async chunk({ meetingId, n, start, duration, audio }) {
       const l = await open(meetingId)
       const { meeting } = l.stored
+      // An earlier try got here, though its answer did not get back: it is
+      // in, and stays as it came.
+      if (meeting.chunks.some((c) => c.n === n)) return
       if (meeting.phase !== 'recording') {
         throw new CapabilityError('CONFLICT', 'this meeting is not recording')
-      }
-      if (meeting.chunks.some((c) => c.n === n)) {
-        throw new CapabilityError('CONFLICT', `chunk ${n} is already in`)
       }
       if (audio.byteLength > MAX_CHUNK_BYTES) {
         throw new CapabilityError('BAD_REQUEST', 'the chunk is too large')
@@ -1628,9 +1639,9 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       }
       await forget(meetingId)
       const files = new Set([
-        `${m.folder}/transcript.local.md`,
-        `${m.folder}/minutes.local.md`,
-        `${m.folder}/minutes.md`,
+        `${m.folder}/${TRANSCRIPT_FILE}`,
+        `${m.folder}/${MINUTES_FILES.local}`,
+        `${m.folder}/${MINUTES_FILES.shared}`,
       ])
       try {
         await deps.removeFiles([...files], m.folder)
@@ -1666,11 +1677,10 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     async editSegment(meetingId, i, text) {
       const l = await open(meetingId)
       const { meeting } = l.stored
-      const at = meeting.segments[i]?.i === i ? i : meeting.segments.findIndex((s) => s.i === i)
-      const seg = meeting.segments[at]
+      const seg = lineAt(meeting.segments, i)
       if (seg === undefined) throw new CapabilityError('NOT_FOUND', `no line ${i} in this meeting`)
       if (seg.text === text) return seg
-      const edited = correct(l, at, text)
+      const edited = correct(l, i, text)
       changed(meetingId)
       await writeFiles(l)
       return edited

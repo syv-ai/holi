@@ -48,7 +48,10 @@ async function rig() {
       meetings: engine.meetings,
       profiles,
       speechKey: {} as never,
-      services: { get: async () => ({ url: null, model: null }), set: async (s) => s },
+      services: {
+        read: async () => ({ url: null, model: null }),
+        update: async (change) => change({ url: null, model: null }),
+      },
       serviceChanged: () => {},
       remote: 'syv/vault',
     }),
@@ -397,8 +400,8 @@ describe('the context', () => {
       tasks: [{ id: 'c1', kind: 'feature', title: 'Spec the export', status: 'accepted' }],
     })
     expect(text).toContain('last segment: 5')
-    expect(text).toContain('  0\t(untitled)\t(not written: write it in full)')
-    expect(text).toContain('  3\tBudget\t(open)\t(the person’s: keywords)')
+    expect(text).toMatch(/\[0\] \(untitled\) \(.+\) — not written yet: write it in full/)
+    expect(text).toMatch(/\[3\] Budget \(.+–now, open\) — the person’s: keywords/)
     expect(text).toContain('  c1\tfeature\tSpec the export')
   })
 })
@@ -591,7 +594,11 @@ describe('sending a task', () => {
       })
     ).value as Card
     const { value } = await r.ui('meeting.build', { meetingId: r.meetingId, cardId: card.id })
-    expect(value).toEqual({ sessionId: 'b0b0b0b0' })
+    expect(value).toMatchObject({
+      sessionId: 'b0b0b0b0',
+      card: { id: card.id, status: 'building', buildSessionId: 'b0b0b0b0' },
+    })
+    expect((value as { card: Card }).card.taskPath).toMatch(/\/task\..+\.local\.md$/)
     const args = r.agent.launch.mock.calls.at(-1)![0]
     expect(args.name).toBe('Build · Build the CSV export')
     expect(args.allow).toBeUndefined()
@@ -658,18 +665,17 @@ describe('the UI’s params', () => {
     })
   })
 
-  it('a chunk number already in is refused rather than overwritten', async () => {
+  it('a chunk number already in is taken as delivered, and not overwritten', async () => {
     const r = await rig()
-    const again = refusal(
-      r.ui('meeting.chunk', {
-        meetingId: r.meetingId,
-        n: 0,
-        start: 0,
-        duration: 8,
-        audio: Buffer.from(chunkWav(1)).toString('base64'),
-      }),
-    )
-    expect(await again).toMatchObject({ code: 'CONFLICT' })
+    const before = (await r.meetings.get(r.meetingId)).chunks.find((c) => c.n === 0)
+    await r.ui('meeting.chunk', {
+      meetingId: r.meetingId,
+      n: 0,
+      start: 0,
+      duration: 8,
+      audio: Buffer.from(chunkWav(1)).toString('base64'),
+    })
+    expect((await r.meetings.get(r.meetingId)).chunks.find((c) => c.n === 0)).toEqual(before)
   })
 })
 

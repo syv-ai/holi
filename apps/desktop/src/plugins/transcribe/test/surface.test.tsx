@@ -77,7 +77,16 @@ beforeEach(() => {
         return { ...card, ...params.patch }
       }
       case 'meeting.build':
-        return { sessionId: 'job-9' }
+        return {
+          sessionId: 'job-9',
+          card: {
+            ...meeting.cards.find((c) => c.id === params.cardId)!,
+            status: 'building',
+            buildSessionId: 'job-9',
+            taskPath: 'Meetings/x.meeting/task.sent.local.md',
+            updatedAt: Date.now(),
+          },
+        }
       case 'meeting.segment.edit': {
         const seg = meeting.segments.find((s) => s.i === params.i)!
         return { ...seg, text: params.text, edited: true }
@@ -417,7 +426,7 @@ test('a sent task shows its run, and its session opens from its row', async () =
 }, 15_000)
 
 test('a caption line is corrected in place: Enter saves, Escape puts it back', async () => {
-  show()
+  const store = show()
   await userEvent.click(screen.getByRole('button', { name: 'Show transcript' }))
   const captions = screen.getByRole('list', { name: 'Transcript' })
   await userEvent.click(within(captions).getByRole('button', { name: 'Line 4 of the call' }))
@@ -437,7 +446,18 @@ test('a caption line is corrected in place: Enter saves, Escape puts it back', a
   const words = within(captions).getByRole('button', { name: 'Export, as said' })
   // `edited` follows the words, not the row's far edge.
   expect(words.nextElementSibling).toHaveTextContent('edited')
-  // The task quoting the line quotes the correction.
+  // Main's next state has the task quoting the correction (its own rule).
+  act(() =>
+    store.set(meetingStatesAtom, (all) => ({
+      m1: {
+        ...all['m1']!,
+        cards: all['m1']!.cards.map((c) => ({
+          ...c,
+          quotes: c.quotes.map((q) => (q.i === 3 ? { ...q, text: 'Export, as said' } : q)),
+        })),
+      },
+    })),
+  )
   const card = await expand('Export to CSV')
   expect(within(card).getByRole('button', { name: /“Export, as said”/ })).toBeInTheDocument()
 }, 15_000)

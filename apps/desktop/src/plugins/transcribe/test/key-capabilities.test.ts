@@ -55,13 +55,14 @@ async function rig(vaultEnv: Record<string, string> = {}) {
   const fetch = vi.fn(service)
   let chosen: SpeechService = SYV_SERVICE
   const services = {
-    get: async () => chosen,
-    set: async (s: SpeechService) => (chosen = s),
+    read: async () => chosen,
+    update: async (change: (s: SpeechService) => SpeechService | Promise<SpeechService>) =>
+      (chosen = await change(chosen)),
   }
   const speechKey = createSpeechKey({
     store: createSpeechKeyStore(join(userData, 'speech-key.enc'), storage),
     vaultEnv: async () => vaultEnv,
-    service: services.get,
+    service: services.read,
     fetch,
     changed: () => meetings?.wake(),
   })

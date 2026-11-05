@@ -123,8 +123,6 @@ export async function startCapture(options: CaptureOptions): Promise<Capture> {
     let framesSinceLevel = 0
     const chunker = new Chunker({
       sampleRate: RATE,
-      minChunk: options.minChunk,
-      maxChunk: options.maxChunk,
       onFrame: (level) => {
         loudest = Math.max(loudest, level)
         if (++framesSinceLevel < LEVEL_FRAMES) return

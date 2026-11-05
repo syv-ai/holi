@@ -146,25 +146,15 @@ export const putCardAtom = atom(null, (_get, set, meetingId: string, card: Card)
   }),
 )
 
-/** A line main answered with, put in its meeting at once. */
+/** A line main answered with, put in its meeting at once. The quotes that
+ *  follow it come with main's next state of the meeting. */
 export const putSegmentAtom = atom(null, (_get, set, meetingId: string, segment: Segment) =>
   set(meetingStatesAtom, (all) => {
     const m = all[meetingId]
     if (m === undefined) return all
     return {
       ...all,
-      [meetingId]: {
-        ...m,
-        segments: m.segments.map((s) => (s.i === segment.i ? segment : s)),
-        cards: m.cards.map((c) =>
-          c.quotes.some((q) => q.i === segment.i)
-            ? {
-                ...c,
-                quotes: c.quotes.map((q) => (q.i === segment.i ? { ...q, text: segment.text } : q)),
-              }
-            : c,
-        ),
-      },
+      [meetingId]: { ...m, segments: m.segments.map((s) => (s.i === segment.i ? segment : s)) },
     }
   }),
 )

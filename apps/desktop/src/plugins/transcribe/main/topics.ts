@@ -24,7 +24,14 @@
  */
 import { CapabilityError } from '../../../main/plugin-api'
 import { tidyJoins } from '../shared/joins'
-import type { CardKind, Segment, Suggestion, Topic, TopicField } from '../shared/meeting'
+import {
+  lineAt,
+  type CardKind,
+  type Segment,
+  type Suggestion,
+  type Topic,
+  type TopicField,
+} from '../shared/meeting'
 
 /** The most groups a meeting keeps: about one every two minutes of a long one. */
 const MAX_TOPICS = 60
@@ -307,7 +314,7 @@ export function applyGroup(
   opts: { cursor: number; sent: ReadonlySet<string> },
 ): GroupResult {
   const i = input.startIndex
-  if (i > opts.cursor || !segments.some((s) => s.i === i)) {
+  if (i > opts.cursor || lineAt(segments, i) === undefined) {
     bad(
       `line ${i} is not one you were sent; the last is ${opts.cursor}`,
       '`holi meeting context` prints the groups and the last line',

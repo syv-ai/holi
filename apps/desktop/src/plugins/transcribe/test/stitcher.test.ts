@@ -165,10 +165,10 @@ describe('order', () => {
   ]
 
   it('holds a chunk until every earlier one is in, then numbers in order', () => {
-    let { state, added } = stitch({ ...empty, pending: { 1: two(1) } })
-    expect(added).toEqual([])
-    ;({ state, added } = stitch({ ...state, pending: { ...state.pending, 0: two(0) } }))
-    expect(added.map((s) => [s.i, s.text])).toEqual([
+    let { state } = stitch({ ...empty, pending: { 1: two(1) } })
+    expect(state.segments).toEqual([])
+    ;({ state } = stitch({ ...state, pending: { ...state.pending, 0: two(0) } }))
+    expect(state.segments.map((s) => [s.i, s.text])).toEqual([
       [0, 'a0'],
       [1, 'b0'],
       [2, 'a1'],

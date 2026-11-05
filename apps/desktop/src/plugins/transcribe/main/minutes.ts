@@ -18,7 +18,7 @@
  * Pure: no `electron`, no I/O.
  */
 import { localDate } from '@holi/shared'
-import { joinedSets } from '../shared/joins'
+import { joinedSets, merged } from '../shared/joins'
 import type { Card, MeetingProfile, MeetingState, Topic } from '../shared/meeting'
 import { clock } from '../shared/scribe-prompt'
 
@@ -126,9 +126,8 @@ function topicSection(set: readonly Topic[], w: Words): string {
   }
   const times = set.map((x) => `${clock(x.start)}–${clock(x.end)}`).join(', ')
   const lines = [`### ${titleOf(t, w)} (${times})`]
-  const summary = set.flatMap((x) => x.summary)
+  const { summary, keywords } = merged(set)
   lines.push('', ...(summary.length > 0 ? summary.map((b) => `- ${b}`) : [`_${w.notSummarised}_`]))
-  const keywords = [...new Set(set.flatMap((x) => x.keywords))]
   if (keywords.length > 0) lines.push('', `${w.keywords}: ${keywords.join(', ')}`)
   return lines.join('\n')
 }
@@ -140,7 +139,7 @@ function gathered(
   w: Words,
 ): string[] {
   return sets.flatMap((set) =>
-    set.flatMap((t) => pick(t).map((item) => `- ${item} (${titleOf(set[0]!, w)})`)),
+    pick(merged(set)).map((item) => `- ${item} (${titleOf(set[0]!, w)})`),
   )
 }
 

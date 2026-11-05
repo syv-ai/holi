@@ -31,6 +31,7 @@ import {
   stringParam,
   vaultNotOpen,
   type CapabilityContext,
+  type JsonFileStore,
 } from '../../../main/plugin-api'
 import type {
   Card,
@@ -40,17 +41,19 @@ import type {
   MeetingSummary,
   Segment,
   SendTarget,
+  SpeechService,
   Topic,
   TopicField,
 } from '../shared/meeting'
 import { MAX_CONTEXT, MEETING_SUFFIX } from '../shared/meeting'
+import { groupsBlock, type GroupLine } from '../shared/scribe-prompt'
 import { cardPatchParam, kindOf } from './cards'
 import { MAX_TITLE, type Meetings } from './engine'
 import { profileParam, type Profiles } from './profiles'
 import type { Related } from './related'
-import type { TellKind } from './scribe'
+import { groupLines, type TellKind } from './scribe'
 import { speechKeyParam, type SpeechKey, type SpeechKeyStatus } from './speech-key'
-import { serviceParam, type SpeechServices } from './speech-service'
+import { serviceParam } from './speech-service'
 import { topicPatchParam } from './topics'
 
 export const MEETING_NAMESPACES = ['meeting'] as const
@@ -71,7 +74,8 @@ export interface MeetingCapabilitiesDeps {
   meetings: Meetings
   profiles: Profiles
   speechKey: SpeechKey
-  services: SpeechServices
+  /** The speech service chosen on this machine. */
+  services: JsonFileStore<SpeechService>
   /** The speech service changed: wake every vault's waiting uploads. */
   serviceChanged(): void
   /** The vault this plugin runs in: every verb acts there alone. */
@@ -184,14 +188,8 @@ export interface ScribeContext {
   >
   /** The tasks people made. */
   tasks: Array<Pick<Card, 'id' | 'kind' | 'title' | 'status'>>
-  /** The groups, in order. */
-  groups: Array<{
-    startIndex: number
-    title: string
-    open: boolean
-    stale: boolean
-    edited: TopicField[]
-  }>
+  /** The groups, in order, as a batch lists them. */
+  groups: GroupLine[]
   /** The index of the last transcript line, -1 before any. */
   lastSegment: number
 }
@@ -361,7 +359,7 @@ export const meetingCapabilities = (deps: MeetingCapabilitiesDeps) => {
         // twice.
         args: ['json?'],
         summary:
-          "write one of this meeting's groups: {startIndex,title,keywords,summary?,decisions?,questions?,suggestions?} as the argument or on stdin (the scribe's)",
+          "write one of this meeting's groups: {startIndex,title,keywords,summary?,decisions?,questions?,suggestions?,people?} as the argument or on stdin (the scribe's)",
         stdin: 'json',
         job: 'session',
       },
@@ -417,13 +415,7 @@ export const meetingCapabilities = (deps: MeetingCapabilitiesDeps) => {
           tasks: meeting.cards
             .filter((c) => c.origin === 'person' && c.status !== 'dismissed')
             .map(({ id, kind, title, status }) => ({ id, kind, title, status })),
-          groups: meeting.topics.map((t) => ({
-            startIndex: t.lines[0] ?? 0,
-            title: t.title,
-            open: t.open,
-            stale: t.stale === true || (!t.open && t.summary.length === 0),
-            edited: t.edited ?? [],
-          })),
+          groups: groupLines(meeting),
           lastSegment: meeting.segments.at(-1)?.i ?? -1,
         }
       },
@@ -432,11 +424,8 @@ export const meetingCapabilities = (deps: MeetingCapabilitiesDeps) => {
           `meeting: ${c.meeting.title} (${c.meeting.phase})`,
           `profile: ${c.profile.name}`,
           `last segment: ${c.lastSegment}`,
-          c.groups.length === 0 ? 'groups: none' : 'groups (startIndex, title):',
-          ...c.groups.map(
-            (g) =>
-              `  ${g.startIndex}\t${g.title === '' ? '(untitled)' : g.title}${g.open ? '\t(open)' : ''}${g.stale ? '\t(not written: write it in full)' : ''}${g.edited.length > 0 ? `\t(the person’s: ${g.edited.join(', ')})` : ''}`,
-          ),
+          // As every batch lists them.
+          groupsBlock(c.groups),
           c.tasks.length === 0 ? 'tasks the person made: none' : 'tasks the person made:',
           ...c.tasks.map((t) => `  ${t.id}\t${t.kind}\t${t.title}`),
         ].join('\n'),
@@ -460,7 +449,10 @@ export const meetingCapabilities = (deps: MeetingCapabilitiesDeps) => {
           ...(target === undefined ? {} : { target }),
         }
       },
-      run: async (ctx, { meetingId, cardId, ...opts }): Promise<{ sessionId: string }> => {
+      run: async (
+        ctx,
+        { meetingId, cardId, ...opts },
+      ): Promise<{ sessionId: string; card: Card }> => {
         here(ctx)
         return meetings.build(meetingId, cardId, opts)
       },
@@ -752,7 +744,7 @@ export const meetingCapabilities = (deps: MeetingCapabilitiesDeps) => {
         return { ...serviceParam(o), moveKey: o['moveKey'] === true }
       },
       run: async (_ctx, { url, model, moveKey }): Promise<SpeechKeyStatus> => {
-        await deps.services.set({ url, model })
+        await deps.services.update(() => ({ url, model }))
         if (moveKey) await speechKey.rebind()
         deps.serviceChanged()
         return speechKey.status()

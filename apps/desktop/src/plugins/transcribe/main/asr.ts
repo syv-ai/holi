@@ -15,6 +15,7 @@
 import type { SpeechService } from '../shared/meeting'
 import { endpointOf, isSyv, SYV_MODELS_URL } from './speech-service'
 import type { AsrSegment } from './stitcher'
+import { encodeWav } from './wav'
 
 /** A chunk is seconds of audio; an answer slower than this is a hung request. */
 const TIMEOUT_MS = 60_000
@@ -117,28 +118,7 @@ export async function transcribe(fetchImpl: Fetch, req: AsrRequest): Promise<Asr
 
 /** Half a second of silence, 16 kHz mono 16-bit: what a test sends a
  *  service with no free way to ask about a key. */
-function silence(): Uint8Array {
-  const samples = 8000
-  const out = new Uint8Array(44 + samples * 2)
-  const view = new DataView(out.buffer)
-  const ascii = (at: number, text: string) => {
-    for (let k = 0; k < text.length; k++) out[at + k] = text.charCodeAt(k)
-  }
-  ascii(0, 'RIFF')
-  view.setUint32(4, 36 + samples * 2, true)
-  ascii(8, 'WAVE')
-  ascii(12, 'fmt ')
-  view.setUint32(16, 16, true)
-  view.setUint16(20, 1, true)
-  view.setUint16(22, 1, true)
-  view.setUint32(24, 16_000, true)
-  view.setUint32(28, 32_000, true)
-  view.setUint16(32, 2, true)
-  view.setUint16(34, 16, true)
-  ascii(36, 'data')
-  view.setUint32(40, samples * 2, true)
-  return out
-}
+const silence = (): Uint8Array => encodeWav(16_000, [new Int16Array(8000)])
 
 /** Whether the service takes requests with this key: syv.ai's free model
  *  list (no credits, no audio), else half a second of silence. */

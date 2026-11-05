@@ -11,6 +11,7 @@
  */
 import { CapabilityError } from '../../../main/plugin-api'
 import {
+  lineAt,
   MAX_PROMPT,
   type Card,
   type CardKind,
@@ -56,8 +57,8 @@ export function kindOf(raw: unknown): CardKind {
 /** The quotes for `segments`, copied from the meeting's transcript. */
 function quotesFor(meeting: MeetingState, segments: readonly number[]): Quote[] {
   return segments.map((i) => {
-    const seg = meeting.segments[i]
-    if (seg === undefined || seg.i !== i) bad(`line ${i} is not in this meeting's transcript`)
+    const seg = lineAt(meeting.segments, i)
+    if (seg === undefined) bad(`line ${i} is not in this meeting's transcript`)
     return { i, speaker: seg.speaker, start: seg.start, text: seg.text }
   })
 }

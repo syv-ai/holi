@@ -67,6 +67,9 @@ const RELATED: Related[] = [
 
 let related: () => Promise<Related[]> = async () => RELATED
 
+/** The last task `meeting.task.create` made, which Send then sends. */
+let made: Card | undefined
+
 beforeEach(() => {
   run.mockReset()
   caps.clear()
@@ -130,10 +133,14 @@ beforeEach(() => {
           createdAt: 9,
           updatedAt: 9,
         }
+        made = card
         return card
       }
       case 'meeting.build':
-        return { sessionId: 'job-9' }
+        return {
+          sessionId: 'job-9',
+          card: { ...made!, status: 'building', buildSessionId: 'job-9', updatedAt: Date.now() },
+        }
       case 'holis.list':
         return [{ id: 'proposal', name: 'Proposal', status: 'approved' }]
       default:
@@ -502,6 +509,13 @@ test('a topic joins another from its menu: one topic, its lists across both part
   expect((calls('meeting.task.create')[0] as { lines: number[] }).lines).toEqual([
     0, 1, 2, 3, 4, 5, 6, 7,
   ])
+
+  // A suggestion of the head goes with its own group's lines: one stretch.
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  const ask = within(joined).getByRole('group', { name: 'Ask finance for the licence quote' })
+  await userEvent.click(within(ask).getByRole('button', { name: 'Send' }))
+  const one = await screen.findByRole('dialog', { name: 'Send: Ask finance for the licence quote' })
+  expect(one).not.toHaveTextContent('stretches')
 }, 15_000)
 
 test('Separate topics gives each group back its own row', async () => {

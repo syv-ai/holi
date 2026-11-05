@@ -169,19 +169,13 @@ function SendForm({
       })
       setMade(card)
       put(meeting.id, card)
-      const { sessionId } = await meetingCap.build(remote, {
+      const sent = await meetingCap.build(remote, {
         meetingId: meeting.id,
         cardId: card.id,
         target,
       })
-      put(meeting.id, {
-        ...card,
-        status: 'building',
-        buildSessionId: sessionId,
-        target,
-        // When it was sent, in the click: Sent until the agent lists its run.
-        updatedAt: Date.now(),
-      })
+      // Main's card, not one made here: it has the task.
+      put(meeting.id, sent.card)
       const to =
         target.kind === 'holi' ? (holis.find((h) => h.id === target.id)?.name ?? target.id) : agent
       toast(`Sent “${card.title}” to ${to}`)
@@ -294,8 +288,9 @@ export function SendPanel({
   // A joined topic goes whole: every group's lines and words.
   const topic =
     found === undefined || open?.suggestionId !== undefined ? found : asOne(meeting.topics, found)
+  // A suggestion goes with its own group's lines, one stretch.
   const stretches =
-    topic === undefined ? 0 : meeting.topics.filter((t) => (t.joinedTo ?? t.id) === topic.id).length
+    topic === found ? 1 : meeting.topics.filter((t) => (t.joinedTo ?? t.id) === topic?.id).length
   const title = suggestion?.title ?? (topic === undefined ? '' : topicName(topic))
   return (
     <Sheet modal={false} open={topic !== undefined} onOpenChange={(o) => !o && setOpen(null)}>

@@ -33,6 +33,7 @@ import {
   type AsrSegment,
   type ChunkSegment,
 } from './stitcher'
+import { ECHO_RATIO, FRAME_SECONDS } from '../shared/speech'
 import { channelWav, monoWav, rms, type Pcm } from './wav'
 
 /** The detector: Silero's speech probability for each 512-sample window
@@ -53,10 +54,6 @@ const MIN_SILENCE_SECONDS = 0.3
 const PAD_SECONDS = 0.25
 /** The silence an upload holds between two regions. */
 const GAP_SECONDS = 0.3
-/** As `stitcher.ts` judges speech and echo: 20 ms frames, and the computer
- *  this much louder than the microphone is its echo. */
-const FRAME_SECONDS = 0.02
-const ECHO_RATIO = 2
 /** A channel with no 20 ms frame this loud (-60 dBFS) is not run through the
  *  model: the recorder counts nothing under -55 dBFS as speech either. */
 const QUIET = 32768 * 10 ** (-60 / 20)

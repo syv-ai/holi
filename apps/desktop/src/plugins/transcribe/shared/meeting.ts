@@ -79,6 +79,18 @@ export interface Quote {
  *  `Meetings/2026-11-02 Planning.meeting/`. */
 export const MEETING_SUFFIX = '.meeting'
 
+/** Line `i` of a transcript. Lines are numbered by their place, and the
+ *  transcript only grows (`stitch`), so line `i` is `segments[i]`. */
+export const lineAt = (segments: readonly Segment[], i: number): Segment | undefined => segments[i]
+
+/** A meeting's transcript in its folder: kept on this machine, and the file
+ *  the tree opens the folder as. */
+export const TRANSCRIPT_FILE = 'transcript.local.md'
+
+/** A meeting's minutes in its folder: on this machine, or shared with the
+ *  vault (`MeetingProfile.shareMinutes`). */
+export const MINUTES_FILES = { local: 'minutes.local.md', shared: 'minutes.md' } as const
+
 /** How long a person's ask for a task may be. */
 export const MAX_PROMPT = 2000
 
@@ -288,9 +300,6 @@ export interface CaptureOptions {
   onChunk: (chunk: CapturedChunk) => void
   /** 0..1 loudness, about 20 times a second. */
   onLevel?: (level: number) => void
-  /** Seconds; a chunk closes at the first pause after minChunk and always by maxChunk. Defaults 6 and 12. */
-  minChunk?: number
-  maxChunk?: number
 }
 
 export interface Capture {
