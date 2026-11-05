@@ -70,6 +70,7 @@ function setup(initial: Row[] = []) {
     attach: async () => '',
     write: () => {},
     resize: () => {},
+    setAppearance: () => {},
     paste: (id, text) => {
       pastes.push([id, text])
       return true

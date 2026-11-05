@@ -79,6 +79,11 @@ export { sessionAtom } from '@/state/session'
 export { forgetAgentLabelsAtom } from '@/state/document-runs'
 export { agentProviderSettingAtom, usePluginSetting } from '@/state/settings'
 export { activeModeAtom } from '@/state/color-scheme'
+export {
+  terminalTheme,
+  watchTerminalTheme,
+  suppressTerminalColorQueries,
+} from '@/lib/terminal-theme'
 export { appModeAtom, /** @public */ type AppMode } from '@/state/app-mode'
 export {
   agentsSelectionAtom,
