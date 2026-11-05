@@ -5,6 +5,7 @@
  * is `panes[] → tabs[]` and a tab is a discriminated union.
  */
 import { describe, expect, it } from 'vitest'
+import type { Tab } from '@/lib/tab'
 import {
   activeTab,
   closePane,
@@ -21,7 +22,6 @@ import {
   splitPane,
   focusPane,
   type FolderSurface,
-  type Tab,
   type Workspace,
 } from '@/state/panes'
 

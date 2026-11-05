@@ -32,9 +32,13 @@ export type FileHistory =
 /**
  * A file's commits, newest first, following renames; read again whenever
  * the file's history moves (an autosave commit, a pull), so the header's
- * latest commit stays the latest.
+ * latest commit stays the latest. Asks nothing while `enabled` is false (a
+ * closed dialog that has its own lookup).
  */
-export function useFileHistory(path: string): {
+export function useFileHistory(
+  path: string,
+  enabled = true,
+): {
   history: FileHistory
   retry: () => void
 } {
@@ -43,6 +47,7 @@ export function useFileHistory(path: string): {
   const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
+    if (!enabled) return
     let live = true
     trpc.history.list
       .query({ path })
@@ -58,7 +63,7 @@ export function useFileHistory(path: string): {
     return () => {
       live = false
     }
-  }, [path, epoch, attempt])
+  }, [path, epoch, attempt, enabled])
 
   const retry = useCallback(() => {
     setHistory({ kind: 'loading' })
@@ -68,14 +73,15 @@ export function useFileHistory(path: string): {
 }
 
 /** Who has written the file, with GitHub faces where there are some
- *  (`github.fileContributors`; local names when GitHub cannot answer). */
-export function useFileAuthors(path: string): FileAuthor[] {
+ *  (`github.fileContributors`; local names when GitHub cannot answer), asked
+ *  only while `enabled`. */
+export function useFileAuthors(path: string, enabled = true): FileAuthor[] {
   const remote = useAtomValue(activeRemoteAtom)
   const epoch = historyEpoch(useAtomValue(historyEpochsAtom), path)
   const [authors, setAuthors] = useState<FileAuthor[]>([])
 
   useEffect(() => {
-    if (remote === null) return
+    if (remote === null || !enabled) return
     let live = true
     trpc.github.fileContributors
       .query({ remote, path })
@@ -84,7 +90,7 @@ export function useFileAuthors(path: string): FileAuthor[] {
     return () => {
       live = false
     }
-  }, [remote, path, epoch])
+  }, [remote, path, epoch, enabled])
 
   return authors
 }

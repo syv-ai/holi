@@ -43,3 +43,34 @@ export function FileHistoryButton({ path }: { path: string }) {
     </div>
   )
 }
+
+/** The same commits dialog on its own, for whatever names a path's history
+ *  without a file header: a vault app's approval opens its bundle's. */
+export function FileHistoryDialog({
+  path,
+  open,
+  onOpenChange,
+  sha,
+}: {
+  path: string
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  /** The commit to open on, as `HistoryDialog`'s `sha`. */
+  sha?: string
+}) {
+  // Asks git and GitHub only while open: the dialog stays mounted for its
+  // close animation, and a closed one wants nothing.
+  const { history, retry } = useFileHistory(path, open)
+  const authors = useFileAuthors(path, open)
+  return (
+    <HistoryDialog
+      path={path}
+      history={history}
+      authors={authors}
+      onRetry={retry}
+      open={open}
+      onOpenChange={onOpenChange}
+      {...(sha === undefined ? {} : { sha })}
+    />
+  )
+}
