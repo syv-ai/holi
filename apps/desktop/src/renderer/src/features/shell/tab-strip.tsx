@@ -385,9 +385,9 @@ export function TabStrip({
                   targetPreview && combinePreview !== null
                     ? combineOnStrip(ws, combinePreview.source, id)
                     : null
-                const combinedEntry = combined?.entries.find(
-                  (candidate) => entryId(candidate) === id,
-                )
+                const combinedEntry =
+                  combined?.entries.find((candidate) => entryId(candidate) === combined.active) ??
+                  undefined
                 const shownMembers =
                   targetPreview && isSplit(combinedEntry) ? combinedEntry.views.map(look) : members
                 const shownTab = targetPreview ? null : tab
