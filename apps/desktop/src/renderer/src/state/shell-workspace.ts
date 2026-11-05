@@ -331,7 +331,7 @@ function insertMember(ws: ShellWorkspace, key: string, index: number): ShellWork
 
 /** Whether `key` names a view (a tab key), not a split's id or junk: what a
  *  drop takes, whether it is open already or comes from the sidebar. */
-function isViewKey(key: string): boolean {
+export function isViewKey(key: string): boolean {
   return parseTabKey(key) !== null
 }
 
@@ -605,6 +605,65 @@ export function dropOnStrip(ws: ShellWorkspace, dragged: string, index: number):
     return isViewKey(dragged) ? insertEntry(ws, dragged, index) : ws
   }
   return moveOut(ws, dragged, index)
+}
+
+/** Combine the dragged view (or whole split entry) with an explicit strip
+ *  target. Unlike dropTab, this does not depend on which entry is active. */
+export function combineOnStrip(
+  ws: ShellWorkspace,
+  dragged: string,
+  targetId: string,
+): ShellWorkspace {
+  const targetIndex = indexOfEntry(ws, targetId)
+  if (targetIndex === -1) return ws
+  const sourceIndex = indexOfEntry(ws, dragged)
+  const sourceEntry = sourceIndex !== -1 ? ws.entries[sourceIndex]! : entryOf(ws, dragged)
+  const targetEntry = ws.entries[targetIndex]!
+  if (
+    (sourceEntry === null && !isViewKey(dragged)) ||
+    (sourceEntry !== null && entryId(sourceEntry) === entryId(targetEntry))
+  ) {
+    return ws
+  }
+
+  const sourceViews =
+    sourceEntry !== null && isSplit(sourceEntry) && sourceIndex !== -1
+      ? sourceEntry.views
+      : [dragged]
+  const targetViews = entryViews(targetEntry)
+  if (
+    sourceViews.some((key) => targetViews.includes(key)) ||
+    sourceViews.length + targetViews.length > MAX_SPLIT
+  ) {
+    return ws
+  }
+
+  // A split pill moves as a group; a member dragged from within a split
+  // keeps the existing member-level semantics and leaves its siblings behind.
+  let entries = ws.entries
+  if (sourceIndex !== -1) {
+    entries = entries.filter((_, index) => index !== sourceIndex)
+  } else if (sourceEntry !== null) {
+    const detached = detach(ws, dragged)
+    entries = detached.entries
+  }
+  const adjustedTarget = entries.findIndex((entry) => entryId(entry) === entryId(targetEntry))
+  if (adjustedTarget === -1) return ws
+
+  const id = isSplit(targetEntry) ? targetEntry.id : nextSplitId(ws).id
+  const seq = isSplit(targetEntry) ? ws.seq : nextSplitId(ws).seq
+  const views = [...targetViews, ...sourceViews]
+  const targetShares = isSplit(targetEntry) ? targetEntry.shares : [1]
+  const sourceShares =
+    sourceEntry !== null && isSplit(sourceEntry) && sourceIndex !== -1 ? sourceEntry.shares : [1]
+  const shares = normalise([
+    ...targetShares.map((share) => share * 0.5),
+    ...sourceShares.map((share) => share * 0.5),
+  ])
+  const focused = isSplit(targetEntry) ? targetEntry.focused : targetViews[0]!
+  const split: ShellSplit = { id, views, shares, focused }
+  entries = entries.map((entry, index) => (index === adjustedTarget ? split : entry))
+  return { ...ws, entries, active: id, seq }
 }
 
 /** Where a view dropped on the content goes: beside the view under it, or
