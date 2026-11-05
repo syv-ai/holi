@@ -216,6 +216,7 @@ export function CalendarView(): React.JSX.Element {
       const lastDay = end && end > start ? localDate(allDay ? subDays(end, 1) : end) : startDay
       setCard({
         mode: 'create',
+        identity: cardIdentity.current,
         draft: {
           title: '',
           location: '',
@@ -249,7 +250,11 @@ export function CalendarView(): React.JSX.Element {
         (event ? new DOMRect(event.clientX, event.clientY, 1, 1) : new DOMRect())
       setCardAnchor({ rect, element, fallback: newEventTrigger.current })
       setError(null)
-      setCard({ mode: 'view', draft: draftFromOccurrence(occurrence) })
+      setCard({
+        mode: 'view',
+        identity: cardIdentity.current,
+        draft: draftFromOccurrence(occurrence),
+      })
     },
     [],
   )
@@ -257,11 +262,7 @@ export function CalendarView(): React.JSX.Element {
   const startEdit = useCallback(() => {
     if (pending.current) return
     setError(null)
-    setCard((prev) => (prev ? { mode: 'edit', draft: prev.draft } : prev))
-  }, [])
-
-  const updateDraft = useCallback((draft: EventDraft) => {
-    setCard((prev) => (prev ? { ...prev, draft } : prev))
+    setCard((prev) => (prev ? { ...prev, mode: 'edit', draft: prev.draft } : prev))
   }, [])
 
   const closeCard = useCallback((open: boolean) => {
@@ -273,10 +274,9 @@ export function CalendarView(): React.JSX.Element {
     }
   }, [])
 
-  const saveDraft = async (): Promise<void> => {
+  const saveDraft = async (draft: EventDraft): Promise<void> => {
     if (!card || pending.current) return
     const identity = cardIdentity.current
-    const draft = card.draft
     const title = draft.title.trim()
     if (title === '') return setError('Give it a title.')
     const start = draft.allDay ? toDate(draft.date, '00:00') : toDate(draft.date, draft.start)
@@ -662,11 +662,10 @@ export function CalendarView(): React.JSX.Element {
           saving={saving}
           canCreateTask={canCreateTask}
           onOpenChange={closeCard}
-          onDraftChange={updateDraft}
           onEdit={startEdit}
-          onSave={() => void saveDraft()}
-          onDelete={deleteDraft}
-          onCreateTask={createTask}
+          onSave={(draft) => void saveDraft(draft)}
+          onDelete={() => void deleteDraft()}
+          onCreateTask={() => void createTask()}
           onOpenExternal={(url) => openExternal(url)}
         />
       </div>

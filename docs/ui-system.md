@@ -52,7 +52,11 @@ design system on top of the stock one.
   `destructive`, `border`, `input`, `ring`, the `sidebar-*` set, and pairs), and `@theme inline`
   exposes them as `--color-*` utilities that hold `var()` pointers, so overriding a token
   re-cascades every utility. State tokens (`success`, `info`, `warning`, `invert`) are exposed the
-  same way.
+  same way. One token departs from the published theme: `muted-foreground` is `oklch(0.54 0 0)` in
+  light (not `0.556`) and `oklch(0.8 0 0)` in dark (not `0.708`), so muted text meets WCAG AA
+  (4.5:1) at full opacity on every surface in both modes. Holi's seeded `theme.css`, which reaches
+  vault-app frames as their base (`plugins/apps/main/tokens.ts`), raises its dark value the same
+  way; its light one already passes.
 - Dark follows the `data-theme` stamp on `<html>` (`state/color-scheme.ts`); `dark:` variants key
   off it, and `color-scheme` follows so unpainted native UI does.
 - `index.css` also carries Holi's own names, in sections: `brand`, `divider`, `drawer-edge`,
@@ -233,6 +237,9 @@ motion, header and edge through the injected stylesheet and cannot resize.
 - Only floating things (dialogs, menus, popovers, tooltips, toasts) get `--popover` and a shadow,
   in React and CodeMirror alike, and no border of their own.
 - Tokens or nothing: no colour literal and no motion number at a call site.
+- Text a person reads (a header, a label, a date) is never drawn at reduced opacity
+  (`text-muted-foreground/70`): muted text is AA at full opacity, and opacity takes it below.
+  Opacity is for icons and decorative marks.
 - A question about one thing is asked where that thing is, leaving the rest of the app usable.
 
 ## Rejected

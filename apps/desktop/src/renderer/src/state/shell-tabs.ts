@@ -12,7 +12,13 @@
  */
 import { atom } from 'jotai'
 
-import { emptyWorkspace, openInSplit, openTab, type ShellWorkspace } from './shell-workspace'
+import {
+  emptyWorkspace,
+  openInSplit,
+  openTab,
+  trackRecent,
+  type ShellWorkspace,
+} from './shell-workspace'
 import { openingBeside } from './alt-open'
 import { tabKey, type TabDescriptor } from './tab-descriptor'
 import { activeRemoteAtom } from './vaults'
@@ -20,13 +26,14 @@ import { activeRemoteAtom } from './vaults'
 const workspacesAtom = atom<Record<string, ShellWorkspace>>({})
 const EMPTY = emptyWorkspace()
 
-/** The open vault's workspace. Written with a value or an update. */
+/** The open vault's workspace. Written with a value or an update; every
+ *  write records which entry is now in front (`trackRecent`). */
 export const shellWorkspaceAtom = atom(
   (get): ShellWorkspace => get(workspacesAtom)[get(activeRemoteAtom) ?? ''] ?? EMPTY,
   (get, set, update: ShellWorkspace | ((ws: ShellWorkspace) => ShellWorkspace)) => {
     const remote = get(activeRemoteAtom) ?? ''
     const current = get(workspacesAtom)[remote] ?? EMPTY
-    const next = typeof update === 'function' ? update(current) : update
+    const next = trackRecent(typeof update === 'function' ? update(current) : update)
     if (next === current) return
     set(workspacesAtom, (all) => ({ ...all, [remote]: next }))
   },

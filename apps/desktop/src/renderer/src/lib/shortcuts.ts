@@ -44,6 +44,10 @@ export interface Shortcut {
   /** Fires in a terminal even with Control held: the panel's own toggle,
    *  which has to close the panel from inside the shell it shows. */
   inTerminal?: true
+  /** Runs before the focused widget sees the key (a capture listener), so an
+   *  editor or a terminal cannot take it: the tab switcher's ⌃Tab, which has
+   *  to work with focus anywhere and hold the key while Control is down. */
+  capture?: true
   /** Fires while a dialog is open: the toggles for the dialogs themselves. */
   inDialogs?: true
   /** Fires on auto-repeat, for keys that step (next tab). */
@@ -141,12 +145,17 @@ export const SHORTCUTS: readonly Shortcut[] = [
   },
 
   // Tabs
+  // Hold Control and press Tab to step the tab switcher; letting go opens the
+  // tab selected (`features/shell/tab-switcher.tsx`). A terminal or an editor
+  // would take Tab, so these run before them.
   {
     id: 'tab.next',
     label: 'Next tab',
     group: 'Tabs',
     keys: ['⌃Tab'],
     whileTyping: true,
+    inTerminal: true,
+    capture: true,
     repeats: true,
   },
   {
@@ -155,6 +164,8 @@ export const SHORTCUTS: readonly Shortcut[] = [
     group: 'Tabs',
     keys: ['⌃⇧Tab'],
     whileTyping: true,
+    inTerminal: true,
+    capture: true,
     repeats: true,
   },
   {
@@ -395,6 +406,9 @@ export interface KeyContext {
   dialogOpen: boolean
   /** The ids that have a handler right now. */
   live: ReadonlySet<string>
+  /** The capture listener asks: only `capture` rows, which the bubbling one
+   *  never runs. */
+  capture?: boolean
 }
 
 export interface ShortcutMatch {
@@ -422,7 +436,10 @@ export function resolveShortcut(
   // A symbol key ignores a Shift its spec does not name (`?`), so ⌘\ also
   // matches ⇧⌘\: a live row whose spec names the Shift held goes first.
   const candidates = table.filter(
-    (shortcut) => shortcut.boundBy === undefined && ctx.live.has(shortcut.id),
+    (shortcut) =>
+      shortcut.boundBy === undefined &&
+      ctx.live.has(shortcut.id) &&
+      (shortcut.capture === true) === (ctx.capture === true),
   )
   const exact = (shortcut: Shortcut): boolean =>
     shortcut.keys.some(
