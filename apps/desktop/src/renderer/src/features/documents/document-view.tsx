@@ -15,7 +15,9 @@
  *
  * A note's comment threads sit in a panel beside the text, their passages
  * tinted in it (`document-comments.ts`): the format bubble's Comment, or
- * ⌘⌥M, starts one on the selection.
+ * ⌘⌥M, starts one on the selection. A task's properties sit above the text or
+ * in a panel beside it, as the person's `propertiesLayout` says; the header's
+ * toggle flips it.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -26,6 +28,7 @@ import {
   isHoliLinkable,
   isResolved,
   parseTaskFile,
+  TASKS_CLAIM,
 } from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { findNext, findPrev } from 'prosemirror-search'
@@ -54,13 +57,15 @@ import {
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { cn } from '@/lib/cn'
-import { TaskProperties } from '@/features/planning/task-properties'
+import { TaskProperties, useHasTaskProperties } from '@/features/planning/task-properties'
+import { useSettingsWrite } from '@/features/settings/use-vault-settings'
 import { trpc } from '@/lib/trpc'
 import { sawText } from '@/state/doc-changes'
 import { canStartConversationAtom, startConversationAtom } from '@/state/agents-slots'
 import { isRunLive, useAgentLabel } from '@/state/document-runs'
 import { agentProviderSettingAtom } from '@/state/settings'
 import { claimsAtom } from '@/state/plugins'
+import { activeVaultSettingsAtom, useAppSetting } from '@/state/settings'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { closeTab, entryOf, focusedTab } from '@/state/shell-workspace'
 import { tabKey, tabPath } from '@/state/tab-descriptor'
@@ -99,6 +104,17 @@ const SAVE_DELAY_MS = 600
 const DROP_LINE =
   '[&_.prosemirror-dropcursor-block]:text-primary [&_.prosemirror-dropcursor-block]:h-0.5! [&_.prosemirror-dropcursor-block]:rounded-full'
 
+/**
+ * When a task's properties may sit in a sidebar: only while the view is wide
+ * enough to keep a readable text column beside it, a wider view when the
+ * comments panel is open too. Below that the sidebar is hidden and the
+ * inline properties show instead.
+ */
+const SIDEBAR_FITS = {
+  alone: { sidebar: 'hidden @4xl/document:flex', inline: '@4xl/document:hidden' },
+  besideComments: { sidebar: 'hidden @7xl/document:flex', inline: '@7xl/document:hidden' },
+} as const
+
 type Load =
   | { kind: 'loading' }
   | { kind: 'ready'; head: string; body: string; text: string }
@@ -116,8 +132,11 @@ export function DocumentView({
   onMoved?: (from: string, to: string) => void
 }) {
   const remote = useAtomValue(activeRemoteAtom)
-  const docs = useAtomValue(snapshotAtom).docs
-  const mtime = docs.find((doc) => doc.path === path)?.updatedAt
+  const snapshot = useAtomValue(snapshotAtom)
+  const docs = snapshot.docs
+  const mtime =
+    docs.find((doc) => doc.path === path)?.updatedAt ??
+    JSON.stringify(snapshot.claimed[TASKS_CLAIM]?.items.find((item) => item.path === path) ?? null)
   const [load, setLoad] = useState<Load>({ kind: 'loading' })
   const [attempt, setAttempt] = useState(0)
 
@@ -213,6 +232,11 @@ function DocumentEditor({
   const [deleteTableOpen, setDeleteTableOpen] = useState(false)
   const [fullWidth, setFullWidth] = useState(false)
   const [smallText, setSmallText] = useState(false)
+  const tableStyle = useAppSetting('tableStyle')
+  const propertiesLayout = useAppSetting('propertiesLayout')
+  const hasProperties = useHasTaskProperties(path)
+  const settingsRead = useAtomValue(activeVaultSettingsAtom) !== null
+  const writeSetting = useSettingsWrite()
   const [promptBox] = useState(() => {
     const box = document.createElement('div')
     box.contentEditable = 'false'
@@ -223,6 +247,16 @@ function DocumentEditor({
   /** The page's scroller, whose place a tab switch keeps. */
   const scrollerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<HTMLDivElement>(null)
+  const [compactView, setCompactView] = useState(false)
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    const measure = () => setCompactView(view.getBoundingClientRect().width < 640)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(view)
+    return () => observer.disconnect()
+  }, [])
   const head = useRef(initial.head)
   /** The file as last read or written: what a change on disk is compared to. */
   const lastText = useRef(initial.text)
@@ -230,8 +264,17 @@ function DocumentEditor({
   const dirty = useRef(false)
   /** Writes are serialized so each one compares against the prior completed write. */
   const writing = useRef<Promise<void>>(Promise.resolve())
+  const reloadPending = useRef<Promise<void>>(Promise.resolve())
+  const reloadFailed = useRef(false)
   const frozen = useRef(false)
   const doneFreeze = useRef(false)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   const lockedRef = useRef(locked)
   lockedRef.current = locked
 
@@ -355,7 +398,12 @@ function DocumentEditor({
     ? {
         file: () => holiLink({ remote, path }),
         heading: () => {
-          if (!editor) return null
+          if (
+            !editor ||
+            editor.state.selection.$from.depth !== 1 ||
+            editor.state.selection.$from.parent.type.name !== 'heading'
+          )
+            return null
           const heading = headingAtCaret(editor, markdown())
           return heading === null ? null : holiLink({ remote, path, heading })
         },
@@ -372,10 +420,33 @@ function DocumentEditor({
   function save(): Promise<void> {
     window.clearTimeout(saveTimer.current)
     saveTimer.current = undefined
-    // Snapshot while the editor is alive. The queued write may run after this
-    // component unmounts (for example, closing a tab during an earlier write).
-    const text = markdown()
-    const done = writing.current.then(() => write(text, true))
+    // Capture the body while the editor is alive, but take frontmatter after
+    // pending disk reads: task properties may have changed independently.
+    const capturedDirty = dirty.current
+    const body = editor ? editor.getMarkdown() : splitDocument(lastText.current).body
+    const done = writing.current
+      .then(async () => {
+        if (reloadFailed.current) {
+          const failed = reloadPending.current
+          const text = await trpc.notes.read.query({ remote, path })
+          if (reloadPending.current === failed) {
+            head.current = splitDocument(text).head
+            reloadFailed.current = false
+            reloadPending.current = Promise.resolve()
+          }
+        }
+        let pending: Promise<void>
+        do {
+          pending = reloadPending.current
+          await pending
+        } while (pending !== reloadPending.current)
+        // A clean snapshot has no local work to restore over a newer disk body.
+        if (capturedDirty) await write(joinDocument(head.current, body), true)
+      })
+      .catch((error: unknown) => {
+        setSaveState('error')
+        throw error
+      })
     writing.current = done.catch(() => undefined)
     return done
   }
@@ -387,8 +458,11 @@ function DocumentEditor({
       (!dirty.current && !captured) ||
       !differsBeyondTidy(lastText.current, text, path, claimsRef.current)
     ) {
-      dirty.current = false
-      setSaveState('saved')
+      dirty.current =
+        mounted.current && editor !== null && !editor.isDestroyed
+          ? differsBeyondTidy(lastText.current, markdown(), path, claimsRef.current)
+          : false
+      setSaveState(dirty.current ? 'saving' : 'saved')
       return
     }
     setSaveState('saving')
@@ -396,11 +470,11 @@ function DocumentEditor({
       await trpc.notes.write.mutate({ remote, path, text })
       lastText.current = text
       dirty.current =
-        editor !== null && !editor.isDestroyed
+        mounted.current && editor !== null && !editor.isDestroyed
           ? differsBeyondTidy(text, markdown(), path, claimsRef.current)
           : dirty.current && !captured
       setSaveState(dirty.current ? 'saving' : 'saved')
-      placeRef.current()
+      if (mounted.current) placeRef.current()
     } catch (error) {
       setSaveState('error')
       throw error
@@ -444,32 +518,44 @@ function DocumentEditor({
   useEffect(() => {
     if (!editor || mtime === undefined) return
     let live = true
-    void trpc.notes.read
-      .query({ remote, path })
-      .then((text) => {
-        if (!live || editor.isDestroyed || text === lastText.current) return
-        // The commit's tidy (`normalize-md`) rewrote what was saved: nothing
-        // new, so the buffer stays, and with it a space just typed under the
-        // caret. The next save compares against the tidied file.
-        if (!differsBeyondTidy(lastText.current, text, path, claimsRef.current)) {
-          lastText.current = text
-          return
-        }
-        if (dirty.current && !locked) return
-        const next = splitDocument(text)
-        try {
-          const changed = applyReload(editor, next.body)
-          head.current = next.head
-          lastText.current = text
-          if (changed) placeRef.current()
-          setSaveState('saved')
-        } catch {
-          // Keep the last-known file snapshot unchanged so a later disk update
-          // can retry; dispatch failures must not be mistaken for a successful reload.
-          setSaveState('error')
-        }
-      })
-      .catch(() => undefined)
+    const reload: Promise<void> = trpc.notes.read.query({ remote, path }).then((text) => {
+      if (!live || editor.isDestroyed) {
+        // A queued save outlives the editor too. Its captured body still needs
+        // the latest metadata; a superseded read must never supply it.
+        if (reloadPending.current === reload) head.current = splitDocument(text).head
+        return
+      }
+      if (text === lastText.current) return
+      // The commit's tidy (`normalize-md`) rewrote what was saved: nothing
+      // new, so the buffer stays, and with it a space just typed under the
+      // caret. The next save compares against the tidied file.
+      if (!differsBeyondTidy(lastText.current, text, path, claimsRef.current)) {
+        lastText.current = text
+        return
+      }
+      const next = splitDocument(text)
+      if (dirty.current && !locked) {
+        head.current = next.head
+        lastText.current = text
+        return
+      }
+      try {
+        const changed = applyReload(editor, next.body)
+        head.current = next.head
+        lastText.current = text
+        if (changed) placeRef.current()
+        setSaveState('saved')
+      } catch {
+        // Keep the last-known file snapshot unchanged so a later disk update
+        // can retry; dispatch failures must not be mistaken for a successful reload.
+        setSaveState('error')
+      }
+    })
+    reloadPending.current = reload
+    reloadFailed.current = false
+    void reload.catch(() => {
+      if (reloadPending.current === reload) reloadFailed.current = true
+    })
     return () => {
       live = false
     }
@@ -627,11 +713,13 @@ function DocumentEditor({
     if (!res.ok) toast.error(`Couldn't start the chat. ${res.message}`)
   }
 
+  const sidebarFits = commentable && commentsOpen ? SIDEBAR_FITS.besideComments : SIDEBAR_FITS.alone
+
   return (
     <TooltipProvider delayDuration={300}>
       <div
         ref={viewRef}
-        className="text-foreground relative flex h-full min-h-0 w-full flex-col"
+        className="text-foreground @container/document relative flex h-full min-h-0 w-full flex-col"
         onKeyDown={handleViewKeyDown}
       >
         {/* Locked while a run edits the document: nothing in it answers. */}
@@ -649,13 +737,26 @@ function DocumentEditor({
                 ? { pending: donePending, error: doneError, onDone: finishTask }
                 : undefined
             }
+            compact={compactView}
             markdown={markdown}
             fullWidth={fullWidth}
             smallText={smallText}
             onFullWidthChange={setFullWidth}
             onSmallTextChange={setSmallText}
             onCreateVaultApp={canAsk && agent.appable ? () => void createVaultApp() : null}
-            holiLinks={holiLinks}
+            holiLink={holiLinks?.file ?? null}
+            headingLink={holiLinks?.heading ?? null}
+            properties={
+              hasProperties
+                ? {
+                    // Nothing to flip until the settings are read.
+                    disabled: !settingsRead,
+                    sidebar: propertiesLayout === 'sidebar',
+                    onSidebarChange: (sidebar) =>
+                      void writeSetting('propertiesLayout', sidebar ? 'sidebar' : 'inline'),
+                  }
+                : null
+            }
             comments={
               commentable
                 ? {
@@ -690,36 +791,42 @@ function DocumentEditor({
                   <Banner path={path} />
                 </div>
               ) : null}
-              {/* A task's fields, on the body's column; nothing for a note. */}
+              {/* A task's properties, on the body's column; nothing for a note.
+                  In a sidebar only when the view has room for it beside the
+                  text (and the comments, when they are open): narrower, they
+                  stay here whatever the setting says. */}
               <TaskProperties
                 path={path}
+                layout="inline"
                 beforeWrite={save}
                 onMoved={onMoved}
                 className={cn(
                   'mx-auto w-full px-4 pt-8 sm:px-16 sm:pt-12',
                   fullWidth ? 'max-w-none' : 'max-w-3xl',
+                  propertiesLayout === 'sidebar' && sidebarFits.inline,
                 )}
               />
               <div ref={pageRef} className={cn('relative min-h-full', DROP_LINE)}>
                 {editor ? (
-                  <EditorContent
-                    editor={editor}
-                    onKeyDown={(event) => {
-                      const mod = event.metaKey || event.ctrlKey
-                      if (mod && !event.altKey && event.key.toLowerCase() === 'k') {
-                        event.preventDefault()
-                        openLinkEditor()
-                      }
-                    }}
-                    className={cn(
-                      RICH_TEXT_PROSE,
-                      RICH_TEXT_TABLE_PROSE,
-                      'mx-auto w-full px-4 py-8 sm:px-16 sm:py-12',
-                      fullWidth ? 'max-w-none' : 'max-w-3xl',
-                      smallText && 'text-sm/6',
-                      locked && 'opacity-60',
-                    )}
-                  />
+                  <div data-table-style={tableStyle} className={RICH_TEXT_TABLE_PROSE}>
+                    <EditorContent
+                      editor={editor}
+                      onKeyDown={(event) => {
+                        const mod = event.metaKey || event.ctrlKey
+                        if (mod && !event.altKey && event.key.toLowerCase() === 'k') {
+                          event.preventDefault()
+                          openLinkEditor()
+                        }
+                      }}
+                      className={cn(
+                        RICH_TEXT_PROSE,
+                        'mx-auto w-full px-4 py-8 sm:px-16 sm:py-12',
+                        fullWidth ? 'max-w-none' : 'max-w-3xl',
+                        smallText && 'text-sm/6',
+                        locked && 'opacity-60',
+                      )}
+                    />
+                  </div>
                 ) : (
                   <DocumentSkeleton />
                 )}
@@ -747,6 +854,7 @@ function DocumentEditor({
                       editable={editable}
                       scrollerRef={pageRef}
                       onDeleteTable={() => setDeleteTableOpen(true)}
+                      headingLink={holiLinks?.heading ?? null}
                     />
                   </>
                 ) : null}
@@ -762,6 +870,15 @@ function DocumentEditor({
                   : null}
               </div>
             </div>
+            {propertiesLayout === 'sidebar' ? (
+              <TaskProperties
+                path={path}
+                layout="sidebar"
+                beforeWrite={save}
+                onMoved={onMoved}
+                className={sidebarFits.sidebar}
+              />
+            ) : null}
             {commentable && commentsOpen ? (
               <CommentsPanel
                 load={threadsLoad}

@@ -7,6 +7,7 @@
  * pages cannot drift apart.
  */
 import type { CSSProperties, ReactNode } from 'react'
+import { VAULT_SETTINGS, type VaultSettingKey } from '@holi/shared'
 
 import { cn } from '@/lib/cn'
 import { IconTile } from '@/components/ui/icon-tile'
@@ -139,6 +140,20 @@ export type Choice<TValue extends string> = {
   value: TValue
   label: string
   icon?: ReactNode
+}
+
+/** A pick-one setting's row as `VAULT_SETTINGS` declares it: its label,
+ *  explanation and options, so the row restates none of them. */
+export function choiceSetting<TValue extends string>(
+  key: VaultSettingKey,
+): { title: string; description: string; choices: readonly Choice<TValue>[] } {
+  const setting = VAULT_SETTINGS.find((s) => s.key === key)
+  const options = setting?.type.kind === 'enum' ? setting.type.options : []
+  return {
+    title: setting?.label ?? key,
+    description: setting?.explanation ?? '',
+    choices: options.map((o) => ({ value: o.value as TValue, label: o.label })),
+  }
 }
 
 /** Pick one of a few, all visible: Theme, Transparency, the notes' font. */

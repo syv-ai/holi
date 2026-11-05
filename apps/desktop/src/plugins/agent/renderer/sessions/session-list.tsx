@@ -134,7 +134,7 @@ function SessionCards({
               <div
                 aria-hidden="true"
                 className={cn(
-                  'px-2 pt-1 pb-0.5 text-xs text-muted-foreground/70',
+                  'px-2 pt-1 pb-0.5 text-xs text-muted-foreground',
                   group.id === 'needs-you' && 'font-medium text-foreground',
                 )}
               >
