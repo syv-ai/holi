@@ -7,6 +7,7 @@
  * chevron. A note's menu has Create vault app, as the document's own does.
  */
 import { Provider, createStore, useAtomValue } from 'jotai'
+import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
 import { emptyVaultSnapshot, TASKS_CLAIM, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { act, fireEvent, render, screen, waitFor } from '@/test/render'
@@ -21,13 +22,17 @@ import {
   vaultsAtom,
 } from '@/state/vaults'
 import { SidebarProvider } from '@/components/ui/sidebar'
+// This integration test installs Tasks' real renderer contribution through the
+// normal plugin-resolution path; production core remains plugin-free.
+// eslint-disable-next-line no-restricted-imports
+import { tasksRenderer } from '../../../../../plugins/tasks/renderer'
 import { FilesSection } from '../files-section'
 
 const deleteMany = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
 const createNote = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
 const createTask = vi.hoisted(() =>
-  vi.fn(async ({ parent }: { parent: string; name: string }) =>
-    parent === '' ? 'task.created.md' : `${parent}/task.created.md`,
+  vi.fn(async ({ folder }: { folder: string; title: string; status: string }) =>
+    folder === '' ? 'task.created.md' : `${folder}/task.created.md`,
   ),
 )
 const writeNote = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
@@ -35,9 +40,11 @@ const snapshotQuery = vi.hoisted(() =>
   vi.fn(async () => (await import('@holi/shared')).emptyVaultSnapshot()),
 )
 const capRun = vi.hoisted(() =>
-  vi.fn(async ({ name }: { name: string; paramsJson: string }) =>
-    name === 'agent.providers' ? [] : { ok: true, sessionId: 'abc12345' },
-  ),
+  vi.fn(async ({ name, paramsJson }: { name: string; paramsJson: string }) => {
+    if (name === 'agent.providers') return []
+    if (name === 'tasks.create') return { path: await createTask(JSON.parse(paramsJson) as never) }
+    return { ok: true, sessionId: 'abc12345' }
+  }),
 )
 vi.mock('@/lib/trpc', () => ({
   trpc: {
@@ -104,21 +111,6 @@ function mount({ tasks = true }: { tasks?: boolean } = {}) {
     surfaces: [],
     rail: [],
     claims: [
-      ...(tasks
-        ? [
-            {
-              match: (p: string) => p.startsWith('task.'),
-              create: {
-                id: 'task',
-                label: 'New task',
-                icon: () => null,
-                placeholder: 'Task title',
-                asksName: true as const,
-                run: createTask,
-              },
-            },
-          ]
-        : []),
       {
         match: (p: string) => p.endsWith('.app'),
         folder: { surface: 'app', entry: 'index.html' },
@@ -148,6 +140,20 @@ function mount({ tasks = true }: { tasks?: boolean } = {}) {
       },
     ],
   })
+  store.set(installedPluginsAtom, [tasksRenderer])
+  if (!tasks) {
+    store.set(vaultSettingsAtom, {
+      remote: 'mara/notes',
+      settings: {
+        ...VAULT_SETTING_DEFAULTS,
+        plugins: {
+          ...VAULT_SETTING_DEFAULTS.plugins,
+          vault: { ...VAULT_SETTING_DEFAULTS.plugins.vault, tasks: false },
+        },
+        warnings: [],
+      },
+    })
+  }
   const onOpen = vi.fn()
   render(
     <Provider store={store}>
@@ -159,23 +165,34 @@ function mount({ tasks = true }: { tasks?: boolean } = {}) {
   return { run, makeLink, onOpen, store }
 }
 
-test('the task plugin contributes one title-backed New task action', async () => {
-  const { makeLink } = mount()
-  fireEvent.contextMenu(await screen.findByText('kunder'))
-  const actions = await screen.findAllByRole('menuitem', { name: 'New task' })
-  expect(actions).toHaveLength(1)
-  fireEvent.click(actions[0]!)
-  const field = await screen.findByPlaceholderText('Task title')
+test('the Tasks plugin claim asks for a title and creates in the selected folder', async () => {
+  createTask.mockClear()
+  capRun.mockClear()
+  const { makeLink, onOpen } = mount()
+  fireEvent.click(await screen.findByText('kunder'))
+  expect(screen.getByRole('treeitem', { name: 'kunder' })).toHaveAttribute('aria-selected', 'true')
+  await userEvent.click(screen.getByRole('button', { name: 'New' }))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'New task' }))
+  expect(await screen.findByRole('dialog', { name: 'New task' })).toBeTruthy()
+  expect(screen.getByText('In kunder.')).toBeTruthy()
+  const field = screen.getByPlaceholderText('Task title')
   expect(createTask).not.toHaveBeenCalled()
   fireEvent.change(field, { target: { value: 'Review the brief' } })
   fireEvent.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() =>
-    expect(createTask).toHaveBeenCalledWith({
+    expect(capRun).toHaveBeenCalledWith({
       remote: 'mara/notes',
-      parent: 'kunder',
-      name: 'Review the brief',
+      name: 'tasks.create',
+      paramsJson: JSON.stringify({ title: 'Review the brief', status: 'todo', folder: 'kunder' }),
     }),
   )
+  expect(createTask).toHaveBeenCalledWith({
+    title: 'Review the brief',
+    status: 'todo',
+    folder: 'kunder',
+  })
+  expect(onOpen).toHaveBeenCalledWith('kunder/task.created.md')
+  expect(screen.queryByLabelText('Rename task.created.md')).toBeNull()
   expect(makeLink).not.toHaveBeenCalled()
 })
 
@@ -183,6 +200,67 @@ test('without the tasks plugin, the New menu has no task action', async () => {
   mount({ tasks: false })
   fireEvent.contextMenu(await screen.findByText('kunder'))
   expect(screen.queryByRole('menuitem', { name: 'New task' })).toBeNull()
+})
+
+test('the Files header New creates a document in the selected folder and focuses its name field', async () => {
+  const { store } = mount()
+  createNote.mockClear()
+  fireEvent.click(await screen.findByText('kunder'))
+  expect(screen.getByRole('treeitem', { name: 'kunder' })).toHaveAttribute('aria-selected', 'true')
+  await userEvent.click(screen.getByRole('button', { name: 'New' }))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'New document' }))
+  await waitFor(() =>
+    expect(createNote).toHaveBeenLastCalledWith({
+      remote: 'mara/notes',
+      path: 'kunder/Untitled.md',
+      text: '',
+    }),
+  )
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom)!,
+      docs: [
+        ...store.get(snapshotAtom)!.docs,
+        { path: 'kunder/Untitled.md', title: 'Untitled', updatedAt: '2026-10-23T10:00:00Z' },
+      ] as never,
+    }),
+  )
+  const input = await screen.findByLabelText('Rename Untitled.md')
+  await waitFor(() => expect(document.activeElement).toBe(input))
+})
+
+test('the Files header New creates an app beside the selected file and focuses its name field', async () => {
+  const { run, store } = mount()
+  fireEvent.click(await screen.findByText('kunder'))
+  fireEvent.click(await screen.findByText('brief'))
+  expect(screen.getByRole('treeitem', { name: 'brief.md' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'New' }))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'New app' }))
+  await waitFor(() =>
+    expect(run).toHaveBeenCalledWith({
+      remote: 'mara/notes',
+      parent: 'kunder',
+      name: 'Untitled',
+    }),
+  )
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom)!,
+      docs: [
+        ...store.get(snapshotAtom)!.docs,
+        {
+          path: 'kunder/Untitled.app/index.html',
+          title: 'index',
+          updatedAt: '2026-10-23T10:00:00Z',
+        },
+      ] as never,
+    }),
+  )
+  const input = await screen.findByLabelText('Rename Untitled.app')
+  await waitFor(() => expect(document.activeElement).toBe(input))
 })
 
 test("New app on a folder's menu makes the app in that folder", async () => {
