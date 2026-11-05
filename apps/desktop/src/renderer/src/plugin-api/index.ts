@@ -40,11 +40,9 @@ export type {
   SlashResult,
   /** @public */ StatusItem,
   CommandMenuEntry,
-  /** @public */ PaletteItem,
   Surface,
   SurfaceTabLook,
 } from './types'
-export type { Command } from '@/state/commands'
 export type { /** @public */ PluginInfo } from '@holi/shared'
 
 export { trpc } from '@/lib/trpc'
@@ -99,7 +97,6 @@ export {
   openPathAtom,
   openSurfaceAtom,
   surfaceTabIdsAtom,
-  /** @public */ tabForPathAtom,
 } from '@/state/surfaces'
 export {
   agentRunFilesAtom,

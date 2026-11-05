@@ -148,8 +148,9 @@ claims takes no comments.
 A plugin adds `surfaces` (tab kinds) and `rail`
 items to the nav menu ([tabs and panes](features/tabs-panes.md)), each with a badge if it likes,
 registered beside core's own, `settingsSections` to the settings tab
-([settings](features/settings.md)), and `slashCommands` to the notes editor's slash menu
-([editor](features/editor.md)). It marks paths in the tree and the tabs (`pathMarks`: a glyph, a
+([settings](features/settings.md)), `slashCommands` to the notes editor's slash menu
+([editor](features/editor.md)), and `commandMenu` rows to ⌘K, the one way it adds a command
+([command palette](features/command-palette.md)). It marks paths in the tree and the tabs (`pathMarks`: a glyph, a
 strike, a badge) and lays `overlays` over the panes (a drawer, quick add), each deciding whether
 it shows. Its dialogs open as `{id: 'plugin', render}`.
 Main tells a plugin's renderer something through events: `ctx.emit(remote, name, payload)` sends
@@ -229,7 +230,7 @@ identity is its remote. Holi never adopts a checkout the user maintains, because
 own and would trample WIP branches and staged changes.
 
 - **Autosave commits** keep the working tree clean, so a pull can always merge.
-- **Auto-push** sends them within seconds; ⌘S, a vault switch and quit commit and push at once.
+- **Auto-push** sends them within seconds; a vault switch and quit commit and push at once.
 - **Auto-pull merges, never rebases.**
 - **A conflicting merge is aborted** at once, and the user may hand it to the agent to reconcile.
 
@@ -297,7 +298,7 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 | [links](features/links.md)                     | `link.*.md` files and page previews                                 |
 | [browser](features/browser.md)                 | Web pages in a tab, and `holi browser` for the agent                |
 | [vault-apps](features/vault-apps.md)           | Agent-authored apps in their own origin                             |
-| [command-palette](features/command-palette.md) | Quick open and the one table of commands                            |
+| [command-palette](features/command-palette.md) | The ⌘K command menu                                                 |
 | [onboarding](features/onboarding.md)           | First run and adding a vault                                        |
 
 ## 7. State outside the repo
