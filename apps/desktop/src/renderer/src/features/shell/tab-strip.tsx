@@ -130,6 +130,7 @@ export function TabStrip({
   const remote = useAtomValue(activeRemoteAtom)
   const setDrag = useSetAtom(tabDragAtom)
   const clearDragVault = useSetAtom(tabDragVaultAtom)
+  const clearDragWasOpen = useSetAtom(tabDragWasOpenAtom)
   /** Where a drag along the strip would land: before entry `n`. */
   const [dropAt, setDropAt] = useState<number | null>(null)
   const [combinePreview, setCombinePreview] = useState<{
@@ -163,6 +164,28 @@ export function TabStrip({
    *  how many there are. */
   const listRef = useRef<HTMLDivElement>(null)
   const [overflowing, setOverflowing] = useState(false)
+  useEffect(() => {
+    if (dragged === null) return
+    const sourceExists = ws.entries.some(
+      (entry) => entryId(entry) === dragged || (isSplit(entry) && entry.views.includes(dragged)),
+    )
+    if (dragVault === remote && (!dragWasOpen || sourceExists)) return
+    setDrag(null)
+    clearDragVault(null)
+    clearDragWasOpen(false)
+    setDropAt(null)
+    setCombinePreview(null)
+  }, [
+    clearDragVault,
+    clearDragWasOpen,
+    dragVault,
+    dragWasOpen,
+    dragged,
+    remote,
+    setDrag,
+    ws.entries,
+  ])
+
   useEffect(() => {
     if (dragged !== null && dragVault === remote) return
     setDropAt(null)
@@ -377,6 +400,7 @@ export function TabStrip({
                 setCombinePreview(null)
                 setDrag(null)
                 clearDragVault(null)
+                clearDragWasOpen(false)
                 if (drop === null || key === null) return
                 event.preventDefault()
                 if (drop.kind === 'combine') {

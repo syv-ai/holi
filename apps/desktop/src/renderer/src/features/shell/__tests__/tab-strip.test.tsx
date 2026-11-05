@@ -163,6 +163,47 @@ test('a closed original source cannot be reopened by an edge drop', () => {
   expect(document.querySelector('[data-drop-before="true"], [data-drop-after="true"]')).toBeNull()
 })
 
+test('closing an originally open drag source cancels global drag state without dragend', () => {
+  const { store } = setup()
+  act(() => store.set(shellWorkspaceAtom, (workspace) => closeTab(workspace, 'A.md')))
+  expect(store.get(tabDragAtom)).toBeNull()
+  expect(store.get(tabDragVaultAtom)).toBeNull()
+  expect(store.get(tabDragWasOpenAtom)).toBe(false)
+
+  // The native source was removed with the tab, so no dragend can arrive later.
+  act(() => store.set(shellWorkspaceAtom, (workspace) => openTab(workspace, 'A.md')))
+  expect(store.get(tabDragAtom)).toBeNull()
+})
+
+test('changing vault ownership cancels the drag before returning to its source vault', () => {
+  const { store, list, transfer } = setup()
+  fireEvent(list, dragEvent('dragover', transfer, 150))
+  expect(document.querySelector('[data-combine-preview="true"]')).not.toBeNull()
+
+  act(() => store.set(activeRemoteAtom, 'other/vault'))
+  expect(store.get(tabDragAtom)).toBeNull()
+  expect(store.get(tabDragVaultAtom)).toBeNull()
+  expect(store.get(tabDragWasOpenAtom)).toBe(false)
+  act(() => store.set(activeRemoteAtom, 'owner/vault'))
+  expect(document.querySelector('[data-combine-preview="true"]')).toBeNull()
+  fireEvent(list, dragEvent('dragover', transfer, 150))
+  expect(document.querySelector('[data-combine-preview="true"]')).toBeNull()
+})
+
+test('an unopened sidebar view is accepted for a same-vault combine preview', () => {
+  const { store, list, transfer } = setup()
+  const unopened = 'C.md'
+  transfer.setData(MIME, unopened)
+  act(() => {
+    store.set(tabDragAtom, unopened)
+    store.set(tabDragWasOpenAtom, false)
+  })
+  fireEvent(list, dragEvent('dragover', transfer, 150))
+  expect(document.querySelector('[data-combine-preview="true"]')).not.toBeNull()
+  expect(screen.getByRole('tab', { name: 'Split view: B, C' })).toBeTruthy()
+  expect(store.get(tabDragWasOpenAtom)).toBe(false)
+})
+
 test('dropping a valid ordinary target combines once and clears drag state', () => {
   const { store, list, transfer } = setup()
   fireEvent(list, dragEvent('dragover', transfer, 150))
