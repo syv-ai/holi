@@ -1,5 +1,5 @@
 /**
- * An open task's chips write its file: a field is a patch, saved after the
+ * An open task's properties write its file: a field is a patch, saved after the
  * editor's pending write, and a project is a move whose new path is reported.
  * Sharing is a rename too, and making a task private asks first.
  */
@@ -82,7 +82,12 @@ function setup(task: Task = TASK) {
   const onMoved = vi.fn()
   render(
     <Provider store={store}>
-      <TaskProperties path={task.path} beforeWrite={beforeWrite} onMoved={onMoved} />
+      <TaskProperties
+        path={task.path}
+        layout="inline"
+        beforeWrite={beforeWrite}
+        onMoved={onMoved}
+      />
     </Provider>,
   )
   return { beforeWrite, onMoved }
@@ -121,7 +126,7 @@ test('a document that is not a task draws no fields', () => {
   store.set(snapshotAtom, snapshotOf([TASK]))
   render(
     <Provider store={store}>
-      <TaskProperties path="notes/plan.md" beforeWrite={() => Promise.resolve()} />
+      <TaskProperties path="notes/plan.md" layout="inline" beforeWrite={() => Promise.resolve()} />
     </Provider>,
   )
   expect(screen.queryByRole('group', { name: 'Task fields' })).toBeNull()

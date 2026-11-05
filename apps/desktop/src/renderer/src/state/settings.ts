@@ -25,6 +25,7 @@ import {
   pluginSettingValue,
   type PluginInfo,
   type ResolvedVaultSettings,
+  type VaultSettingKey,
 } from '@holi/shared'
 import { trpc } from '@/lib/trpc'
 import { activeRemoteAtom, snapshotAtom } from './vaults'
@@ -90,23 +91,34 @@ export function useSettingsFollowDisk(): void {
   }, [files, load])
 }
 
+/** The open vault's settings, or `null` until they are read: never another
+ *  vault's, whose answer may still sit in the cache. */
+export const activeVaultSettingsAtom = atom((get): ResolvedVaultSettings | null => {
+  const cached = get(vaultSettingsAtom)
+  return cached !== null && cached.remote === get(activeRemoteAtom) ? cached.settings : null
+})
+
 /** A plugin's own setting in the open vault (`PluginInfo.settings`): its
  *  default until the vault's settings are read. */
 export function usePluginSetting(info: PluginInfo, key: string): unknown {
-  const cached = useAtomValue(vaultSettingsAtom)
-  const remote = useAtomValue(activeRemoteAtom)
-  const values = cached !== null && cached.remote === remote ? cached.settings.pluginValues : {}
-  return pluginSettingValue(values, info, key)
+  const settings = useAtomValue(activeVaultSettingsAtom)
+  return pluginSettingValue(settings?.pluginValues ?? {}, info, key)
+}
+
+/** One of core's settings in the open vault (`VAULT_SETTINGS`): its default
+ *  until the vault's settings are read. */
+export function useAppSetting<K extends VaultSettingKey>(
+  key: K,
+): Omit<ResolvedVaultSettings, 'warnings'>[K] {
+  const settings = useAtomValue(activeVaultSettingsAtom)
+  return settings !== null ? settings[key] : VAULT_SETTING_DEFAULTS[key]
 }
 
 /** This machine's `agentProvider`, or null until the vault's settings are
  *  read: for a run that must not start on the default by mistake. */
-export const loadedAgentProviderAtom = atom((get) => {
-  const cached = get(vaultSettingsAtom)
-  return cached !== null && cached.remote === get(activeRemoteAtom)
-    ? cached.settings.agentProvider
-    : null
-})
+export const loadedAgentProviderAtom = atom(
+  (get) => get(activeVaultSettingsAtom)?.agentProvider ?? null,
+)
 
 /** The agent a new session runs on this machine (`agentProvider`): its
  *  default until the vault's settings are read. */

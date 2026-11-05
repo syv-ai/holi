@@ -144,7 +144,7 @@ export function AgentsCard() {
       })
       return
     }
-    void write('agentProvider', id, 'local')
+    void write('agentProvider', id)
   }
 
   const test = async (h: HarnessRecord): Promise<void> => {
@@ -365,7 +365,7 @@ export function AgentsCard() {
         confirmLabel={asking?.confirmLabel ?? 'Make default'}
         onConfirm={async () => {
           if (asking === null) return
-          await write('agentProvider', asking.id, 'local')
+          await write('agentProvider', asking.id)
         }}
       />
       <ConfirmDialog
