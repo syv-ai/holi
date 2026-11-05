@@ -30,7 +30,7 @@ export function RenderedMediaLightbox({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
-        <div className="flex min-h-24 min-w-0 items-center justify-center overflow-auto">
+        <div className="flex min-h-24 min-w-0 items-start justify-center overflow-auto">
           {preview}
         </div>
       </DialogContent>
