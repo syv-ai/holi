@@ -28,6 +28,17 @@ export interface FolderSurface {
   match(path: string): boolean
 }
 
+/**
+ * A directory that is one document, as the tabs need it: the surface its
+ * tabs are, by path, and the entry file whose move or delete says where the
+ * directory went (`PathClaim.folder`).
+ */
+export interface FolderSurface {
+  surface: string
+  entry: string
+  match(path: string): boolean
+}
+
 /** Up to four views in a split: a session beside a document beside the
  *  board beside an app, each still wide enough to use on a laptop. */
 export const MAX_SPLIT = 4
@@ -60,10 +71,13 @@ export interface ShellWorkspace {
   closed: ClosedEntry[]
   /** The last number handed out, to New tabs and to splits. */
   seq: number
+  /** Entry ids, the active one first and then each by when it was last
+   *  active; only open entries. Kept by `trackRecent`, never by hand. */
+  recent: string[]
 }
 
 export function emptyWorkspace(): ShellWorkspace {
-  return { entries: [], active: null, closed: [], seq: 0 }
+  return { entries: [], active: null, closed: [], seq: 0, recent: [] }
 }
 
 // ------------------------------------------------------------------ reading
@@ -114,6 +128,33 @@ export function allTabs(ws: ShellWorkspace): string[] {
 /** The strip's entry ids, in order. */
 export function entryIds(ws: ShellWorkspace): string[] {
   return ws.entries.map(entryId)
+}
+
+/** The strip's entry ids, most recently active first (the tab switcher's
+ *  order); any never active yet follow in strip order. */
+export function entriesByRecency(ws: ShellWorkspace): string[] {
+  const ids = entryIds(ws)
+  return [
+    ...ws.recent.filter((id) => ids.includes(id)),
+    ...ids.filter((id) => !ws.recent.includes(id)),
+  ]
+}
+
+/**
+ * `ws` with `recent` brought up to date: the active entry to the front, and
+ * entries no longer open dropped. The one place recency is kept: every write
+ * of the workspace passes through it (`shellWorkspaceAtom`), so whatever
+ * changed the active entry is recorded. The same workspace when nothing
+ * changed.
+ */
+export function trackRecent(ws: ShellWorkspace): ShellWorkspace {
+  const open = new Set(entryIds(ws))
+  const recent = [
+    ...(ws.active === null || !open.has(ws.active) ? [] : [ws.active]),
+    ...ws.recent.filter((id) => id !== ws.active && open.has(id)),
+  ]
+  const same = recent.length === ws.recent.length && recent.every((id, i) => id === ws.recent[i])
+  return same ? ws : { ...ws, recent }
 }
 
 function isNewKey(key: string | null): boolean {

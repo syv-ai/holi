@@ -4,7 +4,7 @@
  * Main does a deterministic if-not-exists-write, so two of your devices mint an
  * identical blob at an identical path and git merges them silently.
  *
- * This layer is the *mechanism* only: mint today's daily and land on it.
+ * This layer is the mechanism only: mint today's daily and land on it.
  * **Whether** to is `dailyNotes` in the vault's settings; ⇧⌘D mints one on
  * demand even in a vault that keeps no daily notes automatically.
  */

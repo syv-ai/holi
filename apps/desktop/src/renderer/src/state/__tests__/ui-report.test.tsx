@@ -33,7 +33,7 @@ function setup() {
 
 /** The strip as `entries`, with `active` in front. */
 function show(store: ReturnType<typeof createStore>, entries: ShellEntry[], active: string) {
-  store.set(shellWorkspaceAtom, { entries, active, closed: [], seq: 1 })
+  store.set(shellWorkspaceAtom, { entries, active, closed: [], seq: 1, recent: [] })
 }
 
 const split = (views: string[], focused: string): ShellEntry => ({
