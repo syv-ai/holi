@@ -396,13 +396,13 @@ export function TabStrip({
                 const combinedEntry =
                   combined?.entries.find((candidate) => entryId(candidate) === combined.active) ??
                   undefined
-                const shownMembers =
-                  targetPreview && isSplit(combinedEntry) ? combinedEntry.views.map(look) : members
-                const shownTab = targetPreview ? null : tab
-                const label =
-                  shownTab !== null
-                    ? spoken(shownTab)
-                    : `Split view: ${shownMembers!.map(spoken).join(', ')}`
+                const previewMembers =
+                  targetPreview && isSplit(combinedEntry) ? combinedEntry.views.map(look) : null
+                const label = targetPreview
+                  ? `Split view: ${previewMembers!.map(spoken).join(', ')}`
+                  : tab !== null
+                    ? spoken(tab)
+                    : `Split view: ${members!.map(spoken).join(', ')}`
                 return (
                   <ContextMenu key={id}>
                     <ContextMenuTrigger asChild>
@@ -444,32 +444,32 @@ export function TabStrip({
                           }}
                           variant="tab"
                           className={cn(
-                            'hover:bg-foreground/5',
+                            'relative hover:bg-foreground/5',
                             'group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 dark:group-data-[variant=line]/tabs-list:data-active:bg-foreground/8',
                             tab !== null ? 'w-56' : members!.length > 2 ? 'w-80' : 'w-64',
                           )}
                         >
-                          {shownTab !== null ? (
-                            <>
-                              <TabMark tab={shownTab} dot={false} />
-                              <span className="truncate">{shownTab.title}</span>
-                              {shownTab.status !== undefined ? (
-                                <TabStatus status={shownTab.status} />
-                              ) : null}
-                            </>
+                          {tab !== null ? (
+                            <span className={targetPreview ? 'invisible' : undefined}>
+                              <TabMark tab={tab} dot={false} />
+                              <span className="truncate">{tab.title}</span>
+                              {tab.status !== undefined ? <TabStatus status={tab.status} /> : null}
+                            </span>
                           ) : (
                             <SplitMembers
                               drag={draggable ? memberDrag : undefined}
-                              members={shownMembers!}
-                              focused={
-                                targetPreview
-                                  ? null
-                                  : split?.id === id
-                                    ? (entry as ShellSplit).focused
-                                    : null
-                              }
+                              members={members!}
+                              focused={split?.id === id ? (entry as ShellSplit).focused : null}
                             />
                           )}
+                          {previewMembers !== null ? (
+                            <span
+                              aria-hidden="true"
+                              className="pointer-events-none absolute inset-0 flex items-center px-2"
+                            >
+                              <SplitMembers members={previewMembers} focused={null} />
+                            </span>
+                          ) : null}
                         </TabsTrigger>
                         {/* Shown on hover and keyboard focus, and always on the tab
                           in front unless its status badge holds the place. */}
