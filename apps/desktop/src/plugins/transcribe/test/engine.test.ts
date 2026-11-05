@@ -798,6 +798,13 @@ describe('starting', () => {
     const { meetingId } = await rig.meetings.start({ profileId: 'default' })
     expect((await rig.meetings.get(meetingId)).title).toMatch(/^Meeting \d\d\.\d\d$/)
   })
+
+  it('takes a title as prepare and rename do: one line, cut to length', async () => {
+    const rig = await engineRig()
+    const { meetingId } = await rig.meetings.start({ title: `Weekly\n  sync ${'x'.repeat(200)}` })
+    const { title } = await rig.meetings.get(meetingId)
+    expect(title).toBe(`Weekly sync ${'x'.repeat(108)}`)
+  })
 })
 
 describe('another speech service', () => {

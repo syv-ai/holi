@@ -23,7 +23,7 @@
  *   at load and finished again, without a scribe (`rescue`).
  * - **The transcript** is stitched in chunk order (`stitcher.ts`), and
  *   written to the meeting's folder in the vault with the minutes:
- *   `Meetings/<date> <title>/transcript.local.md` and `minutes.local.md`
+ *   `Meetings/<date> <title>.meeting/transcript.local.md` and `minutes.local.md`
  *   (`minutes.md` when the profile shares them). Machine-local by default:
  *   a client meeting is not the vault's to push.
  * - **The groups** (`topics.ts`) are the meeting's backbone: the scribe
@@ -35,14 +35,14 @@
  *   line, the files are written again, and the scribe hears both with its
  *   next batch (`ScribeNotes`).
  * - **Tasks** are a person's: made from a group, a suggestion or a stretch
- *   of lines (`cards.ts`), and sent to Claude or a Holi with every line they
+ *   of lines (`cards.ts`), and sent to the vault's agent or a Holi with every line they
  *   carry (`build.ts`).
  * - **The renderer** hears `meeting` (one meeting's state, at most four times
  *   a second) and `meetings` (the list).
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { isLocalOnlyPath, type AgentProviderId } from '@holi/shared'
+import { isLocalOnlyPath, localDate, type AgentProviderId } from '@holi/shared'
 import { randomBytes } from 'node:crypto'
 import {
   lstat,
@@ -123,11 +123,16 @@ const BAD_KEY = 'the speech key was refused'
 /** Whether a chunk failed for the key and nothing else. */
 const keyFailure = (c: ChunkInfo): boolean =>
   (c.state === 'failed' || c.state === 'queued') &&
-  c.error !== undefined &&
-  (c.error === LEGACY_NO_KEY ||
-    c.error === NO_KEY ||
-    c.error === BAD_KEY ||
-    /^transcription failed: 40[13]\b/.test(c.error))
+  (c.reason === 'no-key' || c.reason === 'bad-key' || savedKeyFailure(c.error))
+
+/** How a chunk saved before chunks had a `reason` said it failed for the key:
+ *  only by its words. */
+const savedKeyFailure = (error: string | undefined): boolean =>
+  error !== undefined &&
+  (error === LEGACY_NO_KEY ||
+    error === NO_KEY ||
+    error === BAD_KEY ||
+    /^transcription failed: 40[13]\b/.test(error))
 
 /** A chunk is seconds of audio: this is far past any. */
 const MAX_CHUNK_BYTES = 16 * 1024 * 1024
@@ -358,7 +363,12 @@ const pad = (n: number) => String(n).padStart(2, '0')
 /** Where a meeting goes when no folder is chosen. */
 const DEFAULT_PARENT = 'Meetings'
 /** The longest title a person may give a meeting. */
-const MAX_TITLE = 120
+export const MAX_TITLE = 120
+
+/** A meeting's title as given: one line, trimmed, at most `MAX_TITLE`. */
+function meetingTitle(title: string): string {
+  return title.replace(/\s+/g, ' ').trim().slice(0, MAX_TITLE)
+}
 
 /** A title fit for a folder name: no path or shell-hostile characters, one
  *  line, not empty. */
@@ -408,7 +418,6 @@ function normalTopic(t: Topic): Topic {
 /** The transcript as markdown: a heading per topic, a paragraph per turn
  *  with its speaker and time. */
 function transcriptMarkdown(m: MeetingState): string {
-  const day = new Date(m.startedAt)
   const lines = [
     '---',
     `meeting: ${m.id}`,
@@ -416,7 +425,7 @@ function transcriptMarkdown(m: MeetingState): string {
     '',
     `# ${m.title}`,
     '',
-    `Transcript of the meeting on ${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}, transcribed automatically: words can be misheard.`,
+    `Transcript of the meeting on ${localDate(new Date(m.startedAt))}, transcribed automatically: words can be misheard.`,
   ]
   let speaker: string | null = null
   const topicAt = new Map(m.topics.map((t) => [t.lines[0], t]))
@@ -983,8 +992,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
    *  and no file has: `<parent>/<date> <name>.meeting`, numbered when taken.
    *  The suffix makes the vault's tree open it as one document. */
   async function freeFolder(parent: string, name: string, at: number): Promise<string> {
-    const d = new Date(at)
-    const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    const day = localDate(new Date(at))
     const base = `${parent === '' ? '' : `${parent}/`}${day} ${folderTitle(name)}`
     let folder = `${base}${MEETING_SUFFIX}`
     const taken = new Set([...summaries.values()].map((s) => s.folder))
@@ -1175,6 +1183,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     chunk.state = 'queued'
     chunk.tries = 0
     chunk.error = why === 'no-key' ? NO_KEY : BAD_KEY
+    chunk.reason = why
     l.parked.add(chunk.n)
     l.stored.meeting.blocked = why
     changed(l.stored.meeting.id)
@@ -1192,6 +1201,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
         const c = meeting.chunks.find((x) => x.n === n)
         if (c?.state !== 'queued') continue
         delete c.error
+        delete c.reason
         enqueue(meeting.id, n)
       }
       changed(meeting.id)
@@ -1227,7 +1237,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     // What failed is tried once more, from the start of its backoff; a
     // rescued meeting tried what it could when it was rescued.
     for (const c of meeting.chunks) {
-      if (c.state === 'failed' && !l.rescued && c.error !== LOST) {
+      if (c.state === 'failed' && !l.rescued && c.reason !== 'lost') {
         c.state = 'queued'
         c.tries = 0
         enqueue(id, c.n)
@@ -1465,7 +1475,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     },
 
     async prepare({ folder: parent, title }) {
-      const name = title.replace(/\s+/g, ' ').trim().slice(0, MAX_TITLE)
+      const name = meetingTitle(title)
       const path = await freeFolder(parent, name === '' ? defaultTitle(now()) : name, now())
       await deps.writeFile(
         `${path}/transcript.local.md`,
@@ -1480,7 +1490,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
           ? ((await deps.profiles.list())[0] ?? DEFAULT_PROFILE)
           : await deps.profiles.get(profileId)
       const at = now()
-      const name = title?.trim() || defaultTitle(at)
+      const name = meetingTitle(title ?? '') || defaultTitle(at)
       // A folder is a meeting's by the id in its transcript, not by a record
       // that once had its path: that meeting moved or was deleted.
       const there = path === undefined ? null : (await markAt(path)).kind
@@ -1551,7 +1561,15 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       // It got through after all, or the meeting is long over.
       if (meeting.chunks.some((c) => c.n === n)) return
       if (meeting.phase !== 'recording' && meeting.phase !== 'finishing') return
-      meeting.chunks.push({ n, start, duration, state: 'failed', tries: 0, error: LOST })
+      meeting.chunks.push({
+        n,
+        start,
+        duration,
+        state: 'failed',
+        tries: 0,
+        error: LOST,
+        reason: 'lost',
+      })
       meeting.chunks.sort((a, b) => a.n - b.n)
       l.skip.add(n)
       restitch(l, false)
@@ -1595,7 +1613,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
 
     async rename(meetingId, title) {
       const l = await open(meetingId)
-      const name = title.replace(/\s+/g, ' ').trim().slice(0, MAX_TITLE)
+      const name = meetingTitle(title)
       if (name === '') throw new CapabilityError('BAD_REQUEST', 'a meeting needs a title')
       l.stored.meeting.title = name
       changed(meetingId)
@@ -1688,8 +1706,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
         throw new CapabilityError('BAD_REQUEST', 'the minutes go to an absolute path ending in .md')
       }
       if (await isSymlink(out)) throw new CapabilityError('BAD_REQUEST', `${out} is a symlink`)
-      const day = new Date(meeting.startedAt)
-      const date = `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`
+      const date = localDate(new Date(meeting.startedAt))
       // Minutes rendered from groups carry their title and date; a meeting's
       // from before them does not.
       const text = meeting.minutes.startsWith('# ')

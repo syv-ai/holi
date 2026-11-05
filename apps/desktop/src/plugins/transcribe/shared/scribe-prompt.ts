@@ -60,7 +60,8 @@ function langName(lang: Lang): string {
       : 'the language the meeting is held in'
 }
 
-/** m:ss or h:mm:ss from seconds. */
+/** Seconds as `m:ss`, or `h:mm:ss` past an hour: how the transcript, the
+ *  scribe and the meetings surface all write a time. */
 export function clock(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds))
   const h = Math.floor(s / 3600)

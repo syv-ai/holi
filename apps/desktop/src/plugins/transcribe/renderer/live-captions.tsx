@@ -14,7 +14,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { speakerName, type MeetingState } from '../shared/meeting'
 import { CaptionLine } from './caption-line'
-import { clock } from './format'
+import { clock } from '../shared/scribe-prompt'
 import { highlightAtom } from './state'
 import { topicIndex, topicName } from './topic-index'
 

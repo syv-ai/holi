@@ -5,13 +5,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { transcribe, type Fetch } from '../main/asr'
-import {
-  BROADCAST_CLICHES,
-  compressionRatio,
-  dropHallucinations,
-  isTimestampLoop,
-  similarity,
-} from '../main/junk'
+import { compressionRatio, dropHallucinations, isTimestampLoop, similarity } from '../main/junk'
 import { chunkSegments, stitch, type ChunkSegment } from '../main/stitcher'
 
 const line = (
@@ -194,10 +188,6 @@ describe('bursts', () => {
 
   it('keeps three words or more, however short', () => {
     expect(kept([line('Them', 50, 50.9, 'Hvad siger du?')])).toEqual(['Hvad siger du?'])
-  })
-
-  it('is one list', () => {
-    expect(BROADCAST_CLICHES.length).toBeGreaterThan(3)
   })
 })
 

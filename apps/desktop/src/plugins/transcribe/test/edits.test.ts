@@ -546,7 +546,7 @@ describe('a task a person makes', () => {
   })
 })
 
-const spec = (over: Partial<Card>) =>
+const spec = (over: Partial<Card>, startedAt = 0) =>
   cardSpec(
     {
       id: 'c1',
@@ -563,10 +563,22 @@ const spec = (over: Partial<Card>) =>
       updatedAt: 1,
       ...over,
     },
-    { meetingTitle: 'Planning', startedAt: 0, minutesPath: 'Meetings/x/minutes.local.md' },
+    { meetingTitle: 'Planning', startedAt, minutesPath: 'Meetings/x/minutes.local.md' },
   )
 
 describe('the brief of a task', () => {
+  it('dates the meeting by the day this machine held it, not the UTC one', () => {
+    const tz = process.env['TZ']
+    process.env['TZ'] = 'Pacific/Auckland'
+    try {
+      const text = spec({}, new Date(2026, 0, 15, 0, 30).getTime())
+      expect(text).toContain('"Planning" on 2026-01-15')
+    } finally {
+      if (tz === undefined) delete process.env['TZ']
+      else process.env['TZ'] = tz
+    }
+  })
+
   it('says it had more lines than it carries, and stays under its size cap', () => {
     const long = 'word '.repeat(200)
     const quotes = Array.from({ length: 400 }, (_v, i) => ({

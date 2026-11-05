@@ -7,7 +7,7 @@
  */
 import { useAtomValue } from 'jotai'
 import { agentSessionRowsAtom } from '@/plugin-api'
-import type { MeetingState } from '../shared/meeting'
+import type { MeetingState, ScribeState } from '../shared/meeting'
 import { useAgentName } from './agent-name'
 import { SCRIBE_TITLE } from './names'
 
@@ -15,19 +15,33 @@ type ScribeFix = 'open-session' | 'restart' | 'settings'
 
 export type ScribeReadiness = { ready: true } | { ready: false; reason: string; fixes: ScribeFix[] }
 
+/** The scribe's state, its session's row given: the agent's own word that it
+ *  waits for the person is fresher than the last meeting event. */
+export function scribeStateOf(
+  meeting: MeetingState,
+  row: { state: string } | undefined,
+): ScribeState {
+  return row?.state === 'needs-you' ? 'needs-you' : meeting.scribeState
+}
+
+/** Why the topics cannot run under this vault's agent. */
+export const unsupportedReason = (agent: string): string =>
+  `Topics need Claude Code or Pi, and this vault’s agent is ${agent}.`
+
 export function useScribeReadiness(meeting: MeetingState): ScribeReadiness {
   const rows = useAtomValue(agentSessionRowsAtom)
   const agent = useAgentName()
   const session = meeting.scribeSessionId
-  // The agent's own word is fresher than the last meeting event.
-  const state =
-    rows.find((r) => r.id === session)?.state === 'needs-you' ? 'needs-you' : meeting.scribeState
+  const state = scribeStateOf(
+    meeting,
+    rows.find((r) => r.id === session),
+  )
   const withSession = (fixes: ScribeFix[]): ScribeFix[] =>
     session === undefined ? fixes : [...fixes, 'open-session']
   if (meeting.scribeUnsupported !== undefined) {
     return {
       ready: false,
-      reason: `Topics need Claude Code or Pi, and this vault’s agent is ${agent}. Choose one in Settings › General › Agents, then start the assistant.`,
+      reason: `${unsupportedReason(agent)} Choose one in Settings › General › Agents, then start the assistant.`,
       fixes: ['settings', 'restart'],
     }
   }

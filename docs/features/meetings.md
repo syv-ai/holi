@@ -159,7 +159,8 @@ sent the whole transcript with the groups so far.
 On Claude Code it is one background session per meeting, launched at Start with the profile in its
 system prompt (`shared/scribe-prompt.ts`), one allow rule, `Bash(holi meeting:*)`, and deny rules
 (`--disallowedTools`) that beat any allow, the vault's own included. It needs no file or web tools:
-the transcript comes by message and `holi meeting context` re-syncs it. So it has no `Read`, `Edit`,
+the transcript comes by message, and `holi meeting context` says where the meeting stands (its
+groups, the person's tasks and the last line sent). So it has no `Read`, `Edit`,
 `Write`, `Glob`, `Grep`, `NotebookEdit`, `WebFetch`, `WebSearch`, subagents (`Agent`, `Task`) or
 `Monitor`, and `Read(//**)` and `Edit(//**)` deny every path, which Claude Code also applies to the
 file commands it recognises in Bash and to redirections: `cat .env.local`, `grep -r` and `< file`
@@ -171,8 +172,8 @@ what rules see. The profile's MCP servers stay available.
 **It is fed per group, not per minute.** Main sends the new transcript lines as one batch when the
 scribe is idle and either at least 180 s of new transcript waits (`BATCH_TRANSCRIPT_S` in
 `main/scribe.ts`), or the person pressed **Summarise now**, or the meeting stopped. About three
-minutes is how long a subject runs, so a batch closes one group or none, and the scribe takes about
-a fifth of the turns it took when it was fed at most every 45 s. Never into a running turn: a turn
+minutes is how long a subject runs, so a batch closes one group or none, and the scribe takes under
+a third of the turns it took when it was fed at most every 45 s (Quality). Never into a running turn: a turn
 pauses vault sync, and a feed into a working turn would hold sync paused for the whole meeting. A
 batch carries the new lines, the groups so far (start, title, open or not written, the fields a
 person edited, the suggestions each already has), and what the person changed since the last one
@@ -337,8 +338,7 @@ bar per topic, as wide as the topic ran (the open one in the primary colour), wh
 topic and brings it into view, and a folded roll-up of the decisions and open questions, each with its
 topic, scrolling smoothly there; **Expand all** and **Collapse all** in the Minutes header. One topic
 is open at a time: opening one folds the others, so the list stays a list. A folded topic is one row:
-its number, title, gist (its first bullet) and its time: the counts of decisions, questions and
-suggestions it once had were icons that crowded the row and said less than the gist. Open, it has two tabs. **Summary**: its bullets, decisions, questions, suggestions as
+its number, title, gist (its first bullet) and its time. Open, it has two tabs. **Summary**: its bullets, decisions, questions, suggestions as
 compact rows with Send (a sent one shows its run and Open session) and its keywords as small badges.
 **Transcript**: the topic's own lines word for word, each correctable and able to start a new topic
 as in the whole transcript, with Copy. Send and a menu with Edit
@@ -357,8 +357,7 @@ choice is kept on this machine. A quote clicked on a task shows the transcript f
 
 **The review.** Stop, and opening any meeting that is not recording, land on its review: title,
 date and length, with **Copy transcript** (one `[m:ss] Speaker: text` line each), **Export minutes**
-and **Open in vault** (the minutes file). The transcript is copied only here, once the meeting is
-over. Export minutes is a menu: **Markdown file…** opens the save sheet beside the minutes and main
+and **Open in vault** (the minutes file). Export minutes is a menu: **Markdown file…** opens the save sheet beside the minutes and main
 writes the rendered minutes, under the meeting's title, where it says (`meeting.export`, an absolute
 `.md` path; in the vault through the vault writer); **PDF…**, offered while the PDF plugin is on,
 renders the minutes file through `pdf.render` with the `plain` template. Either one that lands in the
@@ -487,7 +486,7 @@ sends it as a change to the groups (above).
     topic preset is the same thing, from the groups.
   - **The separate Topics tab**: the topics are the middle of the tab now.
   - **The 45 s cadence**: a batch per three minutes of transcript sees whole subjects, and takes
-    about a fifth of the turns (Quality).
+    under a third of the turns (Quality).
 - **No Claes, measured.** syv.ai's Claes decision model was measured as a fast detector of feature
   requests (window AUC 0.63–0.72) and, for groups, on three jobs: related lines for a prompt,
   topic-change detection, and re-sorting lines into groups. It tied or lost to free baselines on

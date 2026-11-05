@@ -5,6 +5,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
+import { localDate } from '@holi/shared'
 import type { Card, CardRange, MeetingProfile } from '../shared/meeting'
 import { speakerName } from '../shared/meeting'
 import { clock } from '../shared/scribe-prompt'
@@ -87,7 +88,7 @@ function taskTranscript(quotes: Card['quotes'], range: CardRange): string {
  * line of it (up to `MAX_RANGE_TEXT`), in its stretches.
  */
 export function cardSpec(card: Card, ctx: SpecContext): string {
-  const day = new Date(ctx.startedAt).toISOString().slice(0, 10)
+  const day = localDate(new Date(ctx.startedAt))
   const parts = [
     `# ${card.title}`,
     `From the meeting "${ctx.meetingTitle}" on ${day} (minutes: \`${ctx.minutesPath}\`).`,

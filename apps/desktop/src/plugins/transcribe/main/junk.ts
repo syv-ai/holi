@@ -29,10 +29,8 @@ import type { ChunkSegment } from './stitcher'
  * against the segment's text trimmed of surrounding punctuation, whole,
  * case-insensitively; a sentence that merely mentions DR is kept. What a
  * person could say, only short, is in `BROADCAST_CLICHES`.
- *
- * @public exported for its test
  */
-export const ASR_JUNK: readonly RegExp[] = [
+const ASR_JUNK: readonly RegExp[] = [
   // "DR", "DR1", "DR P1", "DR P4 Fælles", "DR K", "DR Ramasjang"
   /^dr ?(\d|p ?\d( [a-zæøå]+)?|k|ramasjang|nyheder)?$/i,
   // "P2:", "P1"
@@ -86,10 +84,8 @@ interface Cliche {
  * a line shorter than 2.5 s is dropped for it. Matched whole, against the
  * line trimmed of surrounding punctuation; a place's name must be
  * capitalised, as the model writes one.
- *
- * @public exported for its test
  */
-export const BROADCAST_CLICHES: readonly Cliche[] = [
+const BROADCAST_CLICHES: readonly Cliche[] = [
   // Channels: "TV 2", "TV2 News", "TV 3", "DR", "DR P3", "P4 København", "Kanal 5", "Radio 24syv"
   {
     re: /^(tv ?\d+( (news|nyhederne|sport|charlie|echo|fri|play|lorry|øst|fyn|nord|syd))?|dr ?(\d|p ?\d|k|tv|nyheder)?|p ?\d( \p{L}+)?|kanal ?\d+|radio \p{L}+)$/iu,

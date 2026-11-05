@@ -9,7 +9,7 @@
 import { readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
-import { exactPath, resolveRelative } from '@holi/shared/path-safety-node'
+import { resolveRelative } from '@holi/shared/path-safety-node'
 import {
   commentThreads,
   isCommentableNote,
@@ -65,6 +65,7 @@ import { ensureClone } from './vault/clone'
 import {
   absPathFor,
   carryFolder,
+  lockPath,
   pruneEmptiedFolder,
   removeDocFile,
   withFileLock,
@@ -1169,8 +1170,7 @@ export function createRouter(deps: RouterDeps) {
         // Under the file's lock, keyed as an app's `docs.write` keys it (the
         // canonical path), so an app's check of the text it read and its
         // write are never split by this save.
-        const abs = (await exactPath(root, rel)) ?? absPathFor(root, rel)
-        await withFileLock(abs, () => writeAtomic(root, rel, input.text))
+        await withFileLock(await lockPath(root, rel), () => writeAtomic(root, rel, input.text))
         return { ok: true as const }
       }),
 

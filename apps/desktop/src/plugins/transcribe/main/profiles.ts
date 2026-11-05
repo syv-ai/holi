@@ -10,7 +10,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import { CapabilityError, type JsonFileStore } from '../../../main/plugin-api'
 import type { GlossaryEntry, MeetingProfile } from '../shared/meeting'
@@ -137,9 +137,15 @@ export function parseProfilesFile(raw: unknown): ProfilesFile {
     typeof raw === 'object' && raw !== null && Array.isArray((raw as ProfilesFile).profiles)
       ? (raw as ProfilesFile).profiles
       : []
+  // One written by hand without an id gets one from its name, the same on
+  // every read, so it can be found and saved by it.
+  const named = (p: unknown): unknown =>
+    typeof p === 'object' && p !== null && !('id' in p) && 'name' in p && typeof p.name === 'string'
+      ? { ...p, id: createHash('sha256').update(p.name).digest('hex').slice(0, 8) }
+      : p
   const profiles = list.flatMap((p) => {
     try {
-      return [profileParam(p)]
+      return [profileParam(named(p))]
     } catch {
       return []
     }

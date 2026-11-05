@@ -30,16 +30,22 @@ import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import type { Related } from '../main/related'
 import { asOne } from '../shared/joins'
-import type { Card, CardKind, MeetingState, SendTarget, Suggestion, Topic } from '../shared/meeting'
+import {
+  MAX_PROMPT,
+  type Card,
+  type CardKind,
+  type MeetingState,
+  type SendTarget,
+  type Suggestion,
+  type Topic,
+} from '../shared/meeting'
 import { useAgentName } from './agent-name'
-import { clock } from './format'
+import { clock } from '../shared/scribe-prompt'
 import { meetingCap } from './meeting-cap'
 import { SendButton } from './send-button'
 import { message, putCardAtom, sendPanelAtom } from './state'
 import { topicName } from './topic-index'
 
-/** How long the ask may be: main's limit. */
-const MAX_PROMPT = 2000
 /** How long typing rests before the related lines are asked again. */
 const RELATED_DEBOUNCE_MS = 300
 

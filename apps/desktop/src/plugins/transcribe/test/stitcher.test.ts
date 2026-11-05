@@ -3,7 +3,7 @@
  * the order and indices of the transcript.
  */
 import { describe, expect, it } from 'vitest'
-import { ASR_JUNK, isAsrJunk } from '../main/junk'
+import { isAsrJunk } from '../main/junk'
 import {
   chunkSegments,
   cleanSegments,
@@ -125,10 +125,6 @@ describe('junk', () => {
     'Tak for i dag.',
   ])('keeps speech that only mentions it: %j', (text) => {
     expect(isAsrJunk(text)).toBe(false)
-  })
-
-  it('is one list', () => {
-    expect(ASR_JUNK.length).toBeGreaterThan(3)
   })
 
   it('drops junk segments from a chunk', () => {

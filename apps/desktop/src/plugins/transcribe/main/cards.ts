@@ -10,7 +10,14 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { CapabilityError } from '../../../main/plugin-api'
-import type { Card, CardKind, CardStatus, MeetingState, Quote } from '../shared/meeting'
+import {
+  MAX_PROMPT,
+  type Card,
+  type CardKind,
+  type CardStatus,
+  type MeetingState,
+  type Quote,
+} from '../shared/meeting'
 
 /**
  * The most tasks one meeting holds.
@@ -78,8 +85,6 @@ export function requote(meeting: MeetingState, i: number, now: number): void {
  * @public exported for its test
  */
 export const MAX_TASK_LINES = 400
-/** How long a person's ask may be. */
-const MAX_PROMPT = 2000
 /** A title from the ask's first line, cut to this. */
 const PROMPT_TITLE = 80
 

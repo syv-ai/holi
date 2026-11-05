@@ -17,6 +17,7 @@
  *
  * Pure: no `electron`, no I/O.
  */
+import { localDate } from '@holi/shared'
 import { joinedSets } from '../shared/joins'
 import type { Card, MeetingProfile, MeetingState, Topic } from '../shared/meeting'
 import { clock } from '../shared/scribe-prompt'
@@ -108,7 +109,7 @@ const hhmm = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`
 /** The date and time it ran, as this machine tells time. */
 function when(meeting: MeetingState, w: Words): string {
   const start = new Date(meeting.startedAt)
-  const day = `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`
+  const day = localDate(start)
   const end = meeting.endedAt === undefined ? null : new Date(meeting.endedAt)
   return end === null ? `${day} · ${w.from} ${hhmm(start)}` : `${day} · ${hhmm(start)}–${hhmm(end)}`
 }

@@ -27,6 +27,7 @@ import type { ChunkInfo, ChunkState, MeetingState, ScribeState } from '../shared
 import { useAgentName } from './agent-name'
 import { SCRIBE_NAME, SCRIBE_TITLE } from './names'
 import { recorderAtom } from './recorder'
+import { scribeStateOf, unsupportedReason } from './scribe-ready'
 
 /** How the topics are doing: "Topics: listening". */
 const DOING: Record<ScribeState, string> = {
@@ -55,7 +56,6 @@ function useHealth(meeting: MeetingState) {
   const inState = (...states: ChunkState[]): ChunkInfo[] =>
     meeting.chunks.filter((c) => states.includes(c.state))
   const scribe = meeting.scribeSessionId
-  // The agent's own word is fresher than the last meeting event.
   const row = sessions.find((s) => s.id === scribe)
   return {
     waiting: inState('queued', 'uploading'),
@@ -63,7 +63,7 @@ function useHealth(meeting: MeetingState) {
     lag: meeting.chunks.filter((c) => c.state === 'done' && c.latencyMs !== undefined).at(-1),
     scribe,
     live: scribe !== undefined && row !== undefined,
-    state: (row?.state === 'needs-you' ? 'needs-you' : meeting.scribeState) as ScribeState,
+    state: scribeStateOf(meeting, row),
   }
 }
 
@@ -99,7 +99,7 @@ export function MeetingStatus({ meeting }: { meeting: MeetingState }): React.JSX
   /** What to do about topics that stopped or cannot run; the recording
    *  and the captions go on either way. */
   const fix = unsupported
-    ? `Topics need Claude Code or Pi, and this vault’s agent is ${agent}. Recording and captions go on. Choose one in Settings › General › Agents, then start the assistant under Now.`
+    ? `${unsupportedReason(agent)} Recording and captions go on. Choose one in Settings › General › Agents, then start the assistant under Now.`
     : state === 'gone'
       ? `${SCRIBE_TITLE}, the session that writes the topics, ended. Recording and captions go on; open its session to see why.`
       : null

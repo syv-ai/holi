@@ -21,19 +21,22 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
-import type { Card, MeetingState, Quote, SendTarget } from '../shared/meeting'
+import {
+  MAX_CONTEXT,
+  type Card,
+  type MeetingState,
+  type Quote,
+  type SendTarget,
+} from '../shared/meeting'
 import { useAgentName } from './agent-name'
 import { CardFields, draftOf, type CardDraft } from './card-fields'
-import { clock } from './format'
+import { clock } from '../shared/scribe-prompt'
 import { meetingCap, type CardPatch } from './meeting-cap'
 import { SCRIBE_NAME, TASK_NAME } from './names'
 import { useRun } from './run-state'
 import { SendButton } from './send-button'
 import { SpeakerBadge } from './speaker-badge'
 import { highlightSegmentAtom, message, openTaskAtom, putCardAtom } from './state'
-
-/** How long a note on how to do it may be: main's limit. */
-const MAX_CONTEXT = 2000
 
 /** A quote, which finds its words in the transcript when clicked. */
 function QuoteButton({ quote, onClick }: { quote: Quote; onClick: () => void }): React.JSX.Element {

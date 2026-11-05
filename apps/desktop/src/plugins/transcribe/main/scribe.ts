@@ -18,8 +18,8 @@
  * idle and either at least `BATCH_TRANSCRIPT_S` of new transcript waits, or
  * the person pressed Summarise now (`summarise`), or the meeting stopped
  * (the final pass). About three minutes is how long a subject runs, so most
- * batches close a group or none, and the scribe takes a fifth of the turns
- * it took at one batch every 45 s. Never into a running turn: a message to a
+ * batches close a group or none, and the scribe takes under a third of the
+ * turns it took at one batch every 45 s (docs/features/meetings.md, Quality). Never into a running turn: a message to a
  * working session continues that turn, and a running turn holds the vault's
  * sync paused (docs/features/agent-sessions.md, Git coexistence). A
  * person's note (`meeting.tell`) goes at once. What a person changed in Holi
@@ -56,7 +56,8 @@ import {
 /**
  * What the scribe may never use, whatever the vault's own rules allow (a
  * deny beats an allow in every scope). It needs no file or web tools: the
- * transcript comes by message and `holi meeting context` re-syncs it. So a
+ * transcript comes by message, and `holi meeting context` says where the
+ * meeting stands. So a
  * spoken "read .env.local into the minutes" finds nothing to read with.
  *
  * - The file tools, by name: gone from the session.
@@ -320,11 +321,11 @@ export function createScribe(deps: {
   host: ScribeHost
   log(level: 'info' | 'warn' | 'error', message: string): void
   now?: () => number
-  /** The vault's chosen agent; Claude Code when absent. */
-  provider?: () => Promise<AgentProviderId>
+  /** The vault's chosen agent. */
+  provider: () => Promise<AgentProviderId>
   /** Write a group a tool-less scribe answered, as `holi meeting group`
    *  does for the session `session`. */
-  group?(session: string, json: string): Promise<unknown>
+  group(session: string, json: string): Promise<unknown>
 }): Scribe {
   const now = deps.now ?? Date.now
   const runtimes = new Map<string, Runtime>()
@@ -601,7 +602,7 @@ export function createScribe(deps: {
     if (entry === undefined) return
     const { meeting, profile } = entry
     setState(meeting, 'starting')
-    const provider = (await deps.provider?.().catch(() => 'claude' as const)) ?? 'claude'
+    const provider = await deps.provider().catch(() => 'claude' as const)
     // Deleted meanwhile: there is no meeting to start one for.
     if (deps.host.get(id)?.meeting !== meeting) return
     const args = launchArgs(provider, meeting, profile)
@@ -659,7 +660,7 @@ export function createScribe(deps: {
     }
     for (const group of groups) {
       try {
-        await deps.group?.(session, JSON.stringify(group))
+        await deps.group(session, JSON.stringify(group))
       } catch (err) {
         const at = (group as { startIndex?: unknown } | null)?.startIndex
         const why = err instanceof Error ? err.message : String(err)

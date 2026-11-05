@@ -15,6 +15,7 @@ import {
   pruneEmptiedFolder,
   removeDocFile,
   withFileLock,
+  withFileLocks,
   writeAtomic,
 } from '../../../main/plugin-api'
 
@@ -59,12 +60,16 @@ export async function removeVaultFiles(
   paths: readonly string[],
   folder: string,
 ): Promise<void> {
-  for (const path of paths) {
-    const rel = vaultRelPath(path)
-    const abs = await exactPath(root, rel)
-    if (abs === null) throw new Error(`refused to remove ${path}: not a plain vault path`)
-    await withFileLock(abs, () => removeDocFile(root, rel))
+  const rels = paths.map((path) => vaultRelPath(path))
+  for (const rel of rels) {
+    if ((await exactPath(root, rel)) === null) {
+      throw new Error(`refused to remove ${rel}: not a plain vault path`)
+    }
   }
+  // All of them at once, as every delete of several files holds them.
+  await withFileLocks(root, rels, async () => {
+    for (const rel of rels) await removeDocFile(root, rel)
+  })
   await pruneEmptiedFolder(root, vaultRelPath(folder))
 }
 

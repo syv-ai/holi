@@ -1,6 +1,6 @@
 /** The transcript as text to paste: one `[m:ss] Speaker: text` line each. */
 import { speakerName, type Segment } from '../shared/meeting'
-import { clock } from './format'
+import { clock } from '../shared/scribe-prompt'
 
 export function transcriptText(segments: readonly Segment[]): string {
   return segments

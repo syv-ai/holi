@@ -43,9 +43,9 @@ import type {
   Topic,
   TopicField,
 } from '../shared/meeting'
-import { MEETING_SUFFIX } from '../shared/meeting'
+import { MAX_CONTEXT, MEETING_SUFFIX } from '../shared/meeting'
 import { cardPatchParam, kindOf } from './cards'
-import type { Meetings } from './engine'
+import { MAX_TITLE, type Meetings } from './engine'
 import { profileParam, type Profiles } from './profiles'
 import type { Related } from './related'
 import type { TellKind } from './scribe'
@@ -62,10 +62,6 @@ const MAX_TELL = 4000
 const MAX_QUERY = 4000
 /** The most lines a task or a related query's exclusions name. */
 const MAX_LINES = 5000
-/** How the person wants a card done: a note, not a document. */
-const MAX_CONTEXT = 2000
-/** The longest title a meeting may be given. */
-const MAX_TITLE = 120
 /** A transcript line's words, as a person corrects them. */
 const MAX_LINE = 2000
 /** A Holi's id: its folder's name. */
@@ -552,7 +548,6 @@ export const meetingCapabilities = (deps: MeetingCapabilitiesDeps) => {
       },
     }),
 
-    /** The scribe's next batch now, however little transcript waits. */
     /** Start the assistant of a meeting that records again, after it
      *  stopped or could not start: on the vault's agent as it is now. */
     'meeting.scribe.restart': cap({
@@ -565,6 +560,7 @@ export const meetingCapabilities = (deps: MeetingCapabilitiesDeps) => {
       },
     }),
 
+    /** The scribe's next batch now, however little transcript waits. */
     'meeting.summarise': cap({
       doors: ['ui'],
       params: meetingParams,

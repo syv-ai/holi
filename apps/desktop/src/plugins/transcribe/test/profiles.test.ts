@@ -15,6 +15,15 @@ async function rig() {
 }
 
 describe('meeting profiles', () => {
+  it('give one written by hand without an id the same id on every read', async () => {
+    const { profiles, path } = await rig()
+    await writeFile(path, JSON.stringify({ profiles: [{ name: 'Weekly' }] }))
+    const [hand] = await profiles.list()
+    expect(await profiles.get(hand!.id)).toMatchObject({ name: 'Weekly' })
+    await profiles.save({ ...hand!, focus: 'the roadmap' })
+    expect(await profiles.list()).toEqual([{ ...hand, focus: 'the roadmap' }])
+  })
+
   it('start with a Default: Danish, private minutes, no audio kept', async () => {
     const { profiles } = await rig()
     expect(await profiles.list()).toEqual([DEFAULT_PROFILE])

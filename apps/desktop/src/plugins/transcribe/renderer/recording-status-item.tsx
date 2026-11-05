@@ -3,7 +3,7 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Circle } from 'lucide-react'
 import { openSurfaceAtom, StatusBarItem, useNow } from '@/plugin-api'
-import { clock } from './format'
+import { clock } from '../shared/scribe-prompt'
 import { recorderAtom } from './recorder'
 import { MEETINGS_SURFACE, shownMeetingIdAtom } from './state'
 

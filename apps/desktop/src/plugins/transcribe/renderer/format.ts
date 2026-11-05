@@ -1,14 +1,5 @@
 /** Small pure helpers the meetings surface shares. */
 
-/** Seconds as `m:ss`, or `h:mm:ss` past an hour. */
-export function clock(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds))
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  const ss = String(s % 60).padStart(2, '0')
-  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`
-}
-
 /** Bytes as base64, in slices so a long chunk does not overflow the call stack. */
 export function base64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer)

@@ -24,15 +24,12 @@ import { Slider } from '@/components/ui/slider'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import type { CardKind, MeetingState, Segment } from '../shared/meeting'
-import { clock } from './format'
+import { MAX_PROMPT, type CardKind, type MeetingState, type Segment } from '../shared/meeting'
+import { clock } from '../shared/scribe-prompt'
 import { meetingCap } from './meeting-cap'
 import { SCRIBE_TITLE, TASK_NAME } from './names'
 import { SpeakerBadge } from './speaker-badge'
 import { message, openTaskAtom, putCardAtom } from './state'
-
-/** How long the ask may be: main's limit. */
-const MAX_PROMPT = 2000
 
 const LAST: ReadonlyArray<{ id: string; label: string; seconds: number }> = [
   { id: 'last-2', label: 'Last 2 min', seconds: 120 },
