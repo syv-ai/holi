@@ -175,6 +175,7 @@ export function browserVault(remote: string, store: PluginStore): () => void {
   let pages = new Set(asked.map((p) => p.id))
   let open = new Set(store.get(tabs))
   const requested = new Set<string>()
+  const closing = new Set<string>()
   const opened = new Set<string>()
   const reopening = new Map<string, Promise<void>>()
 
@@ -208,10 +209,12 @@ export function browserVault(remote: string, store: PluginStore): () => void {
         if (stopped || !store.get(tabs).includes(id)) {
           await browserCap.close(remote, { tab: id }).catch(() => {})
         } else {
+          requested.delete(id)
           opened.add(id)
         }
       })
       .catch(() => {
+        requested.delete(id)
         if (!stopped && store.get(tabs).includes(id))
           store.set(
             closeSurfaceTabsAtom,
@@ -227,9 +230,10 @@ export function browserVault(remote: string, store: PluginStore): () => void {
   void browserCap
     .tabs(remote)
     .then((list) => {
-      if (stopped || store.get(pagesAtom) !== asked) return
-      store.set(pagesAtom, list)
-      const live = new Set(list.map((p) => p.id))
+      if (stopped) return
+      if (store.get(pagesAtom) === asked) store.set(pagesAtom, list)
+      const authoritative = store.get(pagesAtom)
+      const live = new Set(authoritative.map((p) => p.id))
       for (const id of store.get(tabs)) {
         if (live.has(id)) continue
         requested.add(id)
@@ -245,6 +249,7 @@ export function browserVault(remote: string, store: PluginStore): () => void {
     const now = new Set(list.map((p) => p.id))
     const gone = [...pages].filter((id) => !now.has(id))
     pages = now
+    for (const id of gone) closing.delete(id)
     for (const id of now) opened.delete(id)
     for (const id of gone) opened.delete(id)
     const activeTabs = store.get(tabs)
@@ -286,13 +291,16 @@ export function browserVault(remote: string, store: PluginStore): () => void {
     for (const id of open) {
       if (!now.has(id)) {
         requested.delete(id)
+        if (pages.has(id)) closing.add(id)
         if (!reopening.has(id)) void browserCap.close(remote, { tab: id }).catch(() => {})
       }
     }
     for (const id of now) {
       if (open.has(id)) continue
-      requested.add(id)
-      ensureOpen(id)
+      if (!pages.has(id) || closing.has(id)) {
+        requested.add(id)
+        ensureOpen(id)
+      }
     }
     open = now
   })
