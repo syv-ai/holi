@@ -12,7 +12,13 @@
  */
 import { atom } from 'jotai'
 
-import { emptyWorkspace, openInSplit, openTab, type ShellWorkspace } from './shell-workspace'
+import {
+  emptyWorkspace,
+  openInSplit,
+  openTab,
+  trackRecent,
+  type ShellWorkspace,
+} from './shell-workspace'
 import { openingBeside } from './alt-open'
 import { tabKey, type TabDescriptor } from './tab-descriptor'
 import { activeRemoteAtom } from './vaults'
@@ -20,16 +26,33 @@ import { activeRemoteAtom } from './vaults'
 const workspacesAtom = atom<Record<string, ShellWorkspace>>({})
 const EMPTY = emptyWorkspace()
 
-/** The open vault's workspace. Written with a value or an update. */
-export const shellWorkspaceAtom = atom(
-  (get): ShellWorkspace => get(workspacesAtom)[get(activeRemoteAtom) ?? ''] ?? EMPTY,
-  (get, set, update: ShellWorkspace | ((ws: ShellWorkspace) => ShellWorkspace)) => {
-    const remote = get(activeRemoteAtom) ?? ''
+type WorkspaceUpdate = ShellWorkspace | ((ws: ShellWorkspace) => ShellWorkspace)
+
+/** The workspace of the vault at `remote`, open or not: what a plugin
+ *  watching its own vault's tabs reads, so a vault switch does not look like
+ *  its tabs closing. */
+export const workspaceOfAtom = atom(
+  (get) =>
+    (remote: string): ShellWorkspace =>
+      get(workspacesAtom)[remote] ?? EMPTY,
+)
+
+/** Write the workspace of the vault at `remote`, with a value or an update. */
+export const updateWorkspaceAtom = atom(
+  null,
+  (get, set, remote: string, update: WorkspaceUpdate): void => {
     const current = get(workspacesAtom)[remote] ?? EMPTY
-    const next = typeof update === 'function' ? update(current) : update
+    const next = trackRecent(typeof update === 'function' ? update(current) : update)
     if (next === current) return
     set(workspacesAtom, (all) => ({ ...all, [remote]: next }))
   },
+)
+
+/** The open vault's workspace. Written with a value or an update. */
+export const shellWorkspaceAtom = atom(
+  (get): ShellWorkspace => get(workspacesAtom)[get(activeRemoteAtom) ?? ''] ?? EMPTY,
+  (get, set, update: WorkspaceUpdate) =>
+    set(updateWorkspaceAtom, get(activeRemoteAtom) ?? '', update),
 )
 
 /** Open a tab, or select it where it is (its split, focused on it);

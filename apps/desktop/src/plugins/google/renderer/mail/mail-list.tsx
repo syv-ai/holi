@@ -161,7 +161,7 @@ function MailItem({
             <span
               className={cn(
                 'truncate text-sm leading-tight',
-                thread.unread ? 'text-foreground font-semibold' : 'text-foreground/75 font-medium',
+                thread.unread ? 'text-foreground font-semibold' : 'text-foreground font-medium',
               )}
             >
               {thread.from.name}
@@ -206,7 +206,7 @@ function MailItem({
             <span
               className={cn(
                 'text-xs whitespace-nowrap tabular-nums',
-                thread.unread ? 'text-foreground/70 font-medium' : 'text-muted-foreground/60',
+                thread.unread ? 'text-foreground font-medium' : 'text-muted-foreground',
               )}
             >
               {listStamp(thread.date)}
@@ -219,7 +219,7 @@ function MailItem({
           <p
             className={cn(
               'min-w-0 truncate text-xs leading-tight',
-              thread.unread ? 'text-foreground/90 font-medium' : 'text-foreground/70',
+              thread.unread ? 'text-foreground font-medium' : 'text-foreground',
             )}
           >
             {thread.subject}
@@ -272,15 +272,15 @@ function DraftItem({ draft, onClick }: { draft: DraftSummary; onClick: () => voi
       )}
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="mb-1 flex items-center justify-between gap-1">
-          <span className="text-foreground/75 truncate text-sm leading-tight font-medium">
+          <span className="text-foreground truncate text-sm leading-tight font-medium">
             {recipients(draft)}
           </span>
-          <span className="text-muted-foreground/60 shrink-0 text-xs whitespace-nowrap tabular-nums">
+          <span className="text-muted-foreground shrink-0 text-xs whitespace-nowrap tabular-nums">
             {listStamp(draft.date)}
           </span>
         </div>
         <div className="mb-1 grid">
-          <p className="text-foreground/70 min-w-0 truncate text-xs leading-tight">
+          <p className="text-foreground min-w-0 truncate text-xs leading-tight">
             {draft.subject === '' ? '(no subject)' : draft.subject}
           </p>
         </div>

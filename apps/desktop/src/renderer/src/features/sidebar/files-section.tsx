@@ -60,22 +60,27 @@ import { closeTabsWhere } from '@/state/shell-workspace'
 import { parseTabKey, tabKey, tabPath } from '@/state/tab-descriptor'
 import { shellTabForPathAtom } from '@/state/surfaces'
 import { claimsAtom, folderClaimsAtom } from '@/state/plugins'
-import { createTaskAtom } from '@/state/tasks'
 import { setTreeOrderAtom, treeOrderAtom } from '@/state/tree-order'
 import {
   createFolderAtom,
   createNoteAtom,
+  activeRemoteAtom,
   deleteManyAtom,
   importFilesAtom,
   moveNotesAtom,
-  activeRemoteAtom,
   snapshotAtom,
   snapshotLoadedAtom,
   vaultsAtom,
 } from '@/state/vaults'
 import { EllipsisIcon, PlusIcon } from 'lucide-react'
 import { AskNameDialog } from './ask-name-dialog'
-import { newActions, pluginRowActions, rowActions, type FileCreate } from './file-menu-actions'
+import {
+  newActions,
+  pluginRowActions,
+  rowActions,
+  viewActions,
+  type FileCreate,
+} from './file-menu-actions'
 import { displayName, FileGlyph, RowHover } from './file-row'
 import { attempt, freeName, useFiles } from './use-files'
 
@@ -132,7 +137,6 @@ export function FilesSection({
   const vaults = useAtomValue(vaultsAtom)
   const createNote = useSetAtom(createNoteAtom)
   const createFolder = useSetAtom(createFolderAtom)
-  const createTask = useSetAtom(createTaskAtom)
   const moveNotes = useSetAtom(moveNotesAtom)
   const deleteMany = useSetAtom(deleteManyAtom)
   const setWorkspace = useSetAtom(shellWorkspaceAtom)
@@ -145,10 +149,21 @@ export function FilesSection({
   /** Set by a menu's Rename; the field opens once the menu has closed, so
    *  the menu handing focus back does not take it from the field. */
   const renameNext = useRef<string | null>(null)
+  /** Set by a New item that opens a name field once it lands: the menu
+   *  closing leaves focus alone, so it cannot take it from the field. */
+  const namingNext = useRef(false)
+  /** An asking New item waits until its menu has released focus before the
+   *  dialog mounts; otherwise the closing menu can select text in its field. */
+  const askingNext = useRef<{ create: FileCreate; parent: string } | null>(null)
   /** Rows that just landed (made, moved, renamed, dropped in, revealed): they
    *  rise in once, so the eye finds where they went. */
   const [arrived, setArrived] = useState<ReadonlySet<string>>(new Set())
-  /** Rows waiting for the snapshot projection to include them. */
+  /** The rows that landed last, waiting for the tree to show one: then they
+   *  are selected and the first shown is focused and scrolled into view, its
+   *  name field open when `name` is set (a row just made as Untitled).
+   *  `snapshot` is the one current when they landed: once a newer one still
+   *  shows none of them (a dotfile while hidden files are off), they are
+   *  dropped rather than shown whenever they next appear. */
   const [landing, setLanding] = useState<{
     paths: string[]
     name: boolean
@@ -355,11 +370,7 @@ export function FilesSection({
   // computes: expanding, selecting and focusing go by id.
   useEffect(() => {
     if (landing === null) return
-    if (landing.remote !== files.remote) {
-      setLanding(null)
-      return
-    }
-    if (!stillCurrent(landing.remote)) {
+    if (landing.remote !== files.remote || !stillCurrent(landing.remote)) {
       setLanding(null)
       return
     }
@@ -379,8 +390,6 @@ export function FilesSection({
         ...(snapshot.claimed[TASKS_CLAIM]?.items.map((item) => item.path) ?? []),
         ...(snapshot.claimed[TASKS_CLAIM]?.broken.map((item) => item.path) ?? []),
       ])
-      // A raw snapshot confirms these rows exist, but a user filter keeps them
-      // out of the tree. Truly absent paths may still be awaiting a scan.
       if (
         landing.paths.every(
           (landed) =>
@@ -467,15 +476,16 @@ export function FilesSection({
     parent: string,
     name: string,
     { untitled = false } = {},
-  ): Promise<void> {
+  ): Promise<boolean> {
     const remote = files.remote
-    if (remote === null) return
+    if (remote === null) return false
     const path = await create.run({ remote, parent, name })
-    if (!path || !stillCurrent(remote)) return
+    if (!path || !stillCurrent(remote)) return false
     const suffix = create.entry === undefined ? null : `/${create.entry}`
     const opened = suffix !== null && path.endsWith(suffix) ? path.slice(0, -suffix.length) : path
     land([opened], { name: untitled })
     onOpen(opened)
+    return true
   }
 
   /** The web address a browser's drag carries, if that is all it carries. */
@@ -492,7 +502,9 @@ export function FilesSection({
   /** A web address dropped from a browser, saved as a link in `parent`. */
   function dropUrl(url: string, parent: string) {
     if (urlCreate === undefined) return
-    void attempt('save the link', () => made(urlCreate, parent, url))
+    void attempt('save the link', async () => {
+      await made(urlCreate, parent, url)
+    })
   }
 
   /** Finder drops on the empty space below the rows land at the root, and a
@@ -512,17 +524,31 @@ export function FilesSection({
     void attempt('add the files', () => dropPaths(sources, ''))
   }
 
-  function newNote() {
-    void attempt('create a document', async () => {
-      const remote = files.remote
-      if (remote === null) return
-      const parent = newParent(focused?.getId() ?? null)
-      const name = freeName(files.taken, parent, 'Untitled', '.md')
-      await createNote(joinPath(parent, name))
-      if (!stillCurrent(remote)) return
-      const path = joinPath(parent, name)
-      land([path])
-      onOpen(path)
+  /** A new Untitled document in `parent`, opened; `name` opens its name
+   *  field (the New menu's), where the empty tree's button only opens it. */
+  async function newNote(parent: string, { name = false } = {}): Promise<boolean> {
+    const path = joinPath(parent, freeName(files.taken, parent, 'Untitled', '.md'))
+    const remote = files.remote
+    if (remote === null) return false
+    await createNote(path)
+    if (!stillCurrent(remote)) return false
+    land([path], { name })
+    onOpen(path)
+    return true
+  }
+
+  /** A New menu item that lands with its name field open. The menu closing
+   *  leaves focus for that field, so when nothing lands (a failure, a
+   *  plugin's refusal) focus goes back to the tree instead of the page. */
+  function naming(what: string, action: () => Promise<boolean>) {
+    namingNext.current = true
+    void attempt(what, async () => {
+      let landed = false
+      try {
+        landed = await action()
+      } finally {
+        if (!landed) tree.updateDomFocus()
+      }
     })
   }
 
@@ -584,7 +610,6 @@ export function FilesSection({
         moveTo: (path, dest) =>
           void attempt(`move “${basename(path)}”`, async () => land(await moveInto([path], dest))),
         remove: setDeleting,
-        // The note opens, so its pill says how the app is going.
         createVaultApp: (path) => {
           onOpen(path)
           void startVaultApp(path)
@@ -636,52 +661,66 @@ export function FilesSection({
     return item.isFolder() && !browsable.has(target) ? target : parentOf(target)
   }
 
+  /** The New menu for a menu opened on `target` (null: nothing picked).
+   *  Each item lands what it made with its name field open, except one that
+   *  asked its name in a dialog first (a link's address, a task's title). */
   const newActionsOf = (target: string | null): MenuAction[] => {
     const parent = newParent(target)
     return newActions({
       creates,
       remote: files.remote,
-      showTasks: files.showTasks,
-      showHidden: files.showHidden,
       on: {
+        newNote: () => naming('create a document', () => newNote(parent, { name: true })),
         newFolder: () =>
-          void attempt('create the folder', async () => {
+          naming('create the folder', async () => {
             const name = joinPath(parent, freeName(files.taken, parent, 'New folder'))
             await createFolder(name)
             land([name], { name: true })
+            return true
           }),
-        newTask: () =>
-          void attempt('create the task', async () => {
-            const remote = files.remote
-            const path = await createTask({
-              title: 'Untitled task',
-              status: 'todo',
-              folder: parent,
-            })
-            if (!path || !stillCurrent(remote)) return
-            land([path])
-            onOpen(path)
-          }),
-        make: (create) =>
-          create.asksName === true
-            ? setAsking({ create, parent })
-            : void attempt(`make the ${create.label.toLowerCase()}`, async () => {
-                await made(
-                  create,
-                  parent,
-                  freeName(files.taken, parent, 'Untitled', '.app').replace(/\.app$/, ''),
-                  { untitled: true },
-                )
-              }),
-        toggleTasks: files.toggleTasks,
-        toggleHidden: files.toggleHidden,
-        collapseAll: () => tree.collapseAll(),
+        make: (create) => {
+          if (create.asksName === true) askingNext.current = { create, parent }
+          else
+            naming(`make the ${create.label.toLowerCase()}`, () =>
+              made(
+                create,
+                parent,
+                freeName(files.taken, parent, 'Untitled', '.app').replace(/\.app$/, ''),
+                { untitled: true },
+              ),
+            )
+        },
       },
     })
   }
 
-  /** A menu closing on Rename opens the field instead of taking focus back. */
+  /** The view switches below the New menu in the ⋯ and right-click menus. */
+  const viewMenu = viewActions({
+    showTasks: files.showTasks,
+    showHidden: files.showHidden,
+    on: {
+      toggleTasks: files.toggleTasks,
+      toggleHidden: files.toggleHidden,
+      collapseAll: () => tree.collapseAll(),
+    },
+  })
+
+  /** Transfer focus ownership only after the closing menu has finished its
+   *  own focus handling: to a requested dialog, a New item's name field, or a
+   *  renamed row. */
   function openRenameOnClose(event: Event) {
+    const ask = askingNext.current
+    if (ask !== null) {
+      askingNext.current = null
+      event.preventDefault()
+      setAsking(ask)
+      return
+    }
+    if (namingNext.current) {
+      namingNext.current = false
+      event.preventDefault()
+      return
+    }
     const id = renameNext.current
     if (id === null) return
     renameNext.current = null
@@ -697,16 +736,24 @@ export function FilesSection({
   return (
     <SidebarGroup className="min-h-0 flex-1">
       <SidebarGroupLabel>Files</SidebarGroupLabel>
-      {/* New document sits beside the menu, where the section's actions are. */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <SidebarGroupAction className="right-9" onClick={newNote}>
-            <PlusIcon aria-hidden="true" />
-            <span className="sr-only">New document</span>
-          </SidebarGroupAction>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">New document</TooltipContent>
-      </Tooltip>
+      {/* What to add sits beside the menu, where the section's actions are,
+          made where the ⋯ menu's New items make it. */}
+      <DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <SidebarGroupAction className="right-9">
+                <PlusIcon aria-hidden="true" />
+                <span className="sr-only">New</span>
+              </SidebarGroupAction>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">New</TooltipContent>
+        </Tooltip>
+        <DropdownMenuContent align="end" className="w-56" onCloseAutoFocus={openRenameOnClose}>
+          <DropdownMenuActions actions={newActionsOf(focused?.getId() ?? null)} />
+        </DropdownMenuContent>
+      </DropdownMenu>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <SidebarGroupAction>
@@ -723,7 +770,13 @@ export function FilesSection({
               <DropdownMenuActions actions={rowActionsOf(focused.getId())} />
             </>
           ) : null}
-          <DropdownMenuActions actions={newActionsOf(focused?.getId() ?? null)} />
+          <DropdownMenuActions
+            actions={[
+              ...newActionsOf(focused?.getId() ?? null),
+              { kind: 'separator' },
+              ...viewMenu,
+            ]}
+          />
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -769,7 +822,13 @@ export function FilesSection({
                   <p className="text-muted-foreground text-xs">
                     No files yet. Drop some here, or start one.
                   </p>
-                  <Button variant="outline" size="sm" onClick={newNote}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      void attempt('create a document', async () => void (await newNote('')))
+                    }
+                  >
                     <PlusIcon aria-hidden="true" />
                     New document
                   </Button>
@@ -846,7 +905,9 @@ export function FilesSection({
 
           <ContextMenuContent className="w-52" onCloseAutoFocus={openRenameOnClose}>
             {menuTarget !== null ? <ContextMenuActions actions={rowActionsOf(menuTarget)} /> : null}
-            <ContextMenuActions actions={newActionsOf(menuTarget)} />
+            <ContextMenuActions
+              actions={[...newActionsOf(menuTarget), { kind: 'separator' }, ...viewMenu]}
+            />
           </ContextMenuContent>
         </ContextMenu>
       </div>
@@ -874,7 +935,9 @@ export function FilesSection({
         asking={asking}
         onClose={() => setAsking(null)}
         onMake={(name) =>
-          asking === null ? Promise.resolve() : made(asking.create, asking.parent, name)
+          asking === null
+            ? Promise.resolve()
+            : made(asking.create, asking.parent, name).then(() => undefined)
         }
       />
     </SidebarGroup>

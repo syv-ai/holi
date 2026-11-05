@@ -20,7 +20,8 @@ import {
   type VaultSnapshot,
 } from '@holi/shared'
 import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
-import { workspaceAtom } from '@/state/panes'
+import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { allTabs } from '@/state/shell-workspace'
 import { activeRemoteAtom } from '@/state/vaults'
 import { openTodaysDailyAtom } from '@/state/daily'
 
@@ -48,7 +49,7 @@ const snap = (path: string): VaultSnapshot => ({
 })
 
 describe('openTodaysDailyAtom', () => {
-  it('creates and opens a pinned tab', async () => {
+  it('creates it and opens its tab', async () => {
     holi = installFakeHoli((op) => {
       if (op.path === 'notes.getOrCreateDaily') return { path: '21-07-2026.md', created: true }
       if (op.path === 'vaults.snapshot') return snap('21-07-2026.md')
@@ -58,9 +59,7 @@ describe('openTodaysDailyAtom', () => {
     store.set(activeRemoteAtom, 'me/notes')
 
     expect(await store.set(openTodaysDailyAtom)).toBe('21-07-2026.md')
-    expect(store.get(workspaceAtom).panes[0]!.tabs).toEqual([
-      { kind: 'note', path: '21-07-2026.md' },
-    ])
+    expect(allTabs(store.get(shellWorkspaceAtom))).toEqual(['21-07-2026.md'])
     expect(holi.calls.map((c) => c.path)).toContain('notes.getOrCreateDaily')
   })
 

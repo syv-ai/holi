@@ -57,9 +57,10 @@ complete`), `lead` (a GitHub login), `start` and `due` (stamps, as on a task) an
   (Manual, Due date, Priority, Start date, Title) and **New task**: a title, a description and the
   task's fields as a row of chips; the new task opens. The tab, search, filter and sort
   are kept for the session, so leaving the Board and coming back finds them as they were.
-- **A task's fields are chips** (`task-fields.tsx`): status, assignee, priority, due and start
-  date, labels (`tags`), project and estimate, the same row in New task and above an open task's
-  body, where each change writes the file at once. **Project is the task's folder**: no project is
+- **A task's fields** (`task-fields.tsx`): status, assignees, priority, start and due date,
+  labels (`tags`), project, estimate and sharing, one list drawn as a row of chips in New task and
+  as labelled properties on an open task ([editor](editor.md)), where each change writes the file
+  at once. **Project is the task's folder**: no project is
   the vault root, picking one moves the file there (`tasks.move`, inbound links rewritten, the
   tab following), and a new name makes the folder. Dot-folders are never projects. Before it
   writes, the row saves what the editor has pending, since the editor writes the file whole.

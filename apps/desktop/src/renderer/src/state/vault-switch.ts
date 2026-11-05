@@ -1,8 +1,9 @@
 /**
  * Leaving the active vault: by switching to another, or by adding one.
  *
- * A vault switch is a teardown in main (the old watcher and timers stop), so
- * the tabs over the old vault go with it. Setting the active remote is all that
+ * A vault switch is a teardown in main (the old watcher and timers stop). The
+ * shell keeps each vault's tabs apart (`shell-tabs.ts`), so the old vault's
+ * leave the strip and come back with it. Setting the active remote is all that
  * is needed: Shell's open effect picks it up and runs the same sequence as a
  * cold start.
  *
@@ -16,11 +17,9 @@
  * Shell's add-vault gesture.
  */
 import { atom } from 'jotai'
-import { flushSync } from 'react-dom'
 import { flushAllBuffers, freezeBuffers } from '@/lib/buffer-registry'
-import { emptyWorkspace, workspaceAtom } from './panes'
 import { leaveReasonsAtom } from './plugins'
-import { activeRemoteAtom } from './vaults'
+import { activeRemoteAtom, openedRemoteAtom } from './vaults'
 
 export type LeavingVault = { kind: 'switch'; remote: string } | { kind: 'add' } | null
 
@@ -34,13 +33,13 @@ export const leavingVaultAtom = atom<LeavingVault>(null)
  */
 export const applyVaultSwitchAtom = atom(null, async (_get, set, remote: string): Promise<void> => {
   set(leavingVaultAtom, null)
+  // The shell keeps each vault's workspace independently. Flush the old
+  // vault before changing remotes; do not clear its tabs.
   const release = freezeBuffers()
   try {
     await flushAllBuffers()
-    flushSync(() => {
-      set(workspaceAtom, emptyWorkspace())
-      set(activeRemoteAtom, remote)
-    })
+    set(openedRemoteAtom, null)
+    set(activeRemoteAtom, remote)
   } finally {
     release()
   }
