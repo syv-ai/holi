@@ -1170,7 +1170,11 @@ describe('ActiveVault — sync', () => {
   })
 
   /** A vault whose pushes fail on the network while `failing()` says so. */
-  async function withFlakyPush(failing: () => boolean, failingAlertMs?: number) {
+  async function withFlakyPush(
+    failing: () => boolean,
+    failingAlertMs?: number,
+    onPullCompleted?: () => void,
+  ) {
     const origin = await makeRemote()
     const dir = await makeClone(origin)
     await sleep(QUIESCE)
@@ -1181,6 +1185,11 @@ describe('ActiveVault — sync', () => {
       remote: 'syv-ai/notes',
       repo: {
         ...real,
+        pull: async () => {
+          const result = await real.pull()
+          onPullCompleted?.()
+          return result
+        },
         push: async () => {
           if (!failing()) return { kind: 'nothing-to-push' as const }
           throw new GitError('could not resolve host: github.com', 128, 'could not resolve host')
@@ -1207,16 +1216,49 @@ describe('ActiveVault — sync', () => {
     expect(alerts).toEqual([])
   })
 
-  it('does not alert, when the time is up, about a blip a later pull got past', async () => {
+  it('does not alert, when the time is up, about a blip a later pull got past', async ({
+    onTestFinished,
+  }) => {
     let failing = false
-    const { active, alerts } = await withFlakyPush(() => failing, 800)
+    let pullCompleted = false
+    const failingAlertMs = 800
+    let alertTimeout: (() => void) | undefined
+    const realSetTimeout = globalThis.setTimeout.bind(globalThis)
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation((handler, timeout, ...args) => {
+        if (timeout === failingAlertMs && typeof handler === 'function') {
+          alertTimeout = handler
+          return realSetTimeout(handler, 60_000, ...args)
+        }
+        return realSetTimeout(handler, timeout, ...args)
+      })
+    onTestFinished(() => {
+      setTimeoutSpy.mockRestore()
+    })
+
+    const { active, alerts } = await withFlakyPush(
+      () => failing,
+      failingAlertMs,
+      () => {
+        pullCompleted = true
+      },
+    )
     await active.pushNow()
     failing = true
     await active.pushNow()
     failing = false
-    // A pull reaches the remote, and no push follows it.
+    // A pull reaches the remote, and no push follows it. Hold only the alert
+    // timer so fixture IO cannot race the retry's real pull.
+    pullCompleted = false
     await active.retry()
-    await sleep(1_000)
+    expect(pullCompleted).toBe(true)
+    expect(alertTimeout).toBeDefined()
+    expect(alerts).toEqual([])
+
+    // Even if the delayed callback runs after recovery, it must not report the
+    // cleared failure.
+    alertTimeout!()
     expect(alerts).toEqual([])
   })
 

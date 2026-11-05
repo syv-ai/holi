@@ -14,7 +14,7 @@
  * the primary calendar, and the calls it writes through carry a title, times
  * and, on creation, a place.
  */
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
@@ -81,9 +81,9 @@ interface EventSheetProps {
   /** Offered only in a vault that runs tasks. */
   canCreateTask: boolean
   onOpenChange: (open: boolean) => void
-  onDraftChange: (draft: EventDraft) => void
   onEdit: () => void
-  onSave: () => void
+  /** Save what the form holds: the draft it was opened with, as edited. */
+  onSave: (draft: EventDraft) => void
   onDelete: () => void
   onCreateTask: () => void
   onOpenExternal: (url: string) => void
@@ -191,7 +191,6 @@ export function EventSheet({
   saving,
   canCreateTask,
   onOpenChange,
-  onDraftChange,
   onEdit,
   onSave,
   onDelete,
@@ -214,7 +213,6 @@ export function EventSheet({
               mode={state.mode as 'edit' | 'create'}
               error={error}
               saving={saving}
-              onChange={onDraftChange}
               onSave={onSave}
               onDelete={onDelete}
               onClose={() => onOpenChange(false)}
@@ -436,13 +434,17 @@ function EventView({
   )
 }
 
+/**
+ * The form owns its edit buffer, so a keystroke re-renders the form and not
+ * the calendar behind it: held by the view, every key re-rendered the week
+ * grid and the rail.
+ */
 function EventForm({
-  draft,
+  draft: initial,
   mode,
   error,
   saving,
-  onChange,
-  onSave,
+  onSave: save,
   onDelete,
   onClose,
 }: {
@@ -450,12 +452,19 @@ function EventForm({
   mode: 'edit' | 'create'
   error: string | null
   saving: boolean
-  onChange: (draft: EventDraft) => void
-  onSave: () => void
+  onSave: (draft: EventDraft) => void
   onDelete: () => void
   onClose: () => void
 }) {
-  const patch = (partial: Partial<EventDraft>) => onChange({ ...draft, ...partial })
+  const [draft, setDraft] = useState(initial)
+  const patch = useCallback(
+    (partial: Partial<EventDraft>) => setDraft((prev) => ({ ...prev, ...partial })),
+    [],
+  )
+  // Stable, so the memoised time selects skip a keystroke in the title.
+  const setStart = useCallback((start: string) => patch({ start }), [patch])
+  const setEnd = useCallback((end: string) => patch({ end }), [patch])
+  const onSave = () => save(draft)
   return (
     <TooltipProvider>
       {/* Header */}
@@ -559,19 +568,11 @@ function EventForm({
               <div className="flex gap-3">
                 <Field className="min-w-0 flex-1">
                   <FieldLabel htmlFor="event-start-time">From</FieldLabel>
-                  <TimeSelect
-                    id="event-start-time"
-                    value={draft.start}
-                    onChange={(start) => patch({ start })}
-                  />
+                  <TimeSelect id="event-start-time" value={draft.start} onChange={setStart} />
                 </Field>
                 <Field className="min-w-0 flex-1">
                   <FieldLabel htmlFor="event-end-time">To</FieldLabel>
-                  <TimeSelect
-                    id="event-end-time"
-                    value={draft.end}
-                    onChange={(end) => patch({ end })}
-                  />
+                  <TimeSelect id="event-end-time" value={draft.end} onChange={setEnd} />
                 </Field>
               </div>
             )}

@@ -19,9 +19,6 @@ export interface ShellActions {
   activeTabId: string | null
   // Split tabs (docs/features/tabs-panes.md): the fields below are optional
   // so a shell without split view keeps compiling.
-  /** The active entry's id, which next/previous step from; `activeTabId`
-   *  when absent. */
-  activeEntryId?: string | null
   /** A New tab, or the Agents home on the Agents side (⌘T). */
   newTab?: () => void
   /** Every member of the active split back to a tab of its own (⇧⌘\);
@@ -76,15 +73,6 @@ export function useShellShortcuts(shell: ShellActions): void {
   function toggleSidebar() {
     shell.toggleFiles()
   }
-  /** The entry `step` places from the active one, wrapping. */
-  function stepTab(step: number) {
-    if (tabIds.length === 0) return
-    const current = shell.activeEntryId === undefined ? activeTabId : shell.activeEntryId
-    const at = current === null ? -1 : tabIds.indexOf(current)
-    const from = at < 0 ? (step > 0 ? -1 : 0) : at
-    const id = tabIds[(from + step + tabIds.length) % tabIds.length]
-    if (id !== undefined) shell.selectTab(id)
-  }
   function toggleDialog() {
     shell.setSearchOpen(() => false)
     setDialogOpen((open) => !open)
@@ -113,8 +101,7 @@ export function useShellShortcuts(shell: ShellActions): void {
         }
       : undefined,
     'board.open': () => shell.open(BOARD_KEY),
-    'tab.next': () => stepTab(1),
-    'tab.previous': () => stepTab(-1),
+    // ⌃Tab and ⌃⇧Tab are the tab switcher's (`tab-switcher.tsx`).
     // ⌘9 is the last tab, as in a browser.
     'tab.goto': (index) => {
       const id = index === 8 ? tabIds[tabIds.length - 1] : tabIds[index]
