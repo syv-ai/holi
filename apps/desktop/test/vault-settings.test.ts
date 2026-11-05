@@ -141,6 +141,23 @@ describe('writeVaultSettings', () => {
     expect(await settingsAt(root, SETTINGS_FILE)).toEqual({ dailyNotes: false })
   })
 
+  it('preserves an existing home selection when another setting changes', async () => {
+    const root = await vault('home: board\neditorFont: serif\n')
+
+    const before = await readVaultSettings(root)
+    expect(before.editorFont).toBe('serif')
+
+    await writeVaultSettings(root, { committed: { dailyNotes: false } })
+
+    const after = await readVaultSettings(root)
+    expect(after.dailyNotes).toBe(false)
+    expect(await settingsAt(root, SETTINGS_FILE)).toMatchObject({
+      home: 'board',
+      editorFont: 'serif',
+      dailyNotes: false,
+    })
+  })
+
   it('merges over what is already there, key by key', async () => {
     const root = await vault('{"editorFont":"serif","maxCommittedFileBytes":2048}')
     await writeVaultSettings(root, { committed: { dailyNotes: false } })
