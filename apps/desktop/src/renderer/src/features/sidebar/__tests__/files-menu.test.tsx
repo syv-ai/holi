@@ -165,6 +165,40 @@ function mount({ tasks = true }: { tasks?: boolean } = {}) {
   return { run, makeLink, onOpen, store }
 }
 
+test.each(['header New', 'More file actions', 'context menu'])(
+  'the task dialog takes focus after the menu releases it (%s)',
+  async (entryPoint) => {
+    mount()
+    if (entryPoint === 'header New') {
+      await userEvent.click(screen.getByRole('button', { name: 'New' }))
+    } else if (entryPoint === 'More file actions') {
+      await userEvent.click(screen.getByRole('button', { name: 'More file actions' }))
+    } else {
+      fireEvent.contextMenu(await screen.findByText('kunder'))
+    }
+    const item = await screen.findByRole('menuitem', { name: 'New task' })
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(item)
+
+      // Radix restores focus from a macrotask after the menu unmounts. The
+      // asking dialog must not mount until that lifecycle has released focus.
+      expect(screen.queryByPlaceholderText('Task title')).toBeNull()
+      await act(async () => vi.runOnlyPendingTimers())
+      const field = screen.getByPlaceholderText('Task title') as HTMLInputElement
+      expect(document.activeElement).toBe(field)
+      fireEvent.change(field, { target: { value: 'R' } })
+      field.setSelectionRange(1, 1)
+      expect(field).toHaveValue('R')
+      expect(document.activeElement).toBe(field)
+      expect(field.selectionStart).toBe(1)
+      expect(field.selectionEnd).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  },
+)
+
 test('the Tasks plugin claim asks for a title and creates in the selected folder', async () => {
   createTask.mockClear()
   capRun.mockClear()

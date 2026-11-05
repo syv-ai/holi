@@ -149,9 +149,12 @@ export function FilesSection({
   /** Set by a menu's Rename; the field opens once the menu has closed, so
    *  the menu handing focus back does not take it from the field. */
   const renameNext = useRef<string | null>(null)
-  /** Set by a menu's New item that opens a name field once it lands: the
-   *  menu closing leaves focus alone, so it cannot take it from the field. */
+  /** Set by a New item that opens a name field once it lands: the menu
+   *  closing leaves focus alone, so it cannot take it from the field. */
   const namingNext = useRef(false)
+  /** An asking New item waits until its menu has released focus before the
+   *  dialog mounts; otherwise the closing menu can select text in its field. */
+  const askingNext = useRef<{ create: FileCreate; parent: string } | null>(null)
   /** Rows that just landed (made, moved, renamed, dropped in, revealed): they
    *  rise in once, so the eye finds where they went. */
   const [arrived, setArrived] = useState<ReadonlySet<string>>(new Set())
@@ -676,7 +679,7 @@ export function FilesSection({
             return true
           }),
         make: (create) => {
-          if (create.asksName === true) setAsking({ create, parent })
+          if (create.asksName === true) askingNext.current = { create, parent }
           else
             naming(`make the ${create.label.toLowerCase()}`, () =>
               made(
@@ -702,9 +705,17 @@ export function FilesSection({
     },
   })
 
-  /** A menu closing on Rename opens the field instead of taking focus back,
-   *  and one closing on a New item leaves focus for the name field to come. */
+  /** Transfer focus ownership only after the closing menu has finished its
+   *  own focus handling: to a requested dialog, a New item's name field, or a
+   *  renamed row. */
   function openRenameOnClose(event: Event) {
+    const ask = askingNext.current
+    if (ask !== null) {
+      askingNext.current = null
+      event.preventDefault()
+      setAsking(ask)
+      return
+    }
     if (namingNext.current) {
       namingNext.current = false
       event.preventDefault()
