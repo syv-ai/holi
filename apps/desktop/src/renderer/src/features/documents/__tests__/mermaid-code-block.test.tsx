@@ -67,13 +67,25 @@ describe('Mermaid fences in a document editor', () => {
     expect(e.view.dom.querySelector('[data-mermaid-diagram]')).not.toBeNull()
   })
 
-  it('keeps empty and rejected diagrams as editable source', async () => {
+  it('keeps empty and rejected diagrams editable and explains render failures', async () => {
     const e = makeEditor('```mermaid\n\n```\n\n```mermaid\nnot valid\n```')
     renderMermaid.mockRejectedValue(new Error('invalid diagram'))
     await settle()
     expect(e.view.dom.querySelectorAll('[data-mermaid-source]')).toHaveLength(2)
     expect(e.view.dom.querySelector('[data-mermaid-diagram]')).toBeNull()
+    expect(e.view.dom.textContent).toContain("Couldn't draw this diagram")
     expect(e.getMarkdown()).toContain('not valid')
+  })
+
+  it('recovers after a failed render when the source is corrected', async () => {
+    renderMermaid.mockRejectedValueOnce(new Error('invalid diagram'))
+    const e = makeEditor('```mermaid\nnot valid\n```')
+    await waitFor(() => expect(e.view.dom.textContent).toContain("Couldn't draw this diagram"))
+    act(() => e.commands.setContent('```mermaid\nflowchart LR\n```', { contentType: 'markdown' }))
+    await waitFor(() =>
+      expect(e.view.dom.querySelector('[data-mermaid-diagram] svg')).not.toBeNull(),
+    )
+    expect(e.view.dom.textContent).not.toContain("Couldn't draw this diagram")
   })
 
   it('sanitizes renderer SVG before attaching it and stays rendered when read-only', async () => {
@@ -137,6 +149,9 @@ describe('Mermaid fences in a document editor', () => {
     renderMermaid.mockImplementationOnce(() => new Promise((resolve) => (resolveFirst = resolve)))
     const e = makeEditor('```mermaid\nflowchart LR\n```\n\nAfter')
     await waitFor(() => expect(renderMermaid).toHaveBeenCalledOnce())
+    expect(e.view.dom.querySelector('[data-mermaid-diagram]')?.textContent).toBe(
+      'Rendering diagram…',
+    )
     act(() => {
       e.commands.setTextSelection(3)
       e.view.focus()

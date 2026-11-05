@@ -1,6 +1,5 @@
 import CodeBlock from '@tiptap/extension-code-block'
 import DOMPurify from 'dompurify'
-import mermaid from 'mermaid'
 import {
   NodeViewContent,
   NodeViewWrapper,
@@ -18,12 +17,6 @@ let renderId = 0
 
 // Mermaid receives note-authored text. DOMPurify is still the final gate before
 // SVG reaches the document.
-mermaid.initialize({
-  startOnLoad: false,
-  securityLevel: 'strict',
-  htmlLabels: false,
-})
-
 function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
   const [svg, setSvg] = useState<string | null>(null)
   const [renderError, setRenderError] = useState(false)
@@ -65,19 +58,22 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
     if (!isMermaid || source.trim() === '' || active) return () => void (current = false)
 
     const id = `holi-mermaid-${++renderId}`
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: 'strict',
-      theme,
-      htmlLabels: false,
-      suppressErrorRendering: true,
-    })
-    void mermaid
-      .render(id, source)
-      .then(({ svg: result }) => {
-        if (current) {
+    void import('mermaid')
+      .then(({ default: mermaid }) => {
+        if (!current) return null
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'strict',
+          theme,
+          htmlLabels: false,
+          suppressErrorRendering: true,
+        })
+        return mermaid.render(id, source)
+      })
+      .then((result) => {
+        if (current && result) {
           setSvg(
-            DOMPurify.sanitize(result, {
+            DOMPurify.sanitize(result.svg, {
               USE_PROFILES: { svg: true },
               FORBID_TAGS: ['a'],
               FORBID_ATTR: ['href', 'xlink:href', 'target'],
@@ -136,6 +132,9 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
         className={showDiagram ? 'hidden' : undefined}
         data-mermaid-source={isMermaid ? '' : undefined}
       />
+      {renderError && isMermaid ? (
+        <p className="text-muted-foreground text-sm">Couldn&apos;t draw this diagram</p>
+      ) : null}
     </NodeViewWrapper>
   )
 }
