@@ -72,73 +72,91 @@ export async function vaultAttachments(
 ): Promise<MailPart[]> {
   const files: { path: string; handle: Awaited<ReturnType<typeof open>> }[] = []
   let total = 0
-  for (const path of paths) {
-    // The marker is in a name, so the path as given says it: normalising
-    // never renames a segment, and `knownPath` holds it to the case on disk.
-    if (isLocalOnlyPath(path)) {
+  try {
+    for (const path of paths) {
+      // The marker is in a name, so the path as given says it: normalising
+      // never renames a segment, and `knownPath` holds it to the case on disk.
+      if (isLocalOnlyPath(path)) {
+        throw new CapabilityError(
+          'FORBIDDEN',
+          `${path} is local to this machine and never leaves it, so it cannot be attached`,
+        )
+      }
+      const rel = await knownPath(ctx, path)
+      const abs = await exactPath(ctx.root, rel)
+      if (abs === null) throw new CapabilityError('FORBIDDEN', path)
+      // Open without following a last-component symlink, then use this retained
+      // descriptor for both validation and reading. Recheck ancestors around the
+      // open to reject directory replacement during path resolution.
+      const before = await realpath(ctx.root)
+      const segments = rel.split('/')
+      let cursor = before
+      const ancestors: { path: string; dev: number; ino: number }[] = []
+      for (const segment of segments.slice(0, -1)) {
+        cursor = `${cursor}/${segment}`
+        const ancestor = await lstat(cursor).catch(() => null)
+        if (!ancestor || ancestor.isSymbolicLink() || !ancestor.isDirectory()) {
+          throw new CapabilityError('FORBIDDEN', path)
+        }
+        ancestors.push({ path: cursor, dev: ancestor.dev, ino: ancestor.ino })
+      }
+      const handle = await open(abs, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch(
+        () => null,
+      )
+      if (!handle) throw new CapabilityError('NOT_FOUND', path)
+      try {
+        const info = await handle.stat()
+        if (!info.isFile()) {
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            `${path} is not a file, so it cannot be attached`,
+          )
+        }
+        const afterRoot = await realpath(ctx.root)
+        const currentLeaf = await lstat(abs).catch(() => null)
+        const unchanged =
+          afterRoot === before &&
+          currentLeaf !== null &&
+          currentLeaf.isFile() &&
+          !currentLeaf.isSymbolicLink() &&
+          currentLeaf.dev === info.dev &&
+          currentLeaf.ino === info.ino &&
+          (
+            await Promise.all(
+              ancestors.map(async (item) => {
+                const current = await lstat(item.path).catch(() => null)
+                return (
+                  current !== null &&
+                  current.isDirectory() &&
+                  !current.isSymbolicLink() &&
+                  current.dev === item.dev &&
+                  current.ino === item.ino
+                )
+              }),
+            )
+          ).every(Boolean)
+        if (!unchanged) throw new CapabilityError('FORBIDDEN', path)
+        total += info.size
+        files.push({ path: rel, handle })
+      } catch (error) {
+        await handle.close()
+        throw error
+      }
+    }
+    if (total > MAX_ATTACHMENT_BYTES) {
       throw new CapabilityError(
-        'FORBIDDEN',
-        `${path} is local to this machine and never leaves it, so it cannot be attached`,
+        'BAD_REQUEST',
+        `the attachments come to ${megabytes(total)}, over the 18 MB that fits in Gmail's 25 MB message once encoded`,
+        'attach fewer or smaller files, or share a link to them instead',
       )
     }
-    const rel = await knownPath(ctx, path)
-    const abs = await exactPath(ctx.root, rel)
-    if (abs === null) throw new CapabilityError('FORBIDDEN', path)
-    // Open without following a last-component symlink, then use this retained
-    // descriptor for both validation and reading. Recheck ancestors around the
-    // open to reject directory replacement during path resolution.
-    const before = await realpath(ctx.root)
-    const segments = rel.split('/')
-    let cursor = before
-    const ancestors: { path: string; dev: number; ino: number }[] = []
-    for (const segment of segments.slice(0, -1)) {
-      cursor = `${cursor}/${segment}`
-      const ancestor = await lstat(cursor).catch(() => null)
-      if (!ancestor || ancestor.isSymbolicLink() || !ancestor.isDirectory()) {
-        throw new CapabilityError('FORBIDDEN', path)
-      }
-      ancestors.push({ path: cursor, dev: ancestor.dev, ino: ancestor.ino })
-    }
-    const handle = await open(abs, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch(
-      () => null,
-    )
-    if (!handle) throw new CapabilityError('NOT_FOUND', path)
-    const info = await handle.stat()
-    if (!info.isFile()) {
-      await handle.close()
-      throw new CapabilityError('BAD_REQUEST', `${path} is not a file, so it cannot be attached`)
-    }
-    const afterRoot = await realpath(ctx.root)
-    const unchanged =
-      afterRoot === before &&
-      (
-        await Promise.all(
-          ancestors.map(async (item) => {
-            const current = await lstat(item.path).catch(() => null)
-            return (
-              current !== null &&
-              current.isDirectory() &&
-              !current.isSymbolicLink() &&
-              current.dev === item.dev &&
-              current.ino === item.ino
-            )
-          }),
-        )
-      ).every(Boolean)
-    if (!unchanged) {
-      await handle.close()
-      throw new CapabilityError('FORBIDDEN', path)
-    }
-    total += info.size
-    files.push({ path: rel, handle })
+  } catch (error) {
+    await Promise.all(files.map(({ handle }) => handle.close()))
+    throw error
   }
-  if (total > MAX_ATTACHMENT_BYTES) {
-    throw new CapabilityError(
-      'BAD_REQUEST',
-      `the attachments come to ${megabytes(total)}, over the 18 MB that fits in Gmail's 25 MB message once encoded`,
-      'attach fewer or smaller files, or share a link to them instead',
-    )
-  }
+  // The initial stat is only an early rejection; enforce the aggregate again
+  // against bytes actually read, since a file can grow after it is opened.
+  total = 0
   try {
     return await Promise.all(
       files.map(async ({ path, handle }) => {
@@ -148,7 +166,8 @@ export async function vaultAttachments(
         for await (const chunk of stream) {
           const bytes = Buffer.from(chunk)
           size += bytes.length
-          if (size > MAX_ATTACHMENT_BYTES) {
+          total += bytes.length
+          if (size > MAX_ATTACHMENT_BYTES || total > MAX_ATTACHMENT_BYTES) {
             throw new CapabilityError(
               'BAD_REQUEST',
               `${path} grew beyond the attachment size limit`,

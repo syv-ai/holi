@@ -155,7 +155,7 @@ function asTheShellReads(command) {
     const c = command[i]
     if (c === '\\') {
       const next = command[++i]
-      if (next !== undefined && next !== '\n') out += next
+      if (next !== undefined && next !== '\n') out += next === ' ' ? '\uE000' : next
     } else if (c === "'") {
       const end = command.indexOf("'", i + 1)
       out += (end < 0 ? command.slice(i + 1) : command.slice(i + 1, end)).replace(/ /g, '\uE000')
