@@ -124,7 +124,7 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
   return (
     <NodeViewWrapper className="tiptap-code-block">
       {showDiagram ? (
-        <div>
+        <div contentEditable={false}>
           {!svg ? (
             <span role="status" className="flex items-center gap-2 text-muted-foreground text-sm">
               <Skeleton aria-hidden="true" className="size-4" />
@@ -152,7 +152,7 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
         data-mermaid-source={isMermaid ? '' : undefined}
       />
       {renderError && isMermaid ? (
-        <p role="status" className="text-muted-foreground text-sm">
+        <p role="status" contentEditable={false} className="text-muted-foreground text-sm">
           Couldn&apos;t draw this diagram{' '}
           <Button
             type="button"
@@ -201,6 +201,19 @@ function SvgPreview({ svg }: { svg: string | null }) {
 /** Code blocks with Mermaid preview while their source is not selected. */
 export const MermaidCodeBlock = CodeBlock.extend({
   addNodeView() {
-    return ReactNodeViewRenderer(MermaidCodeBlockView, { as: 'pre' })
+    const renderView = ReactNodeViewRenderer(MermaidCodeBlockView, { as: 'pre' })
+    return (props) => {
+      const view = renderView(props)
+      const ignoreMutation = view.ignoreMutation?.bind(view)
+      view.ignoreMutation = (mutation) => {
+        if (mutation.type === 'selection') {
+          const anchor = view.dom.ownerDocument.getSelection()?.anchorNode
+          // Rendered controls are not the code block's editable source.
+          if (anchor && !view.contentDOM?.contains(anchor)) return true
+        }
+        return ignoreMutation?.(mutation) ?? false
+      }
+      return view
+    }
   },
 })
