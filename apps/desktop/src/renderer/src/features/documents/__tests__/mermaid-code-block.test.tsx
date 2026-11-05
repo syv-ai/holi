@@ -1,5 +1,5 @@
 import { Editor, EditorContent } from '@tiptap/react'
-import { act, render, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -80,6 +80,20 @@ describe('Mermaid fences in a document editor', () => {
     expect(e.getMarkdown()).not.toContain("Couldn't draw this diagram")
   })
 
+  it('retries a failed Mermaid render from the error action', async () => {
+    renderMermaid.mockRejectedValueOnce(new Error('temporary failure'))
+    const e = makeEditor('```mermaid\nflowchart LR\n```')
+    await screen.findByRole('button', { name: 'Retry' })
+    renderMermaid.mockResolvedValueOnce({
+      svg: '<svg xmlns="http://www.w3.org/2000/svg"><text>retried</text></svg>',
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() =>
+      expect(e.view.dom.querySelector('[data-mermaid-diagram] svg')).not.toBeNull(),
+    )
+    expect(renderMermaid).toHaveBeenCalledTimes(2)
+  })
+
   it('recovers after a failed render when the source is corrected', async () => {
     renderMermaid.mockRejectedValueOnce(new Error('invalid diagram'))
     const e = makeEditor('```mermaid\nnot valid\n```')
@@ -127,13 +141,14 @@ describe('Mermaid fences in a document editor', () => {
       })
     })
     await settle()
-    act(() => {
-      e.commands.setTextSelection(105)
-      e.view.focus()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit source' }))
+    await waitFor(() => {
+      expect(e.state.doc.resolve(e.state.selection.from).parent.type.name).toBe('codeBlock')
+      expect(e.view.dom.querySelector('[data-mermaid-source]')?.textContent).toContain('A --> B')
     })
     expect(e.state.selection.from).toBeGreaterThan(100)
+    expect(e.view.hasFocus()).toBe(true)
     expect(e.state.doc.textBetween(e.state.selection.from, e.state.selection.to)).toBe('')
-    expect(e.state.doc.resolve(e.state.selection.from).parent.type.name).toBe('codeBlock')
   })
 
   it('leaves other code fences unchanged', async () => {
