@@ -11,7 +11,7 @@
  * `permissions.allow` and a prior "don't ask again", which no permission rule
  * does. The user still decides; they just always get to.
  */
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -84,9 +84,13 @@ describe('both maintained and shipped gates cover shell spellings', () => {
   it.each([
     `holi google send --attach 'Board; deck.pptx' --to a@b.c`,
     `holi google send --attach $'Board deck.pptx' --to a@b.c`,
+    `holi google send --attach "Board; deck.pptx" --to a@b.c`,
+    `holi google send --attach Board\\;\\ deck.pptx --to a@b.c`,
     `holi google $'respond' e1 --yes`,
     `holi google $'api' POST gmail/v1/users/me/messages/send --body '{}'`,
     'if true; then holi google send --attach q2.pdf --to a@b.c; fi',
+    'if true; then "$HOLI_BIN" google respond e1 --yes; fi',
+    'for x in once; do "$HOLI_BIN" google respond e1 --yes; done',
     'for x in once; do holi google respond e1 --yes; done',
     'if true; then holi google api POST gmail/v1/users/me/messages/send --body "{}"; fi',
     'eval "holi google send --to a@b.c"',
@@ -108,6 +112,25 @@ describe('both maintained and shipped gates cover shell spellings', () => {
 })
 
 describe('the send gate asks', () => {
+  it('reports shell-decoded attachment names, independently checked by Bash', async () => {
+    const commands = [
+      `holi google send --to a@b.c --attach "Board; deck.pptx"`,
+      `holi google send --to a@b.c --attach Board\\;\\ deck.pptx`,
+      `holi google send --to a@b.c --attach $'line\\tbreak\\nname'`,
+      `holi google send --to a@b.c --attach 'marker\uE000\uE100\uE101'`,
+    ]
+    for (const command of commands) {
+      const shellArgument = command.match(/--attach\s+(.+?)(?:\s+--to|$)/)?.[1]
+      expect(shellArgument).toBeDefined()
+      const oracle = spawnSync('bash', ['-c', `eval "set -- ${shellArgument}"; printf %s "$1"`], {
+        encoding: 'utf8',
+      })
+      const reason =
+        (await decide(bash(command))).hookSpecificOutput?.permissionDecisionReason ?? ''
+      expect(oracle.status).toBe(0)
+      expect(reason).toContain(oracle.stdout)
+    }
+  })
   it('asks for a bare-name send', async () => {
     expect(decisionOf(await decide(bash('holi google send --to ada@syv.ai --subject x')))).toBe(
       'ask',
