@@ -42,6 +42,7 @@ function mount(markdown: string, editable = true) {
     content: markdown,
     contentType: 'markdown',
     editable,
+    editorProps: { handleScrollToSelection: () => true },
   })
   view = render(createElement(Provider, { store }, createElement(EditorContent, { editor })))
   return editor
