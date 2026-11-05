@@ -135,7 +135,7 @@ function HomeView(): React.JSX.Element {
     <IconStackEmpty
       icon={TerminalSquare}
       title="No session here"
-      description={`Start one and it opens in its terminal, in ${providerLabel(providers, provider)}. Hover the sidebar's + for the other agents.`}
+      description={`Start one and it opens in its terminal, in ${providerLabel(providers, provider)}. Use the sidebar's + to choose an agent.`}
       action={{ label: 'New session', icon: SquarePen, onClick: () => void create() }}
       secondary={{ label: 'History', onClick: () => setView({ kind: 'history' }) }}
     />
