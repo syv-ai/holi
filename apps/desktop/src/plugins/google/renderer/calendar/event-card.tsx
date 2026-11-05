@@ -212,10 +212,25 @@ export function EventCard({
   onCreateTask,
   onOpenExternal,
 }: EventCardProps) {
-  const virtualRef = useMemo(
-    () => ({ current: { getBoundingClientRect: () => anchor?.rect ?? new DOMRect() } }),
-    [anchor?.rect],
-  )
+  const virtualRef = useMemo(() => {
+    const initialElementRect = anchor?.element?.getBoundingClientRect()
+    const point =
+      anchor?.rect.width === 1 && initialElementRect
+        ? { x: anchor.rect.x - initialElementRect.x, y: anchor.rect.y - initialElementRect.y }
+        : null
+    return {
+      current: {
+        contextElement: anchor?.element ?? undefined,
+        getBoundingClientRect: () => {
+          if (!anchor?.element?.isConnected) return anchor?.rect ?? new DOMRect()
+          const rect = anchor.element.getBoundingClientRect()
+          return point
+            ? new DOMRect(rect.x + Math.min(point.x, rect.width), rect.y + point.y, 1, 1)
+            : rect
+        },
+      },
+    }
+  }, [anchor])
   const escapeClose = useRef(false)
   const explicitClose = useRef(false)
   const isForm = state?.mode === 'edit' || state?.mode === 'create'
@@ -228,8 +243,9 @@ export function EventCard({
           size="calendar"
           variant="flush"
           align="start"
-          side="right"
+          side={anchor && anchor.rect.y > window.innerHeight / 2 ? 'top' : 'bottom'}
           aria-label={label || 'Event details'}
+          aria-busy={saving}
           onOpenAutoFocus={(event) => {
             escapeClose.current = false
             event.preventDefault()
@@ -237,11 +253,17 @@ export function EventCard({
             if (isForm) content.querySelector<HTMLInputElement>('#event-title')?.focus()
             else content.querySelector<HTMLElement>('[data-event-card-focus]')?.focus()
           }}
-          onEscapeKeyDown={() => {
-            escapeClose.current = true
+          onEscapeKeyDown={(event) => {
+            if (saving) event.preventDefault()
+            else escapeClose.current = true
           }}
           onCloseAutoFocus={(event) => {
-            const target = anchor.element?.isConnected ? anchor.element : anchor.fallback
+            const origin = anchor.element
+            const target =
+              origin?.isConnected &&
+              origin.matches('button:not(:disabled),a[href],input:not(:disabled),[tabindex]')
+                ? origin
+                : anchor.fallback
             if ((escapeClose.current || explicitClose.current) && target?.isConnected) {
               event.preventDefault()
               target.focus()
@@ -250,6 +272,9 @@ export function EventCard({
             explicitClose.current = false
           }}
         >
+          <span role="status" className="sr-only">
+            {saving ? 'Working…' : ''}
+          </span>
           {isForm ? (
             <EventForm
               draft={state.draft}
@@ -287,9 +312,15 @@ export function EventCard({
 }
 
 /** Header close button, shared by view + form. */
-function CloseButton({ onClose }: { onClose: () => void }) {
+function CloseButton({ onClose, disabled }: { onClose: () => void; disabled: boolean }) {
   return (
-    <IconButton type="button" label="Close" className="-me-1 shrink-0" onClick={onClose}>
+    <IconButton
+      type="button"
+      label="Close"
+      className="-me-1 shrink-0"
+      onClick={onClose}
+      disabled={disabled}
+    >
       <XIcon className="size-4" aria-hidden="true" />
     </IconButton>
   )
@@ -380,12 +411,12 @@ function EventView({
             <TooltipContent>Open in Google Calendar</TooltipContent>
           </Tooltip>
         )}
-        <CloseButton onClose={onClose} />
+        <CloseButton onClose={onClose} disabled={saving} />
       </div>
 
       {/* Details */}
-      <div className="min-h-0 flex-1">
-        <ScrollArea className="h-full">
+      <div className="flex min-h-0 flex-1">
+        <ScrollArea className="flex-1">
           <div className="flex flex-col gap-4 px-5 py-5">
             <DetailRow icon={<ClockIcon />}>
               <WhenDetail draft={draft} />
@@ -527,17 +558,22 @@ function EventForm({
         <PopoverDescription className="sr-only">
           {mode === 'edit' ? 'Change this event.' : 'Add an event to your own calendar.'}
         </PopoverDescription>
-        <CloseButton onClose={onClose} />
+        <CloseButton onClose={onClose} disabled={saving} />
       </div>
 
       {/* Form body */}
-      <div className="min-h-0 flex-1">
-        <ScrollArea className="h-full">
+      <div className="flex min-h-0 flex-1">
+        <ScrollArea className="flex-1">
           {/* Enter in a text field saves, as a form would. */}
           <div
             className="flex flex-col gap-5 px-5 py-5"
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && event.target instanceof HTMLInputElement && !saving) {
+              if (
+                event.key === 'Enter' &&
+                !event.nativeEvent.isComposing &&
+                event.target instanceof HTMLInputElement &&
+                !saving
+              ) {
                 event.preventDefault()
                 onSave()
               }
@@ -547,6 +583,7 @@ function EventForm({
               <FieldLabel htmlFor="event-title">Title</FieldLabel>
               <Input
                 id="event-title"
+                autoFocus
                 value={draft.title}
                 onChange={(event) => patch({ title: event.target.value })}
                 disabled={saving}

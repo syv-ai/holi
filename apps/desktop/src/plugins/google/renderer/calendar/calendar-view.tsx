@@ -79,18 +79,6 @@ import { EventCard, type EventCardAnchor, type EventDraft, type EventCardState }
 
 type Occurrence = EventCalendarOccurrence<GoogleEventData>
 
-function captureCardAnchor(
-  element: HTMLElement,
-  rect = element.getBoundingClientRect(),
-): EventCardAnchor {
-  const root = element.closest<HTMLElement>('[data-slot="event-calendar"]')
-  const fallback =
-    root?.querySelector<HTMLElement>('[data-slot="event-calendar-more"]') ??
-    root?.querySelector<HTMLElement>('button') ??
-    null
-  return { rect, element, fallback }
-}
-
 /** Quick-add ("New event") lands on a working hour. Slot clicks bring their
  *  own real time and never go through here. */
 const QUICK_ADD_HOUR = 9
@@ -132,12 +120,10 @@ function draftFromOccurrence(occurrence: Occurrence): EventDraft {
 export function CalendarView(): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const { account, currentSub } = useGoogleAccount()
-  const calendar = useGoogleCalendar(
-    remote,
-    account ? `${account.email}:${currentSub ?? ''}` : null,
-  )
+  const accountIdentity = account ? `${account.email}:${currentSub ?? ''}` : null
+  const calendar = useGoogleCalendar(remote, accountIdentity)
   useEffect(() => {
-    const nextIdentity = `${remote ?? ''}:${account?.email ?? ''}`
+    const nextIdentity = `${remote ?? ''}:${accountIdentity ?? ''}`
     if (contextIdentity.current !== nextIdentity) {
       contextIdentity.current = nextIdentity
       cardIdentity.current += 1
@@ -150,7 +136,7 @@ export function CalendarView(): React.JSX.Element {
     return () => {
       cardIdentity.current += 1
     }
-  }, [remote, account?.email])
+  }, [remote, accountIdentity])
   const openSettings = useSetAtom(openSettingsSectionAtom)
   const openNote = useSetAtom(openNoteTabAtom)
   const canCreateTask = useHasCapability(TASKS_CREATE) && remote !== null
@@ -161,7 +147,8 @@ export function CalendarView(): React.JSX.Element {
   const [saving, setSaving] = useState(false)
   const cardIdentity = useRef(0)
   const pending = useRef(false)
-  const contextIdentity = useRef(`${remote ?? ''}:${account?.email ?? ''}`)
+  const contextIdentity = useRef(`${remote ?? ''}:${accountIdentity ?? ''}`)
+  const newEventTrigger = useRef<HTMLButtonElement>(null)
   // The visible date, shared by the rail's mini calendar and the grid. One
   // source of truth: the mini calendar and grid nav both write it, both read it.
   const [date, setDate] = useState<Date>(() => new Date())
@@ -221,7 +208,7 @@ export function CalendarView(): React.JSX.Element {
     (start: Date, allDay = false, end?: Date, anchor?: EventCardAnchor | null) => {
       if (pending.current) return
       cardIdentity.current += 1
-      setCardAnchor(anchor ?? null)
+      setCardAnchor(anchor ? { ...anchor, fallback: newEventTrigger.current } : null)
       setError(null)
       const startDay = localDate(start)
       // Slot ends are exclusive; store the inclusive last day so multi-day
@@ -260,12 +247,7 @@ export function CalendarView(): React.JSX.Element {
       const rect =
         element?.getBoundingClientRect() ??
         (event ? new DOMRect(event.clientX, event.clientY, 1, 1) : new DOMRect())
-      const root = element?.closest<HTMLElement>('[data-slot="event-calendar"]')
-      const fallback =
-        root?.querySelector<HTMLElement>('[data-slot="event-calendar-more"]') ??
-        root?.querySelector<HTMLElement>('button') ??
-        null
-      setCardAnchor(element ? captureCardAnchor(element, rect) : { rect, element, fallback })
+      setCardAnchor({ rect, element, fallback: newEventTrigger.current })
       setError(null)
       setCard({ mode: 'view', draft: draftFromOccurrence(occurrence) })
     },
@@ -292,7 +274,7 @@ export function CalendarView(): React.JSX.Element {
   }, [])
 
   const saveDraft = async (): Promise<void> => {
-    if (!card || saving) return
+    if (!card || pending.current) return
     const identity = cardIdentity.current
     const draft = card.draft
     const title = draft.title.trim()
@@ -643,6 +625,7 @@ export function CalendarView(): React.JSX.Element {
                 <TooltipContent>Refresh</TooltipContent>
               </Tooltip>
               <Button
+                ref={newEventTrigger}
                 className="flex-1 sm:flex-none"
                 onClick={(event) =>
                   openCreate(quickAddStart(date), false, undefined, {
