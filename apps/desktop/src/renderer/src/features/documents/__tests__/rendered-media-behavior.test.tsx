@@ -216,12 +216,15 @@ describe('rendered media inspection through the document editor', () => {
     expect(origin.querySelector('img')?.getAttribute('src')).toBe(
       'holi-vault://vault/assets/map.png',
     )
+    const inline = origin.querySelector('img')
     await user.click(origin)
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByLabelText('Loading image')).toBeTruthy()
     fireEvent.error(dialog.querySelector('img')!)
     expect(within(dialog).getByRole('status').textContent).toContain("Couldn't load image")
     await user.click(within(dialog).getByRole('button', { name: 'Retry' }))
+    // Reload the failed inline request too, not just the enlarged image.
+    expect(origin.querySelector('img')).not.toBe(inline)
     fireEvent.load(dialog.querySelector('img')!)
     expect(within(dialog).queryByLabelText('Loading image')).toBeNull()
     expect(e.getMarkdown()).toBe(before)

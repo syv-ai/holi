@@ -14,6 +14,7 @@ export function DocumentImageView({
 }: ReactNodeViewProps & { folder: string; resolveSrc: (src: string, folder: string) => string }) {
   const [failedSrc, setFailedSrc] = useState<string | null>(null)
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null)
+  const [retryVersion, setRetryVersion] = useState(0)
   const src = resolveSrc(String(node.attrs.src ?? ''), folder)
   const alt = String(node.attrs.alt ?? '')
   const title = alt.trim() || 'Image'
@@ -24,6 +25,7 @@ export function DocumentImageView({
   const failed = failedSrc === src
   const image = (large: boolean) => (
     <img
+      key={`${src}:${retryVersion}:${large}`}
       src={src}
       alt={alt}
       className={large ? 'max-h-full max-w-full object-contain' : IMAGE_CLASS}
@@ -39,7 +41,15 @@ export function DocumentImageView({
           failed ? (
             <p role="status" className="text-sm">
               Couldn&apos;t load image: {alt}{' '}
-              <Button type="button" variant="link" onClick={() => setFailedSrc(null)}>
+              <Button
+                type="button"
+                variant="link"
+                onClick={() => {
+                  setFailedSrc(null)
+                  setLoadedSrc(null)
+                  setRetryVersion((version) => version + 1)
+                }}
+              >
                 Retry
               </Button>
             </p>
