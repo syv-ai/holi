@@ -18,6 +18,8 @@ import type { RendererPlugin } from '@/plugin-api/types'
 import { installedPluginsAtom } from '@/state/plugins'
 import { openSettingsSectionAtom } from '@/state/settings-section'
 import { vaultSettingsAtom } from '@/state/settings'
+import { vimCodeEditingAtom } from '@/state/preferences'
+import { EditorPage } from '../pages/editor-page'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 
 const write = vi.fn(async (_input: unknown) => ({
@@ -182,6 +184,27 @@ function mount({ agent = false }: { agent?: boolean } = {}) {
 beforeEach(() => {
   write.mockClear()
   capRun.mockClear()
+})
+
+test('the machine-wide Vim switch works while vault settings load and never writes vault settings', async () => {
+  localStorage.removeItem('holi:vimCodeEditing')
+  const store = createStore()
+  store.set(activeRemoteAtom, 'mara/notes')
+  store.set(vaultSettingsAtom, null)
+  render(
+    <Provider store={store}>
+      <EditorPage />
+    </Provider>,
+  )
+
+  expect(screen.getByRole('status', { name: 'Reading the settings' })).toBeInTheDocument()
+  const toggle = screen.getByRole('switch', { name: 'Vim keys in code files' })
+  fireEvent.click(toggle)
+  expect(store.get(vimCodeEditingAtom)).toBe(true)
+  expect(localStorage.getItem('holi:vimCodeEditing')).toBe('true')
+  expect(write).not.toHaveBeenCalled()
+  expect(await screen.findByRole('switch', { name: 'Keep a daily note' })).toBeInTheDocument()
+  expect(write).not.toHaveBeenCalled()
 })
 
 test('⌘, opens Settings as a tab, its nav in place of the files', async () => {

@@ -13,7 +13,7 @@
  * half-typed settings file never reaches the vault. Its header carries the
  * latest commit and History, the same as a document's (`FileHistoryButton`).
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { fileKind } from '@holi/shared'
 import { Annotation, Compartment, EditorState, Prec } from '@codemirror/state'
 import { findNext, findPrevious } from '@codemirror/search'
@@ -22,6 +22,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { FileTextIcon } from 'lucide-react'
 
 import { ViewHeader, ViewHeaderTitle } from '@/composites/view-header'
+import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { plainTextExtensions } from '@/editor/extensions'
 import { syntaxValid } from '@/editor/languages'
@@ -31,6 +32,8 @@ import { vaultAssetUrl } from '@/lib/vault-asset'
 import { sawText } from '@/state/doc-changes'
 import { editorSelectionAtom } from '@/state/ui-report'
 import { useViewMemory } from '@/state/view-memory'
+import { vimCodeEditingAtom } from '@/state/preferences'
+import { vimCodeEditor } from '@/editor/vim'
 import { claimsAtom } from '@/state/plugins'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
@@ -45,10 +48,12 @@ import { basename } from '@/lib/tree-paths'
 function FileHeader({
   path,
   status,
+  editorMode,
   actions,
 }: {
   path: string
   status?: string
+  editorMode?: string
   actions?: ReactNode
 }) {
   const folder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : null
@@ -57,7 +62,7 @@ function FileHeader({
       <ViewHeaderTitle
         title={basename(path)}
         meta={
-          folder === null && status === undefined ? undefined : (
+          folder === null && status === undefined && editorMode === undefined ? undefined : (
             <>
               {folder !== null ? <span className="truncate">{folder}</span> : null}
               {folder !== null && status !== undefined ? (
@@ -70,6 +75,11 @@ function FileHeader({
                 <span aria-live="polite" className="shrink-0">
                   {status}
                 </span>
+              ) : null}
+              {editorMode !== undefined ? (
+                <Badge variant="outline" aria-label={`Vim ${editorMode} mode`}>
+                  {editorMode.toUpperCase()}
+                </Badge>
               ) : null}
             </>
           )
@@ -118,15 +128,25 @@ function TextEditor({
   text,
   onSaved,
   onSaveState,
+  vimEnabled,
+  onVimModeChange,
 }: {
   path: string
   text: string
   onSaved: (text: string) => void
   onSaveState: (state: SaveState) => void
+  vimEnabled: boolean
+  onVimModeChange: (mode: string) => void
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
+  const vimCompartment = useRef(new Compartment())
+  const vimEnabledRef = useRef(vimEnabled)
+  vimEnabledRef.current = vimEnabled
+  const onVimModeChangeRef = useRef(onVimModeChange)
+  onVimModeChangeRef.current = onVimModeChange
+  const reportVimMode = useCallback((mode: string) => onVimModeChangeRef.current(mode), [])
   const lastText = useRef(text)
   const saveTimer = useRef<number | undefined>(undefined)
   const dirty = useRef(false)
@@ -194,6 +214,7 @@ function TextEditor({
           highlightActiveLineGutter(),
           ...codeLook(path),
           codeFind(),
+          vimCompartment.current.of(vimEnabledRef.current ? vimCodeEditor(reportVimMode) : []),
           Prec.highest(editable.of([EditorState.readOnly.of(false), EditorView.editable.of(true)])),
           EditorState.transactionFilter.of((transaction) =>
             frozen.current && transaction.docChanged && !transaction.annotation(externalReload)
@@ -281,7 +302,17 @@ function TextEditor({
       setView(null)
       setFind(null)
     }
-  }, [remote, path, memory])
+  }, [remote, path, memory, reportVimMode])
+
+  // Reconfigure this compartment so toggling does not recreate the editor.
+  useEffect(() => {
+    const current = viewRef.current
+    if (current === null) return
+    current.dispatch({
+      effects: vimCompartment.current.reconfigure(vimEnabled ? vimCodeEditor(reportVimMode) : []),
+    })
+    if (!vimEnabled) reportVimMode('')
+  }, [vimEnabled, reportVimMode])
 
   // A change on disk comes back in, unless local edits are still pending.
   useEffect(() => {
@@ -323,7 +354,7 @@ function TextEditor({
   }
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col" onKeyDown={handleKeyDown}>
+    <div className="relative flex min-h-0 flex-1 flex-col" onKeyDownCapture={handleKeyDown}>
       {view && find ? (
         <div className="absolute top-2 right-4 z-40">
           <CodeFindBar view={view} request={find} count={count} onClose={() => setFind(null)} />
@@ -340,10 +371,12 @@ function TextEditor({
 
 function TextFileView({ path }: { path: string }) {
   const remote = useAtomValue(activeRemoteAtom)
+  const vimEnabled = useAtomValue(vimCodeEditingAtom)
   const mtime = useAtomValue(snapshotAtom).files.find((file) => file.path === path)?.updatedAt
   const [load, setLoad] = useState<Load>({ kind: 'loading' })
   const [attempt, setAttempt] = useState(0)
   const [saveState, setSaveState] = useState<SaveState>('saved')
+  const [vimMode, setVimMode] = useState('')
 
   useEffect(() => {
     if (remote === null) return
@@ -393,6 +426,7 @@ function TextFileView({ path }: { path: string }) {
       <FileHeader
         path={path}
         status={ready ? SAVE_LABEL[saveState] : undefined}
+        editorMode={vimMode || undefined}
         actions={<FileHistoryButton path={path} />}
       />
       {load.kind === 'error' ? (
@@ -409,6 +443,8 @@ function TextFileView({ path }: { path: string }) {
           text={load.text}
           onSaved={(text) => setLoad({ kind: 'ready', text })}
           onSaveState={setSaveState}
+          vimEnabled={vimEnabled}
+          onVimModeChange={setVimMode}
         />
       )}
     </div>
