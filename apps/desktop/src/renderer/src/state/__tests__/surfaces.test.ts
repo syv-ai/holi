@@ -3,7 +3,10 @@ import { createStore } from 'jotai'
 import { describe, expect, test } from 'vitest'
 import type { PathClaim } from '@/state/plugin-types'
 import { coreContributionAtom } from '@/state/plugins'
-import { shellTabForPathAtom } from '@/state/surfaces'
+import { activeSurfaceIdAtom, shellTabForPathAtom } from '@/state/surfaces'
+import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { openTab } from '@/state/shell-workspace'
+import { sessionKey } from '@/state/tab-descriptor'
 import { snapshotAtom } from '@/state/vaults'
 
 const glyph = () => null
@@ -30,6 +33,17 @@ function storeWith(files: string[]) {
   })
   return store
 }
+
+describe('activeSurfaceIdAtom', () => {
+  test('reads the focused session selection for its owning surface', () => {
+    const store = storeWith([])
+    const key = sessionKey({ owner: 'agent', id: 'session:codex-session' })
+    store.set(shellWorkspaceAtom, (ws) => openTab(ws, key))
+
+    expect(store.get(activeSurfaceIdAtom('agent'))).toBe('session:codex-session')
+    expect(store.get(activeSurfaceIdAtom('browser'))).toBeNull()
+  })
+})
 
 describe('shellTabForPathAtom', () => {
   test("a plugin's folder document opens as the plugin's surface", () => {

@@ -17,6 +17,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { agentCap } from './agent-cap'
 import { terminalKeyAction } from './lib/terminal-keys'
+import { createPiMouseSelectionFilter } from './lib/pi-mouse-selection'
 import { vaultLinks } from './lib/terminal-links'
 import { terminalTheme, watchTerminalTheme, suppressTerminalColorQueries } from '@/plugin-api'
 import {
@@ -162,9 +163,14 @@ export function SessionTerminal({
     // Its output, and, so a paste into this session can be followed by the
     // keyboard, its focus: see `session-terminals.ts` for the case the
     // visible effect below misses.
+    const filterPiOutput = provider === 'pi' ? createPiMouseSelectionFilter() : undefined
+    const writeOutput = (data: string) => {
+      const filtered = filterPiOutput ? filterPiOutput(data) : data
+      if (filtered) term.write(filtered)
+    }
     const unregister = registerSessionTerminal(terminalId, {
       focus: () => term.focus(),
-      write: (data) => term.write(data),
+      write: writeOutput,
     })
 
     const selection = term.onSelectionChange(() => {
@@ -234,7 +240,7 @@ export function SessionTerminal({
         remoteRef.current === null
           ? ''
           : await agentCap.attach(remoteRef.current, { id: terminalId })
-      if (state) term.write(state)
+      if (state) writeOutput(state)
       term.write(HIDE_CURSOR)
     })()
 

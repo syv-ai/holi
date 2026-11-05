@@ -17,6 +17,7 @@ import { DocumentFind } from './document-find'
 import { AGENT_MARKER, DocumentMarkdown } from './markdown'
 import { MultiCursor } from './multi-cursor'
 import { WikiLink } from './wiki-link'
+import { MermaidCodeBlock } from './rich-text/mermaid-code-block'
 
 /** `src` as written in the file, resolved against the document's folder for
  *  display only: the markdown keeps the path it had. */
@@ -163,6 +164,7 @@ export function createDocumentExtensions({
     ...createRichTextExtensions({ placeholder }).filter(
       (extension) => extension.name !== 'textAlign',
     ),
+    MermaidCodeBlock,
     WikiLink.configure({ onOpen: onOpenLink }),
     DocumentImage.configure({ folder }),
     HtmlBlock,

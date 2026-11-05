@@ -5,12 +5,14 @@
  */
 import { type Ref } from 'react'
 import type { Editor } from '@tiptap/react'
-import { MessagesSquareIcon, PanelRightIcon } from 'lucide-react'
+import { AlertTriangleIcon, CheckIcon, MessagesSquareIcon, PanelRightIcon } from 'lucide-react'
 
 import { RichTextHistory } from '@/features/documents/rich-text/rich-text-controls'
 import { useRichTextState } from '@/features/documents/rich-text/rich-text-state'
 import { RichTextToolbarSeparator } from '@/features/documents/rich-text/rich-text-toolbar'
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Toggle } from '@/components/ui/toggle'
 import { ViewHeader, ViewHeaderTitle } from '@/composites/view-header'
 import {
@@ -78,6 +80,7 @@ interface DocumentHeaderProps extends Omit<DocumentActionsProps, 'editor'> {
   path: string
   title: string
   saveState: SaveState
+  taskDone?: { pending: boolean; error: string | null; onDone: () => void }
   /** An agent run is editing the document. */
   locked: boolean
   /** The comments panel's toggle, with the open threads' count; null for a
@@ -103,6 +106,7 @@ export function DocumentHeader({
   path,
   title,
   saveState,
+  taskDone,
   locked,
   comments = null,
   properties = null,
@@ -116,70 +120,104 @@ export function DocumentHeader({
   // line goes first, then the faces, History's label, and undo and redo
   // (⌘Z still works); the title truncates and the menu always stays.
   return (
-    <ViewHeader ref={ref}>
-      <ViewHeaderTitle
-        title={title}
-        badge={
-          locked ? (
-            <Badge variant="outline" className="shrink-0 font-normal">
-              Locked
-            </Badge>
-          ) : undefined
-        }
-        meta={
-          <>
-            {folder ? (
-              <>
-                <span className="truncate">{folder}</span>
-                <Dot />
-              </>
-            ) : null}
-            <span aria-live="polite" className="shrink-0">
-              {saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : 'Saved'}
-            </span>
-          </>
-        }
-      />
+    <>
+      <ViewHeader ref={ref}>
+        <ViewHeaderTitle
+          title={title}
+          badge={
+            locked ? (
+              <Badge variant="outline" className="shrink-0 font-normal">
+                Locked
+              </Badge>
+            ) : undefined
+          }
+          meta={
+            <>
+              {folder ? (
+                <>
+                  <span className="truncate">{folder}</span>
+                  <Dot />
+                </>
+              ) : null}
+              <span aria-live="polite" className="shrink-0">
+                {saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : 'Saved'}
+              </span>
+            </>
+          }
+        />
 
-      <Contributors path={path} />
-      <FileHistoryButton path={path} />
-      {comments ? (
-        <Toggle
-          size="sm"
-          pressed={comments.open}
-          onPressedChange={comments.onOpenChange}
-          aria-label={comments.count > 0 ? `Comments, ${comments.count} open` : 'Comments'}
-          className="shrink-0"
-        >
-          <MessagesSquareIcon aria-hidden="true" />
-          {comments.count > 0 ? <span className="tabular-nums">{comments.count}</span> : null}
-        </Toggle>
-      ) : null}
-      {properties ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Toggle
+        <Contributors path={path} />
+        <FileHistoryButton path={path} />
+        {comments ? (
+          <Toggle
+            size="sm"
+            pressed={comments.open}
+            onPressedChange={comments.onOpenChange}
+            aria-label={comments.count > 0 ? `Comments, ${comments.count} open` : 'Comments'}
+            className="shrink-0"
+          >
+            <MessagesSquareIcon aria-hidden="true" />
+            {comments.count > 0 ? <span className="tabular-nums">{comments.count}</span> : null}
+          </Toggle>
+        ) : null}
+        {properties ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Toggle
+                size="sm"
+                pressed={properties.sidebar}
+                disabled={properties.disabled}
+                onPressedChange={properties.onSidebarChange}
+                aria-label="Properties in a sidebar"
+                className="shrink-0"
+              >
+                <PanelRightIcon aria-hidden="true" />
+              </Toggle>
+            </TooltipTrigger>
+            <TooltipContent>Properties in a sidebar</TooltipContent>
+          </Tooltip>
+        ) : null}
+
+        <div className="flex shrink-0 items-center gap-1">
+          <div className="hidden items-center gap-1 @md/view-header:flex">
+            <RichTextHistory editor={editor} state={state} />
+            <RichTextToolbarSeparator />
+          </div>
+          <DocumentActions editor={editor} compact={compact} {...actions} />
+          {taskDone ? (
+            <Button
+              type="button"
               size="sm"
-              pressed={properties.sidebar}
-              disabled={properties.disabled}
-              onPressedChange={properties.onSidebarChange}
-              aria-label="Properties in a sidebar"
-              className="shrink-0"
+              variant="outline"
+              disabled={taskDone.pending || locked || !editor?.isEditable}
+              onClick={taskDone.onDone}
             >
-              <PanelRightIcon aria-hidden="true" />
-            </Toggle>
-          </TooltipTrigger>
-          <TooltipContent>Properties in a sidebar</TooltipContent>
-        </Tooltip>
-      ) : null}
-
-      <div className="flex shrink-0 items-center gap-1">
-        <div className="hidden items-center gap-1 @md/view-header:flex">
-          <RichTextHistory editor={editor} state={state} />
-          <RichTextToolbarSeparator />
+              <CheckIcon aria-hidden="true" />
+              {taskDone.pending ? 'Saving…' : 'Done'}
+            </Button>
+          ) : null}
         </div>
-        <DocumentActions editor={editor} compact={compact} {...actions} />
-      </div>
-    </ViewHeader>
+      </ViewHeader>
+      {taskDone?.error ? (
+        <div className="max-w-3xl px-4 pt-3">
+          <Alert>
+            <AlertTriangleIcon aria-hidden="true" />
+            <AlertTitle className="min-w-0">Could not finish editing</AlertTitle>
+            <AlertDescription className="min-w-0 wrap-anywhere">{taskDone.error}</AlertDescription>
+            <AlertAction>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={taskDone.pending || locked || !editor?.isEditable}
+                onClick={taskDone.onDone}
+              >
+                Retry
+              </Button>
+            </AlertAction>
+          </Alert>
+        </div>
+      ) : null}
+    </>
   )
 }

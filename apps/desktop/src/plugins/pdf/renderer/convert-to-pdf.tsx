@@ -2,7 +2,7 @@ import type { TemplateField } from '../shared/template-fields'
 import { useSetAtom } from 'jotai'
 import { useEffect, useId, useMemo, useState } from 'react'
 import { TriangleAlert } from 'lucide-react'
-import { openNoteTabAtom } from '@/plugin-api'
+import { openDocumentAtom } from '@/plugin-api'
 import { pdfCap, readNoteText } from './pdf-cap'
 import { FieldWidget } from './field-widget'
 import {
@@ -141,7 +141,7 @@ export function ConvertToPdf({
     setValues(prefillValues(tpl.fields, frontmatter, today))
   }, [slug, templates, today, frontmatter])
 
-  const openTab = useSetAtom(openNoteTabAtom)
+  const openTab = useSetAtom(openDocumentAtom)
 
   const convert = async () => {
     if (selected === null) return
