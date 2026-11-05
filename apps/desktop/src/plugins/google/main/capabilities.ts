@@ -13,11 +13,14 @@
  * vault on screen: a background agent session outlives a vault switch and must
  * not then reach another vault's mailbox.
  *
- * **`send` and `reply` are the two verbs that reach another person.** Nothing
- * here gates them: the gate is the agent's `PreToolUse` hook
- * (`google-send-gate.mjs`), which matches `holi google send|reply`. The bridge
- * refuses any word before the verb, so that pattern cannot be stepped around.
- * A person pressing Send in the UI has already decided.
+ * **`send`, `reply` and `respond` reach another person, and `api` may.**
+ * Nothing here asks about them: the gate is the agent's `PreToolUse` hook
+ * (`google-send-gate.mjs`), which matches `holi google send|reply|respond` and
+ * any `holi google api` that is not a `GET`. The bridge refuses any word before
+ * the verb, so that pattern cannot be stepped around. What `api` may never do,
+ * permanent deletes and anything outside Gmail and Calendar, main refuses
+ * itself (`passthrough.ts`). A person pressing Send in the UI has already
+ * decided.
  *
  * **What other people wrote reaches the agent fenced** (`untrusted.ts`): each
  * read the CLI door opens fences it in `cliValue`, so the agent reads a mail's
@@ -44,10 +47,12 @@ import {
   createEvent,
   deleteEvent,
   resolveCalendars,
+  respondToEvent,
   updateEvent,
   type AgendaWindow,
   type CalendarOverrides,
   type EventPatch,
+  type InviteAnswer,
 } from './calendar'
 import type { ComposeWrite, GoogleData } from './data'
 import {
@@ -67,6 +72,7 @@ import { CLIENT_ID_SUFFIX } from './credentials'
 import { resolveThreadMeeting } from './invite'
 import type { LoopbackFlow } from './loopback-flow'
 import type { OutgoingMail } from './mime'
+import { assertCalendarAccess, fenceAnswer, planApiCall } from './passthrough'
 import { listContacts } from './people'
 import { GoogleReconnectRequiredError } from './session'
 import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
@@ -332,6 +338,21 @@ function eventFields(p: Record<string, unknown>): EventPatch {
     ...(end === undefined ? {} : { end }),
     ...(flagParam(p, 'all-day') ? { allDay: true } : {}),
   }
+}
+
+/** `respond`'s answer: exactly one of `--yes`, `--no`, `--maybe`. */
+function inviteAnswer(p: Record<string, unknown>): InviteAnswer {
+  const answers = (
+    [
+      ['yes', 'accepted'],
+      ['no', 'declined'],
+      ['maybe', 'tentative'],
+    ] as const
+  ).filter(([flag]) => flagParam(p, flag))
+  if (answers.length !== 1) {
+    throw new CapabilityError('BAD_REQUEST', 'answer with exactly one of --yes, --no, --maybe')
+  }
+  return answers[0]![1]
 }
 
 const ok = { ok: true as const }
@@ -894,6 +915,78 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       run: async (ctx, { id }) => {
         await google(() => deleteEvent(apiOf(ctx.remote), id))
         return ok
+      },
+    }),
+
+    /**
+     * Answer an invitation, with a note to the organizer if `--comment`. One
+     * occurrence of a recurring meeting, since `agenda`'s ids are occurrences.
+     * Google tells the organizer: the agent's send gate asks first.
+     */
+    'google.respond': cap({
+      doors: ['cli'],
+      cli: {
+        args: ['id'],
+        flags: ['yes', 'no', 'maybe'],
+        summary:
+          'answer an invitation: --yes, --no or --maybe, [--comment <text>]; tells the organizer; asks first',
+      },
+      params: (raw) => {
+        const p = paramsObject(raw)
+        return {
+          id: stringParam(p, 'id'),
+          answer: inviteAnswer(p),
+          comment: optionalStringParam(p, 'comment'),
+        }
+      },
+      run: async (ctx, { id, answer, comment }) => {
+        await google(() => respondToEvent(apiOf(ctx.remote), id, answer, comment))
+        return { ok: true as const, response: answer }
+      },
+    }),
+
+    /**
+     * The rest of Gmail and Calendar: `METHOD path [--body -]`. Main refuses
+     * what no answer may allow and keeps a silent calendar write silent
+     * (`planApiCall`); the gate asks before any call that is not a `GET`, and
+     * reads the method by position, so method and path are positional only. CLI only, so `run` is the CLI door
+     * and fences the answer itself: which text is whose depends on the API
+     * the call went to, which the result alone no longer says.
+     */
+    'google.api': cap({
+      doors: ['cli'],
+      cli: {
+        args: ['method', 'path'],
+        summary:
+          'call the Gmail or Calendar API: METHOD gmail/v1/users/me/... or calendar/v3/..., [--body -] (JSON on stdin); METHOD in capitals; asks first unless GET',
+        stdin: 'body',
+        stdinOnDash: true,
+        positionalOnly: true,
+      },
+      params: (raw) => {
+        const p = paramsObject(raw)
+        return planApiCall(
+          stringParam(p, 'method'),
+          stringParam(p, 'path'),
+          optionalStringParam(p, 'body'),
+        )
+      },
+      run: async (ctx, call) => {
+        const api = apiOf(ctx.remote)
+        if (call.source === 'calendar') {
+          const calendars = await google(async () =>
+            resolveCalendars(api, await overrides(ctx.root)),
+          )
+          assertCalendarAccess(
+            call,
+            new Set(
+              calendars.filter((calendar) => calendar.enabled).map((calendar) => calendar.id),
+            ),
+            calendars.find((calendar) => calendar.primary)?.id,
+          )
+        }
+        const answer = await google(() => api.request(call.method, call.url, call.body))
+        return fenceAnswer(answer ?? { ok: true }, call.source)
       },
     }),
 

@@ -204,7 +204,9 @@ export const claudeSeed: SeedContribution = {
       const all = fragments as SettingsFragment[]
       const present = new Set<string>()
       for (const hook of all.flatMap((f) => f.hooks ?? [])) {
-        if (await has(hookScript(hook.script))) present.add(hookScript(hook.script))
+        if ('script' in hook && (await has(hookScript(hook.script)))) {
+          present.add(hookScript(hook.script))
+        }
       }
       return agentSettings(existing, all, (rel) => present.has(rel))
     },

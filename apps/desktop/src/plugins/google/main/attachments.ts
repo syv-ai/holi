@@ -12,7 +12,8 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { readFile, stat } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { open, lstat, realpath } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { isLocalOnlyPath } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
@@ -69,7 +70,7 @@ export async function vaultAttachments(
   ctx: CapabilityContext,
   paths: readonly string[],
 ): Promise<MailPart[]> {
-  const files: { path: string; abs: string }[] = []
+  const files: { path: string; handle: Awaited<ReturnType<typeof open>> }[] = []
   let total = 0
   for (const path of paths) {
     // The marker is in a name, so the path as given says it: normalising
@@ -83,13 +84,53 @@ export async function vaultAttachments(
     const rel = await knownPath(ctx, path)
     const abs = await exactPath(ctx.root, rel)
     if (abs === null) throw new CapabilityError('FORBIDDEN', path)
-    const info = await stat(abs).catch(() => null)
-    if (info === null) throw new CapabilityError('NOT_FOUND', path)
+    // Open without following a last-component symlink, then use this retained
+    // descriptor for both validation and reading. Recheck ancestors around the
+    // open to reject directory replacement during path resolution.
+    const before = await realpath(ctx.root)
+    const segments = rel.split('/')
+    let cursor = before
+    const ancestors: { path: string; dev: number; ino: number }[] = []
+    for (const segment of segments.slice(0, -1)) {
+      cursor = `${cursor}/${segment}`
+      const ancestor = await lstat(cursor).catch(() => null)
+      if (!ancestor || ancestor.isSymbolicLink() || !ancestor.isDirectory()) {
+        throw new CapabilityError('FORBIDDEN', path)
+      }
+      ancestors.push({ path: cursor, dev: ancestor.dev, ino: ancestor.ino })
+    }
+    const handle = await open(abs, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch(
+      () => null,
+    )
+    if (!handle) throw new CapabilityError('NOT_FOUND', path)
+    const info = await handle.stat()
     if (!info.isFile()) {
+      await handle.close()
       throw new CapabilityError('BAD_REQUEST', `${path} is not a file, so it cannot be attached`)
     }
+    const afterRoot = await realpath(ctx.root)
+    const unchanged =
+      afterRoot === before &&
+      (
+        await Promise.all(
+          ancestors.map(async (item) => {
+            const current = await lstat(item.path).catch(() => null)
+            return (
+              current !== null &&
+              current.isDirectory() &&
+              !current.isSymbolicLink() &&
+              current.dev === item.dev &&
+              current.ino === item.ino
+            )
+          }),
+        )
+      ).every(Boolean)
+    if (!unchanged) {
+      await handle.close()
+      throw new CapabilityError('FORBIDDEN', path)
+    }
     total += info.size
-    files.push({ path: rel, abs })
+    files.push({ path: rel, handle })
   }
   if (total > MAX_ATTACHMENT_BYTES) {
     throw new CapabilityError(
@@ -98,11 +139,31 @@ export async function vaultAttachments(
       'attach fewer or smaller files, or share a link to them instead',
     )
   }
-  return Promise.all(
-    files.map(async ({ path, abs }) => ({
-      filename: basename(path),
-      mimeType: attachmentType(path),
-      data: (await readFile(abs)).toString('base64'),
-    })),
-  )
+  try {
+    return await Promise.all(
+      files.map(async ({ path, handle }) => {
+        const chunks: Buffer[] = []
+        let size = 0
+        const stream = handle.createReadStream({ autoClose: false })
+        for await (const chunk of stream) {
+          const bytes = Buffer.from(chunk)
+          size += bytes.length
+          if (size > MAX_ATTACHMENT_BYTES) {
+            throw new CapabilityError(
+              'BAD_REQUEST',
+              `${path} grew beyond the attachment size limit`,
+            )
+          }
+          chunks.push(bytes)
+        }
+        return {
+          filename: basename(path),
+          mimeType: attachmentType(path),
+          data: Buffer.concat(chunks).toString('base64'),
+        }
+      }),
+    )
+  } finally {
+    await Promise.all(files.map(({ handle }) => handle.close()))
+  }
 }
