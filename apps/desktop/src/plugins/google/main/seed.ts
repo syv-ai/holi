@@ -30,15 +30,32 @@ const folder = seedFolder(
   }),
 )
 
-// Kept inline in the merged settings so vaults with a frozen, older shipped
-// gate still get native consent for the verbs added later. It is intentionally
-// a conservative command-line check; the current shipped gate supplies the
-// detailed prompt and remains the authoritative full parser.
-const LEGACY_CONSENT_SOURCE =
-  `let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{\n` +
-  `const ask=()=>console.log(JSON.stringify({hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'ask',permissionDecisionReason:'This Google action can reach another person; confirm it in the native permission prompt.'}}));\n` +
-  `try{const c=(JSON.parse(s).tool_input?.command||'').replace(/["']/g,'');const r=/(?:^|[;&|\\n])\\s*(?:\\$\\{?HOLI_BIN\\}?|(?:[^\\s;&|]*\\/)?holi)[ \\t]+google[ \\t]+(respond|api)(?:[ \\t]+([^\\s;&|]+))?/g;let m;while((m=r.exec(c))){if(m[1]==='respond'||(m[1]==='api'&&(!m[2]||m[2]!=='GET'))){ask();return}}}catch{ask()}\n` +
-  `});`
+// Kept inline in merged settings so an older vault's frozen hook gets the same
+// shell normalization and command-boundary handling for newly gated verbs.
+const LEGACY_CONSENT_SOURCE = `
+let input = ''
+process.stdin.on('data', chunk => input += chunk).on('end', () => {
+  const ask = () => console.log(JSON.stringify({hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'ask',permissionDecisionReason:'This Google action can reach another person; confirm it in the native permission prompt.'}}))
+  try {
+    const command = JSON.parse(input).tool_input?.command ?? ''
+    let words = '', quote = ''
+    for (let i = 0; i < command.length; i++) {
+      const c = command[i]
+      if (quote) {
+        if (c === quote) quote = ''
+        else if (c === '\\\\' && command[i + 1] === '\\n') i++
+        else words += c === ' ' ? '\\uE000' : c
+      } else if (c === '\\'' || c === '\"') quote = c
+      else if (c === '\\\\') { if (command[i + 1] === '\\n') i++; else words += command[++i] ?? '' }
+      else words += c
+    }
+    const re = /(?:^|[|;&(\\n])\\s*(?:command[ \\t]+)?(?:\\$\\{?HOLI_BIN\\}?|\\/[^|;&(\\n]*?\\bholi|[^\\s|;&(\\n]*\\bholi)[ \\t]+google[ \\t]+([A-Za-z-]+)\\b(?:[ \\t]+([^\\s|;&(]*))?/g
+    for (const match of words.matchAll(re)) {
+      const verb = match[1], method = match[2]
+      if (['send','reply','forward','respond'].includes(verb) || (verb === 'api' && method !== 'GET')) { ask(); return }
+    }
+  } catch { ask() }
+})`
 const LEGACY_CONSENT_HOOK = `node -e "eval(Buffer.from('${Buffer.from(LEGACY_CONSENT_SOURCE).toString('base64')}', 'base64').toString())"`
 
 const SETTINGS: SettingsFragment = {

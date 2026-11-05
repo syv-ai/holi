@@ -113,14 +113,27 @@ describe('what a raw call may never do', () => {
 })
 
 describe('raw Calendar API respects the enabled-calendar selection', () => {
-  const enabled = new Set(['primary', 'owned@group.calendar.google.com'])
-  const access = (method: string, path: string, body?: string) =>
-    assertCalendarAccess(planApiCall(method, path, body), enabled)
+  const enabled = new Set(['ada@syv.ai', 'owned@group.calendar.google.com'])
+  const primaryId = 'ada@syv.ai'
+  const access = (method: string, path: string, body?: string, selected: Set<string> = enabled) =>
+    assertCalendarAccess(planApiCall(method, path, body), selected, primaryId)
 
   it('permits selected calendar event reads and writes', () => {
     expect(() => access('GET', 'calendar/v3/calendars/primary/events')).not.toThrow()
     expect(() =>
+      access('GET', 'calendar/v3/calendars/ada%40syv.ai/events/e1/instances'),
+    ).not.toThrow()
+    expect(() =>
+      access('GET', 'calendar/v3/calendars/owned%40group.calendar.google.com/events'),
+    ).not.toThrow()
+    expect(() =>
       access('PATCH', 'calendar/v3/calendars/primary/events/e1', '{"summary":"x"}'),
+    ).not.toThrow()
+    expect(() =>
+      access('POST', 'calendar/v3/freeBusy', '{"items":[{"id":"primary"}]}'),
+    ).not.toThrow()
+    expect(() =>
+      access('POST', 'calendar/v3/freeBusy', '{"items":[{"id":"ada@syv.ai"}]}'),
     ).not.toThrow()
   })
 
@@ -128,16 +141,29 @@ describe('raw Calendar API respects the enabled-calendar selection', () => {
     ['GET', 'calendar/v3/calendars/disabled/events'],
     ['PATCH', 'calendar/v3/calendars/disabled/events/e1', '{}'],
     ['GET', 'calendar/v3/calendars/%64isabled/events'],
+    ['GET', 'calendar/v3/calendars/ada%2540syv.ai/events'],
+    [
+      'GET',
+      'calendar/v3/calendars/primary/events',
+      undefined,
+      new Set(['owned@group.calendar.google.com']),
+    ],
     ['POST', 'calendar/v3/freeBusy?calendarId=disabled', '{"items":[{"id":"primary"}]}'],
     ['POST', 'calendar/v3/freeBusy', '{"items":[{"id":"disabled"}]}'],
+    [
+      'POST',
+      'calendar/v3/freeBusy',
+      '{"items":[{"id":"primary"}]}',
+      new Set(['owned@group.calendar.google.com']),
+    ],
     ['GET', 'calendar/v3/calendars/primary/events?calendarId=disabled'],
     ['POST', 'calendar/v3/calendars/primary/events', '{"calendarId":"disabled"}'],
     ['POST', 'calendar/v3/batch/calendar/v3', '{}'],
     ['GET', 'calendar/v3/users/me/calendarList'],
-  ] as [string, string, string?][])(
+  ] as [string, string, string?, Set<string>?][])(
     'refuses disabled or unrecognized Calendar route %s %s',
-    (method, path, body) => {
-      expect(refusal(() => access(method, path, body))).toBe('FORBIDDEN')
+    (method, path, body, selected) => {
+      expect(refusal(() => access(method, path, body, selected))).toBe('FORBIDDEN')
     },
   )
 })

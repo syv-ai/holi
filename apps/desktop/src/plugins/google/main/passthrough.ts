@@ -159,24 +159,41 @@ export interface ApiCall {
 /** Refuse raw Calendar routes that cannot be proven to stay within the user's
  * enabled calendars. Unknown routes fail closed rather than becoming an alias
  * around the calendar picker. */
-export function assertCalendarAccess(call: ApiCall, enabled: ReadonlySet<string>): void {
+export function assertCalendarAccess(
+  call: ApiCall,
+  enabled: ReadonlySet<string>,
+  primaryId?: string,
+): void {
   const url = new URL(call.url)
   if (!url.pathname.startsWith('/calendar/v3/')) return
   const refuse = (): never => {
     throw new CapabilityError('FORBIDDEN', 'the raw Calendar API is limited to enabled calendars')
   }
   const route = url.pathname.slice('/calendar/v3/'.length)
-  if (
-    route.split('/').some((segment) => segment.includes('%')) ||
-    /(?:^|\/)batch(?:\/|$)/i.test(route)
-  ) {
-    refuse()
-  }
+  if (/(?:^|\/)batch(?:\/|$)/i.test(route)) refuse()
 
-  const enabledId = (id: unknown): id is string => typeof id === 'string' && enabled.has(id)
-  const calendarRoute = /^calendars\/([^/]+)(?:\/(events)(?:\/([^/]+))?)?$/.exec(route)
+  // Decode exactly once, only for an identifier. Structural escapes and any
+  // remaining percent sign are rejected so URL parsing cannot reinterpret it.
+  const decodedId = (value: string): string | null => {
+    try {
+      const decoded = decodeURIComponent(value)
+      return decoded.includes('/') || decoded.includes('\\') || decoded.includes('%')
+        ? null
+        : decoded
+    } catch {
+      return null
+    }
+  }
+  const aliasEnabled = (id: string): boolean =>
+    id === 'primary' ? primaryId !== undefined && enabled.has(primaryId) : enabled.has(id)
+  const enabledId = (id: unknown): id is string =>
+    typeof id === 'string' && decodedId(id) !== null && aliasEnabled(decodedId(id)!)
+  const calendarRoute = /^calendars\/([^/]+)(?:\/(events)(?:\/([^/]+)(?:\/instances)?)?)?$/.exec(
+    route,
+  )
   if (calendarRoute) {
-    if (!enabledId(calendarRoute[1])) refuse()
+    const id = decodedId(calendarRoute[1]!)
+    if (id === null || !aliasEnabled(id)) refuse()
   } else if (route !== 'colors' && route !== 'freeBusy') {
     refuse()
   }
