@@ -190,7 +190,7 @@ test('changing vault ownership cancels the drag before returning to its source v
   expect(document.querySelector('[data-combine-preview="true"]')).toBeNull()
 })
 
-test('an unopened sidebar view is accepted for a same-vault combine preview', () => {
+test('an unopened sidebar view previews and combines in the same vault', () => {
   const { store, list, transfer } = setup()
   const unopened = 'C.md'
   transfer.setData(MIME, unopened)
@@ -201,6 +201,11 @@ test('an unopened sidebar view is accepted for a same-vault combine preview', ()
   fireEvent(list, dragEvent('dragover', transfer, 150))
   expect(document.querySelector('[data-combine-preview="true"]')).not.toBeNull()
   expect(screen.getByRole('tab', { name: 'Split view: B, C' })).toBeTruthy()
+  expect(store.get(tabDragWasOpenAtom)).toBe(false)
+  fireEvent(list, dragEvent('drop', transfer, 150))
+  expect(store.get(shellWorkspaceAtom).entries).toMatchObject(['A.md', { views: ['B.md', 'C.md'] }])
+  expect(store.get(tabDragAtom)).toBeNull()
+  expect(store.get(tabDragVaultAtom)).toBeNull()
   expect(store.get(tabDragWasOpenAtom)).toBe(false)
 })
 
