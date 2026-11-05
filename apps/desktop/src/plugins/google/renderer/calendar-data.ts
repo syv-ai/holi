@@ -162,7 +162,10 @@ export interface GoogleCalendarData {
 }
 
 /** Google's calendar for the open vault's account, a visible range at a time. */
-export function useGoogleCalendar(remote: string | null): GoogleCalendarData {
+export function useGoogleCalendar(
+  remote: string | null,
+  accountIdentity: string | null = null,
+): GoogleCalendarData {
   const [status, setStatus] = useState<CalendarStatus>({ kind: 'loading' })
   const [loading, setLoading] = useState(false)
   const [events, setEvents] = useState<GoogleEvent[]>([])
@@ -171,19 +174,38 @@ export function useGoogleCalendar(remote: string | null): GoogleCalendarData {
   /** The newest load: an answer for a range already left arrives late and
    *  is dropped. */
   const latest = useRef(0)
+  const context = useRef({ remote, accountIdentity, generation: 0 })
+  if (context.current.remote !== remote || context.current.accountIdentity !== accountIdentity) {
+    context.current = { remote, accountIdentity, generation: context.current.generation + 1 }
+    latest.current += 1
+  }
+  const contextGeneration = context.current.generation
 
   const loadCalendars = useCallback(() => {
     if (remote === null) return
+    const generation = context.current.generation
     // No error surface of its own: the events' error covers an outage.
     void googleCap
       .calendars(remote)
-      .then(setCalendars)
-      .catch(() => setCalendars([]))
+      .then((choices) => {
+        if (context.current.generation === generation && context.current.remote === remote) {
+          setCalendars(choices)
+        }
+      })
+      .catch(() => {
+        if (context.current.generation === generation && context.current.remote === remote) {
+          setCalendars([])
+        }
+      })
   }, [remote])
 
   const load = useCallback(() => {
     const asked = ++latest.current
-    const current = (): boolean => asked === latest.current
+    const generation = contextGeneration
+    const current = (): boolean =>
+      asked === latest.current &&
+      context.current.generation === generation &&
+      context.current.remote === remote
     if (remote === null) {
       setStatus({ kind: 'disconnected' })
       return
@@ -218,10 +240,10 @@ export function useGoogleCalendar(remote: string | null): GoogleCalendarData {
         )
       },
     )
-  }, [remote, window])
+  }, [remote, window, contextGeneration])
 
   useEffect(load, [load])
-  useEffect(loadCalendars, [loadCalendars])
+  useEffect(loadCalendars, [loadCalendars, contextGeneration])
 
   const showRange = useCallback((range: { start: Date; end: Date }) => {
     const next = rangeWindow(range)
@@ -269,12 +291,13 @@ export function useGoogleCalendar(remote: string | null): GoogleCalendarData {
   const create = useCallback(
     async (times: EventTimes & { title: string; location: string }) => {
       if (remote === null) throw new Error('No vault is open.')
+      const generation = context.current.generation
       await googleCap.schedule(remote, {
         ...eventParams(times),
         title: times.title,
         ...(times.location === '' ? {} : { location: times.location }),
       })
-      load()
+      if (context.current.generation === generation && context.current.remote === remote) load()
     },
     [remote, load],
   )
@@ -282,8 +305,9 @@ export function useGoogleCalendar(remote: string | null): GoogleCalendarData {
   const update = useCallback(
     async (googleId: string, times: EventTimes) => {
       if (remote === null) throw new Error('No vault is open.')
+      const generation = context.current.generation
       await googleCap.reschedule(remote, { id: googleId, ...eventParams(times) })
-      load()
+      if (context.current.generation === generation && context.current.remote === remote) load()
     },
     [remote, load],
   )
@@ -291,8 +315,9 @@ export function useGoogleCalendar(remote: string | null): GoogleCalendarData {
   const remove = useCallback(
     async (googleId: string) => {
       if (remote === null) throw new Error('No vault is open.')
+      const generation = context.current.generation
       await googleCap.unschedule(remote, { id: googleId })
-      load()
+      if (context.current.generation === generation && context.current.remote === remote) load()
     },
     [remote, load],
   )

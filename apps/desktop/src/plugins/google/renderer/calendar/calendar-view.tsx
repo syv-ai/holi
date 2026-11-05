@@ -131,8 +131,11 @@ function draftFromOccurrence(occurrence: Occurrence): EventDraft {
 
 export function CalendarView(): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
-  const { account } = useGoogleAccount()
-  const calendar = useGoogleCalendar(remote)
+  const { account, currentSub } = useGoogleAccount()
+  const calendar = useGoogleCalendar(
+    remote,
+    account ? `${account.email}:${currentSub ?? ''}` : null,
+  )
   useEffect(() => {
     const nextIdentity = `${remote ?? ''}:${account?.email ?? ''}`
     if (contextIdentity.current !== nextIdentity) {
@@ -181,12 +184,14 @@ export function CalendarView(): React.JSX.Element {
 
   /** Live drag feedback (invalid cursor). */
   const canDropEvent = useCallback(
-    (update: EventCalendarProposedUpdate<GoogleEventData>) => update.event.data?.editable === true,
+    (update: EventCalendarProposedUpdate<GoogleEventData>) =>
+      !pending.current && update.event.data?.editable === true,
     [],
   )
 
   /** A drag or resize: painted at once, then sent; a refusal puts it back. */
   const handleEventUpdate = useCallback((update: EventCalendarProposedUpdate<GoogleEventData>) => {
+    if (pending.current) return false
     const data = update.event.data
     if (data?.editable !== true) {
       errorToast(lockedReason(update.event.title, data))
@@ -551,7 +556,10 @@ export function CalendarView(): React.JSX.Element {
           onEventClick={(occurrence, event) => openView(occurrence, event)}
           onSlotClick={(slot: EventCalendarSlotInfo, event) =>
             openCreate(slot.date, slot.allDay, slot.end, {
-              rect: event.currentTarget.getBoundingClientRect(),
+              rect:
+                event.clientX !== 0 || event.clientY !== 0
+                  ? new DOMRect(event.clientX, event.clientY, 1, 1)
+                  : event.currentTarget.getBoundingClientRect(),
               element: event.currentTarget as HTMLElement,
             })
           }
@@ -588,7 +596,7 @@ export function CalendarView(): React.JSX.Element {
                   size="row"
                   className="w-full min-w-0 justify-start"
                   onClick={(event) => {
-                    close()
+                    close({ restoreFocus: false })
                     openView(occurrence, event)
                   }}
                 >
