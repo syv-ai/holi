@@ -1,0 +1,79 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <div class="when">
+        <div class="field">
+          <span class="label" id="dayLabel">Day</span>
+          <div class="stepper">
+            <button id="prevDay" class="icon" aria-label="Previous day">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5" /></svg>
+            </button>
+            <input id="day" type="date" aria-labelledby="dayLabel" />
+            <button id="nextDay" class="icon" aria-label="Next day">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" /></svg>
+            </button>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label" id="startLabel">Start</span>
+          <button id="start" class="time" aria-haspopup="dialog" aria-expanded="false" aria-labelledby="startLabel start"></button>
+        </div>
+        <div class="field">
+          <span class="label" id="endLabel">End</span>
+          <div class="row">
+            <button id="end" class="time" aria-haspopup="dialog" aria-expanded="false" aria-labelledby="endLabel end"></button>
+            <span class="muted duration" id="duration"></span>
+          </div>
+        </div>
+      </div>
+      <div class="account" id="account"></div>
+    </header>
+
+    <section class="card signin" id="signin" hidden>
+      <div class="row">
+        <strong>Sign in to the booking site</strong>
+        <span class="muted">Holi emails you a login link and picks it up from Gmail.</span>
+      </div>
+      <div class="row">
+        <input id="email" type="email" placeholder="you@company.com" autocomplete="email" />
+        <button id="sendLink" class="primary">Send login link</button>
+      </div>
+      <div class="row" id="pasteRow" hidden>
+        <input id="link" placeholder="Paste the link from the email" />
+        <button id="useLink">Sign in</button>
+      </div>
+      <p class="muted" id="signinStatus" role="status"></p>
+    </section>
+
+    <main class="plan" id="plan" aria-label="Rooms"></main>
+
+    <section class="card sheet" id="sheet" hidden>
+      <div class="row between">
+        <div>
+          <strong id="sheetRoom"></strong>
+          <span class="muted" id="sheetWhen"></span>
+        </div>
+        <div class="row">
+          <button id="book" class="primary">Book room</button>
+          <button id="closeSheet" class="icon ghost" aria-label="Close">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7m0-7-7 7" /></svg>
+          </button>
+        </div>
+      </div>
+      <ul class="day" id="sheetDay"></ul>
+    </section>
+
+    <div class="picker" id="picker" role="dialog" hidden>
+      <div class="column" id="pickHours" role="listbox" aria-label="Hour"></div>
+      <div class="column" id="pickMinutes" role="listbox" aria-label="Minute"></div>
+    </div>
+
+    <p class="muted status" id="status" role="status"></p>
+    <script src="app.js"></script>
+  </body>
+</html>

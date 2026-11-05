@@ -60,6 +60,8 @@ import { hostBridgeMessage } from './bridge-host'
 const AFFORDANCE_TEXT: Record<AppAffordance, string> = {
   mail: 'your mail',
   calendar: 'your calendar',
+  booking:
+    "every room's bookings, other people's included, and book rooms and cancel your bookings in your name",
 }
 
 /** The topics this frame is told about: the vault's, and its own collections'. */

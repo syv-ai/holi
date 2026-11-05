@@ -1,0 +1,626 @@
+/* Holi's look: neutral surfaces from the vault's theme, soft shadows for the
+   cards, and colour only where it means something (free, busy, yours). Every
+   colour is a theme token, so the app follows whatever palette the vault has
+   chosen. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+[hidden] {
+  display: none !important;
+}
+:root {
+  --free: var(--task-done);
+  --taken: var(--destructive);
+  --yours: var(--link);
+  --control-h: 2.25rem;
+  --r-control: calc(var(--radius) - 2px);
+  --r-card: calc(var(--radius) + 4px);
+  /* The picker's options sit 4px inside a 1px edge: its corner is theirs
+     plus both, so the curves run parallel. */
+  --r-popover: calc(var(--r-control) + 5px);
+  /* A ring for the edge, a lift and a little ambient depth. */
+  --shadow-border:
+    0 0 0 1px oklch(0 0 0 / 0.06), 0 1px 2px -1px oklch(0 0 0 / 0.06),
+    0 2px 4px 0 oklch(0 0 0 / 0.04);
+  --shadow-border-hover:
+    0 0 0 1px oklch(0 0 0 / 0.1), 0 1px 2px -1px oklch(0 0 0 / 0.08),
+    0 4px 8px 0 oklch(0 0 0 / 0.06);
+  --shadow-popover:
+    0 0 0 1px oklch(0 0 0 / 0.08), 0 4px 8px -2px oklch(0 0 0 / 0.08),
+    0 12px 24px -6px oklch(0 0 0 / 0.12);
+}
+/* Depth shadows vanish on a dark ground: dark keeps a light ring. */
+:root[data-mode='dark'] {
+  --shadow-border: 0 0 0 1px oklch(1 0 0 / 0.08);
+  --shadow-border-hover: 0 0 0 1px oklch(1 0 0 / 0.14);
+  --shadow-popover: 0 0 0 1px oklch(1 0 0 / 0.1), 0 12px 24px -6px oklch(0 0 0 / 0.5);
+}
+html,
+body {
+  min-height: 100%;
+}
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font:
+    14px/1.45 'Geist Variable',
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  margin: 0 auto;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 64rem;
+}
+p,
+span {
+  text-wrap: pretty;
+}
+.muted {
+  color: var(--muted-foreground);
+}
+.status {
+  margin: 0;
+  min-height: 1.4em;
+  font-size: 0.75rem;
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.row.between {
+  justify-content: space-between;
+  flex-wrap: nowrap;
+}
+.card {
+  background: var(--card);
+  color: var(--card-foreground);
+  /* Forced colours drop the shadow and paint this edge instead. */
+  border: 1px solid transparent;
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-border);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* ── controls, drawn like Holi's own ─────────────────────────────────────── */
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+input {
+  min-height: var(--control-h);
+  background: var(--card);
+  border: 1px solid var(--input);
+  border-radius: var(--r-control);
+  padding: 0 0.625rem;
+  min-width: 0;
+}
+input::placeholder {
+  color: var(--muted-foreground);
+}
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  min-height: var(--control-h);
+  padding: 0 0.875rem;
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  background: var(--card);
+  box-shadow: var(--shadow-border);
+  font-weight: 500;
+  cursor: pointer;
+  transition-property: background-color, box-shadow, scale;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+button:not(:disabled):active {
+  scale: 0.96;
+}
+@media (hover: hover) {
+  button:not(:disabled):hover {
+    box-shadow: var(--shadow-border-hover);
+  }
+  button.primary:not(:disabled):hover {
+    background: color-mix(in srgb, var(--primary) 88%, var(--foreground));
+  }
+  button.ghost:not(:disabled):hover {
+    background: var(--accent);
+    box-shadow: none;
+  }
+}
+button.primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: none;
+}
+button.ghost {
+  background: transparent;
+  box-shadow: none;
+}
+button.danger {
+  background: var(--destructive);
+  color: var(--primary-foreground);
+  box-shadow: none;
+}
+@media (hover: hover) {
+  button.danger:not(:disabled):hover {
+    background: color-mix(in srgb, var(--destructive) 88%, var(--foreground));
+    box-shadow: none;
+  }
+}
+button.compact {
+  min-height: 1.75rem;
+  padding: 0 0.625rem;
+  font-size: 0.75rem;
+}
+button.icon {
+  width: var(--control-h);
+  padding: 0;
+}
+svg {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+button.link {
+  min-height: 0;
+  padding: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+@media (hover: hover) {
+  button.link:hover {
+    color: var(--foreground);
+    box-shadow: none;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--ring) 70%, transparent);
+  outline-offset: 2px;
+}
+#email,
+#link {
+  flex: 1;
+  min-width: min(14rem, 100%);
+}
+
+/* ── the bar: day, start and end on the left, the account on the right ──── */
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+}
+.when {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+.label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+#day {
+  font-variant-numeric: tabular-nums;
+}
+button.time {
+  justify-content: flex-start;
+  min-width: 6rem;
+  padding: 0 0.75rem 0 0.625rem;
+  gap: 0.5rem;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+button.time svg {
+  color: var(--muted-foreground);
+}
+button.time[aria-expanded='true'] {
+  box-shadow:
+    0 0 0 1px var(--ring),
+    0 0 0 3px color-mix(in srgb, var(--ring) 25%, transparent);
+}
+.duration {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.account {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: var(--control-h);
+  font-size: 0.75rem;
+  min-width: 0;
+}
+.account .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── the time picker: hours and quarter hours side by side ──────────────── */
+.picker {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  padding: 4px;
+  gap: 4px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid transparent;
+  border-radius: var(--r-popover);
+  box-shadow: var(--shadow-popover);
+  transform-origin: top left;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .picker:not([hidden]) {
+    animation: picker-in 150ms ease-out both;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .picker:not([hidden]) {
+    animation: picker-fade 150ms ease-out both;
+  }
+}
+@keyframes picker-in {
+  from {
+    opacity: 0;
+    scale: 0.96;
+    translate: 0 -4px;
+  }
+}
+@keyframes picker-fade {
+  from {
+    opacity: 0;
+  }
+}
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 3.5rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.column + .column {
+  border-left: 1px solid var(--border);
+  padding-left: 4px;
+  width: calc(3.5rem + 5px);
+}
+.option {
+  flex: none;
+  min-height: 2rem;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  transition-property: background-color;
+}
+.option:not(:disabled):active {
+  scale: none;
+}
+@media (hover: hover) {
+  .option:not(:disabled):hover {
+    background: var(--accent);
+    box-shadow: none;
+  }
+}
+.option[aria-selected='true'],
+.option[aria-selected='true']:hover {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-weight: 500;
+}
+.option:disabled {
+  opacity: 0.35;
+}
+.option:focus-visible {
+  outline-offset: -2px;
+}
+
+/* ── the plan ─────────────────────────────────────────────────────────── */
+.plan {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+.zone-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  margin: 0.875rem 0 0;
+}
+.zone-label:first-child {
+  margin-top: 0;
+}
+.zone {
+  display: grid;
+  gap: 0.75rem;
+}
+.zone.large {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+/* Two small booths and one big one: sizes say how many fit. */
+.zone.booths {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr);
+}
+.zone.other {
+  grid-template-columns: repeat(auto-fill, minmax(min(12rem, 100%), 1fr));
+}
+@media (max-width: 560px) {
+  .zone.large,
+  .zone.booths {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+.room {
+  --tone: var(--free);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding: 1rem;
+  text-align: left;
+  font-weight: 400;
+  background: var(--card);
+  color: var(--card-foreground);
+  border-radius: var(--r-card);
+  container-type: inline-size;
+}
+/* A whole card pressing in would lurch; it answers with its edge. */
+.room:not(:disabled):active {
+  scale: none;
+}
+/* Selected is a state, so it is a real edge, not a soft shadow. */
+.room[aria-pressed='true'],
+.room[aria-pressed='true']:hover {
+  box-shadow:
+    0 0 0 2px var(--foreground),
+    0 4px 12px -4px oklch(0 0 0 / 0.12);
+}
+.room.busy {
+  --tone: var(--taken);
+}
+.room.mine {
+  --tone: var(--yours);
+}
+.room.unknown {
+  --tone: var(--muted-foreground);
+}
+/* Name and kind on the left, the state on the right; a narrow card puts
+   the state under the name instead, so cards side by side match. */
+.room .top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+}
+@container (max-width: 22rem) {
+  .room .top {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+}
+.room .head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+}
+.room .name {
+  font-weight: 600;
+  font-size: 0.9375rem;
+  white-space: nowrap;
+}
+.room .kind {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+/* The state as a soft badge: a tint of its colour, the colour as a dot. */
+.room .state {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  max-width: 100%;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  background: color-mix(in srgb, var(--tone) 12%, transparent);
+  color: color-mix(in srgb, var(--tone) 60%, var(--foreground));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.room .state::before {
+  content: '';
+  flex: none;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 50%;
+  background: var(--tone);
+}
+
+/* The day: one rounded block per half hour, soft, with the chosen slot's
+   blocks at full strength and a bar under them. */
+.day-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3125rem;
+}
+.cells {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 3px;
+  height: 1.75rem;
+}
+.cell {
+  border-radius: 5px;
+  background: var(--muted);
+  transition-property: background-color, opacity;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+.cell:first-child {
+  border-radius: 8px 5px 5px 8px;
+}
+.cell:last-child {
+  border-radius: 5px 8px 8px 5px;
+}
+.cell.open {
+  background: color-mix(in srgb, var(--free) 20%, var(--card));
+}
+.cell.taken {
+  background: color-mix(in srgb, var(--taken) 28%, var(--card));
+}
+.cell.yours {
+  background: color-mix(in srgb, var(--yours) 36%, var(--card));
+}
+.cell.past {
+  opacity: 0.45;
+}
+.cell.chosen.open {
+  background: color-mix(in srgb, var(--free) 72%, var(--card));
+}
+.cell.chosen.taken {
+  background: color-mix(in srgb, var(--taken) 80%, var(--card));
+}
+.cell.chosen.yours {
+  background: var(--yours);
+}
+.track {
+  position: relative;
+  display: block;
+  height: 3px;
+}
+.track .slot {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: var(--tone);
+}
+.hours {
+  position: relative;
+  display: block;
+  height: 0.75rem;
+  font-size: 0.75rem;
+  line-height: 1;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.hours span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+}
+.hours span.first {
+  transform: none;
+}
+.hours span.last {
+  transform: translateX(-100%);
+}
+
+/* ── the sheet ────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: no-preference) {
+  .sheet:not([hidden]) {
+    animation: sheet-in 200ms ease-out both;
+  }
+}
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
+.sheet .row.between > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.sheet #sheetWhen {
+  font-variant-numeric: tabular-nums;
+}
+.day {
+  list-style: none;
+  margin: 0;
+  padding: 0.75rem 0 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+.day li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.8125rem;
+  min-width: 0;
+}
+.day .time {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  min-width: 7rem;
+}
+.day .what {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.day li button {
+  margin-left: auto;
+}
+.day li.mine .what {
+  color: var(--yours);
+}

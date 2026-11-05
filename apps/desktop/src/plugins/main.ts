@@ -7,6 +7,7 @@ import { agentMain } from './agent/main'
 import { automationsMain } from './automations/main'
 import { holisMain } from './holis/main'
 import { appsMain } from './apps/main'
+import { bookingMain } from './booking/main'
 import { communityMain } from './community/main'
 import { googleMain } from './google/main'
 import { browserMain } from './browser/main'
@@ -25,4 +26,5 @@ export const MAIN_PLUGINS: readonly MainPlugin[] = [
   googleMain,
   appsMain,
   communityMain,
+  bookingMain,
 ]

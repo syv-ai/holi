@@ -141,6 +141,19 @@ export const BRIDGE_JS = `(() => {
     // A secret from the vault's .env (.env.local wins), or null when unset:
     // only the names app.yaml lists under env.
     env: (name) => call('env.get', { name }),
+    // The person's sign-in to the room booking site, and bookings in their
+    // name: needs dangerously-allow: [booking], and the person's approval.
+    booking: {
+      status: () => call('booking.status'),
+      login: (email) => call('booking.login', { email }),
+      finish: (link) => call('booking.finish', { link }),
+      logout: () => call('booking.logout'),
+      rooms: () => call('booking.rooms'),
+      availability: (day) => call('booking.availability', day ? { day } : {}),
+      book: (booking) => call('booking.book', booking),
+      // One of the person's bookings, by the id availability gives it.
+      cancel: (id) => call('booking.cancel', { booking: id }),
+    },
     on,
     // A line in the app's log, for whoever debugs it next.
     log: (...parts) => report('info', parts),

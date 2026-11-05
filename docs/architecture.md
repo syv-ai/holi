@@ -175,7 +175,8 @@ only, for `capClient`, and its tests live in its own `test/`. The built-in part 
 ([tasks](features/tasks.md)), automations and Holis, built on the agent, PDF
 ([pdf](features/pdf.md)), links ([links](features/links.md)), the browser
 ([browser](features/browser.md)), Google
-([google](features/google.md)), vault apps ([vault apps](features/vault-apps.md)) and community
+([google](features/google.md)), vault apps ([vault apps](features/vault-apps.md)), room booking
+([booking](features/booking.md)) and community
 plugins ([community plugins](features/community-plugins.md)), which hosts plugins from other
 repositories as processes it runs, never as code it loads. A renderer plugin may give its claims as
 an atom, for claims that follow what main tells it, and a plugin may register a frame origin with
@@ -297,12 +298,14 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 | [links](features/links.md)                     | `link.*.md` files and page previews                                 |
 | [browser](features/browser.md)                 | Web pages in a tab, and `holi browser` for the agent                |
 | [vault-apps](features/vault-apps.md)           | Agent-authored apps in their own origin                             |
+| [booking](features/booking.md)                 | The office's meeting rooms, from an app and the agent               |
 | [command-palette](features/command-palette.md) | Quick open and the one table of commands                            |
 | [onboarding](features/onboarding.md)           | First run and adding a vault                                        |
 
 ## 7. State outside the repo
 
-- `userData` holds the GitHub and Google tokens (encrypted with Electron `safeStorage`), the vault
+- `userData` holds the GitHub and Google tokens and the room-booking session (encrypted with
+  Electron `safeStorage`), the vault
   registry (which repos are added and where), each vault's agent config directory, the Google cache,
   which schedules this machine runs (and their run log) and the `holi` CLIs. It is a machine fact: a
   second laptop starts empty.

@@ -7,6 +7,7 @@ import { agentRenderer } from './agent/renderer'
 import { automationsRenderer } from './automations/renderer'
 import { holisRenderer } from './holis/renderer'
 import { appsRenderer } from './apps/renderer'
+import { bookingRenderer } from './booking/renderer'
 import { communityRenderer } from './community/renderer'
 import { googleRenderer } from './google/renderer'
 import { browserRenderer } from './browser/renderer'
@@ -25,4 +26,5 @@ export const RENDERER_PLUGINS: readonly RendererPlugin[] = [
   googleRenderer,
   appsRenderer,
   communityRenderer,
+  bookingRenderer,
 ]

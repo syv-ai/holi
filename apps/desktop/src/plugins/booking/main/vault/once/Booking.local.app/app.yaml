@@ -1,0 +1,5 @@
+description: Book the Garage meeting rooms at booking.birdsatfive.dk
+collections:
+  prefs:
+dangerously-allow:
+  booking: To show the rooms' bookings, and book rooms and cancel your bookings in your name

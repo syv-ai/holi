@@ -115,7 +115,9 @@ the note as it was, in a session the person can watch and add to ([editor](edito
   `google.agenda` and `google.search` (`holi.google.agenda({ from, to })`,
   `holi.google.search(query)`, a page: `{ threads, nextPageToken }`). Writes: its own records
   (`holi.store(collection)`), and the vault's shared notes and tasks, each as Holi's own views
-  write them (see Writing the vault). `<holi-note path>` is a custom element the shim defines: the
+  write them (see Writing the vault). Opted into, the room booking calls (`holi.booking.*`,
+  [booking](booking.md)) both read the rooms' bookings and act as the person on the booking site:
+  they sign in and out, book rooms and cancel bookings in their name. `<holi-note path>` is a custom element the shim defines: the
   note rendered, themed and live. The theme is ambient CSS variables, not a call.
 - **Writing the vault.** An app changes shared content directly, with no approval step: trust
   is vault membership, as for an edit by hand, and the change syncs like one. Each write is
@@ -183,7 +185,8 @@ the note as it was, in a session the person can watch and add to ([editor](edito
 - **One person's data is opt-in, twice.** `google.agenda` and `google.search` read the Google
   account of whoever has the app open, not the vault's; an app can keep what it reads in records
   that sync to every member, or send it over the network. So the app declares
-  `dangerously-allow: [mail, calendar]` in `app.yaml`, or as a map giving each one a reason
+  `dangerously-allow: [mail, calendar]` in `app.yaml` (`booking` is the third: the person's
+  room-booking sign-in, which also books and cancels in their name), or as a map giving each one a reason
   (`{ calendar: To show your next meeting }`, plain text, at most 200 characters) that the dialog
   quotes "in the developer's words" (without the flag the call fails and names it), and each person approves the app in a dialog before its frame loads. The dialog is a security consent and reads as one: in body text, it says plainly that the app can store what it reads and that what it stores may sync to others or leave the machine, and to allow it only if you trust who wrote it. The approval is
   kept in main (`userData/app-grants.json`), never the renderer, which is the process running the

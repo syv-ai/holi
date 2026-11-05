@@ -19,7 +19,9 @@
  * mail), "open this in Holi", its own store (records in its bundle's `data/`),
  * and the vault's shared content as a member's editor writes it: a note over
  * the text it read, a task's fields, a new task, a task completed. Main fences
- * each write (docs/features/vault-apps.md). No theme
+ * each write (docs/features/vault-apps.md). Opted into and approved like mail,
+ * an app may also book rooms and cancel bookings in the person's name (`booking.*`), a write to
+ * the booking site, never to the vault (docs/features/booking.md). No theme
  * getter: the theme is injected as CSS custom properties when the entry document
  * is served, so an app reads it with `var(--primary)`.
  */
@@ -42,6 +44,14 @@ export const APP_METHODS = [
   'agent.sessions',
   'google.agenda',
   'google.search',
+  'booking.status',
+  'booking.login',
+  'booking.finish',
+  'booking.logout',
+  'booking.rooms',
+  'booking.availability',
+  'booking.book',
+  'booking.cancel',
   'tasks.complete',
   'env.get',
   'docs.write',

@@ -14,6 +14,8 @@ import { googleCapabilities, GOOGLE_NAMESPACES } from '../src/plugins/google/mai
 import { PDF_NAMESPACES, pdfCapabilities } from '../src/plugins/pdf/main/capabilities'
 import { appsCapabilities, storeCapabilities } from '../src/plugins/apps/main/capabilities'
 import { envCapabilities, ENV_NAMESPACES } from '../src/plugins/apps/main/env'
+import { BOOKING_NAMESPACES, bookingCapabilities } from '../src/plugins/booking/main/capabilities'
+import { BIRDS_AT_FIVE } from '../src/plugins/booking/main/site'
 
 it('answers every bridge method that is not the renderer’s at the app door', () => {
   const registry = createCapabilityRegistry()
@@ -68,6 +70,15 @@ it('answers every bridge method that is not the renderer’s at the app door', (
   )
   registry.register(['store'], storeCapabilities())
   registry.register(ENV_NAMESPACES, envCapabilities())
+  registry.register(
+    BOOKING_NAMESPACES,
+    bookingCapabilities({
+      site: BIRDS_AT_FIVE,
+      api: {} as never,
+      auth: {} as never,
+      mailFor: () => ({ search: async () => [], messages: async () => [] }),
+    }),
+  )
 
   const open = new Set(registry.names('app'))
   const renderer: readonly string[] = RENDERER_METHODS

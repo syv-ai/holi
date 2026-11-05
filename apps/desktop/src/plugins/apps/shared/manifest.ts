@@ -121,9 +121,10 @@ export const MAX_ALLOW_REASON = 200
 
 /** The reads an app must opt into, because what they return is one person's,
  *  not the vault's: an app can keep it in synced records or send it anywhere.
+ *  `booking` also acts as that person: it books rooms and cancels their bookings in their name.
  *  There is no `location`: Electron's geolocation needs Google's network
  *  service and does not answer on macOS, so no app is offered it. */
-const APP_AFFORDANCES = ['mail', 'calendar'] as const
+const APP_AFFORDANCES = ['mail', 'calendar', 'booking'] as const
 
 export type AppAffordance = (typeof APP_AFFORDANCES)[number]
 
