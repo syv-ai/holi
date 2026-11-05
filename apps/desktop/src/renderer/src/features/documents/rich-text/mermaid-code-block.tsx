@@ -9,13 +9,13 @@ import {
   type ReactNodeViewProps,
 } from '@tiptap/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { closeHistory } from '@tiptap/pm/history'
+import { useStore } from 'jotai'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
-import { activeRemoteAtom } from '@/plugin-api'
-import { getDefaultStore } from 'jotai'
-
+import { activeRemoteAtom } from '@/state/vaults'
 import { useAtomValue } from 'jotai'
 
 import { activeModeAtom } from '@/state/color-scheme'
@@ -32,17 +32,28 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const [validating, setValidating] = useState(false)
   const session = useRef(0)
+  const editContext = useRef<{
+    node: typeof node
+    source: string
+    remote: string | null
+    theme: string
+  } | null>(null)
   const [draft, setDraft] = useState('')
   const [editError, setEditError] = useState('')
   const activeMode = useAtomValue(activeModeAtom)
+  const store = useStore()
   const theme = activeMode === 'dark' ? 'dark' : 'default'
   const svgHost = useRef<HTMLDivElement>(null)
   const source = node.textContent
   const isMermaid = String(node.attrs.language ?? '').toLowerCase() === 'mermaid'
   const editable = editor.isEditable
-  const currentPosition = () => (typeof getPos === 'function' ? getPos() : undefined)
+  const currentPosition = useCallback(
+    () => (typeof getPos === 'function' ? getPos() : undefined),
+    [getPos],
+  )
   const closeEditor = useCallback(() => {
     session.current++
+    editContext.current = null
     setSelected(null)
     setAnchor(null)
     setEditError('')
@@ -115,6 +126,8 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
       targetEl.setAttribute('aria-label', `${target.label} (${target.id})`)
       targetEl.setAttribute('data-label-target', '')
       targetEl.addEventListener('click', () => {
+        session.current++
+        editContext.current = { node, source, remote: store.get(activeRemoteAtom), theme }
         setSelected(target)
         setDraft(target.label)
         setAnchor(targetEl as HTMLElement)
@@ -128,7 +141,7 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
         }
       })
     })
-  }, [editing, svg, targets])
+  }, [editing, svg, targets, node, source, store, theme])
 
   useEffect(() => {
     if (!editable || active) {
@@ -138,13 +151,58 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
   }, [active, editable, closeEditor])
 
   const showDiagram = isMermaid && !active && source.trim() !== '' && !renderError
+
+  useEffect(() => {
+    const invalidateIfDeparted = () => {
+      if (!selected) return
+      let position: number | undefined
+      try {
+        position = currentPosition()
+      } catch {
+        closeEditor()
+        return
+      }
+      const context = editContext.current
+      const liveNode = typeof position === 'number' ? editor.state.doc.nodeAt(position) : null
+      const { from, to } = editor.state.selection
+      if (
+        !editor.isEditable ||
+        !context ||
+        !liveNode?.eq(context.node) ||
+        liveNode.textContent !== context.source ||
+        store.get(activeRemoteAtom) !== context.remote ||
+        context.theme !== theme ||
+        from < (position ?? 0) ||
+        to > (position ?? 0) + (liveNode?.nodeSize ?? 0)
+      )
+        closeEditor()
+    }
+    editor.on('transaction', invalidateIfDeparted)
+    editor.on('update', invalidateIfDeparted)
+    return () => {
+      editor.off('transaction', invalidateIfDeparted)
+      editor.off('update', invalidateIfDeparted)
+    }
+  }, [editor, selected, closeEditor, store, activeMode, theme, currentPosition])
+
+  useEffect(
+    () => () => {
+      session.current++
+      editContext.current = null
+    },
+    [],
+  )
+
   async function applyLabel() {
-    if (!selected || !editable || !editor.isEditable) return
+    const context = editContext.current
+    if (!selected || !context || !editable || !editor.isEditable) return
     const id = session.current
-    const capturedSource = source
+    const capturedSource = context.source
+    const capturedNode = context.node
     const capturedId = selected.id
-    const remote = getDefaultStore().get(activeRemoteAtom)
-    const patched = patchMermaidLabel(capturedSource, capturedId, draft)
+    const remote = context.remote
+    const capturedDraft = draft
+    const patched = patchMermaidLabel(capturedSource, capturedId, capturedDraft)
     if ('error' in patched) {
       setEditError(patched.error)
       return
@@ -153,16 +211,38 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
       closeEditor()
       return
     }
+    const isCurrent = () => {
+      if (session.current !== id || !editor.isEditable || store.get(activeRemoteAtom) !== remote)
+        return false
+      try {
+        const position = currentPosition()
+        return (
+          typeof position === 'number' &&
+          editor.state.doc.nodeAt(position)?.eq(capturedNode) === true &&
+          editor.state.doc.nodeAt(position)?.textContent === capturedSource &&
+          context.theme === theme &&
+          svgHost.current?.isConnected === true
+        )
+      } catch {
+        return false
+      }
+    }
+    if (!isCurrent()) {
+      closeEditor()
+      return
+    }
     setValidating(true)
     try {
       const checked = await renderMermaid(patched.source, theme)
+      if (!isCurrent()) return
       const livePosition = currentPosition()
       if (
         session.current !== id ||
         !editor.isEditable ||
         typeof livePosition !== 'number' ||
+        editor.state.doc.nodeAt(livePosition)?.eq(capturedNode) !== true ||
         editor.state.doc.nodeAt(livePosition)?.textContent !== capturedSource ||
-        getDefaultStore().get(activeRemoteAtom) !== remote ||
+        store.get(activeRemoteAtom) !== remote ||
         !svgHost.current?.isConnected
       )
         return
@@ -171,7 +251,9 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
       if (
         oldTargets.size !== checkedTargets.size ||
         [...oldTargets].some((target) => !checkedTargets.has(target)) ||
-        !checked.targets.some((target) => target.id === capturedId && target.label === draft)
+        !checked.targets.some(
+          (target) => target.id === capturedId && target.label === capturedDraft,
+        )
       ) {
         setEditError('This label cannot be verified in the rendered diagram. Edit source instead.')
         return
@@ -183,7 +265,6 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
       let end = 0
       while (end < old.length - start && old[old.length - 1 - end] === next[next.length - 1 - end])
         end++
-      const { closeHistory } = await import('@tiptap/pm/history')
       const before = closeHistory(editor.state.tr)
       editor.view.dispatch(before)
       const transaction = editor.state.tr.insertText(
@@ -287,7 +368,11 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
               <Input
                 id="mermaid-label-input"
                 value={draft}
-                onChange={(event) => setDraft(event.target.value)}
+                onChange={(event) => {
+                  session.current++
+                  setValidating(false)
+                  setDraft(event.target.value)
+                }}
                 onKeyDown={(event) => {
                   if (event.key === 'Escape') closeEditor()
                   if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
