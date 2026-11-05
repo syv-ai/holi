@@ -217,9 +217,11 @@ describe('rendered media inspection through the document editor', () => {
       'holi-vault://vault/assets/map.png',
     )
     const inline = origin.querySelector('img')
+    expect(inline?.hasAttribute('data-drag-handle')).toBe(true)
     await user.click(origin)
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByLabelText('Loading image')).toBeTruthy()
+    expect(dialog.querySelector('img')?.hasAttribute('data-drag-handle')).toBe(false)
     fireEvent.error(dialog.querySelector('img')!)
     expect(within(dialog).getByRole('status').textContent).toContain("Couldn't load image")
     await user.click(within(dialog).getByRole('button', { name: 'Retry' }))

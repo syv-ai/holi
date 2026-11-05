@@ -28,6 +28,7 @@ export function DocumentImageView({
       key={`${src}:${retryVersion}:${large}`}
       src={src}
       alt={alt}
+      data-drag-handle={large ? undefined : ''}
       className={large ? 'max-h-full max-w-full object-contain' : IMAGE_CLASS}
       onError={() => setFailedSrc(src)}
       onLoad={() => setLoadedSrc(src)}
