@@ -25,6 +25,9 @@ export interface MailPart {
    * file that opens as garbage, visible only to the recipient.
    */
   data: string
+  /** Preserve inline images when a foreign draft is reopened and saved. */
+  disposition?: 'attachment' | 'inline'
+  contentId?: string
 }
 
 /** A message to be sent or drafted. */
@@ -113,6 +116,8 @@ function render(body: Body): string {
 
 /** Fold only between MIME parameters, where the inserted whitespace is legal. */
 function foldHeader(name: string, value: string): string {
+  const complete = `${name}: ${value}`
+  if (Buffer.byteLength(complete, 'utf8') <= 78) return complete
   const segments: string[] = []
   let start = 0
   let quoted = false
@@ -234,7 +239,11 @@ function attachmentBody(part: MailPart): Body {
   return {
     headers: [
       ['Content-Type', `${part.mimeType}${filenameParameters('name', part.filename)}`],
-      ['Content-Disposition', `attachment${filenameParameters('filename', part.filename)}`],
+      [
+        'Content-Disposition',
+        `${part.disposition ?? 'attachment'}${filenameParameters('filename', part.filename)}`,
+      ],
+      ...(part.contentId === undefined ? [] : [['Content-ID', part.contentId] as [string, string]]),
       ['Content-Transfer-Encoding', 'base64'],
     ],
     content: wrapBase64(part.data),

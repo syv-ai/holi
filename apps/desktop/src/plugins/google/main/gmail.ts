@@ -1144,7 +1144,10 @@ export async function saveDraft(
   opts: { draftId?: string; threadId?: string } = {},
 ): Promise<{ id: string | null }> {
   const threading = opts.threadId === undefined ? {} : await threadingHeaders(api, opts.threadId)
-  const attachments = opts.draftId === undefined ? [] : await draftAttachments(api, opts.draftId)
+  const attachments =
+    opts.draftId === undefined
+      ? (mail.attachments ?? [])
+      : await draftAttachments(api, opts.draftId)
   const message = {
     raw: toBase64Url(buildRfc822({ ...mail, attachments, ...threading })),
     ...(opts.threadId === undefined ? {} : { threadId: opts.threadId }),
@@ -1361,6 +1364,8 @@ interface AttachmentRef {
   mimeType: string
   attachmentId?: string
   data?: string
+  disposition?: 'attachment' | 'inline'
+  contentId?: string
 }
 
 function attachmentRefsOf(part: RawPart | undefined): AttachmentRef[] {
@@ -1370,13 +1375,23 @@ function attachmentRefsOf(part: RawPart | undefined): AttachmentRef[] {
     part.filename !== undefined &&
     part.filename !== '' &&
     body !== undefined &&
-    (body.attachmentId !== undefined || body.data !== undefined)
+    (body.attachmentId !== undefined || body.data !== undefined || body.size === 0)
       ? [
           {
             filename: part.filename,
             mimeType: part.mimeType ?? 'application/octet-stream',
             ...(body.attachmentId === undefined ? {} : { attachmentId: body.attachmentId }),
-            ...(body.data === undefined ? {} : { data: body.data }),
+            ...(body.data === undefined
+              ? body.size === 0
+                ? { data: '' }
+                : {}
+              : { data: body.data }),
+            ...(headerOf(part, 'Content-Disposition')?.toLowerCase().startsWith('inline')
+              ? { disposition: 'inline' as const }
+              : {}),
+            ...(headerOf(part, 'Content-ID') === null
+              ? {}
+              : { contentId: headerOf(part, 'Content-ID')! }),
           },
         ]
       : []
@@ -1397,15 +1412,21 @@ async function draftAttachments(api: GoogleApi, draftId: string): Promise<MailPa
           filename: ref.filename,
           mimeType: ref.mimeType,
           data: Buffer.from(ref.data, 'base64url').toString('base64'),
+          ...(ref.disposition === undefined ? {} : { disposition: ref.disposition }),
+          ...(ref.contentId === undefined ? {} : { contentId: ref.contentId }),
         }
       }
       if (message?.id === undefined || ref.attachmentId === undefined) {
         throw new Error('Gmail draft attachment is missing its content')
       }
-      return fetchAttachment(api, message.id, ref.attachmentId, {
-        filename: ref.filename,
-        mimeType: ref.mimeType,
-      })
+      return {
+        ...(await fetchAttachment(api, message.id, ref.attachmentId, {
+          filename: ref.filename,
+          mimeType: ref.mimeType,
+        })),
+        ...(ref.disposition === undefined ? {} : { disposition: ref.disposition }),
+        ...(ref.contentId === undefined ? {} : { contentId: ref.contentId }),
+      }
     }),
   )
 }
@@ -1431,15 +1452,21 @@ export async function fetchMessageAttachments(
           filename: ref.filename,
           mimeType: ref.mimeType,
           data: Buffer.from(ref.data, 'base64url').toString('base64'),
+          ...(ref.disposition === undefined ? {} : { disposition: ref.disposition }),
+          ...(ref.contentId === undefined ? {} : { contentId: ref.contentId }),
         }
       }
       if (ref.attachmentId === undefined) {
         throw new Error('Gmail message attachment is missing its content')
       }
-      return fetchAttachment(api, messageId, ref.attachmentId, {
-        filename: ref.filename,
-        mimeType: ref.mimeType,
-      })
+      return {
+        ...(await fetchAttachment(api, messageId, ref.attachmentId, {
+          filename: ref.filename,
+          mimeType: ref.mimeType,
+        })),
+        ...(ref.disposition === undefined ? {} : { disposition: ref.disposition }),
+        ...(ref.contentId === undefined ? {} : { contentId: ref.contentId }),
+      }
     }),
   )
 }
