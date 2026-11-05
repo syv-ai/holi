@@ -70,7 +70,7 @@ import { CLIENT_ID_SUFFIX } from './credentials'
 import { resolveThreadMeeting } from './invite'
 import type { LoopbackFlow } from './loopback-flow'
 import type { OutgoingMail } from './mime'
-import { fenceAnswer, planApiCall } from './passthrough'
+import { assertCalendarAccess, fenceAnswer, planApiCall } from './passthrough'
 import { listContacts } from './people'
 import { GoogleReconnectRequiredError } from './session'
 import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
@@ -924,9 +924,19 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         )
       },
       run: async (ctx, call) => {
-        const answer = await google(() =>
-          apiOf(ctx.remote).request(call.method, call.url, call.body),
-        )
+        const api = apiOf(ctx.remote)
+        if (call.source === 'calendar') {
+          const calendars = await google(async () =>
+            resolveCalendars(api, await overrides(ctx.root)),
+          )
+          assertCalendarAccess(
+            call,
+            new Set(
+              calendars.filter((calendar) => calendar.enabled).map((calendar) => calendar.id),
+            ),
+          )
+        }
+        const answer = await google(() => api.request(call.method, call.url, call.body))
         return fenceAnswer(answer ?? { ok: true }, call.source)
       },
     }),

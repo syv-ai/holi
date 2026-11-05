@@ -216,9 +216,9 @@ function reasonToAsk(command) {
   const invocation = new RegExp(
     String.raw`(?:^|[|;&]|\s)` + // start of a command
       String.raw`(?:\$\{?HOLI_BIN\}?|[^\s|;&]*\bholi)` + // the binary
-      String.raw`\s+google` + // the group
-      String.raw`\s+([A-Za-z-]+)\b` + // the verb
-      String.raw`(?:\s+([^\s|;&]*))?`, // the word after it
+      String.raw`[ \t]+google` + // the group; never cross a command boundary
+      String.raw`[ \t]+([A-Za-z-]+)\b` + // the verb
+      String.raw`(?:[ \t]+([^\s|;&]*))?`, // the word after it
     'g',
   )
   for (const [, verb, next] of words.matchAll(invocation)) {
