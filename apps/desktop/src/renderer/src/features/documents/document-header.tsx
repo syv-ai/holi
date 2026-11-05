@@ -5,7 +5,7 @@
  */
 import { type Ref } from 'react'
 import type { Editor } from '@tiptap/react'
-import { CheckIcon, MessagesSquareIcon } from 'lucide-react'
+import { AlertTriangleIcon, CheckIcon, MessagesSquareIcon } from 'lucide-react'
 
 import { RichTextHistory } from '@/features/documents/rich-text/rich-text-controls'
 import { useRichTextState } from '@/features/documents/rich-text/rich-text-state'
@@ -172,9 +172,10 @@ export function DocumentHeader({
         </div>
       </ViewHeader>
       {taskDone?.error ? (
-        <div className="px-4 pt-3">
-          <Alert variant="destructive">
-            <AlertTitle>Task is still open</AlertTitle>
+        <div className="max-w-3xl px-4 pt-3">
+          <Alert>
+            <AlertTriangleIcon aria-hidden="true" />
+            <AlertTitle>Could not finish editing</AlertTitle>
             <AlertDescription>{taskDone.error}</AlertDescription>
             <AlertAction>
               <Button
