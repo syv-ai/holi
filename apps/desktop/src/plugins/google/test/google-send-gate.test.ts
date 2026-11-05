@@ -151,6 +151,16 @@ describe('the send gate asks', () => {
 
   // The body is on stdin, out of the hook's sight, so the method decides:
   // every raw call that is not a GET asks, however its method is spelled.
+  it('does not let a following command replace the current invocation argument', async () => {
+    for (const command of [
+      `"$HOLI_BIN" google agenda\n"$HOLI_BIN" google respond e1 --yes`,
+      `"$HOLI_BIN" google agenda\n"$HOLI_BIN" google api POST calendar/v3/freeBusy --body -`,
+      `"$HOLI_BIN" google agenda\n"$HOLI_BIN" google send --to a@b.c`,
+    ]) {
+      expect(decisionOf(await decide(bash(command))), command).toBe('ask')
+    }
+  })
+
   it('asks for every raw api call that is not a GET', async () => {
     for (const command of [
       'holi google api POST gmail/v1/users/me/messages/send --body -',

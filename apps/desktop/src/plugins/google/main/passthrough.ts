@@ -156,6 +156,64 @@ export interface ApiCall {
   source: UntrustedSource
 }
 
+/** Refuse raw Calendar routes that cannot be proven to stay within the user's
+ * enabled calendars. Unknown routes fail closed rather than becoming an alias
+ * around the calendar picker. */
+export function assertCalendarAccess(call: ApiCall, enabled: ReadonlySet<string>): void {
+  const url = new URL(call.url)
+  if (!url.pathname.startsWith('/calendar/v3/')) return
+  const refuse = (): never => {
+    throw new CapabilityError('FORBIDDEN', 'the raw Calendar API is limited to enabled calendars')
+  }
+  const route = url.pathname.slice('/calendar/v3/'.length)
+  if (
+    route.split('/').some((segment) => segment.includes('%')) ||
+    /(?:^|\/)batch(?:\/|$)/i.test(route)
+  ) {
+    refuse()
+  }
+
+  const enabledId = (id: unknown): id is string => typeof id === 'string' && enabled.has(id)
+  const calendarRoute = /^calendars\/([^/]+)(?:\/(events)(?:\/([^/]+))?)?$/.exec(route)
+  if (calendarRoute) {
+    if (!enabledId(calendarRoute[1])) refuse()
+  } else if (route !== 'colors' && route !== 'freeBusy') {
+    refuse()
+  }
+
+  for (const [key, value] of url.searchParams) {
+    if (key.toLowerCase() === 'calendarid' && !enabledId(value)) refuse()
+  }
+
+  if (route === 'freeBusy') {
+    if (call.method !== 'POST' || call.body === null || typeof call.body !== 'object') refuse()
+    const body = call.body as Record<string, unknown>
+    const items = body.items
+    if (!Array.isArray(items) || items.length === 0) refuse()
+    for (const item of items as unknown[]) {
+      if (
+        item === null ||
+        typeof item !== 'object' ||
+        !enabledId((item as Record<string, unknown>).id)
+      ) {
+        refuse()
+      }
+    }
+  }
+
+  const inspectAliases = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const child of value) inspectAliases(child)
+    } else if (value !== null && typeof value === 'object') {
+      for (const [key, child] of Object.entries(value)) {
+        if (['calendarid', 'calendar_id'].includes(key.toLowerCase()) && !enabledId(child)) refuse()
+        inspectAliases(child)
+      }
+    }
+  }
+  if (call.body !== undefined) inspectAliases(call.body)
+}
+
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 
 /** The path, checked, split into its service, the rest and the query. */

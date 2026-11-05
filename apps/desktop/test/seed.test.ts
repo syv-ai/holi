@@ -90,7 +90,11 @@ const hookEntry = (script: string) => ({
   type: 'command',
   command: `node "$CLAUDE_PROJECT_DIR/.claude/hooks/${script}.mjs"`,
 })
-const gateOf = (pre: { matcher?: string }[]) => pre.find((e) => e.matcher === 'Bash') as any
+const gateOf = (pre: { matcher?: string; hooks?: unknown[] }[]) =>
+  pre.find(
+    (entry) =>
+      entry.matcher === 'Bash' && JSON.stringify(entry.hooks ?? []).includes('google-send-gate'),
+  ) as any
 
 /** The merged `.claude/settings.json` a vault gets when it has none. */
 const SETTINGS_SEED = mergedSettings(null)!
@@ -118,6 +122,17 @@ interface HookRun {
 }
 
 /** Bare `node` is broken in this environment — spawn the running interpreter. */
+function runCommand(command: string, stdin: string): Promise<HookRun> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('bash', ['-c', command], { env: { PATH: process.env.PATH ?? '' } })
+    let stdout = ''
+    child.stdout.on('data', (d) => (stdout += d))
+    child.on('error', reject)
+    child.on('close', (code) => resolve({ stdout, code }))
+    child.stdin.end(stdin)
+  })
+}
+
 function runHook(
   name: string,
   opts: { env?: Record<string, string>; cwd?: string; stdin?: string },
@@ -700,6 +715,37 @@ describe('hook scripts', () => {
 describe('mergedSettings', () => {
   const parse = (s: string | null) => JSON.parse(s!) as Record<string, any>
 
+  it('adds maintained consent protection without replacing a frozen old gate', async () => {
+    const oldHook = hookEntry('google-send-gate')
+    const before = JSON.stringify({
+      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [oldHook] }] },
+    })
+    const after = parse(mergedSettings(before))
+    const entries = after.hooks.PreToolUse as { matcher: string; hooks: { command: string }[] }[]
+    const inline = entries.find((entry) =>
+      entry.hooks.some((hook) => hook.command.includes('node -e')),
+    )
+    expect(inline).toBeDefined()
+    expect(entries.some((entry) => JSON.stringify(entry.hooks).includes('google-send-gate'))).toBe(
+      true,
+    )
+
+    const hook = inline!.hooks[0]!.command
+    for (const command of [
+      '"$HOLI_BIN" google respond e1 --yes',
+      '"$HOLI_BIN" google api POST calendar/v3/freeBusy --body -',
+      'holi google api',
+    ]) {
+      const run = await runCommand(hook, JSON.stringify({ tool_input: { command } }))
+      expect(JSON.parse(run.stdout).hookSpecificOutput.permissionDecision, command).toBe('ask')
+    }
+    const get = await runCommand(
+      hook,
+      JSON.stringify({ tool_input: { command: '"$HOLI_BIN" google api GET calendar/v3/colors' } }),
+    )
+    expect(get.stdout).toBe('')
+  })
+
   it('adds the gate to a settings.json that predates it', () => {
     const before = JSON.stringify({
       hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'x' }] }] },
@@ -788,6 +834,7 @@ describe('mergedSettings', () => {
     // matcher cannot see. Seeding again adds none of them.
     expect(parse(once).hooks.PreToolUse.map((e: { matcher: string }) => e.matcher)).toEqual([
       'Write|Edit|MultiEdit',
+      'Bash',
       'Bash',
       'mcp__.*[Gg]mail.*',
     ])
@@ -897,7 +944,7 @@ describe('mergedSettings — the memory index guard', () => {
     const text = JSON.stringify(pre)
     expect(text).toContain('memory-index-guard')
     // The gate is not added twice.
-    expect(text.match(/google-send-gate/g)).toHaveLength(pre.length - 1)
+    expect(text.match(/google-send-gate/g)).toHaveLength(2)
   })
 
   it('leaves settings that already carry it alone', () => {

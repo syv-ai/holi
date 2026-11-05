@@ -60,8 +60,11 @@ export interface SeedResult {
  * fragment for it is ignored.
  */
 export interface SettingsFragment {
-  /** Hooks, each running `.claude/hooks/<script>.mjs` with `args`. */
-  hooks?: { event: string; matcher?: string; script: string; args?: string[] }[]
+  /** Hooks run either a shipped script or a maintained inline command. */
+  hooks?: (
+    | { event: string; matcher?: string; script: string; args?: string[] }
+    | { event: string; matcher?: string; command: string }
+  )[]
   /** Rules appended to the vault's own, each only when absent. */
   permissions?: { ask?: string[]; allow?: string[]; deny?: string[] }
 }
