@@ -302,4 +302,4 @@ play ranked live. Sign-in and adding a vault run the same board as background on
   `hooks/use-session-tabs.ts`
 - `apps/desktop/src/renderer/src/components/ui/motion-panels.tsx`
 - `apps/desktop/src/main/menu.ts`: ⌘W and ⌘⇧W
-- `state/surfaces.ts`: the plugin seam onto the shell's tabs. `state/panes.ts` is the earlier shell's workspace, which nothing on screen and nothing a plugin reads draws from; its removal is in [findings](../refactor/findings.md).
+- `state/surfaces.ts`: the plugin seam onto the shell's tabs.

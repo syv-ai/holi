@@ -25,7 +25,7 @@ import { installedPluginsAtom } from '@/state/plugins'
 import type { ConversationStart } from '@/state/plugin-types'
 import { pendingHeadingAtom } from '@/state/open-document'
 import { vaultSettingsAtom } from '@/state/settings'
-import { openTabAtom } from '@/state/shell-tabs'
+import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { forgetAgentLabelsAtom } from '@/state/document-runs'
 
@@ -71,8 +71,8 @@ vi.mock('@/lib/trpc', () => ({
             {
               sha: '4a14110aaaa',
               subject: 'Update',
-              // The history fixture stays recent relative to the test run, not render time.
-              date: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+              // Keep the history fixture recent and independent of render time.
+              date: '2026-11-04T12:00:00.000Z',
               author: 'Ada',
               added: 1,
               removed: 0,
@@ -183,17 +183,25 @@ beforeEach(() => {
 
 afterEach(() => vi.useRealTimers())
 
-function open(text: string) {
-  files.set(PATH, text)
+function open(text: string, path = PATH) {
+  files.set(path, text)
   return render(
     <Provider store={store}>
-      <DocumentView path={PATH} onOpen={() => undefined} />
+      <DocumentView path={path} onOpen={() => undefined} />
     </Provider>,
   )
 }
 
-async function editorBox() {
-  return await screen.findByRole('textbox', { name: 'Plan document' })
+const TASK_PATH = 'tasks/task.write-report.md'
+
+function openTask(text = '# Report\n') {
+  store.set(openTabAtom, { kind: 'doc', path: TASK_PATH })
+  return open(text, TASK_PATH)
+}
+
+async function editorBox(path = PATH) {
+  const title = path.split('/').pop()!.replace(/\.md$/, '')
+  return await screen.findByRole('textbox', { name: `${title} document` })
 }
 
 function deferred<T>() {
@@ -201,6 +209,193 @@ function deferred<T>() {
   const promise = new Promise<T>((done) => (resolve = done))
   return { promise, resolve }
 }
+
+test('ordinary notes do not show Done', async () => {
+  open('# Plan\n')
+  await editorBox()
+  expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument()
+})
+
+test('Done saves the latest task text before closing its unsplit tab', async () => {
+  const user = userEvent.setup()
+  openTask()
+  const box = await editorBox(TASK_PATH)
+  const editor = (box as WithEditor).editor
+  editor.commands.insertContent('Last keystroke')
+  const done = screen.getByRole('button', { name: 'Done' })
+  await user.click(done)
+  await waitFor(() => expect(write).toHaveBeenCalledOnce())
+  await waitFor(() => expect(store.get(shellWorkspaceAtom).entries).toHaveLength(0))
+  expect(write.mock.calls[0]![0]).toMatchObject({
+    path: TASK_PATH,
+    text: expect.stringContaining('Last keystroke'),
+  })
+})
+
+test('Done keeps a clean task open when its YAML is malformed', async () => {
+  const user = userEvent.setup()
+  openTask('---\ntags: [\n---\n\n# Task\n')
+  await editorBox(TASK_PATH)
+
+  await user.click(screen.getByRole('button', { name: 'Done' }))
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('frontmatter is not valid YAML')
+  expect(store.get(shellWorkspaceAtom).entries).toContain(TASK_PATH)
+  expect(write).not.toHaveBeenCalled()
+})
+
+test('Done saves a body edit but keeps the task open when its YAML is malformed', async () => {
+  const user = userEvent.setup()
+  openTask('---\ntags: [\n---\n\n# Task\n')
+  const box = await editorBox(TASK_PATH)
+  ;(box as WithEditor).editor.commands.insertContent('Edited body')
+
+  await user.click(screen.getByRole('button', { name: 'Done' }))
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('frontmatter is not valid YAML')
+  expect(store.get(shellWorkspaceAtom).entries).toContain(TASK_PATH)
+  expect(write).toHaveBeenCalledOnce()
+  expect(files.get(TASK_PATH)).toContain('Edited body')
+})
+
+test('Done keeps a task open when a known frontmatter field is invalid', async () => {
+  const user = userEvent.setup()
+  openTask('---\nstatus: []\n---\n\n# Task\n')
+  await editorBox(TASK_PATH)
+
+  await user.click(screen.getByRole('button', { name: 'Done' }))
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('status must be a word')
+  expect(store.get(shellWorkspaceAtom).entries).toContain(TASK_PATH)
+})
+
+test('Done accepts a valid task without frontmatter', async () => {
+  const user = userEvent.setup()
+  openTask('# Task\n')
+  await editorBox(TASK_PATH)
+
+  await user.click(screen.getByRole('button', { name: 'Done' }))
+
+  await waitFor(() => expect(store.get(shellWorkspaceAtom).entries).toHaveLength(0))
+})
+
+test('Done closes only its member of a split', async () => {
+  const user = userEvent.setup()
+  openTask()
+  store.set(openTabAtom, { kind: 'doc', path: 'notes/Other.md' }, { beside: true })
+  await editorBox(TASK_PATH)
+  expect(store.get(shellWorkspaceAtom).entries).toHaveLength(1)
+  await user.click(screen.getByRole('button', { name: 'Done' }))
+  await waitFor(() => expect(store.get(shellWorkspaceAtom).entries).toHaveLength(1))
+  const entry = store.get(shellWorkspaceAtom).entries[0]
+  expect(entry).toBe('notes/Other.md')
+})
+
+test.each([
+  'Invalid task frontmatter: the status value does not match the supported task statuses. Please review the complete task details and try again.',
+  `EACCES: permission denied, open /vault/${'long-filename-'.repeat(18)}.md`,
+])('a failed Done keeps the task open, explains %s and allows retry', async (cause) => {
+  const user = userEvent.setup()
+  write.mockRejectedValueOnce(new Error(cause))
+  openTask()
+  const box = await editorBox(TASK_PATH)
+  act(() => (box as WithEditor).editor.commands.insertContent('Pending edit'))
+  await user.click(screen.getByRole('button', { name: 'Done' }))
+  const error = await screen.findByRole('alert')
+  expect(within(error).getByText('Could not finish editing')).toBeVisible()
+  expect(within(error).getByText(cause)).toBeVisible()
+  expect(store.get(shellWorkspaceAtom).entries).toHaveLength(1)
+  await user.click(within(error).getByRole('button', { name: 'Retry' }))
+  await waitFor(() => expect(store.get(shellWorkspaceAtom).entries).toHaveLength(0))
+})
+
+test('Done does not close a task after the active vault changes during its save', async () => {
+  const user = userEvent.setup()
+  const pending = deferred<void>()
+  write.mockImplementationOnce(() => pending.promise)
+  openTask()
+  const box = await editorBox(TASK_PATH)
+  act(() => (box as WithEditor).editor.commands.insertContent('Pending edit'))
+  await user.click(screen.getByRole('button', { name: 'Done' }))
+  await waitFor(() => expect(write).toHaveBeenCalledOnce())
+  act(() => store.set(activeRemoteAtom, 'other/vault'))
+  await act(async () => pending.resolve())
+  act(() => store.set(activeRemoteAtom, 'syv/vault'))
+  expect(store.get(shellWorkspaceAtom).entries).toHaveLength(1)
+  expect(JSON.stringify(store.get(shellWorkspaceAtom))).toContain(TASK_PATH)
+})
+
+test('Done ignores concurrent clicks while its save is pending', async () => {
+  const user = userEvent.setup()
+  const pending = deferred<void>()
+  write.mockImplementationOnce(() => pending.promise)
+  openTask()
+  const box = await editorBox(TASK_PATH)
+  act(() => (box as WithEditor).editor.commands.insertContent('Pending edit'))
+  const done = screen.getByRole('button', { name: 'Done' })
+  await user.click(done)
+  expect(await screen.findByRole('button', { name: 'Saving…' })).toBeDisabled()
+  await act(async () => pending.resolve())
+  await waitFor(() => expect(store.get(shellWorkspaceAtom).entries).toHaveLength(0))
+  expect(write).toHaveBeenCalledOnce()
+})
+
+test('Done waits for an earlier autosave, saves the latest text and blocks further edits', async () => {
+  const user = userEvent.setup()
+  const pending = deferred<void>()
+  write.mockImplementationOnce(() => pending.promise)
+  openTask()
+  const editor = ((await editorBox(TASK_PATH)) as WithEditor).editor
+  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, 'First draft'))
+  await waitFor(() => expect(write).toHaveBeenCalledOnce(), { timeout: 2000 })
+  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, ' Final wording'))
+
+  await user.click(screen.getByRole('button', { name: 'Done' }))
+
+  expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled()
+  expect(store.get(shellWorkspaceAtom).entries).toContain(TASK_PATH)
+  expect(editor.isEditable).toBe(false)
+  act(() => editor.commands.insertContentAt(editor.state.doc.content.size, 'ghost'))
+  expect(editor.getMarkdown()).not.toContain('ghost')
+  expect(write).toHaveBeenCalledOnce()
+  await act(async () => pending.resolve())
+  await waitFor(() => expect(store.get(shellWorkspaceAtom).entries).toHaveLength(0))
+  expect(write).toHaveBeenCalledTimes(2)
+  expect(files.get(TASK_PATH)).toContain('First draft')
+  expect(files.get(TASK_PATH)).toContain('Final wording')
+  expect(files.get(TASK_PATH)).not.toContain('ghost')
+})
+
+test('Done preserves the task when the workspace changes during its save', async () => {
+  const user = userEvent.setup()
+  const pending = deferred<void>()
+  write.mockImplementationOnce(() => pending.promise)
+  openTask()
+  const editor = ((await editorBox(TASK_PATH)) as WithEditor).editor
+  act(() => editor.commands.insertContent('Pending edit'))
+  await user.click(screen.getByRole('button', { name: 'Done' }))
+  await waitFor(() => expect(write).toHaveBeenCalledOnce())
+  act(() => store.set(openTabAtom, { kind: 'doc', path: PATH }))
+  const changed = store.get(shellWorkspaceAtom)
+
+  await act(async () => pending.resolve())
+
+  expect(store.get(shellWorkspaceAtom)).toBe(changed)
+  expect(changed.entries).toContain(TASK_PATH)
+  expect(changed.entries).toContain(PATH)
+  expect(editor.isEditable).toBe(true)
+})
+
+test('Done is unavailable while buffers are externally frozen', async () => {
+  openTask()
+  await editorBox(TASK_PATH)
+  const release = freezeBuffers()
+  try {
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Done' })).toBeDisabled())
+  } finally {
+    release()
+  }
+})
 
 test('keeps unsaved editor content and selection when provider labels arrive', async () => {
   const labels = deferred<readonly { id: string; label: string }[]>()

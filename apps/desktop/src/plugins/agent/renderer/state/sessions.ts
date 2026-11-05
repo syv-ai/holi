@@ -130,7 +130,7 @@ const titleText = (terminal: AgentTerminal): string =>
   terminal.title.replace(/^[^\p{L}\p{N}]+\s+/u, '').trim()
 
 /** Claude Code titles its list `… claude agents`. */
-export const titleIsList = (terminal: AgentTerminal): boolean =>
+const titleIsList = (terminal: AgentTerminal): boolean =>
   /\bclaude agents$/.test(titleText(terminal))
 
 /**

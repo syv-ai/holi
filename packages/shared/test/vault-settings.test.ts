@@ -8,10 +8,6 @@ import {
   VAULT_SETTINGS,
   VAULT_SETTING_DEFAULTS,
   VAULT_SETTING_DESCRIPTORS,
-  homeTargetOf,
-  parseHome,
-  availableOptions,
-  normaliseAnswers,
   parseSettingsPatch,
   resolveColorMode,
   resolveAppSettings,
@@ -23,8 +19,7 @@ import {
 const committed = (value: unknown): string => JSON.stringify(value)
 
 describe('VAULT_SETTING_DEFAULTS', () => {
-  it('opens on a Home of Holi’s own, not an app, when nothing says otherwise', () => {
-    expect(homeTargetOf(VAULT_SETTING_DEFAULTS.home).kind).not.toBe('file')
+  it('keeps daily notes when nothing says otherwise', () => {
     expect(VAULT_SETTING_DEFAULTS.dailyNotes).toBe(true)
   })
 
@@ -63,7 +58,6 @@ describe('VAULT_SETTING_DEFAULTS', () => {
 describe('resolveAppSettings — absent and empty files', () => {
   it('resolves to the defaults when neither file exists', () => {
     const s = resolveAppSettings(null, null)
-    expect(s.home).toBe(VAULT_SETTING_DEFAULTS.home)
     expect(s.dailyNotes).toBe(true)
     expect(s.colorScheme).toBe('system')
     expect(s.hooks).toEqual(VAULT_SETTING_DEFAULTS.hooks)
@@ -73,7 +67,7 @@ describe('resolveAppSettings — absent and empty files', () => {
 
   it('treats an empty file as an absent one', () => {
     expect(resolveAppSettings('', '   ').warnings).toEqual([])
-    expect(resolveAppSettings('', '   ').home).toBe(VAULT_SETTING_DEFAULTS.home)
+    expect(resolveAppSettings('', '   ').editorFont).toBe(VAULT_SETTING_DEFAULTS.editorFont)
   })
 
   it('never returns the shared defaults object itself', () => {
@@ -89,7 +83,7 @@ describe('resolveAppSettings — the committed file', () => {
   it('reads every setting from the committed file', () => {
     const s = resolveAppSettings(
       committed({
-        home: 'board',
+        editorFont: 'serif',
         dailyNotes: false,
         colorScheme: 'light',
         hooks: { 'archive-done': true },
@@ -97,7 +91,7 @@ describe('resolveAppSettings — the committed file', () => {
       }),
       null,
     )
-    expect(s.home).toBe('board')
+    expect(s.editorFont).toBe('serif')
     expect(s.dailyNotes).toBe(false)
     expect(s.colorScheme).toBe('light')
     expect(s.hooks['archive-done']).toBe(true)
@@ -119,12 +113,12 @@ describe('resolveAppSettings — the committed file', () => {
 describe('resolveAppSettings — the local override', () => {
   it('overrides per key, inheriting the rest of the committed file', () => {
     const s = resolveAppSettings(
-      committed({ home: 'board', dailyNotes: false, colorScheme: 'light' }),
+      committed({ editorFont: 'serif', dailyNotes: false, colorScheme: 'light' }),
       committed({ colorScheme: 'dark' }),
     )
     expect(s.colorScheme).toBe('dark')
     // Inherited, not wiped out by a one-key local file.
-    expect(s.home).toBe('board')
+    expect(s.editorFont).toBe('serif')
     expect(s.dailyNotes).toBe(false)
   })
 
@@ -151,8 +145,11 @@ describe('resolveAppSettings — the local override', () => {
   })
 
   it('lets local win over committed, not the other way round', () => {
-    const s = resolveAppSettings(committed({ home: 'mail' }), committed({ home: 'agenda' }))
-    expect(s.home).toBe('agenda')
+    const s = resolveAppSettings(
+      committed({ editorFont: 'serif' }),
+      committed({ editorFont: 'mono' }),
+    )
+    expect(s.editorFont).toBe('mono')
   })
 })
 
@@ -161,7 +158,7 @@ describe('resolveAppSettings — malformed input never throws', () => {
     const s = resolveAppSettings('{ not json', committed({ colorScheme: 'light' }))
     expect(s.colorScheme).toBe('light')
     // The corrupt committed file contributes nothing, not an exception.
-    expect(s.home).toBe(VAULT_SETTING_DEFAULTS.home)
+    expect(s.dailyNotes).toBe(true)
   })
 
   it('ignores a corrupt local file and keeps the committed one', () => {
@@ -173,7 +170,7 @@ describe('resolveAppSettings — malformed input never throws', () => {
     'treats a non-object top level (%s) as no settings',
     (json) => {
       const s = resolveAppSettings(json, null)
-      expect(s.home).toBe(VAULT_SETTING_DEFAULTS.home)
+      expect(s.editorFont).toBe(VAULT_SETTING_DEFAULTS.editorFont)
       expect(s.dailyNotes).toBe(true)
     },
   )
@@ -209,31 +206,6 @@ describe('resolveAppSettings — malformed input never throws', () => {
     const s = resolveAppSettings(committed({ hooks: { 'Not A Name': true } }), null)
     expect(s.hooks).toEqual(VAULT_SETTING_DEFAULTS.hooks)
     expect(s.warnings.length).toBeGreaterThan(0)
-  })
-})
-
-describe('parseHome and homeTargetOf', () => {
-  it.each([
-    ['daily', 'daily', { kind: 'daily' }],
-    ['recents', 'recents', { kind: 'recents' }],
-    ['board', 'board', { kind: 'surface', surface: 'board' }],
-    ['./Finance/Budget.app/', 'Finance/Budget.app', { kind: 'file', path: 'Finance/Budget.app' }],
-    [' Notes/Standup.md ', 'Notes/Standup.md', { kind: 'file', path: 'Notes/Standup.md' }],
-    ['plan.pdf', 'plan.pdf', { kind: 'file', path: 'plan.pdf' }],
-  ])('reads %j as %j', (raw, home, target) => {
-    expect(parseHome(raw)).toBe(home)
-    expect(homeTargetOf(home)).toEqual(target)
-  })
-
-  it.each([
-    ['an empty string', ''],
-    ['a path outside the vault', '../x.md'],
-    ['an absolute path', '/etc/passwd'],
-    ['an object', { kind: 'board' }],
-    ['null', null],
-    ['a number', 7],
-  ])('refuses %s', (_label, value) => {
-    expect(parseHome(value)).toBeNull()
   })
 })
 
@@ -280,7 +252,6 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
     )
     expect(committed).toEqual([
       'dailyNotes',
-      'home',
       'hooks',
       'maxCommittedFileBytes',
       'autoUpdateSkills',
@@ -291,16 +262,6 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
   it('names no key twice', () => {
     const keys = VAULT_SETTING_DESCRIPTORS.map((d) => d.key)
     expect(new Set(keys).size).toBe(keys.length)
-  })
-
-  it('offers Home core’s views, and leaves the rest to the settings tab', () => {
-    const home = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'home')!
-    expect(home.control.kind).toBe('choice')
-    if (home.control.kind !== 'choice') return
-    expect(home.control.openEnded).toBe(true)
-    const values = home.control.options.map((o) => o.value)
-    expect(values).toContain(VAULT_SETTING_DEFAULTS.home)
-    expect(values).toEqual(expect.arrayContaining(['daily']))
   })
 
   it('gives the file-size cap a row without seeding it', () => {
@@ -351,7 +312,7 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
 describe('seedSettings', () => {
   it('writes the committed rows into the vault’s settings file', () => {
     const seeded = seedSettings('committed')
-    expect(Object.keys(seeded).sort()).toEqual(['dailyNotes', 'home', 'hooks'])
+    expect(Object.keys(seeded).sort()).toEqual(['dailyNotes', 'hooks'])
   })
 
   it('still declares every transform the hooks expect', () => {
@@ -385,7 +346,6 @@ describe('seedSettings', () => {
       JSON.stringify(seedSettings('local')),
     )
     expect(resolved.warnings).toEqual([])
-    expect(resolved.home).toBe(VAULT_SETTING_DEFAULTS.home)
     expect(resolved.dailyNotes).toBe(VAULT_SETTING_DEFAULTS.dailyNotes)
     expect(resolved.colorScheme).toBe(VAULT_SETTING_DEFAULTS.colorScheme)
     expect(resolved.hooks).toEqual(VAULT_SETTING_DEFAULTS.hooks)
@@ -412,13 +372,7 @@ describe('parseSettingsPatch — the write-side trust boundary', () => {
     })
   })
 
-  it('normalises a home exactly as a read does', () => {
-    const { patch } = parseSettingsPatch(JSON.stringify({ home: './Notes/a.md' }), CORE_TRANSFORMS)
-    expect(patch.home).toBe('Notes/a.md')
-  })
-
   it.each([
-    ['a home outside the vault', { home: '../a.md' }],
     ['a non-boolean dailyNotes', { dailyNotes: 'yes' }],
     ['an unknown colour scheme', { colorScheme: 'sepia' }],
     ['a non-object hooks block', { hooks: 'all' }],
@@ -480,13 +434,11 @@ describe('splitAnswersByTarget', () => {
   it('sends each answer to the file its descriptor names', () => {
     const { committed, local } = splitAnswersByTarget({
       dailyNotes: false,
-      home: 'board',
       hooks: { relink: false },
       colorScheme: 'dark',
     })
     expect(committed).toEqual({
       dailyNotes: false,
-      home: 'board',
       hooks: { relink: false },
     })
     expect(local).toEqual({ colorScheme: 'dark' })
@@ -524,74 +476,6 @@ describe('splitAnswersByTarget', () => {
     const { committed, local } = splitAnswersByTarget(answers)
     expect(committed).toEqual(seedSettings('committed'))
     expect(local).toEqual(seedSettings('local'))
-  })
-})
-
-describe('a row that depends on another row', () => {
-  const home = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'home')!
-  const labels = (answers: Record<string, unknown>) =>
-    availableOptions(home, answers).map((o) => o.label)
-
-  it('offers today’s note while the vault keeps one', () => {
-    expect(labels({ dailyNotes: true })).toContain('Today’s note')
-  })
-
-  it('withdraws it when the vault keeps no daily note', () => {
-    // A Home on a daily the vault does not make would read as a broken choice.
-    expect(labels({ dailyNotes: false })).not.toContain('Today’s note')
-    expect(labels({ dailyNotes: false })).toHaveLength(labels({ dailyNotes: true }).length - 1)
-  })
-
-  it('falls back to the descriptor default when the answer is absent', () => {
-    expect(labels({})).toContain('Today’s note')
-  })
-
-  it('leaves rows with no dependency alone', () => {
-    const scheme = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'colorScheme')!
-    expect(availableOptions(scheme, { dailyNotes: false })).toHaveLength(3)
-  })
-
-  it('returns nothing for a control that is not a choice', () => {
-    const hooks = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'hooks')!
-    expect(availableOptions(hooks, {})).toEqual([])
-  })
-})
-
-describe('normaliseAnswers', () => {
-  const home = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'home')!
-
-  it('moves a Home that has just been withdrawn', () => {
-    const fixed = normaliseAnswers({ dailyNotes: false, home: 'daily' })
-    expect(fixed.home).toBe(availableOptions(home, { dailyNotes: false })[0]!.value)
-  })
-
-  it('leaves a still-valid answer exactly where it is', () => {
-    const answers = { dailyNotes: false, home: 'mail' }
-    expect(normaliseAnswers(answers).home).toBe('mail')
-  })
-
-  it('leaves an app or a file it does not list alone', () => {
-    // Home takes values beyond its options: they are not withdrawn, only unlisted.
-    for (const value of ['retro.app', 'Notes/Standup.md']) {
-      const answers = { dailyNotes: false, home: value }
-      expect(normaliseAnswers(answers)).toBe(answers)
-    }
-  })
-
-  it('returns the same object when nothing needed repairing', () => {
-    const answers = { dailyNotes: true, home: 'daily' }
-    expect(normaliseAnswers(answers)).toBe(answers)
-  })
-
-  it('does not mutate what it was given', () => {
-    const answers = { dailyNotes: false, home: 'daily' }
-    normaliseAnswers(answers)
-    expect(answers.home).toBe('daily')
-  })
-
-  it('is idempotent', () => {
-    const once = normaliseAnswers({ dailyNotes: false, home: 'daily' })
-    expect(normaliseAnswers(once)).toBe(once)
   })
 })
 
@@ -652,39 +536,6 @@ describe('editorFont', () => {
   it('is not seeded into either file', () => {
     expect(seedSettings('committed')).not.toHaveProperty('editorFont')
     expect(seedSettings('local')).not.toHaveProperty('editorFont')
-  })
-})
-
-describe('home', () => {
-  it('takes any app bundle or file path, normalised', () => {
-    for (const [raw, path] of [
-      ['Home.app', 'Home.app'],
-      ['./Dash/Home.local.app/', 'Dash/Home.local.app'],
-      ['Notes/Standup.md', 'Notes/Standup.md'],
-    ]) {
-      const s = resolveAppSettings(committed({ home: raw }), null)
-      expect(s.home).toBe(path)
-      expect(s.warnings).toEqual([])
-    }
-  })
-
-  it('lets the local file choose a home of your own', () => {
-    const s = resolveAppSettings(
-      committed({ home: 'Team.app' }),
-      committed({ home: 'Me.local.app' }),
-    )
-    expect(s.home).toBe('Me.local.app')
-  })
-
-  it('refuses what is not a view or a path in the vault, and says so', () => {
-    for (const raw of ['../x.app', '/abs.app', '', 3]) {
-      const s = resolveAppSettings(committed({ home: raw }), null)
-      expect(s.home).toBe(VAULT_SETTING_DEFAULTS.home)
-      expect(s.warnings.join(' ')).toContain('home')
-    }
-    expect(
-      parseSettingsPatch(committed({ home: '../x.app' }), CORE_TRANSFORMS).patch,
-    ).not.toHaveProperty('home')
   })
 })
 
