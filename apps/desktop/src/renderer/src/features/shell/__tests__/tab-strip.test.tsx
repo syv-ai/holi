@@ -72,6 +72,19 @@ test('ordinary target hover renders the prospective target-first split without m
   expect(tabs[1]!.dataset.combinePreview).toBe('true')
 })
 
+test('combine preview keeps the hovered title connected so leaving clears it', () => {
+  const { list, tabs, transfer } = setup()
+  const title = screen.getByText('B')
+  fireEvent(list, dragEvent('dragover', transfer, 150))
+  expect(title.isConnected).toBe(true)
+  expect(tabs[1]!.dataset.combinePreview).toBe('true')
+
+  const leave = new Event('dragleave', { bubbles: true })
+  Object.defineProperty(leave, 'relatedTarget', { value: document.body })
+  fireEvent(title, leave)
+  expect(tabs[1]!.dataset.combinePreview).toBeUndefined()
+})
+
 test('combine preview preserves measured target geometry through repeated hover and drop', () => {
   const { store, list, transfer } = setup()
   const items = Array.from(list.querySelectorAll<HTMLElement>('[data-entry-id]'))
