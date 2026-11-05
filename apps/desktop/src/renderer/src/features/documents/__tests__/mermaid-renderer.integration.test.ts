@@ -1,4 +1,6 @@
 import mermaid from 'mermaid'
+import { patchMermaidLabel } from '@holi/shared'
+import { renderMermaid } from '@/lib/mermaid-renderer'
 import { afterEach, describe, expect, it } from 'vitest'
 
 type SvgLayoutElement = SVGElement & { getBBox: () => DOMRect; getComputedTextLength: () => number }
@@ -36,6 +38,24 @@ describe('real Mermaid renderer', () => {
     expect(svg).toContain('Alpha')
     expect(svg).toContain('Beta')
     expect(svg).not.toContain('foreignObject')
+  })
+
+  it('maps supported source ids to exact rendered node identities', async () => {
+    polyfillSvgLayout()
+    const result = await renderMermaid('flowchart LR\nA[Alpha] --> B[Beta]', 'default')
+    expect(result.svg).toContain('Alpha')
+    expect(result.svg).toContain('Beta')
+    expect(result.svg).not.toContain('foreignObject')
+  })
+
+  it('round-trips punctuation through Mermaid entities without changing diagram structure', async () => {
+    polyfillSvgLayout()
+    const patched = patchMermaidLabel('flowchart LR\nA[Alpha]', 'A', 'literal & # " < >')
+    if (!('source' in patched)) throw new Error(patched.error)
+    const result = await renderMermaid(patched.source, 'default')
+    expect(result.svg).toContain('literal')
+    expect(result.svg).toContain('&amp;')
+    expect(result.svg).toContain('&lt;')
   })
 
   it('does not leave error SVGs in the document after repeated invalid renders', async () => {
