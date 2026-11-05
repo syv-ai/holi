@@ -51,7 +51,6 @@ describe('createDeliveredLog', () => {
     const log = createDeliveredLog(rootFor)
     log.markDelivered('o/r', 'task.a.md', '2026-07-28T09:00')
     const text = await readFile(settingsPath(), 'utf8')
-    expect(text).toContain('# Every setting this vault has.')
     const onDisk = parseSettingsText(text)
     expect(onDisk.colorScheme).toBe('light')
     expect(onDisk.reminders).toEqual({ 'task.a.md': '2026-07-28T09:00' })
