@@ -99,6 +99,8 @@ const scheduleMock = vi.fn()
 const rescheduleMock = vi.fn()
 const unscheduleMock = vi.fn()
 const setCalendarMock = vi.fn()
+const namesMock = vi.fn()
+const taskMock = vi.fn()
 
 const google: Record<string, (params: Record<string, unknown>) => unknown> = {
   'google.status': () => ({ account: { email: ME }, missingScopes: [] }),
@@ -114,11 +116,12 @@ const google: Record<string, (params: Record<string, unknown>) => unknown> = {
   'google.reschedule': (p) => rescheduleMock(p),
   'google.unschedule': (p) => unscheduleMock(p),
   'google.imageSenders': () => [],
+  'tasks.create': (p) => taskMock(p),
 }
 vi.mock('@/lib/trpc', () => ({
   trpc: {
     cap: {
-      names: { query: async () => [] },
+      names: { query: async () => namesMock() },
       run: {
         mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
           const verb = google[name]
@@ -136,6 +139,8 @@ beforeEach(() => {
   rescheduleMock.mockReset().mockResolvedValue({ ok: true })
   unscheduleMock.mockReset().mockResolvedValue({ ok: true })
   setCalendarMock.mockReset().mockResolvedValue({ ok: true })
+  namesMock.mockReset().mockResolvedValue([])
+  taskMock.mockReset().mockResolvedValue({ path: 'Tasks/focus.md' })
   getDefaultStore().set(activeRemoteAtom, 'git@github.com:syv-ai/notes.git')
   // @ts-expect-error — the preload bridge is not typed onto window in tests.
   window.holi = { openExternal: vi.fn() }
@@ -251,6 +256,49 @@ describe('the calendar view', () => {
     expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('Focus block')
     expect(screen.getByRole('combobox', { name: 'From' })).toHaveTextContent(clockLabel('09:00'))
     expect(rescheduleMock).not.toHaveBeenCalled()
+  })
+
+  test('delete confirmation stays pending and retries a refused delete', async () => {
+    let rejectDelete!: (error: Error) => void
+    unscheduleMock.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectDelete = reject
+        }),
+    )
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Focus block'))[0]!)
+    const card = await screen.findByRole('dialog')
+    await user.click(within(card).getByRole('button', { name: 'Delete' }))
+    const confirm = await screen.findByRole('alertdialog')
+    await user.click(within(confirm).getByRole('button', { name: 'Delete' }))
+    expect(within(confirm).getByRole('button', { name: /Delete$/ })).toBeDisabled()
+    await user.keyboard('{Escape}')
+    expect(confirm).toBeInTheDocument()
+    rejectDelete(new Error('Delete refused'))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(await within(card).findByRole('alert')).toHaveTextContent('Delete refused')
+    await user.click(within(card).getByRole('button', { name: 'Delete' }))
+    await user.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete' }),
+    )
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(unscheduleMock).toHaveBeenCalledTimes(2)
+  })
+
+  test('failed task creation explains the error and retries from the same event', async () => {
+    namesMock.mockResolvedValue(['tasks.create'])
+    taskMock.mockRejectedValueOnce(new Error('Task refused'))
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Focus block'))[0]!)
+    const card = await screen.findByRole('dialog')
+    await user.click(await within(card).findByRole('button', { name: 'Task' }))
+    expect(await within(card).findByRole('alert')).toHaveTextContent('Task refused')
+    await user.click(within(card).getByRole('button', { name: 'Task' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(taskMock).toHaveBeenCalledTimes(2)
   })
 
   test('deleting your own event unschedules it', async () => {

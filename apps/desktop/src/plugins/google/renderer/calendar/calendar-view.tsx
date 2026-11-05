@@ -664,8 +664,8 @@ export function CalendarView(): React.JSX.Element {
           onOpenChange={closeCard}
           onEdit={startEdit}
           onSave={(draft) => void saveDraft(draft)}
-          onDelete={() => void deleteDraft()}
-          onCreateTask={() => void createTask()}
+          onDelete={deleteDraft}
+          onCreateTask={createTask}
           onOpenExternal={(url) => openExternal(url)}
         />
       </div>

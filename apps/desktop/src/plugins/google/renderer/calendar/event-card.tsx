@@ -98,8 +98,8 @@ interface EventCardProps {
   onEdit: () => void
   /** Save what the form holds: the draft it was opened with, as edited. */
   onSave: (draft: EventDraft) => void
-  onDelete: () => void
-  onCreateTask: () => void
+  onDelete: () => Promise<void>
+  onCreateTask: () => Promise<void>
   onOpenExternal: (url: string) => void
 }
 
@@ -283,7 +283,7 @@ export function EventCard({
               error={error}
               saving={saving}
               onSave={onSave}
-              onDelete={async () => onDelete()}
+              onDelete={onDelete}
               onClose={() => {
                 explicitClose.current = true
                 onOpenChange(false)
@@ -296,8 +296,8 @@ export function EventCard({
               canCreateTask={canCreateTask}
               saving={saving}
               onEdit={onEdit}
-              onDelete={async () => onDelete()}
-              onCreateTask={async () => onCreateTask()}
+              onDelete={onDelete}
+              onCreateTask={onCreateTask}
               onOpenExternal={onOpenExternal}
               onClose={() => {
                 explicitClose.current = true
