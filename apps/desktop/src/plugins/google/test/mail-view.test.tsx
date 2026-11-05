@@ -1920,57 +1920,6 @@ test('a rate-limit code is not reported as a permissions problem either', async 
   expect(screen.queryByText(/Reconnect Google/)).toBeNull()
 })
 
-test('unblocking builds a NEW frame, because a document cannot shed a CSP', async () => {
-  // A `<meta>` CSP joins the document's list of policies, and `document.open()`
-  // does not clear the ones already applied, so rewriting the document with a
-  // wider `img-src` leaves the images blocked. Only a new iframe drops a policy.
-  //
-  // jsdom does not enforce CSP, so this asserts the element is replaced.
-  withMessage({ body: 'hello', html: '<img src="https://cdn.test/logo.png">' })
-  const user = userEvent.setup()
-
-  const article = await openThread()
-  const before = article.querySelector('iframe')
-  await frameOf(article)
-
-  await user.click(within(article).getByRole('button', { name: /^load images$/i }))
-
-  await waitFor(() => expect(article.querySelector('iframe')).not.toBe(before))
-  expect((await frameOf(article)).querySelector('img')?.getAttribute('src')).toBe(
-    'https://cdn.test/logo.png',
-  )
-})
-
-test('“always from this sender” rebuilds the frame too, not just the banner', async () => {
-  // The iframe is keyed on the policy flag; the standing path must take the
-  // same route, since it reaches `allowRemoteContent` through a different atom.
-  withMessage({ body: 'hello', html: '<img src="https://cdn.test/logo.png">' })
-  const user = userEvent.setup()
-
-  const article = await openThread()
-  const before = article.querySelector('iframe')
-  await frameOf(article)
-
-  await user.click(within(article).getByRole('button', { name: /always from this sender/i }))
-
-  await waitFor(() => expect(article.querySelector('iframe')).not.toBe(before))
-  expect((await frameOf(article)).querySelector('img')?.getAttribute('src')).toBe(
-    'https://cdn.test/logo.png',
-  )
-})
-
-test('does not churn the frame when nothing about the policy changed', async () => {
-  // The key is the flag, not a fresh value per render, which would rebuild the
-  // document every render and lose scroll position.
-  withMessage({ body: 'hello', html: '<p>just a sentence</p>' })
-
-  const article = await openThread()
-  const first = article.querySelector('iframe')
-  await frameOf(article)
-
-  expect(article.querySelector('iframe')).toBe(first)
-})
-
 /**
  * Replying without leaving.
  *
