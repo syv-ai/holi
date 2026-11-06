@@ -1951,13 +1951,13 @@ test('narrow composition hides the list without remounting, then restores the re
   const reader = group.querySelector('[data-mail-pane="reader"]')!
 
   expect(group).not.toHaveClass('@container/mail')
-  expect(list.firstElementChild).not.toHaveClass('@max-[40rem]/mail:hidden')
+  expect(group).not.toHaveClass('@max-[40rem]/mail:[&>[data-panel]:first-child]:!hidden')
 
   await user.click(screen.getByRole('button', { name: 'New message' }))
   const composer = await screen.findByRole('region', { name: 'Compose mail' })
   const subject = within(composer).getByRole('textbox', { name: 'Subject' })
   expect(group).toHaveClass('@container/mail')
-  expect(list.firstElementChild).toHaveClass('@max-[40rem]/mail:hidden')
+  expect(group).toHaveClass('@max-[40rem]/mail:[&>[data-panel]:first-child]:!hidden')
   expect(handle).toHaveClass('@max-[40rem]/mail:hidden')
 
   await user.type(subject, 'A narrow-window draft')
@@ -1967,7 +1967,8 @@ test('narrow composition hides the list without remounting, then restores the re
   await user.click(within(composer).getByRole('button', { name: 'Close' }))
   await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
   expect(group).not.toHaveClass('@container/mail')
-  expect(list.firstElementChild).not.toHaveClass('@max-[40rem]/mail:hidden')
+  expect(group).not.toHaveClass('@max-[40rem]/mail:[&>[data-panel]:first-child]:!hidden')
+  expect(group.querySelector('#mail-list')).toBe(list)
   expect(handle).not.toHaveClass('@max-[40rem]/mail:hidden')
   expect(group.querySelector('[data-mail-pane="reader"]')).toBe(reader)
 })

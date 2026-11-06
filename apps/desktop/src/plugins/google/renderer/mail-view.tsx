@@ -867,20 +867,14 @@ export function MailView() {
       className={cn(
         'h-full min-h-0',
         composing !== null &&
-          '@container/mail @max-[40rem]/mail:[&>[data-panel]:first-child]:hidden @max-[40rem]/mail:[&>[data-panel]:last-child]:!grow',
+          '@container/mail @max-[40rem]/mail:[&>[data-panel]:first-child]:!hidden',
       )}
       defaultLayout={layout.defaultLayout}
       onLayoutChanged={layout.onLayoutChanged}
       onKeyDown={onKeyDown}
     >
       {/* The list, resizable: no fixed width suits both wide and narrow windows. */}
-      <ResizablePanel
-        id="mail-list"
-        defaultSize={320}
-        minSize={220}
-        maxSize={640}
-        className={composing !== null ? '@max-[40rem]/mail:hidden' : undefined}
-      >
+      <ResizablePanel id="mail-list" defaultSize={320} minSize={220} maxSize={640}>
         <div className="flex h-full min-h-0 flex-col">
           {live.size > 0 ? (
             <SelectionBar
