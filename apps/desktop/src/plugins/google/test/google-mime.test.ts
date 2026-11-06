@@ -13,14 +13,13 @@ import { buildRfc822, toBase64Url } from '../main/mime'
 
 const BASE = { to: ['ada@syv.ai'], subject: 'Q2 budget', body: 'Here it is.' }
 
-/** Headers, as a lookup. Header names are case-insensitive; values may be
- *  folded across lines, which this deliberately does not handle — no header
- *  written here is long enough to fold, and a test that unfolds would hide it
- *  if one became so. */
+/** Headers, as a lookup. Header names are case-insensitive and folded lines
+ *  are unfolded with the whitespace RFC 5322 assigns them. */
 function headersOf(raw: string): Record<string, string> {
   const [head] = raw.split('\r\n\r\n')
+  const unfolded = head!.replace(/\r\n[ \t]+/g, ' ')
   const out: Record<string, string> = {}
-  for (const line of head!.split('\r\n')) {
+  for (const line of unfolded.split('\r\n')) {
     const at = line.indexOf(':')
     if (at > 0) out[line.slice(0, at).toLowerCase()] = line.slice(at + 1).trim()
   }
@@ -328,6 +327,60 @@ describe('buildRfc822 — multipart/mixed', () => {
     expect(attachment).toMatch(/Content-Disposition: attachment; filename="q2.pdf"/)
     expect(attachment).toMatch(/Content-Transfer-Encoding: base64/)
     expect(attachment).toContain('\r\n\r\nAAECAwQ=')
+  })
+
+  it('continues long Unicode filenames without breaking UTF-8 or line limits', () => {
+    const filename = `${'界'.repeat(80)}.pdf`
+    const raw = buildRfc822(
+      { ...BASE, attachments: [{ ...PDF, filename }] },
+      fixedBoundaries('MIX'),
+    )
+    const part = partsOf(raw, 'MIX')[1]!
+    const disposition = headersOf(part)['content-disposition']!
+    const continuations = [...disposition.matchAll(/filename\*(\d+)\*=([^;]+)/g)]
+      .sort((a, b) => Number(a[1]) - Number(b[1]))
+      .map((match) => match[2]!.trim())
+    const encoded = continuations.join('').replace(/^UTF-8''/, '')
+
+    expect(continuations.length).toBeGreaterThan(1)
+    expect(Buffer.from(decodeURIComponent(encoded), 'utf8').toString('utf8')).toBe(filename)
+    expect([...Buffer.from(decodeURIComponent(encoded), 'utf8')]).toEqual([
+      ...Buffer.from(filename),
+    ])
+    expect(headersOf(part)['content-type']).toContain("name*0*=UTF-8''")
+    for (const line of raw.split('\r\n')) {
+      expect(Buffer.byteLength(line, 'utf8')).toBeLessThanOrEqual(998)
+      if (/^(Content-(?:Type|Disposition):| )/.test(line)) {
+        expect(Buffer.byteLength(line, 'utf8')).toBeLessThanOrEqual(78)
+      }
+    }
+  })
+
+  it('preserves quoted ASCII filenames and escapes quote and backslash', () => {
+    const filename = 'report; final "quoted" \\ copy.pdf'
+    const attachment = partsOf(
+      buildRfc822({ ...BASE, attachments: [{ ...PDF, filename }] }, fixedBoundaries('MIX')),
+      'MIX',
+    )[1]!
+
+    expect(headersOf(attachment)['content-disposition']).toContain(
+      'filename="report; final \\"quoted\\" \\\\ copy.pdf"',
+    )
+  })
+
+  it('never splits an RFC 2231 percent-encoding triplet across continuations', () => {
+    const filename = `${'é'.repeat(50)}.pdf`
+    const attachment = partsOf(
+      buildRfc822({ ...BASE, attachments: [{ ...PDF, filename }] }, fixedBoundaries('MIX')),
+      'MIX',
+    )[1]!
+    const values = [...attachment.matchAll(/filename\*\d+\*=([^;\r\n]+)/g)].map((match) =>
+      match[1]!.trim(),
+    )
+
+    expect(values.length).toBeGreaterThan(1)
+    for (const value of values)
+      expect(value).toMatch(/^(?:UTF-8'')?(?:%[\dA-F]{2}|[A-Za-z0-9!#$&+.^_`|~-])*$/)
   })
 
   it('wraps base64 at 76 columns', () => {

@@ -18,9 +18,7 @@ import {
   agentSessionsAtom,
   agentTerminalsAtom,
   sessionTitled,
-  titleIsList,
   type AgentTarget,
-  type AgentTerminal,
 } from './sessions'
 import { activeRemoteAtom, appModeAtom, openSurfaceAtom } from '@/plugin-api'
 import { newSessionProviderAtom } from './providers'
@@ -49,35 +47,6 @@ function inVault<R>(
   const remote = get(activeRemoteAtom)
   return remote === null ? Promise.resolve(NO_VAULT) : call(remote)
 }
-
-/**
- * Whether a terminal shows the agents list **now**. How it was launched does
- * not say: `←` and Enter move one terminal between the list and a session. Its
- * title does, because Claude Code titles the list `… claude agents` and a
- * session by its name. A list that has not titled itself yet is one Holi just
- * opened as the list.
- */
-const showsList = (t: AgentTerminal): boolean =>
-  t.title === '' ? t.launchedFor === null : titleIsList(t)
-
-/**
- * ⌘J and the agent icon: the agents list.
- *
- * Focuses a terminal showing the list, the most recently opened if there are
- * several, else opens one. **It does not toggle**: pressed twice, it leaves
- * you where it put you.
- */
-export const showAgentsAtom = atom(null, async (get, set): Promise<AgentResult> => {
-  const existing = get(agentTerminalsAtom).filter(showsList).at(-1)
-  if (existing !== undefined) {
-    land(set, existing.id)
-    return { ok: true }
-  }
-  const res = await inVault(get, (remote) => agentCap.open(remote, geometry(get)))
-  if (!res.ok) return res
-  land(set, res.terminalId)
-  return { ok: true }
-})
 
 /**
  * Open overview, in an agent tab's bar: a **new** agents list every time. The
@@ -110,7 +79,7 @@ export const openConversationTerminalAtom = atom(
 )
 
 /**
- * One session, from a sidebar row, an orb or the palette: a window whose title
+ * One session, from a sidebar row, an orb or the inbox: a window whose title
  * names it (any tab, the list's included, may have attached it since), else the
  * window Holi opened for it, else a new `claude attach` window. An unnamed
  * session has only a generic title, so it can land in a second window; two

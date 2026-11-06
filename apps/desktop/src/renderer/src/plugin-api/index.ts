@@ -40,11 +40,9 @@ export type {
   SlashResult,
   /** @public */ StatusItem,
   CommandMenuEntry,
-  /** @public */ PaletteItem,
   Surface,
   SurfaceTabLook,
 } from './types'
-export type { Command } from '@/state/commands'
 export type { /** @public */ PluginInfo } from '@holi/shared'
 
 export { trpc } from '@/lib/trpc'
@@ -79,6 +77,11 @@ export { sessionAtom } from '@/state/session'
 export { forgetAgentLabelsAtom } from '@/state/document-runs'
 export { agentProviderSettingAtom, usePluginSetting } from '@/state/settings'
 export { activeModeAtom } from '@/state/color-scheme'
+export {
+  terminalTheme,
+  watchTerminalTheme,
+  suppressTerminalColorQueries,
+} from '@/lib/terminal-theme'
 export { appModeAtom, /** @public */ type AppMode } from '@/state/app-mode'
 export {
   agentsSelectionAtom,
@@ -86,7 +89,6 @@ export {
   /** @public */ type AgentsSelection,
 } from '@/state/agents-slots'
 export { openNextBeside } from '@/state/alt-open'
-export { openNoteTabAtom } from '@/state/panes'
 export { openSettingsSectionAtom } from '@/state/settings-section'
 export {
   activeSurfaceIdAtom,
@@ -95,7 +97,6 @@ export {
   openPathAtom,
   openSurfaceAtom,
   surfaceTabIdsAtom,
-  /** @public */ tabForPathAtom,
 } from '@/state/surfaces'
 export {
   agentRunFilesAtom,
@@ -110,7 +111,8 @@ export {
 } from '@/state/agent-service'
 export { surfacesAtom } from '@/state/plugins'
 export { byRecency, recentsAtom } from '@/state/recents'
-export { openCommitInHistoryAtom } from '@/state/history'
+// A path's commits, the dialog a document's History opens.
+export { FileHistoryDialog } from '@/features/history/file-history-button'
 export {
   openDialogAtom,
   /** @public */ type ActiveDialog,

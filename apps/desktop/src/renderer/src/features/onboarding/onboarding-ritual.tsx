@@ -8,7 +8,7 @@ import { useEffect, useReducer, useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { claudeFirstRunAtom } from '@/state/claude-first-run'
 import { X } from 'lucide-react'
-import { VAULT_SETTING_DEFAULTS, resolvePlugins, type PluginSettings } from '@holi/shared'
+import { VAULT_SETTING_DEFAULTS, type PluginSettings } from '@holi/shared'
 import { BrandMark } from '@/composites/brand-mark'
 import { ScreenArcade } from '@/composites/arcade/screen-arcade'
 import { IconButton } from '@/composites/icon-button'
@@ -23,7 +23,6 @@ import {
   type Act,
   type Mode,
 } from '@/state/onboarding-flow'
-import { installedPluginsAtom } from '@/state/plugins'
 import { sessionAtom } from '@/state/session'
 import { useRitualActions } from './actions'
 import { beat } from './build-beat'
@@ -58,7 +57,6 @@ interface Props {
 
 export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
   const session = useAtomValue(sessionAtom)
-  const installed = useAtomValue(installedPluginsAtom)
   const actions = useRitualActions(dryRun, onDismiss)
 
   const [s, dispatch] = useReducer(reduce, undefined, () =>
@@ -83,10 +81,6 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
   const naming = s.act === 'naming' && s.view === 'form'
   const plugins =
     (s.settings.plugins as PluginSettings | undefined) ?? VAULT_SETTING_DEFAULTS.plugins
-  const { running } = resolvePlugins(
-    plugins,
-    installed.map((p) => p.info),
-  )
 
   useEffect(() => {
     if (!naming || !typed || wokenOnce) return
@@ -321,7 +315,6 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
               slug={slug}
               owner={s.owner}
               remote={createdRemote}
-              running={running}
               building={s.submitting}
               built={built}
               error={s.error}

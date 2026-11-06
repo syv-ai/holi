@@ -11,7 +11,7 @@ import { trpc } from '@/lib/trpc'
 import { codeLanguage } from '@/editor/languages'
 import { basename } from '@/lib/tree-paths'
 import { lineDiff, type LineDiff } from './line-diff'
-import { ErrorState } from '@/composites/empty-state'
+import { EmptyState, ErrorState } from '@/composites/empty-state'
 
 /** Past this, a version shows as plain text rather than tokenizing a
  *  generated file or a lockfile line by line. */
@@ -109,6 +109,72 @@ export function CommitView({
       >
         <CodeBlockContent />
       </CodeBlock>
+    </div>
+  )
+}
+
+type FilesLoad =
+  { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; paths: string[] }
+
+/**
+ * One commit of a folder (a vault app's bundle): the changes it made to each
+ * of the folder's files (`history.changed`, then each file's diff). A folder
+ * has no single file to show as the commit left it.
+ */
+export function FolderCommitView({ folder, sha }: { folder: string; sha: string }) {
+  const [load, setLoad] = useState<FilesLoad>({ kind: 'loading' })
+  const [attempt, setAttempt] = useState(0)
+
+  useEffect(() => {
+    let live = true
+    setLoad({ kind: 'loading' })
+    trpc.history.changed
+      .query({ sha })
+      .then(
+        (paths) =>
+          live &&
+          setLoad({ kind: 'ready', paths: paths.filter((p) => p.startsWith(`${folder}/`)) }),
+      )
+      .catch(
+        (err: unknown) =>
+          live &&
+          setLoad({
+            kind: 'error',
+            message: err instanceof Error ? err.message : String(err),
+          }),
+      )
+    return () => {
+      live = false
+    }
+  }, [folder, sha, attempt])
+
+  if (load.kind === 'loading') {
+    return (
+      <div className="flex flex-col gap-2.5 py-2" role="status" aria-label="Loading the commit">
+        <Skeleton className="h-4 w-1/2" />
+        <Skeleton className="h-4 w-3/4" />
+        <Skeleton className="h-4 w-2/5" />
+      </div>
+    )
+  }
+  if (load.kind === 'error') {
+    return (
+      <ErrorState
+        title="This commit could not be read"
+        message={load.message}
+        onRetry={() => setAttempt((n) => n + 1)}
+      />
+    )
+  }
+  if (load.paths.length === 0) {
+    // A merge that brought the folder's changes in made none of its own.
+    return <EmptyState title="This commit changed no file here of its own." />
+  }
+  return (
+    <div className="flex flex-col gap-6">
+      {load.paths.map((path) => (
+        <CommitView key={path} path={path} sha={sha} show="diff" />
+      ))}
     </div>
   )
 }
