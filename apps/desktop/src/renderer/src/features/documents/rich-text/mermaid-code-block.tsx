@@ -8,7 +8,7 @@ import {
   useEditorState,
   type ReactNodeViewProps,
 } from '@tiptap/react'
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { closeHistory } from '@tiptap/pm/history'
 import { NodeSelection, type Transaction } from '@tiptap/pm/state'
 import { useStore } from 'jotai'
@@ -33,6 +33,15 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
   const [editing, setEditing] = useState(false)
   const [selected, setSelected] = useState<MermaidTarget | null>(null)
   const [anchor, setAnchor] = useState<Element | null>(null)
+  const virtualAnchor = useMemo(
+    () => ({
+      current: {
+        getBoundingClientRect: () => anchor?.getBoundingClientRect() ?? new DOMRect(),
+        contextElement: anchor ?? undefined,
+      },
+    }),
+    [anchor],
+  )
   const [validating, setValidating] = useState(false)
   const session = useRef(0)
   const editContext = useRef<{
@@ -345,7 +354,11 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
         </div>
       ) : null}
       {showDiagram && editable ? (
-        <div className="flex gap-2">
+        <div
+          contentEditable={false}
+          className="flex flex-wrap gap-2 font-sans"
+          onMouseDownCapture={(event) => event.preventDefault()}
+        >
           <Button
             type="button"
             size="sm"
@@ -374,7 +387,10 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
         </div>
       ) : null}
       {editing && svg && targets.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
+        <p
+          contentEditable={false}
+          className="font-sans whitespace-normal text-sm text-muted-foreground"
+        >
           Labels cannot be safely edited for this diagram. Edit source instead.
         </p>
       ) : null}
@@ -384,13 +400,7 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
           if (!open) closeEditor()
         }}
       >
-        {selected && anchor ? (
-          <PopoverAnchor
-            virtualRef={{
-              current: { getBoundingClientRect: () => anchor.getBoundingClientRect() },
-            }}
-          />
-        ) : null}
+        {selected && anchor ? <PopoverAnchor virtualRef={virtualAnchor} /> : null}
         <PopoverContent
           onEscapeKeyDown={finishEdit}
           onInteractOutside={closeEditor}
@@ -451,7 +461,12 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
         data-mermaid-source={isMermaid ? '' : undefined}
       />
       {renderError && isMermaid ? (
-        <div role="status" className="flex gap-2 text-sm">
+        <div
+          contentEditable={false}
+          role="status"
+          className="flex flex-wrap gap-2 font-sans whitespace-normal text-sm"
+          onMouseDownCapture={(event) => event.preventDefault()}
+        >
           <span>Couldn&apos;t draw this diagram.</span>
           <Button
             type="button"

@@ -110,6 +110,17 @@ describe('editing labels in the rendered Mermaid drawing', () => {
     expect(e.getMarkdown()).toContain('A[Alpha] --> B[Beta]')
   })
 
+  it('keeps toolbar mousedown outside ProseMirror selection handling', async () => {
+    const { e } = await open()
+    const selection = e.state.selection.toJSON()
+    const button = screen.getByRole('button', { name: 'Edit labels' })
+    expect(button.closest('[contenteditable="false"]')).not.toBeNull()
+    expect(fireEvent.mouseDown(button)).toBe(false)
+    fireEvent.click(button)
+    expect(e.state.selection.toJSON()).toEqual(selection)
+    expect(await screen.findByRole('button', { name: 'Alpha (A)' })).toBeInTheDocument()
+  })
+
   it('applies only the label, serializes Markdown and keeps the drawing visible', async () => {
     const { e, updates } = await open()
     const original = e.getMarkdown()
