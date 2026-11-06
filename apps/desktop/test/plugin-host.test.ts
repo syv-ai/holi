@@ -2,12 +2,17 @@
  * The plugin host with test-only plugins: enablement gates dispatch and
  * seeding, and what is started follows the open vault's settings.
  */
+import { request } from 'node:http'
 import { mkdtemp, readFile, rm, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
-import { createCapabilityRegistry } from '../src/main/capabilities/registry'
+import {
+  createCapabilityRegistry,
+  type CapabilityRegistry,
+} from '../src/main/capabilities/registry'
+import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
 import { noCoreServices } from '../src/main/capabilities/services'
 import { cap, noParams, type MainPlugin, type PluginCtx } from '../src/main/plugin-api'
 import type { PluginEvent } from '../src/main/plugin-host/events'
@@ -49,12 +54,17 @@ function rig(
     roots?: Record<string, string>
     live?: string
     plugins?: MainPlugin[]
+    registry?: CapabilityRegistry
+    remote?: string
+    bridge?: BridgeServer
+    appDoor?: boolean
   } = {},
 ) {
   const calls = { started: 0, stopped: 0 }
   const sent: { channel: string; event: PluginEvent }[] = []
   const listeners = new Map<string, (message: unknown) => void>()
   let context: PluginCtx | null = null
+  let appDoor: ReturnType<PluginCtx['openAppDoor']> | null = null
   let open: OpenVault | null = null
   const fake: MainPlugin = {
     info: { id: 'fake', label: 'Fake', default: opts.default ?? true },
@@ -63,15 +73,23 @@ function rig(
       context = ctx
       calls.started += 1
       ctx.register(['fake'], {
-        'fake.ping': cap({ doors: ['ui'], params: noParams, run: async () => 'pong' }),
+        'fake.ping': cap({
+          doors: ['ui'],
+          params: noParams,
+          run: async () => `pong:${ctx.remote}`,
+        }),
       })
+      if (opts.bridge !== undefined)
+        ctx.route('/same', { body: 'discard', handle: (remote) => ({ status: 200, body: remote }) })
+      if (opts.appDoor) appDoor = ctx.openAppDoor({ admit: async () => {} })
       return () => {
+        appDoor?.close()
         calls.stopped += 1
       }
     },
   }
   const plugins = opts.plugins ?? [fake]
-  const registry = createCapabilityRegistry()
+  const registry = opts.registry ?? createCapabilityRegistry()
   const host = createPluginHost({
     plugins,
     registry,
@@ -87,8 +105,8 @@ function rig(
       },
       liveRemote: () => opts.live ?? null,
     },
-    openAppDoor: (opener) => capabilities.openAppDoor(opener),
-    route: () => () => {},
+    openAppDoor: (opener, remote) => capabilities.openAppDoor(opener, remote),
+    route: (path, route, remote) => opts.bridge?.route(path, route, remote) ?? (() => {}),
     binDir: () => '/holi/bin',
     githubToken: () => null,
     frameOrigin: () => () => {},
@@ -106,7 +124,12 @@ function rig(
   })
   const ping = (at: string) => {
     root = at
-    return capabilities.dispatch({ door: 'ui', remote: 'o/r', name: 'fake.ping', params: {} })
+    return capabilities.dispatch({
+      door: 'ui',
+      remote: opts.remote ?? 'o/r',
+      name: 'fake.ping',
+      params: {},
+    })
   }
   /** What the renderer sends the plugin's main side. */
   const fromRenderer = (message: unknown) => listeners.get('plugin:fake')?.(message)
@@ -115,7 +138,17 @@ function rig(
     open = vault
     await host.reconcile('open')
   }
-  return { host, registry, calls, ping, sent, fromRenderer, enter, ctx: () => context! }
+  return {
+    host,
+    registry,
+    calls,
+    ping,
+    sent,
+    fromRenderer,
+    enter,
+    ctx: () => context!,
+    appDoor: () => appDoor!,
+  }
 }
 
 const turn = (root: string, on: boolean) =>
@@ -147,11 +180,11 @@ describe('the plugin host', () => {
     await host.reconcile('snapshot')
     await host.reconcile('settings')
     expect(calls.started).toBe(1)
-    expect(registry.pluginOf('fake.ping')).toBe('fake')
+    expect(registry.pluginOf('fake.ping', 'o/r')).toBe('fake')
 
     await host.stop()
     expect(calls.stopped).toBe(1)
-    expect(registry.has('fake.ping')).toBe(false)
+    expect(registry.has('fake.ping', 'o/r')).toBe(false)
   })
 
   it('does not start a plugin the vault has off', async () => {
@@ -167,8 +200,61 @@ describe('the plugin host', () => {
     await turn(off, false)
     await enter(openVault('o/r', on))
 
-    expect((await ping(on)).value).toBe('pong')
+    expect((await ping(on)).value).toBe('pong:o/r')
     await expect(ping(off)).rejects.toThrow('no such method: fake.ping')
+  })
+})
+
+describe('vault-scoped plugin host adapters', () => {
+  it('binds each host context to its remote and stopping A leaves B registered', async () => {
+    const bridge = createBridgeServer({ log: () => {} })
+    await bridge.start()
+    const registry = createCapabilityRegistry()
+    const a = rig({ registry, remote: 'A', roots: { A: '/A' }, bridge, appDoor: true })
+    const b = rig({ registry, remote: 'B', roots: { B: '/B' }, bridge, appDoor: true })
+    try {
+      await a.enter(openVault('A', '/A'))
+      await b.enter(openVault('B', '/B'))
+      registry.register(['core'], {
+        'core.remote': cap({ doors: ['app'], params: noParams, run: async (ctx) => ctx.remote }),
+      })
+      await expect(a.appDoor().call('B', 'T.app', 'core.remote', {})).rejects.toThrow(
+        /belongs to A/,
+      )
+      expect((await a.appDoor().call('A', 'T.app', 'core.remote', {})).value).toBe('A')
+      expect((await b.appDoor().call('B', 'T.app', 'core.remote', {})).value).toBe('B')
+      expect((await a.ping('/A')).value).toBe('pong:A')
+      expect((await b.ping('/B')).value).toBe('pong:B')
+      const tokenA = bridge.tokenForVault('A')
+      const tokenB = bridge.tokenForVault('B')
+      const post = (token: string) =>
+        new Promise<{ status: number; body: string }>((resolve, reject) => {
+          const req = request(
+            { host: '127.0.0.1', port: bridge.port()!, path: `/same?t=${token}`, method: 'POST' },
+            (res) => {
+              let body = ''
+              res.on('data', (chunk) => {
+                body += chunk
+              })
+              res.on('end', () => resolve({ status: res.statusCode ?? 0, body }))
+            },
+          )
+          req.on('error', reject)
+          req.end()
+        })
+      expect(await post(tokenA)).toEqual({ status: 200, body: 'A' })
+      expect(await post(tokenB)).toEqual({ status: 200, body: 'B' })
+      await a.host.stop()
+      await expect(a.appDoor().call('A', 'T.app', 'core.remote', {})).rejects.toThrow(/closed/)
+      await expect(a.ping('/A')).rejects.toThrow(/no such method/)
+      expect((await b.ping('/B')).value).toBe('pong:B')
+      expect((await post(tokenA)).status).toBe(404)
+      expect(await post(tokenB)).toEqual({ status: 200, body: 'B' })
+    } finally {
+      await a.host.stop()
+      await b.host.stop()
+      await bridge.stop()
+    }
   })
 })
 
@@ -181,12 +267,12 @@ describe('the lifecycle', () => {
     await turn(root, false)
     await host.reconcile('snapshot')
     expect(calls).toEqual({ started: 1, stopped: 1 })
-    expect(registry.has('fake.ping')).toBe(false)
+    expect(registry.has('fake.ping', 'o/r')).toBe(false)
 
     await turn(root, true)
     await host.reconcile('snapshot')
     expect(calls).toEqual({ started: 2, stopped: 1 })
-    expect(registry.pluginOf('fake.ping')).toBe('fake')
+    expect(registry.pluginOf('fake.ping', 'o/r')).toBe('fake')
   })
 
   it('keeps a plugin turned off served until its disposer is done', async () => {

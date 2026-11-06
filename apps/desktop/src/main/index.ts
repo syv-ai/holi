@@ -368,9 +368,9 @@ async function main(): Promise<void> {
     rootFor: (remote) => rootFor(remote),
     events: eventsDeps,
     // `capabilityHost` is built below, long before any vault opens.
-    openAppDoor: (opener) => capabilityHost.openAppDoor(opener),
+    openAppDoor: (opener, remote) => capabilityHost.openAppDoor(opener, remote),
     // The bridge and the `holi` command exist before any vault can open.
-    route: (path, route) => bridge.route(path, route),
+    route: (path, route, remote) => bridge.route(path, route, remote),
     binDir: () => binDir,
     githubToken: () => session.token(),
     frameOrigin: (origin) => {
@@ -886,7 +886,7 @@ async function main(): Promise<void> {
   // The bridge: what runs inside a vault (the `holi` command, the agent's
   // hooks, git's hook and merge driver) reaching this Holi on loopback.
   const bridge = createBridgeServer({
-    cli: { dispatch, commands: () => capabilities.commands(), rootFor },
+    cli: { dispatch, commands: (remote) => capabilities.commands(remote), rootFor },
   })
   registerGitRoutes(bridge, {
     rootFor,
