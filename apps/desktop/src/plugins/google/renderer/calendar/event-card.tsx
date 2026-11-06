@@ -1,5 +1,5 @@
 /**
- * The event sheet, from ReUI's `event-calendar-3` block: a floating sheet
+ * The event card, from ReUI's `event-calendar-3` block: an anchored card
  * that reads an event, and edits or creates one.
  *
  * Reading shows what Google says about it: when, which calendar, where, the
@@ -14,14 +14,20 @@
  * the primary calendar, and the calls it writes through carry a title, times
  * and, on creation, a place.
  */
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
+import {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+  PopoverDescription,
+  PopoverTitle,
+} from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ConfirmDialog } from '@/composites/confirm-dialog'
@@ -67,15 +73,23 @@ export interface EventDraft {
   data?: GoogleEventData
 }
 
-type EventSheetMode = 'view' | 'edit' | 'create'
+type EventCardMode = 'view' | 'edit' | 'create'
 
-export interface EventSheetState {
-  mode: EventSheetMode
+export interface EventCardState {
+  mode: EventCardMode
   draft: EventDraft
+  identity: number
 }
 
-interface EventSheetProps {
-  state: EventSheetState | null
+export interface EventCardAnchor {
+  rect: DOMRect
+  element: HTMLElement | null
+  fallback?: HTMLElement | null
+}
+
+interface EventCardProps {
+  state: EventCardState | null
+  anchor: EventCardAnchor | null
   error: string | null
   saving: boolean
   /** Offered only in a vault that runs tasks. */
@@ -84,8 +98,8 @@ interface EventSheetProps {
   onEdit: () => void
   /** Save what the form holds: the draft it was opened with, as edited. */
   onSave: (draft: EventDraft) => void
-  onDelete: () => void
-  onCreateTask: () => void
+  onDelete: () => Promise<void>
+  onCreateTask: () => Promise<void>
   onOpenExternal: (url: string) => void
 }
 
@@ -185,8 +199,9 @@ function WhenDetail({ draft }: { draft: EventDraft }) {
   )
 }
 
-export function EventSheet({
+export function EventCard({
   state,
+  anchor,
   error,
   saving,
   canCreateTask,
@@ -196,48 +211,116 @@ export function EventSheet({
   onDelete,
   onCreateTask,
   onOpenExternal,
-}: EventSheetProps) {
+}: EventCardProps) {
+  const virtualRef = useMemo(() => {
+    const initialElementRect = anchor?.element?.getBoundingClientRect()
+    const point =
+      anchor?.rect.width === 1 && initialElementRect
+        ? { x: anchor.rect.x - initialElementRect.x, y: anchor.rect.y - initialElementRect.y }
+        : null
+    return {
+      current: {
+        contextElement: anchor?.element ?? undefined,
+        getBoundingClientRect: () => {
+          if (!anchor?.element?.isConnected) return anchor?.rect ?? new DOMRect()
+          const rect = anchor.element.getBoundingClientRect()
+          return point
+            ? new DOMRect(rect.x + Math.min(point.x, rect.width), rect.y + point.y, 1, 1)
+            : rect
+        },
+      },
+    }
+  }, [anchor])
+  const escapeClose = useRef(false)
+  const explicitClose = useRef(false)
   const isForm = state?.mode === 'edit' || state?.mode === 'create'
+  const label = isForm ? (state?.mode === 'edit' ? 'Edit event' : 'New event') : state?.draft.title
   return (
-    <Sheet open={state !== null} onOpenChange={onOpenChange}>
-      <SheetContent
-        onOpenAutoFocus={(event) => event.preventDefault()}
-        side="right"
-        showCloseButton={false}
-        className="sm:max-w-lg"
-      >
-        {state &&
-          (isForm ? (
+    <Popover open={state !== null && anchor !== null} onOpenChange={onOpenChange}>
+      {anchor && <PopoverAnchor virtualRef={virtualRef} />}
+      {state && anchor && (
+        <PopoverContent
+          size="calendar"
+          variant="flush"
+          align="start"
+          side={anchor && anchor.rect.y > window.innerHeight / 2 ? 'top' : 'bottom'}
+          aria-label={label || 'Event details'}
+          aria-busy={saving}
+          onOpenAutoFocus={(event) => {
+            escapeClose.current = false
+            event.preventDefault()
+            const content = event.currentTarget as HTMLElement
+            if (isForm) content.querySelector<HTMLInputElement>('#event-title')?.focus()
+            else content.querySelector<HTMLElement>('[data-event-card-focus]')?.focus()
+          }}
+          onEscapeKeyDown={(event) => {
+            if (saving) event.preventDefault()
+            else escapeClose.current = true
+          }}
+          onCloseAutoFocus={(event) => {
+            const origin = anchor.element
+            const target =
+              origin?.isConnected &&
+              origin.matches('button:not(:disabled),a[href],input:not(:disabled),[tabindex]')
+                ? origin
+                : anchor.fallback
+            if ((escapeClose.current || explicitClose.current) && target?.isConnected) {
+              event.preventDefault()
+              target.focus()
+            }
+            escapeClose.current = false
+            explicitClose.current = false
+          }}
+        >
+          <span role="status" className="sr-only">
+            {saving ? 'Working…' : ''}
+          </span>
+          {isForm ? (
             <EventForm
+              key={state.identity}
               draft={state.draft}
               mode={state.mode as 'edit' | 'create'}
               error={error}
               saving={saving}
               onSave={onSave}
               onDelete={onDelete}
-              onClose={() => onOpenChange(false)}
+              onClose={() => {
+                explicitClose.current = true
+                onOpenChange(false)
+              }}
             />
           ) : (
             <EventView
               draft={state.draft}
               error={error}
               canCreateTask={canCreateTask}
+              saving={saving}
               onEdit={onEdit}
               onDelete={onDelete}
               onCreateTask={onCreateTask}
               onOpenExternal={onOpenExternal}
-              onClose={() => onOpenChange(false)}
+              onClose={() => {
+                explicitClose.current = true
+                onOpenChange(false)
+              }}
             />
-          ))}
-      </SheetContent>
-    </Sheet>
+          )}
+        </PopoverContent>
+      )}
+    </Popover>
   )
 }
 
 /** Header close button, shared by view + form. */
-function CloseButton({ onClose }: { onClose: () => void }) {
+function CloseButton({ onClose, disabled }: { onClose: () => void; disabled: boolean }) {
   return (
-    <IconButton type="button" label="Close" className="-me-1 shrink-0" onClick={onClose}>
+    <IconButton
+      type="button"
+      label="Close"
+      className="-me-1 shrink-0"
+      onClick={onClose}
+      disabled={disabled}
+    >
       <XIcon className="size-4" aria-hidden="true" />
     </IconButton>
   )
@@ -262,6 +345,7 @@ function EventView({
   draft,
   error,
   canCreateTask,
+  saving,
   onEdit,
   onDelete,
   onCreateTask,
@@ -271,9 +355,10 @@ function EventView({
   draft: EventDraft
   error: string | null
   canCreateTask: boolean
+  saving: boolean
   onEdit: () => void
-  onDelete: () => void
-  onCreateTask: () => void
+  onDelete: () => Promise<void>
+  onCreateTask: () => Promise<void>
   onOpenExternal: (url: string) => void
   onClose: () => void
 }) {
@@ -284,10 +369,14 @@ function EventView({
       {/* Header: title + state badges share one line. The calendar color is
           shown in the Calendar detail row below, not repeated here. */}
       <div className="flex shrink-0 items-center gap-2.5 border-b px-5 py-3">
-        <SheetTitle className="min-w-0 shrink truncate text-lg leading-tight font-semibold">
+        <PopoverTitle
+          data-event-card-focus
+          tabIndex={-1}
+          className="min-w-0 shrink truncate text-lg leading-tight font-semibold"
+        >
           {draft.title}
-        </SheetTitle>
-        <SheetDescription className="sr-only">Event details.</SheetDescription>
+        </PopoverTitle>
+        <PopoverDescription className="sr-only">Event details.</PopoverDescription>
         {draft.allDay && (
           <Badge variant="outline" className="shrink-0">
             All day
@@ -322,12 +411,12 @@ function EventView({
             <TooltipContent>Open in Google Calendar</TooltipContent>
           </Tooltip>
         )}
-        <CloseButton onClose={onClose} />
+        <CloseButton onClose={onClose} disabled={saving} />
       </div>
 
       {/* Details */}
-      <div className="min-h-0 flex-1">
-        <ScrollArea className="h-full">
+      <div className="flex min-h-0 flex-1">
+        <ScrollArea className="flex-1">
           <div className="flex flex-col gap-4 px-5 py-5">
             <DetailRow icon={<ClockIcon />}>
               <WhenDetail draft={draft} />
@@ -404,7 +493,7 @@ function EventView({
 
       {/* Actions */}
       <div className="bg-muted flex shrink-0 items-center gap-2 border-t px-5 py-3">
-        {editable && <DeleteEventButton onDelete={onDelete} />}
+        {editable && <DeleteEventButton onDelete={onDelete} disabled={saving} />}
         {!editable && data !== undefined && (
           <p className="text-muted-foreground min-w-0 text-xs">
             {data.attendeeCount > 0
@@ -414,18 +503,23 @@ function EventView({
         )}
         <div aria-hidden="true" className="flex-1" />
         {canCreateTask && (
-          <Button type="button" variant="outline" onClick={onCreateTask}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void onCreateTask()}
+            disabled={saving}
+          >
             <ClipboardListIcon className="size-4" aria-hidden="true" />
             Task
           </Button>
         )}
         {editable ? (
-          <Button type="button" onClick={onEdit}>
+          <Button type="button" onClick={onEdit} disabled={saving}>
             <PencilIcon className="size-4" aria-hidden="true" />
             Edit
           </Button>
         ) : (
-          <Button type="button" variant="outline" onClick={onClose}>
+          <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
             Close
           </Button>
         )}
@@ -453,7 +547,7 @@ function EventForm({
   error: string | null
   saving: boolean
   onSave: (draft: EventDraft) => void
-  onDelete: () => void
+  onDelete: () => Promise<void>
   onClose: () => void
 }) {
   const [draft, setDraft] = useState(initial)
@@ -469,23 +563,28 @@ function EventForm({
     <TooltipProvider>
       {/* Header */}
       <div className="flex shrink-0 items-center gap-3 border-b px-5 py-3">
-        <SheetTitle className="flex-1 text-base font-semibold">
+        <PopoverTitle className="flex-1 text-base font-semibold">
           {mode === 'edit' ? 'Edit event' : 'New event'}
-        </SheetTitle>
-        <SheetDescription className="sr-only">
+        </PopoverTitle>
+        <PopoverDescription className="sr-only">
           {mode === 'edit' ? 'Change this event.' : 'Add an event to your own calendar.'}
-        </SheetDescription>
-        <CloseButton onClose={onClose} />
+        </PopoverDescription>
+        <CloseButton onClose={onClose} disabled={saving} />
       </div>
 
       {/* Form body */}
-      <div className="min-h-0 flex-1">
-        <ScrollArea className="h-full">
+      <div className="flex min-h-0 flex-1">
+        <ScrollArea className="flex-1">
           {/* Enter in a text field saves, as a form would. */}
           <div
             className="flex flex-col gap-5 px-5 py-5"
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && event.target instanceof HTMLInputElement && !saving) {
+              if (
+                event.key === 'Enter' &&
+                !event.nativeEvent.isComposing &&
+                event.target instanceof HTMLInputElement &&
+                !saving
+              ) {
                 event.preventDefault()
                 onSave()
               }
@@ -495,8 +594,10 @@ function EventForm({
               <FieldLabel htmlFor="event-title">Title</FieldLabel>
               <Input
                 id="event-title"
+                autoFocus
                 value={draft.title}
                 onChange={(event) => patch({ title: event.target.value })}
+                disabled={saving}
                 placeholder="Title"
                 autoComplete="off"
               />
@@ -540,6 +641,7 @@ function EventForm({
                 id="event-all-day"
                 checked={draft.allDay}
                 onCheckedChange={(checked: boolean) => patch({ allDay: checked })}
+                disabled={saving}
               />
             </Field>
 
@@ -549,6 +651,7 @@ function EventForm({
                 <DateField
                   id="event-start-date"
                   value={draft.date}
+                  disabled={saving}
                   onSelect={(date) =>
                     patch({ date, dateEnd: draft.dateEnd < date ? date : draft.dateEnd })
                   }
@@ -559,6 +662,7 @@ function EventForm({
                 <DateField
                   id="event-end-date"
                   value={draft.dateEnd}
+                  disabled={saving}
                   onSelect={(dateEnd) => patch({ dateEnd })}
                 />
               </Field>
@@ -568,11 +672,21 @@ function EventForm({
               <div className="flex gap-3">
                 <Field className="min-w-0 flex-1">
                   <FieldLabel htmlFor="event-start-time">From</FieldLabel>
-                  <TimeSelect id="event-start-time" value={draft.start} onChange={setStart} />
+                  <TimeSelect
+                    id="event-start-time"
+                    value={draft.start}
+                    disabled={saving}
+                    onChange={setStart}
+                  />
                 </Field>
                 <Field className="min-w-0 flex-1">
                   <FieldLabel htmlFor="event-end-time">To</FieldLabel>
-                  <TimeSelect id="event-end-time" value={draft.end} onChange={setEnd} />
+                  <TimeSelect
+                    id="event-end-time"
+                    value={draft.end}
+                    disabled={saving}
+                    onChange={setEnd}
+                  />
                 </Field>
               </div>
             )}
@@ -585,6 +699,7 @@ function EventForm({
                   id="event-location"
                   value={draft.location}
                   onChange={(event) => patch({ location: event.target.value })}
+                  disabled={saving}
                   placeholder="Location"
                   autoComplete="off"
                 />
@@ -602,17 +717,26 @@ function EventForm({
 
       {/* Actions */}
       <div className="bg-muted flex shrink-0 items-center gap-2 border-t px-5 py-3">
-        {mode === 'edit' && <DeleteEventButton onDelete={onDelete} className="me-auto" />}
+        {mode === 'edit' && (
+          <DeleteEventButton onDelete={onDelete} disabled={saving} className="me-auto" />
+        )}
         <Button
           type="button"
           variant="outline"
           className={cn(mode === 'create' && 'ms-auto')}
           onClick={onClose}
+          disabled={saving}
         >
           Cancel
         </Button>
         <Button type="button" onClick={onSave} disabled={saving}>
-          {saving ? 'Saving…' : mode === 'edit' ? 'Save' : 'Add event'}
+          {saving
+            ? 'Saving…'
+            : error && error !== 'Give it a title.' && error !== 'It has to end after it starts.'
+              ? 'Retry'
+              : mode === 'edit'
+                ? 'Save'
+                : 'Add event'}
         </Button>
       </div>
     </TooltipProvider>
@@ -620,11 +744,25 @@ function EventForm({
 }
 
 /** The Delete button, which asks before it deletes. */
-function DeleteEventButton({ onDelete, className }: { onDelete: () => void; className?: string }) {
+function DeleteEventButton({
+  onDelete,
+  className,
+  disabled,
+}: {
+  onDelete: () => Promise<void>
+  className?: string
+  disabled?: boolean
+}) {
   const [open, setOpen] = useState(false)
   return (
     <>
-      <Button type="button" variant="outline" className={className} onClick={() => setOpen(true)}>
+      <Button
+        type="button"
+        variant="outline"
+        className={className}
+        disabled={disabled}
+        onClick={() => setOpen(true)}
+      >
         <Trash2Icon className="size-4" aria-hidden="true" />
         Delete
       </Button>

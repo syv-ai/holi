@@ -3,6 +3,7 @@
  * for, what it draws, and which writes it sends through which capability.
  */
 import { render, screen, waitFor, within } from '@/test/render'
+import { fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { getDefaultStore } from 'jotai'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -98,6 +99,8 @@ const scheduleMock = vi.fn()
 const rescheduleMock = vi.fn()
 const unscheduleMock = vi.fn()
 const setCalendarMock = vi.fn()
+const namesMock = vi.fn()
+const taskMock = vi.fn()
 
 const google: Record<string, (params: Record<string, unknown>) => unknown> = {
   'google.status': () => ({ account: { email: ME }, missingScopes: [] }),
@@ -113,11 +116,12 @@ const google: Record<string, (params: Record<string, unknown>) => unknown> = {
   'google.reschedule': (p) => rescheduleMock(p),
   'google.unschedule': (p) => unscheduleMock(p),
   'google.imageSenders': () => [],
+  'tasks.create': (p) => taskMock(p),
 }
 vi.mock('@/lib/trpc', () => ({
   trpc: {
     cap: {
-      names: { query: async () => [] },
+      names: { query: async () => namesMock() },
       run: {
         mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
           const verb = google[name]
@@ -135,6 +139,8 @@ beforeEach(() => {
   rescheduleMock.mockReset().mockResolvedValue({ ok: true })
   unscheduleMock.mockReset().mockResolvedValue({ ok: true })
   setCalendarMock.mockReset().mockResolvedValue({ ok: true })
+  namesMock.mockReset().mockResolvedValue([])
+  taskMock.mockReset().mockResolvedValue({ path: 'Tasks/focus.md' })
   getDefaultStore().set(activeRemoteAtom, 'git@github.com:syv-ai/notes.git')
   // @ts-expect-error — the preload bridge is not typed onto window in tests.
   window.holi = { openExternal: vi.fn() }
@@ -196,6 +202,7 @@ describe('the calendar view', () => {
     const sheet = await screen.findByRole('dialog')
     await user.click(within(sheet).getByRole('button', { name: 'Edit' }))
     const title = await screen.findByRole('textbox', { name: 'Title' })
+    expect(title).toHaveFocus()
     await user.clear(title)
     await user.type(title, 'Deep work')
     agendaMock.mockClear()
@@ -232,23 +239,68 @@ describe('the calendar view', () => {
     render(<CalendarView />)
     await user.click((await screen.findAllByText('Focus block'))[0]!)
     const sheet = await screen.findByRole('dialog')
-    await user.click(within(sheet).getByRole('button', { name: 'Edit' }))
+    const form = within(sheet)
+    await user.click(form.getByRole('button', { name: 'Edit' }))
 
-    const title = await screen.findByRole('textbox', { name: 'Title' })
+    const title = await form.findByRole('textbox', { name: 'Title' })
     await user.clear(title)
-    await user.type(title, 'Changed title')
-    await user.click(screen.getByRole('combobox', { name: 'From' }))
-    await user.click(await screen.findByRole('option', { name: clockLabel('09:30') }))
-    expect(screen.getByRole('combobox', { name: 'From' })).toHaveTextContent(clockLabel('09:30'))
-    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    // Per-key rendering is covered above; this test exercises draft discard.
+    await user.paste('Changed title')
+    await user.click(form.getByRole('combobox', { name: 'From' }))
+    await user.keyboard('{ArrowDown}{ArrowDown}{Enter}')
+    expect(form.getByRole('combobox', { name: 'From' })).toHaveTextContent(clockLabel('09:30'))
+    await user.click(form.getByRole('button', { name: 'Cancel' }))
 
     await user.click((await screen.findAllByText('Focus block'))[0]!)
-    const reopened = await screen.findByRole('dialog')
-    expect(within(reopened).getByText('Focus block')).toBeInTheDocument()
-    await user.click(within(reopened).getByRole('button', { name: 'Edit' }))
-    expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('Focus block')
-    expect(screen.getByRole('combobox', { name: 'From' })).toHaveTextContent(clockLabel('09:00'))
+    const reopened = within(await screen.findByRole('dialog'))
+    expect(reopened.getByText('Focus block')).toBeInTheDocument()
+    await user.click(reopened.getByRole('button', { name: 'Edit' }))
+    expect(await reopened.findByRole('textbox', { name: 'Title' })).toHaveValue('Focus block')
+    expect(reopened.getByRole('combobox', { name: 'From' })).toHaveTextContent(clockLabel('09:00'))
     expect(rescheduleMock).not.toHaveBeenCalled()
+  })
+
+  test('delete confirmation stays pending and retries a refused delete', async () => {
+    let rejectDelete!: (error: Error) => void
+    unscheduleMock.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectDelete = reject
+        }),
+    )
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Focus block'))[0]!)
+    const card = await screen.findByRole('dialog')
+    await user.click(within(card).getByRole('button', { name: 'Delete' }))
+    const confirm = await screen.findByRole('alertdialog')
+    await user.click(within(confirm).getByRole('button', { name: 'Delete' }))
+    expect(within(confirm).getByRole('button', { name: /Delete$/ })).toBeDisabled()
+    await user.keyboard('{Escape}')
+    expect(confirm).toBeInTheDocument()
+    rejectDelete(new Error('Delete refused'))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(await within(card).findByRole('alert')).toHaveTextContent('Delete refused')
+    await user.click(within(card).getByRole('button', { name: 'Delete' }))
+    await user.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete' }),
+    )
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(unscheduleMock).toHaveBeenCalledTimes(2)
+  })
+
+  test('failed task creation explains the error and retries from the same event', async () => {
+    namesMock.mockResolvedValue(['tasks.create'])
+    taskMock.mockRejectedValueOnce(new Error('Task refused'))
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    await user.click((await screen.findAllByText('Focus block'))[0]!)
+    const card = await screen.findByRole('dialog')
+    await user.click(await within(card).findByRole('button', { name: 'Task' }))
+    expect(await within(card).findByRole('alert')).toHaveTextContent('Task refused')
+    await user.click(within(card).getByRole('button', { name: 'Task' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(taskMock).toHaveBeenCalledTimes(2)
   })
 
   test('deleting your own event unschedules it', async () => {
@@ -308,6 +360,83 @@ describe('the calendar view', () => {
     })
   })
 
+  test('Cancel and Close restore the connected origin', async () => {
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    const trigger = screen.getByRole('button', { name: 'New event' })
+    await user.click(trigger)
+    await screen.findByRole('textbox', { name: 'Title' })
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(trigger).toHaveFocus())
+
+    const event = (await screen.findAllByText('Focus block'))[0]!.closest('button')!
+    await user.click(event)
+    await user.click(await screen.findByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(event).toHaveFocus())
+  })
+
+  test('nested date picker Escape preserves the card; card Escape restores its event trigger', async () => {
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    const eventButton = (await screen.findAllByText('Focus block'))[0]!.closest('button')!
+    await user.click(eventButton)
+    expect(await screen.findByRole('dialog', { name: 'Focus block' })).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(eventButton).toHaveFocus()
+
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    await screen.findByRole('textbox', { name: 'Title' })
+    await user.click(screen.getByRole('button', { name: 'Starts' }))
+    expect(screen.getAllByRole('dialog')).toHaveLength(2)
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.getAllByRole('dialog')).toHaveLength(1))
+    expect(screen.getByRole('textbox', { name: 'Title' })).toBeInTheDocument()
+  })
+
+  test('a pending write is single-flight and keeps its anchored card open', async () => {
+    const user = userEvent.setup()
+    let resolve!: (value: { id: string }) => void
+    scheduleMock.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done
+      }),
+    )
+    render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    const trigger = screen.getByRole('button', { name: 'New event' })
+    await user.click(trigger)
+    const card = await screen.findByRole('dialog', { name: 'New event' })
+    const title = within(card).getByRole('textbox', { name: 'Title' })
+    expect(title).toHaveFocus()
+    await user.type(title, 'Deferred event')
+    await user.click(within(card).getByRole('button', { name: 'Add event' }))
+    expect(within(card).getByRole('button', { name: 'Saving…' })).toBeDisabled()
+    expect(within(card).getByRole('button', { name: 'Close' })).toBeDisabled()
+    expect(card).toHaveAttribute('aria-busy', 'true')
+    await user.keyboard('{Escape}')
+    await user.click(trigger)
+    expect(scheduleMock).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('dialog', { name: 'New event' })).toBeInTheDocument()
+    resolve({ id: 'new' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  test('composition Enter does not submit the event', async () => {
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    const title = await screen.findByRole('textbox', { name: 'Title' })
+    await user.type(title, 'Composed event')
+    fireEvent.keyDown(title, { key: 'Enter', isComposing: true })
+    expect(scheduleMock).not.toHaveBeenCalled()
+    expect(title).toHaveValue('Composed event')
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(scheduleMock).toHaveBeenCalledTimes(1))
+  })
+
   test('a refused save says why and keeps the form', async () => {
     const user = userEvent.setup()
     scheduleMock.mockRejectedValue(new Error('Google said no'))
@@ -323,13 +452,14 @@ describe('the calendar view', () => {
   })
 
   test('a failed load says so inline, and Retry asks again', async () => {
-    const user = userEvent.setup()
-    agendaMock.mockRejectedValueOnce(new Error('Google is down'))
+    // The outage lasts through account initialization; only Retry recovers it.
+    agendaMock.mockRejectedValue(new Error('Google is down'))
     render(<CalendarView />)
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('Google is down')
-    agendaMock.mockClear()
-    await user.click(within(alert).getByRole('button', { name: 'Retry' }))
+    expect(alert.isConnected).toBe(true)
+    agendaMock.mockResolvedValue([FOCUS, SYNC]).mockClear()
+    fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(agendaMock).toHaveBeenCalled())
     expect((await screen.findAllByText('Focus block')).length).toBeGreaterThan(0)
   })
