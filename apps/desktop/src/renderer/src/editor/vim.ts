@@ -1,15 +1,15 @@
+import { useLayoutEffect, useRef, useState, type KeyboardEventHandler } from 'react'
 import { Vim, getCM, vim } from '@replit/codemirror-vim'
-import { Prec, type Extension } from '@codemirror/state'
+import { Compartment, Prec, type Extension } from '@codemirror/state'
 import { EditorView, ViewPlugin } from '@codemirror/view'
 
 type VimMode = 'normal' | 'insert' | 'visual'
-type ModeChange = (mode: VimMode) => void
+type ModeChange = (mode: VimMode | '') => void
 
 // Leave normal-mode f unused for the later host-hints feature. Insert mode is
 // still handled by the Vim engine as ordinary text input.
 Vim.map('f', '<Esc>', 'normal')
 
-/** Private adapter for Vim keys and per-view mode reporting. */
 function modeFor(view: EditorView): VimMode {
   const vimState = getCM(view)?.state.vim
   if (vimState?.insertMode) return 'insert'
@@ -17,7 +17,7 @@ function modeFor(view: EditorView): VimMode {
   return 'normal'
 }
 
-export function vimCodeEditor(onModeChange: ModeChange): Extension[] {
+function vimExtensions(onModeChange: ModeChange): Extension[] {
   return [
     Prec.highest(vim()),
     ViewPlugin.fromClass(
@@ -59,4 +59,39 @@ export function vimCodeEditor(onModeChange: ModeChange): Extension[] {
       },
     ),
   ]
+}
+
+/** Owns Vim's compartment, mode lifecycle and keyboard routing for one editor. */
+export function useVimEditor(
+  view: EditorView | null,
+  enabled: boolean,
+  onModeChange: ModeChange,
+  onKeyDown: KeyboardEventHandler<HTMLDivElement>,
+) {
+  const callbacks = useRef({ onModeChange, onKeyDown })
+  callbacks.current = { onModeChange, onKeyDown }
+  const [editor] = useState(() => {
+    const compartment = new Compartment()
+    return { compartment, extension: compartment.of([]) }
+  })
+
+  useLayoutEffect(() => {
+    if (view === null) return
+    view.dispatch({
+      effects: editor.compartment.reconfigure(
+        enabled ? vimExtensions((mode) => callbacks.current.onModeChange(mode)) : [],
+      ),
+    })
+    callbacks.current.onModeChange(enabled ? modeFor(view) : '')
+  }, [view, enabled, editor])
+
+  const routeKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
+    if (!event.defaultPrevented) callbacks.current.onKeyDown(event)
+  }
+
+  return {
+    extension: editor.extension,
+    onKeyDownCapture: enabled ? routeKeyDown : undefined,
+    onKeyDown: enabled ? undefined : routeKeyDown,
+  }
 }

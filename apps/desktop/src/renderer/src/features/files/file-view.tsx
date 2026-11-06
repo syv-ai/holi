@@ -13,7 +13,7 @@
  * half-typed settings file never reaches the vault. Its header carries the
  * latest commit and History, the same as a document's (`FileHistoryButton`).
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { fileKind } from '@holi/shared'
 import { Annotation, Compartment, EditorState, Prec } from '@codemirror/state'
 import { findNext, findPrevious } from '@codemirror/search'
@@ -33,7 +33,7 @@ import { sawText } from '@/state/doc-changes'
 import { editorSelectionAtom } from '@/state/ui-report'
 import { useViewMemory } from '@/state/view-memory'
 import { vimCodeEditingAtom } from '@/state/preferences'
-import { vimCodeEditor } from '@/editor/vim'
+import { useVimEditor } from '@/editor/vim'
 import { claimsAtom } from '@/state/plugins'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
@@ -141,12 +141,6 @@ function TextEditor({
   const remote = useAtomValue(activeRemoteAtom)
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
-  const vimCompartment = useRef(new Compartment())
-  const vimEnabledRef = useRef(vimEnabled)
-  vimEnabledRef.current = vimEnabled
-  const onVimModeChangeRef = useRef(onVimModeChange)
-  onVimModeChangeRef.current = onVimModeChange
-  const reportVimMode = useCallback((mode: string) => onVimModeChangeRef.current(mode), [])
   const lastText = useRef(text)
   const saveTimer = useRef<number | undefined>(undefined)
   const dirty = useRef(false)
@@ -161,6 +155,7 @@ function TextEditor({
   const reportSelection = useRef(setEditorSelection)
   reportSelection.current = setEditorSelection
   const memory = useViewMemory()
+  const vim = useVimEditor(view, vimEnabled, onVimModeChange, handleFindKeyDown)
 
   useEffect(() => {
     const host = hostRef.current
@@ -214,7 +209,7 @@ function TextEditor({
           highlightActiveLineGutter(),
           ...codeLook(path),
           codeFind(),
-          vimCompartment.current.of(vimEnabledRef.current ? vimCodeEditor(reportVimMode) : []),
+          vim.extension,
           Prec.highest(editable.of([EditorState.readOnly.of(false), EditorView.editable.of(true)])),
           EditorState.transactionFilter.of((transaction) =>
             frozen.current && transaction.docChanged && !transaction.annotation(externalReload)
@@ -302,17 +297,7 @@ function TextEditor({
       setView(null)
       setFind(null)
     }
-  }, [remote, path, memory, reportVimMode])
-
-  // Reconfigure this compartment so toggling does not recreate the editor.
-  useEffect(() => {
-    const current = viewRef.current
-    if (current === null) return
-    current.dispatch({
-      effects: vimCompartment.current.reconfigure(vimEnabled ? vimCodeEditor(reportVimMode) : []),
-    })
-    if (!vimEnabled) reportVimMode('')
-  }, [vimEnabled, reportVimMode])
+  }, [remote, path, memory, vim.extension])
 
   // A change on disk comes back in, unless local edits are still pending.
   useEffect(() => {
@@ -335,19 +320,19 @@ function TextEditor({
     setFind((was) => ({ token: (was?.token ?? 0) + 1, text }))
   }
 
-  function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+  function handleFindKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
     const current = viewRef.current
-    if (current === null || event.defaultPrevented) return
+    if (current === null) return
     const mod = event.metaKey || event.ctrlKey
     const key = event.key.toLowerCase()
     if (mod && !event.altKey && !event.shiftKey && key === 'f') {
       event.preventDefault()
       openFind()
-    } else if (find && mod && !event.altKey && key === 'g') {
+    } else if (find !== null && mod && !event.altKey && key === 'g') {
       event.preventDefault()
       if (event.shiftKey) findPrevious(current)
       else findNext(current)
-    } else if (find && event.key === 'Escape' && current.hasFocus) {
+    } else if (find !== null && event.key === 'Escape' && current.hasFocus) {
       event.preventDefault()
       setFind(null)
     }
@@ -356,8 +341,8 @@ function TextEditor({
   return (
     <div
       className="relative flex min-h-0 flex-1 flex-col"
-      onKeyDownCapture={vimEnabled ? handleKeyDown : undefined}
-      onKeyDown={vimEnabled ? undefined : handleKeyDown}
+      onKeyDownCapture={vim.onKeyDownCapture}
+      onKeyDown={vim.onKeyDown}
     >
       {view && find ? (
         <div className="absolute top-2 right-4 z-40">
