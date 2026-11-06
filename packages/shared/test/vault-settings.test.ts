@@ -257,6 +257,19 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
       'autoUpdateSkills',
       'plugins',
     ])
+    const local = VAULT_SETTING_DESCRIPTORS.filter((d) => d.target === 'local').map((d) => d.key)
+    expect(local).toEqual([
+      'colorScheme',
+      'windowGlass',
+      'gridArcade',
+      'foldSidebarForApps',
+      'confirmCloseSplitTabs',
+      'editorFont',
+      'propertiesLayout',
+      'tableStyle',
+      'spaceAsksAgent',
+      'agentProvider',
+    ])
   })
 
   it('names no key twice', () => {
@@ -586,6 +599,17 @@ describe('the schema is the only declaration', () => {
       else if (setting.type.kind === 'flags') expect(control.kind).toBe('group')
       else expect(control.kind).toBe('choice')
     }
+  })
+
+  it('defaults split-tab close confirmation on and lets the local file turn it off', () => {
+    expect(VAULT_SETTING_DEFAULTS.confirmCloseSplitTabs).toBe(true)
+    expect(resolveAppSettings(null, null).confirmCloseSplitTabs).toBe(true)
+    expect(
+      resolveAppSettings(null, committed({ confirmCloseSplitTabs: false })).confirmCloseSplitTabs,
+    ).toBe(false)
+    expect(
+      parseSettingsPatch(committed({ confirmCloseSplitTabs: false }), CORE_TRANSFORMS).patch,
+    ).toEqual({ confirmCloseSplitTabs: false })
   })
 
   it('defaults are the schema’s defaults, not a second list', () => {
