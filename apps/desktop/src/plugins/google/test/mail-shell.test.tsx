@@ -15,6 +15,8 @@ import { resetMailFramesForTests } from '../renderer/mail-frames'
 const searchMock = vi.fn()
 const threadMock = vi.fn()
 const draftsMock = vi.fn()
+const saveDraftMock = vi.fn()
+const draftBodyMock = vi.fn()
 const markReadMock = vi.fn()
 const starMock = vi.fn()
 const archiveMock = vi.fn()
@@ -36,6 +38,10 @@ const google: Record<string, (params: unknown) => unknown> = {
   search: (p) => searchMock(p),
   thread: (p) => threadMock(p),
   drafts: () => draftsMock(),
+  saveDraft: (p) => saveDraftMock(p),
+  draftBody: (p) => draftBodyMock(p),
+  discardDraft: () => undefined,
+  send: () => ({ id: 'sent' }),
   mailCounts: () => ({ unread: 2, total: 40 }),
   categoryCounts: () => ({}),
   contacts: () => [],
@@ -130,6 +136,17 @@ beforeEach(() => {
   searchMock.mockReset().mockResolvedValue(page([summary()]))
   threadMock.mockReset().mockResolvedValue(thread)
   draftsMock.mockReset().mockResolvedValue([])
+  saveDraftMock.mockReset().mockResolvedValue({ id: 'd-new' })
+  draftBodyMock.mockReset().mockResolvedValue({
+    draftId: 'd-new',
+    threadId: null,
+    to: [],
+    cc: [],
+    subject: '',
+    markdown: '',
+    html: null,
+    foreign: false,
+  })
   markReadMock.mockReset().mockResolvedValue({ ok: true })
   starMock.mockReset().mockResolvedValue({ ok: true })
   archiveMock.mockReset().mockResolvedValue({ ok: true })
@@ -371,12 +388,243 @@ test('the account menu switches the vault to another connected account', async (
   expect(useAccountMock).toHaveBeenCalledWith({ sub: 'b' })
 })
 
-test('compose opens the existing composer in a dialog', async () => {
+test('compose opens the existing composer inline in the reader', async () => {
   const user = userEvent.setup()
   render(<MailShell />)
   await screen.findByRole('list', { name: 'Inbox' })
 
   await user.click(screen.getByRole('button', { name: 'Compose new email' }))
 
-  expect(await screen.findByRole('dialog', { name: 'New message' })).toBeInTheDocument()
+  expect(await screen.findByText('New message')).toBeInTheDocument()
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+})
+
+test('a failed composition save blocks thread, folder, compose, and account navigation', async () => {
+  const user = userEvent.setup()
+  saveDraftMock.mockRejectedValue(new Error('offline'))
+  render(<MailShell />)
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Compose new email' }))
+  const subject = await screen.findByRole('textbox', { name: 'Subject' })
+  await user.type(subject, 'unsaved words')
+
+  await user.click(screen.getByText('Q2 budget', { selector: 'p' }))
+  await waitFor(() => expect(screen.getByTestId('save-state')).toHaveTextContent('Not saved'))
+  expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('unsaved words')
+  expect(threadMock).not.toHaveBeenCalled()
+
+  await user.click(screen.getByRole('button', { name: 'Mailbox: Inbox' }))
+  await user.click(await screen.findByRole('menuitemradio', { name: 'Sent' }))
+  expect(screen.getByRole('button', { name: 'Mailbox: Inbox' })).toBeInTheDocument()
+  expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('unsaved words')
+
+  await user.click(screen.getByRole('button', { name: 'Compose new email' }))
+  expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('unsaved words')
+
+  await user.click(screen.getByRole('button', { name: 'Google account ada@syv.ai' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'ada@home.test' }))
+  expect(useAccountMock).not.toHaveBeenCalled()
+  expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('unsaved words')
+})
+
+test('Close restores the reader selection behind standalone Compose', async () => {
+  const user = userEvent.setup()
+  render(<MailShell />)
+  await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+  expect(await screen.findByRole('heading', { name: 'Q2 budget' })).toBeInTheDocument()
+
+  await user.click(screen.getByRole('button', { name: 'Compose new email' }))
+  const composeRegion = await screen.findByRole('region', { name: 'Compose mail' })
+  await user.click(within(composeRegion).getByRole('button', { name: 'Close' }))
+
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
+  expect(screen.getByRole('heading', { name: 'Q2 budget' })).toBeInTheDocument()
+})
+
+test('Close waits for the latest draft save, then removes the composer and restores the reader', async () => {
+  const user = userEvent.setup()
+  const saves: Array<(value: { id: string }) => void> = []
+  saveDraftMock.mockImplementation(() => new Promise((resolve) => saves.push(resolve)))
+  render(<MailShell />)
+  await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+  await screen.findByRole('heading', { name: 'Q2 budget' })
+  await user.click(screen.getByRole('button', { name: 'Compose new email' }))
+  const region = await screen.findByRole('region', { name: 'Compose mail' })
+  const subject = within(region).getByRole('textbox', { name: 'Subject' })
+  await user.type(subject, 'first')
+  await new Promise((resolve) => setTimeout(resolve, 2100))
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(1))
+  await user.type(subject, '-latest')
+  await user.click(within(region).getByRole('button', { name: 'Close' }))
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: 'Q2 budget' })).toBeInTheDocument()
+
+  saves[0]!({ id: 'd-new' })
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(2))
+  expect(saveDraftMock.mock.calls[1]![0]).toMatchObject({ mail: { subject: 'first-latest' } })
+  saves[1]!({ id: 'd-new' })
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
+  expect(screen.getByRole('heading', { name: 'Q2 budget' })).toBeInTheDocument()
+})
+
+test('a late Close completion from an old vault cannot close a newer composition', async () => {
+  const user = userEvent.setup()
+  let finishSave: ((value: { id: string }) => void) | undefined
+  saveDraftMock.mockImplementation(() => new Promise((resolve) => (finishSave = resolve)))
+  render(<MailShell />)
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Compose new email' }))
+  const oldRegion = await screen.findByRole('region', { name: 'Compose mail' })
+  await user.type(within(oldRegion).getByRole('textbox', { name: 'Subject' }), 'old draft')
+  await user.click(within(oldRegion).getByRole('button', { name: 'Close' }))
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(1))
+
+  getDefaultStore().set(activeRemoteAtom, 'syv-ai/other-vault')
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
+  await user.click(screen.getByRole('button', { name: 'Compose new email' }))
+  const newRegion = await screen.findByRole('region', { name: 'Compose mail' })
+  await user.type(within(newRegion).getByRole('textbox', { name: 'Subject' }), 'new draft')
+  finishSave?.({ id: 'd-old' })
+
+  expect(await screen.findByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+  expect(within(newRegion).getByRole('textbox', { name: 'Subject' })).toHaveValue('new draft')
+})
+
+test('a failed Close keeps editing gated for the next navigation attempt', async () => {
+  const user = userEvent.setup()
+  saveDraftMock.mockRejectedValue(new Error('offline'))
+  render(<MailShell />)
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Compose new email' }))
+  const region = await screen.findByRole('region', { name: 'Compose mail' })
+  const subject = within(region).getByRole('textbox', { name: 'Subject' })
+  await user.type(subject, 'unsaved subject')
+  await user.click(within(region).getByRole('button', { name: 'Close' }))
+  await waitFor(() =>
+    expect(within(region).getByTestId('save-state')).toHaveTextContent('Not saved'),
+  )
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+  expect(within(region).getByRole('textbox', { name: 'Subject' })).toHaveValue('unsaved subject')
+  expect(within(region).getByRole('textbox', { name: 'Message' })).toHaveAttribute(
+    'contenteditable',
+    'true',
+  )
+
+  await user.type(within(region).getByRole('textbox', { name: 'Subject' }), ' again')
+  await user.click(screen.getByText('Q2 budget', { selector: 'p' }))
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(2))
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+  expect(within(region).getByRole('textbox', { name: 'Subject' })).toHaveValue(
+    'unsaved subject again',
+  )
+  expect(within(region).getByRole('textbox', { name: 'Message' })).toHaveAttribute(
+    'contenteditable',
+    'true',
+  )
+  expect(threadMock).not.toHaveBeenCalled()
+})
+
+test.each(['reply', 'forward'] as const)(
+  '%s uses the shared save-before-replacement gate',
+  async (mode) => {
+    const user = userEvent.setup()
+    saveDraftMock.mockRejectedValue(new Error('offline'))
+    render(<MailShell />)
+    await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+    if (mode === 'reply') {
+      await user.click(await screen.findByRole('button', { name: 'Reply all' }))
+    } else {
+      await user.click(screen.getByRole('button', { name: 'More actions' }))
+      await user.click(await screen.findByRole('menuitem', { name: 'Forward' }))
+    }
+    const subject = await screen.findByRole('textbox', { name: 'Subject' })
+    await user.type(subject, 'edited')
+    await user.click(screen.getByRole('button', { name: 'Compose new email' }))
+
+    await waitFor(() => expect(screen.getByTestId('save-state')).toHaveTextContent('Not saved'))
+    expect((screen.getByRole('textbox', { name: 'Subject' }) as HTMLInputElement).value).toContain(
+      'edited',
+    )
+    expect(screen.getByRole('heading', { name: 'Q2 budget' })).toBeInTheDocument()
+  },
+)
+
+test('a deferred Continue draft is ignored after the selected thread changes', async () => {
+  const user = userEvent.setup()
+  let finishDrafts: ((value: unknown[]) => void) | undefined
+  searchMock.mockResolvedValue(
+    page([summary({ hasDraft: true }), summary({ id: 't2', subject: 'Other' })]),
+  )
+  draftsMock.mockImplementation(() => new Promise((resolve) => (finishDrafts = resolve)))
+  render(<MailShell />)
+  await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+  await user.click(screen.getByRole('button', { name: 'More actions' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Continue your draft' }))
+  await user.click(screen.getByText('Other', { selector: 'p' }))
+  finishDrafts?.([
+    { draftId: 'd-late', threadId: 't1', date: '2026-08-04', to: [], subject: 'Late draft' },
+  ])
+
+  await screen.findByRole('heading', { name: 'Q2 budget' })
+  expect(threadMock).toHaveBeenCalledWith({ id: 't2' })
+  expect(screen.queryByText('New message')).toBeNull()
+  expect(screen.queryByRole('textbox', { name: 'Subject' })).toBeNull()
+})
+
+test('a deferred Continue draft is ignored after a vault switch', async () => {
+  const user = userEvent.setup()
+  let finishDrafts: ((value: unknown[]) => void) | undefined
+  searchMock.mockResolvedValue(page([summary({ hasDraft: true })]))
+  draftsMock.mockImplementation(() => new Promise((resolve) => (finishDrafts = resolve)))
+  render(<MailShell />)
+  await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+  await user.click(screen.getByRole('button', { name: 'More actions' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Continue your draft' }))
+
+  getDefaultStore().set(activeRemoteAtom, 'syv-ai/other-vault')
+  finishDrafts?.([
+    { draftId: 'd-late', threadId: 't1', date: '2026-08-04', to: [], subject: 'Late draft' },
+  ])
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(screen.queryByText('New message')).toBeNull()
+  expect(screen.queryByRole('textbox', { name: 'Subject' })).toBeNull()
+})
+
+test('a departed sidebar does not navigate when its save completes', async () => {
+  const user = userEvent.setup()
+  let finishSave: ((value: { id: string }) => void) | undefined
+  saveDraftMock.mockImplementation(() => new Promise((resolve) => (finishSave = resolve)))
+  const view = render(<MailShell />)
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Compose new email' }))
+  await user.type(await screen.findByRole('textbox', { name: 'Subject' }), 'unfinished')
+  await user.click(screen.getByText('Q2 budget', { selector: 'p' }))
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(1))
+  view.unmount()
+  finishSave?.({ id: 'd-new' })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(threadMock).not.toHaveBeenCalled()
+})
+
+test('thread navigation waits for the latest content save', async () => {
+  const user = userEvent.setup()
+  let finishSave: ((value: { id: string }) => void) | undefined
+  saveDraftMock.mockImplementation(() => new Promise((resolve) => (finishSave = resolve)))
+  render(<MailShell />)
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Compose new email' }))
+  const subject = await screen.findByRole('textbox', { name: 'Subject' })
+  await user.type(subject, 'first')
+  await new Promise((resolve) => setTimeout(resolve, 2100))
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(1))
+  await user.type(screen.getByRole('textbox', { name: 'Subject' }), '-latest')
+  await user.click(screen.getByText('Q2 budget', { selector: 'p' }))
+  expect(threadMock).not.toHaveBeenCalled()
+
+  finishSave?.({ id: 'd-new' })
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(2))
+  expect(saveDraftMock.mock.calls[1]![0]).toMatchObject({ mail: { subject: 'first-latest' } })
+  finishSave?.({ id: 'd-new' })
+  await waitFor(() => expect(threadMock).toHaveBeenCalledWith({ id: 't1' }))
+  expect(screen.queryByRole('textbox', { name: 'Subject' })).toBeNull()
 })

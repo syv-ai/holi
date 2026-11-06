@@ -57,7 +57,6 @@ import {
   activeRemoteAtom,
   cn,
   matchHotkey,
-  openDialogAtom,
   openSettingsSectionAtom,
   openDocumentAtom,
   useAgentService,
@@ -83,8 +82,8 @@ import { EmptyState, LoadingRows } from '@/composites/empty-state'
 import { IconButton } from '@/composites/icon-button'
 import { PaneToolbar } from '@/composites/pane-toolbar'
 import { SandboxedHtml } from './sandboxed-html'
-import { ComposeMailDialog } from './compose-mail-dialog'
-import { MailComposer } from './mail-composer'
+import { MailComposer, type MailComposerHandle } from './mail-composer'
+import { ComposeSessionGate } from './compose-session'
 import { DraftsList, type DraftSummary } from './drafts-list'
 import { ThreadMenu, type ThreadActions } from './thread-menu'
 import { SelectionBar } from './selection-bar'
@@ -226,12 +225,15 @@ export function MailView() {
   const listGeneration = useRef(0)
   /** The inline composer's intent, or `null` when it is closed. */
   const [composing, setComposing] = useState<ComposeIntent | null>(null)
+  const composerRef = useRef<MailComposerHandle | null>(null)
+  const composeGate = useRef(new ComposeSessionGate()).current
   /**
    * Bumped on every open, so React remounts the composer rather than reusing
    * it: `composeFrom` runs once, on mount, so Reply then Forward would keep the
    * first intent's draft state.
    */
   const [composeKey, setComposeKey] = useState(0)
+  const composeRequest = useRef(0)
   /** Every address the account may send from, so reply-all excludes all of
    *  them. `[]` until it resolves; the cost of being early is copying the user
    *  on their own reply, which they can see and remove. */
@@ -241,6 +243,8 @@ export function MailView() {
   /** The Gmail draft the composer is continuing, if any. */
   const [continuing, setContinuing] = useState<string | undefined>(undefined)
   const remote = useAtomValue(activeRemoteAtom)
+  const remoteRef = useRef(remote)
+  remoteRef.current = remote
   /** Offered only in a vault that runs tasks. */
   const canLinkToTask = useHasCapability(TASKS_CREATE) && remote !== null
   /** One of Google's calls, for the open vault; refused with none open. */
@@ -250,7 +254,6 @@ export function MailView() {
     [remote],
   )
   const openNote = useSetAtom(openDocumentAtom)
-  const openDialog = useSetAtom(openDialogAtom)
   const openSettingsSection = useSetAtom(openSettingsSectionAtom)
   /** Where Google is connected: the Connections section of Settings. */
   const openConnections = () => openSettingsSection('connections')
@@ -279,6 +282,22 @@ export function MailView() {
     const res = await agent.ask({ text, target })
     if (!res.ok && target !== 'new') await agent.ask({ text, target: 'new' })
   }
+
+  useEffect(() => {
+    composeGate.invalidate()
+    setComposing(null)
+    composerRef.current = null
+    setContinuing(undefined)
+    composeRequest.current++
+  }, [remote, composeGate])
+
+  useEffect(
+    () => () => {
+      composeRequest.current++
+      composeGate.invalidate()
+    },
+    [composeGate],
+  )
 
   const showDrafts = view.kind === 'drafts'
   const searching = submitted !== ''
@@ -384,13 +403,35 @@ export function MailView() {
     return inbound ?? thread.messages[thread.messages.length - 1]!
   }
 
+  const transitionCompose = (action: () => void, clearComposition = false): Promise<boolean> => {
+    const request = ++composeRequest.current
+    const originRemote = remoteRef.current
+    return composeGate.leave(
+      () => {
+        if (clearComposition) {
+          composerRef.current = null
+          setComposing(null)
+          setContinuing(undefined)
+          setDraftsGeneration((generation) => generation + 1)
+        }
+        action()
+      },
+      () => request === composeRequest.current && originRemote === store.get(activeRemoteAtom),
+    )
+  }
+
   const startCompose = (all: boolean): void => {
     if (open === null) return
     const parent = replyTarget(open)
     if (parent === null) return
-    setComposeKey((key) => key + 1)
-    setContinuing(undefined)
-    setComposing({ kind: 'reply', threadId: open.id, subject: open.subject, parent, all })
+    const intent = { kind: 'reply' as const, threadId: open.id, subject: open.subject, parent, all }
+    transitionCompose(() => {
+      composerRef.current = null
+      composeGate.begin()
+      setComposeKey((key) => key + 1)
+      setContinuing(undefined)
+      setComposing(intent)
+    })
   }
 
   /**
@@ -401,21 +442,27 @@ export function MailView() {
    * intent that also computed them would flicker when overwritten.
    */
   const continueDraft = (draft: DraftSummary): void => {
-    setComposeKey((key) => key + 1)
-    setContinuing(draft.draftId)
-    setComposing({ kind: 'new' })
-    // The draft composer renders in the reader pane only with nothing open.
-    // With a thread open it would land off-screen at the foot of that thread.
-    setOpenId(null)
+    transitionCompose(() => {
+      composerRef.current = null
+      composeGate.begin()
+      setComposeKey((key) => key + 1)
+      setContinuing(draft.draftId)
+      setComposing({ kind: 'new' })
+    })
   }
 
   const startForward = (): void => {
     if (open === null) return
     const parent = replyTarget(open)
     if (parent === null) return
-    setComposeKey((key) => key + 1)
-    setContinuing(undefined)
-    setComposing({ kind: 'forward', threadId: open.id, subject: open.subject, parent })
+    const intent = { kind: 'forward' as const, threadId: open.id, subject: open.subject, parent }
+    transitionCompose(() => {
+      composerRef.current = null
+      composeGate.begin()
+      setComposeKey((key) => key + 1)
+      setContinuing(undefined)
+      setComposing(intent)
+    })
   }
 
   /**
@@ -426,38 +473,67 @@ export function MailView() {
    */
   const openThreadDraft = (): void => {
     if (open === null) return
+    const request = ++composeRequest.current
+    const threadId = open.id
+    const originRemote = remoteRef.current
     void call((r) => googleCap.drafts(r))
       .then((drafts) => {
-        const mine = drafts.filter((draft) => draft.threadId === open.id)
+        if (
+          request !== composeRequest.current ||
+          originRemote !== remoteRef.current ||
+          openId !== threadId
+        )
+          return
+        const mine = drafts.filter((draft) => draft.threadId === threadId)
         // Newest by date: `listDrafts` makes no ordering promise.
         const newest = mine.sort((a, b) => a.date.localeCompare(b.date)).pop()
         if (newest !== undefined) continueDraft(newest)
       })
-      .catch(() => setWriteError('Could not open that draft.'))
+      .catch(() => {
+        if (
+          request === composeRequest.current &&
+          originRemote === store.get(activeRemoteAtom) &&
+          openId === threadId
+        )
+          setWriteError('Could not open that draft.')
+      })
   }
 
-  /** Both exits from the composer refresh the Drafts list. */
-  const closeComposer = (): void => {
+  /** An acknowledged send/discard belongs only to the composition that started it. */
+  const finishComposer = (identity: object, sent = false): void => {
+    if (
+      composeGate.current()?.identity !== identity ||
+      remoteRef.current !== store.get(activeRemoteAtom)
+    )
+      return
+
+    composeRequest.current++
+    composeGate.invalidate()
+    composerRef.current = null
     setComposing(null)
     setContinuing(undefined)
     setDraftsGeneration((generation) => generation + 1)
+
+    if (!sent || open === null || composing === null || composing.kind === 'new') return
+    const threadId = open.id
+    const originRemote = remoteRef.current
+    void call((r) => googleCap.thread(r, { id: threadId }))
+      .then((thread) => {
+        if (originRemote === store.get(activeRemoteAtom) && remoteRef.current === originRemote)
+          setOpen(thread)
+      })
+      .catch(() => undefined)
+    load()
   }
 
-  /**
-   * After a send: close the composer, refetch the open thread and the list.
-   */
-  const onComposerSent = (): void => {
-    const intent = composing
-    closeComposer()
-    if (open === null || intent === null || intent.kind === 'new') return
-
-    void call((r) => googleCap.thread(r, { id: open.id }))
-      .then(setOpen)
-      .catch(() => {
-        // The send succeeded; only the refetch failed. Leave the thread as it
-        // was rather than invent a message we cannot confirm arrived.
-      })
-    load()
+  /** Explicit close still passes through the save-before-leave gate. */
+  const closeComposer = (): void => {
+    transitionCompose(() => {
+      composerRef.current = null
+      setComposing(null)
+      setContinuing(undefined)
+      setDraftsGeneration((generation) => generation + 1)
+    })
   }
 
   /**
@@ -499,27 +575,30 @@ export function MailView() {
    * the unsubscribe link come from the list response and are not refetched.
    */
   const openThread = (thread: ThreadSummary) => {
-    // A find bar left open would count matches in the previous thread.
-    setFindOpen(false)
-    setOpenId(thread.id)
-    setOpenSummary(thread)
-    setOpen(null)
-    setMeeting(null)
-    void call((r) => googleCap.thread(r, { id: thread.id }))
-      .then(setOpen)
-      .catch(() => setOpenId(null))
-    // Only for a thread the list already says holds an `.ics`, to avoid two
-    // requests per open. A failure is swallowed deliberately: the badge still
-    // says this is a meeting, and a convenience lookup does not merit a banner.
-    if (thread.hasInvite) {
-      void call((r) => googleCap.meeting(r, { id: thread.id }))
-        .then((found) => {
-          if (found !== null) setMeeting({ ...found, threadId: thread.id })
-        })
-        .catch(() => undefined)
-    }
-    // Only when there is something to change: the API is rate limited.
-    if (thread.unread) void setRead(thread.id, true)
+    void transitionCompose(() => {
+      composerRef.current = null
+      // A find bar left open would count matches in the previous thread.
+      setFindOpen(false)
+      setOpenId(thread.id)
+      setOpenSummary(thread)
+      setOpen(null)
+      setMeeting(null)
+      void call((r) => googleCap.thread(r, { id: thread.id }))
+        .then(setOpen)
+        .catch(() => setOpenId(null))
+      // Only for a thread the list already says holds an `.ics`, to avoid two
+      // requests per open. A failure is swallowed deliberately: the badge still
+      // says this is a meeting, and a convenience lookup does not merit a banner.
+      if (thread.hasInvite) {
+        void call((r) => googleCap.meeting(r, { id: thread.id }))
+          .then((found) => {
+            if (found !== null) setMeeting({ ...found, threadId: thread.id })
+          })
+          .catch(() => undefined)
+      }
+      // Only when there is something to change: the API is rate limited.
+      if (thread.unread) void setRead(thread.id, true)
+    }, true)
   }
 
   /**
@@ -589,7 +668,15 @@ export function MailView() {
    * The reader closes with it, so `openSummary` does not go on rendering a
    * thread the list no longer holds.
    */
-  const removeThread = (id: string, mutate: () => Promise<unknown>) => {
+  const removeThread = async (id: string, mutate: () => Promise<unknown>): Promise<boolean> => {
+    if (composing !== null && openId === id) {
+      const left = await transitionCompose(() => {
+        composerRef.current = null
+        setComposing(null)
+        setContinuing(undefined)
+      })
+      if (!left) return false
+    }
     if (openId === id) {
       setOpen(null)
       setOpenId(null)
@@ -733,6 +820,17 @@ export function MailView() {
    * fallback for a thread the current list does not contain.
    */
   const openRow = threads.find((thread) => thread.id === openId) ?? openSummary
+  const renderedComposeIdentity = composeGate.current()?.identity
+
+  const closeRenderedComposer = (): void => {
+    if (
+      renderedComposeIdentity === undefined ||
+      composeGate.current()?.identity !== renderedComposeIdentity ||
+      remoteRef.current !== store.get(activeRemoteAtom)
+    )
+      return
+    closeComposer()
+  }
 
   /**
    * ⌘F, scoped to this pane.
@@ -766,7 +864,11 @@ export function MailView() {
   return (
     <ResizablePanelGroup
       orientation="horizontal"
-      className="h-full min-h-0"
+      className={cn(
+        'h-full min-h-0',
+        composing !== null &&
+          '@container/mail @max-[40rem]/mail:[&>[data-panel]:first-child]:!hidden',
+      )}
       defaultLayout={layout.defaultLayout}
       onLayoutChanged={layout.onLayoutChanged}
       onKeyDown={onKeyDown}
@@ -787,30 +889,29 @@ export function MailView() {
             <MailToolbar
               query={query}
               onQueryChange={setQuery}
-              onSubmit={setSubmitted}
+              onSubmit={(next) => void transitionCompose(() => setSubmitted(next), true)}
               searchOpen={searchOpen}
               onSearchOpenChange={setSearchOpen}
               people={threads}
               contacts={contacts}
               view={view}
-              onViewChange={setView}
+              onViewChange={(next) => void transitionCompose(() => setView(next), true)}
               searching={searching}
               unreadOnly={unreadOnly}
-              onUnreadChange={setUnreadOnly}
+              onUnreadChange={(next) => void transitionCompose(() => setUnreadOnly(next), true)}
               unreadCount={viewUnread(view, counts?.unread ?? null, categoryCounts)}
               inboxUnread={counts?.unread ?? null}
               categoryCounts={categoryCounts}
               onCategoryMenuOpen={loadCategoryCounts}
-              onCompose={() =>
-                // A dialog, where a reply is inline: a fresh message has no
-                // thread to keep in view. Closing is safe: the composer saves
-                // on unmount and the Drafts view finds it again.
-                openDialog({
-                  id: 'plugin',
-                  size: 'lg',
-                  render: (close) => <ComposeMailDialog onClose={close} />,
+              onCompose={() => {
+                transitionCompose(() => {
+                  composerRef.current = null
+                  composeGate.begin()
+                  setComposeKey((key) => key + 1)
+                  setContinuing(undefined)
+                  setComposing({ kind: 'new' })
                 })
-              }
+              }}
               onRefresh={() => {
                 load()
                 loadCounts()
@@ -916,24 +1017,35 @@ export function MailView() {
       </ResizablePanel>
 
       {/* The divider IS the handle, so the list has no border of its own. */}
-      <ResizableHandle />
+      <ResizableHandle className={composing !== null ? '@max-[40rem]/mail:hidden' : undefined} />
 
       {/* The reader */}
       <ResizablePanel id="mail-reader" minSize={280}>
         <div className="flex h-full min-h-0 min-w-0 flex-col" data-mail-pane="reader">
           {/* A draft opened from the Drafts list has no thread behind it, so
               it goes in the reader pane. */}
-          {composing !== null && openId === null ? (
+          {composing?.kind === 'new' ? (
             <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4">
               <MailComposer
+                ref={(handle) => {
+                  const session = composeGate.current()
+                  if (session !== null) composeGate.attach(session.identity, handle)
+                  composerRef.current = handle
+                }}
                 key={composeKey}
                 intent={composing}
                 draftId={continuing}
                 sendAs={sendAs}
                 suggestions={contacts}
-                onSent={onComposerSent}
-                onDiscarded={closeComposer}
-                onClose={closeComposer}
+                onSent={() => {
+                  if (renderedComposeIdentity !== undefined)
+                    finishComposer(renderedComposeIdentity, true)
+                }}
+                onDiscarded={() => {
+                  if (renderedComposeIdentity !== undefined) finishComposer(renderedComposeIdentity)
+                }}
+                onClose={closeRenderedComposer}
+                bare
               />
             </div>
           ) : openId === null ? (
@@ -1101,14 +1213,26 @@ export function MailView() {
                     so the message being answered stays on screen. */}
                 {composing !== null && (
                   <MailComposer
+                    ref={(handle) => {
+                      const session = composeGate.current()
+                      if (session !== null) composeGate.attach(session.identity, handle)
+                      composerRef.current = handle
+                    }}
                     key={composeKey}
                     intent={composing}
                     draftId={continuing}
                     sendAs={sendAs}
                     suggestions={contacts}
-                    onSent={onComposerSent}
-                    onDiscarded={closeComposer}
-                    onClose={closeComposer}
+                    onSent={() => {
+                      if (renderedComposeIdentity !== undefined)
+                        finishComposer(renderedComposeIdentity, true)
+                    }}
+                    onDiscarded={() => {
+                      if (renderedComposeIdentity !== undefined)
+                        finishComposer(renderedComposeIdentity)
+                    }}
+                    onClose={closeRenderedComposer}
+                    bare
                   />
                 )}
               </div>
