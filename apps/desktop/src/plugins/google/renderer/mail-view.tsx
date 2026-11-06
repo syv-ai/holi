@@ -403,12 +403,20 @@ export function MailView() {
     return inbound ?? thread.messages[thread.messages.length - 1]!
   }
 
-  const transitionCompose = (action: () => void): void => {
+  const transitionCompose = (action: () => void, clearComposition = false): Promise<boolean> => {
     const request = ++composeRequest.current
     const originRemote = remoteRef.current
-    void composeGate.leave(
-      action,
-      () => request === composeRequest.current && originRemote === remoteRef.current,
+    return composeGate.leave(
+      () => {
+        if (clearComposition) {
+          composerRef.current = null
+          setComposing(null)
+          setContinuing(undefined)
+          setDraftsGeneration((generation) => generation + 1)
+        }
+        action()
+      },
+      () => request === composeRequest.current && originRemote === store.get(activeRemoteAtom),
     )
   }
 
@@ -481,7 +489,14 @@ export function MailView() {
         const newest = mine.sort((a, b) => a.date.localeCompare(b.date)).pop()
         if (newest !== undefined) continueDraft(newest)
       })
-      .catch(() => setWriteError('Could not open that draft.'))
+      .catch(() => {
+        if (
+          request === composeRequest.current &&
+          originRemote === store.get(activeRemoteAtom) &&
+          openId === threadId
+        )
+          setWriteError('Could not open that draft.')
+      })
   }
 
   /** Both exits from the composer refresh the Drafts list. */
@@ -555,7 +570,7 @@ export function MailView() {
    * the unsubscribe link come from the list response and are not refetched.
    */
   const openThread = (thread: ThreadSummary) => {
-    transitionCompose(() => {
+    void transitionCompose(() => {
       composerRef.current = null
       // A find bar left open would count matches in the previous thread.
       setFindOpen(false)
@@ -578,7 +593,7 @@ export function MailView() {
       }
       // Only when there is something to change: the API is rate limited.
       if (thread.unread) void setRead(thread.id, true)
-    })
+    }, true)
   }
 
   /**
@@ -648,7 +663,15 @@ export function MailView() {
    * The reader closes with it, so `openSummary` does not go on rendering a
    * thread the list no longer holds.
    */
-  const removeThread = (id: string, mutate: () => Promise<unknown>) => {
+  const removeThread = async (id: string, mutate: () => Promise<unknown>): Promise<boolean> => {
+    if (composing !== null && openId === id) {
+      const left = await transitionCompose(() => {
+        composerRef.current = null
+        setComposing(null)
+        setContinuing(undefined)
+      })
+      if (!left) return false
+    }
     if (openId === id) {
       setOpen(null)
       setOpenId(null)
@@ -846,16 +869,16 @@ export function MailView() {
             <MailToolbar
               query={query}
               onQueryChange={setQuery}
-              onSubmit={(next) => transitionCompose(() => setSubmitted(next))}
+              onSubmit={(next) => void transitionCompose(() => setSubmitted(next), true)}
               searchOpen={searchOpen}
               onSearchOpenChange={setSearchOpen}
               people={threads}
               contacts={contacts}
               view={view}
-              onViewChange={(next) => transitionCompose(() => setView(next))}
+              onViewChange={(next) => void transitionCompose(() => setView(next), true)}
               searching={searching}
               unreadOnly={unreadOnly}
-              onUnreadChange={(next) => transitionCompose(() => setUnreadOnly(next))}
+              onUnreadChange={(next) => void transitionCompose(() => setUnreadOnly(next), true)}
               unreadCount={viewUnread(view, counts?.unread ?? null, categoryCounts)}
               inboxUnread={counts?.unread ?? null}
               categoryCounts={categoryCounts}
