@@ -1,12 +1,12 @@
 /**
- * Start meeting and Stop meeting, in the command menu and as commands. Start
+ * Start meeting and Stop meeting, in the command menu. Start
  * records with the picked profile (the Default without one), both audio
  * sources and no title, and brings the Meetings tab forward, where it says
  * so if transcription is not set up yet.
  */
 import { atom, type Getter, type Setter } from 'jotai'
 import { AudioLines, Square } from 'lucide-react'
-import { openSurfaceAtom, type Command, type CommandMenuEntry } from '@/plugin-api'
+import { openSurfaceAtom, type CommandMenuEntry } from '@/plugin-api'
 import { recorderAtom, startRecordingAtom, stopRecordingAtom } from './recorder'
 import { MEETINGS_SURFACE, selectedProfileIdAtom } from './state'
 
@@ -26,11 +26,6 @@ function stopMeeting(_get: Getter, set: Setter): void {
 
 const idle = (get: Getter) => get(recorderAtom).phase === 'idle'
 const recording = (get: Getter) => get(recorderAtom).phase === 'recording'
-
-export const MEETING_COMMANDS: readonly Command[] = [
-  { id: 'meeting.start', label: 'Start meeting', when: idle, run: startMeeting },
-  { id: 'meeting.stop', label: 'Stop meeting', when: recording, run: stopMeeting },
-]
 
 /** Meetings under Go to: the way to the tab, since the nav is not drawn. */
 const goToMeetings = (get: Getter): CommandMenuEntry => ({

@@ -10,7 +10,7 @@ import { atom } from 'jotai'
 import { AudioLines } from 'lucide-react'
 import type { RendererPlugin } from '@/plugin-api'
 import { TRANSCRIBE_INFO } from '../info'
-import { MEETING_COMMANDS, meetingMenuEntriesAtom, runMeetingMenuEntryAtom } from './commands'
+import { meetingMenuEntriesAtom, runMeetingMenuEntryAtom } from './commands'
 import { MEETING_CLAIM, meetingName } from './meeting-claim'
 import { MeetingsSurface } from './meetings-surface'
 import { RecordingStatusItem } from './recording-status-item'
@@ -46,7 +46,6 @@ export const transcribeRenderer: RendererPlugin = {
   ],
   // After Agenda, before Agents.
   rail: [{ surface: MEETINGS_SURFACE, order: 55, live: recordingAtom }],
-  commands: MEETING_COMMANDS,
   commandMenu: { entries: meetingMenuEntriesAtom, run: runMeetingMenuEntryAtom },
   statusItems: [{ id: 'recording', side: 'left', order: 10, Component: RecordingStatusItem }],
   leaveGuard: atom((get) =>
