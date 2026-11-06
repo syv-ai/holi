@@ -270,7 +270,7 @@ export function MailShell({ className }: { className?: string }) {
         suggestions={mail.contacts}
         onSent={() => finishComposition(composition.identity, true)}
         onDiscarded={() => finishComposition(composition.identity, false)}
-        onClose={() => transition(() => finishComposition(composition.identity, false))}
+        onClose={() => finishComposition(composition.identity, false)}
         onReconnect={openConnections}
         bare={composition.intent.kind === 'new'}
       />
