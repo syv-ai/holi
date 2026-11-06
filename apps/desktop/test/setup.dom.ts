@@ -11,6 +11,17 @@ if (!Element.prototype.hasPointerCapture) {
   Element.prototype.setPointerCapture = () => {}
   Element.prototype.releasePointerCapture = () => {}
 }
+// Chromium preserves iframe documents with moveBefore. jsdom models DOM
+// insertion only; real browsing-context continuity is exercised in Electron.
+if (!('moveBefore' in Element.prototype)) {
+  Object.defineProperty(Element.prototype, 'moveBefore', {
+    configurable: true,
+    writable: true,
+    value(this: Element, node: Node, before: Node | null) {
+      this.insertBefore(node, before)
+    },
+  })
+}
 if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {}
 // The Vim cursor plugin measures visual-mode selections. jsdom has no Range
 // geometry; a deterministic empty list is enough for keyboard-behaviour tests.

@@ -71,6 +71,7 @@ import { DialogHost } from './dialog-host'
 import { MobileHeader } from './mobile-header'
 import { readShares, writeShares } from './split-shares'
 import { SplitView, type MemberSlot } from './split-view'
+import { useRetainedSurfaces } from './retained-surfaces'
 import { TabStrip } from './tab-strip'
 import { TabView } from './tab-view'
 import { TitleBar } from './title-bar'
@@ -348,11 +349,11 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
 
   /** One view: its header in a split, then what it shows. Focus follows a
    *  press or keyboard focus into a split's member. */
-  function memberBody(key: string) {
+  function memberBody(key: string, visible: boolean) {
     const tab = key === NO_TAB ? null : key
     const isFocused = tab === focusedKey
     const focus = () => {
-      if (split !== null && tab !== null) {
+      if (visible && split !== null && tab !== null) {
         setWs((w) => focusMember(w, split.id, tab))
       }
     }
@@ -371,6 +372,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <TabView
             tab={tab}
+            visible={visible}
             settingsNavInSidebar={isFocused && settingsActive && !isMobile && sidebarOpen}
             onOpen={openTabKey}
             onOpenBeside={(id) => setWs((w) => openInSplit(w, keyFor(id)))}
@@ -388,6 +390,10 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     )
   }
 
+  const retained = useRetainedSurfaces(
+    isMobile ? [focusedKey ?? NO_TAB] : members.map((member) => member.key),
+    memberBody,
+  )
   const header = (
     <TabStrip onNewTab={openNewTab} onCloseRequest={requestEntryClose} draggable={!isMobile} />
   )
@@ -407,12 +413,12 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <main className="flex min-h-0 min-w-0 flex-1 flex-col">
             {isMobile ? (
-              memberBody(focusedKey ?? NO_TAB)
+              retained.slot(focusedKey ?? NO_TAB)
             ) : (
               <SplitView
                 entryId={ws.active}
                 members={members}
-                renderMember={memberBody}
+                renderMember={retained.slot}
                 onShareChange={resizeMember}
               />
             )}
@@ -435,6 +441,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
       onOpenChange={toggleSidebar}
       className="bg-background text-foreground h-svh min-h-0 w-full"
     >
+      {retained.content}
       {isMobile ? (
         <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
           {/* The brand bar is global chrome and the header below is this
