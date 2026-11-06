@@ -2209,3 +2209,67 @@ test('new message replaces the open thread in the reader pane', async () => {
   expect(screen.queryByRole('article')).not.toBeInTheDocument()
   expect(screen.getByRole('heading', { name: 'New message' })).toBeInTheDocument()
 })
+
+test('thread navigation saves the active composer before displaying the destination', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary(), summary({ id: 't2', subject: 'Next thread' })]))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+  await user.click(screen.getByRole('button', { name: 'Reply' }))
+  await user.type(screen.getByRole('textbox', { name: 'Subject' }), ' latest')
+
+  let finish!: (result: { id: string }) => void
+  saveDraftMock.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)))
+  await user.click(screen.getByRole('button', { name: /Next thread/ }))
+  await waitFor(() => expect(saveDraftMock).toHaveBeenCalledTimes(1))
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+  finish({ id: 'saved-draft' })
+
+  await screen.findByText('Next thread')
+  expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull()
+  expect(readMock).toHaveBeenLastCalledWith({ id: 't2' })
+  expect(saveDraftMock.mock.calls[0]![0]).toMatchObject({
+    expectedAccountSub: 'mail-view-account',
+    mail: { subject: 'Re: Q2 budget latest' },
+  })
+})
+
+test('failed navigation save keeps the composer and does not open the thread', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary(), summary({ id: 't2', subject: 'Next thread' })]))
+  saveDraftMock.mockRejectedValue(new Error('offline'))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+  await user.click(screen.getByRole('button', { name: 'Reply' }))
+  await user.type(screen.getByRole('textbox', { name: 'Subject' }), ' latest')
+  await user.click(screen.getByRole('button', { name: /Next thread/ }))
+
+  expect(await screen.findByText('offline')).toBeInTheDocument()
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+  expect(readMock).not.toHaveBeenCalledWith({ id: 't2' })
+})
+
+test.each([
+  ['Archive this thread', archiveMock],
+  ['Move this thread to trash', trashMock],
+] as const)(
+  '%s waits for a reply save and refuses the write on failure',
+  async (label, mutation) => {
+    const user = userEvent.setup()
+    threadMock.mockResolvedValue(page([summary()]))
+    saveDraftMock.mockRejectedValue(new Error('offline'))
+    render(<MailView />)
+    await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+    await screen.findByRole('article')
+    await user.click(screen.getByRole('button', { name: 'Reply' }))
+    await user.type(screen.getByRole('textbox', { name: 'Subject' }), ' latest')
+    await user.click(screen.getByRole('button', { name: label }))
+
+    expect(await screen.findByText('offline')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+    expect(mutation).not.toHaveBeenCalled()
+    expect(screen.getByRole('article')).toBeInTheDocument()
+  },
+)
