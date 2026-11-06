@@ -8,7 +8,7 @@
  * parent (`h-full`) and brings its own folder rail and list column. Not
  * mounted yet; see the plugin's `index.tsx` for the surfaces that are.
  */
-import { useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -51,39 +51,112 @@ export function MailShell({ className }: { className?: string }) {
 
   const composerRef = useRef<MailComposerHandle | null>(null)
   const composeGate = useRef(new ComposeSessionGate()).current
+  const transitionRef = useRef(0)
+  const continueRef = useRef(0)
+  const sequenceRef = useRef(0)
+  const liveContext = useRef({ remote, account: currentSub, selectedThread: mail.openId })
+  liveContext.current = { remote, account: currentSub, selectedThread: mail.openId }
   const [expanded, setExpanded] = useState(true)
-  /** A new message or draft temporarily replaces the reader pane. */
-  const [compose, setCompose] = useState<{ draftId?: string; key: number } | null>(null)
-  /** A reply or forward, inline under the thread it answers. */
-  const [inline, setInline] = useState<{
+  /** Exactly one active composition, whether standalone or attached to a thread. */
+  const [composition, setComposition] = useState<{
     intent: ComposeIntent
+    draftId?: string
+    identity: object
     key: number
   } | null>(null)
+  const compositionOwner = useRef<object | null>(null)
+  compositionOwner.current = composition?.identity ?? null
 
   const openConnections = () => openSettingsSection('connections')
   const thread = mail.reader.kind === 'ready' ? mail.reader.thread : null
-
-  const startCompose = (draftId?: string) => {
-    void composeGate.leave(() => {
+  const contextIsCurrent = (expectedRemote: string | null, expectedAccount: string | null) =>
+    store.get(activeRemoteAtom) === expectedRemote &&
+    liveContext.current.remote === expectedRemote &&
+    liveContext.current.account === expectedAccount
+  const transition = (action: () => void): Promise<boolean> => {
+    const request = ++transitionRef.current
+    const expectedRemote = remote
+    const expectedAccount = currentSub
+    return composeGate.leave(
+      () => {
+        continueRef.current++
+        action()
+      },
+      () => transitionRef.current === request && contextIsCurrent(expectedRemote, expectedAccount),
+    )
+  }
+  const navigate = (action: () => void) =>
+    transition(() => {
+      action()
+      if (compositionOwner.current !== null) {
+        compositionOwner.current = null
+        composerRef.current = null
+        setComposition(null)
+        mail.reloadDrafts()
+      }
+    })
+  const beginComposition = (intent: ComposeIntent, draftId?: string) => {
+    transition(() => {
+      const session = composeGate.begin()
       composerRef.current = null
-      composeGate.begin()
-      setCompose((previous) => ({ draftId, key: (previous?.key ?? 0) + 1 }))
+      setComposition({ intent, draftId, identity: session.identity, key: ++sequenceRef.current })
     })
   }
-
+  const startCompose = (draftId?: string) => beginComposition({ kind: 'new' }, draftId)
   const openDraft = (draft: DraftSummary) => startCompose(draft.draftId)
+  const previousContext = useRef({ remote, account: currentSub })
+  useEffect(() => {
+    if (
+      previousContext.current.remote !== remote ||
+      previousContext.current.account !== currentSub
+    ) {
+      previousContext.current = { remote, account: currentSub }
+      transitionRef.current++
+      continueRef.current++
+      compositionOwner.current = null
+      composerRef.current = null
+      composeGate.invalidate()
+      setComposition(null)
+    }
+  }, [remote, currentSub, composeGate])
 
-  /** Bumped on every open, so the composer remounts: it reads its intent
-   *  once, on mount. */
-  const openInline = (intent: ComposeIntent) =>
-    setInline((previous) => ({ intent, key: (previous?.key ?? 0) + 1 }))
+  useEffect(
+    () => () => {
+      transitionRef.current++
+      continueRef.current++
+      compositionOwner.current = null
+      composeGate.invalidate()
+      composerRef.current = null
+    },
+    [composeGate],
+  )
+
+  const guardedMail = {
+    ...mail,
+    openThread: (row: Parameters<typeof mail.openThread>[0]) => {
+      void navigate(() => mail.openThread(row))
+    },
+    setCategory: (value: Parameters<typeof mail.setCategory>[0]) => {
+      void navigate(() => mail.setCategory(value))
+    },
+    setUnreadOnly: (value: Parameters<typeof mail.setUnreadOnly>[0]) => {
+      void navigate(() => mail.setUnreadOnly(value))
+    },
+    search: (value: Parameters<typeof mail.search>[0]) => {
+      void navigate(() => mail.search(value))
+    },
+    removeThreads: (...args: Parameters<typeof mail.removeThreads>) =>
+      navigate(() => {
+        void mail.removeThreads(...args)
+      }).then(() => undefined),
+  }
 
   const commands: ThreadCommands = {
     reply: (all) => {
       if (thread === null) return
       const parent = replyTarget(thread, mail.sendAs)
       if (parent === null) return
-      openInline({
+      beginComposition({
         kind: 'reply',
         threadId: thread.id,
         subject: thread.subject,
@@ -95,7 +168,7 @@ export function MailShell({ className }: { className?: string }) {
       if (thread === null) return
       const parent = replyTarget(thread, mail.sendAs)
       if (parent === null) return
-      openInline({
+      beginComposition({
         kind: 'forward',
         threadId: thread.id,
         subject: thread.subject,
@@ -107,16 +180,32 @@ export function MailShell({ className }: { className?: string }) {
     continueDraft: () => {
       const id = mail.openId
       if (id === null) return
+      const request = ++continueRef.current
+      const expectedRemote = remote
+      const expectedAccount = currentSub
       void mail
         .call((r) => googleCap.drafts(r))
         .then((drafts) => {
+          if (
+            request !== continueRef.current ||
+            liveContext.current.selectedThread !== id ||
+            !contextIsCurrent(expectedRemote, expectedAccount)
+          )
+            return
           const newest = drafts
             .filter((draft) => draft.threadId === id)
             .sort((a, b) => a.date.localeCompare(b.date))
             .pop()
           if (newest !== undefined) openDraft(newest)
         })
-        .catch(() => mail.reportError('Could not open that draft.'))
+        .catch(() => {
+          if (
+            request === continueRef.current &&
+            liveContext.current.selectedThread === id &&
+            contextIsCurrent(expectedRemote, expectedAccount)
+          )
+            mail.reportError('Could not open that draft.')
+        })
     },
     summarize:
       agent === null
@@ -149,67 +238,50 @@ export function MailShell({ className }: { className?: string }) {
         },
   }
 
-  const standaloneComposer =
-    compose === null ? null : (
+  const finishComposition = (identity: object, reloadThread: boolean) => {
+    if (
+      compositionOwner.current !== identity ||
+      composeGate.current()?.identity !== identity ||
+      !contextIsCurrent(remote, currentSub)
+    )
+      return
+    compositionOwner.current = null
+    composeGate.invalidate()
+    composerRef.current = null
+    setComposition(null)
+    mail.reloadDrafts()
+    if (reloadThread) {
+      mail.reloadThread()
+      mail.load()
+    }
+  }
+  const composer =
+    composition === null ? null : (
       <MailComposer
         ref={(handle) => {
-          const session = composeGate.current()
-          if (session !== null) composeGate.attach(session.identity, handle)
-          composerRef.current = handle
+          composeGate.attach(composition.identity, handle)
+          if (composeGate.current()?.identity === composition.identity) composerRef.current = handle
         }}
-        key={compose.key}
-        intent={{ kind: 'new' }}
-        draftId={compose.draftId}
+        key={composition.key}
+        intent={composition.intent}
+        draftId={composition.draftId}
+        accountSub={currentSub ?? undefined}
         sendAs={mail.sendAs}
         suggestions={mail.contacts}
-        onSent={() => {
-          composeGate.invalidate()
-          composerRef.current = null
-          setCompose(null)
-          mail.reloadDrafts()
-          mail.load()
-        }}
-        onDiscarded={() => {
-          composeGate.invalidate()
-          composerRef.current = null
-          setCompose(null)
-          mail.reloadDrafts()
-        }}
-        onClose={() => {
-          void composeGate.leave(() => {
-            composerRef.current = null
-            setCompose(null)
-            mail.reloadDrafts()
-          })
-        }}
+        onSent={() => finishComposition(composition.identity, true)}
+        onDiscarded={() => finishComposition(composition.identity, false)}
+        onClose={() => transition(() => finishComposition(composition.identity, false))}
         onReconnect={openConnections}
-        bare
+        bare={composition.intent.kind === 'new'}
       />
     )
-
-  const closeInline = () => {
-    setInline(null)
-    mail.reloadDrafts()
-  }
-
-  const composer =
-    inline !== null && thread !== null ? (
-      <div className="pt-4">
-        <MailComposer
-          key={inline.key}
-          intent={inline.intent}
-          sendAs={mail.sendAs}
-          suggestions={mail.contacts}
-          onSent={() => {
-            closeInline()
-            mail.reloadThread()
-            mail.load()
-          }}
-          onDiscarded={closeInline}
-          onClose={closeInline}
-          onReconnect={openConnections}
-        />
-      </div>
+  const standaloneComposer = composition?.intent.kind === 'new' ? composer : null
+  const inlineComposer =
+    composition !== null &&
+    composition.intent.kind !== 'new' &&
+    composition.intent.threadId === mail.openId &&
+    thread !== null ? (
+      <div className="pt-4">{composer}</div>
     ) : null
 
   return (
@@ -230,11 +302,16 @@ export function MailShell({ className }: { className?: string }) {
         {/* The list column, with the account and the mailbox menu atop it */}
         <AppSidebar expanded={expanded} onToggle={() => setExpanded((value) => !value)}>
           <MailList
-            mail={mail}
-            account={<NavUser onManage={openConnections} onError={mail.reportError} />}
+            mail={guardedMail}
+            account={
+              <NavUser
+                onManage={openConnections}
+                onError={mail.reportError}
+                onBeforeChange={() => navigate(() => undefined)}
+              />
+            }
             onSelectFolder={(folder) => {
-              mail.setFolder(folder)
-              setInline(null)
+              void navigate(() => mail.setFolder(folder))
             }}
             onCompose={() => startCompose()}
             onOpenDraft={openDraft}
@@ -244,16 +321,15 @@ export function MailShell({ className }: { className?: string }) {
 
         {/* No fill of its own: the window's surface shows through. */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <AppHeader mail={mail} commands={commands} />
-          <MailReader
-            mail={mail}
-            composer={
-              inline !== null &&
-              inline.intent.kind !== 'new' &&
-              inline.intent.threadId === mail.openId
-                ? composer
-                : null
+          <AppHeader
+            mail={
+              composition?.intent.kind === 'new' ? { ...guardedMail, openId: null } : guardedMail
             }
+            commands={commands}
+          />
+          <MailReader
+            mail={guardedMail}
+            composer={inlineComposer}
             onCompose={() => startCompose()}
             standaloneComposer={standaloneComposer}
           />
