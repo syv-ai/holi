@@ -82,7 +82,8 @@ import { EmptyState, LoadingRows } from '@/composites/empty-state'
 import { IconButton } from '@/composites/icon-button'
 import { PaneToolbar } from '@/composites/pane-toolbar'
 import { SandboxedHtml } from './sandboxed-html'
-import { MailComposer } from './mail-composer'
+import { MailComposer, type MailComposerHandle } from './mail-composer'
+import { ComposeSessionGate } from './compose-session'
 import { DraftsList, type DraftSummary } from './drafts-list'
 import { ThreadMenu, type ThreadActions } from './thread-menu'
 import { SelectionBar } from './selection-bar'
@@ -224,6 +225,8 @@ export function MailView() {
   const listGeneration = useRef(0)
   /** The inline composer's intent, or `null` when it is closed. */
   const [composing, setComposing] = useState<ComposeIntent | null>(null)
+  const composerRef = useRef<MailComposerHandle | null>(null)
+  const composeGate = useRef(new ComposeSessionGate()).current
   /**
    * Bumped on every open, so React remounts the composer rather than reusing
    * it: `composeFrom` runs once, on mount, so Reply then Forward would keep the
@@ -385,9 +388,14 @@ export function MailView() {
     if (open === null) return
     const parent = replyTarget(open)
     if (parent === null) return
-    setComposeKey((key) => key + 1)
-    setContinuing(undefined)
-    setComposing({ kind: 'reply', threadId: open.id, subject: open.subject, parent, all })
+    const intent = { kind: 'reply' as const, threadId: open.id, subject: open.subject, parent, all }
+    void composeGate.leave(() => {
+      composerRef.current = null
+      composeGate.begin()
+      setComposeKey((key) => key + 1)
+      setContinuing(undefined)
+      setComposing(intent)
+    })
   }
 
   /**
@@ -398,21 +406,28 @@ export function MailView() {
    * intent that also computed them would flicker when overwritten.
    */
   const continueDraft = (draft: DraftSummary): void => {
-    setComposeKey((key) => key + 1)
-    setContinuing(draft.draftId)
-    setComposing({ kind: 'new' })
-    // The draft composer renders in the reader pane only with nothing open.
-    // With a thread open it would land off-screen at the foot of that thread.
-    setOpenId(null)
+    void composeGate.leave(() => {
+      composerRef.current = null
+      composeGate.begin()
+      setComposeKey((key) => key + 1)
+      setContinuing(draft.draftId)
+      setComposing({ kind: 'new' })
+      setOpenId(null)
+    })
   }
 
   const startForward = (): void => {
     if (open === null) return
     const parent = replyTarget(open)
     if (parent === null) return
-    setComposeKey((key) => key + 1)
-    setContinuing(undefined)
-    setComposing({ kind: 'forward', threadId: open.id, subject: open.subject, parent })
+    const intent = { kind: 'forward' as const, threadId: open.id, subject: open.subject, parent }
+    void composeGate.leave(() => {
+      composerRef.current = null
+      composeGate.begin()
+      setComposeKey((key) => key + 1)
+      setContinuing(undefined)
+      setComposing(intent)
+    })
   }
 
   /**
@@ -435,9 +450,12 @@ export function MailView() {
 
   /** Both exits from the composer refresh the Drafts list. */
   const closeComposer = (): void => {
-    setComposing(null)
-    setContinuing(undefined)
-    setDraftsGeneration((generation) => generation + 1)
+    void composeGate.leave(() => {
+      composerRef.current = null
+      setComposing(null)
+      setContinuing(undefined)
+      setDraftsGeneration((generation) => generation + 1)
+    })
   }
 
   /**
@@ -799,10 +817,14 @@ export function MailView() {
               categoryCounts={categoryCounts}
               onCategoryMenuOpen={loadCategoryCounts}
               onCompose={() => {
-                setComposeKey((key) => key + 1)
-                setContinuing(undefined)
-                setOpenId(null)
-                setComposing({ kind: 'new' })
+                void composeGate.leave(() => {
+                  composerRef.current = null
+                  composeGate.begin()
+                  setComposeKey((key) => key + 1)
+                  setContinuing(undefined)
+                  setOpenId(null)
+                  setComposing({ kind: 'new' })
+                })
               }}
               onRefresh={() => {
                 load()
@@ -919,6 +941,11 @@ export function MailView() {
           {composing !== null && openId === null ? (
             <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4">
               <MailComposer
+                ref={(handle) => {
+                  const session = composeGate.current()
+                  if (session !== null) composeGate.attach(session.identity, handle)
+                  composerRef.current = handle
+                }}
                 key={composeKey}
                 intent={composing}
                 draftId={continuing}
@@ -1095,6 +1122,11 @@ export function MailView() {
                     so the message being answered stays on screen. */}
                 {composing !== null && (
                   <MailComposer
+                    ref={(handle) => {
+                      const session = composeGate.current()
+                      if (session !== null) composeGate.attach(session.identity, handle)
+                      composerRef.current = handle
+                    }}
                     key={composeKey}
                     intent={composing}
                     draftId={continuing}
