@@ -41,6 +41,7 @@ import {
   type CapabilityTable,
 } from '../../../main/plugin-api'
 import type { GoogleAccountsManager } from './accounts'
+import type { GoogleSession } from './session'
 import { vaultAttachments } from './attachments'
 import { GoogleApi, GoogleApiError, type GoogleErrorCode } from './api'
 import {
@@ -89,6 +90,8 @@ export interface GoogleCapabilityDeps {
   accounts: GoogleAccountsManager
   /** The vault's cached data layer; null when no account is connected to it. */
   dataFor(remote: string): Promise<GoogleData | null>
+  /** Cached data permanently bound to this resolved account session. */
+  dataForSession?(session: GoogleSession): GoogleData
   /** This vault's Google settings on this machine (`GOOGLE_INFO.settings`):
    *  the agenda view, an app and the agent all read through them. */
   settings: GoogleSettingsStore
@@ -219,10 +222,19 @@ function addressesParam(p: Record<string, unknown>, key: string): string[] {
  * in `buildRfc822`, the last thing to see the message, which already refuses a
  * newline in any header.
  */
-function composeParams(raw: unknown): ComposeWrite {
+function expectedAccountParam(p: Record<string, unknown>): string | undefined {
+  const sub = optionalStringParam(p, 'expectedAccountSub')
+  if (sub !== undefined && !/^[A-Za-z0-9_-]+$/.test(sub)) {
+    throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub must be a Google account id')
+  }
+  return sub
+}
+
+function composeParams(raw: unknown): ComposeWrite & { expectedAccountSub?: string } {
   const p = paramsObject(raw)
   const draftId = optionalStringParam(p, 'draftId')
   const threadId = optionalStringParam(p, 'threadId')
+  const expectedAccountSub = expectedAccountParam(p)
   const mail = p.mail
   if (mail === null || typeof mail !== 'object' || Array.isArray(mail)) {
     throw new CapabilityError('BAD_REQUEST', 'mail must be an object')
@@ -251,6 +263,7 @@ function composeParams(raw: unknown): ComposeWrite {
     forwardOf = { messageId: stringParam(p.forwardOf as Record<string, unknown>, 'messageId') }
   }
   return {
+    ...(expectedAccountSub === undefined ? {} : { expectedAccountSub }),
     ...(draftId === undefined ? {} : { draftId }),
     ...(threadId === undefined ? {} : { threadId }),
     ...(forwardOf === undefined ? {} : { forwardOf }),
@@ -309,10 +322,13 @@ async function withAttachments(
  * Gmail's `drafts.send`, which deletes it as it sends: a draft followed by a
  * composed send would be two messages and an orphaned draft.
  */
-function sendParams(raw: unknown): ComposeWrite & { attach?: string[] } {
+function sendParams(
+  raw: unknown,
+): ComposeWrite & { attach?: string[]; expectedAccountSub?: string } {
   const p = paramsObject(raw)
   if (p.mail !== undefined) return composeParams(raw)
   const draft = optionalStringParam(p, 'draft')
+  const expectedAccountSub = expectedAccountParam(p)
   if (draft !== undefined) {
     if (p.to !== undefined) {
       throw new CapabilityError('BAD_REQUEST', '--draft and --to are alternatives')
@@ -322,9 +338,17 @@ function sendParams(raw: unknown): ComposeWrite & { attach?: string[] } {
     if (p.attach !== undefined) {
       throw new CapabilityError('BAD_REQUEST', '--draft and --attach are alternatives')
     }
-    return { draftId: draft, mail: { to: [], subject: '', body: '' } }
+    return {
+      ...(expectedAccountSub === undefined ? {} : { expectedAccountSub }),
+      draftId: draft,
+      mail: { to: [], subject: '', body: '' },
+    }
   }
-  return { mail: cliMail(p), attach: attachParam(p) }
+  return {
+    ...(expectedAccountSub === undefined ? {} : { expectedAccountSub }),
+    mail: cliMail(p),
+    attach: attachParam(p),
+  }
 }
 
 /** `schedule`'s and `reschedule`'s event fields. */
@@ -364,16 +388,30 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
   let connectFlow: LoopbackFlow | null = null
 
   /** The vault's data layer, or the refusal that says there is none. */
+  const accountOf = async (remote: string, expectedAccountSub?: string) => {
+    const session = await deps.accounts.sessionFor(remote)
+    if (expectedAccountSub !== undefined && session?.accountSub !== expectedAccountSub) {
+      throw new CapabilityError('FORBIDDEN', 'Google account changed; reload the composer')
+    }
+    if (session === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
+    if (expectedAccountSub !== undefined && deps.dataForSession === undefined) {
+      throw new CapabilityError('UNAVAILABLE', 'account-bound Google data is unavailable')
+    }
+    const data = deps.dataForSession?.(session) ?? (await deps.dataFor(remote))
+    if (data === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
+    return { session, data }
+  }
+
   const dataOf = async (remote: string): Promise<GoogleData> => {
     const data = await deps.dataFor(remote)
     if (data === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
     return data
   }
 
-  /**
-   * A Google client bound to the vault's session's token **getter**, never a
-   * token. Built per call: a held one would outlive a disconnect.
-   */
+  /** A client bound to one resolved session, never a vault mapping looked up later. */
+  const apiForSession = (session: GoogleSession): GoogleApi =>
+    new GoogleApi({ accessToken: () => session.getAccessToken() })
+
   const apiOf = (remote: string): GoogleApi =>
     new GoogleApi({
       accessToken: async () => {
@@ -730,8 +768,18 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
 
     'google.draftBody': cap({
       doors: ['ui'],
-      params: idParams,
-      run: async (ctx, { id }) => google(() => readDraft(apiOf(ctx.remote), id)),
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const expectedAccountSub = expectedAccountParam(p)
+        return {
+          id: stringParam(p, 'id'),
+          ...(expectedAccountSub === undefined ? {} : { expectedAccountSub }),
+        }
+      },
+      run: async (ctx, { id, expectedAccountSub }) => {
+        const { session } = await accountOf(ctx.remote, expectedAccountSub)
+        return google(() => readDraft(apiForSession(session), id))
+      },
     }),
 
     /**
@@ -753,8 +801,8 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     'google.saveDraft': cap({
       doors: ['ui'],
       params: composeParams,
-      run: async (ctx, input) => {
-        const data = await dataOf(ctx.remote)
+      run: async (ctx, { expectedAccountSub, ...input }) => {
+        const { data } = await accountOf(ctx.remote, expectedAccountSub)
         return google(() => data.saveDraft(input))
       },
     }),
@@ -764,13 +812,15 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       params: (raw) => {
         const p = paramsObject(raw)
         const threadId = optionalStringParam(p, 'threadId')
+        const expectedAccountSub = expectedAccountParam(p)
         return {
           draftId: stringParam(p, 'draftId'),
           ...(threadId === undefined ? {} : { threadId }),
+          ...(expectedAccountSub === undefined ? {} : { expectedAccountSub }),
         }
       },
-      run: async (ctx, input) => {
-        const data = await dataOf(ctx.remote)
+      run: async (ctx, { expectedAccountSub, ...input }) => {
+        const { data } = await accountOf(ctx.remote, expectedAccountSub)
         await google(() => data.discardDraft(input))
         return ok
       },
@@ -821,9 +871,9 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         many: ['attach'],
       },
       params: sendParams,
-      run: async (ctx, { attach, ...input }) => {
+      run: async (ctx, { attach, expectedAccountSub, ...input }) => {
+        const { data } = await accountOf(ctx.remote, expectedAccountSub)
         const mail = await withAttachments(ctx, input.mail, attach ?? [])
-        const data = await dataOf(ctx.remote)
         return google(() => data.sendMail({ ...input, mail }))
       },
     }),
