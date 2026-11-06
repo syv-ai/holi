@@ -564,7 +564,7 @@ export function MailComposer({
         </div>
       )}
       {loadingRef.current && draftId !== undefined && (
-        <div aria-label="Loading draft" className="flex flex-col gap-2">
+        <div role="status" aria-label="Loading draft" className="flex flex-col gap-2">
           <Skeleton className="h-8 w-full" />
           <Skeleton className="h-8 w-3/4" />
           <Skeleton className="h-40 w-full" />
@@ -678,7 +678,10 @@ export function MailComposer({
       )}
 
       {failure !== null && (
-        <div className="flex items-center gap-2 rounded-md bg-destructive/10 px-2 py-1 text-xs">
+        <div
+          role="alert"
+          className="flex items-center gap-2 rounded-md bg-destructive/10 px-2 py-1 text-xs"
+        >
           <span className="min-w-0 flex-1">{failure.message}</span>
           {failure.action === 'reconnect' && onReconnect !== undefined && (
             <Button size="sm" variant="outline" onClick={onReconnect}>
@@ -778,7 +781,11 @@ export function MailComposer({
           Discard
         </Button>
         {to.length === 0 && <span className="text-xs text-muted-foreground">Add a recipient</span>}
-        <span className="ml-auto text-xs text-muted-foreground" data-testid="save-state">
+        <span
+          className="ml-auto text-xs text-muted-foreground"
+          data-testid="save-state"
+          aria-live="polite"
+        >
           {SAVE_LABEL[saveState]}
         </span>
       </div>
