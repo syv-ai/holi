@@ -62,7 +62,7 @@ export function useRetainedSurfaces(
     if (ownerWindow === null) return
     let lastOutside: HTMLElement | null = null
     let queued = false
-    let frame: number | null = null
+    let timer: number | null = null
     let disposed = false
     const outside = (element: Element | null): element is HTMLElement =>
       element instanceof ownerWindow.HTMLElement &&
@@ -104,12 +104,12 @@ export function useRetainedSurfaces(
     // A remote document can change frame focus without a parent DOM event.
     // Watch only while hosts are parked; no layout reads are needed.
     const watch = () => {
-      if (disposed || frame !== null) return
-      frame = ownerWindow.requestAnimationFrame(() => {
-        frame = null
+      if (disposed || timer !== null) return
+      timer = ownerWindow.setTimeout(() => {
+        timer = null
         check()
         if (home.childElementCount > 0) watch()
-      })
+      }, 250)
     }
     const focusIn = (event: FocusEvent) => {
       if (outside(event.target as Element | null)) lastOutside = event.target as HTMLElement
@@ -133,7 +133,7 @@ export function useRetainedSurfaces(
     return () => {
       disposed = true
       queued = false
-      if (frame !== null) ownerWindow.cancelAnimationFrame(frame)
+      if (timer !== null) ownerWindow.clearTimeout(timer)
       ownerDocument.removeEventListener('focusin', focusIn, true)
       ownerDocument.removeEventListener('focus', schedule, true)
       ownerWindow.removeEventListener('blur', schedule)

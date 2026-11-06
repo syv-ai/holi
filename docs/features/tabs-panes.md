@@ -57,8 +57,13 @@ back as the Agents selection, and what ⌘W closes.
 **What each tab shows** is one switch, `TabView`: the New tab's empty view (also an empty strip's),
 the board, Settings (its nav in the sidebar while it is the view in front and the sidebar is open,
 inline otherwise), a sidebar app's view, the Agents mode's `main` for a session or the home, the
-`app` surface for a vault app, and the document editor for a document. Only the active entry's
-views are mounted.
+`app` surface for a vault app, and the document editor for a document. Active views mount normally.
+A surface opts into `keepMounted` explicitly: after first display, it stays mounted while hidden
+and its stable host is parked until the tab closes, the surface is removed, or the vault changes.
+Browser tabs and the agent's terminal surfaces already opt in. Agent session tabs use the
+separate `session` descriptor, not a surface; their viewport and geometry retention remain separate
+work. The terminal host/cache and PTY attachment behavior are unchanged. Other views unmount when
+left.
 
 **Sessions are tabs** ([sidebar](sidebar.md)): the Agents mode's selection opens or selects a
 session tab, and the view in front writes the selection back, so inside a split the selection
@@ -173,8 +178,12 @@ click resets it. The separator is the library's, `role="separator"` with `aria-o
 
 **A view never remounts when the layout changes.** Each view renders through a portal into a host
 element of its own, keyed on its tab key, and whichever slot holds it adopts the host: a tab made
-into a split, or a split closed back into a tab, keeps its composer or its document. A move does
-reset scroll positions inside it (the DOM node is re-parented).
+to a split, or a split closed back into a tab, keeps its composer or its document. Connected hosts
+move with Chromium's state-preserving `moveBefore`, preserving the live document and its scroll
+position. When a `keepMounted` surface leaves the visible layout, its host moves into the inert,
+visually hidden parking area at its last viewport size; returning removes those temporary size
+constraints. Hidden retained hosts cannot keep keyboard focus: the shell returns focus to a visible
+control, including when a remote iframe changes focus without a parent-frame event.
 
 **Opening and closing fold**, within one split, by motion-panels' own collapse: a member arriving
 in a sized slot mounts folded and opens; one leaving a sized slot stays as an empty ghost while it

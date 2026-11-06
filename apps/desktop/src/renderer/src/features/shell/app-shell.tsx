@@ -558,7 +558,6 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
         onConfirm={confirmPendingClose}
       />
       <DialogHost />
-      <div id="holi-split-host-parking" hidden aria-hidden="true" />
     </SidebarProvider>
   )
 }

@@ -21,6 +21,9 @@ export type { PluginRow, ServerState }
 /** The open vault's rows, with the vault they were read for. */
 export const rowsAtom = atom<{ remote: string; rows: readonly PluginRow[] } | null>(null)
 
+/** The current row refresh's failure, fenced with the rows and cleared on success. */
+export const rowsErrorAtom = atom<string | null>(null)
+
 /**
  * The plugins whose vault notice this machine dismissed, as ids by vault.
  * By id, not by pin, so a newer version the vault pins stays dismissed while
@@ -99,9 +102,11 @@ export async function refreshRows(remote: string, store: PluginStore): Promise<v
     const rows = await communityCap.list(remote)
     if (current(store, remote, lifetime) && fenceFor(store).rows === request) {
       store.set(rowsAtom, { remote, rows })
+      store.set(rowsErrorAtom, null)
     }
   } catch (err) {
     if (current(store, remote, lifetime) && fenceFor(store).rows === request) {
+      store.set(rowsErrorAtom, err instanceof Error ? err.message : String(err))
       console.error('[community] list:', err)
     }
   }
@@ -132,6 +137,7 @@ export function followRows(remote: string, store: PluginStore): () => void {
     undo()
     if (ownsLifetime) {
       store.set(rowsAtom, null)
+      store.set(rowsErrorAtom, null)
       store.set(serversAtom, {})
       store.set(updatesAtom, {})
     }

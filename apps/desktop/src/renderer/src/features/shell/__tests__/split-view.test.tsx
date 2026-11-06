@@ -424,7 +424,8 @@ test('retained focus guards remove their global handlers on unmount', async () =
   const removeWindow = vi.spyOn(window, 'removeEventListener')
   const addDocument = vi.spyOn(document, 'addEventListener')
   const removeDocument = vi.spyOn(document, 'removeEventListener')
-  const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame')
+  const clearTimer = vi.spyOn(window, 'clearTimeout')
+  const scheduleTimer = vi.spyOn(window, 'setTimeout')
   const f = retainedFixture()
   f.show('one')
   const input = await screen.findByRole('textbox', { name: 'State one' })
@@ -440,7 +441,8 @@ test('retained focus guards remove their global handlers on unmount', async () =
   await act(async () => {})
   for (const call of windowFocus) expect(removeWindow.mock.calls).toContainEqual(call)
   for (const call of documentFocus) expect(removeDocument.mock.calls).toContainEqual(call)
-  expect(cancelFrame).toHaveBeenCalled()
+  expect(scheduleTimer.mock.calls.some(([, delay]) => delay === 250)).toBe(true)
+  expect(clearTimer).toHaveBeenCalled()
 })
 
 test('a visited keepMounted surface keeps its document and lease while another tab is shown', async () => {
@@ -491,7 +493,7 @@ test('a visited keepMounted surface keeps its document and lease while another t
   await waitFor(() => expect(released).toHaveBeenCalledTimes(1))
 })
 
-function retainedFixture(keepMounted = true) {
+function retainedFixture(keepMounted = true, surfaceKind = 'test-document') {
   const acquired = vi.fn()
   const released = vi.fn()
   function Document({ id, visible }: { id?: string; visible: boolean }) {
@@ -505,7 +507,7 @@ function retainedFixture(keepMounted = true) {
   }
   const store = mount()
   const surface = {
-    kind: 'test-document',
+    kind: surfaceKind,
     label: 'Deck',
     icon: () => null,
     render: Document,
@@ -520,6 +522,31 @@ function retainedFixture(keepMounted = true) {
   const away = () => act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'A.md')))
   return { store, acquired, released, key, show, away, install }
 }
+
+test('five opted-in agent terminal surfaces keep one view each and release on close', async () => {
+  const f = retainedFixture(true, 'agent')
+  const ids = ['terminal-one', 'terminal-two', 'terminal-three', 'terminal-four', 'terminal-five']
+  const inputs = new Map<string, HTMLElement>()
+  for (const id of ids) {
+    f.show(id)
+    inputs.set(id, await screen.findByRole('textbox', { name: `State ${id}` }))
+  }
+  for (const id of ids) {
+    f.show(id)
+    expect(await screen.findByRole('textbox', { name: `State ${id}` })).toBe(inputs.get(id))
+    for (const other of ids) {
+      expect(inputs.get(other)?.isConnected).toBe(true)
+      expect(inputs.get(other)?.closest('[inert]') !== null).toBe(other !== id)
+    }
+  }
+  expect(f.acquired.mock.calls).toEqual(ids.map((id) => [id]))
+  expect(f.released).not.toHaveBeenCalled()
+  for (const id of ids) {
+    act(() => f.store.set(shellWorkspaceAtom, (ws) => closeTab(ws, f.key(id))))
+  }
+  await waitFor(() => expect(f.released).toHaveBeenCalledTimes(ids.length))
+  for (const input of inputs.values()) expect(input.isConnected).toBe(false)
+})
 
 test('retained surfaces mount only after first display and close/reopen starts fresh', async () => {
   const f = retainedFixture()

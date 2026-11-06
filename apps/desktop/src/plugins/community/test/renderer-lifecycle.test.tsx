@@ -11,6 +11,7 @@ import {
   refreshRows,
   refreshUpdates,
   rowsAtom,
+  rowsErrorAtom,
   serversAtom,
   updatesAtom,
   type PluginRow,
@@ -58,9 +59,12 @@ const releaseResult = {
   lease: '123e4567-e89b-12d3-a456-426614174000',
 } as const
 
-afterEach(() => {
+afterEach(async () => {
   cleanup()
-  vi.clearAllMocks()
+  // Lease releases run after the resolved acquire, including cleanup's unmounts.
+  await Promise.resolve()
+  await Promise.resolve()
+  vi.resetAllMocks()
 })
 
 test('late row and update responses cannot repopulate a closed followRows lifetime', async () => {
@@ -256,6 +260,34 @@ test('a crashed server is retried only after Start again', async () => {
   view.unmount()
 })
 
+test('a serving plugin that becomes unready releases its lease and can be checked again', async () => {
+  capability.acquire.mockResolvedValue(releaseResult)
+  capability.release.mockResolvedValue(undefined)
+  capability.list.mockResolvedValue([{ ...row, running: false, status: 'needs-consent' }])
+  const store = createStore()
+  store.set(activeRemoteAtom, 'ada/notes')
+  store.set(rowsAtom, { remote: 'ada/notes', rows: [row] })
+  const view = render(
+    <Provider store={store}>
+      <PluginFrame path="index.dash.md" />
+    </Provider>,
+  )
+  await waitFor(() => expect(view.container.querySelector('iframe')).not.toBeNull())
+  await act(async () => {
+    store.set(rowsAtom, {
+      remote: 'ada/notes',
+      rows: [{ ...row, running: false, status: 'needs-consent' }],
+    })
+  })
+  expect(view.container.querySelector('iframe')).toBeNull()
+  expect(await screen.findByText(/Dash needs permission to run this version/)).toBeInTheDocument()
+  expect(capability.acquire).toHaveBeenCalledTimes(1)
+  await waitFor(() => expect(capability.release).toHaveBeenCalledTimes(1))
+  await userEvent.click(screen.getByRole('button', { name: 'Check again' }))
+  await waitFor(() => expect(store.get(rowsAtom)?.rows[0]?.running).toBe(false))
+  expect(capability.acquire).toHaveBeenCalledTimes(1)
+})
+
 test('losing the serving row releases the lease and removes the iframe', async () => {
   capability.acquire.mockResolvedValue(releaseResult)
   capability.release.mockResolvedValue(undefined)
@@ -273,4 +305,205 @@ test('losing the serving row releases the lease and removes the iframe', async (
   })
   expect(view.container.querySelector('iframe')).toBeNull()
   await waitFor(() => expect(capability.release).toHaveBeenCalledTimes(1))
+})
+
+test.each([false, true])(
+  'a disabled overlapping claim cannot shadow the running owner (present on open: %s)',
+  async (presentOnOpen) => {
+    capability.acquire.mockResolvedValue(releaseResult)
+    const store = createStore()
+    store.set(activeRemoteAtom, 'ada/notes')
+    const disabled = { ...row, id: 'earlier', name: 'Earlier', on: false, running: false }
+    store.set(rowsAtom, { remote: 'ada/notes', rows: presentOnOpen ? [disabled, row] : [row] })
+    const view = render(
+      <Provider store={store}>
+        <PluginFrame path="index.dash.md" />
+      </Provider>,
+    )
+    await waitFor(() => expect(view.container.querySelector('iframe')).not.toBeNull())
+    const frame = view.container.querySelector('iframe')
+    await act(async () => {
+      store.set(rowsAtom, {
+        remote: 'ada/notes',
+        rows: [disabled, row],
+      })
+    })
+    expect(view.container.querySelector('iframe')).toBe(frame)
+    expect(frame).toHaveAttribute('aria-label', 'Dash: index.dash.md')
+    expect(capability.acquire).toHaveBeenCalledTimes(1)
+    expect(capability.release).not.toHaveBeenCalled()
+  },
+)
+
+test('a superseded Check again cannot release the frame restored by a newer refresh', async () => {
+  capability.acquire.mockResolvedValue(releaseResult)
+  const pending = deferred<PluginRow[]>()
+  capability.list.mockReturnValueOnce(pending.promise).mockResolvedValueOnce([row])
+  const store = createStore()
+  store.set(activeRemoteAtom, 'ada/notes')
+  store.set(rowsAtom, { remote: 'ada/notes', rows: [] })
+  const view = render(
+    <Provider store={store}>
+      <PluginFrame path="index.dash.md" />
+    </Provider>,
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Check again' }))
+  await act(async () => {
+    await refreshRows('ada/notes', store)
+  })
+  await waitFor(() => expect(view.container.querySelector('iframe')).not.toBeNull())
+  const frame = view.container.querySelector('iframe')
+  await act(async () => {
+    pending.resolve([])
+  })
+  expect(store.get(rowsAtom)?.rows).toEqual([row])
+  expect(view.container.querySelector('iframe')).toBe(frame)
+  expect(capability.release).not.toHaveBeenCalled()
+})
+
+test('Check again from a previous A lifetime cannot replace the restored frame after A to B to A', async () => {
+  capability.acquire.mockResolvedValue(releaseResult)
+  capability.updates.mockResolvedValue({})
+  const pending = deferred<PluginRow[]>()
+  capability.list
+    .mockResolvedValueOnce([])
+    .mockReturnValueOnce(pending.promise)
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([row])
+  const store = createStore()
+  store.set(activeRemoteAtom, 'ada/notes')
+  const stopA = followRows('ada/notes', store)
+  await waitFor(() => expect(store.get(rowsAtom)?.rows).toEqual([]))
+  const view = render(
+    <Provider store={store}>
+      <PluginFrame path="index.dash.md" />
+    </Provider>,
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Check again' }))
+  let stopAgain!: () => void
+  await act(async () => {
+    stopA()
+    store.set(activeRemoteAtom, 'ada/other')
+    const stopB = followRows('ada/other', store)
+    stopB()
+    store.set(activeRemoteAtom, 'ada/notes')
+    stopAgain = followRows('ada/notes', store)
+  })
+  try {
+    await waitFor(() => expect(view.container.querySelector('iframe')).not.toBeNull())
+    const frame = view.container.querySelector('iframe')
+    await act(async () => {
+      pending.resolve([])
+    })
+    expect(store.get(rowsAtom)?.rows).toEqual([row])
+    expect(view.container.querySelector('iframe')).toBe(frame)
+    expect(capability.release).not.toHaveBeenCalled()
+  } finally {
+    view.unmount()
+    stopAgain()
+  }
+})
+
+test('a failed Check again shows an inline error and recovers on retry', async () => {
+  const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  capability.list.mockRejectedValueOnce(new Error('connection lost')).mockResolvedValueOnce([row])
+  capability.acquire.mockResolvedValue(releaseResult)
+  const store = createStore()
+  store.set(activeRemoteAtom, 'ada/notes')
+  store.set(rowsAtom, { remote: 'ada/notes', rows: [] })
+  const view = render(
+    <Provider store={store}>
+      <PluginFrame path="index.dash.md" />
+    </Provider>,
+  )
+  try {
+    await userEvent.click(screen.getByRole('button', { name: 'Check again' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('connection lost')
+    expect(capability.acquire).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: 'Check again' }))
+    await waitFor(() => expect(view.container.querySelector('iframe')).not.toBeNull())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(capability.acquire).toHaveBeenCalledTimes(1)
+  } finally {
+    errorLog.mockRestore()
+  }
+})
+
+test.each([
+  [{ ...row, running: false, status: 'needs-consent' as const }, /Dash needs permission to run/],
+  [{ ...row, running: false, on: false }, /Dash is turned off/],
+  [null, /No installed or pinned plugin claims this file/],
+])('an unavailable frame names its known reason: %j', async (unavailableRow, reason) => {
+  const store = createStore()
+  store.set(activeRemoteAtom, 'ada/notes')
+  store.set(rowsAtom, { remote: 'ada/notes', rows: unavailableRow ? [unavailableRow] : [] })
+  render(
+    <Provider store={store}>
+      <PluginFrame path="index.dash.md" />
+    </Provider>,
+  )
+  expect(await screen.findByText(reason)).toBeInTheDocument()
+  expect(screen.queryByText(/Starting/)).not.toBeInTheDocument()
+  expect(capability.acquire).not.toHaveBeenCalled()
+})
+
+test.each([false, true])(
+  'a stale failed refresh cannot set the current error (vault reopened: %s)',
+  async (reopen) => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const store = createStore()
+    store.set(activeRemoteAtom, 'ada/notes')
+    capability.updates.mockResolvedValue({})
+    capability.list.mockResolvedValueOnce([])
+    let stop = followRows('ada/notes', store)
+    await waitFor(() => expect(store.get(rowsAtom)?.rows).toEqual([]))
+    const stale = deferred<PluginRow[]>()
+    capability.list.mockReturnValueOnce(stale.promise).mockResolvedValueOnce([row])
+    const first = refreshRows('ada/notes', store)
+    try {
+      if (reopen) {
+        stop()
+        store.set(activeRemoteAtom, 'ada/other')
+        store.set(activeRemoteAtom, 'ada/notes')
+        stop = followRows('ada/notes', store)
+      } else {
+        await refreshRows('ada/notes', store)
+      }
+      await waitFor(() => expect(store.get(rowsAtom)?.rows).toEqual([row]))
+      stale.reject(new Error('outdated failure'))
+      await first
+      expect(store.get(rowsErrorAtom)).toBeNull()
+      expect(errorLog).not.toHaveBeenCalled()
+    } finally {
+      stop()
+      errorLog.mockRestore()
+    }
+  },
+)
+
+test('a superseded success cannot clear the latest refresh failure, and vault teardown clears it', async () => {
+  const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  const store = createStore()
+  store.set(activeRemoteAtom, 'ada/notes')
+  capability.updates.mockResolvedValue({})
+  capability.list.mockResolvedValueOnce([])
+  const stop = followRows('ada/notes', store)
+  await waitFor(() => expect(store.get(rowsAtom)?.rows).toEqual([]))
+  const stale = deferred<PluginRow[]>()
+  capability.list
+    .mockReturnValueOnce(stale.promise)
+    .mockRejectedValueOnce(new Error('latest failure'))
+  const first = refreshRows('ada/notes', store)
+  try {
+    await refreshRows('ada/notes', store)
+    expect(store.get(rowsErrorAtom)).toBe('latest failure')
+    stale.resolve([row])
+    await first
+    expect(store.get(rowsErrorAtom)).toBe('latest failure')
+    expect(store.get(rowsAtom)?.rows).toEqual([])
+  } finally {
+    stop()
+    errorLog.mockRestore()
+  }
+  expect(store.get(rowsErrorAtom)).toBeNull()
 })
