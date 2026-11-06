@@ -514,6 +514,7 @@ export function MailComposer({
         <span className="w-12 shrink-0 text-xs text-muted-foreground">To</span>
         <ChipInput
           label="To"
+          disabled={loadingRef.current || sending || departingRef.current || discardingRef.current}
           value={to}
           onChange={(next) => {
             setTo(next)
@@ -533,6 +534,9 @@ export function MailComposer({
           <span className="w-12 shrink-0 text-xs text-muted-foreground">Cc</span>
           <ChipInput
             label="Cc"
+            disabled={
+              loadingRef.current || sending || departingRef.current || discardingRef.current
+            }
             value={cc}
             onChange={(next) => {
               setCc(next)
