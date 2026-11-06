@@ -2184,6 +2184,63 @@ test('the thread list comes back when Mail is chosen again', async () => {
  * A dialog, where a reply is inline: a fresh message has no context to
  * preserve.
  */
+test('confirmed discard closes a dirty new message without recreating it', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: 'New message' }))
+  await user.type(screen.getByRole('textbox', { name: 'Subject' }), ' throw away')
+
+  await user.click(screen.getByRole('button', { name: 'Discard' }))
+  await user.click(screen.getByRole('button', { name: 'Discard draft' }))
+
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
+  expect(discardDraftMock).toHaveBeenCalledWith({
+    draftId: 'd-1',
+    expectedAccountSub: 'mail-view-account',
+  })
+  // Any debounced save may already have created a server draft; discarding it
+  // must not trigger another create from the unmount lifecycle.
+  const callsAtCompletion = saveDraftMock.mock.calls.length
+  await new Promise((resolve) => setTimeout(resolve, 400))
+  expect(saveDraftMock).toHaveBeenCalledTimes(callsAtCompletion)
+  expect(screen.getByText('Pick a thread to read it')).toBeInTheDocument()
+})
+
+test('confirmed discard removes a saved draft and restores the previous reader', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  draftsMock.mockResolvedValue([draft()])
+  draftMock.mockResolvedValue({
+    draftId: 'd-1',
+    threadId: null,
+    to: [],
+    cc: [],
+    bcc: [],
+    subject: 'Half written',
+    markdown: 'body',
+    html: null,
+    foreign: false,
+  })
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+  await chooseMailbox(user, 'Drafts')
+  await user.click(await screen.findByText('Half written'))
+  await screen.findByRole('textbox', { name: 'Subject' })
+  await user.click(screen.getByRole('button', { name: 'Discard' }))
+  await user.click(screen.getByRole('button', { name: 'Discard draft' }))
+
+  await waitFor(() => expect(discardDraftMock).toHaveBeenCalledTimes(1))
+  expect(discardDraftMock).toHaveBeenCalledWith({
+    draftId: 'd-1',
+    expectedAccountSub: 'mail-view-account',
+  })
+  expect(await screen.findByRole('article')).toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull()
+  expect(saveDraftMock).not.toHaveBeenCalled()
+})
+
 test('new message opens in the reader pane without a compose dialog', async () => {
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary()]))

@@ -499,7 +499,34 @@ export function MailView() {
       })
   }
 
-  /** Both exits from the composer refresh the Drafts list. */
+  /** An acknowledged send/discard belongs only to the composition that started it. */
+  const finishComposer = (identity: object, sent = false): void => {
+    if (
+      composeGate.current()?.identity !== identity ||
+      remoteRef.current !== store.get(activeRemoteAtom)
+    )
+      return
+
+    composeRequest.current++
+    composeGate.invalidate()
+    composerRef.current = null
+    setComposing(null)
+    setContinuing(undefined)
+    setDraftsGeneration((generation) => generation + 1)
+
+    if (!sent || open === null || composing === null || composing.kind === 'new') return
+    const threadId = open.id
+    const originRemote = remoteRef.current
+    void call((r) => googleCap.thread(r, { id: threadId }))
+      .then((thread) => {
+        if (originRemote === store.get(activeRemoteAtom) && remoteRef.current === originRemote)
+          setOpen(thread)
+      })
+      .catch(() => undefined)
+    load()
+  }
+
+  /** Explicit close still passes through the save-before-leave gate. */
   const closeComposer = (): void => {
     transitionCompose(() => {
       composerRef.current = null
@@ -507,28 +534,6 @@ export function MailView() {
       setContinuing(undefined)
       setDraftsGeneration((generation) => generation + 1)
     })
-  }
-
-  /**
-   * After a send: close the composer, refetch the open thread and the list.
-   */
-  const onComposerSent = (): void => {
-    const intent = composing
-    composeRequest.current++
-    composeGate.invalidate()
-    composerRef.current = null
-    setComposing(null)
-    setContinuing(undefined)
-    setDraftsGeneration((generation) => generation + 1)
-    if (open === null || intent === null || intent.kind === 'new') return
-
-    void call((r) => googleCap.thread(r, { id: open.id }))
-      .then(setOpen)
-      .catch(() => {
-        // The send succeeded; only the refetch failed. Leave the thread as it
-        // was rather than invent a message we cannot confirm arrived.
-      })
-    load()
   }
 
   /**
@@ -815,6 +820,17 @@ export function MailView() {
    * fallback for a thread the current list does not contain.
    */
   const openRow = threads.find((thread) => thread.id === openId) ?? openSummary
+  const renderedComposeIdentity = composeGate.current()?.identity
+
+  const closeRenderedComposer = (): void => {
+    if (
+      renderedComposeIdentity === undefined ||
+      composeGate.current()?.identity !== renderedComposeIdentity ||
+      remoteRef.current !== store.get(activeRemoteAtom)
+    )
+      return
+    closeComposer()
+  }
 
   /**
    * ⌘F, scoped to this pane.
@@ -1017,9 +1033,14 @@ export function MailView() {
                 draftId={continuing}
                 sendAs={sendAs}
                 suggestions={contacts}
-                onSent={onComposerSent}
-                onDiscarded={closeComposer}
-                onClose={closeComposer}
+                onSent={() => {
+                  if (renderedComposeIdentity !== undefined)
+                    finishComposer(renderedComposeIdentity, true)
+                }}
+                onDiscarded={() => {
+                  if (renderedComposeIdentity !== undefined) finishComposer(renderedComposeIdentity)
+                }}
+                onClose={closeRenderedComposer}
                 bare
               />
             </div>
@@ -1198,9 +1219,15 @@ export function MailView() {
                     draftId={continuing}
                     sendAs={sendAs}
                     suggestions={contacts}
-                    onSent={onComposerSent}
-                    onDiscarded={closeComposer}
-                    onClose={closeComposer}
+                    onSent={() => {
+                      if (renderedComposeIdentity !== undefined)
+                        finishComposer(renderedComposeIdentity, true)
+                    }}
+                    onDiscarded={() => {
+                      if (renderedComposeIdentity !== undefined)
+                        finishComposer(renderedComposeIdentity)
+                    }}
+                    onClose={closeRenderedComposer}
                     bare
                   />
                 )}
