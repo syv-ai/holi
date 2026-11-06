@@ -13,12 +13,15 @@
  * `turndown` and opens for editing with a notice saying so.
  */
 import { useAtomValue } from 'jotai'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import type { Ref } from 'react'
+import { useGoogleAccount } from './account'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { Skeleton } from '@/components/ui/skeleton'
 import { ChipInput } from './chip-input'
 import { SandboxedHtml } from './sandboxed-html'
 import { activeRemoteAtom, cn, plainMarkdownExtensions } from '@/plugin-api'
@@ -47,7 +50,15 @@ const SAVE_LABEL: Record<SaveState, string> = {
   error: 'Not saved',
 }
 
+export interface MailComposerHandle {
+  /** Flushes the latest edit. False means the composer must remain mounted. */
+  prepareToLeave(): Promise<boolean>
+}
+
 export interface MailComposerProps {
+  ref?: Ref<MailComposerHandle>
+  /** Account identity supplied by the mounted Mail surface when available. */
+  accountSub?: string
   intent: ComposeIntent
   /** An existing Gmail draft to continue. Absent means this composer will
    *  create one on its first save. */
@@ -91,6 +102,8 @@ export function MailComposer({
   onClose,
   onReconnect,
   bare = false,
+  ref,
+  accountSub: accountSubProp,
 }: MailComposerProps): React.JSX.Element {
   /**
    * The vault whose account this message is written in, fixed at mount: a
@@ -98,6 +111,9 @@ export function MailComposer({
    * the time Send is pressed.
    */
   const [remote] = useState(useAtomValue(activeRemoteAtom))
+  const { currentSub } = useGoogleAccount()
+  const accountSubRef = useRef<string | null>(accountSubProp ?? currentSub)
+  if (accountSubRef.current === null && currentSub !== null) accountSubRef.current = currentSub
   const vault = useCallback((): string => {
     if (remote === null) throw new Error('No vault is open.')
     return remote
@@ -159,11 +175,19 @@ export function MailComposer({
   /** The current values, readable from inside an async save without capturing
    *  a stale closure. */
   const latest = useRef({ to, cc, subject, markdown })
-  latest.current = { to, cc, subject, markdown }
+  const editVersion = useRef(0)
+  const loadingRef = useRef(draftId !== undefined)
+  const [loadAttempt, setLoadAttempt] = useState(0)
 
   // ---- loading an existing draft -----------------------------------------
 
   const applyLoaded = (draft: LoadedDraft): void => {
+    latest.current = {
+      to: draft.to,
+      cc: draft.cc,
+      subject: draft.subject,
+      markdown: draft.markdown,
+    }
     setTo(draft.to)
     setCc(draft.cc)
     setShowCc(draft.cc.length > 0)
@@ -181,11 +205,12 @@ export function MailComposer({
   useEffect(() => {
     if (draftId === undefined) return
     let cancelled = false
-    if (remote === null) return
+    if (remote === null || accountSubRef.current === null) return
     void googleCap
-      .draftBody(remote, { id: draftId })
+      .draftBody(remote, { id: draftId, expectedAccountSub: accountSubRef.current ?? undefined })
       .then((draft) => {
-        if (cancelled) return
+        if (cancelled || editVersion.current !== 0 || !mountedRef.current) return
+        loadingRef.current = false
         // `markdown` is null exactly when `X-Holi-Source` was absent: the
         // renderer converts, since turndown needs a DOM. With no html either the
         // plain text IS the message; converting `''` would open blank and
@@ -204,12 +229,15 @@ export function MailComposer({
         })
       })
       .catch((error: unknown) => {
-        if (!cancelled) setFailure(describeSendFailure(error))
+        if (!cancelled) {
+          loadingRef.current = true
+          setFailure(describeSendFailure(error))
+        }
       })
     return () => {
       cancelled = true
     }
-  }, [draftId, remote])
+  }, [draftId, remote, currentSub, loadAttempt])
 
   // ---- the payload --------------------------------------------------------
 
@@ -240,8 +268,12 @@ export function MailComposer({
   const runSave = useCallback(async (): Promise<void> => {
     savingRef.current = true
     if (mountedRef.current) setSaveState('saving')
+    let saveError: unknown
     try {
+      if (accountSubRef.current === null)
+        throw new Error('No Google account is connected to this vault.')
       const result = await googleCap.saveDraft(vault(), {
+        expectedAccountSub: accountSubRef.current ?? undefined,
         ...(draftRef.current === null ? {} : { draftId: draftRef.current }),
         ...(threadId === undefined ? {} : { threadId }),
         ...(forwardOf === undefined ? {} : { forwardOf }),
@@ -258,18 +290,25 @@ export function MailComposer({
         setSaveState(queuedRef.current ? 'dirty' : 'saved')
         setFailure(null)
       }
-    } catch {
-      // The text is untouched. A refused save is retried on the next edit or on
-      // Send; it never discards what the user wrote.
+    } catch (error) {
       dirtyRef.current = true
-      if (mountedRef.current) setSaveState('error')
+      if (mountedRef.current) {
+        setSaveState('error')
+        setFailure({
+          message: error instanceof Error ? error.message : 'Draft could not be saved.',
+          action: 'retry',
+        })
+      }
+      saveError = error
     } finally {
       savingRef.current = false
     }
     if (queuedRef.current) {
       queuedRef.current = false
       await runSave()
+      saveError = undefined
     }
+    if (saveError !== undefined) throw saveError
   }, [payload, threadId, forwardOf, vault])
 
   /** The chain currently in flight, so a caller arriving mid-save can await the
@@ -296,14 +335,19 @@ export function MailComposer({
     }
   }, [runSave])
 
-  const markDirty = useCallback(() => {
+  const markDirty = useCallback((patch?: Partial<typeof latest.current>) => {
+    if (loadingRef.current || sendingRef.current || departingRef.current || discardingRef.current)
+      return
+    if (patch !== undefined) latest.current = { ...latest.current, ...patch }
+    editVersion.current += 1
     dirtyRef.current = true
+    if (savingRef.current) queuedRef.current = true
     setSaveState((state) => (state === 'saving' ? state : 'dirty'))
   }, [])
 
   useEffect(() => {
     if (!dirtyRef.current) return
-    const timer = setTimeout(() => void save(), AUTOSAVE_IDLE_MS)
+    const timer = setTimeout(() => void save().catch(() => {}), AUTOSAVE_IDLE_MS)
     return () => clearTimeout(timer)
   }, [to, cc, subject, markdown, save])
 
@@ -318,34 +362,50 @@ export function MailComposer({
   useEffect(() => {
     return () => {
       mountedRef.current = false
-      if (dirtyRef.current) void saveOnUnmount.current()
+      if (dirtyRef.current) void saveOnUnmount.current().catch(() => {})
     }
   }, [])
 
   // ---- sending ------------------------------------------------------------
 
-  const canSend = to.length > 0 && !sending
+  const sendingRef = useRef(false)
+  const departingRef = useRef(false)
+  const discardingRef = useRef(false)
+  const canSend = to.length > 0 && !sending && !loadingRef.current
 
   const send = useCallback(async (): Promise<void> => {
+    if (sendingRef.current || discardingRef.current || departingRef.current || loadingRef.current)
+      return
+    sendingRef.current = true
     setSending(true)
     setFailure(null)
     try {
       // Forced save first, so a draft that exists is the one being sent and a
       // failure leaves the newest text in Gmail rather than an older copy.
-      if (dirtyRef.current) await save()
+      if (dirtyRef.current) {
+        try {
+          await save()
+        } catch {
+          return
+        }
+      }
+      if (accountSubRef.current === null)
+        throw new Error('No Google account is connected to this vault.')
       const result = await googleCap.send(vault(), {
+        expectedAccountSub: accountSubRef.current ?? undefined,
         ...(draftRef.current === null ? {} : { draftId: draftRef.current }),
         ...(threadId === undefined ? {} : { threadId }),
         ...(forwardOf === undefined ? {} : { forwardOf }),
         mail: payload(),
       })
-      onSent(result)
+      if (mountedRef.current) onSent(result)
     } catch (error: unknown) {
       // Never auto-retried. The failure mode of a send is a duplicate arriving
       // at a real person, not a message lost.
-      setFailure(describeSendFailure(error))
+      if (mountedRef.current) setFailure(describeSendFailure(error))
     } finally {
-      setSending(false)
+      sendingRef.current = false
+      if (mountedRef.current) setSending(false)
     }
   }, [onSent, payload, save, threadId, forwardOf, vault])
 
@@ -361,32 +421,55 @@ export function MailComposer({
   // ---- discarding and closing --------------------------------------------
 
   const discard = async (): Promise<void> => {
+    if (discardingRef.current || sendingRef.current || departingRef.current) return
+    discardingRef.current = true
+    if (inFlightRef.current !== null) {
+      try {
+        await inFlightRef.current
+      } catch {
+        /* discard may still remove saved draft */
+      }
+    }
     if (draftRef.current !== null) {
       try {
         await googleCap.discardDraft(vault(), {
           draftId: draftRef.current,
+          expectedAccountSub:
+            accountSubRef.current ??
+            (() => {
+              throw new Error('No Google account is connected to this vault.')
+            })(),
           ...(threadId === undefined ? {} : { threadId }),
         })
       } catch (error: unknown) {
         // Stay open with the failure and the text intact: closing would hide
         // that the draft still sits in Gmail.
-        setFailure(describeSendFailure(error))
+        if (mountedRef.current) setFailure(describeSendFailure(error))
+        discardingRef.current = false
         return
       }
     }
     // The unmount save would be a `create`, putting the discarded message
     // straight back into Drafts.
     dirtyRef.current = false
-    onDiscarded()
+    if (mountedRef.current) onDiscarded()
   }
 
-  const attemptClose = (): void => {
-    // Pristine closes like any dialog. Dirty asks first: the exits are Send and
-    // an explicit Discard.
-    if (dirtyRef.current) {
-      setConfirmingDiscard(true)
-      return
+  const prepareToLeave = useCallback(async (): Promise<boolean> => {
+    if (!dirtyRef.current) return true
+    departingRef.current = true
+    try {
+      await save()
+      return true
+    } catch {
+      departingRef.current = false
+      return false
     }
+  }, [save])
+  useImperativeHandle(ref, () => ({ prepareToLeave }), [prepareToLeave])
+
+  const attemptClose = async (): Promise<void> => {
+    if (!(await prepareToLeave()) || !mountedRef.current) return
     onClose()
   }
 
@@ -409,6 +492,14 @@ export function MailComposer({
           </Button>
         </div>
       )}
+      {loadingRef.current && draftId !== undefined && (
+        <div aria-label="Loading draft" className="flex flex-col gap-2">
+          <Skeleton className="h-8 w-full" />
+          <Skeleton className="h-8 w-3/4" />
+          <Skeleton className="h-40 w-full" />
+        </div>
+      )}
+
       {foreign && (
         <p
           className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground"
@@ -423,10 +514,11 @@ export function MailComposer({
         <span className="w-12 shrink-0 text-xs text-muted-foreground">To</span>
         <ChipInput
           label="To"
+          disabled={loadingRef.current || sending || departingRef.current || discardingRef.current}
           value={to}
           onChange={(next) => {
             setTo(next)
-            markDirty()
+            markDirty({ to: next })
           }}
           suggestions={suggestions}
         />
@@ -442,10 +534,13 @@ export function MailComposer({
           <span className="w-12 shrink-0 text-xs text-muted-foreground">Cc</span>
           <ChipInput
             label="Cc"
+            disabled={
+              loadingRef.current || sending || departingRef.current || discardingRef.current
+            }
             value={cc}
             onChange={(next) => {
               setCc(next)
-              markDirty()
+              markDirty({ cc: next })
             }}
             suggestions={suggestions}
           />
@@ -456,12 +551,13 @@ export function MailComposer({
         <span className="w-12 shrink-0 text-xs text-muted-foreground">Subject</span>
         <Input
           aria-label="Subject"
+          disabled={loadingRef.current || sending || departingRef.current || discardingRef.current}
           value={subject}
           onChange={(event) => {
             setSubject(event.target.value)
-            markDirty()
+            markDirty({ subject: event.target.value })
           }}
-          onBlur={() => void save()}
+          onBlur={() => void save().catch(() => {})}
         />
       </div>
 
@@ -483,7 +579,7 @@ export function MailComposer({
         onValueChange={(which) => {
           if (which !== 'edit' && which !== 'preview') return
           // Switching to preview is a natural save point.
-          if (which === 'preview' && tab !== 'preview') void save()
+          if (which === 'preview' && tab !== 'preview') void save().catch(() => {})
           setTab(which)
         }}
       >
@@ -497,12 +593,13 @@ export function MailComposer({
       {tab === 'edit' ? (
         <MarkdownEditor
           key={loads}
+          disabled={loadingRef.current || sending || departingRef.current || discardingRef.current}
           value={markdown}
           onChange={(next) => {
             setMarkdown(next)
-            markDirty()
+            markDirty({ markdown: next })
           }}
-          onBlur={() => void save()}
+          onBlur={() => void save().catch(() => {})}
         />
       ) : (
         <SandboxedHtml html={html} label="Preview of your message" />
@@ -517,7 +614,18 @@ export function MailComposer({
             </Button>
           )}
           {failure.action === 'retry' && (
-            <Button size="sm" variant="outline" onClick={() => void send()}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                if (loadingRef.current && draftId !== undefined) {
+                  setFailure(null)
+                  loadingRef.current = true
+                  setLoadAttempt((n) => n + 1)
+                } else if (dirtyRef.current) void save().catch(() => {})
+                else void send()
+              }}
+            >
               Retry
             </Button>
           )}
@@ -549,7 +657,7 @@ export function MailComposer({
             variant="ghost"
             onClick={() => {
               setConfirmingDiscard(false)
-              void save()
+              void save().catch(() => {})
             }}
           >
             Keep
@@ -565,8 +673,9 @@ export function MailComposer({
           size="sm"
           variant="ghost"
           onClick={() => {
-            if (draftRef.current === null && !dirtyRef.current) onDiscarded()
-            else setConfirmingDiscard(true)
+            if (draftRef.current === null && !dirtyRef.current) {
+              if (mountedRef.current) onDiscarded()
+            } else setConfirmingDiscard(true)
           }}
         >
           Discard
@@ -589,7 +698,9 @@ function MarkdownEditor({
   value,
   onChange,
   onBlur,
+  disabled,
 }: {
+  disabled: boolean
   value: string
   onChange: (next: string) => void
   onBlur: () => void
@@ -610,6 +721,8 @@ function MarkdownEditor({
         doc: initial.current,
         extensions: [
           ...plainMarkdownExtensions(),
+          EditorState.readOnly.of(disabled),
+          EditorView.editable.of(!disabled),
           // The field's accessible name: CodeMirror's content element is a
           // bare `contenteditable` otherwise.
           EditorView.contentAttributes.of({ 'aria-label': 'Message', 'aria-multiline': 'true' }),
@@ -622,7 +735,7 @@ function MarkdownEditor({
       parent,
     })
     return () => view.destroy()
-  }, [])
+  }, [disabled])
 
   return <div ref={host} className="min-h-40 flex-1 overflow-auto" data-testid="mail-body" />
 }

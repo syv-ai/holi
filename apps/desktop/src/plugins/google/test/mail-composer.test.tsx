@@ -12,8 +12,9 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getDefaultStore } from 'jotai'
-import { MailComposer } from '../renderer/mail-composer'
+import { Provider, createStore } from 'jotai'
+import { createRef } from 'react'
+import { MailComposer, type MailComposerHandle } from '../renderer/mail-composer'
 import { activeRemoteAtom } from '@/plugin-api'
 import type { ComposeIntent } from '../renderer/compose-intent'
 import type { ThreadMessage } from '../renderer/mail-types'
@@ -25,6 +26,11 @@ const draftQuery = vi.fn()
 
 /** Google's capabilities, by name, through the UI door. */
 const google: Record<string, (params: unknown) => unknown> = {
+  'google.status': () => ({ account: { email: 'ada@syv.ai' }, missingScopes: [] }),
+  'google.accounts': () => ({
+    accounts: [{ sub: 'sub-1', email: 'ada@syv.ai' }],
+    current: 'sub-1',
+  }),
   'google.saveDraft': (p) => saveDraft(p),
   'google.send': (p) => send(p),
   'google.discardDraft': (p) => discardDraft(p),
@@ -74,15 +80,20 @@ function mount(props: Partial<React.ComponentProps<typeof MailComposer>> = {}) {
   const onSent = vi.fn()
   const onDiscarded = vi.fn()
   const onClose = vi.fn()
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv-ai/vault')
   const { unmount } = render(
-    <MailComposer
-      intent={REPLY}
-      sendAs={['ada@syv.ai']}
-      onSent={onSent}
-      onDiscarded={onDiscarded}
-      onClose={onClose}
-      {...props}
-    />,
+    <Provider store={store}>
+      <MailComposer
+        intent={REPLY}
+        sendAs={['ada@syv.ai']}
+        accountSub="sub-1"
+        onSent={onSent}
+        onDiscarded={onDiscarded}
+        onClose={onClose}
+        {...props}
+      />
+    </Provider>,
   )
   return { onSent, onDiscarded, onClose, unmount }
 }
@@ -92,8 +103,6 @@ const saveState = (): string => screen.getByTestId('save-state').textContent ?? 
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // The composer writes in the vault open when it mounts.
-  getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
   saveDraft.mockResolvedValue({ id: 'd-1' })
   send.mockResolvedValue({ id: 'm-9' })
   discardDraft.mockResolvedValue(undefined)
@@ -135,6 +144,37 @@ describe('the pristine guard', () => {
     await user.keyboard('{Escape}')
 
     expect(onClose).toHaveBeenCalled()
+  })
+})
+
+describe('leaving the composer', () => {
+  it('pristine leave creates no draft; dirty leave waits for the latest content', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    mount({ ref: handle })
+    expect(await handle.current!.prepareToLeave()).toBe(true)
+    expect(saveDraft).not.toHaveBeenCalled()
+
+    await user.type(subjectField(), ' latest')
+    expect(await handle.current!.prepareToLeave()).toBe(true)
+    expect(saveDraft).toHaveBeenCalledTimes(1)
+    expect(saveDraft.mock.calls[0]![0]).toMatchObject({
+      expectedAccountSub: 'sub-1',
+      mail: { subject: 'Re: Q2 budget latest' },
+    })
+  })
+
+  it('keeps the composer when the leave save fails', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    saveDraft.mockRejectedValue(new Error('offline'))
+    mount({ ref: handle })
+    await user.type(subjectField(), ' latest')
+
+    expect(await handle.current!.prepareToLeave()).toBe(false)
+    expect(subjectField()).toHaveValue('Re: Q2 budget latest')
+    await waitFor(() => expect(saveState()).toBe('Not saved'))
+    expect(send).not.toHaveBeenCalled()
   })
 })
 
@@ -535,7 +575,11 @@ describe('discarding', () => {
 
     await user.click(screen.getByRole('button', { name: 'Discard draft' }))
     await waitFor(() => expect(onDiscarded).toHaveBeenCalled())
-    expect(discardDraft).toHaveBeenCalledWith({ draftId: 'd-1', threadId: 't1' })
+    expect(discardDraft).toHaveBeenCalledWith({
+      draftId: 'd-1',
+      threadId: 't1',
+      expectedAccountSub: 'sub-1',
+    })
   })
 
   /**
@@ -599,8 +643,7 @@ describe('discarding', () => {
 
     await user.keyboard('{Escape}')
 
-    expect(onClose).not.toHaveBeenCalled()
-    expect(screen.getByText('Discard this draft?')).toBeInTheDocument()
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
   })
 })
 
