@@ -233,6 +233,7 @@ export function MailView() {
    * first intent's draft state.
    */
   const [composeKey, setComposeKey] = useState(0)
+  const composeRequest = useRef(0)
   /** Every address the account may send from, so reply-all excludes all of
    *  them. `[]` until it resolves; the cost of being early is copying the user
    *  on their own reply, which they can see and remove. */
@@ -242,6 +243,8 @@ export function MailView() {
   /** The Gmail draft the composer is continuing, if any. */
   const [continuing, setContinuing] = useState<string | undefined>(undefined)
   const remote = useAtomValue(activeRemoteAtom)
+  const remoteRef = useRef(remote)
+  remoteRef.current = remote
   /** Offered only in a vault that runs tasks. */
   const canLinkToTask = useHasCapability(TASKS_CREATE) && remote !== null
   /** One of Google's calls, for the open vault; refused with none open. */
@@ -279,6 +282,22 @@ export function MailView() {
     const res = await agent.ask({ text, target })
     if (!res.ok && target !== 'new') await agent.ask({ text, target: 'new' })
   }
+
+  useEffect(() => {
+    composeGate.invalidate()
+    setComposing(null)
+    composerRef.current = null
+    setContinuing(undefined)
+    composeRequest.current++
+  }, [remote, composeGate])
+
+  useEffect(
+    () => () => {
+      composeRequest.current++
+      composeGate.invalidate()
+    },
+    [composeGate],
+  )
 
   const showDrafts = view.kind === 'drafts'
   const searching = submitted !== ''
@@ -384,12 +403,21 @@ export function MailView() {
     return inbound ?? thread.messages[thread.messages.length - 1]!
   }
 
+  const transitionCompose = (action: () => void): void => {
+    const request = ++composeRequest.current
+    const originRemote = remoteRef.current
+    void composeGate.leave(
+      action,
+      () => request === composeRequest.current && originRemote === remoteRef.current,
+    )
+  }
+
   const startCompose = (all: boolean): void => {
     if (open === null) return
     const parent = replyTarget(open)
     if (parent === null) return
     const intent = { kind: 'reply' as const, threadId: open.id, subject: open.subject, parent, all }
-    void composeGate.leave(() => {
+    transitionCompose(() => {
       composerRef.current = null
       composeGate.begin()
       setComposeKey((key) => key + 1)
@@ -406,13 +434,12 @@ export function MailView() {
    * intent that also computed them would flicker when overwritten.
    */
   const continueDraft = (draft: DraftSummary): void => {
-    void composeGate.leave(() => {
+    transitionCompose(() => {
       composerRef.current = null
       composeGate.begin()
       setComposeKey((key) => key + 1)
       setContinuing(draft.draftId)
       setComposing({ kind: 'new' })
-      setOpenId(null)
     })
   }
 
@@ -421,7 +448,7 @@ export function MailView() {
     const parent = replyTarget(open)
     if (parent === null) return
     const intent = { kind: 'forward' as const, threadId: open.id, subject: open.subject, parent }
-    void composeGate.leave(() => {
+    transitionCompose(() => {
       composerRef.current = null
       composeGate.begin()
       setComposeKey((key) => key + 1)
@@ -438,9 +465,18 @@ export function MailView() {
    */
   const openThreadDraft = (): void => {
     if (open === null) return
+    const request = ++composeRequest.current
+    const threadId = open.id
+    const originRemote = remoteRef.current
     void call((r) => googleCap.drafts(r))
       .then((drafts) => {
-        const mine = drafts.filter((draft) => draft.threadId === open.id)
+        if (
+          request !== composeRequest.current ||
+          originRemote !== remoteRef.current ||
+          openId !== threadId
+        )
+          return
+        const mine = drafts.filter((draft) => draft.threadId === threadId)
         // Newest by date: `listDrafts` makes no ordering promise.
         const newest = mine.sort((a, b) => a.date.localeCompare(b.date)).pop()
         if (newest !== undefined) continueDraft(newest)
@@ -450,7 +486,7 @@ export function MailView() {
 
   /** Both exits from the composer refresh the Drafts list. */
   const closeComposer = (): void => {
-    void composeGate.leave(() => {
+    transitionCompose(() => {
       composerRef.current = null
       setComposing(null)
       setContinuing(undefined)
@@ -463,7 +499,12 @@ export function MailView() {
    */
   const onComposerSent = (): void => {
     const intent = composing
-    closeComposer()
+    composeRequest.current++
+    composeGate.invalidate()
+    composerRef.current = null
+    setComposing(null)
+    setContinuing(undefined)
+    setDraftsGeneration((generation) => generation + 1)
     if (open === null || intent === null || intent.kind === 'new') return
 
     void call((r) => googleCap.thread(r, { id: open.id }))
@@ -514,27 +555,30 @@ export function MailView() {
    * the unsubscribe link come from the list response and are not refetched.
    */
   const openThread = (thread: ThreadSummary) => {
-    // A find bar left open would count matches in the previous thread.
-    setFindOpen(false)
-    setOpenId(thread.id)
-    setOpenSummary(thread)
-    setOpen(null)
-    setMeeting(null)
-    void call((r) => googleCap.thread(r, { id: thread.id }))
-      .then(setOpen)
-      .catch(() => setOpenId(null))
-    // Only for a thread the list already says holds an `.ics`, to avoid two
-    // requests per open. A failure is swallowed deliberately: the badge still
-    // says this is a meeting, and a convenience lookup does not merit a banner.
-    if (thread.hasInvite) {
-      void call((r) => googleCap.meeting(r, { id: thread.id }))
-        .then((found) => {
-          if (found !== null) setMeeting({ ...found, threadId: thread.id })
-        })
-        .catch(() => undefined)
-    }
-    // Only when there is something to change: the API is rate limited.
-    if (thread.unread) void setRead(thread.id, true)
+    transitionCompose(() => {
+      composerRef.current = null
+      // A find bar left open would count matches in the previous thread.
+      setFindOpen(false)
+      setOpenId(thread.id)
+      setOpenSummary(thread)
+      setOpen(null)
+      setMeeting(null)
+      void call((r) => googleCap.thread(r, { id: thread.id }))
+        .then(setOpen)
+        .catch(() => setOpenId(null))
+      // Only for a thread the list already says holds an `.ics`, to avoid two
+      // requests per open. A failure is swallowed deliberately: the badge still
+      // says this is a meeting, and a convenience lookup does not merit a banner.
+      if (thread.hasInvite) {
+        void call((r) => googleCap.meeting(r, { id: thread.id }))
+          .then((found) => {
+            if (found !== null) setMeeting({ ...found, threadId: thread.id })
+          })
+          .catch(() => undefined)
+      }
+      // Only when there is something to change: the API is rate limited.
+      if (thread.unread) void setRead(thread.id, true)
+    })
   }
 
   /**
@@ -802,27 +846,26 @@ export function MailView() {
             <MailToolbar
               query={query}
               onQueryChange={setQuery}
-              onSubmit={setSubmitted}
+              onSubmit={(next) => transitionCompose(() => setSubmitted(next))}
               searchOpen={searchOpen}
               onSearchOpenChange={setSearchOpen}
               people={threads}
               contacts={contacts}
               view={view}
-              onViewChange={setView}
+              onViewChange={(next) => transitionCompose(() => setView(next))}
               searching={searching}
               unreadOnly={unreadOnly}
-              onUnreadChange={setUnreadOnly}
+              onUnreadChange={(next) => transitionCompose(() => setUnreadOnly(next))}
               unreadCount={viewUnread(view, counts?.unread ?? null, categoryCounts)}
               inboxUnread={counts?.unread ?? null}
               categoryCounts={categoryCounts}
               onCategoryMenuOpen={loadCategoryCounts}
               onCompose={() => {
-                void composeGate.leave(() => {
+                transitionCompose(() => {
                   composerRef.current = null
                   composeGate.begin()
                   setComposeKey((key) => key + 1)
                   setContinuing(undefined)
-                  setOpenId(null)
                   setComposing({ kind: 'new' })
                 })
               }}
@@ -938,7 +981,7 @@ export function MailView() {
         <div className="flex h-full min-h-0 min-w-0 flex-col" data-mail-pane="reader">
           {/* A draft opened from the Drafts list has no thread behind it, so
               it goes in the reader pane. */}
-          {composing !== null && openId === null ? (
+          {composing?.kind === 'new' ? (
             <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4">
               <MailComposer
                 ref={(handle) => {
@@ -1135,7 +1178,7 @@ export function MailView() {
                     onSent={onComposerSent}
                     onDiscarded={closeComposer}
                     onClose={closeComposer}
-                    bare={composing.kind === 'new'}
+                    bare
                   />
                 )}
               </div>
