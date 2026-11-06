@@ -1,5 +1,8 @@
 .DS_Store
 node_modules/
+.build/
+.swiftpm/
+DerivedData/
 dist/
 out/
 release/
