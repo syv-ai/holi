@@ -70,22 +70,22 @@ describe('readMaxCommittedFileBytes', () => {
 describe('readVaultSettings', () => {
   it('resolves to the defaults in a vault with no settings files', async () => {
     const s = await readVaultSettings(await vault())
-    expect(s.home).toBe(VAULT_SETTING_DEFAULTS.home)
+    expect(s.editorFont).toBe(VAULT_SETTING_DEFAULTS.editorFont)
     expect(s.dailyNotes).toBe(true)
     expect(s.hooks).toEqual(DEFAULT_HOOKS)
     expect(s.warnings).toEqual([])
   })
 
   it('reads the committed file', async () => {
-    const s = await readVaultSettings(await vault('{"home":"board"}'))
-    expect(s.home).toBe('board')
+    const s = await readVaultSettings(await vault('{"editorFont":"serif"}'))
+    expect(s.editorFont).toBe('serif')
   })
 
   it('lets the local file override the committed one, per key', async () => {
     const s = await readVaultSettings(
-      await vault('{"home":"board","dailyNotes":false}', '{"home":"agenda"}'),
+      await vault('{"editorFont":"serif","dailyNotes":false}', '{"editorFont":"mono"}'),
     )
-    expect(s.home).toBe('agenda')
+    expect(s.editorFont).toBe('mono')
     // Untouched by a local file that says nothing about it.
     expect(s.dailyNotes).toBe(false)
   })
@@ -141,11 +141,28 @@ describe('writeVaultSettings', () => {
     expect(await settingsAt(root, SETTINGS_FILE)).toEqual({ dailyNotes: false })
   })
 
+  it('preserves an existing home selection when another setting changes', async () => {
+    const root = await vault('home: board\neditorFont: serif\n')
+
+    const before = await readVaultSettings(root)
+    expect(before.editorFont).toBe('serif')
+
+    await writeVaultSettings(root, { committed: { dailyNotes: false } })
+
+    const after = await readVaultSettings(root)
+    expect(after.dailyNotes).toBe(false)
+    expect(await settingsAt(root, SETTINGS_FILE)).toMatchObject({
+      home: 'board',
+      editorFont: 'serif',
+      dailyNotes: false,
+    })
+  })
+
   it('merges over what is already there, key by key', async () => {
-    const root = await vault('{"home":"board","maxCommittedFileBytes":2048}')
+    const root = await vault('{"editorFont":"serif","maxCommittedFileBytes":2048}')
     await writeVaultSettings(root, { committed: { dailyNotes: false } })
     expect(await settingsAt(root, SETTINGS_FILE)).toEqual({
-      home: 'board',
+      editorFont: 'serif',
       maxCommittedFileBytes: 2048,
       dailyNotes: false,
     })
@@ -182,10 +199,10 @@ describe('writeVaultSettings', () => {
   it('writes both files in one call', async () => {
     const root = await vault()
     await writeVaultSettings(root, {
-      committed: { home: 'board' },
+      committed: { editorFont: 'serif' },
       local: { colorScheme: 'dark' },
     })
-    expect(await settingsAt(root, SETTINGS_FILE)).toEqual({ home: 'board' })
+    expect(await settingsAt(root, SETTINGS_FILE)).toEqual({ editorFont: 'serif' })
     expect(await settingsAt(root, SETTINGS_LOCAL_FILE)).toEqual({ colorScheme: 'dark' })
   })
 
@@ -213,11 +230,11 @@ describe('writeVaultSettings', () => {
   it('round-trips through the reader', async () => {
     const root = await vault()
     await writeVaultSettings(root, {
-      committed: { home: 'agenda', dailyNotes: false },
+      committed: { editorFont: 'mono', dailyNotes: false },
       local: { colorScheme: 'dark' },
     })
     const s = await readVaultSettings(root)
-    expect(s.home).toBe('agenda')
+    expect(s.editorFont).toBe('mono')
     expect(s.dailyNotes).toBe(false)
     expect(s.colorScheme).toBe('dark')
     expect(s.warnings).toEqual([])

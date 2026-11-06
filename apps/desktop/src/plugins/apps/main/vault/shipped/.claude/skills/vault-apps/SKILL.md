@@ -80,7 +80,7 @@ await holi.tasks.update(path, { due: '2026-08-24', priority: null }) // set fiel
 const created = await holi.tasks.create({ title: 'Call the vendor', folder: 'ops' }) // { path }
 await holi.docs.write(path, newText, text) // over the text you read; see Changing the vault
 await holi.open('projects/q2.md') // opens that note in a Holi tab
-await holi.open('board') // or a view: home, board, agenda, mail, settings, history
+await holi.open('board') // or a view, such as board, agenda, mail or settings
 const recents = await holi.recents() // [{ kind: 'path'|'surface'|'session', key, id? }], newest first; an app is { kind: 'surface', key: 'app', id: bundle }
 const hits = await holi.search('budget') // [{ path, match: 'name'|'body', snippet? }]
 const settings = await holi.settings() // the vault's resolved settings
@@ -657,29 +657,6 @@ pane.
   </body>
 </html>
 ```
-
-## The Home tab
-
-Home is what `home:` in `.holi/settings/app.yaml` says, and it is also what the
-vault opens on. By default it is `recents`, Holi's own list of what was opened
-recently. It can instead be `daily` (today's note), `board`, `agenda`, `mail`,
-or any app or file in the vault by its path.
-
-When the user asks to change or customize their home page, and Home names an
-app, edit that app. When Home is `recents` or another of Holi's views, build an
-app for it (`Home.app` is the usual name) and point `home:` at its path; start
-from what Home showed until now unless they ask for something else. If they
-want Home to be something else entirely (their board, a note), change `home:`
-instead.
-
-- A home for everyone in the vault is the shared setting. A home for one person
-  is `home:` in `.holi/settings/app.local.yaml`, which never syncs, pointing at
-  a personal app (`Home.local.app`) or anything else.
-- If Home names an app the vault does not have yet, write the folder yourself
-  (`holi apps init <path>` scaffolds it).
-- To see a change, ask the user to open Home again (or reload it from its tab).
-  `holi apps open <path>` works too, but opens it in a tab of its own beside
-  Home rather than reloading the Home tab.
 
 ## Before you say it is done
 

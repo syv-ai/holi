@@ -23,6 +23,7 @@ import { randomUUID } from 'node:crypto'
 import type { TerminalCommand } from '../provider'
 import { AgentRuntime, type PidState, type SpawnPty } from './pty'
 import { TerminalMirror } from './terminal-mirror'
+import { TerminalAppearanceProtocol } from './terminal-appearance'
 
 /** Text pasted into a terminal, unsent: the framing is the terminal's own, and
  *  there is no `\r`, so nothing Holi writes can submit a draft. */
@@ -92,6 +93,8 @@ export interface AgentTerminals {
   resize(id: string, cols: number, rows: number): void
   /** Put text in the terminal's input, unsent. False for a terminal that is gone. */
   paste(id: string, text: string): boolean
+  /** Set the appearance the child sees through OSC colour queries. */
+  setAppearance(id: string, appearance: unknown): void
   /** Detach: end the client. The session it shows keeps running. */
   close(id: string): Promise<void>
   closeAll(): Promise<void>
@@ -109,6 +112,7 @@ interface Terminal {
   title: string
   runtime: AgentRuntime
   mirror: TerminalMirror
+  appearance: TerminalAppearanceProtocol
   onInput: ((data: string) => void) | undefined
   onExit: ((title?: string) => void) | undefined
   /** False until a renderer has taken its state: output goes to the record only. */
@@ -188,6 +192,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
         title: '',
         runtime,
         mirror,
+        appearance: new TerminalAppearanceProtocol(),
         onInput,
         onExit,
         attached: false,
@@ -203,6 +208,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
         pushList(remote)
       })
       runtime.onData((data) => {
+        for (const reply of t.appearance.feed(data)) runtime.write(reply)
         mirror.write(data)
         onOutput?.(data)
         if (t.attached) deps.emit(remote, 'pty-data', { id, data })
@@ -276,6 +282,12 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
       if (t.ready) t.runtime.write(bracketedPaste(text))
       else t.pending.push(text)
       return true
+    },
+
+    setAppearance(id, appearance) {
+      const t = terminals.get(id)
+      if (t === undefined || t.exited) return
+      if (t.appearance.update(appearance)) t.runtime.write(t.appearance.notification())
     },
 
     async close(id) {

@@ -37,10 +37,12 @@
         "test/**/*.ts",
         "scripts/**",
         // Left out of the project, so production mode does not report them as
-        // unreached: test helpers, which only tests import, and the seeded theme,
-        // which is read through `import.meta.glob` with `?raw` and imported by
-        // `index.css`, neither an import knip follows in production mode.
+        // unreached: test helpers, which only tests import (the renderer's and
+        // each plugin's own), and the seeded theme, which is read through
+        // `import.meta.glob` with `?raw` and imported by `index.css`, neither an
+        // import knip follows in production mode.
         "!src/renderer/src/test/**",
+        "!src/plugins/*/test/**",
         "!src/main/vault/seed/vault/once/.holi/settings/theme.css",
       ],
       // The gate self-test lints these on purpose; they are inputs, not code.

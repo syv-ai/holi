@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path'
 import {
   app,
   BrowserWindow,
+  desktopCapturer,
   dialog,
   ipcMain,
   nativeImage,
@@ -110,6 +111,14 @@ protocol.registerSchemesAsPrivileged(
   SCHEMES.map(({ scheme }) => ({ scheme: scheme.scheme, privileges: scheme.privileges })),
 )
 const FRAME_SCHEMES = frameSchemes(SCHEMES)
+
+// A screen share's system audio on macOS (`getDisplayMedia` with
+// `audio: 'loopback'` below): Chromium's Core Audio tap, behind a feature flag.
+// Switches are read at startup, so this is set at module top level too. Only
+// macOS reads the flag; Windows has loopback audio without one.
+if (process.platform === 'darwin') {
+  app.commandLine.appendSwitch('enable-features', 'MacCatapLoopbackAudioForScreenShare')
+}
 
 /** A path main asks the renderer to show in a tab (`vault:open`). */
 interface OpenRequest {
@@ -507,6 +516,28 @@ async function main(): Promise<void> {
   electronSession.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => {
     callback(permission !== 'geolocation')
   })
+  /**
+   * `getDisplayMedia`, which Electron refuses unless a handler answers it. The
+   * asker is Holi's own document: the Meetings tab recording the meeting's
+   * sound (`plugins/transcribe/renderer/audio/capture.ts`). A frame's request
+   * (a vault app's, whose origin is opaque) is refused, so only a top-level
+   * document is answered. It shares the main screen, with the system's sound
+   * when audio was asked for.
+   */
+  electronSession.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    // No streams is how Electron is told no: `{}` throws when video was asked
+    // for. The typings do not say so.
+    const refuse = (): void => (callback as unknown as (streams: null) => void)(null)
+    if (request.frame === null || request.frame.parent !== null) return refuse()
+    desktopCapturer
+      .getSources({ types: ['screen'] })
+      .then(([screen]) => {
+        if (screen === undefined) return refuse()
+        callback({ video: screen, ...(request.audioRequested ? { audio: 'loopback' } : {}) })
+      })
+      // On macOS: Holi has not been allowed Screen & System Audio Recording.
+      .catch(refuse)
+  })
   // Settings' member list reads the same cache as an app and the agent.
   const members = createMembersCache((remote) => session.api.collaborators(remote))
   /**
@@ -752,7 +783,9 @@ async function main(): Promise<void> {
       members,
       reports: uiReports,
     }),
-    pluginEnabled: async (plugin, root) => (await plugins.enabled(root)).has(plugin),
+    // A plugin being turned off keeps its capabilities until its disposer is
+    // done, so what it finishes on the way out still reaches it.
+    pluginEnabled: async (plugin, root) => (await plugins.serving(root)).has(plugin),
     claims: (root) => plugins.scanClaimsFor(root),
   })
   const dispatch = capabilityHost.dispatch

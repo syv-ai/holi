@@ -15,8 +15,29 @@
  * Every function returns the same workspace when it changes nothing, so a
  * caller (a drop target asking whether to take a drop) can tell a no-op.
  */
-import type { FolderSurface } from './panes'
 import { parseTabKey, tabForPath, tabKey } from './tab-descriptor'
+
+/**
+ * A directory that is one document, as the tabs need it: the surface its
+ * tabs are, by path, and the entry file whose move or delete says where the
+ * directory went (`PathClaim.folder`).
+ */
+export interface FolderSurface {
+  surface: string
+  entry: string
+  match(path: string): boolean
+}
+
+/**
+ * A directory that is one document, as the tabs need it: the surface its
+ * tabs are, by path, and the entry file whose move or delete says where the
+ * directory went (`PathClaim.folder`).
+ */
+export interface FolderSurface {
+  surface: string
+  entry: string
+  match(path: string): boolean
+}
 
 /** Up to four views in a split: a session beside a document beside the
  *  board beside an app, each still wide enough to use on a laptop. */
@@ -731,8 +752,7 @@ export function setShares(ws: ShellWorkspace, splitId: string, shares: number[])
  *  split, in front, and in Reopen. So does a folder document's (a vault app,
  *  a plugin's deck): the moves name files, so it follows its entry file, and
  *  only to a directory its claim still matches. A file dragged out of an
- *  expanded folder document is not the document moving (`panes.ts`, the same
- *  rule). */
+ *  expanded folder document is not the document moving. */
 export function retargetTabs(
   ws: ShellWorkspace,
   moves: readonly { from: string; to: string }[],

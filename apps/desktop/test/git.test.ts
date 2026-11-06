@@ -665,6 +665,23 @@ describe('classifyPushFailure', () => {
   })
 })
 
+describe('commit lookup', () => {
+  it('resolves full and unambiguous abbreviated commit ids, but not other objects', async () => {
+    const dir = await makeClone(await makeRemote())
+    await commitFile(dir, 'a.md', 'first\n')
+    const target = (await plainGit(dir, ['rev-parse', 'HEAD'])).trim()
+    const repo = openRepo(dir)
+
+    expect((await repo.commit(target))?.sha).toBe(target)
+    expect((await repo.commit(target.slice(0, 12)))?.sha).toBe(target)
+    expect(await repo.commit('f'.repeat(12))).toBeNull()
+    await expect(repo.commit('--help')).rejects.toThrow(/Invalid commit SHA/)
+
+    const blob = (await plainGit(dir, ['rev-parse', 'HEAD:a.md'])).trim()
+    expect(await repo.commit(blob)).toBeNull()
+  })
+})
+
 describe('commitFiles', () => {
   it("lists each commit's paths, newest first, a quote or a space kept as is", async () => {
     const dir = await makeClone(await makeRemote())
@@ -1032,11 +1049,52 @@ describe('changedFiles', () => {
     expect((await repo.changedFiles(sha)).sort()).toEqual(['a.md', 'b.md'])
   })
 
+  it('returns exact names for quoted paths and folder filtering', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    const paths = ['Demo.app/æ.js', 'Demo.app/ leading and trailing ', 'Demo.app/tab\tname.js']
+    for (const path of paths) {
+      await mkdir(join(dir, path, '..'), { recursive: true })
+      await writeFile(join(dir, path), 'content\n', 'utf8')
+    }
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'unicode app paths'])
+    const [{ sha }] = await repo.log({ limit: 1 })
+    const changed = await repo.changedFiles(sha)
+    expect(changed.filter((path) => path.startsWith('Demo.app/')).sort()).toEqual(paths.sort())
+  })
+
   it('lists the files of the very first (root) commit', async () => {
     const dir = await makeClone(await makeRemote())
     const repo = openRepo(dir)
     const commits = await repo.log({})
     const root = commits[commits.length - 1]!
     expect((await repo.changedFiles(root.sha)).length).toBeGreaterThan(0)
+  })
+
+  it('looks up exact commit metadata outside the recent history window', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    await mkdir(join(dir, 'Demo.app'), { recursive: true })
+    await writeFile(join(dir, 'Demo.app', 'index.html'), 'app\n', 'utf8')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'create demo app'])
+    const [target] = await repo.log({ path: 'Demo.app', folder: true, limit: 1 })
+    for (let i = 0; i < 201; i++) {
+      await writeFile(join(dir, 'Demo.app', 'data.json'), `${i}\n`, 'utf8')
+      await plainGit(dir, ['add', '-A'])
+      await plainGit(dir, ['commit', '-m', `data ${i}`])
+    }
+    expect(
+      (await repo.log({ path: 'Demo.app', folder: true, limit: 200 })).some(
+        (c) => c.sha === target!.sha,
+      ),
+    ).toBe(false)
+    expect(await repo.commit(target!.sha)).toMatchObject({
+      sha: target!.sha,
+      subject: 'create demo app',
+      added: 1,
+      removed: 0,
+    })
   })
 })

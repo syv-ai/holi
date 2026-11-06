@@ -18,6 +18,23 @@ function Harness({ onConfirm }: { onConfirm: () => void | Promise<unknown> }) {
   )
 }
 
+test('a plain footer inherits the dialog surface in either theme', () => {
+  render(
+    <ConfirmDialog
+      open
+      onOpenChange={() => {}}
+      title="Close split tab?"
+      confirmLabel="Close tab"
+      footerVariant="plain"
+      confirmVariant="secondary"
+      onConfirm={() => {}}
+    />,
+  )
+  const footer = document.querySelector('[data-slot="alert-dialog-footer"]')
+  expect(footer).toHaveClass('bg-inherit')
+  expect(footer).not.toHaveClass('border-t', 'bg-muted/50', 'bg-background')
+})
+
 test('a synchronous confirm calls back and closes', async () => {
   const onConfirm = vi.fn()
   render(<Harness onConfirm={onConfirm} />)

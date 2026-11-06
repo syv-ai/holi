@@ -10,6 +10,14 @@ directories:
 files:
   - out/**/*
   - package.json
+  # The meeting VAD runs onnxruntime-web's plain wasm build in main; its other
+  # builds (WebGPU, WebGL, JSEP, JSPI, asyncify), sources and maps are about
+  # 125 MB that nothing loads.
+  - '!**/node_modules/onnxruntime-web/{docs,lib}/**'
+  - '!**/node_modules/onnxruntime-web/dist/*.map'
+  - '!**/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.{asyncify,jsep,jspi}.*'
+  - '!**/node_modules/onnxruntime-web/dist/ort.{all,bundle,jspi,webgl,webgpu,wasm}.*'
+  - '!**/node_modules/onnxruntime-web/dist/ort.{js,mjs,min.js,min.mjs}'
 asarUnpack:
   # A native module and its spawn helper are executed, so they cannot live
   # inside the asar archive.
@@ -19,6 +27,8 @@ asarUnpack:
   - '**/node_modules/@img/**'
   # The PDF plugin hands pdfium's wasm to the engine by path.
   - '**/node_modules/@embedpdf/pdfium/**'
+  # The meeting VAD imports onnxruntime-web's wasm loader by path.
+  - '**/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.*'
 # Holi links (docs/features/holi-links.md): the OS hands a clicked `holi://`
 # link to the app.
 protocols:

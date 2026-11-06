@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Holi PreToolUse hook — the send gate.
 //
-// Sending mail and replying are the two things the agent can do that reach
-// another human and cannot be undone. Everything else it can do to a mailbox or
-// a calendar, the user can put back with one click.
+// Sending mail, replying and answering an invitation are the things the agent
+// can do that reach another human and cannot be undone, and a raw `holi google
+// api` call that is not a GET may be any of them. Everything else it can do to
+// a mailbox or a calendar, the user can put back with one click.
 //
-// So this returns `ask` for those two, and nothing at all for everything else.
+// So this returns `ask` for those, and nothing at all for everything else.
 // `ask` is the mechanism the whole design was chosen for: it overrides
 // `permissions.allow` AND a prior "don't ask again", which no permission rule
 // does. The user still decides — they just always get to. Printing nothing and
@@ -24,9 +25,6 @@
 // an adversarial one. No string match survives `eval`, a variable, or `sh -c`.
 // The claim it supports is "the agent never sends without you seeing it", not
 // "the agent cannot send".
-
-/** The two subcommands that reach another person. */
-const REACHES_A_HUMAN = ['send', 'reply']
 
 function decide(decision, reason) {
   process.stdout.write(
@@ -67,7 +65,7 @@ function readStdin() {
  * A `reply` is the exception: its recipients are derived from the thread inside
  * Holi, so they are nowhere in the command, and the prompt says so plainly.
  */
-function audienceOf(command) {
+function audienceOf(command, verb) {
   // `send --draft <id>` is the second exception: the draft carries its own
   // recipients inside Gmail, and the user can go and look at it.
   if (/--draft\b/.test(command)) {
@@ -76,7 +74,7 @@ function audienceOf(command) {
       'draft rather than in this command, so open it in Drafts if you want to check them.'
     )
   }
-  if (/\breply\b/.test(command)) {
+  if (verb === 'reply') {
     return /--all\b/.test(command)
       ? 'It goes to everyone on the thread (--all). Holi works the recipients out ' +
           'from the thread, so they are not visible in this command.'
@@ -93,30 +91,178 @@ function audienceOf(command) {
   return `It goes to: ${recipients.join(', ')}.`
 }
 
+const attachmentsOf = (command) => {
+  // Private-use markers are parser syntax, not filename characters. Escape any
+  // literal occurrences before parsing so they can never be mistaken for it.
+  const safeCommand = command.replace(/[\uE000\uE100\uE101]/g, (char) => `%${char.charCodeAt(0)}%`)
+  const words = asTheShellReads(safeCommand.split('<<')[0] ?? '')
+  const tokens = words.split(/[\s|;&()]+/).filter(Boolean)
+  const paths = []
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i] ?? ''
+    if (token === '--attach') {
+      if (tokens[i + 1]) paths.push(tokens[++i].replaceAll('\uE000', ' ').replace(/\uE100(\d+)\uE101/g, (_, code) => String.fromCharCode(Number(code))).replace(/%(57344|57600|57601)%/g, (_, code) => String.fromCharCode(Number(code))))
+    } else if (token.startsWith('--attach=')) {
+      paths.push(token.slice('--attach='.length).replaceAll('\uE000', ' ').replace(/\uE100(\d+)\uE101/g, (_, code) => String.fromCharCode(Number(code))).replace(/%(57344|57600|57601)%/g, (_, code) => String.fromCharCode(Number(code))))
+    }
+  }
+  return paths.length ? ` It attaches: ${paths.join(', ')}.` : ''
+}
+
+const MAIL_PROMPT = (command, _next, verb) =>
+  `This sends mail from your account. ${audienceOf(command, verb)}${attachmentsOf(command)} ` +
+  'It cannot be recalled, so Holi asks every time — even if you have allowed ' +
+  'this command before. The message text is on stdin and is not shown here.'
+
 /**
- * Does this command line invoke `holi google send` or `holi google reply`?
+ * The `holi google` verbs that reach another person, and what the prompt for
+ * each says. Each takes the command line as a shell reads it
+ * (`asTheShellReads`), the word after the verb and the verb, and
+ * answers the reason to ask, or `null` when this call reaches nobody. A verb
+ * not here has no opinion.
+ *
+ * `api` is decided from the method alone: its body is on stdin, which this
+ * cannot see, so every call that is not a GET asks, whatever it does. Holi
+ * itself refuses the calls no answer may allow (a permanent delete, a path
+ * outside Gmail and Calendar), so this only has to ask.
+ */
+const REACHES_A_HUMAN = {
+  send: MAIL_PROMPT,
+  reply: MAIL_PROMPT,
+  respond: () =>
+    'This answers a calendar invitation from your account, and Google tells the ' +
+    'organizer, with any --comment in the command. Holi asks every time — even if ' +
+    'you have allowed this command before.',
+  api: (_command, method) =>
+    method.toUpperCase() === 'GET'
+      ? null
+      : `This calls Google's API directly (${method || 'no method'}). Holi cannot tell ` +
+        'from the command whether it reaches someone (sending mail, changing an event ' +
+        'other people are invited to), so it asks for every call that is not a GET. ' +
+        'Any body is on stdin and is not shown here. Holi refuses permanent deletes ' +
+        'itself, whatever you answer.',
+}
+
+/**
+ * The command line with its quoting taken away, as a shell would read the
+ * words: a backslash-newline joins the lines, quotes go (`a""pi`, `'send'`,
+ * `$'respond'`, `"$HOLI_BIN"`) and a backslash before a character leaves the
+ * character (`s\end`). The text inside a quote is kept as it is, spaces
+ * included, so a quoted path or a quoted `holi google send` in an `echo` reads
+ * as words too: a needless prompt costs a click, a missed one a mail.
+ * Expansions are left as written; no string match follows those.
+ */
+function asTheShellReads(command) {
+  let out = ''
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i]
+    if (c === '\\') {
+      const next = command[++i]
+      if (next !== undefined && next !== '\n') out += /[;|&()]/.test(next) ? `\uE100${next.charCodeAt(0)}\uE101` : next === ' ' ? '\uE000' : next
+    } else if (c === '$' && command[i + 1] === "'") {
+      i += 2
+      while (i < command.length && command[i] !== "'") {
+        if (command[i] === '\\' && i + 1 < command.length) {
+          const [char, used] = ansiEscape(command, i + 1)
+          out += /[\t\r\n;|&()]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char === ' ' ? '\uE000' : char
+          i += used + 1
+        } else {
+          const char = command[i++]
+          out += char === ' ' ? '\uE000' : /[\t\r\n;|&()]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char
+        }
+      }
+    } else if (c === "'") {
+      const end = command.indexOf("'", i + 1)
+      out += (end < 0 ? command.slice(i + 1) : command.slice(i + 1, end)).replace(/ /g, '\uE000').replace(/[\t\r\n;|&()]/g, (x) => `\uE100${x.charCodeAt(0)}\uE101`)
+      i = end < 0 ? command.length : end
+    } else if (c === '"' || (c === '$' && command[i + 1] === '"')) {
+      if (c === '$') i++
+      for (i++; i < command.length && command[i] !== '"'; i++) {
+        // Inside double quotes a backslash only escapes `$`, a backtick, `"`,
+        // a backslash or a newline; before anything else it stays.
+        if (command[i] === '\\' && '$`"\\\n'.includes(command[i + 1] ?? '')) {
+          i++
+          if (command[i] !== '\n') {
+            const char = command[i]
+            out += char === ' ' ? '\uE000' : /[\t\r\n;|&()]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char
+          }
+        } else {
+          const char = command[i]
+          out += char === ' ' ? '\uE000' : /[\t\r\n;|&()]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char
+        }
+      }
+    } else {
+      out += c
+    }
+  }
+  return out
+}
+
+/** One escape inside `$'…'`, read from just after its backslash: the
+ *  character it stands for, and how many characters it took. */
+function ansiEscape(text, at) {
+  const c = text[at]
+  const hex = /^x([0-9a-fA-F]{1,2})(?![0-9a-fA-F])/.exec(text.slice(at))
+  if (hex) return [String.fromCharCode(parseInt(hex[1], 16)), hex[0].length]
+  const uni = text[at] === 'u'
+    ? /^u([0-9a-fA-F]{4})(?![0-9a-fA-F])/.exec(text.slice(at))
+    : /^U([0-9a-fA-F]{8})(?![0-9a-fA-F])/.exec(text.slice(at))
+  if (uni) {
+    const code = parseInt(uni[1], 16)
+    return [code <= 0x10ffff ? String.fromCodePoint(code) : '', uni[0].length]
+  }
+  const oct = /^[0-7]{1,3}/.exec(text.slice(at))
+  if (oct) return [String.fromCharCode(parseInt(oct[0], 8)), oct[0].length]
+  const named = { n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', e: '\x1b', f: '\f', v: '\v' }
+  return [Object.hasOwn(named, c) ? named[c] : c, 1]
+}
+
+/**
+ * Why to ask about this command line, or `null`: does it invoke a `holi google`
+ * verb that reaches someone?
  *
  * Matched on the *invocation*, not on the presence of the word: `grep send
  * notes.md` is not a send, and a gate that prompts on it teaches the user to
- * click through prompts.
+ * click through prompts. Every invocation in the line is checked.
  *
  * Three spellings of the command are live, and all must match: the bare name
  * (resolved via PATH), `$HOLI_BIN`, and an absolute path to the generated
- * script, any of them quoted, as `google` and the verb may be too. Missing one
- * is a gate that never fires. Holi refuses any word between `holi` and the
- * verb, so nothing can be slipped in between to step around this.
+ * script. Matched on the line as a shell reads it, so quoting, escaping or a
+ * line continuation anywhere in the words changes nothing. Missing one is a
+ * gate that never fires. Holi refuses any word between `holi` and the verb,
+ * so nothing can be slipped in between to step around this.
  */
-function isSend(command) {
-  // The command word, however it was spelled, then `google`, then the verb.
-  // `[^\s|;&]*` keeps them adjacent within one pipeline stage, so
-  // `holi google search x | grep send` does not match.
+function reasonToAsk(command) {
+  const words = asTheShellReads(command)
+  if (/(?:\bholi\b|\$\{?HOLI_BIN\}?|\/[^\s|;&()]*\bholi)\s+google\b/i.test(words) && /\b(if|then|elif|else|fi|for|while|until|do|done|case|esac|select)\b/.test(words)) {
+    return `This Google action appears inside shell control flow.${attachmentsOf(command)} Review the command and confirm it in the native permission prompt.`
+  }
+  if (/\bholi\b/.test(command) && /(\$\(|`|\$\{|\$[A-Za-z_])/.test(command)) {
+    return 'This command uses dynamic shell expansion near Holi. Review it and confirm in the native permission prompt.'
+  }
+  if (
+    /\b(?:eval|source)\b|\b(?:sh|bash|zsh)\s+-c\b/.test(command) &&
+    /holi\s+google/.test(words.replaceAll('\uE000', ' '))
+  ) {
+    return 'This command wraps a Google action in another shell. Review it and confirm in the native permission prompt.'
+  }
+  // The command word, however it was spelled, then `google`, then the verb,
+  // then the word after it. `[^\s|;&]*` keeps them adjacent within one
+  // pipeline stage, so `holi google search x | grep send` does not match.
   const invocation = new RegExp(
-    String.raw`(^|[|;&]|\s)` + // start of a command
-      String.raw`(?:["']?\$\{?HOLI_BIN\}?["']?|[^\s|;&]*\bholi["']?)` + // the binary
-      String.raw`\s+["']?google["']?` + // the group
-      String.raw`\s+["']?(?:${REACHES_A_HUMAN.join('|')})\b`, // the verb
+    String.raw`(?:^|[|;&(\n])\s*` + // start of a command
+      String.raw`(?:command[ \t]+)?(?:\$\{?HOLI_BIN\}?|/[^|;&(\n]*?\bholi|[^\s|;&(\n]*\bholi)` + // the binary
+      String.raw`[ \t]+google` + // the group; never cross a command boundary
+      String.raw`[ \t]+([A-Za-z-]+)\b` + // the verb
+      String.raw`(?:[ \t]+([^\s|;&(]*))?`, // the word after it
+    'g',
   )
-  return invocation.test(command)
+  for (const [, verb, next] of words.matchAll(invocation)) {
+    if (!Object.hasOwn(REACHES_A_HUMAN, verb)) continue
+    const reason = REACHES_A_HUMAN[verb](command, next ?? '', verb)
+    if (reason !== null) return reason
+  }
+  return null
 }
 
 const raw = await readStdin()
@@ -175,12 +321,12 @@ if (typeof command !== 'string') {
   ask('Holi could not read this command, so it is asking rather than assuming it is safe.')
 }
 
-if (isSend(command)) {
-  ask(
-    `This sends mail from your account. ${audienceOf(command)} ` +
-      'It cannot be recalled, so Holi asks every time — even if you have allowed ' +
-      'this command before. The message text is on stdin and is not shown here.',
-  )
+let reason
+try {
+  reason = reasonToAsk(command)
+} catch {
+  ask('Holi could not read this command, so it is asking rather than assuming it is safe.')
 }
+if (reason !== null) ask(reason)
 
 pass()

@@ -51,7 +51,7 @@ import { PaneToolbar } from '@/composites/pane-toolbar'
 import { SandboxedHtml } from './sandboxed-html'
 import {
   activeRemoteAtom,
-  openNoteTabAtom,
+  openDocumentAtom,
   openSettingsSectionAtom,
   useGlobalPanelLayout,
   useHasCapability,
@@ -243,7 +243,7 @@ export function AgendaView({
   const [year, month] = cursor
   const [calendars, setCalendars] = useState<CalendarChoice[]>([])
   const remote = useAtomValue(activeRemoteAtom)
-  const openNote = useSetAtom(openNoteTabAtom)
+  const openNote = useSetAtom(openDocumentAtom)
   const [creating, setCreating] = useState<string | null>(null)
   /** Offered only in a vault that runs tasks. */
   const canCreateTask = useHasCapability(TASKS_CREATE) && remote !== null

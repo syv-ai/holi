@@ -5,9 +5,6 @@
  * that leave the open vault, switching and adding one, which ask first when
  * leaving would stop something.
  *
- * A vault's theme file (`.holi/settings/theme.css`) does not reach the screen
- * here: the fresh frontend is shadcn's neutral theme until theming is rebuilt
- * on it.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
@@ -20,6 +17,7 @@ import { tickNowAtom } from '@/state/clock'
 import { useVaultMembers } from '@/state/members'
 import { usePlanningFiles } from '@/state/planning'
 import { useSettingsFollowDisk } from '@/state/settings'
+import { useVaultTheme } from '@/state/vault-theme'
 import { applyVaultSwitchAtom, leavingVaultAtom } from '@/state/vault-switch'
 import { activeRemoteAtom, openVaultAtom } from '@/state/vaults'
 import { LeaveVaultDialog } from './leave-vault-dialog'
@@ -34,6 +32,7 @@ export function VaultHost() {
   const [showAdd, setShowAdd] = useState(false)
 
   useSettingsFollowDisk()
+  useVaultTheme()
   useVaultMembers()
   usePlanningFiles()
 

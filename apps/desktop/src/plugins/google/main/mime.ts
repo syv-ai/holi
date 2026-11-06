@@ -13,8 +13,8 @@
 
 import { randomBytes } from 'node:crypto'
 
-/** A file travelling with a message. Only forwards produce these: there
- *  is no file picker, so the bytes always come from another Gmail message. */
+/** A file travelling with a message: a forwarded message's (the composer has
+ *  no file picker) or a vault file the agent attached (`attachments.ts`). */
 export interface MailPart {
   filename: string
   mimeType: string
@@ -25,6 +25,9 @@ export interface MailPart {
    * file that opens as garbage, visible only to the recipient.
    */
   data: string
+  /** Preserve inline images when a foreign draft is reopened and saved. */
+  disposition?: 'attachment' | 'inline'
+  contentId?: string
 }
 
 /** A message to be sent or drafted. */
@@ -107,8 +110,41 @@ interface Body {
 }
 
 function render(body: Body): string {
-  const head = body.headers.map(([name, value]) => `${name}: ${value}`).join(CRLF)
+  const head = body.headers.map(([name, value]) => foldHeader(name, value)).join(CRLF)
   return `${head}${CRLF}${CRLF}${body.content}`
+}
+
+/** Fold only between MIME parameters, where the inserted whitespace is legal. */
+function foldHeader(name: string, value: string): string {
+  const complete = `${name}: ${value}`
+  if (Buffer.byteLength(complete, 'utf8') <= 78) return complete
+  const segments: string[] = []
+  let start = 0
+  let quoted = false
+  let escaped = false
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index]!
+    if (escaped) escaped = false
+    else if (char === '\\' && quoted) escaped = true
+    else if (char === '"') quoted = !quoted
+    else if (!quoted && char === ';' && value[index + 1] === ' ') {
+      segments.push(value.slice(start, index))
+      start = index + 2
+      index++
+    }
+  }
+  segments.push(value.slice(start))
+  const lines = [`${name}: ${segments.shift()}`]
+  for (const segment of segments) {
+    const line = lines.at(-1)!
+    if (Buffer.byteLength(`${line}; ${segment}`, 'utf8') <= 78) {
+      lines[lines.length - 1] = `${line}; ${segment}`
+    } else {
+      lines[lines.length - 1] = `${line};`
+      lines.push(` ${segment}`)
+    }
+  }
+  return lines.join(CRLF)
 }
 
 /**
@@ -144,8 +180,51 @@ function textBody(mimeType: string, content: string): Body {
  * closes, reached through a forwarded message's headers.
  */
 function quoteParameter(value: string): string {
-  if (isAscii(value)) return `"${value.replace(/[\\"]/g, '\\$&')}"`
-  return encodeHeaderWord(value)
+  // The encoded word is quoted too: its `=` and `?` are not legal bare in a
+  // parameter value, and a strict parser drops the whole parameter.
+  return `"${(isAscii(value) ? value : encodeHeaderWord(value)).replace(/[\\"]/g, '\\$&')}"`
+}
+
+/**
+ * A non-ASCII filename as RFC 2231 says it (`filename*=UTF-8''%C3%B8.pdf`),
+ * beside the RFC 2047 word `quoteParameter` writes when the value is short.
+ * Long values use indexed RFC 2231 continuation parameters instead.
+ */
+function extendedParameter(name: string, value: string): string {
+  // Encode UTF-8 bytes as attr-chars or complete %HH triplets. A continuation
+  // may end between characters, but never inside a triplet.
+  const encoded = [...Buffer.from(value, 'utf8')]
+    .map((byte) => {
+      const char = String.fromCharCode(byte)
+      return /^[A-Za-z0-9!#$&+.^_`|~-]$/.test(char)
+        ? char
+        : `%${byte.toString(16).toUpperCase().padStart(2, '0')}`
+    })
+    .join('')
+  const chunks: string[] = []
+  for (const token of encoded.match(/%[0-9A-F]{2}|./g) ?? []) {
+    const current = chunks.at(-1)
+    if (current && current.length + token.length <= 48) {
+      chunks[chunks.length - 1] = current + token
+    } else {
+      chunks.push(token)
+    }
+  }
+  return chunks
+    .map((chunk, index) => `; ${name}*${index}*=${index === 0 ? "UTF-8''" : ''}${chunk}`)
+    .join('')
+}
+
+function filenameParameters(name: string, value: string): string {
+  const quoted = `${name}=${quoteParameter(value)}`
+  const extended = !isAscii(value)
+    ? `; ${name}*=UTF-8''${encodeURIComponent(value).replace(/['()*!]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}`
+    : ''
+  // Keep the existing compact ASCII and dual-format Unicode form when it
+  // fits comfortably. Long values use RFC 2231 continuations in place of one
+  // unbroken quoted/extended parameter.
+  if (Buffer.byteLength(quoted + extended, 'utf8') <= 60) return `; ${quoted}${extended}`
+  return extendedParameter(name, value)
 }
 
 /** Base64 wrapped at 76 columns. A line over 998 octets is refused outright by
@@ -159,8 +238,12 @@ function attachmentBody(part: MailPart): Body {
   assertNoNewline(part.mimeType, 'attachment mimeType')
   return {
     headers: [
-      ['Content-Type', `${part.mimeType}; name=${quoteParameter(part.filename)}`],
-      ['Content-Disposition', `attachment; filename=${quoteParameter(part.filename)}`],
+      ['Content-Type', `${part.mimeType}${filenameParameters('name', part.filename)}`],
+      [
+        'Content-Disposition',
+        `${part.disposition ?? 'attachment'}${filenameParameters('filename', part.filename)}`,
+      ],
+      ...(part.contentId === undefined ? [] : [['Content-ID', part.contentId] as [string, string]]),
       ['Content-Transfer-Encoding', 'base64'],
     ],
     content: wrapBase64(part.data),

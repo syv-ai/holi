@@ -157,7 +157,7 @@ describe('settings', () => {
   it('answers with the seeded vault’s settings', async () => {
     const { caller } = await rig()
     const settings = await caller.settings.read({ remote: REMOTE })
-    expect(settings.home).toBe(VAULT_SETTING_DEFAULTS.home)
+    expect(settings.editorFont).toBe(VAULT_SETTING_DEFAULTS.editorFont)
     expect(settings.dailyNotes).toBe(true)
     // The seed writes a hooks block.
     expect(settings.hooks).toEqual({
@@ -169,23 +169,23 @@ describe('settings', () => {
     expect(settings.warnings).toEqual([])
   })
 
-  it('reads a Home the vault actually committed', async () => {
+  it('reads a setting the vault actually committed', async () => {
     const { caller, root } = await rig()
-    await writeFile(join(root, SETTINGS_FILE), JSON.stringify({ home: 'board' }), 'utf8')
-    expect((await caller.settings.read({ remote: REMOTE })).home).toBe('board')
+    await writeFile(join(root, SETTINGS_FILE), JSON.stringify({ editorFont: 'serif' }), 'utf8')
+    expect((await caller.settings.read({ remote: REMOTE })).editorFont).toBe('serif')
   })
 
   it('writes the step’s answers into both files, and reads them back', async () => {
     const { caller } = await rig()
     const result = await caller.settings.write({
       remote: REMOTE,
-      committedJson: JSON.stringify({ home: 'agenda', dailyNotes: false }),
+      committedJson: JSON.stringify({ editorFont: 'mono', dailyNotes: false }),
       localJson: JSON.stringify({ colorScheme: 'dark' }),
     })
     expect(result.warnings).toEqual([])
 
     const settings = await caller.settings.read({ remote: REMOTE })
-    expect(settings.home).toBe('agenda')
+    expect(settings.editorFont).toBe('mono')
     expect(settings.dailyNotes).toBe(false)
     expect(settings.colorScheme).toBe('dark')
   })
@@ -224,11 +224,13 @@ describe('settings', () => {
     const { caller } = await rig()
     const result = await caller.settings.write({
       remote: REMOTE,
-      committedJson: JSON.stringify({ home: '../nowhere' }),
+      committedJson: JSON.stringify({ editorFont: 'comic' }),
     })
     expect(result.warnings.length).toBeGreaterThan(0)
     // The vault still opens the way it did before.
-    expect((await caller.settings.read({ remote: REMOTE })).home).toBe(VAULT_SETTING_DEFAULTS.home)
+    expect((await caller.settings.read({ remote: REMOTE })).editorFont).toBe(
+      VAULT_SETTING_DEFAULTS.editorFont,
+    )
   })
 })
 
@@ -598,6 +600,32 @@ describe('notes', () => {
     await expect(caller.notes.read({ remote: REMOTE, path: 'a.md' })).rejects.toThrow()
     await expect(caller.notes.read({ remote: REMOTE, path: 'b.md' })).rejects.toThrow()
     expect(await caller.notes.read({ remote: REMOTE, path: 'c.md' })).toBe('C')
+  })
+
+  it('deleteMany lets no writer that checks one deleted file bring back another', async () => {
+    // A recording meeting writes its minutes only while its transcript is
+    // there. Someone holds the transcript while the delete starts; the writer
+    // then queues on the minutes. A delete that let go of the minutes before
+    // taking the transcript would let the writer find the transcript and
+    // bring the minutes back.
+    const { caller, root } = await rig({ 'm/minutes.md': 'minutes', 'm/transcript.md': 'mine' })
+    const key = async (rel: string) => (await exactPath(root, rel))!
+    let open!: () => void
+    const gate = new Promise<void>((r) => (open = r))
+    const holder = withFileLock(await key('m/transcript.md'), () => gate)
+    const removal = caller.notes.deleteMany({
+      remote: REMOTE,
+      paths: ['m/minutes.md', 'm/transcript.md'],
+      folders: ['m'],
+    })
+    await new Promise((r) => setTimeout(r, 50))
+    const write = withFileLock(await key('m/minutes.md'), async () => {
+      if ((await readFile(join(root, 'm/transcript.md'), 'utf8').catch(() => null)) === null) return
+      await writeFile(join(root, 'm/minutes.md'), 'written back')
+    })
+    open()
+    await Promise.all([holder, removal, write])
+    await expect(stat(join(root, 'm'))).rejects.toThrow()
   })
 
   it('deleteMany takes a deleted folder with it, keeping what it never listed', async () => {
@@ -1111,7 +1139,8 @@ describe('tasks.move', () => {
     // a field another writer set while the move waited is kept.
     const { caller, root } = await rig({ 'task.foo.md': '---\ntitle: Foo\nstatus: todo\n---\n' })
     let release!: () => void
-    const held = withFileLock(join(root, 'task.foo.md'), async () => {
+    // Held by its canonical key, as every writer takes it (`lockPath`).
+    const held = withFileLock((await exactPath(root, 'task.foo.md'))!, async () => {
       await new Promise<void>((r) => (release = r))
       await writeFile(join(root, 'task.foo.md'), '---\nstatus: todo\ndue: 2026-08-01\n---\n')
     })
@@ -1845,6 +1874,58 @@ describe('history', () => {
     const commits = await caller.history.log()
     expect(commits.length).toBeGreaterThanOrEqual(2)
     expect(commits[0]!.subject).toBe('Update note.md')
+  })
+
+  it('lists exact Unicode bundle paths through history.changed', async () => {
+    const { caller, root } = await rig()
+    await mkdir(join(root, 'Demo.app'), { recursive: true })
+    await mkdir(join(root, 'Æble.app'), { recursive: true })
+    await writeFile(join(root, 'Demo.app', 'æ.js'), 'export {}\n', 'utf8')
+    await writeFile(join(root, 'Æble.app', 'index.html'), '<main />\n', 'utf8')
+    await plainGit(root, ['init', '-b', 'main'])
+    await plainGit(root, ['add', '-A'])
+    await plainGit(root, ['commit', '-m', 'create unicode apps'])
+    await caller.vaults.open({ remote: REMOTE })
+    const [commit] = await caller.history.log()
+    const changed = await caller.history.changed({ sha: commit!.sha })
+    expect(changed.filter((path) => path.startsWith('Demo.app/'))).toEqual(['Demo.app/æ.js'])
+    expect(changed.filter((path) => path.startsWith('Æble.app/'))).toEqual(['Æble.app/index.html'])
+  })
+
+  it('looks up a named commit even when it is outside the recent cap', async () => {
+    const { caller, root } = await rig()
+    await mkdir(join(root, 'Demo.app', 'data'), { recursive: true })
+    await writeFile(join(root, 'Demo.app', 'index.html'), 'app\n', 'utf8')
+    await plainGit(root, ['init', '-b', 'main'])
+    await plainGit(root, ['add', '-A'])
+    await plainGit(root, ['commit', '-m', 'create demo app'])
+    const target = (await plainGit(root, ['rev-parse', 'HEAD'])).trim()
+    for (let i = 0; i < 201; i++) {
+      await writeFile(join(root, 'Demo.app', 'data', 'records.json'), `${i}\n`, 'utf8')
+      await plainGit(root, ['add', '-A'])
+      await plainGit(root, ['commit', '-m', `data ${i}`])
+    }
+    await caller.vaults.open({ remote: REMOTE })
+    const recent = await caller.history.list({ path: 'Demo.app' })
+    expect(recent).toHaveLength(200)
+    expect(recent.some((commit) => commit.sha === target)).toBe(false)
+    expect(await caller.history.commit({ sha: target })).toMatchObject({
+      sha: target,
+      subject: 'create demo app',
+      added: expect.any(Number),
+    })
+    expect(await caller.history.commit({ sha: target.slice(0, 12) })).toMatchObject({
+      sha: target,
+      subject: 'create demo app',
+    })
+    const blob = (await plainGit(root, ['rev-parse', 'HEAD:Demo.app/index.html'])).trim()
+    expect(await caller.history.commit({ sha: blob })).toBeNull()
+    await expect(caller.history.commit({ sha: target.slice(0, 3) })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    })
+    await expect(caller.history.commit({ sha: 'not-a-sha' })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    })
   })
 
   it('lists the files a commit changed', async () => {

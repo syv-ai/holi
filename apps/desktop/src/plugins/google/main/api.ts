@@ -199,6 +199,23 @@ export class GoogleApi {
   }
 
   /**
+   * Any method, its answer read if there is one: `holi google api`, whose URL
+   * `passthrough.ts` has already built and judged. JSON comes back parsed, an
+   * empty answer (a 204) as `null`, anything else as its text. Read as text
+   * first because a 2xx is a done thing whether or not its body parses.
+   */
+  async request(method: string, url: string, body?: unknown): Promise<unknown> {
+    const res = await this.#write(method, url, body)
+    const text = await res.text().catch(() => '')
+    if (text === '') return null
+    try {
+      return JSON.parse(text) as unknown
+    } catch {
+      return text
+    }
+  }
+
+  /**
    * Follow `nextPageToken` until the pages run out.
    *
    * Google paginates *everything*, and the default page size is small. `cap`

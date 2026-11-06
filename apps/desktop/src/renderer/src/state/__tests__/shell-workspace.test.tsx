@@ -37,6 +37,7 @@ import {
   type ShellWorkspace,
 } from '../shell-workspace'
 import { AGENTS_HOME_KEY, parseTabKey, sessionKey, tabKey } from '../tab-descriptor'
+import { applyEntryClose, closesSplit, confirmEntryClose } from '../shell-close'
 
 const A = 'Notes/A.md'
 const B = 'Notes/B.md'
@@ -427,6 +428,20 @@ describe('files', () => {
     })
   })
 
+  test('deleted views close and the user stays on a surviving one', () => {
+    const ws = closeTabsWhere(selectEntry(withTabs(A, B, C), A), (k) => k === B)
+    expect(strip(ws)).toEqual([A, C])
+    expect(ws.active).toBe(A)
+  })
+
+  test('a deleted active view hands over to its neighbour, and all gone empties', () => {
+    let ws = closeTabsWhere(selectEntry(withTabs(A, B, C), B), (k) => k === B)
+    expect(ws.active).toBe(C)
+    ws = closeTabsWhere(ws, () => true)
+    expect(ws.entries).toEqual([])
+    expect(ws.active).toBeNull()
+  })
+
   test('gone views close wherever they are, not offered to Reopen', () => {
     const ws = closeTabsWhere(pair(), (k) => k === B || k === C)
     expect(strip(ws)).toEqual([A])
@@ -437,5 +452,39 @@ describe('files', () => {
     const ws = withTabs(A)
     expect(retargetTabs(ws, [{ from: C, to: D }])).toBe(ws)
     expect(closeTabsWhere(ws, () => false)).toBe(ws)
+  })
+})
+
+describe('whole-entry close confirmation', () => {
+  test('confirms split entries for direct and bulk closes, but not ordinary tabs', () => {
+    const ws = pair()
+    const splitId = entryIds(ws)[0]!
+    expect(closesSplit(ws, { kind: 'entry', id: splitId })).toBe(true)
+    expect(closesSplit(ws, { kind: 'all' })).toBe(true)
+    expect(closesSplit(ws, { kind: 'others', id: C })).toBe(true)
+    const reordered = moveEntry(ws, C, 0)
+    expect(closesSplit(reordered, { kind: 'right', id: C })).toBe(true)
+
+    const unsplit = withTabs(A, B)
+    expect(closesSplit(unsplit, { kind: 'entry', id: A })).toBe(false)
+    expect(applyEntryClose(unsplit, { kind: 'entry', id: A }).entries).toHaveLength(1)
+  })
+
+  test('does not mutate until confirmation and refuses a stale workspace', () => {
+    const ws = pair()
+    const splitId = entryIds(ws)[0]!
+    const request = { kind: 'entry' as const, id: splitId }
+    expect(ws.entries).toHaveLength(2)
+    expect(confirmEntryClose(ws, ws, request).entries).toHaveLength(1)
+
+    const changed = openNewTab(ws)
+    expect(confirmEntryClose(changed, ws, request)).toBe(changed)
+  })
+
+  test('bulk close selection includes splits it actually removes', () => {
+    const ws = pair()
+    const splitId = entryIds(ws)[0]!
+    expect(closesSplit(ws, { kind: 'others', id: C })).toBe(true)
+    expect(closesSplit(ws, { kind: 'right', id: splitId })).toBe(false)
   })
 })
