@@ -62,7 +62,7 @@ lead, dates, milestones and About. There is one per vault. See [planning](featur
 
 ### Autosave commit
 
-A local commit made when editing goes idle, or on ⌘S. It keeps the working tree clean so a pull can
+A local commit made when editing goes idle. It keeps the working tree clean so a pull can
 always merge, and pushes within seconds. See [vaults-sync](features/vaults-sync.md).
 
 ### Flush
@@ -70,13 +70,13 @@ always merge, and pushes within seconds. See [vaults-sync](features/vaults-sync.
 Writing a dirty buffer to disk, which comes before the commit. **Dirty buffer**: the editor holds
 text the file does not; only a flush fixes it, and it is the only state that can lose data. **Dirty
 tree**: the file holds text the last commit does not; an autosave commit fixes it. The renderer
-flushes and main commits. Blur and tab close flush; ⌘S, a vault switch and quit flush, commit and
-push at once.
+flushes and main commits. Blur and tab close flush; a vault switch and quit flush, commit and push
+at once.
 
 ### Push
 
-Sending local commits to the remote. Automatic, on a short coalescing timer, and at once on ⌘S, a
-vault switch or quit. There is no publish step.
+Sending local commits to the remote. Automatic, on a short coalescing timer, and at once on a vault
+switch or quit. There is no publish step.
 
 ### Reconcile
 

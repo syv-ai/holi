@@ -116,8 +116,12 @@ export interface AgentSessions {
     prompt: string
     model?: string
     allow?: readonly string[]
+    /** Rules it may never use, whatever the vault allows. */
+    deny?: readonly string[]
     /** A Holi's soul and memory, when one carries the run out. */
     appendSystemPrompt?: string
+    /** An MCP JSON config the session loads besides the vault's own. */
+    mcpConfig?: string
   }): Promise<LaunchResult>
   /** Whether Holi has a terminal open on the session. */
   watched(id: string): boolean
@@ -481,7 +485,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       return opened.ok ? { ok: true, sessionId: res.id, terminalId: opened.terminalId } : opened
     },
 
-    async launch({ name, prompt, model, allow, appendSystemPrompt }) {
+    async launch({ name, prompt, model, allow, deny, appendSystemPrompt, mcpConfig }) {
       const c = await ensureCurrent()
       if (c === null) return noVault
       const res = await bg.cli.startBg(targetOf(c), {
@@ -489,7 +493,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         prompt,
         ...(model === undefined ? {} : { model }),
         ...(allow === undefined ? {} : { allow }),
+        ...(deny === undefined ? {} : { deny }),
         ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt }),
+        ...(mcpConfig === undefined ? {} : { mcpConfig }),
       })
       if (!res.ok) return res
       if (current !== c) {

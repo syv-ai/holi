@@ -34,7 +34,14 @@ import { exactPath } from '@holi/shared/path-safety-node'
 import { runGit, tryGit } from '../git'
 import type { StagedChanges } from './hooks/staged'
 import type { TransformResult } from './hooks/relink'
-import { absPathFor, listFiles, moveDocFile, withFileLock, writeAtomic } from './vault-files'
+import {
+  absPathFor,
+  listFiles,
+  lockPath,
+  moveDocFile,
+  withFileLock,
+  writeAtomic,
+} from './vault-files'
 
 /** A thread's or a comment's id: short, random, unique within a note. */
 const commentId = (): string => randomBytes(4).toString('hex')
@@ -91,13 +98,13 @@ async function readStored(
  * over, so a teammate's comment that landed meanwhile stays.
  * @public exported for its test
  */
-export function changeNoteComments(
+export async function changeNoteComments(
   root: string,
   notePath: string,
   edit: (file: CommentsFile) => CommentsFile | null,
 ): Promise<CommentsFile | null> {
   const rel = vaultRelPath(commentsPathFor(notePath))
-  return withFileLock(absPathFor(root, rel), async () => {
+  return withFileLock(await lockPath(root, rel), async () => {
     const read = await readStored(root, notePath)
     const next = edit(read.file)
     if (next === null) return null

@@ -3,7 +3,7 @@
  *
  * **A renderer keydown, not a menu accelerator**: the app menu has no
  * Settings item, and an accelerator fires before the page sees the key, which
- * `state/commands.ts` keeps for ⌘W alone. A key a focused widget already
+ * the shortcut table keeps for ⌘W alone (`lib/shortcuts.ts`). A key a focused widget already
  * handled (`defaultPrevented`) is left to it.
  */
 import { useSetAtom } from 'jotai'

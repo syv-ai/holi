@@ -1,12 +1,6 @@
 import { atom, type createStore } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import {
-  type DocMeta,
-  GITKEEP,
-  type VaultEntry,
-  type VaultSnapshot,
-  emptyVaultSnapshot,
-} from '@holi/shared'
+import { GITKEEP, type VaultEntry, type VaultSnapshot, emptyVaultSnapshot } from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
 import type { HeldBackFile } from '../../../main/vault/large-files'
 import type { RendererPlugin } from '@/state/plugin-types'
@@ -16,14 +10,13 @@ import { shellWorkspaceAtom } from './shell-tabs'
 import { retargetTabs as retargetShellTabs, closeTabsWhere } from './shell-workspace'
 import { tabPath } from './tab-descriptor'
 import { trpc } from '@/lib/trpc'
-import { closeTabsForPaths, retargetTab, retargetTabs, workspaceAtom } from './panes'
 // A cycle (`plugins` reads `activeRemoteAtom`), safe because neither module
 // reads the other's atoms until a store does.
-import { folderSurfacesAtom } from './plugins'
 import { openDocumentAtom } from './open-document'
 // A cycle too (`document-runs` reads `activeRemoteAtom`), safe the same way.
 import { documentRunsAtom } from './document-runs'
 import { settledRect } from '@/lib/settled-rect'
+import { folderSurfacesAtom } from './plugins'
 
 type JotaiStore = ReturnType<typeof createStore>
 
@@ -36,6 +29,10 @@ export const vaultsLoadedAtom = atom(false)
 /** The open vault, as `owner/repo`. A vault has no id: the remote IS the
  * identity, and the clone's path is machine-local. */
 export const activeRemoteAtom = atom<string | null>(null)
+
+/** The remote whose main-process `vaults.open` has completed. Plugin vault
+ * hooks must not run until main has finished opening that vault. */
+export const openedRemoteAtom = atom<string | null>(null)
 
 /**
  * Per-vault "show hidden files" preference, persisted across launches. One
@@ -68,9 +65,6 @@ export const snapshotAtom = atom<VaultSnapshot>(EMPTY_SNAPSHOT)
 /** False until the open vault's first snapshot arrives: an empty vault and a
  *  loading one look alike otherwise. */
 export const snapshotLoadedAtom = atom((get) => get(snapshotAtom) !== EMPTY_SNAPSHOT)
-
-/** The doc open in the editor. */
-export const activeDocAtom = atom<DocMeta | null>(null)
 
 /**
  * The one sync state, exactly as main computed it.
@@ -108,9 +102,16 @@ export function bumpHistoryEpochs(epochs: HistoryEpochs, paths: string[] | null)
   return { ...epochs, byPath }
 }
 
-/** A number that changes whenever `path`'s git history may have. */
+/** A number that changes whenever `path`'s git history may have: a commit
+ *  that took it, or anything under it when it is a folder (a vault app's
+ *  bundle). */
 export function historyEpoch(epochs: HistoryEpochs, path: string): number {
-  return epochs.all + (epochs.byPath[path] ?? 0)
+  const under = `${path}/`
+  let n = epochs.all
+  for (const [p, count] of Object.entries(epochs.byPath)) {
+    if (p === path || p.startsWith(under)) n += count
+  }
+  return n
 }
 
 export const loadVaultsAtom = atom(null, async (get, set) => {
@@ -145,7 +146,7 @@ export const openVaultAtom = atom(null, async (_get, set, remote: string) => {
   const snapshot = await trpc.vaults.open.mutate({ remote })
   set(activeRemoteAtom, remote)
   set(snapshotAtom, snapshot)
-  set(activeDocAtom, null)
+  set(openedRemoteAtom, remote)
 })
 
 /**
@@ -163,7 +164,6 @@ export const addVaultAtom = atom(null, async (_get, set, remote: string) => {
   const snapshot = await trpc.vaults.add.mutate({ remote })
   set(activeRemoteAtom, remote)
   set(snapshotAtom, snapshot)
-  set(activeDocAtom, null)
   await set(loadVaultsAtom)
 })
 
@@ -262,7 +262,6 @@ export const createNoteAtom = atom(null, async (get, set, path: string) => {
   // and the block is written with the first value.
   await trpc.notes.create.mutate({ remote, path, text: '' })
   await set(loadSnapshotAtom)
-  set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === path) ?? null)
 })
 
 /** Make a folder real on disk. Git tracks no empty directory, so we drop a
@@ -356,14 +355,11 @@ export const renameNoteAtom = atom(
         ...(localLinksOnly === true ? { localLinksOnly } : {}),
       })
       flushSync(() => {
-        set(workspaceAtom, retargetTab(get(workspaceAtom), from, to))
         set(shellWorkspaceAtom, (ws) =>
           retargetShellTabs(ws, [{ from, to }], get(folderSurfacesAtom)),
         )
       })
-      const wasActive = get(activeDocAtom)?.path === from
       await set(loadSnapshotAtom)
-      if (wasActive) set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === to) ?? null)
       await trpc.sync.commitNow.mutate()
     } finally {
       release()
@@ -374,8 +370,9 @@ export const renameNoteAtom = atom(
 /**
  * Batch move (folder rename/delete-to-move, drag, cut+paste). Same order as
  * `renameNoteAtom`, one commit-pair for the whole batch: flush the live buffer
- * and commit a clean restore point, run the single-pass `notes.move`, retarget
- * every open tab, reload the snapshot, follow the active doc, commit again.
+ * and commit a clean restore point, run the single-pass `notes.move`, reload
+ * the snapshot, commit again. The open tabs follow
+ * through the caller (`onMoved`).
  * `folders` are the folders the move was aimed at, whose leftovers (`.gitkeep`,
  * ignored files) main carries after the documents.
  */
@@ -397,13 +394,9 @@ export const moveNotesAtom = atom(
       await flushAllBuffers()
       await trpc.notes.move.mutate({ remote, moves, folders })
       flushSync(() => {
-        set(workspaceAtom, retargetTabs(get(workspaceAtom), moves, get(folderSurfacesAtom)))
         set(shellWorkspaceAtom, (ws) => retargetShellTabs(ws, moves, get(folderSurfacesAtom)))
       })
-      const active = get(activeDocAtom)
-      const moved = active ? moves.find((m) => m.from === active.path) : undefined
       await set(loadSnapshotAtom)
-      if (moved) set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === moved.to) ?? null)
       await trpc.sync.commitNow.mutate()
     } finally {
       release()
@@ -436,7 +429,7 @@ export const importFilesAtom = atom(
 
 /**
  * Batch delete (file, folder, multi-selection). Clears the editor if the open
- * note is among them and closes every deleted tab. One commit-pair, like the
+ * note is among them; the caller closes the deleted tabs. One commit-pair, like the
  * others. `folders` are what a folder delete was aimed at, pruned once their
  * documents are gone (`deleteMany` in main).
  */
@@ -451,9 +444,7 @@ export const deleteManyAtom = atom(
       await flushAllBuffers()
       await trpc.notes.deleteMany.mutate({ remote, paths, folders })
       const gone = new Set(paths)
-      if (gone.has(get(activeDocAtom)?.path ?? '')) set(activeDocAtom, null)
       flushSync(() => {
-        set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), paths, get(folderSurfacesAtom)))
         set(shellWorkspaceAtom, (ws) => closeTabsWhere(ws, (key) => gone.has(tabPath(key) ?? '')))
       })
       await set(loadSnapshotAtom)

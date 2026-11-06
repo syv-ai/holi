@@ -22,7 +22,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
-import { differsBeyondTidy, holiLink, isHoliLinkable, isResolved, TASKS_CLAIM } from '@holi/shared'
+import {
+  differsBeyondTidy,
+  holiLink,
+  isHoliLinkable,
+  isResolved,
+  parseTaskFile,
+  TASKS_CLAIM,
+} from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { findNext, findPrev } from 'prosemirror-search'
 import { EditorContent, Extension, useEditor } from '@tiptap/react'
@@ -60,8 +67,8 @@ import { agentProviderSettingAtom } from '@/state/settings'
 import { claimsAtom } from '@/state/plugins'
 import { activeVaultSettingsAtom, useAppSetting } from '@/state/settings'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
-import { focusedTab } from '@/state/shell-workspace'
-import { tabPath } from '@/state/tab-descriptor'
+import { closeTab, entryOf, focusedTab } from '@/state/shell-workspace'
+import { tabKey, tabPath } from '@/state/tab-descriptor'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 import { AgentPrompt, AgentStatus } from './agent-prompt'
@@ -85,6 +92,10 @@ import { DocumentFormatBubble } from './document-format-bubble'
 import { DocumentHeader, type SaveState } from './document-header'
 import { documentTitle, joinDocument, splitDocument } from './markdown'
 import { ErrorState } from '@/composites/empty-state'
+
+function isTaskPath(path: string): boolean {
+  return /(?:^|\/)task\.[^/]+\.md$/.test(path)
+}
 
 // How long typing has to pause before the file is written.
 const SAVE_DELAY_MS = 600
@@ -214,6 +225,9 @@ function DocumentEditor({
   const store = useStore()
   const locked = locksDocument(agent.run)
   const [saveState, setSaveState] = useState<SaveState>('saved')
+  const [donePending, setDonePending] = useState(false)
+  const [doneError, setDoneError] = useState<string | null>(null)
+  const doneInFlight = useRef(false)
   const [linkOpen, setLinkOpen] = useState(false)
   const [deleteTableOpen, setDeleteTableOpen] = useState(false)
   const [fullWidth, setFullWidth] = useState(false)
@@ -253,6 +267,7 @@ function DocumentEditor({
   const reloadPending = useRef<Promise<void>>(Promise.resolve())
   const reloadFailed = useRef(false)
   const frozen = useRef(false)
+  const doneFreeze = useRef(false)
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
@@ -283,7 +298,7 @@ function DocumentEditor({
         addProseMirrorPlugins: () => [
           new Plugin({
             filterTransaction: (transaction) =>
-              !frozen.current ||
+              (!frozen.current && !doneFreeze.current) ||
               !transaction.docChanged ||
               transaction.getMeta('preventUpdate') === true,
           }),
@@ -480,7 +495,7 @@ function DocumentEditor({
         undefined,
         (value) => {
           frozen.current = value
-          editor?.setEditable(!value && !lockedRef.current)
+          editor?.setEditable(!value && !doneFreeze.current && !lockedRef.current)
         },
       ),
     [editor],
@@ -551,7 +566,7 @@ function DocumentEditor({
   // A run that edits the document locks it; done, the lock lifts.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
-    editor.setEditable(!locked && !frozen.current)
+    editor.setEditable(!locked && !frozen.current && !doneFreeze.current)
   }, [editor, locked])
 
   // A finished edit clears its pill on its own. A finished vault app opens
@@ -619,6 +634,50 @@ function DocumentEditor({
 
   const { find, setFind, apple, isFindKey, openFind } = useDocumentFind(editor, viewRef)
 
+  async function finishTask() {
+    if (doneInFlight.current || lockedRef.current || frozen.current || !editor?.isEditable) return
+    const remoteAtStart = store.get(activeRemoteAtom)
+    const workspaceAtStart = store.get(shellWorkspaceAtom)
+    const key = tabKey({ kind: 'doc', path })
+    if (remoteAtStart !== remote || entryOf(workspaceAtStart, key) === null || !isTaskPath(path))
+      return
+
+    doneInFlight.current = true
+    doneFreeze.current = true
+    editor.setEditable(false)
+    setDonePending(true)
+    setDoneError(null)
+    try {
+      await saveRef.current()
+      // A clean buffer may not write at all. Check the serialized header only
+      // after the queued save so validation sees the latest task text.
+      parseTaskFile(markdown(), path)
+      // A vault switch or any workspace change while the write was pending
+      // makes the original close stale. Never act on the newly active workspace.
+      if (
+        store.get(activeRemoteAtom) !== remoteAtStart ||
+        store.get(shellWorkspaceAtom) !== workspaceAtStart ||
+        frozen.current ||
+        entryOf(store.get(shellWorkspaceAtom), key) === null
+      )
+        return
+      store.set(shellWorkspaceAtom, (workspace) =>
+        workspace === workspaceAtStart && entryOf(workspace, key) !== null
+          ? closeTab(workspace, key)
+          : workspace,
+      )
+    } catch (error) {
+      setDoneError(error instanceof Error ? error.message : String(error))
+    } finally {
+      doneInFlight.current = false
+      if (!editor.isDestroyed) {
+        doneFreeze.current = false
+        editor.setEditable(!lockedRef.current && !frozen.current)
+      }
+      setDonePending(false)
+    }
+  }
+
   function handleViewKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
     if (!editor || event.defaultPrevented) return
     const mod = apple ? event.metaKey : event.ctrlKey
@@ -673,6 +732,11 @@ function DocumentEditor({
             title={documentTitle(path)}
             saveState={saveState}
             locked={locked}
+            taskDone={
+              isTaskPath(path)
+                ? { pending: donePending, error: doneError, onDone: finishTask }
+                : undefined
+            }
             compact={compactView}
             markdown={markdown}
             fullWidth={fullWidth}
@@ -703,7 +767,7 @@ function DocumentEditor({
                 : null
             }
           />
-          <div className="flex min-h-0 flex-1">
+          <div inert={donePending} className="flex min-h-0 flex-1">
             <div
               ref={scrollerRef}
               className="relative min-h-0 min-w-0 flex-1 overflow-y-auto"

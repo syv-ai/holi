@@ -200,7 +200,11 @@ unattended work: Claude Code uses its background supervisor and Pi a Holi-manage
 above), refused with the reason when their rules ask for more than its sandbox can enforce.
 Changing the default requires fresh approval for Holis and automations. Pi's runs use the person's
 normal filesystem permissions, without a sandbox or per-tool approval prompts; their configured
-`allow` rules are not enforced. A
+`allow` rules are not enforced. A caller that needs a Pi run held to less starts it with `tools: 'none'`
+(`agent.launch`): Pi's `--no-tools`, with no extensions, skills, prompt templates, context files, MCP
+servers or project settings (`NO_TOOLS` in `pi/rpc.ts`), so it can only answer; `keep` keeps it
+between turns until it is stopped, and `agent.reply` reads its last turn's answer. A meeting's
+scribe is the one caller ([meetings](meetings.md)). A
 default that names an agent this machine no longer has (a harness removed) is said in Settings, and
 the Sessions + then opens its menu and asks which agent; nothing is started on another agent in its
 place, and `agent.start`, `agent.job` and a new session from `agent.send` refuse it in words.
@@ -332,7 +336,9 @@ wrote into `plugins.yaml` is ignored, and dropped at the file's next write.
 **Other plugins drive the agent through it, never around it.** The agent knows nothing of a
 plugin that requires it ([architecture](../architecture.md), Plugins); it offers general
 capabilities any such plugin calls, from its renderer or, through `ctx.call`, from its main side:
-`agent.launch` (a background session whose first turn is a prompt, with no terminal),
+`agent.launch` (a background session whose first turn is a prompt, with no terminal, and
+optionally its model, `allow` rules as `--allowedTools`, `deny` rules as `--disallowedTools`, an
+appended system prompt and an MCP config; the UI door alone),
 `agent.job` (a prompt run unwatched on any provider that can, within a scope or under `allow`;
 Jobs above),
 `agent.scoped` (the same, as a session the person can watch; Fenced sessions above),
