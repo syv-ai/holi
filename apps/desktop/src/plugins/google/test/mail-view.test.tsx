@@ -9,11 +9,10 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@/test/rend
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { MailView, matchPeople, mentionAt, replaceMention } from '../renderer/mail-view'
-import { getDefaultStore } from 'jotai'
 import { resetMailImagesForTests } from '../renderer/mail-images'
 import { resetMailFramesForTests } from '../renderer/mail-frames'
 import { activeRemoteAtom } from '@/plugin-api'
-import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { getDefaultStore } from 'jotai'
 
 const threadMock = vi.fn()
 const readMock = vi.fn()
