@@ -26,7 +26,7 @@ export function EditorPage() {
       description="How notes read and what the editor does as you type."
     >
       <SettingsFieldRow
-        title="Vim keys in code files"
+        title="Vim mode"
         description="Use Vim editing in code and plain-text files on this machine. Notes, mail, fields, browser pages and terminals are unchanged."
         htmlFor="settings-vim-code-editing"
       >
