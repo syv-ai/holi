@@ -1,4 +1,5 @@
 // Adapted from ReUI's app-shell-21 block (`npx shadcn@latest view @reui/app-shell-21` shows the published source).
+import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 
@@ -92,8 +93,11 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const loadSettings = useSetAtom(loadVaultSettingsAtom)
   const store = useStore()
   const [pendingClose, setPendingClose] = useState<EntryCloseIntent | null>(null)
+  const [presentedClose, setPresentedClose] = useState<EntryCloseIntent | null>(null)
   const closeConfirmationEnabled =
-    settings !== null && settings.remote === remote ? settings.settings.confirmCloseSplitTabs : true
+    settings !== null && settings.remote === remote
+      ? settings.settings.confirmCloseSplitTabs
+      : VAULT_SETTING_DEFAULTS.confirmCloseSplitTabs
   useEffect(() => {
     void loadSettings().catch((error: unknown) => console.warn('[settings] read failed:', error))
   }, [loadSettings, remote])
@@ -195,10 +199,11 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     const current = store.get(shellWorkspaceAtom)
     const intent = { remote: store.get(activeRemoteAtom), workspace: current, request }
     if (closesSplit(current, request) && closeConfirmationEnabled) {
+      setPresentedClose(intent)
       setPendingClose(intent)
       return
     }
-    void saveEntryClose(store, intent)
+    void saveEntryClose(store, intent).catch(() => {})
   }
 
   function confirmPendingClose() {
@@ -532,15 +537,17 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
           if (!open) setPendingClose(null)
         }}
         title={
-          pendingClose?.request.kind === 'entry' ? 'Close split tab?' : 'Close tabs with splits?'
+          presentedClose?.request.kind === 'entry' ? 'Close split tab?' : 'Close tabs with splits?'
         }
         description={
-          pendingClose?.request.kind === 'entry'
+          presentedClose?.request.kind === 'entry'
             ? 'This tab contains multiple views. Closing it will close every view in the split.'
             : 'This will close tab entries containing multiple views, including every view in each split.'
         }
-        confirmLabel={pendingClose?.request.kind === 'entry' ? 'Close tab' : 'Close tabs'}
-        destructive
+        confirmLabel={presentedClose?.request.kind === 'entry' ? 'Close tab' : 'Close tabs'}
+        confirmVariant="secondary"
+        footerVariant="plain"
+
         onConfirm={confirmPendingClose}
       />
       <DialogHost />

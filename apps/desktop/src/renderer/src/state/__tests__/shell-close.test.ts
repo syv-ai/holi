@@ -54,12 +54,20 @@ test('confirmed closure waits for buffers to save and keeps the split in closed 
 test('a failed save leaves the approved workspace intact and unfreezes its buffers', async () => {
   const { store, intent } = splitIntent()
   const error = vi.spyOn(console, 'error').mockImplementation(() => {})
-  const flush = vi.fn().mockRejectedValue(new Error('disk is full'))
+  const flush = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('disk is full'))
+    .mockResolvedValueOnce(undefined)
   const freeze = vi.fn()
   cleanups.push(registerBuffer(flush, flush, freeze))
-  await saveEntryClose(store, intent)
+  await expect(saveEntryClose(store, intent)).rejects.toThrow('disk is full')
   expect(store.get(shellWorkspaceAtom)).toBe(intent.workspace)
   expect(error).toHaveBeenCalled()
+  expect(freeze).toHaveBeenLastCalledWith(false)
+
+  await saveEntryClose(store, intent)
+  expect(store.get(shellWorkspaceAtom).entries).toEqual([])
+  expect(flush).toHaveBeenCalledTimes(2)
   expect(freeze).toHaveBeenLastCalledWith(false)
 })
 

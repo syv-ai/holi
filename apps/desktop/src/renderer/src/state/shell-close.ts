@@ -37,7 +37,7 @@ export async function saveEntryClose(
   await saveBeforeClosing(() => {
     if (!current()) return
     store.set(shellWorkspaceAtom, (ws) => confirmEntryClose(ws, intent.workspace, intent.request))
-  })
+  }, true)
 }
 
 /** The workspace resulting from the requested whole-entry close.
