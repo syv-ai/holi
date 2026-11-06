@@ -132,6 +132,18 @@ describe('editing labels in the rendered Mermaid drawing', () => {
     expect(screen.queryByRole('textbox', { name: 'Alpha (A)' })).not.toBeInTheDocument()
   })
 
+  it.each([
+    ['AlphaAlpha', 'Alpha'],
+    ['aaaa', 'a'],
+    ['ababa', 'aba'],
+  ])('shortens %s to %s without overlapping prefix and suffix ranges', async (before, after) => {
+    const { e, updates } = await open(markdown.replace('A[Alpha]', `A[${before}]`))
+    fireEvent.change(await labelField(`${before} (A)`), { target: { value: after } })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(e.getMarkdown()).toBe(markdown.replace('A[Alpha]', `A[${after}]`)))
+    expect(updates).toHaveBeenCalledOnce()
+  })
+
   it('rejects a same-task Provider vault switch before Apply', async () => {
     const { e, store, updates } = await open()
     fireEvent.change(await labelField(), { target: { value: 'Gamma' } })

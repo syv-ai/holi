@@ -294,7 +294,10 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
       let start = 0
       while (start < old.length && old[start] === next[start]) start++
       let end = 0
-      while (end < old.length - start && old[old.length - 1 - end] === next[next.length - 1 - end])
+      while (
+        end < Math.min(old.length, next.length) - start &&
+        old[old.length - 1 - end] === next[next.length - 1 - end]
+      )
         end++
       const transaction = closeHistory(editor.state.tr).insertText(
         next.slice(start, next.length - end),
