@@ -103,24 +103,44 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Select an available iOS Simulator
+      - name: Check Swift formatting
+        run: xcrun swift-format lint --strict apps/ios/Sources/HoliVaultFormat/VaultFormat.swift apps/ios/Tests/HoliVaultFormatTests/VaultFormatTests.swift
+
+      - name: Run host Swift tests
+        run: swift test
+        working-directory: apps/ios
+
+      - name: Select a compatible iOS Simulator
         id: simulator
         shell: bash
         run: |
           xcodebuild -version
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json, subprocess
+          import json, re, subprocess
           data = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "--json"]))
-          devices = [device for runtime, values in data["devices"].items() if runtime.startswith("com.apple.CoreSimulator.SimRuntime.iOS-") for device in values if device["name"].startswith("iPhone")]
-          if not devices:
-              raise SystemExit("No available iOS Simulator device/runtime; refusing to skip native tests")
-          print(f"id={devices[0]['udid']}")
+          candidates = []
+          for runtime, devices in data["devices"].items():
+              match = re.fullmatch(r"com\.apple\.CoreSimulator\.SimRuntime\.iOS-(\d+)-(\d+)(?:-(\d+))?", runtime)
+              if not match:
+                  continue
+              version = tuple(int(part or 0) for part in match.groups())
+              if version < (26, 0, 0):
+                  continue
+              for device in devices:
+                  if device["name"].startswith("iPhone"):
+                      candidates.append((version, device["name"], device["udid"]))
+          if not candidates:
+              raise SystemExit("No available iPhone simulator on iOS 26 or newer; refusing to skip native tests")
+          _, name, udid = sorted(candidates)[0]
+          print(f"Selected {name} ({udid})")
+          print(f"id={udid}")
           PY
 
       - name: Build and test for iOS Simulator
         run: >-
           xcodebuild -scheme HoliVaultFormat
           -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}'
+          -parallel-testing-enabled NO
           CODE_SIGNING_ALLOWED=NO test
         working-directory: apps/ios
 
