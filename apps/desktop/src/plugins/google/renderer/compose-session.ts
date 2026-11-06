@@ -26,13 +26,19 @@ export class ComposeSessionGate {
     if (this.active?.identity === identity) this.active = { identity, handle }
   }
 
-  async leave(action: () => void): Promise<boolean> {
+  async leave(action: () => void, isCurrent: () => boolean = () => true): Promise<boolean> {
+    if (!isCurrent()) return false
     const session = this.active
     const generation = this.generation
     if (session?.handle !== null && session?.handle !== undefined) {
       if (!(await session.handle.prepareToLeave())) return false
     }
-    if (this.generation !== generation || this.active?.identity !== session?.identity) return false
+    if (
+      !isCurrent() ||
+      this.generation !== generation ||
+      this.active?.identity !== session?.identity
+    )
+      return false
     this.active = null
     action()
     return true
