@@ -158,6 +158,8 @@ export function MailComposer({
   const [saveState, setSaveState] = useState<SaveState>('pristine')
   const [failure, setFailure] = useState<SendFailure | null>(null)
   const [sending, setSending] = useState(false)
+  const [departing, setDeparting] = useState(false)
+  const [discarding, setDiscarding] = useState(false)
   const [confirmingSubject, setConfirmingSubject] = useState(false)
   const [confirmingDiscard, setConfirmingDiscard] = useState(false)
 
@@ -280,6 +282,8 @@ export function MailComposer({
         mail: payload(),
       })
       if (result.id !== null) draftRef.current = result.id
+      if (draftRef.current === null)
+        throw new Error('Draft could not be saved; Gmail returned no draft id.')
       /**
        * Only clean if nothing changed *while this save was in flight*. Clearing
        * unconditionally makes the queued save find a clean flag and skip,
@@ -316,14 +320,13 @@ export function MailComposer({
   const inFlightRef = useRef<Promise<void> | null>(null)
 
   const save = useCallback(async (): Promise<void> => {
-    if (!dirtyRef.current) return
     if (savingRef.current) {
-      // Latest-wins: coalesce every request arriving mid-flight into one
-      // trailing save, then wait for the chain that will run it.
-      queuedRef.current = true
+      // A real edit queues its own trailing write in markDirty. A read-only
+      // waiter (blur, navigation, send) only joins that existing chain.
       await inFlightRef.current
       return
     }
+    if (!dirtyRef.current) return
     // `runSave` sets `savingRef` before its first await, so the ref below is
     // assigned before any other caller can observe the flag and read it.
     const chain = runSave()
@@ -335,14 +338,15 @@ export function MailComposer({
     }
   }, [runSave])
 
-  const markDirty = useCallback((patch?: Partial<typeof latest.current>) => {
+  const markDirty = useCallback((patch?: Partial<typeof latest.current>): boolean => {
     if (loadingRef.current || sendingRef.current || departingRef.current || discardingRef.current)
-      return
+      return false
     if (patch !== undefined) latest.current = { ...latest.current, ...patch }
     editVersion.current += 1
     dirtyRef.current = true
     if (savingRef.current) queuedRef.current = true
     setSaveState((state) => (state === 'saving' ? state : 'dirty'))
+    return true
   }, [])
 
   useEffect(() => {
@@ -423,6 +427,7 @@ export function MailComposer({
   const discard = async (): Promise<void> => {
     if (discardingRef.current || sendingRef.current || departingRef.current) return
     discardingRef.current = true
+    setDiscarding(true)
     if (inFlightRef.current !== null) {
       try {
         await inFlightRef.current
@@ -446,6 +451,7 @@ export function MailComposer({
         // that the draft still sits in Gmail.
         if (mountedRef.current) setFailure(describeSendFailure(error))
         discardingRef.current = false
+        if (mountedRef.current) setDiscarding(false)
         return
       }
     }
@@ -456,14 +462,20 @@ export function MailComposer({
   }
 
   const prepareToLeave = useCallback(async (): Promise<boolean> => {
+    if (!mountedRef.current || sendingRef.current || discardingRef.current || departingRef.current)
+      return false
     if (!dirtyRef.current) return true
     departingRef.current = true
+    setDeparting(true)
     try {
       await save()
       return true
     } catch {
-      departingRef.current = false
       return false
+    } finally {
+      // The parent may call the gate again before it actually removes us.
+      departingRef.current = false
+      if (mountedRef.current) setDeparting(false)
     }
   }, [save])
   useImperativeHandle(ref, () => ({ prepareToLeave }), [prepareToLeave])
@@ -514,11 +526,10 @@ export function MailComposer({
         <span className="w-12 shrink-0 text-xs text-muted-foreground">To</span>
         <ChipInput
           label="To"
-          disabled={loadingRef.current || sending || departingRef.current || discardingRef.current}
+          disabled={loadingRef.current || sending || departing || discarding}
           value={to}
           onChange={(next) => {
-            setTo(next)
-            markDirty({ to: next })
+            if (markDirty({ to: next })) setTo(next)
           }}
           suggestions={suggestions}
         />
@@ -534,13 +545,10 @@ export function MailComposer({
           <span className="w-12 shrink-0 text-xs text-muted-foreground">Cc</span>
           <ChipInput
             label="Cc"
-            disabled={
-              loadingRef.current || sending || departingRef.current || discardingRef.current
-            }
+            disabled={loadingRef.current || sending || departing || discarding}
             value={cc}
             onChange={(next) => {
-              setCc(next)
-              markDirty({ cc: next })
+              if (markDirty({ cc: next })) setCc(next)
             }}
             suggestions={suggestions}
           />
@@ -551,11 +559,10 @@ export function MailComposer({
         <span className="w-12 shrink-0 text-xs text-muted-foreground">Subject</span>
         <Input
           aria-label="Subject"
-          disabled={loadingRef.current || sending || departingRef.current || discardingRef.current}
+          disabled={loadingRef.current || sending || departing || discarding}
           value={subject}
           onChange={(event) => {
-            setSubject(event.target.value)
-            markDirty({ subject: event.target.value })
+            if (markDirty({ subject: event.target.value })) setSubject(event.target.value)
           }}
           onBlur={() => void save().catch(() => {})}
         />
@@ -593,11 +600,10 @@ export function MailComposer({
       {tab === 'edit' ? (
         <MarkdownEditor
           key={loads}
-          disabled={loadingRef.current || sending || departingRef.current || discardingRef.current}
+          disabled={loadingRef.current || sending || departing || discarding}
           value={markdown}
           onChange={(next) => {
-            setMarkdown(next)
-            markDirty({ markdown: next })
+            if (markDirty({ markdown: next })) setMarkdown(next)
           }}
           onBlur={() => void save().catch(() => {})}
         />
