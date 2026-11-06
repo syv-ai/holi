@@ -41,6 +41,11 @@ const createTaskMock = vi.fn()
 
 /** Google's capabilities, by name, through the UI door. */
 const google: Record<string, (params: unknown) => unknown> = {
+  status: () => ({ account: { sub: 'mail-view-account', email: 'ada@syv.ai' }, missingScopes: [] }),
+  accounts: () => ({
+    accounts: [{ sub: 'mail-view-account', email: 'ada@syv.ai' }],
+    current: 'mail-view-account',
+  }),
   search: (p) => threadMock(p),
   thread: (p) => readMock(p),
   mailCounts: () => countsMock(),
@@ -2076,7 +2081,7 @@ test('opening a draft loads it into the composer', async () => {
   await user.click(await screen.findByText('Half written'))
 
   await screen.findByRole('region', { name: 'Compose mail' })
-  expect(draftMock).toHaveBeenCalledWith({ id: 'd-1' })
+  expect(draftMock).toHaveBeenCalledWith({ id: 'd-1', expectedAccountSub: 'mail-view-account' })
 })
 
 test('opening a draft closes the thread it would otherwise hide behind', async () => {
@@ -2143,7 +2148,9 @@ test('Continue draft opens the newest draft in the open thread', async () => {
 
   await moreAction(user, 'Continue your draft')
 
-  await waitFor(() => expect(draftMock).toHaveBeenCalledWith({ id: 'new' }))
+  await waitFor(() =>
+    expect(draftMock).toHaveBeenCalledWith({ id: 'new', expectedAccountSub: 'mail-view-account' }),
+  )
 })
 
 test('no Continue draft on a thread that has none', async () => {
