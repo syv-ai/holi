@@ -5,11 +5,11 @@
  */
 import { useEffect } from 'react'
 import { Provider, createStore } from 'jotai'
+import { afterEach, expect, test, vi } from 'vitest'
 import { Input } from '@/components/ui/input'
 import { coreContributionAtom } from '@/state/plugins'
 import { tabKey } from '@/state/tab-descriptor'
 import { closeTab, selectEntry, separate, openInSplit } from '@/state/shell-workspace'
-import { expect, test, vi } from 'vitest'
 import {
   VAULT_SETTING_DEFAULTS,
   emptyVaultSnapshot,
@@ -30,12 +30,19 @@ import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { activeSplit, focusedTab, isSplit, openTab, splitActive } from '@/state/shell-workspace'
 import { vaultSettingsAtom } from '@/state/settings'
 import { tabDragAtom } from '@/features/shell/use-tab-drag'
+import { registerBuffer } from '@/lib/buffer-registry'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 
 const write = vi.fn(async (_input: unknown) => ({
   ok: true as const,
   warnings: [] as string[],
 }))
+
+const bufferCleanups: (() => void)[] = []
+afterEach(() => {
+  for (const cleanup of bufferCleanups.splice(0)) cleanup()
+  vi.restoreAllMocks()
+})
 
 const SETTINGS: ResolvedVaultSettings = {
   ...VAULT_SETTING_DEFAULTS,
@@ -233,6 +240,43 @@ test('⌘\\\\ makes a split of the tab and a New tab: one pill, two views', asyn
   expect(document.querySelectorAll('[data-slot=pane-header]')).toHaveLength(0)
   expect(within(views()[0]!).queryByRole('tab')).toBeNull()
   expect(within(views()[1]!).queryByRole('tab')).toBeNull()
+})
+
+test('a failed split-tab close stays visible and can be retried', async () => {
+  const store = mount()
+  fireEvent.keyDown(window, { key: '\\', ctrlKey: true })
+  await waitFor(() => expect(views()).toHaveLength(2))
+
+  const flush = vi
+    .fn<() => Promise<void>>()
+    .mockRejectedValueOnce(new Error('disk is full'))
+    .mockResolvedValue(undefined)
+  bufferCleanups.push(registerBuffer(flush))
+
+  fireEvent.click(within(stripOf()).getByRole('button', { name: 'Close split view' }))
+  expect(await screen.findByRole('heading', { name: 'Close split tab?' })).toBeTruthy()
+  expect(
+    screen.getByText(
+      'This tab contains multiple views. Closing it will close every view in the split.',
+    ),
+  ).toBeTruthy()
+  const confirm = screen.getByRole('button', { name: 'Close tab' })
+
+  fireEvent.click(confirm)
+  expect(await screen.findByRole('alert')).toHaveTextContent('disk is full')
+  expect(screen.getByRole('heading', { name: 'Close split tab?' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Close tab' })).toBeTruthy()
+  expect(views()).toHaveLength(2)
+  expect(activeSplit(store.get(shellWorkspaceAtom))?.views).toEqual([
+    'B.md',
+    expect.stringMatching(/^holi:new:/),
+  ])
+
+  fireEvent.click(screen.getByRole('button', { name: 'Close tab' }))
+  await waitFor(() => expect(views()).toHaveLength(1))
+  expect(store.get(shellWorkspaceAtom).entries).toEqual(['A.md'])
+  expect(flush).toHaveBeenCalledTimes(2)
+  expect(screen.queryByRole('heading', { name: 'Close split tab?' })).toBeNull()
 })
 
 test('selecting another tab shows it alone, the split staying in the strip', async () => {
