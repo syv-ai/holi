@@ -864,13 +864,23 @@ export function MailView() {
   return (
     <ResizablePanelGroup
       orientation="horizontal"
-      className="h-full min-h-0"
+      className={cn(
+        'h-full min-h-0',
+        composing !== null &&
+          '@container/mail @max-[40rem]/mail:[&>[data-panel]:first-child]:hidden @max-[40rem]/mail:[&>[data-panel]:last-child]:!grow',
+      )}
       defaultLayout={layout.defaultLayout}
       onLayoutChanged={layout.onLayoutChanged}
       onKeyDown={onKeyDown}
     >
       {/* The list, resizable: no fixed width suits both wide and narrow windows. */}
-      <ResizablePanel id="mail-list" defaultSize={320} minSize={220} maxSize={640}>
+      <ResizablePanel
+        id="mail-list"
+        defaultSize={320}
+        minSize={220}
+        maxSize={640}
+        className={composing !== null ? '@max-[40rem]/mail:hidden' : undefined}
+      >
         <div className="flex h-full min-h-0 flex-col">
           {live.size > 0 ? (
             <SelectionBar
@@ -1013,7 +1023,7 @@ export function MailView() {
       </ResizablePanel>
 
       {/* The divider IS the handle, so the list has no border of its own. */}
-      <ResizableHandle />
+      <ResizableHandle className={composing !== null ? '@max-[40rem]/mail:hidden' : undefined} />
 
       {/* The reader */}
       <ResizablePanel id="mail-reader" minSize={280}>
