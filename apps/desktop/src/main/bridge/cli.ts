@@ -159,7 +159,15 @@ export function resolveArgv(
     }
   }
   if (positionals.length > 0) return wrong(`unexpected argument: ${positionals[0]}`)
-  if (cli.job !== undefined && job !== null && job !== '' && !Object.hasOwn(params, cli.job)) {
+  if (cli.job !== undefined && job !== null && job !== '') {
+    // Inside a session, the command is that session's: naming another one
+    // would let any session act as the one a verb trusts (a meeting's
+    // scribe). The flag is for a person at a terminal outside any session.
+    if (Object.hasOwn(params, cli.job) && params[cli.job] !== job) {
+      return wrong(
+        `--${cli.job} names another session; run inside one, this command is always its own`,
+      )
+    }
     params[cli.job] = job
   }
 

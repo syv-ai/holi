@@ -104,13 +104,17 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   useEffect(() => {
     if (pendingClose !== null && pendingClose.remote !== remote) setPendingClose(null)
   }, [pendingClose, remote])
-  const tabForPath = useAtomValue(shellTabForPathAtom)
   const folders = useAtomValue(folderSurfacesAtom)
   /** The key a sidebar row, a search hit or a plugin's request opens: a view's
    *  own key (the board), or a vault path's tab, which a plugin's folder
    *  document (a deck) opens as its surface. */
+  // Resolved from the store as it is now, not as it was at the last render:
+  // a caller that just made or renamed a folder document opens it in the
+  // same tick its snapshot arrived.
   const keyFor = (id: string): string =>
-    parseTabKey(id)?.kind === 'doc' || id.endsWith('.app') ? tabKey(tabForPath(id)) : id
+    parseTabKey(id)?.kind === 'doc' || id.endsWith('.app')
+      ? tabKey(store.get(shellTabForPathAtom)(id))
+      : id
   /** Split tabs: the active split, when the active entry is one. */
   const split = activeSplit(ws)
   /** The view in front (the active tab, or the split's focused member):

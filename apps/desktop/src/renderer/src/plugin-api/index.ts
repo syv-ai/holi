@@ -49,6 +49,7 @@ export { trpc } from '@/lib/trpc'
 export { capClient, /** @public */ type CapClient, type UiCapability } from '@/lib/cap-client'
 export { useHasCapability } from '@/state/capabilities'
 export { cn } from '@/lib/cn'
+export { prefersReducedMotion } from '@/lib/motion'
 export { /** @public */ openExternal } from '@/lib/open-external'
 export { /** @public */ vaultAssetUrl } from '@/lib/vault-asset'
 export { useAck } from '@/hooks/use-ack'
@@ -74,7 +75,7 @@ export {
   /** @public */ HoliArcade,
 } from '@/composites/arcade/holi-arcade'
 export { sessionAtom } from '@/state/session'
-export { forgetAgentLabelsAtom } from '@/state/document-runs'
+export { forgetAgentLabelsAtom, useAgentLabel } from '@/state/document-runs'
 export { agentProviderSettingAtom, usePluginSetting } from '@/state/settings'
 export { activeModeAtom } from '@/state/color-scheme'
 export {

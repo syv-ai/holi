@@ -330,8 +330,11 @@ export { gitignoreWith } from './vault/seed/core'
 export {
   absPathFor,
   listFiles,
+  lockPath,
+  pruneEmptiedFolder,
   removeDocFile,
   withFileLock,
+  withFileLocks,
   writeAtomic,
 } from './vault/vault-files'
 export { moveNotes } from './vault/move'
@@ -340,6 +343,8 @@ export { completionStatuses, readVaultStatuses } from './vault/statuses'
 export { renameNote } from './vault/rename'
 export { holiTheme, readVaultTheme } from './vault/theme'
 export { readVaultSettings, writePluginSettings } from './vault/settings'
+export { readVaultEnv } from './vault/dotenv'
+export type { SafeStorageLike } from './github/token-store'
 export { installedInfos } from './plugin-host/installed'
 export { shellReadBridgeEnv } from './bridge/env-file'
 export { mimeFor } from './vault/asset-protocol'

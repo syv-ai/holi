@@ -9,7 +9,7 @@
 import { readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
-import { exactPath, resolveRelative } from '@holi/shared/path-safety-node'
+import { resolveRelative } from '@holi/shared/path-safety-node'
 import {
   commentThreads,
   isCommentableNote,
@@ -65,9 +65,11 @@ import { ensureClone } from './vault/clone'
 import {
   absPathFor,
   carryFolder,
+  lockPath,
   pruneEmptiedFolder,
   removeDocFile,
   withFileLock,
+  withFileLocks,
   writeAtomic,
 } from './vault/vault-files'
 import { vaultReadme } from './vault/readme'
@@ -1168,8 +1170,7 @@ export function createRouter(deps: RouterDeps) {
         // Under the file's lock, keyed as an app's `docs.write` keys it (the
         // canonical path), so an app's check of the text it read and its
         // write are never split by this save.
-        const abs = (await exactPath(root, rel)) ?? absPathFor(root, rel)
-        await withFileLock(abs, () => writeAtomic(root, rel, input.text))
+        await withFileLock(await lockPath(root, rel), () => writeAtomic(root, rel, input.text))
         return { ok: true as const }
       }),
 
@@ -1192,7 +1193,9 @@ export function createRouter(deps: RouterDeps) {
     delete: vaultMutation
       .input(fields({ remote: 'string', path: 'string' }))
       .mutation(async ({ input }) => {
-        await removeDocFile(await rootFor(input.remote), safe(input.path))
+        const root = await rootFor(input.remote)
+        const rel = safe(input.path)
+        await withFileLocks(root, [rel], () => removeDocFile(root, rel))
         return { ok: true as const }
       }),
 
@@ -1294,7 +1297,12 @@ export function createRouter(deps: RouterDeps) {
     // folder would stay on its `.gitkeep` with nothing left to delete.
     deleteMany: vaultMutation.input(deleteManyInput).mutation(async ({ input }) => {
       const root = await rootFor(input.remote)
-      for (const p of input.paths) await removeDocFile(root, safe(p))
+      // Held together, as a move holds its files: no write that checked one
+      // of them lands between two removes.
+      const rels = input.paths.map((p) => safe(p))
+      await withFileLocks(root, rels, async () => {
+        for (const rel of rels) await removeDocFile(root, rel)
+      })
       for (const f of input.folders) await pruneEmptiedFolder(root, safe(f))
       return { ok: true as const }
     }),
