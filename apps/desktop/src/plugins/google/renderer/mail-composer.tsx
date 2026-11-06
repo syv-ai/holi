@@ -41,6 +41,7 @@ import { googleCap } from './google-cap'
 const AUTOSAVE_IDLE_MS = 2000
 
 type SaveState = 'pristine' | 'dirty' | 'saving' | 'saved' | 'error'
+type FailedOperation = 'load' | 'save' | 'send' | 'discard'
 
 const SAVE_LABEL: Record<SaveState, string> = {
   pristine: '',
@@ -157,6 +158,7 @@ export function MailComposer({
   const [foreign, setForeign] = useState(false)
   const [saveState, setSaveState] = useState<SaveState>('pristine')
   const [failure, setFailure] = useState<SendFailure | null>(null)
+  const [failedOperation, setFailedOperation] = useState<FailedOperation | null>(null)
   const [sending, setSending] = useState(false)
   const [departing, setDeparting] = useState(false)
   const [discarding, setDiscarding] = useState(false)
@@ -233,6 +235,7 @@ export function MailComposer({
       .catch((error: unknown) => {
         if (!cancelled) {
           loadingRef.current = true
+          setFailedOperation('load')
           setFailure(describeSendFailure(error))
         }
       })
@@ -293,11 +296,13 @@ export function MailComposer({
       if (mountedRef.current) {
         setSaveState(queuedRef.current ? 'dirty' : 'saved')
         setFailure(null)
+        setFailedOperation(null)
       }
     } catch (error) {
       dirtyRef.current = true
       if (mountedRef.current) {
         setSaveState('error')
+        setFailedOperation('save')
         setFailure({
           message: error instanceof Error ? error.message : 'Draft could not be saved.',
           action: 'retry',
@@ -383,6 +388,7 @@ export function MailComposer({
     sendingRef.current = true
     setSending(true)
     setFailure(null)
+    setFailedOperation(null)
     try {
       // Forced save first, so a draft that exists is the one being sent and a
       // failure leaves the newest text in Gmail rather than an older copy.
@@ -406,7 +412,16 @@ export function MailComposer({
     } catch (error: unknown) {
       // Never auto-retried. The failure mode of a send is a duplicate arriving
       // at a real person, not a message lost.
-      if (mountedRef.current) setFailure(describeSendFailure(error))
+      if (mountedRef.current) {
+        setFailedOperation('send')
+        const sendFailure = describeSendFailure(error)
+        setFailure({
+          ...sendFailure,
+          // Retrying a send is always explicit; the composer never retries it
+          // after an unknown outcome.
+          action: sendFailure.action === null ? 'retry' : sendFailure.action,
+        })
+      }
     } finally {
       sendingRef.current = false
       if (mountedRef.current) setSending(false)
@@ -449,7 +464,14 @@ export function MailComposer({
       } catch (error: unknown) {
         // Stay open with the failure and the text intact: closing would hide
         // that the draft still sits in Gmail.
-        if (mountedRef.current) setFailure(describeSendFailure(error))
+        if (mountedRef.current) {
+          setFailedOperation('discard')
+          const discardFailure = describeSendFailure(error)
+          setFailure({
+            ...discardFailure,
+            action: discardFailure.action === null ? 'retry' : discardFailure.action,
+          })
+        }
         discardingRef.current = false
         if (mountedRef.current) setDiscarding(false)
         return
@@ -458,6 +480,7 @@ export function MailComposer({
     // The unmount save would be a `create`, putting the discarded message
     // straight back into Drafts.
     dirtyRef.current = false
+    setFailedOperation(null)
     if (mountedRef.current) onDiscarded()
   }
 
@@ -630,12 +653,24 @@ export function MailComposer({
               size="sm"
               variant="outline"
               onClick={() => {
-                if (loadingRef.current && draftId !== undefined) {
-                  setFailure(null)
-                  loadingRef.current = true
-                  setLoadAttempt((n) => n + 1)
-                } else if (dirtyRef.current) void save().catch(() => {})
-                else void send()
+                setFailure(null)
+                switch (failedOperation) {
+                  case 'load':
+                    loadingRef.current = true
+                    setLoadAttempt((n) => n + 1)
+                    break
+                  case 'save':
+                    void save().catch(() => {})
+                    break
+                  case 'send':
+                    void send()
+                    break
+                  case 'discard':
+                    void discard()
+                    break
+                  case null:
+                    break
+                }
               }}
             >
               Retry

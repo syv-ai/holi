@@ -460,6 +460,92 @@ describe('autosave', () => {
   })
 })
 
+describe('operation-specific retries', () => {
+  it('retries a failed discard of a saved draft without saving or sending', async () => {
+    const user = setup()
+    draftQuery.mockResolvedValue({
+      draftId: 'd-1',
+      threadId: 't1',
+      to: [],
+      cc: [],
+      subject: 'Draft',
+      markdown: 'saved body',
+      html: '<p>saved body</p>',
+      text: 'saved body',
+      foreign: false,
+    })
+    discardDraft.mockRejectedValueOnce(new Error('offline'))
+    mount({ intent: { kind: 'new' }, draftId: 'd-1' })
+    await waitFor(() => expect(subjectField()).toHaveValue('Draft'))
+
+    await user.click(screen.getByRole('button', { name: 'Discard' }))
+    await user.click(screen.getByRole('button', { name: 'Discard draft' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument())
+    expect(subjectField()).not.toBeDisabled()
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(discardDraft).toHaveBeenCalledTimes(2))
+    expect(saveDraft).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('retries a dirty draft discard instead of saving it', async () => {
+    const user = setup()
+    draftQuery.mockResolvedValue({
+      draftId: 'd-1',
+      threadId: 't1',
+      to: [],
+      cc: [],
+      subject: 'Draft',
+      markdown: 'saved body',
+      html: '<p>saved body</p>',
+      text: 'saved body',
+      foreign: false,
+    })
+    discardDraft.mockRejectedValueOnce(new Error('offline'))
+    mount({ intent: { kind: 'new' }, draftId: 'd-1' })
+    await waitFor(() => expect(subjectField()).toHaveValue('Draft'))
+    await user.type(subjectField(), ' edited')
+    await user.click(screen.getByRole('button', { name: 'Discard' }))
+    await user.click(screen.getByRole('button', { name: 'Discard draft' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument())
+
+    const savesBeforeRetry = saveDraft.mock.calls.length
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(discardDraft).toHaveBeenCalledTimes(2))
+    expect(saveDraft).toHaveBeenCalledTimes(savesBeforeRetry)
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('explicitly retries a send whose outcome is unknown', async () => {
+    const user = setup()
+    send.mockRejectedValueOnce(new Error('offline'))
+    mount()
+
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument())
+    expect(send).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2))
+  })
+
+  it('retries only the save when a send is blocked by save failure', async () => {
+    const user = setup()
+    saveDraft.mockRejectedValueOnce(new Error('offline'))
+    mount()
+    await user.type(subjectField(), ' latest')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument())
+    expect(saveDraft).toHaveBeenCalledTimes(1)
+    expect(send).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(saveDraft).toHaveBeenCalledTimes(2))
+    expect(send).not.toHaveBeenCalled()
+  })
+})
+
 describe('sending', () => {
   it('refuses to send with no recipients, and says why', async () => {
     mount({ intent: { kind: 'new' } })
@@ -577,15 +663,19 @@ describe('sending', () => {
     expect(send).toHaveBeenCalledTimes(1)
   })
 
-  it('offers no retry at all for an unexplained failure', async () => {
+  it('offers an explicit retry for an unexplained send failure without retrying by itself', async () => {
     const user = setup()
-    send.mockRejectedValue(new Error('something went wrong'))
+    send.mockRejectedValueOnce(new Error('something went wrong'))
     mount()
 
     await user.click(screen.getByRole('button', { name: 'Send' }))
 
     await waitFor(() => expect(screen.getByText('something went wrong')).toBeVisible())
-    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible()
+    expect(send).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2))
   })
 })
 
