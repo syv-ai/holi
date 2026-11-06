@@ -92,7 +92,7 @@ function AlertDialogFooter({
       className={cn(
         "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-xl p-4 group-data-[size=sm]/alert-dialog-content:grid group-data-[size=sm]/alert-dialog-content:grid-cols-2 sm:flex-row sm:justify-end",
         variant === "default" && "border-t bg-muted/50",
-        variant === "plain" && "bg-background",
+        variant === "plain" && "bg-inherit",
         className
       )}
       {...props}
