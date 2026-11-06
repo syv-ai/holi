@@ -96,6 +96,34 @@ jobs:
           TITLE: ${{ github.event.pull_request.title }}
         run: node scripts/check-commit-msg.mjs --message "$TITLE"
 
+  ios-format:
+    name: iOS vault format (native)
+    # Keep native checks independent from Node/pnpm on the dependable Intel pool.
+    runs-on: macos-26-intel
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select an available iOS Simulator
+        id: simulator
+        shell: bash
+        run: |
+          xcodebuild -version
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, subprocess
+          data = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "--json"]))
+          devices = [device for runtime, values in data["devices"].items() if runtime.startswith("com.apple.CoreSimulator.SimRuntime.iOS-") for device in values if device["name"].startswith("iPhone")]
+          if not devices:
+              raise SystemExit("No available iOS Simulator device/runtime; refusing to skip native tests")
+          print(f"id={devices[0]['udid']}")
+          PY
+
+      - name: Build and test for iOS Simulator
+        run: >-
+          xcodebuild -scheme HoliVaultFormat
+          -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}'
+          CODE_SIGNING_ALLOWED=NO test
+        working-directory: apps/ios
+
   test:
     name: Test
     # macOS on purpose: the tests encode the filesystem Holi ships on (macOS and
