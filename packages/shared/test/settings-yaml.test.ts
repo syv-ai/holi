@@ -84,6 +84,12 @@ describe('writing to a settings file', () => {
     expect(written).toContain('dailyNotes: false')
   })
 
+  it('persists the split-close confirmation preference in the local file', () => {
+    const local = writeSettingsText({ confirmCloseSplitTabs: false }, 'local', [])
+    expect(local).toContain('confirmCloseSplitTabs: false')
+    expect(resolveAppSettings(seeded, local).confirmCloseSplitTabs).toBe(false)
+  })
+
   it('turns an answer back into a comment when it is unset', () => {
     const answered = writeSettingsText({ autoUpdateSkills: true }, 'committed', [])
     expect(answered).toContain('autoUpdateSkills: true')
