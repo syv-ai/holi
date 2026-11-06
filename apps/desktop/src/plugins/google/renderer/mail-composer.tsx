@@ -401,6 +401,14 @@ export function MailComposer({
         }
       }}
     >
+      {bare && (
+        <div className="flex items-center justify-between gap-2 border-b border-divider pb-2">
+          <h2 className="text-sm font-medium">{draftId === undefined ? 'New message' : 'Draft'}</h2>
+          <Button type="button" size="sm" variant="ghost" onClick={attemptClose}>
+            Close
+          </Button>
+        </div>
+      )}
       {foreign && (
         <p
           className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground"
