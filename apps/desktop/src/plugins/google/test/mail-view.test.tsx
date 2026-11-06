@@ -2178,32 +2178,20 @@ test('the thread list comes back when Mail is chosen again', async () => {
  * A dialog, where a reply is inline: a fresh message has no context to
  * preserve.
  */
-test('new message opens the compose dialog rather than an inline composer', async () => {
+test('new message opens in the reader pane without a compose dialog', async () => {
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary()]))
   render(<MailView />)
 
   await user.click(await screen.findByRole('button', { name: 'New message' }))
 
-  // The plugin dialog is the contract with core's dialog host: it renders
-  // what the plugin hands it.
-  expect(openedDialog).toHaveBeenCalledWith(expect.objectContaining({ id: 'plugin', size: 'lg' }))
-  const { render: content } = openedDialog.mock.calls[0]![0] as {
-    render: (close: () => void) => React.ReactNode
-  }
-  render(
-    <Dialog open>
-      <DialogContent>{content(() => {})}</DialogContent>
-    </Dialog>,
-  )
-  // Named by its visible title, and the body field by its own label.
-  expect(await screen.findByRole('dialog', { name: 'New message' })).toBeInTheDocument()
+  expect(openedDialog).not.toHaveBeenCalled()
+  expect(await screen.findByRole('heading', { name: 'New message' })).toBeInTheDocument()
   expect(screen.getByRole('textbox', { name: 'Subject' })).toBeInTheDocument()
   expect(screen.getByRole('textbox', { name: 'Message' })).toBeInTheDocument()
 })
 
-test('new message does not disturb an open thread', async () => {
-  // The dialog must not close what is being read behind it.
+test('new message replaces the open thread in the reader pane', async () => {
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary()]))
   render(<MailView />)
@@ -2212,5 +2200,6 @@ test('new message does not disturb an open thread', async () => {
 
   await user.click(screen.getByRole('button', { name: 'New message' }))
 
-  expect(screen.getByRole('article')).toBeInTheDocument()
+  expect(screen.queryByRole('article')).not.toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: 'New message' })).toBeInTheDocument()
 })

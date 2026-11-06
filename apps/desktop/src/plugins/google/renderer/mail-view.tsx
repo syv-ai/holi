@@ -57,7 +57,6 @@ import {
   activeRemoteAtom,
   cn,
   matchHotkey,
-  openDialogAtom,
   openSettingsSectionAtom,
   openDocumentAtom,
   useAgentService,
@@ -83,7 +82,6 @@ import { EmptyState, LoadingRows } from '@/composites/empty-state'
 import { IconButton } from '@/composites/icon-button'
 import { PaneToolbar } from '@/composites/pane-toolbar'
 import { SandboxedHtml } from './sandboxed-html'
-import { ComposeMailDialog } from './compose-mail-dialog'
 import { MailComposer } from './mail-composer'
 import { DraftsList, type DraftSummary } from './drafts-list'
 import { ThreadMenu, type ThreadActions } from './thread-menu'
@@ -250,7 +248,6 @@ export function MailView() {
     [remote],
   )
   const openNote = useSetAtom(openDocumentAtom)
-  const openDialog = useSetAtom(openDialogAtom)
   const openSettingsSection = useSetAtom(openSettingsSectionAtom)
   /** Where Google is connected: the Connections section of Settings. */
   const openConnections = () => openSettingsSection('connections')
@@ -801,16 +798,12 @@ export function MailView() {
               inboxUnread={counts?.unread ?? null}
               categoryCounts={categoryCounts}
               onCategoryMenuOpen={loadCategoryCounts}
-              onCompose={() =>
-                // A dialog, where a reply is inline: a fresh message has no
-                // thread to keep in view. Closing is safe: the composer saves
-                // on unmount and the Drafts view finds it again.
-                openDialog({
-                  id: 'plugin',
-                  size: 'lg',
-                  render: (close) => <ComposeMailDialog onClose={close} />,
-                })
-              }
+              onCompose={() => {
+                setComposeKey((key) => key + 1)
+                setContinuing(undefined)
+                setOpenId(null)
+                setComposing({ kind: 'new' })
+              }}
               onRefresh={() => {
                 load()
                 loadCounts()
@@ -934,6 +927,7 @@ export function MailView() {
                 onSent={onComposerSent}
                 onDiscarded={closeComposer}
                 onClose={closeComposer}
+                bare
               />
             </div>
           ) : openId === null ? (
@@ -1109,6 +1103,7 @@ export function MailView() {
                     onSent={onComposerSent}
                     onDiscarded={closeComposer}
                     onClose={closeComposer}
+                    bare={composing.kind === 'new'}
                   />
                 )}
               </div>

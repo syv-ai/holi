@@ -28,7 +28,6 @@ import { googleCap } from '../google-cap'
 import { useGoogleAccount } from '../account'
 import { AppHeader, type ThreadCommands } from './mail-header'
 import { AppSidebar } from './mail-sidebar'
-import { ComposeDialog, type ComposeRequest } from './compose-dialog'
 import { MailList } from './mail-list'
 import { MailReader } from './mail-reader'
 import { NavUser } from './nav-user'
@@ -50,8 +49,8 @@ export function MailShell({ className }: { className?: string }) {
   const canLinkToTask = useHasCapability(TASKS_CREATE) && remote !== null
 
   const [expanded, setExpanded] = useState(true)
-  /** A new message or a draft, in a dialog: it has no thread to keep in view. */
-  const [compose, setCompose] = useState<ComposeRequest | null>(null)
+  /** A new message or draft temporarily replaces the reader pane. */
+  const [compose, setCompose] = useState<{ draftId?: string; key: number } | null>(null)
   /** A reply or forward, inline under the thread it answers. */
   const [inline, setInline] = useState<{
     intent: ComposeIntent
@@ -142,6 +141,32 @@ export function MailShell({ className }: { className?: string }) {
         },
   }
 
+  const standaloneComposer =
+    compose === null ? null : (
+      <MailComposer
+        key={compose.key}
+        intent={{ kind: 'new' }}
+        draftId={compose.draftId}
+        sendAs={mail.sendAs}
+        suggestions={mail.contacts}
+        onSent={() => {
+          setCompose(null)
+          mail.reloadDrafts()
+          mail.load()
+        }}
+        onDiscarded={() => {
+          setCompose(null)
+          mail.reloadDrafts()
+        }}
+        onClose={() => {
+          setCompose(null)
+          mail.reloadDrafts()
+        }}
+        onReconnect={openConnections}
+        bare
+      />
+    )
+
   const closeInline = () => {
     setInline(null)
     mail.reloadDrafts()
@@ -210,20 +235,10 @@ export function MailShell({ className }: { className?: string }) {
                 : null
             }
             onCompose={() => startCompose()}
+            standaloneComposer={standaloneComposer}
           />
         </div>
       </SidebarProvider>
-
-      <ComposeDialog
-        request={compose}
-        sendAs={mail.sendAs}
-        contacts={mail.contacts}
-        onReconnect={openConnections}
-        onClose={() => {
-          setCompose(null)
-          mail.reloadDrafts()
-        }}
-      />
     </TooltipProvider>
   )
 }
