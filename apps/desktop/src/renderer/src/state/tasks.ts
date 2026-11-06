@@ -42,11 +42,6 @@ export const openTaskCountAtom = atom((get) => {
   return get(snapshotTasksAtom).items.filter((t) => !isClosed(t.status)).length
 })
 
-/** Quick add (⌘T) is open: one dialog near the top, wherever it was asked for. */
-const quickAddAtom = atom(false)
-
-export const openQuickAddAtom = atom(null, (_get, set) => set(quickAddAtom, true))
-
 // ------------------------------------------------------------------- writes
 //
 // Every write re-reads the vault. No optimistic patching and no

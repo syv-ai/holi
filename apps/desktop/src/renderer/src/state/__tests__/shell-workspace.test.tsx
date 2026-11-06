@@ -427,6 +427,20 @@ describe('files', () => {
     })
   })
 
+  test('deleted views close and the user stays on a surviving one', () => {
+    const ws = closeTabsWhere(selectEntry(withTabs(A, B, C), A), (k) => k === B)
+    expect(strip(ws)).toEqual([A, C])
+    expect(ws.active).toBe(A)
+  })
+
+  test('a deleted active view hands over to its neighbour, and all gone empties', () => {
+    let ws = closeTabsWhere(selectEntry(withTabs(A, B, C), B), (k) => k === B)
+    expect(ws.active).toBe(C)
+    ws = closeTabsWhere(ws, () => true)
+    expect(ws.entries).toEqual([])
+    expect(ws.active).toBeNull()
+  })
+
   test('gone views close wherever they are, not offered to Reopen', () => {
     const ws = closeTabsWhere(pair(), (k) => k === B || k === C)
     expect(strip(ws)).toEqual([A])

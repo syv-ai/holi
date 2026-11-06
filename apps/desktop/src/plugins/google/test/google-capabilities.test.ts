@@ -360,3 +360,12 @@ describe('what other people wrote, at the CLI door', () => {
     expect(await call('agenda')).toEqual([event])
   })
 })
+
+describe('answering an invitation from the CLI', () => {
+  it('refuses unless exactly one answer is given, before reaching Google', async () => {
+    const { cli } = rig()
+    for (const params of [{ id: 'e1' }, { id: 'e1', yes: 'true', no: 'true' }]) {
+      expect(await refusal(cli('respond', params))).toMatchObject({ code: 'BAD_REQUEST' })
+    }
+  })
+})

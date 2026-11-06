@@ -47,7 +47,7 @@ import { toast } from 'sonner'
 import {
   activeRemoteAtom,
   cn,
-  openNoteTabAtom,
+  openDocumentAtom,
   openSettingsSectionAtom,
   useHasCapability,
   openExternal,
@@ -122,7 +122,7 @@ export function CalendarView(): React.JSX.Element {
   const { account } = useGoogleAccount()
   const calendar = useGoogleCalendar(remote)
   const openSettings = useSetAtom(openSettingsSectionAtom)
-  const openNote = useSetAtom(openNoteTabAtom)
+  const openNote = useSetAtom(openDocumentAtom)
   const canCreateTask = useHasCapability(TASKS_CREATE) && remote !== null
 
   const [sheet, setSheet] = useState<EventSheetState | null>(null)

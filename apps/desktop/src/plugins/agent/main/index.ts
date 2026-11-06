@@ -266,6 +266,10 @@ export const agentMain: MainPlugin = {
         terminals.resize(p.id, p.cols, p.rows)
       }
     })
+    ctx.on('pty-appearance', (_remote, payload) => {
+      const p = payload as { id?: unknown; appearance?: unknown }
+      if (typeof p?.id === 'string') terminals.setAppearance(p.id, p.appearance)
+    })
     // Each provider's hooks, by the session id they carry: a session Holi
     // runs, or a background job. The built-in ones are fixed, so their
     // routes are served once.

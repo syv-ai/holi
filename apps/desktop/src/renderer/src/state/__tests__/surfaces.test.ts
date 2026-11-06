@@ -12,7 +12,7 @@ import {
 } from '@/state/surfaces'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { openInSplit, openTab, emptyWorkspace } from '@/state/shell-workspace'
-import { tabKey } from '@/state/tab-descriptor'
+import { sessionKey, tabKey } from '@/state/tab-descriptor'
 import { snapshotAtom } from '@/state/vaults'
 
 const glyph = () => null
@@ -65,6 +65,17 @@ test('vault-app descriptors keep the app surface lifecycle and close behavior', 
   expect(store.get(surfaceTabIdsAtom('app'))).toEqual([first])
   store.set(closeSurfaceTabsAtom, 'app', [])
   expect(store.get(surfaceTabIdsAtom('app'))).toEqual([])
+})
+
+describe('activeSurfaceIdAtom', () => {
+  test('reads the focused session selection for its owning surface', () => {
+    const store = storeWith([])
+    const key = sessionKey({ owner: 'agent', id: 'session:codex-session' })
+    store.set(shellWorkspaceAtom, (ws) => openTab(ws, key))
+
+    expect(store.get(activeSurfaceIdAtom('agent'))).toBe('session:codex-session')
+    expect(store.get(activeSurfaceIdAtom('browser'))).toBeNull()
+  })
 })
 
 describe('shellTabForPathAtom', () => {
