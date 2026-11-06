@@ -1,6 +1,6 @@
 /** Appearance: how this machine's window looks (theme, glass). */
 import { useAtomValue, useSetAtom } from 'jotai'
-import type { ColorScheme, WindowGlass } from '@holi/shared'
+import { VAULT_SETTING_DEFAULTS, type ColorScheme, type WindowGlass } from '@holi/shared'
 import { Switch } from '@/components/ui/switch'
 import { COLOR_SCHEMES, colorSchemeAtom, writeColorSchemeAtom } from '@/state/color-scheme'
 import { isMac } from '@/lib/platform'
@@ -87,7 +87,7 @@ export function AppearancePage() {
         <Switch
           id="settings-confirm-close-split-tabs"
           disabled={resolved === null}
-          checked={resolved?.confirmCloseSplitTabs ?? true}
+          checked={resolved?.confirmCloseSplitTabs ?? VAULT_SETTING_DEFAULTS.confirmCloseSplitTabs}
           onCheckedChange={(on) => void write('confirmCloseSplitTabs', on)}
         />
       </SettingsFieldRow>
