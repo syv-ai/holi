@@ -42,20 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v5
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build
-        run: pnpm --filter @holi/desktop build
+      - uses: ./.github/actions/setup
 
       # electron-builder rebuilds node-pty for Electron, signs with the
       # Developer ID certificate in CSC_LINK, and notarizes and staples the app
@@ -94,20 +81,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v5
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build
-        run: pnpm --filter @holi/desktop build
+      - uses: ./.github/actions/setup
 
       # Unsigned: Linux has no platform signature for the updater to check.
       # electron-builder rebuilds node-pty for Electron before the deb and
@@ -138,14 +112,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v5
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: pnpm
+      - uses: ./.github/actions/setup
 
       - name: Calculate prerelease version
         id: version
@@ -155,12 +122,6 @@ jobs:
           echo "next_patch=$NEXT_PATCH" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build
-        run: pnpm --filter @holi/desktop build
 
       - name: Package, sign and notarize
         working-directory: apps/desktop
@@ -229,20 +190,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v5
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build
-        run: pnpm --filter @holi/desktop build
+      - uses: ./.github/actions/setup
 
       - name: Package
         working-directory: apps/desktop

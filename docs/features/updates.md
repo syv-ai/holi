@@ -148,4 +148,5 @@ A dev build reports updates as unsupported.
 - `apps/desktop/src/main/vault/seed/update.ts` (`pendingShipped`), `seed/state.ts` (`release`),
   `seed/update-on-open.ts`, `state/skills.ts`: the skills offer, the update on open and its notice
 - `apps/desktop/src/renderer/src/features/settings/pages/updates-page.tsx`: Settings → Updates
-- `apps/desktop/electron-builder.yml`, `.github/workflows/release.yml`: packaging and release
+- `apps/desktop/electron-builder.yml`, `.github/workflows/release.yml`: packaging and release;
+  `.github/actions/setup/`: the install and build every release job runs first
