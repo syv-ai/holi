@@ -12,7 +12,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Provider, createStore } from 'jotai'
-import { createRef } from 'react'
+import { createRef, useState } from 'react'
 import { undo, redo } from '@codemirror/commands'
 import { EditorView } from '@codemirror/view'
 import { MailComposer, type MailComposerHandle } from '../renderer/mail-composer'
@@ -130,6 +130,81 @@ afterEach(() => {
 function setup() {
   return userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
 }
+
+describe('composer focus', () => {
+  it('focuses the recipient for a new message and the real editor for a reply', async () => {
+    const { unmount } = mount({ intent: { kind: 'new' } })
+    expect(screen.getByRole('textbox', { name: /to/i })).toHaveFocus()
+    unmount()
+
+    mount()
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveFocus())
+  })
+
+  it('does not steal focus outside while a draft is loading', async () => {
+    let resolveDraft: ((draft: unknown) => void) | undefined
+    draftQuery.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveDraft = resolve
+        }),
+    )
+    const outside = document.createElement('button')
+    document.body.append(outside)
+    mount({ intent: { kind: 'new' }, draftId: 'd-7' })
+    outside.focus()
+
+    resolveDraft?.({
+      draftId: 'd-7',
+      threadId: null,
+      to: [],
+      cc: [],
+      subject: 'Loaded',
+      markdown: 'Body',
+      html: null,
+      foreign: false,
+    })
+    await waitFor(() => expect(subjectField()).toHaveValue('Loaded'))
+    expect(outside).toHaveFocus()
+    outside.remove()
+  })
+
+  it('restores focus to the opening control when the composer unmounts', async () => {
+    const user = setup()
+    const onSent = vi.fn()
+    const onDiscarded = vi.fn()
+    const onClose = vi.fn()
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/vault')
+    function Host() {
+      const [open, setOpen] = useState(false)
+      return (
+        <>
+          <button onClick={() => setOpen(true)}>Compose</button>
+          {open && (
+            <Provider store={store}>
+              <MailComposer
+                intent={{ kind: 'new' }}
+                onSent={onSent}
+                onDiscarded={onDiscarded}
+                onClose={() => {
+                  onClose()
+                  setOpen(false)
+                }}
+              />
+            </Provider>
+          )}
+        </>
+      )
+    }
+    render(<Host />)
+    const trigger = screen.getByRole('button', { name: 'Compose' })
+    await user.click(trigger)
+    expect(screen.getByRole('textbox', { name: /to/i })).toHaveFocus()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(trigger).toHaveFocus())
+  })
+})
 
 describe('the pristine guard', () => {
   it('creates no draft when the composer is opened and closed untouched', async () => {
@@ -718,6 +793,7 @@ describe('a draft written outside Holi', () => {
     await waitFor(() =>
       expect(screen.getByTestId('mail-body')).toHaveTextContent('Hello from the draft'),
     )
+    expect(screen.getByRole('textbox', { name: /to/i })).toHaveFocus()
   })
 
   it('does not save a loaded draft back over itself before it is touched', async () => {

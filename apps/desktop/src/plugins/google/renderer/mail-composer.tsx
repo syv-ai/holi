@@ -13,7 +13,15 @@
  * `turndown` and opens for editing with a notice saying so.
  */
 import { useAtomValue } from 'jotai'
-import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import type { Ref } from 'react'
 import { useGoogleAccount } from './account'
 import { Compartment, EditorState } from '@codemirror/state'
@@ -182,6 +190,32 @@ export function MailComposer({
   const editVersion = useRef(0)
   const loadingRef = useRef(draftId !== undefined)
   const [loadAttempt, setLoadAttempt] = useState(0)
+  const sectionRef = useRef<HTMLElement | null>(null)
+  const originRef = useRef<HTMLElement | null>(
+    typeof document === 'undefined' ? null : (document.activeElement as HTMLElement | null),
+  )
+  const focusLoadedDraftRef = useRef(false)
+
+  useLayoutEffect(() => {
+    const section = sectionRef.current
+    const origin = originRef.current
+    if (draftId === undefined && intent.kind === 'new') {
+      section?.querySelector<HTMLElement>('[aria-label="To"]')?.focus()
+    }
+    return () => {
+      if (section?.contains(document.activeElement) && origin !== null && origin.isConnected) {
+        origin.focus()
+      }
+    }
+    // The origin and initial focus policy belong to this composer instance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useLayoutEffect(() => {
+    if (loads === 0 || !focusLoadedDraftRef.current) return
+    focusLoadedDraftRef.current = false
+    sectionRef.current?.querySelector<HTMLElement>('[aria-label="To"]')?.focus()
+  }, [loads])
 
   // ---- loading an existing draft -----------------------------------------
 
@@ -215,6 +249,7 @@ export function MailComposer({
       .then((draft) => {
         if (cancelled || editVersion.current !== 0 || !mountedRef.current) return
         loadingRef.current = false
+        focusLoadedDraftRef.current = document.activeElement === originRef.current
         // `markdown` is null exactly when `X-Holi-Source` was absent: the
         // renderer converts, since turndown needs a DOM. With no html either the
         // plain text IS the message; converting `''` would open blank and
@@ -510,6 +545,7 @@ export function MailComposer({
 
   return (
     <section
+      ref={sectionRef}
       className={cn('flex min-h-0 flex-col gap-2', !bare && 'border-t border-divider py-3')}
       aria-label="Compose mail"
       onKeyDown={(event) => {
@@ -629,6 +665,7 @@ export function MailComposer({
       {tab === 'edit' ? (
         <MarkdownEditor
           key={loads}
+          focusOnMount={draftId === undefined && intent.kind !== 'new'}
           disabled={loadingRef.current || sending || departing || discarding}
           value={markdown}
           onChange={(next) => {
@@ -759,8 +796,10 @@ function MarkdownEditor({
   onChange,
   onBlur,
   disabled,
+  focusOnMount = false,
 }: {
   disabled: boolean
+  focusOnMount?: boolean
   value: string
   onChange: (next: string) => void
   onBlur: () => void
@@ -774,6 +813,7 @@ function MarkdownEditor({
   const initial = useRef(value)
   const editable = useRef(new Compartment())
   const viewRef = useRef<EditorView | null>(null)
+  const ignoreOpeningBlur = useRef(focusOnMount)
 
   // The view is created once so readonly changes cannot discard its document
   // or undo history; the following effect reconfigures the compartment.
@@ -794,13 +834,17 @@ function MarkdownEditor({
           EditorView.contentAttributes.of({ 'aria-label': 'Message', 'aria-multiline': 'true' }),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) notify.current(update.state.doc.toString())
-            if (update.focusChanged && !update.view.hasFocus) blurred.current()
+            if (update.focusChanged && !update.view.hasFocus) {
+              if (ignoreOpeningBlur.current) ignoreOpeningBlur.current = false
+              else blurred.current()
+            }
           }),
         ],
       }),
       parent,
     })
     viewRef.current = view
+    if (focusOnMount) view.focus()
     return () => {
       viewRef.current = null
       view.destroy()
