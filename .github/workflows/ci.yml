@@ -104,7 +104,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Check Swift formatting
-        run: xcrun swift-format lint --strict apps/ios/Sources/HoliVaultFormat/VaultFormat.swift apps/ios/Tests/HoliVaultFormatTests/VaultFormatTests.swift
+        run: xcrun swift-format lint --strict apps/ios/Package.swift apps/ios/Sources/HoliVaultFormat/VaultFormat.swift apps/ios/Tests/HoliVaultFormatTests/VaultFormatTests.swift
 
       - name: Run host Swift tests
         run: swift test
@@ -116,7 +116,7 @@ jobs:
         run: |
           xcodebuild -version
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json, re, subprocess
+          import json, re, subprocess, sys
           data = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "--json"]))
           candidates = []
           for runtime, devices in data["devices"].items():
@@ -132,7 +132,7 @@ jobs:
           if not candidates:
               raise SystemExit("No available iPhone simulator on iOS 26 or newer; refusing to skip native tests")
           _, name, udid = sorted(candidates)[0]
-          print(f"Selected {name} ({udid})")
+          print(f"Selected {name} ({udid})", file=sys.stderr)
           print(f"id={udid}")
           PY
 
