@@ -154,6 +154,9 @@ export function FilesSection({
   /** Set by a New item that opens a name field once it lands: the menu
    *  closing leaves focus alone, so it cannot take it from the field. */
   const namingNext = useRef(false)
+  /** What a New item just made and opened with its name field open: named,
+   *  it opens again at its new path, so its view is in front at once. */
+  const namedNext = useRef<string | null>(null)
   /** An asking New item waits until its menu has released focus before the
    *  dialog mounts; otherwise the closing menu can select text in its field. */
   const askingNext = useRef<{ create: FileCreate; parent: string } | null>(null)
@@ -251,6 +254,9 @@ export function FilesSection({
    *  holds. Either way links are rewritten and open tabs follow. */
   async function rename(item: ItemInstance<TreeItemData>, value: string) {
     const from = item.getId()
+    const opening = namedNext.current === from
+    namedNext.current = null
+    const remote = files.remote
     const name = value.trim()
     if (name === '' || name === basename(from)) return
     if (name.includes('/')) {
@@ -288,6 +294,7 @@ export function FilesSection({
       )
     }
     land([to])
+    if (opening && stillCurrent(remote)) onOpen(to)
   }
 
   async function onDrop(items: ItemInstance<TreeItemData>[], target: DragTarget<TreeItemData>) {
@@ -492,6 +499,7 @@ export function FilesSection({
     const opened = suffix !== null && path.endsWith(suffix) ? path.slice(0, -suffix.length) : path
     land([opened], { name: untitled })
     onOpen(opened)
+    if (untitled) namedNext.current = opened
     return true
   }
 
@@ -541,6 +549,7 @@ export function FilesSection({
     if (!stillCurrent(remote)) return false
     land([path], { name })
     onOpen(path)
+    if (name) namedNext.current = path
     return true
   }
 

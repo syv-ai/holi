@@ -152,7 +152,8 @@ profile's model and MCP servers, which are Claude Code's, are not used. Codex ha
 meeting on it records and captions without topics (`scribeUnsupported`), and the header says so with
 the fix, never running another agent behind the person's choice. A Stop while the scribe is still
 starting waits for it, up to a minute, before deciding the meeting has none, so a short meeting
-still gets its final pass. **Start the assistant** under Now (`meeting.scribe.restart`) starts a new
+still gets its final pass; a scribe that starts after that, after the meeting was deleted or after
+the plugin stopped is stopped at once, never left running. **Start the assistant** under Now (`meeting.scribe.restart`) starts a new
 one for a recording meeting whose assistant stopped or could not start, on the agent chosen then,
 sent the whole transcript with the groups so far.
 
@@ -416,7 +417,9 @@ changes the title the list, the review and the transcript's heading show, not th
 is where the tasks made from the meeting were filed, and moving it would break their paths. A delete
 removes the meeting's state on this machine and the transcript and minutes it wrote, then its folder
 if nothing else is left in it; the tasks made from it stay, since they are the work the meeting led
-to. A meeting that records or finishes cannot be deleted: stop it first.
+to. The files go only while the folder's transcript is still this meeting's, checked under their
+locks: a folder whose transcript is now someone else's keeps everything in it, and only this
+machine's record of the meeting goes. A meeting that records or finishes cannot be deleted: stop it first.
 
 ## Profiles
 

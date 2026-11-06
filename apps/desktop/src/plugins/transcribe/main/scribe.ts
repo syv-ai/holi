@@ -337,6 +337,9 @@ export function createScribe(deps: {
   const runtimes = new Map<string, Runtime>()
   /** Each meeting's scribe launch while it is under way. */
   const launching = new Map<string, Promise<void>>()
+  /** Meetings whose final pass stopped waiting for their launch: a scribe
+   *  that starts later has nothing left to do, and is stopped. */
+  const over = new Set<string>()
   let disposed = false
 
   const rt = (id: string): Runtime => {
@@ -605,8 +608,8 @@ export function createScribe(deps: {
     const { meeting, profile } = entry
     setState(meeting, 'starting')
     const provider = await deps.provider().catch(() => 'claude' as const)
-    // Deleted meanwhile: there is no meeting to start one for.
-    if (deps.host.get(id)?.meeting !== meeting) return
+    // Deleted, over or shut down meanwhile: there is nothing to start one for.
+    if (deps.host.get(id)?.meeting !== meeting || over.has(id) || disposed) return
     const args = launchArgs(provider, meeting, profile)
     if (args === null) {
       meeting.scribeUnsupported = provider
@@ -628,9 +631,15 @@ export function createScribe(deps: {
       setState(meeting, 'gone')
       return
     }
-    if (runtimes.get(id) !== r || deps.host.get(id)?.meeting !== meeting) {
-      // The meeting was deleted while its scribe started (`end` found no
-      // session to stop): the run goes too rather than outlive it.
+    if (
+      disposed ||
+      over.has(id) ||
+      runtimes.get(id) !== r ||
+      deps.host.get(id)?.meeting !== meeting
+    ) {
+      // The meeting was deleted, finished without it or the plugin stopped
+      // while its scribe started (nothing found a session to stop): the run
+      // goes too rather than outlive it.
       void deps.agent.stop(res.sessionId).catch(() => {})
       return
     }
@@ -785,6 +794,7 @@ export function createScribe(deps: {
           new Promise<void>((resolve) => (timer = setTimeout(resolve, wait))),
         ])
         clearTimeout(timer)
+        over.add(id)
       }
       const meeting = deps.host.get(id)?.meeting
       if (
@@ -814,6 +824,7 @@ export function createScribe(deps: {
     },
 
     end(id, session) {
+      over.delete(id)
       const r = runtimes.get(id)
       if (r === undefined) return
       if (r.timer !== null) clearTimeout(r.timer)
@@ -840,6 +851,7 @@ export function createScribe(deps: {
         }
       }
       runtimes.clear()
+      over.clear()
     },
   }
   return scribe

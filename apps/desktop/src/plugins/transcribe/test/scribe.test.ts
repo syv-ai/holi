@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CapabilityError } from '../../../main/capabilities/error'
 import { firstMessage, groupsChangeMessage, tellMessage } from '../shared/scribe-prompt'
 import { BATCH_TRANSCRIPT_S, groupsInAnswer, type LaunchArgs } from '../main/scribe'
-import { chunkWav, engineRig, SCRIBE, until } from './engine-helpers'
+import { chunkWav, engineRig, SCRIBE, settle, until } from './engine-helpers'
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
@@ -376,6 +376,38 @@ describe('the end of a meeting', () => {
     await until(() => rig.agent.stop.mock.calls.length > 0)
     expect(rig.agent.stop).toHaveBeenCalledWith(SCRIBE)
     expect(meeting.scribeSessionId).toBeUndefined()
+  })
+
+  it('started after the meeting finished without it is stopped, not kept running', async () => {
+    let started: ((v: { ok: true; sessionId: string }) => void) | undefined
+    const rig = await engineRig({
+      provider: async () => 'pi',
+      launch: () => new Promise((r) => (started = r)),
+    })
+    const { meetingId } = await rig.meetings.start({ title: 'Slow', profileId: 'default' })
+    const meeting = await rig.meetings.get(meetingId)
+    await until(() => started !== undefined)
+    await rig.meetings.stop(meetingId)
+    await vi.advanceTimersByTimeAsync(61_000)
+    await until(() => meeting.phase === 'done')
+    started!({ ok: true, sessionId: SCRIBE })
+    await until(() => rig.agent.stop.mock.calls.length > 0)
+    expect(rig.agent.stop).toHaveBeenCalledWith(SCRIBE)
+    expect(meeting.scribeSessionId).toBeUndefined()
+  })
+
+  it('is not started when the plugin stopped while it looked up the agent', async () => {
+    let chosen: ((p: 'pi') => void) | undefined
+    const rig = await engineRig({
+      provider: () => new Promise((r) => (chosen = r)),
+      launch: async () => ({ ok: true, sessionId: SCRIBE }),
+    })
+    await rig.meetings.start({ title: 'Closing', profileId: 'default' })
+    await until(() => chosen !== undefined)
+    await rig.meetings.dispose()
+    chosen!('pi')
+    await settle()
+    expect(rig.agent.launch).not.toHaveBeenCalled()
   })
 
   it('is not started on an agent that cannot run it, and the meeting says why', async () => {

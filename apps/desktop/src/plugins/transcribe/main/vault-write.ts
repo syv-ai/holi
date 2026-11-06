@@ -53,13 +53,16 @@ export async function vaultFolderExists(root: string, path: string): Promise<boo
 /**
  * Remove a meeting's own files from the vault, then its folder if nothing
  * else is left in it: a task made from the meeting, or a file a person put
- * there, keeps the folder. Sync commits the removal of a synced one.
+ * there, keeps the folder. Sync commits the removal of a synced one. Unless
+ * `guard`, asked under the files' locks, says no: the folder may have become
+ * someone else's since it was checked. Whether it removed them.
  */
 export async function removeVaultFiles(
   root: string,
   paths: readonly string[],
   folder: string,
-): Promise<void> {
+  guard?: () => Promise<boolean>,
+): Promise<boolean> {
   const rels = paths.map((path) => vaultRelPath(path))
   for (const rel of rels) {
     if ((await exactPath(root, rel)) === null) {
@@ -67,10 +70,13 @@ export async function removeVaultFiles(
     }
   }
   // All of them at once, as every delete of several files holds them.
-  await withFileLocks(root, rels, async () => {
+  const removed = await withFileLocks(root, rels, async () => {
+    if (guard !== undefined && !(await guard())) return false
     for (const rel of rels) await removeDocFile(root, rel)
+    return true
   })
-  await pruneEmptiedFolder(root, vaultRelPath(folder))
+  if (removed) await pruneEmptiedFolder(root, vaultRelPath(folder))
+  return removed
 }
 
 /** How much of a transcript is read to know it: its id, or the placeholder,

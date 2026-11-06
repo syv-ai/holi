@@ -676,6 +676,17 @@ describe('a meeting folder changed in the vault', () => {
     expect(rig.writes.get(transcript)).toBe('my own notes\n')
     expect(rig.meetings.list()).toEqual([expect.objectContaining({ id: meetingId, away: true })])
     expect(await present(join(dir, 'state.json'))).toBe(true)
+
+    // Deleted then, only this machine's record of it goes: the folder's
+    // files are the person's now.
+    const minutes = `${meeting.folder}/minutes.local.md`
+    const before = rig.writes.get(minutes)
+    await rig.meetings.remove(meetingId)
+    expect(rig.meetings.list()).toEqual([])
+    expect(await present(dir)).toBe(false)
+    expect(rig.removed).toEqual([])
+    expect(rig.writes.get(transcript)).toBe('my own notes\n')
+    expect(rig.writes.get(minutes)).toBe(before)
   })
 
   it('moved while a write raced it leaves nothing behind at the old path', async () => {
@@ -690,7 +701,7 @@ describe('a meeting folder changed in the vault', () => {
     await rig.meetings.follow()
     expect(meeting.folder).toBe('Moved.meeting')
     expect(rig.removed.at(-1)).toEqual({
-      rels: [`${from}/minutes.local.md`, `${from}/minutes.md`],
+      rels: [`${from}/transcript.local.md`, `${from}/minutes.local.md`, `${from}/minutes.md`],
       folder: from,
     })
   })

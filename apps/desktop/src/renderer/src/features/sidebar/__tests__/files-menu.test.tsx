@@ -36,6 +36,7 @@ const createTask = vi.hoisted(() =>
   ),
 )
 const writeNote = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined))
+const moveNotes = vi.hoisted(() => vi.fn(async (_input: unknown) => ({ rewritten: [] })))
 const snapshotQuery = vi.hoisted(() =>
   vi.fn(async () => (await import('@holi/shared')).emptyVaultSnapshot()),
 )
@@ -53,6 +54,7 @@ vi.mock('@/lib/trpc', () => ({
       deleteMany: { mutate: deleteMany },
       create: { mutate: createNote },
       write: { mutate: writeNote },
+      move: { mutate: moveNotes },
     },
     cap: { run: { mutate: capRun } },
     vaults: {
@@ -512,6 +514,31 @@ test('a made app opens its name field once the vault has it', async () => {
     ] as never,
   })
   expect(await screen.findByLabelText('Rename Untitled.app')).toBeTruthy()
+})
+
+test('a made app, named in place, opens at its new name', async () => {
+  const { store, onOpen } = mount()
+  fireEvent.contextMenu(await screen.findByText('kunder'))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'New app' }))
+  const snapshot = store.get(snapshotAtom)!
+  store.set(snapshotAtom, {
+    ...snapshot,
+    docs: [
+      ...snapshot.docs,
+      { path: 'kunder/Untitled.app/index.html', title: 'index', updatedAt: '2026-10-23T10:00:00Z' },
+    ] as never,
+  })
+  await screen.findByLabelText('Rename Untitled.app')
+  await waitFor(() => expect(onOpen).toHaveBeenLastCalledWith('kunder/Untitled.app'))
+  await userEvent.keyboard('Budget{Enter}')
+  await waitFor(() =>
+    expect(moveNotes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        moves: [{ from: 'kunder/Untitled.app/index.html', to: 'kunder/Budget.app/index.html' }],
+      }),
+    ),
+  )
+  await waitFor(() => expect(onOpen).toHaveBeenLastCalledWith('kunder/Budget.app'))
 })
 
 test("a deck's row opens it, and its chevron shows the files inside", async () => {

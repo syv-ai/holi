@@ -254,8 +254,13 @@ export interface MeetingsDeps {
   writeFile(rel: string, text: string, guard?: () => Promise<boolean>): Promise<boolean | void>
   /** Whether `rel` is a folder in the vault now. */
   folderExists(rel: string): Promise<boolean>
-  /** Remove vault files, then `folder` if nothing else is left in it. */
-  removeFiles(rels: readonly string[], folder: string): Promise<void>
+  /** Remove vault files, then `folder` if nothing else is left in it,
+   *  unless `guard`, asked under the files' locks, says no. */
+  removeFiles(
+    rels: readonly string[],
+    folder: string,
+    guard?: () => Promise<boolean>,
+  ): Promise<boolean | void>
   /** The start of a vault file, or null when there is none (`vault-write.ts`). */
   readHead(rel: string): Promise<string | null>
   /** The vault's folders as last scanned. */
@@ -704,8 +709,14 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     // old path, beside no transcript: they go, and the folder with them if
     // that empties it.
     if ((await markAt(from)).kind === 'absent' && (await deps.folderExists(from))) {
+      const left = [TRANSCRIPT_FILE, MINUTES_FILES.local, MINUTES_FILES.shared]
+      // Asked again under the locks: a transcript may arrive meanwhile.
       await deps
-        .removeFiles([`${from}/${MINUTES_FILES.local}`, `${from}/${MINUTES_FILES.shared}`], from)
+        .removeFiles(
+          left.map((name) => `${from}/${name}`),
+          from,
+          async () => (await markAt(from)).kind === 'absent',
+        )
         .catch(() => {})
     }
   }
@@ -1644,7 +1655,13 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
         `${m.folder}/${MINUTES_FILES.shared}`,
       ])
       try {
-        await deps.removeFiles([...files], m.folder)
+        // Only while the folder is still this meeting's, asked under the
+        // locks: a folder whose transcript is now someone else's keeps all
+        // it holds, and only this machine's record of the meeting goes.
+        const own = () => mayWrite(l)
+        if ((await deps.removeFiles([...files], m.folder, own)) === false) {
+          deps.log('info', `meeting "${m.title}": its folder is no longer its own, so kept`)
+        }
       } catch (err) {
         deps.log('warn', `meeting "${m.title}": could not remove its files: ${String(err)}`)
       }

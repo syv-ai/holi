@@ -129,9 +129,11 @@ export async function engineRig(
       writes.set(rel, text)
       return true
     },
-    removeFiles: async (rels, folder) => {
+    removeFiles: async (rels, folder, guard) => {
+      if (guard !== undefined && !(await guard())) return false
       for (const rel of rels) writes.delete(rel)
       removed.push({ rels: [...rels], folder })
+      return true
     },
     // The vault is what was written: its files, and the folders they are in.
     // Cut by bytes, as the real one reads them.
