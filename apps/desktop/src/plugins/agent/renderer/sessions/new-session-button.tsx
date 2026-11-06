@@ -1,12 +1,4 @@
-/**
- * The Sessions header's + (docs/features/agent-sessions.md, The Agents view).
- * A click, Enter or Space starts a session in this machine's default agent at
- * once. Hovering it, or ↓ on it, opens the other ways in: a session in each
- * agent, and Resume for an agent Holi runs itself (its own picker of earlier
- * conversations). An agent not on this machine is listed, but off. When the
- * default names an agent this machine no longer has (a harness removed in
- * Settings), a click opens the menu instead: it asks which agent, never picks.
- */
+/** The Sessions header's + (docs/features/agent-sessions.md, The Agents view). */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { PlusIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
@@ -14,7 +6,6 @@ import {
   defaultMissingAtom,
   loadProvidersAtom,
   newSessionProviderAtom,
-  providerLabel,
   providersAtom,
 } from '../state/providers'
 import { startViewSessionAtom } from '../state/session-view'
@@ -28,12 +19,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { AgentMark } from '@/composites/marks'
-
-/** How long the pointer rests on the + before the menu opens, and how long
- *  it may be off both before it closes: crossing the gap is not leaving. */
-const OPEN_DELAY_MS = 250
-const CLOSE_DELAY_MS = 200
 
 export function NewSessionButton(): React.JSX.Element {
   const providers = useAtomValue(providersAtom)
@@ -42,87 +29,87 @@ export function NewSessionButton(): React.JSX.Element {
   const missing = useAtomValue(defaultMissingAtom)
   const start = useSetAtom(startViewSessionAtom)
   const [open, setOpen] = useState(false)
-  const timer = useRef<number | null>(null)
+  const launching = useRef(false)
+  const dismissingOutside = useRef(false)
 
   const list = providers.kind === 'ready' ? providers.providers : []
+  const ordered = list.length
+    ? [
+        list.find((provider) => provider.id === fallback),
+        ...list.filter((p) => p.id !== fallback),
+      ].filter((provider): provider is (typeof list)[number] => provider !== undefined)
+    : []
   const byDefault = list.find((p) => p.id === fallback)
 
-  const later = (fn: () => void, ms: number): void => {
-    if (timer.current !== null) window.clearTimeout(timer.current)
-    timer.current = window.setTimeout(() => {
-      timer.current = null
-      fn()
-    }, ms)
-  }
-  const stay = (): void => {
-    if (timer.current !== null) window.clearTimeout(timer.current)
-    timer.current = null
-  }
-  useEffect(() => stay, [])
-
   useEffect(() => {
-    if (open && providers.kind !== 'ready') void load()
+    if (open && providers.kind === 'loading') void load()
   }, [open, providers.kind, load])
 
-  const startDefault = (): void => {
-    if (missing) {
-      setOpen(true)
-      return
-    }
-    setOpen(false)
-    void start({})
+  const launch = (args: Parameters<typeof start>[0]): void => {
+    launching.current = true
+    void start(args)
   }
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen} modal={false}>
-      <DropdownMenuTrigger
-        asChild
-        onPointerDown={(e) => e.preventDefault()}
-        onPointerEnter={() => later(() => setOpen(true), OPEN_DELAY_MS)}
-        onPointerLeave={() => later(() => setOpen(false), CLOSE_DELAY_MS)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            startDefault()
-          }
-        }}
-        onClick={startDefault}
-      >
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label={
-            missing
-              ? 'New session: choose an agent'
-              : `New ${providerLabel(providers, fallback)} session`
-          }
-        >
-          <PlusIcon />
+      <DropdownMenuTrigger asChild>
+        <Button type="button" variant="ghost" size="icon-xs" aria-label="New session">
+          <PlusIcon aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
         side="right"
         className="min-w-56"
-        onPointerEnter={stay}
-        onPointerLeave={() => later(() => setOpen(false), CLOSE_DELAY_MS)}
-        onCloseAutoFocus={(e) => e.preventDefault()}
+        onInteractOutside={() => {
+          dismissingOutside.current = true
+        }}
+        onCloseAutoFocus={(event) => {
+          if (launching.current || dismissingOutside.current) {
+            event.preventDefault()
+            launching.current = false
+            dismissingOutside.current = false
+          }
+        }}
       >
         <DropdownMenuLabel>
           {missing ? `${fallback} is gone. Start in which agent?` : 'New session'}
         </DropdownMenuLabel>
         {providers.kind === 'error' ? (
-          <DropdownMenuItem onSelect={() => void load()}>
-            Couldn't list the agents. Retry
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
+              void load()
+            }}
+          >
+            <span role="status">Couldn't list the agents.</span>
+            <DropdownMenuShortcut>Retry</DropdownMenuShortcut>
           </DropdownMenuItem>
         ) : providers.kind === 'loading' ? (
-          <DropdownMenuItem disabled>Reading the agents…</DropdownMenuItem>
+          <DropdownMenuItem disabled>
+            <Skeleton className="h-4 w-4" aria-hidden="true" />
+            <span role="status">Reading the agents…</span>
+          </DropdownMenuItem>
+        ) : ordered.length === 0 ? (
+          <>
+            <DropdownMenuItem disabled>
+              <span role="status">No agents available.</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={(event) => {
+                event.preventDefault()
+                void load()
+              }}
+            >
+              Retry agent list
+            </DropdownMenuItem>
+          </>
         ) : (
-          list.map((p) => (
+          ordered.map((p) => (
             <DropdownMenuItem
               key={p.id}
               disabled={!p.installed}
-              onSelect={() => void start({ provider: p.id })}
+              onSelect={() => launch({ provider: p.id })}
             >
               <AgentMark agent={p.id} />
               {p.label}
@@ -138,7 +125,7 @@ export function NewSessionButton(): React.JSX.Element {
           .map((p) => (
             <DropdownMenuItem
               key={`resume-${p.id}`}
-              onSelect={() => void start({ provider: p.id, resume: 'pick' })}
+              onSelect={() => launch({ provider: p.id, resume: 'pick' })}
             >
               <AgentMark agent={p.id} />
               Resume a {p.label} conversation
