@@ -1940,6 +1940,38 @@ async function openForCompose() {
   return user
 }
 
+test('narrow composition hides the list without remounting, then restores the reader', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+  render(<MailView />)
+  const row = await screen.findByRole('button', { name: /Q2 budget/ })
+  const group = row.closest('[data-slot="resizable-panel-group"]')!
+  const list = group.querySelector('#mail-list')!
+  const handle = group.querySelector('[data-slot="resizable-handle"]')!
+  const reader = group.querySelector('[data-mail-pane="reader"]')!
+
+  expect(group).not.toHaveClass('@container/mail')
+  expect(list.firstElementChild).not.toHaveClass('@max-[40rem]/mail:hidden')
+
+  await user.click(screen.getByRole('button', { name: 'New message' }))
+  const composer = await screen.findByRole('region', { name: 'Compose mail' })
+  const subject = within(composer).getByRole('textbox', { name: 'Subject' })
+  expect(group).toHaveClass('@container/mail')
+  expect(list.firstElementChild).toHaveClass('@max-[40rem]/mail:hidden')
+  expect(handle).toHaveClass('@max-[40rem]/mail:hidden')
+
+  await user.type(subject, 'A narrow-window draft')
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBe(composer)
+  expect(within(composer).getByRole('textbox', { name: 'Subject' })).toBe(subject)
+
+  await user.click(within(composer).getByRole('button', { name: 'Close' }))
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Compose mail' })).toBeNull())
+  expect(group).not.toHaveClass('@container/mail')
+  expect(list.firstElementChild).not.toHaveClass('@max-[40rem]/mail:hidden')
+  expect(handle).not.toHaveClass('@max-[40rem]/mail:hidden')
+  expect(group.querySelector('[data-mail-pane="reader"]')).toBe(reader)
+})
+
 test('reply opens a composer inside the thread, not a browser', async () => {
   const user = await openForCompose()
 
