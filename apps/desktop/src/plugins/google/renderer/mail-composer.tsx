@@ -16,7 +16,7 @@ import { useAtomValue } from 'jotai'
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import type { Ref } from 'react'
 import { useGoogleAccount } from './account'
-import { EditorState } from '@codemirror/state'
+import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -375,7 +375,7 @@ export function MailComposer({
   const sendingRef = useRef(false)
   const departingRef = useRef(false)
   const discardingRef = useRef(false)
-  const canSend = to.length > 0 && !sending && !loadingRef.current
+  const canSend = to.length > 0 && !sending && !departing && !discarding && !loadingRef.current
 
   const send = useCallback(async (): Promise<void> => {
     if (sendingRef.current || discardingRef.current || departingRef.current || loadingRef.current)
@@ -534,7 +534,12 @@ export function MailComposer({
           suggestions={suggestions}
         />
         {!showCc && (
-          <Button variant="ghost" size="sm" onClick={() => setShowCc(true)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={sending || departing || discarding}
+            onClick={() => setShowCc(true)}
+          >
             Cc
           </Button>
         )}
@@ -581,6 +586,7 @@ export function MailComposer({
         aria-label="Compose view"
         size="sm"
         spacing={1}
+        disabled={sending || departing || discarding}
         value={tab}
         // Pressing the current pick reports '', which a pick never is here.
         onValueChange={(which) => {
@@ -641,10 +647,15 @@ export function MailComposer({
       {confirmingSubject && (
         <div className="flex items-center gap-2 text-xs" role="alert">
           <span className="min-w-0 flex-1">Send without a subject?</span>
-          <Button size="sm" onClick={attemptSend}>
+          <Button size="sm" disabled={sending || departing || discarding} onClick={attemptSend}>
             Send anyway
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => setConfirmingSubject(false)}>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={sending || departing || discarding}
+            onClick={() => setConfirmingSubject(false)}
+          >
             Go back
           </Button>
         </div>
@@ -655,12 +666,18 @@ export function MailComposer({
           <span className="min-w-0 flex-1">Discard this draft?</span>
           {/* "Discard draft", not "Discard": the button that opened this
               confirmation is also called Discard. */}
-          <Button size="sm" variant="destructive" onClick={() => void discard()}>
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={sending || departing || discarding}
+            onClick={() => void discard()}
+          >
             Discard draft
           </Button>
           <Button
             size="sm"
             variant="ghost"
+            disabled={sending || departing || discarding}
             onClick={() => {
               setConfirmingDiscard(false)
               void save().catch(() => {})
@@ -678,7 +695,9 @@ export function MailComposer({
         <Button
           size="sm"
           variant="ghost"
+          disabled={sending || departing || discarding}
           onClick={() => {
+            if (sendingRef.current || departingRef.current || discardingRef.current) return
             if (draftRef.current === null && !dirtyRef.current) {
               if (mountedRef.current) onDiscarded()
             } else setConfirmingDiscard(true)
@@ -718,7 +737,11 @@ function MarkdownEditor({
   blurred.current = onBlur
   /** The opening document. Read once — see the note above. */
   const initial = useRef(value)
+  const editable = useRef(new Compartment())
+  const viewRef = useRef<EditorView | null>(null)
 
+  // The view is created once so readonly changes cannot discard its document
+  // or undo history; the following effect reconfigures the compartment.
   useEffect(() => {
     const parent = host.current
     if (parent === null) return
@@ -727,8 +750,10 @@ function MarkdownEditor({
         doc: initial.current,
         extensions: [
           ...plainMarkdownExtensions(),
-          EditorState.readOnly.of(disabled),
-          EditorView.editable.of(!disabled),
+          editable.current.of([
+            EditorState.readOnly.of(disabled),
+            EditorView.editable.of(!disabled),
+          ]),
           // The field's accessible name: CodeMirror's content element is a
           // bare `contenteditable` otherwise.
           EditorView.contentAttributes.of({ 'aria-label': 'Message', 'aria-multiline': 'true' }),
@@ -740,7 +765,24 @@ function MarkdownEditor({
       }),
       parent,
     })
-    return () => view.destroy()
+    viewRef.current = view
+    return () => {
+      viewRef.current = null
+      view.destroy()
+    }
+    // disabled initializes the compartment; later values are reconfigured below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    const editor = viewRef.current
+    if (editor === null) return
+    editor.dispatch({
+      effects: editable.current.reconfigure([
+        EditorState.readOnly.of(disabled),
+        EditorView.editable.of(!disabled),
+      ]),
+    })
   }, [disabled])
 
   return <div ref={host} className="min-h-40 flex-1 overflow-auto" data-testid="mail-body" />

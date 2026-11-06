@@ -5,15 +5,16 @@
  * *drafts that should not fork*: both surface later in Gmail as half-written
  * messages the user does not remember making.
  *
- * The body editor is CodeMirror and is exercised in
- * core's `editor/__tests__/plain-markdown-extensions.test.tsx`; dirtiness is driven
- * here through the header fields, which is the same state machine.
+ * The body editor is exercised through its real CodeMirror contenteditable so
+ * its document/history survive the composer busy-state transitions.
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Provider, createStore } from 'jotai'
 import { createRef } from 'react'
+import { undo, redo } from '@codemirror/commands'
+import { EditorView } from '@codemirror/view'
 import { MailComposer, type MailComposerHandle } from '../renderer/mail-composer'
 import { activeRemoteAtom } from '@/plugin-api'
 import type { ComposeIntent } from '../renderer/compose-intent'
@@ -23,6 +24,15 @@ const saveDraft = vi.fn()
 const send = vi.fn()
 const discardDraft = vi.fn()
 const draftQuery = vi.fn()
+
+// CodeMirror measures its selection; jsdom has no layout engine.
+Range.prototype.getBoundingClientRect ??= () => new DOMRect()
+Range.prototype.getClientRects ??= () =>
+  ({
+    length: 0,
+    item: () => null,
+    [Symbol.iterator]: [][Symbol.iterator],
+  }) as unknown as DOMRectList
 
 /** Google's capabilities, by name, through the UI door. */
 const google: Record<string, (params: unknown) => unknown> = {
@@ -222,6 +232,59 @@ describe('leaving the composer', () => {
     resolveSave?.({ id: 'd-1' })
     expect(await leaving).toBe(true)
     expect(saveDraft).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves CodeMirror body, caret, and history when a leave save fails', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    saveDraft.mockRejectedValueOnce(new Error('offline'))
+    mount({ intent: { kind: 'new' }, ref: handle })
+    const body = screen.getByRole('textbox', { name: 'Message' })
+    await user.type(body, 'first body')
+
+    expect(await handle.current!.prepareToLeave()).toBe(false)
+    expect(body).toHaveTextContent('first body')
+    expect(body).toHaveAttribute('contenteditable', 'true')
+
+    const editor = EditorView.findFromDOM(body)!
+    editor.dispatch({ selection: { anchor: editor.state.doc.length } })
+    expect(undo(editor)).toBe(true)
+    expect(body).not.toHaveTextContent('first body')
+    expect(redo(editor)).toBe(true)
+    expect(body).toHaveTextContent('first body')
+    editor.dispatch({ changes: { from: editor.state.doc.length, insert: '!' } })
+    expect(body).toHaveTextContent('first body!')
+    await vi.advanceTimersByTimeAsync(2000)
+    await waitFor(() => expect(saveDraft).toHaveBeenCalledTimes(2))
+    expect(saveDraft.mock.calls[1]![0]).toMatchObject({ mail: { body: 'first body!' } })
+  })
+
+  it('preserves the body through a rejected send and saves the next edit exactly', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    let rejectSend: ((error: Error) => void) | undefined
+    send.mockImplementationOnce(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          rejectSend = reject
+        }),
+    )
+    mount({ intent: { kind: 'new' }, ref: handle })
+    const body = screen.getByRole('textbox', { name: 'Message' })
+    await user.type(body, 'body')
+    await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
+    await user.type(subjectField(), 'Subject')
+
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(body).toHaveAttribute('contenteditable', 'false'))
+    rejectSend?.(new Error('offline'))
+    await waitFor(() => expect(body).toHaveAttribute('contenteditable', 'true'))
+    expect(body).toHaveTextContent('body')
+
+    const editor = EditorView.findFromDOM(body)!
+    editor.dispatch({ changes: { from: editor.state.doc.length, insert: ' latest' } })
+    expect(await handle.current!.prepareToLeave()).toBe(true)
+    expect(saveDraft.mock.calls.at(-1)![0]).toMatchObject({ mail: { body: 'body latest' } })
   })
 
   it('keeps the composer when the leave save fails', async () => {
@@ -636,6 +699,27 @@ describe('a draft written outside Holi', () => {
 })
 
 describe('discarding', () => {
+  it('does not discard a pristine reply while send is in flight', async () => {
+    const user = setup()
+    const { onDiscarded } = mount()
+    let resolveSend: ((value: { id: string }) => void) | undefined
+    send.mockImplementationOnce(
+      () =>
+        new Promise<{ id: string }>((resolve) => {
+          resolveSend = resolve
+        }),
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await user.click(screen.getByRole('button', { name: 'Discard' }))
+
+    expect(onDiscarded).not.toHaveBeenCalled()
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(discardDraft).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Discard' })).toBeDisabled()
+    resolveSend?.({ id: 'm-9' })
+    await waitFor(() => expect(onDiscarded).not.toHaveBeenCalled())
+  })
   it('asks before discarding a draft that exists', async () => {
     const user = setup()
     const { onDiscarded } = mount()
