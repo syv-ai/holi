@@ -6,8 +6,7 @@
  * Holi has not declared, and every write regenerates the whole file. A list
  * that changes on every tab switch is UI state.
  *
- * Recording happens in two places only: Shell watches the active tab, and
- * `runCommandAtom` records each command it runs.
+ * Recording is `touchRecentAtom`, which nothing in the shell calls yet.
  */
 import { atom, type Getter } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
@@ -65,6 +64,10 @@ export const recentsAtom = atom<RecentEntry[]>((get) => {
   return get(recentsByVaultAtom)[remote] ?? NONE
 })
 
+/** Record `entry` as the active vault's most recent. Nothing calls it yet:
+ *  its one caller went with the old command table (`docs/refactor/findings.md`).
+ * @public exported for its test
+ */
 export const touchRecentAtom = atom(null, (get, set, entry: RecentEntry): void => {
   const remote = get(activeRemoteAtom)
   if (remote === null) return

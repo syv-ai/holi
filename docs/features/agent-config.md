@@ -188,14 +188,14 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
 
 - `holi <namespace> <verb>`: generic. It posts its argv to the bridge's `/cli`, and main reads
   it against the capabilities open at the CLI door ([vault apps](vault-apps.md)), each of which
-  declares its positional arguments and a one-line summary; bare `holi` prints them all. Any
-  argument can also be given as `--name value`, `--json` prints the value, and nothing may come
-  before the verb. Exit 0 prints the answer, 1 a refusal (its code and a `next:` step), 2 a usage
+  declares its positional arguments and a one-line summary; bare `holi` prints them all. An
+  argument can also be given as `--name value` (not `google api`'s method and path, which a gate
+  reads by position), `--json` prints the value, and nothing may come before the verb. Exit 0 prints the answer, 1 a refusal (its code and a `next:` step), 2 a usage
   error. An answer over 16 KiB is written to `.holi/state/out/` and the command prints its path and
   shape instead ([architecture](../architecture.md) §3). A command that reads a
   body from stdin and was not given one is answered 428 without running, and the script sends
-  stdin once (`send --draft <id>` reads none). Today: `apps open|init|console`, `skills update|status`,
-  `comments list|add|reply|resolve|reopen`, `community path`, `pdf comments|typst`, `google agenda|search|read|mark-read|star|archive|trash|draft|send|reply|schedule|reschedule|unschedule`, `tasks list|complete`,
+  stdin once (`send --draft <id>` reads none, and `google api` reads it only for `--body -`). Today: `apps open|init|console`, `skills update|status`,
+  `comments list|add|reply|resolve|reopen`, `community path`, `pdf comments|typst`, `google agenda|search|read|mark-read|star|archive|trash|draft|send|reply|respond|schedule|reschedule|unschedule|api`, `tasks list|complete`,
   `store list|get|put|delete|check`,
   `docs list|read|inspect|render|open|screenshot|create|update|delete|settle`, `sync status`,
   `agent sessions|notify|log|message|version`, `schedules list|disable|run` (turning one on is the
@@ -206,8 +206,9 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   generated at `<Electron userData>/bin/holi`, and Holi supplies its path as `HOLI_BIN` to its
   Claude sessions; it finds the bridge through the vault's `bridge.local.env`. A CLI document write exits 0 only when
   pushed; exit 1 preserves a pending receipt (or reports a refusal), and exit 2 is a CLI usage error. All reversible
-  or read-only (a record write is a file change in git history) except `google send` and
-  `google reply`, which the send gate asks about.
+  or read-only (a record write is a file change in git history) except `google send`,
+  `google reply`, `google respond` and a `google api` call that is not a `GET`, which the send
+  gate asks about.
 - `holi google <verb>`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
 - `holi pdf render` for PDF export, the same render as Convert to PDF, and `holi pdf typst`, which prints the Typst binary's path ([pdf.md](pdf.md)).
 - Shipped skills: the agent's `memory`, `notify`, `note-comments`, `show-the-user`
@@ -231,7 +232,8 @@ outranks an allow in every scope, so getting a tool back means removing it from 
 
 **Permissions.** Each agent's native prompts are the permission UX, answered in its terminal.
 The seeded rules ask for `curl`, `wget`, `holi schedules run` and
-`holi google archive|trash|unschedule|send|reply` (one rule per verb), and allow `holi apps`,
+`holi google archive|trash|unschedule|send|reply|respond` (one rule per verb) and
+`holi google api POST|PUT|PATCH|DELETE` (one rule per method), and allow `holi apps`,
 `holi store`, `holi pdf comments`, `holi pdf typst`, `holi community path`, `holi comments list`,
 `holi schedules list`, the read-only memory lint (`node .claude/skills/memory/lint.mjs`),
 `holi agent notify` and `holi agent log` (asking would stop an unattended run at a prompt nobody

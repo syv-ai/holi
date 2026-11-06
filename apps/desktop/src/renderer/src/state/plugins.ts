@@ -27,8 +27,7 @@ import type {
   SlashCommand,
   Surface,
 } from '@/state/plugin-types'
-import type { Command } from './commands'
-import type { FolderSurface } from './panes'
+import type { FolderSurface } from './shell-workspace'
 import { vaultSettingsAtom } from './settings'
 import { activeRemoteAtom, openedRemoteAtom } from './vaults'
 
@@ -86,7 +85,7 @@ export const folderClaimsAtom = atom((get): readonly FolderDocumentClaim[] =>
   folderClaims(get(claimsAtom)),
 )
 
-/** The same, as the panes need them to follow a moved or deleted one. */
+/** The same, as the tabs need them to follow a moved one. */
 export const folderSurfacesAtom = atom((get): readonly FolderSurface[] =>
   get(folderClaimsAtom).map(({ claim, folder }) => ({
     surface: folder.surface,
@@ -107,11 +106,6 @@ export const pluginSlashCommandsAtom = atom((get): readonly SlashCommand[] =>
   get(runningPluginsAtom).flatMap((p) =>
     p.slashCommands === undefined ? [] : get(p.slashCommands),
   ),
-)
-
-/** Every running plugin's commands, in list order. */
-export const pluginCommandsAtom = atom((get): readonly Command[] =>
-  get(runningPluginsAtom).flatMap((p) => p.commands ?? []),
 )
 
 /** What running plugins add to the ⌘K command menu, each with its plugin's

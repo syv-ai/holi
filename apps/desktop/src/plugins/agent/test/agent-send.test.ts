@@ -19,7 +19,6 @@ import {
   duplicateSessionAtom,
   openSessionAtom,
   sendToAgentAtom,
-  showAgentsAtom,
   startSessionAtom,
   stopSessionAtom,
 } from '../renderer/state/send'
@@ -92,48 +91,6 @@ function storeWith(sessions: AgentSession[] = [], terminals: AgentTerminal[] = [
 /** The agent tab showing, if the showing tab is one at all. */
 const shown = (store: ReturnType<typeof createStore>): string | null =>
   store.get(activeSurfaceIdAtom('agent'))
-
-test('going to the agents opens the list when Holi has none open', async () => {
-  const store = storeWith()
-  await store.set(showAgentsAtom)
-
-  expect(open).toHaveBeenCalledWith({ cols: 80, rows: 24 })
-  expect(shown(store)).toBe('opened')
-})
-
-test('going to the agents focuses the list that is already open', async () => {
-  const store = storeWith([], [terminal('t-attach', 'aaaaaaaa'), terminal('t-list', null)])
-  await store.set(showAgentsAtom)
-
-  expect(open).not.toHaveBeenCalled()
-  expect(shown(store)).toBe('t-list')
-})
-
-test('going to the agents skips a list terminal that has since attached a session', async () => {
-  // `←` and Enter move a terminal between the list and a session: its title,
-  // not its launch, says which it shows.
-  const store = storeWith(
-    [],
-    [
-      terminal('t-was-list', null, 'check123 (copy)'),
-      terminal('t-now-list', 'aaaaaaaa', '1 awaiting input · claude agents'),
-    ],
-  )
-  await store.set(showAgentsAtom)
-
-  expect(open).not.toHaveBeenCalled()
-  expect(shown(store)).toBe('t-now-list')
-})
-
-test('going to the agents twice leaves you where it put you', async () => {
-  // A tab is a place to go: the second press must not undo the first.
-  const store = storeWith([], [terminal('t-list', null)])
-  await store.set(showAgentsAtom)
-  await store.set(showAgentsAtom)
-
-  expect(shown(store)).toBe('t-list')
-  expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(1)
-})
 
 test('opening a session reuses the window Holi opened for it', async () => {
   const store = storeWith([session({ id: 'aaaaaaaa' })], [terminal('t-a', 'aaaaaaaa')])

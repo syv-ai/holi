@@ -85,6 +85,7 @@ export async function saveBeforeClosing(close: () => void): Promise<void> {
  * Write every buffer willing to be written, for ⌘S: every pane's work, not
  * just the focused one.
  */
+/** @public Used by buffer-registry tests to exercise the save policy directly. */
 export async function saveAllBuffers(): Promise<void> {
   await writeAll((b) => b.save, 'save')
 }

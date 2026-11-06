@@ -177,7 +177,7 @@ not show it; the schema per file kind (`frontmatterSchema`) is built.
 
 **The Home library.** The tabs and table of recent files, notes, tasks and activity, and the nav
 menu that listed the places that are not files ([home](features/home.md),
-[nav-menu](features/nav-menu.md)). The `home` setting resolves, and an empty pane shows the New tab.
+[nav-menu](features/nav-menu.md)). An empty pane shows the New tab.
 
 **Vault history and Restore.** The right-hand file drawer, the vault history tab and restoring an
 old version ([history](features/history.md)). A file's history opens as a dialog.

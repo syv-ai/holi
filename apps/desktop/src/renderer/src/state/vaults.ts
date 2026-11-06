@@ -1,12 +1,6 @@
 import { atom, type createStore } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import {
-  type DocMeta,
-  GITKEEP,
-  type VaultEntry,
-  type VaultSnapshot,
-  emptyVaultSnapshot,
-} from '@holi/shared'
+import { GITKEEP, type VaultEntry, type VaultSnapshot, emptyVaultSnapshot } from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
 import type { HeldBackFile } from '../../../main/vault/large-files'
 import type { RendererPlugin } from '@/state/plugin-types'
@@ -71,9 +65,6 @@ export const snapshotAtom = atom<VaultSnapshot>(EMPTY_SNAPSHOT)
 /** False until the open vault's first snapshot arrives: an empty vault and a
  *  loading one look alike otherwise. */
 export const snapshotLoadedAtom = atom((get) => get(snapshotAtom) !== EMPTY_SNAPSHOT)
-
-/** The doc open in the editor. */
-export const activeDocAtom = atom<DocMeta | null>(null)
 
 /**
  * The one sync state, exactly as main computed it.
@@ -156,7 +147,6 @@ export const openVaultAtom = atom(null, async (_get, set, remote: string) => {
   set(activeRemoteAtom, remote)
   set(snapshotAtom, snapshot)
   set(openedRemoteAtom, remote)
-  set(activeDocAtom, null)
 })
 
 /**
@@ -174,7 +164,6 @@ export const addVaultAtom = atom(null, async (_get, set, remote: string) => {
   const snapshot = await trpc.vaults.add.mutate({ remote })
   set(activeRemoteAtom, remote)
   set(snapshotAtom, snapshot)
-  set(activeDocAtom, null)
   await set(loadVaultsAtom)
 })
 
@@ -273,7 +262,6 @@ export const createNoteAtom = atom(null, async (get, set, path: string) => {
   // and the block is written with the first value.
   await trpc.notes.create.mutate({ remote, path, text: '' })
   await set(loadSnapshotAtom)
-  set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === path) ?? null)
 })
 
 /** Make a folder real on disk. Git tracks no empty directory, so we drop a
@@ -371,9 +359,7 @@ export const renameNoteAtom = atom(
           retargetShellTabs(ws, [{ from, to }], get(folderSurfacesAtom)),
         )
       })
-      const wasActive = get(activeDocAtom)?.path === from
       await set(loadSnapshotAtom)
-      if (wasActive) set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === to) ?? null)
       await trpc.sync.commitNow.mutate()
     } finally {
       release()
@@ -385,7 +371,7 @@ export const renameNoteAtom = atom(
  * Batch move (folder rename/delete-to-move, drag, cut+paste). Same order as
  * `renameNoteAtom`, one commit-pair for the whole batch: flush the live buffer
  * and commit a clean restore point, run the single-pass `notes.move`, reload
- * the snapshot, follow the active doc, commit again. The open tabs follow
+ * the snapshot, commit again. The open tabs follow
  * through the caller (`onMoved`).
  * `folders` are the folders the move was aimed at, whose leftovers (`.gitkeep`,
  * ignored files) main carries after the documents.
@@ -410,10 +396,7 @@ export const moveNotesAtom = atom(
       flushSync(() => {
         set(shellWorkspaceAtom, (ws) => retargetShellTabs(ws, moves, get(folderSurfacesAtom)))
       })
-      const active = get(activeDocAtom)
-      const moved = active ? moves.find((m) => m.from === active.path) : undefined
       await set(loadSnapshotAtom)
-      if (moved) set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === moved.to) ?? null)
       await trpc.sync.commitNow.mutate()
     } finally {
       release()
@@ -461,7 +444,6 @@ export const deleteManyAtom = atom(
       await flushAllBuffers()
       await trpc.notes.deleteMany.mutate({ remote, paths, folders })
       const gone = new Set(paths)
-      if (gone.has(get(activeDocAtom)?.path ?? '')) set(activeDocAtom, null)
       flushSync(() => {
         set(shellWorkspaceAtom, (ws) => closeTabsWhere(ws, (key) => gone.has(tabPath(key) ?? '')))
       })

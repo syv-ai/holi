@@ -47,13 +47,10 @@ mode, the mode's own list, and who is signed in. Everywhere else is one keystrok
   done) and its mark (a Holi's face, an automation's bolt, else the agent's). The mode's views paint no ground of
   their own: on macOS the window is glass and `<main>` tints it as the vault's Transparency asks,
   so only controls, cards, menus and overlays inside them carry a background.
-- **Vault** is a search field and two destinations, then what you pinned, then the files:
+- **Vault** is a search field and a destination, then what you pinned, then the files:
   - **Search** is a field at the top (a grey fill, as every text field is) that opens the
     [command menu](command-palette.md) (⌘K): files, notes and actions. It is a press, not a
     field that filters here, so there is one search and not two.
-  - **Home** opens the vault's [library](home.md), always. The "Home is" setting decides what a
-    vault opens on, not where this row goes: a row named Home that opened the board read as a
-    broken link.
   - **Board** opens the [board](tasks.md) and shows how many tasks are open (in the destructive
     colour when one is late). Under the pointer or focus the count gives way to a **+** that opens
     the board and starts a task in Todo; it is its own control beside the row, not inside it.
@@ -79,7 +76,7 @@ mode, the mode's own list, and who is signed in. Everywhere else is one keystrok
 
 **The toggle sits beside the window's lights** (`features/shell/title-bar.tsx`), where
 the window's own controls already are, and ⌘B does the same. Hidden, the sidebar collapses to a
-80px **rail** rather than to nothing: the lights and the toggle at its top, the two modes, Home, the
+80px **rail** rather than to nothing: the lights and the toggle at its top, the two modes, the
 board and Search as icons with tooltips (a mode button switches the mode without opening the
 sidebar), and the avatar's menu at its foot. The rail slides in as the sidebar slides out, on the
 drawer's own width transition. 80px is the lights' width and the panel's 8px margin, so they never sit

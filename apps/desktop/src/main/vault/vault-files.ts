@@ -100,9 +100,9 @@ export function isIgnoredPath(rel: string): boolean {
  *
  *  - **The personal theme.** It stays uncommitted and out of the snapshot's
  *    notes, but editing it has to restyle the app at once.
- *  - **The personal settings.** `home:` there is a personal Home tab, which
- *    has to follow an edit the way the committed file's does.
- *  - **A personal app** (`Home.local.app`) and everything in it. The watcher
+ *  - **The personal settings.** An edit there (the appearance, say) has to
+ *    take effect the way the committed file's does.
+ *  - **A personal app** (`Mine.local.app`) and everything in it. The watcher
  *    prunes an ignored directory's whole subtree, so without this the agent
  *    writes the app and nothing appears until the periodic heal. A bundle
  *    inside a local folder that is not itself a bundle (`x.local/Foo.app`) is

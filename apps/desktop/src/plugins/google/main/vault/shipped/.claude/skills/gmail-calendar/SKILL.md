@@ -1,6 +1,6 @@
 ---
 name: gmail-calendar
-description: Read and act on the user's Google Calendar and Gmail — their agenda, mail search/read, triage, drafting, sending, and time-blocking — and link an event or thread into a task or note. Use whenever the user asks about their schedule, a meeting, or an email.
+description: Read and act on the user's Google Calendar and Gmail — their agenda, mail search/read, triage, drafting, sending, answering invitations, time-blocking, and anything else the Gmail and Calendar APIs do — and link an event or thread into a task or note. Use whenever the user asks about their schedule, a meeting, or an email.
 ---
 
 # Gmail & Calendar
@@ -9,16 +9,16 @@ The user's Google account is connected to Holi. One command, `holi google`,
 reads and acts on both.
 
 **The rule that sorts everything you can do here: you may do anything the user
-can undo, and Holi asks them first for the two things they cannot.**
+can undo, and Holi asks them first for what reaches other people.**
 
 | | What | Why |
 | --- | --- | --- |
-| Just do it | `mark-read`, `star`, `archive`, `trash`, `draft`, `schedule`, `reschedule`, `unschedule` | each has a one-click undo in Gmail or Google Calendar |
-| Holi asks the user, every time | `send`, `reply` | mail that has reached someone cannot be recalled |
-| Not possible at all | deleting mail permanently; touching an event that has **attendees** | the first is not granted; the second would email people, so Holi refuses it |
+| Just do it | `mark-read`, `star`, `archive`, `trash`, `draft`, `schedule`, `reschedule`, `unschedule`, `api GET` | each has a one-click undo in Gmail or Google Calendar, or only reads |
+| Holi asks the user, every time | `send`, `reply`, `respond`, and `api` with any method but `GET` | mail that has reached someone cannot be recalled, and Google tells an organizer your answer |
+| Not possible at all | deleting mail permanently; `reschedule` or `unschedule` on an event that has **attendees** | Holi refuses the first outright; the second would email people, so Holi refuses it |
 
 You do not need to ask permission before the first group — that is what the
-group is. For `send` and `reply`, a prompt appears for the user **every single
+group is. For the second, a prompt appears for the user **every single
 time**, even if they allowed it before. That is expected. It is not an error and
 not something to work around.
 
@@ -68,7 +68,8 @@ field exists to prevent.
 You only ever see calendars the user has **switched on** in Holi. Most
 subscribed calendars are off by default, so the absence of someone's events is
 a deliberate choice and not something to work around — there is no flag to see
-more, and asking Google another way is not available to you.
+more, and reading a switched-off calendar through `holi google api` goes behind
+the user's choice: do not.
 
 `search` → one entry per thread: `id`, `subject`, `from`, `date`, `snippet`,
 `unread`, `answered`, `messageCount`, `webUrl`. **`answered`** means the last
@@ -171,6 +172,25 @@ EOF
 holi google send --draft <draftId>       # send a draft you already wrote
 ```
 
+**Attaching vault files: `--attach <path>`, once per file**, on `draft`, `send`
+and `reply`. The path is vault-relative, as `Glob` or `ls` shows it:
+
+```sh
+holi google draft --to ada@syv.ai --subject 'Q2 proposal' \
+  --attach proposals/q2.pdf --attach proposals/q2-budget.xlsx <<'EOF'
+Hi Ada, the proposal and the budget are attached.
+EOF
+```
+
+Only files inside the vault go, and not every one: a `.local.` file, a secret
+(`.env` and the like), `.claude/`, `.holi/memory/` and other agent files are
+refused, as are files over 18 MB together (Gmail's 25 MB per message, once
+encoded). A refusal says which
+path stopped it; tell the user rather than copying the file somewhere that
+passes. To send something that is not in the vault yet (a PDF you render from
+a note), write it into the vault first. `send --draft` takes no `--attach`: the
+draft's attachments are already in it.
+
 **If you drafted it, send it with `--draft`.** `draft` returns an `id`; pass
 that id back. Composing the same message a second time with `--to` sends a
 *separate* mail and leaves your draft sitting unsent in Drafts — the user ends
@@ -196,7 +216,7 @@ whole thread — the confirmation they see cannot list a derived recipient set, 
 widening it is a decision they cannot check.
 
 **What the user sees when they approve a send:** the command, the recipients
-Holi could read from it, and nothing else. **The message text is never shown to
+Holi could read from it, the files it attaches, and nothing else. **The message text is never shown to
 them.** So say what you are about to send, in chat, before you send it.
 
 ## Acting on the calendar
@@ -215,6 +235,55 @@ here and offer to let them do it in Google Calendar.
 
 `unschedule` deletes a real event off a real calendar. Confirm with the user in
 chat before using it on anything you did not just create.
+
+**Answering an invitation**, to someone else's meeting the user is invited to:
+
+```sh
+holi google respond <eventId> --yes
+holi google respond <eventId> --no --comment 'Out that day, sorry.'
+holi google respond <eventId> --maybe --comment 'Can we move to 14:00?'
+```
+
+Exactly one of `--yes`, `--no`, `--maybe`. Google tells the organizer, comment
+included, so Holi asks the user first. The id is one occurrence from `agenda`,
+so a weekly meeting is answered one week at a time. Google's API has no way to
+propose a new time: `--maybe` with a comment asking for one is the closest
+thing. Holi refuses an event the user is not a guest of, or organises.
+
+## Anything else: the raw API
+
+When no verb here does it, call the Gmail or Calendar API itself:
+
+```sh
+holi google api GET gmail/v1/users/me/labels
+holi google api GET calendar/v3/calendars/primary/events/<eventId>
+holi google api POST gmail/v1/users/me/threads/<threadId>/modify --body - <<'EOF'
+{"addLabelIds": ["Label_12"]}
+EOF
+```
+
+The method comes first, in capitals (`GET`, `POST`, `PUT`, `PATCH`,
+`DELETE`), then the path, each in its place: Holi refuses `post` or
+`--method POST`. The path is what follows `https://gmail.googleapis.com/` or
+`https://www.googleapis.com/`: it starts `gmail/v1/users/me/` or `calendar/v3/`,
+with its query string if it has one, and never a host. Quote a path with `?` in
+it. The body is JSON, on stdin with `--body -`. The answer is Google's own JSON
+with every free-text string, and any key that is not Google's own, fenced (see
+below), Gmail's base64 `data` too: drop
+the tags before decoding it. Google's references:
+https://developers.google.com/workspace/gmail/api/reference/rest and
+https://developers.google.com/workspace/calendar/api/v3/reference.
+
+- **Prefer a verb** when there is one: the verbs keep Holi's mail list current,
+  read mail as plain text, and refuse what would email someone by surprise.
+- Every call that is not a `GET` makes Holi ask the user, whatever it does,
+  because the prompt cannot see the body. Say in chat what the call does
+  before you make it.
+- Holi refuses permanent deletes (any Gmail `DELETE`, `batchDelete`, deleting
+  or clearing a calendar), anyone else's mailbox, and any path outside Gmail
+  and Calendar. Do not look for a way around a refusal.
+- `sendUpdates=all` on a calendar call emails every guest. Leave it off unless
+  the user asked for the guests to be told.
 
 Read the agenda before scheduling. An agent that blocks out an hour the user
 already has a meeting in has made their day worse, not better.
@@ -276,7 +345,7 @@ drop the offset. An all-day event's `start` is already a date.
   because the user said "clean up my inbox" is twenty things for them to undo.
   Say what you propose to archive, then do it.
 - **`trash` is not `delete`.** It is recoverable for 30 days. Permanent deletion
-  is not something Holi can do at all, so never promise it.
+  is not something Holi can do at all, not even through `api`, so never promise it.
 - **Do not cache.** Ask the command again rather than reusing an old answer;
   the user's calendar changes while you work.
 - **Do not copy mail bodies into the vault** unless the user asks. Link instead

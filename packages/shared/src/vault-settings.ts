@@ -27,8 +27,6 @@
  */
 
 import { parse as parseYaml } from 'yaml'
-import { vaultRelPath } from './path-safety'
-import { isSurfaceName } from './surfaces'
 import type { PluginInfo, PluginSettings } from './plugins'
 import {
   PLUGINS_FILE,
@@ -169,60 +167,8 @@ export const EDITOR_FONT_STACKS: Readonly<Record<EditorFont, string>> = Object.f
   serif: 'ui-serif, Georgia, Cambria, "Times New Roman", serif',
 })
 
-/**
- * What Home can be besides a surface, an app or a file: one of core's own
- * views. `recents` is what you opened recently, shown in the Home tab itself.
- */
-export type HomeView = 'recents' | 'daily'
-
-export const HOME_VIEWS: readonly HomeView[] = ['recents', 'daily']
-
-/**
- * What Home is, classified. The file holds one string (`homeTargetOf` reads
- * it): a core view's name, a surface's name (`board`, `mail`), or a vault
- * path. A path may be a directory that is one document, such as a vault app:
- * the renderer's claims decide that, since they depend on the plugins too.
- *
- * **`daily` is a view, not a path.** `22-08-2026.md` would rot overnight;
- * naming the daily by kind keeps Home on it as the days turn.
- *
- * A surface is named by its spelling alone. Whether it exists, and may be
- * Home, is the renderer's registry's answer, since it depends on the plugins
- * the vault runs.
- */
-export type HomeTarget =
-  | { kind: 'recents' }
-  | { kind: 'daily' }
-  | { kind: 'surface'; surface: string }
-  | { kind: 'file'; path: string }
-
-/** What Home is, from its setting. Never throws: a validated value. */
-export function homeTargetOf(home: string): HomeTarget {
-  if ((HOME_VIEWS as readonly string[]).includes(home)) return { kind: home as HomeView }
-  if (isSurfaceName(home)) return { kind: 'surface', surface: home }
-  return { kind: 'file', path: home }
-}
-
-/**
- * An untrusted value as a `home`, or `null`: a view's name, or a path inside
- * the vault (an app bundle, or any file), normalised. A bare name with no
- * slash or dot is a view's name, never a file at the vault's root.
- */
-export function parseHome(value: unknown): string | null {
-  if (typeof value !== 'string') return null
-  const trimmed = value.trim()
-  if (isSurfaceName(trimmed)) return trimmed
-  try {
-    return vaultRelPath(trimmed.replace(/\/+$/, ''))
-  } catch {
-    return null
-  }
-}
-
 /** What `app.yaml` and `app.local.yaml` answer: core's own settings. */
 export interface ResolvedAppSettings {
-  /** What Home is, and what the vault opens on: see `homeTargetOf`. */
-  home: string
   dailyNotes: boolean
   colorScheme: ColorScheme
   windowGlass: WindowGlass
@@ -372,15 +318,12 @@ function clone(value: unknown): unknown {
  */
 export type SettingTarget = 'committed' | 'local'
 
-/** One option in a `choice`. `value` is whatever the key holds (a `home` string
- *  for `home`, a `ColorScheme` for `colorScheme`) and is written verbatim. */
+/** One option in a `choice`. `value` is whatever the key holds (a
+ *  `ColorScheme` for `colorScheme`) and is written verbatim. */
 export interface VaultSettingOption {
   value: unknown
   label: string
   hint?: string
-  /** Only offered while another answer holds. Data rather than a predicate, so
-   *  the rule stays readable in the list and survives being serialised. */
-  requires?: { key: VaultSettingKey; equals: unknown }
 }
 
 /**
@@ -392,9 +335,6 @@ export type VaultSettingControl =
   | {
       kind: 'choice'
       options: readonly VaultSettingOption[]
-      /** It takes answers beyond `options` (Home's views, folder documents
-       *  and files), which the settings tab lists beside them. */
-      openEnded?: true
     }
   | {
       kind: 'group'
@@ -408,7 +348,6 @@ export type VaultSettingControl =
  *  (`askedAtBirth`). */
 export type VaultSettingKey =
   | 'dailyNotes'
-  | 'home'
   | 'hooks'
   | 'colorScheme'
   | 'windowGlass'
@@ -463,8 +402,6 @@ const LOCAL_FILE_HINT = `Change it any time in ${SETTINGS_LOCAL_FILE}, which sta
  * boolean with a pick-one control, or a choice offering a value the validator
  * refuses. Here the kind decides the control (`toggle`, `choice`, `group`) and
  * the entry supplies only the labels, so that class of bug cannot be written.
- *
- * `home` exists for exactly one setting.
  */
 export type SettingType =
   | { kind: 'boolean' }
@@ -485,12 +422,6 @@ export type SettingType =
       kind: 'flags'
       flags: readonly { key: TransformName; label: string; explanation: string }[]
     }
-  /**
-   * What Home is: one of `options`, a view's name, or any app or file in the
-   * vault by its path (`parseHome`). The settings tab adds the views that can
-   * be Home and the vault's apps to the options.
-   */
-  | { kind: 'home'; options: readonly VaultSettingOption[] }
   /**
    * An agent harness's id (`AGENT_ID`): one of `options`, the built-in ones,
    * or one this machine added, which the agent checks against its harnesses.
@@ -559,30 +490,6 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     target: 'committed',
     askedAtBirth: true,
     whereToChange: SETTINGS_FILE_HINT,
-    section: 'general',
-  },
-  {
-    key: 'home',
-    label: 'Home is',
-    explanation: 'What Home shows, and what you see when you open this vault.',
-    type: {
-      kind: 'home',
-      options: [
-        { value: 'recents', label: 'Vault overview' },
-        // Only on offer while the vault actually keeps one: a Home on a daily
-        // note the vault does not make would read as a broken choice.
-        {
-          value: 'daily',
-          label: 'Today’s note',
-          requires: { key: 'dailyNotes', equals: true },
-        },
-      ],
-    },
-    // One of Holi's own views, so Home works in a vault with no apps.
-    default: 'recents',
-    target: 'committed',
-    askedAtBirth: true,
-    whereToChange: `${SETTINGS_FILE_HINT}, where it can also name any view, app or file. A home of your own goes in ${SETTINGS_LOCAL_FILE}`,
     section: 'general',
   },
   {
@@ -882,9 +789,6 @@ function controlFor(type: SettingType): VaultSettingControl {
       return { kind: 'toggle' }
     case 'flags':
       return { kind: 'group', toggles: type.flags }
-    case 'home':
-    case 'agent':
-      return { kind: 'choice', options: type.options, openEnded: true }
     // enum and number are both "pick one of these", and differ only in
     // what ELSE is legal, which is the validator's business, not the control's.
     default:
@@ -924,12 +828,6 @@ function readValue(
       return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? { ok: true, value }
         : { ok: false, expected: 'an object' }
-    case 'home': {
-      const home = parseHome(value)
-      return home === null
-        ? { ok: false, expected: "recents, daily, a view's name, or a path in the vault" }
-        : { ok: true, value: home }
-    }
     case 'agent':
       return isAgentId(value)
         ? { ok: true, value }
@@ -1102,63 +1000,6 @@ export function splitAnswersByTarget(answers: Record<string, unknown>): {
     bucket[d.key] = answers[d.key]
   }
   return { committed, local }
-}
-
-/**
- * The options a choice can offer, given the answers so far.
- *
- * A row can depend on another row: a Home on today's note is only on offer
- * while the vault actually keeps one. Filtering rather than disabling: the
- * reason is already visible one row up.
- *
- * Returns `[]` for anything that is not a choice.
- */
-export function availableOptions(
-  descriptor: VaultSettingDescriptor,
-  answers: Record<string, unknown>,
-): readonly VaultSettingOption[] {
-  if (descriptor.control.kind !== 'choice') return []
-  return descriptor.control.options.filter((option) => {
-    if (option.requires === undefined) return true
-    const current = answers[option.requires.key] ?? VAULT_SETTING_DEFAULTS[option.requires.key]
-    return current === option.requires.equals
-  })
-}
-
-/**
- * Repair answers that another answer has just invalidated.
- *
- * Turning daily notes off takes "today's note" off the Home row, and the
- * answer sitting there can no longer be seen or changed. Move it to the first
- * option still on offer, visibly, rather than leaving a row with nothing
- * selected or writing a value that was silently withdrawn.
- *
- * Idempotent, and a no-op when every answer is still available.
- */
-export function normaliseAnswers(answers: Record<string, unknown>): Record<string, unknown> {
-  let out = answers
-  for (const descriptor of VAULT_SETTING_DESCRIPTORS) {
-    if (descriptor.control.kind !== 'choice') continue
-    // Repair only what is there: filling in an answer nobody gave is
-    // `initialState`'s job.
-    if (!(descriptor.key in out)) continue
-    const options = availableOptions(descriptor, out)
-    if (options.length === 0) continue
-    const current = JSON.stringify(out[descriptor.key])
-    if (options.some((o) => JSON.stringify(o.value) === current)) continue
-    // A row that takes values beyond its options (Home's views and files) is
-    // repaired only when its answer was one of them and has been withdrawn.
-    if (
-      descriptor.control.openEnded === true &&
-      !descriptor.control.options.some((o) => JSON.stringify(o.value) === current)
-    ) {
-      continue
-    }
-    // Copy on first change only, so an untouched object comes back identical.
-    if (out === answers) out = { ...answers }
-    out[descriptor.key] = options[0]!.value
-  }
-  return out
 }
 
 /**
