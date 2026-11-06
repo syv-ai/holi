@@ -55,6 +55,7 @@
     "@lezer/highlight": "^1.2.3",
     "@lezer/markdown": "^1.7.1",
     "@replit/codemirror-css-color-picker": "^6.3.0",
+    "@replit/codemirror-vim": "6.4.0",
     "@tanstack/react-table": "^9.3.1",
     "@tanstack/react-virtual": "^3.14.22",
     "@tiptap/extension-code-block": "^3.32.0",

@@ -12,6 +12,11 @@ if (!Element.prototype.hasPointerCapture) {
   Element.prototype.releasePointerCapture = () => {}
 }
 if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {}
+// The Vim cursor plugin measures visual-mode selections. jsdom has no Range
+// geometry; a deterministic empty list is enough for keyboard-behaviour tests.
+if (!Range.prototype.getClientRects) {
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList
+}
 // jsdom computes no layout, so it implements neither scroll method on an
 // element. The settings rail uses both — `scrollTo` to start a section at the
 // top, `scrollIntoView` to jump to a heading — and without these a section
