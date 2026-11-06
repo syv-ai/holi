@@ -9,7 +9,7 @@
  * core's `editor/__tests__/plain-markdown-extensions.test.tsx`; dirtiness is driven
  * here through the header fields, which is the same state machine.
  */
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Provider, createStore } from 'jotai'
@@ -164,6 +164,66 @@ describe('leaving the composer', () => {
     })
   })
 
+  it('refuses to leave while a send is in flight', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    let resolveSend: ((value: { id: string }) => void) | undefined
+    send.mockImplementationOnce(
+      () =>
+        new Promise<{ id: string }>((resolve) => {
+          resolveSend = resolve
+        }),
+    )
+    mount({ ref: handle })
+
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    expect(await handle.current!.prepareToLeave()).toBe(false)
+    expect(subjectField()).toBeDisabled()
+    expect(screen.getByRole('textbox', { name: /to/i })).toBeDisabled()
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveAttribute(
+      'contenteditable',
+      'false',
+    )
+    expect(send).toHaveBeenCalledTimes(1)
+
+    resolveSend?.({ id: 'm-9' })
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+  })
+
+  it('allows the parent close gate to prepare again after a successful save', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    mount({ ref: handle })
+    await user.type(subjectField(), ' latest')
+
+    expect(await handle.current!.prepareToLeave()).toBe(true)
+    expect(subjectField()).not.toBeDisabled()
+    expect(await handle.current!.prepareToLeave()).toBe(true)
+  })
+
+  it('does not queue a trailing save when blur and leave only await the same write', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    let resolveSave: ((value: { id: string }) => void) | undefined
+    saveDraft.mockImplementationOnce(
+      () =>
+        new Promise<{ id: string }>((resolve) => {
+          resolveSave = resolve
+        }),
+    )
+    mount({ ref: handle })
+    await user.type(subjectField(), ' latest')
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(saveDraft).toHaveBeenCalledTimes(1)
+
+    fireEvent.blur(subjectField())
+    const leaving = handle.current!.prepareToLeave()
+    resolveSave?.({ id: 'd-1' })
+    expect(await leaving).toBe(true)
+    expect(saveDraft).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps the composer when the leave save fails', async () => {
     const user = setup()
     const handle = createRef<MailComposerHandle>()
@@ -173,6 +233,7 @@ describe('leaving the composer', () => {
 
     expect(await handle.current!.prepareToLeave()).toBe(false)
     expect(subjectField()).toHaveValue('Re: Q2 budget latest')
+    expect(subjectField()).not.toBeDisabled()
     await waitFor(() => expect(saveState()).toBe('Not saved'))
     expect(send).not.toHaveBeenCalled()
   })
@@ -307,6 +368,18 @@ describe('autosave', () => {
 
     await waitFor(() => expect(saveState()).toBe('Not saved'))
     expect(subjectField()).toHaveValue('Re: Q2 budgethello')
+  })
+
+  it('does not treat a save without an id as durable', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    saveDraft.mockResolvedValueOnce({ id: null })
+    mount({ intent: { kind: 'new' }, ref: handle })
+    await user.type(subjectField(), 'draft')
+
+    expect(await handle.current!.prepareToLeave()).toBe(false)
+    expect(subjectField()).not.toBeDisabled()
+    expect(send).not.toHaveBeenCalled()
   })
 
   it('retries a refused save on the next edit', async () => {
@@ -586,6 +659,30 @@ describe('discarding', () => {
    * A failed discard leaves the draft in Gmail, so the composer must stay open
    * and show the failure rather than close as if the draft were gone.
    */
+  it('refuses to leave while discard is in flight', async () => {
+    const user = setup()
+    const handle = createRef<MailComposerHandle>()
+    let resolveDiscard: (() => void) | undefined
+    discardDraft.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveDiscard = resolve
+        }),
+    )
+    await mount({ ref: handle })
+    await user.type(subjectField(), 'a')
+    await vi.advanceTimersByTimeAsync(2000)
+    await waitFor(() => expect(saveState()).toBe('Saved'))
+
+    await user.click(screen.getByRole('button', { name: 'Discard' }))
+    const discarding = user.click(screen.getByRole('button', { name: 'Discard draft' }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(await handle.current!.prepareToLeave()).toBe(false)
+    expect(subjectField()).toBeDisabled()
+    resolveDiscard?.()
+    await discarding
+  })
+
   it('stays open and says so when the discard is refused', async () => {
     const user = setup()
     discardDraft.mockRejectedValue(new Error('offline'))
