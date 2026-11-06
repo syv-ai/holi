@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 
 import { isMac } from '@/lib/platform'
 import { keyTargetOf, resolveShortcut } from '@/lib/shortcuts'
+import { dialogOpen } from '@/lib/dialog-open'
 import {
   handlersAtom,
   liveShortcutIdsAtom,
@@ -51,15 +52,6 @@ export function useShortcutHandlers(
         return next
       })
   }, [ids, setHandlers])
-}
-
-/** A modal over the shell: a Radix dialog or alert dialog that is open. */
-function dialogOpen(): boolean {
-  return (
-    document.querySelector(
-      '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]',
-    ) !== null
-  )
 }
 
 /**

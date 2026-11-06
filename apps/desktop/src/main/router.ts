@@ -131,6 +131,10 @@ export type VaultMembership =
 
 export interface RouterDeps {
   registry: VaultRegistry
+  /** The shared main-side Holi link validation/opener, used by paste. */
+  openPastedHoliLink?: (
+    url: string,
+  ) => Promise<{ ok: true } | { ok: false; message: string; detail: string }>
   session: GitHubSession
   /** Which vault is open, and everything running behind it. */
   host: VaultHost
@@ -2023,6 +2027,17 @@ export function createRouter(deps: RouterDeps) {
   })
 
   return t.router({
+    holiLinks: t.router({
+      openPasted: t.procedure.input(fields({ url: 'string' })).mutation(({ input }) =>
+        deps.openPastedHoliLink === undefined
+          ? Promise.resolve({
+              ok: false as const,
+              message: 'This link cannot be opened.',
+              detail: 'Link opening is unavailable.',
+            })
+          : deps.openPastedHoliLink(input.url),
+      ),
+    }),
     auth,
     github,
     vaults,

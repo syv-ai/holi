@@ -9,7 +9,6 @@
  * import anywhere on this path stops the window opening at all.
  */
 import { applyLiquidGlass, wantsLiquidGlass } from './liquid-glass'
-import { stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   app,
@@ -24,8 +23,8 @@ import {
   shell,
   type Tray,
 } from 'electron'
-import { HOLI_LINK_SCHEME, holiLinkInArgv, parseHoliLink } from '@holi/shared'
-import { exactPath } from '@holi/shared/path-safety-node'
+import { HOLI_LINK_SCHEME, holiLinkInArgv } from '@holi/shared'
+import { openHoliLink as openCheckedHoliLink } from './holi-link-opener'
 import { requestFlush, type FlushChannel } from './flush'
 import { captureTab } from './tab-capture'
 import { vaultScheme } from './vault/asset-protocol'
@@ -626,48 +625,28 @@ async function main(): Promise<void> {
    * file one that is in it. Anything else is said in a dialog and opens
    * nothing. A link only ever opens a tab: it runs nothing.
    */
+  const checkAndOpenHoliLink = (url: string) =>
+    openCheckedHoliLink(url, {
+      vaults: () => registry.list(),
+      showPath: (remote, path, options) => showPath(remote, path, options),
+    })
   const openHoliLink = async (url: string): Promise<void> => {
+    const result = await checkAndOpenHoliLink(url)
+    if (result.ok) return
     // A sheet on a minimised or tray-hidden window is a dialog nobody sees, so
-    // the window comes forward first, as it does for a link that opens; with
-    // no window at all the dialog stands alone.
-    const tell = (message: string, detail: string): void => {
-      const options = { type: 'info' as const, message, detail, buttons: ['OK'] }
-      const win = mainWindow
-      if (win === null || win.isDestroyed()) return void dialog.showMessageBox(options)
-      bringForward(win)
-      void dialog.showMessageBox(win, options)
+    // bring the window forward first; with no window the dialog stands alone.
+    const options = {
+      type: 'info' as const,
+      message: result.message,
+      detail: result.detail,
+      buttons: ['OK'],
     }
-    const parsed = parseHoliLink(url)
-    if (!parsed.ok) return tell('This link cannot be opened.', parsed.reason)
-    const { remote, path, heading } = parsed.link
-    // GitHub names are case-insensitive, so a link typed or pasted with
-    // another case still names the vault.
-    const entry = (await registry.list()).find(
-      (e) => e.remote.toLowerCase() === remote.toLowerCase(),
-    )
-    if (entry === undefined) {
-      return tell(
-        `${remote} is not on this computer.`,
-        'Add the vault with Add vault… in the vault menu, then open the link again.',
-      )
-    }
-    // `exactPath` refuses a name that reaches outside the clone through a link
-    // or a case alias, so what is shown is what was named.
-    const abs = await exactPath(entry.path, path)
-    const isFile =
-      abs !== null &&
-      (await stat(abs).then(
-        (s) => s.isFile(),
-        () => false,
-      ))
-    if (!isFile) {
-      return tell(
-        `${path} is not in ${remote}.`,
-        'It may have been moved or deleted, or it has not synced to this computer yet.',
-      )
-    }
-    showPath(entry.remote, path, { heading })
+    const win = mainWindow
+    if (win === null || win.isDestroyed()) return void dialog.showMessageBox(options)
+    bringForward(win)
+    void dialog.showMessageBox(win, options)
   }
+  const openPastedHoliLink = (url: string) => checkAndOpenHoliLink(url)
 
   /** `holi docs open` and `holi docs screenshot` show a path only in the vault
    *  Holi has open (`requireOpen`), asked again here since a switch can land
@@ -839,6 +818,7 @@ async function main(): Promise<void> {
   })
 
   const router = createRouter({
+    openPastedHoliLink,
     updates: updater,
     activity,
     logs: appLog,
