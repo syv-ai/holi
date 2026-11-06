@@ -1,5 +1,6 @@
 'use client'
 
+import type { EntryCloseRequest } from '@/state/shell-close'
 import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import {
@@ -45,11 +46,7 @@ import type { IconGlyph } from '@/lib/icon-glyph'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import {
   activeSplit,
-  closeAllTabs,
-  closeEntry,
-  closeOtherTabs,
   closeTab,
-  closeTabsToRight,
   dropOnStrip,
   entriesByRecency,
   entryId,
@@ -105,10 +102,12 @@ function spoken(tab: HeaderTab): string {
  */
 export function TabStrip({
   onNewTab,
+  onCloseRequest,
   draggable = true,
 }: {
   /** +, as the shell opens a New tab (or the Agents home). */
   onNewTab: () => void
+  onCloseRequest: (request: EntryCloseRequest) => void
   draggable?: boolean
 }) {
   const [ws, setWs] = useAtom(shellWorkspaceAtom)
@@ -319,7 +318,7 @@ export function TabStrip({
                             variant="ghost"
                             size="icon-xs"
                             aria-label={tab !== null ? `Close ${tab.title}` : 'Close split view'}
-                            onClick={() => close((w) => closeEntry(w, id))}
+                            onClick={() => onCloseRequest({ kind: 'entry', id })}
                           >
                             <XIcon aria-hidden="true" />
                           </Button>
@@ -340,9 +339,9 @@ export function TabStrip({
                       only={count < 2}
                       onOpenInSplit={() => act((w) => openInSplit(w, id))}
                       onSeparate={() => act((w) => separate(w, id))}
-                      onClose={() => close((w) => closeEntry(w, id))}
-                      onCloseOthers={() => close((w) => closeOtherTabs(w, id))}
-                      onCloseRight={() => close((w) => closeTabsToRight(w, id))}
+                      onClose={() => onCloseRequest({ kind: 'entry', id })}
+                      onCloseOthers={() => onCloseRequest({ kind: 'others', id })}
+                      onCloseRight={() => onCloseRequest({ kind: 'right', id })}
                       onReopen={() => act(reopenClosed)}
                     />
                   </ContextMenu>
@@ -393,7 +392,10 @@ export function TabStrip({
               Reopen closed tab
               <DropdownMenuShortcut>⇧⌘T</DropdownMenuShortcut>
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={count === 0} onSelect={() => close(closeAllTabs)}>
+            <DropdownMenuItem
+              disabled={count === 0}
+              onSelect={() => onCloseRequest({ kind: 'all' })}
+            >
               <XIcon aria-hidden="true" />
               Close all tabs
               <DropdownMenuShortcut>⌥⌘W</DropdownMenuShortcut>
