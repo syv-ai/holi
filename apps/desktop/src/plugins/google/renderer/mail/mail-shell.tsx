@@ -8,7 +8,7 @@
  * parent (`h-full`) and brings its own folder rail and list column. Not
  * mounted yet; see the plugin's `index.tsx` for the surfaces that are.
  */
-import { useState, type CSSProperties } from 'react'
+import { useRef, useState, type CSSProperties } from 'react'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -21,7 +21,8 @@ import {
   useHasCapability,
 } from '@/plugin-api'
 import type { ComposeIntent } from '../compose-intent'
-import { MailComposer } from '../mail-composer'
+import { MailComposer, type MailComposerHandle } from '../mail-composer'
+import { ComposeSessionGate } from '../compose-session'
 import { buildSummarizePrompt } from '../summarize-prompt'
 import { TASKS_CREATE, tasksCreateCap } from '../tasks-cap'
 import { googleCap } from '../google-cap'
@@ -48,6 +49,8 @@ export function MailShell({ className }: { className?: string }) {
   const store = useStore()
   const canLinkToTask = useHasCapability(TASKS_CREATE) && remote !== null
 
+  const composerRef = useRef<MailComposerHandle | null>(null)
+  const composeGate = useRef(new ComposeSessionGate()).current
   const [expanded, setExpanded] = useState(true)
   /** A new message or draft temporarily replaces the reader pane. */
   const [compose, setCompose] = useState<{ draftId?: string; key: number } | null>(null)
@@ -60,8 +63,13 @@ export function MailShell({ className }: { className?: string }) {
   const openConnections = () => openSettingsSection('connections')
   const thread = mail.reader.kind === 'ready' ? mail.reader.thread : null
 
-  const startCompose = (draftId?: string) =>
-    setCompose((previous) => ({ draftId, key: (previous?.key ?? 0) + 1 }))
+  const startCompose = (draftId?: string) => {
+    void composeGate.leave(() => {
+      composerRef.current = null
+      composeGate.begin()
+      setCompose((previous) => ({ draftId, key: (previous?.key ?? 0) + 1 }))
+    })
+  }
 
   const openDraft = (draft: DraftSummary) => startCompose(draft.draftId)
 
@@ -144,23 +152,35 @@ export function MailShell({ className }: { className?: string }) {
   const standaloneComposer =
     compose === null ? null : (
       <MailComposer
+        ref={(handle) => {
+          const session = composeGate.current()
+          if (session !== null) composeGate.attach(session.identity, handle)
+          composerRef.current = handle
+        }}
         key={compose.key}
         intent={{ kind: 'new' }}
         draftId={compose.draftId}
         sendAs={mail.sendAs}
         suggestions={mail.contacts}
         onSent={() => {
+          composeGate.invalidate()
+          composerRef.current = null
           setCompose(null)
           mail.reloadDrafts()
           mail.load()
         }}
         onDiscarded={() => {
+          composeGate.invalidate()
+          composerRef.current = null
           setCompose(null)
           mail.reloadDrafts()
         }}
         onClose={() => {
-          setCompose(null)
-          mail.reloadDrafts()
+          void composeGate.leave(() => {
+            composerRef.current = null
+            setCompose(null)
+            mail.reloadDrafts()
+          })
         }}
         onReconnect={openConnections}
         bare
