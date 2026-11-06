@@ -87,6 +87,44 @@ jobs:
             apps/desktop/release/latest-mac.yml
           if-no-files-found: error
 
+  build-linux:
+    needs: version
+    if: needs.version.outputs.exists == 'false' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm --filter @holi/desktop build
+
+      # Unsigned: Linux has no platform signature for the updater to check.
+      # electron-builder rebuilds node-pty for Electron before the deb and
+      # AppImage.
+      - name: Package
+        working-directory: apps/desktop
+        run: pnpm exec electron-builder --linux --x64 --publish never
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Holi-linux-x64
+          path: |
+            apps/desktop/release/*.deb
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/latest-linux.yml
+          if-no-files-found: error
+
   build-prerelease-mac:
     # Every main commit gets an isolated prerelease version and feed. Re-runs
     # reuse the run number, tag and release, replacing the same release assets.
@@ -94,6 +132,9 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v5
 
@@ -175,8 +216,60 @@ jobs:
           done
           exit 1
 
+  build-prerelease-linux:
+    # The mac job creates and publishes the dev prerelease; this one adds the
+    # Linux assets to it once it exists, so the two never race to create it.
+    # Until they are up, a Linux dev client's check finds no dev-linux.yml and
+    # tries again on the next one.
+    needs: build-prerelease-mac
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm --filter @holi/desktop build
+
+      - name: Package
+        working-directory: apps/desktop
+        run: pnpm exec electron-builder --linux --x64 --publish never --config.extraMetadata.version="${{ needs.build-prerelease-mac.outputs.version }}" --config.publish.channel=dev
+
+      - name: Upload to the prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build-prerelease-mac.outputs.tag }}
+        # Retried for the same reason as the mac job's publish; --clobber makes
+        # a re-run replace the same assets.
+        run: |
+          for attempt in 1 2 3 4; do
+            if gh release upload "$TAG" \
+              apps/desktop/release/*.deb \
+              apps/desktop/release/*.AppImage \
+              apps/desktop/release/dev-linux.yml \
+              --clobber; then exit 0; fi
+            if [ "$attempt" -lt 4 ]; then
+              echo "Uploading failed (attempt $attempt); retrying in $((attempt * 30))s."
+              sleep $((attempt * 30))
+            fi
+          done
+          exit 1
+
   release:
-    needs: [version, build-mac]
+    needs: [version, build-mac, build-linux]
     # Two commits with the same bumped version can build concurrently. Only
     # one may create the stable tag; a later run observes it and stops.
     concurrency:

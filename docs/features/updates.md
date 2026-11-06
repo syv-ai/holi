@@ -1,7 +1,7 @@
 # Updates
 
-Holi updates itself. CI builds a signed, notarized macOS app from `main` and publishes it as a GitHub
-release of `syv-ai/holi`; the installed app finds it there, downloads it in the background, and
+Holi updates itself. CI builds a signed, notarized macOS app and an x64 Linux deb and AppImage from
+`main` and publishes them as a GitHub release of `syv-ai/holi`; the installed app finds it there, downloads it in the background, and
 installs it when Holi next quits. There is no update server: the release is the feed, and its notes
 are the release notes. A release's newer skills and hooks are offered to each vault, or brought in
 on open by a vault that asks for that.
@@ -10,12 +10,15 @@ on open by a vault that asks for that.
 
 **Shipping stable is bumping the version.** On each `main` push, `.github/workflows/release.yml`
 checks the version in `apps/desktop/package.json`. If `v<version>` has no tag, it builds arm64
-macOS with `electron-builder` (`apps/desktop/electron-builder.yml`) and publishes the dmg, zip,
-blockmaps and `latest-mac.yml`. Existing tags skip stable publication; concurrent builds cannot
+macOS and x64 Linux with `electron-builder` (`apps/desktop/electron-builder.yml`) and publishes,
+once both have built, the dmg, zip, blockmaps and `latest-mac.yml` with the deb, AppImage and
+`latest-linux.yml`. Existing tags skip stable publication; concurrent builds cannot
 overwrite its assets. Every push keeps its own CI run.
 
 **Every `main` commit also gets a dev prerelease**, `<next patch>-dev.<run number>`, built by the
-same workflow. Each one contains every commit before it, so a commit whose build failed is covered
+same workflow. The mac job creates and publishes it; the Linux job then adds its deb, AppImage and
+`dev-linux.yml` to that release, so a Linux dev client can find a new prerelease a few minutes
+before its feed is there and simply finds it on a later check. Each one contains every commit before it, so a commit whose build failed is covered
 by the next one that succeeds. Publishing retries a failed GitHub API call a few times before it
 gives up. When a commit's dev prerelease fails or is cancelled and no newer one exists, the
 workflow opens a single issue labelled `dev-release-failed` (a later failure updates it), and the
@@ -28,6 +31,12 @@ certificate in `CSC_LINK`/`CSC_KEY_PASSWORD` under the hardened runtime and
 `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`) before it makes the dmg and zip, so both carry a
 stapled app. The workflow then checks `codesign`, `spctl` and `stapler`. The updater installs from
 the zip, and macOS refuses an update that is not signed by the same team as the running app.
+
+**Linux is unsigned.** There is no platform signature for the updater to check; it verifies the
+download against the sha512 in `latest-linux.yml`. The deb puts Holi in the app menu and registers
+`holi://` links, and its updates install through `pkexec`, which asks for a password; the AppImage
+runs without installing and replaces itself. Ubuntu 24.04 needs `libfuse2t64` to start an AppImage.
+**Open at login** does nothing on Linux, where Electron has no login items.
 
 **The updater** is `electron-updater` in main (`src/main/updates/updater.ts`), for packaged apps
 only. It checks ten seconds after launch, every four hours, on focus and on wake. `shouldCheck`
