@@ -60,7 +60,7 @@ function DialogContent({
   variant?: "default" | "flush"
   /** The width from `sm` up, for a dialog whose width is chosen at runtime
    *  (a plugin's, by the size it asked for). */
-  size?: "default" | "md" | "lg" | "3xl" | "6xl"
+  size?: "default" | "md" | "lg" | "3xl" | "6xl" | "media"
 }) {
   return (
     <DialogPortal>
@@ -74,6 +74,8 @@ function DialogContent({
           size === "lg" && "sm:max-w-lg",
           size === "3xl" && "sm:max-w-3xl",
           size === "6xl" && "sm:max-w-6xl",
+          size === "media" &&
+            "sm:max-w-6xl max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden",
           className
         )}
         {...props}
