@@ -140,6 +140,9 @@ export type PropertiesLayout = 'inline' | 'sidebar'
 /** How a note's tables are drawn: alternate rows banded, or lines between. */
 export type TableStyle = 'banded' | 'lines'
 
+/** Which clock the Calendar writes times on: 14:30, or 2:30 PM. */
+export type TimeFormat = '24h' | '12h'
+
 /**
  * Which coding agent a new session runs (docs/features/agent-sessions.md,
  * Harnesses): one of this machine's agent harnesses, by its id. The built-in
@@ -187,6 +190,10 @@ export interface ResolvedAppSettings {
   foldSidebarForApps: boolean
   /** Warn before closing an entry that contains a split view. */
   confirmCloseSplitTabs: boolean
+  /** The Calendar's clock. */
+  timeFormat: TimeFormat
+  /** The Calendar's month shows ISO week numbers. */
+  weekNumbers: boolean
   hooks: VaultHooks
   maxCommittedFileBytes: number
   /** Whether Holi brings a release's newer skills and hooks in when the vault
@@ -361,6 +368,8 @@ export type VaultSettingKey =
   | 'gridArcade'
   | 'foldSidebarForApps'
   | 'confirmCloseSplitTabs'
+  | 'timeFormat'
+  | 'weekNumbers'
   | 'maxCommittedFileBytes'
   | 'autoUpdateSkills'
 
@@ -616,6 +625,34 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     label: 'Confirm before closing split tabs',
     explanation:
       'Ask before closing a tab entry that contains multiple views, including when closing other tabs or all tabs.',
+    type: { kind: 'boolean' },
+    default: true,
+    target: 'local',
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'appearance',
+  },
+  {
+    key: 'timeFormat',
+    label: 'Calendar clock',
+    explanation: 'How the Calendar writes times: 14:30, or 2:30 PM.',
+    type: {
+      kind: 'enum',
+      options: [
+        { value: '24h', label: '24-hour' },
+        { value: '12h', label: '12-hour' },
+      ],
+    },
+    default: '24h' as TimeFormat,
+    target: 'local',
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'appearance',
+  },
+  {
+    key: 'weekNumbers',
+    label: 'Week numbers in the Calendar',
+    explanation: 'ISO week numbers, Monday first, down the side of the Calendar’s month.',
     type: { kind: 'boolean' },
     default: true,
     target: 'local',

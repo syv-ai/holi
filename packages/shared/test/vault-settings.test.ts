@@ -264,6 +264,8 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
       'gridArcade',
       'foldSidebarForApps',
       'confirmCloseSplitTabs',
+      'timeFormat',
+      'weekNumbers',
       'editorFont',
       'propertiesLayout',
       'tableStyle',
