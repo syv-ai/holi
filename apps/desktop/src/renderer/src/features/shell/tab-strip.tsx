@@ -219,7 +219,9 @@ export function TabStrip({
               ref={listRef}
               variant="line"
               aria-label="Tabs"
-              className="min-w-0 justify-start overflow-x-auto group-data-horizontal/tabs:h-9"
+              // No bar: the app's would take 10px of the strip's height. It
+              // still scrolls, and the tab count says when it holds more.
+              className="no-scrollbar min-w-0 justify-start overflow-x-auto group-data-horizontal/tabs:h-9"
               onDragOver={(event) => {
                 const at = stripDrop(event)
                 if (at !== dropAt) setDropAt(at)

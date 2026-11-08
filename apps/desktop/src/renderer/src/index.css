@@ -398,6 +398,43 @@
   background: var(--selection);
 }
 
+/* ── Scrollbars ───────────────────────────────────────────────────────────
+ * One rule for every scroller in the app, drawn from the theme's Scrollbars
+ * tokens (`--scrollbar-thumb`, `--scrollbar-thumb-hover`). A bare
+ * `::-webkit-scrollbar` reaches the scrollers no stylesheet of ours names
+ * (CodeMirror's, xterm's viewport, a Radix menu that outgrew the screen), and
+ * styling it makes Chromium drop the native overlay bar, which otherwise
+ * turned into the wide macOS bar with a track under the pointer. So the bar
+ * is one shape always: a 10px gutter with a transparent track and a round
+ * thumb inset 3px, shown while the pointer is over its scroller and darker
+ * under the pointer itself. `.no-scrollbar` (shadcn's) still hides it.
+ * Pseudo-elements rather than `scrollbar-color`: setting that makes Chromium
+ * ignore these. The PDF viewer repeats the shape inside its shadow root
+ * (`PDF_SCROLLBAR_CSS`). */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+  transition: background-color var(--motion-respond) var(--ease-settle);
+}
+:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: content-box;
+}
+
 /* ── Icons ────────────────────────────────────────────────────────────────
  * One size and one stroke weight for every glyph; `icon-sm` and `icon-lg` are
  * the two the components ask for. */
