@@ -13,7 +13,10 @@ import { useEventCalendar } from '@/components/ui/event-calendar/event-calendar'
 /** Horizontal wheel travel (px) a swipe needs before it pages. */
 const SWIPE_THRESHOLD = 50
 /** A quiet gap (ms) that ends a swipe. A trackpad's momentum keeps sending
- *  wheel events until it settles, so one swipe is one burst of them. */
+ *  wheel events until it settles, so one swipe is one burst of them. The gap
+ *  is timed from when the last event was handled, not from its timestamp:
+ *  paging re-renders the calendar, and the events that queue up behind that
+ *  render must not read as a new swipe. */
 const SWIPE_IDLE_MS = 180
 
 interface SwipeState {
@@ -21,13 +24,11 @@ interface SwipeState {
   travel: number
   /** This swipe already paged; the rest of it is swallowed. */
   paged: boolean
-  /** timeStamp of the swipe's last event. */
-  last: number
 }
 
-const SWIPE_START: SwipeState = { travel: 0, paged: false, last: -Infinity }
+const SWIPE_START: SwipeState = { travel: 0, paged: false }
 
-type SwipeWheel = Pick<WheelEvent, 'deltaX' | 'deltaY' | 'deltaMode' | 'shiftKey' | 'timeStamp'>
+type SwipeWheel = Pick<WheelEvent, 'deltaX' | 'deltaY' | 'deltaMode' | 'shiftKey'>
 
 /** A wheel event's horizontal travel in px: a sideways trackpad swipe, or a
  *  shift-scroll (which some platforms already turn sideways). 0 for a
@@ -49,23 +50,16 @@ function readSwipe(
   state: SwipeState,
   event: SwipeWheel,
 ): { state: SwipeState; page: -1 | 0 | 1; claim: boolean } {
-  const current = event.timeStamp - state.last > SWIPE_IDLE_MS ? SWIPE_START : state
   const travel = horizontalTravel(event)
   if (travel === 0) {
     // A paged swipe's momentum can drift vertical and still belongs to it;
     // before it pages, a vertical scroll means it was never a swipe.
-    return {
-      state: current.paged ? { ...current, last: event.timeStamp } : SWIPE_START,
-      page: 0,
-      claim: false,
-    }
+    return { state: state.paged ? state : SWIPE_START, page: 0, claim: false }
   }
-  if (current.paged) {
-    return { state: { ...current, last: event.timeStamp }, page: 0, claim: true }
-  }
-  const total = current.travel + travel
+  if (state.paged) return { state, page: 0, claim: true }
+  const total = state.travel + travel
   const page = Math.abs(total) >= SWIPE_THRESHOLD ? (total > 0 ? 1 : -1) : 0
-  return { state: { travel: total, paged: page !== 0, last: event.timeStamp }, page, claim: true }
+  return { state: { travel: total, paged: page !== 0 }, page, claim: true }
 }
 
 /** Whether something between the target and the calendar's root scrolls
@@ -100,17 +94,32 @@ export function useWheelSwipe(): void {
     const root = instance.internals.getRootEl()
     if (!root) return
     let state = SWIPE_START
+    let idle: ReturnType<typeof setTimeout> | undefined
+    /** End the swipe after a quiet gap. A timer that fires well late means the
+     *  thread was busy (a page's render), and wheel events may be queued
+     *  behind it: wait one more gap rather than ending the swipe under them. */
+    const endAfterQuiet = () => {
+      clearTimeout(idle)
+      const armed = performance.now()
+      idle = setTimeout(() => {
+        if (performance.now() - armed > 2 * SWIPE_IDLE_MS) endAfterQuiet()
+        else state = SWIPE_START
+      }, SWIPE_IDLE_MS)
+    }
     const onWheel = (event: WheelEvent) => {
       if (event.ctrlKey) return
       const travel = horizontalTravel(event)
       if (travel !== 0 && innerScrollsX(event.target, root, travel)) {
         // The swipe is the inner area's: when it reaches its edge, the rest
         // of the gesture's momentum is swallowed rather than paging.
-        state = { travel: 0, paged: true, last: event.timeStamp }
+        state = { travel: 0, paged: true }
+        endAfterQuiet()
         return
       }
       const read = readSwipe(state, event)
       state = read.state
+      if (state === SWIPE_START) clearTimeout(idle)
+      else endAfterQuiet()
       if (read.claim) event.preventDefault()
       if (read.page === 0) return
       if (read.page > 0) instance.api.next()
@@ -132,6 +141,7 @@ export function useWheelSwipe(): void {
     root.addEventListener('wheel', onWheel, { passive: false })
     root.addEventListener('animationend', onEnd)
     return () => {
+      clearTimeout(idle)
       root.removeEventListener('wheel', onWheel)
       root.removeEventListener('animationend', onEnd)
     }
