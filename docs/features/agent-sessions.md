@@ -520,6 +520,13 @@ was checked live, so a release can change it. The socket answers nothing, so a s
 knowing. Claude Code rate-limits each sender and queues at most 50 messages. A vault opened
 without Holi has no bridge, and the hook does nothing.
 
+**A resumed conversation is told its job folder moved.** A conversation resumed into another job
+runs with a new `$CLAUDE_JOB_DIR`, while its scratch files stay in the old one's. At each session
+start `turn-signal.mjs` notes the job folder in `.holi/state/jobs.local.json` by the conversation's
+id (the 100 latest), and at a `resume` start whose folder differs from the noted one it prints one
+line, which Claude Code adds to the agent's context: the new folder, and the old one's path while it
+still exists. A conversation with no note, or resumed in the same job, gets nothing.
+
 **Git coexistence.** The seeded `UserPromptSubmit` and `Stop` hooks run `turn-signal.mjs`, which
 reads the vault's `bridge.local.env` ([agent-config](agent-config.md)) for the port and the vault's token, and posts
 the job id from `$CLAUDE_JOB_DIR`; at a Stop, also `pending`, how many background tasks and
