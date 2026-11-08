@@ -621,22 +621,6 @@ describe('hook scripts', () => {
     expect((await run()).split('`')[1]).toHaveLength(200)
   })
 
-  it('user-prompt-submit never names a focused secret file', async () => {
-    const root = await tempDir()
-    await mkdir(join(root, '.holi/state'), { recursive: true })
-    const focus = (focusedPath: string) =>
-      writeFile(join(root, '.holi/state/context.local.json'), JSON.stringify({ focusedPath }))
-    const run = async () =>
-      (await runHook('user-prompt-submit', { cwd: root, env: { CLAUDE_PROJECT_DIR: root } })).stdout
-
-    for (const secret of ['.env', 'apps/web/.env.production', '.secrets', 'x/.secrets/key.md']) {
-      await focus(secret)
-      expect(await run()).toBe('')
-    }
-    await focus('notes/.envelope.md')
-    expect(await run()).toContain('Focused note: `notes/.envelope.md`')
-  })
-
   it('user-prompt-submit prints nothing when nothing is focused', async () => {
     const root = await tempDir()
     await writeFile(join(root, 'MEMORY.md'), 'Vault uses British English.')

@@ -55,8 +55,9 @@ last changed its selection owns it, and it outlives that editor's unmount, so a 
 counts while the person types to the agent in the same pane; a vault switch clears it. Typing to the
 agent focuses its own view (a session, the Agents home, a terminal), which keeps a note: in a split,
 the note beside it, the one last focused there when there are more; alone, the note focused before
-it. Any other view in front (the board, a browser tab) reports none. A focused secret file (`.env`,
-`.secrets` and their variants) prints no line, so the agent is never pointed at it. Tasks, backlinks and sync state the
+it. Any other view in front (the board, a browser tab) reports none. Holi never writes a secret file
+(`.env`, `.secrets` and their variants, `isSecretPath`) into the focus file, focused or open, so the
+agent is never pointed at one and existing vaults need no hook update. Tasks, backlinks and sync state the
 agent finds itself with `Glob`, `grep` and `git`. The line carries no time or count, so the same
 focus and selection print the same bytes and do not break the prompt cache.
 

@@ -99,8 +99,6 @@ const shown = (path) => {
 function focusLine() {
   const context = readJson('.holi/state/context.local.json')
   if (typeof context?.focusedPath !== 'string' || context.focusedPath === '') return null
-  // A secret file is never named, so the agent is never pointed at reading it.
-  if (isSecret(context.focusedPath)) return null
   const { startLine, endLine } = context.selection ?? {}
   const selected = !Number.isInteger(startLine)
     ? ''
@@ -115,15 +113,12 @@ function focusLine() {
  *  runs in any Claude Code and cannot import Holi. */
 const SECRET_NAME = /^\.(env|secrets)(\..+)?$/i
 
-/** Whether any folder or the file in `path` has a secret file's name. */
-const isSecret = (path) => path.split('/').some((segment) => SECRET_NAME.test(segment))
-
 /** Holi's own state, machine-local files and secrets are not what anyone needs
  *  told about. */
 const worthNaming = (path) =>
   !path.startsWith('.holi/state/') &&
   !path.includes('.local.') &&
-  !isSecret(path)
+  !path.split('/').some((segment) => SECRET_NAME.test(segment))
 
 function changesLine() {
   if (!jobDir) return null
