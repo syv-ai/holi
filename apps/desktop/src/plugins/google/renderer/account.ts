@@ -66,7 +66,7 @@ const connectionAtom = atom(async (get): Promise<Connection> => {
   try {
     const [status, connected] = await Promise.all([
       googleCap.status(remote),
-      googleCap.accounts(remote),
+      googleCap.allAccounts(remote),
     ])
     return {
       remote,

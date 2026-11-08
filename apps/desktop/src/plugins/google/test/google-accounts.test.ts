@@ -22,6 +22,7 @@ import {
 import { createVaultAccounts } from '../main/vault-accounts'
 import { GoogleTokenStore, type StoredGoogleAuth } from '../main/token-store'
 import type { LoopbackServer } from '../main/loopback-flow'
+import { GOOGLE_SCOPES } from '../main/session'
 
 const storage = {
   isEncryptionAvailable: () => true,
@@ -130,6 +131,43 @@ describe('list', () => {
       { sub: 'sub-1', email: 'ada@syv.ai' },
       { sub: 'sub-2', email: 'work@syv.ai' },
     ])
+  })
+})
+
+describe('overview', () => {
+  it("names this vault's account, its state and a count of its other vaults, never their names", async () => {
+    const accounts = await manager([
+      auth({ scopes: [...GOOGLE_SCOPES] }),
+      auth({ sub: 'sub-2', email: 'work@syv.ai' }),
+    ])
+    await accounts.link(VAULT, 'sub-1')
+    await accounts.link(WORK, 'sub-1')
+    const overview = await accounts.overview(VAULT)
+    expect(overview).toMatchObject({
+      remote: VAULT,
+      state: 'connected',
+      account: { sub: 'sub-1', email: 'ada@syv.ai', missingScopes: [], otherVaults: 1 },
+      client: { id: 'client-1', source: 'own' },
+    })
+    expect(JSON.stringify(overview)).not.toContain(WORK)
+    expect(JSON.stringify(overview)).not.toContain('work@syv.ai')
+  })
+
+  it('says which scopes a grant lacks', async () => {
+    const accounts = await manager([auth()])
+    await accounts.link(VAULT, 'sub-1')
+    const overview = await accounts.overview(VAULT)
+    expect(overview.state).toBe('missing-scope')
+    expect(overview.account?.missingScopes.length).toBeGreaterThan(0)
+  })
+
+  it('needs reconnecting when the linked account is gone, and is not connected when never linked', async () => {
+    const accounts = await manager([auth()])
+    expect(await accounts.overview(VAULT)).toMatchObject({ state: 'not-connected', account: null })
+    await accounts.link(VAULT, 'sub-1')
+    await store.write({})
+    const gone = await manager()
+    expect(await gone.overview(VAULT)).toMatchObject({ state: 'needs-reconnect', account: null })
   })
 })
 

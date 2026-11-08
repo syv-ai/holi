@@ -35,7 +35,7 @@ const setClient = vi.fn()
 /** Google's capabilities, by name, through the UI door. */
 const google: Record<string, (params: unknown) => unknown> = {
   'google.status': () => status(),
-  'google.accounts': () => accounts(),
+  'google.allAccounts': () => accounts(),
   'google.useAccount': (p) => linkAccount(p),
   'google.removeAccount': (p) => removeAccount(p),
   'google.disconnectVault': () => disconnectVault(),
