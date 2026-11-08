@@ -127,3 +127,26 @@ export function prefillValues(
   }
   return seed
 }
+
+/**
+ * The prefilled field values for a note at `path` (vault-relative) with text
+ * `text`: its frontmatter, then what it says without it (`noteValues`), then
+ * each field's default (`prefillValues`). The Convert dialog and
+ * `holi pdf render` both seed their fields through this one function, so the
+ * two fill the same. Never throws: a note whose frontmatter does not parse
+ * prefills from the rest.
+ */
+export function fieldValuesFor(
+  fields: TemplateField[],
+  path: string,
+  text: string,
+  today: string,
+): Record<string, string> {
+  let frontmatter: Record<string, unknown> = {}
+  try {
+    frontmatter = parseFrontmatter(text)
+  } catch {
+    // An unterminated fence is a note mid-edit: no frontmatter to read.
+  }
+  return prefillValues(fields, frontmatter, today, noteValues(path, text))
+}

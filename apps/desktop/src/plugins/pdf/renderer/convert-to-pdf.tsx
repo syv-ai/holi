@@ -5,13 +5,7 @@ import { TriangleAlert } from 'lucide-react'
 import { openDocumentAtom } from '@/plugin-api'
 import { pdfCap, readNoteText } from './pdf-cap'
 import { FieldWidget } from './field-widget'
-import {
-  metaFromValues,
-  missingRequired,
-  noteValues,
-  parseFrontmatter,
-  prefillValues,
-} from '../shared/pdf-fields'
+import { metaFromValues, missingRequired, fieldValuesFor } from '../shared/pdf-fields'
 import { Button } from '@/components/ui/button'
 import { DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
@@ -86,13 +80,10 @@ export function ConvertToPdf({
   const [templates, setTemplates] = useState<TemplateOption[] | null>(null)
   const [slug, setSlug] = useState<string>('')
   const [values, setValues] = useState<Record<string, string>>({})
-  /** The note's YAML frontmatter, and what it says without it (its opening
-   *  H1, its client folder), read once on open; they pre-fill matching fields.
-   *  Empty until read, and on any read/parse failure: Convert must never break. */
-  const [fromNote, setFromNote] = useState<{
-    frontmatter: Record<string, unknown>
-    derived: Record<string, string>
-  }>({ frontmatter: {}, derived: {} })
+  /** The note's text, read once on open; it pre-fills matching fields
+   *  (`fieldValuesFor`). Empty until read, and on a read failure: Convert must
+   *  never break. */
+  const [noteText, setNoteText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   /** Required fields left empty at the last Convert, marked at the field. */
@@ -127,12 +118,8 @@ export function ConvertToPdf({
   useEffect(() => {
     let live = true
     void readNoteText(remote, path)
-      .then(
-        (text) =>
-          live &&
-          setFromNote({ frontmatter: parseFrontmatter(text), derived: noteValues(path, text) }),
-      )
-      .catch(() => live && setFromNote({ frontmatter: {}, derived: {} }))
+      .then((text) => live && setNoteText(text))
+      .catch(() => live && setNoteText(''))
     return () => {
       live = false
     }
@@ -148,8 +135,8 @@ export function ConvertToPdf({
       setValues({})
       return
     }
-    setValues(prefillValues(tpl.fields, fromNote.frontmatter, today, fromNote.derived))
-  }, [slug, templates, today, fromNote])
+    setValues(fieldValuesFor(tpl.fields, path, noteText, today))
+  }, [slug, templates, today, path, noteText])
 
   const openTab = useSetAtom(openDocumentAtom)
 

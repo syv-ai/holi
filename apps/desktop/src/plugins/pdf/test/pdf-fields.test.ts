@@ -1,6 +1,7 @@
 import type { TemplateField } from '../shared/template-fields'
 import { describe, expect, it } from 'vitest'
 import {
+  fieldValuesFor,
   metaFromValues,
   missingRequired,
   noteValues,
@@ -164,5 +165,24 @@ describe('prefillValues with what the note says', () => {
       field({ key: 'client', type: 'select', options: ['Acme', 'Other'] }),
     ]
     expect(prefillValues(fields, {}, today, fromNote)).toEqual({ title: 'Fixed', client: '' })
+  })
+})
+
+describe('fieldValuesFor', () => {
+  const fields = [field({ key: 'title', type: 'text' }), field({ key: 'client', type: 'text' })]
+
+  it('reads frontmatter first, then the H1 and client folder', () => {
+    const note = '---\nclient: Beta\n---\n# Analysis\n'
+    expect(fieldValuesFor(fields, 'kunder/Acme/a.md', note, '2026-07-01')).toEqual({
+      title: 'Analysis',
+      client: 'Beta',
+    })
+  })
+
+  it('prefills from the rest of a note whose frontmatter is unterminated', () => {
+    expect(fieldValuesFor(fields, 'kunder/Acme/a.md', '---\nx: 1\n', '2026-07-01')).toEqual({
+      title: '',
+      client: 'Acme',
+    })
   })
 })
