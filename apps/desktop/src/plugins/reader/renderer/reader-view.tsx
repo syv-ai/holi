@@ -22,7 +22,7 @@ export function ReaderView({ path }: { path: string }) {
     <ReaderPane path={path}>
       {(bytes) => (
         <Suspense fallback={<ReaderLoading />}>
-          <View bytes={bytes} name={name} />
+          <View bytes={bytes} name={name} path={path} />
         </Suspense>
       )}
     </ReaderPane>

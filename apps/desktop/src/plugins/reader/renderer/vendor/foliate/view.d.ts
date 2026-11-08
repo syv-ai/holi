@@ -31,6 +31,7 @@ export interface Book {
 
 export interface Relocation {
   fraction: number
+  cfi?: string
   tocItem?: { label?: string; href?: string } | null
 }
 

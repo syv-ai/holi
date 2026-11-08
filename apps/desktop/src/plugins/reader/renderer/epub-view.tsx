@@ -39,8 +39,9 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { activeModeAtom } from '@/plugin-api'
+import { activeModeAtom, activeRemoteAtom } from '@/plugin-api'
 import { guardChapters } from './epub-chapters'
+import { readPosition, savePosition } from './epub-positions'
 import {
   READING_THEME_LABELS,
   nextReadingTheme,
@@ -68,7 +69,17 @@ function bookStyles(theme: ReadingTheme, mode: string): string {
 /** Each reading theme's glyph on the toolbar button. */
 const THEME_ICONS = { light: Sun, sepia: Coffee, dark: Moon, app: Monitor, book: BookOpen }
 
-export function EpubView({ bytes, name }: { bytes: Uint8Array<ArrayBuffer>; name: string }) {
+export function EpubView({
+  bytes,
+  name,
+  path,
+}: {
+  bytes: Uint8Array<ArrayBuffer>
+  name: string
+  /** The book's vault path, to remember where it was last read. */
+  path: string
+}) {
+  const remote = useAtomValue(activeRemoteAtom)
   const host = useRef<HTMLDivElement>(null)
   const viewRef = useRef<View | null>(null)
   const mode = useAtomValue(activeModeAtom)
@@ -122,6 +133,7 @@ export function EpubView({ bytes, name }: { bytes: Uint8Array<ArrayBuffer>; name
           const detail = (event as CustomEvent<Relocation>).detail
           setFraction(detail.fraction)
           setChapter(detail.tocItem?.label ?? null)
+          if (remote !== null && detail.cfi) savePosition(remote, path, detail.cfi)
         })
         view.addEventListener('load', (event) => {
           const { doc } = (event as CustomEvent<{ doc: Document }>).detail
@@ -141,7 +153,8 @@ export function EpubView({ bytes, name }: { bytes: Uint8Array<ArrayBuffer>; name
         viewRef.current = view
         await view.open(book)
         view.renderer.setStyles?.(stylesRef.current)
-        await view.init({ showTextStart: true })
+        const lastLocation = remote === null ? undefined : readPosition(remote, path)
+        await view.init(lastLocation ? { lastLocation } : { showTextStart: true })
         if (!live) return
         setToc(book.toc ?? [])
         setState('open')
@@ -157,7 +170,7 @@ export function EpubView({ bytes, name }: { bytes: Uint8Array<ArrayBuffer>; name
       opened?.destroy()
       viewRef.current = null
     }
-  }, [bytes, name, attempt])
+  }, [bytes, name, path, remote, attempt])
 
   useEffect(() => {
     viewRef.current?.renderer?.setStyles?.(bookStyles(theme, mode))

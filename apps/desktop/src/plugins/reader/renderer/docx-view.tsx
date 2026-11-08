@@ -39,7 +39,14 @@ function fitToWidth(body: HTMLElement, pages: HTMLElement): void {
   pages.style.zoom = String(Math.min(1, room / page.offsetWidth))
 }
 
-export function DocxView({ bytes, name }: { bytes: Uint8Array<ArrayBuffer>; name: string }) {
+export function DocxView({
+  bytes,
+  name,
+}: {
+  bytes: Uint8Array<ArrayBuffer>
+  name: string
+  path: string
+}) {
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
   if (error !== null)

@@ -33,7 +33,14 @@ import { InertFrame } from './inert-frame-host'
 /** Room around the slides, so they sit on the canvas rather than at its edge. */
 const PPTX_CSS = 'body { padding: 24px; box-sizing: border-box; }'
 
-export function PptxView({ bytes, name }: { bytes: Uint8Array<ArrayBuffer>; name: string }) {
+export function PptxView({
+  bytes,
+  name,
+}: {
+  bytes: Uint8Array<ArrayBuffer>
+  name: string
+  path: string
+}) {
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
   if (error !== null)
