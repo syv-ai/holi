@@ -46,6 +46,9 @@ export interface GoogleAccountsManager {
   link(remote: string, sub: string): Promise<void>
   /** Forget this vault's choice. Emphatically not a disconnect. */
   unlinkVault(remote: string): Promise<void>
+  /** Which account each vault on this machine uses, by remote: `sub`s, no
+   *  tokens. */
+  links(): Promise<Record<string, string>>
   /** Revoke at Google, drop the record, unlink every vault pointing at it. */
   removeAccount(sub: string): Promise<void>
   /** Fires for a connect, a removal, and a dead grant, naming the account that
@@ -232,6 +235,8 @@ export async function createGoogleAccounts(
       await deps.vaults.unlinkVault(remote)
       emit(null)
     },
+
+    links: () => deps.vaults.all(),
 
     removeAccount,
 

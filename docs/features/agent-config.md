@@ -198,7 +198,7 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   shape instead ([architecture](../architecture.md) §3). A command that reads a
   body from stdin and was not given one is answered 428 without running, and the script sends
   stdin once (`send --draft <id>` reads none, and `google api` reads it only for `--body -`). Today: `apps open|init|console`, `skills update|status`,
-  `comments list|add|reply|resolve|reopen`, `community path`, `pdf comments|typst`, `google agenda|search|read|mark-read|star|archive|trash|draft|send|reply|respond|schedule|reschedule|unschedule|api`, `tasks list|complete`,
+  `comments list|add|reply|resolve|reopen`, `community path`, `pdf comments|typst`, `google accounts|agenda|search|read|mark-read|star|archive|trash|draft|send|reply|respond|schedule|reschedule|unschedule|api`, `tasks list|complete`,
   `store list|get|put|delete|check`,
   `docs list|read|inspect|render|open|screenshot|create|update|delete|settle`, `sync status`,
   `agent sessions|notify|log|message|version`, `schedules list|disable|run` (turning one on is the

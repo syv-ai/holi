@@ -211,18 +211,52 @@ describe('accounts per vault', () => {
         calls.push({ name: 'removeAccount', arg: sub })
         for (const [k, v] of links) if (v === sub) links.delete(k)
       },
+      links: async () => Object.fromEntries(links),
+      sessionForSub: (sub: string) =>
+        ({ missingScopes: () => (sub === 'sub-1' ? ['gmail.modify'] : []) }) as never,
+      client: () => ({ id: 'id-1.apps.googleusercontent.com', source: 'shipped' as const }),
     }
-    return { call: rig({ accounts }).call, calls, links }
+    const r = rig({ accounts })
+    return { call: r.call, cli: r.cli, calls, links }
   }
 
   it('lists every connected account and names the one this vault uses', async () => {
-    expect(await accountsRig().call('accounts', undefined, 'syv/work')).toEqual({
+    expect(await accountsRig().call('accounts', undefined, 'syv/work')).toMatchObject({
       accounts: [
         { sub: 'sub-1', email: 'ada@syv.ai' },
         { sub: 'sub-2', email: 'work@syv.ai' },
       ],
       current: 'sub-2',
     })
+  })
+
+  it("answers `holi google accounts` with each account's vaults and state, and the client", async () => {
+    const { cli, links } = accountsRig()
+    links.set('owner/repo', 'sub-2')
+    links.set('ada-holm/notes', 'sub-1')
+    const { value, text } = await cli('accounts')
+    expect(value).toMatchObject({
+      accounts: [
+        { email: 'ada@syv.ai', vaults: ['ada-holm/notes'], state: 'missing-scope' },
+        { email: 'work@syv.ai', vaults: ['owner/repo', 'syv/work'], state: 'connected' },
+      ],
+      vault: { remote: 'owner/repo', state: 'connected' },
+      client: { source: 'shipped' },
+    })
+    expect(text).toContain('work@syv.ai: connected (this vault)')
+    expect(text).toContain('missing scopes: gmail.modify')
+    expect(text).toContain('client: shipped (id-1.apps.googleusercontent.com)')
+  })
+
+  it('says a vault linked to an account that is gone needs reconnecting, and one never linked is not connected', async () => {
+    const { cli, links } = accountsRig()
+    links.set('owner/repo', 'sub-gone')
+    expect((await cli('accounts')).value).toMatchObject({
+      current: null,
+      vault: { state: 'needs-reconnect' },
+    })
+    links.delete('owner/repo')
+    expect((await cli('accounts')).value).toMatchObject({ vault: { state: 'not-connected' } })
   })
 
   it('reports no account for a vault that has never connected', async () => {
