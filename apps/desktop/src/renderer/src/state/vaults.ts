@@ -1,6 +1,12 @@
 import { atom, type createStore } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import { GITKEEP, type VaultEntry, type VaultSnapshot, emptyVaultSnapshot } from '@holi/shared'
+import {
+  GITKEEP,
+  type VaultEntry,
+  type VaultSnapshot,
+  emptyVaultSnapshot,
+  isLocalOnlyPath,
+} from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
 import type { HeldBackFile } from '../../../main/vault/large-files'
 import type { RendererPlugin } from '@/state/plugin-types'
@@ -75,9 +81,38 @@ export const snapshotLoadedAtom = atom((get) => get(snapshotAtom) !== EMPTY_SNAP
  */
 export const syncStateAtom = atom<SyncState>({ kind: 'up-to-date' })
 
-/** Files the large-file gate held out of the last commit: the callout's source.
- *  Pushed from main every commit tick (empty clears it, incl. on a vault switch). */
-const heldBackAtom = atom<HeldBackFile[]>([])
+/** Files the large-file gate held out of the last commit, which the tree
+ *  marks. Pushed from main every commit tick (empty clears it, incl. on a
+ *  vault switch). */
+export const heldBackAtom = atom<HeldBackFile[]>([])
+
+/**
+ * Settle a held-back file: commit it anyway (past the size gate), or keep it
+ * on this machine (`.git/info/exclude`). Dropped from the list at once; main
+ * pushes the accurate set on its next tick. Keeping it local reads the
+ * snapshot again, so the tree learns git now ignores it.
+ */
+export const resolveHeldBackAtom = atom(
+  null,
+  async (get, set, { path, action }: { path: string; action: 'commit' | 'keep' }) => {
+    const remote = get(activeRemoteAtom)
+    if (!remote) return
+    if (action === 'commit') await trpc.vaults.commitFile.mutate({ remote, path })
+    else await trpc.vaults.keepFileLocal.mutate({ remote, path })
+    if (get(activeRemoteAtom) !== remote) return
+    set(heldBackAtom, (files) => files.filter((file) => file.path !== path))
+    if (action === 'keep') await set(loadSnapshotAtom)
+  },
+)
+
+/** The open vault's paths git ignores (`snapshot.ignored`), as a set. */
+export const ignoredPathsAtom = atom((get) => new Set(get(snapshotAtom).ignored))
+
+/** Whether `path` never syncs from this machine: git ignores it, or its path
+ *  is local (`.local.`, a secret file's name). The tree dims such a row. */
+export function isUnsyncedPath(ignored: ReadonlySet<string>, path: string): boolean {
+  return ignored.has(path) || isLocalOnlyPath(path)
+}
 
 /**
  * How often each file's history has moved since launch: `all` counts merged

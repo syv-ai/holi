@@ -66,13 +66,18 @@ import {
   createNoteAtom,
   activeRemoteAtom,
   deleteManyAtom,
+  heldBackAtom,
+  ignoredPathsAtom,
   importFilesAtom,
+  isUnsyncedPath,
   loadSnapshotAtom,
   moveNotesAtom,
+  resolveHeldBackAtom,
   snapshotAtom,
   snapshotLoadedAtom,
   vaultsAtom,
 } from '@/state/vaults'
+import { activeVaultSettingsAtom } from '@/state/settings'
 import { EllipsisIcon, PlusIcon } from 'lucide-react'
 import { AskNameDialog } from './ask-name-dialog'
 import {
@@ -82,7 +87,7 @@ import {
   viewActions,
   type FileCreate,
 } from './file-menu-actions'
-import { displayName, FileGlyph, RowHover } from './file-row'
+import { displayName, FileGlyph, HeldBackMark, RowHover } from './file-row'
 import { attempt, freeName, useFiles } from './use-files'
 
 const INDENT = 16
@@ -112,6 +117,24 @@ export function FilesSection({
   const folderClaims = useAtomValue(folderClaimsAtom)
   const claims = useAtomValue(claimsAtom)
   const snapshot = useAtomValue(snapshotAtom)
+  const ignored = useAtomValue(ignoredPathsAtom)
+  const heldBack = useAtomValue(heldBackAtom)
+  const resolveHeldBack = useSetAtom(resolveHeldBackAtom)
+  const sizeLimit = useAtomValue(activeVaultSettingsAtom)?.maxCommittedFileBytes ?? null
+  /** Each held-back file, and every folder above one, with the files it
+   *  holds: a closed folder carries their warning. */
+  const heldUnder = useMemo(() => {
+    const under = new Map<string, typeof heldBack>()
+    for (const file of heldBack) {
+      let path = file.path
+      for (;;) {
+        under.set(path, [...(under.get(path) ?? []), file])
+        if (!path.includes('/')) break
+        path = parentOf(path)
+      }
+    }
+    return under
+  }, [heldBack])
   const openDialog = useSetAtom(openDialogAtom)
   const vaultAppOffer = useAtomValue(vaultAppOfferAtom)
   const startVaultApp = useSetAtom(startVaultAppAtom)
@@ -589,6 +612,7 @@ export function FilesSection({
       dirs: files.dirs,
       remote: files.remote,
       vaultApp: vaultAppOffer,
+      heldBack: heldBack.some((file) => file.path === id),
       pluginActions: pluginRowActions({
         id,
         remote: files.remote,
@@ -621,6 +645,14 @@ export function FilesSection({
           onOpen(path)
           void startVaultApp(path)
         },
+        commitAnyway: (path) =>
+          void attempt(`commit “${basename(path)}”`, () =>
+            resolveHeldBack({ path, action: 'commit' }),
+          ),
+        keepLocal: (path) =>
+          void attempt(`keep “${basename(path)}” local`, () =>
+            resolveHeldBack({ path, action: 'keep' }),
+          ),
       },
     })
   }
@@ -875,7 +907,14 @@ export function FilesSection({
                         )}
                       >
                         <RowHover card={hoverOf(item.getId())} path={item.getId()}>
-                          <span className="flex min-w-0 items-center gap-2">
+                          {/* A file that never syncs is dimmed, on the
+                              contents so a selection behind stays solid. */}
+                          <span
+                            className={cn(
+                              'flex min-w-0 flex-1 items-center gap-2',
+                              isUnsyncedPath(ignored, item.getId()) && 'opacity-60',
+                            )}
+                          >
                             <FileGlyph item={item} />
                             {item.isRenaming() ? (
                               <Input
@@ -899,6 +938,11 @@ export function FilesSection({
                             ) : (
                               <span className="truncate">{displayName(item)}</span>
                             )}
+                            {/* An open folder leaves the warning to its files. */}
+                            <HeldBackMark
+                              held={item.isExpanded() ? undefined : heldUnder.get(item.getId())}
+                              limit={sizeLimit}
+                            />
                           </span>
                         </RowHover>
                       </TreeItemLabel>
