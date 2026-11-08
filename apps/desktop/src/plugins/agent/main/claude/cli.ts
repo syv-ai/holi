@@ -336,9 +336,24 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
     return { ok: true, id }
   }
 
+  /** Set once this Claude Code has refused `--all`: it predates the flag,
+   *  and its plain listing still carries the finished sessions. */
+  let allRefused = false
+
   return {
     async list(target) {
+      // Since 2.1.319 `--json` lists only active sessions and `--all` adds the
+      // finished ones, which History is made of. An older Claude Code refuses
+      // the flag as an unknown option; it listed them without it.
       try {
+        if (!allRefused) {
+          try {
+            return await exec(target, ['agents', '--json', '--all'], LIST_TIMEOUT_MS)
+          } catch (err: unknown) {
+            if (!/unknown option/i.test(String(err))) throw err
+            allRefused = true
+          }
+        }
         return await exec(target, ['agents', '--json'], LIST_TIMEOUT_MS)
       } catch (err: unknown) {
         log(`listing failed: ${String(err)}`)
