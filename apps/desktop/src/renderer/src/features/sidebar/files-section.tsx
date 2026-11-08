@@ -907,12 +907,13 @@ export function FilesSection({
                         )}
                       >
                         <RowHover card={hoverOf(item.getId())} path={item.getId()}>
-                          {/* A file that never syncs is dimmed, on the
-                              contents so a selection behind stays solid. */}
+                          {/* A file that never syncs is muted, on the
+                              contents so a selection behind stays solid;
+                              muted text, not opacity, so the name stays AA. */}
                           <span
                             className={cn(
                               'flex min-w-0 flex-1 items-center gap-2',
-                              isUnsyncedPath(ignored, item.getId()) && 'opacity-60',
+                              isUnsyncedPath(ignored, item.getId()) && 'text-muted-foreground',
                             )}
                           >
                             <FileGlyph item={item} />

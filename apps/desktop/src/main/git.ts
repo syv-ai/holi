@@ -945,7 +945,10 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   async function excludeLocally(path: string): Promise<void> {
     const excludeFile = join(root, '.git', 'info', 'exclude')
     await mkdir(dirname(excludeFile), { recursive: true })
-    await appendFile(excludeFile, `${path}\n`, 'utf8')
+    // One file, not a pattern: anchored to the root so a same-named file in
+    // another folder keeps syncing, and its glob characters escaped.
+    const literal = path.replace(/[\\*?[\]]/g, '\\$&').replace(/ $/, '\\ ')
+    await appendFile(excludeFile, `/${literal}\n`, 'utf8')
   }
 
   /**

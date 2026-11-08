@@ -89,8 +89,9 @@ export const heldBackAtom = atom<HeldBackFile[]>([])
 /**
  * Settle a held-back file: commit it anyway (past the size gate), or keep it
  * on this machine (`.git/info/exclude`). Dropped from the list at once; main
- * pushes the accurate set on its next tick. Keeping it local reads the
- * snapshot again, so the tree learns git now ignores it.
+ * pushes the accurate set on its next tick. Both are vault writes, so main
+ * rescans and pushes the snapshot before answering: a file kept local arrives
+ * dimmed.
  */
 export const resolveHeldBackAtom = atom(
   null,
@@ -101,7 +102,6 @@ export const resolveHeldBackAtom = atom(
     else await trpc.vaults.keepFileLocal.mutate({ remote, path })
     if (get(activeRemoteAtom) !== remote) return
     set(heldBackAtom, (files) => files.filter((file) => file.path !== path))
-    if (action === 'keep') await set(loadSnapshotAtom)
   },
 )
 
