@@ -15,9 +15,18 @@
  *   resolved and handed to foliate again when the mode flips. A book's own CSS
  *   may still set its colours.
  */
-import { useAtomValue } from 'jotai'
+import { useAtom, useAtomValue } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, ListTree } from 'lucide-react'
+import {
+  BookOpen,
+  ChevronLeft,
+  ChevronRight,
+  Coffee,
+  ListTree,
+  Monitor,
+  Moon,
+  Sun,
+} from 'lucide-react'
 import { ErrorState } from '@/composites/empty-state'
 import { IconButton } from '@/composites/icon-button'
 import { PaneToolbar } from '@/composites/pane-toolbar'
@@ -32,6 +41,13 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { activeModeAtom } from '@/plugin-api'
 import { guardChapters } from './epub-chapters'
+import {
+  READING_THEME_LABELS,
+  nextReadingTheme,
+  readingThemeAtom,
+  readingThemeCss,
+  type ReadingTheme,
+} from './epub-themes'
 import { followLink, forwardShortcuts, openOutside, withInertPolicy } from './inert-frame'
 import { themeColour } from './inert-frame-host'
 import { ReaderLoading } from './reader-pane'
@@ -40,18 +56,25 @@ import type { Book, Relocation, TocItem, View } from './vendor/foliate/view.js'
 /** The chapter types foliate unpacks as documents, which get the policy. */
 const CHAPTER_TYPES = new Set(['application/xhtml+xml', 'text/html'])
 
-/** The stylesheet foliate puts into every chapter: the theme's text colours. */
-function bookStyles(mode: string): string {
-  return `html { color-scheme: ${mode}; color: ${themeColour('--foreground')}; background: transparent; }
-a:any-link { color: ${themeColour('--primary')}; }`
+/** The stylesheet foliate puts into every chapter, for the reading theme. */
+function bookStyles(theme: ReadingTheme, mode: string): string {
+  return readingThemeCss(theme, {
+    mode,
+    foreground: themeColour('--foreground'),
+    primary: themeColour('--primary'),
+  })
 }
+
+/** Each reading theme's glyph on the toolbar button. */
+const THEME_ICONS = { light: Sun, sepia: Coffee, dark: Moon, app: Monitor, book: BookOpen }
 
 export function EpubView({ bytes, name }: { bytes: Uint8Array<ArrayBuffer>; name: string }) {
   const host = useRef<HTMLDivElement>(null)
   const viewRef = useRef<View | null>(null)
   const mode = useAtomValue(activeModeAtom)
-  const modeRef = useRef(mode)
-  modeRef.current = mode
+  const [theme, setTheme] = useAtom(readingThemeAtom)
+  const stylesRef = useRef('')
+  stylesRef.current = bookStyles(theme, mode)
   const [state, setState] = useState<'opening' | 'open' | { error: string }>('opening')
   const [attempt, setAttempt] = useState(0)
   const [toc, setToc] = useState<readonly TocItem[]>([])
@@ -117,7 +140,7 @@ export function EpubView({ bytes, name }: { bytes: Uint8Array<ArrayBuffer>; name
         parent.append(view)
         viewRef.current = view
         await view.open(book)
-        view.renderer.setStyles?.(bookStyles(modeRef.current))
+        view.renderer.setStyles?.(stylesRef.current)
         await view.init({ showTextStart: true })
         if (!live) return
         setToc(book.toc ?? [])
@@ -137,8 +160,8 @@ export function EpubView({ bytes, name }: { bytes: Uint8Array<ArrayBuffer>; name
   }, [bytes, name, attempt])
 
   useEffect(() => {
-    viewRef.current?.renderer?.setStyles?.(bookStyles(mode))
-  }, [mode])
+    viewRef.current?.renderer?.setStyles?.(bookStyles(theme, mode))
+  }, [theme, mode])
 
   if (typeof state === 'object')
     return (
@@ -182,6 +205,7 @@ export function EpubView({ bytes, name }: { bytes: Uint8Array<ArrayBuffer>; name
         <span className="text-xs text-muted-foreground tabular-nums">
           {Math.round(fraction * 100)}%
         </span>
+        <ThemeButton theme={theme} onNext={() => setTheme(nextReadingTheme(theme))} />
         <IconButton label="Previous page" onClick={() => quietly(viewRef.current?.goLeft())}>
           <ChevronLeft />
         </IconButton>
@@ -223,5 +247,20 @@ function TocEntries({ items, go }: { items: readonly TocItem[]; go: (href: strin
         {item.label}
       </DropdownMenuItem>
     ),
+  )
+}
+
+/** One button that steps through the reading themes; it shows the current one. */
+function ThemeButton({ theme, onNext }: { theme: ReadingTheme; onNext: () => void }) {
+  const Icon = THEME_ICONS[theme]
+  const next = READING_THEME_LABELS[nextReadingTheme(theme)]
+  return (
+    <IconButton
+      label={`Theme: ${READING_THEME_LABELS[theme]}`}
+      tooltip={`Theme: ${READING_THEME_LABELS[theme]}. Click for ${next}`}
+      onClick={onNext}
+    >
+      <Icon />
+    </IconButton>
   )
 }
