@@ -378,10 +378,14 @@
   --diff-removed: var(--color-red-500);
   --diff-added-foreground: var(--color-green-400);
   --diff-removed-foreground: var(--color-red-400);
+  --scrollbar-thumb: var(--color-zinc-700);
+  --scrollbar-thumb-hover: var(--color-zinc-600);
 }
 [data-theme='light'] {
   --diff-added-foreground: var(--color-green-700);
   --diff-removed-foreground: var(--color-red-700);
+  --scrollbar-thumb: var(--color-neutral-400);
+  --scrollbar-thumb-hover: var(--color-neutral-500);
 }
 @theme inline {
   --color-brand: var(--brand);
