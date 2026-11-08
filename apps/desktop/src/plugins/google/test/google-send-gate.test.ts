@@ -95,6 +95,15 @@ describe('both maintained and shipped gates cover shell spellings', () => {
     'if true; then holi google api POST gmail/v1/users/me/messages/send --body "{}"; fi',
     'eval "holi google send --to a@b.c"',
     'cmd=holi; $cmd google send --to a@b.c',
+    'V=send; holi google $V --to a@b.c',
+    '"$HOLI_BIN" google $VERB t1',
+    'holi google "$(echo send)" --to a@b.c',
+    '$(echo holi) google send --to a@b.c',
+    '`echo holi` google send --to a@b.c',
+    'X=1 holi google ${VERB} t1',
+    'ls | holi google $V t1',
+    'sudo -u ada holi google $V t1',
+    'cd /tmp && /opt/bin/holi google $V t1',
   ])('asks for risky syntax: %s', async (command) => {
     expect(decisionOf(await decide(bash(command)))).toBe('ask')
     expect(decisionOf(await decide(bash(command), true))).toBe('ask')
@@ -105,6 +114,15 @@ describe('both maintained and shipped gates cover shell spellings', () => {
     'holi google api GET calendar/v3/calendars/primary/events',
     'holi google search x | grep send',
     'echo holi google respond e2 --yes',
+    // Holi only as an argument or in a path, beside an expansion: no Holi runs.
+    'grep holi "$f"',
+    'grep -rn holi src | head -$N',
+    'cat ~/repos/holi-src/$FILE',
+    'cd "$HOME/repos/holi-src" && git log -1',
+    'gh repo view syv-ai/holi --json "$FIELDS"',
+    'for f in *.md; do grep -l holi "$f"; done',
+    '"$HOLI_BIN" google agenda',
+    'command "$HOLI_BIN" google agenda today',
   ])('does not ask for a safe/non-invocation command: %s', async (command) => {
     expect(decisionOf(await decide(bash(command)))).toBe('none')
     expect(decisionOf(await decide(bash(command), true))).toBe('none')

@@ -217,6 +217,55 @@ function ansiEscape(text, at) {
   return [Object.hasOwn(named, c) ? named[c] : c, 1]
 }
 
+/** Shell words that open a stage and leave its command word after them. */
+const KEYWORDS = new Set(['then', 'do', 'else', 'elif', 'if', 'while', 'until', '!', '{', 'time', 'command', 'builtin', 'exec'])
+/** Commands that run another command named in their arguments, after options
+ *  whose arity this cannot know: any Holi in such a stage may be the run. */
+const RUNNERS = new Set(['env', 'nohup', 'nice', 'sudo', 'xargs', 'timeout', 'caffeinate'])
+/** `holi`, a path to it, or `$HOLI_BIN`: a word that runs Holi. */
+const HOLI_WORD = /^(?:\S*\/)?holi$|^\$\{?HOLI_BIN\}?$/
+const EXPANDS = /[`$]/
+
+/**
+ * Could an expansion in this line decide a `holi google` call? No string match
+ * follows a variable, so a stage that runs Holi with one in it (`holi google
+ * $VERB`), or runs whatever a variable or a substitution names (`$cmd google
+ * send`, `$(echo holi) google send`), is asked about. Read per pipeline or
+ * list stage, on its command word: `grep holi "$f"`, a path with `holi-src` in
+ * it or `gh repo view syv-ai/holi` beside a `$VAR` runs no Holi, and a gate
+ * that prompts on those teaches the user to click through prompts.
+ */
+function expandsNearHoli(command, words) {
+  const nearHoli = /holi/i.test(command)
+  // A `$(` is cut at its parenthesis here, so a substitution standing where
+  // the command word would be reads as a stage whose word is a bare `$`.
+  for (const stage of words.split(/[|;&()\n]/)) {
+    const tokens = stage.trim().split(/[ \t]+/).filter(Boolean)
+    let i = 0
+    while (
+      i < tokens.length &&
+      (KEYWORDS.has(tokens[i]) ||
+        /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i]) ||
+        (/^-/.test(tokens[i]) && KEYWORDS.has(tokens[i - 1] ?? '')))
+    ) {
+      i++
+    }
+    const word = tokens[i]
+    if (word === undefined) continue
+    const rest = tokens.slice(i + 1)
+    // `$HOLI_BIN` is how Holi is named, not an expansion that decides what runs.
+    const expands = rest.some((t) => EXPANDS.test(t) && !HOLI_WORD.test(t))
+    if (HOLI_WORD.test(word)) {
+      if (expands) return true
+    } else if (EXPANDS.test(word)) {
+      if (nearHoli || rest.includes('google')) return true
+    } else if (RUNNERS.has(word)) {
+      if (expands && (nearHoli || rest.includes('google'))) return true
+    }
+  }
+  return false
+}
+
 /**
  * Why to ask about this command line, or `null`: does it invoke a `holi google`
  * verb that reaches someone?
@@ -237,7 +286,7 @@ function reasonToAsk(command) {
   if (/(?:\bholi\b|\$\{?HOLI_BIN\}?|\/[^\s|;&()]*\bholi)\s+google\b/i.test(words) && /\b(if|then|elif|else|fi|for|while|until|do|done|case|esac|select)\b/.test(words)) {
     return `This Google action appears inside shell control flow.${attachmentsOf(command)} Review the command and confirm it in the native permission prompt.`
   }
-  if (/\bholi\b/.test(command) && /(\$\(|`|\$\{|\$[A-Za-z_])/.test(command)) {
+  if (expandsNearHoli(command, words)) {
     return 'This command uses dynamic shell expansion near Holi. Review it and confirm in the native permission prompt.'
   }
   if (
