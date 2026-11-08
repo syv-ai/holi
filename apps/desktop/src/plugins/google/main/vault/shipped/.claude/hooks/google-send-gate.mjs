@@ -237,6 +237,14 @@ const EXPANDS = /[`$]/
  */
 function expandsNearHoli(command, words) {
   const nearHoli = /holi/i.test(command)
+  // A Holi followed by `google` anywhere, not just as a stage's command word:
+  // whatever runs it (`xargs`, `find -exec`, `stdbuf`, a redirection or a
+  // backtick in front) is not a list this can finish, so any expansion in the
+  // line may decide the call. `$HOLI_BIN` itself is not such an expansion.
+  if (EXPANDS.test(words.replace(/\$\{?HOLI_BIN\}?(?![A-Za-z0-9_])/g, ''))) {
+    const all = words.split(/[\s|;&()`<>]+/).filter(Boolean)
+    if (all.some((t, i) => HOLI_WORD.test(t) && all[i + 1] === 'google')) return true
+  }
   // A `$(` is cut at its parenthesis here, so a substitution standing where
   // the command word would be reads as a stage whose word is a bare `$`.
   for (const stage of words.split(/[|;&()\n]/)) {

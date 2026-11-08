@@ -104,6 +104,13 @@ describe('both maintained and shipped gates cover shell spellings', () => {
     'ls | holi google $V t1',
     'sudo -u ada holi google $V t1',
     'cd /tmp && /opt/bin/holi google $V t1',
+    // Holi run by something other than the stage's command word.
+    'echo "$T" | xargs holi google send --to',
+    'find . -exec holi google send --to "$T" \\;',
+    'stdbuf -oL holi google send --to "$T"',
+    '>/dev/null holi google $V t1',
+    'exec -a x holi google $V t1',
+    'echo `holi google send --to $T`',
   ])('asks for risky syntax: %s', async (command) => {
     expect(decisionOf(await decide(bash(command)))).toBe('ask')
     expect(decisionOf(await decide(bash(command), true))).toBe('ask')
