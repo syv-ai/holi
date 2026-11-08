@@ -173,8 +173,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     setWs((w) => openTabIn(w, tabKey({ kind: 'app', id })))
   }
 
-  const { openSettings: showSettings, leaveSettings } = useSettingsTab({
-    focusedKey,
+  const { openSettings: showSettings, leaveSettings: backFromSettings } = useSettingsTab({
     update: setWs,
     showSidebar: () => {
       if (!isMobile) showSidebar()
@@ -183,6 +182,12 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   function openSettings() {
     setMobileNavOpen(false)
     showSettings()
+  }
+  /** Settings' Back goes to another tab, so on mobile the sheet that held
+   *  its nav closes, as it does for any other tab opened from it. */
+  function leaveSettings() {
+    setMobileNavOpen(false)
+    backFromSettings()
   }
 
   /** + and ⌘T: a New tab, or on the Agents side a new session in the
