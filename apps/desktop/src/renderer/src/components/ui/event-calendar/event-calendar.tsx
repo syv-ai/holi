@@ -1856,7 +1856,13 @@ function EventCalendar<TData = unknown>({
           // cascade from here (the few portaled surfaces - "+N more" popover,
           // drag carry clone - pin the size explicitly since DOM inheritance
           // does not cross a portal).
-          className={cn("flex min-h-0 min-w-0 flex-col text-xs", className)}
+          // --ec-grid-line is the slot and day gridlines: the border colour at
+          // the reduced strength Holi gives its other dimmed edges, so the
+          // grid recedes behind the events. Override it on the root to retint.
+          className={cn(
+            "flex min-h-0 min-w-0 flex-col text-xs [--ec-grid-line:color-mix(in_oklab,var(--color-border)_60%,transparent)]",
+            className
+          )}
           {...rest}
         >
           {/* Slottable keeps the announcer sibling legal when asChild slots
