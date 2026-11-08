@@ -69,7 +69,6 @@ import {
   heldBackAtom,
   ignoredPathsAtom,
   importFilesAtom,
-  isUnsyncedPath,
   loadSnapshotAtom,
   moveNotesAtom,
   resolveHeldBackAtom,
@@ -77,7 +76,6 @@ import {
   snapshotLoadedAtom,
   vaultsAtom,
 } from '@/state/vaults'
-import { activeVaultSettingsAtom } from '@/state/settings'
 import { EllipsisIcon, PlusIcon } from 'lucide-react'
 import { AskNameDialog } from './ask-name-dialog'
 import {
@@ -120,7 +118,6 @@ export function FilesSection({
   const ignored = useAtomValue(ignoredPathsAtom)
   const heldBack = useAtomValue(heldBackAtom)
   const resolveHeldBack = useSetAtom(resolveHeldBackAtom)
-  const sizeLimit = useAtomValue(activeVaultSettingsAtom)?.maxCommittedFileBytes ?? null
   /** Each held-back file, and every folder above one, with the files it
    *  holds: a closed folder carries their warning. */
   const heldUnder = useMemo(() => {
@@ -913,7 +910,7 @@ export function FilesSection({
                           <span
                             className={cn(
                               'flex min-w-0 flex-1 items-center gap-2',
-                              isUnsyncedPath(ignored, item.getId()) && 'text-muted-foreground',
+                              ignored.has(item.getId()) && 'text-muted-foreground',
                             )}
                           >
                             <FileGlyph item={item} />
@@ -942,7 +939,6 @@ export function FilesSection({
                             {/* An open folder leaves the warning to its files. */}
                             <HeldBackMark
                               held={item.isExpanded() ? undefined : heldUnder.get(item.getId())}
-                              limit={sizeLimit}
                             />
                           </span>
                         </RowHover>

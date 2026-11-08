@@ -1,12 +1,6 @@
 import { atom, type createStore } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import {
-  GITKEEP,
-  type VaultEntry,
-  type VaultSnapshot,
-  emptyVaultSnapshot,
-  isLocalOnlyPath,
-} from '@holi/shared'
+import { GITKEEP, type VaultEntry, type VaultSnapshot, emptyVaultSnapshot } from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
 import type { HeldBackFile } from '../../../main/vault/large-files'
 import type { RendererPlugin } from '@/state/plugin-types'
@@ -105,14 +99,12 @@ export const resolveHeldBackAtom = atom(
   },
 )
 
-/** The open vault's paths git ignores (`snapshot.ignored`), as a set. */
+/** The open vault's paths git ignores (`snapshot.ignored`), as a set: what
+ *  never syncs from this machine, as main read it. Every vault's `.gitignore`
+ *  carries the local-only lines (`LOCAL_ONLY_IGNORE_LINES`), so `.local.` and
+ *  secret files are in it, and a local-named file someone committed anyway is
+ *  rightly not. The tree dims these rows. */
 export const ignoredPathsAtom = atom((get) => new Set(get(snapshotAtom).ignored))
-
-/** Whether `path` never syncs from this machine: git ignores it, or its path
- *  is local (`.local.`, a secret file's name). The tree dims such a row. */
-export function isUnsyncedPath(ignored: ReadonlySet<string>, path: string): boolean {
-  return ignored.has(path) || isLocalOnlyPath(path)
-}
 
 /**
  * How often each file's history has moved since launch: `all` counts merged

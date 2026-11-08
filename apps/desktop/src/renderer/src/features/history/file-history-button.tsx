@@ -3,7 +3,7 @@ import { useAtomValue } from 'jotai'
 import { HistoryIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { ignoredPathsAtom, isUnsyncedPath } from '@/state/vaults'
+import { ignoredPathsAtom } from '@/state/vaults'
 
 import { HistoryDialog } from './history-dialog'
 import { commitAge, shortSha } from './commit-format'
@@ -20,7 +20,7 @@ export function FileHistoryButton({ path }: { path: string }) {
   const authors = useFileAuthors(path)
   const [open, setOpen] = useState(false)
   const latest = history.kind === 'ready' ? history.commits[0] : undefined
-  const unsynced = isUnsyncedPath(useAtomValue(ignoredPathsAtom), path)
+  const unsynced = useAtomValue(ignoredPathsAtom).has(path)
 
   // A file git ignores has no history to show unless it was committed before
   // it was ignored: it says where it lives instead.

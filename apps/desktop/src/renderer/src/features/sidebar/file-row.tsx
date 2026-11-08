@@ -6,7 +6,15 @@ import { FileType, getFileType } from '@/components/ui/file-type'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { FolderDocumentMark } from '@/composites/marks'
+import { megabytes } from '@/lib/megabytes'
 import type { TreeItemData } from '@/lib/tree-data'
+
+/** A held-back file as main pushes it (`HeldBackFile`): its size and the
+ *  limit it was held back against. */
+interface Held {
+  bytes: number
+  limit: number
+}
 
 /** A row in a hover card when its claim draws one; the row alone otherwise. */
 export function RowHover({
@@ -60,35 +68,21 @@ export function FileGlyph({ item }: { item: ItemInstance<TreeItemData> }) {
   )
 }
 
-const MB = 1024 * 1024
-
-/** A size as the settings name the limit: `11.7 MB`, `10 MB`. */
-function megabytes(bytes: number): string {
-  const mb = bytes / MB
-  return `${Number.isInteger(mb) ? mb : mb.toFixed(1)} MB`
-}
-
 /** Why a held-back file is not syncing, or a closed folder holding some:
- *  the size against the vault's limit (`null` while the settings load). */
-function heldBackReason(held: readonly { bytes: number }[], limit: number | null): string {
-  const over = limit === null ? 'over the size limit' : `over the ${megabytes(limit)} limit`
-  const [only] = held
-  if (held.length === 1 && only !== undefined)
-    return `Not synced: ${megabytes(only.bytes)}, ${over}`
-  return `Not synced: ${held.length} files ${over}`
+ *  the size against the limit main held it back at. One commit tick holds
+ *  them all against the same limit. */
+function heldBackReason([first, ...rest]: readonly Held[]): string {
+  if (first === undefined) return ''
+  const over = `over the ${megabytes(first.limit)} limit`
+  if (rest.length === 0) return `Not synced: ${megabytes(first.bytes)}, ${over}`
+  return `Not synced: ${rest.length + 1} files ${over}`
 }
 
 /** The warning at a row's end on a file the large-file gate held back, and
  *  on a folder holding some: `held` is what the row holds, if anything. */
-export function HeldBackMark({
-  held,
-  limit,
-}: {
-  held: readonly { bytes: number }[] | undefined
-  limit: number | null
-}) {
+export function HeldBackMark({ held }: { held: readonly Held[] | undefined }) {
   if (held === undefined || held.length === 0) return null
-  const reason = heldBackReason(held, limit)
+  const reason = heldBackReason(held)
   return (
     <Tooltip>
       <TooltipTrigger asChild>

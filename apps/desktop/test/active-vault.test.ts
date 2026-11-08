@@ -396,8 +396,8 @@ describe('ActiveVault — commit', () => {
     // coalesced push not due yet.
     expect((await active.repo.status()).dirtyPaths).toEqual(['big.bin'])
     expect(active.syncState()).toEqual({ kind: 'unsynced', ahead: 1, behind: 0 })
-    expect(active.heldBack()).toEqual([{ path: 'big.bin', bytes: 2000 }])
-    expect(held.at(-1)).toEqual([{ path: 'big.bin', bytes: 2000 }])
+    expect(active.heldBack()).toEqual([{ path: 'big.bin', bytes: 2000, limit: 1024 }])
+    expect(held.at(-1)).toEqual([{ path: 'big.bin', bytes: 2000, limit: 1024 }])
     await expect(readFile(join(dir, 'big.bin'), 'utf8')).resolves.toHaveLength(2000)
   })
 
@@ -422,7 +422,7 @@ describe('ActiveVault — commit', () => {
     await writeFile(join(dir, 'big.bin'), 'x'.repeat(2000), 'utf8')
     await active.commitNow()
 
-    expect(active.heldBack()).toEqual([{ path: 'big.bin', bytes: 2000 }])
+    expect(active.heldBack()).toEqual([{ path: 'big.bin', bytes: 2000, limit: 1024 }])
     await expect(readFile(join(dir, '.git/hooks/pre-commit'), 'utf8')).resolves.toContain(
       'limit=1024',
     )
@@ -2047,7 +2047,7 @@ describe('VaultHost', () => {
     hosts.push(h)
 
     await h.open('syv-ai/a')
-    expect(held.at(-1)).toEqual([{ path: 'big.bin', bytes: 2000 }])
+    expect(held.at(-1)).toEqual([{ path: 'big.bin', bytes: 2000, limit: 1024 }])
   })
 
   it('waits for startup prerequisites before opening a vault', async () => {
