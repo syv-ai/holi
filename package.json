@@ -30,7 +30,8 @@
       "node-pty"
     ],
     "patchedDependencies": {
-      "codemirror-markdown-tables@1.0.0": "patches/codemirror-markdown-tables@1.0.0.patch"
+      "codemirror-markdown-tables@1.0.0": "patches/codemirror-markdown-tables@1.0.0.patch",
+      "@aiden0z/pptx-renderer@1.4.0": "patches/@aiden0z__pptx-renderer@1.4.0.patch"
     }
   },
   "devDependencies": {

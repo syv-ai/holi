@@ -20,15 +20,34 @@ const DOC = new Set([
   'ppt',
   'pptx',
   'odp',
+  'epub',
   'pages',
   'numbers',
   'key',
 ])
 
-export function fileKind(path: string): FileKind {
+/** A path's extension, lowercased; '' for none. A leading dot is a hidden
+ *  name, not an extension. */
+function extensionOf(path: string): string {
   const base = path.slice(path.lastIndexOf('/') + 1)
   const dot = base.lastIndexOf('.')
-  const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : ''
+  return dot > 0 ? base.slice(dot + 1).toLowerCase() : ''
+}
+
+/** The documents the Read all the things plugin opens read-only (docs/features/reader.md). */
+export type ReadableDoc = 'docx' | 'pptx' | 'epub'
+
+const READABLE: ReadonlySet<string> = new Set<ReadableDoc>(['docx', 'pptx', 'epub'])
+
+/** Which readable document a path is, or null. Core asks too, to say which
+ *  plugin to turn on when it is off. */
+export function readableDoc(path: string): ReadableDoc | null {
+  const ext = extensionOf(path)
+  return READABLE.has(ext) ? (ext as ReadableDoc) : null
+}
+
+export function fileKind(path: string): FileKind {
+  const ext = extensionOf(path)
   if (ext === 'md' || ext === 'markdown') return 'markdown'
   if (ext === 'pdf') return 'pdf'
   if (IMAGE.has(ext)) return 'image'

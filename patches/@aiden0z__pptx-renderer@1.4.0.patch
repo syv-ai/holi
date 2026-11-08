@@ -1,0 +1,22 @@
+diff --git a/dist/aiden0z-pptx-renderer.es.js b/dist/aiden0z-pptx-renderer.es.js
+index 969a042875b85ebfc89705bfd41e8d1ddaf8c75a..70c30b8bd439addfd331613181caece866a5b3cf 100644
+--- a/dist/aiden0z-pptx-renderer.es.js
++++ b/dist/aiden0z-pptx-renderer.es.js
+@@ -6,7 +6,7 @@ import * as ur from "echarts/core";
+ import { BarChart as im, CandlestickChart as am, CustomChart as rm, LineChart as om, PieChart as lm, RadarChart as dm, ScatterChart as sm } from "echarts/charts";
+ import { AxisPointerComponent as um, GraphicComponent as cm, GridComponent as mm, LegendComponent as pm, RadarComponent as hm, TitleComponent as fm, TooltipComponent as gm } from "echarts/components";
+ import { LabelLayout as km } from "echarts/features";
+-import { CanvasRenderer as ym } from "echarts/renderers";
++import { SVGRenderer as ym } from "echarts/renderers";
+ function xm(e) {
+   var i;
+   const t = ((i = e.split(".").pop()) == null ? void 0 : i.toLowerCase()) || "";
+@@ -49228,7 +49228,7 @@ function Lx(e, t) {
+ }
+ function wx(e, t, n, i) {
+   try {
+-    const a = ur.init(e);
++    const a = ur.init(e, void 0, { renderer: "svg" });
+     a.setOption(t), n == null || n.add(a);
+     const r = () => {
+       o == null || o.disconnect(), a.isDisposed() || a.dispose(), n == null || n.delete(a), i == null || i.removeEventListener("abort", r);

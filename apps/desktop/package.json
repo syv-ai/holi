@@ -18,6 +18,7 @@
     "lint": "eslint --max-warnings 0 \"src/renderer/src/**/*.{ts,tsx}\" \"src/plugins/**/*.{ts,tsx}\""
   },
   "dependencies": {
+    "@aiden0z/pptx-renderer": "1.4.0",
     "@base-ui/react": "^1.8.0",
     "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.10.4",
@@ -87,6 +88,7 @@
     "command-score": "0.1.2",
     "d3-force": "^3.0.0",
     "date-fns": "^4.4.0",
+    "docx-preview": "0.4.1",
     "dompurify": "^3.4.13",
     "electron-liquid-glass": "1.1.1",
     "electron-updater": "^6.8.9",

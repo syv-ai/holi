@@ -12,6 +12,7 @@ import { googleMain } from './google/main'
 import { browserMain } from './browser/main'
 import { linksMain } from './links/main'
 import { pdfMain } from './pdf/main'
+import { readerMain } from './reader/main'
 import { tasksMain } from './tasks/main'
 import { transcribeMain } from './transcribe/main'
 
@@ -21,6 +22,7 @@ export const MAIN_PLUGINS: readonly MainPlugin[] = [
   holisMain,
   tasksMain,
   pdfMain,
+  readerMain,
   linksMain,
   browserMain,
   googleMain,

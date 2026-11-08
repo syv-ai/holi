@@ -24,6 +24,7 @@ describe('fileKind', () => {
     for (const p of ['a.png', 'a.jpg', 'a.jpeg', 'a.gif', 'a.webp', 'a.svg'])
       expect(fileKind(p)).toBe('image')
     expect(fileKind('a.pdf')).toBe('pdf')
-    for (const p of ['a.docx', 'a.doc', 'a.xlsx', 'a.pptx']) expect(fileKind(p)).toBe('doc')
+    for (const p of ['a.docx', 'a.doc', 'a.xlsx', 'a.pptx', 'a.epub', 'B.EPUB'])
+      expect(fileKind(p)).toBe('doc')
   })
 })

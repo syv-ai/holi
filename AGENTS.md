@@ -23,8 +23,8 @@ Node access or GitHub credentials. `router.ts` is main's typed API seam; keep
 Electron dependencies out of code that should remain testable under plain Node.
 
 Optional parts of Holi are plugins under `src/plugins/<id>/` (tasks, automations,
-Holis, saved links, the browser, PDF, Google, vault apps and community plugins so
-far), each with its own `main/`, `renderer/` and `test/` (and a `shared/` where it
+Holis, saved links, the browser, PDF, Read all the things, Google, vault apps and
+community plugins so far), each with its own `main/`, `renderer/` and `test/` (and a `shared/` where it
 has rules of its own), reaching core only through `src/main/plugin-api.ts` and
 `@/plugin-api`. The agent lives there too, written to the same contract,
 but is built in (`PluginInfo.builtIn`): it always runs, Settings does not list
