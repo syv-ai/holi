@@ -74,6 +74,10 @@ describe('both maintained and shipped gates cover shell spellings', () => {
     'command "$HOLI_BIN" google api POST gmail/v1/users/me/messages/send --body -',
     '("$HOLI_BIN" google respond e2 --yes)',
     '("$HOLI_BIN" google api POST gmail/v1/users/me/messages/send --body -)',
+    'HOLI google respond e2 --yes',
+    'sudo holi google respond e2 --yes',
+    'nohup /usr/local/bin/holi google respond e2 --yes',
+    'eval "$HOLI_BIN google respond e2 --yes"',
   ]
 
   it.each(commands)('asks for %s in either hook', async (command) => {
@@ -95,6 +99,22 @@ describe('both maintained and shipped gates cover shell spellings', () => {
     'if true; then holi google api POST gmail/v1/users/me/messages/send --body "{}"; fi',
     'eval "holi google send --to a@b.c"',
     'cmd=holi; $cmd google send --to a@b.c',
+    'V=send; holi google $V --to a@b.c',
+    '"$HOLI_BIN" google $VERB t1',
+    'holi google "$(echo send)" --to a@b.c',
+    '$(echo holi) google send --to a@b.c',
+    '`echo holi` google send --to a@b.c',
+    'X=1 holi google ${VERB} t1',
+    'ls | holi google $V t1',
+    'sudo -u ada holi google $V t1',
+    'cd /tmp && /opt/bin/holi google $V t1',
+    // Holi run by something other than the stage's command word.
+    'echo "$T" | xargs holi google send --to',
+    'find . -exec holi google send --to "$T" \\;',
+    'stdbuf -oL holi google send --to "$T"',
+    '>/dev/null holi google $V t1',
+    'exec -a x holi google $V t1',
+    'echo `holi google send --to $T`',
   ])('asks for risky syntax: %s', async (command) => {
     expect(decisionOf(await decide(bash(command)))).toBe('ask')
     expect(decisionOf(await decide(bash(command), true))).toBe('ask')
@@ -105,6 +125,15 @@ describe('both maintained and shipped gates cover shell spellings', () => {
     'holi google api GET calendar/v3/calendars/primary/events',
     'holi google search x | grep send',
     'echo holi google respond e2 --yes',
+    // Holi only as an argument or in a path, beside an expansion: no Holi runs.
+    'grep holi "$f"',
+    'grep -rn holi src | head -$N',
+    'cat ~/repos/holi-src/$FILE',
+    'cd "$HOME/repos/holi-src" && git log -1',
+    'gh repo view syv-ai/holi --json "$FIELDS"',
+    'for f in *.md; do grep -l holi "$f"; done',
+    '"$HOLI_BIN" google agenda',
+    'command "$HOLI_BIN" google agenda today',
   ])('does not ask for a safe/non-invocation command: %s', async (command) => {
     expect(decisionOf(await decide(bash(command)))).toBe('none')
     expect(decisionOf(await decide(bash(command), true))).toBe('none')
