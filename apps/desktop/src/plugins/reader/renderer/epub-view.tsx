@@ -194,7 +194,7 @@ export function EpubView({ bytes, name }: { bytes: Uint8Array<ArrayBuffer>; name
                 <ListTree />
               </IconButton>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
+            <DropdownMenuContent align="start" size="wide">
               <TocEntries items={toc} go={(href) => quietly(viewRef.current?.goTo(href))} />
             </DropdownMenuContent>
           </DropdownMenu>
@@ -237,7 +237,7 @@ function TocEntries({ items, go }: { items: readonly TocItem[]; go: (href: strin
     item.subitems != null && item.subitems.length > 0 ? (
       <DropdownMenuSub key={`${item.href}-${i}`}>
         <DropdownMenuSubTrigger>{item.label}</DropdownMenuSubTrigger>
-        <DropdownMenuSubContent>
+        <DropdownMenuSubContent size="wide">
           <DropdownMenuItem onSelect={() => go(item.href)}>{item.label}</DropdownMenuItem>
           <TocEntries items={item.subitems} go={go} />
         </DropdownMenuSubContent>
