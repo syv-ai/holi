@@ -212,6 +212,7 @@ function SyncItems() {
   const label = syncLabel(state)
   const busy = view.busy || running
   const counts = `${info.behind}↓ ${info.ahead}↑`
+  const pending = state.kind === 'unsynced' || info.ahead > 0 || info.behind > 0
   const tooltip = [
     `Sync: ${label.text}`,
     info.lastError === null ? null : info.lastError.split('\n')[0],
@@ -252,7 +253,14 @@ function SyncItems() {
         ) : (
           <RefreshCwIcon
             aria-hidden
-            className={cn('size-3.5', busy && 'animate-spin motion-reduce:animate-none')}
+            className={cn(
+              'size-3.5',
+              busy && 'animate-spin motion-reduce:animate-none',
+              // Holi syncs in the background, so the glyph only shows when
+              // there is something to sync; hidden, it keeps its room so
+              // the items beside it do not move when it appears.
+              !busy && !pending && 'invisible',
+            )}
           />
         )}
         <span className="tabular-nums">{counts}</span>
