@@ -352,11 +352,7 @@ export function TabStrip({
           {count > 0 && overflowing ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <TabSwitcherButton
-                  variant="ghost"
-                  size="xs"
-                  className="text-muted-foreground font-normal whitespace-nowrap"
-                >
+                <TabSwitcherButton variant="quiet" size="xs">
                   {count === 1 ? '1 tab' : `${count} tabs`}
                 </TabSwitcherButton>
               </TooltipTrigger>

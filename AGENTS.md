@@ -294,7 +294,7 @@ Gotchas of a fresh checkout or worktree that no file states.
   from the branch you are on. Have it `git reset --hard <your commit>` first, and bring its
   work back with `git cherry-pick`.
 - Holi edits the stock files in place, and `shadcn add` would overwrite those edits if
-  you let it. Added on purpose: `Button` variants `text`, `dashed`, `section` and sizes `row`, `field`,
+  you let it. Added on purpose: `Button` variants `text`, `quiet`, `dashed`, `section` and sizes `row`, `field`,
   `inline`; `DialogContent`, `PopoverContent`, `HoverCardContent` variant `flush`;
   `DialogContent` `size` (the width of a dialog chosen at runtime); `FileType`'s `deck`
   extension (a community plugin's presentation);
