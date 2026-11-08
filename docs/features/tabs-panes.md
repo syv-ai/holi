@@ -75,9 +75,13 @@ view in front the files sidebar folds to its rail, and leaving it gives the side
 
 ## The strip
 
-The strip (`features/shell/tab-strip.tsx`) rides in the title band always, split or not. A tab is a 224px
-pill: its mark, its title, × on hover. A split is one wider pill holding each member's mark and
-title side by side, a hairline between them, truncating evenly; with the split active the focused
+The strip (`features/shell/tab-strip.tsx`) rides in the title band always, split or not. A tab is a
+pill: its mark, its title, × on hover. Every tab is one width, 176px (`w-44`) while they fit, and
+as more open they shrink evenly, browser-style, down to 112px (`min-w-28`), which still shows the
+mark and the start of the title; only then does the strip scroll. A split is one wider pill
+(240px for two members, 320px for three or four), shrinking in the same proportion down to its own
+floor (176px, 240px). The widths are CSS (each entry's width and min-width in a shrinking flex
+row), not measured. A split's pill holds each member's mark and title side by side, a hairline between them, truncating evenly; with the split active the focused
 member's title has the full weight and the others are muted. Clicking the pill selects the split;
 clicking a member inside it selects the split focused on that member. + opens a New tab (⌘T), or
 while the sidebar is on Agents starts a session in the default agent, in a tab of its own.
