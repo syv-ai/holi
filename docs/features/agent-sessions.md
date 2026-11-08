@@ -462,8 +462,10 @@ respawn`, a fresh process for the same conversation, which re-reads settings and
 session's own name is Claude Code's: `/rename`, or Ctrl+R in the list. **Start another session** on an agent tab starts
 one with no prompt, which waits for yours.
 
-**State is read, not inferred.** Main reads `claude agents --json` for the vault's config directory
-and keeps the background rows under the vault root. `needs-you` is `status: waiting`, `working` is
+**State is read, not inferred.** Main reads `claude agents --json --all` for the vault's config
+directory (`--all` adds the finished sessions, which a plain `--json` leaves out since Claude Code
+2.1.319; a Claude Code that refuses the flag is asked without it, which listed them) and keeps the
+background rows under the vault root. `needs-you` is `status: waiting`, `working` is
 `busy` or `shell`, then the turn bracket; a session started with no prompt reads `state: blocked`
 and is idle. The read is triggered by a watch of `<configDir>/sessions/` and `jobs/` (edge triggers,
 never parsed), by each turn hook, and by a vault opening. The one timer is a second read about a second
