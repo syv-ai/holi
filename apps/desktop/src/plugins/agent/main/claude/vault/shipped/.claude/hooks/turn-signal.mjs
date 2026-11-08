@@ -35,7 +35,7 @@
 // in a session that is not a background one, or with Holi closed, it sends
 // nothing.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
 const edge = process.argv[2]
@@ -98,7 +98,11 @@ function noteJob(root, input) {
   }
   const next = [{ conversation, job: jobDir }, ...jobs.filter((j) => j.conversation !== conversation)]
   mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, `${JSON.stringify(next.slice(0, JOBS_KEPT), null, 2)}\n`)
+  // Through a rename: two sessions starting at once must not leave a torn
+  // file, which the next start would read as none and so forget every note.
+  const scratch = `${file}.${process.pid}`
+  writeFileSync(scratch, `${JSON.stringify(next.slice(0, JOBS_KEPT), null, 2)}\n`)
+  renameSync(scratch, file)
 }
 
 /** The vault this runs in: the nearest folder up holding `.holi/vault`. */
