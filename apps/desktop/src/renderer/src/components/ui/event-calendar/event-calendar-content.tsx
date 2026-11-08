@@ -169,7 +169,12 @@ function EventCalendarContent({
     const onWheel = (event: WheelEvent) => {
       if (event.ctrlKey) return
       const travel = horizontalTravel(event)
-      if (travel !== 0 && innerScrollsX(event.target, root, travel)) return
+      if (travel !== 0 && innerScrollsX(event.target, root, travel)) {
+        // The swipe is the inner area's: when it reaches its edge, the rest
+        // of the gesture's momentum is swallowed rather than paging.
+        state = { travel: 0, paged: true, last: event.timeStamp }
+        return
+      }
       const read = readSwipe(state, event)
       state = read.state
       if (read.claim) event.preventDefault()
