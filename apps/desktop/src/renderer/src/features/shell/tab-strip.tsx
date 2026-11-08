@@ -269,6 +269,16 @@ export function TabStrip({
                         }
                         className={cn(
                           'group/tab relative flex h-full',
+                          // Browser-style: every tab one width, shrinking
+                          // evenly as more open down to what still shows its
+                          // mark and the start of its title, and only then
+                          // does the strip scroll. A split is proportionally
+                          // wider, and shrinks in the same proportion.
+                          tab !== null
+                            ? 'w-44 min-w-28'
+                            : members!.length > 2
+                              ? 'w-80 min-w-60'
+                              : 'w-60 min-w-44',
                           // Where a dragged entry would land: a hairline in
                           // the gap.
                           'data-drop-before:before:bg-primary data-drop-before:before:absolute data-drop-before:before:inset-y-1.5 data-drop-before:before:-start-0.5 data-drop-before:before:w-0.5 data-drop-before:before:rounded-full',
@@ -289,7 +299,7 @@ export function TabStrip({
                           className={cn(
                             'hover:bg-foreground/5',
                             'group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 dark:group-data-[variant=line]/tabs-list:data-active:bg-foreground/8',
-                            tab !== null ? 'w-56' : members!.length > 2 ? 'w-80' : 'w-64',
+                            'w-full',
                           )}
                         >
                           {tab !== null ? (
