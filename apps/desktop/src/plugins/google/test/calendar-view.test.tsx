@@ -2,7 +2,7 @@
  * The calendar view (ReUI's event calendar over Google): what it asks Google
  * for, what it draws, and which writes it sends through which capability.
  */
-import { render, screen, waitFor, within } from '@/test/render'
+import { fireEvent, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { getDefaultStore } from 'jotai'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -178,6 +178,25 @@ describe('mapping Google onto the calendar', () => {
 })
 
 describe('the calendar view', () => {
+  test('one sideways swipe pages one week, and a vertical scroll pages none', async () => {
+    const { container } = render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    const root = container.querySelector<HTMLElement>('[data-slot="event-calendar"]')!
+    const title = () => container.querySelector('[data-slot="event-calendar-title"]')?.textContent
+    const before = title()
+    const from = () => Date.parse((agendaMock.mock.calls.at(-1)![0] as { from: string }).from)
+    const first = from()
+
+    fireEvent.wheel(root, { deltaY: 120 })
+    expect(title()).toBe(before)
+
+    // A swipe and its momentum: one burst of sideways events.
+    for (let i = 0; i < 12; i++) fireEvent.wheel(root, { deltaX: 30, deltaY: 2 })
+    await waitFor(() => expect(title()).not.toBe(before))
+    await waitFor(() => expect(from()).not.toBe(first))
+    expect(Math.round((from() - first) / 86_400_000)).toBe(7)
+  })
+
   test('asks Google for the visible week and draws its events', async () => {
     render(<CalendarView />)
     expect((await screen.findAllByText('Focus block')).length).toBeGreaterThan(0)

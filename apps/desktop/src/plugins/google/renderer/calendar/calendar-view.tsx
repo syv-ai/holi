@@ -514,7 +514,7 @@ export function CalendarView(): React.JSX.Element {
               </Button>
             </div>
           )}
-          <EventCalendarContent />
+          <EventCalendarContent swipeNavigation />
         </EventCalendar>
 
         <EventSheet
