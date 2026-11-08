@@ -1,13 +1,6 @@
 import type { TemplateField } from '../shared/template-fields'
 import { describe, expect, it } from 'vitest'
-import {
-  fieldValuesFor,
-  metaFromValues,
-  missingRequired,
-  noteValues,
-  parseFrontmatter,
-  prefillValues,
-} from '../shared/pdf-fields'
+import { fieldValuesFor, metaFromValues, missingRequired } from '../shared/pdf-fields'
 
 const field = (over: Partial<TemplateField>): TemplateField => ({
   key: 'k',
@@ -51,29 +44,27 @@ describe('metaFromValues', () => {
   })
 })
 
-describe('parseFrontmatter', () => {
-  it('returns {} when there is no frontmatter', () => {
-    expect(parseFrontmatter('# just a heading\n\nbody\n')).toEqual({})
-  })
+const today = '2026-08-04'
 
-  it('parses a leading YAML map', () => {
-    expect(parseFrontmatter('---\ntitle: Report\nyear: 2026\n---\n\nbody\n')).toEqual({
+/** Seed `fields` from a note, the one way the dialog and the CLI both do. */
+const fill = (fields: TemplateField[], text: string, path = 'a.md') =>
+  fieldValuesFor(fields, path, text, today)
+
+describe('fieldValuesFor: frontmatter', () => {
+  it('reads a leading YAML map, and nothing when there is none', () => {
+    const fields = [field({ key: 'title' }), field({ key: 'year' })]
+    expect(fill(fields, '---\ntitle: Report\nyear: 2026\n---\n\nbody\n')).toEqual({
       title: 'Report',
-      year: 2026,
+      year: '2026',
     })
+    expect(fill(fields, 'body\n')).toEqual({ title: '', year: '' })
   })
 
-  it('returns {} on invalid YAML rather than throwing', () => {
-    expect(parseFrontmatter('---\ntags: [unterminated\n---\nbody\n')).toEqual({})
+  it('ignores invalid YAML or a frontmatter that is not a map, rather than throwing', () => {
+    const fields = [field({ key: 'tags' })]
+    expect(fill(fields, '---\ntags: [unterminated\n---\nbody\n')).toEqual({ tags: '' })
+    expect(fill(fields, '---\n- a\n- b\n---\nbody\n')).toEqual({ tags: '' })
   })
-
-  it('returns {} when the frontmatter is not a map', () => {
-    expect(parseFrontmatter('---\n- a\n- b\n---\nbody\n')).toEqual({})
-  })
-})
-
-describe('prefillValues', () => {
-  const today = '2026-08-04'
 
   it('overlays frontmatter on the type default, coerced by field type', () => {
     const fields = [
@@ -81,108 +72,80 @@ describe('prefillValues', () => {
       field({ key: 'count', type: 'number' }),
       field({ key: 'urgent', type: 'checkbox' }),
     ]
-    const fm = { title: 'Q3 Report', count: 42, urgent: true }
-    expect(prefillValues(fields, fm, today)).toEqual({
+    expect(fill(fields, '---\ntitle: Q3 Report\ncount: 42\nurgent: true\n---\n')).toEqual({
       title: 'Q3 Report',
       count: '42',
       urgent: 'true',
     })
   })
 
-  it('formats a Date-typed frontmatter value as YYYY-MM-DD for a date field', () => {
+  it('formats an unquoted date as YYYY-MM-DD and passes a quoted one through', () => {
     const fields = [field({ key: 'date', type: 'date' })]
-    // yaml parses an unquoted ISO date to a JS Date.
-    const fm = parseFrontmatter('---\ndate: 2026-07-08\n---\n')
-    expect(prefillValues(fields, fm, today)).toEqual({ date: '2026-07-08' })
+    expect(fill(fields, '---\ndate: 2026-07-08\n---\n')).toEqual({ date: '2026-07-08' })
+    expect(fill(fields, '---\ndate: "2026-01-02"\n---\n')).toEqual({ date: '2026-01-02' })
   })
 
-  it('passes a date string through unchanged', () => {
-    const fields = [field({ key: 'date', type: 'date' })]
-    expect(prefillValues(fields, { date: '2026-01-02' }, today)).toEqual({ date: '2026-01-02' })
-  })
-
-  it('falls back to initialValue when the key is absent', () => {
+  it('falls back to the type default when the key is absent', () => {
     const fields = [field({ key: 'date', type: 'date' }), field({ key: 'to', type: 'text' })]
-    expect(prefillValues(fields, {}, today)).toEqual({ date: today, to: '' })
+    expect(fill(fields, '---\nx: 1\n---\n')).toEqual({ date: today, to: '' })
   })
 
   it('ignores array/object/null values and keeps the default', () => {
     const fields = [field({ key: 'to', type: 'text' })]
-    expect(prefillValues(fields, { to: ['a', 'b'] }, today)).toEqual({ to: '' })
-    expect(prefillValues(fields, { to: { x: 1 } }, today)).toEqual({ to: '' })
-    expect(prefillValues(fields, { to: null }, today)).toEqual({ to: '' })
+    expect(fill(fields, '---\nto: [a, b]\n---\n')).toEqual({ to: '' })
+    expect(fill(fields, '---\nto: { x: 1 }\n---\n')).toEqual({ to: '' })
+    expect(fill(fields, '---\nto: null\n---\n')).toEqual({ to: '' })
   })
 
   it('never seeds a key the template does not declare (no leak)', () => {
     const fields = [field({ key: 'title', type: 'text' })]
-    expect(prefillValues(fields, { title: 'T', recipient: 'ACME' }, today)).toEqual({ title: 'T' })
+    expect(fill(fields, '---\ntitle: T\nrecipient: ACME\n---\n')).toEqual({ title: 'T' })
   })
 })
 
-describe('noteValues', () => {
+describe('fieldValuesFor: what the note says', () => {
+  const fields = [field({ key: 'title', type: 'text' }), field({ key: 'client', type: 'text' })]
+
   it('reads the title off the opening H1 and the client off kunder/<client>/', () => {
     const note = '# Market analysis\n\nBody\n'
-    expect(noteValues('kunder/Acme/reports/analysis.md', note)).toEqual({
-      title: 'Market analysis',
-      client: 'Acme',
-    })
-    expect(noteValues('kunder/Acme/analysis.md', note)).toEqual({
-      title: 'Market analysis',
-      client: 'Acme',
-    })
+    const expected = { title: 'Market analysis', client: 'Acme' }
+    expect(fill(fields, note, 'kunder/Acme/reports/analysis.md')).toEqual(expected)
+    expect(fill(fields, note, 'kunder/Acme/analysis.md')).toEqual(expected)
   })
 
   it('has no client outside a client folder of kunder/', () => {
-    expect(noteValues('kunder/analysis.md', '')).toEqual({})
-    expect(noteValues('notes/kunder/Acme/a.md', '')).toEqual({})
-    expect(noteValues('analysis.md', '')).toEqual({})
+    const none = { title: '', client: '' }
+    expect(fill(fields, '', 'kunder/analysis.md')).toEqual(none)
+    expect(fill(fields, '', 'notes/kunder/Acme/a.md')).toEqual(none)
+    expect(fill(fields, '', 'analysis.md')).toEqual(none)
   })
 
   it('takes the H1 only when the note opens with it, past frontmatter', () => {
-    expect(noteValues('a.md', '---\nx: 1\n---\n\n# Title #\n')).toEqual({ title: 'Title' })
-    expect(noteValues('a.md', 'Intro\n\n# Later\n')).toEqual({})
-    expect(noteValues('a.md', '## Section\n')).toEqual({})
-    expect(noteValues('a.md', '#\n')).toEqual({})
+    const title = (text: string) => fill(fields, text).title
+    expect(title('---\nx: 1\n---\n\n# Title #\n')).toBe('Title')
+    expect(title('Intro\n\n# Later\n')).toBe('')
+    expect(title('## Section\n')).toBe('')
+    expect(title('#\n')).toBe('')
   })
-})
 
-describe('prefillValues with what the note says', () => {
-  const today = '2026-07-01'
-  const fromNote = { title: 'From H1', client: 'Acme' }
-
-  it('fills text fields of those keys, frontmatter first', () => {
-    const fields = [field({ key: 'title', type: 'text' }), field({ key: 'client', type: 'text' })]
-    expect(prefillValues(fields, {}, today, fromNote)).toEqual(fromNote)
-    expect(prefillValues(fields, { title: 'FM' }, today, fromNote)).toEqual({
+  it('reads frontmatter first, then the H1 and client folder', () => {
+    const note = '---\nclient: Beta\n---\n# Analysis\n'
+    expect(fill(fields, note, 'kunder/Acme/a.md')).toEqual({ title: 'Analysis', client: 'Beta' })
+    expect(fill(fields, '---\ntitle: FM\n---\n# From H1\n', 'kunder/Acme/a.md')).toEqual({
       title: 'FM',
       client: 'Acme',
     })
   })
 
   it('leaves a field with its own default, or of another type, alone', () => {
-    const fields = [
+    const own = [
       field({ key: 'title', type: 'text', default: 'Fixed' }),
       field({ key: 'client', type: 'select', options: ['Acme', 'Other'] }),
     ]
-    expect(prefillValues(fields, {}, today, fromNote)).toEqual({ title: 'Fixed', client: '' })
-  })
-})
-
-describe('fieldValuesFor', () => {
-  const fields = [field({ key: 'title', type: 'text' }), field({ key: 'client', type: 'text' })]
-
-  it('reads frontmatter first, then the H1 and client folder', () => {
-    const note = '---\nclient: Beta\n---\n# Analysis\n'
-    expect(fieldValuesFor(fields, 'kunder/Acme/a.md', note, '2026-07-01')).toEqual({
-      title: 'Analysis',
-      client: 'Beta',
-    })
+    expect(fill(own, '# From H1\n', 'kunder/Acme/a.md')).toEqual({ title: 'Fixed', client: '' })
   })
 
   it('prefills from the rest of a note whose frontmatter is unterminated', () => {
-    expect(fieldValuesFor(fields, 'kunder/Acme/a.md', '---\nx: 1\n', '2026-07-01')).toEqual({
-      title: '',
-      client: 'Acme',
-    })
+    expect(fill(fields, '---\nx: 1\n', 'kunder/Acme/a.md')).toEqual({ title: '', client: 'Acme' })
   })
 })

@@ -31,7 +31,7 @@ export function metaFromValues(
  * frontmatter, invalid YAML, or a non-map top level all degrade to `{}`, so a
  * broken note can never break the Convert dialog.
  */
-export function parseFrontmatter(text: string): Record<string, unknown> {
+function parseFrontmatter(text: string): Record<string, unknown> {
   const { yaml } = splitFrontmatter(text)
   if (yaml === null) return {}
   let parsed: unknown
@@ -84,7 +84,7 @@ const CLIENTS_FOLDER = 'kunder'
  * note rather than written into a template, so it fills a field of that key in
  * any vault's templates, seeded or not. Never throws.
  */
-export function noteValues(path: string, text: string): Record<string, string> {
+function noteValues(path: string, text: string): Record<string, string> {
   const values: Record<string, string> = {}
   let body = text
   try {
@@ -108,7 +108,7 @@ export function noteValues(path: string, text: string): Record<string, string> {
  * own takes it; a text field the note answers (`noteValues`) takes that; and
  * every other field keeps its type default (`initialValue`).
  */
-export function prefillValues(
+function prefillValues(
   fields: TemplateField[],
   frontmatter: Record<string, unknown>,
   today: string,
