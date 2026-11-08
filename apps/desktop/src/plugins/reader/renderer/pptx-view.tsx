@@ -13,6 +13,12 @@
  *   makes the renderer use echarts' SVG renderer; once the `chartRenderer`
  *   option (aiden0z/pptx-renderer#56) is released, pass `chartRenderer: 'svg'`
  *   here and drop the patch.
+ * - **Text boxes** take the presentation's default text size, not the master's
+ *   `otherStyle`, which is for tables (aiden0z/pptx-renderer#57; checked
+ *   against Apple's Quick Look and LibreOffice). The same patch carries it.
+ * - **Picture placeholders** take their layout placeholder's shape (an arch, a
+ *   circle) when they set none of their own (aiden0z/pptx-renderer#58); also in
+ *   the patch.
  * - **Links** are taken by the frame (`InertFrame`) before the renderer's own
  *   handler, which would call `window.open`.
  * - **Large decks** parse their slides and media only as they are drawn.

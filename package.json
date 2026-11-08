@@ -31,7 +31,8 @@
     ],
     "patchedDependencies": {
       "codemirror-markdown-tables@1.0.0": "patches/codemirror-markdown-tables@1.0.0.patch",
-      "@aiden0z/pptx-renderer@1.4.0": "patches/@aiden0z__pptx-renderer@1.4.0.patch"
+      "@aiden0z/pptx-renderer@1.4.0": "patches/@aiden0z__pptx-renderer@1.4.0.patch",
+      "docx-preview@0.4.1": "patches/docx-preview@0.4.1.patch"
     }
   },
   "devDependencies": {

@@ -6,11 +6,14 @@ settings:
 
 patchedDependencies:
   '@aiden0z/pptx-renderer@1.4.0':
-    hash: a8e6f218a757c0be4c08aef6241ed1118b4603579d797540e8dd3b360139fc88
+    hash: 2a35faf3126f8cade5569f96d16a2435d4eb1faf64ef5b1a6394dd6959651fc8
     path: patches/@aiden0z__pptx-renderer@1.4.0.patch
   codemirror-markdown-tables@1.0.0:
     hash: 523f0b81ff5752a6e3a8e46891bc5868d731068af7bdd7b8b41e9a3ef5b6a2fb
     path: patches/codemirror-markdown-tables@1.0.0.patch
+  docx-preview@0.4.1:
+    hash: dae881cac7eb0da07bce8b24466094e8643c9882dde9a373bc42d92d485be87d
+    path: patches/docx-preview@0.4.1.patch
 
 importers:
 
@@ -39,7 +42,7 @@ importers:
     dependencies:
       '@aiden0z/pptx-renderer':
         specifier: 1.4.0
-        version: 1.4.0(patch_hash=a8e6f218a757c0be4c08aef6241ed1118b4603579d797540e8dd3b360139fc88)
+        version: 1.4.0(patch_hash=2a35faf3126f8cade5569f96d16a2435d4eb1faf64ef5b1a6394dd6959651fc8)
       '@base-ui/react':
         specifier: ^1.8.0
         version: 1.8.0(@date-fns/tz@1.5.0)(@types/react@19.2.18)(date-fns@4.4.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -249,7 +252,7 @@ importers:
         version: 4.4.0
       docx-preview:
         specifier: 0.4.1
-        version: 0.4.1
+        version: 0.4.1(patch_hash=dae881cac7eb0da07bce8b24466094e8643c9882dde9a373bc42d92d485be87d)
       dompurify:
         specifier: ^3.4.13
         version: 3.4.13
@@ -7923,7 +7926,7 @@ snapshots:
 
   '@adobe/css-tools@4.5.0': {}
 
-  '@aiden0z/pptx-renderer@1.4.0(patch_hash=a8e6f218a757c0be4c08aef6241ed1118b4603579d797540e8dd3b360139fc88)':
+  '@aiden0z/pptx-renderer@1.4.0(patch_hash=2a35faf3126f8cade5569f96d16a2435d4eb1faf64ef5b1a6394dd6959651fc8)':
     dependencies:
       echarts: 6.1.0
       jszip: 3.10.2
@@ -12485,7 +12488,7 @@ snapshots:
       - electron-builder-squirrel-windows
       - supports-color
 
-  docx-preview@0.4.1:
+  docx-preview@0.4.1(patch_hash=dae881cac7eb0da07bce8b24466094e8643c9882dde9a373bc42d92d485be87d):
     dependencies:
       jszip: 3.10.2
 

@@ -2,6 +2,13 @@
  * A Word document, drawn by docx-preview into an inert frame. The one module
  * that imports docx-preview, loaded lazily so the main chunk never carries it.
  *
+ * `patches/docx-preview@0.4.1.patch` fixes two parser bugs until upstream ships
+ * them: a style's own paragraph and run properties lost to its base style's (a
+ * heading that turns off "page break before" still broke the page;
+ * VolodymyrBaydalka/docxjs#259), and content controls around table rows, cells
+ * and cell paragraphs dropped (a cover title vanished; docxjs#253). Drop each
+ * part of the patch once a release has it.
+ *
  * Images come out of the file as `data:` URLs (`useBase64URL`), which the
  * frame's policy allows, and nothing the document links to outside itself is
  * fetched. Pages are paper whatever the theme: a document brings its own
