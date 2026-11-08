@@ -74,6 +74,10 @@ describe('both maintained and shipped gates cover shell spellings', () => {
     'command "$HOLI_BIN" google api POST gmail/v1/users/me/messages/send --body -',
     '("$HOLI_BIN" google respond e2 --yes)',
     '("$HOLI_BIN" google api POST gmail/v1/users/me/messages/send --body -)',
+    'HOLI google respond e2 --yes',
+    'sudo holi google respond e2 --yes',
+    'nohup /usr/local/bin/holi google respond e2 --yes',
+    'eval "$HOLI_BIN google respond e2 --yes"',
   ]
 
   it.each(commands)('asks for %s in either hook', async (command) => {
