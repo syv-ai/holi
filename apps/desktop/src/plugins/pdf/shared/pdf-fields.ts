@@ -70,20 +70,60 @@ function coerce(field: TemplateField, value: unknown): string | null {
   }
 }
 
+/** A leading H1 (`# Title`, up to three spaces in), its closing hashes dropped. */
+const TOP_H1 = /^ {0,3}#[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/
+
+/** The folder whose subfolders are clients: `kunder/<client>/…`. */
+const CLIENTS_FOLDER = 'kunder'
+
+/**
+ * What a note says about itself without frontmatter, by field key: `title` is
+ * the H1 the note opens with, and `client` the folder directly under `kunder/`
+ * when the note is anywhere inside one (`kunder/Acme/reports/a.md` is Acme's;
+ * `kunder/a.md` and anything outside `kunder/` have no client). Read off the
+ * note rather than written into a template, so it fills a field of that key in
+ * any vault's templates, seeded or not. Never throws.
+ */
+export function noteValues(path: string, text: string): Record<string, string> {
+  const values: Record<string, string> = {}
+  let body = text
+  try {
+    body = splitFrontmatter(text).body
+  } catch {
+    // An unterminated fence is a note mid-edit: read it whole.
+  }
+  const first = body.split('\n').find((line) => line.trim() !== '')
+  const title = first === undefined ? undefined : TOP_H1.exec(first)?.[1]?.trim()
+  if (title) values.title = title
+  const segments = path.split('/')
+  if (segments[0] === CLIENTS_FOLDER && segments.length > 2 && segments[1] !== '') {
+    values.client = segments[1]!
+  }
+  return values
+}
+
 /**
  * Seed the Convert dialog's field values: a note's frontmatter pre-fills any
- * field whose `key` it declares (exact match), and every other field keeps
- * its type default (`initialValue`).
+ * field whose `key` it declares (exact match); a field with a `default` of its
+ * own takes it; a text field the note answers (`noteValues`) takes that; and
+ * every other field keeps its type default (`initialValue`).
  */
 export function prefillValues(
   fields: TemplateField[],
   frontmatter: Record<string, unknown>,
   today: string,
+  fromNote: Record<string, string> = {},
 ): Record<string, string> {
   const seed: Record<string, string> = {}
   for (const f of fields) {
     const fromFm = Object.hasOwn(frontmatter, f.key) ? coerce(f, frontmatter[f.key]) : null
-    seed[f.key] = fromFm ?? initialValue(f, today)
+    const derived =
+      f.default === undefined &&
+      (f.type === 'text' || f.type === 'textarea') &&
+      Object.hasOwn(fromNote, f.key)
+        ? fromNote[f.key]
+        : undefined
+    seed[f.key] = fromFm ?? derived ?? initialValue(f, today)
   }
   return seed
 }

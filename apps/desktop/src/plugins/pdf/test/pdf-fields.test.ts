@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   metaFromValues,
   missingRequired,
+  noteValues,
   parseFrontmatter,
   prefillValues,
 } from '../shared/pdf-fields'
@@ -114,5 +115,54 @@ describe('prefillValues', () => {
   it('never seeds a key the template does not declare (no leak)', () => {
     const fields = [field({ key: 'title', type: 'text' })]
     expect(prefillValues(fields, { title: 'T', recipient: 'ACME' }, today)).toEqual({ title: 'T' })
+  })
+})
+
+describe('noteValues', () => {
+  it('reads the title off the opening H1 and the client off kunder/<client>/', () => {
+    const note = '# Market analysis\n\nBody\n'
+    expect(noteValues('kunder/Acme/reports/analysis.md', note)).toEqual({
+      title: 'Market analysis',
+      client: 'Acme',
+    })
+    expect(noteValues('kunder/Acme/analysis.md', note)).toEqual({
+      title: 'Market analysis',
+      client: 'Acme',
+    })
+  })
+
+  it('has no client outside a client folder of kunder/', () => {
+    expect(noteValues('kunder/analysis.md', '')).toEqual({})
+    expect(noteValues('notes/kunder/Acme/a.md', '')).toEqual({})
+    expect(noteValues('analysis.md', '')).toEqual({})
+  })
+
+  it('takes the H1 only when the note opens with it, past frontmatter', () => {
+    expect(noteValues('a.md', '---\nx: 1\n---\n\n# Title #\n')).toEqual({ title: 'Title' })
+    expect(noteValues('a.md', 'Intro\n\n# Later\n')).toEqual({})
+    expect(noteValues('a.md', '## Section\n')).toEqual({})
+    expect(noteValues('a.md', '#\n')).toEqual({})
+  })
+})
+
+describe('prefillValues with what the note says', () => {
+  const today = '2026-07-01'
+  const fromNote = { title: 'From H1', client: 'Acme' }
+
+  it('fills text fields of those keys, frontmatter first', () => {
+    const fields = [field({ key: 'title', type: 'text' }), field({ key: 'client', type: 'text' })]
+    expect(prefillValues(fields, {}, today, fromNote)).toEqual(fromNote)
+    expect(prefillValues(fields, { title: 'FM' }, today, fromNote)).toEqual({
+      title: 'FM',
+      client: 'Acme',
+    })
+  })
+
+  it('leaves a field with its own default, or of another type, alone', () => {
+    const fields = [
+      field({ key: 'title', type: 'text', default: 'Fixed' }),
+      field({ key: 'client', type: 'select', options: ['Acme', 'Other'] }),
+    ]
+    expect(prefillValues(fields, {}, today, fromNote)).toEqual({ title: 'Fixed', client: '' })
   })
 })

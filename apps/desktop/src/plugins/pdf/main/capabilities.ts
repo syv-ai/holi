@@ -22,7 +22,7 @@ import {
   type CapabilityTable,
 } from '../../../main/plugin-api'
 import { commentThreadsJson, formatCommentThreads } from '../shared/pdf-comments'
-import { missingRequired, parseFrontmatter, prefillValues } from '../shared/pdf-fields'
+import { missingRequired, noteValues, parseFrontmatter, prefillValues } from '../shared/pdf-fields'
 import { pdfCommentsInVault } from './comments'
 import type { DrawDiagrams } from './mermaid'
 import { renderPdf } from './render'
@@ -239,7 +239,12 @@ export function pdfCapabilities(deps: PdfCapabilityDeps) {
         const note = await readFile(noteAbs, 'utf8').catch(() => null)
         if (note === null) throw new CapabilityError('NOT_FOUND', path)
         const values = {
-          ...prefillValues(tpl.fields, parseFrontmatter(note), localDate(new Date())),
+          ...prefillValues(
+            tpl.fields,
+            parseFrontmatter(note),
+            localDate(new Date()),
+            noteValues(vaultRelPath(path), note),
+          ),
           ...meta,
         }
         const missing = missingRequired(tpl.fields, values)
