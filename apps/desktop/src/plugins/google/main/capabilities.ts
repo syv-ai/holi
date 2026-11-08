@@ -358,25 +358,48 @@ function inviteAnswer(p: Record<string, unknown>): InviteAnswer {
 const ok = { ok: true as const }
 const json = (value: unknown): string => JSON.stringify(value, null, 2)
 
-/** `holi google accounts`, as the agent reads it. */
-function accountsText(value: {
-  accounts: {
-    sub: string
-    email: string
-    vaults: string[]
-    state: string
-    missingScopes: string[]
-  }[]
+/** One connected account, as `google.accounts` answers it. */
+interface AccountRow {
+  sub: string
+  email: string
+  state: 'connected' | 'missing-scope'
+  missingScopes: string[]
+  /** How many vaults on this machine besides this one use it. A count, never
+   *  their names: vaults are isolated, and this vault's agent reads it. */
+  otherVaults: number
+}
+
+interface AccountsAnswer {
+  accounts: AccountRow[]
   current: string | null
-  vault: { remote: string; state: string }
+  vault: {
+    remote: string
+    state: 'connected' | 'missing-scope' | 'needs-reconnect' | 'not-connected'
+  }
   client: { id: string; source: string }
-}): string {
+}
+
+/** At the CLI door, only the account this vault uses: one connected for
+ *  another vault is that vault's business. */
+const thisVaultsAccount = (value: AccountsAnswer): AccountsAnswer => ({
+  ...value,
+  accounts: value.accounts.filter((a) => a.sub === value.current),
+})
+
+/** `holi google accounts`, as the agent reads it. */
+function accountsText(value: AccountsAnswer): string {
   const lines = [`this vault (${value.vault.remote}): ${value.vault.state}`]
-  if (value.accounts.length === 0) lines.push('no Google account is connected on this machine')
+  if (value.vault.state === 'not-connected') {
+    lines.push('no Google account is linked to this vault')
+  } else if (value.vault.state === 'needs-reconnect') {
+    lines.push('the account this vault was linked to is no longer connected: connect Google again')
+  }
   for (const a of value.accounts) {
-    lines.push('', `${a.email}: ${a.state}${a.sub === value.current ? ' (this vault)' : ''}`)
+    lines.push('', `${a.email}: ${a.state}`)
     if (a.missingScopes.length > 0) lines.push(`  missing scopes: ${a.missingScopes.join(' ')}`)
-    lines.push(`  vaults: ${a.vaults.length === 0 ? 'none' : a.vaults.join(', ')}`)
+    if (a.otherVaults > 0) {
+      lines.push(`  also linked to ${a.otherVaults} other vault${a.otherVaults === 1 ? '' : 's'}`)
+    }
   }
   lines.push('', `client: ${value.client.source} (${value.client.id})`)
   return lines.join('\n')
@@ -471,8 +494,9 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     /**
      * Every account connected on this machine, and the one this vault uses.
      * For the agent too (`holi google accounts`), so it can ask whether Google
-     * is connected without reading the calendar to find out: each account's
-     * vaults, its state and the client in use, and never a token.
+     * is connected without reading the calendar to find out. There it names
+     * only the account this vault uses, its state, how many other vaults use
+     * it (never which) and the client in use; never a token.
      *
      * The state is what Holi knows without asking Google, as `google.status`
      * reports it: a grant Google refuses is dropped at the next call that
@@ -483,21 +507,21 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       doors: ['ui', 'cli'],
       cli: {
         args: [],
-        summary: 'the Google accounts connected here, their vaults and state (no tokens)',
+        summary: "this vault's Google account and its state (no tokens)",
       },
       params: noParams,
-      run: async (ctx) => {
+      run: async (ctx): Promise<AccountsAnswer> => {
         const links = await deps.accounts.links()
         const linked = links[ctx.remote] ?? null
-        const accounts = deps.accounts.list().map((account) => {
+        const accounts = deps.accounts.list().map((account): AccountRow => {
           const missing = deps.accounts.sessionForSub(account.sub)?.missingScopes() ?? []
           return {
             ...account,
-            vaults: Object.keys(links)
-              .filter((remote) => links[remote] === account.sub)
-              .sort(),
-            state: missing.length > 0 ? ('missing-scope' as const) : ('connected' as const),
+            state: missing.length > 0 ? 'missing-scope' : 'connected',
             missingScopes: missing,
+            otherVaults: Object.keys(links).filter(
+              (remote) => remote !== ctx.remote && links[remote] === account.sub,
+            ).length,
           }
         })
         const current = accounts.some((a) => a.sub === linked) ? linked : null
@@ -509,14 +533,15 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
             remote: ctx.remote,
             state:
               linked === null
-                ? ('not-connected' as const)
+                ? 'not-connected'
                 : current === null
-                  ? ('needs-reconnect' as const)
-                  : (accounts.find((a) => a.sub === current)?.state ?? ('connected' as const)),
+                  ? 'needs-reconnect'
+                  : (accounts.find((a) => a.sub === current)?.state ?? 'connected'),
           },
           client: deps.accounts.client(),
         }
       },
+      cliValue: thisVaultsAccount,
       text: accountsText,
     }),
 

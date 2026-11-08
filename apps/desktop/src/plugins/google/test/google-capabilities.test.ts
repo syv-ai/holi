@@ -230,22 +230,32 @@ describe('accounts per vault', () => {
     })
   })
 
-  it("answers `holi google accounts` with each account's vaults and state, and the client", async () => {
+  it("answers `holi google accounts` with this vault's account alone, a count of its other vaults, and the client", async () => {
     const { cli, links } = accountsRig()
     links.set('owner/repo', 'sub-2')
     links.set('ada-holm/notes', 'sub-1')
     const { value, text } = await cli('accounts')
     expect(value).toMatchObject({
-      accounts: [
-        { email: 'ada@syv.ai', vaults: ['ada-holm/notes'], state: 'missing-scope' },
-        { email: 'work@syv.ai', vaults: ['owner/repo', 'syv/work'], state: 'connected' },
-      ],
+      accounts: [{ email: 'work@syv.ai', state: 'connected', otherVaults: 1 }],
       vault: { remote: 'owner/repo', state: 'connected' },
       client: { source: 'shipped' },
     })
-    expect(text).toContain('work@syv.ai: connected (this vault)')
-    expect(text).toContain('missing scopes: gmail.modify')
+    expect(text).toContain('work@syv.ai: connected')
+    expect(text).toContain('also linked to 1 other vault')
     expect(text).toContain('client: shipped (id-1.apps.googleusercontent.com)')
+    // Another vault's name, and an account this vault does not use, stay out.
+    for (const other of ['syv/work', 'ada-holm/notes', 'ada@syv.ai']) {
+      expect(JSON.stringify(value)).not.toContain(other)
+      expect(text).not.toContain(other)
+    }
+  })
+
+  it("names this vault's missing scopes at the CLI", async () => {
+    const { cli, links } = accountsRig()
+    links.set('owner/repo', 'sub-1')
+    const { value, text } = await cli('accounts')
+    expect(value).toMatchObject({ vault: { state: 'missing-scope' } })
+    expect(text).toContain('missing scopes: gmail.modify')
   })
 
   it('says a vault linked to an account that is gone needs reconnecting, and one never linked is not connected', async () => {
