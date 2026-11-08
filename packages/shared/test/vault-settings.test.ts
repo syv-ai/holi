@@ -242,7 +242,7 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
     }
   })
 
-  it('writes to the vault only what changes its content or sync, everything personal locally', () => {
+  it('writes to the vault what changes its content, sync or how its calendar reads, everything personal locally', () => {
     // Personal by default: a teammate's committed choice flipping your app to
     // light mode, taking your Space key or changing your editor is exactly the
     // failure the `.local` layer exists to prevent. The vault may still commit
@@ -254,6 +254,8 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
       'dailyNotes',
       'hooks',
       'maxCommittedFileBytes',
+      'timeFormat',
+      'weekNumbers',
       'autoUpdateSkills',
       'plugins',
     ])
@@ -264,8 +266,6 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
       'gridArcade',
       'foldSidebarForApps',
       'confirmCloseSplitTabs',
-      'timeFormat',
-      'weekNumbers',
       'editorFont',
       'propertiesLayout',
       'tableStyle',

@@ -1,6 +1,6 @@
 /**
  * The calendar view's two display settings, core's `timeFormat` and
- * `weekNumbers` (`VAULT_SETTINGS`, this machine's by default): which clock it
+ * `weekNumbers` (`VAULT_SETTINGS`, the vault's, which this machine may override): which clock it
  * writes times on and whether its month shows week numbers.
  */
 import type { Locale } from 'date-fns'

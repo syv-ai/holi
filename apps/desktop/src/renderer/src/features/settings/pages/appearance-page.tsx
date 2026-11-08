@@ -1,5 +1,5 @@
-/** Appearance: how this machine's window looks (theme, glass), and how its
- *  Calendar writes times and weeks. */
+/** Appearance: how this machine's window looks (theme, glass), and how the
+ *  vault's Calendar writes times and weeks, which is the vault's answer. */
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
   VAULT_SETTING_DEFAULTS,
@@ -126,7 +126,7 @@ export function AppearancePage() {
       </SettingsGroup>
       <SettingsGroup
         title="Calendar"
-        description="How the Calendar writes times and weeks on this machine."
+        description="How the Calendar writes times and weeks, for everyone in this vault."
       >
         <SettingsFieldRow title={CLOCKS.title} description={CLOCKS.description}>
           <Segmented

@@ -16,8 +16,8 @@ A vault's settings are YAML files it carries itself, in two pairs. `.holi/settin
 | `spaceAsksAgent`                      | local     | no             | `true`                       |
 | `gridArcade`                          | local     | no             | `true`                       |
 | `foldSidebarForApps`                  | local     | no             | `true`                       |
-| `timeFormat`                          | local     | no             | `24h`                        |
-| `weekNumbers`                         | local     | no             | `true`                       |
+| `timeFormat`                          | committed | no             | `24h`                        |
+| `weekNumbers`                         | committed | no             | `true`                       |
 | `autoUpdateSkills`                    | committed | no             | `false`                      |
 | `agentProvider`                       | local     | no             | `claude`                     |
 
@@ -40,7 +40,7 @@ A vault's settings are YAML files it carries itself, in two pairs. `.holi/settin
 - Data, never code: settings name which of Holi's behaviours apply and can never carry a script or a path to run.
 - The committed file is untrusted input. Every value is validated on read and on write.
 - A broken or missing settings file never stops a vault opening or a commit landing.
-- Something about you on this machine (`colorScheme`, `spaceAsksAgent`, `gridArcade`, `foldSidebarForApps`, the Calendar's `timeFormat` and `weekNumbers`) is written local, so a teammate's choice cannot flip your app or take your Space key.
+- Something about you on this machine (`colorScheme`, `spaceAsksAgent`, `gridArcade`, `foldSidebarForApps`) is written local, so a teammate's choice cannot flip your app or take your Space key. How the vault's Calendar reads (`timeFormat`, `weekNumbers`) is the vault's, written committed so a team answers it once; `app.local.yaml` overrides it on one machine.
 - Not every setting is a birth question. A preference with a good default stays out of the ritual, and the seed never freezes an unasked value into a new vault.
 - Adding a setting is adding one entry to `VAULT_SETTINGS`.
 

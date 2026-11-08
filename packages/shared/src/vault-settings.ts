@@ -644,9 +644,9 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
       ],
     },
     default: '24h' as TimeFormat,
-    target: 'local',
+    target: 'committed',
     askedAtBirth: false,
-    whereToChange: LOCAL_FILE_HINT,
+    whereToChange: SETTINGS_FILE_HINT,
     section: 'appearance',
   },
   {
@@ -655,9 +655,9 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     explanation: 'ISO week numbers, Monday first, down the side of the Calendar’s month.',
     type: { kind: 'boolean' },
     default: true,
-    target: 'local',
+    target: 'committed',
     askedAtBirth: false,
-    whereToChange: LOCAL_FILE_HINT,
+    whereToChange: SETTINGS_FILE_HINT,
     section: 'appearance',
   },
   {
