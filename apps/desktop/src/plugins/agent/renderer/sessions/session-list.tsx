@@ -23,6 +23,7 @@ import { agentSessionsAtom } from '../state/sessions'
 import {
   closeSessionRowAtom,
   groupRows,
+  historyRowsAtom,
   keyOwner,
   newSessionAtom,
   NO_FILTER,
@@ -30,7 +31,6 @@ import {
   openSessionRowsAtom,
   reloadSessionsAtom,
   rowAbilitiesAtom,
-  rowMatches,
   sessionFilterAtom,
   sessionQueryAtom,
   sessionRowsAtom,
@@ -282,10 +282,7 @@ export function SessionHistory(): React.JSX.Element {
   const openKeys = useOpenKeys()
   const now = useNow()
 
-  const visible = useMemo(
-    () => rows.filter((r) => rowMatches(r, query, filter)),
-    [rows, query, filter],
-  )
+  const visible = useAtomValue(historyRowsAtom)
   const groups = useMemo(() => groupRows(visible, now), [visible, now])
   const listed = rows.some((r) => r.item.archived !== true || filter.archived)
 
@@ -321,7 +318,10 @@ export function SessionHistory(): React.JSX.Element {
         </Empty>
       ) : visible.length === 0 ? (
         <div className="flex items-center justify-between gap-2 px-2 text-sm text-muted-foreground">
-          No conversations match.
+          <span>
+            No conversations match.
+            {query.trim() !== '' && ' Press Enter to start a new session with this as the prompt.'}
+          </span>
           <Button
             size="xs"
             variant="ghost"

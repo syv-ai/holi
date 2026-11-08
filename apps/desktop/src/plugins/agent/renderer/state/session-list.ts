@@ -395,6 +395,13 @@ export const sessionRowsAtom = atom((get): SessionRow[] => {
   })
 })
 
+/** History's rows: those that pass the search and the filter. */
+export const historyRowsAtom = atom((get): SessionRow[] => {
+  const query = get(sessionQueryAtom)
+  const filter = get(sessionFilterAtom)
+  return get(sessionRowsAtom).filter((r) => rowMatches(r, query, filter))
+})
+
 /**
  * How a session tab looks (the mode's `tabLook`): the row it shows, found as
  * the list finds the open one, by its selection or, for one of the agent's

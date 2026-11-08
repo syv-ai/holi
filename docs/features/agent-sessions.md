@@ -378,7 +378,8 @@ most recent. **History**, in the main view, has every row by day (Needs you, Pin
 Yesterday, Earlier) under its search field and filter menu. **⌘J** (the mode's `overview`)
 brings History forward with that field focused, as the place to pick up or start work: typing
 narrows the rows, ↓ goes into them (↑ from the first comes back), Enter on a card opens it, and
-Enter in the field starts a session in the default agent with what was typed as its first prompt. A plugin's row that is an agent session (its job id)
+Enter in the field opens the one conversation a search leaves, or else starts a session in the default
+agent with what was typed as its first prompt (the empty search says so). A plugin's row that is an agent session (its job id)
 and the live session with that id are one row: the session gives it its state and model, the
 plugin its title and who ran it. A card is two lines: the title, in full on hover, with the age on
 the right; then, quieter, a mark (a Holi's face, or an automation's bolt, when one ran it, else the
