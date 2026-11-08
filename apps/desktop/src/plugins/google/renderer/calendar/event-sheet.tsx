@@ -44,8 +44,7 @@ import {
 import type { GoogleEventData } from '../calendar-data'
 import { descriptionHtml } from '../event-description'
 import { SandboxedHtml } from '../sandboxed-html'
-import { dayMonth, longDay, timeOf } from './calendar-format'
-import type { TimeFormat } from '@holi/shared'
+import { dayMonth, longDay, timeOf, type TimeFormat } from './calendar-format'
 import { useTimeFormat } from './calendar-settings'
 import { CalendarDot, DateField, TimeSelect } from './event-fields'
 

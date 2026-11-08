@@ -2,7 +2,9 @@
  * How the calendar view writes days and times: in the person's language, on
  * the clock the `timeFormat` setting names, never a fixed English pattern.
  */
-import type { TimeFormat } from '@holi/shared'
+/** Which clock the calendar writes times on: 14:30, or 2:30 PM (the
+ *  plugin's `timeFormat` setting). */
+export type TimeFormat = '24h' | '12h'
 
 /** Monday first, as the Agenda's month and ISO week numbers are. */
 export const WEEK_STARTS_ON = 1

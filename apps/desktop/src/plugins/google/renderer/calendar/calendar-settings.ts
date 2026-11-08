@@ -1,17 +1,35 @@
 /**
- * The calendar view's two display settings, core's `timeFormat` and
- * `weekNumbers` (`VAULT_SETTINGS`, the vault's, which this machine may override): which clock it
- * writes times on and whether its month shows week numbers.
+ * The calendar view's two display settings, the plugin's own `timeFormat`
+ * and `weekNumbers` (`GOOGLE_INFO.settings`, committed in `plugins.yaml` and
+ * overridable in `plugins.local.yaml`): which clock it writes times on and
+ * whether its month shows week numbers.
  */
 import type { Locale } from 'date-fns'
 import { enUS } from 'date-fns/locale/en-US'
-import type { TimeFormat } from '@holi/shared'
-import { useAppSetting } from '@/plugin-api'
-import { WEEK_STARTS_ON } from './calendar-format'
+import { trpc, usePluginSetting } from '@/plugin-api'
+import { GOOGLE_INFO } from '../../info'
+import { WEEK_STARTS_ON, type TimeFormat } from './calendar-format'
 
-export const useTimeFormat = (): TimeFormat => useAppSetting('timeFormat')
+export const useTimeFormat = (): TimeFormat =>
+  usePluginSetting(GOOGLE_INFO, 'timeFormat') === '12h' ? '12h' : '24h'
 
-export const useWeekNumbers = (): boolean => useAppSetting('weekNumbers')
+export const useWeekNumbers = (): boolean => usePluginSetting(GOOGLE_INFO, 'weekNumbers') !== false
+
+/** Write one of the two into the file it names (`PluginSetting.target`), through
+ *  core's validated settings write. The view follows when the file changes. */
+export async function writeCalendarSetting(
+  remote: string,
+  key: 'timeFormat' | 'weekNumbers',
+  value: TimeFormat | boolean,
+): Promise<string[]> {
+  const target = GOOGLE_INFO.settings?.find((s) => s.key === key)?.target ?? 'committed'
+  const patch = JSON.stringify({ [GOOGLE_INFO.id]: { [key]: value } })
+  const result = await trpc.settings.write.mutate({
+    remote,
+    ...(target === 'committed' ? { committedJson: patch } : { localJson: patch }),
+  })
+  return result.warnings
+}
 
 /**
  * The event calendar's date-fns patterns for each clock. The calendar draws

@@ -18,8 +18,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { localDate, type TimeFormat } from '@holi/shared'
-import { WEEK_STARTS_ON, clockLabel } from './calendar-format'
+import { localDate } from '@holi/shared'
+import { WEEK_STARTS_ON, clockLabel, type TimeFormat } from './calendar-format'
 import { useTimeFormat } from './calendar-settings'
 
 const pad = (n: number): string => String(n).padStart(2, '0')

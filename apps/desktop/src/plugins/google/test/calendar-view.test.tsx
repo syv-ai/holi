@@ -6,14 +6,15 @@ import { render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { getDefaultStore } from 'jotai'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { VAULT_SETTING_DEFAULTS, localDate } from '@holi/shared'
+import { localDate } from '@holi/shared'
 import { activeRemoteAtom } from '@/plugin-api'
 import { CalendarView } from '../renderer/calendar/calendar-view'
-import { clockLabel } from '../renderer/calendar/calendar-format'
+import { clockLabel, type TimeFormat } from '../renderer/calendar/calendar-format'
+import { GOOGLE_INFO } from '../info'
 import { rangeWindow, toCalendarItem, type GoogleEvent } from '../renderer/calendar-data'
 
 /** The clock the view writes on when no settings file answers. */
-const clock = VAULT_SETTING_DEFAULTS.timeFormat
+const clock = GOOGLE_INFO.settings?.find((s) => s.key === 'timeFormat')?.default as TimeFormat
 
 const renderCounts = vi.hoisted(() => ({ calendar: 0, timeSelect: 0 }))
 
