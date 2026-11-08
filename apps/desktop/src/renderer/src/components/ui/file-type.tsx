@@ -93,7 +93,7 @@ const CATEGORY_NAMES: Record<FileTypeCategory, string> = {
  * At a tree row's 16px the label cannot be read, so the hue is what tells
  * types apart: formats a vault holds side by side take hues far apart, within
  * a family and across the common ones (PDF red, slides amber, a deck fuchsia,
- * Word blue, a sheet green and its CSV teal, an SVG orange beside a PNG's
+ * Word blue, a sheet green and its CSV teal, an SVG pink beside a PNG's
  * yellow), never two neighbours such as red and orange.
  */
 const FILE_TYPE_EXTENSIONS = {
@@ -142,7 +142,7 @@ const FILE_TYPE_EXTENSIONS = {
   tiff: { category: "image", color: "text-violet-600" },
   ico: { category: "image", color: "text-violet-600" },
   raw: { category: "image", color: NEUTRAL },
-  svg: { category: "image", color: "text-orange-600" },
+  svg: { category: "image", color: "text-pink-600" },
   jxl: { category: "image", color: "text-violet-600" },
   // Video
   mp4: { category: "video", color: "text-blue-600" },
