@@ -174,7 +174,6 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   }
 
   const { openSettings: showSettings, leaveSettings } = useSettingsTab({
-    focusedKey,
     update: setWs,
     showSidebar: () => {
       if (!isMobile) showSidebar()
