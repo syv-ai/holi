@@ -245,10 +245,9 @@ test('editing a Mermaid label persists through DocumentView autosave and reopen'
   const original =
     '---\ntitle: Diagram note\ntags: [kept]\n---\n\nProse before.\n\n```mermaid\nflowchart LR\n%% Keep this comment\nA[Alpha] --> B[Beta]\n```\n\nProse after.\n'
   const view = open(original)
-  const box = await editorBox()
-  await waitFor(() => expect(box.querySelector('svg')).not.toBeNull())
+  await editorBox()
 
-  fireEvent.click(screen.getByRole('button', { name: 'Edit labels' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit labels' }))
   const alpha = await screen.findByRole('button', { name: 'Alpha' })
   expect(alpha.namespaceURI).toBe('http://www.w3.org/2000/svg')
   expect(alpha.isConnected).toBe(true)
@@ -273,9 +272,8 @@ test('editing a Mermaid label persists through DocumentView autosave and reopen'
   view.unmount()
   open(saved)
   const reopenedBox = await editorBox()
-  await waitFor(() => expect(reopenedBox.querySelector('svg')).not.toBeNull())
+  expect(await screen.findByRole('button', { name: 'Edit labels' })).toBeInTheDocument()
   expect((reopenedBox as WithEditor).editor.getMarkdown()).toContain('A[Gamma] --> B[Beta]')
-  expect(screen.getByRole('button', { name: 'Edit labels' })).toBeInTheDocument()
 })
 
 test('Done saves the latest task text before closing its unsplit tab', async () => {
