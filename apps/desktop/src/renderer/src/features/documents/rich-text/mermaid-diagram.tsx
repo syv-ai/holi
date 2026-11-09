@@ -1,8 +1,8 @@
-import DOMPurify from 'dompurify'
 import { useEffect, useId, useRef, useState } from 'react'
 
-import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { renderMermaid, type MermaidTarget } from '@/lib/mermaid-renderer'
+import { ErrorState } from '@/composites/empty-state'
 
 function rewriteCssIds(css: string, ids: Map<string, string>): string {
   const rewriteSelector = (selector: string) =>
@@ -42,15 +42,18 @@ export function MermaidDiagram({
   theme,
   enlarged = false,
   className,
+  onRendered,
 }: {
   source: string
   theme: 'dark' | 'default'
   enlarged?: boolean
   className?: string
+  onRendered?: (root: SVGSVGElement, targets: MermaidTarget[]) => void
 }) {
   const [svg, setSvg] = useState<string | null>(null)
   const [error, setError] = useState(false)
   const [retry, setRetry] = useState(0)
+  const [targets, setTargets] = useState<MermaidTarget[]>([])
   const host = useRef<HTMLDivElement>(null)
   const instanceId = `holi-mermaid-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
 
@@ -58,28 +61,11 @@ export function MermaidDiagram({
     let current = true
     setSvg(null)
     setError(false)
-    void import('mermaid')
-      .then(({ default: mermaid }) => {
-        if (!current) return null
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: 'strict',
-          theme,
-          htmlLabels: false,
-          suppressErrorRendering: true,
-        })
-        return mermaid.render(instanceId, source)
-      })
+    void renderMermaid(source, theme)
       .then((result) => {
-        if (current && result) {
-          setSvg(
-            DOMPurify.sanitize(result.svg, {
-              USE_PROFILES: { svg: true },
-              FORBID_TAGS: ['a'],
-              FORBID_ATTR: ['href', 'xlink:href', 'target'],
-              ADD_ATTR: ['id', 'aria-labelledby'],
-            }),
-          )
+        if (current) {
+          setTargets(result.targets)
+          setSvg(result.svg)
         }
       })
       .catch(() => {
@@ -120,6 +106,11 @@ export function MermaidDiagram({
     }
     for (const element of [root, ...root.querySelectorAll('*')]) {
       for (const attribute of Array.from(element.attributes)) {
+        if (
+          attribute.name === 'data-mermaid-source-id' ||
+          attribute.name === 'data-mermaid-original-id'
+        )
+          continue
         const value = attribute.value.replace(/url\(#([^)]+)\)/g, (_, id: string) =>
           ids.has(id) ? `url(#${ids.get(id)})` : `url(#${id})`,
         )
@@ -137,16 +128,17 @@ export function MermaidDiagram({
     }
     if (enlarged) root.style.maxWidth = 'none'
     target.replaceChildren(document.importNode(root, true))
-  }, [enlarged, instanceId, svg])
+    const liveRoot = target.querySelector('svg')
+    if (liveRoot) onRendered?.(liveRoot, targets)
+  }, [enlarged, instanceId, onRendered, svg, targets])
 
   if (error) {
     return (
-      <p role="status" className="text-muted-foreground text-sm">
-        Couldn&apos;t draw this diagram{' '}
-        <Button type="button" variant="link" onClick={() => setRetry((version) => version + 1)}>
-          Retry
-        </Button>
-      </p>
+      <ErrorState
+        compact
+        title="Couldn’t draw this diagram."
+        onRetry={() => setRetry((version) => version + 1)}
+      />
     )
   }
   return (
@@ -161,7 +153,7 @@ export function MermaidDiagram({
         ref={host}
         className={className ?? 'max-w-fit [&_svg]:h-auto [&_svg]:w-full [&_svg]:max-w-full'}
         data-mermaid-diagram=""
-        role={svg ? 'img' : 'status'}
+        role={svg ? (onRendered ? 'group' : 'img') : 'status'}
         aria-label={svg ? 'Mermaid diagram' : 'Rendering diagram'}
       />
     </>
