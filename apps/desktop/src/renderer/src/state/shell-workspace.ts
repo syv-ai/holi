@@ -120,9 +120,10 @@ export function entryOf(ws: ShellWorkspace, key: string): ShellEntry | null {
   return ws.entries.find((e) => entryViews(e).includes(key)) ?? null
 }
 
-/** Whether a tab key is currently represented in the workspace. */
+/** Whether a dragged identity is still represented: either a view key or
+ *  the id of the strip entry that owns it. */
 export function tabIsOpen(ws: ShellWorkspace, key: string): boolean {
-  return entryOf(ws, key) !== null
+  return entryIds(ws).includes(key) || entryOf(ws, key) !== null
 }
 
 /** Every open view, entry by entry. */

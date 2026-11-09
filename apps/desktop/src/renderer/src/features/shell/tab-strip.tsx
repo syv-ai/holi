@@ -38,7 +38,7 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsEntry, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/cn'
 import { saveBeforeClosing } from '@/lib/buffer-registry'
@@ -364,7 +364,8 @@ export function TabStrip({
                     <ContextMenuTrigger asChild>
                       {/* The close button is the trigger's sibling: a button
                         cannot hold another button. */}
-                      <div
+                      <TabsEntry
+                        size={tab !== null ? 'tab' : members!.length > 2 ? 'tab-wide' : 'tab-group'}
                         data-entry-id={id}
                         data-combine-preview={targetPreview || undefined}
                         aria-description={targetPreview ? 'Split preview' : undefined}
@@ -379,13 +380,6 @@ export function TabStrip({
                               ?.getAttribute('data-member') ?? null,
                           )
                         }
-                        className={cn(
-                          'group/tab flex h-full',
-                          // Where a dragged entry would land: a hairline in
-                          // the gap.
-                          'data-drop-before:before:bg-primary data-drop-before:before:absolute data-drop-before:before:inset-y-1.5 data-drop-before:before:-start-0.5 data-drop-before:before:w-0.5 data-drop-before:before:rounded-full',
-                          'data-drop-after:after:bg-primary data-drop-after:after:absolute data-drop-after:after:inset-y-1.5 data-drop-after:after:-end-0.5 data-drop-after:after:w-0.5 data-drop-after:after:rounded-full',
-                        )}
                       >
                         <TabsTrigger
                           value={id}
@@ -399,9 +393,6 @@ export function TabStrip({
                             if (member) act((w) => focusMember(w, id, member))
                           }}
                           variant="tab"
-                          size={
-                            tab !== null ? 'tab' : members!.length > 2 ? 'tab-wide' : 'tab-group'
-                          }
                         >
                           {/* Transparent, not invisible: Chromium must keep the same native drag target. */}
                           <span className="relative flex min-w-0 flex-1 items-center gap-2">
@@ -454,7 +445,7 @@ export function TabStrip({
                             <XIcon aria-hidden="true" />
                           </Button>
                         </span>
-                      </div>
+                      </TabsEntry>
                     </ContextMenuTrigger>
                     <EntryMenu
                       split={isSplit(entry) ? entry : null}

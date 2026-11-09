@@ -163,6 +163,17 @@ test.each([
   expect(store.get(shellWorkspaceAtom)).not.toBe(workspace)
 })
 
+test('entry slots anchor close controls and shrink while triggers fill their slot', () => {
+  setup()
+  const entry = document.querySelector<HTMLElement>('[data-entry-id]')!
+  const trigger = entry.querySelector<HTMLElement>('[role="tab"]')!
+  expect(entry.className).toContain('relative')
+  expect(entry.className).toContain('flex-[1_1_11rem]')
+  expect(entry.className).toContain('min-w-28')
+  expect(trigger.className).toContain('w-full')
+  expect(trigger.className).toContain('flex-1')
+})
+
 test('ordinary target hover renders the prospective target-first split without mutating workspace', () => {
   const { store, list, tabs, transfer } = setup()
   const before = store.get(shellWorkspaceAtom)
@@ -216,10 +227,9 @@ test('combine preview preserves measured target geometry through repeated hover 
   for (const [index, item] of items.entries()) {
     vi.spyOn(item, 'getBoundingClientRect').mockImplementation(() => {
       const widths = items.map((candidate) => {
-        const trigger = candidate.querySelector('[role="tab"]')!
-        return trigger.className.includes('w-80')
+        return candidate.className.includes('flex-[1_1_20rem]')
           ? 320
-          : trigger.className.includes('w-64')
+          : candidate.className.includes('flex-[1_1_15rem]')
             ? 256
             : 224
       })
@@ -241,7 +251,7 @@ test('combine preview preserves measured target geometry through repeated hover 
   const targetCenterBoundary = 224 + 60
   fireEvent(list, dragEvent('dragover', transfer, targetCenterBoundary))
   expect(items[1]!.dataset.combinePreview).toBe('true')
-  expect(items[1]!.querySelector('[role="tab"]')!.className).toContain('w-44')
+  expect(items[1]!.className).toContain('flex-[1_1_11rem]')
   fireEvent(list, dragEvent('dragover', transfer, targetCenterBoundary))
   expect(items[1]!.dataset.combinePreview).toBe('true')
   fireEvent(list, dragEvent('drop', transfer, targetCenterBoundary))
@@ -298,6 +308,29 @@ test('an unopened sidebar view previews and combines in the same vault', () => {
   expect(screen.getByRole('tab', { name: 'Split view: B, C' })).toBeTruthy()
   fireEvent(list, dragEvent('drop', transfer, 150))
   expect(store.get(shellWorkspaceAtom).entries).toMatchObject(['A.md', { views: ['B.md', 'C.md'] }])
+  expect(store.get(tabDragAtom)).toBeNull()
+})
+
+test('a whole split entry can be dragged from the strip and combined as a group', () => {
+  const workspace = combineOnStrip(
+    openTab(openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md'), 'C.md'),
+    'B.md',
+    'A.md',
+  )
+  const { store, list, transfer } = setup(workspace)
+  const split = workspace.entries[0]
+  if (split === undefined || typeof split === 'string') throw new Error('expected split')
+  transfer.setData(MIME, split.id)
+  act(() => {
+    store.set(tabDragAtom, { key: split.id, vault: 'owner/vault', wasOpen: true })
+  })
+  fireEvent(list, dragEvent('dragover', transfer, 150))
+  expect(document.querySelector('[data-combine-preview="true"]')).not.toBeNull()
+  fireEvent(list, dragEvent('drop', transfer, 150))
+  expect(store.get(shellWorkspaceAtom).entries).toHaveLength(1)
+  expect(store.get(shellWorkspaceAtom).entries[0]).toMatchObject({
+    views: ['C.md', 'A.md', 'B.md'],
+  })
   expect(store.get(tabDragAtom)).toBeNull()
 })
 
