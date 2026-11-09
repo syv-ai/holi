@@ -18,7 +18,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { GitError, openRepo } from '../src/main/git'
 import * as vaultWatcher from '../src/main/vault/watcher'
 import * as vaultStore from '../src/main/vault/vault-store'
-import type { HeldBackFile } from '../src/main/vault/large-files'
+import { HELD_BACK_FILE, type HeldBackFile } from '../src/main/vault/large-files'
 import {
   createVaultHost,
   openActiveVault,
@@ -374,6 +374,8 @@ describe('ActiveVault — commit', () => {
     const dir = await makeClone(origin)
     await mkdir(join(dir, '.holi/settings'), { recursive: true })
     await writeFile(join(dir, SETTINGS_FILE), '{"maxCommittedFileBytes": 1024}', 'utf8')
+    // As in a seeded vault, so the held-back list Holi writes stays local.
+    await writeFile(join(dir, '.gitignore'), '*.local.*\n', 'utf8')
     await writeFile(join(dir, 'note.md'), 'a thought\n', 'utf8')
     await writeFile(join(dir, 'big.bin'), 'x'.repeat(2000), 'utf8')
     await sleep(QUIESCE)
@@ -399,6 +401,13 @@ describe('ActiveVault — commit', () => {
     expect(active.heldBack()).toEqual([{ path: 'big.bin', bytes: 2000 }])
     expect(held.at(-1)).toEqual([{ path: 'big.bin', bytes: 2000 }])
     await expect(readFile(join(dir, 'big.bin'), 'utf8')).resolves.toHaveLength(2000)
+    // Listed for the agent's prompt hook, and gone once nothing is held back.
+    expect(JSON.parse(await readFile(join(dir, HELD_BACK_FILE), 'utf8'))).toEqual({
+      paths: ['big.bin'],
+    })
+    await rm(join(dir, 'big.bin'))
+    await active.commitNow()
+    await expect(readFile(join(dir, HELD_BACK_FILE), 'utf8')).rejects.toThrow()
   })
 
   it('applies a changed size cap to the next commit, not the next open', async () => {
@@ -433,6 +442,7 @@ describe('ActiveVault — commit', () => {
     const dir = await makeClone(origin)
     await mkdir(join(dir, '.holi/settings'), { recursive: true })
     await writeFile(join(dir, SETTINGS_FILE), '{"maxCommittedFileBytes": 1024}', 'utf8')
+    await writeFile(join(dir, '.gitignore'), '*.local.*\n', 'utf8')
     await writeFile(join(dir, 'big.bin'), 'x'.repeat(2000), 'utf8')
     await sleep(QUIESCE)
 
@@ -513,6 +523,52 @@ describe('ActiveVault — commit', () => {
 
     expect(sha).not.toBeNull()
     expect(await count(dir)).toBe(before + 1)
+  })
+
+  it('commitNow() during a commit already running answers with that commit', async () => {
+    // A turn's settle commit asks right behind the commit the resume starts:
+    // that one holds the turn's work, and the turn needs to know which it is.
+    const { active, dir } = await vault({ commitQuietMs: 60_000, healIntervalMs: 60_000 })
+    const repo = active.repo
+    const commit = repo.commitAll.bind(repo)
+    let started!: () => void
+    let release!: () => void
+    const entered = new Promise<void>((resolve) => (started = resolve))
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    repo.commitAll = async (...args) => {
+      started()
+      await gate
+      return commit(...args)
+    }
+    await writeFile(join(dir, 'turn.md'), 'the work\n', 'utf8')
+    const first = active.commitNow()
+    await entered
+    const second = active.commitNow()
+    release()
+    const sha = await first
+    expect(sha).not.toBeNull()
+    expect(await second).toBe(sha)
+
+    // A write that comes after the running commit read the status (a buffer
+    // ⌘S flushed) is committed too, rather than answered with that commit.
+    const entered2 = new Promise<void>((resolve) => (started = resolve))
+    const gate2 = new Promise<void>((resolve) => (release = resolve))
+    repo.commitAll = async (...args) => {
+      started()
+      await gate2
+      return commit(...args)
+    }
+    await writeFile(join(dir, 'turn.md'), 'more work\n', 'utf8')
+    const third = active.commitNow()
+    await entered2
+    await writeFile(join(dir, 'saved.md'), 'flushed\n', 'utf8')
+    const fourth = active.commitNow()
+    release()
+    const running = await third
+    const after = await fourth
+    expect(after).not.toBeNull()
+    expect(after).not.toBe(running)
+    expect((await repo.status()).dirty).toBe(false)
   })
 
   it('reports the paths a commit took, so open files can refresh their history', async () => {

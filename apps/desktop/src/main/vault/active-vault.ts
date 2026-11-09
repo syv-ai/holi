@@ -23,7 +23,12 @@ import type { SyncState, VaultSnapshot } from '@holi/shared'
 import type { BranchList, GitDeps, GitRepo, PullResult, RepoStatus } from '../git'
 import { BranchRefusedError, isIndexLockError, openRepo } from '../git'
 import { errorText, type ActivityWrite } from '../activity/log'
-import { installGitHook, partitionBySize, type HeldBackFile } from './large-files'
+import {
+  installGitHook,
+  partitionBySize,
+  writeHeldBackFile,
+  type HeldBackFile,
+} from './large-files'
 import { installMergeDrivers } from './merge-drivers'
 import { readMaxCommittedFileBytes } from './vault-settings'
 import type { VaultRegistry } from './registry'
@@ -120,8 +125,12 @@ export interface ActiveVault {
   syncState(): SyncState
   /** Rescan now and push. */
   refresh(): Promise<void>
-  /** Commit whatever is dirty, now — ⌘S, vault switch, quit. */
-  commitNow(): Promise<string | null>
+  /** Commit whatever is dirty, now — ⌘S, vault switch, quit, a turn's settle
+   *  commit. The commit's sha, or null for none; `'busy'` when a pull (or a
+   *  delivery's check) in flight refused it, which a moment later may not. A
+   *  commit already running is waited out first, and its sha is the answer
+   *  when nothing was left after it. */
+  commitNow(): Promise<string | null | 'busy'>
   /** Drain commits, verify their content, then push and wait for in-flight work. */
   deliverNow(path: string, verify: () => Promise<boolean>): Promise<boolean>
   /**
@@ -311,6 +320,22 @@ export async function openActiveVault(args: {
   // open, so every commit re-reads it (`currentCap`).
   let maxCommittedFileBytes = await readMaxCommittedFileBytes(root)
   let heldBack: HeldBackFile[] = []
+  // The held-back paths as last written for the agent's prompt hook. Null until
+  // the first write, so a file a previous run left behind is replaced (or
+  // removed) by the first commit tick.
+  let heldBackWritten: string | null = null
+  async function persistHeldBack(): Promise<void> {
+    const key = heldBack
+      .map((file) => file.path)
+      .sort()
+      .join('\0')
+    if (key === heldBackWritten) return
+    heldBackWritten = key
+    await writeHeldBackFile(root, heldBack).catch((err) => {
+      heldBackWritten = null
+      console.error('[vault] held-back list write failed:', err)
+    })
+  }
   // The same gate for the agent's own commits: a machine-local pre-commit hook,
   // regenerated each open so a threshold change takes effect. Best-effort: a
   // failed install must not block opening the vault.
@@ -354,6 +379,8 @@ export async function openActiveVault(args: {
   let rescanQueued = false
   let rescanTimer: NodeJS.Timeout | null = null
   let committing = false
+  /** The commit `committing` stands for, while it runs: its sha, or null. */
+  let commitRun: Promise<string | null> | null = null
   let commitTimer: NodeJS.Timeout | null = null
   let pushTimer: NodeJS.Timeout | null = null
   /** Set by `pause()`. Distinct from the status-derived pause,
@@ -686,6 +713,9 @@ export async function openActiveVault(args: {
      */
     if (pullInFlight && !duringPull) return null
     committing = true
+    let landed: (sha: string | null) => void = () => {}
+    commitRun = new Promise((resolve) => (landed = resolve))
+    let sha: string | null = null
     try {
       const status = await args.repo.status()
       // The large-file gate: split the dirty paths by size and commit only the
@@ -709,6 +739,7 @@ export async function openActiveVault(args: {
       heldBack = partitioned.heldBack
       // Push the surface every tick, even when empty, so a resolved file clears it.
       args.onHeldBack?.(heldBack)
+      await persistHeldBack()
 
       // An all-held-back tree is effectively clean: commit nothing, and let the
       // sync state read up-to-date rather than perpetually dirty (the held-back
@@ -718,7 +749,7 @@ export async function openActiveVault(args: {
         return null
       }
       const message = commitMessage(partitioned.commit)
-      const sha = await args.repo.commitAll(message, partitioned.commit)
+      sha = await args.repo.commitAll(message, partitioned.commit)
       if (sha !== null) {
         log(
           'git',
@@ -737,9 +768,12 @@ export async function openActiveVault(args: {
     } catch (err) {
       console.error('[vault] commit failed:', err)
       log('git', 'error', 'Commit failed', errorText(err))
+      sha = null
       return null
     } finally {
       committing = false
+      commitRun = null
+      landed(sha)
     }
   }
 
@@ -1190,14 +1224,23 @@ export async function openActiveVault(args: {
       schedulePush()
     },
     refresh: () => rescan(true),
-    commitNow() {
-      // ⌘S, a vault switch, and quit. Skips the timer entirely: a real commit
-      // point rather than a placebo.
+    async commitNow() {
+      // ⌘S, a vault switch, quit, and a turn's settle commit. Skips the timer
+      // entirely: a real commit point rather than a placebo.
       if (commitTimer !== null) {
         clearTimeout(commitTimer)
         commitTimer = null
       }
-      return maybeCommit()
+      // A commit already running (the one a resume starts, which a turn's
+      // settle commit asks right behind) would make this answer null with the
+      // work still landing. Wait it out, then commit what it did not take: it
+      // read the status before the caller's last write (a flushed buffer)
+      // perhaps. The newest sha that landed is the answer.
+      let ran: string | null = null
+      while (commitRun !== null) ran = (await commitRun) ?? ran
+      // Read in the tick `maybeCommit` checks them in, so it is why it declined.
+      const busy = pullInFlight || deliveryVerifying
+      return (await maybeCommit()) ?? ran ?? (busy ? 'busy' : null)
     },
     async deliverNow(path, verify) {
       const waitForSync = async () => {

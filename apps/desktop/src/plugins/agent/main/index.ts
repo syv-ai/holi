@@ -18,6 +18,7 @@ import {
   jsonFileStore,
   readVaultSettings,
   resolveBin,
+  runGit,
   type MainPlugin,
 } from '../../../main/plugin-api'
 import { AGENT_INFO } from '../info'
@@ -275,9 +276,16 @@ export const agentMain: MainPlugin = {
     // routes are served once.
     for (const p of providers().filter((x) => x.custom !== true)) {
       p.capabilities.turns?.routes(ctx, {
-        onTurn: (remote, id, active, pending) => {
-          if (!PTY_SESSION_ID.test(id)) return started.noteTurn(remote, id, active, pending)
-          if (remote === ctx.remote) ptySessions.noteTurn(id, active)
+        onTurn: async (remote, id, active, pending) => {
+          if (PTY_SESSION_ID.test(id)) {
+            if (remote === ctx.remote) ptySessions.noteTurn(id, active)
+            return null
+          }
+          // The settle commit's tree, for the Stop hook to save as where the
+          // turn left the vault.
+          const commit = await started.noteTurn(remote, id, active, pending)
+          if (commit === null) return null
+          return runGit(ctx.root, ['rev-parse', '--verify', `${commit}^{tree}`]).catch(() => null)
         },
         // A session's status line: how much of its context is used.
         onStatus: (remote, id, status) => started.noteStatus(remote, id, status),

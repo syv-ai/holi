@@ -92,8 +92,15 @@ export interface RouteServer {
  *  background job id, or the id Holi gave a session it runs. */
 export interface TurnRouteDeps {
   /** A turn began or ended. At an end, `pending` is how much the session
-   *  said was still in flight, 0 meaning done; null when it does not say. */
-  onTurn(remote: string, id: string, active: boolean, pending: number | null): void
+   *  said was still in flight, 0 meaning done; null when it does not say. An
+   *  end may answer the tree of the settle commit Holi made for the turn, for
+   *  the Stop hook to count the next prompt's changes from. */
+  onTurn(
+    remote: string,
+    id: string,
+    active: boolean,
+    pending: number | null,
+  ): void | Promise<string | null>
   /** A status report (`status` reads it). */
   onStatus?(remote: string, id: string, status: unknown): void
   /** What the session said about itself at a turn's end: its first ask,

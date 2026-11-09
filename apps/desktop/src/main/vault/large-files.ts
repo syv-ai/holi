@@ -8,10 +8,11 @@
  * hook (below) is the same gate for the agent's own direct commits.
  */
 
-import { chmod, mkdir, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import { VAULT_SETTING_DEFAULTS, vaultRelPath } from '@holi/shared'
 import { shellReadBridgeEnv } from '../bridge/env-file'
+import { writeAtomic } from './vault-files'
 
 /** The default cap when `.holi/settings/app.yaml` sets no `maxCommittedFileBytes`.
  *  10 MB: notes-vault assets (images, PDFs) sit well under; this catches videos,
@@ -47,6 +48,26 @@ export function partitionBySize(
     }
   }
   return { commit, heldBack }
+}
+
+/** What autosave holds back right now, for readers outside Holi: the agent's
+ *  prompt hook leaves exactly these paths out of what it says changed
+ *  (`user-prompt-submit.mjs`), since a held-back file differs from every turn's
+ *  settle commit. Machine state, never synced (`.local.`). Present only while something
+ *  is held back.
+ * @public exported for its test
+ */
+export const HELD_BACK_FILE = '.holi/state/held-back.local.json'
+
+/** Write `HELD_BACK_FILE` as `{ "paths": [...] }`, sorted, or remove it when
+ *  nothing is held back. */
+export async function writeHeldBackFile(root: string, files: HeldBackFile[]): Promise<void> {
+  if (files.length === 0) {
+    await rm(join(root, HELD_BACK_FILE), { force: true })
+    return
+  }
+  const paths = files.map((file) => file.path).sort()
+  await writeAtomic(root, vaultRelPath(HELD_BACK_FILE), `${JSON.stringify({ paths })}\n`)
 }
 
 /**
