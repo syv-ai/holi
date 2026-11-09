@@ -2,7 +2,7 @@
 
 import type { EntryCloseRequest } from '@/state/shell-close'
 import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
-import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import {
   CheckIcon,
   CircleAlertIcon,
@@ -44,14 +44,18 @@ import { cn } from '@/lib/cn'
 import { saveBeforeClosing } from '@/lib/buffer-registry'
 import type { IconGlyph } from '@/lib/icon-glyph'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { activeRemoteAtom } from '@/state/vaults'
 import {
   activeSplit,
+  tabIsOpen,
   closeTab,
+  combineOnStrip,
   dropOnStrip,
   entriesByRecency,
   entryId,
   focusMember,
   isSplit,
+  isViewKey,
   MAX_SPLIT,
   moveOut,
   openInSplit,
@@ -66,7 +70,7 @@ import {
 
 import { useTabLook } from './tab-look'
 import { TabSwitcher, type SwitcherRow } from './tab-switcher'
-import { TAB_MIME, tabDragAtom, useTabDragSource } from './use-tab-drag'
+import { TAB_MIME, stripDropZone, tabDragAtom, useTabDragSource } from './use-tab-drag'
 
 export type HeaderTab = {
   id: string
@@ -111,12 +115,21 @@ export function TabStrip({
   draggable?: boolean
 }) {
   const [ws, setWs] = useAtom(shellWorkspaceAtom)
+  const store = useStore()
   const look = useTabLook()
   const dragSource = useTabDragSource()
-  const dragged = useAtomValue(tabDragAtom)
+  const drag = useAtomValue(tabDragAtom)
+  const dragged = drag?.key ?? null
+  const dragVault = drag?.vault ?? null
+  const dragWasOpen = drag?.wasOpen ?? false
+  const remote = useAtomValue(activeRemoteAtom)
   const setDrag = useSetAtom(tabDragAtom)
   /** Where a drag along the strip would land: before entry `n`. */
   const [dropAt, setDropAt] = useState<number | null>(null)
+  const [combinePreview, setCombinePreview] = useState<{
+    source: string
+    target: string
+  } | null>(null)
   /** The member of a split's pill that was right-clicked, whose own
    *  actions its menu offers: a member has no header of its own. */
   const [menuMember, setMenuMember] = useState<string | null>(null)
@@ -142,6 +155,21 @@ export function TabStrip({
   const listRef = useRef<HTMLDivElement>(null)
   const [overflowing, setOverflowing] = useState(false)
   useEffect(() => {
+    if (dragged === null) return
+    const sourceExists = tabIsOpen(ws, dragged)
+    if (dragVault === remote && (!dragWasOpen || sourceExists)) return
+    setDrag(null)
+    setDropAt(null)
+    setCombinePreview(null)
+  }, [dragVault, dragWasOpen, dragged, remote, setDrag, ws])
+
+  useEffect(() => {
+    if (dragged !== null && dragVault === remote) return
+    setDropAt(null)
+    setCombinePreview(null)
+  }, [dragged, dragVault, remote])
+
+  useEffect(() => {
     const list = listRef.current
     if (list === null) return
     // The list and each entry: a window resize, or an entry turning into a
@@ -152,6 +180,16 @@ export function TabStrip({
     for (const child of list.children) observer.observe(child)
     return () => observer.disconnect()
   }, [ws.entries])
+
+  /** The rendered gesture may outlive its workspace or drag ownership until
+   *  React commits. Read the store at event time before allowing its operation. */
+  function gestureContextCurrent(): boolean {
+    return (
+      store.get(activeRemoteAtom) === remote &&
+      store.get(shellWorkspaceAtom) === ws &&
+      store.get(tabDragAtom) === drag
+    )
+  }
 
   /** The insertion point under the pointer: before the first entry whose
    *  middle is right of it, else the end. */
@@ -166,12 +204,57 @@ export function TabStrip({
 
   /** Where a drag over the strip would land, or null when it would change
    *  nothing (an entry dropped where it is). */
-  function stripDrop(event: DragEvent<HTMLElement>): number | null {
+  function stripDrop(
+    event: DragEvent<HTMLElement>,
+  ):
+    | { kind: 'reorder'; index: number }
+    | { kind: 'combine'; target: string; next: ShellWorkspace }
+    | null {
     if (!draggable || !event.dataTransfer.types.includes(TAB_MIME)) return null
-    if (dragged === null) return null
+    if (!gestureContextCurrent() || dragged === null || dragVault !== remote) return null
+    const sourceExists = tabIsOpen(ws, dragged)
+    if (!sourceExists && (dragWasOpen || !isViewKey(dragged))) {
+      setDropAt(null)
+      setCombinePreview(null)
+      return null
+    }
+    const items = event.currentTarget.querySelectorAll<HTMLElement>('[data-entry-id]')
+    for (const item of items) {
+      const rect = item.getBoundingClientRect()
+      if (event.clientX < rect.left || event.clientX > rect.right) continue
+      const position = rect.width === 0 ? 0 : (event.clientX - rect.left) / rect.width
+      const id = item.dataset.entryId
+      if (id === undefined) return null
+      if (stripDropZone(position) === 'combine') {
+        const next = combineOnStrip(ws, dragged, id)
+        if (next !== ws) {
+          setCombinePreview((current) =>
+            current?.source === dragged && current.target === id
+              ? current
+              : { source: dragged, target: id },
+          )
+          return { kind: 'combine', target: id, next }
+        }
+      }
+      setCombinePreview(null)
+      setDropAt(indexAt(event))
+      const at = indexAt(event)
+      return dropOnStrip(ws, dragged, at) === ws ? null : { kind: 'reorder', index: at }
+    }
+    setCombinePreview(null)
     const at = indexAt(event)
-    return dropOnStrip(ws, dragged, at) === ws ? null : at
+    return dropOnStrip(ws, dragged, at) === ws ? null : { kind: 'reorder', index: at }
   }
+
+  const previewValid =
+    combinePreview !== null &&
+    dragVault === remote &&
+    dragged === combinePreview.source &&
+    !(dragWasOpen && !tabIsOpen(ws, combinePreview.source)) &&
+    (() => {
+      const next = combineOnStrip(ws, combinePreview.source, combinePreview.target)
+      return next !== ws
+    })()
 
   /** An entry as the tab switcher lists it: a tab's mark and title, a
    *  split's members side by side, as in the strip. */
@@ -221,9 +304,10 @@ export function TabStrip({
               aria-label="Tabs"
               className="min-w-0 justify-start overflow-x-auto group-data-horizontal/tabs:h-9"
               onDragOver={(event) => {
-                const at = stripDrop(event)
+                const drop = stripDrop(event)
+                const at = drop?.kind === 'reorder' ? drop.index : null
                 if (at !== dropAt) setDropAt(at)
-                if (at === null) return
+                if (drop === null) return
                 event.preventDefault()
                 event.dataTransfer.dropEffect = 'move'
               }}
@@ -231,24 +315,50 @@ export function TabStrip({
                 const to = event.relatedTarget
                 if (!(to instanceof Node) || !event.currentTarget.contains(to)) {
                   setDropAt(null)
+                  setCombinePreview(null)
                 }
               }}
               onDrop={(event) => {
-                const at = stripDrop(event)
-                const key = event.dataTransfer.getData(TAB_MIME) || dragged
+                const currentGesture = gestureContextCurrent()
+                const drop = currentGesture ? stripDrop(event) : null
+                const key = event.dataTransfer.getData(TAB_MIME)
+                const ownsKey = key !== '' && key === dragged && key === store.get(tabDragAtom)?.key
+                const validPreview =
+                  previewValid &&
+                  combinePreview?.source === key &&
+                  drop?.kind === 'combine' &&
+                  combinePreview.target === drop.target
                 setDropAt(null)
+                setCombinePreview(null)
                 setDrag(null)
-                if (at === null || key === null) return
+                if (!currentGesture || !ownsKey || drop === null) return
                 event.preventDefault()
-                act((w) => dropOnStrip(w, key, at))
+                if (drop.kind === 'combine') {
+                  if (validPreview) act((w) => combineOnStrip(w, key, drop.target))
+                } else {
+                  act((w) => dropOnStrip(w, key, drop.index))
+                }
               }}
             >
               {ws.entries.map((entry, index) => {
                 const id = entryId(entry)
                 const members = isSplit(entry) ? entry.views.map(look) : null
                 const tab = members === null ? look(id) : null
-                const label =
-                  tab !== null ? spoken(tab) : `Split view: ${members!.map(spoken).join(', ')}`
+                const targetPreview = previewValid && combinePreview?.target === id
+                const combined =
+                  targetPreview && combinePreview !== null
+                    ? combineOnStrip(ws, combinePreview.source, id)
+                    : null
+                const combinedEntry =
+                  combined?.entries.find((candidate) => entryId(candidate) === combined.active) ??
+                  undefined
+                const previewMembers =
+                  targetPreview && isSplit(combinedEntry) ? combinedEntry.views.map(look) : null
+                const label = targetPreview
+                  ? `Split view: ${previewMembers!.map(spoken).join(', ')}`
+                  : tab !== null
+                    ? spoken(tab)
+                    : `Split view: ${members!.map(spoken).join(', ')}`
                 return (
                   <ContextMenu key={id}>
                     <ContextMenuTrigger asChild>
@@ -256,6 +366,8 @@ export function TabStrip({
                         cannot hold another button. */}
                       <div
                         data-entry-id={id}
+                        data-combine-preview={targetPreview || undefined}
+                        aria-description={targetPreview ? 'Split preview' : undefined}
                         data-tab-key={tab === null ? undefined : id}
                         data-drop-before={dropAt === index || undefined}
                         data-drop-after={(dropAt === count && index === count - 1) || undefined}
@@ -268,17 +380,7 @@ export function TabStrip({
                           )
                         }
                         className={cn(
-                          'group/tab relative flex h-full',
-                          // Browser-style: every tab one width, shrinking
-                          // evenly as more open down to what still shows its
-                          // mark and the start of its title, and only then
-                          // does the strip scroll. A split is proportionally
-                          // wider, and shrinks in the same proportion.
-                          tab !== null
-                            ? 'w-44 min-w-28'
-                            : members!.length > 2
-                              ? 'w-80 min-w-60'
-                              : 'w-60 min-w-44',
+                          'group/tab flex h-full',
                           // Where a dragged entry would land: a hairline in
                           // the gap.
                           'data-drop-before:before:bg-primary data-drop-before:before:absolute data-drop-before:before:inset-y-1.5 data-drop-before:before:-start-0.5 data-drop-before:before:w-0.5 data-drop-before:before:rounded-full',
@@ -287,6 +389,7 @@ export function TabStrip({
                       >
                         <TabsTrigger
                           value={id}
+                          data-combine-preview={targetPreview || undefined}
                           aria-label={label}
                           onClick={(event) => {
                             // A member's part of the pill focuses that member.
@@ -296,25 +399,43 @@ export function TabStrip({
                             if (member) act((w) => focusMember(w, id, member))
                           }}
                           variant="tab"
-                          className={cn(
-                            'hover:bg-foreground/5',
-                            'group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 dark:group-data-[variant=line]/tabs-list:data-active:bg-foreground/8',
-                            'w-full',
-                          )}
+                          size={
+                            tab !== null ? 'tab' : members!.length > 2 ? 'tab-wide' : 'tab-group'
+                          }
                         >
-                          {tab !== null ? (
-                            <>
-                              <TabMark tab={tab} dot={false} />
-                              <span className="truncate">{tab.title}</span>
-                              {tab.status !== undefined ? <TabStatus status={tab.status} /> : null}
-                            </>
-                          ) : (
-                            <SplitMembers
-                              drag={draggable ? memberDrag : undefined}
-                              members={members!}
-                              focused={split?.id === id ? (entry as ShellSplit).focused : null}
-                            />
-                          )}
+                          {/* Transparent, not invisible: Chromium must keep the same native drag target. */}
+                          <span className="relative flex min-w-0 flex-1 items-center gap-2">
+                            <span
+                              className={cn(
+                                'flex min-w-0 flex-1 items-center gap-2',
+                                targetPreview && 'opacity-0',
+                              )}
+                            >
+                              {tab !== null ? (
+                                <>
+                                  <TabMark tab={tab} dot={false} />
+                                  <span className="truncate">{tab.title}</span>
+                                  {tab.status !== undefined ? (
+                                    <TabStatus status={tab.status} />
+                                  ) : null}
+                                </>
+                              ) : (
+                                <SplitMembers
+                                  drag={draggable ? memberDrag : undefined}
+                                  members={members!}
+                                  focused={split?.id === id ? (entry as ShellSplit).focused : null}
+                                />
+                              )}
+                            </span>
+                            {previewMembers !== null ? (
+                              <span
+                                aria-hidden="true"
+                                className="pointer-events-none absolute inset-0 flex items-center"
+                              >
+                                <SplitMembers members={previewMembers} focused={null} />
+                              </span>
+                            ) : null}
+                          </span>
                         </TabsTrigger>
                         {/* Shown on hover and keyboard focus, and always on the tab
                           in front unless its status badge holds the place. */}
