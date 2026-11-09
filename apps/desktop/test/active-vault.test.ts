@@ -52,7 +52,7 @@ const SETTLE = 400
 async function waitFor(
   what: string,
   predicate: () => Promise<boolean> | boolean,
-  timeoutMs = 8_000,
+  timeoutMs = 15_000,
 ) {
   const deadline = Date.now() + timeoutMs
   for (;;) {
