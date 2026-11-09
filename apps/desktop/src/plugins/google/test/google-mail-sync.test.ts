@@ -62,6 +62,7 @@ function rawThread(id: string, subject: string, labels: string[] = ['INBOX']) {
 interface Routes {
   /** `threads.list` — the ids, newest first. */
   list?: { id: string }[]
+  listPages?: Record<string, { threads: { id: string }[]; nextPageToken?: string }>
   threads?: Record<string, unknown>
   /** `history.list`. A number means "answer this status instead". */
   history?: unknown | number
@@ -91,7 +92,10 @@ function gmail(routes: Routes) {
       }
       return ok(routes.history ?? { historyId: '5000' })
     }
-    if (path.endsWith('/threads')) return ok({ threads: routes.list ?? [] })
+    if (path.endsWith('/threads')) {
+      const token = new URL(url).searchParams.get('pageToken') ?? ''
+      return ok(routes.listPages?.[token] ?? { threads: routes.list ?? [] })
+    }
     return ok(routes.threads?.[path.split('/').pop()!] ?? {})
   }) as unknown as typeof globalThis.fetch
 
@@ -115,6 +119,33 @@ describe('syncThreads', () => {
 
     expect(page.threads.map((t) => t.subject)).toEqual(['One', 'Two'])
     expect(threadGets(seen)).toHaveLength(2)
+  })
+
+  it('refreshes explicit searches so repeated results retain current pagination', async () => {
+    const firstIds = Array.from({ length: 25 }, (_, i) => `t${i + 1}`)
+    const threads = Object.fromEntries([...firstIds, 't26'].map((id) => [id, rawThread(id, id)]))
+    const first = gmail({
+      listPages: { '': { threads: firstIds.map((id) => ({ id })), nextPageToken: 'page-2' } },
+      threads,
+    })
+    const query = { query: 'in:inbox newer_than:7d' }
+
+    const initial = await syncThreads(first.api, cache, query)
+    expect(initial.threads).toHaveLength(25)
+    expect(initial.nextPageToken).toBe('page-2')
+
+    const repeated = gmail({
+      listPages: { '': { threads: firstIds.map((id) => ({ id })), nextPageToken: 'page-2' } },
+      threads,
+    })
+    const refreshed = await syncThreads(repeated.api, cache, query)
+    expect(refreshed.threads).toHaveLength(25)
+    expect(refreshed.nextPageToken).toBe('page-2')
+
+    const later = gmail({ list: [{ id: 't26' }], threads })
+    const next = await syncThreads(later.api, cache, { ...query, pageToken: 'page-2' })
+    expect(next.threads.map((thread) => thread.id)).toEqual(['t26'])
+    expect(next.nextPageToken).toBeNull()
   })
 
   it('asks Gmail only what changed when a history id is held', async () => {
@@ -268,8 +299,9 @@ describe('syncThreads', () => {
     })
     const page = await syncThreads(second.api, cache, { query: 'from:jane' })
 
-    // A delta is only meaningful against the list it was computed for.
+    // Explicit searches are fetched from Gmail rather than inferred from mailbox history.
     expect(page.threads.map((t) => t.subject)).toEqual(['Search hit'])
+    expect(second.seen.some((url) => new URL(url).pathname.endsWith('/history'))).toBe(false)
   })
 
   it('asks for changes since the list was cached, not since some other list was', async () => {
@@ -432,9 +464,8 @@ describe('syncThreads', () => {
     })
 
     it('keeps it in a SEARCH, which may still legitimately match', async () => {
-      // An explicit query is not the inbox, so "left the inbox" says nothing
-      // about whether the thread still answers `from:jane`. Here it is a
-      // refetch, exactly as it was before departures existed.
+      // A Gmail search is fetched fresh: history cannot decide whether an
+      // archived thread still matches arbitrary query syntax.
       const first = gmail({
         list: [{ id: 't2' }],
         threads: { t2: rawThread('t2', 'Two') },
@@ -442,7 +473,7 @@ describe('syncThreads', () => {
       await syncThreads(first.api, cache, { query: 'from:jane' })
 
       const second = gmail({
-        history: archivedInHistory('t2'),
+        list: [{ id: 't2' }],
         threads: { t2: rawThread('t2', 'Two (archived)', []) },
       })
       const page = await syncThreads(second.api, cache, { query: 'from:jane' })

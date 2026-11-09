@@ -86,8 +86,11 @@ export async function syncThreads(
   options: ListThreadsOptions = {},
 ): Promise<MailPage> {
   // "Load more" asks for what is past the tail: the one thing a last-N cache
-  // does not hold.
+  // does not hold. An explicit search also goes to Gmail: mailbox history cannot
+  // evaluate arbitrary Gmail query grammar or reproduce a current search page's
+  // pagination token. Unfiltered/category/unread/mailbox lists remain delta-backed.
   if (options.pageToken !== undefined) return listThreads(api, options)
+  if (options.query?.trim()) return fullSync(api, cache, options, cacheKey(options))
 
   const key = cacheKey(options)
   const cached = cache.readThreads(key)
