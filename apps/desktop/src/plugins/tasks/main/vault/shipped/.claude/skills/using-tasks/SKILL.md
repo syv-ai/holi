@@ -158,10 +158,13 @@ the same pass.
 
 ## Tips
 
-- **Finding tasks is a grep.** They are files: `task.*.md` with `status: todo` in the
-  frontmatter, private ones included (`task.*.local.md` matches the same glob). Your
-  search tool may skip gitignored files, so look for private tasks explicitly, or use
-  `holi tasks list`. There is no index to query.
+- **Finding tasks:** use `holi tasks list`, not grep or glob. It discovers shared and
+  private tasks, including their status, title, path and due date. Add `--due today` to
+  show tasks due on the local calendar day, `--overdue` to show overdue open tasks, or
+  both to intersect the filters. `holi tasks list --json` returns task objects with
+  `path`, `title`, `status`, optional `due`, and the other task fields (`start`,
+  `priority`, `estimate`, `tags`, `assignees`, `reminder`, `recurrence`, `order`,
+  `description`).
 - Writing a whole task file at once is fine and is the fastest way to create one.
   Use the title's slug for the filename: lowercase, dashes for spaces, æ ø å written as
   ae oe aa, other accents dropped, no punctuation ("Møde med Bo" is
