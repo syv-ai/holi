@@ -1,6 +1,7 @@
-import { render, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { act, render } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import * as mermaidRenderer from '@/lib/mermaid-renderer'
 import { MermaidDiagram } from '../rich-text/mermaid-diagram'
 
 type SvgLayoutElement = SVGElement & { getBBox: () => DOMRect; getComputedTextLength: () => number }
@@ -15,6 +16,7 @@ function polyfillSvgLayout() {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   svgPrototype.getBBox = originalGetBBox
   svgPrototype.getComputedTextLength = originalGetComputedTextLength
   document.body.replaceChildren()
@@ -23,6 +25,7 @@ afterEach(() => {
 describe('real Mermaid SVG styling', () => {
   it('rewrites generated CSS selectors and URL references per rendered instance', async () => {
     polyfillSvgLayout()
+    const renders = vi.spyOn(mermaidRenderer, 'renderMermaid')
     const source = `flowchart LR\n  A[Alpha]:::custom --> B[Beta]\n  classDef custom fill:#ff0000,stroke:#0000ff,color:#ffffff`
     const view = render(
       <>
@@ -30,7 +33,11 @@ describe('real Mermaid SVG styling', () => {
         <MermaidDiagram source={source} theme="default" enlarged />
       </>,
     )
-    await waitFor(() => expect(view.container.querySelectorAll('svg')).toHaveLength(2))
+    expect(renders).toHaveBeenCalledTimes(2)
+    await act(async () => {
+      await Promise.all(renders.mock.results.map((result) => result.value))
+    })
+    expect(view.container.querySelectorAll('svg')).toHaveLength(2)
 
     const [first, second] = Array.from(view.container.querySelectorAll<SVGSVGElement>('svg'))
     const ids = Array.from(view.container.querySelectorAll<SVGElement>('[id]'))
