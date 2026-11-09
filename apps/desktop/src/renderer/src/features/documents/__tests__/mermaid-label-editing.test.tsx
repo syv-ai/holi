@@ -110,6 +110,25 @@ describe('editing labels in the rendered Mermaid drawing', () => {
     expect(e.getMarkdown()).toContain('A[Alpha] --> B[Beta]')
   })
 
+  it('keeps a single preview click non-destructive and opens inspection on double-click', async () => {
+    const { e, updates } = await open()
+    const original = e.state.doc
+    const selection = e.state.selection.toJSON()
+    const diagram = document.querySelector('[data-mermaid-diagram]')!
+    fireEvent.click(diagram)
+    expect(document.querySelector('[data-mermaid-diagram]')).toBe(diagram)
+    expect(e.state.doc).toBe(original)
+    expect(e.state.selection.toJSON()).toEqual(selection)
+    expect(updates).not.toHaveBeenCalled()
+    expect(e.can().undo()).toBe(false)
+
+    fireEvent.doubleClick(diagram)
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(e.state.doc).toBe(original)
+    expect(updates).not.toHaveBeenCalled()
+    expect(e.can().undo()).toBe(false)
+  })
+
   it('keeps toolbar mousedown outside ProseMirror selection handling', async () => {
     const { e } = await open()
     const selection = e.state.selection.toJSON()
