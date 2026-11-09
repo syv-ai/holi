@@ -871,6 +871,84 @@ describe('tasks.update', () => {
 })
 
 describe('tasks.list', () => {
+  it('filters due tasks by local day and overdue status, including private tasks only at the CLI', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 8, 30, 12, 0))
+    try {
+      const items = [
+        {
+          path: 'task.today.md',
+          title: 'today',
+          status: 'todo',
+          due: '2026-09-30',
+          tags: [],
+          assignees: [],
+        },
+        {
+          path: 'task.timed.md',
+          title: 'timed',
+          status: 'todo',
+          due: '2026-09-30T11:59',
+          tags: [],
+          assignees: [],
+        },
+        {
+          path: 'task.private.local.md',
+          title: 'private',
+          status: 'todo',
+          due: '2026-09-29',
+          tags: [],
+          assignees: [],
+        },
+        {
+          path: 'task.closed.md',
+          title: 'closed',
+          status: 'done',
+          due: '2026-09-29',
+          tags: [],
+          assignees: [],
+        },
+        {
+          path: 'task.future.md',
+          title: 'future',
+          status: 'todo',
+          due: '2026-10-01',
+          tags: [],
+          assignees: [],
+        },
+      ]
+      const context: CapabilityContext = {
+        ...ctx(),
+        snapshot: async () => ({
+          ...emptyVaultSnapshot(),
+          claimed: { tasks: { items, broken: [] } },
+        }),
+      }
+      const filtered = async (params: Record<string, unknown>) =>
+        (await runCapability('tasks.list', 'cli', context, params)).value as { path: string }[]
+      expect((await filtered({ due: 'today' })).map((task) => task.path)).toEqual([
+        'task.today.md',
+        'task.timed.md',
+      ])
+      expect((await filtered({ overdue: true })).map((task) => task.path)).toEqual([
+        'task.timed.md',
+        'task.private.local.md',
+      ])
+      expect((await filtered({ due: 'today', overdue: true })).map((task) => task.path)).toEqual([
+        'task.timed.md',
+      ])
+      const listed = await runCapability('tasks.list', 'cli', context, {})
+      expect(listed.text).toContain('due 2026-09-30T11:59')
+      expect(taskCapabilities({ today: () => '2026-09-30' })['tasks.list'].cli?.summary).toContain(
+        '--due today',
+      )
+      await expect(filtered({ due: 'tomorrow' })).rejects.toThrow(/due.*today/i)
+      await expect(filtered({ overdue: 'no' })).rejects.toThrow(/overdue/i)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('tells an app only the tasks it may read, and the agent every one', async () => {
     const task = (path: string) => ({ path, title: path, status: 'todo', tags: [], assignees: [] })
     const items = ['ops/task.a.md', '.holi/memory/task.b.md', 'Budget.app/data/task.c.md'].map(task)
