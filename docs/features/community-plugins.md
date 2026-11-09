@@ -137,7 +137,14 @@ closes; tabs on one file share one server, and the last release stops it. Main p
 from 3040 up, spawns `serve` in the plugin's folder as its own process group, on `toolPath()`, with
 `HOLI_VAULT_ROOT`, `HOLI_FILE` and `HOLI_PORT`, and waits up to 60 seconds for the port to take a
 connection on 127.0.0.1 or ::1. The tab shows the server's output while it starts, and the output
-and Start again if it fails or stops. Leaving the vault and quitting stop every server.
+and Start again if it fails or stops. A retained tab whose plugin can no longer run releases its
+server and says why (for example, permission for a new version or a plugin turned off), with
+**Check again** after restoring it in Settings → Plugins. If several plugins claim the file, a
+non-running claim never shadows a running owner. Check again uses the same row refresh as settings
+and vault changes: only the latest request in the current vault lifetime can apply its rows or
+error, so an old answer cannot undo a restored frame, even after leaving and reopening the same
+vault. A failed refresh shows an inline error and can be retried. Leaving the vault and quitting
+stop every server.
 
 **The frame** is `http://localhost:<port>/`, whichever loopback the server took (Vite takes ::1 on
 macOS). While a server is up its origin is registered with the window guard: the frame may move

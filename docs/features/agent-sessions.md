@@ -378,7 +378,8 @@ most recent. **History**, in the main view, has every row by day (Needs you, Pin
 Yesterday, Earlier) under its search field and filter menu. **⌘J** (the mode's `overview`)
 brings History forward with that field focused, as the place to pick up or start work: typing
 narrows the rows, ↓ goes into them (↑ from the first comes back), Enter on a card opens it, and
-Enter in the field starts a session in the default agent with what was typed as its first prompt. A plugin's row that is an agent session (its job id)
+Enter in the field opens the one conversation a search leaves, or else starts a session in the default
+agent with what was typed as its first prompt (the empty search says so). A plugin's row that is an agent session (its job id)
 and the live session with that id are one row: the session gives it its state and model, the
 plugin its title and who ran it. A card is two lines: the title, in full on hover, with the age on
 the right; then, quieter, a mark (a Holi's face, or an automation's bolt, when one ran it, else the
@@ -462,8 +463,10 @@ respawn`, a fresh process for the same conversation, which re-reads settings and
 session's own name is Claude Code's: `/rename`, or Ctrl+R in the list. **Start another session** on an agent tab starts
 one with no prompt, which waits for yours.
 
-**State is read, not inferred.** Main reads `claude agents --json` for the vault's config directory
-and keeps the background rows under the vault root. `needs-you` is `status: waiting`, `working` is
+**State is read, not inferred.** Main reads `claude agents --json --all` for the vault's config
+directory (`--all` adds the finished sessions, which a plain `--json` leaves out since Claude Code
+2.1.319; a Claude Code that refuses the flag is asked without it, which listed them) and keeps the
+background rows under the vault root. `needs-you` is `status: waiting`, `working` is
 `busy` or `shell`, then the turn bracket; a session started with no prompt reads `state: blocked`
 and is idle. The read is triggered by a watch of `<configDir>/sessions/` and `jobs/` (edge triggers,
 never parsed), by each turn hook, and by a vault opening. The one timer is a second read about a second
@@ -516,6 +519,13 @@ was checked live, so a release can change it. The socket answers nothing, so a s
 `crossSessionInbound` is `refuse` (or `hold`) drops (or sets aside) the message without Holi
 knowing. Claude Code rate-limits each sender and queues at most 50 messages. A vault opened
 without Holi has no bridge, and the hook does nothing.
+
+**A resumed conversation is told its job folder moved.** A conversation resumed into another job
+runs with a new `$CLAUDE_JOB_DIR`, while its scratch files stay in the old one's. At each session
+start `turn-signal.mjs` notes the job folder in `.holi/state/jobs.local.json` by the conversation's
+id (the 100 latest), and at a `resume` start whose folder differs from the noted one it prints one
+line, which Claude Code adds to the agent's context: the new folder, and the old one's path while it
+still exists. A conversation with no note, or resumed in the same job, gets nothing.
 
 **Git coexistence.** The seeded `UserPromptSubmit` and `Stop` hooks run `turn-signal.mjs`, which
 reads the vault's `bridge.local.env` ([agent-config](agent-config.md)) for the port and the vault's token, and posts

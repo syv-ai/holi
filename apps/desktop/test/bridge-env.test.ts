@@ -201,6 +201,37 @@ describe('turn-signal.mjs', () => {
     expect(turns).toHaveLength(3)
   })
 
+  it('at a resumed start in a new job folder, says so and where the old one is', async () => {
+    await writeFor()
+    const jobs = join(dir, 'jobs')
+    const start = (job: string, input: unknown) =>
+      run(
+        process.execPath,
+        [HOOK, 'session'],
+        { PATH: process.env.PATH, CLAUDE_JOB_DIR: join(jobs, job) },
+        JSON.stringify(input),
+      )
+    await mkdir(join(jobs, 'aaaa1111'), { recursive: true })
+    expect(await start('aaaa1111', { session_id: 'conv-1', source: 'startup' })).toMatchObject({
+      code: 0,
+      stdout: '',
+    })
+    // Resumed in the same job (a stopped session picked from the list): nothing to say.
+    expect((await start('aaaa1111', { session_id: 'conv-1', source: 'resume' })).stdout).toBe('')
+    // Resumed into another job: the line, naming both.
+    expect((await start('bbbb2222', { session_id: 'conv-1', source: 'resume' })).stdout).toBe(
+      `This conversation was resumed in a new job folder: $CLAUDE_JOB_DIR is now ${join(jobs, 'bbbb2222')}. ` +
+        `Files from before the resume are still in ${join(jobs, 'aaaa1111')}.`,
+    )
+    // Resumed again, from a job folder that has since gone.
+    expect((await start('cccc3333', { session_id: 'conv-1', source: 'resume' })).stdout).toBe(
+      `This conversation was resumed in a new job folder: $CLAUDE_JOB_DIR is now ${join(jobs, 'cccc3333')}. ` +
+        'The one before it is gone.',
+    )
+    // A conversation with no record says nothing: it cannot know it moved.
+    expect((await start('dddd4444', { session_id: 'conv-2', source: 'resume' })).stdout).toBe('')
+  })
+
   it('does nothing, silently, when Holi is not there or this is not a background session', async () => {
     // No env file.
     await writeVaultEnv(dir, null)

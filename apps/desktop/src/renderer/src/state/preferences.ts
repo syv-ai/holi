@@ -18,6 +18,29 @@ export const globalPanelLayoutsAtom = atomWithStorage<Record<string, PanelLayout
   {},
 )
 
+/** Whether this machine enables Vim keys in code and plain-text file editors. */
+export const vimCodeEditingAtom = atomWithStorage<boolean>(
+  'holi:vimCodeEditing',
+  false,
+  {
+    getItem(key) {
+      try {
+        const value: unknown = JSON.parse(localStorage.getItem(key) ?? 'null')
+        return typeof value === 'boolean' ? value : false
+      } catch {
+        return false
+      }
+    },
+    setItem(key, value) {
+      localStorage.setItem(key, JSON.stringify(value))
+    },
+    removeItem(key) {
+      localStorage.removeItem(key)
+    },
+  },
+  { getOnInit: true },
+)
+
 /** What a `ResizablePanelGroup` needs to restore and record its layout. */
 export interface PanelLayoutBinding {
   defaultLayout: PanelLayout | undefined

@@ -23,11 +23,19 @@
 // hooks reference says to tell the two apart. Sent as `pending`, their count;
 // left out when the input carries neither list.
 //
-// It never fails the turn and never prints: anything written to stdout from a
-// UserPromptSubmit hook is injected into Claude's context. Outside Holi, in a
-// session that is not a background one, or with Holi closed, it does nothing.
+// At `session` it also notes which job folder the conversation runs in, in
+// `.holi/state/jobs.local.json` by the conversation's id. A conversation
+// resumed into another job gets a new `$CLAUDE_JOB_DIR`, and its scratch files
+// stay in the old one, so at a `resume` start whose folder moved it prints one
+// line saying so, and where the old one is if it is still there. That line,
+// which SessionStart adds to Claude's context, is the only thing it prints.
+//
+// It never fails the turn and prints nothing else: anything written to stdout
+// from a UserPromptSubmit hook is injected into Claude's context. Outside Holi,
+// in a session that is not a background one, or with Holi closed, it sends
+// nothing.
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
 const edge = process.argv[2]
@@ -61,6 +69,42 @@ function pendingOf(input) {
   return (Array.isArray(tasks) ? tasks.length : 0) + (Array.isArray(crons) ? crons.length : 0)
 }
 
+/** Where each conversation last ran: `{ conversation, job }`, newest first. */
+const JOBS_FILE = '.holi/state/jobs.local.json'
+const JOBS_KEPT = 100
+
+/** Record this conversation's job folder; at a resume into a different one,
+ *  say so. Best-effort: a lost record only loses the line. */
+function noteJob(root, input) {
+  const conversation = input?.session_id
+  if (typeof conversation !== 'string' || !/^[\w-]{1,128}$/.test(conversation)) return
+  const file = join(root, JOBS_FILE)
+  let jobs = []
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8'))
+    // A path with a control character could end the line it is printed in.
+    const plain = (j) => typeof j?.job === 'string' && !/\p{C}/u.test(j.job)
+    if (Array.isArray(parsed)) jobs = parsed.filter(plain)
+  } catch {
+    // None yet, or unreadable: start over.
+  }
+  const previous = jobs.find((j) => j.conversation === conversation)?.job
+  if (input.source === 'resume' && previous !== undefined && previous !== jobDir) {
+    process.stdout.write(
+      existsSync(previous)
+        ? `This conversation was resumed in a new job folder: $CLAUDE_JOB_DIR is now ${jobDir}. Files from before the resume are still in ${previous}.`
+        : `This conversation was resumed in a new job folder: $CLAUDE_JOB_DIR is now ${jobDir}. The one before it is gone.`,
+    )
+  }
+  const next = [{ conversation, job: jobDir }, ...jobs.filter((j) => j.conversation !== conversation)]
+  mkdirSync(dirname(file), { recursive: true })
+  // Through a rename: two sessions starting at once must not leave a torn
+  // file, which the next start would read as none and so forget every note.
+  const scratch = `${file}.${process.pid}`
+  writeFileSync(scratch, `${JSON.stringify(next.slice(0, JOBS_KEPT), null, 2)}\n`)
+  renameSync(scratch, file)
+}
+
 /** The vault this runs in: the nearest folder up holding `.holi/vault`. */
 function vaultRoot() {
   for (let dir = process.cwd(); ; dir = dirname(dir)) {
@@ -73,6 +117,14 @@ async function main() {
   if (!Object.hasOwn(ROUTES, edge ?? '') || !jobDir) return
   const root = vaultRoot()
   if (root === null) return
+  const input = edge === 'start' ? null : await hookInput()
+  if (edge === 'session') {
+    try {
+      noteJob(root, input)
+    } catch {
+      // Never at the cost of telling Holi where the session takes messages.
+    }
+  }
   const env = Object.create(null)
   for (const line of readFileSync(join(root, '.holi/state/bridge.local.env'), 'utf8').split('\n')) {
     const at = line.indexOf('=')
@@ -82,7 +134,7 @@ async function main() {
   if (!/^\d+$/.test(port ?? '') || !/^[0-9a-f]+$/.test(token ?? '')) return
   const query = new URLSearchParams({ t: token, job: basename(jobDir) })
   if (edge === 'end') {
-    const pending = pendingOf(await hookInput())
+    const pending = pendingOf(input)
     if (pending !== null) query.set('pending', String(pending))
   }
   const { CLAUDE_CODE_MESSAGING_SOCKET: socket, CLAUDE_CODE_MESSAGING_TOKEN: inboxToken } =

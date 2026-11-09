@@ -9,9 +9,15 @@ import { createStore, Provider } from 'jotai'
 import { afterEach, expect, test, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 import { act, fireEvent, render, screen, waitFor } from '@/test/render'
-import { flushAllBuffers, saveAllBuffers, saveBuffersOnBlur } from '@/lib/buffer-registry'
+import {
+  flushAllBuffers,
+  freezeBuffers,
+  saveAllBuffers,
+  saveBuffersOnBlur,
+} from '@/lib/buffer-registry'
 import { coreContributionAtom } from '@/state/plugins'
 import { editorSelectionAtom } from '@/state/ui-report'
+import { vimCodeEditingAtom } from '@/state/preferences'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { FileView } from '../file-view'
 
@@ -44,10 +50,11 @@ afterEach(() => {
   fileDiff.mockReset()
 })
 
-function setup(path: string, claims = false) {
+function setup(path: string, claims = false, vimEnabled = false) {
   const store = createStore()
   lastStore = store
   store.set(activeRemoteAtom, 'syv-ai/site')
+  store.set(vimCodeEditingAtom, vimEnabled)
   store.set(snapshotAtom, {
     ...emptyVaultSnapshot(),
     files: [{ path, updatedAt: '2026-10-23T10:00:00Z' }],
@@ -110,6 +117,7 @@ test('code opens straight into the editor, with its latest commit', async () => 
     {
       sha: '4a14110aaaa',
       subject: 'Update',
+      // The history fixture uses the current clock to exercise the relative timestamp.
       date: new Date(Date.now() - 2 * 3_600_000).toISOString(),
       author: 'Ana',
       added: 1,
@@ -183,7 +191,7 @@ test('a json file saves once it parses, and not before', async () => {
   read.mockResolvedValue('{"a": 1}\n')
   write.mockResolvedValue(undefined)
   historyList.mockResolvedValue([])
-  setup('.holi/config.json')
+  setup('.holi/config.json', false, true)
   expect(await screen.findByText('Saved')).toBeInTheDocument()
 
   await typeInto('{"a": ')
@@ -204,7 +212,7 @@ test('flush retries a rejected autosave and propagates persistent failures', asy
   read.mockResolvedValue('a\n')
   write.mockResolvedValue(undefined)
   historyList.mockResolvedValue([])
-  setup('src/retry.ts')
+  setup('src/retry.ts', false, true)
   await screen.findByText('Saved')
   await typeInto('b\n')
   write.mockRejectedValueOnce(new Error('offline'))
@@ -219,7 +227,7 @@ test('a later blur retries a failed autosave while syntax remains valid', async 
   read.mockResolvedValue('a\n')
   historyList.mockResolvedValue([])
   write.mockResolvedValue(undefined)
-  setup('src/blur.ts')
+  setup('src/blur.ts', false, true)
   await screen.findByText('Saved')
   await act(() => new Promise((resolve) => setTimeout(resolve, 650)))
   write.mockClear()
@@ -268,7 +276,7 @@ test('flush waits for an in-flight autosave and writes edits made while it waits
   })
 })
 
-test('closing during a pending code save retains the final undo snapshot', async () => {
+test('closing during a pending Vim-enabled code save retains the final undo snapshot', async () => {
   read.mockResolvedValue('a\n')
   historyList.mockResolvedValue([])
   let release!: () => void
@@ -278,7 +286,7 @@ test('closing during a pending code save retains the final undo snapshot', async
         release = resolve
       }),
   )
-  const view = setup('src/race.ts')
+  const view = setup('src/race.ts', false, true)
   await screen.findByText('Saved')
   await typeInto('b\n')
   const first = saveAllBuffers()
@@ -327,7 +335,7 @@ test('a flush writes json that does not parse, and ⌘S holds it', async () => {
   read.mockResolvedValue('{"a": 1}\n')
   write.mockResolvedValue(undefined)
   historyList.mockResolvedValue([])
-  setup('.holi/config.json')
+  setup('.holi/config.json', false, true)
   expect(await screen.findByText('Saved')).toBeInTheDocument()
 
   await typeInto('{"a": ')
@@ -363,42 +371,138 @@ test('leaving the window saves json that parses, and holds json that does not', 
   off()
 })
 
-test('⌘F finds in a code file, steps through the matches and replaces them', async () => {
+test('Vim key events drive modes, motions, edits, yank, paste, undo and redo', async () => {
   const user = userEvent.setup()
+  read.mockResolvedValue('one two\nthree four\n')
   historyList.mockResolvedValue([])
-  write.mockResolvedValue({ ok: true })
-  read.mockResolvedValue('const a = 1\nconst ab = a + a\n')
-  setup('src/main.ts')
+  setup('src/list.txt', false, true)
   const content = await waitFor(() => {
     const node = document.querySelector<HTMLElement>('.cm-content')
     if (node === null) throw new Error('no editor yet')
     return node
   })
-  content.focus()
-  // jsdom is not a Mac: Ctrl stands for ⌘.
-  await user.keyboard('{Control>}f{/Control}')
-  const field = await screen.findByRole('textbox', { name: 'Find' })
-  await user.type(field, 'a')
-  const status = screen.getByRole('status')
-  await waitFor(() => expect(status).toHaveTextContent(/of 4$/))
-  await user.click(screen.getByRole('button', { name: 'Match whole word' }))
-  await waitFor(() => expect(status).toHaveTextContent('1 of 3'))
-  await user.click(field)
-  await user.keyboard('{Enter}')
-  await waitFor(() => expect(status).toHaveTextContent('2 of 3'))
-  expect(document.querySelectorAll('.cm-searchMatch').length).toBe(3)
-
-  await user.click(screen.getByRole('button', { name: 'Show replace' }))
-  await user.type(screen.getByRole('textbox', { name: 'Replace' }), 'x')
-  await user.click(screen.getByRole('button', { name: 'Replace all' }))
   const { EditorView } = await import('@codemirror/view')
-  expect(EditorView.findFromDOM(content)!.state.doc.toString()).toBe(
-    'const x = 1\nconst ab = x + x\n',
-  )
-  await user.click(screen.getByRole('button', { name: 'Close' }))
-  expect(screen.queryByRole('search', { name: 'Find in file' })).toBeNull()
-  expect(document.querySelectorAll('.cm-searchMatch').length).toBe(0)
+  const view = EditorView.findFromDOM(content as HTMLElement)!
+  view.focus()
+  expect(screen.getByLabelText('Vim normal mode')).toBeInTheDocument()
+
+  await user.keyboard('i')
+  expect(await screen.findByLabelText('Vim insert mode')).toBeInTheDocument()
+  await user.keyboard('{Control>}o{/Control}')
+  expect(await screen.findByLabelText('Vim normal mode')).toBeInTheDocument()
+  await user.keyboard('w')
+  expect(await screen.findByLabelText('Vim insert mode')).toBeInTheDocument()
+  await user.keyboard('{Escape}')
+  view.dispatch({ selection: { anchor: 0 } })
+  await user.keyboard('if')
+  await user.keyboard('{Escape}')
+  await user.keyboard('f')
+  expect(view.state.doc.toString()).toBe('fone two\nthree four\n')
+  expect(await screen.findByLabelText('Vim normal mode')).toBeInTheDocument()
+
+  await user.keyboard('w')
+  expect(view.state.selection.main.head).toBe(5)
+  await user.keyboard('vll')
+  expect(await screen.findByLabelText('Vim visual mode')).toBeInTheDocument()
+  await user.keyboard('y')
+  expect(await screen.findByLabelText('Vim normal mode')).toBeInTheDocument()
+  await user.keyboard('p')
+  const afterPaste = view.state.doc.toString()
+  expect(afterPaste).not.toBe('fone two\nthree four\n')
+  await user.keyboard('u')
+  expect(view.state.doc.toString()).toBe('fone two\nthree four\n')
+  await user.keyboard('{Control>}r{/Control}')
+  expect(view.state.doc.toString()).toBe(afterPaste)
+  await user.keyboard('x')
+  expect(view.state.doc.toString()).not.toBe(afterPaste)
+  await user.keyboard('u')
+  expect(view.state.doc.toString()).toBe(afterPaste)
+
+  view.dispatch({ selection: { anchor: 0 } })
+  await user.keyboard('2j')
+  expect(view.state.doc.lineAt(view.state.selection.main.head).number).toBe(3)
 })
+
+test('changing Vim preference reconfigures the same dirty editor and retains history', async () => {
+  const user = userEvent.setup()
+  read.mockResolvedValue('alpha beta\n')
+  historyList.mockResolvedValue([])
+  const result = setup('src/list.txt')
+  const content = await waitFor(() => {
+    const node = document.querySelector<HTMLElement>('.cm-content')
+    if (node === null) throw new Error('no editor yet')
+    return node
+  })
+  const { EditorView } = await import('@codemirror/view')
+  const view = EditorView.findFromDOM(content)!
+  content.focus()
+  await user.keyboard('x')
+  const edited = view.state.doc.toString()
+  const selection = view.state.selection.main.head
+  view.scrollDOM.scrollTop = 31
+  act(() => lastStore.set(vimCodeEditingAtom, true))
+  await screen.findByLabelText('Vim normal mode')
+  expect(EditorView.findFromDOM(content)).toBe(view)
+  expect(view.state.doc.toString()).toBe(edited)
+  expect(view.state.selection.main.head).toBe(selection)
+  await user.keyboard('i!{Escape}')
+  const withVimEdit = view.state.doc.toString()
+  const vimSelection = view.state.selection.main.head
+  act(() => lastStore.set(vimCodeEditingAtom, false))
+  await waitFor(() => expect(screen.queryByLabelText(/Vim .* mode/)).toBeNull())
+  expect(EditorView.findFromDOM(content)).toBe(view)
+  expect(view.state.doc.toString()).toBe(withVimEdit)
+  expect(view.state.selection.main.head).toBe(vimSelection)
+  expect(view.scrollDOM.scrollTop).toBe(31)
+  act(() => lastStore.set(vimCodeEditingAtom, true))
+  await screen.findByLabelText('Vim normal mode')
+  expect(EditorView.findFromDOM(content)).toBe(view)
+  await user.keyboard('u')
+  expect(view.state.doc.toString()).toBe(edited)
+  expect(result.container.querySelector('[data-file-editor="src/list.txt"]')).toBeInTheDocument()
+})
+
+test.each([
+  ['Mac command', '{Meta>}f{/Meta}'],
+  ['Control', '{Control>}f{/Control}'],
+])(
+  '%s finds in a code file, steps through the matches and replaces them',
+  async (_platform, shortcut) => {
+    const user = userEvent.setup()
+    historyList.mockResolvedValue([])
+    write.mockResolvedValue({ ok: true })
+    read.mockResolvedValue('const a = 1\nconst ab = a + a\n')
+    setup('src/main.ts', false, true)
+    const content = await waitFor(() => {
+      const node = document.querySelector<HTMLElement>('.cm-content')
+      if (node === null) throw new Error('no editor yet')
+      return node
+    })
+    content.focus()
+    await user.keyboard(shortcut)
+    const field = await screen.findByRole('textbox', { name: 'Find' })
+    await user.type(field, 'a')
+    const status = screen.getByRole('status')
+    await waitFor(() => expect(status).toHaveTextContent(/of 4$/))
+    await user.click(screen.getByRole('button', { name: 'Match whole word' }))
+    await waitFor(() => expect(status).toHaveTextContent('1 of 3'))
+    await user.click(field)
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(status).toHaveTextContent('2 of 3'))
+    expect(document.querySelectorAll('.cm-searchMatch').length).toBe(3)
+
+    await user.click(screen.getByRole('button', { name: 'Show replace' }))
+    await user.type(screen.getByRole('textbox', { name: 'Replace' }), 'x')
+    await user.click(screen.getByRole('button', { name: 'Replace all' }))
+    const { EditorView } = await import('@codemirror/view')
+    expect(EditorView.findFromDOM(content)!.state.doc.toString()).toBe(
+      'const x = 1\nconst ab = x + x\n',
+    )
+    await user.click(screen.getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('search', { name: 'Find in file' })).toBeNull()
+    expect(document.querySelectorAll('.cm-searchMatch').length).toBe(0)
+  },
+)
 
 test('a code file reports the lines selected in it, and a caret clears them', async () => {
   historyList.mockResolvedValue([])
@@ -444,4 +548,157 @@ test('a code file switched away from and back to keeps its caret', async () => {
   const back = await find()
   expect(back.state.selection.main.anchor).toBe(9)
   expect(back.state.selection.main.head).toBe(12)
+})
+
+test('external updates reload a clean Vim buffer but do not replace a dirty one', async () => {
+  read.mockResolvedValueOnce('original\n')
+  historyList.mockResolvedValue([])
+  setup('src/external.txt', false, true)
+  const content = await waitFor(() => {
+    const node = document.querySelector<HTMLElement>('.cm-content')
+    if (node === null) throw new Error('no editor yet')
+    return node
+  })
+  const { EditorView } = await import('@codemirror/view')
+  const view = EditorView.findFromDOM(content)!
+  await screen.findByText('Saved')
+
+  read.mockResolvedValueOnce('from disk\n')
+  act(() =>
+    lastStore.set(snapshotAtom, {
+      ...emptyVaultSnapshot(),
+      files: [{ path: 'src/external.txt', updatedAt: '2026-10-24T10:00:00Z' }],
+    }),
+  )
+  await waitFor(() => expect(view.state.doc.toString()).toBe('from disk\n'))
+
+  await typeInto('local edit\n')
+  read.mockResolvedValueOnce('external conflict\n')
+  act(() =>
+    lastStore.set(snapshotAtom, {
+      ...emptyVaultSnapshot(),
+      files: [{ path: 'src/external.txt', updatedAt: '2026-10-25T10:00:00Z' }],
+    }),
+  )
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(3))
+  expect(view.state.doc.toString()).toBe('local edit\n')
+})
+
+test('Vim commands edit and undo by keyboard, while normal-mode f remains unused', async () => {
+  const user = userEvent.setup()
+  read.mockResolvedValue('alpha beta gamma\n')
+  historyList.mockResolvedValue([])
+  setup('src/vim.txt', false, true)
+  const content = await waitFor(() => {
+    const node = document.querySelector<HTMLElement>('.cm-content')
+    if (node === null) throw new Error('no editor yet')
+    return node
+  })
+  const { EditorView } = await import('@codemirror/view')
+  const view = EditorView.findFromDOM(content)!
+  content!.focus()
+
+  await user.keyboard('2w')
+  expect(view.state.selection.main.head).toBe(11)
+  await user.keyboard('vll')
+  expect(view.state.selection.main.from).toBe(11)
+  expect(view.state.selection.main.to).toBe(14)
+  await user.keyboard('d')
+  const deleted = 'alpha beta ma\n'
+  expect(view.state.doc.toString()).toBe(deleted)
+  await user.keyboard('u')
+  expect(view.state.doc.toString()).toBe('alpha beta gamma\n')
+  await user.keyboard('{Control>}r{/Control}')
+  expect(view.state.doc.toString()).toBe(deleted)
+  await user.keyboard('u')
+  expect(view.state.doc.toString()).toBe('alpha beta gamma\n')
+
+  await user.keyboard('i!{Escape}')
+  expect(view.state.doc.toString()).toBe('alpha beta !gamma\n')
+  await user.keyboard('f')
+  expect(view.state.doc.toString()).toBe('alpha beta !gamma\n')
+})
+
+test('Vim editing remains isolated to the focused editor', async () => {
+  const user = userEvent.setup()
+  read.mockResolvedValue('first second\n')
+  historyList.mockResolvedValue([])
+  setup('src/first.txt', false, true)
+  const { EditorView } = await import('@codemirror/view')
+  const firstContent = await waitFor(() => {
+    const node = document.querySelector<HTMLElement>('.cm-content')
+    if (node === null) throw new Error('no editor yet')
+    return node
+  })
+  const first = EditorView.findFromDOM(firstContent)!
+  render(
+    <Provider store={lastStore}>
+      <FileView path="src/second.txt" />
+    </Provider>,
+  )
+  await waitFor(() => expect(document.querySelectorAll('.cm-content')).toHaveLength(2))
+  const editors = [...document.querySelectorAll<HTMLElement>('.cm-content')]
+  const second = EditorView.findFromDOM(editors[1]!)!
+  first.dispatch({ selection: { anchor: 6 } })
+  second.dispatch({ selection: { anchor: 0 } })
+  editors[1]!.focus()
+  await user.keyboard('iX')
+  expect(first.state.doc.toString()).toBe('first second\n')
+  expect(second.state.doc.toString()).toBe('Xfirst second\n')
+  expect(first.state.selection.main.head).toBe(6)
+  expect(second.state.selection.main.head).toBe(1)
+  expect(screen.getByLabelText('Vim normal mode')).toBeInTheDocument()
+  expect(screen.getByLabelText('Vim insert mode')).toBeInTheDocument()
+})
+
+test('frozen Vim editors reject edit commands and become editable after thaw', async () => {
+  const user = userEvent.setup()
+  read.mockResolvedValue('alpha beta\n')
+  historyList.mockResolvedValue([])
+  setup('src/frozen.txt', false, true)
+  const content = await waitFor(() => {
+    const node = document.querySelector<HTMLElement>('.cm-content')
+    if (node === null) throw new Error('no editor yet')
+    return node
+  })
+  const { EditorView } = await import('@codemirror/view')
+  const view = EditorView.findFromDOM(content)!
+  content.focus()
+  const thaw = freezeBuffers()
+  expect(content).toHaveAttribute('contenteditable', 'false')
+  const deletion = new KeyboardEvent('keydown', {
+    key: 'x',
+    code: 'KeyX',
+    bubbles: true,
+    cancelable: true,
+  })
+  content.dispatchEvent(deletion)
+  expect(deletion.defaultPrevented).toBe(true)
+  expect(await screen.findByLabelText('Vim normal mode')).toBeInTheDocument()
+  expect(view.state.doc.toString()).toBe('alpha beta\n')
+  thaw()
+  content.focus()
+  await user.keyboard('iX{Escape}')
+  expect(view.state.doc.toString()).toBe('Xalpha beta\n')
+})
+
+test('Vim-off find handling respects keys consumed inside CodeMirror', async () => {
+  const user = userEvent.setup()
+  read.mockResolvedValue('alpha beta\n')
+  historyList.mockResolvedValue([])
+  setup('src/find.txt')
+  const content = await waitFor(() => {
+    const node = document.querySelector<HTMLElement>('.cm-content')
+    if (node === null) throw new Error('no editor yet')
+    return node
+  })
+  content.focus()
+  await user.keyboard('{Meta>}f{/Meta}')
+  expect(await screen.findByRole('textbox', { name: 'Find' })).toBeInTheDocument()
+  content.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') event.preventDefault()
+  })
+  content.focus()
+  await user.keyboard('{Escape}')
+  expect(screen.getByRole('textbox', { name: 'Find' })).toBeInTheDocument()
 })

@@ -55,7 +55,9 @@ last changed its selection owns it, and it outlives that editor's unmount, so a 
 counts while the person types to the agent in the same pane; a vault switch clears it. Typing to the
 agent focuses its own view (a session, the Agents home, a terminal), which keeps a note: in a split,
 the note beside it, the one last focused there when there are more; alone, the note focused before
-it. Any other view in front (the board, a browser tab) reports none. Tasks, backlinks and sync state the
+it. Any other view in front (the board, a browser tab) reports none. Holi never writes a secret file
+(`.env`, `.secrets` and their variants, `isSecretPath`) into the focus file, focused or open, so the
+agent is never pointed at one and existing vaults need no hook update. Tasks, backlinks and sync state the
 agent finds itself with `Glob`, `grep` and `git`. The line carries no time or count, so the same
 focus and selection print the same bytes and do not break the prompt cache.
 
@@ -188,7 +190,8 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
 
 - `holi <namespace> <verb>`: generic. It posts its argv to the bridge's `/cli`, and main reads
   it against the capabilities open at the CLI door ([vault apps](vault-apps.md)), each of which
-  declares its positional arguments and a one-line summary; bare `holi` prints them all. An
+  declares its positional arguments and a one-line summary; bare `holi` and `--help` print them
+  all and exit 0 (`--help` after a command prints its line alone). An
   argument can also be given as `--name value` (not `google api`'s method and path, which a gate
   reads by position), `--json` prints the value, and nothing may come before the verb. Exit 0 prints the answer, 1 a refusal (its code and a `next:` step), 2 a usage
   error. An answer over 16 KiB is written to `.holi/state/out/` and the command prints its path and

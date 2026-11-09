@@ -217,6 +217,75 @@ function ansiEscape(text, at) {
   return [Object.hasOwn(named, c) ? named[c] : c, 1]
 }
 
+/** Shell words that open a stage and leave its command word after them. */
+const KEYWORDS = new Set(['then', 'do', 'else', 'elif', 'if', 'while', 'until', '!', '{', 'time', 'command', 'builtin', 'exec'])
+/** Commands that run another command named in their arguments, after options
+ *  whose arity this cannot know: any Holi in such a stage may be the run. */
+const RUNNERS = new Set(['env', 'nohup', 'nice', 'sudo', 'xargs', 'timeout', 'caffeinate', 'stdbuf', 'find'])
+/**
+ * The word that runs Holi, as a regular expression's source: `holi`, a path
+ * ending in it (`./holi`, `/…/bin/holi`), or `$HOLI_BIN` / `${HOLI_BIN}`. Every
+ * test below that looks for Holi is built from this one, so they cannot drift
+ * apart. The name matches in any case, since macOS finds `HOLI` and `…/Holi` as
+ * `holi`; the variable as written, since the shell's names are case-sensitive.
+ * It starts and ends where the shell's word does, so `holi-src`, `x-holi` or
+ * `$HOLI_BINX` is not it.
+ */
+const HOLI = String.raw`(?<![^\s|;&()<>\`])(?:\$\{?HOLI_BIN\}?|(?:[^\s|;&()<>\`]*\/)?[Hh][Oo][Ll][Ii])(?![^\s|;&()<>\`])`
+/** `text` as a regular expression that matches just it. */
+const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+/** A whole word that runs Holi. */
+const HOLI_WORD = new RegExp(`^${HOLI}$`)
+const EXPANDS = /[`$]/
+
+/**
+ * Could an expansion in this line decide a `holi google` call? No string match
+ * follows a variable, so a stage that runs Holi with one in it (`holi google
+ * $VERB`), or runs whatever a variable or a substitution names (`$cmd google
+ * send`, `$(echo holi) google send`), is asked about. Read per pipeline or
+ * list stage, on its command word: `grep holi "$f"`, a path with `holi-src` in
+ * it or `gh repo view syv-ai/holi` beside a `$VAR` runs no Holi, and a gate
+ * that prompts on those teaches the user to click through prompts.
+ */
+function expandsNearHoli(command, words) {
+  const nearHoli = /holi/i.test(command)
+  // A Holi followed by `google` anywhere, not just as a stage's command word:
+  // whatever runs it (`xargs`, `find -exec`, `stdbuf`, a redirection or a
+  // backtick in front) is not a list this can finish, so any expansion in the
+  // line may decide the call. `$HOLI_BIN` itself is not such an expansion.
+  if (EXPANDS.test(words.replace(new RegExp(HOLI, 'g'), ''))) {
+    const all = words.split(/[\s|;&()`<>]+/).filter(Boolean)
+    if (all.some((t, i) => HOLI_WORD.test(t) && all[i + 1] === 'google')) return true
+  }
+  // A `$(` is cut at its parenthesis here, so a substitution standing where
+  // the command word would be reads as a stage whose word is a bare `$`.
+  for (const stage of words.split(/[|;&()\n]/)) {
+    const tokens = stage.trim().split(/[ \t]+/).filter(Boolean)
+    let i = 0
+    while (
+      i < tokens.length &&
+      (KEYWORDS.has(tokens[i]) ||
+        /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i]) ||
+        (/^-/.test(tokens[i]) && KEYWORDS.has(tokens[i - 1] ?? '')))
+    ) {
+      i++
+    }
+    const word = tokens[i]
+    if (word === undefined) continue
+    const rest = tokens.slice(i + 1)
+    // `$HOLI_BIN` is how Holi is named, not an expansion that decides what runs.
+    const expands = rest.some((t) => EXPANDS.test(t) && !HOLI_WORD.test(t))
+    if (HOLI_WORD.test(word)) {
+      if (expands) return true
+    } else if (EXPANDS.test(word)) {
+      if (nearHoli || rest.includes('google')) return true
+    } else if (RUNNERS.has(word)) {
+      if (expands && (nearHoli || rest.includes('google'))) return true
+    }
+  }
+  return false
+}
+
 /**
  * Why to ask about this command line, or `null`: does it invoke a `holi google`
  * verb that reaches someone?
@@ -227,31 +296,39 @@ function ansiEscape(text, at) {
  *
  * Three spellings of the command are live, and all must match: the bare name
  * (resolved via PATH), `$HOLI_BIN`, and an absolute path to the generated
- * script. Matched on the line as a shell reads it, so quoting, escaping or a
+ * script; `HOLI` says which. Matched on the line as a shell reads it, so quoting, escaping or a
  * line continuation anywhere in the words changes nothing. Missing one is a
  * gate that never fires. Holi refuses any word between `holi` and the verb,
  * so nothing can be slipped in between to step around this.
  */
 function reasonToAsk(command) {
   const words = asTheShellReads(command)
-  if (/(?:\bholi\b|\$\{?HOLI_BIN\}?|\/[^\s|;&()]*\bholi)\s+google\b/i.test(words) && /\b(if|then|elif|else|fi|for|while|until|do|done|case|esac|select)\b/.test(words)) {
+  if (new RegExp(String.raw`${HOLI}\s+google\b`).test(words) && /\b(if|then|elif|else|fi|for|while|until|do|done|case|esac|select)\b/.test(words)) {
     return `This Google action appears inside shell control flow.${attachmentsOf(command)} Review the command and confirm it in the native permission prompt.`
   }
-  if (/\bholi\b/.test(command) && /(\$\(|`|\$\{|\$[A-Za-z_])/.test(command)) {
+  if (expandsNearHoli(command, words)) {
     return 'This command uses dynamic shell expansion near Holi. Review it and confirm in the native permission prompt.'
   }
   if (
     /\b(?:eval|source)\b|\b(?:sh|bash|zsh)\s+-c\b/.test(command) &&
-    /holi\s+google/.test(words.replaceAll('\uE000', ' '))
+    new RegExp(String.raw`${HOLI}\s+google\b`).test(words.replaceAll('\uE000', ' '))
   ) {
     return 'This command wraps a Google action in another shell. Review it and confirm in the native permission prompt.'
   }
-  // The command word, however it was spelled, then `google`, then the verb,
-  // then the word after it. `[^\s|;&]*` keeps them adjacent within one
-  // pipeline stage, so `holi google search x | grep send` does not match.
+  // The word that runs Holi, then `google`, then the verb, then the word
+  // after it. `[ \t]+` keeps them adjacent within one pipeline stage, so
+  // `holi google search x | grep send` does not match. Holi is the stage's
+  // command word, after any keyword, assignment or redirection, or follows a
+  // runner and its arguments (`sudo -u ada holi`, `/usr/bin/env holi`, `exec
+  // -a x holi`), so `echo holi google send` runs nothing. A command word that
+  // is an absolute path counts as a runner too, since a path with a space in
+  // it, left unquoted, reads as several words.
+  const word = String.raw`[^\s|;&()]+`
   const invocation = new RegExp(
     String.raw`(?:^|[|;&(\n])\s*` + // start of a command
-      String.raw`(?:command[ \t]+)?(?:\$\{?HOLI_BIN\}?|/[^|;&(\n]*?\bholi|[^\s|;&(\n]*\bholi)` + // the binary
+      String.raw`(?:(?:${[...KEYWORDS].map(literal).join('|')}|[A-Za-z_][A-Za-z0-9_]*=${word}|-${word}|\d*[<>]+&?[ \t]*${word})[ \t]+)*` + // keywords
+      String.raw`(?:(?:(?:${word}/)?(?:${[...RUNNERS, 'exec'].join('|')})|/${word})(?:[ \t]+${word})*?[ \t]+)?` + // a runner
+      HOLI + // the binary
       String.raw`[ \t]+google` + // the group; never cross a command boundary
       String.raw`[ \t]+([A-Za-z-]+)\b` + // the verb
       String.raw`(?:[ \t]+([^\s|;&(]*))?`, // the word after it

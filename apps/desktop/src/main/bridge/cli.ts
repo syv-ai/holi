@@ -43,6 +43,8 @@ export type CliRequest =
     }
   /** Not a command: the text says why and what is (exit 2). */
   | { kind: 'usage'; text: string }
+  /** Asked for usage, bare or with --help: the text is the answer (exit 0). */
+  | { kind: 'help'; text: string }
   /** The command reads a param from stdin and it was not given: ask the
    *  script for stdin, and run nothing yet. */
   | { kind: 'stdin' }
@@ -62,6 +64,9 @@ function commandLine({ name, cli }: CliCommand): string {
   for (const name of cli.many ?? []) words.push(`[--${name} <${name}>]...`)
   return words.join(' ')
 }
+
+/** `--help` or `-h`: asks for usage, whichever command it follows. */
+const HELP = new Set(['--help', '-h'])
 
 /** Every command and its summary, for bare `holi`. */
 function usageText(commands: readonly CliCommand[]): string {
@@ -92,7 +97,17 @@ export function resolveArgv(
     kind: 'usage',
     text: `${why}\n\n${usageText(commands)}`,
   })
-  if (argv.length === 0) return { kind: 'usage', text: usageText(commands) }
+  // Asking for usage is not an error: bare `holi` and any `--help` before a
+  // `--` answer it and run nothing, the one command's line when one is named.
+  const end = argv.indexOf('--')
+  if (argv.length === 0 || (end < 0 ? argv : argv.slice(0, end)).some((w) => HELP.has(w))) {
+    const named = commands.find((c) => c.name === `${argv[0]}.${argv[1]}`)
+    const text =
+      named === undefined
+        ? usageText(commands)
+        : `usage: ${commandLine(named)}\n${named.cli.summary}`
+    return { kind: 'help', text }
+  }
   const [ns, verb] = argv
   if (ns === undefined || ns.startsWith('-') || verb === undefined || verb.startsWith('-')) {
     return usage('holi: say the command first: holi <namespace> <verb>')

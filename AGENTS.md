@@ -303,7 +303,9 @@ Gotchas of a fresh checkout or worktree that no file states.
   and `ResizablePanelGroup` `animateFirst`; `PanelSeparator` variant `line`;
   `motion-reduce` on `Skeleton` and `Spinner`; the scroll fade on `CommandList`; ReUI
   `KanbanBoard` variant `row`, `FramePanel` `flush`, `TreeItem` `arrived`, the data grid's
-  `tableLayout.edgeInset`. `git log -p -- apps/desktop/src/renderer/src/components` shows
+  `tableLayout.edgeInset`; the event calendar's gridlines, one `--ec-grid-line` token (the
+  theme's `--divider`, muted) set on its root and read by the time grid, month and resource
+  views. `git log -p -- apps/desktop/src/renderer/src/components` shows
   each. Need a look a stock component lacks? Add a variant there, never a className at
   the call site (`@shadcn/lint`'s `no-restyle`).
 - knip treats an export tagged `/** @public */` as used. That tag marks the plugin seam

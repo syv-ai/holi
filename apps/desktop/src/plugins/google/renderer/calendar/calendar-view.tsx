@@ -42,7 +42,8 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { IconButton } from '@/composites/icon-button'
 import { toast } from 'sonner'
 import {
   activeRemoteAtom,
@@ -477,28 +478,21 @@ export function CalendarView(): React.JSX.Element {
                   onToggle={calendar.setCalendarEnabled}
                 />
               </div>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    disabled={calendar.loading}
-                    onClick={calendar.reload}
-                  >
-                    <RefreshCwIcon className="size-4" aria-hidden="true" />
-                    <span className="sr-only">Refresh</span>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Refresh</TooltipContent>
-              </Tooltip>
-              <Button
-                className="flex-1 sm:flex-none"
+              <IconButton
+                label="Refresh"
+                size="icon"
+                disabled={calendar.loading}
+                onClick={calendar.reload}
+              >
+                <RefreshCwIcon className="size-4" aria-hidden="true" />
+              </IconButton>
+              <IconButton
+                label="New event"
+                size="icon"
                 onClick={() => openCreate(quickAddStart(date), false)}
               >
                 <PlusIcon className="size-4" aria-hidden="true" />
-                New event
-              </Button>
+              </IconButton>
             </EventCalendarToolbar>
           </div>
           {calendar.status.kind === 'error' && (

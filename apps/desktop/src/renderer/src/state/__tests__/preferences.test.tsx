@@ -6,11 +6,12 @@
  * measured geometry and jsdom measures nothing. What *is* testable is which
  * store a layout lands in, and the `isUserInteraction` guard.
  */
-import { Provider, createStore } from 'jotai'
+import { Provider, createStore, useAtomValue } from 'jotai'
 import { beforeEach, expect, test } from 'vitest'
 import { render } from '@/test/render'
 import {
   globalPanelLayoutsAtom,
+  vimCodeEditingAtom,
   useGlobalPanelLayout,
   type PanelLayoutBinding,
 } from '../preferences'
@@ -22,10 +23,56 @@ function Probe({ bind }: { bind: (binding: PanelLayoutBinding) => void }): null 
   return null
 }
 
+function VimProbe({ bind }: { bind: (value: boolean) => void }): null {
+  bind(useAtomValue(vimCodeEditingAtom))
+  return null
+}
+
 const DRAG = { isUserInteraction: true }
 const REFLOW = { isUserInteraction: false }
 
 beforeEach(() => localStorage.clear())
+
+test.each(['"true"', '[]', '{'])(
+  'Vim preference validates malformed local storage on mount: %s',
+  (raw) => {
+    localStorage.setItem('holi:vimCodeEditing', raw)
+    const store = createStore()
+    let restored = true
+    render(
+      <Provider store={store}>
+        <VimProbe bind={(value) => (restored = value)} />
+      </Provider>,
+    )
+    expect(restored).toBe(false)
+  },
+)
+
+test('Vim editing is off by default, machine-wide, and rejects malformed stored values', () => {
+  expect(createStore().get(vimCodeEditingAtom)).toBe(false)
+
+  localStorage.setItem('holi:vimCodeEditing', JSON.stringify('true'))
+  expect(createStore().get(vimCodeEditingAtom)).toBe(false)
+
+  const firstLaunch = createStore()
+  render(
+    <Provider store={firstLaunch}>
+      <Probe bind={() => undefined} />
+      <VimProbe bind={() => undefined} />
+    </Provider>,
+  )
+  firstLaunch.set(vimCodeEditingAtom, true)
+  expect(localStorage.getItem('holi:vimCodeEditing')).toBe('true')
+
+  const restarted = createStore()
+  let restored = false
+  render(
+    <Provider store={restarted}>
+      <VimProbe bind={(value) => (restored = value)} />
+    </Provider>,
+  )
+  expect(restored).toBe(true)
+})
 
 test('a drag on an account-wide split is stored without a vault in the key', () => {
   const store = createStore()

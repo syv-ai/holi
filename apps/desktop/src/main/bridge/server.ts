@@ -115,7 +115,8 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
    * order, and a background session's job id as `job`. The output is the
    * answer itself, so it answers text: 200 with it (or, past `SPILL_BYTES`,
    * with where it was written, as JSON when the answer was asked for as JSON),
-   * 422 with a refusal and its next step, 400 with usage, or 428, having run
+   * 422 with a refusal and its next step, 400 with usage (200 when usage was
+   * what was asked for), or 428, having run
    * nothing, when the command reads a param from stdin that was not given.
    */
   async function runCli(remote: string, body: string): Promise<Reply> {
@@ -128,6 +129,7 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
       form.get('job'),
     )
     if (request.kind === 'usage') return { status: 400, body: request.text }
+    if (request.kind === 'help') return { status: 200, body: request.text }
     if (request.kind === 'stdin') return { status: 428 }
     let output: string
     try {
