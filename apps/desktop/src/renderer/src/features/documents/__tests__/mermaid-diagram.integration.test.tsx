@@ -44,6 +44,8 @@ describe('real Mermaid SVG styling', () => {
       expect(drawing.querySelector('[data-mermaid-original-id]')).toBeTruthy()
     }
     expect(first!.id).not.toBe(second!.id)
+    expect(first!.style.maxWidth).toBe('116px')
+    expect(second!.style.maxWidth).toBe('none')
     expect(first!.querySelector('style')?.textContent).not.toBe(
       second!.querySelector('style')?.textContent,
     )

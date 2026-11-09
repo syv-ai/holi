@@ -155,23 +155,25 @@ describe('rendered media inspection through the document editor', () => {
     },
   )
 
-  it('reaches the media toolbar with Alt+F10 and returns focus to the editor on Escape', async () => {
+  it('targets only the selected media toolbar with Alt+F10 and returns focus on Escape', async () => {
     const user = userEvent.setup()
-    const e = mount(`${diagram}\n\nAfter`)
-    await waitFor(() => expect(document.querySelector('[data-mermaid-diagram] svg')).toBeTruthy())
-    const updated = vi.fn()
-    e.on('update', updated)
-
+    const e = mount(`${picture}\n\n${picture}\n\nAfter`)
+    await screen.findAllByRole('button', { name: 'Open larger' })
+    const imagePositions: number[] = []
+    e.state.doc.descendants((node, position) => {
+      if (node.type.name === 'image') imagePositions.push(position)
+    })
+    expect(screen.getAllByRole('button', { name: 'Open larger' })).toHaveLength(2)
     act(() => {
-      e.commands.setTextSelection(e.state.doc.content.size - 1)
+      e.commands.setNodeSelection(imagePositions[0]!)
       e.view.focus()
     })
-    const sourceAction = screen.getByRole('button', { name: 'Edit source' })
+    const actions = screen.getAllByRole('button', { name: 'Open larger' })
     fireEvent.keyDown(e.view.dom, { key: 'F10', altKey: true })
-    await waitFor(() => expect(document.activeElement).toBe(sourceAction))
+    await waitFor(() => expect(document.activeElement).toBe(actions[0]))
+    expect(document.activeElement).not.toBe(actions[1])
     await user.keyboard('{Escape}')
     await waitFor(() => expect(e.view.hasFocus()).toBe(true))
-    expect(updated).not.toHaveBeenCalled()
   })
 
   it('keeps explicit source editing and undo functional', async () => {
@@ -262,7 +264,7 @@ describe('rendered media inspection through the document editor', () => {
     const user = userEvent.setup()
     draw.mockImplementation(() =>
       Promise.resolve({
-        svg: '<svg xmlns="http://www.w3.org/2000/svg" id="root"><defs><linearGradient id="paint" /></defs><rect id="node" fill="url(#paint)" aria-labelledby="node" /></svg>',
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" id="root" style="max-width: 137px"><defs><linearGradient id="paint" /></defs><rect id="node" fill="url(#paint)" aria-labelledby="node paint" aria-describedby="paint node" /></svg>',
       }),
     )
     mount(diagram)
@@ -277,7 +279,7 @@ describe('rendered media inspection through the document editor', () => {
     const enlarged = roots[1]!
     const ids = roots.map((root) => root.id)
     expect(new Set(ids).size).toBe(2)
-    expect(inline.style.maxWidth).toBe('20rem')
+    expect(inline.style.maxWidth).toBe('137px')
     expect(enlarged.style.maxWidth).toBe('none')
     const inlineId = inline.querySelector('[data-mermaid-source-id$="paint"]')?.id
     const enlargedId = enlarged.querySelector('[data-mermaid-source-id$="paint"]')?.id
@@ -286,7 +288,20 @@ describe('rendered media inspection through the document editor', () => {
     expect(inlineId).not.toBe(enlargedId)
     expect(inline.querySelector('rect')?.getAttribute('fill')).toBe(`url(#${inlineId})`)
     expect(enlarged.querySelector('rect')?.getAttribute('fill')).toBe(`url(#${enlargedId})`)
-    expect(inline.querySelector('rect')?.getAttribute('aria-labelledby')).not.toBe('node')
+    const inlineRect = inline.querySelector('rect')!
+    const enlargedRect = enlarged.querySelector('rect')!
+    expect(inlineRect.getAttribute('aria-labelledby')).toBe(
+      `${inlineId?.replace(/paint$/, 'node')} ${inlineId}`,
+    )
+    expect(inlineRect.getAttribute('aria-describedby')).toBe(
+      `${inlineId} ${inlineId?.replace(/paint$/, 'node')}`,
+    )
+    expect(enlargedRect.getAttribute('aria-labelledby')).toBe(
+      `${enlargedId?.replace(/paint$/, 'node')} ${enlargedId}`,
+    )
+    expect(enlargedRect.getAttribute('aria-describedby')).toBe(
+      `${enlargedId} ${enlargedId?.replace(/paint$/, 'node')}`,
+    )
   })
 
   it('resolves relative images without changing Markdown and recovers from a preview error', async () => {
