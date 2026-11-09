@@ -53,8 +53,8 @@ describe('Mermaid fences in a document editor', () => {
     renderMermaid.mockImplementationOnce(() => new Promise(() => undefined))
     makeEditor('```mermaid\nflowchart LR\n```')
     fireEvent.click(await screen.findByRole('button', { name: 'Open Mermaid diagram' }))
-    const dialog = await screen.findByRole('dialog')
-    expect(dialog.querySelector('[role="status"]')?.textContent).toContain('Rendering diagram…')
+    await screen.findByRole('dialog')
+    expect(document.querySelector('[role="status"]')?.textContent).toContain('Rendering diagram…')
   })
 
   it('renders valid fences at rest and returns to source while the caret is inside', async () => {

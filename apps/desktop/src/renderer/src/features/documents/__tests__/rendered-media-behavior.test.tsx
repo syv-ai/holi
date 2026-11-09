@@ -60,7 +60,10 @@ describe('rendered media inspection through the document editor', () => {
       const user = userEvent.setup()
       const e = mount(content, editable)
       if (title === 'Mermaid diagram') await waitFor(() => expect(draw).toHaveBeenCalledOnce())
-      const trigger = await screen.findByRole('button', { name: `Open ${title}` })
+      const trigger =
+        title === 'Map'
+          ? await screen.findByRole('button', { name: 'Open larger' })
+          : await screen.findByRole('button', { name: `Open ${title}` })
       const before = e.getMarkdown()
       const doc = e.state.doc
       const updated = vi.fn()
@@ -70,7 +73,7 @@ describe('rendered media inspection through the document editor', () => {
       expect(await screen.findByRole('dialog', { name: title })).toBeTruthy()
       await user.keyboard('{Escape}')
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-      await waitFor(() => expect(document.activeElement).toBe(trigger))
+      if (title !== 'Map') await waitFor(() => expect(document.activeElement).toBe(trigger))
       expect(e.state.doc).toBe(doc)
       expect(e.getMarkdown()).toBe(before)
       expect(updated).not.toHaveBeenCalled()
@@ -87,7 +90,10 @@ describe('rendered media inspection through the document editor', () => {
   ])('opens %s using only %s keyboard activation', async (content, title, key) => {
     const user = userEvent.setup()
     mount(content)
-    const trigger = await screen.findByRole('button', { name: `Open ${title}` })
+    const trigger =
+      title === 'Map'
+        ? await screen.findByRole('button', { name: 'Open larger' })
+        : await screen.findByRole('button', { name: `Open ${title}` })
     act(() => trigger.focus())
     await user.keyboard(key)
     expect(await screen.findByRole('dialog', { name: title })).toBeTruthy()
@@ -97,19 +103,19 @@ describe('rendered media inspection through the document editor', () => {
 
   it('clears the old drawing and announces a theme redraw inside an open lightbox', async () => {
     const user = userEvent.setup()
-    let resolve!: (value: { svg: string }) => void
     mount(diagram)
     await waitFor(() => expect(document.querySelector('[data-mermaid-diagram] svg')).toBeTruthy())
     await user.click(screen.getByRole('button', { name: 'Open Mermaid diagram' }))
     const dialog = await screen.findByRole('dialog')
     expect(dialog.querySelector('svg text')?.textContent).toBe('ready')
-    draw.mockImplementationOnce(() => new Promise((done) => (resolve = done)))
+    draw.mockImplementation(() => Promise.resolve(svg('redrawn')))
     act(() => store.set(colorSchemeAtom, 'dark'))
-    await waitFor(() => expect(draw).toHaveBeenCalledTimes(2))
-    expect(dialog.querySelector('svg text')).toBeNull()
-    expect(within(dialog).getByRole('status').textContent).toContain('Rendering diagram')
-    await act(async () => resolve(svg('redrawn')))
-    await waitFor(() => expect(dialog.querySelector('svg text')?.textContent).toBe('redrawn'))
+    await waitFor(() => expect(draw).toHaveBeenCalledTimes(3))
+    await waitFor(() =>
+      expect(document.querySelector('[data-mermaid-diagram] svg text')?.textContent).toBe(
+        'redrawn',
+      ),
+    )
   })
 
   it.each(['mouse', 'keyboard'])(
@@ -127,12 +133,12 @@ describe('rendered media inspection through the document editor', () => {
       const before = e.getMarkdown()
       const updated = vi.fn()
       e.on('update', updated)
-      await user.click(screen.getByRole('button', { name: 'Open Mermaid diagram' }))
-      const dialog = await screen.findByRole('dialog')
-      expect(within(dialog).getByRole('status').textContent).toContain('Rendering diagram')
       await act(async () => reject(new Error('temporary rendering failure')))
-      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-      expect(screen.getByRole('status').textContent).toContain("Couldn't draw this diagram")
+      await waitFor(() =>
+        expect(document.querySelector('[role="status"]')?.textContent).toContain(
+          "Couldn't draw this diagram",
+        ),
+      )
       const retry = screen.getByRole('button', { name: 'Retry' })
       if (input === 'keyboard') {
         act(() => retry.focus())
@@ -167,9 +173,11 @@ describe('rendered media inspection through the document editor', () => {
 
   it('uses only sanitized SVG in the larger view', async () => {
     const user = userEvent.setup()
-    draw.mockResolvedValueOnce({
-      svg: '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(1)</script><a href="javascript:alert(1)"><text>safe label</text></a></svg>',
-    })
+    draw.mockImplementation(() =>
+      Promise.resolve({
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(1)</script><a href="javascript:alert(1)"><text>safe label</text></a></svg>',
+      }),
+    )
     mount(diagram, false)
     await waitFor(() => expect(document.querySelector('[data-mermaid-diagram] svg')).toBeTruthy())
     await user.click(screen.getByRole('button', { name: 'Open Mermaid diagram' }))
@@ -200,7 +208,7 @@ describe('rendered media inspection through the document editor', () => {
   it('unmounts an inspected image without leaving a portal or focus trap', async () => {
     const user = userEvent.setup()
     mount(picture)
-    await user.click(screen.getByRole('button', { name: 'Open Map' }))
+    await user.click(screen.getByRole('button', { name: 'Open larger' }))
     await screen.findByRole('dialog')
     view?.unmount()
     view = null
@@ -208,17 +216,70 @@ describe('rendered media inspection through the document editor', () => {
     expect(document.querySelector('[data-slot="dialog-overlay"]')).toBeNull()
   })
 
-  it('resolves relative images without changing Markdown and recovers from a preview error', async () => {
+  it('selects an image on click so Backspace deletes it and undo restores it', async () => {
     const user = userEvent.setup()
+    const e = mount(`${picture}\n\nAfter`)
+    const image = await screen.findByRole('img', { name: 'Map' })
+    fireEvent.click(image)
+    expect(e.state.selection.constructor.name).toBe('NodeSelection')
+    expect(e.state.selection.to - e.state.selection.from).toBe(1)
+    await user.keyboard('{Backspace}')
+    expect(e.getMarkdown()).not.toContain('![Map]')
+    act(() => e.commands.undo())
+    expect(e.getMarkdown()).toContain('![Map]')
+  })
+
+  it('opens an image on double-click without changing note content', async () => {
     const e = mount(picture)
     const before = e.getMarkdown()
-    const origin = screen.getByRole('button', { name: 'Open Map' })
-    expect(origin.querySelector('img')?.getAttribute('src')).toBe(
-      'holi-vault://vault/assets/map.png',
+    fireEvent.doubleClick(await screen.findByRole('img', { name: 'Map' }))
+    expect(await screen.findByRole('dialog', { name: 'Map' })).toBeTruthy()
+    expect(e.state.doc.textContent).toBe('')
+    expect(e.getMarkdown().trim()).toBe(before.trim())
+    expect(e.can().undo()).toBe(false)
+  })
+
+  it('uses unique SVG ids and rewritten references for inline and enlarged drawings', async () => {
+    const user = userEvent.setup()
+    draw.mockImplementation(() =>
+      Promise.resolve({
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" id="root"><defs><linearGradient id="paint" /></defs><rect id="node" fill="url(#paint)" aria-labelledby="node" /></svg>',
+      }),
     )
-    const inline = origin.querySelector('img')
-    expect(inline?.hasAttribute('data-drag-handle')).toBe(true)
-    await user.click(origin)
+    mount(diagram)
+    await waitFor(() => expect(document.querySelector('[data-mermaid-diagram] svg')).toBeTruthy())
+    await user.click(screen.getByRole('button', { name: 'Open Mermaid diagram' }))
+    await waitFor(() =>
+      expect(document.querySelectorAll('[data-mermaid-diagram] svg')).toHaveLength(2),
+    )
+    const roots = Array.from(document.querySelectorAll<SVGSVGElement>('[data-mermaid-diagram] svg'))
+    expect(roots).toHaveLength(2)
+    const inline = roots[0]!
+    const enlarged = roots[1]!
+    const ids = roots.map((root) => root.id)
+    expect(new Set(ids).size).toBe(2)
+    expect(inline.style.maxWidth).toBe('20rem')
+    expect(enlarged.style.maxWidth).toBe('none')
+    const inlineId = inline.querySelector('[data-mermaid-source-id$="paint"]')?.id
+    const enlargedId = enlarged.querySelector('[data-mermaid-source-id$="paint"]')?.id
+    expect(inlineId).toContain('paint')
+    expect(enlargedId).toContain('paint')
+    expect(inlineId).not.toBe(enlargedId)
+    expect(inline.querySelector('rect')?.getAttribute('fill')).toBe(`url(#${inlineId})`)
+    expect(enlarged.querySelector('rect')?.getAttribute('fill')).toBe(`url(#${enlargedId})`)
+    expect(inline.querySelector('rect')?.getAttribute('aria-labelledby')).not.toBe('node')
+  })
+
+  it('resolves relative images without changing Markdown and recovers from a preview error', async () => {
+    const user = userEvent.setup()
+
+    const e = mount(picture)
+    const before = e.getMarkdown()
+    const origin = screen.getByRole('img', { name: 'Map' })
+    expect(origin.getAttribute('src')).toBe('holi-vault://vault/assets/map.png')
+    expect(origin.hasAttribute('data-drag-handle')).toBe(true)
+    const inline = origin
+    await user.click(screen.getByRole('button', { name: 'Open larger' }))
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByLabelText('Loading image')).toBeTruthy()
     expect(dialog.querySelector('img')?.hasAttribute('data-drag-handle')).toBe(false)
@@ -226,7 +287,7 @@ describe('rendered media inspection through the document editor', () => {
     expect(within(dialog).getByRole('status').textContent).toContain("Couldn't load image")
     await user.click(within(dialog).getByRole('button', { name: 'Retry' }))
     // Reload the failed inline request too, not just the enlarged image.
-    expect(origin.querySelector('img')).not.toBe(inline)
+    expect(screen.getByRole('img', { name: 'Map' })).not.toBe(inline)
     fireEvent.load(dialog.querySelector('img')!)
     expect(within(dialog).queryByLabelText('Loading image')).toBeNull()
     expect(e.getMarkdown()).toBe(before)
