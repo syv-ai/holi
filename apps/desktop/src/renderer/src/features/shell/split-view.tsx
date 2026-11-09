@@ -140,7 +140,8 @@ export function SplitView({
   onShareChange: (key: string, share: number) => void
 }) {
   const [ws, setWs] = useAtom(shellWorkspaceAtom)
-  const dragging = useAtomValue(tabDragAtom)
+  const drag = useAtomValue(tabDragAtom)
+  const dragging = drag?.key ?? null
   const setDrag = useSetAtom(tabDragAtom)
   const look = useTabLook()
 

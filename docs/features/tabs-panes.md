@@ -113,9 +113,18 @@ stock `Popover` holding a `Command` list (`tab-switcher.tsx`) that takes no focu
 the editor or terminal it was in. ⌃Tab reaches it from there because its row runs before the
 focused widget sees the key ([keyboard shortcuts](keyboard-shortcuts.md)).
 
-Entries drag along the strip to reorder (a hairline marks where it would land). A tab's
-right-click menu: **Open in split view**, Close, Close others, Close tabs to the right, Reopen
-closed tab. A split's: **Separate**, then the same closes. The strip's ⋯ holds Split view,
+Entries drag along the strip to reorder (a hairline marks where it would land). Drag an entry
+over the middle half of another pill to combine; the outer quarters still reorder. A whole split
+pill moves its group, while dragging one member's subsection moves only that view. The target
+pill previews the target-first result without changing the workspace. Drop commits it; a closed
+source, removed target, cross-vault gesture, self-drop, duplicate member, or result over four
+views is rejected. When a center combine is ineligible, that area falls back to strip reordering.
+Leaving the strip, ending or cancelling the native drag clears the preview without committing.
+A successful combine focuses the dragged view (the first member when a group is dragged) and
+shares the available width evenly across the resulting members, like other split creation.
+
+A tab's right-click menu: **Open in split view**, Close, Close others, Close tabs to the right,
+Reopen closed tab. A split's: **Separate**, then the same closes. The strip's ⋯ holds Split view,
 Separate (with a split active), Reopen closed tab and Close all tabs.
 
 **Opening.** A view already open is selected where it is: its tab, or its split with it focused.
