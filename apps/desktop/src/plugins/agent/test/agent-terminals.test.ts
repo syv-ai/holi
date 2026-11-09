@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { PtyProcess } from '../main/host/pty'
+import type { PtyProcess, SpawnPty } from '../main/host/pty'
 import { terminalCommand } from '../main/claude/cli'
 import { createAgentTerminals } from '../main/host/terminals'
 
@@ -43,7 +43,12 @@ const on = (attach?: string, bin: string | null = '/usr/local/bin/claude') => ({
 })
 
 function setup() {
-  const spawns: Array<{ pty: FakePty; file: string; args: string[]; opts: any }> = []
+  const spawns: Array<{
+    pty: FakePty
+    file: string
+    args: string[]
+    opts: Parameters<SpawnPty>[2]
+  }> = []
   const sent: Array<[string, unknown]> = []
   const terminals = createAgentTerminals({
     emit: (_remote: string, name: string, payload: unknown) => sent.push([name, payload]),
@@ -77,7 +82,7 @@ describe('agent terminals', () => {
     for (const { opts } of spawns) {
       expect(opts.cwd).toBe(TARGET.root)
       expect(opts.env.CLAUDE_CONFIG_DIR).toBe('/cfg/vault')
-      expect(opts.env.PATH.split(':')[0]).toBe('/holi/bin')
+      expect(opts.env.PATH?.split(':')[0]).toBe('/holi/bin')
     }
     expect(terminals.list().map((t) => t.launchedFor)).toEqual([null, '1234abcd'])
   })

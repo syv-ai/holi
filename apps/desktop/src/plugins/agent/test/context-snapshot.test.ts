@@ -14,10 +14,18 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
 })
 
+/** The context file as the agent reads it off disk. */
+interface Written {
+  focusedPath: string | null
+  selection: unknown
+  openPaths: string[]
+  updatedAt: unknown
+}
+
 interface Rig {
   snapshot: ContextSnapshot
   root: string
-  read(): Promise<any>
+  read(): Promise<Written>
 }
 
 async function rig(): Promise<Rig> {

@@ -114,9 +114,11 @@ export interface Capability<P = unknown, R = unknown> {
   cliSucceeded?(result: R): boolean
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-/** @public exported for its test */
-export type AnyCapability = Capability<any, any>
+/** Any entry, whatever its params and result: its methods take them as
+ *  method parameters, which TypeScript checks both ways, so every
+ *  `Capability<P, R>` fits.
+ * @public exported for its test */
+export type AnyCapability = Capability<unknown, unknown>
 
 /** One owner's entries, by full name. */
 export type CapabilityTable = Readonly<Record<string, AnyCapability>>
