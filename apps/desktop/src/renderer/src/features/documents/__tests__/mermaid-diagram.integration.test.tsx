@@ -1,7 +1,7 @@
 import { act, render } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import * as mermaidRenderer from '@/lib/mermaid-renderer'
+import mermaid from 'mermaid'
 import { MermaidDiagram } from '../rich-text/mermaid-diagram'
 
 type SvgLayoutElement = SVGElement & { getBBox: () => DOMRect; getComputedTextLength: () => number }
@@ -25,7 +25,7 @@ afterEach(() => {
 describe('real Mermaid SVG styling', () => {
   it('rewrites generated CSS selectors and URL references per rendered instance', async () => {
     polyfillSvgLayout()
-    const renders = vi.spyOn(mermaidRenderer, 'renderMermaid')
+    const renders = vi.spyOn(mermaid, 'render')
     const source = `flowchart LR\n  A[Alpha]:::custom --> B[Beta]\n  classDef custom fill:#ff0000,stroke:#0000ff,color:#ffffff`
     const view = render(
       <>
@@ -33,6 +33,9 @@ describe('real Mermaid SVG styling', () => {
         <MermaidDiagram source={source} theme="default" enlarged />
       </>,
     )
+    await act(async () => {
+      await import('mermaid')
+    })
     expect(renders).toHaveBeenCalledTimes(2)
     await act(async () => {
       await Promise.all(renders.mock.results.map((result) => result.value))
