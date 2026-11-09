@@ -9,6 +9,7 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { emptyVaultSnapshot } from '@holi/shared'
+import { resolveArgv } from '../../../main/bridge/cli'
 import type { CapabilityError } from '../../../main/capabilities/error'
 import { resolveArgv } from '../../../main/bridge/cli'
 import { createCapabilityRegistry, type Door } from '../../../main/capabilities/registry'
@@ -73,7 +74,7 @@ function rig({ data = {}, accounts = {} }: RigOptions = {}) {
     (await run(name, params, remote, 'ui')).value
   /** The agent's `holi google <name>`: the value `--json` prints, and the text. */
   const cli = (name: string, params?: unknown) => run(name, params, 'owner/repo', 'cli')
-  return { call, cli, calls }
+  return { call, cli, calls, commands: registry.commands() }
 }
 
 it('lists --full in the generated usage for google read', () => {
@@ -361,8 +362,33 @@ describe('what other people wrote, at the CLI door', () => {
   const page = { threads: [INJECTED], nextPageToken: null, syncedAt: '2026-10-21T08:00:00Z' }
 
   it('fences a search for the agent, in --json and in text, and leaves the UI its values', async () => {
-    const { call, cli } = rig({ data: { threads: async () => page } })
-    const { value, text } = await cli('search', { query: 'is:unread' })
+    const requested: unknown[] = []
+    const { call, cli, commands } = rig({
+      data: {
+        threads: async (options) => {
+          requested.push(options)
+          return page
+        },
+      },
+    })
+    const { value, text } = await cli('search', { query: 'in:inbox is:unread' })
+    const projected = value as typeof page
+    expect(projected).toMatchObject({
+      nextPageToken: null,
+      syncedAt: page.syncedAt,
+      threads: [{ id: INJECTED.id, from: { email: INJECTED.from.email } }],
+    })
+    expect(projected.threads[0]!.from.name).toMatch(/^<untrusted /)
+    expect(JSON.parse(text)).toEqual(projected.threads)
+    const request = resolveArgv(
+      ['google', 'search', 'in:inbox newer_than:7d', '--pageToken', 'next', '--json'],
+      commands,
+      null,
+    )
+    expect(request).toMatchObject({ kind: 'run', name: 'google.search', json: true })
+    if (request.kind !== 'run') throw new Error('the documented search command must run')
+    await cli('search', request.params)
+    expect(requested.at(-1)).toMatchObject({ query: 'in:inbox newer_than:7d', pageToken: 'next' })
     const snippet = (value as typeof page).threads[0]!.snippet
     expect(snippet).toMatch(/^<untrusted id="[0-9a-f]+" source="mail" from="mallory@example.com">/)
     expect(closesOnlyAtTheEnd(snippet)).toBe(true)
@@ -516,7 +542,10 @@ describe('what other people wrote, at the CLI door', () => {
       recurring: false,
     }
     const { call, cli } = rig({ data: { agenda: async () => [event] } })
-    const [fenced] = (await cli('agenda')).value as (typeof event)[]
+    const agenda = await cli('agenda')
+    expect(Array.isArray(agenda.value)).toBe(true)
+    expect(JSON.parse(agenda.text)).toEqual(agenda.value)
+    const [fenced] = agenda.value as (typeof event)[]
     for (const prose of [
       fenced!.title,
       fenced!.description,
