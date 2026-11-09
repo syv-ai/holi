@@ -4,6 +4,38 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 
+function rewriteCssIds(css: string, ids: Map<string, string>): string {
+  const rewriteSelector = (selector: string) =>
+    Array.from(ids.entries()).reduce((result, [original, replacement]) => {
+      const escaped = original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      return result.replace(new RegExp(`#${escaped}(?![\\w-])`, 'g'), `#${replacement}`)
+    }, selector)
+  const rewriteRules = (rules: string): string => {
+    let result = ''
+    let cursor = 0
+    while (cursor < rules.length) {
+      const open = rules.indexOf('{', cursor)
+      if (open === -1) return result + rules.slice(cursor)
+      let depth = 1
+      let close = open + 1
+      while (close < rules.length && depth > 0) {
+        if (rules[close] === '{') depth += 1
+        else if (rules[close] === '}') depth -= 1
+        close += 1
+      }
+      const prelude = rules.slice(cursor, open)
+      const body = rules.slice(open + 1, close - 1)
+      const trimmed = prelude.trimStart()
+      result += `${trimmed.startsWith('@') ? prelude : rewriteSelector(prelude)}{${trimmed.startsWith('@') ? rewriteRules(body) : body}}`
+      cursor = close
+    }
+    return result
+  }
+  return rewriteRules(css).replace(/url\(#([^)]+)\)/g, (_, id: string) =>
+    ids.has(id) ? `url(#${ids.get(id)})` : `url(#${id})`,
+  )
+}
+
 /** Draw one sanitized Mermaid diagram; every drawing gets isolated SVG ids and references. */
 export function MermaidDiagram({
   source,
@@ -80,7 +112,11 @@ export function MermaidDiagram({
         ? original.slice(instanceId.length + 1)
         : original
       element.setAttribute('data-mermaid-source-id', sourceId)
+      element.setAttribute('data-mermaid-original-id', sourceId)
       element.id = replacement
+    }
+    for (const style of root.querySelectorAll('style')) {
+      style.textContent = rewriteCssIds(style.textContent ?? '', ids)
     }
     for (const element of [root, ...root.querySelectorAll('*')]) {
       for (const attribute of Array.from(element.attributes)) {

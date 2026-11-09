@@ -59,7 +59,7 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
     <NodeViewWrapper className="tiptap-code-block">
       {showDiagram ? (
         <div contentEditable={false} className="group/media relative max-w-fit" data-media-root="">
-          <RenderedMediaToolbar>
+          <RenderedMediaToolbar editor={editor}>
             {editable ? (
               <RenderedMediaAction onClick={editSource}>Edit source</RenderedMediaAction>
             ) : null}

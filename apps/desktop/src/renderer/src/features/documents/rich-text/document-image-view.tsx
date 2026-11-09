@@ -5,6 +5,7 @@ import { useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { RenderedMediaAction, RenderedMediaToolbar } from './rendered-media-toolbar'
+import { displaySrc } from '../media-src'
 
 import { RenderedMediaLightbox } from './rendered-media-lightbox'
 
@@ -13,14 +14,13 @@ export function DocumentImageView({
   editor,
   getPos,
   folder,
-  resolveSrc,
-}: ReactNodeViewProps & { folder: string; resolveSrc: (src: string, folder: string) => string }) {
+}: ReactNodeViewProps & { folder: string }) {
   const [failedSrc, setFailedSrc] = useState<string | null>(null)
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null)
   const [retryVersion, setRetryVersion] = useState(0)
   const [open, setOpen] = useState(false)
   const openButton = useRef<HTMLButtonElement>(null)
-  const src = resolveSrc(String(node.attrs.src ?? ''), folder)
+  const src = displaySrc(String(node.attrs.src ?? ''), folder)
   const alt = String(node.attrs.alt ?? '')
   const title = alt.trim() || 'Image'
   const failed = failedSrc === src
@@ -75,7 +75,7 @@ export function DocumentImageView({
           {image(false)}
         </Button>
       )}
-      <RenderedMediaToolbar>
+      <RenderedMediaToolbar editor={editor}>
         <RenderedMediaAction ref={openButton} onClick={() => setOpen(true)}>
           Open larger
         </RenderedMediaAction>

@@ -32,9 +32,7 @@ const DocumentImage = Image.extend<{ folder: string }>({
   },
   addNodeView() {
     const folder = this.options.folder
-    return ReactNodeViewRenderer((props) =>
-      createElement(DocumentImageView, { ...props, folder, resolveSrc: displaySrc }),
-    )
+    return ReactNodeViewRenderer((props) => createElement(DocumentImageView, { ...props, folder }))
   },
   renderHTML({ HTMLAttributes }) {
     return [
