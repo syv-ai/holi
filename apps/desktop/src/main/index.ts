@@ -838,6 +838,23 @@ async function main(): Promise<void> {
       confirmingQuit = false
       return ready
     },
+    // The vault, plugins and terminals are already stopped and `quitting` is
+    // set, so staying open would leave a window with nothing behind it: say
+    // why, then finish the exit. The next launch offers the update again.
+    installFailed: (message) => {
+      console.error('[updates] install failed after teardown:', message)
+      const options: Electron.MessageBoxOptions = {
+        type: 'error',
+        buttons: ['Close Holi'],
+        message: 'The update could not be installed',
+        detail: `${message}\n\nHoli will close. Open it again to keep working; the update will be offered again.`,
+      }
+      const shown =
+        mainWindow === null
+          ? dialog.showMessageBox(options)
+          : dialog.showMessageBox(mainWindow, options)
+      void shown.catch(() => undefined).finally(() => app.quit())
+    },
   })
 
   const router = createRouter({

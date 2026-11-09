@@ -34,7 +34,11 @@ the zip, and macOS refuses an update that is not signed by the same team as the 
 
 **Linux is unsigned.** There is no platform signature for the updater to check; it verifies the
 download against the sha512 in `latest-linux.yml`. The deb puts Holi in the app menu and registers
-`holi://` links, and its updates install through `pkexec`, which asks for a password; the AppImage
+`holi://` links, and its updates install through `pkexec`, which asks for a password. The installer
+runs after the quit's teardown, so when the password prompt is cancelled or the install fails Holi
+says why and closes rather than stay open with its vault stopped; the next launch offers the update
+again. The deb declares ALSA (`libasound2t64 | libasound2`) beside electron-builder's default
+dependencies, without which a clean Ubuntu 24.04 installs Holi but cannot start it. The AppImage
 runs without installing and replaces itself. Ubuntu 24.04 needs `libfuse2t64` to start an AppImage.
 **Open at login** does nothing on Linux, where Electron has no login items.
 
