@@ -1392,6 +1392,10 @@ export async function openActiveVault(args: {
       // Sequenced, not fired together: run concurrently, one simply loses to the
       // other's guard and silently does nothing.
       await maybeCommit()
+      // A settle commit asked right behind this one wakes first and starts
+      // another. Wait it out, or the pull below sees it and declines, and what
+      // arrived during the turn waits for the next tick.
+      while (commitRun !== null) await commitRun
       await maybePull()
       await refreshState()
     },

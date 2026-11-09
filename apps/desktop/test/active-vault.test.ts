@@ -525,6 +525,24 @@ describe('ActiveVault — commit', () => {
     expect(await count(dir)).toBe(before + 1)
   })
 
+  it('still pulls after a resume when a settle commit runs right behind its commit', async () => {
+    const { active, dir } = await vault({ commitQuietMs: 60_000, healIntervalMs: 60_000 })
+    const repo = active.repo
+    const pull = repo.pull.bind(repo)
+    let pulls = 0
+    repo.pull = async (...args) => {
+      pulls += 1
+      return pull(...args)
+    }
+    active.pause('the assistant is working')
+    await writeFile(join(dir, 'turn.md'), 'the work\n', 'utf8')
+
+    active.resume()
+    await active.commitNow()
+
+    await vi.waitFor(() => expect(pulls).toBeGreaterThan(0))
+  })
+
   it('commitNow() during a commit already running answers with that commit', async () => {
     // A turn's settle commit asks right behind the commit the resume starts:
     // that one holds the turn's work, and the turn needs to know which it is.
