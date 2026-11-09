@@ -15,26 +15,46 @@ export function RenderedMediaLightbox({
   children,
   preview,
   onTriggerClick,
+  open,
+  onOpenChange,
+  restoreFocus,
 }: {
   title: string
   children: ReactNode
   preview: ReactNode
   onTriggerClick?: React.MouseEventHandler<HTMLButtonElement>
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  restoreFocus?: () => void
 }) {
+  const controlled = open !== undefined
+  const content = controlled ? (
+    children
+  ) : (
+    <DialogTrigger asChild>
+      <Button
+        type="button"
+        variant="ghost"
+        size="media"
+        aria-label={`Open ${title}`}
+        onClick={onTriggerClick}
+      >
+        {children}
+      </Button>
+    </DialogTrigger>
+  )
   return (
-    <Dialog>
-      <DialogTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="media"
-          aria-label={`Open ${title}`}
-          onClick={onTriggerClick}
-        >
-          {children}
-        </Button>
-      </DialogTrigger>
-      <DialogContent size="media" aria-describedby={undefined}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {content}
+      <DialogContent
+        size="media"
+        aria-describedby={undefined}
+        onCloseAutoFocus={(event) => {
+          if (!controlled || !restoreFocus) return
+          event.preventDefault()
+          queueMicrotask(restoreFocus)
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
