@@ -747,6 +747,7 @@ test("dragging a strip tab onto the view's right part opens a gap there, and the
   expect(ws.entries).toHaveLength(1)
   // The drag is over: no catcher left over the views.
   await waitFor(() => expect(document.querySelector('[data-drop-target]')).toBeNull())
+  expect(store.get(tabDragAtom)).toBeNull()
   vi.restoreAllMocks()
 })
 
@@ -755,7 +756,7 @@ test('a view not open yet, dragged from the sidebar, opens in the gap', async ()
   layOut()
   const dataTransfer = transfer()
   dataTransfer.setData('application/x-holi-tab', 'C.md')
-  store.set(tabDragAtom, 'C.md')
+  store.set(tabDragAtom, { key: 'C.md', vault: 'mara/notes', wasOpen: false })
   const target = await catcher()
   fireEvent(target, at(createEvent.dragOver(target, { dataTransfer }), 50))
   await waitFor(() => expect(target.dataset.dropSlot).toBe('insert:0'))
