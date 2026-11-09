@@ -11,7 +11,7 @@
  * foliate parses, and any other page is shown as an `<img>` inside a page that
  * does carry the policy: an image runs nothing and loads nothing.
  */
-import type { Book } from './vendor/foliate/view.js'
+import type { Book, View } from './vendor/foliate/view.js'
 import { withInertPolicy } from './inert-frame'
 
 /** @public */
@@ -40,10 +40,27 @@ export function imagePage(src: string): string {
   )
 }
 
+/** Lets go of an open book. foliate's `close` throws on a book whose first
+ *  section never loaded, and a throw from an effect's cleanup blanks the app. */
+export function closeBook(view: View | null, book: Book | null): void {
+  try {
+    view?.close()
+  } catch (err) {
+    console.warn('[reader] closing the book failed:', err)
+  }
+  view?.remove()
+  book?.destroy()
+}
+
 /** Brings every page of `book` under the policy; call before it is opened. */
 export function guardChapters(book: Book): void {
   for (const item of book.resources.manifest) item.mediaType = essence(item.mediaType)
-  book.resources.spine.forEach(({ idref }, index) => {
+  // foliate leaves out a spine entry missing from the manifest, so `sections`
+  // lines up with the entries it kept, not with the spine.
+  const kept = book.resources.spine.filter(
+    ({ idref }) => book.resources.getItemByID(idref) !== undefined,
+  )
+  kept.forEach(({ idref }, index) => {
     const item = book.resources.getItemByID(idref)
     const section = book.sections[index]
     if (item === undefined || section == null) return

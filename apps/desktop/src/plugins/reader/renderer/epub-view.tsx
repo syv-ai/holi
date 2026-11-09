@@ -40,7 +40,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { activeModeAtom, activeRemoteAtom } from '@/plugin-api'
-import { guardChapters } from './epub-chapters'
+import { closeBook, guardChapters } from './epub-chapters'
 import { readPosition, savePosition } from './epub-positions'
 import {
   READING_THEME_LABELS,
@@ -165,9 +165,7 @@ export function EpubView({
     return () => {
       live = false
       for (const undo of unforward) undo()
-      view?.close()
-      view?.remove()
-      opened?.destroy()
+      closeBook(view, opened)
       viewRef.current = null
     }
   }, [bytes, name, path, remote, attempt])

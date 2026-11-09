@@ -36,6 +36,21 @@ describe('a chapter’s policy', () => {
     expect(out).toContain('<p>x</p>')
   })
 
+  it('blanks a chapter whose root is not HTML, where the policy would be ignored', () => {
+    for (const root of [
+      '<svg xmlns="http://www.w3.org/2000/svg"><image href="http://x/a"/></svg>',
+      '<x xmlns="urn:x"><y/></x>',
+    ]) {
+      const out = withInertPolicy(root, 'application/xhtml+xml')
+      const doc = new DOMParser().parseFromString(out, 'application/xhtml+xml')
+      expect(doc.documentElement.localName).toBe('html')
+      expect(doc.querySelector('head')?.firstElementChild?.getAttribute('http-equiv')).toBe(
+        'Content-Security-Policy',
+      )
+      expect(out).not.toContain('http://x/a')
+    }
+  })
+
   it('handles an HTML chapter too', () => {
     const out = withInertPolicy('<p>loose</p>', 'text/html')
     expect(firstInHead(out, 'text/html')?.getAttribute('content')).toBe(INERT_CSP)

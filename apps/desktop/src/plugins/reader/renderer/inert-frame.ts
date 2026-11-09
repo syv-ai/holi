@@ -71,6 +71,9 @@ export function openOutside(href: string): boolean {
   return true
 }
 
+const XHTML = 'http://www.w3.org/1999/xhtml'
+const BLANK_PAGE = `<html xmlns="${XHTML}"><head><title></title></head><body></body></html>`
+
 /**
  * A chapter's markup with `INERT_CSP` as the first thing in its head, made
  * with a real parser so a `<head>` inside a comment or a string cannot take
@@ -82,7 +85,10 @@ export function withInertPolicy(
 ): string {
   const doc = new DOMParser().parseFromString(markup, type)
   const root = doc.documentElement
-  const ns = root.namespaceURI ?? 'http://www.w3.org/1999/xhtml'
+  // A `<meta>` only counts in the HTML namespace, and one inside an `<svg>` or
+  // an invented root would leave the page free to fetch. Nothing to read there.
+  if (root.namespaceURI !== XHTML) return withInertPolicy(BLANK_PAGE, 'application/xhtml+xml')
+  const ns = XHTML
   let head = root.querySelector(':scope > head')
   if (head === null) {
     head = doc.createElementNS(ns, 'head')
