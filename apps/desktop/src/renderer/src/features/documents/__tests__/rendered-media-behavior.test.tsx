@@ -110,7 +110,7 @@ describe('rendered media inspection through the document editor', () => {
     expect(dialog.querySelector('svg text')?.textContent).toBe('ready')
     draw.mockImplementation(() => Promise.resolve(svg('redrawn')))
     act(() => store.set(colorSchemeAtom, 'dark'))
-    await waitFor(() => expect(draw).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(draw).toHaveBeenCalledTimes(4))
     await waitFor(() =>
       expect(document.querySelector('[data-mermaid-diagram] svg text')?.textContent).toBe(
         'redrawn',
@@ -135,8 +135,8 @@ describe('rendered media inspection through the document editor', () => {
       e.on('update', updated)
       await act(async () => reject(new Error('temporary rendering failure')))
       await waitFor(() =>
-        expect(document.querySelector('[role="status"]')?.textContent).toContain(
-          "Couldn't draw this diagram",
+        expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+          'Couldn’t draw this diagram',
         ),
       )
       const retry = screen.getByRole('button', { name: 'Retry' })
