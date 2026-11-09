@@ -416,9 +416,11 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       params: noParams,
       run: async (ctx) => {
         const session = await deps.accounts.sessionFor(ctx.remote).catch(() => null)
+        const overview = await deps.accounts.overview(ctx.remote).catch(() => null)
         return {
           account: session?.account ?? null,
           missingScopes: session?.missingScopes() ?? [],
+          needsReconnect: overview?.state === 'needs-reconnect',
         }
       },
     }),

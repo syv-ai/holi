@@ -134,6 +134,15 @@ describe('ConnectionsSection', () => {
     expect(removeAccount).not.toHaveBeenCalled()
   })
 
+  it('lets a vault whose grant Google refused forget it', async () => {
+    status.mockResolvedValue({ account: null, missingScopes: [], needsReconnect: true })
+    render()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Forget this connection' }))
+
+    await waitFor(() => expect(disconnectVault).toHaveBeenCalled())
+  })
+
   it('removes an account by name when that is what was asked for', async () => {
     render()
     await screen.findByText('ada@syv.ai')

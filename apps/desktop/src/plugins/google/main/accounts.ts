@@ -367,7 +367,11 @@ export async function createGoogleAccounts(
   }
 
   async function removeAccount(sub: string): Promise<void> {
-    if (accounts[sub] === undefined) return
+    if (accounts[sub] === undefined) {
+      // Already refused by Google: asked to remove it, its vaults let go too.
+      await deps.vaults.unlinkAccount(sub)
+      return
+    }
     // Revoking server-side is the point: dropping only the local copy leaves a
     // live grant on someone's Google account with nothing in Holi to show for
     // it. A failed revoke still clears locally: the user asked for this, and

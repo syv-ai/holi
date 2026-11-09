@@ -284,6 +284,7 @@ describe('accounts per vault', () => {
     expect(await call('status', undefined, 'ada-holm/notes')).toEqual({
       account: null,
       missingScopes: [],
+      needsReconnect: false,
     })
   })
 

@@ -217,6 +217,25 @@ describe('a grant Google refuses', () => {
     expect(await accounts.overview(VAULT)).toMatchObject({ state: 'not-connected' })
   })
 
+  it('stops needing a reconnect when an account already refused is removed', async () => {
+    const accounts = await manager([auth({ expiresAt: NOW - 1 })], refused)
+    await accounts.link(VAULT, 'sub-1')
+    await (await accounts.sessionFor(VAULT))!.getAccessToken().catch(() => undefined)
+
+    await accounts.removeAccount('sub-1')
+
+    expect(await accounts.overview(VAULT)).toMatchObject({ state: 'not-connected' })
+  })
+
+  it('is not left needing a reconnect when a removal overlaps the refusal', async () => {
+    const vaults = createVaultAccounts(join(dir, 'overlap.json'))
+    await vaults.link(VAULT, 'sub-1')
+
+    await Promise.all([vaults.expireAccount('sub-1'), vaults.unlinkAccount('sub-1')])
+
+    expect(await vaults.needsReconnect(VAULT)).toBe(false)
+  })
+
   it('is not left needing a reconnect when the grant dies during a removal', async () => {
     let session: Awaited<ReturnType<GoogleAccountsManager['sessionFor']>> = null
     const dying = vi.fn(async (url: string) => {
