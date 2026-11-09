@@ -298,7 +298,7 @@ Gotchas of a fresh checkout or worktree that no file states.
   `DialogContent` `size` (the width of a dialog chosen at runtime); `FileType`'s `deck`
   extension (a community plugin's presentation);
   `SidebarMenuButton` variant `fill` and size `rail`; `Avatar` `shape="square"`;
-  `TabsTrigger` variant `tab`; `Toggle` size `icon`; `ResizableHandle` variant `primary`
+  `TabsTrigger` variant `tab` with `bg-muted/40` combine-preview tint; `TabsEntry` sizes `tab`, `tab-group`, `tab-wide` own strip widths; `Toggle` size `icon`; `ResizableHandle` variant `primary`
   and `ResizablePanelGroup` `animateFirst`; `PanelSeparator` variant `line`;
   `motion-reduce` on `Skeleton` and `Spinner`; the scroll fade on `CommandList`; ReUI
   `KanbanBoard` variant `row`, `FramePanel` `flush`, `TreeItem` `arrived`, the data grid's
