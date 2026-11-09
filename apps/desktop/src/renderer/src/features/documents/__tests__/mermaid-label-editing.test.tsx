@@ -63,7 +63,7 @@ async function open(text = markdown) {
 }
 
 async function labelField(name = 'Alpha') {
-  fireEvent.click(screen.getByRole('button', { name: 'Edit labels' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit labels' }))
   const target = await screen.findByRole('button', { name })
   expect(target.namespaceURI).toBe('http://www.w3.org/2000/svg')
   expect(target.isConnected).toBe(true)
@@ -132,7 +132,7 @@ describe('editing labels in the rendered Mermaid drawing', () => {
   it('keeps toolbar mousedown outside ProseMirror selection handling', async () => {
     const { e } = await open()
     const selection = e.state.selection.toJSON()
-    const button = screen.getByRole('button', { name: 'Edit labels' })
+    const button = await screen.findByRole('button', { name: 'Edit labels' })
     expect(button.closest('[contenteditable="false"]')).not.toBeNull()
     fireEvent.mouseDown(button)
     fireEvent.click(button)
@@ -270,7 +270,7 @@ describe('editing labels in the rendered Mermaid drawing', () => {
     'opens a label with %s and returns focus on Escape',
     async (key) => {
       await open()
-      fireEvent.click(screen.getByRole('button', { name: 'Edit labels' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit labels' }))
       const target = await screen.findByRole('button', { name: 'Alpha' })
       target.focus()
       fireEvent.keyDown(target, { key })
@@ -282,7 +282,7 @@ describe('editing labels in the rendered Mermaid drawing', () => {
 
   it('edits the selected identity when two nodes have the same wording', async () => {
     const { e } = await open(markdown.replace('B[Beta]', 'B[Alpha]'))
-    fireEvent.click(screen.getByRole('button', { name: 'Edit labels' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit labels' }))
     const secondNode = await waitFor(() => {
       const node = document.querySelector('[data-mermaid-source-id="node-B"]')
       if (!node) throw new Error('Second editable Mermaid node is missing')

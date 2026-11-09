@@ -1,5 +1,6 @@
 import { parse as parseYaml } from 'yaml'
 import { execFile } from 'node:child_process'
+import { commitChanges } from './commit-changes'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
@@ -1900,11 +1901,7 @@ describe('history', () => {
     await plainGit(root, ['add', '-A'])
     await plainGit(root, ['commit', '-m', 'create demo app'])
     const target = (await plainGit(root, ['rev-parse', 'HEAD'])).trim()
-    for (let i = 0; i < 201; i++) {
-      await writeFile(join(root, 'Demo.app', 'data', 'records.json'), `${i}\n`, 'utf8')
-      await plainGit(root, ['add', '-A'])
-      await plainGit(root, ['commit', '-m', `data ${i}`])
-    }
+    await commitChanges(root, 'Demo.app/data/records.json', 201)
     await caller.vaults.open({ remote: REMOTE })
     const recent = await caller.history.list({ path: 'Demo.app' })
     expect(recent).toHaveLength(200)

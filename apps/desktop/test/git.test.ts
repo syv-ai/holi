@@ -12,6 +12,7 @@
  * bare repo plays the teammate.
  */
 import { execFile } from 'node:child_process'
+import { commitChanges } from './commit-changes'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -1080,11 +1081,7 @@ describe('changedFiles', () => {
     await plainGit(dir, ['add', '-A'])
     await plainGit(dir, ['commit', '-m', 'create demo app'])
     const [target] = await repo.log({ path: 'Demo.app', folder: true, limit: 1 })
-    for (let i = 0; i < 201; i++) {
-      await writeFile(join(dir, 'Demo.app', 'data.json'), `${i}\n`, 'utf8')
-      await plainGit(dir, ['add', '-A'])
-      await plainGit(dir, ['commit', '-m', `data ${i}`])
-    }
+    await commitChanges(dir, 'Demo.app/data.json', 201)
     expect(
       (await repo.log({ path: 'Demo.app', folder: true, limit: 200 })).some(
         (c) => c.sha === target!.sha,

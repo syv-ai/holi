@@ -1,8 +1,13 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup } from '@testing-library/react'
+import { cleanup, configure } from '@testing-library/react'
 import { afterEach } from 'vitest'
 
 afterEach(() => cleanup())
+
+// How long `findBy` and `waitFor` wait for their condition. A bound on a
+// failure only: a passing query returns as soon as it holds. Testing Library's
+// 1 second is shorter than a heavy render takes on CI's Intel runner.
+configure({ asyncUtilTimeout: 5_000 })
 
 // Radix relies on DOM APIs jsdom omits. Polyfill the ones its Dialog touches,
 // or focus-trap/pointer interactions throw instead of exercising real behaviour.
