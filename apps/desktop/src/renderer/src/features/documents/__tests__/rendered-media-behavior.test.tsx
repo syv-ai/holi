@@ -155,6 +155,25 @@ describe('rendered media inspection through the document editor', () => {
     },
   )
 
+  it('reaches the media toolbar with Alt+F10 and returns focus to the editor on Escape', async () => {
+    const user = userEvent.setup()
+    const e = mount(`${diagram}\n\nAfter`)
+    await waitFor(() => expect(document.querySelector('[data-mermaid-diagram] svg')).toBeTruthy())
+    const updated = vi.fn()
+    e.on('update', updated)
+
+    act(() => {
+      e.commands.setTextSelection(e.state.doc.content.size - 1)
+      e.view.focus()
+    })
+    const sourceAction = screen.getByRole('button', { name: 'Edit source' })
+    fireEvent.keyDown(e.view.dom, { key: 'F10', altKey: true })
+    await waitFor(() => expect(document.activeElement).toBe(sourceAction))
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(e.view.hasFocus()).toBe(true))
+    expect(updated).not.toHaveBeenCalled()
+  })
+
   it('keeps explicit source editing and undo functional', async () => {
     const user = userEvent.setup()
     const e = mount(diagram)
