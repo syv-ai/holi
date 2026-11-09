@@ -76,6 +76,7 @@ import { TASKS_CREATE, tasksCreateCap } from '../tasks-cap'
 import { CalendarRail } from './calendar-rail'
 import { CalendarsMenu } from './calendars-menu'
 import { WEEK_STARTS_ON, hhmm, timeOf } from './calendar-format'
+import { CLOCK_FORMATS, ISO_WEEK_LOCALE, useTimeFormat, useWeekNumbers } from './calendar-settings'
 import { EventSheet, type EventDraft, type EventSheetState } from './event-sheet'
 
 type Occurrence = EventCalendarOccurrence<GoogleEventData>
@@ -125,6 +126,9 @@ export function CalendarView(): React.JSX.Element {
   const openSettings = useSetAtom(openSettingsSectionAtom)
   const openNote = useSetAtom(openDocumentAtom)
   const canCreateTask = useHasCapability(TASKS_CREATE) && remote !== null
+  const clock = useTimeFormat()
+  const weekNumbers = useWeekNumbers()
+  const i18n = useMemo(() => ({ formats: CLOCK_FORMATS[clock] }), [clock])
 
   const [sheet, setSheet] = useState<EventSheetState | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -320,7 +324,7 @@ export function CalendarView(): React.JSX.Element {
             segment.isStart &&
             (view === 'month' ? (
               <span className="text-muted-foreground shrink-0 text-xs">
-                {timeOf(occurrence.start)}
+                {timeOf(occurrence.start, clock)}
               </span>
             ) : (
               <span
@@ -329,13 +333,13 @@ export function CalendarView(): React.JSX.Element {
                   stacked ? EVENT_CALENDAR_FADE_TRUNCATE : 'truncate',
                 )}
               >
-                {timeOf(occurrence.start)} - {timeOf(occurrence.end)}
+                {timeOf(occurrence.start, clock)} - {timeOf(occurrence.end, clock)}
               </span>
             ))}
         </>
       )
     },
-    [],
+    [clock],
   )
 
   // Agenda rows get their own renderer: a full-width list row has the space
@@ -351,7 +355,7 @@ export function CalendarView(): React.JSX.Element {
           <span className="text-muted-foreground w-40 shrink-0 truncate tabular-nums">
             {occurrence.allDay
               ? 'All day'
-              : `${timeOf(occurrence.start)} - ${timeOf(occurrence.end)}`}
+              : `${timeOf(occurrence.start, clock)} - ${timeOf(occurrence.end, clock)}`}
           </span>
           <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-(--ec-event-color)" />
           <span className="truncate text-sm font-medium">{event.title}</span>
@@ -373,7 +377,7 @@ export function CalendarView(): React.JSX.Element {
         </>
       )
     },
-    [],
+    [clock],
   )
 
   const renderNoEvents = useCallback(
@@ -439,6 +443,9 @@ export function CalendarView(): React.JSX.Element {
           defaultView="week"
           views={['day', 'week', 'month', 'agenda']}
           weekStartsOn={WEEK_STARTS_ON}
+          locale={ISO_WEEK_LOCALE}
+          i18n={i18n}
+          showWeekNumbers={weekNumbers}
           loading={calendar.loading}
           navButtonSize="default"
           nowIndicator
