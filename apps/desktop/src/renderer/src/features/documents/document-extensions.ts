@@ -7,10 +7,12 @@
  * applied and vanish on the next open.
  */
 import Image from '@tiptap/extension-image'
-import { mergeAttributes, Node } from '@tiptap/react'
+import { createElement } from 'react'
+import { mergeAttributes, Node, ReactNodeViewRenderer } from '@tiptap/react'
+import { DocumentImageView } from './rich-text/document-image-view'
+import { displaySrc } from './media-src'
 
 import { createRichTextExtensions } from '@/features/documents/rich-text/rich-text-extensions'
-import { vaultAssetUrl } from '@/lib/vault-asset'
 
 import { AgentTrigger } from './agent-trigger'
 import { DocumentFind } from './document-find'
@@ -19,39 +21,28 @@ import { MultiCursor } from './multi-cursor'
 import { WikiLink } from './wiki-link'
 import { MermaidCodeBlock } from './rich-text/mermaid-code-block'
 
-/** `src` as written in the file, resolved against the document's folder for
- *  display only: the markdown keeps the path it had. */
-function displaySrc(src: string, folder: string): string {
-  if (/^(https?:|data:|holi-vault:)/.test(src)) return src
-  const parts = (src.startsWith('/') ? src.slice(1) : `${folder}/${src}`)
-    .split('/')
-    .filter((part) => part !== '' && part !== '.')
-  const resolved: string[] = []
-  for (const part of parts) {
-    if (part === '..') resolved.pop()
-    else resolved.push(decodeURI(part))
-  }
-  return vaultAssetUrl(resolved.join('/'))
-}
-
 /** An image at its natural size up to the column's width, never scaled up.
  *  Its height is capped at 70% of the window but never below the column's
  *  widest (48rem, `max-w-3xl`), so a square figure always fills the column
  *  and only a tall portrait one is held to the screen; in a table cell it
  *  stays thumbnail-sized. */
-const IMAGE_CLASS =
-  'h-auto w-auto max-w-full max-h-[max(70vh,48rem)] rounded-md in-[td]:max-h-80 in-[th]:max-h-80'
-
 const DocumentImage = Image.extend<{ folder: string }>({
   addOptions() {
     return { ...this.parent!(), folder: '' }
+  },
+  addNodeView() {
+    const folder = this.options.folder
+    return ReactNodeViewRenderer((props) =>
+      createElement(DocumentImageView, { ...props, folder, resolveSrc: displaySrc }),
+    )
   },
   renderHTML({ HTMLAttributes }) {
     return [
       'img',
       mergeAttributes(HTMLAttributes, {
         src: displaySrc(String(HTMLAttributes.src ?? ''), this.options.folder),
-        class: IMAGE_CLASS,
+        class:
+          'h-auto w-auto max-w-full max-h-[max(70vh,48rem)] rounded-md in-[td]:max-h-80 in-[th]:max-h-80',
       }),
     ]
   },
