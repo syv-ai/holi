@@ -103,18 +103,6 @@ function MermaidCodeBlockView({ node, editor, getPos }: ReactNodeViewProps) {
 /** Code blocks with Mermaid preview while their source is not selected. */
 export const MermaidCodeBlock = CodeBlock.extend({
   addNodeView() {
-    const renderView = ReactNodeViewRenderer(MermaidCodeBlockView, { as: 'pre' })
-    return (props) => {
-      const view = renderView(props)
-      const ignoreMutation = view.ignoreMutation?.bind(view)
-      view.ignoreMutation = (mutation) => {
-        if (mutation.type === 'selection') {
-          const anchor = view.dom.ownerDocument.getSelection()?.anchorNode
-          if (anchor && !view.contentDOM?.contains(anchor)) return true
-        }
-        return ignoreMutation?.(mutation) ?? false
-      }
-      return view
-    }
+    return ReactNodeViewRenderer(MermaidCodeBlockView, { as: 'pre' })
   },
 })
