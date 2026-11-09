@@ -116,7 +116,7 @@ export function MermaidDiagram({
         )
         const reference = ids.get(value.replace(/^#/, ''))
         const idReferences = attribute.value
-          .split(/\\s+/)
+          .split(/\s+/)
           .map((id) => ids.get(id) ?? id)
           .join(' ')
         if (value !== attribute.value) element.setAttribute(attribute.name, value)
@@ -126,7 +126,7 @@ export function MermaidDiagram({
           element.setAttribute(attribute.name, idReferences)
       }
     }
-    root.style.maxWidth = enlarged ? 'none' : '20rem'
+    if (enlarged) root.style.maxWidth = 'none'
     target.replaceChildren(document.importNode(root, true))
     const liveRoot = target.querySelector('svg')
     if (liveRoot) onRendered?.(liveRoot, targets)

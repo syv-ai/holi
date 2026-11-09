@@ -19,9 +19,21 @@ export function RenderedMediaToolbar({
     const handleShortcut = (event: KeyboardEvent) => {
       const toolbar = toolbarRef.current
       if (!event.altKey || event.key !== 'F10' || !toolbar?.isConnected) return
+      const nodeView = toolbar.closest('[data-node-view-wrapper]')
+      if (!nodeView) return
+      let position: number
+      try {
+        position = editor.view.posAtDOM(nodeView, 0)
+      } catch {
+        return
+      }
+      const node = editor.state.doc.nodeAt(position)
+      const { from, to } = editor.state.selection
+      if (!node || from < position || to > position + node.nodeSize) return
       const item = toolbar.querySelector<HTMLElement>('[data-toolbar-item]:not([disabled])')
       if (!item) return
       event.preventDefault()
+      event.stopImmediatePropagation()
       item.focus()
     }
     dom.addEventListener('keydown', handleShortcut)
