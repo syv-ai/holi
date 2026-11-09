@@ -736,7 +736,7 @@ describe('mergedSettings', () => {
       hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [oldHook] }] },
     })
     const after = parse(mergedSettings(before))
-    const entries = after.hooks.PreToolUse as { matcher: string; hooks: { command: string }[] }[]
+    const entries = after.hooks.PreToolUse ?? []
     const inline = entries.find((entry) =>
       entry.hooks.some((hook) => hook.command.includes('node -e')),
     )
