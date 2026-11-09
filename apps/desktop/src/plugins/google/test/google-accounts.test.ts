@@ -11,7 +11,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createGoogleAccounts } from '../main/accounts'
+import { createGoogleAccounts, type GoogleAccountsManager } from '../main/accounts'
 import {
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
@@ -168,6 +168,76 @@ describe('overview', () => {
     await store.write({})
     const gone = await manager()
     expect(await gone.overview(VAULT)).toMatchObject({ state: 'needs-reconnect', account: null })
+  })
+})
+
+describe('a grant Google refuses', () => {
+  const refused = vi.fn(async () => ({
+    ok: false,
+    status: 400,
+    json: async () => ({ error: 'invalid_grant' }),
+    text: async () => '{"error":"invalid_grant"}',
+  })) as unknown as typeof globalThis.fetch
+
+  it('leaves the vault needing a reconnect until it links again or lets go', async () => {
+    const accounts = await manager([auth({ expiresAt: NOW - 1 })], refused)
+    await accounts.link(VAULT, 'sub-1')
+    const changed = vi.fn()
+    accounts.onChange(changed)
+    const session = await accounts.sessionFor(VAULT)
+
+    await expect(session!.getAccessToken()).rejects.toThrow(/expired or been revoked/)
+
+    expect(changed).toHaveBeenCalledWith('sub-1')
+    expect(await accounts.sessionFor(VAULT)).toBeNull()
+    expect(accounts.list()).toEqual([])
+    expect(await accounts.overview(VAULT)).toMatchObject({
+      state: 'needs-reconnect',
+      account: null,
+    })
+
+    // The same account connected elsewhere does not hand this vault its mailbox.
+    const again = await manager([auth()])
+    expect(await again.sessionFor(VAULT)).toBeNull()
+    expect(await again.overview(VAULT)).toMatchObject({ state: 'needs-reconnect' })
+
+    await again.link(VAULT, 'sub-1')
+    expect((await again.overview(VAULT)).state).not.toBe('needs-reconnect')
+    await again.unlinkVault(VAULT)
+    expect(await again.overview(VAULT)).toMatchObject({ state: 'not-connected' })
+  })
+
+  it('stops needing a reconnect when the vault lets go', async () => {
+    const accounts = await manager([auth({ expiresAt: NOW - 1 })], refused)
+    await accounts.link(VAULT, 'sub-1')
+    await (await accounts.sessionFor(VAULT))!.getAccessToken().catch(() => undefined)
+
+    await accounts.unlinkVault(VAULT)
+
+    expect(await accounts.overview(VAULT)).toMatchObject({ state: 'not-connected' })
+  })
+
+  it('is not left needing a reconnect when the grant dies during a removal', async () => {
+    let session: Awaited<ReturnType<GoogleAccountsManager['sessionFor']>> = null
+    const dying = vi.fn(async (url: string) => {
+      if (String(url).includes('revoke')) {
+        await session!.getAccessToken().catch(() => undefined)
+        return { ok: true, status: 200, json: async () => ({}), text: async () => '' }
+      }
+      return {
+        ok: false,
+        status: 400,
+        json: async () => ({ error: 'invalid_grant' }),
+        text: async () => '{"error":"invalid_grant"}',
+      }
+    }) as unknown as typeof globalThis.fetch
+    const accounts = await manager([auth({ expiresAt: NOW - 1 })], dying)
+    await accounts.link(VAULT, 'sub-1')
+    session = await accounts.sessionFor(VAULT)
+
+    await accounts.removeAccount('sub-1')
+
+    expect(await accounts.overview(VAULT)).toMatchObject({ state: 'not-connected' })
   })
 })
 
