@@ -23,7 +23,7 @@ import { createServer, type RequestListener, type Server } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import type { Dispatch } from '../capabilities/dispatch'
 import type { CliCommand } from '../capabilities/registry'
-import { refusalText, resolveArgv } from './cli'
+import { refusalText, resolveArgv, runScript } from './cli'
 import { SPILL_BYTES, spillNotice, spillOutput } from './spill'
 
 /** What a route answers. No body is an empty one. */
@@ -116,8 +116,9 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
    * answer itself, so it answers text: 200 with it (or, past `SPILL_BYTES`,
    * with where it was written, as JSON when the answer was asked for as JSON),
    * 422 with a refusal and its next step, 400 with usage (200 when usage was
-   * what was asked for), or 428, having run
-   * nothing, when the command reads a param from stdin that was not given.
+   * what was asked for), 428, having run
+   * nothing, when the command reads a param from stdin that was not given, or
+   * 202 with the shell that runs a program in the script's place (`cliRun`).
    */
   async function runCli(remote: string, body: string): Promise<Reply> {
     const cli = deps.cli!
@@ -139,6 +140,8 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
         name: request.name,
         params: request.params,
       })
+      // A program for the script to run in its place, as shell (`runScript`).
+      if (result.run !== undefined) return { status: 202, body: runScript(result.run) }
       const succeeded = commandSucceeded(cli.commands(), request.name, result.value)
       // A command that answered with its own failure: 422, the answer whole.
       if (!succeeded) return { status: 422, body: JSON.stringify(result.value, null, 2) }

@@ -3,7 +3,7 @@
  * on disk: fetch a release, consent, set up, pin, then serve a file and stop
  * its server. The server is a tiny Node http server, as Prezzi's is a Vite one.
  */
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFile, execFileSync, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import {
   chmod,
@@ -12,6 +12,7 @@ import {
   readFile,
   readlink,
   rename,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -22,8 +23,14 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import type { CapabilityContext } from '../../../main/plugin-api'
 import { createCapabilityRegistry } from '../../../main/capabilities/registry'
+import { createCapabilityHost } from '../../../main/capabilities/dispatch'
+import { noCoreServices } from '../../../main/capabilities/services'
+import { installHoliCli } from '../../../main/bridge/cli'
+import { createBridgeServer } from '../../../main/bridge/server'
+import { bridgeLines, writeVaultEnv } from '../../../../test/helpers/bridge-env'
 import { PLUGIN_COMMANDS_DIR } from '@holi/shared'
 import {
+  COMMUNITY_NAMESPACES,
   communityCapabilities,
   linkRunningCommands,
   listPlugins,
@@ -663,6 +670,99 @@ describe('readiness check', () => {
   })
 })
 
+describe('verbs through holi plugin', () => {
+  /** A verb that says what it was given and exits as told. */
+  const VERB = `
+const input = require('node:fs').readFileSync(0, 'utf8')
+console.log(JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), root: process.env.HOLI_VAULT_ROOT, input }))
+console.error('booked')
+process.exit(process.argv.includes('--taken') ? 3 : 0)
+`
+
+  /** The real \`holi\` script, run without blocking the bridge it asks. */
+  const holi = (bin: string, args: string[], input: string) =>
+    new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
+      const child = execFile(
+        bin,
+        args,
+        { cwd: vault, env: { PATH: process.env.PATH } },
+        (err, stdout, stderr) =>
+          resolve({ stdout, stderr, code: err === null ? 0 : Number(err.code ?? 1) }),
+      )
+      child.stdin?.end(input)
+    })
+
+  test('a running plugin books with named flags, its stdin, output and exit code its own', async () => {
+    const pluginDir = join(dir, 'modelokale')
+    await mkdir(pluginDir, { recursive: true })
+    await writeFile(join(pluginDir, 'cli.cjs'), VERB)
+    await writeFile(
+      join(pluginDir, 'holi-plugin.json'),
+      JSON.stringify({
+        id: 'modelokale',
+        name: 'Mødelokale',
+        version: '0.1.0',
+        cli: { run: [process.execPath, 'cli.cjs'], verbs: { book: 'Book a room' } },
+      }),
+    )
+    const { call, deps } = setup()
+    await call('community.installFolder', { folder: pluginDir })
+    const registry = createCapabilityRegistry()
+    registry.register(COMMUNITY_NAMESPACES, communityCapabilities(deps))
+    const server = createBridgeServer({
+      log: () => {},
+      cli: {
+        dispatch: createCapabilityHost({
+          registry,
+          rootFor: async () => vault,
+          active: () => null,
+          core: noCoreServices,
+          pluginEnabled: async () => true,
+          claims: async () => [],
+        }).dispatch,
+        commands: () => registry.commands(),
+        rootFor: async () => vault,
+      },
+    })
+    await server.start()
+    try {
+      await writeVaultEnv(vault, bridgeLines(server.port()!, server.tokenForVault('syv-ai/decks')))
+      const bin = await installHoliCli(userData)
+      const book = ['plugin', 'modelokale', 'book', '--room', "Garage 2's", '--start', '10:00']
+
+      // Installed but off in the vault: refused, and nothing runs.
+      const off = await holi(bin, book, '')
+      expect(off).toMatchObject({ code: 1, stdout: '' })
+      expect(off.stderr).toContain('modelokale does not run in this vault here')
+
+      await mkdir(join(vault, '.holi/settings'), { recursive: true })
+      await writeFile(
+        join(vault, '.holi/settings/plugins.yaml'),
+        'plugins:\n  community: true\n  modelokale: true\n',
+      )
+      const booked = await holi(bin, book, 'a note\n')
+      expect(booked.code).toBe(0)
+      expect(booked.stderr).toBe('booked\n')
+      expect(JSON.parse(booked.stdout)).toEqual({
+        argv: ['book', '--room', "Garage 2's", '--start', '10:00'],
+        cwd: await realpath(pluginDir),
+        root: vault,
+        input: 'a note\n',
+      })
+      expect((await holi(bin, [...book, '--taken'], '')).code).toBe(3)
+
+      const listed = await holi(bin, ['plugin'], '')
+      expect(listed.code).toBe(0)
+      expect(listed.stdout).toMatch(/holi plugin modelokale book +Book a room/)
+      const unknown = await holi(bin, ['plugin', 'modelokale', 'cancel'], '')
+      expect(unknown.code).toBe(1)
+      expect(unknown.stderr).toContain('next: run holi plugin modelokale for its verbs')
+    } finally {
+      await server.stop()
+    }
+  })
+})
+
 describe('serving', () => {
   async function ready(serveArgs: string[] = [], firstPort?: number) {
     const commit = await makeRepo(serveArgs)
@@ -677,7 +777,7 @@ describe('serving', () => {
   test('a pending capability acquire cannot outlive activation disposal', async () => {
     const s = await ready([], 3950)
     const registry = createCapabilityRegistry()
-    const unregister = registry.register(['community'], communityCapabilities(s.deps))
+    const unregister = registry.register(COMMUNITY_NAMESPACES, communityCapabilities(s.deps))
     let resolveInstall!: (install: Awaited<ReturnType<typeof s.deps.store.get>>) => void
     let lookupStarted!: () => void
     const lookup = new Promise<void>((resolve) => (lookupStarted = resolve))

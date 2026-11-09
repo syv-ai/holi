@@ -6,7 +6,7 @@
  * a quoting bug in it does not fail loudly, it sends a different argument.
  */
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -597,5 +597,82 @@ describe('a command that acts as the calling session', () => {
   it('takes the flag from a person at a terminal outside any session', async () => {
     const res = await run(bin, ['x', 'who', '--session', 'ffff0000'], env)
     expect(res).toMatchObject({ code: 0, stdout: 'ffff0000\n' })
+  })
+})
+
+describe('a command that is its namespace and runs a program in the script’s place', () => {
+  const hostile = [
+    "it's",
+    '$(touch pwned)',
+    '`id`',
+    'two\nlines',
+    '"quoted" \\ back',
+    '*',
+    '--help',
+  ]
+  const whole = cap({
+    doors: ['cli'],
+    cli: { args: [], rest: true, summary: 'run what follows' },
+    params: (raw) => raw as { argv: string[] },
+    run: async (_ctx, { argv }) => argv,
+    cliRun: (argv: string[]) =>
+      argv[0] === 'print'
+        ? null
+        : {
+            cwd: dir,
+            argv: [
+              process.execPath,
+              '-e',
+              `const input = require('node:fs').readFileSync(0, 'utf8')
+               console.log(JSON.stringify({ argv: process.argv.slice(1), cwd: process.cwd(), env: process.env.X_VALUE, input }))
+               process.exit(Number(process.env.X_EXIT))`,
+              ...argv,
+            ],
+            env: { X_VALUE: "a 'b' $c", X_EXIT: '7' },
+          },
+    text: (argv: string[]) => `printed ${argv.join(' ')}`,
+  })
+
+  beforeEach(async () => {
+    await server.stop()
+    server = bridge({ 'x.run': whole }, ['x'])
+    await server.start()
+    await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
+  })
+
+  it('hands every word after the namespace over unread, --help too, and the program runs as typed', async () => {
+    const res = await run(bin, ['x', ...hostile], env, 'from stdin')
+    expect(res.code).toBe(7)
+    expect(JSON.parse(res.stdout)).toEqual({
+      argv: hostile,
+      cwd: await realpath(dir),
+      env: "a 'b' $c",
+      input: 'from stdin',
+    })
+    expect(await readdir(dir)).not.toContain('pwned')
+  })
+
+  it('prints a result that is not a program', async () => {
+    expect(await run(bin, ['x', 'print', 'it'], env)).toMatchObject({
+      code: 0,
+      stdout: 'printed print it\n',
+    })
+  })
+
+  it('reads as one line in bare holi', async () => {
+    expect((await run(bin, [], env)).stdout).toContain('holi x [<arguments>...]')
+  })
+
+  it('is its namespace’s one command', () => {
+    const registry = createCapabilityRegistry()
+    const other = cap({
+      doors: ['cli'],
+      cli: { args: [], summary: 'other' },
+      params: () => ({}),
+      run: async () => '',
+    })
+    expect(() => registry.register(['x'], { 'x.run': whole, 'x.other': other })).toThrow(
+      /one command/,
+    )
   })
 })

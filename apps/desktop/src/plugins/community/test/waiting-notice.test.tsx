@@ -33,6 +33,7 @@ const row = (
   serve: null,
   apps: [],
   bin: [],
+  cli: null,
   commandsNote: null,
   check: null,
 })

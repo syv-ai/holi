@@ -90,6 +90,22 @@ export interface CliSpec {
    *  value given for it is refused: only a person at a terminal outside any
    *  session names one. */
   job?: string
+  /** The command is its namespace, for one with a grammar of its own
+   *  (`holi plugin <id> <verb> …`): every word after the namespace, `--help`
+   *  and options too, reaches the `argv` param unread, as a list. It takes no
+   *  `args` and is its namespace's one CLI command. */
+  rest?: true
+}
+
+/**
+ * A program the `holi` script runs in its own place (`bridge/cli.ts`), so
+ * what it reads, prints and exits with is the caller's, as a command on
+ * `PATH` would be. `cwd` is absolute; `env` is added to the caller's.
+ */
+export interface CliRun {
+  cwd: string
+  argv: string[]
+  env: Record<string, string>
 }
 
 export interface Capability<P = unknown, R = unknown> {
@@ -112,6 +128,9 @@ export interface Capability<P = unknown, R = unknown> {
   text?(result: R): string
   /** Whether the CLI operation completed successfully; false preserves its receipt with failure status. */
   cliSucceeded?(result: R): boolean
+  /** At the CLI door, a program for the script to run in its place, or null
+   *  to print the result as `text` reads it. */
+  cliRun?(result: R): CliRun | null
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -136,6 +155,8 @@ export interface CapabilityResult {
   value: unknown
   text: string
   writes: boolean
+  /** At the CLI door, what `cliRun` asked the script to run instead. */
+  run?: CliRun
 }
 
 export interface CliCommand {
@@ -200,6 +221,15 @@ export function createCapabilityRegistry(): CapabilityRegistry {
             `capability ${name} must say how it reads at the CLI door, and only there`,
           )
         }
+        if (
+          entry.cli?.rest === true &&
+          (entry.cli.args.length > 0 ||
+            Object.entries(table).some(
+              ([other, e]) => other !== name && e.cli !== undefined && namespaceOf(other) === ns,
+            ))
+        ) {
+          throw new Error(`capability ${name} takes every word, so it is ${ns}'s one command`)
+        }
         const optional = entry.cli?.args.findIndex((a) => a.endsWith('?')) ?? -1
         if (optional >= 0 && entry.cli!.args.slice(optional).some((a) => !a.endsWith('?'))) {
           throw new Error(`capability ${name} has a required argument after an optional one`)
@@ -249,10 +279,17 @@ export function createCapabilityRegistry(): CapabilityRegistry {
       }
       const result = await entry.run(ctx, params)
       const value = door === 'cli' && entry.cliValue !== undefined ? entry.cliValue(result) : result
+      const run = door === 'cli' ? (entry.cliRun?.(value) ?? null) : null
       return {
         value,
-        text: entry.text !== undefined ? entry.text(value) : JSON.stringify(value, null, 2),
+        text:
+          run !== null
+            ? ''
+            : entry.text !== undefined
+              ? entry.text(value)
+              : JSON.stringify(value, null, 2),
         writes: entry.writes === true,
+        ...(run === null ? {} : { run }),
       }
     },
   }
