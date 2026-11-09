@@ -58,9 +58,9 @@ const tabsEntryVariants = cva(
   'group/tab relative flex h-full min-w-0 data-drop-before:before:bg-primary data-drop-before:before:absolute data-drop-before:before:inset-y-1.5 data-drop-before:before:-start-0.5 data-drop-before:before:w-0.5 data-drop-before:before:rounded-full data-drop-after:after:bg-primary data-drop-after:after:absolute data-drop-after:after:inset-y-1.5 data-drop-after:after:-end-0.5 data-drop-after:after:w-0.5 data-drop-after:after:rounded-full', {
   variants: {
     size: {
-      tab: 'flex-[1_1_11rem] min-w-28',
-      'tab-group': 'flex-[1_1_15rem] min-w-44',
-      'tab-wide': 'flex-[1_1_20rem] min-w-60',
+      tab: 'w-44 min-w-28',
+      'tab-group': 'w-60 min-w-44',
+      'tab-wide': 'w-80 min-w-60',
     },
   },
 })

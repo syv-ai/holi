@@ -1,6 +1,7 @@
 import { Provider, createStore } from 'jotai'
 import { expect, test, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@/test/render'
+import { TabsEntry } from '@/components/ui/tabs'
 import { TabStrip } from '../tab-strip'
 import { shellWorkspaceAtom, updateWorkspaceAtom, workspaceOfAtom } from '@/state/shell-tabs'
 import {
@@ -168,11 +169,27 @@ test('entry slots anchor close controls and shrink while triggers fill their slo
   const entry = document.querySelector<HTMLElement>('[data-entry-id]')!
   const trigger = entry.querySelector<HTMLElement>('[role="tab"]')!
   expect(entry.className).toContain('relative')
-  expect(entry.className).toContain('flex-[1_1_11rem]')
+  expect(entry.className).toContain('w-44')
   expect(entry.className).toContain('min-w-28')
+  expect(entry.className).not.toMatch(/(?:^| )flex-(?:1|\[)/)
   expect(trigger.className).toContain('w-full')
   expect(trigger.className).toContain('flex-1')
 })
+
+test.each([
+  ['tab', 'w-44', 'min-w-28'],
+  ['tab-group', 'w-60', 'min-w-44'],
+  ['tab-wide', 'w-80', 'min-w-60'],
+] as const)(
+  '%s entries have a fixed intrinsic width and a smaller shrink floor',
+  (size, width, minWidth) => {
+    const { container } = render(<TabsEntry size={size} />)
+    const entry = container.firstElementChild as HTMLElement
+    expect(entry.className).toContain(width)
+    expect(entry.className).toContain(minWidth)
+    expect(entry.className).not.toMatch(/(?:^| )flex-(?:1|\[)/)
+  },
+)
 
 test('ordinary target hover renders the prospective target-first split without mutating workspace', () => {
   const { store, list, tabs, transfer } = setup()
@@ -251,7 +268,7 @@ test('combine preview preserves measured target geometry through repeated hover 
   const targetCenterBoundary = 224 + 60
   fireEvent(list, dragEvent('dragover', transfer, targetCenterBoundary))
   expect(items[1]!.dataset.combinePreview).toBe('true')
-  expect(items[1]!.className).toContain('flex-[1_1_11rem]')
+  expect(items[1]!.className).toContain('w-44')
   fireEvent(list, dragEvent('dragover', transfer, targetCenterBoundary))
   expect(items[1]!.dataset.combinePreview).toBe('true')
   fireEvent(list, dragEvent('drop', transfer, targetCenterBoundary))
