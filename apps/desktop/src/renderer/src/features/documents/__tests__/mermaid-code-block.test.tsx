@@ -1,5 +1,5 @@
 import { Editor, EditorContent } from '@tiptap/react'
-import { act, fireEvent, render, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -49,6 +49,14 @@ describe('Mermaid fences in a document editor', () => {
     })
   })
 
+  it('opens a pending preview with an announced loading state', async () => {
+    renderMermaid.mockImplementationOnce(() => new Promise(() => undefined))
+    makeEditor('```mermaid\nflowchart LR\n```')
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Mermaid diagram' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.querySelector('[role="status"]')?.textContent).toContain('Rendering diagram…')
+  })
+
   it('renders valid fences at rest and returns to source while the caret is inside', async () => {
     const e = makeEditor('```mermaid\nflowchart LR\n  A --> B\n```\n\nAfter')
     await settle()
@@ -78,6 +86,20 @@ describe('Mermaid fences in a document editor', () => {
     )
     expect(e.getMarkdown()).toContain('not valid')
     expect(e.getMarkdown()).not.toContain("Couldn't draw this diagram")
+  })
+
+  it('retries a failed Mermaid render from the error action', async () => {
+    renderMermaid.mockRejectedValueOnce(new Error('temporary failure'))
+    const e = makeEditor('```mermaid\nflowchart LR\n```')
+    await screen.findByRole('button', { name: 'Retry' })
+    renderMermaid.mockResolvedValueOnce({
+      svg: '<svg xmlns="http://www.w3.org/2000/svg"><text>retried</text></svg>',
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() =>
+      expect(e.view.dom.querySelector('[data-mermaid-diagram] svg')).not.toBeNull(),
+    )
+    expect(renderMermaid).toHaveBeenCalledTimes(2)
   })
 
   it('recovers after a failed render when the source is corrected', async () => {
@@ -115,7 +137,7 @@ describe('Mermaid fences in a document editor', () => {
     )
   })
 
-  it('uses the current node position when the preview is clicked after preceding edits', async () => {
+  it('edits source only through the explicit action after preceding edits', async () => {
     const e = makeEditor('```mermaid\nflowchart LR\n  A --> B\n```\n\nAfter')
     await settle()
     const diagram = e.view.dom.querySelector('[data-mermaid-diagram]')
@@ -127,14 +149,14 @@ describe('Mermaid fences in a document editor', () => {
       })
     })
     await settle()
-    const movedDiagram = e.view.dom.querySelector('[data-mermaid-diagram]')
-    expect(movedDiagram).not.toBeNull()
-    act(() => {
-      fireEvent.mouseDown(movedDiagram!)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit source' }))
+    await waitFor(() => {
+      expect(e.state.doc.resolve(e.state.selection.from).parent.type.name).toBe('codeBlock')
+      expect(e.view.dom.querySelector('[data-mermaid-source]')?.textContent).toContain('A --> B')
     })
     expect(e.state.selection.from).toBeGreaterThan(100)
+    expect(e.view.hasFocus()).toBe(true)
     expect(e.state.doc.textBetween(e.state.selection.from, e.state.selection.to)).toBe('')
-    expect(e.state.doc.resolve(e.state.selection.from).parent.type.name).toBe('codeBlock')
   })
 
   it('leaves other code fences unchanged', async () => {
@@ -152,9 +174,8 @@ describe('Mermaid fences in a document editor', () => {
     renderMermaid.mockImplementationOnce(() => new Promise((resolve) => (resolveFirst = resolve)))
     const e = makeEditor('```mermaid\nflowchart LR\n```\n\nAfter')
     await waitFor(() => expect(renderMermaid).toHaveBeenCalledOnce())
-    expect(e.view.dom.querySelector('[data-mermaid-diagram]')?.textContent).toBe(
-      'Rendering diagram…',
-    )
+    expect(e.view.dom.querySelector('[data-mermaid-diagram]')).not.toBeNull()
+    expect(e.view.dom.querySelector('[role="status"]')?.textContent).toContain('Rendering diagram…')
     act(() => {
       e.commands.setTextSelection(3)
       e.view.focus()
