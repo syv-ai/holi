@@ -54,16 +54,33 @@ function TabsList({
   )
 }
 
+const tabsEntryVariants = cva(
+  'group/tab relative flex h-full min-w-0 data-drop-before:before:bg-primary data-drop-before:before:absolute data-drop-before:before:inset-y-1.5 data-drop-before:before:-start-0.5 data-drop-before:before:w-0.5 data-drop-before:before:rounded-full data-drop-after:after:bg-primary data-drop-after:after:absolute data-drop-after:after:inset-y-1.5 data-drop-after:after:-end-0.5 data-drop-after:after:w-0.5 data-drop-after:after:rounded-full', {
+  variants: {
+    size: {
+      tab: 'flex-[1_1_11rem] min-w-28',
+      'tab-group': 'flex-[1_1_15rem] min-w-44',
+      'tab-wide': 'flex-[1_1_20rem] min-w-60',
+    },
+  },
+})
+
+/** A strip entry owns its responsive width; its trigger fills the slot. */
+function TabsEntry({
+  className,
+  size,
+  ...props
+}: React.ComponentProps<'div'> & { size: 'tab' | 'tab-group' | 'tab-wide' }) {
+  return <div className={cn(tabsEntryVariants({ size }), className)} {...props} />
+}
+
 function TabsTrigger({
   className,
   variant = "default",
-  size = "default",
   ...props
 }: Omit<React.ComponentProps<typeof TabsPrimitive.Trigger>, "size"> & {
-  /** `tab` is a fixed-width, start-aligned tab that keeps room at its end
-   *  for a close control, or for a `data-tab-status` badge that takes the room. */
+  /** `tab` is a start-aligned trigger that fills its stock `TabsEntry` slot. */
   variant?: "default" | "tab"
-  size?: "default" | "tab" | "tab-group" | "tab-wide"
 }) {
   return (
     <TabsPrimitive.Trigger
@@ -75,10 +92,7 @@ function TabsTrigger({
         variant === "tab" && "hover:bg-foreground/5 data-active:bg-foreground/8 dark:data-active:bg-foreground/8 data-[combine-preview]:bg-muted/40",
         "after:absolute after:bg-foreground after:opacity-0 after:transition-opacity group-data-horizontal/tabs:after:inset-x-0 group-data-horizontal/tabs:after:bottom-[-5px] group-data-horizontal/tabs:after:h-0.5 group-data-vertical/tabs:after:inset-y-0 group-data-vertical/tabs:after:-right-1 group-data-vertical/tabs:after:w-0.5 group-data-[variant=line]/tabs-list:data-active:after:opacity-100",
         variant === "tab" &&
-          "flex-none justify-start gap-2 px-3 pe-8 after:hidden has-data-[tab-status]:pe-1.5",
-        size === "tab" && "w-44 min-w-28",
-        size === "tab-group" && "w-60 min-w-44",
-        size === "tab-wide" && "w-80 min-w-60",
+          "flex-1 w-full min-w-0 justify-start gap-2 px-3 pe-8 after:hidden has-data-[tab-status]:pe-1.5",
         className
       )}
       {...props}
@@ -99,4 +113,4 @@ function TabsContent({
   )
 }
 
-export { Tabs, TabsList, TabsTrigger, TabsContent, tabsListVariants }
+export { Tabs, TabsList, TabsTrigger, TabsContent, TabsEntry, tabsListVariants }
