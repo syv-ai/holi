@@ -20,20 +20,9 @@ export function renderMermaid(source: string, theme: 'dark' | 'default'): Promis
         suppressErrorRendering: true,
       })
 
-      let diagram:
-        | {
-            db?: {
-              getVertices?: () =>
-                | Map<string, { id?: string; domId?: string; text?: string; label?: string }>
-                | Record<string, { id?: string; domId?: string; text?: string; label?: string }>
-            }
-          }
-        | undefined
+      let diagram: Awaited<ReturnType<typeof mermaid.mermaidAPI.getDiagramFromText>> | undefined
       try {
-        const api = mermaid.mermaidAPI as unknown as {
-          getDiagramFromText?: (text: string) => Promise<typeof diagram> | typeof diagram
-        }
-        diagram = await api.getDiagramFromText?.(source)
+        diagram = await mermaid.mermaidAPI.getDiagramFromText(source)
       } catch {
         // Parsing for edit targets is optional. Mermaid still gets the source to render below.
       }
@@ -50,7 +39,17 @@ export function renderMermaid(source: string, theme: 'dark' | 'default'): Promis
         | Record<string, { id?: string; domId?: string; text?: string; label?: string }>
         | undefined
       try {
-        vertices = diagram?.db?.getVertices?.()
+        const db: unknown = diagram?.db
+        const getVertices =
+          db !== null &&
+          typeof db === 'object' &&
+          'getVertices' in db &&
+          typeof db.getVertices === 'function'
+            ? (db.getVertices.bind(db) as () =>
+                | Map<string, { id?: string; domId?: string; text?: string; label?: string }>
+                | Record<string, { id?: string; domId?: string; text?: string; label?: string }>)
+            : undefined
+        vertices = getVertices?.()
       } catch {
         // A changed or incomplete Mermaid DB capability disables editing, not rendering.
       }
