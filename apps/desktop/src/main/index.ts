@@ -147,6 +147,8 @@ const heldOpens: OpenRequest[] = []
  */
 const heldLinks: string[] = []
 let openLink: ((url: string) => void) | null = null
+/** `main()`'s create-or-focus for the window, once it has made the first one. */
+let showWindow: (() => void) | null = null
 const takeLink = (url: string): void => {
   if (openLink === null) heldLinks.push(url)
   else openLink(url)
@@ -269,10 +271,10 @@ async function main(): Promise<void> {
     // argv; `openLink` brings the window forward itself.
     const link = holiLinkInArgv(argv)
     if (link !== null) return takeLink(link)
-    // Someone tried to launch Holi again: show them the one they have.
-    if (mainWindow === null) return
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.focus()
+    // Someone tried to launch Holi again: show them the one they have, or a new
+    // one when they closed it and Holi stayed on in the tray. Before `main()`
+    // has a window there is nothing to bring forward: the launch is opening one.
+    showWindow?.()
   })
 
   await app.whenReady()
@@ -836,6 +838,23 @@ async function main(): Promise<void> {
       confirmingQuit = false
       return ready
     },
+    // The vault, plugins and terminals are already stopped and `quitting` is
+    // set, so staying open would leave a window with nothing behind it: say
+    // why, then finish the exit. The next launch offers the update again.
+    installFailed: (message) => {
+      console.error('[updates] install failed after teardown:', message)
+      const options: Electron.MessageBoxOptions = {
+        type: 'error',
+        buttons: ['Close Holi'],
+        message: 'The update could not be installed',
+        detail: `${message}\n\nHoli will close. Open it again to keep working; the update will be offered again.`,
+      }
+      const shown =
+        mainWindow === null
+          ? dialog.showMessageBox(options)
+          : dialog.showMessageBox(mainWindow, options)
+      void shown.catch(() => undefined).finally(() => app.quit())
+    },
   })
 
   const router = createRouter({
@@ -937,6 +956,7 @@ async function main(): Promise<void> {
     fresh.on('focus', () => host.active()?.onFocus())
     return fresh
   }
+  showWindow = () => void openWindow()
 
   // The dock: the main window, opened if it was closed and brought out if a
   // launch at login left it out of sight.
