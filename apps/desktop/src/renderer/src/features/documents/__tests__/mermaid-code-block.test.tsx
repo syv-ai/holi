@@ -50,11 +50,13 @@ describe('Mermaid fences in a document editor', () => {
   })
 
   it('opens a pending preview with an announced loading state', async () => {
-    renderMermaid.mockImplementationOnce(() => new Promise(() => undefined))
+    let resolve!: (value: { svg: string }) => void
+    renderMermaid.mockImplementationOnce(() => new Promise((done) => (resolve = done)))
     makeEditor('```mermaid\nflowchart LR\n```')
     fireEvent.click(await screen.findByRole('button', { name: 'Open Mermaid diagram' }))
     await screen.findByRole('dialog')
     expect(document.querySelector('[role="status"]')?.textContent).toContain('Rendering diagram…')
+    await act(async () => resolve({ svg: '<svg xmlns="http://www.w3.org/2000/svg" />' }))
   })
 
   it('renders valid fences at rest and returns to source while the caret is inside', async () => {
@@ -81,8 +83,8 @@ describe('Mermaid fences in a document editor', () => {
     await settle()
     expect(e.view.dom.querySelectorAll('[data-mermaid-source]')).toHaveLength(2)
     expect(e.view.dom.querySelector('[data-mermaid-diagram]')).toBeNull()
-    expect(e.view.dom.querySelector('[role="status"]')?.textContent).toContain(
-      "Couldn't draw this diagram",
+    expect(e.view.dom.querySelector('[role="alert"]')?.textContent).toContain(
+      'Couldn’t draw this diagram',
     )
     expect(e.getMarkdown()).toContain('not valid')
     expect(e.getMarkdown()).not.toContain("Couldn't draw this diagram")
@@ -105,12 +107,12 @@ describe('Mermaid fences in a document editor', () => {
   it('recovers after a failed render when the source is corrected', async () => {
     renderMermaid.mockRejectedValueOnce(new Error('invalid diagram'))
     const e = makeEditor('```mermaid\nnot valid\n```')
-    await waitFor(() => expect(e.view.dom.textContent).toContain("Couldn't draw this diagram"))
+    await waitFor(() => expect(e.view.dom.textContent).toContain('Couldn’t draw this diagram'))
     act(() => e.commands.setContent('```mermaid\nflowchart LR\n```', { contentType: 'markdown' }))
     await waitFor(() =>
       expect(e.view.dom.querySelector('[data-mermaid-diagram] svg')).not.toBeNull(),
     )
-    expect(e.view.dom.textContent).not.toContain("Couldn't draw this diagram")
+    expect(e.view.dom.textContent).not.toContain('Couldn’t draw this diagram')
   })
 
   it('sanitizes renderer SVG before attaching it and stays rendered when read-only', async () => {

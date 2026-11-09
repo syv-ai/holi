@@ -8,6 +8,7 @@
  * opens the app once its `app.yaml` lands.
  */
 import {
+  analyseMermaidLabels,
   emptyVaultSnapshot,
   normalizeText,
   parseTaskFile,
@@ -48,6 +49,29 @@ let readOverride: (() => Promise<string>) | null = null
 const write = vi.fn()
 const cap = vi.fn()
 const providers = vi.fn()
+
+function renderedMermaid(source: string) {
+  const analysis = analyseMermaidLabels(source)
+  const labels = analysis.supported ? analysis.labels : []
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  for (const label of labels) {
+    const group = document.createElementNS(svg.namespaceURI, 'g')
+    group.setAttribute('id', `node-${label.id}`)
+    group.setAttribute('class', 'node')
+    const text = document.createElementNS(svg.namespaceURI, 'text')
+    text.setAttribute('class', 'label')
+    text.textContent = label.label
+    group.append(text)
+    svg.append(group)
+  }
+  return {
+    svg: new XMLSerializer().serializeToString(svg),
+    targets: labels.map(({ id, label }) => ({ id, label, domId: `node-${id}` })),
+  }
+}
+
+const renderMermaid = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/mermaid-renderer', () => ({ renderMermaid }))
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
@@ -156,6 +180,7 @@ let store: ReturnType<typeof createStore>
 beforeEach(() => {
   files.clear()
   readOverride = null
+  renderMermaid.mockReset().mockImplementation(async (source: string) => renderedMermaid(source))
   write.mockReset()
   cap.mockReset()
   providers.mockReset().mockResolvedValue([])
@@ -214,6 +239,43 @@ test('ordinary notes do not show Done', async () => {
   open('# Plan\n')
   await editorBox()
   expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument()
+})
+
+test('editing a Mermaid label persists through DocumentView autosave and reopen', async () => {
+  const original =
+    '---\ntitle: Diagram note\ntags: [kept]\n---\n\nProse before.\n\n```mermaid\nflowchart LR\n%% Keep this comment\nA[Alpha] --> B[Beta]\n```\n\nProse after.\n'
+  const view = open(original)
+  const box = await editorBox()
+  await waitFor(() => expect(box.querySelector('svg')).not.toBeNull())
+
+  fireEvent.click(screen.getByRole('button', { name: 'Edit labels' }))
+  const alpha = await screen.findByRole('button', { name: 'Alpha' })
+  expect(alpha.namespaceURI).toBe('http://www.w3.org/2000/svg')
+  expect(alpha.isConnected).toBe(true)
+  fireEvent.click(alpha)
+  fireEvent.change(await screen.findByRole('textbox', { name: 'Alpha' }), {
+    target: { value: 'Gamma' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+
+  await waitFor(() => expect(write).toHaveBeenCalledOnce(), { timeout: 2000 })
+  expect(write).toHaveBeenCalledWith(expect.objectContaining({ path: PATH }))
+  const saved = files.get(PATH)!
+  expect(saved).toContain('---\ntitle: Diagram note\ntags: [kept]\n---')
+  expect(saved).toContain('Prose before.')
+  expect(saved).toContain('Prose after.')
+  const originalFence = original.match(/```mermaid\n[\s\S]*?\n```/)![0]
+  const savedFence = saved.match(/```mermaid\n[\s\S]*?\n```/)![0]
+  expect(savedFence.replace('Gamma', 'Alpha')).toBe(originalFence)
+  expect(savedFence).toContain('%% Keep this comment')
+  expect(savedFence).toContain('A[Gamma] --> B[Beta]')
+
+  view.unmount()
+  open(saved)
+  const reopenedBox = await editorBox()
+  await waitFor(() => expect(reopenedBox.querySelector('svg')).not.toBeNull())
+  expect((reopenedBox as WithEditor).editor.getMarkdown()).toContain('A[Gamma] --> B[Beta]')
+  expect(screen.getByRole('button', { name: 'Edit labels' })).toBeInTheDocument()
 })
 
 test('Done saves the latest task text before closing its unsplit tab', async () => {
