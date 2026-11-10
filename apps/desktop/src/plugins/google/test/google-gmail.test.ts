@@ -238,6 +238,160 @@ describe('htmlToText', () => {
 })
 
 describe('listThreads', () => {
+  it('summarizes replies and latest incoming recipient and automation facts', async () => {
+    const messages = [
+      {
+        id: 'in',
+        internalDate: '1000',
+        labelIds: ['INBOX'],
+        payload: { headers: [header('To', 'Ada <ada@example.com>')] },
+      },
+      { id: 'sent', internalDate: '2000', labelIds: ['SENT'], payload: { headers: [] } },
+      {
+        id: 'followup',
+        internalDate: '3000',
+        labelIds: ['INBOX'],
+        payload: {
+          headers: [
+            header('Cc', 'ADA@example.com'),
+            header('Auto-Submitted', 'auto-replied'),
+            header('List-Id', 'list.example'),
+          ],
+        },
+      },
+    ]
+    const { api } = gmail([{ id: 't1' }], { t1: { id: 't1', messages } })
+    const summary = (await listThreads(api, {}, ['ada@example.com'])).threads[0]!
+
+    expect(summary).toMatchObject({
+      replied: true,
+      lastReplyAt: new Date(2000).toISOString(),
+      addressedAs: 'cc',
+      automated: true,
+      answered: false,
+    })
+  })
+
+  it('does not treat drafts as incoming messages or replies', async () => {
+    const ownDraft = {
+      id: 'd',
+      internalDate: '2000',
+      labelIds: ['DRAFT'],
+      payload: { headers: [] },
+    }
+    const sentOnly = { id: 's', internalDate: '1000', labelIds: ['SENT'], payload: { headers: [] } }
+    const { api } = gmail([{ id: 't1' }], { t1: { id: 't1', messages: [sentOnly, ownDraft] } })
+    const summary = (await listThreads(api, {}, ['me@example.com'])).threads[0]!
+    expect(summary).toMatchObject({
+      answered: false,
+      replied: false,
+      lastReplyAt: null,
+      addressedAs: null,
+      automated: false,
+    })
+  })
+
+  it.each([
+    ['empty Auto-Submitted', [header('Auto-Submitted', '')]],
+    ['invalid Auto-Submitted', [header('Auto-Submitted', 'no; parameter')]],
+    ['empty list headers', [header('List-Unsubscribe', ' '), header('List-Id', '')]],
+    ['invalid list id', [header('List-Id', 'example.com')]],
+    ['calendar subtype lookalike', [header('Content-Type', 'text/calendar-bogus; method=REQUEST')]],
+    [
+      'plain content with calendar mention',
+      [header('Content-Type', 'text/plain; name=text/calendar')],
+    ],
+    ['calendar publish', [header('Content-Type', 'text/calendar; method=PUBLISH')]],
+  ])('does not infer automation from %s', async (_name, headers) => {
+    const { api } = gmail([{ id: 't1' }], {
+      t1: {
+        id: 't1',
+        messages: [{ id: 'in', internalDate: '1000', labelIds: ['INBOX'], payload: { headers } }],
+      },
+    })
+    expect((await listThreads(api, {}, ['me@example.com'])).threads[0]!.automated).toBe(false)
+  })
+
+  const automationFor = async (headers: { name: string; value: string }[]) => {
+    const { api } = gmail([{ id: 'fact' }], {
+      fact: {
+        id: 'fact',
+        messages: [
+          { id: 'incoming', internalDate: '1000', labelIds: ['INBOX'], payload: { headers } },
+        ],
+      },
+    })
+    return (await listThreads(api, {}, ['me@example.com'])).threads[0]!.automated
+  }
+
+  it.each([
+    ['bare qualified', '<list.example.org>', true],
+    ['descriptive', 'Project discussion <project.example.org>', true],
+    ['commented', '(project discussion) <project.example.org>', true],
+    ['unqualified', '<not-an-id>', false],
+    ['email-shaped', '<team@example.org>', false],
+    ['empty segment', '<project..example.org>', false],
+  ])('validates list ids (%s)', async (_name, listId, expected) => {
+    expect(await automationFor([header('List-Id', listId)])).toBe(expected)
+  })
+
+  it.each([
+    ['actual quoted method', 'text/calendar; method="REQUEST"', true],
+    [
+      'fake method in quoted filename',
+      'text/calendar; name="calendar; method=REQUEST; other.ics"; method=PUBLISH',
+      false,
+    ],
+    ['quoted semicolon and escaped quote', 'text/calendar; name="a; \\\"b"; method="REPLY"', true],
+    ['unmatched quote', 'text/calendar; method="REQUEST', false],
+    ['missing equals', 'text/calendar; method', false],
+    ['malformed unrelated parameter', 'text/calendar; method=REQUEST; !!!', false],
+    ['duplicate method', 'text/calendar; method=REQUEST; method=CANCEL', false],
+  ])('parses complete calendar parameters (%s)', async (_name, contentType, expected) => {
+    expect(await automationFor([header('Content-Type', contentType)])).toBe(expected)
+  })
+
+  it.each([
+    ['valid generated token with parameter', 'Auto-Generated; type=vacation', true],
+    ['valid replied token with quoted semicolon', 'auto-replied; note="x;y"', true],
+    ['invalid punctuation token', 'auto-replied!!!', false],
+    ['malformed parameter syntax', 'auto-replied; !!!', false],
+    ['missing parameter value', 'auto-replied; type=', false],
+    ['unterminated parameter quote', 'auto-replied; note="oops', false],
+  ])('parses complete Auto-Submitted parameters (%s)', async (_name, value, expected) => {
+    expect(await automationFor([header('Auto-Submitted', value)])).toBe(expected)
+  })
+
+  it.each([
+    ['valid HTTP', '<https://example.org/unsubscribe>', true],
+    ['malformed HTTP', '<http://[>', false],
+    ['malformed mailto', '<mailto:not-an-address>', false],
+  ])('validates List-Unsubscribe URI (%s)', async (_name, value, expected) => {
+    expect(await automationFor([header('List-Unsubscribe', value)])).toBe(expected)
+  })
+
+  it.each([
+    ['uppercase scheme', '<HTTPS://EXAMPLE.ORG/unsubscribe>', 'HTTPS://EXAMPLE.ORG/unsubscribe'],
+    ['legacy malformed URL', '<http://[>', 'http://['],
+  ])('preserves the existing unsubscribe URL (%s)', async (_name, value, expected) => {
+    const { api } = gmail([{ id: 'legacy' }], {
+      legacy: {
+        id: 'legacy',
+        messages: [
+          {
+            id: 'incoming',
+            internalDate: '1000',
+            labelIds: ['INBOX'],
+            payload: { headers: [header('List-Unsubscribe', value)] },
+          },
+        ],
+      },
+    })
+    expect((await listThreads(api, {}, ['me@example.com'])).threads[0]!.unsubscribeUrl).toBe(
+      expected,
+    )
+  })
+
   const thread = {
     id: 't1',
     messages: [
@@ -708,6 +862,9 @@ describe('listThreads', () => {
       'Cc',
       'Reply-To',
       'List-Unsubscribe',
+      'Auto-Submitted',
+      'List-Id',
+      'Content-Type',
     ])
   })
 })

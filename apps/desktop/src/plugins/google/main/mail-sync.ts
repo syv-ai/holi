@@ -84,18 +84,31 @@ export async function syncThreads(
   api: GoogleApi,
   cache: GoogleCache,
   options: ListThreadsOptions = {},
+  knownAddresses?: string[],
 ): Promise<MailPage> {
   // "Load more" asks for what is past the tail: the one thing a last-N cache
   // does not hold.
-  if (options.pageToken !== undefined) return listThreads(api, options)
+  if (options.pageToken !== undefined) return listThreads(api, options, knownAddresses)
 
-  const key = cacheKey(options)
+  // Recipient classification depends on the resolved account identities. Keep
+  // summaries from an outage/previous identity from becoming authoritative once
+  // send-as addresses recover or change.
+  const identityKey =
+    knownAddresses === undefined
+      ? ''
+      : `|identity:${
+          [...knownAddresses]
+            .map((address) => address.trim().toLowerCase())
+            .sort()
+            .join(',') || 'unknown'
+        }`
+  const key = `${cacheKey(options)}${identityKey}`
   const cached = cache.readThreads(key)
   // The cursor THIS list was written at. Gmail's cursor is mailbox-wide, but
   // each cached list was written at a different moment.
   const since = cache.historyId(key)
 
-  if (cached === null || since === null) return fullSync(api, cache, options, key)
+  if (cached === null || since === null) return fullSync(api, cache, options, key, knownAddresses)
 
   // The mailbox this list is of, as Gmail labels it: the scope of the delta,
   // and the label whose removal means a thread has left.
@@ -114,7 +127,7 @@ export async function syncThreads(
     // Gmail keeps roughly a week. Older than that is a resync, not a failure,
     // and must never reach the user as one.
     if (error instanceof GoogleApiError && error.status === 404) {
-      return fullSync(api, cache, options, key)
+      return fullSync(api, cache, options, key, knownAddresses)
     }
     throw error
   }
@@ -138,6 +151,7 @@ export async function syncThreads(
   const refetched = await fetchThreadSummaries(
     api,
     [...changed].filter((id) => !gone.has(id)),
+    knownAddresses,
   )
 
   const threads = merge(cached, refetched, gone, patches, options)
@@ -161,9 +175,10 @@ async function fullSync(
   cache: GoogleCache,
   options: ListThreadsOptions,
   key: string,
+  knownAddresses?: string[],
 ): Promise<MailPage> {
   const cursor = currentHistoryId(api)
-  const page = await listThreads(api, options)
+  const page = await listThreads(api, options, knownAddresses)
   cache.writeThreads(key, page.threads)
   const historyId = await cursor
   if (historyId !== null) cache.setHistoryId(key, historyId)

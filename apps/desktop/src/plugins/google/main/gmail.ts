@@ -87,6 +87,14 @@ export interface MailThreadSummary {
    * see `fetchInviteIds` for why it cannot, and what is asked instead.
    */
   hasInvite: boolean
+  /** Whether a Gmail-SENT message followed an incoming non-SENT message, regardless of later follow-up. */
+  replied: boolean
+  /** ISO timestamp of the last qualifying account reply, or null when none exists. */
+  lastReplyAt: string | null
+  /** Latest incoming message recipient match; unknown means account addresses could not be resolved. */
+  addressedAs: 'to' | 'cc' | 'neither' | 'unknown' | null
+  /** Recognized automation evidence on the latest incoming message only; false means no recognized signal, not that a reply is needed. */
+  automated: boolean
 }
 
 interface MailAttachment {
@@ -516,6 +524,7 @@ export async function fetchCategoryCounts(api: GoogleApi): Promise<CategoryCount
 export async function listThreads(
   api: GoogleApi,
   options: ListThreadsOptions = {},
+  knownAddresses?: string[],
 ): Promise<MailPage> {
   const page = await api.get<{ threads?: { id?: string }[]; nextPageToken?: string }>(
     `${BASE}/threads`,
@@ -529,7 +538,7 @@ export async function listThreads(
   const ids = (page.threads ?? []).map((t) => t.id).filter((id): id is string => id !== undefined)
 
   return {
-    threads: await fetchThreadSummaries(api, ids),
+    threads: await fetchThreadSummaries(api, ids, knownAddresses),
     // `undefined` means "no further page" on the wire; `null` says it on the
     // type, so a caller cannot mistake "not asked" for "nothing left".
     nextPageToken: page.nextPageToken ?? null,
@@ -547,6 +556,7 @@ export async function listThreads(
 export async function fetchThreadSummaries(
   api: GoogleApi,
   ids: string[],
+  knownAddresses?: string[],
 ): Promise<MailThreadSummary[]> {
   if (ids.length === 0) return []
 
@@ -569,13 +579,16 @@ export async function fetchThreadSummaries(
         'Cc',
         'Reply-To',
         'List-Unsubscribe',
+        'Auto-Submitted',
+        'List-Id',
+        'Content-Type',
       ],
     }),
   )
 
   const names = await labelNames
   const summaries = threads
-    .map((thread) => summarize(thread, names))
+    .map((thread) => summarize(thread, names, knownAddresses))
     .filter((t): t is Omit<MailThreadSummary, 'hasInvite'> => t !== null)
 
   const invites = await fetchInviteIds(api, summaries)
@@ -696,11 +709,86 @@ function unsubscribeUrlOf(header: string | null): string | null {
   return null
 }
 
+function validUnsubscribeUri(candidate: string): string | null {
+  if (!candidate || /[\s<>\\]/.test(candidate)) return null
+  try {
+    const url = new URL(candidate)
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      return url.hostname ? candidate : null
+    }
+    if (url.protocol === 'mailto:' && /^[^@\s,<>]+@[^@\s,<>]+\.[^@\s,<>]+$/.test(url.pathname)) {
+      return candidate
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+/** Parse a header value and its complete RFC-style parameter list. */
+function parseHeaderParameters(
+  value: string,
+): { main: string; parameters: Map<string, string> } | null {
+  const parts: string[] = []
+  let part = ''
+  let quoted = false
+  let escaped = false
+  for (const character of value) {
+    if (escaped) {
+      part += character
+      escaped = false
+    } else if (quoted && character === '\\') {
+      part += character
+      escaped = true
+    } else if (character === '"') {
+      quoted = !quoted
+      part += character
+    } else if (character === ';' && !quoted) {
+      parts.push(part.trim())
+      part = ''
+    } else {
+      part += character
+    }
+  }
+  if (quoted || escaped) return null
+  parts.push(part.trim())
+  const main = parts.shift()
+  if (!main) return null
+  const parameters = new Map<string, string>()
+  for (const entry of parts) {
+    const match = /^([!#$%&'*+.^_`|~0-9A-Za-z-]+)\s*=\s*(.*)$/.exec(entry)
+    if (!match || !match[2]) return null
+    const name = match[1]!.toLowerCase()
+    const raw = match[2]!
+    let parsed: string
+    if (raw.startsWith('"')) {
+      if (!/^"(?:[^"\\]|\\[\s\S])*"$/.test(raw)) return null
+      parsed = raw.slice(1, -1).replace(/\\([\s\S])/g, '$1')
+    } else {
+      if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(raw)) return null
+      parsed = raw
+    }
+    if (parameters.has(name)) return null
+    parameters.set(name, parsed)
+  }
+  return { main, parameters }
+}
+
+function validListId(value: string | null): boolean {
+  if (value === null) return false
+  const match =
+    /^\s*(?:[^<>\r\n]*?\s*)?<([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+)>\s*$/.exec(
+      value,
+    )
+  return match !== null
+}
+
 /** Everything derivable from the metadata fetch: everything except
  *  `hasInvite`. */
 function summarize(
   thread: RawThread,
   labelNames: Map<string, string>,
+  knownAddresses?: string[],
 ): Omit<MailThreadSummary, 'hasInvite'> | null {
   const messages = thread.messages ?? []
   const first = messages[0]
@@ -710,6 +798,50 @@ function summarize(
   // A label anywhere in the thread applies to the thread, as in Gmail's own list.
   const allLabels = messages.flatMap((m) => m.labelIds ?? [])
   const category = last.labelIds?.map((id) => CATEGORY_BY_LABEL[id]).find((c) => c !== undefined)
+  const incoming = messages.filter(
+    (message) => !message.labelIds?.includes('SENT') && !message.labelIds?.includes('DRAFT'),
+  )
+  let seenIncoming = false
+  const replies = messages.filter((message) => {
+    if (!message.labelIds?.includes('SENT') && !message.labelIds?.includes('DRAFT')) {
+      seenIncoming = true
+      return false
+    }
+    return message.labelIds?.includes('SENT') === true && seenIncoming
+  })
+  const latestIncoming = incoming[incoming.length - 1]
+  const incomingTo =
+    latestIncoming === undefined ? [] : parseAddresses(headerOf(latestIncoming.payload, 'To'))
+  const incomingCc =
+    latestIncoming === undefined ? [] : parseAddresses(headerOf(latestIncoming.payload, 'Cc'))
+  const own =
+    knownAddresses === undefined || knownAddresses.length === 0
+      ? null
+      : new Set(knownAddresses.map((address) => address.trim().toLowerCase()))
+  const matches = (addresses: MailAddress[]) =>
+    own !== null && addresses.some((address) => own.has(address.email))
+  const autoSubmitted =
+    latestIncoming === undefined ? null : headerOf(latestIncoming.payload, 'Auto-Submitted')
+  const listUnsubscribe =
+    latestIncoming === undefined ? null : headerOf(latestIncoming.payload, 'List-Unsubscribe')
+  const listId = latestIncoming === undefined ? null : headerOf(latestIncoming.payload, 'List-Id')
+  const listEvidence =
+    (listUnsubscribe !== null &&
+      [...listUnsubscribe.matchAll(/<([^<>]*)>/g)].some(
+        (match) => validUnsubscribeUri(match[1]!) !== null,
+      )) ||
+    validListId(listId)
+  const contentType =
+    latestIncoming === undefined ? null : headerOf(latestIncoming.payload, 'Content-Type')
+  const mimeType = contentType?.split(';', 1)[0]?.trim().toLowerCase()
+  // Only a genuine invitation method is positive evidence. PUBLISH calendars and
+  // arbitrary text/attachments mentioning calendar are not necessarily automation.
+  const calendarParameters = contentType === null ? null : parseHeaderParameters(contentType)
+  const invitation =
+    mimeType === 'text/calendar' &&
+    ['request', 'reply', 'cancel'].includes(
+      calendarParameters?.parameters.get('method')?.toLowerCase() ?? '',
+    )
 
   return {
     id: thread.id,
@@ -743,6 +875,28 @@ function summarize(
       .map((id) => labelNames.get(id))
       .filter((name): name is string => name !== undefined),
     unsubscribeUrl: unsubscribeUrlOf(headerOf(last.payload, 'List-Unsubscribe')),
+    replied: replies.length > 0,
+    lastReplyAt: replies.length === 0 ? null : isoDate(replies[replies.length - 1]!),
+    addressedAs:
+      latestIncoming === undefined
+        ? null
+        : own === null
+          ? 'unknown'
+          : matches(incomingTo)
+            ? 'to'
+            : matches(incomingCc)
+              ? 'cc'
+              : 'neither',
+    // Conservative evidence only: valid Auto-Submitted automation tokens, valid
+    // list headers, or a recognized calendar invitation on the latest incoming.
+    automated:
+      latestIncoming !== undefined &&
+      ((autoSubmitted !== null &&
+        ['auto-generated', 'auto-replied'].includes(
+          parseHeaderParameters(autoSubmitted)?.main.toLowerCase() ?? '',
+        )) ||
+        listEvidence ||
+        invitation),
   }
 }
 
