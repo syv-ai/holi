@@ -35,7 +35,7 @@ const setClient = vi.fn()
 /** Google's capabilities, by name, through the UI door. */
 const google: Record<string, (params: unknown) => unknown> = {
   'google.status': () => status(),
-  'google.accounts': () => accounts(),
+  'google.allAccounts': () => accounts(),
   'google.useAccount': (p) => linkAccount(p),
   'google.removeAccount': (p) => removeAccount(p),
   'google.disconnectVault': () => disconnectVault(),
@@ -132,6 +132,15 @@ describe('ConnectionsSection', () => {
 
     await waitFor(() => expect(disconnectVault).toHaveBeenCalled())
     expect(removeAccount).not.toHaveBeenCalled()
+  })
+
+  it('lets a vault whose grant Google refused forget it', async () => {
+    status.mockResolvedValue({ account: null, missingScopes: [], needsReconnect: true })
+    render()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Forget this connection' }))
+
+    await waitFor(() => expect(disconnectVault).toHaveBeenCalled())
   })
 
   it('removes an account by name when that is what was asked for', async () => {

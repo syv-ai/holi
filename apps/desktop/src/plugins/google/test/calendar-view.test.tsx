@@ -105,7 +105,7 @@ const setCalendarMock = vi.fn()
 
 const google: Record<string, (params: Record<string, unknown>) => unknown> = {
   'google.status': () => ({ account: { email: ME }, missingScopes: [] }),
-  'google.accounts': () => ({ accounts: [{ sub: '1', email: ME }], current: '1' }),
+  'google.allAccounts': () => ({ accounts: [{ sub: '1', email: ME }], current: '1' }),
   'google.agenda': (p) => agendaMock(p),
   'google.agendaCached': () => null,
   'google.calendars': () => [
