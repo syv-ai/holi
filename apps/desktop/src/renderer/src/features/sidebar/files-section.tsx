@@ -432,7 +432,16 @@ export function FilesSection({
   /** A deck's row: its chevron expands it, the rest opens it, where the
    *  tree's own press would do both. */
   function onLabelClick(item: ItemInstance<TreeItemData>, event: MouseEvent<HTMLElement>) {
-    if (!browsable.has(item.getId()) || event.shiftKey || event.metaKey || event.ctrlKey) return
+    const path = item.getId()
+    const openable = !item.isFolder() || browsable.has(path)
+    const primaryModifier = event.metaKey || event.ctrlKey
+    if (openable && !event.shiftKey && primaryModifier) {
+      event.preventDefault()
+      event.stopPropagation()
+      openTab(tabForPath(path), { beside: true })
+      return
+    }
+    if (!browsable.has(path) || event.shiftKey || event.metaKey || event.ctrlKey) return
     event.stopPropagation()
     tree.setSelectedItems([item.getId()])
     item.setFocused()

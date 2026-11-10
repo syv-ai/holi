@@ -1,6 +1,6 @@
 import { Provider, createStore } from 'jotai'
 import { expect, test, vi } from 'vitest'
-import { act, fireEvent, render, screen } from '@/test/render'
+import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import { TabsEntry } from '@/components/ui/tabs'
 import { TabStrip } from '../tab-strip'
 import { shellWorkspaceAtom, updateWorkspaceAtom, workspaceOfAtom } from '@/state/shell-tabs'
@@ -63,6 +63,29 @@ function setup(workspace = openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md')) {
   })
   return { store, list, tabs, transfer }
 }
+function pointerClick(
+  target: HTMLElement,
+  modifiers: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean } = {},
+  afterPress?: () => void,
+) {
+  fireEvent.pointerDown(target, { button: 0, ...modifiers })
+  const mouseDown = new MouseEvent('mousedown', {
+    bubbles: true,
+    cancelable: true,
+    button: 0,
+    ...modifiers,
+  })
+  act(() => {
+    target.dispatchEvent(mouseDown)
+    target.focus()
+  })
+  afterPress?.()
+  fireEvent.pointerUp(target, { button: 0, ...modifiers })
+  fireEvent.mouseUp(target, { button: 0, ...modifiers })
+  fireEvent.click(target, { ...modifiers })
+  return mouseDown
+}
+
 function dragEvent(type: 'dragover' | 'drop', transfer: DataTransfer, x: number) {
   const event = new Event(type, { bubbles: true, cancelable: true })
   Object.defineProperties(event, { clientX: { value: x }, dataTransfer: { value: transfer } })
@@ -188,6 +211,115 @@ test.each([
     expect(entry.className).toContain(width)
     expect(entry.className).toContain(minWidth)
     expect(entry.className).not.toMatch(/(?:^| )flex-(?:1|\[)/)
+  },
+)
+
+test.each([
+  ['Home', 'B.md', 'A.md'],
+  ['End', 'A.md', 'B.md'],
+  ['ArrowLeft', 'B.md', 'A.md'],
+  ['ArrowRight', 'A.md', 'B.md'],
+])(
+  '%s preserves keyboard selection without enabling a later pointer press',
+  async (key, from, to) => {
+    const { store } = setup(selectEntry(openTab(openTab(emptyWorkspace(), 'A.md'), 'B.md'), from))
+    const start = screen.getByRole('tab', { name: from.slice(0, -3) })
+    act(() => start.focus())
+    fireEvent.keyDown(start, { key })
+    await waitFor(() => expect(store.get(shellWorkspaceAtom).active).toBe(to))
+    const next = screen.getByRole('tab', { name: from.slice(0, -3) })
+    fireEvent.pointerDown(next, { button: 0 })
+    fireEvent.mouseDown(next, { button: 0 })
+    act(() => next.focus())
+    expect(store.get(shellWorkspaceAtom).active).toBe(to)
+    fireEvent.mouseUp(next, { button: 0 })
+    fireEvent.keyUp(window, { key })
+  },
+)
+
+test('background pointer selection waits for a confirmed click without cancelling native drag', () => {
+  const workspace = selectEntry(
+    openTab(openTab(emptyWorkspace(), 'Delta.md'), 'Alpha.md'),
+    'Delta.md',
+  )
+  const { store } = setup(workspace)
+  const trigger = screen.getByRole('tab', { name: 'Alpha' }) as HTMLElement
+
+  const mouseDown = pointerClick(trigger)
+
+  expect(mouseDown.defaultPrevented).toBe(false)
+  expect(store.get(shellWorkspaceAtom).active).toBe('Alpha.md')
+})
+
+test.each([
+  ['Command', { metaKey: true }],
+  ['Alt', { altKey: true }],
+] as const)(
+  '%s-click opens a background tab beside the original active view',
+  (_name, modifiers) => {
+    const workspace = selectEntry(
+      openTab(openTab(emptyWorkspace(), 'Delta.md'), 'Alpha.md'),
+      'Delta.md',
+    )
+    const { store } = setup(workspace)
+    const trigger = screen.getByRole('tab', { name: 'Alpha' }) as HTMLElement
+
+    const mouseDown = pointerClick(trigger, modifiers, () => {
+      expect(store.get(shellWorkspaceAtom).active).toBe('Delta.md')
+    })
+    const result = store.get(shellWorkspaceAtom)
+    const active = result.entries.find(
+      (entry) => typeof entry !== 'string' && entry.id === result.active,
+    )
+
+    expect(mouseDown.defaultPrevented).toBe(false)
+    expect(active).toMatchObject({ views: ['Delta.md', 'Alpha.md'], focused: 'Alpha.md' })
+    expect(
+      result.entries.flatMap((entry) => (typeof entry === 'string' ? [entry] : entry.views)),
+    ).toHaveLength(2)
+  },
+)
+
+test('modifier-clicking a split member opens only that view beside the original active view', () => {
+  let workspace = openTab(openTab(openTab(emptyWorkspace(), 'Alpha.md'), 'Beta.md'), 'Delta.md')
+  workspace = combineOnStrip(workspace, 'Alpha.md', 'Beta.md')
+  workspace = selectEntry(workspace, 'Delta.md')
+  const { store } = setup(workspace)
+  const member = document.querySelector<HTMLElement>('[data-member="Beta.md"]')!
+  pointerClick(member, { metaKey: true })
+
+  const result = store.get(shellWorkspaceAtom)
+  expect(result.entries).toMatchObject([
+    'Alpha.md',
+    { views: ['Delta.md', 'Beta.md'], focused: 'Beta.md' },
+  ])
+  expect(
+    result.entries.flatMap((entry) => (typeof entry === 'string' ? [entry] : entry.views)),
+  ).toEqual(['Alpha.md', 'Delta.md', 'Beta.md'])
+})
+
+test.each([
+  ['Command', { metaKey: true }],
+  ['Alt', { altKey: true }],
+] as const)(
+  '%s-clicking split padding combines the whole group with the active entry',
+  (_name, modifiers) => {
+    let workspace = openTab(openTab(openTab(emptyWorkspace(), 'Alpha.md'), 'Beta.md'), 'Delta.md')
+    workspace = combineOnStrip(workspace, 'Alpha.md', 'Beta.md')
+    workspace = selectEntry(workspace, 'Delta.md')
+    const { store } = setup(workspace)
+    const group = screen.getByRole('tab', { name: 'Split view: Beta, Alpha' }) as HTMLElement
+
+    pointerClick(group, modifiers)
+    const result = store.get(shellWorkspaceAtom)
+    const split = result.entries.find(
+      (entry) => typeof entry !== 'string' && entry.id === result.active,
+    )
+
+    expect(split).toMatchObject({ views: ['Delta.md', 'Beta.md', 'Alpha.md'] })
+    expect(
+      result.entries.flatMap((entry) => (typeof entry === 'string' ? [entry] : entry.views)),
+    ).toEqual(['Delta.md', 'Beta.md', 'Alpha.md'])
   },
 )
 

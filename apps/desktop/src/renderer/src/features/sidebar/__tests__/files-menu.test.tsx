@@ -14,6 +14,7 @@ import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import { coreContributionAtom, installedPluginsAtom } from '@/state/plugins'
 import { vaultSettingsAtom } from '@/state/settings'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { activeSplit, openTab } from '@/state/shell-workspace'
 import {
   activeRemoteAtom,
   showHiddenByVaultAtom,
@@ -198,6 +199,29 @@ test.each(['header New', 'More file actions', 'context menu'])(
     }
   },
 )
+
+test.each([{ metaKey: true }, { ctrlKey: true }])(
+  'a primary-modifier click opens an openable tree row beside the active tab (%o)',
+  async (modifier) => {
+    const { store } = mount()
+    act(() => store.set(shellWorkspaceAtom, (ws) => openTab(openTab(ws, 'A.md'), 'B.md')))
+    const deck = await screen.findByRole('treeitem', { name: 'talk.deck' })
+    fireEvent.click(deck.querySelector('[data-slot=tree-item-label]')!, modifier)
+    await waitFor(() => expect(activeSplit(store.get(shellWorkspaceAtom))).not.toBeNull())
+    expect(activeSplit(store.get(shellWorkspaceAtom))?.views).toHaveLength(2)
+    expect(activeSplit(store.get(shellWorkspaceAtom))?.views[0]).toBe('B.md')
+    expect(store.get(shellWorkspaceAtom).entries).toHaveLength(2)
+  },
+)
+
+test('primary-modifier on a normal folder preserves expand and selection behavior', async () => {
+  const { store } = mount()
+  act(() => store.set(shellWorkspaceAtom, (ws) => openTab(openTab(ws, 'A.md'), 'B.md')))
+  const folder = await screen.findByRole('treeitem', { name: 'kunder' })
+  fireEvent.click(folder, { metaKey: true })
+  expect(store.get(shellWorkspaceAtom).entries).toEqual(['A.md', 'B.md'])
+  expect(folder).toHaveAttribute('aria-selected', 'true')
+})
 
 test('the Tasks plugin claim asks for a title and creates in the selected folder', async () => {
   createTask.mockClear()
