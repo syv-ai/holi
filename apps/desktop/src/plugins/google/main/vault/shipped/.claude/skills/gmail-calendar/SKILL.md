@@ -158,6 +158,11 @@ holi google draft --thread <threadId> --to ada@syv.ai --subject 'Re: Q2 budget' 
 Sounds good.
 EOF
 
+# Keep the id returned by draft; update replaces the whole message in that draft.
+holi google draft --update <draftId> --to ada@syv.ai --subject 'Q2 budget (revised)' <<'EOF'
+The complete replacement body goes here.
+EOF
+
 holi google reply <threadId> <<'EOF'     # to the SENDER; subject from the thread
 Yes, Tuesday works.
 EOF
@@ -193,7 +198,10 @@ a note), write it into the vault first. `send --draft` takes no `--attach`: the
 draft's attachments are already in it.
 
 **If you drafted it, send it with `--draft`.** `draft` returns an `id`; pass
-that id back. Composing the same message a second time with `--to` sends a
+that id back. Repeat `--cc` for multiple addresses, or provide comma-separated addresses. `--bcc` is available on `draft` only; direct `send` accepts visible To/Cc recipients so its approval can show everyone who will receive the message. `draft --thread` replies to the latest non-draft message and writes its `In-Reply-To` and `References` headers. To revise an
+existing draft, use `draft --update <draftId>` with the complete new message;
+it replaces the whole message rather than patching fields and preserves the
+existing draft id. Composing the same message a second time with `--to` sends a
 *separate* mail and leaves your draft sitting unsent in Drafts — the user ends
 up with one message delivered and one orphan they have to clean up. `--draft`
 makes Gmail delete the draft as it sends, so "draft it" then "send it" ends with
