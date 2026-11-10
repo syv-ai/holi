@@ -446,6 +446,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
           level,
           message: id === 'agent' ? message : `${plugin.info.label}: ${message}`,
           remote,
+          plugin: id,
           ...(detail === undefined ? {} : { detail }),
         }),
       publish: (name, payload) => {
@@ -515,6 +516,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         message: `${plugin.info.label} did not start`,
         detail: err instanceof Error ? err.message : String(err),
         remote,
+        plugin: id,
       })
       undoAll(id, undos)
       return null

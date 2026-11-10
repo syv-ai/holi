@@ -63,6 +63,7 @@ import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
 import { registerIpc } from './ipc'
 import { createActivityLog, scrubSecrets } from './activity/log'
+import { logsCapabilities } from './capabilities/logs-caps'
 import { captureConsole, createAppLog, rendererLevel, type AppLogEntry } from './logs/app-log'
 import { createTerminals } from './terminal/terminals'
 import { pathToFileURL } from 'node:url'
@@ -297,7 +298,7 @@ async function main(): Promise<void> {
   // happened before the panel was ever opened.
   const activity = createActivityLog({ onEntry: (entry) => send('activity:entry', entry) })
   pushLog = (entry) => send('logs:entry', entry)
-  activity.write({ channel: 'app', message: `Holi ${app.getVersion()} started` })
+  activity.write({ channel: 'app', message: `Holi ${app.getVersion()} started`, global: true })
   // The bottom panel's shells. `binDir` is read lazily: the `holi` command is
   // installed below, long before anyone opens a terminal.
   const terminals = createTerminals({
@@ -769,6 +770,7 @@ async function main(): Promise<void> {
     },
   })
   capabilities.register(VAULT_NAMESPACES, vaultCaps)
+  capabilities.register(['logs'], logsCapabilities(activity))
   // Comment threads on notes, for the agent: written as the signed-in person.
   capabilities.register(
     COMMENT_NAMESPACES,
@@ -814,12 +816,14 @@ async function main(): Promise<void> {
           status.lastError !== null
             ? {
                 channel: 'app',
+                global: true,
                 level: 'warn',
                 message: 'Update check failed',
                 detail: status.lastError,
               }
             : {
                 channel: 'app',
+                global: true,
                 message:
                   status.state === 'ready'
                     ? `Holi ${status.availableVersion ?? ''} is ready to install`

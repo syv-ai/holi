@@ -65,6 +65,12 @@ export interface CliSpec {
   summary: string
   /** Params given as a bare `--name`, which reads as `'true'`. */
   flags?: readonly string[]
+  /** Named params which require a value (`--name value`). Declaring this list
+   *  opts the command into strict named-option validation; without it, legacy
+   *  commands retain their permissive `--name value` grammar. */
+  values?: readonly string[]
+  /** This is the command reached by `holi <namespace>` as well as its full name. */
+  standalone?: true
   /** Params that may be given more than once (`--attach a --attach b`), read
    *  as a list in the order given; given once, a list of one. */
   many?: readonly string[]

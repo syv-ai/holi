@@ -56,11 +56,14 @@ const argName = (arg: string): string => arg.replace(/\?$/, '')
 
 /** One command's line: `holi store put <bundle> <collection> <value> [<id>]`. */
 function commandLine({ name, cli }: CliCommand): string {
-  const words = [`holi ${name.replace('.', ' ')}`]
+  const words = [
+    `holi ${cli.standalone === true ? name.slice(0, name.indexOf('.')) : name.replace('.', ' ')}`,
+  ]
   for (const arg of cli.args) {
     words.push(arg.endsWith('?') ? `[<${argName(arg)}>]` : `<${arg}>`)
   }
   for (const flag of cli.flags ?? []) words.push(`[--${flag}]`)
+  for (const value of cli.values ?? []) words.push(`[--${value} <${value}>]`)
   for (const name of cli.many ?? []) words.push(`[--${name} <${name}>]...`)
   return words.join(' ')
 }
@@ -99,23 +102,41 @@ export function resolveArgv(
   })
   // Asking for usage is not an error: bare `holi` and any `--help` before a
   // `--` answer it and run nothing, the one command's line when one is named.
+  const standalone = commands.filter((c) => c.cli.standalone === true)
+  const standaloneByNamespace = new Map<string, CliCommand>()
+  for (const command of standalone) {
+    const namespace = command.name.slice(0, command.name.indexOf('.'))
+    if (standaloneByNamespace.has(namespace)) {
+      throw new Error(`multiple standalone CLI commands for namespace ${namespace}`)
+    }
+    standaloneByNamespace.set(namespace, command)
+  }
   const end = argv.indexOf('--')
   if (argv.length === 0 || (end < 0 ? argv : argv.slice(0, end)).some((w) => HELP.has(w))) {
     const named = commands.find((c) => c.name === `${argv[0]}.${argv[1]}`)
+    const root = argv[0] === undefined ? undefined : standaloneByNamespace.get(argv[0])
     const text =
-      named === undefined
-        ? usageText(commands)
-        : `usage: ${commandLine(named)}\n${named.cli.summary}`
+      named !== undefined
+        ? `usage: ${commandLine(named)}\n${named.cli.summary}`
+        : root !== undefined
+          ? `usage: ${commandLine(root)}\n${root.cli.summary}`
+          : usageText(commands)
     return { kind: 'help', text }
   }
-  const [ns, verb] = argv
+  const ns = argv[0]
+  const standaloneCommand = ns === undefined ? undefined : standaloneByNamespace.get(ns)
+  const bare =
+    standaloneCommand !== undefined && (argv[1] === undefined || argv[1]!.startsWith('-'))
+  const verb = bare
+    ? standaloneCommand!.name.slice(standaloneCommand!.name.indexOf('.') + 1)
+    : argv[1]
   if (ns === undefined || ns.startsWith('-') || verb === undefined || verb.startsWith('-')) {
     return usage('holi: say the command first: holi <namespace> <verb>')
   }
-  const command = commands.find((c) => c.name === `${ns}.${verb}`)
+  const command = bare ? standaloneCommand : commands.find((c) => c.name === `${ns}.${verb}`)
   if (command === undefined) return usage(`holi: no such command: ${ns} ${verb}`)
 
-  const label = `holi ${ns} ${verb}`
+  const label = `holi ${ns}${bare ? '' : ` ${verb}`}`
   const wrong = (why: string): CliRequest => ({
     kind: 'usage',
     text: `${label}: ${why}\nusage: ${commandLine(command)}`,
@@ -125,7 +146,7 @@ export function resolveArgv(
   const positionals: string[] = []
   let json = false
   let options = true
-  const rest = argv.slice(2)
+  const rest = argv.slice(bare ? 1 : 2)
   for (let i = 0; i < rest.length; i++) {
     const word = rest[i]!
     if (options && word === '--') {
@@ -134,27 +155,39 @@ export function resolveArgv(
       const eq = word.indexOf('=')
       const name = eq < 0 ? word.slice(2) : word.slice(2, eq)
       if (!OPTION_NAME.test(name)) return wrong(`not an option: ${word}`)
-      if (cli.many?.includes(name)) {
-        const value = eq >= 0 ? word.slice(eq + 1) : rest[++i]
-        if (value === undefined) return wrong(`--${name} needs a value`)
-        const prior = params[name]
-        params[name] = [...(Array.isArray(prior) ? prior : []), value]
+      if (name === 'json' && eq < 0) {
+        json = true
         continue
       }
-      if (Object.hasOwn(params, name)) return wrong(`--${name} is given twice`)
+      const isFlag = cli.flags?.includes(name) === true
+      const takesValue =
+        cli.values?.includes(name) === true ||
+        cli.many?.includes(name) === true ||
+        cli.args.some((arg) => argName(arg) === name) ||
+        name === cli.stdin ||
+        name === cli.stdinUnless ||
+        name === cli.job
+      // `values` opts a command into strict option validation. Older commands
+      // rely on undeclared named values, so leave their grammar unchanged.
+      if (cli.values !== undefined && !isFlag && !takesValue)
+        return wrong(`unknown option --${name}`)
+      if (Object.hasOwn(params, name) && !cli.many?.includes(name))
+        return wrong(`--${name} is given twice`)
       if (cli.positionalOnly === true && cli.args.some((arg) => argName(arg) === name)) {
         return wrong(`give ${name} in its place, not as --${name}`)
       }
-      if (eq < 0 && name === 'json') {
-        json = true
-      } else if (eq < 0 && cli.flags?.includes(name)) {
+      if (isFlag && eq >= 0 && cli.values !== undefined)
+        return wrong(`--${name} does not take a value`)
+      if (isFlag && eq < 0) {
         params[name] = 'true'
-      } else if (eq >= 0) {
-        params[name] = word.slice(eq + 1)
       } else {
-        const value = rest[++i]
-        if (value === undefined) return wrong(`--${name} needs a value`)
-        params[name] = value
+        const value = eq >= 0 ? word.slice(eq + 1) : rest[++i]
+        if (value === undefined || (cli.values !== undefined && value.startsWith('--')))
+          return wrong(`--${name} needs a value`)
+        if (cli.many?.includes(name)) {
+          const prior = params[name]
+          params[name] = [...(Array.isArray(prior) ? prior : []), value]
+        } else params[name] = value
       }
     } else if (options && word.startsWith('-') && word !== '-') {
       return wrong(`unknown option ${word}`)

@@ -56,6 +56,8 @@ function rig(
   const listeners = new Map<string, (message: unknown) => void>()
   let context: PluginCtx | null = null
   let open: OpenVault | null = null
+  const activity: Parameters<NonNullable<Parameters<typeof createPluginHost>[0]['activity']>>[0][] =
+    []
   const fake: MainPlugin = {
     info: { id: 'fake', label: 'Fake', default: opts.default ?? true },
     seed: { id: 'fake', once: {}, shipped: { [SKILL]: '# fake\n' } },
@@ -94,6 +96,7 @@ function rig(
     frameOrigin: () => () => {},
     notify: () => false,
     focused: () => false,
+    activity: (entry) => activity.push(entry),
   })
   let root = ''
   const capabilities = createCapabilityHost({
@@ -115,7 +118,7 @@ function rig(
     open = vault
     await host.reconcile('open')
   }
-  return { host, registry, calls, ping, sent, fromRenderer, enter, ctx: () => context! }
+  return { host, registry, calls, ping, sent, fromRenderer, enter, ctx: () => context!, activity }
 }
 
 const turn = (root: string, on: boolean) =>
@@ -140,6 +143,36 @@ function logged(
 }
 
 describe('the plugin host', () => {
+  it('tags plugin log lines and activation failures with actual ids, not labels', async () => {
+    const plugins: MainPlugin[] = [
+      {
+        info: { id: 'google', label: 'Google', default: true },
+        activate() {
+          throw new Error('activation failed')
+        },
+      },
+      {
+        info: { id: 'search-google', label: 'Google adjacent', default: true },
+        activate(ctx) {
+          ctx.log('warn', 'runtime line')
+          return () => {}
+        },
+      },
+    ]
+    const { host, enter, activity } = rig({ plugins })
+    await enter(openVault('o/r', await tempDir()))
+    expect(activity).toEqual([
+      expect.objectContaining({ plugin: 'google', remote: 'o/r', message: 'Google did not start' }),
+      expect.objectContaining({
+        plugin: 'search-google',
+        remote: 'o/r',
+        message: 'Google adjacent: runtime line',
+      }),
+    ])
+    expect(activity.filter((entry) => entry.plugin === 'google')).toHaveLength(1)
+    expect(activity.filter((entry) => entry.plugin === 'search-google')).toHaveLength(1)
+    await host.stop()
+  })
   it('starts an enabled plugin once, however often the vault reconciles', async () => {
     const { host, calls, registry, enter } = rig()
     const root = await tempDir()
