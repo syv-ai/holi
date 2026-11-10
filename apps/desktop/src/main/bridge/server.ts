@@ -12,8 +12,9 @@
  * argv against the capabilities open at the CLI door (`cli.ts`) and runs one
  * through `dispatch`, so every verb anyone can type is a capability and not a
  * route. A route is for a caller that is not an agent verb: the agent's turn
- * and status-line hooks, which must answer empty because a body would be
- * injected into Claude's context (the agent plugin's `claude/routes.ts`), and git's
+ * and status-line hooks, which answer empty, or with what the hook reads and
+ * never prints, because a printed body would be injected into Claude's
+ * context (the agent plugin's `claude/routes.ts`), and git's
  * pre-commit hook and merge driver (`vault/git-routes.ts`). Each owner
  * registers its own routes from the composition root.
  *

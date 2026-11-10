@@ -34,7 +34,7 @@ A vault is a GitHub repository cloned into a directory Holi owns. Sync runs both
 
 **Activity log.** The loop writes what it does to the activity log the bottom panel's Output shows ([status bar](status-bar.md)): each autosave commit (short sha and message, the paths when several), a pull that merged, a merge conflict with its paths, a push with its count, a push refused for access or failing with git's stderr, a reconcile and an abandon, a branch switch or creation, a vault opening and closing, and each sync state where it settles. Not the quiet ticks: a pull that found nothing and the passing `pulling` and ahead-and-behind states are not lines, and a failure is logged when it starts or its words change, not every interval. `syncInfo()` keeps when the remote last answered and the last failure's text; `syncNow()` (the status bar's sync item) commits, pulls and pushes in sequence, declining what the loop would.
 
-**Large files.** Autosave stages only files at or under `maxCommittedFileBytes` (default 10 MB, re-read on every commit); deletions always commit. Oversized files stay on disk, unpushed, and a tree holding only those reads as clean. A callout at the window's foot offers **Commit anyway** (`--no-verify`) or **Keep local** (`.git/info/exclude`). The hook applies the same cap to the agent and terminal commits and points at Git LFS without setting it up.
+**Large files.** Autosave stages only files at or under `maxCommittedFileBytes` (default 10 MB, re-read on every commit); deletions always commit. Oversized files stay on disk, unpushed, and a tree holding only those reads as clean. A callout at the window's foot offers **Commit anyway** (`--no-verify`) or **Keep local** (`.git/info/exclude`). While anything is held back, Holi lists its paths in `.holi/state/held-back.local.json` (machine-local), which the agent's prompt hook reads ([agent-config](agent-config.md)). The pre-commit hook applies the same cap to the agent and terminal commits and points at Git LFS without setting it up.
 
 ## Rules
 
@@ -65,7 +65,7 @@ A vault is a GitHub repository cloned into a directory Holi owns. Sync runs both
 - `apps/desktop/src/main/git.ts`: every git command and output parser, `branches`, `switchBranch`, `validBranchName`
 - `apps/desktop/src/main/activity/log.ts`: the activity log the loop writes to
 - `apps/desktop/src/main/vault/clone.ts`, `registry.ts`, `watcher.ts`: clone, registry, watcher
-- `apps/desktop/src/main/vault/large-files.ts`: size partition, hook script
+- `apps/desktop/src/main/vault/large-files.ts`: size partition, held-back list file, hook script
 - `apps/desktop/src/main/vault/hooks/`, `main/vault/git-routes.ts`: staged set, runner, transforms, run log, the hook's and the merge drivers' routes
 - `apps/desktop/src/main/vault/merge-drivers.ts`: the merge drivers' install
 - `apps/desktop/src/main/router.ts` (`vaults.membership`, `settle`, `leave`, `forgetDeleted`), `renderer/src/features/shell/leave-vault-dialog.tsx`: leaving and deleting

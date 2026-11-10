@@ -130,6 +130,19 @@ describe('createBridgeServer', () => {
     expect(r.starts()).toEqual([])
   })
 
+  it("POST /turn/end answers the settle commit's tree, and stays empty without one", async () => {
+    const answers: Array<string | null> = ['a'.repeat(40), null, 'HEAD']
+    const server = createBridgeServer({ log: () => {} })
+    registerAgentRoutes(server, { onTurn: async () => answers.shift() ?? null, log: () => {} })
+    servers.push(server)
+    await server.start()
+    const end = () =>
+      post(server.port()!, `/turn/end?t=${server.tokenForVault(VAULT)}&job=1234abcd`)
+    expect(await end()).toEqual({ status: 200, body: JSON.stringify({ tree: 'a'.repeat(40) }) })
+    expect(await end()).toEqual({ status: 204, body: '' })
+    expect(await end()).toEqual({ status: 204, body: '' })
+  })
+
   it('tells two sessions in one vault apart', async () => {
     const r = await rig()
     await post(r.port(), `/turn/start?t=${r.token()}&job=aaaaaaaa`)

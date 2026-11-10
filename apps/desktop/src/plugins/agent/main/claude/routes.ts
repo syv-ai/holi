@@ -6,8 +6,10 @@
  * The seeded `UserPromptSubmit`/`Stop` hooks (`turn-signal.mjs`) POST
  * `/turn/start` and `/turn/end` with the vault's token and the session's job
  * id; the seeded status line POSTs Claude Code's status JSON to `/statusline`
- * the same way. **Every answer is empty**: whatever a Claude Code hook prints
- * is injected into the agent's context.
+ * the same way. **Every answer is empty but one**, since whatever a Claude Code
+ * hook prints is injected into the agent's context: `/turn/end` answers, once
+ * the settle commit for the turn has landed, `{ "tree": <its tree> }`, which
+ * the Stop hook reads and saves and never prints.
  *
  * At a session's start (`SessionStart`, `/session`) and at each turn's start,
  * the hook's body carries the session's inbox socket and token, which Claude
@@ -59,15 +61,16 @@ export function registerAgentRoutes(server: RouteServer, deps: TurnRouteDeps): (
   const turn = (active: boolean) =>
     server.route(active ? '/turn/start' : '/turn/end', {
       body: active ? 'text' : 'discard',
-      handle(remote, query, body) {
+      async handle(remote, query, body) {
         const job = query.get('job') ?? ''
         const raw = query.get('pending')
         const pending = raw !== null && /^\d+$/.test(raw) ? Number(raw) : null
         if (!JOB_ID.test(job)) return EMPTY
         // Before the turn: a message sent the moment it starts finds the inbox.
         if (active) channel(remote, job, body)
-        deps.onTurn(remote, job, active, active ? null : pending)
-        return EMPTY
+        const tree = await deps.onTurn(remote, job, active, active ? null : pending)
+        if (typeof tree !== 'string' || !/^[0-9a-f]{7,64}$/.test(tree)) return EMPTY
+        return { status: 200, body: JSON.stringify({ tree }), contentType: 'application/json' }
       },
     })
 

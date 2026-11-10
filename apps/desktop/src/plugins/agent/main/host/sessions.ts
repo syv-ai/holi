@@ -138,8 +138,14 @@ export interface AgentSessions {
   stop(id: string): Promise<ActionResult>
   respawn(id: string): Promise<ActionResult>
   duplicate(id: string, geometry?: Geometry): Promise<StartResult>
-  /** A turn edge from the seeded hook, by vault and job id. */
-  noteTurn(remote: string, jobId: string, active: boolean, pending?: number | null): void
+  /** A turn edge from the seeded hook, by vault and job id. At an end,
+   *  answers the settle commit it took (`TurnCoordinator.end`), or null. */
+  noteTurn(
+    remote: string,
+    jobId: string,
+    active: boolean,
+    pending?: number | null,
+  ): Promise<string | null>
   /** A session's status line fired: Claude Code's status JSON, by vault and
    *  job id. */
   noteStatus(remote: string, jobId: string, status: unknown): void
@@ -577,17 +583,19 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       return opened.ok ? { ok: true, sessionId: res.id, terminalId: opened.terminalId } : opened
     },
 
-    noteTurn(remote, jobId, active, pending = null) {
+    async noteTurn(remote, jobId, active, pending = null) {
       // A turn in a vault Holi is not showing is not this vault's pause.
-      if (current?.remote !== remote) return
+      if (current?.remote !== remote) return null
+      let settled: Promise<string | null> = Promise.resolve(null)
       if (active) unprompted.delete(jobId)
       if (active) coordinator.begin(jobId)
       else {
         if (pending !== null) stopPending.set(jobId, pending)
-        coordinator.end(jobId)
+        settled = coordinator.end(jobId)
         stopPending.delete(jobId)
       }
       void refresh()
+      return settled
     },
 
     noteStatus(remote, jobId, report) {
