@@ -110,14 +110,106 @@ describe('restaging', () => {
     await writeFile(join(repo, 'gone.md'), '# x\n', 'utf8')
     await plainGit(repo, ['add', '-A'])
     await plainGit(repo, ['commit', '-m', 'add gone.md'])
-    await plainGit(repo, ['rm', '--cached', 'gone.md'])
-    await writeFile(join(repo, 'gone.md'), '# back\n', 'utf8')
+    await plainGit(repo, ['rm', 'gone.md'])
 
     const result = await runPreCommit(repo, NOTHING, {
       settings: { 'archive-done': true },
       transforms: [fake('archive-done', ['gone.md'])],
     })
     expect(result.failed).toEqual([])
+    expect(await plainGit(repo, ['diff', '--cached', '--name-status'])).toContain('D\tgone.md')
+  })
+
+  it('restages a transformed index without adding ignored local state', async () => {
+    await mkdir(join(repo, '.holi/state/log'), { recursive: true })
+    await mkdir(join(repo, '.holi/memory'), { recursive: true })
+    await writeFile(join(repo, '.gitignore'), '.holi/state/log/*.local.md\n', 'utf8')
+    await writeFile(join(repo, '.holi/state/log/run.local.md'), 'local state\n', 'utf8')
+    await writeFile(join(repo, '.holi/memory/index.md'), 'old index\n', 'utf8')
+    const trackedLocalPath = '.holi/state/log/tracked.local.md'
+    await writeFile(join(repo, trackedLocalPath), 'old tracked local state\n', 'utf8')
+    const spacePath = 'note with spaces.md'
+    const newlinePath = 'note with\nnewline.md'
+    await writeFile(join(repo, spacePath), 'old spaced note\n', 'utf8')
+    await writeFile(join(repo, newlinePath), 'old newline note\n', 'utf8')
+    await plainGit(repo, ['add', '.gitignore', '.holi/memory/index.md', spacePath, newlinePath])
+    await plainGit(repo, ['add', '-f', trackedLocalPath])
+    await writeFile(join(repo, '.holi/memory/index.md'), 'transformed index\n', 'utf8')
+    await writeFile(join(repo, trackedLocalPath), 'transformed tracked local state\n', 'utf8')
+    await writeFile(join(repo, spacePath), 'transformed spaced note\n', 'utf8')
+    await writeFile(join(repo, newlinePath), 'transformed newline note\n', 'utf8')
+
+    const result = await runPreCommit(repo, NOTHING, {
+      settings: { 'memory-index': true },
+      transforms: [
+        {
+          name: 'memory-index',
+          run: async () => ({
+            changed: [
+              '.holi/memory/index.md',
+              '.holi/state/log/run.local.md',
+              trackedLocalPath,
+              spacePath,
+              newlinePath,
+            ],
+            notes: [],
+          }),
+        },
+      ],
+    })
+
+    expect(result.failed).toEqual([])
+    expect(await readHookLog(repo)).not.toContain('restage FAILED')
+    await plainGit(repo, ['commit', '-m', 'transformed memory index'])
+    expect(await plainGit(repo, ['show', 'HEAD:.holi/memory/index.md'])).toContain(
+      'transformed index',
+    )
+    expect(await plainGit(repo, ['show', `HEAD:${trackedLocalPath}`])).toContain(
+      'transformed tracked local state',
+    )
+    expect(await plainGit(repo, ['show', `HEAD:${spacePath}`])).toContain('transformed spaced')
+    expect(await plainGit(repo, ['show', `HEAD:${newlinePath}`])).toContain('transformed newline')
+    expect(await plainGit(repo, ['ls-tree', '-r', '--name-only', 'HEAD'])).not.toContain(
+      'run.local.md',
+    )
+  })
+
+  it('restages ordinary untracked additions', async () => {
+    await writeFile(join(repo, 'new.md'), '# new note\n', 'utf8')
+
+    await runPreCommit(repo, NOTHING, {
+      settings: { 'normalize-md': true },
+      transforms: [fake('normalize-md', ['new.md'])],
+    })
+
+    expect(await plainGit(repo, ['diff', '--cached', '--name-status'])).toContain('A\tnew.md')
+  })
+
+  it('restages deletions of tracked ignored files', async () => {
+    await writeFile(join(repo, '.gitignore'), '*.local.md\n', 'utf8')
+    await writeFile(join(repo, 'tracked.local.md'), 'tracked local content\n', 'utf8')
+    await plainGit(repo, ['add', '.gitignore'])
+    await plainGit(repo, ['add', '-f', 'tracked.local.md'])
+    await plainGit(repo, ['commit', '-m', 'track local file'])
+    await plainGit(repo, ['rm', 'tracked.local.md'])
+
+    await runPreCommit(repo, NOTHING, {
+      settings: { 'archive-done': true },
+      transforms: [fake('archive-done', ['tracked.local.md'])],
+    })
+
+    expect(await plainGit(repo, ['diff', '--cached', '--name-status'])).toContain(
+      'D\ttracked.local.md',
+    )
+  })
+
+  it('reports genuine restage errors', async () => {
+    await runPreCommit(repo, NOTHING, {
+      settings: { relink: true },
+      transforms: [fake('relink', ['not-a-repository-path'])],
+    })
+
+    expect(await readHookLog(repo)).toContain('restage FAILED')
   })
 
   it('restages nothing when nothing changed', async () => {
