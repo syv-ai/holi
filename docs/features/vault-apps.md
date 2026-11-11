@@ -49,8 +49,8 @@ the note as it was, in a session the person can watch and add to ([editor](edito
   the card, so c-card-7 keeps its composition.
 - **Archive** is `archived: true` in the app's `app.yaml`, written by main (`apps.archive`, UI
   door) with every other line and comment of the file kept; Unarchive removes the key. An
-  archived app leaves the surface's `instances`, so the Apps grid, the nav menu's Apps group, ⌘K
-  and the Home picker no longer list it, and the Apps page lists it under an **Archived** toggle
+  archived app leaves the surface's `instances`, so the Apps grid, the nav menu's Apps group and ⌘K
+  no longer list it, and the Apps page lists it under an **Archived** toggle
   in its header, where its menu says Unarchive. It is still a finished app: the tree shows its
   row, a path or `holi apps open` opens it, and nothing is moved or deleted. The toast ("Budget
   archived") offers **Undo** and stays until dismissed, as Mail's archive does, because undo
@@ -103,7 +103,7 @@ the note as it was, in a session the person can watch and add to ([editor](edito
   `window.holi` bridge script. Every other file is served byte for byte. The one document not
   read from the bundle is a slash command's runner (below), made from the manifest.
 - **The bridge** is `postMessage` from the frame to `AppFrame`, which answers `holi.open` itself
-  (the shim sends `{target}`: a view registered in this vault by name wins, such as home, board,
+  (the shim sends `{target}`: a view registered in this vault by name wins, such as board,
   agenda, mail, settings or history; else a vault file, or an app's bundle as that app; a bare
   name that is neither answers "no such view"; a file is held to what `holi docs open` may show,
   `shownPathOrNull`, so never `.holi/state/` or a secret file) and
@@ -208,7 +208,8 @@ the note as it was, in a session the person can watch and add to ([editor](edito
   first. It quotes the app's reasons, and names who added the app's code and who last changed it
   (`bundleAuthorship`: the first and last commits to the bundle, records and log aside). A name
   links to the person's GitHub profile when their login is known (a GitHub noreply email, or a git
-  name that is a member's login), and a short hash opens that commit in History.
+  name that is a member's login), and a short hash opens the bundle's history, the commits
+  dialog a document's History opens (`FileHistoryDialog`).
 - **Links leave Holi.** A web or `mailto:` link from an app opens in the system browser or mail
   app, whether it is a plain link (main's `will-frame-navigate` stops the frame leaving its bundle)
   or `target=_blank`/`window.open` (the sandbox's `allow-popups` lets it reach
@@ -272,10 +273,6 @@ the note as it was, in a session the person can watch and add to ([editor](edito
   a `<name>.app` folder below the session's cwd, a syntax error and its line, a `.ts`/`.tsx`/`.jsx` file nothing will build, a
   `localStorage` call, a missing manifest, and a hard-coded colour. It is advisory, exits 0, and is
   silent when nothing is wrong. See [agent config](agent-config.md) for the CLI and hooks.
-- **Home can be an app.** When the `home` setting ([settings](settings.md)) names a finished app
-  the vault has, the Home tab shows it, through the claim like any folder document. No vault is
-  created with one: Home defaults to Holi's own recents view ([nav menu](nav-menu.md)). When
-  `home` names an app the vault lacks, the Home tab says so.
 
 ## Rules
 

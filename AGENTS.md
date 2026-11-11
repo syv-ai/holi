@@ -294,22 +294,21 @@ Gotchas of a fresh checkout or worktree that no file states.
   from the branch you are on. Have it `git reset --hard <your commit>` first, and bring its
   work back with `git cherry-pick`.
 - Holi edits the stock files in place, and `shadcn add` would overwrite those edits if
-  you let it. Added on purpose: `Button` variants `text`, `dashed`, `section` and sizes `row`, `field`,
-  `inline`; `DialogContent`, `PopoverContent`, `HoverCardContent` variant `flush`;
+  you let it. Added on purpose: `Button` variants `text`, `quiet`, `dashed`, `section` and sizes `row`, `field`, `inline`, `media` (document image sizing); `DialogContent`, `PopoverContent`, `HoverCardContent` variant `flush`;
   `DialogContent` `size` (the width of a dialog chosen at runtime); `FileType`'s `deck`
   extension (a community plugin's presentation);
   `SidebarMenuButton` variant `fill` and size `rail`; `Avatar` `shape="square"`;
-  `TabsTrigger` variant `tab`; `Toggle` size `icon`; `ResizableHandle` variant `primary`
+  `TabsTrigger` variant `tab` with `bg-muted/40` combine-preview tint; `TabsEntry` sizes `tab`, `tab-group`, `tab-wide` own strip widths; `Toggle` size `icon`; `ResizableHandle` variant `primary`
   and `ResizablePanelGroup` `animateFirst`; `PanelSeparator` variant `line`;
   `motion-reduce` on `Skeleton` and `Spinner`; the scroll fade on `CommandList`; ReUI
   `KanbanBoard` variant `row`, `FramePanel` `flush`, `TreeItem` `arrived`, the data grid's
-  `tableLayout.edgeInset`. `git log -p -- apps/desktop/src/renderer/src/components` shows
+  `tableLayout.edgeInset`; the event calendar's gridlines, one `--ec-grid-line` token (the
+  theme's `--divider`, muted) set on its root and read by the time grid, month and resource
+  views. `git log -p -- apps/desktop/src/renderer/src/components` shows
   each. Need a look a stock component lacks? Add a variant there, never a className at
   the call site (`@shadcn/lint`'s `no-restyle`).
 - knip treats an export tagged `/** @public */` as used. That tag marks the plugin seam
   (`plugin-api`) and exports kept for a test; anything else unused is deleted, not tagged.
-- Known defect found during the agent-first refactor, still open: plugin `commands` and
-  `palette` never reach ⌘K. See `docs/refactor/findings.md`.
 - To check UI in the running app, start `pnpm dev:debug` (remote debugging port 9333) and
   drive the window with `node apps/desktop/cdp.mjs '<js expression>'`;
   `apps/desktop/scripts/seed-demo.mjs` seeds demo data. The app needs a signed-in GitHub

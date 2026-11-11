@@ -119,8 +119,8 @@ export function pluginMark(id: string): ReactNode {
 
 /** A folder document's mark (a deck, an app), by its name: its kind's glyph
  *  on ReUI's file-type page rather than a label. At a row's or a tab's size a
- *  label is a coloured band too small to read, and a deck's red one passed for
- *  a PDF's orange. The tree's row and the document's tab both draw this. */
+ *  label is a coloured band too small to read, so the glyph and its hue tell
+ *  a deck from a PDF. The tree's row and the document's tab both draw this. */
 export function FolderDocumentMark({ name }: { name: string }) {
   return (
     <FileType type={getFileType(name)} size="mini" glyph aria-hidden="true" className="shrink-0" />

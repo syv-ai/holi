@@ -95,6 +95,7 @@ export function createRichTextExtensions({ placeholder }: RichTextExtensionOptio
     StarterKit.configure({
       heading: { levels: [1, 2, 3] },
       link: { openOnClick: false, defaultProtocol: 'https' },
+      codeBlock: false,
     }),
     TaskList,
     RichTextTaskItem.configure({ nested: true }),

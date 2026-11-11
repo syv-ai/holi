@@ -6,12 +6,11 @@
  * page, and the session view, each session in its terminal;
  * its terminal tab, the surface `agent`, kept mounted, one per
  * terminal; its nav item; its turn review drawer; leaving a vault asks while a
- * session is busy; it provides the agent service; and the palette lists its
- * live sessions.
+ * session is busy; and it provides the agent service.
  */
 import { atom } from 'jotai'
 import { Astroid } from 'lucide-react'
-import { appModeAtom, type Command, type RendererPlugin, type SurfaceTabLook } from '@/plugin-api'
+import type { RendererPlugin, SurfaceTabLook } from '@/plugin-api'
 import { AGENT_INFO } from '../info'
 import { AgentSurface } from './agent-surface'
 import { agentIndicator } from './lib/notices'
@@ -32,7 +31,6 @@ import {
   agentVault,
   terminalLabel,
 } from './state/sessions'
-import { openSessionAtom, showAgentsAtom } from './state/send'
 import { agentMenuEntriesAtom, runAgentMenuEntryAtom } from './state/command-menu'
 import {
   loadProvidersAtom,
@@ -61,33 +59,6 @@ const tabLooksAtom = atom((get): readonly SurfaceTabLook[] => {
   })
 })
 
-const COMMANDS: readonly Command[] = [
-  // Bound here because an agent tab is mounted only while it is open, so the
-  // shortcut that OPENS one cannot live inside it. The agent list: where
-  // sessions are started and picked up.
-  {
-    id: 'agent.show',
-    label: 'Agent sessions',
-    hotkey: '⌘J',
-    firstKey: 3,
-    run: (_get, set) => set(showHistoryAtom),
-  },
-  // ⌘N is core's: the shell sends it here on the Agents side (`newSession`).
-  {
-    id: 'agent.new',
-    label: 'New session',
-    run: (_get, set) => void set(newSessionAtom),
-  },
-  {
-    id: 'agent.terminal',
-    label: 'Open the agents list in a terminal',
-    run: (_get, set) => {
-      set(appModeAtom, 'documents')
-      void set(showAgentsAtom)
-    },
-  },
-]
-
 export const agentRenderer: RendererPlugin = {
   info: AGENT_INFO,
   events: { ...agentEvents, ...inboxEvents, ...providerEvents },
@@ -108,7 +79,6 @@ export const agentRenderer: RendererPlugin = {
     {
       surface: AGENT_SURFACE,
       order: 60,
-      command: 'agent.show',
       live: atom((get) => get(agentSessionsAtom).length > 0),
     },
   ],
@@ -143,12 +113,5 @@ export const agentRenderer: RendererPlugin = {
   // session whose first turn is the ask, in the machine's default agent.
   agentsSlot: { start: startConversationViewAtom },
   agent: AGENT_SERVICE,
-  commands: COMMANDS,
-  palette: {
-    items: atom((get) =>
-      get(agentSessionsAtom).map((s) => ({ key: s.id, name: s.name, dot: agentIndicator(s).dot })),
-    ),
-    open: atom(null, (_get, set, id: string) => void set(openSessionAtom, id)),
-  },
   commandMenu: { entries: agentMenuEntriesAtom, run: runAgentMenuEntryAtom },
 }

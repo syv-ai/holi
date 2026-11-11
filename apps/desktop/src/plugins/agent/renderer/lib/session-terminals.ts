@@ -65,3 +65,8 @@ export function typeIntoTerminal(remote: string, id: string, data: string): void
 export function resizeTerminal(remote: string, id: string, cols: number, rows: number): void {
   window.holi.plugin.send(AGENT, { remote, name: 'pty-resize', payload: { id, cols, rows } })
 }
+
+/** Keep the main PTY's OSC replies in step with the rendered logical theme. */
+export function updateTerminalAppearance(remote: string, id: string, appearance: object): void {
+  window.holi.plugin.send(AGENT, { remote, name: 'pty-appearance', payload: { id, appearance } })
+}

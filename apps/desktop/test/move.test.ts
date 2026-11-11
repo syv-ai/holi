@@ -2,7 +2,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
+import { vaultRelPath } from '@holi/shared'
+import { exactPath } from '@holi/shared/path-safety-node'
 import { moveNotes } from '../src/main/vault/move'
+import { withFileLock, withFileLocks } from '../src/main/vault/vault-files'
 
 const dirs: string[] = []
 afterAll(async () => {
@@ -22,6 +25,77 @@ async function vault(files: Record<string, string>): Promise<string> {
 const read = (root: string, rel: string) => readFile(join(root, rel), 'utf8')
 
 describe('moveNotes', () => {
+  it('runs beside a delete that holds a note linking to it, and both finish', async () => {
+    const root = await vault({ 'c.md': 'see [[z.md]]', 'z.md': 'Z' })
+    let open!: () => void
+    const gate = new Promise<void>((r) => (open = r))
+    // Someone holds c.md; a delete of both queues behind it, then the move
+    // takes z.md, which the delete wants next.
+    const holder = withFileLock((await exactPath(root, 'c.md'))!, () => gate)
+    const removal = withFileLocks(root, ['c.md', 'z.md'].map(vaultRelPath), async () => {})
+    await new Promise((r) => setTimeout(r, 20))
+    const move = moveNotes(root, [{ from: 'z.md', to: 'x/z.md' }])
+    await new Promise((r) => setTimeout(r, 50))
+    open()
+    const stuck = new Promise((r) => setTimeout(() => r('stuck'), 2000))
+    const all = Promise.all([holder, removal, move]).then(() => 'done')
+    expect(await Promise.race([all, stuck])).toBe('done')
+    expect(await read(root, 'c.md')).toBe('see [[x/z.md]]')
+  })
+
+  it('runs beside another move of a note it links to, and both finish', async () => {
+    const root = await vault({ 'a.md': 'see [[c.md]]', 'c.md': 'see [[a.md]]' })
+    const both = Promise.all([
+      moveNotes(root, [{ from: 'a.md', to: 'x/a.md' }]),
+      moveNotes(root, [{ from: 'c.md', to: 'x/c.md' }]),
+    ])
+    const stuck = new Promise((r) => setTimeout(() => r('stuck'), 2000))
+    expect(await Promise.race([both.then(() => 'done'), stuck])).toBe('done')
+    expect(await read(root, 'x/a.md')).toBe('see [[x/c.md]]')
+    expect(await read(root, 'x/c.md')).toBe('see [[x/a.md]]')
+  })
+
+  it('lets no writer that checks one moving file write another between the two', async () => {
+    // A meeting's minutes are written only while its transcript is there.
+    const root = await vault({ 'm/minutes.md': 'minutes', 'm/transcript.md': 'mine' })
+    const key = async (rel: string) => (await exactPath(root, rel))!
+    let release!: () => void
+    const held = withFileLock(
+      await key('m/transcript.md'),
+      () => new Promise<void>((r) => (release = r)),
+    )
+    const move = moveNotes(root, [
+      { from: 'm/minutes.md', to: 'n/minutes.md' },
+      { from: 'm/transcript.md', to: 'n/transcript.md' },
+    ])
+    await new Promise((r) => setTimeout(r, 50))
+    const write = withFileLock(await key('m/minutes.md'), async () => {
+      if ((await readFile(join(root, 'm/transcript.md'), 'utf8').catch(() => null)) === null) return
+      await writeFile(join(root, 'm/minutes.md'), 'written back')
+    })
+    release()
+    await Promise.all([held, move, write])
+    await expect(read(root, 'm/minutes.md')).rejects.toThrow()
+    expect(await read(root, 'n/minutes.md')).toBe('minutes')
+  })
+
+  it('waits for a write that holds the file by its canonical path', async () => {
+    const root = await vault({ 'old.md': 'body' })
+    // On macOS the temp folder is reached through a link: the canonical path
+    // and the one built from `root` differ, and the lock has to be the same.
+    const key = (await exactPath(root, 'sub/new.md'))!
+    let release!: () => void
+    const held = withFileLock(key, () => new Promise<void>((r) => (release = r)))
+    let moved = false
+    const move = moveNotes(root, [{ from: 'old.md', to: 'sub/new.md' }]).then(() => (moved = true))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(moved).toBe(false)
+    release()
+    await held
+    await move
+    expect(await read(root, 'sub/new.md')).toBe('body')
+  })
+
   it('a single move behaves exactly like a rename (file + inbound rewrite)', async () => {
     const root = await vault({
       'old.md': 'body',

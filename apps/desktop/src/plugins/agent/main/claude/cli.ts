@@ -181,8 +181,9 @@ export interface ClaudeCli {
   /** A new background session in the vault. With no prompt it waits for its
    *  first one; with a prompt, that prompt is its first turn. `model`,
    *  `allow` (Claude Code permission rules it may use without asking) are a
-   *  scheduled run's or a Holi's; `appendSystemPrompt` (Claude Code's own
-   *  flag) is a Holi's, who it is and its instructions. */
+   *  scheduled run's or a Holi's; `deny` (rules it may never use, which beat
+   *  an allow in any scope) a meeting scribe's; `appendSystemPrompt` (Claude
+   *  Code's own flag) is a Holi's, who it is and its instructions. */
   startBg(target: VaultCliTarget, opts: StartBgOptions): Promise<StartResult>
   /** A background copy of a conversation, by Claude Code's full session id. */
   forkBg(target: VaultCliTarget, sessionId: string, name?: string): Promise<StartResult>
@@ -193,7 +194,11 @@ interface StartBgOptions {
   prompt?: string
   model?: string
   allow?: readonly string[]
+  deny?: readonly string[]
   appendSystemPrompt?: string
+  /** An absolute path to an MCP JSON config the session loads besides the
+   *  vault's own (`--mcp-config`, additive). */
+  mcpConfig?: string
 }
 
 /** The longest a session name is worth being: a row is narrow, and the source
@@ -331,9 +336,24 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
     return { ok: true, id }
   }
 
+  /** Set once this Claude Code has refused `--all`: it predates the flag,
+   *  and its plain listing still carries the finished sessions. */
+  let allRefused = false
+
   return {
     async list(target) {
+      // Since 2.1.319 `--json` lists only active sessions and `--all` adds the
+      // finished ones, which History is made of. An older Claude Code refuses
+      // the flag as an unknown option; it listed them without it.
       try {
+        if (!allRefused) {
+          try {
+            return await exec(target, ['agents', '--json', '--all'], LIST_TIMEOUT_MS)
+          } catch (err: unknown) {
+            if (!/unknown option/i.test(String(err))) throw err
+            allRefused = true
+          }
+        }
         return await exec(target, ['agents', '--json'], LIST_TIMEOUT_MS)
       } catch (err: unknown) {
         log(`listing failed: ${String(err)}`)
@@ -343,18 +363,23 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
     stop: (target, id) => action(target, ['stop', id]),
     respawn: (target, id) => action(target, ['respawn', id]),
     rm: (target, id) => action(target, ['rm', id]),
-    startBg(target, { name, prompt, model, allow = [], appendSystemPrompt }) {
+    startBg(target, { name, prompt, model, allow = [], deny = [], appendSystemPrompt, mcpConfig }) {
       const label = sessionName(name)
       return start(target, [
         '--bg',
         ...(model === undefined ? [] : ['--model', model]),
         ...(appendSystemPrompt === undefined ? [] : ['--append-system-prompt', appendSystemPrompt]),
-        // `--allowedTools` takes any number of values, so each rule is one
-        // `=` argument and a plain option always follows to end the list:
-        // the name, which an allow list therefore always gets.
+        // Variadic too: one `=` argument, so nothing after it is read as a
+        // second config.
+        ...(mcpConfig === undefined ? [] : [`--mcp-config=${mcpConfig}`]),
+        // `--allowedTools` and `--disallowedTools` take any number of values,
+        // so each rule is one `=` argument and a plain option always follows
+        // to end the list: the name, which a list of rules therefore always
+        // gets.
         ...allow.map((rule) => `--allowedTools=${rule}`),
+        ...deny.map((rule) => `--disallowedTools=${rule}`),
         ...(label === null
-          ? allow.length > 0
+          ? allow.length > 0 || deny.length > 0
             ? ['--name', 'Scheduled run']
             : []
           : ['--name', label]),

@@ -109,6 +109,14 @@ export interface PluginHostDeps {
 export interface PluginHost {
   /** The plugins the vault at `root` runs. Cached for the open vault. */
   enabled(root: string): Promise<ReadonlySet<string>>
+  /**
+   * The plugins whose capabilities and events are open in the vault at
+   * `root`: what it runs, and a plugin of the open vault until its disposer
+   * has finished. Turning a plugin off writes the setting first, so without
+   * the second its disposer could neither tell its renderer nor hear back
+   * (a meeting's last audio, docs/features/meetings.md).
+   */
+  serving(root: string): Promise<ReadonlySet<string>>
   /** What the scanner claims in the vault at `root`: its enabled plugins'.
    *  Cached for the open vault, like `enabled`. */
   scanClaimsFor(root: string): Promise<ScanClaim[]>
@@ -218,6 +226,18 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     return (await read(root)).running
   }
 
+  /** The open vault's plugins being stopped, until their disposers finish. */
+  const stopping = new Map<string, string>()
+
+  async function serving(root: string): Promise<ReadonlySet<string>> {
+    const on = await enabled(root)
+    const going = [
+      ...(live?.root === root ? live.started.map((s) => s.id) : []),
+      ...[...stopping].filter(([, r]) => r === root).map(([id]) => id),
+    ].filter((id) => !on.has(id))
+    return going.length === 0 ? on : new Set([...on, ...going])
+  }
+
   /** The plugins working across vaults now, by id, in start order. */
   const inBackground = new Map<string, { why: string; dispose: Disposer }>()
   let backgroundQueue: Promise<void> = Promise.resolve()
@@ -288,7 +308,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       // the cached one.
       const runs = async (remote: string): Promise<boolean> => {
         const root = await deps.rootFor(remote)
-        return root !== null && (await enabled(root)).has(id)
+        return root !== null && (await serving(root)).has(id)
       }
       made = pluginEvents(deps.events, id, runs)
       eventsOf.set(id, made)
@@ -520,12 +540,17 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     }
   }
 
-  /** Its disposer, then what it registered. */
-  async function stopOne(s: Started): Promise<void> {
-    await Promise.resolve()
-      .then(s.dispose)
-      .catch((err) => console.error(`[plugins] ${s.id} stop failed:`, err))
-    undoAll(s.id, s.undos)
+  /** Its disposer, then what it registered. It is served until both are done. */
+  async function stopOne(s: Started, root: string): Promise<void> {
+    stopping.set(s.id, root)
+    try {
+      await Promise.resolve()
+        .then(s.dispose)
+        .catch((err) => console.error(`[plugins] ${s.id} stop failed:`, err))
+      undoAll(s.id, s.undos)
+    } finally {
+      stopping.delete(s.id)
+    }
   }
 
   async function stopAll(): Promise<void> {
@@ -533,7 +558,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     live = null
     failed.clear()
     lastWant = ''
-    for (const s of [...(was?.started ?? [])].reverse()) await stopOne(s)
+    if (was !== null) for (const s of [...was.started].reverse()) await stopOne(s, was.root)
     reportListeners.clear()
     mentionListeners.clear()
     snapshotListeners.clear()
@@ -572,7 +597,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     for (const s of [...here.started].reverse()) {
       if (want.has(s.id)) continue
       here.started = here.started.filter((x) => x !== s)
-      await stopOne(s)
+      await stopOne(s, root)
     }
 
     const isStarted = (id: string): boolean => here.started.some((s) => s.id === id)
@@ -596,7 +621,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       const s = await start(plugin, vault)
       // Left while it started: stop it again rather than leave it running.
       if (live !== here) {
-        if (s !== null) await stopOne(s)
+        if (s !== null) await stopOne(s, root)
         return
       }
       if (s !== null) here.started.push(s)
@@ -612,6 +637,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
 
   return {
     enabled,
+    serving,
 
     transformsFor: async (root) =>
       running(await enabled(root)).flatMap((p) =>

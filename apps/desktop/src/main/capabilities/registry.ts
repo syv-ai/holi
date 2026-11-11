@@ -59,23 +59,36 @@ export interface CapabilityContext {
 export interface CliSpec {
   /** Positional params, in order. A trailing `?` marks an optional one, and
    *  only the last ones may be optional. Any param can also be given as
-   *  `--name value`. */
+   *  `--name value`, unless `positionalOnly`. */
   args: readonly string[]
   /** One line for `holi`'s usage. */
   summary: string
   /** Params given as a bare `--name`, which reads as `'true'`. */
   flags?: readonly string[]
+  /** Params that may be given more than once (`--attach a --attach b`), read
+   *  as a list in the order given; given once, a list of one. */
+  many?: readonly string[]
   /** The param a command reads from stdin when it is not given. The bridge
    *  asks for it (428) without running anything, and the script sends stdin
    *  once, so a write never runs on the first leg. */
   stdin?: string
+  /** The positional params are given only in their place, never as
+   *  `--name value`: a gate that reads them off the command line by position
+   *  (the send gate's `holi google api <METHOD>`) then sees what runs. */
+  positionalOnly?: true
   /** A param that, given, means the command has no body to read, so the
    *  bridge never asks for stdin and the script never waits on it
    *  (`holi google send --draft <id>`). */
   stdinUnless?: string
+  /** The `stdin` param is read from stdin only when given as `-`; left out,
+   *  the command has no body, so the script never waits on a stdin nobody
+   *  meant to send (`holi google api GET ...` against `--body -`). */
+  stdinOnDash?: true
   /** A param that, left out, is the calling session's Claude Code job id:
    *  the script sends it from `$CLAUDE_JOB_DIR` when that is set, as a
-   *  background session's status line does. */
+   *  background session's status line does. Inside a session, a different
+   *  value given for it is refused: only a person at a terminal outside any
+   *  session names one. */
   job?: string
 }
 
