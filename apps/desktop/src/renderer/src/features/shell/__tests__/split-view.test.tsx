@@ -32,6 +32,7 @@ import { activeSplit, focusedTab, isSplit, openTab, splitActive } from '@/state/
 import { vaultSettingsAtom } from '@/state/settings'
 import { tabDragAtom } from '@/features/shell/use-tab-drag'
 import { registerBuffer } from '@/lib/buffer-registry'
+import { agentsSelectionAtom } from '@/state/agents-slots'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 
 const write = vi.fn(async (_input: unknown) => ({
@@ -817,6 +818,26 @@ function sessionFixture(
   const away = () => act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'A.md')))
   return { store, plugin, acquired, disposed, key, show, away }
 }
+
+test('an Ask returns to its retained session host and closing releases it', async () => {
+  const f = sessionFixture()
+  act(() => f.store.set(agentsSelectionAtom, { owner: 'agent', id: 'session-one' }))
+  const input = await screen.findByRole('textbox', { name: 'Session agent:session-one' })
+  const instance = input.dataset.instance
+
+  // The PDF Ask lands on the session selection, which the shell turns into
+  // the one canonical session tab instead of a second agent surface.
+  f.away()
+  expect(input.isConnected).toBe(true)
+  expect(input.closest('[inert]')).not.toBeNull()
+  act(() => f.store.set(agentsSelectionAtom, { owner: 'agent', id: 'session-one' }))
+  expect(await screen.findByRole('textbox', { name: 'Session agent:session-one' })).toBe(input)
+  expect(input.dataset.instance).toBe(instance)
+
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => closeTab(ws, f.key('session-one'))))
+  await waitFor(() => expect(input.isConnected).toBe(false))
+  expect(f.disposed).toHaveBeenCalledTimes(1)
+})
 
 test('session retention: document and session switches preserve connected DOM and local state', async () => {
   const f = sessionFixture()
