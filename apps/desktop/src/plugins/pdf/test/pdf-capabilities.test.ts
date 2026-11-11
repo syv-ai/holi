@@ -176,6 +176,29 @@ describe('pdf capabilities', () => {
     await expect(run('pdf.render', { path: 'note.md' })).rejects.toThrow(/recipient/)
   })
 
+  it('unique render refuses an alias into machine state before writing', async () => {
+    const { root, run } = await rig(
+      {
+        ...TEMPLATE_FILES,
+        '.holi/document-templates/plain/template.typ': plainTemplateTyp,
+        'public.md': '# Public note\\n',
+      },
+      true,
+    )
+    await mkdir(join(root, '.holi/state'), { recursive: true })
+    await symlink(join(root, '.holi/state'), join(root, 'alias'))
+    await symlink('../../public.md', join(root, '.holi/state/note.md'))
+
+    await expect(
+      run('pdf.render', {
+        path: 'alias/note.md',
+        unique: true,
+        meta: { recipient: 'A' },
+      }),
+    ).rejects.toThrow(/secret or machine-state/)
+    await expect(readFile(join(root, '.holi/state/note.pdf'))).rejects.toThrow()
+  })
+
   it('unique render skips an occupied leaf symlink without following it', async () => {
     const { root, run } = await rig(
       {
