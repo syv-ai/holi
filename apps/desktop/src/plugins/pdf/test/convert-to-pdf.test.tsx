@@ -26,15 +26,8 @@ beforeEach(() => {
   run.mockImplementation(async ({ name }: { name: string }) =>
     name === 'pdf.templates'
       ? [TEMPLATE]
-      : { pdfPath: '/tmp/offer.pdf', vaultPath: null, bytes: 1000, warnings },
+      : { pdfPath: '/v/offers/offer.pdf', vaultPath: 'offers/offer.pdf', bytes: 1000, warnings },
   )
-  Object.assign(window, {
-    holi: {
-      ...(window as unknown as { holi?: object }).holi,
-      showSaveDialog: vi.fn(async () => '/tmp/offer.pdf'),
-      openPath: vi.fn(async () => undefined),
-    },
-  })
 })
 
 function setup() {
@@ -51,12 +44,16 @@ function setup() {
   return onClose
 }
 
-test('a clean render closes the dialog', async () => {
+test('a clean render, beside the note and never over a file, closes the dialog', async () => {
   const user = userEvent.setup()
   const onClose = setup()
   await screen.findByText('Plain')
   await user.click(screen.getByRole('button', { name: 'Convert' }))
   await vi.waitFor(() => expect(onClose).toHaveBeenCalled())
+  const calls = run.mock.calls.map(([input]) => input as { name: string; paramsJson: string })
+  const params: unknown = JSON.parse(calls.find((c) => c.name === 'pdf.render')?.paramsJson ?? '')
+  expect(params).toMatchObject({ path: 'offers/offer.md', unique: true })
+  expect(params).not.toHaveProperty('out')
 })
 
 test('a render with warnings says what did not come out, and closes on Done', async () => {
