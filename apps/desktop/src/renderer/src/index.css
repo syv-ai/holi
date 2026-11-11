@@ -526,6 +526,13 @@
 @utility motion-in-rise {
   animation: motion-in-rise var(--motion-arrive) var(--ease-settle) both;
 }
+/* A view paged sideways comes in from the side it was paged towards. */
+@utility motion-in-from-end {
+  animation: motion-in-from-end var(--motion-arrive) var(--ease-settle) both;
+}
+@utility motion-in-from-start {
+  animation: motion-in-from-start var(--motion-arrive) var(--ease-settle) both;
+}
 
 /* Acknowledging an act the user committed: one beat, once (`hooks/use-ack.ts`
    adds the class and removes it when the animation ends). */
@@ -581,6 +588,18 @@
   from {
     opacity: 0;
     transform: translateY(6px);
+  }
+}
+@keyframes motion-in-from-end {
+  from {
+    opacity: 0;
+    transform: translateX(1.5rem);
+  }
+}
+@keyframes motion-in-from-start {
+  from {
+    opacity: 0;
+    transform: translateX(-1.5rem);
   }
 }
 @keyframes motion-ack-bloom {
@@ -650,7 +669,9 @@
   .motion-out-origin {
     animation-duration: 1ms;
   }
-  .motion-in-rise {
+  .motion-in-rise,
+  .motion-in-from-end,
+  .motion-in-from-start {
     animation-name: motion-in-fade;
   }
 }
