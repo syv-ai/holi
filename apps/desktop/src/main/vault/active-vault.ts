@@ -171,6 +171,8 @@ export interface ActiveVault {
   /** Take the merge back out of the tree, returning to the state the reconcile
    *  started from: a clean tree with the conflict still waiting. */
   abandon(): Promise<void>
+  /** Commit one held-back path through the active commit lifecycle. */
+  commitHeldBack(path: string): Promise<void>
   /** Files the autosave held out of the last commit for being over the size cap
    *  (the large-file gate). Derived each commit tick, never stored on disk. */
   heldBack(): HeldBackFile[]
@@ -1133,6 +1135,48 @@ export async function openActiveVault(args: {
     snapshot: () => cached,
     syncState: () => state,
     heldBack: () => heldBack,
+    async commitHeldBack(path) {
+      while (!closed && (committing || pullInFlight || pushInFlight || deliveryVerifying)) {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      if (closed || pushInFlight || manualPause !== null || conflictPaths !== null) {
+        throw new Error('Vault sync is busy; try again')
+      }
+      committing = true
+      let landed: (sha: string | null) => void = () => {}
+      commitRun = new Promise((resolve) => (landed = resolve))
+      let sha: string | null = null
+      try {
+        sha = await args.repo.commitFileNoVerify(path)
+        const status = await args.repo.status()
+        const sizes = new Map<string, number>()
+        await Promise.all(
+          status.dirtyPaths.map(async (dirty) => {
+            const size = await stat(join(root, dirty))
+              .then((s) => s.size)
+              .catch(() => null)
+            if (size !== null) sizes.set(dirty, size)
+          }),
+        )
+        heldBack = partitionBySize(
+          status.dirtyPaths,
+          (dirty) => sizes.get(dirty) ?? null,
+          await currentCap(),
+        ).heldBack
+        if (!closed) args.onHeldBack?.(heldBack)
+        await persistHeldBack()
+        await rescan(true)
+        await refreshState()
+        if (sha !== null && !closed) {
+          args.onCommitted?.([path])
+          schedulePush()
+        }
+      } finally {
+        committing = false
+        commitRun = null
+        landed(sha)
+      }
+    },
     syncInfo: () => ({ lastSyncAt, lastError }),
     async syncNow() {
       if (closed) return
