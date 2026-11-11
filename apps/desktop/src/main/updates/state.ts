@@ -8,6 +8,24 @@ type UpdateState = 'idle' | 'checking' | 'available' | 'downloading' | 'ready'
 /** Everything the renderer knows about updating Holi, pushed whole on change. */
 export type UpdateChannel = 'stable' | 'dev'
 
+/**
+ * What `updates.json` holds, read leniently. A file with no channel starts on
+ * the stable feed, except on Windows, which publishes only dev builds until it
+ * has a stable release: there a fresh install would look for a `latest.yml` that
+ * does not exist and never update. An explicit choice always wins.
+ */
+export function parseUpdatePrefs(
+  raw: unknown,
+  platform: NodeJS.Platform,
+): { enabled: boolean; channel: UpdateChannel } {
+  const value = raw as { enabled?: unknown; channel?: unknown } | null
+  const stored = value?.channel === 'dev' || value?.channel === 'stable' ? value.channel : null
+  return {
+    enabled: value?.enabled !== false,
+    channel: stored ?? (platform === 'win32' ? 'dev' : 'stable'),
+  }
+}
+
 export interface UpdateStatus {
   channel: UpdateChannel
   /** False in a dev build, where there is nothing to update. */

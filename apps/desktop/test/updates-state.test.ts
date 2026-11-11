@@ -3,6 +3,7 @@ import {
   CHECK_COOLDOWN_MS,
   CHECK_STALE_MS,
   initialStatus,
+  parseUpdatePrefs,
   reduce,
   shouldCheck,
   type UpdateEvent,
@@ -97,5 +98,24 @@ describe('shouldCheck', () => {
     const checking = fresh({ state: 'checking', checkStartedAt: 0 })
     expect(shouldCheck(checking, 'user', CHECK_STALE_MS - 1)).toBe(false)
     expect(shouldCheck(checking, 'user', CHECK_STALE_MS)).toBe(true)
+  })
+})
+
+describe('parseUpdatePrefs', () => {
+  it('starts on stable on macOS and Linux, and on dev on Windows', () => {
+    expect(parseUpdatePrefs(null, 'darwin').channel).toBe('stable')
+    expect(parseUpdatePrefs({}, 'linux').channel).toBe('stable')
+    expect(parseUpdatePrefs(null, 'win32').channel).toBe('dev')
+  })
+
+  it('keeps an explicit choice on every platform', () => {
+    expect(parseUpdatePrefs({ channel: 'stable' }, 'win32').channel).toBe('stable')
+    expect(parseUpdatePrefs({ channel: 'dev' }, 'darwin').channel).toBe('dev')
+    expect(parseUpdatePrefs({ channel: 'beta' }, 'darwin').channel).toBe('stable')
+  })
+
+  it('leaves automatic checks on unless they were turned off', () => {
+    expect(parseUpdatePrefs(null, 'win32').enabled).toBe(true)
+    expect(parseUpdatePrefs({ enabled: false }, 'linux').enabled).toBe(false)
   })
 })
