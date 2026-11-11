@@ -34,6 +34,7 @@ holi google agenda 2026-08-04T00:00:00Z 2026-08-05T00:00:00Z
 holi google search 'from:jane is:unread'
 holi google search ''                   # the inbox
 holi google read <threadId>
+holi google accounts                    # is Google connected here? reads no mail
 ```
 
 Results over 16 KiB spill to `.holi/state/out/`; `--json` then prints a notice

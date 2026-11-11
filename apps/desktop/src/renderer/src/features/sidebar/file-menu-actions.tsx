@@ -10,9 +10,11 @@ import {
   FolderOpenIcon,
   FolderPlusIcon,
   HardDriveIcon,
+  LockIcon,
   PencilIcon,
   SquareSplitHorizontalIcon,
   Trash2Icon,
+  UploadIcon,
 } from 'lucide-react'
 
 import type { MenuAction } from '@/composites/menu-actions'
@@ -36,6 +38,7 @@ export function rowActions({
   dirs,
   remote,
   vaultApp,
+  heldBack,
   pluginActions,
   on,
 }: {
@@ -44,6 +47,9 @@ export function rowActions({
   dirs: readonly string[]
   remote: string | null
   vaultApp: (id: string) => boolean
+  /** The row is a file the large-file gate held back: it offers the gate's
+   *  two ways out. */
+  heldBack: boolean
   /** What plugin claims add (`pluginRowActions`). */
   pluginActions: MenuAction[]
   on: {
@@ -56,6 +62,8 @@ export function rowActions({
     moveTo: (id: string, dest: string) => void
     remove: (id: string) => void
     createVaultApp: (id: string) => void
+    commitAnyway: (id: string) => void
+    keepLocal: (id: string) => void
   }
 }): MenuAction[] {
   const id = item.getId()
@@ -78,6 +86,23 @@ export function rowActions({
   const note = openable && /\.md$/i.test(id)
   const { copyLink, createVaultApp } = NOTE_ACTIONS
   return [
+    ...(heldBack
+      ? ([
+          {
+            kind: 'item',
+            label: 'Commit anyway',
+            icon: <UploadIcon aria-hidden="true" />,
+            run: () => on.commitAnyway(id),
+          },
+          {
+            kind: 'item',
+            label: 'Keep local',
+            icon: <LockIcon aria-hidden="true" />,
+            run: () => on.keepLocal(id),
+          },
+          { kind: 'separator' },
+        ] satisfies MenuAction[])
+      : []),
     ...(openable
       ? ([
           {

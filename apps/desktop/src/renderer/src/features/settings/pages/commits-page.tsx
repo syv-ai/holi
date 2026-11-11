@@ -2,6 +2,7 @@
 import { useAtomValue } from 'jotai'
 import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { Switch } from '@/components/ui/switch'
+import { megabytes } from '@/lib/megabytes'
 import { settingDescriptorsAtom } from '@/state/plugins'
 import {
   OptionSelect,
@@ -11,8 +12,6 @@ import {
   type Choice,
 } from '../settings-kit'
 import { useVaultSettings } from '../use-vault-settings'
-
-const MB = 1024 * 1024
 
 export function CommitsPage() {
   const { resolved, write } = useVaultSettings()
@@ -44,7 +43,7 @@ export function CommitsPage() {
         ...sizes,
         {
           value: current,
-          label: `${Math.round(resolved.maxCommittedFileBytes / MB)} MB`,
+          label: megabytes(resolved.maxCommittedFileBytes),
         },
       ]
 

@@ -1,7 +1,8 @@
 import { parse as parseYaml } from 'yaml'
 import { THEME_TOKENS, resolveTheme } from '@holi/shared'
 import { execFile, spawn } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,6 +15,7 @@ import {
 } from '@holi/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsFragment } from '../src/main/vault/seed/types'
+import type { SettingsFragment } from '../src/main/vault/seed/types'
 import { claudeSeed, agentSettings } from '../src/plugins/agent/main/claude/seed'
 import { appsSeed } from '../src/plugins/apps/main/seed'
 import { automationsSeed } from '../src/plugins/automations/main/seed'
@@ -23,6 +25,9 @@ import { pdfSeed } from '../src/plugins/pdf/main/seed'
 import { tasksSeed } from '../src/plugins/tasks/main/seed'
 import { coreSeed, GITIGNORE } from '../src/main/vault/seed/core'
 import { TMP_IGNORE_LINE } from '../src/main/vault/vault-files'
+import { HELD_BACK_FILE, partitionBySize, writeHeldBackFile } from '../src/main/vault/large-files'
+import { createBridgeServer } from '../src/main/bridge/server'
+import { registerAgentRoutes } from '../src/plugins/agent/main/claude/routes'
 import { ensureSeeded as ensureSeededWith, shippedFiles } from '../src/main/vault/seed/seed'
 import {
   pendingShipped as pendingWith,
@@ -135,10 +140,10 @@ function runCommand(command: string, stdin: string): Promise<HookRun> {
 
 function runHook(
   name: string,
-  opts: { env?: Record<string, string>; cwd?: string; stdin?: string },
+  opts: { env?: Record<string, string>; cwd?: string; stdin?: string; args?: string[] },
 ): Promise<HookRun> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [join(HOOKS_DIR, `${name}.mjs`)], {
+    const child = spawn(process.execPath, [join(HOOKS_DIR, `${name}.mjs`), ...(opts.args ?? [])], {
       cwd: opts.cwd ?? process.cwd(),
       env: { PATH: process.env.PATH ?? '', ...opts.env },
     })
@@ -332,9 +337,6 @@ describe('the seed tables', () => {
       'Bash(curl:*)',
       'Bash(wget:*)',
       'Bash(holi schedules run:*)',
-      'Bash(holi google archive:*)',
-      'Bash(holi google trash:*)',
-      'Bash(holi google unschedule:*)',
       'Bash(holi google send:*)',
       'Bash(holi google reply:*)',
       'Bash(holi google respond:*)',
@@ -696,6 +698,290 @@ describe('hook scripts', () => {
     expect((await run({ CLAUDE_JOB_DIR: '/jobs/job2' })).stdout).toBe('')
     expect((await run({})).stdout).toBe('')
   })
+
+  it('user-prompt-submit counts from where the Stop hook saw the conversation leave the vault', async () => {
+    const root = await tempDir()
+    const git = (...args: string[]) =>
+      promisify(execFile)(
+        'git',
+        ['-c', 'user.name=Ada Holm', '-c', 'user.email=ada@syv.ai', ...args],
+        { cwd: root },
+      )
+    await git('init', '-q')
+    await mkdir(join(root, '.holi/state'), { recursive: true })
+    await writeFile(join(root, '.holi/vault'), '')
+    await writeFile(join(root, '.gitignore'), '*.local.*\n')
+    await writeFile(join(root, 'shared.md'), 'v1')
+    await writeFile(join(root, 'earlier.md'), 'v1')
+    await git('add', '-A')
+    await git('commit', '-qm', 'turn')
+    const stale = (await git('rev-parse', 'HEAD')).stdout.trim()
+    // After a resume Holi wrote no newer record, so its last one is stale:
+    // what changed after it would be named again at every turn.
+    await writeFile(
+      join(root, '.holi/state/turns.local.json'),
+      JSON.stringify([{ base: stale, end: stale, at: '2026-09-09T01:00:00Z', sessionId: 'job1' }]),
+    )
+    await writeFile(join(root, 'earlier.md'), 'v2, from before the resume')
+    const env = { CLAUDE_PROJECT_DIR: root, CLAUDE_JOB_DIR: '/jobs/job1' }
+    const input = JSON.stringify({ session_id: 'conv-1' })
+    const stop = () => runHook('turn-signal', { cwd: root, env, stdin: input, args: ['end'] })
+    const prompt = async () =>
+      (await runHook('user-prompt-submit', { cwd: root, env, stdin: input })).stdout
+
+    // The agent's own edit, then the turn ends; then another writer's. Holi is
+    // closed (no bridge file), so the Stop saves the tree it took itself.
+    await writeFile(join(root, 'mine.md'), 'the agent wrote this')
+    expect((await stop()).code).toBe(0)
+    await writeFile(join(root, 'shared.md'), 'v2, by a teammate')
+
+    const line = await prompt()
+    const id = /`git diff ([0-9a-f]+)`/.exec(line)?.[1]
+    expect(line).toBe(
+      `Changed since your last turn, not by you: \`shared.md\` (\`git diff ${id}\` shows how)`,
+    )
+    // The hint is something git diff takes.
+    expect((await git('diff', '--name-only', id!)).stdout).toContain('shared.md')
+
+    // Named once: the next turn ends with it in the tree.
+    await writeFile(join(root, 'mine.md'), 'the agent wrote more')
+    await stop()
+    expect(await prompt()).toBe('')
+
+    // A turn that never reached a Stop (an interrupt fires none) left no tree:
+    // counting from the one before would name that turn's own edits.
+    await writeFile(join(root, 'mine.md'), 'written by the interrupted turn')
+    expect(await prompt()).toBe('')
+
+    // A Stop that could not take the tree leaves nothing to count from, not
+    // an older tree that would name the agent's own edits.
+    await writeFile(join(root, '.holi/state/turn-trees/conv-1.local.json'), '{}\n')
+    await writeFile(join(root, 'shared.md'), 'v3')
+    expect(await prompt()).toBe('')
+  })
+
+  it('user-prompt-submit uses the old turn record once, so an interrupted first turn is not named', async () => {
+    const root = await tempDir()
+    const git = (...args: string[]) =>
+      promisify(execFile)(
+        'git',
+        ['-c', 'user.name=Ada Holm', '-c', 'user.email=ada@syv.ai', ...args],
+        { cwd: root },
+      )
+    await git('init', '-q')
+    await mkdir(join(root, '.holi/state'), { recursive: true })
+    await writeFile(join(root, '.holi/vault'), '')
+    await writeFile(join(root, '.gitignore'), '*.local.*\n')
+    await writeFile(join(root, 'note.md'), 'v1')
+    await git('add', '-A')
+    await git('commit', '-qm', 'turn')
+    const end = (await git('rev-parse', 'HEAD')).stdout.trim()
+    await writeFile(
+      join(root, '.holi/state/turns.local.json'),
+      JSON.stringify([{ base: end, end, at: '2026-09-09T01:00:00Z', sessionId: 'job1' }]),
+    )
+    await writeFile(join(root, 'teammate.md'), 'written before the hook update')
+    const env = { CLAUDE_PROJECT_DIR: root, CLAUDE_JOB_DIR: '/jobs/job1' }
+    const stdin = JSON.stringify({ session_id: 'conv-1' })
+    const prompt = async () =>
+      (await runHook('user-prompt-submit', { cwd: root, env, stdin })).stdout
+
+    expect(await prompt()).toContain('`teammate.md`')
+
+    // That turn edits a note and is interrupted, so no Stop fires.
+    await writeFile(join(root, 'note.md'), 'written by the interrupted turn')
+    expect(await prompt()).toBe('')
+  })
+
+  describe.each([
+    ['user-prompt-submit', true],
+    ['turn-signal', false],
+  ] as const)('%s reads a same-size edit under a fractional index time', (hook, isPrompt) => {
+    it('keeps the scratch index no newer than the real one', async () => {
+      const root = await tempDir()
+      const git = (...args: string[]) =>
+        promisify(execFile)(
+          'git',
+          ['-c', 'user.name=Ada Holm', '-c', 'user.email=ada@syv.ai', ...args],
+          { cwd: root },
+        )
+      await git('init', '-q')
+      await git('config', 'core.trustctime', 'false')
+      await git('config', 'core.checkStat', 'minimal')
+      await mkdir(join(root, '.holi/state'), { recursive: true })
+      await writeFile(join(root, '.holi/vault'), '')
+      await writeFile(join(root, '.gitignore'), '*.local.*\n')
+      const note = join(root, 'note.md')
+      const second = Math.floor(Date.now() / 1000) - 100
+      await writeFile(note, 'v1')
+      await utimes(note, second + 0.25, second + 0.25)
+      await git('add', '-A')
+      await git('commit', '-qm', 'turn')
+      const end = (await git('rev-parse', 'HEAD')).stdout.trim()
+      await writeFile(
+        join(root, '.holi/state/turns.local.json'),
+        JSON.stringify([{ base: end, end, at: '2026-09-09T01:00:00Z', sessionId: 'job1' }]),
+      )
+      // Rounded up, this index time reaches the next second, and git trusts the
+      // cached stat of a file edited in the second before it.
+      await writeFile(note, 'v2')
+      await utimes(note, second + 0.99985, second + 0.99985)
+      await utimes(join(root, '.git/index'), second + 0.99975, second + 0.99975)
+      const env = { CLAUDE_PROJECT_DIR: root, CLAUDE_JOB_DIR: '/jobs/job1' }
+      const stdin = JSON.stringify({ session_id: 'conv-1' })
+
+      if (isPrompt) {
+        const { stdout } = await runHook(hook, { cwd: root, env, stdin })
+        expect(stdout).toContain('`note.md`')
+      } else {
+        await runHook(hook, { cwd: root, env, stdin, args: ['end'] })
+        const saved = JSON.parse(
+          await readFile(join(root, '.holi/state/turn-trees/conv-1.local.json'), 'utf8'),
+        ) as { tree: string }
+        expect((await git('show', `${saved.tree}:note.md`)).stdout).toBe('v2')
+      }
+    })
+  })
+
+  it("user-prompt-submit counts from the settle commit's tree Holi answers the Stop with", async () => {
+    const root = await tempDir()
+    const git = (...args: string[]) =>
+      promisify(execFile)(
+        'git',
+        ['-c', 'user.name=Ada Holm', '-c', 'user.email=ada@syv.ai', ...args],
+        { cwd: root },
+      )
+    await git('init', '-q')
+    await mkdir(join(root, '.holi/state'), { recursive: true })
+    await writeFile(join(root, '.holi/vault'), '')
+    await writeFile(join(root, '.gitignore'), '*.local.*\n')
+    await writeFile(join(root, 'note.md'), 'v1')
+    await writeFile(join(root, 'shared.md'), 'v1')
+    await git('add', '-A')
+    await git('commit', '-qm', 'start')
+    const env = { CLAUDE_PROJECT_DIR: root, CLAUDE_JOB_DIR: '/jobs/job1' }
+    const input = JSON.stringify({ session_id: 'conv-1' })
+    const stop = () => runHook('turn-signal', { cwd: root, env, stdin: input, args: ['end'] })
+    const prompt = async () =>
+      (await runHook('user-prompt-submit', { cwd: root, env, stdin: input })).stdout
+    // Holi, open on the vault: at `/turn/end` it takes the settle commit,
+    // whose pre-commit transforms rewrite what the agent wrote (as normalising
+    // markdown would) and regenerate an index, and answers with its tree.
+    let settles = true
+    const server = createBridgeServer({ log: () => {} })
+    registerAgentRoutes(server, {
+      onTurn: async (_remote, _job, active) => {
+        if (active || !settles) return null
+        const text = await readFile(join(root, 'note.md'), 'utf8')
+        await writeFile(join(root, 'note.md'), `${text}, normalised\n`)
+        await writeFile(join(root, 'index.md'), `regenerated for ${text}`)
+        await git('add', '-A')
+        await git('commit', '-qm', 'settle')
+        return (await git('rev-parse', 'HEAD^{tree}')).stdout.trim()
+      },
+      log: () => {},
+    })
+    await server.start()
+    try {
+      await writeFile(
+        join(root, '.holi/state/bridge.local.env'),
+        `HOLI_BRIDGE_PORT=${server.port()}\nHOLI_BRIDGE_TOKEN=${server.tokenForVault('owner/repo')}\n`,
+      )
+
+      await writeFile(join(root, 'note.md'), 'v2')
+      await stop()
+      // Then a pull brings a teammate's change.
+      await writeFile(join(root, 'shared.md'), 'v2, by a teammate')
+      await git('commit', '-qam', 'pulled')
+
+      const line = await prompt()
+      const id = /`git diff ([0-9a-f]+)`/.exec(line)?.[1]
+      expect(line).toBe(
+        `Changed since your last turn, not by you: \`shared.md\` (\`git diff ${id}\` shows how)`,
+      )
+
+      // No settle commit for the turn (another session still working, or
+      // nothing to commit): the Stop's own tree stands.
+      settles = false
+      await writeFile(join(root, 'note.md'), 'v3')
+      await stop()
+      expect(await prompt()).toBe('')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('both turn hooks refuse a session_id that is not a plain name', async () => {
+    const root = await tempDir()
+    const git = (...args: string[]) =>
+      promisify(execFile)(
+        'git',
+        ['-c', 'user.name=Ada Holm', '-c', 'user.email=ada@syv.ai', ...args],
+        { cwd: root },
+      )
+    await git('init', '-q')
+    await mkdir(join(root, '.holi/state'), { recursive: true })
+    await writeFile(join(root, '.holi/vault'), '')
+    await writeFile(join(root, '.gitignore'), '*.local.*\n')
+    await writeFile(join(root, 'note.md'), 'v1')
+    await git('add', '-A')
+    await git('commit', '-qm', 'start')
+    const tree = (await git('rev-parse', 'HEAD^{tree}')).stdout.trim()
+    // Where `../x` would land, holding a tree a prompt would take and empty.
+    const planted = join(root, '.holi/state/x.local.json')
+    await writeFile(planted, JSON.stringify({ tree }))
+    const files = async () => (await readdir(root, { recursive: true })).sort()
+    const before = await files()
+    const env = { CLAUDE_PROJECT_DIR: root, CLAUDE_JOB_DIR: '/jobs/job1' }
+
+    for (const id of ['../x', 'a/b', '', 'x'.repeat(129)]) {
+      const stdin = JSON.stringify({ session_id: id })
+      expect((await runHook('turn-signal', { cwd: root, env, stdin, args: ['end'] })).code).toBe(0)
+      expect((await runHook('user-prompt-submit', { cwd: root, env, stdin })).stdout).toBe('')
+    }
+    expect(await files()).toEqual(before)
+    expect(JSON.parse(await readFile(planted, 'utf8'))).toEqual({ tree })
+  })
+
+  it('user-prompt-submit leaves out exactly the files Holi holds back', async () => {
+    const root = await tempDir()
+    const git = (...args: string[]) =>
+      promisify(execFile)(
+        'git',
+        ['-c', 'user.name=Ada Holm', '-c', 'user.email=ada@syv.ai', ...args],
+        { cwd: root },
+      )
+    await git('init', '-q')
+    await writeFile(join(root, 'note.md'), 'v1')
+    await git('add', '-A')
+    await git('commit', '-qm', 'turn')
+    const end = (await git('rev-parse', 'HEAD')).stdout.trim()
+    await mkdir(join(root, '.holi/state'), { recursive: true })
+    await writeFile(
+      join(root, '.holi/state/turns.local.json'),
+      JSON.stringify([{ base: end, end, at: '2026-09-09T01:00:00Z', sessionId: 'job1' }]),
+    )
+    await writeFile(join(root, 'note.md'), 'v2, longer')
+    await writeFile(join(root, 'video.bin'), 'x')
+    const run = async () =>
+      (
+        await runHook('user-prompt-submit', {
+          cwd: root,
+          env: { CLAUDE_PROJECT_DIR: root, CLAUDE_JOB_DIR: '/jobs/job1' },
+        })
+      ).stdout
+
+    // Outside Holi nothing lists what it holds back, so nothing is left out.
+    expect(await run()).toContain('`video.bin`')
+    await writeFile(join(root, HELD_BACK_FILE), '{not json')
+    expect(await run()).toContain('`video.bin`')
+    // What Holi lists as held back would look changed at every turn.
+    await writeHeldBackFile(root, partitionBySize(['video.bin'], () => 2, 1).heldBack)
+    expect(await run()).toBe(
+      'Changed since your last turn, not by you: `note.md` ' +
+        `(\`git diff ${end.slice(0, 12)}\` shows how)`,
+    )
+  })
 })
 
 /**
@@ -715,41 +1001,68 @@ describe('hook scripts', () => {
 describe('mergedSettings', () => {
   const parse = (s: string | null) => JSON.parse(s!) as Record<string, any>
 
-  it('adds maintained consent protection without replacing a frozen old gate', async () => {
-    const oldHook = hookEntry('google-send-gate')
-    const before = JSON.stringify({
-      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [oldHook] }] },
-    })
-    const after = parse(mergedSettings(before))
-    const entries = after.hooks.PreToolUse as { matcher: string; hooks: { command: string }[] }[]
-    const inline = entries.find((entry) =>
-      entry.hooks.some((hook) => hook.command.includes('node -e')),
-    )
-    expect(inline).toBeDefined()
-    expect(entries.some((entry) => JSON.stringify(entry.hooks).includes('google-send-gate'))).toBe(
-      true,
-    )
-
-    const hook = inline!.hooks[0]!.command
-    for (const command of [
-      '"$HOLI_BIN" google respond e1 --yes',
-      '"$HOLI_BIN" google api POST calendar/v3/freeBusy --body -',
-      'holi google api',
-    ]) {
-      const run = await runCommand(
-        hook,
-        JSON.stringify({ tool_name: 'Bash', tool_input: { command } }),
-      )
-      expect(JSON.parse(run.stdout).hookSpecificOutput.permissionDecision, command).toBe('ask')
+  describe('what an earlier Holi merged in', () => {
+    const gate = '.claude/hooks/google-send-gate.mjs'
+    const shipped = 'const table = { respond: 1, api: 2 }'
+    const inline = { type: 'command', command: 'node -e "the inline gate"' }
+    const retiring: SettingsFragment = {
+      retired: {
+        hooks: {
+          sha256: [createHash('sha256').update(inline.command).digest('hex')],
+          replacedBy: gate,
+          holding: ['respond:', 'api:'],
+        },
+      },
     }
-    const get = await runCommand(
-      hook,
+    const withInline = (extra: object[] = []) =>
       JSON.stringify({
-        tool_name: 'Bash',
-        tool_input: { command: '"$HOLI_BIN" google api GET calendar/v3/colors' },
-      }),
-    )
-    expect(get.stdout).toBe('')
+        hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [inline, ...extra] }] },
+      })
+    const commandsAfter = (before: string, onDisk: string | null) => {
+      const after = agentSettings(
+        before,
+        [retiring],
+        () => false,
+        (rel) => (rel === gate ? onDisk : null),
+      )
+      if (after === null) return null
+      return (JSON.parse(after).hooks.PreToolUse as { hooks: { command: string }[] }[]).flatMap(
+        (entry) => entry.hooks.map((hook) => hook.command),
+      )
+    }
+
+    it('takes out a gate Holi wrote once the shipped one covers its verbs', () => {
+      const mine = { type: 'command', command: 'mine' }
+      expect(commandsAfter(withInline([mine]), shipped)).toEqual(['mine'])
+    })
+
+    it('keeps it while the shipped gate predates those verbs, or is not there', () => {
+      expect(commandsAfter(withInline(), 'const table = { send: 1, reply: 2 }')).toContain(
+        inline.command,
+      )
+      expect(commandsAfter(withInline(), null)).toContain(inline.command)
+    })
+
+    it('never takes a hook a person wrote, whatever it mentions', () => {
+      const own = {
+        type: 'command',
+        command: 'node .claude/hooks/review-user-consent.mjs --stdin-var HOLI_HOOK_STDIN',
+      }
+      expect(commandsAfter(withInline([own]), shipped)).toContain(own.command)
+    })
+
+    it('takes both shipped copies and the undoable ask rules with Google switched off', () => {
+      const agentOnly = claudeSeed.fragments!['.claude/settings.json'] as SettingsFragment[]
+      expect(agentOnly.flatMap((f) => f.retired?.hooks?.sha256 ?? [])).toHaveLength(2)
+
+      const before = JSON.stringify({ permissions: { ask: ['Bash(holi google trash:*)'] } })
+      const after = JSON.parse(agentSettings(before, agentOnly, () => false)!) as Record<
+        string,
+        any
+      >
+
+      expect(after.permissions.ask).not.toContain('Bash(holi google trash:*)')
+    })
   })
 
   it('adds the gate to a settings.json that predates it', () => {
@@ -840,7 +1153,6 @@ describe('mergedSettings', () => {
     // matcher cannot see. Seeding again adds none of them.
     expect(parse(once).hooks.PreToolUse.map((e: { matcher: string }) => e.matcher)).toEqual([
       'Write|Edit|MultiEdit',
-      'Bash',
       'Bash',
       'mcp__.*[Gg]mail.*',
     ])

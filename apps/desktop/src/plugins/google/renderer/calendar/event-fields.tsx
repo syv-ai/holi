@@ -19,15 +19,20 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { localDate } from '@holi/shared'
-import { WEEK_STARTS_ON, clockLabel } from './calendar-format'
+import { WEEK_STARTS_ON, clockLabel, type TimeFormat } from './calendar-format'
+import { useTimeFormat } from './calendar-settings'
 
 const pad = (n: number): string => String(n).padStart(2, '0')
 
 // 15-minute time steps shared by the start/end selects.
-const TIME_OPTIONS = Array.from({ length: 96 }, (_, i) => {
-  const value = `${pad(Math.floor(i / 4))}:${pad((i % 4) * 15)}`
-  return { value, label: clockLabel(value) }
-})
+const TIME_STEPS = Array.from(
+  { length: 96 },
+  (_, i) => `${pad(Math.floor(i / 4))}:${pad((i % 4) * 15)}`,
+)
+const TIME_OPTIONS = {
+  '24h': TIME_STEPS.map((value) => ({ value, label: clockLabel(value, '24h') })),
+  '12h': TIME_STEPS.map((value) => ({ value, label: clockLabel(value, '12h') })),
+} satisfies Record<TimeFormat, { value: string; label: string }[]>
 
 /** A calendar's color swatch (matches the round event-chip dots). The colour
  *  is Google's, not a token: there is no token for "Jane's calendar". */
@@ -55,9 +60,11 @@ export const TimeSelect = memo(function TimeSelect({
   onChange: (value: string) => void
   disabled?: boolean
 }) {
-  const options = TIME_OPTIONS.some((option) => option.value === value)
-    ? TIME_OPTIONS
-    : [...TIME_OPTIONS, { value, label: clockLabel(value) }].sort((a, b) =>
+  const clock = useTimeFormat()
+  const steps = TIME_OPTIONS[clock]
+  const options = steps.some((option) => option.value === value)
+    ? steps
+    : [...steps, { value, label: clockLabel(value, clock) }].sort((a, b) =>
         a.value.localeCompare(b.value),
       )
   return (
@@ -67,7 +74,7 @@ export const TimeSelect = memo(function TimeSelect({
       disabled={disabled}
     >
       <SelectTrigger id={id} className="w-full">
-        <SelectValue>{value ? clockLabel(value) : null}</SelectValue>
+        <SelectValue>{value ? clockLabel(value, clock) : null}</SelectValue>
       </SelectTrigger>
       <SelectContent position="popper">
         {options.map((option) => (

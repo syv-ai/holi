@@ -1,4 +1,4 @@
-import { act, render } from '@testing-library/react'
+import { act, render, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import * as mermaidRenderer from '@/lib/mermaid-renderer'
@@ -37,7 +37,7 @@ describe('real Mermaid SVG styling', () => {
     await act(async () => {
       await Promise.all(renders.mock.results.map((result) => result.value))
     })
-    expect(view.container.querySelectorAll('svg')).toHaveLength(2)
+    await waitFor(() => expect(view.container.querySelectorAll('svg')).toHaveLength(2))
 
     const [first, second] = Array.from(view.container.querySelectorAll<SVGSVGElement>('svg'))
     const ids = Array.from(view.container.querySelectorAll<SVGElement>('[id]'))

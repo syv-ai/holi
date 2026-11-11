@@ -1013,16 +1013,18 @@ export function createRouter(deps: RouterDeps) {
 
     // "Commit anyway" for a file the large-file gate held back: the user has
     // decided this big asset belongs in git. Bypasses the pre-commit hook.
-    commitFile: t.procedure
+    commitFile: vaultMutation
       .input(fields({ remote: 'string', path: 'string' }))
       .mutation(async ({ input }) => {
-        await openRepo(await rootFor(input.remote)).commitFileNoVerify(safe(input.path))
+        const active = await activeOrThrow()
+        if (active.remote !== safeRemote(input.remote)) throw new Error('Vault is no longer active')
+        await active.commitHeldBack(safe(input.path))
         return { ok: true as const }
       }),
 
     // "Keep local" for a held-back file: git-ignore it machine-locally so it
     // stays on disk but never commits or syncs (`.git/info/exclude`).
-    keepFileLocal: t.procedure
+    keepFileLocal: vaultMutation
       .input(fields({ remote: 'string', path: 'string' }))
       .mutation(async ({ input }) => {
         await openRepo(await rootFor(input.remote)).excludeLocally(safe(input.path))
