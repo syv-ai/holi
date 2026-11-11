@@ -158,22 +158,22 @@ function asTheShellReads(command) {
     const c = command[i]
     if (c === '\\') {
       const next = command[++i]
-      if (next !== undefined && next !== '\n') out += /[;|&()]/.test(next) ? `\uE100${next.charCodeAt(0)}\uE101` : next === ' ' ? '\uE000' : next
+      if (next !== undefined && next !== '\n') out += /[;|&()<>]/.test(next) ? `\uE100${next.charCodeAt(0)}\uE101` : next === ' ' ? '\uE000' : next
     } else if (c === '$' && command[i + 1] === "'") {
       i += 2
       while (i < command.length && command[i] !== "'") {
         if (command[i] === '\\' && i + 1 < command.length) {
           const [char, used] = ansiEscape(command, i + 1)
-          out += /[\t\r\n;|&()]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char === ' ' ? '\uE000' : char
+          out += /[\t\r\n;|&()<>]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char === ' ' ? '\uE000' : char
           i += used + 1
         } else {
           const char = command[i++]
-          out += char === ' ' ? '\uE000' : /[\t\r\n;|&()]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char
+          out += char === ' ' ? '\uE000' : /[\t\r\n;|&()<>]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char
         }
       }
     } else if (c === "'") {
       const end = command.indexOf("'", i + 1)
-      out += (end < 0 ? command.slice(i + 1) : command.slice(i + 1, end)).replace(/ /g, '\uE000').replace(/[\t\r\n;|&()]/g, (x) => `\uE100${x.charCodeAt(0)}\uE101`)
+      out += (end < 0 ? command.slice(i + 1) : command.slice(i + 1, end)).replace(/ /g, '\uE000').replace(/[\t\r\n;|&()<>]/g, (x) => `\uE100${x.charCodeAt(0)}\uE101`)
       i = end < 0 ? command.length : end
     } else if (c === '"' || (c === '$' && command[i + 1] === '"')) {
       if (c === '$') i++
@@ -184,11 +184,11 @@ function asTheShellReads(command) {
           i++
           if (command[i] !== '\n') {
             const char = command[i]
-            out += char === ' ' ? '\uE000' : /[\t\r\n;|&()]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char
+            out += char === ' ' ? '\uE000' : /[\t\r\n;|&()<>]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char
           }
         } else {
           const char = command[i]
-          out += char === ' ' ? '\uE000' : /[\t\r\n;|&()]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char
+          out += char === ' ' ? '\uE000' : /[\t\r\n;|&()<>]/.test(char) ? `\uE100${char.charCodeAt(0)}\uE101` : char
         }
       }
     } else {
@@ -219,127 +219,352 @@ function ansiEscape(text, at) {
 
 /** Shell words that open a stage and leave its command word after them. */
 const KEYWORDS = new Set(['then', 'do', 'else', 'elif', 'if', 'while', 'until', '!', '{', 'time', 'command', 'builtin', 'exec'])
-/** Commands that run another command named in their arguments, after options
- *  whose arity this cannot know: any Holi in such a stage may be the run. */
-const RUNNERS = new Set(['env', 'nohup', 'nice', 'sudo', 'xargs', 'timeout', 'caffeinate', 'stdbuf', 'find'])
+/** Commands that only print or search their words, so a `holi google send`
+ *  among them runs nothing. Anything else may be running what it names, under
+ *  options this cannot know (`sudo -u ada`, `gtimeout 30`, `find -exec`). */
+const ONLY_READS_ITS_WORDS = new Set(['echo', 'printf', 'grep', 'egrep', 'fgrep', 'rg'])
 /**
- * The word that runs Holi, as a regular expression's source: `holi`, a path
- * ending in it (`./holi`, `/…/bin/holi`), or `$HOLI_BIN` / `${HOLI_BIN}`. Every
- * test below that looks for Holi is built from this one, so they cannot drift
- * apart. The name matches in any case, since macOS finds `HOLI` and `…/Holi` as
- * `holi`; the variable as written, since the shell's names are case-sensitive.
- * It starts and ends where the shell's word does, so `holi-src`, `x-holi` or
- * `$HOLI_BINX` is not it.
+ * The word that runs Holi: `holi`, a path ending in it (`./holi`, `/…/bin/holi`),
+ * or `$HOLI_BIN` / `${HOLI_BIN}`. The name matches in any case, since macOS
+ * finds `HOLI` and `…/Holi` as `holi`; the variable as written, since the
+ * shell's names are case-sensitive. `holi-src` or `$HOLI_BINX` is not it.
  */
-const HOLI = String.raw`(?<![^\s|;&()<>\`])(?:\$\{?HOLI_BIN\}?|(?:[^\s|;&()<>\`]*\/)?[Hh][Oo][Ll][Ii])(?![^\s|;&()<>\`])`
-/** `text` as a regular expression that matches just it. */
-const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-/** A whole word that runs Holi. */
-const HOLI_WORD = new RegExp(`^${HOLI}$`)
+const HOLI_WORD = /^(?:\$\{?HOLI_BIN\}?|(?:.*\/)?[Hh][Oo][Ll][Ii])$/
 const EXPANDS = /[`$]/
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
+/** Commands that run the command they are given: an expansion among their
+ *  words may be Holi. After anything else (`cp "$a" google x`) it is not. */
+const RUNNERS = new Set(['env', 'nohup', 'nice', 'sudo', 'xargs', 'timeout', 'gtimeout', 'stdbuf', 'setsid'])
+
+const HIDDEN_VERB =
+  'Part of this holi google command comes from a variable or a substitution, so Holi ' +
+  'cannot tell whether it sends something. Check it before allowing.'
 
 /**
- * Could an expansion in this line decide a `holi google` call? No string match
- * follows a variable, so a stage that runs Holi with one in it (`holi google
- * $VERB`), or runs whatever a variable or a substitution names (`$cmd google
- * send`, `$(echo holi) google send`), is asked about. Read per pipeline or
- * list stage, on its command word: `grep holi "$f"`, a path with `holi-src` in
- * it or `gh repo view syv-ai/holi` beside a `$VAR` runs no Holi, and a gate
- * that prompts on those teaches the user to click through prompts.
+ * Why to ask about `<holi> group verb next`, or `null`. Holi refuses any word
+ * between its name and the verb, so these are the only places an outgoing verb
+ * can be: an expansion later in the line cannot turn this into a send.
  */
-function expandsNearHoli(command, words) {
-  const nearHoli = /holi/i.test(command)
-  // A Holi followed by `google` anywhere, not just as a stage's command word:
-  // whatever runs it (`xargs`, `find -exec`, `stdbuf`, a redirection or a
-  // backtick in front) is not a list this can finish, so any expansion in the
-  // line may decide the call. `$HOLI_BIN` itself is not such an expansion.
-  if (EXPANDS.test(words.replace(new RegExp(HOLI, 'g'), ''))) {
-    const all = words.split(/[\s|;&()`<>]+/).filter(Boolean)
-    if (all.some((t, i) => HOLI_WORD.test(t) && all[i + 1] === 'google')) return true
-  }
-  // A `$(` is cut at its parenthesis here, so a substitution standing where
-  // the command word would be reads as a stage whose word is a bare `$`.
-  for (const stage of words.split(/[|;&()\n]/)) {
-    const tokens = stage.trim().split(/[ \t]+/).filter(Boolean)
-    let i = 0
-    while (
-      i < tokens.length &&
-      (KEYWORDS.has(tokens[i]) ||
-        /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i]) ||
-        (/^-/.test(tokens[i]) && KEYWORDS.has(tokens[i - 1] ?? '')))
-    ) {
-      i++
-    }
-    const word = tokens[i]
-    if (word === undefined) continue
-    const rest = tokens.slice(i + 1)
-    // `$HOLI_BIN` is how Holi is named, not an expansion that decides what runs.
-    const expands = rest.some((t) => EXPANDS.test(t) && !HOLI_WORD.test(t))
-    if (HOLI_WORD.test(word)) {
-      if (expands) return true
-    } else if (EXPANDS.test(word)) {
-      if (nearHoli || rest.includes('google')) return true
-    } else if (RUNNERS.has(word)) {
-      if (expands && (nearHoli || rest.includes('google'))) return true
-    }
-  }
-  return false
+function reasonForWords(group, verb, next, command) {
+  if (group === undefined) return null
+  if (EXPANDS.test(group)) return HIDDEN_VERB
+  if (group !== 'google' || verb === undefined) return null
+  if (EXPANDS.test(verb)) return HIDDEN_VERB
+  if (!Object.hasOwn(REACHES_A_HUMAN, verb)) return null
+  return REACHES_A_HUMAN[verb](command, next ?? '', verb)
 }
 
-/**
- * Why to ask about this command line, or `null`: does it invoke a `holi google`
- * verb that reaches someone?
- *
- * Matched on the *invocation*, not on the presence of the word: `grep send
- * notes.md` is not a send, and a gate that prompts on it teaches the user to
- * click through prompts. Every invocation in the line is checked.
- *
- * Three spellings of the command are live, and all must match: the bare name
- * (resolved via PATH), `$HOLI_BIN`, and an absolute path to the generated
- * script; `HOLI` says which. Matched on the line as a shell reads it, so quoting, escaping or a
- * line continuation anywhere in the words changes nothing. Missing one is a
- * gate that never fires. Holi refuses any word between `holi` and the verb,
- * so nothing can be slipped in between to step around this.
- */
-function reasonToAsk(command) {
-  const words = asTheShellReads(command)
-  if (new RegExp(String.raw`${HOLI}\s+google\b`).test(words) && /\b(if|then|elif|else|fi|for|while|until|do|done|case|esac|select)\b/.test(words)) {
-    return `This Google action appears inside shell control flow.${attachmentsOf(command)} Review the command and confirm it in the native permission prompt.`
+const couldBeOutgoing = (word) =>
+  word !== undefined && (EXPANDS.test(word) || Object.hasOwn(REACHES_A_HUMAN, word))
+
+/** What the line's own variables hold of a `holi google` command, as in
+ *  `G="holi google"; $G send` or `cmd="holi google send"; $cmd`. A walk over
+ *  its words, once per line, since a line can be a long unbroken value. */
+function heldInVariables(line) {
+  const parts = line.split(/[\s\uE000|;&()]+/)
+  const held = { group: false, verb: false, google: false }
+  for (let i = 0; i < parts.length; i++) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*=google$/.test(parts[i])) held.google = true
+    if (parts[i] !== 'google' || !/(?:holi|HOLI_BIN|\$[A-Za-z_][A-Za-z0-9_]*)(?:\}|\uE10041\uE101|\$_)?$/i.test(parts[i - 1] ?? '')) continue
+    if (!parts.slice(Math.max(0, i - 3), i).some((part) => ASSIGNMENT.test(part))) continue
+    held.group = true
+    if (couldBeOutgoing(parts[i + 1])) held.verb = true
   }
-  if (expandsNearHoli(command, words)) {
-    return 'This command uses dynamic shell expansion near Holi. Review it and confirm in the native permission prompt.'
+  return held
+}
+
+/** Why to ask about a command word that is an expansion, followed by words
+ *  other than `google`: only if the line's own variables could make it one. */
+function reasonBehindExpansion(second, third, held) {
+  if (held.verb) return HIDDEN_VERB
+  if (held.group && couldBeOutgoing(second)) return HIDDEN_VERB
+  if (held.google && EXPANDS.test(second ?? '') && couldBeOutgoing(third)) return HIDDEN_VERB
+  return null
+}
+
+/** A stage's words, with its redirections taken out wherever they stand:
+ *  `send>/dev/null`, `>"$T" send`, `2> err send`. */
+function stageWords(stage) {
+  const tokens = stage.trim().split(/[ \t]+/).filter(Boolean)
+  const out = []
+  for (let i = 0; i < tokens.length; i++) {
+    const redirect = /^(.*?)\d*[<>]/.exec(tokens[i])
+    if (redirect === null) {
+      out.push(tokens[i])
+      continue
+    }
+    if (redirect[1] !== '') out.push(redirect[1])
+    if (/[<>]$/.test(tokens[i])) i++ // its target is the next word
   }
-  if (
-    /\b(?:eval|source)\b|\b(?:sh|bash|zsh)\s+-c\b/.test(command) &&
-    new RegExp(String.raw`${HOLI}\s+google\b`).test(words.replaceAll('\uE000', ' '))
+  return out
+}
+
+function reasonInStage(tokens, held, command) {
+  let at = 0
+  while (
+    at < tokens.length &&
+    (KEYWORDS.has(tokens[at]) ||
+      ASSIGNMENT.test(tokens[at]) ||
+      (/^-/.test(tokens[at]) && KEYWORDS.has(tokens[at - 1] ?? '')))
   ) {
-    return 'This command wraps a Google action in another shell. Review it and confirm in the native permission prompt.'
+    at++
   }
-  // The word that runs Holi, then `google`, then the verb, then the word
-  // after it. `[ \t]+` keeps them adjacent within one pipeline stage, so
-  // `holi google search x | grep send` does not match. Holi is the stage's
-  // command word, after any keyword, assignment or redirection, or follows a
-  // runner and its arguments (`sudo -u ada holi`, `/usr/bin/env holi`, `exec
-  // -a x holi`), so `echo holi google send` runs nothing. A command word that
-  // is an absolute path counts as a runner too, since a path with a space in
-  // it, left unquoted, reads as several words.
-  const word = String.raw`[^\s|;&()]+`
-  const invocation = new RegExp(
-    String.raw`(?:^|[|;&(\n])\s*` + // start of a command
-      String.raw`(?:(?:${[...KEYWORDS].map(literal).join('|')}|[A-Za-z_][A-Za-z0-9_]*=${word}|-${word}|\d*[<>]+&?[ \t]*${word})[ \t]+)*` + // keywords
-      String.raw`(?:(?:(?:${word}/)?(?:${[...RUNNERS, 'exec'].join('|')})|/${word})(?:[ \t]+${word})*?[ \t]+)?` + // a runner
-      HOLI + // the binary
-      String.raw`[ \t]+google` + // the group; never cross a command boundary
-      String.raw`[ \t]+([A-Za-z-]+)\b` + // the verb
-      String.raw`(?:[ \t]+([^\s|;&(]*))?`, // the word after it
-    'g',
-  )
-  for (const [, verb, next] of words.matchAll(invocation)) {
-    if (!Object.hasOwn(REACHES_A_HUMAN, verb)) continue
-    const reason = REACHES_A_HUMAN[verb](command, next ?? '', verb)
+  const first = tokens[at]
+  if (first === undefined) return null
+  if (ONLY_READS_ITS_WORDS.has(first.slice(first.lastIndexOf('/') + 1))) return null
+  // `holi google <verb>` anywhere in the stage: whatever runs it.
+  const runs = (word, i) =>
+    HOLI_WORD.test(word) || (EXPANDS.test(word) && (i === at || RUNNERS.has(first)))
+  for (let i = at; i < tokens.length; i++) {
+    if (tokens[i + 1] === 'google' && runs(tokens[i], i)) {
+      const reason = reasonForWords('google', tokens[i + 2], tokens[i + 3], command)
+      if (reason !== null) return reason
+    }
+  }
+  if (RUNNERS.has(first)) {
+    // `sudo -u ada holi $G send`: Holi behind a runner's own options is run the
+    // same as Holi first. A word that is neither ends them (`env grep holi "$f"`).
+    for (let i = at + 1; i < tokens.length; i++) {
+      if (HOLI_WORD.test(tokens[i])) {
+        const reason = reasonForWords(tokens[i + 1], tokens[i + 2], tokens[i + 3], command)
+        if (reason !== null) return reason
+        break
+      }
+      if (!/^-|^\d/.test(tokens[i]) && !ASSIGNMENT.test(tokens[i]) && !/^-/.test(tokens[i - 1])) break
+    }
+    const i = tokens.findIndex((word, j) => j > at && EXPANDS.test(word))
+    if (i > 0) {
+      const reason = reasonBehindExpansion(tokens[i + 1], tokens[i + 2], held)
+      if (reason !== null) return reason
+    }
+  }
+  if (HOLI_WORD.test(first)) return reasonForWords(tokens[at + 1], tokens[at + 2], tokens[at + 3], command)
+  if (EXPANDS.test(first)) return reasonBehindExpansion(tokens[at + 1], tokens[at + 2], held)
+  return null
+}
+
+/** The line with each `$(…)` and backtick substitution as one word that
+ *  expands, so `$(which holi) google send` reads as a command and its words. */
+function withSubstitutionsAsWords(words) {
+  let out = words
+  for (let before; before !== out; ) {
+    before = out
+    out = out.replace(/\$\([^()]*\)/g, '$$_').replace(/`[^`]*`/g, '$$_')
+  }
+  return out
+}
+
+/** Why to ask about one command line as a shell reads it, or `null`. */
+function reasonInWords(words, command, held) {
+  const line = withSubstitutionsAsWords(words)
+    .replace(/&>/g, '>')
+    .replace(/\d*[<>]&[\d-]+/g, ' ')
+  for (const stage of line.split(/[|;&()\n]/)) {
+    const reason = reasonInStage(stageWords(stage), held, command)
     if (reason !== null) return reason
   }
   return null
+}
+
+/** A line that hands a heredoc to a shell, whose body is therefore commands. */
+const FEEDS_SHELL = /(?:^|[\s|;&(])(?:eval|source|(?:\S*\/)?(?:ba|z|da)?sh)(?:\s|<|$)|(?:^|[|;&(])\s*\.\s/
+
+/**
+ * The command without what is not code, read with its quotes in mind: comments
+ * go, and a heredoc's body is text, so its words and apostrophes must not
+ * count. A heredoc fed to a shell is commands and stays. `textBodies` are the
+ * bodies with an unquoted tag, whose substitutions still run.
+ */
+function codeOf(command) {
+  let code = ''
+  const textBodies = []
+  let pending = []
+  let quote = null
+  // A `$(…)` is code again inside double quotes, heredocs and all: the quote
+  // waits here until its closing parenthesis.
+  let depth = 0
+  const frames = []
+  for (let i = 0; i < command.length; ) {
+    const c = command[i]
+    if (quote === "'") {
+      code += c
+      if (c === "'") quote = null
+      i++
+    } else if (c === '\\') {
+      code += command.slice(i, i + 2)
+      i += 2
+    } else if (quote === '"' && !(command.startsWith('$(', i) && command[i + 2] !== '(')) {
+      code += c
+      if (c === '"') quote = null
+      i++
+    } else if (command.startsWith('$(', i) && command[i + 2] !== '(') {
+      frames.push({ quote, depth })
+      quote = null
+      depth = 0
+      code += '$('
+      i += 2
+    } else if (c === "'" || c === '"') {
+      quote = c
+      code += c
+      i++
+    } else if (c === '#' && (i === 0 || /[\s;&|(]/.test(command[i - 1]))) {
+      const end = command.indexOf('\n', i)
+      i = end < 0 ? command.length : end
+    } else if (command.startsWith('${', i) || command.startsWith('((', i)) {
+      // A parameter's `#` and an arithmetic `<<` are neither comment nor heredoc.
+      const close = c === '$' ? '}' : '))'
+      const end = command.indexOf(close, i)
+      const stop = end < 0 ? i + 1 : end + close.length
+      code += command.slice(i, stop)
+      i = stop
+    } else if (c === '\n' && pending.length > 0) {
+      const joined = code.replace(/\\\n/g, ' ')
+      const line = joined.slice(joined.lastIndexOf('\n') + 1)
+      const feedsShell = FEEDS_SHELL.test(line)
+      code += '\n'
+      i++
+      for (const { dash, tag, expands } of pending) {
+        const start = i
+        for (;;) {
+          const end = command.indexOf('\n', i)
+          const text = command.slice(i, end < 0 ? command.length : end)
+          const bodyEnd = i
+          i = end < 0 ? command.length : end + 1
+          if ((dash ? text.replace(/^\t+/, '') : text) === tag || end < 0) {
+            const body = command.slice(start, end < 0 ? i : bodyEnd)
+            if (feedsShell) code += `${body}\n`
+            else if (expands) textBodies.push(body)
+            break
+          }
+        }
+      }
+      pending = []
+    } else if (c === '(') {
+      depth++
+      code += c
+      i++
+    } else if (c === ')') {
+      if (depth === 0 && frames.length > 0) ({ quote, depth } = frames.pop())
+      else depth = Math.max(0, depth - 1)
+      code += c
+      i++
+    } else {
+      const heredoc =
+        c === '<' && command[i - 1] !== '<'
+          ? /^<<(?!<)(-?)[ \t]*(?:'([^'\n]*)'|"([^"\n]*)"|(\\?)([\w.-]+))/.exec(command.slice(i, i + 300))
+          : null
+      if (heredoc !== null) {
+        pending.push({
+          dash: heredoc[1] === '-',
+          tag: heredoc[2] ?? heredoc[3] ?? heredoc[5],
+          expands: heredoc[5] !== undefined && heredoc[4] === '',
+        })
+        // The operator goes with its body, or a later read would look for a
+        // closing tag that is no longer there and take what follows as text.
+        code += ' '
+        i += heredoc[0].length
+      } else {
+        code += c
+        i++
+      }
+    }
+  }
+  return { code, textBodies }
+}
+
+/** Where the `$(…)` opening before `from` closes, past any quoted parenthesis. */
+function closingParen(source, from) {
+  let depth = 1
+  for (let j = from; j < source.length; j++) {
+    const c = source[j]
+    if (c === '\\') {
+      j++
+    } else if (c === "'") {
+      const end = source.indexOf("'", j + 1)
+      if (end < 0) return source.length
+      j = end
+    } else if (c === '"') {
+      for (j++; j < source.length && source[j] !== '"'; j++) if (source[j] === '\\') j++
+    } else if (c === '(') {
+      depth++
+    } else if (c === ')' && --depth === 0) {
+      return j
+    }
+  }
+  return source.length
+}
+
+/** What each `$(…)` and backtick substitution runs, quoted or not: a send
+ *  inside `"$(…)"` is one word to `asTheShellReads` but runs all the same.
+ *  `plain` is a heredoc's text, where quotes are only characters. */
+function substitutionBodies(source, plain) {
+  const bodies = []
+  let inDouble = false
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i]
+    if (c === '\\') {
+      i++
+    } else if (!plain && c === "'" && !inDouble) {
+      const end = source.indexOf("'", i + 1)
+      if (end < 0) break
+      i = end
+    } else if (!plain && c === '"') {
+      inDouble = !inDouble
+    } else if (c === '$' && source[i + 1] === '(') {
+      const end = closingParen(source, i + 2)
+      bodies.push(source.slice(i + 2, end))
+      i = end
+    } else if (c === '`') {
+      let end = i + 1
+      while (end < source.length && source[end] !== '`') end += source[end] === '\\' ? 2 : 1
+      bodies.push(source.slice(i + 1, end).replace(/\\([`\\$])/g, '$1'))
+      i = end
+    }
+  }
+  return bodies
+}
+
+/** Words that hand their quoted argument to another shell. */
+const WRAPPER = /(^|[\s|;&(])(?:eval|(?:\S*\/)?(?:ba|z|da)?sh(?:\s+[-+]\S+(?:\s+pipefail)?)*?\s+-\w*c)\b/g
+
+/**
+ * Why to ask about this command line, or `null`: does it invoke a `holi google`
+ * verb that reaches someone, or leave one to a variable?
+ *
+ * Matched on the *invocation*, not on the presence of a word or a `$`: `grep
+ * send notes.md` is not a send, `holi pdf render "$f"` and `$GH api …/holi/…`
+ * cannot be one, and a gate that prompts on those teaches the user to click
+ * through prompts. Every invocation in the line is checked, on the line as a
+ * shell reads it, so quoting, escaping or a line continuation changes nothing.
+ */
+function reasonToAsk(command, shown = command, outer = null) {
+  const { code, textBodies } = codeOf(command)
+  const words = asTheShellReads(code)
+  // A substitution sees the variables of the line around it.
+  const own = heldInVariables(withSubstitutionsAsWords(words))
+  const held = outer === null ? own : {
+    group: own.group || outer.group,
+    verb: own.verb || outer.verb,
+    google: own.google || outer.google,
+  }
+  const direct = reasonInWords(words, shown, held)
+  if (direct !== null) return direct
+  const inner = [
+    ...substitutionBodies(code, false),
+    ...textBodies.flatMap((body) => substitutionBodies(body, true)),
+  ]
+  for (const body of inner) {
+    const reason = reasonToAsk(body, shown, held)
+    if (reason !== null) return reason
+  }
+  if (words.search(WRAPPER) < 0) return null
+  // What eval or sh -c runs is one quoted word here. Read it as the shell it
+  // is handed to will: its own commands, its own quotes.
+  const unwrapped = words
+    .replace(/\uE100(\d+)\uE101/g, (_, code) => String.fromCharCode(Number(code)))
+    .replaceAll('\uE000', ' ')
+    .replace(WRAPPER, '$1\n')
+  return reasonToAsk(unwrapped, shown, held)
 }
 
 const raw = await readStdin()
