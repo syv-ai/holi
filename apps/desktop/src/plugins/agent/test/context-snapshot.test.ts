@@ -58,6 +58,21 @@ describe('ContextSnapshot', () => {
     expect(ctx.openPaths).toEqual([])
   })
 
+  it('never writes a secret file, focused or open', async () => {
+    const r = await rig()
+    r.snapshot.setFocus({
+      focusedPath: 'apps/web/.env.production',
+      selection: { startLine: 1, endLine: 2 },
+      openPaths: [NOTE_PATH, '.secrets/key.md', 'notes/.envelope.md'],
+    })
+    await r.snapshot.flush()
+
+    const ctx = await r.read()
+    expect(ctx.focusedPath).toBeNull()
+    expect(ctx.selection).toBeNull()
+    expect(ctx.openPaths).toEqual([NOTE_PATH, 'notes/.envelope.md'])
+  })
+
   it('coalesces a burst of focus changes — last wins', async () => {
     const r = await rig()
     r.snapshot.setFocus({ focusedPath: NOTE_PATH, openPaths: [NOTE_PATH] })

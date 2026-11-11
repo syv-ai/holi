@@ -1,5 +1,6 @@
 import { parse as parseYaml } from 'yaml'
 import { execFile } from 'node:child_process'
+import { commitChanges } from './commit-changes'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
@@ -602,6 +603,32 @@ describe('notes', () => {
     expect(await caller.notes.read({ remote: REMOTE, path: 'c.md' })).toBe('C')
   })
 
+  it('deleteMany lets no writer that checks one deleted file bring back another', async () => {
+    // A recording meeting writes its minutes only while its transcript is
+    // there. Someone holds the transcript while the delete starts; the writer
+    // then queues on the minutes. A delete that let go of the minutes before
+    // taking the transcript would let the writer find the transcript and
+    // bring the minutes back.
+    const { caller, root } = await rig({ 'm/minutes.md': 'minutes', 'm/transcript.md': 'mine' })
+    const key = async (rel: string) => (await exactPath(root, rel))!
+    let open!: () => void
+    const gate = new Promise<void>((r) => (open = r))
+    const holder = withFileLock(await key('m/transcript.md'), () => gate)
+    const removal = caller.notes.deleteMany({
+      remote: REMOTE,
+      paths: ['m/minutes.md', 'm/transcript.md'],
+      folders: ['m'],
+    })
+    await new Promise((r) => setTimeout(r, 50))
+    const write = withFileLock(await key('m/minutes.md'), async () => {
+      if ((await readFile(join(root, 'm/transcript.md'), 'utf8').catch(() => null)) === null) return
+      await writeFile(join(root, 'm/minutes.md'), 'written back')
+    })
+    open()
+    await Promise.all([holder, removal, write])
+    await expect(stat(join(root, 'm'))).rejects.toThrow()
+  })
+
   it('deleteMany takes a deleted folder with it, keeping what it never listed', async () => {
     // A folder's `.gitkeep` and empty subfolders are not documents, so the
     // delete never listed them; they held the folder on the tree with nothing
@@ -1113,7 +1140,8 @@ describe('tasks.move', () => {
     // a field another writer set while the move waited is kept.
     const { caller, root } = await rig({ 'task.foo.md': '---\ntitle: Foo\nstatus: todo\n---\n' })
     let release!: () => void
-    const held = withFileLock(join(root, 'task.foo.md'), async () => {
+    // Held by its canonical key, as every writer takes it (`lockPath`).
+    const held = withFileLock((await exactPath(root, 'task.foo.md'))!, async () => {
       await new Promise<void>((r) => (release = r))
       await writeFile(join(root, 'task.foo.md'), '---\nstatus: todo\ndue: 2026-08-01\n---\n')
     })
@@ -1658,13 +1686,16 @@ describe('vaults large-file actions', () => {
 
   it('keepFileLocal excludes a held-back file locally, keeping it on disk', async () => {
     const { caller, path } = await adopted()
-    await writeFile(join(path, 'video.mov'), 'x'.repeat(50), 'utf8')
+    await writeFile(join(path, 'video[1].mov'), 'x'.repeat(50), 'utf8')
+    await mkdir(join(path, 'sub'))
+    await writeFile(join(path, 'sub', 'video[1].mov'), 'x'.repeat(50), 'utf8')
 
-    await caller.vaults.keepFileLocal({ remote: 'syv-ai/notes', path: 'video.mov' })
+    await caller.vaults.keepFileLocal({ remote: 'syv-ai/notes', path: 'video[1].mov' })
     // No longer dirty (git-ignored locally) but still on disk.
-    expect(await plainGit(path, ['status', '--porcelain', '--', 'video.mov'])).toBe('')
-    await expect(readFile(join(path, 'video.mov'), 'utf8')).resolves.toHaveLength(50)
-    expect(await readFile(join(path, '.git', 'info', 'exclude'), 'utf8')).toContain('video.mov')
+    expect(await plainGit(path, ['status', '--porcelain', '--', 'video[1].mov'])).toBe('')
+    await expect(readFile(join(path, 'video[1].mov'), 'utf8')).resolves.toHaveLength(50)
+    // That one file, not a pattern: the same name in another folder still syncs.
+    expect(await plainGit(path, ['status', '--porcelain', '-uall'])).toContain('sub/')
   })
 })
 
@@ -1873,11 +1904,7 @@ describe('history', () => {
     await plainGit(root, ['add', '-A'])
     await plainGit(root, ['commit', '-m', 'create demo app'])
     const target = (await plainGit(root, ['rev-parse', 'HEAD'])).trim()
-    for (let i = 0; i < 201; i++) {
-      await writeFile(join(root, 'Demo.app', 'data', 'records.json'), `${i}\n`, 'utf8')
-      await plainGit(root, ['add', '-A'])
-      await plainGit(root, ['commit', '-m', `data ${i}`])
-    }
+    await commitChanges(root, 'Demo.app/data/records.json', 201)
     await caller.vaults.open({ remote: REMOTE })
     const recent = await caller.history.list({ path: 'Demo.app' })
     expect(recent).toHaveLength(200)

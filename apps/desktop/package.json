@@ -3,6 +3,7 @@
   "version": "0.7.0",
   "description": "Local-first markdown vaults on GitHub, with Claude Code as the assistant",
   "author": "syv.ai",
+  "homepage": "https://github.com/syv-ai/holi",
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
@@ -55,6 +56,7 @@
     "@lezer/highlight": "^1.2.3",
     "@lezer/markdown": "^1.7.1",
     "@replit/codemirror-css-color-picker": "^6.3.0",
+    "@replit/codemirror-vim": "6.4.0",
     "@tanstack/react-table": "^9.3.1",
     "@tanstack/react-virtual": "^3.14.22",
     "@tiptap/extension-code-block": "^3.32.0",
@@ -100,6 +102,7 @@
     "motion-panels": "0.6.1",
     "next-themes": "^0.4.6",
     "node-pty": "^1.0.0",
+    "onnxruntime-web": "1.30.0",
     "prosemirror-search": "^1.1.1",
     "radix-ui": "^1.6.7",
     "react": "^19.2.8",

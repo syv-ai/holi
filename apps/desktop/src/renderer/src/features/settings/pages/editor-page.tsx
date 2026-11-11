@@ -8,6 +8,8 @@ import {
   SettingsFieldRow,
   SettingsRowsLoading,
 } from '../settings-kit'
+import { useAtom } from 'jotai'
+import { vimCodeEditingAtom } from '@/state/preferences'
 import { useVaultSettings } from '../use-vault-settings'
 
 const FONTS = choiceSetting<EditorFont>('editorFont')
@@ -16,12 +18,24 @@ const TABLES = choiceSetting<TableStyle>('tableStyle')
 
 export function EditorPage() {
   const { resolved, write } = useVaultSettings()
+  const [vimCodeEditing, setVimCodeEditing] = useAtom(vimCodeEditingAtom)
 
   return (
     <SettingsGroup
       title="Writing"
       description="How notes read and what the editor does as you type."
     >
+      <SettingsFieldRow
+        title="Vim mode"
+        description="Use Vim editing in code and plain-text files on this machine. Notes, mail, fields, browser pages and terminals are unchanged."
+        htmlFor="settings-vim-code-editing"
+      >
+        <Switch
+          id="settings-vim-code-editing"
+          checked={vimCodeEditing}
+          onCheckedChange={setVimCodeEditing}
+        />
+      </SettingsFieldRow>
       {resolved === null ? (
         <SettingsRowsLoading rows={5} label="Reading the settings" />
       ) : (

@@ -83,7 +83,7 @@ describe('the Codex turn report', () => {
     registerCodexRoutes(
       { route: (path, route) => (routes.set(path, route), () => {}) },
       {
-        onTurn: (remote, id, active) => turns.push(`${remote}:${id}:${active}`),
+        onTurn: (remote, id, active) => void turns.push(`${remote}:${id}:${active}`),
         onConversation: (_remote, _id, about) => named.push(about),
       },
     )

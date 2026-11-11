@@ -9,6 +9,7 @@ import {
   closeTab,
   closeTabsToRight,
   closeTabsWhere,
+  combineOnStrip,
   dropOnStrip,
   dropTab,
   emptyWorkspace,
@@ -37,6 +38,7 @@ import {
   type ShellWorkspace,
 } from '../shell-workspace'
 import { AGENTS_HOME_KEY, parseTabKey, sessionKey, tabKey } from '../tab-descriptor'
+import { applyEntryClose, closesSplit, confirmEntryClose } from '../shell-close'
 
 const A = 'Notes/A.md'
 const B = 'Notes/B.md'
@@ -109,6 +111,69 @@ describe('the strip', () => {
     expect(strip(moveEntry(ws, C, 0))).toEqual([C, A, B])
     expect(strip(moveEntry(ws, A, 3))).toEqual([B, C, A])
     expect(moveEntry(ws, A, 1)).toBe(ws)
+  })
+
+  test('combines a dragged tab with an explicit inactive target', () => {
+    const ws = selectEntry(withTabs(A, B, C), C)
+    const combined = combineOnStrip(ws, A, B)
+    expect(strip(combined)).toEqual([[B, A], C])
+    expect(combined.active).toBe('holi:split:1')
+    expect(focusedTab(combined)).toBe(A)
+    expect(allTabs(combined)).toEqual([B, A, C])
+    expect(combined.entries[0]).toMatchObject({ shares: [0.5, 0.5] })
+  })
+
+  test('combines in either strip order without duplicating views', () => {
+    const ws = withTabs(A, B, C)
+    expect(strip(combineOnStrip(ws, C, A))).toEqual([[A, C], B])
+    expect(strip(combineOnStrip(ws, A, C))).toEqual([B, [C, A]])
+  })
+
+  test('a sidebar view can combine without opening a separate tab first', () => {
+    const ws = withTabs(A, B)
+    const combined = combineOnStrip(ws, D, A)
+    expect(strip(combined)).toEqual([[A, D], B])
+    expect(allTabs(combined)).toEqual([A, D, B])
+    expect(focusedTab(combined)).toBe(D)
+  })
+
+  test('dragging one split member combines only that member', () => {
+    const ws = pair()
+    const combined = combineOnStrip(ws, A, C)
+    expect(strip(combined)).toEqual([B, [C, A]])
+    expect(allTabs(combined)).toEqual([B, C, A])
+  })
+
+  test('combines eligible split groups while preserving target identity and members', () => {
+    const ws = openInSplit(openInSplit(withTabs(A, B, C, D), A), B)
+    const targetId = (ws.entries[1] as ShellSplit).id
+    const incoming = openInSplit(selectEntry(ws, C), D)
+    const incomingId = (incoming.entries[0] as ShellSplit).id
+    const combined = combineOnStrip(incoming, incomingId, targetId)
+    expect(strip(combined)).toEqual([[A, B, C, D]])
+    expect((combined.entries[0] as ShellSplit).id).toBe(targetId)
+    expect(allTabs(combined)).toEqual([A, B, C, D])
+    expect(focusedTab(combined)).toBe(C)
+    expect((combined.entries[0] as ShellSplit).shares).toEqual([0.25, 0.25, 0.25, 0.25])
+  })
+
+  test('a three-view group combined with one tab shares width evenly and focuses the dragged group', () => {
+    const three = openInSplit(openInSplit(selectEntry(withTabs(A, B, C, D), A), B), C)
+    const sourceId = (three.entries[0] as ShellSplit).id
+    const combined = combineOnStrip(three, sourceId, D)
+    expect(focusedTab(combined)).toBe(A)
+    expect((combined.entries[0] as ShellSplit).shares).toEqual([0.25, 0.25, 0.25, 0.25])
+  })
+
+  test('rejects self, unknown, and over-capacity combinations without changes', () => {
+    const ws = withTabs(A, B, C, D, E)
+    const full = openInSplit(openInSplit(openInSplit(withTabs(A, B, C, D, E), A), B), C)
+    expect(combineOnStrip(ws, A, A)).toBe(ws)
+    expect(combineOnStrip(ws, 'holi:unknown:entry', A)).toBe(ws)
+    expect(combineOnStrip(full, E, (full.entries[0] as ShellSplit).id)).toBe(full)
+    const combined = combineOnStrip(ws, A, B)
+    expect(allTabs(combined)).toHaveLength(5)
+    expect(new Set(allTabs(combined)).size).toBe(5)
   })
 })
 
@@ -451,5 +516,39 @@ describe('files', () => {
     const ws = withTabs(A)
     expect(retargetTabs(ws, [{ from: C, to: D }])).toBe(ws)
     expect(closeTabsWhere(ws, () => false)).toBe(ws)
+  })
+})
+
+describe('whole-entry close confirmation', () => {
+  test('confirms split entries for direct and bulk closes, but not ordinary tabs', () => {
+    const ws = pair()
+    const splitId = entryIds(ws)[0]!
+    expect(closesSplit(ws, { kind: 'entry', id: splitId })).toBe(true)
+    expect(closesSplit(ws, { kind: 'all' })).toBe(true)
+    expect(closesSplit(ws, { kind: 'others', id: C })).toBe(true)
+    const reordered = moveEntry(ws, C, 0)
+    expect(closesSplit(reordered, { kind: 'right', id: C })).toBe(true)
+
+    const unsplit = withTabs(A, B)
+    expect(closesSplit(unsplit, { kind: 'entry', id: A })).toBe(false)
+    expect(applyEntryClose(unsplit, { kind: 'entry', id: A }).entries).toHaveLength(1)
+  })
+
+  test('does not mutate until confirmation and refuses a stale workspace', () => {
+    const ws = pair()
+    const splitId = entryIds(ws)[0]!
+    const request = { kind: 'entry' as const, id: splitId }
+    expect(ws.entries).toHaveLength(2)
+    expect(confirmEntryClose(ws, ws, request).entries).toHaveLength(1)
+
+    const changed = openNewTab(ws)
+    expect(confirmEntryClose(changed, ws, request)).toBe(changed)
+  })
+
+  test('bulk close selection includes splits it actually removes', () => {
+    const ws = pair()
+    const splitId = entryIds(ws)[0]!
+    expect(closesSplit(ws, { kind: 'others', id: C })).toBe(true)
+    expect(closesSplit(ws, { kind: 'right', id: splitId })).toBe(false)
   })
 })

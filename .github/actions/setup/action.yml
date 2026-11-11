@@ -1,0 +1,24 @@
+# What every release job does before it packages: pnpm, Node, the workspace's
+# dependencies, and the desktop app's build. The job checks out first, since
+# this action is read from the checkout.
+name: Install and build
+description: Install pnpm, Node and the dependencies, then build the desktop app
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v5
+      with:
+        version: 10
+
+    - uses: actions/setup-node@v5
+      with:
+        node-version: 24
+        cache: pnpm
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile
+
+    - name: Build
+      shell: bash
+      run: pnpm --filter @holi/desktop build

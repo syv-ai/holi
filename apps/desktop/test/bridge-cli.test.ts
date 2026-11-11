@@ -178,13 +178,26 @@ describe('when Holi is not running', () => {
 })
 
 describe('usage', () => {
-  it('names every command with its summary when called with none', async () => {
+  it('names every command with its summary when called with none, and succeeds', async () => {
     const res = await run(bin, [], env)
-    expect(res.code).toBe(2)
-    expect(res.stderr).toContain('holi apps open <path>')
-    expect(res.stderr).toContain('holi store put <bundle> <collection> <value> [<id>]')
-    expect(res.stderr).toContain('holi skills update')
-    expect(res.stderr).toContain("a vault PDF's comments")
+    expect(res.code).toBe(0)
+    expect(res.stdout).toContain('holi apps open <path>')
+    expect(res.stdout).toContain('holi store put <bundle> <collection> <value> [<id>]')
+    expect(res.stdout).toContain('holi skills update')
+    expect(res.stdout).toContain("a vault PDF's comments")
+  })
+
+  it('answers --help with usage and exit 0, running nothing', async () => {
+    for (const args of [['--help'], ['-h'], ['sync', '--help']]) {
+      const res = await run(bin, args, env)
+      expect(res.code, args.join(' ')).toBe(0)
+      expect(res.stdout).toContain('holi apps open <path>')
+    }
+    const one = await run(bin, ['apps', 'open', '--help'], env)
+    expect(one.code).toBe(0)
+    expect(one.stdout).toContain('usage: holi apps open <path>')
+    expect(one.stdout).not.toContain('holi skills update')
+    expect(capability).not.toHaveBeenCalled()
   })
 
   it('refuses an unknown command rather than doing something adjacent', async () => {
@@ -537,5 +550,52 @@ describe('a command whose arguments are positional only', () => {
     expect(resolveArgv(['x', 'call', 'a', '--method=POST'], commands, null)).toMatchObject({
       kind: 'usage',
     })
+  })
+})
+
+describe('a command that acts as the calling session', () => {
+  const ran = vi.fn<(params: unknown) => void>()
+  const who = cap({
+    doors: ['cli'],
+    cli: { args: [], summary: 'say which session is asking', job: 'session' },
+    params: (raw) => raw as Record<string, string>,
+    run: async (_ctx, p) => {
+      ran(p)
+      return p.session ?? 'nobody'
+    },
+    text: (session) => session,
+  })
+  const inSession = (job: string) => ({ ...env, CLAUDE_JOB_DIR: `/Users/ada/.claude/jobs/${job}` })
+
+  beforeEach(async () => {
+    await server.stop()
+    ran.mockClear()
+    server = bridge({ 'x.who': who }, ['x'])
+    await server.start()
+    await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
+  })
+
+  it('is the session the script runs in, with no flag for it', async () => {
+    const res = await run(bin, ['x', 'who'], inSession('abcd1234'))
+    expect(res).toMatchObject({ code: 0, stdout: 'abcd1234\n' })
+  })
+
+  it('refuses to name another session from inside one, in either spelling', async () => {
+    for (const flag of [['--session', 'ffff0000'], ['--session=ffff0000']]) {
+      const res = await run(bin, ['x', 'who', ...flag], inSession('abcd1234'))
+      expect(res.code, flag.join(' ')).toBe(2)
+      expect(res.stderr).toContain('--session')
+    }
+    expect(ran).not.toHaveBeenCalled()
+  })
+
+  it('takes its own id given again', async () => {
+    const res = await run(bin, ['x', 'who', '--session', 'abcd1234'], inSession('abcd1234'))
+    expect(res).toMatchObject({ code: 0, stdout: 'abcd1234\n' })
+  })
+
+  it('takes the flag from a person at a terminal outside any session', async () => {
+    const res = await run(bin, ['x', 'who', '--session', 'ffff0000'], env)
+    expect(res).toMatchObject({ code: 0, stdout: 'ffff0000\n' })
   })
 })

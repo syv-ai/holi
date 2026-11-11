@@ -203,7 +203,9 @@ keeps what is started in step with the vault's resolution (`reconcile`): at the 
 write and on any change to the files, so a hand edit to `plugins.yaml` takes effect at once. It
 starts a plugin's providers before it and stops it before them, seeds a plugin that joins before
 starting it, and stops everything, newest first, when Holi leaves the vault or quits: each
-disposer, then what it registered. A plugin that throws as it starts is reported with its message
+disposer, then what it registered. Until both are done the plugin is still served
+(`serving`): its capabilities answer and its events reach the renderer, though turning it off wrote
+the setting first, so what it finishes on the way out (a meeting's last audio) still lands. A plugin that throws as it starts is reported with its message
 (`settings.pluginFailures`) and tried again on the next write or open, never on a bare change.
 One kind of work outlives the open vault: a plugin's work across every registered vault that runs
 it (`MainPlugin.background`), such as reminders, which fire for a vault that is not open. It
@@ -221,7 +223,7 @@ Whatever runs inside a vault (the `holi` CLI, the agent's hooks, git's pre-commi
 driver) reaches main through one loopback bridge (`src/main/bridge/`) with a token per vault,
 found by walking up to the vault's root and parsing `.holi/state/bridge.local.env`. The
 CLI's verbs are capabilities; the few callers that are not (the agent's turn and status-line hooks,
-which must answer empty, and git's two) are routes their owner registers.
+which never answer anything a hook would print, and git's two) are routes their owner registers.
 
 ## 4. The vault
 

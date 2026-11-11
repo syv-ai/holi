@@ -1,6 +1,6 @@
 /** Appearance: how this machine's window looks (theme, glass). */
 import { useAtomValue, useSetAtom } from 'jotai'
-import type { ColorScheme, WindowGlass } from '@holi/shared'
+import { VAULT_SETTING_DEFAULTS, type ColorScheme, type WindowGlass } from '@holi/shared'
 import { Switch } from '@/components/ui/switch'
 import { COLOR_SCHEMES, colorSchemeAtom, writeColorSchemeAtom } from '@/state/color-scheme'
 import { isMac } from '@/lib/platform'
@@ -77,6 +77,18 @@ export function AppearancePage() {
           disabled={resolved === null}
           checked={resolved?.gridArcade ?? true}
           onCheckedChange={(on) => void write('gridArcade', on)}
+        />
+      </SettingsFieldRow>
+      <SettingsFieldRow
+        title="Confirm before closing split tabs"
+        description="Ask before closing a tab entry that contains multiple views, including when closing other tabs or all tabs."
+        htmlFor="settings-confirm-close-split-tabs"
+      >
+        <Switch
+          id="settings-confirm-close-split-tabs"
+          disabled={resolved === null}
+          checked={resolved?.confirmCloseSplitTabs ?? VAULT_SETTING_DEFAULTS.confirmCloseSplitTabs}
+          onCheckedChange={(on) => void write('confirmCloseSplitTabs', on)}
         />
       </SettingsFieldRow>
       <SettingsFieldRow

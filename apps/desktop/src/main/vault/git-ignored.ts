@@ -32,13 +32,29 @@ export async function ignoredPaths(root: string, paths: string[]): Promise<strin
   // `-z` in both directions: a vault has paths with spaces and non-ASCII in
   // them (`nøter/æøå.md`), and without it git quotes and escapes them, so every
   // path downstream is one that does not exist.
-  const outcome = await tryGit(root, ['check-ignore', '-z', '--stdin'], {
-    input: `${paths.join('\0')}\0`,
-  }).catch(() => null)
+  // `--no-index` stops a tracked lookalike that matches a bracket expression
+  // from suppressing an ignored literal path. Remove tracked paths (and their
+  // ancestor directories) explicitly below.
+  const [outcome, tracked] = await Promise.all([
+    tryGit(root, ['check-ignore', '--no-index', '-z', '--stdin'], {
+      input: `${paths.join('\0')}\0`,
+    }).catch(() => null),
+    tryGit(root, ['ls-files', '-z'], {}).catch(() => null),
+  ])
 
   // **Exit 1 means "none of them", not "it failed".** Only 0 and 1 are
   // answers; 128 is a real failure and falls through to the empty list.
   if (outcome === null || (outcome.code !== 0 && outcome.code !== 1)) return []
 
-  return outcome.stdout.split('\0').filter((p) => p !== '')
+  if (tracked === null || !tracked.ok) return []
+  const indexedOrAncestor = new Set<string>()
+  for (const path of tracked.stdout.split('\0').filter((p) => p !== '')) {
+    indexedOrAncestor.add(path)
+    let parent = path
+    while (parent.includes('/')) {
+      parent = parent.slice(0, parent.lastIndexOf('/'))
+      indexedOrAncestor.add(parent)
+    }
+  }
+  return outcome.stdout.split('\0').filter((p) => p !== '' && !indexedOrAncestor.has(p))
 }

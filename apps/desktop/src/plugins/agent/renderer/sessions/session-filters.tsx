@@ -25,7 +25,9 @@ import {
 import { cn } from '@/plugin-api'
 import {
   filterActive,
+  historyRowsAtom,
   NO_FILTER,
+  openSessionRowAtom,
   sessionFilterAtom,
   sessionQueryAtom,
   type SessionFilter,
@@ -51,13 +53,15 @@ const SOURCES: readonly { value: SessionSource; label: string }[] = [
 
 /** MonoCode's search field with its filter button, as a ReUI input group.
  *  It is the History's launcher too (⌘J focuses it): typing narrows the
- *  sessions, ↓ goes into them, and Enter starts a new session with what was
- *  typed as its first prompt. */
+ *  sessions, ↓ goes into them, and Enter opens the one conversation left,
+ *  or else starts a new session with what was typed as its first prompt. */
 export function SessionSearch(): React.JSX.Element {
   const [query, setQuery] = useAtom(sessionQueryAtom)
   const [filter, setFilter] = useAtom(sessionFilterAtom)
   const active = filterActive(filter)
   const start = useSetAtom(startViewSessionAtom)
+  const open = useSetAtom(openSessionRowAtom)
+  const matches = useAtomValue(historyRowsAtom)
   const focusAsked = useAtomValue(historyFocusAtom)
   const field = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -100,7 +104,10 @@ export function SessionSearch(): React.JSX.Element {
             e.preventDefault()
             const prompt = query.trim()
             setQuery('')
-            void start(prompt === '' ? {} : { prompt })
+            // A search down to one conversation opens it; anything else is a prompt.
+            const lone = prompt !== '' && matches.length === 1 ? matches[0] : undefined
+            if (lone !== undefined) void open(lone.item)
+            else void start(prompt === '' ? {} : { prompt })
           }
         }}
       />

@@ -12,7 +12,7 @@ import { emptyVaultSnapshot } from '@holi/shared'
 import type { CapabilityError } from '../../../main/capabilities/error'
 import { createCapabilityRegistry, type Door } from '../../../main/capabilities/registry'
 import { noCoreServices } from '../../../main/capabilities/services'
-import type { GoogleAccountsManager } from '../main/accounts'
+import type { GoogleAccountsManager, GoogleAccountsOverview } from '../main/accounts'
 import { GoogleApiError } from '../main/api'
 import { googleCapabilities, GOOGLE_NAMESPACES } from '../main/capabilities'
 import { fenceThread } from '../main/untrusted'
@@ -329,6 +329,31 @@ describe('the composer', () => {
  * much each disconnect takes down with it.
  */
 describe('accounts per vault', () => {
+  /** What `overview` answers for a vault linked to `sub`, as the fake
+   *  machine below holds it: sub-1 lacks a scope, sub-2 has another vault. */
+  const overviews = (remote: string, sub: string | undefined): GoogleAccountsOverview => {
+    const client = { id: 'id-1.apps.googleusercontent.com', source: 'shipped' as const }
+    if (sub !== 'sub-1' && sub !== 'sub-2') {
+      return {
+        remote,
+        state: sub === undefined ? 'not-connected' : 'needs-reconnect',
+        account: null,
+        client,
+      }
+    }
+    return {
+      remote,
+      state: sub === 'sub-1' ? 'missing-scope' : 'connected',
+      account: {
+        sub,
+        email: sub === 'sub-1' ? 'ada@syv.ai' : 'work@syv.ai',
+        missingScopes: sub === 'sub-1' ? ['gmail.modify'] : [],
+        otherVaults: sub === 'sub-2' ? 1 : 0,
+      },
+      client,
+    }
+  }
+
   function accountsRig() {
     const links = new Map<string, string>([['syv/work', 'sub-2']])
     const calls: { name: string; arg: unknown }[] = []
@@ -359,12 +384,14 @@ describe('accounts per vault', () => {
         calls.push({ name: 'removeAccount', arg: sub })
         for (const [k, v] of links) if (v === sub) links.delete(k)
       },
+      overview: async (remote: string) => overviews(remote, links.get(remote)),
     }
-    return { call: rig({ accounts }).call, calls, links }
+    const r = rig({ accounts })
+    return { call: r.call, cli: r.cli, calls, links }
   }
 
   it('lists every connected account and names the one this vault uses', async () => {
-    expect(await accountsRig().call('accounts', undefined, 'syv/work')).toEqual({
+    expect(await accountsRig().call('allAccounts', undefined, 'syv/work')).toEqual({
       accounts: [
         { sub: 'sub-1', email: 'ada@syv.ai' },
         { sub: 'sub-2', email: 'work@syv.ai' },
@@ -373,12 +400,39 @@ describe('accounts per vault', () => {
     })
   })
 
+  it("answers `holi google accounts` with this vault's overview, as text", async () => {
+    const { cli, links } = accountsRig()
+    links.set('owner/repo', 'sub-2')
+    const { value, text } = await cli('accounts')
+    expect(value).toMatchObject({ remote: 'owner/repo', state: 'connected' })
+    expect(text).toContain('this vault (owner/repo): connected')
+    expect(text).toContain('work@syv.ai: connected')
+    expect(text).toContain('also linked to 1 other vault')
+    expect(text).toContain('client: shipped (id-1.apps.googleusercontent.com)')
+  })
+
+  it("names this vault's missing scopes, and says when it needs reconnecting", async () => {
+    const { cli, links } = accountsRig()
+    links.set('owner/repo', 'sub-1')
+    expect((await cli('accounts')).text).toContain('missing scopes: gmail.modify')
+    links.set('owner/repo', 'sub-gone')
+    expect((await cli('accounts')).text).toContain('connect Google again')
+    links.delete('owner/repo')
+    expect((await cli('accounts')).text).toContain('no Google account is linked to this vault')
+  })
+
+  it('keeps the list of every account to the settings screen', async () => {
+    const { call } = accountsRig()
+    await expect(call('accounts', undefined, 'syv/work')).rejects.toThrow()
+  })
+
   it('reports no account for a vault that has never connected', async () => {
     const { call } = accountsRig()
-    expect(await call('accounts', undefined, 'ada-holm/notes')).toMatchObject({ current: null })
+    expect(await call('allAccounts', undefined, 'ada-holm/notes')).toMatchObject({ current: null })
     expect(await call('status', undefined, 'ada-holm/notes')).toEqual({
       account: null,
       missingScopes: [],
+      needsReconnect: false,
     })
   })
 

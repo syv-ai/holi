@@ -1,13 +1,11 @@
 import {
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
   type DragEvent,
   type ReactNode,
 } from 'react'
-import { createPortal } from 'react-dom'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { MotionConfig } from 'motion/react'
 
@@ -141,20 +139,9 @@ export function SplitView({
   /** A sized member was resized to `share` of the area. */
   onShareChange: (key: string, share: number) => void
 }) {
-  const hosts = useRef(new Map<string, HTMLDivElement>())
-  function hostFor(key: string): HTMLDivElement {
-    let host = hosts.current.get(key)
-    if (host === undefined) {
-      host = document.createElement('div')
-      host.className = 'flex h-full min-h-0 w-full min-w-0 flex-col'
-      host.dataset.paneHost = key
-      hosts.current.set(key, host)
-    }
-    return host
-  }
-
   const [ws, setWs] = useAtom(shellWorkspaceAtom)
-  const dragging = useAtomValue(tabDragAtom)
+  const drag = useAtomValue(tabDragAtom)
+  const dragging = drag?.key ?? null
   const setDrag = useSetAtom(tabDragAtom)
   const look = useTabLook()
 
@@ -221,15 +208,6 @@ export function SplitView({
     const timer = window.setTimeout(() => setGhosts([]), 600)
     return () => window.clearTimeout(timer)
   }, [ghosts])
-
-  // Hosts of views no longer laid out are let go: only the active entry's
-  // views are mounted.
-  useEffect(() => {
-    const live = new Set(members.map((m) => m.key))
-    for (const key of hosts.current.keys()) {
-      if (!live.has(key)) hosts.current.delete(key)
-    }
-  })
 
   // ---------------------------------------------------------------- drops
 
@@ -433,7 +411,7 @@ export function SplitView({
           landing ? 'transition-none' : SLIDE,
         )}
       >
-        {ghost ? null : <HostSlot host={hostFor(member.key)} />}
+        {ghost ? null : renderMember(member.key)}
       </div>
     )
     if (role === 'fill') {
@@ -500,9 +478,6 @@ export function SplitView({
         )}
         {catcher}
       </div>
-      {members.map((member) =>
-        createPortal(renderMember(member.key), hostFor(member.key), member.key),
-      )}
     </MotionConfig>
   )
 }
@@ -641,20 +616,6 @@ function DropLabel({
       <span className="truncate">{tab.title}</span>
     </div>
   )
-}
-
-/** Where a view's host is shown: adopted on mount, given back on unmount. */
-function HostSlot({ host }: { host: HTMLDivElement }) {
-  const ref = useRef<HTMLDivElement>(null)
-  useLayoutEffect(() => {
-    const slot = ref.current
-    if (slot === null) return
-    slot.appendChild(host)
-    return () => {
-      if (host.parentNode === slot) slot.removeChild(host)
-    }
-  }, [host])
-  return <div ref={ref} className="flex h-full min-h-0 w-full min-w-0" />
 }
 
 /**

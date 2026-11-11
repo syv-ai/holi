@@ -3,10 +3,16 @@ import { createStore } from 'jotai'
 import { describe, expect, test } from 'vitest'
 import type { PathClaim } from '@/state/plugin-types'
 import { coreContributionAtom } from '@/state/plugins'
-import { activeSurfaceIdAtom, shellTabForPathAtom } from '@/state/surfaces'
+import {
+  activeSurfaceIdAtom,
+  closeSurfaceTabsAtom,
+  closeSurfaceTabAtom,
+  shellTabForPathAtom,
+  surfaceTabIdsAtom,
+} from '@/state/surfaces'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
-import { openTab } from '@/state/shell-workspace'
-import { sessionKey } from '@/state/tab-descriptor'
+import { openInSplit, openTab, emptyWorkspace } from '@/state/shell-workspace'
+import { sessionKey, tabKey } from '@/state/tab-descriptor'
 import { snapshotAtom } from '@/state/vaults'
 
 const glyph = () => null
@@ -33,6 +39,33 @@ function storeWith(files: string[]) {
   })
   return store
 }
+
+describe('surface tabs in the shell workspace', () => {
+  test('tracks all split members, focuses the active member, and closes programmatically', () => {
+    const store = storeWith([])
+    const first = tabKey({ kind: 'surface', surface: 'plugin-document', id: 'one.deck' })
+    const second = tabKey({ kind: 'surface', surface: 'plugin-document', id: 'two.deck' })
+    store.set(shellWorkspaceAtom, openInSplit(openTab(emptyWorkspace(), first), second))
+
+    expect(store.get(surfaceTabIdsAtom('plugin-document'))).toEqual(['one.deck', 'two.deck'])
+    expect(store.get(activeSurfaceIdAtom('plugin-document'))).toBe('two.deck')
+    store.set(closeSurfaceTabsAtom, 'plugin-document', ['one.deck'])
+    expect(store.get(surfaceTabIdsAtom('plugin-document'))).toEqual(['one.deck'])
+  })
+})
+
+test('vault-app descriptors keep the app surface lifecycle and close behavior', () => {
+  const store = storeWith([])
+  const first = 'one.app'
+  const second = 'two.app'
+  store.set(shellWorkspaceAtom, openInSplit(openTab(emptyWorkspace(), first), second))
+  expect(store.get(surfaceTabIdsAtom('app'))).toEqual([first, second])
+  expect(store.get(activeSurfaceIdAtom('app'))).toBe(second)
+  store.set(closeSurfaceTabAtom, 'app', second)
+  expect(store.get(surfaceTabIdsAtom('app'))).toEqual([first])
+  store.set(closeSurfaceTabsAtom, 'app', [])
+  expect(store.get(surfaceTabIdsAtom('app'))).toEqual([])
+})
 
 describe('activeSurfaceIdAtom', () => {
   test('reads the focused session selection for its owning surface', () => {

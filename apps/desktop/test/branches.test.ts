@@ -267,6 +267,8 @@ describe('ActiveVault.switchBranch', () => {
     // An oversized file is held back by the size gate, so the tree stays
     // dirty after the settle commit, and git would carry it to the new branch.
     const { dir, active } = await rigVault()
+    // Seeded vaults ignore machine-local files such as the held-back list.
+    await writeFile(join(dir, '.gitignore'), '*.local.*\n', 'utf8')
     await mkdir(dirname(join(dir, SETTINGS_FILE)), { recursive: true })
     await writeFile(join(dir, SETTINGS_FILE), '{"maxCommittedFileBytes": 1024}', 'utf8')
     await writeFile(join(dir, 'big.bin'), 'x'.repeat(5000), 'utf8')

@@ -40,7 +40,7 @@ import {
   type CapabilityContext,
   type CapabilityTable,
 } from '../../../main/plugin-api'
-import type { GoogleAccountsManager } from './accounts'
+import type { GoogleAccountsManager, GoogleAccountsOverview } from './accounts'
 import type { GoogleSession } from './session'
 import { vaultAttachments } from './attachments'
 import { GoogleApi, GoogleApiError, type GoogleErrorCode } from './api'
@@ -382,6 +382,26 @@ function inviteAnswer(p: Record<string, unknown>): InviteAnswer {
 const ok = { ok: true as const }
 const json = (value: unknown): string => JSON.stringify(value, null, 2)
 
+/** `holi google accounts`, as the agent reads it. */
+function accountsText(value: GoogleAccountsOverview): string {
+  const lines = [`this vault (${value.remote}): ${value.state}`]
+  if (value.state === 'not-connected') {
+    lines.push('no Google account is linked to this vault')
+  } else if (value.state === 'needs-reconnect') {
+    lines.push('the account this vault was linked to is no longer connected: connect Google again')
+  }
+  const a = value.account
+  if (a !== null) {
+    lines.push('', `${a.email}: ${value.state}`)
+    if (a.missingScopes.length > 0) lines.push(`  missing scopes: ${a.missingScopes.join(' ')}`)
+    if (a.otherVaults > 0) {
+      lines.push(`  also linked to ${a.otherVaults} other vault${a.otherVaults === 1 ? '' : 's'}`)
+    }
+  }
+  lines.push('', `client: ${value.client.source} (${value.client.id})`)
+  return lines.join('\n')
+}
+
 export function googleCapabilities(deps: GoogleCapabilityDeps) {
   /** The connect in progress. One per process: a second supersedes the first
    *  rather than leaving a listener holding a port. */
@@ -434,9 +454,11 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       params: noParams,
       run: async (ctx) => {
         const session = await deps.accounts.sessionFor(ctx.remote).catch(() => null)
+        const overview = await deps.accounts.overview(ctx.remote).catch(() => null)
         return {
           account: session?.account ?? null,
           missingScopes: session?.missingScopes() ?? [],
+          needsReconnect: overview?.state === 'needs-reconnect',
         }
       },
     }),
@@ -482,14 +504,33 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
     }),
 
-    /** Every account connected on this machine, and the one this vault uses. */
-    'google.accounts': cap({
+    /** Every account connected on this machine, and the one this vault uses,
+     *  for the settings picker. */
+    'google.allAccounts': cap({
       doors: ['ui'],
       params: noParams,
       run: async (ctx) => ({
         accounts: deps.accounts.list(),
         current: (await deps.accounts.sessionFor(ctx.remote))?.accountSub ?? null,
       }),
+    }),
+
+    /**
+     * `holi google accounts`: whether this vault's Google is connected, so the
+     * agent can ask without reading the calendar to find out. Only the account
+     * this vault uses, its state, how many other vaults use it (never which)
+     * and the client in use; never a token. One connected for another vault
+     * is that vault's business.
+     */
+    'google.accounts': cap({
+      doors: ['cli'],
+      cli: {
+        args: [],
+        summary: "this vault's Google account and its state (no tokens)",
+      },
+      params: noParams,
+      run: (ctx) => deps.accounts.overview(ctx.remote),
+      text: accountsText,
     }),
 
     /** Point this vault at an account already connected. No consent. */

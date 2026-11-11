@@ -64,6 +64,7 @@ export function ConnectionsSection(): React.JSX.Element {
   const {
     account,
     missingScopes,
+    needsReconnect,
     accounts,
     currentSub,
     refresh: refreshGoogle,
@@ -176,6 +177,8 @@ export function ConnectionsSection(): React.JSX.Element {
                   </>
                 ) : phase.kind === 'connecting' ? (
                   'Waiting for your browser…'
+                ) : needsReconnect ? (
+                  'Google stopped accepting this connection. Connect again, or forget it.'
                 ) : (
                   'Read and triage your Gmail, read your Calendar. This vault only.'
                 )}
@@ -205,9 +208,21 @@ export function ConnectionsSection(): React.JSX.Element {
                   </Button>
                 </>
               ) : (
-                <Button size="sm" disabled={busy} onClick={() => void connect()}>
-                  {phase.kind === 'connecting' ? 'Connecting…' : connectLabel}
-                </Button>
+                <>
+                  <Button size="sm" disabled={busy} onClick={() => void connect()}>
+                    {phase.kind === 'connecting' ? 'Connecting…' : connectLabel}
+                  </Button>
+                  {needsReconnect && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      aria-label="Forget this connection"
+                      onClick={() => void disconnect()}
+                    >
+                      Forget
+                    </Button>
+                  )}
+                </>
               )}
             </ItemActions>
           </Item>

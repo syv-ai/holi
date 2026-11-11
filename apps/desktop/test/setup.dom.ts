@@ -1,8 +1,13 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup } from '@testing-library/react'
+import { cleanup, configure } from '@testing-library/react'
 import { afterEach } from 'vitest'
 
 afterEach(() => cleanup())
+
+// How long `findBy` and `waitFor` wait for their condition. A bound on a
+// failure only: a passing query returns as soon as it holds. Testing Library's
+// 1 second is shorter than a heavy render takes on CI's Intel runner.
+configure({ asyncUtilTimeout: 5_000 })
 
 // Radix relies on DOM APIs jsdom omits. Polyfill the ones its Dialog touches,
 // or focus-trap/pointer interactions throw instead of exercising real behaviour.
@@ -11,7 +16,23 @@ if (!Element.prototype.hasPointerCapture) {
   Element.prototype.setPointerCapture = () => {}
   Element.prototype.releasePointerCapture = () => {}
 }
+// Chromium preserves iframe documents with moveBefore. jsdom models DOM
+// insertion only; real browsing-context continuity is exercised in Electron.
+if (!('moveBefore' in Element.prototype)) {
+  Object.defineProperty(Element.prototype, 'moveBefore', {
+    configurable: true,
+    writable: true,
+    value(this: Element, node: Node, before: Node | null) {
+      this.insertBefore(node, before)
+    },
+  })
+}
 if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {}
+// The Vim cursor plugin measures visual-mode selections. jsdom has no Range
+// geometry; a deterministic empty list is enough for keyboard-behaviour tests.
+if (!Range.prototype.getClientRects) {
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList
+}
 // jsdom computes no layout, so it implements neither scroll method on an
 // element. The settings rail uses both — `scrollTo` to start a section at the
 // top, `scrollIntoView` to jump to a heading — and without these a section

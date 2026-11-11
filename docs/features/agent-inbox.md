@@ -15,7 +15,8 @@ entry opens, held to what `holi docs open` may show (never `.holi/state/` or a s
 shared `shownPathOrNull`), `--session` a session by job id (eight hex characters; anything else is refused, so
 no value can reach `claude attach` as a flag). Run from a background session, the `holi` script
 fills `--session` from `$CLAUDE_JOB_DIR` itself, as the status line does, so the agent never
-passes its own id; a `--path` is still what the entry opens first. It answers `notified`,
+passes its own id, and refuses a different one there (a `job` param is always the calling
+session's, the rule [meetings](meetings.md) relies on); a `--path` is still what the entry opens first. It answers `notified`,
 `added to the inbox`, or `already in the inbox, not repeated`. It needs Holi to have the vault
 open: the `holi` command finds Holi through the vault's bridge file, which Holi deletes when it
 leaves the vault, and a notice for a vault that is not the open one is refused (`UNAVAILABLE: vault-not-open`), so

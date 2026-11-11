@@ -12,8 +12,9 @@
  * argv against the capabilities open at the CLI door (`cli.ts`) and runs one
  * through `dispatch`, so every verb anyone can type is a capability and not a
  * route. A route is for a caller that is not an agent verb: the agent's turn
- * and status-line hooks, which must answer empty because a body would be
- * injected into Claude's context (the agent plugin's `claude/routes.ts`), and git's
+ * and status-line hooks, which answer empty, or with what the hook reads and
+ * never prints, because a printed body would be injected into Claude's
+ * context (the agent plugin's `claude/routes.ts`), and git's
  * pre-commit hook and merge driver (`vault/git-routes.ts`). Each owner
  * registers its own routes from the composition root.
  *
@@ -115,7 +116,8 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
    * order, and a background session's job id as `job`. The output is the
    * answer itself, so it answers text: 200 with it (or, past `SPILL_BYTES`,
    * with where it was written, as JSON when the answer was asked for as JSON),
-   * 422 with a refusal and its next step, 400 with usage, or 428, having run
+   * 422 with a refusal and its next step, 400 with usage (200 when usage was
+   * what was asked for), or 428, having run
    * nothing, when the command reads a param from stdin that was not given.
    */
   async function runCli(remote: string, body: string): Promise<Reply> {
@@ -128,6 +130,7 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
       form.get('job'),
     )
     if (request.kind === 'usage') return { status: 400, body: request.text }
+    if (request.kind === 'help') return { status: 200, body: request.text }
     if (request.kind === 'stdin') return { status: 428 }
     let output: string
     try {

@@ -27,7 +27,7 @@ const openExternal = vi.fn()
 
 const google: Record<string, (params: unknown) => unknown> = {
   status: () => ({ account: { email: 'ada@syv.ai', sub: 'a' }, missingScopes: [] }),
-  accounts: () => ({
+  allAccounts: () => ({
     accounts: [
       { sub: 'a', email: 'ada@syv.ai' },
       { sub: 'b', email: 'ada@home.test' },
