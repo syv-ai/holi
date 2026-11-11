@@ -6,7 +6,7 @@
  * name.
  */
 import { describe, expect, it } from 'vitest'
-import { freeCopyPath } from '../src/copy-names'
+import { freeCopyPath, numberedPath } from '../src/copy-names'
 import { isLocalOnlyPath } from '../src/path-safety'
 
 describe('freeCopyPath', () => {
@@ -87,5 +87,19 @@ describe('freeCopyPath', () => {
     // is what keeps it from becoming ' copy.gitignore'.
     const taken = (p: string) => p === '.gitignore'
     expect(freeCopyPath(taken, '.gitignore')).toBe('.gitignore copy')
+  })
+})
+
+describe('numberedPath', () => {
+  it('is the path itself first, then numbers before the extension', () => {
+    expect(numberedPath('notes/meeting.pdf', 1)).toBe('notes/meeting.pdf')
+    expect(numberedPath('notes/meeting.pdf', 2)).toBe('notes/meeting 2.pdf')
+    expect(numberedPath('meeting.pdf', 3)).toBe('meeting 3.pdf')
+  })
+
+  it('keeps a .local. marker in the extension, so the file stays local', () => {
+    const next = numberedPath('notes/me.local.pdf', 2)
+    expect(next).toBe('notes/me 2.local.pdf')
+    expect(isLocalOnlyPath(next)).toBe(true)
   })
 })

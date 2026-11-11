@@ -135,6 +135,25 @@ describe('pdf capabilities', () => {
     expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
   }, 30_000)
 
+  it('a unique render goes beside the note and never replaces a file there (needs typst)', async () => {
+    if ((await resolveTypstBin()) === null) return // no typst: skip, don't fail
+    const { root, run } = await rig({
+      ...TEMPLATE_FILES,
+      '.holi/document-templates/plain/template.typ': plainTemplateTyp,
+      'notes/meeting.md': '# Meeting\n',
+      'notes/meeting.pdf': 'theirs',
+    })
+    const meta = { recipient: 'A' }
+    const first = await run('pdf.render', { path: 'notes/meeting.md', unique: true, meta })
+    expect(first).toMatchObject({ vaultPath: 'notes/meeting 2.pdf' })
+    const second = await run('pdf.render', { path: 'notes/meeting.md', unique: true, meta })
+    expect(second).toMatchObject({ vaultPath: 'notes/meeting 3.pdf' })
+    expect(await readFile(join(root, 'notes/meeting.pdf'), 'utf8')).toBe('theirs')
+    await expect(
+      run('pdf.render', { path: 'notes/meeting.md', unique: true, out: 'x.pdf', meta }),
+    ).rejects.toThrow(/unique/)
+  }, 30_000)
+
   it('render refuses a field the template does not have, and a missing required one', async () => {
     const { run } = await rig({ ...TEMPLATE_FILES, 'note.md': '# Hi\n' })
     await expect(
