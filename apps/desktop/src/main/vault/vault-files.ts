@@ -3,7 +3,7 @@
  * re-validates through vaultRelPath. */
 import { randomBytes } from 'node:crypto'
 import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join, relative, sep } from 'node:path'
+import { dirname, join, posix, relative, sep, win32 } from 'node:path'
 import {
   GITKEEP,
   APP_LOG_FILE,
@@ -67,6 +67,46 @@ export function toVaultRel(root: string, absPath: string): VaultRelPath | null {
   } catch {
     return null
   }
+}
+
+/** `path` with `/` for the separator on Windows, and untouched elsewhere,
+ *  where a backslash is a character in a name. */
+function toSlashes(path: string, platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' ? path.replaceAll('\\', '/') : path
+}
+
+/**
+ * `typed` with the vault at `root` cut off its front, written with `/`; `typed`
+ * itself (also with `/`) when it does not start there. On Windows either
+ * separator and either case match, as the file system reads them.
+ */
+export function pathUnderRoot(
+  root: string,
+  typed: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const path = toSlashes(typed, platform)
+  const top = `${toSlashes(root, platform).replace(/\/+$/, '')}/`
+  const fold = (text: string) => (platform === 'win32' ? text.toLowerCase() : text)
+  return fold(path).startsWith(fold(top)) ? path.slice(top.length) : path
+}
+
+/**
+ * The vault path a typed path names, for `vaultRelPath` to validate: an
+ * absolute path inside the vault at `root` becomes its vault-relative one
+ * (an agent's tools print the absolute form), and a relative one only drops a
+ * leading `./`. On Windows either separator is read and the result has `/`,
+ * which is all `vaultRelPath` accepts; its `..` or drive-letter form for a
+ * path outside the vault is for `vaultRelPath` to refuse.
+ */
+export function typedVaultPath(
+  root: string,
+  typed: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const api = platform === 'win32' ? win32 : posix
+  const rel = api.isAbsolute(typed) ? api.relative(root, typed) : typed
+  return toSlashes(rel, platform).replace(/^\.\//, '')
 }
 
 /**

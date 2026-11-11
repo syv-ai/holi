@@ -17,7 +17,6 @@
  */
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { isAbsolute, relative } from 'node:path'
 import { init } from '@embedpdf/pdfium'
 import { PdfiumNative } from '@embedpdf/engines/pdfium'
 import type { PdfAnnotationObject, PdfDocumentObject, PdfPageObject, Rect } from '@embedpdf/models'
@@ -30,6 +29,7 @@ import {
 } from '../shared/pdf-comments'
 import { vaultRelPath } from '@holi/shared'
 import { resolveRelative } from '@holi/shared/path-safety-node'
+import { typedVaultPath } from '../../../main/plugin-api'
 
 type PdfCommentsResult =
   | { ok: true; threads: PdfCommentThread[] }
@@ -166,7 +166,7 @@ export async function pdfCommentsInVault(
   root: string,
   typed: string,
 ): Promise<{ ok: true; path: string; threads: PdfCommentThread[] } | { ok: false; error: string }> {
-  const rel = isAbsolute(typed) ? relative(root, typed) : typed
+  const rel = typedVaultPath(root, typed)
   let path: string
   let abs: string
   try {

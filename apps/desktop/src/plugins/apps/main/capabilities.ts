@@ -28,6 +28,7 @@ import {
   writeAtomic,
   pathParams,
   stringParam,
+  pathUnderRoot,
   type PluginCtx,
   type AppDoor,
   type CapabilityContext,
@@ -136,6 +137,12 @@ function finishedApps(files: readonly { path: string }[]): string[] {
 
 const readManifest = (root: string, bundle: string) =>
   readFile(join(root, vaultRelPath(`${bundle}/${APP_MANIFEST_FILE}`)), 'utf8').catch(() => null)
+
+/** A bundle path as `apps.open` and `apps.init` take it. Where the OS writes it
+ *  with backslashes or a drive (the check hook hands the agent one to run), it
+ *  is read as the vault path it names; elsewhere it is exactly what was typed. */
+const bundleArg = (root: string, path: string): string =>
+  process.platform === 'win32' ? pathUnderRoot(root, path) : path
 
 export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
   /**
@@ -341,7 +348,7 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
     },
     params: pathParams,
     run: async (ctx, { path }) => {
-      const result = await openAppOp(ctx.root, path)
+      const result = await openAppOp(ctx.root, bundleArg(ctx.root, path))
       // The tab opens only once the app is known to be openable: a refusal
       // that still opened a tab would show the agent a blank frame and tell it
       // the reason at the same time.
@@ -393,7 +400,7 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
     writes: true,
     params: pathParams,
     run: async (ctx, { path }) => {
-      const result = await initAppOp(ctx.root, path)
+      const result = await initAppOp(ctx.root, bundleArg(ctx.root, path))
       if (!result.ok) throw new CapabilityError('BAD_REQUEST', result.error)
       return { created: result.created }
     },
@@ -468,7 +475,8 @@ export const storeCapabilities = () => ({
     params: pathParams,
     run: async (ctx, { path }) => {
       // The hook passes the path the agent's tool wrote, which may be absolute.
-      const rel = path.startsWith(`${ctx.root}/`) ? path.slice(ctx.root.length + 1) : path
+      // On Windows it names the file with backslashes, and a drive letter in either case.
+      const rel = pathUnderRoot(ctx.root, path)
       const bundle = appBundleOf(rel)
       if (bundle === null) throw new CapabilityError('BAD_REQUEST', `not inside an app: ${path}`)
       return storeCheck(ctx.root, bundle, rel.slice(bundle.length + 1))

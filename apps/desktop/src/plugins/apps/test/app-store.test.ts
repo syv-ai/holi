@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyVaultSnapshot, formatRecord } from '@holi/shared'
-import { storeCapabilities } from '../main/capabilities'
+import { appsCapabilities, storeCapabilities } from '../main/capabilities'
 import { noCoreServices } from '../../../main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../../../main/capabilities/vault-caps'
 import {
@@ -14,6 +14,19 @@ import {
 
 const registry = createCapabilityRegistry()
 registry.register(['store'], storeCapabilities())
+// `apps.init`, which the check hook names as the next step.
+registry.register(
+  ['apps'],
+  appsCapabilities({
+    events: { emit: () => {} },
+    appDoor: () => {
+      throw new Error('no app door in this test')
+    },
+    grants: { status: async () => ({ codeHash: '', affordances: [] }), grant: async () => true },
+    previews: { read: async () => null, save: async () => {}, forget: async () => {} },
+    capture: async () => null,
+  }),
+)
 // `docs.read`, for the refusal of records read as files.
 registry.register(
   VAULT_NAMESPACES,
@@ -182,6 +195,45 @@ describe('the app store', () => {
       call('store.check', { path: 'Work/Tracker.app/data/items/h.json' }),
     ).rejects.toThrow(/no such method/)
   })
+
+  it('checks the file by the absolute path the agent’s tool wrote, on any OS', async () => {
+    await mkdir(dataDir(), { recursive: true })
+    await writeFile(join(dataDir(), 'h.json'), '{"done": 1}')
+    const abs = join(dataDir(), 'h.json')
+    expect(await call('store.check', { path: abs }, 'cli')).toEqual([
+      'title: is required',
+      'done: must be a boolean',
+    ])
+  })
+
+  // The hook hands `holi store check` the path as the OS spells it.
+  it.runIf(process.platform === 'win32')(
+    'checks a file named with Windows separators and any drive-letter case',
+    async () => {
+      await mkdir(dataDir(), { recursive: true })
+      await writeFile(join(dataDir(), 'h.json'), '{"done": 1}')
+      const problems = ['title: is required', 'done: must be a boolean']
+      const rel = String.raw`Work\Tracker.app\data\items\h.json`
+      expect(await call('store.check', { path: rel }, 'cli')).toEqual(problems)
+      const swapped = root[0]!.toLowerCase() + root.slice(1)
+      expect(await call('store.check', { path: `${swapped}\\${rel}` }, 'cli')).toEqual(problems)
+    },
+  )
+
+  // The check hook tells the agent to run `holi apps init <bundle>` with the bundle as the OS spells it.
+  it.runIf(process.platform === 'win32')('inits an app named with backslashes', async () => {
+    const result = await call('apps.init', { path: String.raw`Work\New.app` }, 'cli')
+    expect(result).toMatchObject({ created: expect.arrayContaining(['Work/New.app/app.yaml']) })
+  })
+
+  it.runIf(process.platform !== 'win32')(
+    'reads a backslash as a character, not a folder',
+    async () => {
+      await expect(
+        call('store.check', { path: String.raw`Work\Tracker.app\data\items\h.json` }, 'cli'),
+      ).rejects.toThrow(/not inside an app/)
+    },
+  )
 
   // A committed link would otherwise let an app's store write into the agent
   // surface, or out of the vault altogether.

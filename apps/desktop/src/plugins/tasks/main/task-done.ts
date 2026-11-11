@@ -9,7 +9,6 @@
  * Every refusal names the problem, since the agent is the caller.
  */
 import { readFile } from 'node:fs/promises'
-import { isAbsolute, relative } from 'node:path'
 import { completeTask } from '@holi/shared'
 import { isTaskFilePath, parseTaskFile, serializeTaskFile } from '@holi/shared'
 import { type VaultRelPath, vaultRelPath } from '@holi/shared'
@@ -19,6 +18,7 @@ import {
   absPathFor,
   completionStatuses,
   readVaultStatuses,
+  typedVaultPath,
   writeAtomic,
 } from '../../../main/plugin-api'
 
@@ -34,7 +34,7 @@ export async function taskDoneOp(
 ): Promise<TaskDoneResult> {
   let rel: VaultRelPath
   try {
-    rel = vaultRelPath(isAbsolute(path) ? relative(root, path) : path.replace(/^\.\//, ''))
+    rel = vaultRelPath(typedVaultPath(root, path))
     // Canonicalised, so a symlink inside the vault cannot lead the write out of it.
     await resolveRelative(root, rel)
   } catch {
