@@ -80,8 +80,15 @@ import { WEEK_STARTS_ON, hhmm, timeOf } from './calendar-format'
 
 import { CLOCK_FORMATS, ISO_WEEK_LOCALE, useTimeFormat, useWeekNumbers } from './calendar-settings'
 import { EventCard, type EventCardAnchor, type EventDraft, type EventCardState } from './event-card'
+import { useWheelSwipe } from './use-wheel-swipe'
 
 type Occurrence = EventCalendarOccurrence<GoogleEventData>
+
+/** Swipe paging, which needs the calendar's context: nothing to draw. */
+function WheelSwipe(): null {
+  useWheelSwipe()
+  return null
+}
 
 /** Quick-add ("New event") lands on a working hour. Slot clicks bring their
  *  own real time and never go through here. */
@@ -659,6 +666,7 @@ export function CalendarView(): React.JSX.Element {
               </Button>
             </div>
           )}
+          <WheelSwipe />
           <EventCalendarContent />
         </EventCalendar>
 
