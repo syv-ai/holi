@@ -272,6 +272,28 @@ describe('listThreads', () => {
     })
   })
 
+  it.each([
+    ['comment after bare mailbox', 'ada@example.com (Ada Holm)', 'to'],
+    ['group mailbox', 'team: Ada <ada@example.com>;', 'to'],
+    ['escaped quoted display name', '"Ada \\\"A\\\" Holm" <ada@example.com>', 'to'],
+    ['To wins over Cc', 'ada@example.com', 'to'],
+  ])('extracts RFC mailbox addresses (%s)', async (_name, to, expected) => {
+    const { api } = gmail([{ id: 'address' }], {
+      address: {
+        id: 'address',
+        messages: [
+          {
+            id: 'incoming',
+            internalDate: '1000',
+            labelIds: ['INBOX'],
+            payload: { headers: [header('To', to), header('Cc', 'ada@example.com')] },
+          },
+        ],
+      },
+    })
+    expect((await listThreads(api, {}, ['ada@example.com'])).threads[0]!.addressedAs).toBe(expected)
+  })
+
   it('does not treat drafts as incoming messages or replies', async () => {
     const ownDraft = {
       id: 'd',

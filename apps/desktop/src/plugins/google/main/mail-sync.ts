@@ -118,10 +118,10 @@ export async function syncThreads(
   try {
     page = await api.get<RawHistoryPage>(`${BASE}/history`, {
       startHistoryId: since,
-      // Scoped to this mailbox: everything that happens elsewhere is noise to
-      // this list, and asking about the wrong mailbox would lose events for
-      // good once the cursor advances past them.
-      labelId: label,
+      // Gmail's labelId filter omits cross-label updates to existing threads:
+      // a SENT-only reply to an inbox thread is precisely such an update. Read
+      // mailbox history unfiltered, then restrict refetches to cached threads
+      // (plus explicit arrivals into this mailbox) below.
     })
   } catch (error) {
     // Gmail keeps roughly a week. Older than that is a resync, not a failure,
@@ -133,6 +133,23 @@ export async function syncThreads(
   }
 
   const { changed, deleted, left, patches } = readHistory(page.history ?? [], label)
+  const cachedIds = new Set(cached.map((thread) => thread.id))
+  const arrivals = new Set<string>()
+  if (scopedToMailbox(options)) {
+    for (const record of page.history ?? []) {
+      for (const entry of record.labelsAdded ?? []) {
+        if (entry.labelIds?.includes(label)) {
+          const threadId = entry.message?.threadId
+          if (threadId !== undefined) arrivals.add(threadId)
+        }
+      }
+    }
+  }
+  // Unfiltered history includes unrelated sent/archive/search activity. Existing
+  // rows need every cross-label update, but new rows enter only via mailbox label.
+  for (const id of changed) {
+    if (!cachedIds.has(id) && !arrivals.has(id)) changed.delete(id)
+  }
 
   /**
    * "Left the mailbox" only means "left this list" for a list that IS a mailbox.

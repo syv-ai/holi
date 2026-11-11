@@ -216,10 +216,10 @@ function headerOf(part: RawPart | undefined, name: string): string | null {
  */
 function parseAddress(value: string | null): MailAddress {
   if (value === null) return { name: '', email: '' }
-  const match = /^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/.exec(value)
+  const match = /^\s*(?:"((?:[^"\\]|\\[\s\S])*)"|([^"<]*?))\s*<([^<>]+)>\s*$/.exec(value)
   if (match !== null) {
-    const email = match[2]!.trim().toLowerCase()
-    const name = match[1]!.trim()
+    const email = match[3]!.trim().toLowerCase()
+    const name = (match[1] ?? match[2] ?? '').replace(/\\([\s\S])/g, '$1').trim()
     return { name: name === '' ? email : name, email }
   }
   // A bare address, or a header this pattern does not fit. Treated as an
@@ -230,12 +230,68 @@ function parseAddress(value: string | null): MailAddress {
 
 function parseAddresses(value: string | null): MailAddress[] {
   if (value === null) return []
-  // Split on commas that are not inside quotes: a display name may contain one
-  // ("Holm, Ada" <…>), and splitting naively mangles it into two people.
-  return value
-    .split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
-    .map((a) => parseAddress(a))
-    .filter((a) => a.name !== '')
+  // RFC 5322 address lists can contain nested comments and named groups in
+  // addition to quoted commas. Remove comments outside quoted strings, then
+  // split only at top-level commas/semicolons; a group's label is not a mailbox.
+  let uncommented = ''
+  let quoted = false
+  let escaped = false
+  let commentDepth = 0
+  for (const character of value) {
+    if (escaped) {
+      if (commentDepth === 0) uncommented += character
+      escaped = false
+    } else if (character === '\\\\' && quoted) {
+      if (commentDepth === 0) uncommented += character
+      escaped = true
+    } else if (character === '"' && commentDepth === 0) {
+      quoted = !quoted
+      uncommented += character
+    } else if (!quoted && character === '(') {
+      commentDepth += 1
+    } else if (!quoted && character === ')' && commentDepth > 0) {
+      commentDepth -= 1
+    } else if (commentDepth === 0) {
+      uncommented += character
+    }
+  }
+
+  const addresses: MailAddress[] = []
+  let part = ''
+  quoted = false
+  escaped = false
+  let angleDepth = 0
+  for (const character of uncommented) {
+    if (escaped) {
+      part += character
+      escaped = false
+    } else if (character === '\\\\' && quoted) {
+      part += character
+      escaped = true
+    } else if (character === '"') {
+      quoted = !quoted
+      part += character
+    } else if (!quoted && character === '<') {
+      angleDepth += 1
+      part += character
+    } else if (!quoted && character === '>') {
+      angleDepth = Math.max(0, angleDepth - 1)
+      part += character
+    } else if (!quoted && angleDepth === 0 && (character === ',' || character === ';')) {
+      const mailbox = part.trim()
+      const colon = mailbox.indexOf(':')
+      const candidate = colon < 0 ? mailbox : mailbox.slice(colon + 1)
+      if (candidate !== '') addresses.push(parseAddress(candidate))
+      part = ''
+    } else {
+      part += character
+    }
+  }
+  if (part.trim() !== '') {
+    const colon = part.indexOf(':')
+    addresses.push(parseAddress(colon < 0 ? part : part.slice(colon + 1)))
+  }
+  return addresses.filter((address) => address.name !== '')
 }
 
 /** Gmail encodes body data as base64**url**; plain base64 decoding corrupts any

@@ -134,6 +134,40 @@ describe('syncThreads', () => {
     expect(threadGets(second.seen)).toHaveLength(0)
   })
 
+  it('observes sent-only changes for cached inbox threads without importing unrelated threads', async () => {
+    const first = gmail({
+      list: [{ id: 'cached' }],
+      threads: { cached: rawThread('cached', 'Incoming') },
+    })
+    await syncThreads(first.api, cache, {})
+
+    const replied = rawThread('cached', 'Incoming')
+    replied.messages.push(
+      message('cached-reply', 'cached', [['From', 'Me <me@example.com>']], ['SENT']),
+    )
+    const second = gmail({
+      history: {
+        historyId: '5002',
+        history: [
+          {
+            messagesAdded: [
+              { message: { id: 'reply', threadId: 'cached' } },
+              { message: { id: 'unrelated', threadId: 'sent-only' } },
+            ],
+          },
+        ],
+      },
+      threads: { cached: replied, 'sent-only': rawThread('sent-only', 'Unrelated', ['SENT']) },
+    })
+    const page = await syncThreads(second.api, cache, {})
+
+    expect(page.threads.map((thread) => thread.id)).toEqual(['cached'])
+    expect(page.threads[0]!.replied).toBe(true)
+    expect(threadGets(second.seen)).toHaveLength(1)
+    const historyUrl = second.seen.find((url) => new URL(url).pathname.endsWith('/history'))!
+    expect(new URL(historyUrl).searchParams.has('labelId')).toBe(false)
+  })
+
   it('refetches only the threads history says changed', async () => {
     const first = gmail({
       list: [{ id: 't1' }, { id: 't2' }, { id: 't3' }],
@@ -600,7 +634,7 @@ describe('syncThreads', () => {
       await syncThreads(second.api, cache, { mailbox: 'sent' })
 
       const history = second.seen.find((url) => new URL(url).pathname.endsWith('/history'))!
-      expect(new URL(history).searchParams.get('labelId')).toBe('SENT')
+      expect(new URL(history).searchParams.has('labelId')).toBe(false)
     })
 
     it('keeps a sent thread that was archived out of the inbox', async () => {
