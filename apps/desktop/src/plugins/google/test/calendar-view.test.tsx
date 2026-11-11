@@ -2,7 +2,7 @@
  * The calendar view (ReUI's event calendar over Google): what it asks Google
  * for, what it draws, and which writes it sends through which capability.
  */
-import { render, screen, waitFor, within } from '@/test/render'
+import { fireEvent, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { getDefaultStore } from 'jotai'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -182,6 +182,93 @@ describe('mapping Google onto the calendar', () => {
 })
 
 describe('the calendar view', () => {
+  test('one sideways swipe pages one week, and a vertical scroll pages none', async () => {
+    const { container } = render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    const root = container.querySelector<HTMLElement>('[data-slot="event-calendar"]')!
+    const title = () => container.querySelector('[data-slot="event-calendar-title"]')?.textContent
+    const before = title()
+    const from = () => Date.parse((agendaMock.mock.calls.at(-1)![0] as { from: string }).from)
+    const first = from()
+
+    fireEvent.wheel(root, { deltaY: 120 })
+    fireEvent.wheel(root, { deltaX: 120, ctrlKey: true })
+    expect(title()).toBe(before)
+
+    // A swipe and its momentum: one burst of sideways events.
+    for (let i = 0; i < 12; i++) fireEvent.wheel(root, { deltaX: 30, deltaY: 2 })
+    await waitFor(() => expect(title()).not.toBe(before))
+    await waitFor(() => expect(from()).not.toBe(first))
+    expect(Math.round((from() - first) / 86_400_000)).toBe(7)
+  })
+
+  test('pages backward and cleans up wheel and animation listeners on unmount', async () => {
+    const { container, unmount } = render(<CalendarView />)
+    await screen.findAllByText('Focus block')
+    const root = container.querySelector<HTMLElement>('[data-slot="event-calendar"]')!
+    const content = root.querySelector<HTMLElement>('[data-slot="event-calendar-content"]')!
+    const first = Date.parse((agendaMock.mock.calls.at(-1)![0] as { from: string }).from)
+
+    for (let i = 0; i < 12; i++) fireEvent.wheel(root, { deltaX: -30, deltaY: 2 })
+    await waitFor(() => {
+      const from = Date.parse((agendaMock.mock.calls.at(-1)![0] as { from: string }).from)
+      expect(Math.round((first - from) / 86_400_000)).toBe(7)
+    })
+    expect(content.className).toContain('motion-in-from-start')
+
+    fireEvent.animationEnd(content)
+    expect(content.className).not.toContain('motion-in-from-start')
+
+    unmount()
+    const calls = agendaMock.mock.calls.length
+    fireEvent.wheel(root, { deltaX: -100 })
+    expect(agendaMock).toHaveBeenCalledTimes(calls)
+  })
+
+  test.each([250, 500])(
+    'keeps queued momentum in one swipe after a %i ms renderer stall',
+    async (stall) => {
+      const { container } = render(<CalendarView />)
+      await screen.findAllByText('Focus block')
+      const root = container.querySelector<HTMLElement>('[data-slot="event-calendar"]')!
+      const first = Date.parse((agendaMock.mock.calls.at(-1)![0] as { from: string }).from)
+      const dispatch = (timestamp: number, deltaX: number) => {
+        const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaX })
+        Object.defineProperty(event, 'timeStamp', { value: timestamp })
+        root.dispatchEvent(event)
+      }
+
+      // The first page blocks the renderer. Let the armed quiet timer expire
+      // before dispatching the browser-queued remainder, whose timestamps show
+      // it still belongs to the original gesture.
+      vi.useFakeTimers()
+      try {
+        dispatch(0, 30)
+        dispatch(16, 30)
+        await vi.advanceTimersByTimeAsync(stall)
+        for (let i = 2; i < 12; i++) dispatch(i * 16, 30)
+      } finally {
+        vi.useRealTimers()
+      }
+
+      await waitFor(() => {
+        const from = Date.parse((agendaMock.mock.calls.at(-1)![0] as { from: string }).from)
+        expect(Math.round((from - first) / 86_400_000)).toBe(7)
+      })
+
+      // A later independent gesture has a timestamp gap after the busy period.
+      dispatch(11 * 16 + stall + 1, 60)
+      await waitFor(() => {
+        const from = Date.parse((agendaMock.mock.calls.at(-1)![0] as { from: string }).from)
+        expect(Math.round((from - first) / 86_400_000)).toBe(14)
+      })
+      await waitFor(() => {
+        const from = Date.parse((agendaMock.mock.calls.at(-1)![0] as { from: string }).from)
+        expect(Math.round((from - first) / 86_400_000)).toBe(14)
+      })
+    },
+  )
+
   test('asks Google for the visible week and draws its events', async () => {
     render(<CalendarView />)
     expect((await screen.findAllByText('Focus block')).length).toBeGreaterThan(0)
