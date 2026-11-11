@@ -15,6 +15,7 @@ import {
   watchConfigDir,
   type ClaudeRow,
 } from '../main/claude/listing'
+import { delimiter } from 'node:path'
 
 const ROOT = '/Users/ada/Holi/syv/vault'
 
@@ -163,7 +164,7 @@ describe('claude-cli', () => {
     for (const { opts } of calls) {
       expect(opts.cwd).toBe(ROOT)
       expect(opts.env.CLAUDE_CONFIG_DIR).toBe('/cfg/vault')
-      expect(opts.env.PATH?.split(':')[0]).toBe('/holi/bin')
+      expect(opts.env.PATH?.split(delimiter)[0]).toBe('/holi/bin')
     }
   })
 
