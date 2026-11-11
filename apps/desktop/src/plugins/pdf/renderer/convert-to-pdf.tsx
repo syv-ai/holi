@@ -6,12 +6,7 @@ import { toast } from 'sonner'
 import { openDocumentAtom } from '@/plugin-api'
 import { pdfCap, readNoteText } from './pdf-cap'
 import { FieldWidget } from './field-widget'
-import {
-  metaFromValues,
-  missingRequired,
-  parseFrontmatter,
-  prefillValues,
-} from '../shared/pdf-fields'
+import { metaFromValues, missingRequired, fieldValuesFor } from '../shared/pdf-fields'
 import { Button } from '@/components/ui/button'
 import { DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
@@ -86,9 +81,8 @@ export function ConvertToPdf({
   const [templates, setTemplates] = useState<TemplateOption[] | null>(null)
   const [slug, setSlug] = useState<string>('')
   const [values, setValues] = useState<Record<string, string>>({})
-  /** The note's YAML frontmatter, read once on open; pre-fills matching fields.
-   *  `{}` until read, and on any read/parse failure — Convert must never break. */
-  const [frontmatter, setFrontmatter] = useState<Record<string, unknown>>({})
+  /** The note's text, read once on open; failed reads leave it empty. */
+  const [noteText, setNoteText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   /** Required fields left empty at the last Convert, marked at the field. */
@@ -119,28 +113,27 @@ export function ConvertToPdf({
     }
   }, [remote])
 
-  // Read the note once on open so its frontmatter can pre-fill matching fields.
+  // Read the note once on open so it can seed matching fields.
   useEffect(() => {
     let live = true
     void readNoteText(remote, path)
-      .then((text) => live && setFrontmatter(parseFrontmatter(text)))
-      .catch(() => live && setFrontmatter({}))
+      .then((text) => live && setNoteText(text))
+      .catch(() => live && setNoteText(''))
     return () => {
       live = false
     }
   }, [remote, path])
 
-  // Seed each field whenever the chosen template (or the note's frontmatter)
-  // changes: the note's declared keys pre-fill their fields, everything else
-  // lands on its type default, and one template's values never leak to another.
+  // Seed each field whenever the chosen template or note changes; values never
+  // leak between templates.
   useEffect(() => {
     const tpl = templates?.find((t) => t.slug === slug) ?? null
     if (tpl === null) {
       setValues({})
       return
     }
-    setValues(prefillValues(tpl.fields, frontmatter, today))
-  }, [slug, templates, today, frontmatter])
+    setValues(fieldValuesFor(tpl.fields, path, noteText, today))
+  }, [slug, templates, today, path, noteText])
 
   const openTab = useSetAtom(openDocumentAtom)
 
