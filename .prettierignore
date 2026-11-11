@@ -14,3 +14,6 @@ release/
 **/vault/shipped/
 # Written by the ReUI installer; a re-run would undo any formatting.
 .agents/skills/reui/
+# foliate-js, vendored byte for byte but for the changes in vendored.md; upstream's
+# style, so an update stays a clean diff against the pinned commit.
+apps/desktop/src/plugins/reader/renderer/vendor/foliate/**/*.js

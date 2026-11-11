@@ -106,8 +106,14 @@ test("a plugin's claim on the path wins", () => {
 })
 
 test('an office document is a placeholder, not garbage text', () => {
-  setup('plan.docx')
+  setup('plan.xlsx')
   expect(screen.getByText(/can't show this kind of document/)).toBeInTheDocument()
+  expect(read).not.toHaveBeenCalled()
+})
+
+test('a document Read all the things opens says to turn it on while it is off', () => {
+  setup('plan.docx')
+  expect(screen.getByText(/Turn on Read all the things/)).toBeInTheDocument()
   expect(read).not.toHaveBeenCalled()
 })
 

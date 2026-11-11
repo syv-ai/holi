@@ -174,7 +174,7 @@ it has rules of its own (apps, browser, links, pdf); its renderer imports its ma
 only, for `capClient`, and its tests live in its own `test/`. The built-in part is the agent
 ([agent-sessions](features/agent-sessions.md)). The optional plugins are tasks
 ([tasks](features/tasks.md)), automations and Holis, built on the agent, PDF
-([pdf](features/pdf.md)), links ([links](features/links.md)), the browser
+([pdf](features/pdf.md)), Read all the things ([reader](features/reader.md)), links ([links](features/links.md)), the browser
 ([browser](features/browser.md)), Google
 ([google](features/google.md)), vault apps ([vault apps](features/vault-apps.md)) and community
 plugins ([community plugins](features/community-plugins.md)), which hosts plugins from other
@@ -297,6 +297,7 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 | [daily-notes](features/daily-notes.md)         | Idempotent daily notes and their archive                            |
 | [google](features/google.md)                   | Gmail and Calendar, per vault                                       |
 | [pdf](features/pdf.md)                         | Typst export and the PDF viewer                                     |
+| [reader](features/reader.md)                   | Word, PowerPoint and EPUB files read in a tab                       |
 | [links](features/links.md)                     | `link.*.md` files and page previews                                 |
 | [browser](features/browser.md)                 | Web pages in a tab, and `holi browser` for the agent                |
 | [vault-apps](features/vault-apps.md)           | Agent-authored apps in their own origin                             |

@@ -23,8 +23,8 @@ Node access or GitHub credentials. `router.ts` is main's typed API seam; keep
 Electron dependencies out of code that should remain testable under plain Node.
 
 Optional parts of Holi are plugins under `src/plugins/<id>/` (tasks, automations,
-Holis, saved links, the browser, PDF, Google, vault apps and community plugins so
-far), each with its own `main/`, `renderer/` and `test/` (and a `shared/` where it
+Holis, saved links, the browser, PDF, Read all the things, Google, vault apps and
+community plugins so far), each with its own `main/`, `renderer/` and `test/` (and a `shared/` where it
 has rules of its own), reaching core only through `src/main/plugin-api.ts` and
 `@/plugin-api`. The agent lives there too, written to the same contract,
 but is built in (`PluginInfo.builtIn`): it always runs, Settings does not list
@@ -295,7 +295,7 @@ Gotchas of a fresh checkout or worktree that no file states.
   work back with `git cherry-pick`.
 - Holi edits the stock files in place, and `shadcn add` would overwrite those edits if
   you let it. Added on purpose: `Button` variants `text`, `dashed`, `section` and sizes `row`, `field`, `inline`, `media` (document image sizing); `DialogContent`, `PopoverContent`, `HoverCardContent` variant `flush`;
-  `DialogContent` `size` (the width of a dialog chosen at runtime); `FileType`'s `deck`
+  `DialogContent` `size` (the width of a dialog chosen at runtime); `DropdownMenuContent` and `DropdownMenuSubContent` `size="wide"` (a menu as wide as its items, a book's contents); `FileType`'s `deck`
   extension (a community plugin's presentation);
   `SidebarMenuButton` variant `fill` and size `rail`; `Avatar` `shape="square"`;
   `TabsTrigger` variant `tab` with `bg-muted/40` combine-preview tint; `TabsEntry` sizes `tab`, `tab-group`, `tab-wide` own strip widths; `Toggle` size `icon`; `ResizableHandle` variant `primary`

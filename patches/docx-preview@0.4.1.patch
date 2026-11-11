@@ -1,0 +1,45 @@
+diff --git a/dist/docx-preview.mjs b/dist/docx-preview.mjs
+index 35fb7e765964b9dea6bea818b5623aa6a879bc9b..90108ad0e82053952860490db2165605b5eafe29 100644
+--- a/dist/docx-preview.mjs
++++ b/dist/docx-preview.mjs
+@@ -2186,6 +2186,9 @@ class DocumentParser {
+                 case "tr":
+                     result.children.push(this.parseTableRow(c));
+                     break;
++                case "sdt":
++                    result.children.push(...this.parseSdt(c, e => this.parseTable(e).children));
++                    break;
+                 case "tblGrid":
+                     result.columns = this.parseTableColumns(c);
+                     break;
+@@ -2265,6 +2268,9 @@ class DocumentParser {
+                 case "tc":
+                     result.children.push(this.parseTableCell(c));
+                     break;
++                case "sdt":
++                    result.children.push(...this.parseSdt(c, e => this.parseTableRow(e).children));
++                    break;
+                 case "trPr":
+                 case "tblPrEx":
+                     this.parseTableRowProperties(c, result);
+@@ -2304,6 +2310,9 @@ class DocumentParser {
+                 case "p":
+                     result.children.push(this.parseParagraph(c));
+                     break;
++                case "sdt":
++                    result.children.push(...this.parseSdt(c, e => this.parseBodyElements(e)));
++                    break;
+                 case "tcPr":
+                     this.parseTableCellProperties(c, result);
+                     break;
+@@ -3031,8 +3040,8 @@ class HtmlRenderer {
+         for (const style of styles.filter(x => x.basedOn)) {
+             var baseStyle = stylesMap[style.basedOn];
+             if (baseStyle) {
+-                style.paragraphProps = mergeDeep(style.paragraphProps, baseStyle.paragraphProps);
+-                style.runProps = mergeDeep(style.runProps, baseStyle.runProps);
++                style.paragraphProps = mergeDeep(mergeDeep({}, baseStyle.paragraphProps), style.paragraphProps);
++                style.runProps = mergeDeep(mergeDeep({}, baseStyle.runProps), style.runProps);
+                 for (const baseValues of baseStyle.styles) {
+                     const styleValues = style.styles.find(x => x.target == baseValues.target);
+                     if (styleValues) {

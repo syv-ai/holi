@@ -1,0 +1,89 @@
+diff --git a/dist/aiden0z-pptx-renderer.es.js b/dist/aiden0z-pptx-renderer.es.js
+index 969a042875b85ebfc89705bfd41e8d1ddaf8c75a..7905b0eeed4e77036892be38b770b4e0007fa606 100644
+--- a/dist/aiden0z-pptx-renderer.es.js
++++ b/dist/aiden0z-pptx-renderer.es.js
+@@ -6,7 +6,7 @@ import * as ur from "echarts/core";
+ import { BarChart as im, CandlestickChart as am, CustomChart as rm, LineChart as om, PieChart as lm, RadarChart as dm, ScatterChart as sm } from "echarts/charts";
+ import { AxisPointerComponent as um, GraphicComponent as cm, GridComponent as mm, LegendComponent as pm, RadarComponent as hm, TitleComponent as fm, TooltipComponent as gm } from "echarts/components";
+ import { LabelLayout as km } from "echarts/features";
+-import { CanvasRenderer as ym } from "echarts/renderers";
++import { SVGRenderer as ym } from "echarts/renderers";
+ function xm(e) {
+   var i;
+   const t = ((i = e.split(".").pop()) == null ? void 0 : i.toLowerCase()) || "";
+@@ -4379,7 +4379,7 @@ function Au(e, t, n, i, a) {
+     const D = R.runs.some((q) => q.text === `
+ `), O = (a == null ? void 0 : a.compactSingleLineSpacing) && E === g && !D, G = {};
+     ti(G, Wn(n.presentation.defaultTextStyle, T)), ti(G, Wn(n.master.defaultTextStyle, T));
+-    const V = s === "title" ? n.master.textStyles.titleStyle : s === "body" ? n.master.textStyles.bodyStyle : n.master.textStyles.otherStyle;
++    const V = s === "title" ? n.master.textStyles.titleStyle : s === "body" ? n.master.textStyles.bodyStyle : d || (a == null ? void 0 : a.inTable) ? n.master.textStyles.otherStyle : void 0;
+     if (ti(G, Wn(V, T)), d) {
+       const q = Ds(
+         n.master.placeholders,
+@@ -44811,7 +44811,7 @@ function Uk(e, t) {
+   var l, d;
+   const n = document.createElement("div");
+   n.style.position = "absolute", n.style.left = `${e.position.x}px`, n.style.top = `${e.position.y}px`, n.style.width = `${e.size.w}px`, n.style.height = `${e.size.h}px`, n.style.overflow = "hidden";
+-  const i = Ku(e), a = [];
++  const i = Ku(e, t), a = [];
+   if (e.rotation !== 0 && a.push(`rotate(${e.rotation}deg)`), e.flipH && !i && a.push("scaleX(-1)"), e.flipV && !i && a.push("scaleY(-1)"), a.length > 0 && (n.style.transform = a.join(" ")), Yk(n, e, t), e.isVideo)
+     return o1(e, t, n), n;
+   if (e.isAudio)
+@@ -44917,7 +44917,7 @@ function lo(e, t, n, i) {
+     n.style.backgroundImage = `url("${i}")`, n.style.backgroundRepeat = "repeat", n.style.backgroundSize = "auto", o < 1 && (n.style.opacity = `${Number(o.toFixed(4))}`);
+     return;
+   }
+-  const p = s.exists() ? jk(s) : void 0, h = Ku(e), f = m.mode === "orthographic-top-bevel" ? h ?? `M0,0 L${e.size.w},0 L${e.size.w},${e.size.h} L0,${e.size.h} Z` : h;
++  const p = s.exists() ? jk(s) : void 0, h = Ku(e, t), f = m.mode === "orthographic-top-bevel" ? h ?? `M0,0 L${e.size.w},0 L${e.size.w},${e.size.h} L0,${e.size.h} Z` : h;
+   if (f) {
+     const v = m.mode === "orthographic-top-bevel" ? u : void 0;
+     m.mode === "orthographic-top-bevel" && (n.style.overflow = "visible", v && (n.style.border = "", n.style.boxSizing = "")), Wk(
+@@ -44973,17 +44973,26 @@ function jk(e) {
+ function _k(e, t) {
+   e.style.position = "absolute", e.style.left = `${t.left}%`, e.style.top = `${t.top}%`, e.style.width = `${t.width}%`, e.style.height = `${t.height}%`;
+ }
+-function Ku(e) {
+-  const t = e.source.child("spPr").child("custGeom"), n = e.customGeometry ?? (t.exists() ? t : void 0);
++function KuSource(e, c) {
++  const own = e.source.child("spPr"), has = (x) => x !== void 0 && (x.child("custGeom").exists() || x.child("prstGeom").exists());
++  if (has(own) || !e.placeholder || !c) return { spPr: own, inherited: !1 };
++  const lp = Is(c.layout.placeholders.map((E) => E.node), e.placeholder, ui), ls = lp == null ? void 0 : lp.child("spPr");
++  if (has(ls)) return { spPr: ls, inherited: !0 };
++  const mp = Ds(c.master.placeholders, lp ? ui(lp).type : e.placeholder.type, ui), ms = mp == null ? void 0 : mp.child("spPr");
++  return has(ms) ? { spPr: ms, inherited: !0 } : { spPr: own, inherited: !1 };
++}
++function Ku(e, c) {
++  const { spPr: sp, inherited: inh } = KuSource(e, c);
++  const t = sp.child("custGeom"), n = (inh ? void 0 : e.customGeometry) ?? (t.exists() ? t : void 0);
+   if (n != null && n.exists()) {
+-    const o = e.source.child("spPr").child("xfrm").child("ext"), l = {
++    const o = sp.child("xfrm").child("ext"), l = {
+       w: o.numAttr("cx") ?? 0,
+       h: o.numAttr("cy") ?? 0
+     };
+     return Su(n, e.size.w, e.size.h, l) || void 0;
+   }
+-  const i = e.source.child("spPr").child("prstGeom").attr("prst"), a = e.presetGeometry ?? i;
+-  return !a || a === "rect" ? void 0 : Qf(a, e.size.w, e.size.h, e.geometryAdjustments) || void 0;
++  const i = sp.child("prstGeom").attr("prst"), a = (inh ? void 0 : e.presetGeometry) ?? i;
++  return !a || a === "rect" ? void 0 : Qf(a, e.size.w, e.size.h, inh ? void 0 : e.geometryAdjustments) || void 0;
+ }
+ function Hk(e) {
+   if (e.flipH && e.flipV) return `translate(${e.size.w} ${e.size.h}) scale(-1 -1)`;
+@@ -46116,6 +46125,7 @@ function G1(e, t) {
+         const v = {
+           defaultLineHeight: "1",
+           trimOuterParagraphSpacing: !0,
++          inTable: !0,
+           ...x ? {
+             cellTextColor: x.color,
+             cellTextBold: x.bold,
+@@ -49228,7 +49238,7 @@ function Lx(e, t) {
+ }
+ function wx(e, t, n, i) {
+   try {
+-    const a = ur.init(e);
++    const a = ur.init(e, void 0, { renderer: "svg" });
+     a.setOption(t), n == null || n.add(a);
+     const r = () => {
+       o == null || o.disconnect(), a.isDisposed() || a.dispose(), n == null || n.delete(a), i == null || i.removeEventListener("abort", r);

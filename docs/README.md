@@ -42,6 +42,7 @@ other rather than repeating each other.
 | [agent-inbox](features/agent-inbox.md)             | `holi agent notify`, the inbox, needs-you notifications, the work log    |
 | [google](features/google.md)                       | Gmail and Calendar per vault                                             |
 | [pdf](features/pdf.md)                             | Typst export, templates, the PDF viewer                                  |
+| [reader](features/reader.md)                       | Word, PowerPoint and EPUB files read in a tab, inert and offline         |
 | [links](features/links.md)                         | Web addresses saved as link files, and the page previews                 |
 | [browser](features/browser.md)                     | Web pages in a tab, which the agent drives with `holi browser`           |
 | [vault-apps](features/vault-apps.md)               | Agent-written apps in their own origin, their records, slash commands    |
