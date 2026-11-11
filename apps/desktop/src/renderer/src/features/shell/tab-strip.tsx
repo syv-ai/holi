@@ -69,7 +69,7 @@ import {
 } from '@/state/shell-workspace'
 
 import { useTabLook } from './tab-look'
-import { TabSwitcher, type SwitcherRow } from './tab-switcher'
+import { TabSwitcher, TabSwitcherButton, type SwitcherRow } from './tab-switcher'
 import { TAB_MIME, stripDropZone, tabDragAtom, useTabDragSource } from './use-tab-drag'
 
 export type HeaderTab = {
@@ -473,6 +473,16 @@ export function TabStrip({
               })}
             </TabsList>
           ) : null}
+          {count > 0 && overflowing ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <TabSwitcherButton variant="quiet" size="xs">
+                  {count === 1 ? '1 tab' : `${count} tabs`}
+                </TabSwitcherButton>
+              </TooltipTrigger>
+              <TooltipContent>Switch tab (⌃Tab)</TooltipContent>
+            </Tooltip>
+          ) : null}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="ghost" size="icon-sm" aria-label="New tab" onClick={onNewTab}>
@@ -483,11 +493,6 @@ export function TabStrip({
           </Tooltip>
         </Tabs>
 
-        {count > 0 && overflowing ? (
-          <span className="text-muted-foreground text-xs whitespace-nowrap tabular-nums">
-            {count === 1 ? '1 tab' : `${count} tabs`}
-          </span>
-        ) : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon-sm" aria-label="Tab options">
