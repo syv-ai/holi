@@ -1,6 +1,7 @@
 import { parse as parseYaml } from 'yaml'
 import { THEME_TOKENS, resolveTheme } from '@holi/shared'
 import { execFile, spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,6 +14,7 @@ import {
   VAULT_MARKER_FILE,
 } from '@holi/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { SettingsFragment } from '../src/main/vault/seed/types'
 import type { SettingsFragment } from '../src/main/vault/seed/types'
 import { claudeSeed, agentSettings } from '../src/plugins/agent/main/claude/seed'
 import { appsSeed } from '../src/plugins/apps/main/seed'
@@ -335,9 +337,6 @@ describe('the seed tables', () => {
       'Bash(curl:*)',
       'Bash(wget:*)',
       'Bash(holi schedules run:*)',
-      'Bash(holi google archive:*)',
-      'Bash(holi google trash:*)',
-      'Bash(holi google unschedule:*)',
       'Bash(holi google send:*)',
       'Bash(holi google reply:*)',
       'Bash(holi google respond:*)',
@@ -1002,41 +1001,68 @@ describe('hook scripts', () => {
 describe('mergedSettings', () => {
   const parse = (s: string | null) => JSON.parse(s!) as Record<string, any>
 
-  it('adds maintained consent protection without replacing a frozen old gate', async () => {
-    const oldHook = hookEntry('google-send-gate')
-    const before = JSON.stringify({
-      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [oldHook] }] },
-    })
-    const after = parse(mergedSettings(before))
-    const entries = after.hooks.PreToolUse as { matcher: string; hooks: { command: string }[] }[]
-    const inline = entries.find((entry) =>
-      entry.hooks.some((hook) => hook.command.includes('node -e')),
-    )
-    expect(inline).toBeDefined()
-    expect(entries.some((entry) => JSON.stringify(entry.hooks).includes('google-send-gate'))).toBe(
-      true,
-    )
-
-    const hook = inline!.hooks[0]!.command
-    for (const command of [
-      '"$HOLI_BIN" google respond e1 --yes',
-      '"$HOLI_BIN" google api POST calendar/v3/freeBusy --body -',
-      'holi google api',
-    ]) {
-      const run = await runCommand(
-        hook,
-        JSON.stringify({ tool_name: 'Bash', tool_input: { command } }),
-      )
-      expect(JSON.parse(run.stdout).hookSpecificOutput.permissionDecision, command).toBe('ask')
+  describe('what an earlier Holi merged in', () => {
+    const gate = '.claude/hooks/google-send-gate.mjs'
+    const shipped = 'const table = { respond: 1, api: 2 }'
+    const inline = { type: 'command', command: 'node -e "the inline gate"' }
+    const retiring: SettingsFragment = {
+      retired: {
+        hooks: {
+          sha256: [createHash('sha256').update(inline.command).digest('hex')],
+          replacedBy: gate,
+          holding: ['respond:', 'api:'],
+        },
+      },
     }
-    const get = await runCommand(
-      hook,
+    const withInline = (extra: object[] = []) =>
       JSON.stringify({
-        tool_name: 'Bash',
-        tool_input: { command: '"$HOLI_BIN" google api GET calendar/v3/colors' },
-      }),
-    )
-    expect(get.stdout).toBe('')
+        hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [inline, ...extra] }] },
+      })
+    const commandsAfter = (before: string, onDisk: string | null) => {
+      const after = agentSettings(
+        before,
+        [retiring],
+        () => false,
+        (rel) => (rel === gate ? onDisk : null),
+      )
+      if (after === null) return null
+      return (JSON.parse(after).hooks.PreToolUse as { hooks: { command: string }[] }[]).flatMap(
+        (entry) => entry.hooks.map((hook) => hook.command),
+      )
+    }
+
+    it('takes out a gate Holi wrote once the shipped one covers its verbs', () => {
+      const mine = { type: 'command', command: 'mine' }
+      expect(commandsAfter(withInline([mine]), shipped)).toEqual(['mine'])
+    })
+
+    it('keeps it while the shipped gate predates those verbs, or is not there', () => {
+      expect(commandsAfter(withInline(), 'const table = { send: 1, reply: 2 }')).toContain(
+        inline.command,
+      )
+      expect(commandsAfter(withInline(), null)).toContain(inline.command)
+    })
+
+    it('never takes a hook a person wrote, whatever it mentions', () => {
+      const own = {
+        type: 'command',
+        command: 'node .claude/hooks/review-user-consent.mjs --stdin-var HOLI_HOOK_STDIN',
+      }
+      expect(commandsAfter(withInline([own]), shipped)).toContain(own.command)
+    })
+
+    it('takes both shipped copies and the undoable ask rules with Google switched off', () => {
+      const agentOnly = claudeSeed.fragments!['.claude/settings.json'] as SettingsFragment[]
+      expect(agentOnly.flatMap((f) => f.retired?.hooks?.sha256 ?? [])).toHaveLength(2)
+
+      const before = JSON.stringify({ permissions: { ask: ['Bash(holi google trash:*)'] } })
+      const after = JSON.parse(agentSettings(before, agentOnly, () => false)!) as Record<
+        string,
+        any
+      >
+
+      expect(after.permissions.ask).not.toContain('Bash(holi google trash:*)')
+    })
   })
 
   it('adds the gate to a settings.json that predates it', () => {
@@ -1127,7 +1153,6 @@ describe('mergedSettings', () => {
     // matcher cannot see. Seeding again adds none of them.
     expect(parse(once).hooks.PreToolUse.map((e: { matcher: string }) => e.matcher)).toEqual([
       'Write|Edit|MultiEdit',
-      'Bash',
       'Bash',
       'mcp__.*[Gg]mail.*',
     ])

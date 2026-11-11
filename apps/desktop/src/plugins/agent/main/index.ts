@@ -276,14 +276,14 @@ export const agentMain: MainPlugin = {
     // routes are served once.
     for (const p of providers().filter((x) => x.custom !== true)) {
       p.capabilities.turns?.routes(ctx, {
-        onTurn: async (remote, id, active, pending) => {
+        onTurn: async (remote, id, active, pending, pid) => {
           if (PTY_SESSION_ID.test(id)) {
             if (remote === ctx.remote) ptySessions.noteTurn(id, active)
             return null
           }
           // The settle commit's tree, for the Stop hook to save as where the
           // turn left the vault.
-          const commit = await started.noteTurn(remote, id, active, pending)
+          const commit = await started.noteTurn(remote, id, active, pending, pid)
           if (commit === null) return null
           return runGit(ctx.root, ['rev-parse', '--verify', `${commit}^{tree}`]).catch(() => null)
         },
