@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => {
   const listeners = new Map<string, Array<(...args: any[]) => void>>()
@@ -357,6 +357,60 @@ describe('updater channel switching', () => {
     await switching
     expect(updater.status().channel).toBe('dev')
     expect(updater.installOnQuit()).toBe(false)
+    updater.dispose()
+  })
+})
+
+describe('updater default channel', () => {
+  const originalPlatform = process.platform
+  const onPlatform = (platform: NodeJS.Platform) =>
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+  const create = () =>
+    createUpdater({ send: vi.fn(), beforeInstall: async () => true, installFailed: vi.fn() })
+
+  afterEach(() => {
+    onPlatform(originalPlatform)
+  })
+
+  it.each([
+    ['win32', 'dev', 'dev'],
+    ['darwin', 'stable', 'latest'],
+    ['linux', 'stable', 'latest'],
+  ] as const)(
+    'follows the %s default when no channel was chosen',
+    async (platform, channel, feed) => {
+      onPlatform(platform)
+      mocks.read.mockResolvedValue({ enabled: true, channel: null })
+      const updater = create()
+      await tick()
+      expect(updater.status().channel).toBe(channel)
+      expect(mocks.updater.channel).toBe(feed)
+      updater.dispose()
+    },
+  )
+
+  it('keeps a chosen channel over the default on every platform', async () => {
+    onPlatform('win32')
+    mocks.read.mockResolvedValue({ enabled: true, channel: 'stable' })
+    const updater = create()
+    await tick()
+    expect(updater.status().channel).toBe('stable')
+    expect(mocks.updater.channel).toBe('latest')
+    updater.dispose()
+  })
+
+  it('does not store the default when another setting changes', async () => {
+    onPlatform('win32')
+    mocks.read.mockResolvedValue({ enabled: true, channel: null })
+    let stored: unknown = null
+    mocks.update.mockImplementation(async (change) => {
+      stored = change({ enabled: true, channel: null })
+      return stored
+    })
+    const updater = create()
+    await tick()
+    await updater.setEnabled(false)
+    expect(stored).toEqual({ enabled: false, channel: null })
     updater.dispose()
   })
 })

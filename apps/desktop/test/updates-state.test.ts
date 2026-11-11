@@ -3,6 +3,7 @@ import {
   CHECK_COOLDOWN_MS,
   CHECK_STALE_MS,
   initialStatus,
+  defaultUpdateChannel,
   parseUpdatePrefs,
   reduce,
   shouldCheck,
@@ -102,20 +103,25 @@ describe('shouldCheck', () => {
 })
 
 describe('parseUpdatePrefs', () => {
-  it('starts on stable on macOS and Linux, and on dev on Windows', () => {
-    expect(parseUpdatePrefs(null, 'darwin').channel).toBe('stable')
-    expect(parseUpdatePrefs({}, 'linux').channel).toBe('stable')
-    expect(parseUpdatePrefs(null, 'win32').channel).toBe('dev')
-  })
-
-  it('keeps an explicit choice on every platform', () => {
-    expect(parseUpdatePrefs({ channel: 'stable' }, 'win32').channel).toBe('stable')
-    expect(parseUpdatePrefs({ channel: 'dev' }, 'darwin').channel).toBe('dev')
-    expect(parseUpdatePrefs({ channel: 'beta' }, 'darwin').channel).toBe('stable')
+  it('reads only a channel that was chosen', () => {
+    expect(parseUpdatePrefs(null).channel).toBeNull()
+    expect(parseUpdatePrefs({}).channel).toBeNull()
+    expect(parseUpdatePrefs({ channel: null }).channel).toBeNull()
+    expect(parseUpdatePrefs({ channel: 'beta' }).channel).toBeNull()
+    expect(parseUpdatePrefs({ channel: 'stable' }).channel).toBe('stable')
+    expect(parseUpdatePrefs({ channel: 'dev' }).channel).toBe('dev')
   })
 
   it('leaves automatic checks on unless they were turned off', () => {
-    expect(parseUpdatePrefs(null, 'win32').enabled).toBe(true)
-    expect(parseUpdatePrefs({ enabled: false }, 'linux').enabled).toBe(false)
+    expect(parseUpdatePrefs(null).enabled).toBe(true)
+    expect(parseUpdatePrefs({ enabled: false }).enabled).toBe(false)
+  })
+})
+
+describe('defaultUpdateChannel', () => {
+  it('is stable on macOS and Linux, and dev on Windows', () => {
+    expect(defaultUpdateChannel('darwin')).toBe('stable')
+    expect(defaultUpdateChannel('linux')).toBe('stable')
+    expect(defaultUpdateChannel('win32')).toBe('dev')
   })
 })

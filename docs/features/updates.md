@@ -58,8 +58,9 @@ now: `build-prerelease-win` adds the `.exe`, its `.blockmap` (so the next update
 changed) and `dev.yml` to the prerelease, after the mac job created it and with nothing waiting on
 it. electron-updater names a Windows feed after the channel with no platform suffix, so `dev.yml`
 does not collide with `dev-mac.yml` and `dev-linux.yml`. There is no stable Windows feed, so an
-install with no saved choice starts on the dev channel (`parseUpdatePrefs`,
-`src/main/updates/state.ts`); macOS and Linux start on stable. Because of that, **Dev prereleases**
+install that never chose a channel follows the dev channel (`defaultUpdateChannel`,
+`src/main/updates/state.ts`); macOS and Linux follow stable. Only a chosen channel is written to
+`updates.json`, so changing another setting never pins an install to the default. Because of that, **Dev prereleases**
 is already on there, and turning it off points a Windows install at a stable release that has no
 Windows file: its checks then fail until it is turned back on. Install is the same **Restart now** /
 **Later** dialog, and `quitAndInstall()` runs the installer and starts Holi again (`--force-run`,

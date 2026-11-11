@@ -9,21 +9,29 @@ type UpdateState = 'idle' | 'checking' | 'available' | 'downloading' | 'ready'
 export type UpdateChannel = 'stable' | 'dev'
 
 /**
- * What `updates.json` holds, read leniently. A file with no channel starts on
- * the stable feed, except on Windows, which publishes only dev builds until it
- * has a stable release: there a fresh install would look for a `latest.yml` that
- * does not exist and never update. An explicit choice always wins.
+ * What `updates.json` holds, read leniently. `channel` is null until a person
+ * picks one: only a choice is stored, so changing a default later reaches every
+ * install that never chose.
  */
-export function parseUpdatePrefs(
-  raw: unknown,
-  platform: NodeJS.Platform,
-): { enabled: boolean; channel: UpdateChannel } {
+export function parseUpdatePrefs(raw: unknown): {
+  enabled: boolean
+  channel: UpdateChannel | null
+} {
   const value = raw as { enabled?: unknown; channel?: unknown } | null
-  const stored = value?.channel === 'dev' || value?.channel === 'stable' ? value.channel : null
   return {
     enabled: value?.enabled !== false,
-    channel: stored ?? (platform === 'win32' ? 'dev' : 'stable'),
+    channel: value?.channel === 'dev' || value?.channel === 'stable' ? value.channel : null,
   }
+}
+
+/**
+ * The channel an install follows when none was chosen: stable, except on
+ * Windows, which publishes only dev builds until it has a stable release. There
+ * a fresh install would look for a `latest.yml` that does not exist and never
+ * update.
+ */
+export function defaultUpdateChannel(platform: NodeJS.Platform): UpdateChannel {
+  return platform === 'win32' ? 'dev' : 'stable'
 }
 
 export interface UpdateStatus {
