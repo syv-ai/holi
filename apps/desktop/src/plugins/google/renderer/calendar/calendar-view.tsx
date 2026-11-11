@@ -78,6 +78,7 @@ import { CalendarsMenu } from './calendars-menu'
 import { WEEK_STARTS_ON, hhmm, timeOf } from './calendar-format'
 import { CLOCK_FORMATS, ISO_WEEK_LOCALE, useTimeFormat, useWeekNumbers } from './calendar-settings'
 import { EventSheet, type EventDraft, type EventSheetState } from './event-sheet'
+import { useWheelSwipe } from './use-wheel-swipe'
 
 type Occurrence = EventCalendarOccurrence<GoogleEventData>
 
@@ -117,6 +118,12 @@ function draftFromOccurrence(occurrence: Occurrence): EventDraft {
     color: event.color ?? FALLBACK_COLOR,
     data: event.data,
   }
+}
+
+/** Swipe paging, which needs the calendar's context: nothing to draw. */
+function WheelSwipe(): null {
+  useWheelSwipe()
+  return null
 }
 
 export function CalendarView(): React.JSX.Element {
@@ -515,6 +522,7 @@ export function CalendarView(): React.JSX.Element {
               </Button>
             </div>
           )}
+          <WheelSwipe />
           <EventCalendarContent />
         </EventCalendar>
 
