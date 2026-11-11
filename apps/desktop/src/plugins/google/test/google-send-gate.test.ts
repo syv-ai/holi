@@ -15,7 +15,6 @@ import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { googleSeed } from '../main/seed'
 
 const GATE = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -27,19 +26,9 @@ interface Decision {
 }
 
 /** Feed the hook a PreToolUse payload and read its decision. */
-const maintainedSettings = googleSeed.fragments?.['.claude/settings.json'] as
-  { hooks?: { command?: string }[] }[] | undefined
-const maintainedCommand = maintainedSettings![0]!.hooks![0]!.command!
-const maintainedMatch = /data:text\/javascript;base64,([A-Za-z0-9+/=]+)/.exec(maintainedCommand)!
-const maintainedSource = Buffer.from(maintainedMatch[1]!, 'base64')
-  .toString('utf8')
-  .replace("const raw = process.env.HOLI_HOOK_STDIN ?? ''", 'const raw = await readStdin()')
-
-async function decide(payload: unknown, maintained = false): Promise<Decision & { code: number }> {
+async function decide(payload: unknown): Promise<Decision & { code: number; stdout: string }> {
   return new Promise((resolve, reject) => {
-    const child = maintained
-      ? spawn(process.execPath, ['-e', maintainedSource])
-      : spawn(process.execPath, [GATE])
+    const child = spawn(process.execPath, [GATE])
     let stdout = ''
     child.stdout.on('data', (c: Buffer) => (stdout += c.toString('utf8')))
     child.on('error', reject)
@@ -50,7 +39,7 @@ async function decide(payload: unknown, maintained = false): Promise<Decision & 
       } catch {
         // left empty — a hook that prints nothing parseable is itself a finding
       }
-      resolve({ ...parsed, code: code ?? 0 })
+      resolve({ ...parsed, code: code ?? 0, stdout })
     })
     child.stdin.end(typeof payload === 'string' ? payload : JSON.stringify(payload), 'utf8')
   })
@@ -66,7 +55,7 @@ const bash = (command: string) => ({
  *  normal permission flow decides. */
 const decisionOf = (d: Decision) => d.hookSpecificOutput?.permissionDecision ?? 'none'
 
-describe('both maintained and shipped gates cover shell spellings', () => {
+describe('the gate reads every shell spelling', () => {
   const commands = [
     '"/Users/Ada/Library/Application Support/Holi/bin/holi" google respond e2 --yes',
     '"$HOLI_BIN" google \\\nrespond e2 --yes',
@@ -80,9 +69,8 @@ describe('both maintained and shipped gates cover shell spellings', () => {
     'eval "$HOLI_BIN google respond e2 --yes"',
   ]
 
-  it.each(commands)('asks for %s in either hook', async (command) => {
+  it.each(commands)('asks for %s ', async (command) => {
     expect(decisionOf(await decide(bash(command)))).toBe('ask')
-    expect(decisionOf(await decide(bash(command), true))).toBe('ask')
   })
 
   it.each([
@@ -117,7 +105,6 @@ describe('both maintained and shipped gates cover shell spellings', () => {
     'echo `holi google send --to $T`',
   ])('asks for risky syntax: %s', async (command) => {
     expect(decisionOf(await decide(bash(command)))).toBe('ask')
-    expect(decisionOf(await decide(bash(command), true))).toBe('ask')
   })
 
   it.each([
@@ -136,7 +123,147 @@ describe('both maintained and shipped gates cover shell spellings', () => {
     'command "$HOLI_BIN" google agenda today',
   ])('does not ask for a safe/non-invocation command: %s', async (command) => {
     expect(decisionOf(await decide(bash(command)))).toBe('none')
-    expect(decisionOf(await decide(bash(command), true))).toBe('none')
+  })
+})
+
+/** The rule: only what reaches someone asks, with or without a `$` in the line. */
+describe('only an outgoing action asks', () => {
+  it.each([
+    // A word that could be the verb.
+    'holi google $verb',
+    'holi google "$(echo send)" --to a@b.c',
+    'holi $x accounts',
+    '$(which holi) google send --to a@b.c',
+    '$H google $verb',
+    '"${HOLI_BIN:-holi}" google reply t1',
+    'cmd="holi google send"; $cmd --to a@b.c',
+    'holi google api $METHOD gmail/v1/users/me/labels',
+    // Inside other shell, literally outgoing.
+    'case $x in a) holi google send --to a@b.c;; esac',
+    'sh -c \'holi google "send" --to a@b.c\'',
+    'bash -c "a; holi google reply t1"',
+    'holi google send>/dev/null --to a@b.c',
+    'for t in a b; do holi google reply $t; done',
+    // A variable holding Holi's words.
+    'G="holi google"; $G send --to a@b.c',
+    'G="$HOLI_BIN google"; $G reply t1',
+    'GMAIL="holi google"; $GMAIL search x; $GMAIL send --to a@b.c',
+    'H=$(which holi); G=google; $H $G send --to a@b.c',
+    // Whatever runs it.
+    'gtimeout 30 holi google send --to "$T"',
+    'setsid holi google reply "$T"',
+    'pnpm exec holi google send --to a@b.c',
+    // Inside a quoted substitution.
+    'OUT="$(holi google send --to a@b.c)"; echo "$OUT"',
+    'echo "$(holi google reply t1)"',
+    'if out="$(holi google respond e1 --yes)"; then echo ok; fi',
+    'echo "`holi google send --to a@b.c`"',
+    'ID="$(holi google send --to a@b.c)"; holi google read "$ID"',
+    // An apostrophe in text must not hide what follows.
+    "cat > body.txt <<'EOF'\nHi, I'm out today.\nEOF\nholi google send --to a@b.c < body.txt",
+    "# don't forget the cc\nholi google send --to a@b.c",
+    // A heredoc fed to a shell is commands.
+    'bash <<EOF\nholi google send --to a@b.c\nEOF',
+    // Flags before -c, and a redirection between the words.
+    "bash -euo pipefail -c 'holi google reply t1'",
+    "bash -l -c 'holi google reply t1'",
+    'holi google >"$T" send --to a@b.c',
+    'holi 2>/dev/null google send --to a@b.c',
+    // A namespace that expands, behind a runner.
+    'G=google; env holi $G respond event1 --yes',
+    'env holi $(printf google) reply thread1',
+    'sudo -u ada holi $G reply t1',
+    'gtimeout 30 holi $G send --to a@b.c',
+    // A send on the line that closes a heredoc's substitution.
+    'BODY="$(cat <<\'EOF\'\nShe said "don\'t"\nEOF\n)" && holi google send --to a@b.c --subject "$BODY"',
+    'holi note "$(cat <<\'EOF\'\nShe said "don\'t"\nEOF\n)"; "$HOLI_BIN" google reply t1',
+    'BODY="$(cat <<\'EOF\'\nShe said "I\'m in".\nEOF\n)"\nholi google send --to a@b.c --subject "$BODY"',
+    'git commit -q -m "$(cat <<\'EOF\'\nSay "it\'s" ok\nEOF\n)"\nholi google send --to a@b.c',
+    "R=$(cat <<'EOF'\nhello\nEOF\nholi google send --to a@b.c\n)",
+    "bash<<'EOF'\nholi google send --to a@b.c\nEOF",
+    "bash \\\\\n  -s <<'EOF'\nholi google send --to a@b.c\nEOF",
+    'H=holi; G="$H google"; $G send --to a@b.c',
+    'G="holi google"; gtimeout 30 $G send --to a@b.c',
+    'G="holi google"; env $G reply t1',
+    'G="holi google"; R=$($G reply t1)',
+    'G="holi google"; R="$($G reply t1)"',
+    'CMD="holi google send --to a@b.c"; R="$($CMD)"',
+    'git commit -m "fix a << b"\nholi google send --to a@b.c',
+    'holi google draft --to a@b.c --subject "x << y"\nholi google send --to a@b.c',
+    'echo "1 << 2"\nholi google send --to a@b.c',
+    "echo 'a << b'\nholi google send --to a@b.c",
+    'echo $((1<<2))\nholi google send --to a@b.c',
+    '((x = 1 << 3))\nholi google send --to a@b.c',
+    '# feed it with <<EOF\nholi google send --to a@b.c',
+    'cat <<EOF\n$(holi google send --to a@b.c)\nEOF',
+    "holi google draft --to a@b.c <<EOF\nI'm $(holi google send --to a@b.c)\nEOF",
+    'source /dev/stdin <<EOF\nholi google send --to a@b.c\nEOF',
+    'FROM="Ada <ada@x.y>" holi google send --to a@b.c',
+    'NAME="a>" holi google reply t1',
+    'env X="<" holi google reply t1',
+    'G="$(which holi) google"; $G send --to a@b.c',
+    'G="${HOLI_BIN:-holi} google"; $G send --to a@b.c',
+    "line='a b'; x=${line%% #*}; holi google send --to a@b.c",
+    "true;# don't\nholi google send --to a@b.c",
+    'R="$(printf \')\'; holi google send --to a@b.c)"',
+    'bash -c \'R="$(holi google send --to a@b.c)"\'',
+    'eval \'R="$(holi google send --to a@b.c)"\'',
+    'sudo $H google send --to a@b.c',
+  ])('asks for %s', async (command) => {
+    expect(decisionOf(await decide(bash(command)))).toBe('ask')
+  })
+
+  it.each([
+    // Other Holi verbs, with whatever arguments.
+    'holi pdf render "$f"',
+    '"$HOLI_BIN" agent notify "$MSG"',
+    'holi links create "https://x.dk/?a=$b"',
+    'holi agent notify "costs \\$5"',
+    'holi skills update "$X"',
+    '"${HOLI_BIN:-holi}" pdf typst',
+    'H=$HOLI_BIN; $H pdf typst',
+    '$(which holi) pdf typst',
+    // Reads and undoable Google verbs, however they are run.
+    'holi google read "$id"',
+    'holi google agenda "$FROM" "$TO" --json > "$T/a.json"',
+    'holi google api GET "$path"',
+    'holi google draft --to "$TO" --subject "$S"',
+    'holi google archive "$id"',
+    'holi google trash "$id"',
+    'holi google unschedule "$id"',
+    'for t in a b; do holi google read $t; done',
+    'if [ -n "$X" ]; then holi google search "$X"; fi',
+    'eval "holi google read abc"',
+    '$(which holi) google read abc',
+    // No Holi runs, whatever the line mentions. Every vault path has Holi in it.
+    'cd ~/Holi/syv-ai/x; GH=$(which gh); $GH api repos/syv-ai/holi/contents/docs',
+    'cd ~/Holi/x; C="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; "$C" --headless=new',
+    'D=/x/dashctl; "$D" tasks message abc --from "Holi agent"',
+    'F=$(ls); echo $F && holi pdf typst',
+    'echo $(git status)',
+    // An absolute path is not a runner of its argument.
+    '/usr/bin/grep holi "$f"',
+    'env grep holi "$f"',
+    // A command quoted across lines is text, and so is what follows `.` as a word.
+    "printf '%s\\n' 'Documentation:\nholi google send --to review@example.invalid\n'",
+    'git commit -m "title\n\nThe agent uses holi google send here."',
+    "git add . && git commit -F - <<'EOF'\nnote: holi google send is gated\nEOF",
+    '/bin/ls ~/Holi "$X"',
+    // Holi's words as text.
+    '$GH issue create --title "Fix google api quota"',
+    '"$D" tasks message abc --body "The google reply went out"',
+    'git commit -m "docs: update source (holi google send)"',
+    "cat > note.md <<'EOF'\nholi google send is how the agent mails\nEOF",
+    "holi google draft --to a@b.c <<'EOF'\nholi google send --to x\nEOF",
+    'cp "$a" google "$b"',
+    '# holi google send is what mails\nls',
+    'mv "$a" google send',
+    "cat <<'EOF'\n$(holi google send --to a@b.c)\nEOF",
+  ])('has no opinion on %s', async (command) => {
+    const d = await decide(bash(command))
+    expect(decisionOf(d)).toBe('none')
+    expect(d.stdout).toBe('')
+    expect(d.code).toBe(0)
   })
 })
 
@@ -255,12 +382,9 @@ describe('the send gate asks', () => {
     expect(send).toContain('q2.pdf')
     expect(send).toContain('Board deck.pptx')
     expect(reply).toContain('notes/plan.md')
-    for (const maintained of [false, true]) {
-      const reason = (await decide(bash(concatenated), maintained)).hookSpecificOutput
-        ?.permissionDecisionReason
-      expect(reason).toContain('Board deck.pptx')
-      expect(reason).toContain('Møde résumé.pdf')
-    }
+    const reason = (await decide(bash(concatenated))).hookSpecificOutput?.permissionDecisionReason
+    expect(reason).toContain('Board deck.pptx')
+    expect(reason).toContain('Møde résumé.pdf')
 
     // An escaped space is one name; a body that mentions `--attach` is no file.
     const odd = (

@@ -181,7 +181,7 @@ core's `.gitignore` gets its `*.local.*` line, line-wise, before anything else i
   entry, `disableClaudeAiConnectors`, `autoMemoryEnabled`, `awaySummaryEnabled` and
   `promptSuggestionEnabled` (all `false`: no session recap, no next-prompt suggestion),
   `worktree.bgIsolation: "none"` (so sessions edit the vault rather than a worktree of it) and the
-  inline `statusLine`. Everything else stays. A vault turns a default back by setting it here or
+  inline `statusLine`. Everything else stays, apart from what a fragment retires by name. A vault turns a default back by setting it here or
   in `settings.local.json`; Claude Code's `/config` writes user settings, which a project value
   outranks. Malformed JSON is left alone.
 
@@ -263,7 +263,7 @@ outranks an allow in every scope, so getting a tool back means removing it from 
 
 **Permissions.** Each agent's native prompts are the permission UX, answered in its terminal.
 The seeded rules ask for `curl`, `wget`, `holi schedules run` and
-`holi google archive|trash|unschedule|send|reply|respond` (one rule per verb) and
+`holi google send|reply|respond` (one rule per verb) and
 `holi google api POST|PUT|PATCH|DELETE` (one rule per method), and allow `holi apps`,
 `holi store`, `holi pdf comments`, `holi pdf typst`, `holi community path`, `holi comments list`,
 `holi schedules list`, the read-only memory lint (`node .claude/skills/memory/lint.mjs`),
