@@ -1686,13 +1686,16 @@ describe('vaults large-file actions', () => {
 
   it('keepFileLocal excludes a held-back file locally, keeping it on disk', async () => {
     const { caller, path } = await adopted()
-    await writeFile(join(path, 'video.mov'), 'x'.repeat(50), 'utf8')
+    await writeFile(join(path, 'video[1].mov'), 'x'.repeat(50), 'utf8')
+    await mkdir(join(path, 'sub'))
+    await writeFile(join(path, 'sub', 'video[1].mov'), 'x'.repeat(50), 'utf8')
 
-    await caller.vaults.keepFileLocal({ remote: 'syv-ai/notes', path: 'video.mov' })
+    await caller.vaults.keepFileLocal({ remote: 'syv-ai/notes', path: 'video[1].mov' })
     // No longer dirty (git-ignored locally) but still on disk.
-    expect(await plainGit(path, ['status', '--porcelain', '--', 'video.mov'])).toBe('')
-    await expect(readFile(join(path, 'video.mov'), 'utf8')).resolves.toHaveLength(50)
-    expect(await readFile(join(path, '.git', 'info', 'exclude'), 'utf8')).toContain('video.mov')
+    expect(await plainGit(path, ['status', '--porcelain', '--', 'video[1].mov'])).toBe('')
+    await expect(readFile(join(path, 'video[1].mov'), 'utf8')).resolves.toHaveLength(50)
+    // That one file, not a pattern: the same name in another folder still syncs.
+    expect(await plainGit(path, ['status', '--porcelain', '-uall'])).toContain('sub/')
   })
 })
 
