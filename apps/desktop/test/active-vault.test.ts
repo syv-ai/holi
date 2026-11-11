@@ -14,7 +14,7 @@ import { taskClaim } from '@holi/shared'
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { GitError, openRepo } from '../src/main/git'
 import * as vaultWatcher from '../src/main/vault/watcher'
 import * as vaultStore from '../src/main/vault/vault-store'
@@ -79,8 +79,8 @@ const QUIESCE = 150
 const open: ActiveVault[] = []
 afterEach(async () => {
   for (const v of open.splice(0)) await v.close().catch(() => {})
+  await cleanupFixtures()
 })
-afterAll(cleanupFixtures)
 
 /** Collects the snapshots pushed to the renderer. */
 function snapshots() {
