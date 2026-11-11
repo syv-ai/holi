@@ -50,7 +50,8 @@ jobs:
           if-no-files-found: error
 
   build-windows:
-    runs-on: windows-latest
+    # Pinned like the release workflow's Windows job, for stability.
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v5
 
@@ -72,7 +73,7 @@ jobs:
       # Unsigned: SmartScreen warns on first launch ("More info" → "Run anyway").
       - name: Package
         working-directory: apps/desktop
-        run: pnpm exec electron-builder --win nsis --x64 --publish never --config.win.artifactName='${productName}-${version}-${os}-${arch}.${ext}'
+        run: pnpm exec electron-builder --win nsis --x64 --publish never --config.npmRebuild=false
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 

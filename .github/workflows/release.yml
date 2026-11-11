@@ -216,6 +216,64 @@ jobs:
           done
           exit 1
 
+  build-prerelease-win:
+    # Added to the same prerelease as the Linux assets, and for the same
+    # reason. Nothing `needs:` this job, so a Windows failure cannot fail or
+    # block the mac and Linux jobs, the stable release or the prerelease
+    # itself; a Windows dev client then finds no dev.yml for that build and
+    # tries again on the next one.
+    needs: build-prerelease-mac
+    if: github.ref == 'refs/heads/main'
+    # Pinned for stability: a runner image change under windows-latest should
+    # not change what a release is built on. Nothing here compiles native code.
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/setup
+
+      # Unsigned: SmartScreen warns on the first install ("More info", then
+      # "Run anyway"). To sign later, add Windows-only secrets to this step's
+      # env: WIN_CSC_LINK/WIN_CSC_KEY_PASSWORD, or the AZURE_* variables with
+      # win.azureSignOptions (Azure Trusted Signing). Never CSC_LINK: on Windows
+      # electron-builder falls back to it, and it is the Apple certificate. Set
+      # no publisherName while unsigned: installs that carry one reject every
+      # unsigned update. (CSC_IDENTITY_AUTO_DISCOVERY below only affects macOS.)
+      # --config.npmRebuild=false: node-pty ships a prebuilt win32-x64 N-API
+      # binary that loads in Electron (checked in the packaged app), so there is
+      # nothing to compile and no node-gyp or Visual Studio is needed.
+      - name: Package
+        working-directory: apps/desktop
+        run: pnpm exec electron-builder --win nsis --x64 --publish never --config.npmRebuild=false --config.extraMetadata.version="${{ needs.build-prerelease-mac.outputs.version }}" --config.publish.channel=dev
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Upload to the prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build-prerelease-mac.outputs.tag }}
+        # Retried for the same reason as the mac job's publish; --clobber makes
+        # a re-run replace the same assets. The feed is dev.yml: on Windows
+        # electron-updater names it after the channel, with no platform suffix.
+        run: |
+          for attempt in 1 2 3 4; do
+            if gh release upload "$TAG" \
+              apps/desktop/release/*.exe \
+              apps/desktop/release/*.exe.blockmap \
+              apps/desktop/release/dev.yml \
+              --clobber; then exit 0; fi
+            if [ "$attempt" -lt 4 ]; then
+              echo "Uploading failed (attempt $attempt); retrying in $((attempt * 30))s."
+              sleep $((attempt * 30))
+            fi
+          done
+          exit 1
+
   release:
     needs: [version, build-mac, build-linux]
     # Two commits with the same bumped version can build concurrently. Only
