@@ -130,6 +130,20 @@ async function inVault(root: string, rel: string): Promise<string> {
   }
 }
 
+/** A numbered output's validated parent and its unresolved leaf path. */
+async function candidateLocation(
+  root: string,
+  realRoot: string,
+  rel: string,
+): Promise<{ candidate: string; parent: string; abs: string }> {
+  const candidate = vaultRelPath(rel)
+  const slash = candidate.lastIndexOf('/')
+  const parentRel = slash === -1 ? '' : candidate.slice(0, slash)
+  const leaf = slash === -1 ? candidate : candidate.slice(slash + 1)
+  const parent = parentRel ? await inVault(root, parentRel) : realRoot
+  return { candidate, parent, abs: join(parent, leaf) }
+}
+
 /** Refuse a secret or machine-state vault path: a PDF must neither carry a
  *  secret out into a file that gets committed, nor land among this machine's
  *  state. Checked on the path as given and as resolved, so a symlink cannot
@@ -159,9 +173,20 @@ async function placeBeside(
   tmp: string,
 ): Promise<string> {
   for (let n = 1; n <= MAX_NUMBERED; n++) {
-    const candidate = vaultRelPath(numberedPath(rel, n))
-    const abs = await inVault(root, candidate)
-    refusePrivate([candidate, vaultPathOf(realRoot, abs)])
+    const location = await candidateLocation(root, realRoot, numberedPath(rel, n))
+    const { candidate, parent, abs } = location
+    refusePrivate([candidate, vaultPathOf(realRoot, parent)])
+
+    // The leaf is only a candidate name. In particular, do not resolve an
+    // existing symlink: it occupies this name whether it points inside, out of,
+    // or nowhere, and the next numbered name may still be available.
+    try {
+      await lstat(abs)
+      continue
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+    }
+
     try {
       await copyFile(tmp, abs, constants.COPYFILE_EXCL)
       return abs
@@ -276,12 +301,15 @@ export function pdfCapabilities(deps: PdfCapabilityDeps) {
         // it points.
         const outside = out !== undefined && isAbsolute(out)
         const pdfRel = out ?? path.replace(/\.(md|markdown)$/i, '') + '.pdf'
-        const pdfPath = outside ? pdfRel : await inVault(ctx.root, pdfRel)
+        const location = unique ? await candidateLocation(ctx.root, realRoot, pdfRel) : null
+        const pdfPath = outside ? pdfRel : (location?.abs ?? (await inVault(ctx.root, pdfRel)))
         refusePrivate([
           outside ? vaultPathOf(ctx.root, pdfPath) : vaultRelPath(pdfRel),
-          vaultPathOf(realRoot, pdfPath),
+          unique && location !== null
+            ? vaultPathOf(realRoot, location.parent)
+            : vaultPathOf(realRoot, pdfPath),
         ])
-        if (await isSymlink(outside ? pdfRel : join(ctx.root, vaultRelPath(pdfRel)))) {
+        if (!unique && (await isSymlink(outside ? pdfRel : join(ctx.root, vaultRelPath(pdfRel))))) {
           throw new CapabilityError('BAD_REQUEST', `${pdfRel} is a symlink`)
         }
         const note = await readFile(noteAbs, 'utf8').catch(() => null)

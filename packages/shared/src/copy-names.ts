@@ -28,10 +28,15 @@ function splitName(path: string): { dir: string; stem: string; ext: string } {
    * here rather than by widening the marker: the marker is one exact spelling.
    */
   const localExt = /\.local\.[^.]+$/.exec(base)
-  const dot = localExt !== null ? localExt.index : base.lastIndexOf('.')
-  // `dot > 0`, not `dot >= 0`: a leading dot is a dotfile's name, not an
-  // extension, so `.gitignore` must not become ' copy.gitignore'.
-  const stem = dot > 0 ? base.slice(0, dot) : base
+  // A leading `.local.` is both the local marker and the beginning of a valid
+  // extension-bearing name (for example `.local.pdf`). Split before its final
+  // extension so numbered copies keep the file type: `.local 2.pdf`.
+  const leadingLocal = localExt?.index === 0
+  const dot = leadingLocal ? base.lastIndexOf('.') : (localExt?.index ?? base.lastIndexOf('.'))
+  // Keep the entire marker before the suffix: `.local. 2.pdf` remains local
+  // while retaining a terminal `.pdf` extension. Ordinary dotfiles still keep
+  // their leading dot as part of the name, so `.gitignore` becomes `.gitignore copy`.
+  const stem = leadingLocal ? `${base.slice(0, dot)}.` : dot > 0 ? base.slice(0, dot) : base
   const ext = dot > 0 ? base.slice(dot) : ''
   return { dir, stem, ext }
 }

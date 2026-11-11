@@ -102,4 +102,11 @@ describe('numberedPath', () => {
     expect(next).toBe('notes/me 2.local.pdf')
     expect(isLocalOnlyPath(next)).toBe(true)
   })
+
+  it('keeps the extension when a local marker starts the filename', () => {
+    const next = numberedPath('.local.pdf', 2)
+    expect(next).toBe('.local. 2.pdf')
+    expect(isLocalOnlyPath(next)).toBe(true)
+    expect(numberedPath('.local.md', 3)).toBe('.local. 3.md')
+  })
 })
