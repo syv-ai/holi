@@ -317,11 +317,13 @@ export {
 } from './capabilities/params'
 export { seedFolder } from './vault/seed/folder'
 export { jsonFileStore, type JsonFileStore } from './json-file-store'
-export { nodeFallbackDir, resolveBin, toolPath } from './bin'
-export { defaultProbePid, type PidState } from './process-group'
+export { delimiterFor, isRunnable, nodeFallbackDir, resolveBin, toolPath, withPath } from './bin'
+export { execProgram, spawnProgram } from './launch'
+export { defaultProbePid, killChildTree, killTree, type PidState } from './process-group'
 export { writeScreenshot } from './screenshot-files'
 export {
   defaultSpawnPty,
+  signalPty,
   type PtyProcess,
   type SpawnPty,
   type SpawnPtyOptions,
