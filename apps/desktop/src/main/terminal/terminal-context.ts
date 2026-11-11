@@ -15,7 +15,7 @@
 import { execFile } from 'node:child_process'
 import { stat } from 'node:fs/promises'
 import { homedir, hostname } from 'node:os'
-import { isAbsolute, normalize, sep } from 'node:path'
+import { posix, win32 } from 'node:path'
 
 /** The git work under a shell's cwd. */
 export interface GitSummary {
@@ -87,8 +87,17 @@ function isLocalHost(host: string, local: string): boolean {
 /**
  * The absolute path an OSC 7 payload (`file://host/path`) names, or null when
  * it is not a well-formed local file URL. Does not touch the disk.
+ *
+ * On Windows the URL's path carries a leading slash the folder does not
+ * (`/C:/Users/x` is `C:\Users\x`), and Git Bash prints the MSYS spelling of
+ * a drive (`/c/Users/x`). A path on no drive (`/usr/bin`, `/Users/x`) is not
+ * a folder Windows can open, so it is refused.
  */
-export function parseOsc7(payload: string, localHost: string = hostname()): string | null {
+export function parseOsc7(
+  payload: string,
+  localHost: string = hostname(),
+  platform: NodeJS.Platform = process.platform,
+): string | null {
   let url: URL
   try {
     url = new URL(payload)
@@ -103,16 +112,34 @@ export function parseOsc7(payload: string, localHost: string = hostname()): stri
   } catch {
     return null
   }
-  if (path.includes('\0') || !isAbsolute(path)) return null
-  const clean = normalize(path)
-  return clean.length > 1 && clean.endsWith(sep) ? clean.slice(0, -1) : clean
+  if (path.includes('\0')) return null
+  if (platform === 'win32') {
+    const drive = /^\/([A-Za-z]):(?=\/|$)/.exec(path) ?? /^\/([A-Za-z])(?=\/|$)/.exec(path)
+    if (drive === null) return null
+    path = `${drive[1]!.toUpperCase()}:${path.slice(drive[0].length) || '/'}`
+  }
+  const api = platform === 'win32' ? win32 : posix
+  if (!api.isAbsolute(path)) return null
+  const clean = api.normalize(path)
+  // A root (`/`, `C:\`) keeps its separator; any other folder loses its trailing one.
+  return clean.length > api.parse(clean).root.length && clean.endsWith(api.sep)
+    ? clean.slice(0, -1)
+    : clean
 }
 
-/** `path` as the chips show it: the home folder as `~`. */
-export function homeLabel(path: string, home: string = homedir()): string {
+/** `path` as the chips show it: the home folder as `~`. Windows paths compare
+ *  without regard to case, as its file system does. */
+export function homeLabel(
+  path: string,
+  home: string = homedir(),
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const { sep } = platform === 'win32' ? win32 : posix
   if (home === '' || home === sep) return path
-  if (path === home) return '~'
-  return path.startsWith(home + sep) ? `~${path.slice(home.length)}` : path
+  const same = (a: string, b: string) =>
+    platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
+  if (same(path, home)) return '~'
+  return same(path.slice(0, home.length + 1), home + sep) ? `~${path.slice(home.length)}` : path
 }
 
 /** Whether `path` is a directory that exists now. */
@@ -134,7 +161,7 @@ export function parseLsofCwd(out: string): string | null {
   for (const line of out.split('\n')) {
     if (line.startsWith('n') && line.length > 1) {
       const path = line.slice(1)
-      return isAbsolute(path) ? path : null
+      return posix.isAbsolute(path) ? path : null
     }
   }
   return null
@@ -160,8 +187,15 @@ const defaultRun: RunFile = (file, args, cwd) =>
     )
   })
 
-/** A process's cwd as the OS reports it, or null. */
-export async function processCwd(pid: number, run: RunFile = defaultRun): Promise<string | null> {
+/** A process's cwd as the OS reports it, or null. Windows has no `lsof`, and
+ *  no other way to ask: a Windows shell reports its folder itself or not at
+ *  all (`shell-integration.ts`). */
+export async function processCwd(
+  pid: number,
+  run: RunFile = defaultRun,
+  platform: NodeJS.Platform = process.platform,
+): Promise<string | null> {
+  if (platform === 'win32') return null
   try {
     return parseLsofCwd(await run('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn']))
   } catch {

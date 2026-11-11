@@ -196,6 +196,12 @@ pending, which win; the 3-way merge and the conflict banner are not built for no
 renderer runs on shadcn's neutral theme and the settings have no Appearance page
 ([ui-system](ui-system.md#per-vault-theming)).
 
+**A shell picker for the Terminal.** The panel runs `$SHELL`, else Windows PowerShell on Windows
+and zsh elsewhere, and nothing lets a person choose another (Git Bash, cmd, WSL, a `pwsh` they
+installed) without setting `$SHELL` before Holi starts. cmd also has no folder tracking: Windows has
+no `lsof`, and a `PROMPT` that prints the folder would need its `#`, `?` and `%` escaped first, which
+cmd's `$P` does not do. See [status-bar](features/status-bar.md).
+
 **The rest.** The repo's size in the vault picker and the sync panel
 ([vaults-sync](features/vaults-sync.md)).
 

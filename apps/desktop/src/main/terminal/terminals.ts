@@ -21,7 +21,7 @@
  *
  * Pure Node: tests inject the spawn, the clock-free pieces and the push.
  */
-import { basename } from 'node:path'
+import { defaultShell, shellTitle } from './default-shell'
 import { delimiterFor, readPath, withPath } from '../bin'
 import { defaultProbePid, type PidState } from '../process-group'
 import { defaultSpawnPty, nativeLoadHint, signalPty, type PtyProcess, type SpawnPty } from './pty'
@@ -78,8 +78,12 @@ export interface TerminalsDeps {
   send(event: TerminalEvent): void
   spawnPty?: SpawnPty
   probePid?: (pid: number) => PidState
-  /** The shell to run: `$SHELL`, else `/bin/zsh`. */
+  /** The shell to run: `$SHELL`, else Windows PowerShell on Windows and
+   *  `/bin/zsh` elsewhere (`default-shell.ts`). */
   shell?: () => string
+  /** The OS the paths and shells are those of; the running one unless a test
+   *  says otherwise. */
+  platform?: NodeJS.Platform
   /** The environment it starts with, before Holi's additions. */
   baseEnv?: () => NodeJS.ProcessEnv
   /** Prepended to PATH, so `holi` answers in the shell as it does for the
@@ -158,12 +162,13 @@ interface Live {
 export function createTerminals(deps: TerminalsDeps): Terminals {
   const spawn = deps.spawnPty ?? defaultSpawnPty
   const probe = deps.probePid ?? defaultProbePid
-  const shell = deps.shell ?? (() => process.env.SHELL || '/bin/zsh')
+  const platform = deps.platform ?? process.platform
+  const shell = deps.shell ?? (() => defaultShell(process.env, platform))
   const baseEnv = deps.baseEnv ?? (() => process.env)
   const graceMs = deps.killGraceMs ?? 1_500
   const integrationDir = deps.integrationDir ?? defaultIntegrationDir
   const summarize = deps.gitSummary ?? ((cwd: string) => defaultGitSummary(cwd))
-  const askCwd = deps.processCwd ?? ((pid: number) => defaultProcessCwd(pid))
+  const askCwd = deps.processCwd ?? ((pid: number) => defaultProcessCwd(pid, undefined, platform))
   const isDirectory = deps.isDirectory ?? defaultIsDirectory
   const delayMs = deps.contextDelayMs ?? 150
   const live = new Map<string, Live>()
@@ -203,7 +208,7 @@ export function createTerminals(deps: TerminalsDeps): Terminals {
       try {
         const cwd = t.cwd
         const git = await summarize(cwd).catch(() => null)
-        const next: TerminalContext = { cwd, label: homeLabel(cwd, deps.home), git }
+        const next: TerminalContext = { cwd, label: homeLabel(cwd, deps.home, platform), git }
         if (live.get(t.id) !== t) return
         if (JSON.stringify(next) !== JSON.stringify(t.context)) {
           t.context = next
@@ -265,7 +270,7 @@ export function createTerminals(deps: TerminalsDeps): Terminals {
         // in their own terminal: an app opened from the Dock has neither.
         // With the integration where Holi has one, which reports the cwd.
         const env = shellEnv(baseEnv(), deps.binDir?.() ?? null)
-        const launch = shellLaunch(file, env, integrationDir())
+        const launch = shellLaunch(file, env, integrationDir(), platform)
         pty = spawn(file, launch.args, {
           cwd: root,
           env: { ...env, ...launch.env },
@@ -288,7 +293,7 @@ export function createTerminals(deps: TerminalsDeps): Terminals {
       const t: Live = {
         id,
         remote,
-        title: titleFor(remote, basename(file)),
+        title: titleFor(remote, shellTitle(file, platform)),
         pty,
         exitCode: null,
         output: '',
@@ -324,7 +329,7 @@ export function createTerminals(deps: TerminalsDeps): Terminals {
         for (const payload of scan(data)) {
           // Every prompt prints one: the cwd, and a moment the git work may
           // have changed.
-          const path = parseOsc7(payload)
+          const path = parseOsc7(payload, undefined, platform)
           if (path === null) continue
           t.integrated = true
           const seq = ++reported

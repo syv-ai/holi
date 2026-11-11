@@ -66,7 +66,11 @@ own controls, maximize or restore (the panel fills the column), and close. The p
 from the shell's first render so its keys are live, drawn once first opened, and after that hidden
 rather than unmounted, so a closed panel keeps the shells' scrollback.
 
-**The Terminal** is the person's login shell (`$SHELL -l`, else `/bin/zsh`) in a PTY in main, in
+**The Terminal** is the person's login shell (`$SHELL -l`, else `/bin/zsh`) in a PTY in main; on
+Windows `$SHELL` if they set one (Git Bash does for its own children), else Windows PowerShell
+(`default-shell.ts`). It is not started `-l` there: that is not a PowerShell switch (it exits 1),
+so PowerShell gets `-NoLogo` and, with the integration below, `-NoExit -Command`; cmd takes no
+arguments. On Windows shell names are matched with or without `.exe`. It runs in
 the open vault's clone, with `TERM=xterm-256color` and the `holi` command on `PATH`. It is core's
 (`main/terminal/`), not the agent plugin's: a terminal is a terminal whatever the vault runs, and
 core may not import a plugin. node-pty is loaded in one place, `main/terminal/pty.ts`, which the
@@ -99,11 +103,20 @@ last one for a reload). **Where the shell is** comes from shell integration
 last file restores `ZDOTDIR` for good, and a `HISTFILE` that macOS's `/etc/zshrc` pointed at Holi's
 directory is put back. bash starts with `--init-file`, a script that reads what a login bash would
 (`/etc/profile`, then the first of `~/.bash_profile`, `~/.bash_login`, `~/.profile`) and appends the
-hook to `PROMPT_COMMAND`, after theirs so it still sees the command's status. Main reads the OSC 7
+hook to `PROMPT_COMMAND`, after theirs so it still sees the command's status. Git Bash gets the
+same script with the folder run through `cygpath -m` first (`bash-init-win.sh`), since its `$PWD` may
+sit under an MSYS-only root such as `/tmp`; zsh on Windows starts without a shim. PowerShell (Windows)
+starts with `-NoExit -Command`, which reads a script from the same directory as text (so no execution
+policy refuses it; their `$PROFILE` loads only if the policy lets it) once that has happened,
+and wraps the `prompt` they have, so a theme keeps drawing, to print the OSC 7 first; their `$?` and
+`$LASTEXITCODE` reach it as the command left them. Main reads the OSC 7
 off the PTY's bytes (one split across chunks is held until it ends), and takes it only as a local
-`file:` URL naming a directory that exists. A shell that has never printed one (fish, or an rc that
+`file:` URL naming a directory that exists. On Windows the URL's path is a drive path without its
+leading slash (`/C:/Users/x` is `C:\Users\x`), and Git Bash's `/c/Users/x` is the same folder; a path
+on no drive is refused. A shell that has never printed one (fish, or an rc that
 drops the hook) is asked of the OS instead: `lsof -a -p PID -d cwd -Fn` once output has been quiet a
-moment, at most every two seconds. **The git work** is `rev-parse --abbrev-ref HEAD`,
+moment, at most every two seconds. Windows has no `lsof` and no other way to ask, so a Windows shell
+without the hook (cmd) leaves the chip at the vault folder. **The git work** is `rev-parse --abbrev-ref HEAD`,
 `status --porcelain=v2 -z --untracked-files=all` and `diff --numstat -z HEAD` (the empty tree before
 a first commit), with `GIT_OPTIONAL_LOCKS=0` so a read never takes the index lock from the sync
 engine; it is read at the start, then 150ms after every prompt, since every prompt prints an OSC 7,
@@ -206,7 +219,8 @@ keys back rather than typing them. See [keyboard shortcuts](keyboard-shortcuts.m
 - `apps/desktop/src/main/vault/active-vault.ts`: where sync and git write to it, `syncInfo`,
   `syncNow`
 - `apps/desktop/src/main/terminal/`: the PTY and the panel's shells; `shell-integration.ts` (the
-  zsh and bash shims), `terminal-context.ts` (OSC 7, lsof, the git summary)
+  zsh, bash and PowerShell shims), `default-shell.ts` (the shell with no `$SHELL`),
+  `terminal-context.ts` (OSC 7, lsof, the git summary)
 - `apps/desktop/src/main/router.ts` (`sync.info`, `sync.now`, `sync.branches`,
   `sync.fetchBranches`, `sync.branchNameValid`, `sync.switchBranch`, `activity`, `terminal`),
   `src/preload/index.ts` (`activity`, `terminal` pushes)

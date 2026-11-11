@@ -55,6 +55,8 @@ function rig(over: Partial<TerminalsDeps> = {}) {
   const events: TerminalEvent[] = []
   const summaries: string[] = []
   const terminals = createTerminals({
+    // POSIX paths throughout: the rig is a mac's, whatever OS runs the test.
+    platform: 'darwin',
     send: (e) => events.push(e),
     spawnPty: (file, args, opts) => {
       const p = new FakePty(file, args, opts)
