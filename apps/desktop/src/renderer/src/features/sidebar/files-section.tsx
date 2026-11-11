@@ -457,7 +457,8 @@ export function FilesSection({
     const primaryModifier = event.metaKey || event.ctrlKey
     if (openable && !event.shiftKey && primaryModifier) {
       event.preventDefault()
-      event.stopPropagation()
+      item.setFocused()
+      tree.updateDomFocus()
       openTab(tabForPath(path), { beside: true })
       return
     }

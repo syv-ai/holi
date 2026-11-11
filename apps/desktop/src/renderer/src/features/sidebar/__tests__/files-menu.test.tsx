@@ -214,6 +214,44 @@ test.each([{ metaKey: true }, { ctrlKey: true }])(
   },
 )
 
+test('primary-modifier open focuses the clicked row for ArrowDown', async () => {
+  const { store } = mount()
+  act(() =>
+    store.set(snapshotAtom, {
+      ...store.get(snapshotAtom)!,
+      docs: [
+        ...store.get(snapshotAtom)!.docs,
+        { path: 'z.md', title: 'z', updatedAt: '2026-10-23T10:00:00Z' },
+      ] as never,
+    }),
+  )
+  const folder = await screen.findByRole('treeitem', { name: 'kunder' })
+  fireEvent.click(folder)
+  const deck = await screen.findByRole('treeitem', { name: 'talk.deck' })
+  fireEvent.click(deck.querySelector('[data-slot=tree-item-label]')!, { metaKey: true })
+
+  await waitFor(() => expect(deck).toHaveAttribute('data-focus', 'true'))
+  expect(deck).toHaveAttribute('aria-selected', 'true')
+  fireEvent.keyDown(deck, { key: 'ArrowDown' })
+  const next = await screen.findByRole('treeitem', { name: 'z.md' })
+  await waitFor(() => expect(next).toHaveAttribute('data-focus', 'true'))
+  fireEvent.click(next.querySelector('[data-slot=tree-item-label]')!, { shiftKey: true })
+  expect(deck).toHaveAttribute('aria-selected', 'true')
+  expect(next).toHaveAttribute('aria-selected', 'true')
+  expect(folder).toHaveAttribute('aria-selected', 'false')
+})
+
+test('primary-modifier open lets F2 rename the clicked row', async () => {
+  mount()
+  const folder = await screen.findByRole('treeitem', { name: 'kunder' })
+  fireEvent.click(folder)
+  const deck = await screen.findByRole('treeitem', { name: 'talk.deck' })
+  fireEvent.click(deck.querySelector('[data-slot=tree-item-label]')!, { ctrlKey: true })
+  await waitFor(() => expect(deck).toHaveAttribute('data-focus', 'true'))
+  fireEvent.keyDown(deck, { key: 'F2' })
+  expect(await screen.findByLabelText('Rename talk.deck')).toBeTruthy()
+})
+
 test('primary-modifier on a normal folder preserves expand and selection behavior', async () => {
   const { store } = mount()
   act(() => store.set(shellWorkspaceAtom, (ws) => openTab(openTab(ws, 'A.md'), 'B.md')))
