@@ -480,7 +480,9 @@ whole view**, with nothing drawn over or beside it: the agent's own TUI is the i
 name, state and model are on the sidebar row and the tab, its Stop, Restart and Review last turn
 in the row's menu.
 A vault path in the output is a link that opens the file in a
-pane, and only a path the vault has is one (`renderer/lib/terminal-links.ts`).
+pane, and only a path the vault has is one (`renderer/lib/terminal-links.ts`). For a clone on a
+drive, Windows paths read too: either slash, a drive letter in either case, Git Bash's `/c/…`; one
+on another drive, or in a sibling folder of the clone, names no file of the vault.
 
 **New sessions start at once, in their terminal.** The Sessions **+**, ⌘N, the tab strip's + and
 ⌘T on the Agents side and the command menu's **New session** start one in this machine's default
@@ -538,7 +540,8 @@ opens its agent tab ([holis](holis.md)).
 **Messages go through the session's inbox.** Every Claude Code session that is not `--bare` binds
 an inbox socket for cross-session messaging and exports its path and a per-session token to its
 hooks as `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN`, set before
-`SessionStart`. `turn-signal.mjs` posts both to the bridge at `SessionStart` (`/session`) and at
+`SessionStart`. On Windows the inbox is a named pipe, `\\.\pipe\<name>`, which main accepts
+there and nowhere else (a socket path starts with `/`). `turn-signal.mjs` posts both to the bridge at `SessionStart` (`/session`) and at
 each turn's start (`/turn/start`, in the body), and main keeps them per job id, in memory only:
 dropped when the session leaves the live listing, when a write to it fails, and when Holi leaves the
 vault. Holi never reads Claude Code's own session files for them. `agent.message` (`holi agent

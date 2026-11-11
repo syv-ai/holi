@@ -2,8 +2,8 @@
  * Adding a message to a running Claude Code session: its inbox socket
  * (Claude Code's cross-session messaging, docs/features/agent-sessions.md).
  *
- * Every session that is not `--bare` binds a Unix socket and exports its path
- * and a per-session token to its hooks as `CLAUDE_CODE_MESSAGING_SOCKET` and
+ * Every session that is not `--bare` binds a Unix socket (a named pipe on
+ * Windows, `\\.\pipe\<name>`) and exports its path and a per-session token to its hooks as `CLAUDE_CODE_MESSAGING_SOCKET` and
  * `CLAUDE_CODE_MESSAGING_TOKEN`. The seeded `turn-signal.mjs` hands both to
  * Holi, which keeps them in memory only (`host/sessions.ts`).
  *

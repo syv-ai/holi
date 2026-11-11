@@ -33,9 +33,13 @@ import type { SessionChannel } from './messaging'
 
 const EMPTY = { status: 204 } as const
 
+/** A Windows named pipe, which is what Claude Code's inbox is there:
+ *  `\\.\pipe\<name>`, the name free of control characters. */
+const PIPE = /^\\\\\.\\pipe\\[^\x00-\x1f\\]+(?:\\[^\x00-\x1f\\]+)*$/
+
 /** The inbox a hook's body names, or null when it names none or one that is
- *  not plausibly a socket path and a token. */
-function channelOf(body: string): SessionChannel | null {
+ *  not plausibly a socket path (a named pipe on Windows) and a token. */
+function channelOf(body: string, platform: NodeJS.Platform): SessionChannel | null {
   if (body.trim() === '') return null
   let parsed: unknown
   try {
@@ -46,20 +50,25 @@ function channelOf(body: string): SessionChannel | null {
   if (parsed === null || typeof parsed !== 'object') return null
   const { socket, token } = parsed as Record<string, unknown>
   if (typeof socket !== 'string' || typeof token !== 'string') return null
-  if (!socket.startsWith('/') || socket.length > 1024 || /[\0\n]/.test(socket)) return null
+  const isPlace = socket.startsWith('/') || (platform === 'win32' && PIPE.test(socket))
+  if (!isPlace || socket.length > 1024 || /[\0\n]/.test(socket)) return null
   if (!/^[\w.-]{1,512}$/.test(token)) return null
   return { socket, token }
 }
 
 /** Registers the routes; returns the undo. */
-export function registerAgentRoutes(server: RouteServer, deps: TurnRouteDeps): () => void {
+export function registerAgentRoutes(
+  server: RouteServer,
+  deps: TurnRouteDeps,
+  platform: NodeJS.Platform = process.platform,
+): () => void {
   const log = deps.log ?? ((msg: string) => console.log(`[agent] ${msg}`))
 
   // A signal that names no job cannot say which session's turn it is, and with
   // several running there is no honest guess, so it is dropped (still answered
   // empty).
   const channel = (remote: string, job: string, body: string): void => {
-    const found = channelOf(body)
+    const found = channelOf(body, platform)
     if (found !== null) deps.onChannel?.(remote, job, found)
   }
 

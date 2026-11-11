@@ -102,18 +102,26 @@ function isStatus(value: unknown): value is ClaudeStatus {
 }
 
 /** The root itself, or somewhere under it: a session may have moved into a
- *  subdirectory, and a row for another tree is never ours to act on. */
-function isUnder(cwd: string, root: string): boolean {
+ *  subdirectory, and a row for another tree is never ours to act on. On
+ *  Windows the separator is either slash and a name's case does not tell two
+ *  folders apart. */
+function isUnder(cwd: string, root: string, platform: NodeJS.Platform): boolean {
+  if (platform === 'win32') {
+    const fold = (path: string) => path.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase()
+    const here = fold(cwd)
+    const top = fold(root)
+    return here === top || here.startsWith(`${top}/`)
+  }
   return cwd === root || cwd.startsWith(root.endsWith('/') ? root : `${root}/`)
 }
 
 /** One row, or null. Row by row: a shape we do not recognise costs that
  *  session, not every session. */
-function toRow(value: unknown, vaultRoot: string): ClaudeRow | null {
+function toRow(value: unknown, vaultRoot: string, platform: NodeJS.Platform): ClaudeRow | null {
   if (value === null || typeof value !== 'object') return null
   const r = value as Record<string, unknown>
   if (r['kind'] !== 'background') return null
-  if (typeof r['cwd'] !== 'string' || !isUnder(r['cwd'], vaultRoot)) return null
+  if (typeof r['cwd'] !== 'string' || !isUnder(r['cwd'], vaultRoot, platform)) return null
   if (typeof r['id'] !== 'string' || r['id'] === '') return null
   const pid = typeof r['pid'] === 'number' && Number.isInteger(r['pid']) ? r['pid'] : undefined
   return {
@@ -132,7 +140,11 @@ function toRow(value: unknown, vaultRoot: string): ClaudeRow | null {
 
 /** The vault's background sessions out of `claude agents --json`. Every
  *  failure, including a null listing, is an empty answer. */
-export function parseListing(stdout: string | null, vaultRoot: string): ClaudeRow[] {
+export function parseListing(
+  stdout: string | null,
+  vaultRoot: string,
+  platform: NodeJS.Platform = process.platform,
+): ClaudeRow[] {
   if (stdout === null) return []
   let parsed: unknown
   try {
@@ -141,7 +153,9 @@ export function parseListing(stdout: string | null, vaultRoot: string): ClaudeRo
     return []
   }
   if (!Array.isArray(parsed)) return []
-  return parsed.map((entry) => toRow(entry, vaultRoot)).filter((r): r is ClaudeRow => r !== null)
+  return parsed
+    .map((entry) => toRow(entry, vaultRoot, platform))
+    .filter((r): r is ClaudeRow => r !== null)
 }
 
 /** Is its process alive? Only these are in the sidebar; the rest live in the
