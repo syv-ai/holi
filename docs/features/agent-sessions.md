@@ -529,7 +529,8 @@ still exists. A conversation with no note, or resumed in the same job, gets noth
 
 **Git coexistence.** The seeded `UserPromptSubmit` and `Stop` hooks run `turn-signal.mjs`, which
 reads the vault's `bridge.local.env` ([agent-config](agent-config.md)) for the port and the vault's token, and posts
-the job id from `$CLAUDE_JOB_DIR`; at a Stop, also `pending`, how many background tasks and
+the job id from `$CLAUDE_JOB_DIR`; at a start, also `pid`, the session's `claude` process (`$CLAUDE_PID`, or the hook's parent on
+an older CLI); at a Stop, also `pending`, how many background tasks and
 session crons its input lists, which is what tells a done session from a paused one
 ([scheduled-agents](scheduled-agents.md)). At a Stop it also saves where the turn left the vault, for the
 prompt hook's "changed since your last turn" ([agent-config](agent-config.md)), Holi open or not:
@@ -539,7 +540,11 @@ sync, the last to end resumes it and takes one settle commit (when the resume's 
 already running, the settle commit waits for it and takes what it left; with nothing left, that commit
 is the settle commit). A session also leaves the set when
 its process goes, on two consecutive `idle` readings (escaping a permission prompt fires no `Stop`),
-or on a 10 minute cap. Sessions keep running while Holi is closed, so the first read after a vault
+or on a 10 minute cap. Whether its process went is the process's own answer, not the listing's:
+a working session the listing does not name stays in the set while either pid known for it (from the turn's
+start, or from the listing while it named the session) still runs, since the listing can lose
+sight of a live session after a resume. With no pid known, as from a hook older than it, the
+listing's silence is enough. A reused pid could hold the set past a crash, but only until the cap. Sessions keep running while Holi is closed, so the first read after a vault
 opens puts any session already busy into the set.
 
 **Turn review.** A turn is a commit range, `base` at start to the settle commit, or, for a turn

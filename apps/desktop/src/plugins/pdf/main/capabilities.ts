@@ -7,9 +7,17 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { lstat, readFile, realpath, stat } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { copyFile, lstat, mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { isAbsolute, join, relative, sep } from 'node:path'
-import { isMachineStatePath, isSecretPath, localDate, vaultRelPath } from '@holi/shared'
+import {
+  isMachineStatePath,
+  isSecretPath,
+  localDate,
+  numberedPath,
+  vaultRelPath,
+} from '@holi/shared'
 import { resolveRelative } from '@holi/shared/path-safety-node'
 import {
   cap,
@@ -22,7 +30,7 @@ import {
   type CapabilityTable,
 } from '../../../main/plugin-api'
 import { commentThreadsJson, formatCommentThreads } from '../shared/pdf-comments'
-import { missingRequired, parseFrontmatter, prefillValues } from '../shared/pdf-fields'
+import { fieldValuesFor, missingRequired } from '../shared/pdf-fields'
 import { pdfCommentsInVault } from './comments'
 import type { DrawDiagrams } from './mermaid'
 import { renderPdf } from './render'
@@ -55,22 +63,32 @@ function sizeText(bytes: number): string {
 
 /** The render params. `out` is where the PDF goes: absolute, or relative to
  *  the vault; absent, it goes beside the note. Only an absolute `out` may
- *  leave the vault. The template defaults to
+ *  leave the vault. `unique` (the dialog's, never the CLI's) keeps a PDF
+ *  already beside the note: the new one takes the next free number instead
+ *  (`meeting 2.pdf`). The template defaults to
  *  `plain`. Field values come as `meta` from the dialog and as the remaining
  *  params from the CLI (`--recipient Acme`). */
 function renderParams(raw: unknown): {
   path: string
   template: string
   out?: string
+  unique: boolean
   meta: Record<string, string>
 } {
-  const { path, template, out, meta, ...fields } = paramsObject(raw)
+  const { path, template, out, unique, meta, ...fields } = paramsObject(raw)
   const p = { path, template, out }
   const outPath = optionalStringParam(p, 'out')
+  if (unique !== undefined && typeof unique !== 'boolean') {
+    throw new CapabilityError('BAD_REQUEST', 'unique must be a boolean')
+  }
+  if (unique === true && outPath !== undefined) {
+    throw new CapabilityError('BAD_REQUEST', 'unique names the PDF beside the note: give no out')
+  }
   return {
     path: stringParam(p, 'path'),
     template: optionalStringParam(p, 'template') ?? 'plain',
     ...(outPath === undefined ? {} : { out: outPath }),
+    unique: unique === true,
     meta: { ...metaOf(meta), ...metaOf(fields) },
   }
 }
@@ -112,6 +130,20 @@ async function inVault(root: string, rel: string): Promise<string> {
   }
 }
 
+/** A numbered output's validated parent and its unresolved leaf path. */
+async function candidateLocation(
+  root: string,
+  realRoot: string,
+  rel: string,
+): Promise<{ candidate: string; parent: string; abs: string }> {
+  const candidate = vaultRelPath(rel)
+  const slash = candidate.lastIndexOf('/')
+  const parentRel = slash === -1 ? '' : candidate.slice(0, slash)
+  const leaf = slash === -1 ? candidate : candidate.slice(slash + 1)
+  const parent = parentRel ? await inVault(root, parentRel) : realRoot
+  return { candidate, parent, abs: join(parent, leaf) }
+}
+
 /** Refuse a secret or machine-state vault path: a PDF must neither carry a
  *  secret out into a file that gets committed, nor land among this machine's
  *  state. Checked on the path as given and as resolved, so a symlink cannot
@@ -122,6 +154,47 @@ function refusePrivate(rels: (string | null)[]): void {
       throw new CapabilityError('BAD_REQUEST', `${rel} is a secret or machine-state path`)
     }
   }
+}
+
+/** How many numbered names `placeBeside` tries before giving up. */
+const MAX_NUMBERED = 999
+
+/**
+ * Move the rendered PDF at `tmp` to the first free numbered name for `rel`
+ * (`meeting.pdf`, `meeting 2.pdf`, …) inside the vault. The copy is exclusive,
+ * so the refusal to replace is the filesystem's: nothing that lands between a
+ * check and the write is overwritten, a symlink included. Answers the absolute
+ * path it went to.
+ */
+async function placeBeside(
+  root: string,
+  realRoot: string,
+  rel: string,
+  tmp: string,
+): Promise<string> {
+  for (let n = 1; n <= MAX_NUMBERED; n++) {
+    const location = await candidateLocation(root, realRoot, numberedPath(rel, n))
+    const { candidate, parent, abs } = location
+    refusePrivate([candidate, vaultPathOf(realRoot, parent), vaultPathOf(realRoot, abs)])
+
+    // The leaf is only a candidate name. In particular, do not resolve an
+    // existing symlink: it occupies this name whether it points inside, out of,
+    // or nowhere, and the next numbered name may still be available.
+    try {
+      await lstat(abs)
+      continue
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+    }
+
+    try {
+      await copyFile(tmp, abs, constants.COPYFILE_EXCL)
+      return abs
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+    }
+  }
+  throw new CapabilityError('CONFLICT', `${rel}: no free name beside it`)
 }
 
 /** Whether `abs` itself is a symlink (absent is not). */
@@ -198,7 +271,7 @@ export function pdfCapabilities(deps: PdfCapabilityDeps) {
           'render a note to a PDF through a template (default plain): [--out <path>], [--<field> <value>]',
       },
       params: renderParams,
-      run: async (ctx, { path, template, out, meta }) => {
+      run: async (ctx, { path, template, out, unique, meta }) => {
         // Canonicalised, so a symlink inside the vault cannot lead the read
         // out of it.
         const noteAbs = await inVault(ctx.root, path)
@@ -228,18 +301,21 @@ export function pdfCapabilities(deps: PdfCapabilityDeps) {
         // it points.
         const outside = out !== undefined && isAbsolute(out)
         const pdfRel = out ?? path.replace(/\.(md|markdown)$/i, '') + '.pdf'
-        const pdfPath = outside ? pdfRel : await inVault(ctx.root, pdfRel)
+        const location = unique ? await candidateLocation(ctx.root, realRoot, pdfRel) : null
+        const pdfPath = outside ? pdfRel : (location?.abs ?? (await inVault(ctx.root, pdfRel)))
         refusePrivate([
           outside ? vaultPathOf(ctx.root, pdfPath) : vaultRelPath(pdfRel),
-          vaultPathOf(realRoot, pdfPath),
+          ...(unique && location !== null
+            ? [vaultPathOf(realRoot, location.parent), vaultPathOf(realRoot, location.abs)]
+            : [vaultPathOf(realRoot, pdfPath)]),
         ])
-        if (await isSymlink(outside ? pdfRel : join(ctx.root, vaultRelPath(pdfRel)))) {
+        if (!unique && (await isSymlink(outside ? pdfRel : join(ctx.root, vaultRelPath(pdfRel))))) {
           throw new CapabilityError('BAD_REQUEST', `${pdfRel} is a symlink`)
         }
         const note = await readFile(noteAbs, 'utf8').catch(() => null)
         if (note === null) throw new CapabilityError('NOT_FOUND', path)
         const values = {
-          ...prefillValues(tpl.fields, parseFrontmatter(note), localDate(new Date())),
+          ...fieldValuesFor(tpl.fields, vaultRelPath(path), note, localDate(new Date())),
           ...meta,
         }
         const missing = missingRequired(tpl.fields, values)
@@ -250,22 +326,32 @@ export function pdfCapabilities(deps: PdfCapabilityDeps) {
           )
         }
         const typstBin = await typst()
-        const { warnings } = await renderPdf({
-          typstBin,
-          vaultRoot: ctx.root,
-          templateDir: tpl.dir,
-          ...(tpl.language === undefined ? {} : { language: tpl.language }),
-          notePath: noteAbs,
-          outPath: pdfPath,
-          fields: tpl.fields,
-          meta: values,
-          diagrams: deps.diagrams,
-        })
-        const { size } = await stat(pdfPath)
-        // The vault's path as given or as resolved: an absolute `out` may name
-        // either.
-        const vaultPath = vaultPathOf(ctx.root, pdfPath) ?? vaultPathOf(realRoot, pdfPath)
-        return { pdfPath, vaultPath, bytes: size, warnings }
+        // A unique PDF is made aside and then placed, since Typst would
+        // replace whatever is at its output.
+        const aside = unique ? await mkdtemp(join(tmpdir(), 'holi-pdf-out-')) : null
+        try {
+          const made = aside === null ? pdfPath : join(aside, 'out.pdf')
+          const { warnings } = await renderPdf({
+            typstBin,
+            vaultRoot: ctx.root,
+            templateDir: tpl.dir,
+            ...(tpl.language === undefined ? {} : { language: tpl.language }),
+            notePath: noteAbs,
+            outPath: made,
+            fields: tpl.fields,
+            meta: values,
+            diagrams: deps.diagrams,
+          })
+          const placed =
+            aside === null ? pdfPath : await placeBeside(ctx.root, realRoot, pdfRel, made)
+          const { size } = await stat(placed)
+          // The vault's path as given or as resolved: an absolute `out` may
+          // name either.
+          const vaultPath = vaultPathOf(ctx.root, placed) ?? vaultPathOf(realRoot, placed)
+          return { pdfPath: placed, vaultPath, bytes: size, warnings }
+        } finally {
+          if (aside !== null) await rm(aside, { recursive: true, force: true })
+        }
       },
       text: ({ pdfPath, vaultPath, bytes, warnings }) =>
         [`${vaultPath ?? pdfPath} (${sizeText(bytes)})`, ...warnings].join('\n'),
