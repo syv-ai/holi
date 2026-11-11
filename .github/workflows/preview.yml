@@ -50,9 +50,7 @@ jobs:
           if-no-files-found: error
 
   build-windows:
-    # Pinned like the release workflow's Windows job, for stability only (its
-    # comment says why the node-gyp reason is not one).
-    runs-on: windows-2022
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
 
