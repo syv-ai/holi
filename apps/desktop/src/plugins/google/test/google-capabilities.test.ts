@@ -96,6 +96,19 @@ describe('the composer', () => {
     expect((calls[0]!.input as { mail: { html: string } }).mail.html).toBe('<p>Here it is.</p>')
   })
 
+  it('saveDraft and send preserve Bcc recipients through the UI door', async () => {
+    const { call, calls } = rig()
+    const mail = { ...MAIL, bcc: ['hidden@example.com'] }
+
+    await call('saveDraft', { draftId: 'd-1', mail })
+    await call('send', { draftId: 'd-1', mail })
+
+    expect(calls).toEqual([
+      { name: 'saveDraft', input: { draftId: 'd-1', mail } },
+      { name: 'sendMail', input: { draftId: 'd-1', mail } },
+    ])
+  })
+
   it('saveDraft returns the draft id the composer needs to update in place', async () => {
     expect(await rig().call('saveDraft', { mail: MAIL })).toEqual({ id: 'd-1' })
   })

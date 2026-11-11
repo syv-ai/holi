@@ -241,6 +241,7 @@ function composeParams(raw: unknown): ComposeWrite {
     throw new CapabilityError('BAD_REQUEST', 'mail.html must be a string')
   }
   const cc = addressesParam(m, 'cc')
+  const bcc = addressesParam(m, 'bcc')
   // A forward names the message whose attachments travel with it, never the
   // files: main fetches the bytes, so nothing base64 crosses the IPC seam.
   let forwardOf: { messageId: string } | undefined
@@ -257,6 +258,7 @@ function composeParams(raw: unknown): ComposeWrite {
     mail: {
       to: addressesParam(m, 'to'),
       ...(cc.length === 0 ? {} : { cc }),
+      ...(bcc.length === 0 ? {} : { bcc }),
       subject: text('subject'),
       body: text('body'),
       ...(typeof html === 'string' ? { html } : {}),

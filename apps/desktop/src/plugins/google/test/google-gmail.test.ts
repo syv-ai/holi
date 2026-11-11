@@ -2207,11 +2207,15 @@ describe('the composer surface', () => {
       expect(draft.markdown).toBe(markdown)
     })
 
-    it('carries cc, which is what a reply-all draft is for', async () => {
-      const raw = toBase64Url(buildRfc822({ ...MAIL, cc: ['cec@example.com'] }))
+    it('carries cc and bcc recipients back from an existing draft', async () => {
+      const raw = toBase64Url(
+        buildRfc822({ ...MAIL, cc: ['cec@example.com'], bcc: ['hidden@example.com'] }),
+      )
       const { api } = composer({ drafts: [{ id: 'd-1', raw }] })
+      const draft = await readDraft(api, 'd-1')
 
-      expect((await readDraft(api, 'd-1')).cc.map((a) => a.email)).toEqual(['cec@example.com'])
+      expect(draft.cc.map((a) => a.email)).toEqual(['cec@example.com'])
+      expect(draft.bcc.map((a) => a.email)).toEqual(['hidden@example.com'])
     })
 
     it('reports a 404 for a draft that is gone', async () => {

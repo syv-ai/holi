@@ -1140,6 +1140,7 @@ export interface DraftBody {
   threadId: string | null
   to: MailAddress[]
   cc: MailAddress[]
+  bcc: MailAddress[]
   subject: string
   /**
    * The markdown source, byte-exact, when `X-Holi-Source` says this draft came
@@ -1310,6 +1311,7 @@ export async function readDraft(api: GoogleApi, draftId: string): Promise<DraftB
     threadId: threadIdOf(message),
     to: parseAddresses(headerOf(payload, 'To')),
     cc: parseAddresses(headerOf(payload, 'Cc')),
+    bcc: parseAddresses(headerOf(payload, 'Bcc')),
     subject: headerOf(payload, 'Subject') ?? '',
     // The marker means the text/plain part IS the markdown that produced this
     // draft, so it round-trips byte-exact. Without it there is nothing here to
