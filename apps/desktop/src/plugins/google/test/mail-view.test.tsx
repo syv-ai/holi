@@ -42,7 +42,7 @@ const createTaskMock = vi.fn()
 /** Google's capabilities, by name, through the UI door. */
 const google: Record<string, (params: unknown) => unknown> = {
   status: () => ({ account: { sub: 'mail-view-account', email: 'ada@syv.ai' }, missingScopes: [] }),
-  accounts: () => ({
+  allAccounts: () => ({
     accounts: [{ sub: 'mail-view-account', email: 'ada@syv.ai' }],
     current: 'mail-view-account',
   }),

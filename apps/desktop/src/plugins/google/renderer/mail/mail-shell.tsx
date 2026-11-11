@@ -313,6 +313,12 @@ export function MailShell({ className }: { className?: string }) {
             onSelectFolder={(folder) => {
               void navigate(() => mail.setFolder(folder))
             }}
+            onSelectTab={(folder, unreadOnly) => {
+              void navigate(() => {
+                mail.setFolder(folder)
+                mail.setUnreadOnly(unreadOnly)
+              })
+            }}
             onCompose={() => startCompose()}
             onOpenDraft={openDraft}
             onOpenConnections={openConnections}

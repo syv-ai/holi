@@ -202,7 +202,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   }
 
   function closeTab(key: string) {
-    void saveBeforeClosing(() => setWs((w) => closeTabIn(w, key)))
+    void saveBeforeClosing(() => setWs((w) => closeTabIn(w, key)), true).catch(() => {})
   }
 
   function requestEntryClose(request: EntryCloseRequest) {

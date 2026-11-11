@@ -346,8 +346,10 @@ interface MailListProps {
   mail: MailState
   /** The account menu, full width at the top of the column. */
   account: ReactNode
-  /** Switch mailbox (or the starred pill); the shell also closes any reply. */
+  /** Switch mailbox from the mailbox menu. */
   onSelectFolder: (folder: MailFolder) => void
+  /** Change inbox/unread/starred state in one navigation transaction. */
+  onSelectTab: (folder: MailFolder, unreadOnly: boolean) => void
   onCompose: () => void
   onOpenDraft: (draft: DraftSummary) => void
   onOpenConnections: () => void
@@ -357,6 +359,7 @@ export function MailList({
   mail,
   account,
   onSelectFolder,
+  onSelectTab,
   onCompose,
   onOpenDraft,
   onOpenConnections,
@@ -519,13 +522,7 @@ export function MailList({
     mail.folder === 'starred' ? 'starred' : mail.unreadOnly && filterable ? 'unread' : 'all'
 
   const selectTab = (next: FilterTab) => {
-    if (next === 'starred') {
-      if (mail.folder !== 'starred') onSelectFolder('starred')
-      mail.setUnreadOnly(false)
-      return
-    }
-    if (mail.folder !== 'inbox') onSelectFolder('inbox')
-    mail.setUnreadOnly(next === 'unread')
+    onSelectTab(next === 'starred' ? 'starred' : 'inbox', next === 'unread')
   }
 
   return (

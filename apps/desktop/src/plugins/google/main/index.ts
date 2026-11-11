@@ -13,11 +13,11 @@ import { join } from 'node:path'
 import { pluginSettingValue } from '@holi/shared'
 import { readVaultSettings, writePluginSettings, type MainPlugin } from '../../../main/plugin-api'
 import { GOOGLE_INFO } from '../info'
-import { GoogleApi } from './api'
 import { openGoogleCache, type GoogleCache } from './cache'
 import type { CalendarOverrides } from './calendar'
 import { GOOGLE_NAMESPACES, googleCapabilities } from './capabilities'
 import { createGoogleData, type GoogleData } from './data'
+import { accountApi } from './account-api'
 import { googleSeed } from './seed'
 import { startGoogleTriggers } from './triggers'
 import type { GoogleSession } from './session'
@@ -46,9 +46,9 @@ export const googleMain: MainPlugin = {
       const cache = openGoogleCache(join(ctx.userData, `google-cache-${sub}.db`))
       cache.ensureShape()
       const data = createGoogleData({
-        // Bound to THIS account's session, not to whatever vault is active:
-        // the cache and the client it fills from have to be the same account.
-        api: () => new GoogleApi({ accessToken: () => session.getAccessToken() }),
+        // Resolve the current session rather than retaining the one present
+        // when this per-account cache was first created; reconnect replaces it.
+        api: accountApi(sub, (accountSub) => accounts.sessionForSub(accountSub)),
         cache,
       })
       bySub.set(sub, { data, cache })

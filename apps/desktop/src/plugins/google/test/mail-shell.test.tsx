@@ -7,7 +7,7 @@ import { render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { getDefaultStore } from 'jotai'
-import { activeRemoteAtom } from '@/plugin-api'
+import { activeRemoteAtom, saveBeforeClosing } from '@/plugin-api'
 import { MailShell } from '../renderer/mail/mail-shell'
 import { resetMailImagesForTests } from '../renderer/mail-images'
 import { resetMailFramesForTests } from '../renderer/mail-frames'
@@ -307,14 +307,17 @@ test('search sends Gmail grammar on Enter and escapes the folder', async () => {
   await waitFor(() => expect(searchMock).toHaveBeenLastCalledWith({ query: 'from:jane' }))
 })
 
-test('starred is Gmail’s is:starred', async () => {
+test('starred is one atomic navigation from Inbox and clears unread', async () => {
   const user = userEvent.setup()
   render(<MailShell />)
   await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Compose new email' }))
+  await screen.findByRole('region', { name: 'Compose mail' })
 
   await user.click(screen.getByRole('tab', { name: 'Starred' }))
 
   await waitFor(() => expect(searchMock).toHaveBeenLastCalledWith({ query: 'is:starred' }))
+  expect(screen.getByRole('tab', { name: 'Starred' })).toHaveAttribute('data-state', 'active')
 })
 
 test('archive takes the thread out at once and offers Undo', async () => {
@@ -425,6 +428,22 @@ test('a failed composition save blocks thread, folder, compose, and account navi
   await user.click(await screen.findByRole('menuitem', { name: 'ada@home.test' }))
   expect(useAccountMock).not.toHaveBeenCalled()
   expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('unsaved words')
+})
+
+test('the shell close flush rejects an offline inline composition and leaves it editable', async () => {
+  const user = userEvent.setup()
+  saveDraftMock.mockRejectedValue(new Error('offline'))
+  render(<MailShell />)
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: 'Compose new email' }))
+  const region = await screen.findByRole('region', { name: 'Compose mail' })
+  await user.type(within(region).getByRole('textbox', { name: 'Subject' }), 'pending')
+
+  let closed = false
+  await expect(saveBeforeClosing(() => (closed = true), true)).rejects.toThrow('offline')
+  expect(closed).toBe(false)
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+  expect(within(region).getByRole('textbox', { name: 'Subject' })).toHaveValue('pending')
 })
 
 test('Close restores the reader selection behind standalone Compose', async () => {

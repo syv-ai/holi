@@ -32,7 +32,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ChipInput } from './chip-input'
 import { SandboxedHtml } from './sandboxed-html'
-import { activeRemoteAtom, cn, plainMarkdownExtensions } from '@/plugin-api'
+import { activeRemoteAtom, cn, plainMarkdownExtensions, registerBuffer } from '@/plugin-api'
 import { composeFrom, type ComposeIntent } from './compose-intent'
 import { renderMailMarkdown } from './mail-markdown'
 import { mailHtmlToMarkdown } from './mail-unmarkdown'
@@ -394,6 +394,22 @@ export function MailComposer({
     const timer = setTimeout(() => void save().catch(() => {}), AUTOSAVE_IDLE_MS)
     return () => clearTimeout(timer)
   }, [to, cc, subject, markdown, save])
+
+  // Shell tab closes, vault changes, and quit all flush the shared buffer
+  // registry before unmounting editors. Joining it makes this composer part of
+  // those existing close decisions rather than relying on best-effort cleanup.
+  useEffect(
+    () =>
+      registerBuffer(
+        () => save(),
+        () => save(),
+        (frozen) => {
+          departingRef.current = frozen
+          setDeparting(frozen)
+        },
+      ),
+    [save],
+  )
 
   /**
    * A forced save on the way out, so a dismissed composer leaves its text in
