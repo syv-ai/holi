@@ -94,12 +94,14 @@ export interface TurnRouteDeps {
   /** A turn began or ended. At an end, `pending` is how much the session
    *  said was still in flight, 0 meaning done; null when it does not say. An
    *  end may answer the tree of the settle commit Holi made for the turn, for
-   *  the Stop hook to count the next prompt's changes from. */
+   *  the Stop hook to count the next prompt's changes from. At a start, `pid`
+   *  is the session's own process, when its hook says. */
   onTurn(
     remote: string,
     id: string,
     active: boolean,
     pending: number | null,
+    pid?: number,
   ): void | Promise<string | null>
   /** A status report (`status` reads it). */
   onStatus?(remote: string, id: string, status: unknown): void

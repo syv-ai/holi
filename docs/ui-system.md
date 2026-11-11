@@ -127,7 +127,9 @@ would only fight them.
   - **A, arrive**: entering or leaving the layout, leaving faster than arriving: a popup grows out
     of its trigger and shrinks back (`motion-in-origin`, `motion-out-origin`), anything else fades
     in where it is (`motion-in-fade`), and a view's headline rises into place
-    (`motion-in-rise`; its fade alone under reduced motion). An animation, not a transition,
+    (`motion-in-rise`; its fade alone under reduced motion). A view paged sideways comes in from
+    the side it was paged towards (`motion-in-from-end`, `motion-in-from-start`; their fade alone
+    under reduced motion), as the Calendar does on a swipe. An animation, not a transition,
     because Radix `Presence` waits for `animationend`. One exception is a transition, so a second
     press mid-way reverses from where it is: a drawer's width.
   - **K, acknowledge**: one beat, once, for an act the user committed (`motion-ack-bloom|tick|flash|nudge`
