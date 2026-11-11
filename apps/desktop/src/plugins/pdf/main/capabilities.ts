@@ -175,7 +175,7 @@ async function placeBeside(
   for (let n = 1; n <= MAX_NUMBERED; n++) {
     const location = await candidateLocation(root, realRoot, numberedPath(rel, n))
     const { candidate, parent, abs } = location
-    refusePrivate([candidate, vaultPathOf(realRoot, parent)])
+    refusePrivate([candidate, vaultPathOf(realRoot, parent), vaultPathOf(realRoot, abs)])
 
     // The leaf is only a candidate name. In particular, do not resolve an
     // existing symlink: it occupies this name whether it points inside, out of,
@@ -305,9 +305,9 @@ export function pdfCapabilities(deps: PdfCapabilityDeps) {
         const pdfPath = outside ? pdfRel : (location?.abs ?? (await inVault(ctx.root, pdfRel)))
         refusePrivate([
           outside ? vaultPathOf(ctx.root, pdfPath) : vaultRelPath(pdfRel),
-          unique && location !== null
-            ? vaultPathOf(realRoot, location.parent)
-            : vaultPathOf(realRoot, pdfPath),
+          ...(unique && location !== null
+            ? [vaultPathOf(realRoot, location.parent), vaultPathOf(realRoot, location.abs)]
+            : [vaultPathOf(realRoot, pdfPath)]),
         ])
         if (!unique && (await isSymlink(outside ? pdfRel : join(ctx.root, vaultRelPath(pdfRel))))) {
           throw new CapabilityError('BAD_REQUEST', `${pdfRel} is a symlink`)
