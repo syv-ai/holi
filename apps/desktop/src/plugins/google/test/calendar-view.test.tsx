@@ -195,8 +195,17 @@ describe('the calendar view', () => {
     fireEvent.wheel(root, { deltaX: 120, ctrlKey: true })
     expect(title()).toBe(before)
 
-    // A swipe and its momentum: one burst of sideways events.
-    for (let i = 0; i < 12; i++) fireEvent.wheel(root, { deltaX: 30, deltaY: 2 })
+    // One input burst, even when a slow render delays handling its events.
+    for (let i = 0; i < 12; i++) {
+      const event = new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        deltaX: 30,
+        deltaY: 2,
+      })
+      Object.defineProperty(event, 'timeStamp', { value: i * 16 })
+      fireEvent(root, event)
+    }
     await waitFor(() => expect(title()).not.toBe(before))
     await waitFor(() => expect(from()).not.toBe(first))
     expect(Math.round((from() - first) / 86_400_000)).toBe(7)
@@ -209,7 +218,16 @@ describe('the calendar view', () => {
     const content = root.querySelector<HTMLElement>('[data-slot="event-calendar-content"]')!
     const first = Date.parse((agendaMock.mock.calls.at(-1)![0] as { from: string }).from)
 
-    for (let i = 0; i < 12; i++) fireEvent.wheel(root, { deltaX: -30, deltaY: 2 })
+    for (let i = 0; i < 12; i++) {
+      const event = new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        deltaX: -30,
+        deltaY: 2,
+      })
+      Object.defineProperty(event, 'timeStamp', { value: i * 16 })
+      fireEvent(root, event)
+    }
     await waitFor(() => {
       const from = Date.parse((agendaMock.mock.calls.at(-1)![0] as { from: string }).from)
       expect(Math.round((first - from) / 86_400_000)).toBe(7)

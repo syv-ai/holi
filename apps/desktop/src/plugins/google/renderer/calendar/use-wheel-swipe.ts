@@ -12,11 +12,9 @@ import { useEventCalendar } from '@/components/ui/event-calendar/event-calendar'
 
 /** Horizontal wheel travel (px) a swipe needs before it pages. */
 const SWIPE_THRESHOLD = 50
-/** A quiet gap (ms) that ends a swipe. A trackpad's momentum keeps sending
- *  wheel events until it settles, so one swipe is one burst of them. The gap
- *  is timed from when the last event was handled, not from its timestamp:
- *  paging re-renders the calendar, and the events that queue up behind that
- *  render must not read as a new swipe. */
+/** A quiet gap (ms) between input timestamps that ends a swipe. A trackpad's
+ *  momentum keeps sending events until it settles. Their timestamps keep
+ *  queued input in the same burst even when rendering delays its handling. */
 const SWIPE_IDLE_MS = 180
 
 interface SwipeState {
