@@ -573,9 +573,11 @@ describe('ActiveVault — commit', () => {
   })
 
   it('names a count in the message when several changed', async () => {
-    const { dir } = await vault({ rescanDebounceMs: 30, commitQuietMs: 120 })
+    // Committed at once rather than by the quiet timer: on a slow machine the
+    // gap between two writes can outlast it, and the files land in two commits.
+    const { active, dir } = await vault({ commitQuietMs: 60_000, healIntervalMs: 60_000 })
     for (const n of ['a', 'b', 'c']) await writeFile(join(dir, `${n}.md`), `${n}\n`, 'utf8')
-    await waitFor('the commit', async () => (await subject(dir)) !== 'seed')
+    await active.commitNow()
 
     expect(await subject(dir)).toBe('Update 3 files')
   })
