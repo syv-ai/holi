@@ -49,7 +49,7 @@ const settle = () => new Promise((r) => setTimeout(r, 10))
 
 function rig(
   opts: {
-    commitNow?: () => Promise<string | null>
+    commitNow?: () => Promise<string | null | 'busy'>
     snapshot?: () => Promise<string | null>
     turnSafetyMs?: number
     idleConfirmMs?: number
@@ -162,6 +162,24 @@ describe('the working set', () => {
       ['b', 'end-sha'],
       ['a', 'tree-a'],
     ])
+  })
+
+  it("answers the last turn out's Stop with the settle commit, and no other", async () => {
+    // Its tree is where that turn left the vault, the commit's transforms
+    // included; a turn that ended under another gets nothing to wait for.
+    const r = rig({ snapshot: () => Promise.resolve('tree-a') })
+    r.coordinator.begin('a')
+    r.coordinator.begin('b')
+    await expect(r.coordinator.end('a')).resolves.toBeNull()
+    await expect(r.coordinator.end('b')).resolves.toBe('end-sha')
+    await expect(r.coordinator.end('ghost')).resolves.toBeNull()
+
+    // Nothing landed (a clean tree, or a refused commit): HEAD may lack the
+    // turn's own edits, so it is not answered.
+    const clean = rig({ commitNow: () => Promise.resolve(null) })
+    clean.coordinator.begin('a')
+    await expect(clean.coordinator.end('a')).resolves.toBeNull()
+    expect(clean.appended).toEqual([expect.objectContaining({ end: 'base-sha' })])
   })
 
   it('ends such a turn at HEAD when the snapshot fails', async () => {
@@ -377,19 +395,22 @@ describe('what is not recorded', () => {
     expect(r.appended).toEqual([])
   })
 
-  it('falls back to head() when the turn committed nothing', async () => {
-    const r = rig({ commitNow: () => Promise.resolve(null) })
+  it('falls back to head() when the turn committed nothing, asking once', async () => {
+    // A clean tree is not asked again: the Stop hook waits on this answer.
+    let asks = 0
+    const r = rig({ commitNow: () => (asks++, Promise.resolve(null)) })
     r.coordinator.begin('a')
     r.coordinator.end('a')
     await settle()
     expect(r.appended[0]).toMatchObject({ base: 'base-sha', end: 'base-sha' })
+    expect(asks).toBe(1)
   })
 
-  it("asks again when the resume's own commit held the tree", async () => {
-    // Resuming the vault starts a commit of its own, so the first ask can
-    // answer null with the turn's work still landing.
+  it("asks again when the resume's own pull refused the commit", async () => {
+    // Resuming the vault starts a pull of its own, so the first ask can
+    // answer busy with the turn's work still uncommitted.
     let asks = 0
-    const r = rig({ commitNow: () => Promise.resolve(asks++ === 0 ? null : 'settle-sha') })
+    const r = rig({ commitNow: () => Promise.resolve(asks++ === 0 ? 'busy' : 'settle-sha') })
     r.coordinator.begin('a')
     r.coordinator.end('a')
     await settle()
