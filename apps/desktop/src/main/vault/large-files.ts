@@ -24,6 +24,9 @@ export const DEFAULT_MAX_COMMITTED_FILE_BYTES = VAULT_SETTING_DEFAULTS.maxCommit
 export interface HeldBackFile {
   path: string
   bytes: number
+  /** The cap it was held back against, so what reports it names the limit
+   *  that applied rather than re-reading the setting. */
+  limit: number
 }
 
 /**
@@ -42,7 +45,7 @@ export function partitionBySize(
   for (const path of dirtyPaths) {
     const bytes = sizeOf(path)
     if (bytes !== null && bytes > threshold) {
-      heldBack.push({ path, bytes })
+      heldBack.push({ path, bytes, limit: threshold })
     } else {
       commit.push(path)
     }

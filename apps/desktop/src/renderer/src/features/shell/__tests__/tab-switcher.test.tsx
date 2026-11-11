@@ -2,7 +2,7 @@ import { EditorView } from '@codemirror/view'
 import { Provider, createStore } from 'jotai'
 import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
-import { TabSwitcher } from '../tab-switcher'
+import { TabSwitcher, TabSwitcherButton } from '../tab-switcher'
 import { expect, test, vi } from 'vitest'
 
 function Host({ onSelect }: { onSelect: (id: string) => void }) {
@@ -14,7 +14,10 @@ function Host({ onSelect }: { onSelect: (id: string) => void }) {
       onSelect={onSelect}
       row={(id) => ({ name: id, content: id })}
     >
-      <div id="editor" />
+      <div>
+        <div id="editor" />
+        <TabSwitcherButton>2 tabs</TabSwitcherButton>
+      </div>
     </TabSwitcher>
   )
 }
@@ -64,4 +67,27 @@ test('switching from CodeMirror releases to select and Escape never reaches the 
   expect(screen.queryByRole('group', { name: 'Switch tab' })).toBeNull()
   expect(document.activeElement).toBe(editor.contentDOM)
   editor.destroy()
+})
+
+test('the tab count opens the list pinned: Control let go keeps it, the count closes it, Enter opens', async () => {
+  const onSelect = vi.fn()
+  render(
+    <Provider store={createStore()}>
+      <Host onSelect={onSelect} />
+    </Provider>,
+  )
+  const count = screen.getByRole('button', { name: '2 tabs' })
+  fireEvent.pointerDown(count)
+  fireEvent.click(count)
+  expect(screen.getByRole('group', { name: 'Switch tab' })).toBeTruthy()
+  fireEvent.keyUp(window, { key: 'Control', ctrlKey: false })
+  expect(screen.getByRole('group', { name: 'Switch tab' })).toBeTruthy()
+  fireEvent.pointerDown(count)
+  fireEvent.click(count)
+  await waitFor(() => expect(screen.queryByRole('group', { name: 'Switch tab' })).toBeNull())
+  expect(onSelect).not.toHaveBeenCalled()
+
+  fireEvent.click(count)
+  fireEvent.keyDown(window, { key: 'Enter' })
+  await waitFor(() => expect(onSelect).toHaveBeenCalledWith('second'))
 })
