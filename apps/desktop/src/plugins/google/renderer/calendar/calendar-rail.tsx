@@ -32,6 +32,7 @@ import { CalendarIcon, UsersIcon, VideoIcon } from 'lucide-react'
 import type { CalendarChoice, GoogleCalendarItem, GoogleEventData } from '../calendar-data'
 import { CalendarsMenu } from './calendars-menu'
 import { WEEK_STARTS_ON, shortDay, timeOf } from './calendar-format'
+import { useTimeFormat } from './calendar-settings'
 
 // The event calendar resolves this same default when no timeZone prop is
 // passed; matching it keeps the rail's dots aligned with the grid's days.
@@ -257,6 +258,7 @@ function DaySheetRows({
     event: React.MouseEvent<HTMLButtonElement>,
   ) => void
 }) {
+  const clock = useTimeFormat()
   if (occurrences.length === 0) {
     return <p className="text-muted-foreground px-2 py-4 text-xs">Nothing on this day.</p>
   }
@@ -293,7 +295,7 @@ function DaySheetRows({
                   style={{ '--swatch': occurrence.event.color } as CSSProperties}
                 />
                 <span className="shrink-0 tabular-nums">
-                  {occurrence.allDay ? 'All day' : timeOf(occurrence.start)}
+                  {occurrence.allDay ? 'All day' : timeOf(occurrence.start, clock)}
                 </span>
                 {data?.location && (
                   <>

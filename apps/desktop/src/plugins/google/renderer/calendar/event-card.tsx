@@ -50,7 +50,8 @@ import {
 import type { GoogleEventData } from '../calendar-data'
 import { descriptionHtml } from '../event-description'
 import { SandboxedHtml } from '../sandboxed-html'
-import { dayMonth, longDay, timeOf } from './calendar-format'
+import { dayMonth, longDay, timeOf, type TimeFormat } from './calendar-format'
+import { useTimeFormat } from './calendar-settings'
 import { CalendarDot, DateField, TimeSelect } from './event-fields'
 
 /** The edit buffer. Dates are "yyyy-MM-dd", times are "HH:mm". */
@@ -112,7 +113,7 @@ function Dot() {
 
 /** The "when" split into a date part and (for timed events) a time-range part,
  *  respecting all-day + multi-day spans. */
-function whenParts(draft: EventDraft): { date: string; time: string | null } {
+function whenParts(draft: EventDraft, clock: TimeFormat): { date: string; time: string | null } {
   const start = toDate(draft.date, draft.allDay ? '00:00' : draft.start)
   const sameDay = draft.date === draft.dateEnd
   if (draft.allDay) {
@@ -126,11 +127,11 @@ function whenParts(draft: EventDraft): { date: string; time: string | null } {
   const end = toDate(draft.dateEnd, draft.end)
   if (!sameDay) {
     return {
-      date: `${dayMonth(start)}, ${timeOf(start)} - ${dayMonth(end)}, ${timeOf(end)}`,
+      date: `${dayMonth(start)}, ${timeOf(start, clock)} - ${dayMonth(end)}, ${timeOf(end, clock)}`,
       time: null,
     }
   }
-  return { date: longDay(start), time: `${timeOf(start)} - ${timeOf(end)}` }
+  return { date: longDay(start), time: `${timeOf(start, clock)} - ${timeOf(end, clock)}` }
 }
 
 /** Inclusive all-day span in days. */
@@ -162,7 +163,7 @@ const KIND_LABELS: Partial<Record<GoogleEventData['kind'], string>> = {
 /** The clock detail: a strong date/time line, then a muted meta line (all-day
  *  or duration, recurrence, free time) with dot separators between segments. */
 function WhenDetail({ draft }: { draft: EventDraft }) {
-  const parts = whenParts(draft)
+  const parts = whenParts(draft, useTimeFormat())
   const days = draft.allDay ? allDayDays(draft) : 0
   const meta = [
     draft.data?.recurring ? 'Repeats' : null,

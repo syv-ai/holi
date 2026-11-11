@@ -221,7 +221,7 @@ function EventCalendarMonthView({
           data-slot="event-calendar-month-header"
           // @container scopes the narrow-label breakpoint to the header row
           className={cn(
-            "@container grid border-b",
+            "@container grid border-b border-(--ec-grid-line)",
             viewConfig.classNames?.monthHeader
           )}
           style={{ gridTemplateColumns }}
@@ -231,7 +231,7 @@ function EventCalendarMonthView({
               role="columnheader"
               aria-hidden
               className={cn(
-                "border-e px-2 py-1.5",
+                "border-e border-(--ec-grid-line) px-2 py-1.5",
                 viewConfig.classNames?.weekNumber
               )}
             />
@@ -473,7 +473,7 @@ function EventCalendarMonthWeek({
       role="row"
       data-slot="event-calendar-month-row"
       className={cn(
-        "relative grid min-h-0 border-b last:border-b-0",
+        "relative grid min-h-0 border-b border-(--ec-grid-line) last:border-b-0",
         viewConfig.classNames?.monthRow
       )}
       style={{ gridTemplateColumns }}
@@ -483,7 +483,7 @@ function EventCalendarMonthWeek({
           role="rowheader"
           data-slot="event-calendar-week-number"
           className={cn(
-            "text-muted-foreground border-e px-2 pt-1 tabular-nums",
+            "text-muted-foreground border-e border-(--ec-grid-line) px-2 pt-1 tabular-nums",
             viewConfig.classNames?.weekNumber
           )}
         >
@@ -1023,7 +1023,7 @@ function EventCalendarMonthCell({
       )}
       className={cn(
         "group/ec-cell relative flex min-h-0 min-w-0 flex-col overflow-hidden",
-        !isLast && "border-e",
+        !isLast && "border-e border-(--ec-grid-line)",
         isOutside && !settings.showOutsideDays && "invisible",
         isOff && offClassName,
         isToday &&

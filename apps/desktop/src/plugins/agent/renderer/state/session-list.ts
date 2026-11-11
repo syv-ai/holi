@@ -238,7 +238,7 @@ export const NO_FILTER: SessionFilter = { states: [], source: 'all', archived: f
 export const filterActive = (f: SessionFilter): boolean =>
   f.states.length > 0 || f.source !== 'all' || f.archived
 
-/** Whether a row passes the search and the filter. */
+/** Whether a row passes the search and the filter. @public */
 export function rowMatches(row: SessionRow, query: string, filter: SessionFilter): boolean {
   const { item, state } = row
   if (!filter.archived && item.archived === true) return false
@@ -393,6 +393,13 @@ export const sessionRowsAtom = atom((get): SessionRow[] => {
     const endedAt = Math.max(item.endedAt ?? 0, ended[item.key] ?? 0) || undefined
     return { item, current, state: rowState(item, seen, current, endedAt) }
   })
+})
+
+/** History's rows: those that pass the search and the filter. */
+export const historyRowsAtom = atom((get): SessionRow[] => {
+  const query = get(sessionQueryAtom)
+  const filter = get(sessionFilterAtom)
+  return get(sessionRowsAtom).filter((r) => rowMatches(r, query, filter))
 })
 
 /**

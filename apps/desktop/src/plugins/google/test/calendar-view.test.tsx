@@ -10,8 +10,12 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { localDate } from '@holi/shared'
 import { activeRemoteAtom } from '@/plugin-api'
 import { CalendarView } from '../renderer/calendar/calendar-view'
-import { clockLabel } from '../renderer/calendar/calendar-format'
+import { clockLabel, type TimeFormat } from '../renderer/calendar/calendar-format'
+import { GOOGLE_INFO } from '../info'
 import { rangeWindow, toCalendarItem, type GoogleEvent } from '../renderer/calendar-data'
+
+/** The clock the view writes on when no settings file answers. */
+const clock = GOOGLE_INFO.settings?.find((s) => s.key === 'timeFormat')?.default as TimeFormat
 
 const renderCounts = vi.hoisted(() => ({ calendar: 0, timeSelect: 0 }))
 
@@ -104,7 +108,7 @@ const taskMock = vi.fn()
 
 const google: Record<string, (params: Record<string, unknown>) => unknown> = {
   'google.status': () => ({ account: { email: ME }, missingScopes: [] }),
-  'google.accounts': () => ({ accounts: [{ sub: '1', email: ME }], current: '1' }),
+  'google.allAccounts': () => ({ accounts: [{ sub: '1', email: ME }], current: '1' }),
   'google.agenda': (p) => agendaMock(p),
   'google.agendaCached': () => null,
   'google.calendars': () => [
@@ -195,6 +199,27 @@ describe('the calendar view', () => {
     expect(new Date(window.from).getDay()).toBe(1)
   })
 
+  test('month overflow keeps a long event list inside the bounded scroller', async () => {
+    agendaMock.mockResolvedValue(
+      Array.from({ length: 12 }, (_, index) =>
+        googleEvent({ id: `overflow-${index}`, title: `Overflow event ${index}` }),
+      ),
+    )
+    const user = userEvent.setup()
+    render(<CalendarView />)
+    await user.click(await screen.findByRole('button', { name: 'Select view' }))
+    await user.click(await screen.findByText('Month'))
+    await user.click(await screen.findByRole('button', { name: /more/i }))
+
+    const overflow = await screen.findByRole('dialog')
+    expect(within(overflow).getByText('Overflow event 11')).toBeInTheDocument()
+    const viewport = overflow.querySelector('[data-slot="scroll-area-viewport"]')
+    expect(viewport).toBeInTheDocument()
+    expect(viewport?.parentElement).toHaveClass(
+      '**:data-[slot=scroll-area-viewport]:max-h-(--ec-more-max-height,16rem)',
+    )
+  })
+
   test('an event of your own opens, and editing it reschedules it by its Google id', async () => {
     const user = userEvent.setup()
     render(<CalendarView />)
@@ -248,7 +273,9 @@ describe('the calendar view', () => {
     await user.paste('Changed title')
     await user.click(form.getByRole('combobox', { name: 'From' }))
     await user.keyboard('{ArrowDown}{ArrowDown}{Enter}')
-    expect(form.getByRole('combobox', { name: 'From' })).toHaveTextContent(clockLabel('09:30'))
+    expect(form.getByRole('combobox', { name: 'From' })).toHaveTextContent(
+      clockLabel('09:30', clock),
+    )
     await user.click(form.getByRole('button', { name: 'Cancel' }))
 
     await user.click((await screen.findAllByText('Focus block'))[0]!)
@@ -256,7 +283,9 @@ describe('the calendar view', () => {
     expect(reopened.getByText('Focus block')).toBeInTheDocument()
     await user.click(reopened.getByRole('button', { name: 'Edit' }))
     expect(await reopened.findByRole('textbox', { name: 'Title' })).toHaveValue('Focus block')
-    expect(reopened.getByRole('combobox', { name: 'From' })).toHaveTextContent(clockLabel('09:00'))
+    expect(reopened.getByRole('combobox', { name: 'From' })).toHaveTextContent(
+      clockLabel('09:00', clock),
+    )
     expect(rescheduleMock).not.toHaveBeenCalled()
   })
 

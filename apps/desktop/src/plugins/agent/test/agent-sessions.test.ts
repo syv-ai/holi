@@ -70,6 +70,7 @@ function setup(initial: Row[] = []) {
     attach: async () => '',
     write: () => {},
     resize: () => {},
+    setAppearance: () => {},
     paste: (id, text) => {
       pastes.push([id, text])
       return true
@@ -83,6 +84,8 @@ function setup(initial: Row[] = []) {
   const sent: Array<[string, unknown]> = []
   const message = vi.fn(async (_channel: SessionChannel, _text: string) => {})
   const pauses: string[] = []
+  /** The processes still running, for the pid check. */
+  const running = new Set<number>()
   const vault: AgentVault = {
     remote: REMOTE,
     root: ROOT,
@@ -111,9 +114,11 @@ function setup(initial: Row[] = []) {
     idleRecheckMs: 5,
     idleConfirmMs: 10,
     leaveCapMs: 50,
+    alive: (pid) => running.has(pid),
     log: () => {},
   })
   return {
+    running,
     sessions,
     cli,
     opened,
@@ -179,6 +184,88 @@ describe('agent sessions', () => {
     expect(t.sessions.sessions()[0]?.state).toBe('idle')
     t.sessions.noteTurn(REMOTE, 'aaaaaaaa', true)
     expect(t.sessions.sessions()[0]?.state).toBe('working')
+  })
+
+  it("keeps a working session the listing lost while its process runs, by the hook's pid", async () => {
+    const t = setup([row('aaaaaaaa')])
+    await t.attach()
+    t.running.add(4242)
+    // A turn from an id the listing does not name, as after a resume.
+    t.sessions.noteTurn(REMOTE, 'bbbbbbbb', true, null, 4242)
+    await t.sessions.refresh()
+    expect(t.pauses).toEqual(['the assistant is working'])
+    // Another start would take the pause again had the turn been forgotten.
+    t.sessions.noteTurn(REMOTE, 'cccccccc', true)
+    expect(t.pauses).toHaveLength(1)
+
+    // Its process dies: the next reread lets it go.
+    t.running.delete(4242)
+    t.sessions.noteTurn(REMOTE, 'cccccccc', false)
+    await t.sessions.refresh()
+    t.sessions.noteTurn(REMOTE, 'dddddddd', true)
+    expect(t.pauses).toHaveLength(2)
+  })
+
+  it("keeps the hook's pid when a listing read finishes with the previous process's row", async () => {
+    const t = setup([row('aaaaaaaa', { status: 'busy', state: 'working', pid: 1111 })])
+    await t.attach()
+    t.running.add(2222)
+    t.sessions.noteTurn(REMOTE, 'aaaaaaaa', true, null, 2222)
+    await t.sessions.refresh()
+    t.setListing([])
+    await t.sessions.refresh()
+    t.sessions.noteTurn(REMOTE, 'bbbbbbbb', true)
+    expect(t.pauses).toHaveLength(1)
+  })
+
+  it('holds a turn on the listing pid when the process the hook reported has gone', async () => {
+    const t = setup([row('aaaaaaaa')])
+    await t.attach()
+    t.running.add(2222)
+    t.sessions.noteTurn(REMOTE, 'aaaaaaaa', true, null, 1111)
+    t.setListing([row('aaaaaaaa', { status: 'busy', state: 'working', pid: 2222 })])
+    await t.sessions.refresh()
+    t.setListing([])
+    await t.sessions.refresh()
+    t.sessions.noteTurn(REMOTE, 'bbbbbbbb', true)
+    expect(t.pauses).toHaveLength(1)
+  })
+
+  it('follows the listing to a new process when no hook has reported one', async () => {
+    const t = setup([row('aaaaaaaa', { status: 'busy', state: 'working', pid: 1111 })])
+    await t.attach()
+    t.running.add(2222)
+    t.setListing([row('aaaaaaaa', { status: 'busy', state: 'working', pid: 2222 })])
+    await t.sessions.refresh()
+    t.setListing([])
+    await t.sessions.refresh()
+    t.sessions.noteTurn(REMOTE, 'bbbbbbbb', true)
+    expect(t.pauses).toHaveLength(1)
+  })
+
+  it('forgets a working session the listing no longer names when no process is known', async () => {
+    const t = setup([row('aaaaaaaa')])
+    await t.attach()
+    // A hook older than the pid says none.
+    t.sessions.noteTurn(REMOTE, 'bbbbbbbb', true)
+    await t.sessions.refresh()
+    t.sessions.noteTurn(REMOTE, 'cccccccc', true)
+    expect(t.pauses).toHaveLength(2)
+  })
+
+  it('checks the process the listing named once the listing loses the session', async () => {
+    const t = setup([row('aaaaaaaa', { status: 'busy', state: 'working', pid: 4343 })])
+    t.running.add(4343)
+    await t.attach()
+    t.setListing([])
+    await t.sessions.refresh()
+    t.sessions.noteTurn(REMOTE, 'bbbbbbbb', true)
+    expect(t.pauses).toHaveLength(1)
+    t.running.delete(4343)
+    t.sessions.noteTurn(REMOTE, 'bbbbbbbb', false)
+    await t.sessions.refresh()
+    t.sessions.noteTurn(REMOTE, 'cccccccc', true)
+    expect(t.pauses).toHaveLength(2)
   })
 
   it('holds sync for a turn an outside driver brackets, which the listing never forgets', async () => {
@@ -366,7 +453,7 @@ describe('launched sessions', () => {
   it('start with their options and no terminal', async () => {
     const { sessions, cli, opened, attach } = setup()
     await attach()
-    const args = { name: 'Tidy', prompt: 'tidy the inbox', model: 'opus' }
+    const args = { name: 'Tidy', prompt: 'tidy the inbox', model: 'opus', deny: ['WebFetch'] }
     expect(await sessions.launch(args)).toEqual({ ok: true, sessionId: 'launch00' })
     expect(cli.startBg).toHaveBeenCalledWith(expect.anything(), args)
     expect(opened).toEqual([])

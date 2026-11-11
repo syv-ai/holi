@@ -111,15 +111,18 @@ test('walks naming → plugins → settings → build → threshold without crea
   expect(within(settings).getByRole('group', { name: 'Keep a daily note' })).toBeInTheDocument()
 
   // Answer something, so the write would fire if it were going to.
-  await userEvent.click(within(settings).getByRole('radio', { name: 'Today’s note' }))
+  await userEvent.click(within(settings).getByRole('radio', { name: 'Dark' }))
   await create()
 
   // The threshold builds first, then says ready.
   await waitFor(() => expect(activeAct()).toHaveAttribute('data-act', 'threshold'))
   expect(within(activeAct()).getByText(/building your vault/i)).toBeInTheDocument()
-  await userEvent.click(
-    await within(activeAct()).findByRole('button', { name: /open vault/i }, BUILT),
-  )
+  const threshold = within(activeAct())
+  const openVault = await threshold.findByRole('button', { name: /open vault/i }, BUILT)
+  expect(threshold.getByText('Search').parentElement).toHaveTextContent('⌘K')
+  expect(threshold.getByText('New document').parentElement).toHaveTextContent('⌘N')
+  expect(threshold.getByText('Agent sessions').parentElement).toHaveTextContent('⌘J')
+  await userEvent.click(openVault)
   expect(onDismiss).toHaveBeenCalled()
 
   // ── The promise. No repo, no vault, no settings, no refreshed list. ────────

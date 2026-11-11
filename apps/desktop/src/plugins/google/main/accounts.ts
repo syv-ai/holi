@@ -30,6 +30,31 @@ interface ConnectedAccount extends GoogleAccount {
   sub: string
 }
 
+/**
+ * A vault's Google connection as Holi knows it without asking Google: a grant
+ * Google refuses is dropped at the next call that meets it, and each vault
+ * that used it is remembered as needing a reconnect, as is one still linked to
+ * an account that is gone.
+ */
+type GoogleConnectionState = 'connected' | 'missing-scope' | 'needs-reconnect' | 'not-connected'
+
+/** One vault's connection, for its own agent: its account alone, never
+ *  another vault's name or account, and no tokens. */
+export interface GoogleAccountsOverview {
+  remote: string
+  state: GoogleConnectionState
+  /** The account this vault uses, while it is connected. */
+  account:
+    | (ConnectedAccount & {
+        missingScopes: string[]
+        /** How many vaults on this machine besides this one use it. A count,
+         *  never their names: vaults are isolated. */
+        otherVaults: number
+      })
+    | null
+  client: { id: string; source: GoogleClientSource }
+}
+
 export interface GoogleAccountsManager {
   /** Every connected account, for the picker. */
   list(): ConnectedAccount[]
@@ -46,6 +71,8 @@ export interface GoogleAccountsManager {
   link(remote: string, sub: string): Promise<void>
   /** Forget this vault's choice. Emphatically not a disconnect. */
   unlinkVault(remote: string): Promise<void>
+  /** This vault's connection and its state, the one place that works it out. */
+  overview(remote: string): Promise<GoogleAccountsOverview>
   /** Revoke at Google, drop the record, unlink every vault pointing at it. */
   removeAccount(sub: string): Promise<void>
   /** Fires for a connect, a removal, and a dead grant, naming the account that
@@ -115,16 +142,25 @@ export async function createGoogleAccounts(
       await persist({ ...accounts, [sub]: auth })
     },
     async remove() {
-      const next = { ...accounts }
-      delete next[sub]
-      // A dead grant reaches here (session.#refresh on a 400), so the cache
-      // scoping hung off `onChange` fires for it too, not only for a button.
-      await persist(next)
-      sessions.delete(sub)
+      await dropTokens(sub)
       await deps.vaults.unlinkAccount(sub)
       emit(sub)
     },
+    async expire() {
+      await dropTokens(sub)
+      await deps.vaults.expireAccount(sub)
+      // Through `onChange` too, so the cache scoping hung off it fires for a
+      // dead grant and not only for a button.
+      emit(sub)
+    },
   })
+
+  const dropTokens = async (sub: string): Promise<void> => {
+    const next = { ...accounts }
+    delete next[sub]
+    await persist(next)
+    sessions.delete(sub)
+  }
 
   /** Memoized: two vaults on one account must share ONE session, because
    *  `#refreshing` is that session's single-flight latch. */
@@ -233,6 +269,37 @@ export async function createGoogleAccounts(
       emit(null)
     },
 
+    async overview(remote) {
+      const links = await deps.vaults.all()
+      const sub = links[remote] ?? null
+      const stored = sub === null ? undefined : accounts[sub]
+      const { id, source } = currentClient()
+      const client = { id, source }
+      if (sub === null || stored === undefined) {
+        return {
+          remote,
+          state:
+            sub !== null || (await deps.vaults.needsReconnect(remote))
+              ? 'needs-reconnect'
+              : 'not-connected',
+          account: null,
+          client,
+        }
+      }
+      const missingScopes = sessionForSub(sub)?.missingScopes() ?? []
+      return {
+        remote,
+        state: missingScopes.length > 0 ? 'missing-scope' : 'connected',
+        account: {
+          sub,
+          email: stored.email,
+          missingScopes,
+          otherVaults: Object.entries(links).filter(([r, s]) => r !== remote && s === sub).length,
+        },
+        client,
+      }
+    },
+
     removeAccount,
 
     onChange(cb) {
@@ -300,7 +367,11 @@ export async function createGoogleAccounts(
   }
 
   async function removeAccount(sub: string): Promise<void> {
-    if (accounts[sub] === undefined) return
+    if (accounts[sub] === undefined) {
+      // Already refused by Google: asked to remove it, its vaults let go too.
+      await deps.vaults.unlinkAccount(sub)
+      return
+    }
     // Revoking server-side is the point: dropping only the local copy leaves a
     // live grant on someone's Google account with nothing in Holi to show for
     // it. A failed revoke still clears locally: the user asked for this, and
@@ -310,7 +381,12 @@ export async function createGoogleAccounts(
   }
 
   async function dropAccount(sub: string): Promise<void> {
-    if (accounts[sub] === undefined) return
+    if (accounts[sub] === undefined) {
+      // A refresh refused during the revoke already dropped it, leaving its
+      // vaults marked for a reconnect the person has just declined.
+      await deps.vaults.unlinkAccount(sub)
+      return
+    }
     const next = { ...accounts }
     delete next[sub]
     await persist(next)

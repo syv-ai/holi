@@ -417,9 +417,8 @@
 .onboarding-ritual .obrit-join-list {
   max-height: 46vh;
   overflow-y: auto;
-  /* The app-wide gutter rule keys on the Tailwind overflow utilities; this list
-     declares its own overflow, so it reserves its own gutter. The rule is "the
-     gutter goes wherever the overflow is declared", not "on every scroller". */
+  /* Reserves the app scrollbar's gutter (index.css, Scrollbars) from the
+     start, so the list does not narrow when it grows long enough to scroll. */
   scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;

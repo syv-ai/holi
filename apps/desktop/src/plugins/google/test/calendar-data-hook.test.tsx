@@ -56,6 +56,37 @@ afterEach(() => {
 })
 
 describe('useGoogleCalendar context fencing', () => {
+  test('a write completion reloads the latest visible range, not the range it started in', async () => {
+    const write = deferred<{ id: string }>()
+    schedule.mockReturnValueOnce(write.promise)
+    agenda.mockResolvedValue([])
+    const { result } = renderHook(() => useGoogleCalendar('account-a', 'person-a'))
+    act(() => result.current.showRange(range))
+    await waitFor(() => expect(agenda).toHaveBeenCalledTimes(1))
+    let create!: Promise<void>
+    act(() => {
+      create = result.current.create({
+        title: 'Saved event',
+        location: '',
+        start: new Date(2026, 8, 7, 9),
+        end: new Date(2026, 8, 7, 10),
+        allDay: false,
+      })
+    })
+
+    const nextRange = { start: new Date(2026, 8, 14), end: new Date(2026, 8, 21) }
+    act(() => result.current.showRange(nextRange))
+    await waitFor(() => expect(agenda).toHaveBeenCalledTimes(2))
+    const currentRange = agenda.mock.calls[1]![0] as { from: string; to: string }
+    await act(async () => {
+      write.resolve({ id: 'saved' })
+      await create
+    })
+
+    await waitFor(() => expect(agenda).toHaveBeenCalledTimes(3))
+    expect(agenda.mock.calls[2]![0]).toEqual(currentRange)
+  })
+
   test('a completed write in the old remote cannot start a stale reload', async () => {
     const write = deferred<{ id: string }>()
     const oldRead = deferred<never[]>()

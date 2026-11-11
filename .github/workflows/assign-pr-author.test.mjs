@@ -89,7 +89,7 @@ test('propagates unexpected failures', async () => {
 
 test('keeps the privileged event least-privileged and never checks out PR code', () => {
   assert.match(workflow, /pull_request_target:\n    types: \[opened, reopened\]/)
-  assert.match(workflow, /permissions:\n  issues: write/)
-  assert.doesNotMatch(workflow, /contents:\s*write|pull-requests:\s*write/)
+  assert.match(workflow, /permissions:\n  issues: write\n  pull-requests: write\n/)
+  assert.doesNotMatch(workflow, /contents:\s*write/)
   assert.doesNotMatch(workflow, /actions\/checkout|run:\s|head\.sha/)
 })

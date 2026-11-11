@@ -287,7 +287,7 @@ test('search narrows History by title', async () => {
   expect(cardKeys('History')).toEqual(['fake:c2'])
   await userEvent.clear(screen.getByLabelText('Search conversations, or start one'))
   await userEvent.type(screen.getByLabelText('Search conversations, or start one'), 'zzz')
-  expect(screen.getByText('No conversations match.')).toBeTruthy()
+  expect(screen.getByText(/^No conversations match./)).toBeTruthy()
 })
 
 test('⌘J brings History forward with its field focused', () => {
@@ -307,6 +307,28 @@ test('Enter in the History field starts a session with what was typed', async ()
     expect.objectContaining({ prompt: 'tidy the inbox', name: 'tidy the inbox' }),
   )
   expect((field as HTMLInputElement).value).toBe('')
+})
+
+test('Enter in the History field opens the one conversation the search left', async () => {
+  const store = setup({ history: true })
+  agentCap.start.mockClear()
+  const field = screen.getByLabelText('Search conversations, or start one')
+  await userEvent.type(field, 'weekly{Enter}')
+  expect(agentCap.start).not.toHaveBeenCalled()
+  expect(store.get(agentsSelectionAtom)).toEqual({ owner: 'fake', id: 'c2' })
+  expect((field as HTMLInputElement).value).toBe('')
+})
+
+test('with no match, the History says Enter starts a session with the search', async () => {
+  setup({ history: true })
+  agentCap.start.mockClear()
+  const field = screen.getByLabelText('Search conversations, or start one')
+  await userEvent.type(field, 'zzz')
+  expect(
+    screen.getByText(/Press Enter to start a new session with this as the prompt/),
+  ).toBeTruthy()
+  await userEvent.keyboard('{Enter}')
+  expect(agentCap.start).toHaveBeenCalledWith('o/notes', expect.objectContaining({ prompt: 'zzz' }))
 })
 
 test('arrows go from the History field into the sessions and back', async () => {

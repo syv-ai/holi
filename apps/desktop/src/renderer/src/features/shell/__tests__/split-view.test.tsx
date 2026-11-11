@@ -3,26 +3,46 @@
  * title band holds every tab, a split view being one pill of it; ⌘\\, a
  * tab's menu and a drag make a split; its members carry thin headers.
  */
-import { act } from '@testing-library/react'
+import { useEffect } from 'react'
 import { Provider, createStore } from 'jotai'
-import { expect, test, vi } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
+import { Input } from '@/components/ui/input'
+import { coreContributionAtom } from '@/state/plugins'
+import { tabKey } from '@/state/tab-descriptor'
+import { closeTab, selectEntry, separate, openInSplit } from '@/state/shell-workspace'
 import {
   VAULT_SETTING_DEFAULTS,
   emptyVaultSnapshot,
   type ResolvedVaultSettings,
 } from '@holi/shared'
 
-import { createEvent, fireEvent, render, screen, waitFor, within } from '@/test/render'
+import {
+  act,
+  cleanup,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@/test/render'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
 import { activeSplit, focusedTab, isSplit, openTab, splitActive } from '@/state/shell-workspace'
 import { vaultSettingsAtom } from '@/state/settings'
 import { tabDragAtom } from '@/features/shell/use-tab-drag'
+import { registerBuffer } from '@/lib/buffer-registry'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 
 const write = vi.fn(async (_input: unknown) => ({
   ok: true as const,
   warnings: [] as string[],
 }))
+
+const bufferCleanups: (() => void)[] = []
+afterEach(() => {
+  for (const cleanup of bufferCleanups.splice(0)) cleanup()
+  vi.restoreAllMocks()
+})
 
 const SETTINGS: ResolvedVaultSettings = {
   ...VAULT_SETTING_DEFAULTS,
@@ -222,6 +242,43 @@ test('⌘\\\\ makes a split of the tab and a New tab: one pill, two views', asyn
   expect(within(views()[1]!).queryByRole('tab')).toBeNull()
 })
 
+test('a failed split-tab close stays visible and can be retried', async () => {
+  const store = mount()
+  fireEvent.keyDown(window, { key: '\\', ctrlKey: true })
+  await waitFor(() => expect(views()).toHaveLength(2))
+
+  const flush = vi
+    .fn<() => Promise<void>>()
+    .mockRejectedValueOnce(new Error('disk is full'))
+    .mockResolvedValue(undefined)
+  bufferCleanups.push(registerBuffer(flush))
+
+  fireEvent.click(within(stripOf()).getByRole('button', { name: 'Close split view' }))
+  expect(await screen.findByRole('heading', { name: 'Close split tab?' })).toBeTruthy()
+  expect(
+    screen.getByText(
+      'This tab contains multiple views. Closing it will close every view in the split.',
+    ),
+  ).toBeTruthy()
+  const confirm = screen.getByRole('button', { name: 'Close tab' })
+
+  fireEvent.click(confirm)
+  expect(await screen.findByRole('alert')).toHaveTextContent('disk is full')
+  expect(screen.getByRole('heading', { name: 'Close split tab?' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Close tab' })).toBeTruthy()
+  expect(views()).toHaveLength(2)
+  expect(activeSplit(store.get(shellWorkspaceAtom))?.views).toEqual([
+    'B.md',
+    expect.stringMatching(/^holi:new:/),
+  ])
+
+  fireEvent.click(screen.getByRole('button', { name: 'Close tab' }))
+  await waitFor(() => expect(views()).toHaveLength(1))
+  expect(store.get(shellWorkspaceAtom).entries).toEqual(['A.md'])
+  expect(flush).toHaveBeenCalledTimes(2)
+  expect(screen.queryByRole('heading', { name: 'Close split tab?' })).toBeNull()
+})
+
 test('selecting another tab shows it alone, the split staying in the strip', async () => {
   const store = mount()
   fireEvent.keyDown(window, { key: '\\', ctrlKey: true })
@@ -270,6 +327,345 @@ test('⌘T opens a New tab; ⇧⌘\\ separates; ⌃⌥→ focuses the next membe
   fireEvent.keyDown(window, { key: '|', ctrlKey: true, shiftKey: true })
   await waitFor(() => expect(views()).toHaveLength(1))
   expect(store.get(shellWorkspaceAtom).entries).toHaveLength(4)
+})
+
+test('parked surface focus returns to the shell after a control or iframe takes focus', async () => {
+  const { show, away } = retainedFixture()
+  show('demo.deck')
+  const control = await screen.findByRole('textbox', { name: 'State demo.deck' })
+  const outside = within(stripOf()).getByRole('tab', { name: 'A' })
+  await act(async () => outside.focus())
+  away()
+  await waitFor(() => expect(document.activeElement).toBe(outside))
+  await act(async () => control.focus())
+  expect(document.activeElement).toBe(outside)
+
+  show('demo.deck')
+  const iframe = document.createElement('iframe')
+  control.closest('[data-pane-host]')!.append(iframe)
+  away()
+  // A remote frame signals window blur, not a bubbling focusin. Suppress
+  // jsdom's local focus events while allowing activeElement to really change.
+  const stopLocalFocus = (event: Event) => event.stopImmediatePropagation()
+  window.addEventListener('focus', stopLocalFocus, true)
+  window.addEventListener('focusin', stopLocalFocus, true)
+  const outsideFocus = vi.spyOn(outside, 'focus')
+  try {
+    await act(async () => {
+      iframe.focus()
+      fireEvent.blur(window)
+    })
+    expect(document.activeElement).toBe(outside)
+    expect(outsideFocus).toHaveBeenCalledWith({ preventScroll: true })
+    outsideFocus.mockClear()
+    // A background remote frame can change focus without either parent
+    // focus signal. The parked-host watcher must catch that too.
+    iframe.focus()
+    await waitFor(() => expect(document.activeElement).toBe(outside))
+    expect(outsideFocus).toHaveBeenCalledWith({ preventScroll: true })
+  } finally {
+    window.removeEventListener('focus', stopLocalFocus, true)
+    window.removeEventListener('focusin', stopLocalFocus, true)
+  }
+})
+
+test('programmatically parking a focused surface releases focus and visible members retain it', async () => {
+  const f = retainedFixture()
+  f.show('one')
+  const first = await screen.findByRole('textbox', { name: 'State one' })
+  await act(async () => first.focus())
+  expect(document.activeElement).toBe(first)
+  const bodyFocus = vi.spyOn(document.body, 'focus')
+  // Native moves retain focus silently. Suppress jsdom/React's local
+  // focus signals so release cannot rely on a fresh focusin or window blur.
+  const stopLocalFocus = (event: Event) => event.stopImmediatePropagation()
+  window.addEventListener('focus', stopLocalFocus, true)
+  window.addEventListener('focusin', stopLocalFocus, true)
+  try {
+    f.away()
+    await waitFor(() => expect(bodyFocus).toHaveBeenCalledWith({ preventScroll: true }))
+    expect(document.activeElement).not.toBe(first)
+  } finally {
+    window.removeEventListener('focus', stopLocalFocus, true)
+    window.removeEventListener('focusin', stopLocalFocus, true)
+  }
+
+  f.show('one')
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => openInSplit(ws, f.key('two'))))
+  const second = await screen.findByRole('textbox', { name: 'State two' })
+  for (const [id, input] of [
+    ['one', first],
+    ['two', second],
+  ] as const) {
+    await act(async () => input.focus())
+    expect(document.activeElement).toBe(input)
+    expect(focusedTab(f.store.get(shellWorkspaceAtom))).toBe(f.key(id))
+    expect(input).toHaveAttribute('data-visible', 'true')
+  }
+})
+
+test('parked focus falls back to body after the last outside target is removed', async () => {
+  const { show, away } = retainedFixture()
+  const outside = document.createElement('button')
+  document.body.append(outside)
+  await act(async () => outside.focus())
+  show('demo.deck')
+  const control = await screen.findByRole('textbox', { name: 'State demo.deck' })
+  away()
+  outside.remove()
+  const originalTabIndex = document.body.getAttribute('tabindex')
+  await act(async () => control.focus())
+  expect(document.activeElement).toBe(document.body)
+  expect(document.body.getAttribute('tabindex')).toBe(originalTabIndex)
+})
+
+test('retained focus guards remove their global handlers on unmount', async () => {
+  const addWindow = vi.spyOn(window, 'addEventListener')
+  const removeWindow = vi.spyOn(window, 'removeEventListener')
+  const addDocument = vi.spyOn(document, 'addEventListener')
+  const removeDocument = vi.spyOn(document, 'removeEventListener')
+  const clearTimer = vi.spyOn(window, 'clearTimeout')
+  const scheduleTimer = vi.spyOn(window, 'setTimeout')
+  const f = retainedFixture()
+  f.show('one')
+  const input = await screen.findByRole('textbox', { name: 'State one' })
+  f.away()
+  const windowFocus = addWindow.mock.calls.filter(([type]) => ['blur', 'focus'].includes(type))
+  const documentFocus = addDocument.mock.calls.filter(
+    ([type, , capture]) => ['focus', 'focusin'].includes(type) && capture === true,
+  )
+  expect(windowFocus.length).toBeGreaterThan(0)
+  expect(documentFocus.map(([type]) => type)).toContain('focusin')
+  act(() => input.focus())
+  cleanup()
+  await act(async () => {})
+  for (const call of windowFocus) expect(removeWindow.mock.calls).toContainEqual(call)
+  for (const call of documentFocus) expect(removeDocument.mock.calls).toContainEqual(call)
+  expect(scheduleTimer.mock.calls.some(([, delay]) => delay === 250)).toBe(true)
+  expect(clearTimer).toHaveBeenCalled()
+})
+
+test('a visited keepMounted surface keeps its document and lease while another tab is shown', async () => {
+  const acquired = vi.fn()
+  const released = vi.fn()
+  function Document({ visible }: { visible: boolean }) {
+    useEffect(() => {
+      acquired()
+      return () => {
+        released()
+      }
+    }, [])
+    return (
+      <Input aria-label="Volatile document state" data-visible={visible} defaultValue="initial" />
+    )
+  }
+  const store = mount()
+  const key = tabKey({ kind: 'surface', surface: 'test-document', id: 'demo.deck' })
+  act(() => {
+    store.set(coreContributionAtom, {
+      surfaces: [
+        {
+          kind: 'test-document',
+          label: 'Deck',
+          icon: () => null,
+          keepMounted: true,
+          render: Document,
+        },
+      ],
+      rail: [],
+      claims: [],
+    })
+    store.set(shellWorkspaceAtom, (ws) => openTab(ws, key))
+  })
+  const input = await screen.findByRole('textbox', { name: 'Volatile document state' })
+  fireEvent.change(input, { target: { value: 'keep this unsaved value' } })
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'A.md')))
+  expect(document.querySelector('[aria-label="Volatile document state"]')).toBe(input)
+  expect(input.isConnected).toBe(true)
+  expect(input.closest('[inert]')).not.toBeNull()
+  expect(input.getAttribute('data-visible')).toBe('false')
+  expect(released).not.toHaveBeenCalled()
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, key)))
+  expect(await screen.findByRole('textbox', { name: 'Volatile document state' })).toBe(input)
+  expect(input).toHaveValue('keep this unsaved value')
+  expect(acquired).toHaveBeenCalledTimes(1)
+  act(() => store.set(shellWorkspaceAtom, (ws) => closeTab(ws, key)))
+  await waitFor(() => expect(released).toHaveBeenCalledTimes(1))
+})
+
+function retainedFixture(keepMounted = true, surfaceKind = 'test-document') {
+  const acquired = vi.fn()
+  const released = vi.fn()
+  function Document({ id, visible }: { id?: string; visible: boolean }) {
+    useEffect(() => {
+      acquired(id)
+      return () => {
+        released(id)
+      }
+    }, [id])
+    return <Input aria-label={`State ${id}`} data-visible={visible} defaultValue="initial" />
+  }
+  const store = mount()
+  const surface = {
+    kind: surfaceKind,
+    label: 'Deck',
+    icon: () => null,
+    render: Document,
+    ...(keepMounted ? { keepMounted: true as const } : {}),
+  }
+  const install = (enabled: boolean) =>
+    store.set(coreContributionAtom, { surfaces: enabled ? [surface] : [], rail: [], claims: [] })
+  act(() => install(true))
+  const key = (id: string) => tabKey({ kind: 'surface', surface: surface.kind, id })
+  const show = (id: string) =>
+    act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, key(id))))
+  const away = () => act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, 'A.md')))
+  return { store, acquired, released, key, show, away, install }
+}
+
+test('five opted-in agent terminal surfaces keep one view each and release on close', async () => {
+  const f = retainedFixture(true, 'agent')
+  const ids = ['terminal-one', 'terminal-two', 'terminal-three', 'terminal-four', 'terminal-five']
+  const inputs = new Map<string, HTMLElement>()
+  for (const id of ids) {
+    f.show(id)
+    inputs.set(id, await screen.findByRole('textbox', { name: `State ${id}` }))
+  }
+  for (const id of ids) {
+    f.show(id)
+    expect(await screen.findByRole('textbox', { name: `State ${id}` })).toBe(inputs.get(id))
+    for (const other of ids) {
+      expect(inputs.get(other)?.isConnected).toBe(true)
+      expect(inputs.get(other)?.closest('[inert]') !== null).toBe(other !== id)
+    }
+  }
+  expect(f.acquired.mock.calls).toEqual(ids.map((id) => [id]))
+  expect(f.released).not.toHaveBeenCalled()
+  for (const id of ids) {
+    act(() => f.store.set(shellWorkspaceAtom, (ws) => closeTab(ws, f.key(id))))
+  }
+  await waitFor(() => expect(f.released).toHaveBeenCalledTimes(ids.length))
+  for (const input of inputs.values()) expect(input.isConnected).toBe(false)
+})
+
+test('retained surfaces mount only after first display and close/reopen starts fresh', async () => {
+  const f = retainedFixture()
+  act(() =>
+    f.store.set(shellWorkspaceAtom, (ws) =>
+      selectEntry(openTab(openTab(ws, f.key('one')), f.key('two')), f.key('one')),
+    ),
+  )
+  const first = await screen.findByRole('textbox', { name: 'State one' })
+  expect(document.querySelector('[aria-label="State two"]')).toBeNull()
+  expect(f.acquired.mock.calls).toEqual([['one']])
+  fireEvent.change(first, { target: { value: 'unsaved state' } })
+  f.away()
+  f.show('one')
+  expect(await screen.findByRole('textbox', { name: 'State one' })).toBe(first)
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => closeTab(ws, f.key('one'))))
+  expect(f.released).toHaveBeenCalledTimes(1)
+  f.show('one')
+  expect(await screen.findByRole('textbox', { name: 'State one' })).not.toBe(first)
+  expect(screen.getByRole('textbox', { name: 'State one' })).toHaveValue('initial')
+  expect(f.acquired.mock.calls.filter(([id]) => id === 'one')).toHaveLength(2)
+})
+
+test('parked retained surfaces preserve their viewport size and restore responsive sizing', async () => {
+  const f = retainedFixture()
+  f.show('one')
+  const input = await screen.findByRole('textbox', { name: 'State one' })
+  const host = input.closest<HTMLElement>('[data-pane-host]')!
+  const parking = document.querySelector<HTMLElement>('[data-retained-parking]')!
+  vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({
+    left: 0,
+    top: 0,
+    width: 640,
+    height: 480,
+    right: 640,
+    bottom: 480,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  } as DOMRect)
+
+  f.away()
+
+  expect(host.parentElement).toBe(parking)
+  expect(host.style.width).toBe('640px')
+  expect(host.style.height).toBe('480px')
+  expect(parking).toHaveAttribute('aria-hidden', 'true')
+  expect(parking).toHaveAttribute('inert')
+  expect(parking).not.toHaveAttribute('hidden')
+  expect(parking.style.display).toBe('')
+  expect(parking.className).toContain('invisible')
+  expect(parking.className).toContain('pointer-events-none')
+  expect(parking.className).toContain('absolute')
+
+  f.show('one')
+
+  expect(host.parentElement).not.toBe(parking)
+  expect(host.style.width).toBe('')
+  expect(host.style.height).toBe('')
+  expect(host.className).toContain('w-full')
+})
+
+test('both split members stay visible regardless focus, and separating parks rather than remounts', async () => {
+  const f = retainedFixture()
+  f.show('one')
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => openInSplit(ws, f.key('two'))))
+  const first = await screen.findByRole('textbox', { name: 'State one' })
+  const second = await screen.findByRole('textbox', { name: 'State two' })
+  expect(first.getAttribute('data-visible')).toBe('true')
+  expect(second.getAttribute('data-visible')).toBe('true')
+  fireEvent.pointerDown(first)
+  expect(second.getAttribute('data-visible')).toBe('true')
+  act(() => f.store.set(shellWorkspaceAtom, (ws) => separate(ws, activeSplit(ws)!.id)))
+  expect(first.isConnected).toBe(true)
+  expect(second.isConnected).toBe(true)
+  expect(
+    [first, second].filter((input) => input.getAttribute('data-visible') === 'true'),
+  ).toHaveLength(1)
+  expect(f.acquired).toHaveBeenCalledTimes(2)
+  expect(f.released).not.toHaveBeenCalled()
+})
+
+test('removing a retained surface claim releases hidden content and does not eagerly recreate it', async () => {
+  const f = retainedFixture()
+  f.show('one')
+  const first = await screen.findByRole('textbox', { name: 'State one' })
+  f.away()
+  act(() => f.install(false))
+  expect(first.isConnected).toBe(false)
+  expect(f.released).toHaveBeenCalledTimes(1)
+  act(() => f.install(true))
+  expect(f.acquired).toHaveBeenCalledTimes(1)
+  f.show('one')
+  expect(await screen.findByRole('textbox', { name: 'State one' })).not.toBe(first)
+})
+
+test('the same surface id in another vault gets a fresh instance', async () => {
+  const f = retainedFixture()
+  f.show('one')
+  const first = await screen.findByRole('textbox', { name: 'State one' })
+  fireEvent.change(first, { target: { value: 'vault A only' } })
+  act(() => f.store.set(activeRemoteAtom, 'mara/other'))
+  f.show('one')
+  const second = await screen.findByRole('textbox', { name: 'State one' })
+  expect(second).not.toBe(first)
+  expect(second).toHaveValue('initial')
+  expect(first.isConnected).toBe(false)
+  expect(f.released).toHaveBeenCalledTimes(1)
+})
+
+test('surfaces without keepMounted retain their existing unmount-on-leave behavior', async () => {
+  const f = retainedFixture(false)
+  f.show('one')
+  const first = await screen.findByRole('textbox', { name: 'State one' })
+  f.away()
+  expect(first.isConnected).toBe(false)
+  expect(f.released).toHaveBeenCalledTimes(1)
+  f.show('one')
+  expect(await screen.findByRole('textbox', { name: 'State one' })).not.toBe(first)
 })
 
 /** A drag event at `x`: jsdom's drag events carry no pointer position. */
@@ -351,6 +747,7 @@ test("dragging a strip tab onto the view's right part opens a gap there, and the
   expect(ws.entries).toHaveLength(1)
   // The drag is over: no catcher left over the views.
   await waitFor(() => expect(document.querySelector('[data-drop-target]')).toBeNull())
+  expect(store.get(tabDragAtom)).toBeNull()
   vi.restoreAllMocks()
 })
 
@@ -359,7 +756,7 @@ test('a view not open yet, dragged from the sidebar, opens in the gap', async ()
   layOut()
   const dataTransfer = transfer()
   dataTransfer.setData('application/x-holi-tab', 'C.md')
-  store.set(tabDragAtom, 'C.md')
+  store.set(tabDragAtom, { key: 'C.md', vault: 'mara/notes', wasOpen: false })
   const target = await catcher()
   fireEvent(target, at(createEvent.dragOver(target, { dataTransfer }), 50))
   await waitFor(() => expect(target.dataset.dropSlot).toBe('insert:0'))

@@ -55,6 +55,8 @@ export interface Supervisor {
   /** Stop every server whose key `which` accepts (all, without it),
    *  whoever holds it. */
   stopAll(which?: (key: string) => boolean): Promise<void>
+  /** Permanently close this activation and stop every server it owns. */
+  dispose(): Promise<void>
   state(key: string): ServerState | null
 }
 
@@ -102,6 +104,8 @@ async function findFreePort(taken: ReadonlySet<number>, from = FIRST_PORT): Prom
 
 export function createSupervisor(deps: SupervisorDeps): Supervisor {
   const servers = new Map<string, Server>()
+  let disposed = false
+  let disposal: Promise<void> | null = null
   const readyTimeout = deps.readyTimeoutMs ?? 60_000
   const grace = deps.graceMs ?? 2_000
   const probe = deps.probePid ?? defaultProbePid
@@ -230,6 +234,7 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
 
   return {
     acquire(key, spec) {
+      if (disposed) return Promise.reject(new Error('the supervisor is disposed'))
       const existing = servers.get(key)
       if (existing !== undefined) {
         existing.refs++
@@ -263,6 +268,15 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
       await Promise.all(
         [...servers].filter(([key]) => which(key)).map(([key, server]) => stop(key, server)),
       )
+    },
+    dispose() {
+      if (disposal !== null) return disposal
+      // Close synchronously, before yielding to stop() or its child-exit waits.
+      disposed = true
+      disposal = Promise.all([...servers].map(([key, server]) => stop(key, server))).then(
+        () => undefined,
+      )
+      return disposal
     },
     state: (key) => servers.get(key)?.state ?? null,
   }

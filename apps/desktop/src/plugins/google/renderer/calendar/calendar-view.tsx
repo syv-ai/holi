@@ -42,12 +42,14 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { IconButton } from '@/composites/icon-button'
 import { toast } from 'sonner'
 import {
   activeRemoteAtom,
   cn,
-  openNoteTabAtom,
+  openDocumentAtom,
   openSettingsSectionAtom,
   useHasCapability,
   openExternal,
@@ -75,6 +77,8 @@ import { TASKS_CREATE, tasksCreateCap } from '../tasks-cap'
 import { CalendarRail } from './calendar-rail'
 import { CalendarsMenu } from './calendars-menu'
 import { WEEK_STARTS_ON, hhmm, timeOf } from './calendar-format'
+
+import { CLOCK_FORMATS, ISO_WEEK_LOCALE, useTimeFormat, useWeekNumbers } from './calendar-settings'
 import { EventCard, type EventCardAnchor, type EventDraft, type EventCardState } from './event-card'
 
 type Occurrence = EventCalendarOccurrence<GoogleEventData>
@@ -138,8 +142,11 @@ export function CalendarView(): React.JSX.Element {
     }
   }, [remote, accountIdentity])
   const openSettings = useSetAtom(openSettingsSectionAtom)
-  const openNote = useSetAtom(openNoteTabAtom)
+  const openNote = useSetAtom(openDocumentAtom)
   const canCreateTask = useHasCapability(TASKS_CREATE) && remote !== null
+  const clock = useTimeFormat()
+  const weekNumbers = useWeekNumbers()
+  const i18n = useMemo(() => ({ formats: CLOCK_FORMATS[clock] }), [clock])
 
   const [card, setCard] = useState<EventCardState | null>(null)
   const [cardAnchor, setCardAnchor] = useState<EventCardAnchor | null>(null)
@@ -399,7 +406,7 @@ export function CalendarView(): React.JSX.Element {
             segment.isStart &&
             (view === 'month' ? (
               <span className="text-muted-foreground shrink-0 text-xs">
-                {timeOf(occurrence.start)}
+                {timeOf(occurrence.start, clock)}
               </span>
             ) : (
               <span
@@ -408,13 +415,13 @@ export function CalendarView(): React.JSX.Element {
                   stacked ? EVENT_CALENDAR_FADE_TRUNCATE : 'truncate',
                 )}
               >
-                {timeOf(occurrence.start)} - {timeOf(occurrence.end)}
+                {timeOf(occurrence.start, clock)} - {timeOf(occurrence.end, clock)}
               </span>
             ))}
         </>
       )
     },
-    [],
+    [clock],
   )
 
   // Agenda rows get their own renderer: a full-width list row has the space
@@ -430,7 +437,7 @@ export function CalendarView(): React.JSX.Element {
           <span className="text-muted-foreground w-40 shrink-0 truncate tabular-nums">
             {occurrence.allDay
               ? 'All day'
-              : `${timeOf(occurrence.start)} - ${timeOf(occurrence.end)}`}
+              : `${timeOf(occurrence.start, clock)} - ${timeOf(occurrence.end, clock)}`}
           </span>
           <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-(--ec-event-color)" />
           <span className="truncate text-sm font-medium">{event.title}</span>
@@ -452,7 +459,7 @@ export function CalendarView(): React.JSX.Element {
         </>
       )
     },
-    [],
+    [clock],
   )
 
   const renderNoEvents = useCallback(
@@ -525,6 +532,9 @@ export function CalendarView(): React.JSX.Element {
           defaultView="week"
           views={['day', 'week', 'month', 'agenda']}
           weekStartsOn={WEEK_STARTS_ON}
+          locale={ISO_WEEK_LOCALE}
+          i18n={i18n}
+          showWeekNumbers={weekNumbers}
           loading={calendar.loading}
           navButtonSize="default"
           nowIndicator
@@ -570,26 +580,30 @@ export function CalendarView(): React.JSX.Element {
               <h2 className="px-2 py-1 font-medium">
                 {day.toLocaleDateString(undefined, { dateStyle: 'full' })}
               </h2>
-              {segments.map(({ occurrence }) => (
-                <Button
-                  key={occurrence.key}
-                  type="button"
-                  variant="ghost"
-                  size="row"
-                  className="w-full min-w-0 justify-start"
-                  onClick={(event) => {
-                    close({ restoreFocus: false })
-                    openView(occurrence, event)
-                  }}
-                >
-                  <span className="min-w-0 flex-1 truncate text-start">
-                    {occurrence.event.title}
-                  </span>
-                  <span className="text-muted-foreground shrink-0 text-xs">
-                    {occurrence.allDay ? 'All day' : timeOf(occurrence.start)}
-                  </span>
-                </Button>
-              ))}
+              <ScrollArea className="-me-2 min-h-0 **:data-[slot=scroll-area-viewport]:max-h-(--ec-more-max-height,16rem)">
+                <div className="flex flex-col gap-1 py-1 ps-1 pe-4">
+                  {segments.map(({ occurrence }) => (
+                    <Button
+                      key={occurrence.key}
+                      type="button"
+                      variant="ghost"
+                      size="row"
+                      className="w-full min-w-0 justify-start"
+                      onClick={(event) => {
+                        close({ restoreFocus: false })
+                        openView(occurrence, event)
+                      }}
+                    >
+                      <span className="min-w-0 flex-1 truncate text-start">
+                        {occurrence.event.title}
+                      </span>
+                      <span className="text-muted-foreground shrink-0 text-xs">
+                        {occurrence.allDay ? 'All day' : timeOf(occurrence.start, clock)}
+                      </span>
+                    </Button>
+                  ))}
+                </div>
+              </ScrollArea>
             </div>
           )}
           renderNoEvents={renderNoEvents}
@@ -609,21 +623,14 @@ export function CalendarView(): React.JSX.Element {
                   onToggle={calendar.setCalendarEnabled}
                 />
               </div>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    disabled={calendar.loading}
-                    onClick={calendar.reload}
-                  >
-                    <RefreshCwIcon className="size-4" aria-hidden="true" />
-                    <span className="sr-only">Refresh</span>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Refresh</TooltipContent>
-              </Tooltip>
+              <IconButton
+                label="Refresh"
+                size="icon"
+                disabled={calendar.loading}
+                onClick={calendar.reload}
+              >
+                <RefreshCwIcon className="size-4" aria-hidden="true" />
+              </IconButton>
               <Button
                 ref={newEventTrigger}
                 className="flex-1 sm:flex-none"

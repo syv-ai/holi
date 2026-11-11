@@ -8,12 +8,12 @@
 import { readFile } from 'node:fs/promises'
 import { vaultRelPath, type VaultRelPath } from '@holi/shared'
 import {
-  absPathFor,
   cap,
   CapabilityError,
   optionalStringParam,
   paramsObject,
   stringParam,
+  lockPath,
   withFileLock,
   writeAtomic,
   type CapabilityContext,
@@ -55,7 +55,7 @@ async function createLinkFile(
 ): Promise<VaultRelPath> {
   for (let n = 1; n <= 1000; n++) {
     const rel = safe(linkFilePath(folder, title, n))
-    const abs = absPathFor(ctx.root, rel)
+    const abs = await lockPath(ctx.root, rel)
     const created = await withFileLock(abs, async () => {
       if ((await readFile(abs, 'utf8').catch(() => null)) !== null) return false
       await writeAtomic(ctx.root, rel, text)

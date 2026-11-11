@@ -2,9 +2,12 @@
  * A file's history, after GitHub's commits page: the commits grouped under
  * their day on a timeline, filtered by who and by when. A row opens what
  * the commit changed in the file; its buttons copy the sha, open the change,
- * or show the file as that commit left it.
+ * or show the file as that commit left it. A folder's history (a vault app's
+ * bundle) is every commit under it, and a commit shows the changes to each
+ * of its files there; a folder has no "file at this commit".
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useAtomValue } from 'jotai'
 import {
   ArrowLeftIcon,
   CalendarIcon,
@@ -44,10 +47,12 @@ import {
   PERIODS,
   type Period,
 } from './commit-groups'
-import { CommitView } from './commit-view'
+import { CommitView, FolderCommitView } from './commit-view'
+import { snapshotAtom } from '@/state/vaults'
 import { initials, shortSha } from './commit-format'
 import { authorFor, type FileAuthor, type FileCommit, type FileHistory } from './use-file-history'
 import { EmptyState, ErrorState } from '@/composites/empty-state'
+import { trpc } from '@/lib/trpc'
 
 const ALL_USERS = '__all__'
 
@@ -65,6 +70,7 @@ export function HistoryDialog({
   onRetry,
   open,
   onOpenChange,
+  sha,
 }: {
   path: string
   history: FileHistory
@@ -72,11 +78,80 @@ export function HistoryDialog({
   onRetry: () => void
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** A commit to open on, by its sha or a prefix of it: the dialog shows its
+   *  changes once the list has it, until something else is picked. */
+  sha?: string
 }) {
   const [author, setAuthor] = useState<string | null>(null)
   const [period, setPeriod] = useState<Period>('all')
-  const [detail, setDetail] = useState<Detail>(null)
+  const [picked, setPicked] = useState<Detail>(null)
+  const [opening, setOpening] = useState<string | null>(sha ?? null)
+  // Each opening starts on `sha` again: the dialog stays mounted between them.
+  const [openedFor, setOpenedFor] = useState({ open, sha })
+  const [target, setTarget] = useState<
+    | { key: string; kind: 'loading' }
+    | { key: string; kind: 'error'; message: string }
+    | { key: string; kind: 'ready'; commit: FileCommit }
+    | { key: string; kind: 'unavailable' }
+    | null
+  >(null)
+  const [targetAttempt, setTargetAttempt] = useState(0)
+  if (openedFor.open !== open || openedFor.sha !== sha) {
+    setOpenedFor({ open, sha })
+    if (open) {
+      setOpening(sha ?? null)
+      setPicked(null)
+      setTarget(null)
+    }
+  }
+  const named =
+    opening !== null && history.kind === 'ready'
+      ? history.commits.find((c) => c.sha === opening || c.sha.startsWith(opening))
+      : undefined
+  const targetKey = opening === null ? null : `${path}:${opening}`
+  useEffect(() => {
+    if (
+      !open ||
+      targetKey === null ||
+      opening === null ||
+      named !== undefined ||
+      history.kind !== 'ready'
+    )
+      return
+    let live = true
+    setTarget({ key: targetKey, kind: 'loading' })
+    trpc.history.commit
+      .query({ sha: opening })
+      .then((commit) => {
+        if (live)
+          setTarget(
+            commit
+              ? { key: targetKey, kind: 'ready', commit }
+              : { key: targetKey, kind: 'unavailable' },
+          )
+      })
+      .catch((err: unknown) => {
+        if (live)
+          setTarget({
+            key: targetKey,
+            kind: 'error',
+            message: err instanceof Error ? err.message : String(err),
+          })
+      })
+    return () => {
+      live = false
+    }
+  }, [open, targetKey, opening, named, history.kind, targetAttempt])
+  const exactTarget = targetKey !== null && target?.key === targetKey ? target : null
+  const namedCommit = named ?? (exactTarget?.kind === 'ready' ? exactTarget.commit : undefined)
+  const detail: Detail =
+    picked ?? (namedCommit === undefined ? null : { commit: namedCommit, show: 'diff' })
+  const setDetail = (next: Detail) => {
+    setOpening(null)
+    setPicked(next)
+  }
   const segments = path.split('/')
+  const folder = useAtomValue(snapshotAtom).dirs.includes(path)
 
   return (
     <Dialog
@@ -126,33 +201,67 @@ export function HistoryDialog({
                 <ArrowLeftIcon data-icon="inline-start" aria-hidden="true" />
                 All commits
               </Button>
-              <Button
-                variant={detail.show === 'diff' ? 'secondary' : 'ghost'}
-                size="sm"
-                aria-pressed={detail.show === 'diff'}
-                onClick={() => setDetail({ ...detail, show: 'diff' })}
-              >
-                <FileDiffIcon data-icon="inline-start" aria-hidden="true" />
-                Changes
-              </Button>
-              <Button
-                variant={detail.show === 'file' ? 'secondary' : 'ghost'}
-                size="sm"
-                aria-pressed={detail.show === 'file'}
-                onClick={() => setDetail({ ...detail, show: 'file' })}
-              >
-                <CodeIcon data-icon="inline-start" aria-hidden="true" />
-                File at this commit
-              </Button>
+              {folder ? null : (
+                <>
+                  <Button
+                    variant={detail.show === 'diff' ? 'secondary' : 'ghost'}
+                    size="sm"
+                    aria-pressed={detail.show === 'diff'}
+                    onClick={() => setDetail({ ...detail, show: 'diff' })}
+                  >
+                    <FileDiffIcon data-icon="inline-start" aria-hidden="true" />
+                    Changes
+                  </Button>
+                  <Button
+                    variant={detail.show === 'file' ? 'secondary' : 'ghost'}
+                    size="sm"
+                    aria-pressed={detail.show === 'file'}
+                    onClick={() => setDetail({ ...detail, show: 'file' })}
+                  >
+                    <CodeIcon data-icon="inline-start" aria-hidden="true" />
+                    File at this commit
+                  </Button>
+                </>
+              )}
             </div>
             <div className="max-h-160 min-w-0 overflow-auto">
-              <CommitView
-                key={`${detail.commit.sha}:${detail.show}`}
-                path={path}
-                sha={detail.commit.sha}
-                show={detail.show}
-              />
+              {folder ? (
+                <FolderCommitView key={detail.commit.sha} folder={path} sha={detail.commit.sha} />
+              ) : (
+                <CommitView
+                  key={`${detail.commit.sha}:${detail.show}`}
+                  path={path}
+                  sha={detail.commit.sha}
+                  show={detail.show}
+                />
+              )}
             </div>
+          </div>
+        ) : opening !== null && history.kind === 'ready' && named === undefined ? (
+          <div className="flex min-h-0 flex-col gap-3">
+            <Button variant="outline" size="sm" onClick={() => setDetail(null)}>
+              <ArrowLeftIcon data-icon="inline-start" aria-hidden="true" />
+              All commits
+            </Button>
+            {exactTarget === null || exactTarget.kind === 'loading' ? (
+              <div
+                className="flex flex-col gap-2.5 py-2"
+                role="status"
+                aria-label="Loading the commit"
+              >
+                <Skeleton className="h-4 w-1/2" />
+                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-4 w-2/5" />
+              </div>
+            ) : exactTarget.kind === 'error' ? (
+              <ErrorState
+                title="This commit could not be read"
+                message={exactTarget.message}
+                onRetry={() => setTargetAttempt((n) => n + 1)}
+              />
+            ) : (
+              <EmptyState title="This commit is no longer available." />
+            )}
           </div>
         ) : (
           <CommitList
@@ -163,6 +272,7 @@ export function HistoryDialog({
             onAuthor={setAuthor}
             onPeriod={setPeriod}
             onRetry={onRetry}
+            folder={folder}
             onOpen={(commit, show) => setDetail({ commit, show })}
           />
         )}
@@ -179,6 +289,7 @@ function CommitList({
   onAuthor,
   onPeriod,
   onRetry,
+  folder,
   onOpen,
 }: {
   history: FileHistory
@@ -188,6 +299,7 @@ function CommitList({
   onAuthor: (author: string | null) => void
   onPeriod: (period: Period) => void
   onRetry: () => void
+  folder: boolean
   onOpen: (commit: FileCommit, show: 'diff' | 'file') => void
 }) {
   if (history.kind === 'loading') {
@@ -285,6 +397,7 @@ function CommitList({
                         key={commit.sha}
                         commit={commit}
                         author={authorFor(authors, commit.author)}
+                        folder={folder}
                         onOpen={onOpen}
                       />
                     ))}
@@ -332,10 +445,12 @@ function IconAction({
 function CommitRow({
   commit,
   author,
+  folder,
   onOpen,
 }: {
   commit: FileCommit
   author: FileAuthor
+  folder: boolean
   onOpen: (commit: FileCommit, show: 'diff' | 'file') => void
 }) {
   const who = author.login ?? author.name
@@ -379,9 +494,11 @@ function CommitRow({
         <IconAction label="View the changes" onClick={() => onOpen(commit, 'diff')}>
           <FileDiffIcon aria-hidden="true" />
         </IconAction>
-        <IconAction label="View the file at this commit" onClick={() => onOpen(commit, 'file')}>
-          <CodeIcon aria-hidden="true" />
-        </IconAction>
+        {folder ? null : (
+          <IconAction label="View the file at this commit" onClick={() => onOpen(commit, 'file')}>
+            <CodeIcon aria-hidden="true" />
+          </IconAction>
+        )}
       </div>
     </li>
   )

@@ -19,6 +19,7 @@ import {
   vaultRelPath,
   type VaultRelPath,
 } from '@holi/shared'
+import { exactPath } from '@holi/shared/path-safety-node'
 
 const TMP_MARKER = '.holi-tmp-'
 /** The `.gitignore` line for those files, at any depth. One killed mid-write
@@ -28,6 +29,33 @@ const JUNK = new Set(OS_JUNK_FILES)
 
 export function absPathFor(root: string, rel: VaultRelPath): string {
   return join(root, rel)
+}
+
+/** The key a file is locked by (`withFileLock`): its canonical path, the one
+ *  `exactPath` gives every checked write, so two writers of one file wait on
+ *  each other even when the vault is reached through a link; the lexical
+ *  path for a name `exactPath` refuses. */
+export async function lockPath(root: string, rel: VaultRelPath): Promise<string> {
+  return (await exactPath(root, rel)) ?? absPathFor(root, rel)
+}
+
+/**
+ * `withFileLock` over several files at once, for work that removes or moves
+ * them together (a delete, a rename, a folder move): a writer that checks one
+ * file before writing another beside it waits for the whole of it, never
+ * slipping in between two of its files. The locks are taken in one order, so
+ * two such callers over the same files cannot each hold what the other waits
+ * for. `work` must not take any of these locks itself.
+ */
+export async function withFileLocks<T>(
+  root: string,
+  rels: readonly VaultRelPath[],
+  work: () => Promise<T>,
+): Promise<T> {
+  const keys = [...new Set(await Promise.all(rels.map((rel) => lockPath(root, rel))))].sort()
+  const take = (i: number): Promise<T> =>
+    i === keys.length ? work() : withFileLock(keys[i]!, () => take(i + 1))
+  return take(0)
 }
 
 /** abs → validated vault-relative ('/'-separated), or null when outside/unsafe. */
@@ -72,9 +100,9 @@ export function isIgnoredPath(rel: string): boolean {
  *
  *  - **The personal theme.** It stays uncommitted and out of the snapshot's
  *    notes, but editing it has to restyle the app at once.
- *  - **The personal settings.** `home:` there is a personal Home tab, which
- *    has to follow an edit the way the committed file's does.
- *  - **A personal app** (`Home.local.app`) and everything in it. The watcher
+ *  - **The personal settings.** An edit there (the appearance, say) has to
+ *    take effect the way the committed file's does.
+ *  - **A personal app** (`Mine.local.app`) and everything in it. The watcher
  *    prunes an ignored directory's whole subtree, so without this the agent
  *    writes the app and nothing appears until the periodic heal. A bundle
  *    inside a local folder that is not itself a bundle (`x.local/Foo.app`) is

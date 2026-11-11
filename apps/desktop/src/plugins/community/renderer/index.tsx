@@ -86,7 +86,9 @@ const DOCUMENT_SURFACE: Surface = {
   label: (id) =>
     id === undefined ? 'Document' : id.slice(id.lastIndexOf('/') + 1).replace(/\.[^.]+$/, ''),
   icon: Puzzle,
-  render: ({ id }) => (id === undefined ? null : <PluginFrame path={id} />),
+  render: ({ id, visible }) =>
+    id === undefined ? null : <PluginFrame path={id} visible={visible} />,
+  keepMounted: true,
   unlisted: true,
 }
 

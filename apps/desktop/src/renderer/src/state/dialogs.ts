@@ -5,47 +5,25 @@ import type { ReactNode } from 'react'
 export type DialogSize = 'sm' | 'md' | 'lg' | 'full' | 'bare'
 
 /**
- * The dialogs that can be asked for, as a discriminated union: `id` names the
- * dialog and `size` the width it asks for. `openDialogAtom` records the ask in
- * `activeDialogAtom`, and the shell's `DialogHost` draws it. It draws a
- * plugin's dialog; the core entries have no component in this shell yet, so
- * asking for one still shows nothing.
+ * The dialog that can be asked for: a plugin's, at the width `size` asks for.
+ * `openDialogAtom` records the ask in `activeDialogAtom`, and the shell's
+ * `DialogHost` draws it. `id` stays so a core dialog can join as a union.
  *
- * `closable` rides alongside the union: it means the same thing for every
- * dialog, and an entry sets it only to opt OUT, when its own footer already
+ * `closable` is set only to opt OUT, when the dialog's own footer already
  * offers a way out (a Cancel beside a corner ✕ is two controls for one intent).
  */
-export type ActiveDialog = { closable?: boolean } & (
-  | { id: 'create-task'; size: 'md' } // Full create (⌘⇧T); quick add (⌘T) is `QuickAdd`.
+export type ActiveDialog = { closable?: boolean } & {
   /**
    * A plugin's dialog. Core knows nothing of its content: the plugin renders
    * it, and calls `close` when it is done.
    */
-  | { id: 'plugin'; size: DialogSize; render: (close: () => void) => ReactNode }
-  /**
-   * Set or clear a path's icon in `.holi/settings/icons.yaml`. Carries the
-   * map's current entry, which the tree already has, so the dialog opens filled.
-   */
-  | {
-      id: 'edit-icon'
-      size: 'sm'
-      remote: string
-      path: string
-      current: string | null
-      /** Opens `.holi/settings/icons.yaml` itself. A closure, unlike every other
-       *  field here, because the tree holds the opener. */
-      onOpenMap: () => void
-    }
-  /** Opened from the vault picker and from Settings, for any registered vault,
-   *  not only the open one. */
-  | { id: 'remove-vault'; size: 'sm'; remote: string; intent: RemoveVaultIntent }
-)
+  id: 'plugin'
+  size: DialogSize
+  render: (close: () => void) => ReactNode
+}
 
 /** The one dialog a plugin may open. */
-export type PluginDialog = Extract<ActiveDialog, { id: 'plugin' }>
-
-/** Leave a vault, delete it, or let go of one GitHub no longer shows. */
-type RemoveVaultIntent = 'leave' | 'delete' | 'forget'
+export type PluginDialog = ActiveDialog
 
 /** Null when nothing is open. */
 const activeDialogAtom = atom<ActiveDialog | null>(null)

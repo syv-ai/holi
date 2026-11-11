@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import type { CapabilityContext } from '../../../main/plugin-api'
+import { createCapabilityRegistry } from '../../../main/capabilities/registry'
 import { PLUGIN_COMMANDS_DIR } from '@holi/shared'
 import {
   communityCapabilities,
@@ -672,6 +673,57 @@ describe('serving', () => {
     await s.call('community.setup', { id: 'prezzi' })
     return s
   }
+
+  test('a pending capability acquire cannot outlive activation disposal', async () => {
+    const s = await ready([], 3950)
+    const registry = createCapabilityRegistry()
+    const unregister = registry.register(['community'], communityCapabilities(s.deps))
+    let resolveInstall!: (install: Awaited<ReturnType<typeof s.deps.store.get>>) => void
+    let lookupStarted!: () => void
+    const lookup = new Promise<void>((resolve) => (lookupStarted = resolve))
+    const originalGet = s.deps.store.get.bind(s.deps.store)
+    let block = false
+    s.deps.store.get = ((id: string) =>
+      block
+        ? new Promise((resolve) => {
+            resolveInstall = resolve
+            lookupStarted()
+          })
+        : originalGet(id)) as typeof s.deps.store.get
+    const ctx = {
+      remote: 'syv-ai/decks',
+      root: vault,
+      bundle: null,
+    } as unknown as CapabilityContext
+    block = true
+    const pending = registry.run('community.acquire', 'ui', ctx, { path: 'decks/q4/slides.md' })
+    await lookup
+    const shutdown = s.supervisor.dispose()
+    expect(s.supervisor.dispose()).toBe(shutdown)
+    await shutdown
+    unregister()
+    block = false
+    resolveInstall(await originalGet('prezzi'))
+    await expect(pending).rejects.toThrow(/disposed/)
+    expect(s.origins.size).toBe(0)
+    expect(s.states).toEqual([])
+    expect(registry.has('community.acquire')).toBe(false)
+  })
+
+  test('disposal cancels a pending startup', async () => {
+    await makeRepo()
+    const { supervisor, states, origins } = setup(3945)
+    const pending = supervisor.acquire('pending', {
+      cwd: repoDir,
+      argv: (port) => [process.execPath, 'serve.cjs', 'x', '--port', String(port)],
+      env: () => ({ ...process.env, HOLI_FILE: 'x' }),
+    })
+    await supervisor.dispose()
+    await expect(pending).rejects.toThrow(/stopped before it started/)
+    expect(states).not.toContainEqual(expect.objectContaining({ state: 'running' }))
+    expect(origins.size).toBe(0)
+    await supervisor.dispose()
+  })
 
   test('a file the plugin opens gets one server, shared, framed while up', async () => {
     const { call, origins } = await ready()

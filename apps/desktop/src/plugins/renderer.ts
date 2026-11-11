@@ -13,6 +13,7 @@ import { browserRenderer } from './browser/renderer'
 import { linksRenderer } from './links/renderer'
 import { pdfRenderer } from './pdf/renderer'
 import { tasksRenderer } from './tasks/renderer'
+import { transcribeRenderer } from './transcribe/renderer'
 
 export const RENDERER_PLUGINS: readonly RendererPlugin[] = [
   agentRenderer,
@@ -25,4 +26,5 @@ export const RENDERER_PLUGINS: readonly RendererPlugin[] = [
   googleRenderer,
   appsRenderer,
   communityRenderer,
+  transcribeRenderer,
 ]

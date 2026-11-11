@@ -13,7 +13,7 @@
  * after the seed rather than over a vault someone could already have cloned. `onboarding-ritual.tsx` is a thin view over this reducer, and keeping
  * the flow pure lets it be unit-tested without a DOM.
  */
-import { VAULT_SETTING_DESCRIPTORS, normaliseAnswers, type PluginSettings } from '@holi/shared'
+import { VAULT_SETTING_DESCRIPTORS, type PluginSettings } from '@holi/shared'
 
 const ACTS = ['greeting', 'naming', 'plugins', 'settings', 'threshold'] as const
 export type Act = (typeof ACTS)[number]
@@ -125,10 +125,7 @@ export const reduce = (s: OnboardingState, a: Action): OnboardingState => {
       return { ...s, owner: a.owner }
     case 'setSetting':
       // A fresh object rather than a mutation: the view re-renders off identity.
-      // Normalised, because one answer can withdraw another's options: turning
-      // daily notes off takes "today's note" off the Home row, and the value
-      // sitting there becomes one the user can neither see nor change.
-      return { ...s, settings: normaliseAnswers({ ...s.settings, [a.key]: a.value }) }
+      return { ...s, settings: { ...s.settings, [a.key]: a.value } }
     case 'setPlugin': {
       // Only a plugin turned away from its own default is written down, so a
       // vault that keeps the default follows it if Holi ever changes it.

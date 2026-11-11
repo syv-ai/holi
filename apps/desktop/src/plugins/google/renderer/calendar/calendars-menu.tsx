@@ -67,7 +67,7 @@ export function CalendarsMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger aria-label="Calendars" asChild>
-        <Button type="button" variant="outline" disabled={calendars.length === 0}>
+        <Button type="button" variant="ghost" disabled={calendars.length === 0}>
           {visible.length > 0 && (
             <span className="flex -space-x-1" aria-hidden="true">
               {visible.map((calendar) => (

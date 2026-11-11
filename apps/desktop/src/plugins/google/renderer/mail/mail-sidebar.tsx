@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { cn } from '@/plugin-api'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 // ── Sidebar Rail Toggle ──
 
@@ -10,52 +11,46 @@ import { Button } from '@/components/ui/button'
  */
 function SidebarRailToggle({ expanded, onToggle }: { expanded: boolean; onToggle: () => void }) {
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon-lg"
-      aria-label={expanded ? 'Collapse mail list' : 'Expand mail list'}
-      aria-expanded={expanded}
-      onClick={onToggle}
-      className={cn(
-        'group/rail absolute top-1/2 z-30 -translate-y-1/2 hover:bg-transparent dark:hover:bg-transparent',
-        expanded ? 'left-(--sidebar-width)' : 'left-0',
-      )}
-    >
-      <span className="flex flex-col items-center">
-        <span
-          aria-hidden="true"
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-lg"
+          aria-label={expanded ? 'Collapse mail list' : 'Expand mail list'}
+          aria-expanded={expanded}
+          onClick={onToggle}
           className={cn(
-            'bg-foreground/40 block h-2 w-0.5 rounded-t-full',
-            'origin-bottom motion-respond',
-            expanded
-              ? 'group-hover/rail:bg-foreground/60 group-hover/rail:rotate-40'
-              : 'group-hover/rail:bg-foreground/60 group-hover/rail:-rotate-40',
+            'group/rail absolute top-1/2 z-30 -translate-y-1/2 hover:bg-transparent dark:hover:bg-transparent',
+            expanded ? 'left-(--sidebar-width)' : 'left-0',
           )}
-        />
-        <span
-          aria-hidden="true"
-          className={cn(
-            'bg-foreground/40 block h-2 w-0.5 rounded-b-full',
-            'origin-top motion-respond',
-            expanded
-              ? 'group-hover/rail:bg-foreground/60 group-hover/rail:-rotate-40'
-              : 'group-hover/rail:bg-foreground/60 group-hover/rail:rotate-40',
-          )}
-        />
-      </span>
-
-      <span
-        className={cn(
-          'border-border bg-foreground text-background absolute left-full -ml-2 border px-2 py-0.5 text-xs font-medium whitespace-nowrap shadow-xs shadow-black/5',
-          'rounded-md',
-          'pointer-events-none -translate-x-0.5 opacity-0 motion-respond',
-          'group-hover/rail:translate-x-0 group-hover/rail:opacity-100',
-        )}
-      >
-        {expanded ? 'Collapse' : 'Expand'}
-      </span>
-    </Button>
+        >
+          <span className="flex flex-col items-center">
+            <span
+              aria-hidden="true"
+              className={cn(
+                'bg-foreground/40 block h-2 w-0.5 rounded-t-full',
+                'origin-bottom motion-respond',
+                expanded
+                  ? 'group-hover/rail:bg-foreground/60 group-hover/rail:rotate-40'
+                  : 'group-hover/rail:bg-foreground/60 group-hover/rail:-rotate-40',
+              )}
+            />
+            <span
+              aria-hidden="true"
+              className={cn(
+                'bg-foreground/40 block h-2 w-0.5 rounded-b-full',
+                'origin-top motion-respond',
+                expanded
+                  ? 'group-hover/rail:bg-foreground/60 group-hover/rail:-rotate-40'
+                  : 'group-hover/rail:bg-foreground/60 group-hover/rail:rotate-40',
+              )}
+            />
+          </span>
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="right">{expanded ? 'Collapse' : 'Expand'}</TooltipContent>
+    </Tooltip>
   )
 }
 

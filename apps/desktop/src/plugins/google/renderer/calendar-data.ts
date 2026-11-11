@@ -174,6 +174,7 @@ export function useGoogleCalendar(
   /** The newest load: an answer for a range already left arrives late and
    *  is dropped. */
   const latest = useRef(0)
+  const latestLoad = useRef<() => void>(() => {})
   const context = useRef({ remote, accountIdentity, generation: 0 })
   if (context.current.remote !== remote || context.current.accountIdentity !== accountIdentity) {
     context.current = { remote, accountIdentity, generation: context.current.generation + 1 }
@@ -243,6 +244,7 @@ export function useGoogleCalendar(
       },
     )
   }, [remote, window, contextGeneration])
+  latestLoad.current = load
 
   useEffect(load, [load])
   useEffect(loadCalendars, [loadCalendars, contextGeneration])
@@ -299,9 +301,10 @@ export function useGoogleCalendar(
         title: times.title,
         ...(times.location === '' ? {} : { location: times.location }),
       })
-      if (context.current.generation === generation && context.current.remote === remote) load()
+      if (context.current.generation === generation && context.current.remote === remote)
+        latestLoad.current()
     },
-    [remote, load],
+    [remote],
   )
 
   const update = useCallback(
@@ -309,9 +312,10 @@ export function useGoogleCalendar(
       if (remote === null) throw new Error('No vault is open.')
       const generation = context.current.generation
       await googleCap.reschedule(remote, { id: googleId, ...eventParams(times) })
-      if (context.current.generation === generation && context.current.remote === remote) load()
+      if (context.current.generation === generation && context.current.remote === remote)
+        latestLoad.current()
     },
-    [remote, load],
+    [remote],
   )
 
   const remove = useCallback(
@@ -319,9 +323,10 @@ export function useGoogleCalendar(
       if (remote === null) throw new Error('No vault is open.')
       const generation = context.current.generation
       await googleCap.unschedule(remote, { id: googleId })
-      if (context.current.generation === generation && context.current.remote === remote) load()
+      if (context.current.generation === generation && context.current.remote === remote)
+        latestLoad.current()
     },
-    [remote, load],
+    [remote],
   )
 
   return {

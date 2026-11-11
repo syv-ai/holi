@@ -200,7 +200,11 @@ unattended work: Claude Code uses its background supervisor and Pi a Holi-manage
 above), refused with the reason when their rules ask for more than its sandbox can enforce.
 Changing the default requires fresh approval for Holis and automations. Pi's runs use the person's
 normal filesystem permissions, without a sandbox or per-tool approval prompts; their configured
-`allow` rules are not enforced. A
+`allow` rules are not enforced. A caller that needs a Pi run held to less starts it with `tools: 'none'`
+(`agent.launch`): Pi's `--no-tools`, with no extensions, skills, prompt templates, context files, MCP
+servers or project settings (`NO_TOOLS` in `pi/rpc.ts`), so it can only answer; `keep` keeps it
+between turns until it is stopped, and `agent.reply` reads its last turn's answer. A meeting's
+scribe is the one caller ([meetings](meetings.md)). A
 default that names an agent this machine no longer has (a harness removed) is said in Settings, and
 the Sessions + then opens its menu and asks which agent; nothing is started on another agent in its
 place, and `agent.start`, `agent.job` and a new session from `agent.send` refuse it in words.
@@ -332,7 +336,9 @@ wrote into `plugins.yaml` is ignored, and dropped at the file's next write.
 **Other plugins drive the agent through it, never around it.** The agent knows nothing of a
 plugin that requires it ([architecture](../architecture.md), Plugins); it offers general
 capabilities any such plugin calls, from its renderer or, through `ctx.call`, from its main side:
-`agent.launch` (a background session whose first turn is a prompt, with no terminal),
+`agent.launch` (a background session whose first turn is a prompt, with no terminal, and
+optionally its model, `allow` rules as `--allowedTools`, `deny` rules as `--disallowedTools`, an
+appended system prompt and an MCP config; the UI door alone),
 `agent.job` (a prompt run unwatched on any provider that can, within a scope or under `allow`;
 Jobs above),
 `agent.scoped` (the same, as a session the person can watch; Fenced sessions above),
@@ -372,7 +378,8 @@ most recent. **History**, in the main view, has every row by day (Needs you, Pin
 Yesterday, Earlier) under its search field and filter menu. **⌘J** (the mode's `overview`)
 brings History forward with that field focused, as the place to pick up or start work: typing
 narrows the rows, ↓ goes into them (↑ from the first comes back), Enter on a card opens it, and
-Enter in the field starts a session in the default agent with what was typed as its first prompt. A plugin's row that is an agent session (its job id)
+Enter in the field opens the one conversation a search leaves, or else starts a session in the default
+agent with what was typed as its first prompt (the empty search says so). A plugin's row that is an agent session (its job id)
 and the live session with that id are one row: the session gives it its state and model, the
 plugin its title and who ran it. A card is two lines: the title, in full on hover, with the age on
 the right; then, quieter, a mark (a Holi's face, or an automation's bolt, when one ran it, else the
@@ -456,8 +463,10 @@ respawn`, a fresh process for the same conversation, which re-reads settings and
 session's own name is Claude Code's: `/rename`, or Ctrl+R in the list. **Start another session** on an agent tab starts
 one with no prompt, which waits for yours.
 
-**State is read, not inferred.** Main reads `claude agents --json` for the vault's config directory
-and keeps the background rows under the vault root. `needs-you` is `status: waiting`, `working` is
+**State is read, not inferred.** Main reads `claude agents --json --all` for the vault's config
+directory (`--all` adds the finished sessions, which a plain `--json` leaves out since Claude Code
+2.1.319; a Claude Code that refuses the flag is asked without it, which listed them) and keeps the
+background rows under the vault root. `needs-you` is `status: waiting`, `working` is
 `busy` or `shell`, then the turn bracket; a session started with no prompt reads `state: blocked`
 and is idle. The read is triggered by a watch of `<configDir>/sessions/` and `jobs/` (edge triggers,
 never parsed), by each turn hook, and by a vault opening. The one timer is a second read about a second
@@ -511,21 +520,39 @@ was checked live, so a release can change it. The socket answers nothing, so a s
 knowing. Claude Code rate-limits each sender and queues at most 50 messages. A vault opened
 without Holi has no bridge, and the hook does nothing.
 
+**A resumed conversation is told its job folder moved.** A conversation resumed into another job
+runs with a new `$CLAUDE_JOB_DIR`, while its scratch files stay in the old one's. At each session
+start `turn-signal.mjs` notes the job folder in `.holi/state/jobs.local.json` by the conversation's
+id (the 100 latest), and at a `resume` start whose folder differs from the noted one it prints one
+line, which Claude Code adds to the agent's context: the new folder, and the old one's path while it
+still exists. A conversation with no note, or resumed in the same job, gets nothing.
+
 **Git coexistence.** The seeded `UserPromptSubmit` and `Stop` hooks run `turn-signal.mjs`, which
 reads the vault's `bridge.local.env` ([agent-config](agent-config.md)) for the port and the vault's token, and posts
-the job id from `$CLAUDE_JOB_DIR`; at a Stop, also `pending`, how many background tasks and
+the job id from `$CLAUDE_JOB_DIR`; at a start, also `pid`, the session's `claude` process (`$CLAUDE_PID`, or the hook's parent on
+an older CLI); at a Stop, also `pending`, how many background tasks and
 session crons its input lists, which is what tells a done session from a paused one
-([scheduled-agents](scheduled-agents.md)). The vault has one working set: the first turn to start pauses
-sync, the last to end resumes it and takes one settle commit. A session also leaves the set when
+([scheduled-agents](scheduled-agents.md)). At a Stop it also saves where the turn left the vault, for the
+prompt hook's "changed since your last turn" ([agent-config](agent-config.md)), Holi open or not:
+the tree of the settle commit, when that Stop emptied the working set and `/turn/end` answers with
+it within five seconds, and otherwise the working tree as the hook took it. The vault has one working set: the first turn to start pauses
+sync, the last to end resumes it and takes one settle commit (when the resume's own commit is
+already running, the settle commit waits for it and takes what it left; with nothing left, that commit
+is the settle commit). A session also leaves the set when
 its process goes, on two consecutive `idle` readings (escaping a permission prompt fires no `Stop`),
-or on a 10 minute cap. Sessions keep running while Holi is closed, so the first read after a vault
+or on a 10 minute cap. Whether its process went is the process's own answer, not the listing's:
+a working session the listing does not name stays in the set while either pid known for it (from the turn's
+start, or from the listing while it named the session) still runs, since the listing can lose
+sight of a live session after a resume. With no pid known, as from a hook older than it, the
+listing's silence is enough. A reused pid could hold the set past a crash, but only until the cap. Sessions keep running while Holi is closed, so the first read after a vault
 opens puts any session already busy into the set.
 
 **Turn review.** A turn is a commit range, `base` at start to the settle commit, or, for a turn
 that ended while another session's was still running, to a tree object of the working tree as it
 ended. Records go to `.holi/state/turns.local.json` (50, newest first), keyed by job id; files and
 diffs come from git when shown. A turn that changed nothing is recorded too, since the prompt hook
-counts "changed since your last turn" from it ([agent-config.md](agent-config.md)), but only the
+counts "changed since your last turn" from it when its `Stop` hook has saved no tree for the
+conversation yet ([agent-config.md](agent-config.md)), but only the
 session's latest such one is kept, and the chip skips it. A chip under a session's window says
 `Claude changed N files` and opens a review with per-hunk accept and reject, saved as one new
 commit per file. An overlapped turn says so; an unreachable range says its history is gone.
