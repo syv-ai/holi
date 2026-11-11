@@ -15,7 +15,6 @@ import {
   closeSurfaceTabsAtom,
   openSurfaceAtom,
   surfaceTabIdsAtom,
-  type Command,
   type CommandMenuEntry,
   type PluginEventHandler,
   type PluginStore,
@@ -43,6 +42,8 @@ export const tabLooksAtom = atom((get): readonly SurfaceTabLook[] =>
 )
 
 const SAVED = 'holi.browser.addresses'
+const CLOSED = 'holi.browser.closed-addresses'
+const CLOSED_LIMIT = 50
 
 /** Each tab's last address, by id. Empty when storage cannot be read. */
 function savedAddresses(): Record<string, string> {
@@ -62,6 +63,25 @@ function saveAddresses(addresses: Record<string, string>): void {
   }
 }
 
+function closedAddresses(): Record<string, Record<string, string>> {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(CLOSED) ?? '{}')
+    return typeof parsed === 'object' && parsed !== null
+      ? (parsed as Record<string, Record<string, string>>)
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveClosedAddresses(addresses: Record<string, Record<string, string>>): void {
+  try {
+    localStorage.setItem(CLOSED, JSON.stringify(addresses))
+  } catch {
+    // A convenience: closed tabs may not be available to undo next time.
+  }
+}
+
 /** A new tab, opened in the active pane. */
 const newPageAtom = atom(null, async (get, set, url?: string): Promise<void> => {
   const remote = get(activeRemoteAtom)
@@ -69,10 +89,6 @@ const newPageAtom = atom(null, async (get, set, url?: string): Promise<void> => 
   const page = await browserCap.open(remote, { shown: true, ...(url === undefined ? {} : { url }) })
   set(openSurfaceAtom, BROWSER_SURFACE, page.id)
 })
-
-export const BROWSER_COMMANDS: readonly Command[] = [
-  { id: 'browser.new', label: 'New browser tab', run: (_get, set) => void set(newPageAtom) },
-]
 
 export const browserMenuEntriesAtom = atom((): readonly CommandMenuEntry[] => [
   {
@@ -110,14 +126,27 @@ function replayKey(payload: unknown): void {
 
 let asks = 0
 
+const pendingReveals = new Map<string, Set<string>>()
+
 export const browserEvents: Readonly<Record<string, PluginEventHandler>> = {
   tabs: ({ remote, payload }, store) => {
-    if (remote === store.get(activeRemoteAtom)) store.set(pagesAtom, payload as PageInfo[])
+    if (remote === store.get(activeRemoteAtom)) {
+      const list = payload as PageInfo[]
+      const pending = pendingReveals.get(remote)
+      if (pending !== undefined) {
+        for (const id of pending) pending.delete(id)
+        if (pending.size === 0) pendingReveals.delete(remote)
+      }
+      store.set(pagesAtom, list)
+    }
   },
   // A page the agent opened, or one a page opened: shown where the person is.
   reveal: ({ remote, payload }, store) => {
     const id = (payload as { id?: unknown }).id
     if (remote === store.get(activeRemoteAtom) && typeof id === 'string') {
+      const pending = pendingReveals.get(remote) ?? new Set<string>()
+      pending.add(id)
+      pendingReveals.set(remote, pending)
       store.set(openSurfaceAtom, BROWSER_SURFACE, id)
     }
   },
@@ -139,71 +168,158 @@ export const browserEvents: Readonly<Record<string, PluginEventHandler>> = {
  * each page is.
  */
 export function browserVault(remote: string, store: PluginStore): () => void {
-  const tabs = surfaceTabIdsAtom(BROWSER_SURFACE)
+  const tabs = surfaceTabIdsAtom(BROWSER_SURFACE, remote)
   const asked = store.get(pagesAtom)
+  const knownAddresses = savedAddresses()
+  const closed = closedAddresses()
+  const archive = (closed[remote] ??= {})
+  for (const page of asked) {
+    knownAddresses[page.id] = page.url
+    delete archive[page.id]
+  }
+  saveAddresses(knownAddresses)
+  saveClosedAddresses(closed)
   let stopped = false
+  let pages = new Set(asked.map((p) => p.id))
+  let open = new Set(store.get(tabs))
+  const requested = new Set<string>()
+  const closing = new Set<string>()
+  const opened = new Set<string>()
+  const reopening = new Map<string, Promise<void>>()
 
-  void browserCap.tabs(remote).then(async (list) => {
-    if (stopped) return
-    if (store.get(pagesAtom) === asked) store.set(pagesAtom, list)
-    const live = new Set(list.map((p) => p.id))
-    const saved = savedAddresses()
-    const kept = store.get(tabs).filter((id) => !live.has(id))
-    const reopened = await Promise.all(
-      kept.map(async (id) => {
-        const url = saved[id]
-        if (url === undefined) return null
-        try {
-          return (await browserCap.open(remote, { reopen: id, url, shown: true })).id
-        } catch {
-          return null
-        }
-      }),
+  const addressFor = (id: string): string | undefined =>
+    savedAddresses()[id] ?? closedAddresses()[remote]?.[id]
+
+  const ensureOpen = (id: string): void => {
+    if (
+      stopped ||
+      pendingReveals.get(remote)?.has(id) ||
+      !requested.has(id) ||
+      !store.get(tabs).includes(id) ||
+      opened.has(id)
     )
-    if (stopped) return
-    const lost = kept.filter((_id, i) => reopened[i] === null)
-    if (lost.length > 0) {
+      return
+    if (reopening.has(id)) return
+    if (pages.has(id)) {
+      if (!closing.has(id)) requested.delete(id)
+      return
+    }
+    const url = addressFor(id)
+    if (url === undefined) {
+      requested.delete(id)
       store.set(
         closeSurfaceTabsAtom,
         BROWSER_SURFACE,
-        store.get(tabs).filter((id) => !lost.includes(id)),
+        store.get(tabs).filter((tab) => tab !== id),
+        remote,
       )
+      return
     }
-  })
+    const pending = browserCap
+      .open(remote, { reopen: id, url, shown: true })
+      .then(async () => {
+        if (stopped || !store.get(tabs).includes(id)) {
+          await browserCap.close(remote, { tab: id }).catch(() => {})
+        } else {
+          requested.delete(id)
+          opened.add(id)
+        }
+      })
+      .catch(() => {
+        requested.delete(id)
+        if (!stopped && store.get(tabs).includes(id))
+          store.set(
+            closeSurfaceTabsAtom,
+            BROWSER_SURFACE,
+            store.get(tabs).filter((tab) => tab !== id),
+            remote,
+          )
+      })
+      .finally(() => reopening.delete(id))
+    reopening.set(id, pending)
+  }
 
-  // A page that left main's list (`holi browser close`) takes its tabs.
-  // Diffed, so a tab still being opened again is not closed.
-  let pages = new Set(store.get(pagesAtom).map((p) => p.id))
+  void browserCap
+    .tabs(remote)
+    .then((list) => {
+      if (stopped) return
+      if (store.get(pagesAtom) === asked) store.set(pagesAtom, list)
+      const authoritative = store.get(pagesAtom)
+      const live = new Set(authoritative.map((p) => p.id))
+      for (const id of store.get(tabs)) {
+        if (live.has(id)) continue
+        requested.add(id)
+        ensureOpen(id)
+      }
+    })
+    .catch(() => {})
+
+  // A page that left main's list (`holi browser close`) takes its tabs unless
+  // the shell is concurrently restoring that same tab.
   const offPages = store.sub(pagesAtom, () => {
     const list = store.get(pagesAtom)
     const now = new Set(list.map((p) => p.id))
     const gone = [...pages].filter((id) => !now.has(id))
     pages = now
-    if (gone.length > 0) {
+    for (const id of gone) closing.delete(id)
+    for (const id of now) opened.delete(id)
+    for (const id of gone) opened.delete(id)
+    const activeTabs = store.get(tabs)
+    const lost = gone.filter((id) => !requested.has(id))
+    if (lost.length > 0) {
       store.set(
         closeSurfaceTabsAtom,
         BROWSER_SURFACE,
-        store.get(tabs).filter((id) => !gone.includes(id)),
+        activeTabs.filter((id) => !lost.includes(id)),
+        remote,
       )
     }
     const saved = savedAddresses()
-    for (const p of list) if (p.url !== '') saved[p.id] = p.url
-    for (const id of gone) delete saved[id]
+    const closed = closedAddresses()
+    const archive = (closed[remote] ??= {})
+    for (const id of gone) {
+      const url = saved[id]
+      if (url !== undefined) {
+        delete archive[id]
+        archive[id] = url
+      }
+      delete saved[id]
+    }
+    for (const p of list) {
+      saved[p.id] = p.url
+      delete archive[p.id]
+    }
+    const recent = Object.keys(archive)
+    for (const id of recent.slice(0, -CLOSED_LIMIT)) delete archive[id]
     saveAddresses(saved)
+    saveClosedAddresses(closed)
+    for (const id of requested) ensureOpen(id)
   })
 
-  // Closing the last tab onto a page closes the page. Diffed across each
-  // change, so a tab moved between panes is not a close.
-  let open = new Set(store.get(tabs))
+  // Closing the last tab onto a page closes the page. A reopened tab is
+  // serialized through the page-removal event, including a delayed close.
   const offTabs = store.sub(tabs, () => {
     const now = new Set(store.get(tabs))
-    for (const id of open)
-      if (!now.has(id)) void browserCap.close(remote, { tab: id }).catch(() => {})
+    for (const id of open) {
+      if (!now.has(id)) {
+        requested.delete(id)
+        if (pages.has(id)) closing.add(id)
+        if (!reopening.has(id)) void browserCap.close(remote, { tab: id }).catch(() => {})
+      }
+    }
+    for (const id of now) {
+      if (open.has(id)) continue
+      if (!pages.has(id) || closing.has(id)) {
+        requested.add(id)
+        ensureOpen(id)
+      }
+    }
     open = now
   })
 
   return () => {
     stopped = true
+    pendingReveals.delete(remote)
     offPages()
     offTabs()
     store.set(pagesAtom, [])

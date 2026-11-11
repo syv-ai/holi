@@ -122,6 +122,32 @@ describe('agent terminals', () => {
     await vi.waitFor(() => expect(spawns[0]!.pty.writes).toHaveLength(1), { timeout: 1_000 })
   })
 
+  it('answers native color queries directly to the PTY and not as user input', () => {
+    const { terminals, spawns } = setup()
+    const onInput = vi.fn()
+    const res = terminals.open({ ...on(), onInput })
+    if (!res.ok) throw new Error(res.message)
+    terminals.setAppearance(res.id, {
+      foreground: '#d0d0d0',
+      background: '#14283c00',
+      red: '#c80000',
+    })
+    spawns[0]!.pty.emit('\x1b[?2031h\x1b]10;?\x07\x1b]11;?\x07\x1b]4;1;?\x07')
+    expect(spawns[0]!.pty.writes).toEqual([
+      '\x1b]10;rgb:d0/d0/d0\x07',
+      '\x1b]11;rgb:14/28/3c\x07',
+      '\x1b]4;1;rgb:c8/00/00\x07',
+    ])
+    expect(onInput).not.toHaveBeenCalled()
+
+    terminals.setAppearance(res.id, {
+      foreground: '#d0d0d0',
+      background: '#ffffff00',
+      red: '#c80000',
+    })
+    expect(spawns[0]!.pty.writes.at(-1)).toBe('\x1b[?997;2n')
+  })
+
   it('streams output only once attached, after replaying the record', async () => {
     const { terminals, spawns, sent } = setup()
     const res = terminals.open({ ...on(), notice: 'sign in\r\n' })

@@ -309,6 +309,11 @@ test("New app on a folder's menu makes the app in that folder", async () => {
     }),
   )
   await waitFor(() => expect(onOpen).toHaveBeenCalledWith('kunder/Untitled.app'))
+  // Opened from a scan that has it, not the one from before it was made.
+  const scanned = snapshotQuery.mock.invocationCallOrder.filter(
+    (at) => at > run.mock.invocationCallOrder[0]!,
+  )
+  expect(scanned[0]).toBeLessThan(onOpen.mock.invocationCallOrder[0]!)
 })
 
 test("New app on a file's menu makes the app beside the file", async () => {

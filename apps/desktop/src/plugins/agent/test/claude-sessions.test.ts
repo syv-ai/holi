@@ -65,6 +65,21 @@ describe('parseListing', () => {
     expect(row !== undefined && isLive(row)).toBe(false)
   })
 
+  it('reads a finished row as `--all` prints it (2.1.319) as past', () => {
+    const done = {
+      cwd: ROOT,
+      id: '7b1e0c42',
+      kind: 'background',
+      name: 'Tidy the inbox',
+      sessionId: '7b1e0c42-1f3a-4c55-9d0e-2a6b8f1c3d47',
+      startedAt: 1790627831838,
+      state: 'done',
+    }
+    const [row] = parseListing(listing([done]), ROOT)
+    expect(row).toMatchObject({ id: '7b1e0c42', state: 'done', sessionId: done.sessionId })
+    expect(row !== undefined && isLive(row)).toBe(false)
+  })
+
   it('costs a malformed row that row only', () => {
     const rows = parseListing(listing([{ ...LIVE, id: 7 }, null, LIVE]), ROOT)
     expect(rows.map((r) => r.id)).toEqual(['20c9f6e8'])
@@ -140,7 +155,7 @@ describe('claude-cli', () => {
     await cli.forkBg(target, 'uuid-1', 'Copy')
 
     expect(calls.map((c) => c.args)).toEqual([
-      ['agents', '--json'],
+      ['agents', '--json', '--all'],
       ['stop', '1234abcd'],
       ['--bg', '--name', 'Tidy', '--', 'go'],
       ['--bg', '--resume', 'uuid-1', '--fork-session', '--name', 'Copy'],
@@ -150,6 +165,41 @@ describe('claude-cli', () => {
       expect(opts.env.CLAUDE_CONFIG_DIR).toBe('/cfg/vault')
       expect(opts.env.PATH?.split(':')[0]).toBe('/holi/bin')
     }
+  })
+
+  it('lists finished sessions with --all, and without it on a Claude Code that refuses it', async () => {
+    const calls: string[][] = []
+    const cli = createClaudeCli({
+      resolveBin: () => '/c',
+      run: async (_bin, args) => {
+        calls.push(args)
+        if (args.includes('--all')) throw new Error("error: unknown option '--all'")
+        return '[]'
+      },
+      log: () => {},
+    })
+    expect(await cli.list(target)).toBe('[]')
+    expect(await cli.list(target)).toBe('[]')
+    // Refused once, never asked again.
+    expect(calls).toEqual([
+      ['agents', '--json', '--all'],
+      ['agents', '--json'],
+      ['agents', '--json'],
+    ])
+  })
+
+  it('answers a listing that fails for another reason with nothing, without retrying', async () => {
+    const calls: string[][] = []
+    const cli = createClaudeCli({
+      resolveBin: () => '/c',
+      run: async (_bin, args) => {
+        calls.push(args)
+        throw new Error('timed out')
+      },
+      log: () => {},
+    })
+    expect(await cli.list(target)).toBeNull()
+    expect(calls).toEqual([['agents', '--json', '--all']])
   })
 
   it('starts a scheduled run or a Holi with its model, rules and who it is, a plain option ending the rules', async () => {
@@ -187,6 +237,67 @@ describe('claude-cli', () => {
         'Check mail.',
       ],
       ['--bg', '--allowedTools=Edit', '--name', 'Scheduled run', '--', 'Check mail.'],
+    ])
+  })
+
+  it('passes an MCP config as one `=` argument, before the name ends the options', async () => {
+    const calls: string[][] = []
+    const cli = createClaudeCli({
+      resolveBin: () => '/c',
+      run: async (_bin, args) => {
+        calls.push(args)
+        return 'backgrounded · 1234abcd · x\n'
+      },
+      log: () => {},
+    })
+    await cli.startBg(target, {
+      name: 'Meeting · Planning',
+      prompt: 'Begin.',
+      allow: ['Bash(holi meeting:*)'],
+      mcpConfig: '/Users/me/mcp.json',
+    })
+    expect(calls).toEqual([
+      [
+        '--bg',
+        '--mcp-config=/Users/me/mcp.json',
+        '--allowedTools=Bash(holi meeting:*)',
+        '--name',
+        'Meeting · Planning',
+        '--',
+        'Begin.',
+      ],
+    ])
+  })
+
+  it('passes each deny rule as its own `=` argument, a plain option ending them', async () => {
+    const calls: string[][] = []
+    const cli = createClaudeCli({
+      resolveBin: () => '/c',
+      run: async (_bin, args) => {
+        calls.push(args)
+        return 'backgrounded · 1234abcd · x\n'
+      },
+      log: () => {},
+    })
+    await cli.startBg(target, {
+      name: 'Meeting · Planning',
+      prompt: 'Begin.',
+      allow: ['Bash(holi meeting:*)'],
+      deny: ['Read', 'Read(//**)'],
+    })
+    await cli.startBg(target, { prompt: 'Begin.', deny: ['WebFetch'] })
+    expect(calls).toEqual([
+      [
+        '--bg',
+        '--allowedTools=Bash(holi meeting:*)',
+        '--disallowedTools=Read',
+        '--disallowedTools=Read(//**)',
+        '--name',
+        'Meeting · Planning',
+        '--',
+        'Begin.',
+      ],
+      ['--bg', '--disallowedTools=WebFetch', '--name', 'Scheduled run', '--', 'Begin.'],
     ])
   })
 

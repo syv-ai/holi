@@ -1,19 +1,27 @@
 /**
- * How the calendar view writes days and times: in the person's language and
- * this machine's clock, never a fixed English pattern, as the Agenda does.
+ * How the calendar view writes days and times: in the person's language, on
+ * the clock the `timeFormat` setting names, never a fixed English pattern.
  */
+/** Which clock the calendar writes times on: 14:30, or 2:30 PM (the
+ *  plugin's `timeFormat` setting). */
+export type TimeFormat = '24h' | '12h'
 
 /** Monday first, as the Agenda's month and ISO week numbers are. */
 export const WEEK_STARTS_ON = 1
 
-/** An instant's time of day: 14:30, or 2:30 PM where the clock says so. */
-export const timeOf = (date: Date): string =>
-  date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+/** An instant's time of day on the given clock: 14:30, or 2:30 PM. */
+export const timeOf = (date: Date, clock: TimeFormat): string =>
+  date.toLocaleTimeString(
+    undefined,
+    clock === '12h'
+      ? { hour: 'numeric', minute: '2-digit', hour12: true }
+      : { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' },
+  )
 
-/** "HH:mm" on this machine's clock. */
-export function clockLabel(hhmm: string): string {
+/** "HH:mm" written on the given clock. */
+export function clockLabel(hhmm: string, clock: TimeFormat): string {
   const [h = 0, m = 0] = hhmm.split(':').map(Number)
-  return timeOf(new Date(2000, 0, 1, h, m))
+  return timeOf(new Date(2000, 0, 1, h, m), clock)
 }
 
 /** "Thu, 23 Oct". */

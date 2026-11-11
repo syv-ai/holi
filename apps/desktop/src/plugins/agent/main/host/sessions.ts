@@ -78,7 +78,21 @@ export interface AgentSessionsDeps {
   /** Forwarded to the turn coordinator. */
   idleConfirmMs?: number
   leaveCapMs?: number
+  /** Whether a process is still running; `process.kill(pid, 0)` unless a
+   *  test says otherwise. */
+  alive?: (pid: number) => boolean
   log?: (msg: string) => void
+}
+
+/** Whether `pid` names a running process. EPERM means it runs as someone
+ *  else, which is still running. */
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
 }
 
 export interface AgentSessions {
@@ -116,8 +130,12 @@ export interface AgentSessions {
     prompt: string
     model?: string
     allow?: readonly string[]
+    /** Rules it may never use, whatever the vault allows. */
+    deny?: readonly string[]
     /** A Holi's soul and memory, when one carries the run out. */
     appendSystemPrompt?: string
+    /** An MCP JSON config the session loads besides the vault's own. */
+    mcpConfig?: string
   }): Promise<LaunchResult>
   /** Whether Holi has a terminal open on the session. */
   watched(id: string): boolean
@@ -134,8 +152,16 @@ export interface AgentSessions {
   stop(id: string): Promise<ActionResult>
   respawn(id: string): Promise<ActionResult>
   duplicate(id: string, geometry?: Geometry): Promise<StartResult>
-  /** A turn edge from the seeded hook, by vault and job id. */
-  noteTurn(remote: string, jobId: string, active: boolean, pending?: number | null): void
+  /** A turn edge from the seeded hook, by vault and job id. A start may say
+   *  the session's process id, which outlives a listing that loses the id. At
+   *  an end, answers the settle commit it took (`TurnCoordinator.end`), or null. */
+  noteTurn(
+    remote: string,
+    jobId: string,
+    active: boolean,
+    pending?: number | null,
+    pid?: number,
+  ): Promise<string | null>
   /** A session's status line fired: Claude Code's status JSON, by vault and
    *  job id. */
   noteStatus(remote: string, jobId: string, status: unknown): void
@@ -228,6 +254,20 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   /** What the Stop that is ending a turn said was pending, until the end is
    *  told. */
   const stopPending = new Map<string, number>()
+  /**
+   * Each working session's process, by job id: from its turn-start hook, or
+   * from the listing while it named the session. A working session the
+   * listing does not name is let go only once this process is gone, because
+   * the listing can lose sight of a live one (a resumed conversation). One
+   * with no known process (a hook older than the pid) is let go as soon as
+   * the listing stops naming it. Pids are reused, but only after the counter
+   * wraps; a turn held by a reused one still ends at the safety cap. Both
+   * sources are kept and either running holds the turn: a listing read that
+   * started before a resume finishes with the previous process's row, and a
+   * process whose start report never arrived is known only to the listing.
+   */
+  const workingPid = new Map<string, { hook?: number; listing?: number }>()
+  const alive = deps.alive ?? processAlive
 
   const coordinator: TurnCoordinator = createTurnCoordinator({
     vault: () => current?.vault ?? null,
@@ -359,11 +399,20 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       }
     }
 
-    // A session whose process has gone will not end its turn now. Only the
-    // listing's own: a bracketed turn is its driver's to end.
-    for (const id of coordinator.working) {
-      if (!bracketed.has(id) && !liveIds.has(id)) coordinator.forget(id)
+    for (const row of liveRows) {
+      if (row.pid === undefined || !coordinator.working.has(row.id)) continue
+      workingPid.set(row.id, { ...workingPid.get(row.id), listing: row.pid })
     }
+    // A session whose process has gone will not end its turn now. Only the
+    // listing's own: a bracketed turn is its driver's to end. Its process,
+    // when known, says whether it is gone, not the listing (`workingPid`).
+    for (const id of coordinator.working) {
+      if (bracketed.has(id) || liveIds.has(id)) continue
+      const known = workingPid.get(id)
+      const running = [known?.hook, known?.listing].some((p) => p !== undefined && alive(p))
+      if (!running) coordinator.forget(id)
+    }
+    for (const id of workingPid.keys()) if (!coordinator.working.has(id)) workingPid.delete(id)
     // Nor use any more context; resumed, it says so again at its first event.
     for (const id of contextPercent.keys()) if (!liveIds.has(id)) contextPercent.delete(id)
     for (const id of modelName.keys()) if (!liveIds.has(id)) modelName.delete(id)
@@ -481,7 +530,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       return opened.ok ? { ok: true, sessionId: res.id, terminalId: opened.terminalId } : opened
     },
 
-    async launch({ name, prompt, model, allow, appendSystemPrompt }) {
+    async launch({ name, prompt, model, allow, deny, appendSystemPrompt, mcpConfig }) {
       const c = await ensureCurrent()
       if (c === null) return noVault
       const res = await bg.cli.startBg(targetOf(c), {
@@ -489,7 +538,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         prompt,
         ...(model === undefined ? {} : { model }),
         ...(allow === undefined ? {} : { allow }),
+        ...(deny === undefined ? {} : { deny }),
         ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt }),
+        ...(mcpConfig === undefined ? {} : { mcpConfig }),
       })
       if (!res.ok) return res
       if (current !== c) {
@@ -571,17 +622,21 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       return opened.ok ? { ok: true, sessionId: res.id, terminalId: opened.terminalId } : opened
     },
 
-    noteTurn(remote, jobId, active, pending = null) {
+    async noteTurn(remote, jobId, active, pending = null, pid) {
       // A turn in a vault Holi is not showing is not this vault's pause.
-      if (current?.remote !== remote) return
+      if (current?.remote !== remote) return null
+      let settled: Promise<string | null> = Promise.resolve(null)
       if (active) unprompted.delete(jobId)
+      if (active && pid !== undefined)
+        workingPid.set(jobId, { ...workingPid.get(jobId), hook: pid })
       if (active) coordinator.begin(jobId)
       else {
         if (pending !== null) stopPending.set(jobId, pending)
-        coordinator.end(jobId)
+        settled = coordinator.end(jobId)
         stopPending.delete(jobId)
       }
       void refresh()
+      return settled
     },
 
     noteStatus(remote, jobId, report) {
@@ -679,6 +734,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     await deps.terminals.closeAll()
     for (const id of [...coordinator.working]) coordinator.forget(id)
     bracketed.clear()
+    workingPid.clear()
     unprompted.clear()
     contextPercent.clear()
     modelName.clear()

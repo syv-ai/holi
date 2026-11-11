@@ -4,6 +4,7 @@
  * of the settings tab.
  */
 import { Cable, CalendarDays, Mail } from 'lucide-react'
+import { PLUGINS_FILE, PLUGINS_LOCAL_FILE } from '@holi/shared'
 import { usePluginSetting, type RendererPlugin } from '@/plugin-api'
 import { GOOGLE_INFO } from '../info'
 import { googleConnectedAtom } from './account'
@@ -11,6 +12,7 @@ import { AgendaView } from './agenda-view'
 import { ConnectionsSection } from './connections-section'
 import { MailView } from './mail-view'
 import { CalendarView } from './calendar/calendar-view'
+import { CalendarSettingsSection } from './calendar/calendar-settings-section'
 import { MailShell } from './mail/mail-shell'
 
 /** The Agenda tab, opened on the view this machine's `agendaView` asks for. */
@@ -22,8 +24,8 @@ function AgendaSurface(): React.JSX.Element {
 export const googleRenderer: RendererPlugin = {
   info: GOOGLE_INFO,
   surfaces: [
-    { kind: 'mail', label: 'Mail', icon: Mail, render: MailView, homeable: true },
-    { kind: 'agenda', label: 'Agenda', icon: CalendarDays, render: AgendaSurface, homeable: true },
+    { kind: 'mail', label: 'Mail', icon: Mail, render: MailView },
+    { kind: 'agenda', label: 'Agenda', icon: CalendarDays, render: AgendaSurface },
   ],
   sidebarApps: [
     {
@@ -58,6 +60,15 @@ export const googleRenderer: RendererPlugin = {
       // main's credential storage, and the renderer never sees a token.
       files: [],
       Component: ConnectionsSection,
+    },
+    {
+      id: 'google-calendar',
+      label: 'Calendar',
+      icon: CalendarDays,
+      description: 'How the Calendar writes times and weeks, for everyone in this vault.',
+      headings: [],
+      files: [PLUGINS_FILE, PLUGINS_LOCAL_FILE],
+      Component: CalendarSettingsSection,
     },
   ],
 }

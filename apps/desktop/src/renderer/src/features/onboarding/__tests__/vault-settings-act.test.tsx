@@ -46,21 +46,14 @@ test('a toggle reports its key and its new value', async () => {
   expect(onChange).toHaveBeenCalledWith('dailyNotes', false)
 })
 
-test('a choice reports the option’s value, not its label', async () => {
-  const { onChange } = setup()
-  const row = screen.getByRole('group', { name: 'Home is' })
-  await userEvent.click(within(row).getByRole('radio', { name: 'Today’s note' }))
-  expect(onChange).toHaveBeenCalledWith('home', 'daily')
-})
-
 test('a choice shows which option is currently selected', () => {
-  setup({ home: 'daily' })
-  const row = screen.getByRole('group', { name: 'Home is' })
-  expect(within(row).getByRole('radio', { name: 'Today’s note' })).toBeChecked()
-  expect(within(row).getByRole('radio', { name: 'Vault overview' })).not.toBeChecked()
+  setup({ colorScheme: 'dark' })
+  const row = screen.getByRole('group', { name: 'Appearance' })
+  expect(within(row).getByRole('radio', { name: 'Dark' })).toBeChecked()
+  expect(within(row).getByRole('radio', { name: 'Light' })).not.toBeChecked()
 })
 
-test('appearance is a choice too, and reports a plain string', async () => {
+test('a choice reports the option’s value, not its label', async () => {
   const { onChange } = setup()
   const row = screen.getByRole('group', { name: 'Appearance' })
   await userEvent.click(within(row).getByRole('radio', { name: 'Dark' }))
@@ -100,12 +93,12 @@ test('warns about the shared-vault collision on the daily-note row', () => {
 
 test('falls back to the descriptor default when an answer is missing', () => {
   // A vault whose settings file predates a row still renders it.
-  setup({ home: undefined })
-  const row = screen.getByRole('group', { name: 'Home is' })
-  const fallback = RITUAL_SETTING_DESCRIPTORS.find((d) => d.key === 'home')!
+  setup({ colorScheme: undefined })
+  const row = screen.getByRole('group', { name: 'Appearance' })
+  const fallback = RITUAL_SETTING_DESCRIPTORS.find((d) => d.key === 'colorScheme')!
   const label =
     fallback.control.kind === 'choice'
-      ? fallback.control.options.find((o) => o.value === VAULT_SETTING_DEFAULTS.home)!.label
+      ? fallback.control.options.find((o) => o.value === VAULT_SETTING_DEFAULTS.colorScheme)!.label
       : ''
   expect(within(row).getByRole('radio', { name: label })).toBeChecked()
 })

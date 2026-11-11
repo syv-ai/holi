@@ -29,6 +29,8 @@ export function ConfirmDialog({
   confirmLabel,
   cancelLabel = 'Cancel',
   destructive = false,
+  confirmVariant,
+  footerVariant,
   size,
   children,
   onCloseAutoFocus,
@@ -44,6 +46,8 @@ export function ConfirmDialog({
   confirmLabel: string
   cancelLabel?: string
   destructive?: boolean
+  confirmVariant?: 'default' | 'secondary' | 'outline' | 'destructive'
+  footerVariant?: 'default' | 'plain'
   size?: 'default' | 'sm'
   /** Under the sentence: a choice that goes with the answer, a warning. */
   children?: ReactNode
@@ -100,12 +104,12 @@ export function ConfirmDialog({
           )}
         </AlertDialogHeader>
         {children}
-        <AlertDialogFooter>
+        <AlertDialogFooter variant={footerVariant}>
           <AlertDialogCancel disabled={pending} onClick={onCancel}>
             {cancelLabel}
           </AlertDialogCancel>
           <AlertDialogAction
-            variant={destructive ? 'destructive' : 'default'}
+            variant={confirmVariant ?? (destructive ? 'destructive' : 'default')}
             disabled={pending}
             onClick={confirm}
           >

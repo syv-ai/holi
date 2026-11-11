@@ -122,6 +122,20 @@ describe('machine CLI bridge', () => {
     expect(legacy).toBe(403)
   })
 
+  it('answers help before resolving an explicit vault target', async () => {
+    const resolve = vi.fn(async () => null)
+    const r = await rig({ resolve })
+    const result = await send(
+      r.port,
+      r.token,
+      argv('docs', 'read', '--vault', 'owner/missing', '--help'),
+    )
+    expect(result.status).toBe(200)
+    expect(result.body).toContain('usage: holi docs read <path>')
+    expect(resolve).not.toHaveBeenCalled()
+    expect(r.dispatch).not.toHaveBeenCalled()
+  })
+
   it('refuses a closed stdin command before asking for its body', async () => {
     const r = await rig()
     const result = await send(r.port, r.token, argv('store', 'put'))

@@ -13,11 +13,14 @@
  * vault on screen: a background agent session outlives a vault switch and must
  * not then reach another vault's mailbox.
  *
- * **`send` and `reply` are the two verbs that reach another person.** Nothing
- * here gates them: the gate is the agent's `PreToolUse` hook
- * (`google-send-gate.mjs`), which matches `holi google send|reply`. The bridge
- * refuses any word before the verb, so that pattern cannot be stepped around.
- * A person pressing Send in the UI has already decided.
+ * **`send`, `reply` and `respond` reach another person, and `api` may.**
+ * Nothing here asks about them: the gate is the agent's `PreToolUse` hook
+ * (`google-send-gate.mjs`), which matches `holi google send|reply|respond` and
+ * any `holi google api` that is not a `GET`. The bridge refuses any word before
+ * the verb, so that pattern cannot be stepped around. What `api` may never do,
+ * permanent deletes and anything outside Gmail and Calendar, main refuses
+ * itself (`passthrough.ts`). A person pressing Send in the UI has already
+ * decided.
  *
  * **What other people wrote reaches the agent fenced** (`untrusted.ts`): each
  * read the CLI door opens fences it in `cliValue`, so the agent reads a mail's
@@ -34,18 +37,22 @@ import {
   optionalStringParam,
   paramsObject,
   stringParam,
+  type CapabilityContext,
   type CapabilityTable,
 } from '../../../main/plugin-api'
-import type { GoogleAccountsManager } from './accounts'
+import type { GoogleAccountsManager, GoogleAccountsOverview } from './accounts'
+import { vaultAttachments } from './attachments'
 import { GoogleApi, GoogleApiError, type GoogleErrorCode } from './api'
 import {
   createEvent,
   deleteEvent,
   resolveCalendars,
+  respondToEvent,
   updateEvent,
   type AgendaWindow,
   type CalendarOverrides,
   type EventPatch,
+  type InviteAnswer,
 } from './calendar'
 import type { ComposeWrite, GoogleData } from './data'
 import {
@@ -65,6 +72,7 @@ import { CLIENT_ID_SUFFIX } from './credentials'
 import { resolveThreadMeeting } from './invite'
 import type { LoopbackFlow } from './loopback-flow'
 import type { OutgoingMail } from './mime'
+import { assertCalendarAccess, fenceAnswer, planApiCall } from './passthrough'
 import { listContacts } from './people'
 import { GoogleReconnectRequiredError } from './session'
 import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
@@ -269,6 +277,28 @@ function cliMail(p: Record<string, unknown>): OutgoingMail {
   }
 }
 
+/** `--attach`: vault paths, given once or more (`CliSpec.many`). */
+function attachParam(p: Record<string, unknown>): string[] {
+  const value = p.attach
+  if (value === undefined || value === null) return []
+  const paths = typeof value === 'string' ? [value] : value
+  if (!Array.isArray(paths) || !paths.every((v) => typeof v === 'string' && v !== '')) {
+    throw new CapabilityError('BAD_REQUEST', 'attach must be vault paths')
+  }
+  return paths as string[]
+}
+
+/** `mail` with the files at `attach` on it; unchanged when there are none, so
+ *  a mail without attachments keeps its single-part shape. */
+async function withAttachments(
+  ctx: CapabilityContext,
+  mail: OutgoingMail,
+  attach: readonly string[],
+): Promise<OutgoingMail> {
+  if (attach.length === 0) return mail
+  return { ...mail, attachments: await vaultAttachments(ctx, attach) }
+}
+
 /**
  * `send`'s params: the composer's payload from the UI, or the CLI's
  * `--draft <id>` or composed message.
@@ -279,7 +309,7 @@ function cliMail(p: Record<string, unknown>): OutgoingMail {
  * Gmail's `drafts.send`, which deletes it as it sends: a draft followed by a
  * composed send would be two messages and an orphaned draft.
  */
-function sendParams(raw: unknown): ComposeWrite {
+function sendParams(raw: unknown): ComposeWrite & { attach?: string[] } {
   const p = paramsObject(raw)
   if (p.mail !== undefined) return composeParams(raw)
   const draft = optionalStringParam(p, 'draft')
@@ -287,9 +317,14 @@ function sendParams(raw: unknown): ComposeWrite {
     if (p.to !== undefined) {
       throw new CapabilityError('BAD_REQUEST', '--draft and --to are alternatives')
     }
+    // The draft's attachments are the draft's: adding to them here would send
+    // a message nobody can see in Drafts first.
+    if (p.attach !== undefined) {
+      throw new CapabilityError('BAD_REQUEST', '--draft and --attach are alternatives')
+    }
     return { draftId: draft, mail: { to: [], subject: '', body: '' } }
   }
-  return { mail: cliMail(p) }
+  return { mail: cliMail(p), attach: attachParam(p) }
 }
 
 /** `schedule`'s and `reschedule`'s event fields. */
@@ -305,8 +340,43 @@ function eventFields(p: Record<string, unknown>): EventPatch {
   }
 }
 
+/** `respond`'s answer: exactly one of `--yes`, `--no`, `--maybe`. */
+function inviteAnswer(p: Record<string, unknown>): InviteAnswer {
+  const answers = (
+    [
+      ['yes', 'accepted'],
+      ['no', 'declined'],
+      ['maybe', 'tentative'],
+    ] as const
+  ).filter(([flag]) => flagParam(p, flag))
+  if (answers.length !== 1) {
+    throw new CapabilityError('BAD_REQUEST', 'answer with exactly one of --yes, --no, --maybe')
+  }
+  return answers[0]![1]
+}
+
 const ok = { ok: true as const }
 const json = (value: unknown): string => JSON.stringify(value, null, 2)
+
+/** `holi google accounts`, as the agent reads it. */
+function accountsText(value: GoogleAccountsOverview): string {
+  const lines = [`this vault (${value.remote}): ${value.state}`]
+  if (value.state === 'not-connected') {
+    lines.push('no Google account is linked to this vault')
+  } else if (value.state === 'needs-reconnect') {
+    lines.push('the account this vault was linked to is no longer connected: connect Google again')
+  }
+  const a = value.account
+  if (a !== null) {
+    lines.push('', `${a.email}: ${value.state}`)
+    if (a.missingScopes.length > 0) lines.push(`  missing scopes: ${a.missingScopes.join(' ')}`)
+    if (a.otherVaults > 0) {
+      lines.push(`  also linked to ${a.otherVaults} other vault${a.otherVaults === 1 ? '' : 's'}`)
+    }
+  }
+  lines.push('', `client: ${value.client.source} (${value.client.id})`)
+  return lines.join('\n')
+}
 
 export function googleCapabilities(deps: GoogleCapabilityDeps) {
   /** The connect in progress. One per process: a second supersedes the first
@@ -346,9 +416,11 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       params: noParams,
       run: async (ctx) => {
         const session = await deps.accounts.sessionFor(ctx.remote).catch(() => null)
+        const overview = await deps.accounts.overview(ctx.remote).catch(() => null)
         return {
           account: session?.account ?? null,
           missingScopes: session?.missingScopes() ?? [],
+          needsReconnect: overview?.state === 'needs-reconnect',
         }
       },
     }),
@@ -394,14 +466,33 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
     }),
 
-    /** Every account connected on this machine, and the one this vault uses. */
-    'google.accounts': cap({
+    /** Every account connected on this machine, and the one this vault uses,
+     *  for the settings picker. */
+    'google.allAccounts': cap({
       doors: ['ui'],
       params: noParams,
       run: async (ctx) => ({
         accounts: deps.accounts.list(),
         current: (await deps.accounts.sessionFor(ctx.remote))?.accountSub ?? null,
       }),
+    }),
+
+    /**
+     * `holi google accounts`: whether this vault's Google is connected, so the
+     * agent can ask without reading the calendar to find out. Only the account
+     * this vault uses, its state, how many other vaults use it (never which)
+     * and the client in use; never a token. One connected for another vault
+     * is that vault's business.
+     */
+    'google.accounts': cap({
+      doors: ['cli'],
+      cli: {
+        args: [],
+        summary: "this vault's Google account and its state (no tokens)",
+      },
+      params: noParams,
+      run: (ctx) => deps.accounts.overview(ctx.remote),
+      text: accountsText,
     }),
 
     /** Point this vault at an account already connected. No consent. */
@@ -735,15 +826,23 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       doors: ['cli'],
       cli: {
         args: [],
-        summary: 'draft a message: --to, --subject, [--cc], [--thread]; the body on stdin',
+        summary:
+          'draft a message: --to, --subject, [--cc], [--thread], [--attach <path>]...; the body on stdin',
         stdin: 'body',
+        many: ['attach'],
       },
       params: (raw) => {
         const p = paramsObject(raw)
-        return { mail: cliMail(p), thread: optionalStringParam(p, 'thread') }
+        return {
+          mail: cliMail(p),
+          thread: optionalStringParam(p, 'thread'),
+          attach: attachParam(p),
+        }
       },
-      run: async (ctx, { mail, thread }) =>
-        google(() => createDraft(apiOf(ctx.remote), mail, thread)),
+      run: async (ctx, { mail, thread, attach }) => {
+        const attached = await withAttachments(ctx, mail, attach)
+        return google(() => createDraft(apiOf(ctx.remote), attached, thread))
+      },
     }),
 
     /**
@@ -757,14 +856,16 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       cli: {
         args: [],
         summary:
-          'send a message (--to, --subject, [--cc]; the body on stdin), or --draft <id>; asks first',
+          'send a message (--to, --subject, [--cc], [--attach <path>]...; the body on stdin), or --draft <id>; asks first',
         stdin: 'body',
         stdinUnless: 'draft',
+        many: ['attach'],
       },
       params: sendParams,
-      run: async (ctx, input) => {
+      run: async (ctx, { attach, ...input }) => {
+        const mail = await withAttachments(ctx, input.mail, attach ?? [])
         const data = await dataOf(ctx.remote)
-        return google(() => data.sendMail(input))
+        return google(() => data.sendMail({ ...input, mail }))
       },
     }),
 
@@ -779,8 +880,9 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         args: ['thread'],
         flags: ['all'],
         summary:
-          'reply to the sender (--all: everyone on the thread); the body on stdin; asks first',
+          'reply to the sender (--all: everyone on the thread), [--attach <path>]...; the body on stdin; asks first',
         stdin: 'body',
+        many: ['attach'],
       },
       params: (raw) => {
         const p = paramsObject(raw)
@@ -788,10 +890,18 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
           thread: stringParam(p, 'thread'),
           body: typeof p.body === 'string' ? p.body : '',
           all: flagParam(p, 'all'),
+          attach: attachParam(p),
         }
       },
-      run: async (ctx, { thread, body, all }) =>
-        google(() => replyToThread(apiOf(ctx.remote), thread, body, { all })),
+      run: async (ctx, { thread, body, all, attach }) => {
+        const attachments = attach.length === 0 ? [] : await vaultAttachments(ctx, attach)
+        return google(() =>
+          replyToThread(apiOf(ctx.remote), thread, body, {
+            all,
+            ...(attachments.length === 0 ? {} : { attachments }),
+          }),
+        )
+      },
     }),
 
     /** A solo event, the agent's and the agenda's alike. There is no way to
@@ -846,6 +956,78 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       run: async (ctx, { id }) => {
         await google(() => deleteEvent(apiOf(ctx.remote), id))
         return ok
+      },
+    }),
+
+    /**
+     * Answer an invitation, with a note to the organizer if `--comment`. One
+     * occurrence of a recurring meeting, since `agenda`'s ids are occurrences.
+     * Google tells the organizer: the agent's send gate asks first.
+     */
+    'google.respond': cap({
+      doors: ['cli'],
+      cli: {
+        args: ['id'],
+        flags: ['yes', 'no', 'maybe'],
+        summary:
+          'answer an invitation: --yes, --no or --maybe, [--comment <text>]; tells the organizer; asks first',
+      },
+      params: (raw) => {
+        const p = paramsObject(raw)
+        return {
+          id: stringParam(p, 'id'),
+          answer: inviteAnswer(p),
+          comment: optionalStringParam(p, 'comment'),
+        }
+      },
+      run: async (ctx, { id, answer, comment }) => {
+        await google(() => respondToEvent(apiOf(ctx.remote), id, answer, comment))
+        return { ok: true as const, response: answer }
+      },
+    }),
+
+    /**
+     * The rest of Gmail and Calendar: `METHOD path [--body -]`. Main refuses
+     * what no answer may allow and keeps a silent calendar write silent
+     * (`planApiCall`); the gate asks before any call that is not a `GET`, and
+     * reads the method by position, so method and path are positional only. CLI only, so `run` is the CLI door
+     * and fences the answer itself: which text is whose depends on the API
+     * the call went to, which the result alone no longer says.
+     */
+    'google.api': cap({
+      doors: ['cli'],
+      cli: {
+        args: ['method', 'path'],
+        summary:
+          'call the Gmail or Calendar API: METHOD gmail/v1/users/me/... or calendar/v3/..., [--body -] (JSON on stdin); METHOD in capitals; asks first unless GET',
+        stdin: 'body',
+        stdinOnDash: true,
+        positionalOnly: true,
+      },
+      params: (raw) => {
+        const p = paramsObject(raw)
+        return planApiCall(
+          stringParam(p, 'method'),
+          stringParam(p, 'path'),
+          optionalStringParam(p, 'body'),
+        )
+      },
+      run: async (ctx, call) => {
+        const api = apiOf(ctx.remote)
+        if (call.source === 'calendar') {
+          const calendars = await google(async () =>
+            resolveCalendars(api, await overrides(ctx.root)),
+          )
+          assertCalendarAccess(
+            call,
+            new Set(
+              calendars.filter((calendar) => calendar.enabled).map((calendar) => calendar.id),
+            ),
+            calendars.find((calendar) => calendar.primary)?.id,
+          )
+        }
+        const answer = await google(() => api.request(call.method, call.url, call.body))
+        return fenceAnswer(answer ?? { ok: true }, call.source)
       },
     }),
 

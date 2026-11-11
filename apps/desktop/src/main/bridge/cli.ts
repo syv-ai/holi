@@ -14,10 +14,11 @@
  *
  * **Nothing here is gated.** Almost every command is reversible or read-only
  * (opening a tab, scaffolding a directory, a record write that is a file
- * change in git history). The two that reach another person, `holi google
- * send|reply`, are asked about by the agent's send gate, a hook that matches
- * the command line; `resolveArgv` refuses any word before the verb so that
- * match stays sound.
+ * change in git history). Those that reach another person, `holi google
+ * send|reply|respond` and any `holi google api` that is not a GET, are asked
+ * about by the agent's send gate, a hook that matches the command line;
+ * `resolveArgv` refuses any word before the verb, and a `positionalOnly`
+ * command's arguments given as options, so that match stays sound.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
@@ -36,12 +37,15 @@ export type CliRequest =
       name: string
       label: string
       usage: string
-      params: Record<string, string>
+      /** A `many` param is a list; every other is one string. */
+      params: Record<string, string | string[]>
       json: boolean
       vault: string | null
     }
   /** Not a command: the text says why and what is (exit 2). */
   | { kind: 'usage'; text: string }
+  /** Asked for usage, bare or with --help: the text is the answer (exit 0). */
+  | { kind: 'help'; text: string }
   /** The command reads a param from stdin and it was not given: ask the
    *  script for stdin, and run nothing yet. */
   | { kind: 'stdin'; vault: string | null }
@@ -58,8 +62,12 @@ function commandLine({ name, cli }: CliCommand): string {
     words.push(arg.endsWith('?') ? `[<${argName(arg)}>]` : `<${arg}>`)
   }
   for (const flag of cli.flags ?? []) words.push(`[--${flag}]`)
+  for (const name of cli.many ?? []) words.push(`[--${name} <${name}>]...`)
   return words.join(' ')
 }
+
+/** `--help` or `-h`: asks for usage, whichever command it follows. */
+const HELP = new Set(['--help', '-h'])
 
 /** Every command and its summary, for bare `holi`. */
 function usageText(commands: readonly CliCommand[]): string {
@@ -68,7 +76,7 @@ function usageText(commands: readonly CliCommand[]): string {
     '',
     ...commands.flatMap((c) => [`  ${commandLine(c)}`, `      ${c.cli.summary}`]),
     '',
-    'Any argument can also be given as --name value. --json prints the result as JSON.',
+    'Arguments can also be given as --name value. --json prints the result as JSON.',
     'Use --vault owner/repo after the command to target a managed vault from any directory.',
   ].join('\n')
 }
@@ -91,7 +99,17 @@ export function resolveArgv(
     kind: 'usage',
     text: `${why}\n\n${usageText(commands)}`,
   })
-  if (argv.length === 0) return { kind: 'usage', text: usageText(commands) }
+  // Asking for usage is not an error: bare `holi` and any `--help` before a
+  // `--` answer it and run nothing, the one command's line when one is named.
+  const end = argv.indexOf('--')
+  if (argv.length === 0 || (end < 0 ? argv : argv.slice(0, end)).some((w) => HELP.has(w))) {
+    const named = commands.find((c) => c.name === `${argv[0]}.${argv[1]}`)
+    const text =
+      named === undefined
+        ? usageText(commands)
+        : `usage: ${commandLine(named)}\n${named.cli.summary}`
+    return { kind: 'help', text }
+  }
   const [ns, verb] = argv
   if (ns === undefined || ns.startsWith('-') || verb === undefined || verb.startsWith('-')) {
     return usage('holi: say the command first: holi <namespace> <verb>')
@@ -105,7 +123,7 @@ export function resolveArgv(
     text: `${label}: ${why}\nusage: ${commandLine(command)}`,
   })
   const { cli } = command
-  const params: Record<string, string> = {}
+  const params: Record<string, string | string[]> = {}
   const positionals: string[] = []
   let json = false
   let vault: string | null = null
@@ -125,8 +143,16 @@ export function resolveArgv(
         if (!value) return wrong('--vault needs a non-empty owner/repo')
         if (!isRemote(value)) return wrong('--vault must be owner/repo')
         vault = value
+      } else if (cli.many?.includes(name)) {
+        const value = eq >= 0 ? word.slice(eq + 1) : rest[++i]
+        if (value === undefined) return wrong(`--${name} needs a value`)
+        const prior = params[name]
+        params[name] = [...(Array.isArray(prior) ? prior : []), value]
+        continue
       } else if (Object.hasOwn(params, name)) return wrong(`--${name} is given twice`)
-      else if (eq < 0 && name === 'json') {
+      else if (cli.positionalOnly === true && cli.args.some((arg) => argName(arg) === name)) {
+        return wrong(`give ${name} in its place, not as --${name}`)
+      } else if (eq < 0 && name === 'json') {
         json = true
       } else if (eq < 0 && cli.flags?.includes(name)) {
         params[name] = 'true'
@@ -155,12 +181,23 @@ export function resolveArgv(
     }
   }
   if (positionals.length > 0) return wrong(`unexpected argument: ${positionals[0]}`)
-  if (cli.job !== undefined && job !== null && job !== '' && !Object.hasOwn(params, cli.job)) {
+  if (cli.job !== undefined && job !== null && job !== '') {
+    // Inside a session, the command is that session's: naming another one
+    // would let any session act as the one a verb trusts (a meeting's
+    // scribe). The flag is for a person at a terminal outside any session.
+    if (Object.hasOwn(params, cli.job) && params[cli.job] !== job) {
+      return wrong(
+        `--${cli.job} names another session; run inside one, this command is always its own`,
+      )
+    }
     params[cli.job] = job
   }
 
   const bodyless = cli.stdinUnless !== undefined && Object.hasOwn(params, cli.stdinUnless)
-  if (cli.stdin !== undefined && !bodyless && !Object.hasOwn(params, cli.stdin)) {
+  const wantsStdin =
+    cli.stdin !== undefined &&
+    (cli.stdinOnDash === true ? params[cli.stdin] === '-' : !Object.hasOwn(params, cli.stdin))
+  if (cli.stdin !== undefined && !bodyless && wantsStdin) {
     if (stdin === null) return { kind: 'stdin', vault }
     params[cli.stdin] = stdin
   }
@@ -200,8 +237,9 @@ export function refusalText(request: { label: string; usage: string }, error: un
 const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`
 
 const SCRIPT = (descriptorPath: string) => `#!/bin/sh
-# Generated by Holi. This script contains only the trusted path to the current
-# app's private endpoint descriptor; it never discovers credentials in a vault.
+# holi: ask the running Holi app something. Run it bare for every command.
+# Generated by Holi. Talks to the running app via a private machine credential.
+# A vault-local hook separately gates commands that reach other people.
 set -eu
 
 endpoint=${shellQuote(descriptorPath)}

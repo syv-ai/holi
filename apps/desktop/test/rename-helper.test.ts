@@ -2,7 +2,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
+import { exactPath } from '@holi/shared/path-safety-node'
+import { moveNotes } from '../src/main/vault/move'
 import { renameNote } from '../src/main/vault/rename'
+import { withFileLock } from '../src/main/vault/vault-files'
 
 const dirs: string[] = []
 afterAll(async () => {
@@ -20,6 +23,31 @@ async function vault(files: Record<string, string>): Promise<string> {
 }
 
 describe('renameNote', () => {
+  it('rewrites a linking note under its lock, keeping a save made meanwhile', async () => {
+    const root = await vault({ 'old.md': 'body', 'ref.md': 'see [[old.md]]' })
+    let open!: () => void
+    const gate = new Promise<void>((r) => (open = r))
+    const save = withFileLock((await exactPath(root, 'ref.md'))!, async () => {
+      await gate
+      await writeFile(join(root, 'ref.md'), 'saved [[old.md]]', 'utf8')
+    })
+    const rename = renameNote(root, 'old.md', 'new.md')
+    await new Promise((r) => setTimeout(r, 50))
+    open()
+    await Promise.all([save, rename])
+    expect(await readFile(join(root, 'ref.md'), 'utf8')).toBe('saved [[new.md]]')
+  })
+
+  it('waits for a folder move under way, so neither undoes the other', async () => {
+    const root = await vault({ 't.md': 'task', 'd.md': 'done, see [[t.md]]' })
+    await Promise.all([
+      moveNotes(root, [{ from: 'd.md', to: 'archive/d.md' }]),
+      renameNote(root, 't.md', 'lane/t.md'),
+    ])
+    expect(await readFile(join(root, 'archive/d.md'), 'utf8')).toBe('done, see [[lane/t.md]]')
+    await expect(readFile(join(root, 'd.md'), 'utf8')).rejects.toThrow()
+  })
+
   it('moves the file and rewrites inbound links, returning the referrers', async () => {
     const root = await vault({
       'old.md': 'the body',

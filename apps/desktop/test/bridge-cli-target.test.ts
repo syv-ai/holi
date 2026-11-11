@@ -8,6 +8,43 @@ const command: CliCommand = {
 }
 
 describe('CLI vault selector', () => {
+  it('combines a vault selector with Google CLI options and repeated attachments', () => {
+    const googleSend: CliCommand = {
+      name: 'google.send',
+      cli: {
+        args: [],
+        summary: 'send mail',
+        stdin: 'body',
+        stdinUnless: 'draft',
+        many: ['attach'],
+      },
+    }
+    expect(
+      resolveArgv(
+        [
+          'google',
+          'send',
+          '--to',
+          'ada@example.com',
+          '--attach',
+          'one.pdf',
+          '--attach=two.pdf',
+          '--vault=owner/repo',
+        ],
+        [googleSend],
+        'hello',
+      ),
+    ).toMatchObject({
+      kind: 'run',
+      name: 'google.send',
+      vault: 'owner/repo',
+      params: {
+        to: 'ada@example.com',
+        attach: ['one.pdf', 'two.pdf'],
+        body: 'hello',
+      },
+    })
+  })
   it('removes the selector from params and supports equals syntax after prefix', () => {
     expect(
       resolveArgv(['docs', 'read', 'note.md', '--vault=owner/repo'], [command], null),

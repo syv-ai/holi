@@ -5,8 +5,8 @@
  * contains: the file list and every diff are asked of git when shown, since any
  * held copy goes stale on the next turn, autosave, or pull.
  *
- * Re-declares its row types, as `state/history.ts` does: these are main-process
- * shapes and the renderer does not import from main.
+ * Re-declares its row types, as `features/history/use-file-history.ts` does:
+ * these are main-process shapes and the renderer does not import from main.
  */
 import { atom } from 'jotai'
 import { agentCap } from '../agent-cap'

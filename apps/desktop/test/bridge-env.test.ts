@@ -44,6 +44,7 @@ let dir: string
 let server: BridgeServer
 let turns: Array<[string, string, boolean]>
 let pendings: Array<number | null>
+let pids: Array<number | undefined>
 let statuses: Array<[string, string, unknown]>
 let channels: Array<[string, string, unknown]>
 
@@ -51,12 +52,14 @@ beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'holi-endpoint-'))
   turns = []
   pendings = []
+  pids = []
   statuses = []
   channels = []
   server = createBridgeServer({ log: () => {} })
   registerAgentRoutes(server, {
-    onTurn: (remote, job, active, pending) => {
+    onTurn: (remote, job, active, pending, pid) => {
       turns.push([remote, job, active])
+      if (active) pids.push(pid)
       if (!active) pendings.push(pending)
     },
     onStatus: (remote, job, status) => statuses.push([remote, job, status]),
@@ -173,6 +176,14 @@ describe('turn-signal.mjs', () => {
     expect(pendings).toEqual([0, 2, null])
   })
 
+  it("reports Claude's own pid at a turn's start, or its parent's on an older CLI", async () => {
+    await writeFor()
+    await run(process.execPath, [HOOK, 'start'], { ...sessionEnv(), CLAUDE_PID: '4242' })
+    await run(process.execPath, [HOOK, 'start'], { ...sessionEnv(), CLAUDE_PID: '1;rm' })
+    await run(process.execPath, [HOOK, 'start'], sessionEnv())
+    expect(pids).toEqual([4242, process.pid, process.pid])
+  })
+
   it('hands Holi the session inbox at its start and at each turn, never at a Stop', async () => {
     await writeFor()
     const env = {
@@ -199,6 +210,37 @@ describe('turn-signal.mjs', () => {
     await run(process.execPath, [HOOK, 'start'], sessionEnv('abcd1234'))
     expect(channels).toEqual([])
     expect(turns).toHaveLength(3)
+  })
+
+  it('at a resumed start in a new job folder, says so and where the old one is', async () => {
+    await writeFor()
+    const jobs = join(dir, 'jobs')
+    const start = (job: string, input: unknown) =>
+      run(
+        process.execPath,
+        [HOOK, 'session'],
+        { PATH: process.env.PATH, CLAUDE_JOB_DIR: join(jobs, job) },
+        JSON.stringify(input),
+      )
+    await mkdir(join(jobs, 'aaaa1111'), { recursive: true })
+    expect(await start('aaaa1111', { session_id: 'conv-1', source: 'startup' })).toMatchObject({
+      code: 0,
+      stdout: '',
+    })
+    // Resumed in the same job (a stopped session picked from the list): nothing to say.
+    expect((await start('aaaa1111', { session_id: 'conv-1', source: 'resume' })).stdout).toBe('')
+    // Resumed into another job: the line, naming both.
+    expect((await start('bbbb2222', { session_id: 'conv-1', source: 'resume' })).stdout).toBe(
+      `This conversation was resumed in a new job folder: $CLAUDE_JOB_DIR is now ${join(jobs, 'bbbb2222')}. ` +
+        `Files from before the resume are still in ${join(jobs, 'aaaa1111')}.`,
+    )
+    // Resumed again, from a job folder that has since gone.
+    expect((await start('cccc3333', { session_id: 'conv-1', source: 'resume' })).stdout).toBe(
+      `This conversation was resumed in a new job folder: $CLAUDE_JOB_DIR is now ${join(jobs, 'cccc3333')}. ` +
+        'The one before it is gone.',
+    )
+    // A conversation with no record says nothing: it cannot know it moved.
+    expect((await start('dddd4444', { session_id: 'conv-2', source: 'resume' })).stdout).toBe('')
   })
 
   it('does nothing, silently, when Holi is not there or this is not a background session', async () => {

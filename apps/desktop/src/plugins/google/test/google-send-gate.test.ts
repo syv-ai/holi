@@ -11,7 +11,7 @@
  * `permissions.allow` and a prior "don't ask again", which no permission rule
  * does. The user still decides; they just always get to.
  */
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -26,7 +26,7 @@ interface Decision {
 }
 
 /** Feed the hook a PreToolUse payload and read its decision. */
-async function decide(payload: unknown): Promise<Decision & { code: number }> {
+async function decide(payload: unknown): Promise<Decision & { code: number; stdout: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [GATE])
     let stdout = ''
@@ -39,7 +39,7 @@ async function decide(payload: unknown): Promise<Decision & { code: number }> {
       } catch {
         // left empty — a hook that prints nothing parseable is itself a finding
       }
-      resolve({ ...parsed, code: code ?? 0 })
+      resolve({ ...parsed, code: code ?? 0, stdout })
     })
     child.stdin.end(typeof payload === 'string' ? payload : JSON.stringify(payload), 'utf8')
   })
@@ -55,7 +55,238 @@ const bash = (command: string) => ({
  *  normal permission flow decides. */
 const decisionOf = (d: Decision) => d.hookSpecificOutput?.permissionDecision ?? 'none'
 
+describe('the gate reads every shell spelling', () => {
+  const commands = [
+    '"/Users/Ada/Library/Application Support/Holi/bin/holi" google respond e2 --yes',
+    '"$HOLI_BIN" google \\\nrespond e2 --yes',
+    'holi google re\\spond e2 --yes',
+    'command "$HOLI_BIN" google api POST gmail/v1/users/me/messages/send --body -',
+    '("$HOLI_BIN" google respond e2 --yes)',
+    '("$HOLI_BIN" google api POST gmail/v1/users/me/messages/send --body -)',
+    'HOLI google respond e2 --yes',
+    'sudo holi google respond e2 --yes',
+    'nohup /usr/local/bin/holi google respond e2 --yes',
+    'eval "$HOLI_BIN google respond e2 --yes"',
+  ]
+
+  it.each(commands)('asks for %s ', async (command) => {
+    expect(decisionOf(await decide(bash(command)))).toBe('ask')
+  })
+
+  it.each([
+    `holi google send --attach 'Board; deck.pptx' --to a@b.c`,
+    `holi google send --attach $'Board deck.pptx' --to a@b.c`,
+    `holi google send --attach "Board; deck.pptx" --to a@b.c`,
+    `holi google send --attach Board\\;\\ deck.pptx --to a@b.c`,
+    `holi google $'respond' e1 --yes`,
+    `holi google $'api' POST gmail/v1/users/me/messages/send --body '{}'`,
+    'if true; then holi google send --attach q2.pdf --to a@b.c; fi',
+    'if true; then "$HOLI_BIN" google respond e1 --yes; fi',
+    'for x in once; do "$HOLI_BIN" google respond e1 --yes; done',
+    'for x in once; do holi google respond e1 --yes; done',
+    'if true; then holi google api POST gmail/v1/users/me/messages/send --body "{}"; fi',
+    'eval "holi google send --to a@b.c"',
+    'cmd=holi; $cmd google send --to a@b.c',
+    'V=send; holi google $V --to a@b.c',
+    '"$HOLI_BIN" google $VERB t1',
+    'holi google "$(echo send)" --to a@b.c',
+    '$(echo holi) google send --to a@b.c',
+    '`echo holi` google send --to a@b.c',
+    'X=1 holi google ${VERB} t1',
+    'ls | holi google $V t1',
+    'sudo -u ada holi google $V t1',
+    'cd /tmp && /opt/bin/holi google $V t1',
+    // Holi run by something other than the stage's command word.
+    'echo "$T" | xargs holi google send --to',
+    'find . -exec holi google send --to "$T" \\;',
+    'stdbuf -oL holi google send --to "$T"',
+    '>/dev/null holi google $V t1',
+    'exec -a x holi google $V t1',
+    'echo `holi google send --to $T`',
+  ])('asks for risky syntax: %s', async (command) => {
+    expect(decisionOf(await decide(bash(command)))).toBe('ask')
+  })
+
+  it.each([
+    'holi google agenda today',
+    'holi google api GET calendar/v3/calendars/primary/events',
+    'holi google search x | grep send',
+    'echo holi google respond e2 --yes',
+    // Holi only as an argument or in a path, beside an expansion: no Holi runs.
+    'grep holi "$f"',
+    'grep -rn holi src | head -$N',
+    'cat ~/repos/holi-src/$FILE',
+    'cd "$HOME/repos/holi-src" && git log -1',
+    'gh repo view syv-ai/holi --json "$FIELDS"',
+    'for f in *.md; do grep -l holi "$f"; done',
+    '"$HOLI_BIN" google agenda',
+    'command "$HOLI_BIN" google agenda today',
+  ])('does not ask for a safe/non-invocation command: %s', async (command) => {
+    expect(decisionOf(await decide(bash(command)))).toBe('none')
+  })
+})
+
+/** The rule: only what reaches someone asks, with or without a `$` in the line. */
+describe('only an outgoing action asks', () => {
+  it.each([
+    // A word that could be the verb.
+    'holi google $verb',
+    'holi google "$(echo send)" --to a@b.c',
+    'holi $x accounts',
+    '$(which holi) google send --to a@b.c',
+    '$H google $verb',
+    '"${HOLI_BIN:-holi}" google reply t1',
+    'cmd="holi google send"; $cmd --to a@b.c',
+    'holi google api $METHOD gmail/v1/users/me/labels',
+    // Inside other shell, literally outgoing.
+    'case $x in a) holi google send --to a@b.c;; esac',
+    'sh -c \'holi google "send" --to a@b.c\'',
+    'bash -c "a; holi google reply t1"',
+    'holi google send>/dev/null --to a@b.c',
+    'for t in a b; do holi google reply $t; done',
+    // A variable holding Holi's words.
+    'G="holi google"; $G send --to a@b.c',
+    'G="$HOLI_BIN google"; $G reply t1',
+    'GMAIL="holi google"; $GMAIL search x; $GMAIL send --to a@b.c',
+    'H=$(which holi); G=google; $H $G send --to a@b.c',
+    // Whatever runs it.
+    'gtimeout 30 holi google send --to "$T"',
+    'setsid holi google reply "$T"',
+    'pnpm exec holi google send --to a@b.c',
+    // Inside a quoted substitution.
+    'OUT="$(holi google send --to a@b.c)"; echo "$OUT"',
+    'echo "$(holi google reply t1)"',
+    'if out="$(holi google respond e1 --yes)"; then echo ok; fi',
+    'echo "`holi google send --to a@b.c`"',
+    'ID="$(holi google send --to a@b.c)"; holi google read "$ID"',
+    // An apostrophe in text must not hide what follows.
+    "cat > body.txt <<'EOF'\nHi, I'm out today.\nEOF\nholi google send --to a@b.c < body.txt",
+    "# don't forget the cc\nholi google send --to a@b.c",
+    // A heredoc fed to a shell is commands.
+    'bash <<EOF\nholi google send --to a@b.c\nEOF',
+    // Flags before -c, and a redirection between the words.
+    "bash -euo pipefail -c 'holi google reply t1'",
+    "bash -l -c 'holi google reply t1'",
+    'holi google >"$T" send --to a@b.c',
+    'holi 2>/dev/null google send --to a@b.c',
+    // A namespace that expands, behind a runner.
+    'G=google; env holi $G respond event1 --yes',
+    'env holi $(printf google) reply thread1',
+    'sudo -u ada holi $G reply t1',
+    'gtimeout 30 holi $G send --to a@b.c',
+    // A send on the line that closes a heredoc's substitution.
+    'BODY="$(cat <<\'EOF\'\nShe said "don\'t"\nEOF\n)" && holi google send --to a@b.c --subject "$BODY"',
+    'holi note "$(cat <<\'EOF\'\nShe said "don\'t"\nEOF\n)"; "$HOLI_BIN" google reply t1',
+    'BODY="$(cat <<\'EOF\'\nShe said "I\'m in".\nEOF\n)"\nholi google send --to a@b.c --subject "$BODY"',
+    'git commit -q -m "$(cat <<\'EOF\'\nSay "it\'s" ok\nEOF\n)"\nholi google send --to a@b.c',
+    "R=$(cat <<'EOF'\nhello\nEOF\nholi google send --to a@b.c\n)",
+    "bash<<'EOF'\nholi google send --to a@b.c\nEOF",
+    "bash \\\\\n  -s <<'EOF'\nholi google send --to a@b.c\nEOF",
+    'H=holi; G="$H google"; $G send --to a@b.c',
+    'G="holi google"; gtimeout 30 $G send --to a@b.c',
+    'G="holi google"; env $G reply t1',
+    'G="holi google"; R=$($G reply t1)',
+    'G="holi google"; R="$($G reply t1)"',
+    'CMD="holi google send --to a@b.c"; R="$($CMD)"',
+    'git commit -m "fix a << b"\nholi google send --to a@b.c',
+    'holi google draft --to a@b.c --subject "x << y"\nholi google send --to a@b.c',
+    'echo "1 << 2"\nholi google send --to a@b.c',
+    "echo 'a << b'\nholi google send --to a@b.c",
+    'echo $((1<<2))\nholi google send --to a@b.c',
+    '((x = 1 << 3))\nholi google send --to a@b.c',
+    '# feed it with <<EOF\nholi google send --to a@b.c',
+    'cat <<EOF\n$(holi google send --to a@b.c)\nEOF',
+    "holi google draft --to a@b.c <<EOF\nI'm $(holi google send --to a@b.c)\nEOF",
+    'source /dev/stdin <<EOF\nholi google send --to a@b.c\nEOF',
+    'FROM="Ada <ada@x.y>" holi google send --to a@b.c',
+    'NAME="a>" holi google reply t1',
+    'env X="<" holi google reply t1',
+    'G="$(which holi) google"; $G send --to a@b.c',
+    'G="${HOLI_BIN:-holi} google"; $G send --to a@b.c',
+    "line='a b'; x=${line%% #*}; holi google send --to a@b.c",
+    "true;# don't\nholi google send --to a@b.c",
+    'R="$(printf \')\'; holi google send --to a@b.c)"',
+    'bash -c \'R="$(holi google send --to a@b.c)"\'',
+    'eval \'R="$(holi google send --to a@b.c)"\'',
+    'sudo $H google send --to a@b.c',
+  ])('asks for %s', async (command) => {
+    expect(decisionOf(await decide(bash(command)))).toBe('ask')
+  })
+
+  it.each([
+    // Other Holi verbs, with whatever arguments.
+    'holi pdf render "$f"',
+    '"$HOLI_BIN" agent notify "$MSG"',
+    'holi links create "https://x.dk/?a=$b"',
+    'holi agent notify "costs \\$5"',
+    'holi skills update "$X"',
+    '"${HOLI_BIN:-holi}" pdf typst',
+    'H=$HOLI_BIN; $H pdf typst',
+    '$(which holi) pdf typst',
+    // Reads and undoable Google verbs, however they are run.
+    'holi google read "$id"',
+    'holi google agenda "$FROM" "$TO" --json > "$T/a.json"',
+    'holi google api GET "$path"',
+    'holi google draft --to "$TO" --subject "$S"',
+    'holi google archive "$id"',
+    'holi google trash "$id"',
+    'holi google unschedule "$id"',
+    'for t in a b; do holi google read $t; done',
+    'if [ -n "$X" ]; then holi google search "$X"; fi',
+    'eval "holi google read abc"',
+    '$(which holi) google read abc',
+    // No Holi runs, whatever the line mentions. Every vault path has Holi in it.
+    'cd ~/Holi/syv-ai/x; GH=$(which gh); $GH api repos/syv-ai/holi/contents/docs',
+    'cd ~/Holi/x; C="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; "$C" --headless=new',
+    'D=/x/dashctl; "$D" tasks message abc --from "Holi agent"',
+    'F=$(ls); echo $F && holi pdf typst',
+    'echo $(git status)',
+    // An absolute path is not a runner of its argument.
+    '/usr/bin/grep holi "$f"',
+    'env grep holi "$f"',
+    // A command quoted across lines is text, and so is what follows `.` as a word.
+    "printf '%s\\n' 'Documentation:\nholi google send --to review@example.invalid\n'",
+    'git commit -m "title\n\nThe agent uses holi google send here."',
+    "git add . && git commit -F - <<'EOF'\nnote: holi google send is gated\nEOF",
+    '/bin/ls ~/Holi "$X"',
+    // Holi's words as text.
+    '$GH issue create --title "Fix google api quota"',
+    '"$D" tasks message abc --body "The google reply went out"',
+    'git commit -m "docs: update source (holi google send)"',
+    "cat > note.md <<'EOF'\nholi google send is how the agent mails\nEOF",
+    "holi google draft --to a@b.c <<'EOF'\nholi google send --to x\nEOF",
+    'cp "$a" google "$b"',
+    '# holi google send is what mails\nls',
+    'mv "$a" google send',
+    "cat <<'EOF'\n$(holi google send --to a@b.c)\nEOF",
+  ])('has no opinion on %s', async (command) => {
+    const d = await decide(bash(command))
+    expect(decisionOf(d)).toBe('none')
+    expect(d.stdout).toBe('')
+    expect(d.code).toBe(0)
+  })
+})
+
 describe('the send gate asks', () => {
+  it('reports shell-decoded attachment names, independently checked by Bash', async () => {
+    const commands = [
+      `holi google send --to a@b.c --attach "Board; deck.pptx"`,
+      `holi google send --to a@b.c --attach Board\\;\\ deck.pptx`,
+      `holi google send --to a@b.c --attach $'line\\tbreak\\nname'`,
+      `holi google send --to a@b.c --attach 'marker\uE000\uE100\uE101'`,
+    ]
+    for (const command of commands) {
+      const shellArgument = command.match(/--attach\s+(.+?)(?:\s+--to|$)/)?.[1]
+      expect(shellArgument).toBeDefined()
+      const oracle = spawnSync('bash', ['-c', `eval "set -- ${shellArgument}"; printf %s "$1"`], {
+        encoding: 'utf8',
+      })
+      const reason =
+        (await decide(bash(command))).hookSpecificOutput?.permissionDecisionReason ?? ''
+      expect(oracle.status).toBe(0)
+      expect(reason).toContain(oracle.stdout)
+    }
+  })
   it('asks for a bare-name send', async () => {
     expect(decisionOf(await decide(bash('holi google send --to ada@syv.ai --subject x')))).toBe(
       'ask',
@@ -146,11 +377,93 @@ describe('the send gate asks', () => {
     expect(reason).toMatch(/sender/i)
   })
 
+  // Files leave the machine too, and unlike the body they are on the command
+  // line, so the person sees which ones before they go.
+  it('names every attached file, on a send and on a reply', async () => {
+    const send = (
+      await decide(
+        bash(`holi google send --to ada@syv.ai --attach q2.pdf --attach "Board deck.pptx"`),
+      )
+    ).hookSpecificOutput?.permissionDecisionReason
+    const reply = (await decide(bash('holi google reply t1 --attach=notes/plan.md')))
+      .hookSpecificOutput?.permissionDecisionReason
+    const concatenated = 'holi google send --attach "Board"" deck.pptx" --attach "Møde résumé.pdf"'
+
+    expect(send).toContain('q2.pdf')
+    expect(send).toContain('Board deck.pptx')
+    expect(reply).toContain('notes/plan.md')
+    const reason = (await decide(bash(concatenated))).hookSpecificOutput?.permissionDecisionReason
+    expect(reason).toContain('Board deck.pptx')
+    expect(reason).toContain('Møde résumé.pdf')
+
+    // An escaped space is one name; a body that mentions `--attach` is no file.
+    const odd = (
+      await decide(
+        bash(
+          "holi google send --to ada@syv.ai --attach Board\\ deck.pptx <<'EOF'\nuse --attach x\nEOF",
+        ),
+      )
+    ).hookSpecificOutput?.permissionDecisionReason
+    expect(odd).toContain('It attaches: Board deck.pptx.')
+  })
+
   it('warns that reply --all widens the audience', async () => {
     const reason = (await decide(bash('holi google reply t1 --all'))).hookSpecificOutput
       ?.permissionDecisionReason
 
     expect(reason).toMatch(/everyone|all/i)
+  })
+
+  // Google tells the organizer, so an answer to an invite reaches a person.
+  it('asks for answering an invitation', async () => {
+    expect(decisionOf(await decide(bash('holi google respond ev-1 --no --comment x')))).toBe('ask')
+    expect(decisionOf(await decide(bash('"$HOLI_BIN" google "respond" ev-1 --yes')))).toBe('ask')
+  })
+
+  // The body is on stdin, out of the hook's sight, so the method decides:
+  // every raw call that is not a GET asks, however its method is spelled.
+  it('does not let a following command replace the current invocation argument', async () => {
+    for (const command of [
+      `"$HOLI_BIN" google agenda\n"$HOLI_BIN" google respond e1 --yes`,
+      `"$HOLI_BIN" google agenda\n"$HOLI_BIN" google api POST calendar/v3/freeBusy --body -`,
+      `"$HOLI_BIN" google agenda\n"$HOLI_BIN" google send --to a@b.c`,
+    ]) {
+      expect(decisionOf(await decide(bash(command))), command).toBe('ask')
+    }
+  })
+
+  it('asks for every raw api call that is not a GET', async () => {
+    for (const command of [
+      'holi google api POST gmail/v1/users/me/messages/send --body -',
+      'holi google api patch calendar/v3/calendars/primary/events/e1 --body -',
+      "holi google api 'DELETE' calendar/v3/calendars/primary/events/e1",
+      'holi google api "$M" gmail/v1/users/me/labels',
+      'holi google api --method GET gmail/v1/users/me/labels',
+      'holi google api GET gmail/v1/users/me/labels && holi google api PUT x',
+    ]) {
+      expect(decisionOf(await decide(bash(command))), command).toBe('ask')
+    }
+  })
+
+  // A shell joins these into the plain words before it runs them, so the gate
+  // must read them the same way, for every verb.
+  it('asks when a word is partly quoted, escaped or split across lines', async () => {
+    for (const command of [
+      'holi google a""pi POST gmail/v1/users/me/messages/send --body -',
+      'holi google s\\end --to a@b.c',
+      "holi google $'respond' e1 --yes",
+      'holi \\\ngoogle api POST gmail/v1/users/me/messages/send',
+      "holi google re'ply' t1",
+      'holi google api P""OST gmail/v1/users/me/drafts/send',
+    ]) {
+      expect(decisionOf(await decide(bash(command))), command).toBe('ask')
+    }
+  })
+
+  it('still names the recipients of an escaped send', async () => {
+    const reason = (await decide(bash('holi google s\\end --to "ada@syv.ai"'))).hookSpecificOutput
+      ?.permissionDecisionReason
+    expect(reason).toContain('ada@syv.ai')
   })
 
   it('still says it cannot be recalled, and that allowing it before does not skip this', async () => {
@@ -180,6 +493,10 @@ describe('the send gate has no opinion', () => {
   it('passes on the reads', async () => {
     expect(decisionOf(await decide(bash("holi google search 'is:unread'")))).toBe('none')
     expect(decisionOf(await decide(bash('holi google agenda')))).toBe('none')
+    expect(decisionOf(await decide(bash('holi google api GET gmail/v1/users/me/labels')))).toBe(
+      'none',
+    )
+    expect(decisionOf(await decide(bash("holi google api 'get' calendar/v3/colors")))).toBe('none')
   })
 
   it('passes on an unrelated command that merely contains the word send', async () => {

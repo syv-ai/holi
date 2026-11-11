@@ -46,6 +46,7 @@ type MergeFile = (
   existing: string | null,
   fragments: readonly unknown[],
   has: (rel: string) => Promise<boolean>,
+  read: (rel: string) => Promise<string | null>,
 ) => Promise<string | null>
 
 /** What one run of `ensureSeeded` wrote. */
@@ -60,8 +61,20 @@ export interface SeedResult {
  * fragment for it is ignored.
  */
 export interface SettingsFragment {
-  /** Hooks, each running `.claude/hooks/<script>.mjs` with `args`. */
-  hooks?: { event: string; matcher?: string; script: string; args?: string[] }[]
+  /** Hooks run either a shipped script or an inline command. */
+  hooks?: (
+    | { event: string; matcher?: string; script: string; args?: string[] }
+    | { event: string; matcher?: string; command: string }
+  )[]
   /** Rules appended to the vault's own, each only when absent. */
   permissions?: { ask?: string[]; allow?: string[]; deny?: string[] }
+  /** What an earlier Holi merged in and no longer wants, taken out of a vault
+   *  before anything is added. `hooks`: commands Holi shipped, by the sha-256 of
+   *  the whole command, so one a person wrote or changed stays; only once the
+   *  file `replacedBy` is on disk with every text in `holding`, so nothing is
+   *  retired before what took over from it has arrived. `ask`: exact rules. */
+  retired?: {
+    hooks?: { sha256: string[]; replacedBy: string; holding: string[] }
+    ask?: string[]
+  }
 }

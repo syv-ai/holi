@@ -17,6 +17,11 @@
  * (`worktree-end.ts`). A turn whose span overlapped another session's records
  * `overlapped`, because its range then contains work it did not do.
  *
+ * `end` answers with the settle commit when that `Stop` emptied the set and
+ * the commit landed: the Stop hook saves its tree as where the turn left the
+ * vault, so the next prompt does not name what the commit's transforms
+ * rewrote (docs/features/agent-config.md).
+ *
  * A session leaves the set on `Stop`, on a confirmed registry `idle`, on exit,
  * or on its own safety cap. The cap is a backstop: escaping a permission prompt
  * fires no `Stop` hook at all.
@@ -62,8 +67,10 @@ export interface TurnCoordinatorDeps {
 export interface TurnCoordinator {
   /** `UserPromptSubmit` for this session. */
   begin(sessionId: string): void
-  /** `Stop` for this session. */
-  end(sessionId: string): void
+  /** `Stop` for this session. Answers the settle commit's sha once it has
+   *  landed, when this ended the last turn out; null when no commit landed,
+   *  another session is still working, or the session was not mid-turn. */
+  end(sessionId: string): Promise<string | null>
   /**
    * Claude Code's own session listing reports this session `idle`.
    *
@@ -148,15 +155,16 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
   }
 
   /**
-   * Write the batch's records against one settle commit.
+   * Take the settle commit and write the batch's records against it. Answers
+   * the commit when one landed.
    *
-   * Fire-and-forget at every call site, with rejections swallowed: this runs
-   * under a hook request that must answer immediately with an empty body, and a
-   * failed record must never disturb the sync resume it shares that body with.
+   * Never awaited by the sync resume, with rejections swallowed: a failed
+   * record must never disturb the resume, and only the Stop hook that emptied
+   * the set waits for the answer.
    */
-  async function settleBatch(vault: TurnVault, batch: Turn[]): Promise<void> {
+  async function settleBatch(vault: TurnVault, batch: Turn[]): Promise<string | null> {
     const turnLogFor = deps.turnLogFor
-    if (turnLogFor === undefined) return
+    if (turnLogFor === undefined) return null
     await Promise.all(batch.map((turn) => turn.basePending))
 
     const recordable: Array<{ sessionId: string; base: string; overlapped: boolean }> = []
@@ -164,23 +172,26 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
       if (turn.base === null) continue
       recordable.push({ sessionId: turn.sessionId, base: turn.base, overlapped: turn.overlapped })
     }
-    if (recordable.length === 0) return
+    if (recordable.length === 0) return null
 
     // Taken explicitly rather than observed. Waiting for the idle committer to
     // fire on its own would make the end sha race a 3-second timer that the
     // safety-cap path does not respect; `commitNow` returns null on a clean
     // tree, which is the ordinary outcome of a turn that only read.
     //
-    // Resuming the vault starts a commit of its own (its retry), which can be
-    // the one holding the tree when this asks: `commitNow` then answers null
-    // with the turn's work still landing. So a null is asked again once that
-    // commit has had a moment, and only then read as "nothing to commit".
-    let end = await vault.commitNow()
-    if (end === null) {
+    // Resuming the vault starts a commit and then a pull of its own (its
+    // retry). `commitNow` waits that commit out, but declines while the pull
+    // runs, answering `'busy'` with the turn's work still uncommitted. So that
+    // is asked again once the pull has had a moment; a null (a clean tree) is
+    // not, so the Stop hook waiting on a turn that only read is not held.
+    let asked = await vault.commitNow()
+    if (asked === 'busy') {
       await new Promise((r) => setTimeout(r, deps.settleRetryMs ?? 1_000))
-      end = (await vault.commitNow()) ?? (await vault.head())
+      asked = await vault.commitNow()
     }
-    if (end === null) return
+    const commit = asked === 'busy' ? null : asked
+    const end = commit ?? (await vault.head())
+    if (end === null) return null
     const at = new Date().toISOString()
     // One `end` for all of them: that sha IS what "they shared a settle commit"
     // means, and it is how the reviewer sees the same tree each of them landed in.
@@ -193,13 +204,16 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
         sessionId: turn.sessionId,
         overlapped: turn.overlapped,
       })),
-    )
+    ).catch((err: unknown) => log(`turn record failed: ${String(err)}`))
+    return commit
   }
 
-  /** Leave the working set; `record` is false for a session that died. */
-  function leave(sessionId: string, record: boolean): void {
+  /** Leave the working set; `record` is false for a session that died.
+   *  Answers the settle commit this took, when it took one and it landed. */
+  function leave(sessionId: string, record: boolean): Promise<string | null> {
+    let settled: Promise<string | null> = Promise.resolve(null)
     const turn = turns.get(sessionId)
-    if (turn === undefined) return
+    if (turn === undefined) return settled
     if (turn.safety !== null) clearTimeout(turn.safety)
     turns.delete(sessionId)
 
@@ -229,13 +243,15 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
       // The vault the turns ran in, held: a commit in a vault left meanwhile
       // throws rather than landing in the next one.
       if (batch.length > 0 && vault !== null) {
-        void settleBatch(vault, batch).catch((err: unknown) =>
-          log(`turn record failed: ${String(err)}`),
-        )
+        settled = settleBatch(vault, batch).catch((err: unknown) => {
+          log(`turn record failed: ${String(err)}`)
+          return null
+        })
       }
     }
     deps.onChange?.()
     if (record) deps.onTurnEnd?.(sessionId)
+    return settled
   }
 
   return {
@@ -274,13 +290,13 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
       if (wasEmpty && vault !== null) release = vault.pauseSync('the assistant is working')
       turn.safety = setTimeout(() => {
         log(`session ${sessionId} released by the ${turnSafetyMs}ms safety cap`)
-        leave(sessionId, true)
+        void leave(sessionId, true)
       }, turnSafetyMs)
       deps.onChange?.()
     },
 
     end(sessionId) {
-      leave(sessionId, true)
+      return leave(sessionId, true)
     },
 
     noteBusy(sessionId) {
@@ -298,11 +314,11 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
       }
       if (at - turn.idleSince < idleConfirmMs) return
       log(`session ${sessionId} released by a confirmed idle`)
-      leave(sessionId, true)
+      void leave(sessionId, true)
     },
 
     forget(sessionId) {
-      leave(sessionId, false)
+      void leave(sessionId, false)
     },
 
     get working() {

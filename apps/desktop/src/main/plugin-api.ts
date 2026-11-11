@@ -125,8 +125,10 @@ export interface PluginCtx extends LiveVault, SchemeContext {
    * does nothing.
    */
   pauseSync(reason: string): () => void
-  /** Commit whatever is dirty now. The new commit's sha, or null for none. */
-  commitNow(): Promise<string | null>
+  /** Commit whatever is dirty now. The new commit's sha, or null for none;
+   *  `'busy'` when a pull in flight refused it, so asking again shortly may
+   *  commit. */
+  commitNow(): Promise<string | null | 'busy'>
   /** The checked-out commit, or null on an unborn branch. */
   head(): Promise<string | null>
   /** Hear what the renderer reports the person is looking at in this vault. */
@@ -330,8 +332,11 @@ export { gitignoreWith } from './vault/seed/core'
 export {
   absPathFor,
   listFiles,
+  lockPath,
+  pruneEmptiedFolder,
   removeDocFile,
   withFileLock,
+  withFileLocks,
   writeAtomic,
 } from './vault/vault-files'
 export { moveNotes } from './vault/move'
@@ -340,6 +345,8 @@ export { completionStatuses, readVaultStatuses } from './vault/statuses'
 export { renameNote } from './vault/rename'
 export { holiTheme, readVaultTheme } from './vault/theme'
 export { readVaultSettings, writePluginSettings } from './vault/settings'
+export { readVaultEnv } from './vault/dotenv'
+export type { SafeStorageLike } from './github/token-store'
 export { installedInfos } from './plugin-host/installed'
 export { shellReadBridgeEnv } from './bridge/env-file'
 export { mimeFor } from './vault/asset-protocol'

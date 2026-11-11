@@ -6,13 +6,20 @@
  * The seeded `UserPromptSubmit`/`Stop` hooks (`turn-signal.mjs`) POST
  * `/turn/start` and `/turn/end` with the vault's token and the session's job
  * id; the seeded status line POSTs Claude Code's status JSON to `/statusline`
- * the same way. **Every answer is empty**: whatever a Claude Code hook prints
- * is injected into the agent's context.
+ * the same way. **Every answer is empty but one**, since whatever a Claude Code
+ * hook prints is injected into the agent's context: `/turn/end` answers, once
+ * the settle commit for the turn has landed, `{ "tree": <its tree> }`, which
+ * the Stop hook reads and saves and never prints.
  *
  * At a session's start (`SessionStart`, `/session`) and at each turn's start,
  * the hook's body carries the session's inbox socket and token, which Claude
  * Code exports to its hooks: how Holi adds a message to a running session
  * (`messaging.ts`). Kept in memory by the host, never written down.
+ *
+ * A turn's start also carries `pid`, the session's `claude` process
+ * (`$CLAUDE_PID`, or the hook's parent on an older CLI), absent from a hook older than it: how the host tells a
+ * session that died mid-turn from one the listing merely does not name
+ * (`host/sessions.ts`).
  *
  * The job id rides beside the vault's standing token, because a background
  * session's environment comes from Claude Code's supervisor rather than from
@@ -59,15 +66,24 @@ export function registerAgentRoutes(server: RouteServer, deps: TurnRouteDeps): (
   const turn = (active: boolean) =>
     server.route(active ? '/turn/start' : '/turn/end', {
       body: active ? 'text' : 'discard',
-      handle(remote, query, body) {
+      async handle(remote, query, body) {
         const job = query.get('job') ?? ''
         const raw = query.get('pending')
         const pending = raw !== null && /^\d+$/.test(raw) ? Number(raw) : null
+        const rawPid = query.get('pid')
+        const pid = rawPid !== null && /^[1-9]\d{0,9}$/.test(rawPid) ? Number(rawPid) : undefined
         if (!JOB_ID.test(job)) return EMPTY
         // Before the turn: a message sent the moment it starts finds the inbox.
         if (active) channel(remote, job, body)
-        deps.onTurn(remote, job, active, active ? null : pending)
-        return EMPTY
+        const tree = await deps.onTurn(
+          remote,
+          job,
+          active,
+          active ? null : pending,
+          active ? pid : undefined,
+        )
+        if (typeof tree !== 'string' || !/^[0-9a-f]{7,64}$/.test(tree)) return EMPTY
+        return { status: 200, body: JSON.stringify({ tree }), contentType: 'application/json' }
       },
     })
 

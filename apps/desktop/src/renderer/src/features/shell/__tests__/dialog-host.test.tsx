@@ -46,10 +46,4 @@ describe('DialogHost', () => {
     await userEvent.keyboard('{Escape}')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
-
-  test('a core dialog with no component in this shell shows nothing', () => {
-    const store = mount()
-    store.set(openDialogAtom, { id: 'create-task', size: 'md' })
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-  })
 })

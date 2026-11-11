@@ -21,7 +21,7 @@ const TEST_ONBOARDING_CHANNEL = 'dev:test-onboarding'
 
 /**
  * Main → renderer: a menu item ran, carrying the id of a row in the renderer's
- * command table (`state/commands.ts`). The renderer decides what the id
+ * shortcut table (`lib/shortcuts.ts`). The renderer decides what the id
  * means (which tab ⌘W closes, say) because main has no notion of panes.
  */
 const MENU_COMMAND_CHANNEL = 'menu:command'

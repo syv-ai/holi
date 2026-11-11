@@ -13,6 +13,7 @@ import { browserMain } from './browser/main'
 import { linksMain } from './links/main'
 import { pdfMain } from './pdf/main'
 import { tasksMain } from './tasks/main'
+import { transcribeMain } from './transcribe/main'
 
 export const MAIN_PLUGINS: readonly MainPlugin[] = [
   agentMain,
@@ -25,4 +26,5 @@ export const MAIN_PLUGINS: readonly MainPlugin[] = [
   googleMain,
   appsMain,
   communityMain,
+  transcribeMain,
 ]
