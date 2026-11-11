@@ -929,11 +929,23 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   }
 
   async function commitFileNoVerify(path: string): Promise<string | null> {
-    await runGit(root, ['add', '--', path], opts)
-    if ((await tryGit(root, ['diff', '--cached', '--quiet'], opts)).ok) return null
+    // `--only` commits this working-tree path without consuming unrelated
+    // staged entries. Literal pathspecs keep bracketed names exact.
+    if (!(await status()).dirtyPaths.includes(path)) return null
+    await runGit(root, ['--literal-pathspecs', 'add', '-A', '--', path], opts)
     await runGit(
       root,
-      [...(await identityArgs()), 'commit', '--no-verify', '-m', `Add ${path}`],
+      [
+        '--literal-pathspecs',
+        ...(await identityArgs()),
+        'commit',
+        '--only',
+        '--no-verify',
+        '-m',
+        `Add ${path}`,
+        '--',
+        path,
+      ],
       opts,
     )
     return runGit(root, ['rev-parse', 'HEAD'], opts)
@@ -943,9 +955,18 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
    * decides for itself. An untracked file listed here stops being dirty, so it
    * leaves the held-back set on its own. */
   async function excludeLocally(path: string): Promise<void> {
+    const tracked = await tryGit(
+      root,
+      ['--literal-pathspecs', 'ls-files', '--error-unmatch', '--', path],
+      opts,
+    )
+    if (tracked.ok) throw new Error('A tracked file cannot be kept local')
     const excludeFile = join(root, '.git', 'info', 'exclude')
     await mkdir(dirname(excludeFile), { recursive: true })
-    await appendFile(excludeFile, `${path}\n`, 'utf8')
+    // One file, not a pattern: anchored to the root so a same-named file in
+    // another folder keeps syncing, and its glob characters escaped.
+    const literal = path.replace(/[\\*?[\]]/g, '\\$&').replace(/ $/, '\\ ')
+    await appendFile(excludeFile, `/${literal}\n`, 'utf8')
   }
 
   /**
