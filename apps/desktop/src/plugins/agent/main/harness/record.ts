@@ -17,9 +17,9 @@
  *
  * Pure but for `resolveHarnessBin`: no `electron` import.
  */
-import { accessSync, constants, statSync } from 'node:fs'
+import { statSync } from 'node:fs'
 import { AGENT_ID } from '@holi/shared'
-import { resolveBin } from '../../../../main/plugin-api'
+import { isRunnable, resolveBin } from '../../../../main/plugin-api'
 
 /** The built-in agents whose integration a preset keeps. */
 export const INTEGRATIONS = ['claude', 'codex', 'pi'] as const
@@ -88,10 +88,19 @@ const MAX_ARGS = 64
 const MAX_ARG = 4096
 const MAX_LABEL = 60
 
+/** A full path to a program: `/…` everywhere, and on Windows `C:\…`, `C:/…`
+ *  or a `\\server\…` share too. A folder-relative path is never one.
+ * @public exported for its test */
+export function isFullPath(bin: string, platform: NodeJS.Platform = process.platform): boolean {
+  if (bin.startsWith('/')) return true
+  return platform === 'win32' && /^(?:[A-Za-z]:[\\/]|\\\\[^\\/])/.test(bin)
+}
+
 /** Why an environment variable may not be set, or null when it may. */
-function forbiddenEnv(key: string): string | null {
+function forbiddenEnv(key: string, platform: NodeJS.Platform = process.platform): string | null {
   if (!ENV_KEY.test(key)) return `${key} is not a variable name.`
-  if (key === 'PATH') {
+  // Windows reads the name without regard to case: `Path` is the PATH.
+  if (key === 'PATH' || (platform === 'win32' && key.toUpperCase() === 'PATH')) {
     return "PATH is Holi's to set: it puts its own commands first. Give the program by its full path instead."
   }
   if (key.startsWith('HOLI_')) return `${key} is Holi's own: sessions and the bridge rely on it.`
@@ -99,14 +108,17 @@ function forbiddenEnv(key: string): string | null {
 }
 
 /** Why `bin` cannot be a program, or null when it reads as one. */
-function badBin(bin: string): string | null {
+function badBin(bin: string, platform: NodeJS.Platform = process.platform): string | null {
   if (bin.trim() === '') return 'Name the program to run.'
   if (CONTROL.test(bin) || bin.includes('\0')) return 'The program has a control character in it.'
-  if (bin.startsWith('/')) return null
+  // A Windows path has spaces in it (`C:\Program Files\…`) and is still one file.
+  if (isFullPath(bin, platform)) return null
   if (BARE_BIN.test(bin)) return null
   return /\s/.test(bin)
     ? `"${bin}" reads as a shell command. Give the program alone, and each argument on its own line.`
-    : `"${bin}" is neither a program's name nor a full path (one that starts with /).`
+    : `"${bin}" is neither a program's name nor a full path (one that starts with ${
+        platform === 'win32' ? 'a drive letter or /' : '/'
+      }).`
 }
 
 type ArgsField = 'command' | 'prompt' | 'byId' | 'pick' | 'test'
@@ -357,8 +369,7 @@ export function harnessArgs(h: Harness, opts: HarnessOpts): string[] {
 
 function isExecutableFile(path: string): boolean {
   try {
-    accessSync(path, constants.X_OK)
-    return statSync(path).isFile()
+    return isRunnable(path) && statSync(path).isFile()
   } catch {
     return false
   }
@@ -371,12 +382,12 @@ export function resolveHarnessBin(
   env: NodeJS.ProcessEnv = process.env,
 ): string | null {
   if (badBin(bin) !== null) return null
-  if (bin.startsWith('/')) return isExecutableFile(bin) ? bin : null
+  if (isFullPath(bin)) return isExecutableFile(bin) ? bin : null
   return resolveBin(bin, env)
 }
 
 /** Why a harness's program is not there, in words that say what to do. */
 export const notFound = (h: Harness): string =>
-  h.command.bin.startsWith('/')
+  isFullPath(h.command.bin)
     ? `${h.label}: ${h.command.bin} is not an executable file. Check its command in Settings, General, Agents.`
     : `${h.label}: ${h.command.bin} was not found on PATH. Install it, or give its full path in Settings, General, Agents.`

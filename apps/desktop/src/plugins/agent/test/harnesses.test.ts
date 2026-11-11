@@ -18,6 +18,7 @@ import { createHarnessRegistry, harnessProvider, withPreset } from '../main/harn
 import { readSignal, SIGNAL_SCRIPT } from '../main/harness/signal'
 import { agentCapabilities } from '../main/host/capabilities'
 import type { AgentProvider } from '../main/provider'
+import { delimiter } from 'node:path'
 
 const TARGET = { root: '/Users/ada/Holi/syv/vault', configDir: '/v', binDir: '/holi/bin' }
 
@@ -134,7 +135,7 @@ describe('a harness command line', () => {
     expect(cmd?.args).toEqual(['--no-auto-commits', '--message', 'hi there'])
     expect(cmd?.env[SESSION_ENV]).toBe('p0123456789ab')
     expect(cmd?.env.AIDER_DARK_MODE).toBe('1')
-    expect(cmd?.env.PATH?.startsWith('/holi/bin:')).toBe(true)
+    expect(cmd?.env.PATH?.startsWith(`/holi/bin${delimiter}`)).toBe(true)
     expect(provider.capabilities).toEqual({})
   })
 

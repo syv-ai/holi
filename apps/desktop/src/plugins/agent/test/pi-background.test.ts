@@ -4,6 +4,7 @@ import { NO_TOOLS, type PiChild } from '../main/pi/rpc'
 import { createPiBackground } from '../main/pi/background'
 import { agentCapabilities } from '../main/host/capabilities'
 import type { CapabilityContext } from '../../../main/capabilities/registry'
+import { join } from 'node:path'
 
 function fake() {
   const stdin = new PassThrough()
@@ -357,7 +358,7 @@ describe('Pi background runs', () => {
       expect(childEnv?.PI_WORKTREE_SESSION_MANIFEST).toBeUndefined()
       expect(childEnv?.PI_MODEL).toBeUndefined()
       expect(childEnv?.PI_CODING_AGENT_DIR).toBe(process.env.PI_CODING_AGENT_DIR)
-      expect(childEnv?.PATH).toContain('/holi/bin/fallback')
+      expect(childEnv?.PATH).toContain(join('/holi/bin', 'fallback'))
       await manager.leave()
     } finally {
       if (previousManifest === undefined) delete process.env.PI_WORKTREE_SESSION_MANIFEST
