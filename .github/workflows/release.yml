@@ -226,6 +226,8 @@ jobs:
     if: github.ref == 'refs/heads/main'
     # Pinned for stability: a runner image change under windows-latest should
     # not change what a release is built on. Nothing here compiles native code.
+    # A node-gyp problem with windows-latest's Visual Studio is not why: that
+    # claim is unverified for Holi (preview.yml built fine on windows-latest).
     runs-on: windows-2022
     permissions:
       contents: write

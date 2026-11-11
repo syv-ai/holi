@@ -50,8 +50,9 @@ finishes. Uninstalling from Settings → Apps leaves `%APPDATA%\Holi` (the app's
 clones in `%USERPROFILE%\Holi`. SmartScreen warns once, on the first install ("More info", then "Run anyway"); an update the
 app downloads itself does not go through the browser, so it does not warn again. SmartScreen
 checks only files marked as downloaded from the web, so an install that skips the warning is one
-without the mark: download the release asset in PowerShell with `Invoke-WebRequest`, or untick
-**Unblock** in the file's Properties after a browser download. Like Linux, the
+without the mark: download the release asset in PowerShell with `Invoke-WebRequest` or with
+`curl.exe`, or tick **Unblock** in the file's Properties after a browser download. Windows 11
+Smart App Control, where it is turned on, blocks unsigned apps outright instead of warning. Like Linux, the
 updater checks the download against the sha512 in the feed file. Windows has only dev builds for
 now: `build-prerelease-win` adds the `.exe`, its `.blockmap` (so the next update downloads only what
 changed) and `dev.yml` to the prerelease, after the mac job created it and with nothing waiting on
