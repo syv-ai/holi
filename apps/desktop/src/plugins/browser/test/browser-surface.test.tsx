@@ -9,7 +9,7 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import { activeRemoteAtom } from '@/plugin-api'
 import type { PageInfo } from '../shared/page'
 import { BrowserSurface } from '../renderer/browser-surface'
-import { pagesAtom } from '../renderer/state'
+import { browserEvents, pagesAtom } from '../renderer/state'
 
 const run = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/trpc', () => ({
@@ -82,6 +82,22 @@ test('a page that failed says why, and Retry loads it again', async () => {
   expect(screen.getByText(/ERR_NAME_NOT_RESOLVED/)).toBeInTheDocument()
   await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
   expect(calls('browser.reload').at(-1)?.params).toEqual({ tab: 't1' })
+})
+
+test('a restored tabs event puts its address in the surface and enables Reload', async () => {
+  const { store } = show([])
+  act(() => {
+    browserEvents.tabs!(
+      {
+        remote: 'syv/vault',
+        payload: [page({ id: 't1', url: 'https://restored.example/', title: 'Restored' })],
+      },
+      store,
+    )
+  })
+
+  expect(screen.getByLabelText('Address')).toHaveValue('https://restored.example/')
+  expect(screen.getByRole('button', { name: 'Reload' })).toBeEnabled()
 })
 
 test('back, reload and Open in your browser act on this tab', async () => {

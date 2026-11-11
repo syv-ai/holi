@@ -188,6 +188,7 @@ export const PDF_SCROLLBAR_CSS = [
   ':host *::-webkit-scrollbar-track { background: transparent; }',
   ':host *::-webkit-scrollbar-thumb { background: transparent; border-radius: 9999px; border: 3px solid transparent; background-clip: content-box; transition: background-color var(--motion-respond) var(--ease-settle); }',
   `:host *:hover::-webkit-scrollbar-thumb { background: ${v('scrollbar-thumb')}; background-clip: content-box; }`,
+  `:host *::-webkit-scrollbar-thumb:hover { background: ${v('scrollbar-thumb-hover')}; background-clip: content-box; }`,
 ].join('\n')
 
 /**

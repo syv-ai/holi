@@ -28,6 +28,13 @@ export interface VaultAccountsStore {
   unlinkVault(remote: string): Promise<void>
   /** Forget every vault pointing at `sub`, for when the account itself goes. */
   unlinkAccount(sub: string): Promise<void>
+  /** Google refused `sub`'s grant: unlink its vaults and remember that they
+   *  need a reconnect. Not left linked, or connecting the account in another
+   *  vault would silently give these back its mailbox. */
+  expireAccount(sub: string): Promise<void>
+  /** Whether this vault lost its account to a refused grant and has neither
+   *  connected again nor let go since. */
+  needsReconnect(remote: string): Promise<boolean>
 }
 
 /** Not written yet (no vault has connected) or corrupt (the user loses their
@@ -46,23 +53,61 @@ function parseAccounts(parsed: unknown): VaultAccounts {
 
 export function createVaultAccounts(path: string): VaultAccountsStore {
   const store = jsonFileStore(path, parseAccounts)
+  /** Same shape, beside the links: a vault → the account it lost. */
+  const expired = jsonFileStore(path.replace(/\.json$/, '') + '.expired.json', parseAccounts)
+  const without = (current: VaultAccounts, drop: (remote: string, sub: string) => boolean) =>
+    Object.fromEntries(Object.entries(current).filter(([remote, sub]) => !drop(remote, sub)))
+  /** One change at a time across both files: a link or a removal landing inside
+   *  an expiry would leave a mark on a vault that has moved on. */
+  let queue: Promise<unknown> = Promise.resolve()
+  const serial = (change: () => Promise<void>): Promise<void> => {
+    const run = queue.then(change, change)
+    queue = run.catch(() => undefined)
+    return run
+  }
+  /** Only when there is one to clear: most machines never lose a grant. */
+  const clearExpired = async (drop: (remote: string, sub: string) => boolean) => {
+    const current = await expired.read()
+    if (Object.entries(current).some(([remote, sub]) => drop(remote, sub))) {
+      await expired.update((latest) => without(latest, drop))
+    }
+  }
   return {
     all: store.read,
     async subFor(remote) {
       return (await store.read())[remote] ?? null
     },
-    async link(remote, sub) {
-      await store.update((current) => ({ ...current, [remote]: sub }))
+    link(remote, sub) {
+      return serial(async () => {
+        await store.update((current) => ({ ...current, [remote]: sub }))
+        await clearExpired((key) => key === remote)
+      })
     },
-    async unlinkVault(remote) {
-      await store.update((current) =>
-        Object.fromEntries(Object.entries(current).filter(([key]) => key !== remote)),
-      )
+    unlinkVault(remote) {
+      return serial(async () => {
+        await store.update((current) => without(current, (key) => key === remote))
+        await clearExpired((key) => key === remote)
+      })
     },
-    async unlinkAccount(sub) {
-      await store.update((current) =>
-        Object.fromEntries(Object.entries(current).filter(([, value]) => value !== sub)),
-      )
+    unlinkAccount(sub) {
+      return serial(async () => {
+        await store.update((current) => without(current, (_, value) => value === sub))
+        await clearExpired((_, value) => value === sub)
+      })
+    },
+    expireAccount(sub) {
+      return serial(async () => {
+        const links = await store.read()
+        const lost = Object.keys(links).filter((remote) => links[remote] === sub)
+        await expired.update((current) => ({
+          ...current,
+          ...Object.fromEntries(lost.map((remote) => [remote, sub])),
+        }))
+        await store.update((current) => without(current, (_, value) => value === sub))
+      })
+    },
+    async needsReconnect(remote) {
+      return (await expired.read())[remote] !== undefined
     },
   }
 }

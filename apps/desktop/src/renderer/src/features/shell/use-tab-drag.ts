@@ -16,17 +16,26 @@
  * The keyboard's way to the same places is the menus: Open in split view,
  * Separate, Replace with…, Move out of split, and ⌥-click.
  */
-import { atom, useSetAtom } from 'jotai'
+import { atom, useSetAtom, useStore } from 'jotai'
 import { useCallback, type DragEvent } from 'react'
 
-import { activeSplit, type ShellWorkspace } from '@/state/shell-workspace'
+import { activeSplit, tabIsOpen, type ShellWorkspace } from '@/state/shell-workspace'
 import { tabKey, type TabDescriptor } from '@/state/tab-descriptor'
+import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { activeRemoteAtom } from '@/state/vaults'
 
 /** The drag's MIME type; its data is the tab's key or the split's id. */
 export const TAB_MIME = 'application/x-holi-tab'
 
-/** The tab or split being dragged, or null. */
-export const tabDragAtom = atom<string | null>(null)
+/** The pill's middle half combines; its outer quarters retain strip reorder. */
+export function stripDropZone(position: number): 'combine' | 'reorder' {
+  return position >= 0.25 && position <= 0.75 ? 'combine' : 'reorder'
+}
+
+/** One native drag session, cleared as a unit on every end or cancellation. */
+export const tabDragAtom = atom<{ key: string; vault: string | null; wasOpen: boolean } | null>(
+  null,
+)
 
 interface DragSourceProps {
   draggable: true
@@ -37,6 +46,7 @@ interface DragSourceProps {
 /** What a tab's element spreads to be draggable, by its key. */
 export function useTabDragSource(): (key: string) => DragSourceProps {
   const setDrag = useSetAtom(tabDragAtom)
+  const store = useStore()
   return useCallback(
     (key: string) => ({
       draggable: true,
@@ -45,11 +55,16 @@ export function useTabDragSource(): (key: string) => DragSourceProps {
         event.dataTransfer.effectAllowed = 'move'
         // A frame later: changing the page under the pointer in dragstart
         // itself can cancel the drag.
-        window.setTimeout(() => setDrag(key), 0)
+        window.setTimeout(() => {
+          const ws = store.get(shellWorkspaceAtom)
+          setDrag({ key, vault: store.get(activeRemoteAtom), wasOpen: tabIsOpen(ws, key) })
+        }, 0)
       },
-      onDragEnd: () => setDrag(null),
+      onDragEnd: () => {
+        setDrag(null)
+      },
     }),
-    [setDrag],
+    [setDrag, store],
   )
 }
 
@@ -78,6 +93,7 @@ export function useTabDrag(): {
 } {
   const source = useTabDragSource()
   const setDrag = useSetAtom(tabDragAtom)
+  const store = useStore()
   return useCallback(
     (tab: TabDescriptor | null, options?: { alongside: true }) => {
       if (tab === null) return {}
@@ -86,12 +102,17 @@ export function useTabDrag(): {
       return {
         onDragStartCapture: (event: DragEvent) => {
           event.dataTransfer.setData(TAB_MIME, key)
-          window.setTimeout(() => setDrag(key), 0)
+          window.setTimeout(() => {
+            const ws = store.get(shellWorkspaceAtom)
+            setDrag({ key, vault: store.get(activeRemoteAtom), wasOpen: tabIsOpen(ws, key) })
+          }, 0)
         },
-        onDragEndCapture: () => setDrag(null),
+        onDragEndCapture: () => {
+          setDrag(null)
+        },
       }
     },
-    [setDrag, source],
+    [setDrag, source, store],
   ) as ReturnType<typeof useTabDrag>
 }
 

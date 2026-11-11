@@ -24,6 +24,7 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { readFile } from 'node:fs/promises'
+import { isAbsolute } from 'node:path'
 import { merge3, vaultRelPath, type VaultRelPath } from '@holi/shared'
 import {
   cap,
@@ -36,6 +37,7 @@ import {
   stringParam,
   VAULT_NOT_OPEN,
   withFileLock,
+  withFileLocks,
   writableFile,
   writeAtomic,
   type CapabilityContext,
@@ -127,8 +129,11 @@ export interface AgentCapabilitiesDeps {
       prompt: string
       model?: string
       system?: string
+      noTools?: boolean
+      keep?: boolean
     }): Promise<unknown>
     message(id: string, text: string): Promise<void>
+    reply(id: string): string | null
     stop(id: string): Promise<ActionResult>
   }
 }
@@ -398,8 +403,15 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
      * A background session whose first turn is `prompt`, with no terminal:
      * how a plugin built on the agent runs Claude Code (a Holi's send, an
      * automation's run), from its main side through `ctx.call`, once it has
-     * approved what runs. `model`, `allow` and `system` (appended to Claude
-     * Code's system prompt) are that approval's. The UI door alone, never
+     * approved what runs. `model`, `allow`, `deny` (Claude Code permission
+     * rules it may never use, `--disallowedTools`, which beat any allow in
+     * any scope, the vault's included), `system` (appended to Claude Code's
+     * system prompt) and `mcpConfig` (an absolute path to an MCP JSON
+     * config, `--mcp-config`, additive to the vault's own) are that
+     * approval's. A Pi run takes no rules; instead `tools: 'none'` runs it
+     * with no tools at all (`NO_TOOLS`), so it can only answer, and `keep`
+     * keeps it between turns until it is stopped, for a caller that reads
+     * each answer (`agent.reply`). The UI door alone, never
      * the CLI's: a session could otherwise start another with rules of its
      * own choosing.
      */
@@ -410,23 +422,45 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         const model = optionalStringParam(p, 'model')
         const system = optionalStringParam(p, 'system')
         const provider = providerParam(p)
-        const allow = p['allow']
-        if (
-          allow !== undefined &&
-          (!Array.isArray(allow) || allow.some((r) => typeof r !== 'string'))
-        ) {
-          throw new CapabilityError('BAD_REQUEST', 'allow must be a list of rules')
+        const rules = (key: 'allow' | 'deny'): string[] | undefined => {
+          const list = p[key]
+          if (list === undefined) return undefined
+          if (!Array.isArray(list) || list.some((r) => typeof r !== 'string')) {
+            throw new CapabilityError('BAD_REQUEST', `${key} must be a list of rules`)
+          }
+          return list as string[]
+        }
+        const allow = rules('allow')
+        const deny = rules('deny')
+        const tools = p['tools']
+        if (tools !== undefined && tools !== 'none') {
+          throw new CapabilityError('BAD_REQUEST', "tools is 'none' or absent")
+        }
+        const keep = p['keep'] === true
+        if ((tools !== undefined || keep) && provider !== 'pi') {
+          throw new CapabilityError('BAD_REQUEST', 'tools and keep are for a Pi run')
+        }
+        const mcpConfig = optionalStringParam(p, 'mcpConfig')
+        if (mcpConfig !== undefined && !isAbsolute(mcpConfig)) {
+          throw new CapabilityError('BAD_REQUEST', 'mcpConfig must be an absolute path')
+        }
+        if (mcpConfig !== undefined && !mcpConfig.endsWith('.json')) {
+          throw new CapabilityError('BAD_REQUEST', 'mcpConfig must be a .json file')
         }
         return {
           name: stringParam(p, 'name'),
           prompt: stringParam(p, 'prompt'),
           ...(provider === undefined ? {} : { provider }),
           ...(model === undefined ? {} : { model }),
-          ...(allow === undefined ? {} : { allow: allow as string[] }),
+          ...(allow === undefined ? {} : { allow }),
+          ...(deny === undefined ? {} : { deny }),
           ...(system === undefined ? {} : { appendSystemPrompt: system }),
+          ...(mcpConfig === undefined ? {} : { mcpConfig }),
+          ...(tools === undefined ? {} : { noTools: true }),
+          ...(keep ? { keep } : {}),
         }
       },
-      run: async (ctx, { provider = 'claude', ...args }) => {
+      run: async (ctx, { provider = 'claude', noTools, keep, ...args }) => {
         if (!live(ctx)) return notOpen
         if (provider === 'pi') {
           if (!deps.pi)
@@ -436,6 +470,8 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
             prompt: args.prompt,
             ...(args.model === undefined ? {} : { model: args.model }),
             ...(args.appendSystemPrompt === undefined ? {} : { system: args.appendSystemPrompt }),
+            ...(noTools === true ? { noTools } : {}),
+            ...(keep === true ? { keep } : {}),
           })
         }
         if (provider === 'codex') {
@@ -627,6 +663,23 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
           return started.ok ? deps.own.send(started.sessionId, args.text) : started
         }
         return deps.sessions.send(args)
+      },
+    }),
+
+    /**
+     * What a Pi run's last completed turn answered: how a plugin that runs
+     * one with no tools (`agent.launch` with `tools: 'none'`) hears it. Null
+     * before its first answer. The UI door alone, as the launch is.
+     */
+    'agent.reply': cap({
+      doors: ['ui'],
+      params: (raw) => ({ session: stringParam(paramsObject(raw), 'session') }),
+      run: async (ctx, { session }): Promise<{ output: string | null }> => {
+        if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', VAULT_NOT_OPEN)
+        if (!deps.pi?.sessions().some((item) => item.id === session)) {
+          throw new CapabilityError('NOT_FOUND', `no Pi run ${session}`)
+        }
+        return { output: deps.pi.reply(session) }
       },
     }),
 
@@ -831,7 +884,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', VAULT_NOT_OPEN)
         const rel = relPath(args.path)
         if ('delete' in args) {
-          await removeDocFile(ctx.root, rel)
+          await withFileLocks(ctx.root, [rel], () => removeDocFile(ctx.root, rel))
         } else {
           const { text, base } = args
           const abs = await writableFile(ctx, rel)

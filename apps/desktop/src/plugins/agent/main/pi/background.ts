@@ -31,6 +31,25 @@ interface PiJob {
   busy: boolean
   statsUpdated: boolean
   retentionTimer?: ReturnType<typeof setTimeout>
+  /** Kept between turns until stopped, not for `RETAIN_MS`. */
+  keep: boolean
+  /** What the last completed turn answered. */
+  reply?: string
+}
+
+/** How long a finished run waits for a follow-up before it is closed. */
+const RETAIN_MS = 30_000
+
+/** What a Pi run is started with (`agent.launch`). */
+export interface PiLaunch {
+  name: string
+  prompt: string
+  model?: string
+  system?: string
+  /** No tools at all: it can only answer (`PiRpcOptions.noTools`). */
+  noTools?: boolean
+  /** Kept between turns until stopped or the vault is left. */
+  keep?: boolean
 }
 
 export interface PiBackgroundDeps {
@@ -64,7 +83,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       }),
     )
 
-  async function launch(args: { name: string; prompt: string; model?: string; system?: string }) {
+  async function launch(args: PiLaunch) {
     if (root === null || remote === null)
       return { ok: false as const, message: 'No vault is open.' }
     const bin = deps.bin()
@@ -89,6 +108,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
         },
         ...(args.model === undefined ? {} : { model: args.model }),
         ...(args.system === undefined ? {} : { system: args.system }),
+        ...(args.noTools === true ? { noTools: true } : {}),
         ...(deps.spawn ? { spawn: deps.spawn } : {}),
       })
     } catch (error) {
@@ -103,6 +123,7 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       state: 'working',
       busy: false,
       statsUpdated: false,
+      keep: args.keep === true,
     }
     jobs.set(id, job)
     deps.bracket(id, 'begin')
@@ -136,15 +157,18 @@ export function createPiBackground(deps: PiBackgroundDeps) {
     deps.bracket(job.id, result.status === 'completed' ? 'end' : 'forget')
     deps.changed()
     if (result.status === 'completed') {
+      job.reply = result.output
       // Keep the RPC process available for a follow-up during a bounded idle
-      // window. The completed snapshot above remains observable to consumers.
+      // window, or until it is stopped for a run kept between turns. The
+      // completed snapshot above remains observable to consumers.
       if (job.retentionTimer) clearTimeout(job.retentionTimer)
+      if (job.keep) return
       job.retentionTimer = setTimeout(() => {
         if (jobs.get(job.id) !== job || job.busy) return
         job.run.close()
         jobs.delete(job.id)
         deps.changed()
-      }, 30_000)
+      }, RETAIN_MS)
       job.retentionTimer.unref()
     } else job.run.close()
   }
@@ -155,8 +179,14 @@ export function createPiBackground(deps: PiBackgroundDeps) {
       root = nextRoot
     },
     sessions,
-    async launch(args: { name: string; prompt: string; model?: string; system?: string }) {
+    async launch(args: PiLaunch) {
       return launch(args)
+    },
+    /** What the run's last completed turn answered, or null for a run it
+     *  does not have or that has not answered yet. */
+    reply(id: string): string | null {
+      const job = jobs.get(id)
+      return job === undefined || job.remote !== remote ? null : (job.reply ?? null)
     },
     async message(id: string, text: string) {
       const job = jobs.get(id)

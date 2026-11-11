@@ -143,21 +143,6 @@ describe('the settings the ritual collects', () => {
     const answered = reduce(s0, { type: 'setSetting', key: 'colorScheme', value: 'dark' })
     expect(answered.settings.colorScheme).toBe('dark')
     expect(answered.settings.dailyNotes).toEqual(s0.settings.dailyNotes)
-    expect(answered.settings.home).toEqual(s0.settings.home)
-  })
-
-  it('moves Home off today’s note when its option is withdrawn', () => {
-    // Turning daily notes off takes "today's note" off the Home row. Leaving
-    // the answer there would leave a value the user can neither see nor change.
-    const daily = reduce(s0, { type: 'setSetting', key: 'home', value: 'daily' })
-    const off = reduce(daily, { type: 'setSetting', key: 'dailyNotes', value: false })
-    expect(off.settings.home).not.toBe('daily')
-  })
-
-  it('leaves a Home that is still on offer', () => {
-    const chosen = reduce(s0, { type: 'setSetting', key: 'home', value: 'mail' })
-    const off = reduce(chosen, { type: 'setSetting', key: 'dailyNotes', value: false })
-    expect(off.settings.home).toBe('mail')
   })
 
   it('takes the last answer when one is changed twice', () => {

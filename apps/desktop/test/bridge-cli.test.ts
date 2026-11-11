@@ -13,7 +13,7 @@ import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentCapabilities } from '../src/plugins/agent/main/host/capabilities'
 import { appsCapabilities, storeCapabilities } from '../src/plugins/apps/main/capabilities'
-import { installHoliCli } from '../src/main/bridge/cli'
+import { installHoliCli, resolveArgv } from '../src/main/bridge/cli'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
 import { SPILL_BYTES } from '../src/main/bridge/spill'
 import { OUT_DIR } from '../src/main/vault/out-files'
@@ -178,13 +178,26 @@ describe('when Holi is not running', () => {
 })
 
 describe('usage', () => {
-  it('names every command with its summary when called with none', async () => {
+  it('names every command with its summary when called with none, and succeeds', async () => {
     const res = await run(bin, [], env)
-    expect(res.code).toBe(2)
-    expect(res.stderr).toContain('holi apps open <path>')
-    expect(res.stderr).toContain('holi store put <bundle> <collection> <value> [<id>]')
-    expect(res.stderr).toContain('holi skills update')
-    expect(res.stderr).toContain("a vault PDF's comments")
+    expect(res.code).toBe(0)
+    expect(res.stdout).toContain('holi apps open <path>')
+    expect(res.stdout).toContain('holi store put <bundle> <collection> <value> [<id>]')
+    expect(res.stdout).toContain('holi skills update')
+    expect(res.stdout).toContain("a vault PDF's comments")
+  })
+
+  it('answers --help with usage and exit 0, running nothing', async () => {
+    for (const args of [['--help'], ['-h'], ['sync', '--help']]) {
+      const res = await run(bin, args, env)
+      expect(res.code, args.join(' ')).toBe(0)
+      expect(res.stdout).toContain('holi apps open <path>')
+    }
+    const one = await run(bin, ['apps', 'open', '--help'], env)
+    expect(one.code).toBe(0)
+    expect(one.stdout).toContain('usage: holi apps open <path>')
+    expect(one.stdout).not.toContain('holi skills update')
+    expect(capability).not.toHaveBeenCalled()
   })
 
   it('refuses an unknown command rather than doing something adjacent', async () => {
@@ -396,7 +409,13 @@ describe('a command that reads stdin', () => {
   const echo = cap({
     doors: ['cli'],
     writes: true,
-    cli: { args: ['to'], summary: 'echo a body', stdin: 'body', stdinUnless: 'draft' },
+    cli: {
+      args: ['to'],
+      summary: 'echo a body',
+      stdin: 'body',
+      stdinUnless: 'draft',
+      many: ['attach'],
+    },
     params: (raw) => raw as Record<string, string>,
     run: async (_ctx, p) => {
       ran(p)
@@ -431,5 +450,152 @@ describe('a command that reads stdin', () => {
     const res = await run(bin, ['x', 'echo', 'ada', '--draft', 'd1'], env, 'ignored')
     expect(res.code).toBe(0)
     expect(ran).toHaveBeenCalledWith({ to: 'ada', draft: 'd1' })
+  })
+
+  it('collects an option it may repeat into a list, in order', async () => {
+    const args = ['x', 'echo', 'ada', '--attach', 'a b.pdf', '--attach=c.pdf', '--body', 'hi']
+    expect((await run(bin, args, env)).code).toBe(0)
+    expect(ran).toHaveBeenCalledWith({ to: 'ada', attach: ['a b.pdf', 'c.pdf'], body: 'hi' })
+  })
+})
+
+describe('a command whose body is read from stdin only as `-`', () => {
+  const commands = [
+    { name: 'x.call', cli: { args: ['path'], summary: 'call', stdin: 'body', stdinOnDash: true } },
+  ] as const
+
+  it('has no body when it is left out, and never asks for stdin', () => {
+    expect(resolveArgv(['x', 'call', 'a'], commands, null)).toMatchObject({
+      kind: 'run',
+      params: { path: 'a' },
+    })
+  })
+
+  it('reads stdin for `--body -`, and takes any other value as it is', () => {
+    expect(resolveArgv(['x', 'call', 'a', '--body', '-'], commands, null)).toEqual({
+      kind: 'stdin',
+    })
+    expect(resolveArgv(['x', 'call', 'a', '--body', '-'], commands, '{}')).toMatchObject({
+      params: { path: 'a', body: '{}' },
+    })
+    expect(resolveArgv(['x', 'call', 'a', '--body', '{"a":1}'], commands, null)).toMatchObject({
+      params: { body: '{"a":1}' },
+    })
+  })
+})
+
+describe('a command whose arguments are positional only', () => {
+  const commands = [
+    { name: 'x.call', cli: { args: ['method', 'path'], summary: 'call', positionalOnly: true } },
+  ] as const
+
+  it('takes them in their place', () => {
+    expect(resolveArgv(['x', 'call', 'POST', 'a'], commands, null)).toMatchObject({
+      kind: 'run',
+      params: { method: 'POST', path: 'a' },
+    })
+  })
+
+  it('refuses one given as an option', () => {
+    expect(
+      resolveArgv(['x', 'call', '--method', 'POST', '--path', 'a'], commands, null),
+    ).toMatchObject({ kind: 'usage' })
+    expect(resolveArgv(['x', 'call', 'a', '--method=POST'], commands, null)).toMatchObject({
+      kind: 'usage',
+    })
+  })
+})
+
+describe('a command whose body is read from stdin only as `-`', () => {
+  const commands = [
+    { name: 'x.call', cli: { args: ['path'], summary: 'call', stdin: 'body', stdinOnDash: true } },
+  ] as const
+
+  it('has no body when it is left out, and never asks for stdin', () => {
+    expect(resolveArgv(['x', 'call', 'a'], commands, null)).toMatchObject({
+      kind: 'run',
+      params: { path: 'a' },
+    })
+  })
+
+  it('reads stdin for `--body -`, and takes any other value as it is', () => {
+    expect(resolveArgv(['x', 'call', 'a', '--body', '-'], commands, null)).toEqual({
+      kind: 'stdin',
+    })
+    expect(resolveArgv(['x', 'call', 'a', '--body', '-'], commands, '{}')).toMatchObject({
+      params: { path: 'a', body: '{}' },
+    })
+    expect(resolveArgv(['x', 'call', 'a', '--body', '{"a":1}'], commands, null)).toMatchObject({
+      params: { body: '{"a":1}' },
+    })
+  })
+})
+
+describe('a command whose arguments are positional only', () => {
+  const commands = [
+    { name: 'x.call', cli: { args: ['method', 'path'], summary: 'call', positionalOnly: true } },
+  ] as const
+
+  it('takes them in their place', () => {
+    expect(resolveArgv(['x', 'call', 'POST', 'a'], commands, null)).toMatchObject({
+      kind: 'run',
+      params: { method: 'POST', path: 'a' },
+    })
+  })
+
+  it('refuses one given as an option', () => {
+    expect(
+      resolveArgv(['x', 'call', '--method', 'POST', '--path', 'a'], commands, null),
+    ).toMatchObject({ kind: 'usage' })
+    expect(resolveArgv(['x', 'call', 'a', '--method=POST'], commands, null)).toMatchObject({
+      kind: 'usage',
+    })
+  })
+})
+
+describe('a command that acts as the calling session', () => {
+  const ran = vi.fn<(params: unknown) => void>()
+  const who = cap({
+    doors: ['cli'],
+    cli: { args: [], summary: 'say which session is asking', job: 'session' },
+    params: (raw) => raw as Record<string, string>,
+    run: async (_ctx, p) => {
+      ran(p)
+      return p.session ?? 'nobody'
+    },
+    text: (session) => session,
+  })
+  const inSession = (job: string) => ({ ...env, CLAUDE_JOB_DIR: `/Users/ada/.claude/jobs/${job}` })
+
+  beforeEach(async () => {
+    await server.stop()
+    ran.mockClear()
+    server = bridge({ 'x.who': who }, ['x'])
+    await server.start()
+    await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
+  })
+
+  it('is the session the script runs in, with no flag for it', async () => {
+    const res = await run(bin, ['x', 'who'], inSession('abcd1234'))
+    expect(res).toMatchObject({ code: 0, stdout: 'abcd1234\n' })
+  })
+
+  it('refuses to name another session from inside one, in either spelling', async () => {
+    for (const flag of [['--session', 'ffff0000'], ['--session=ffff0000']]) {
+      const res = await run(bin, ['x', 'who', ...flag], inSession('abcd1234'))
+      expect(res.code, flag.join(' ')).toBe(2)
+      expect(res.stderr).toContain('--session')
+    }
+    expect(ran).not.toHaveBeenCalled()
+  })
+
+  it('takes its own id given again', async () => {
+    const res = await run(bin, ['x', 'who', '--session', 'abcd1234'], inSession('abcd1234'))
+    expect(res).toMatchObject({ code: 0, stdout: 'abcd1234\n' })
+  })
+
+  it('takes the flag from a person at a terminal outside any session', async () => {
+    const res = await run(bin, ['x', 'who', '--session', 'ffff0000'], env)
+    expect(res).toMatchObject({ code: 0, stdout: 'ffff0000\n' })
   })
 })

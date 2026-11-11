@@ -69,13 +69,14 @@ export async function flushAllBuffers(): Promise<void> {
 }
 
 /** Keep editors mounted and stable until closing can preserve their text. */
-export async function saveBeforeClosing(close: () => void): Promise<void> {
+export async function saveBeforeClosing(close: () => void, rejectErrors = false): Promise<void> {
   const release = freezeBuffers()
   try {
     await flushAllBuffers()
     close()
   } catch (error) {
     console.error('[close] save failed; tab retained:', error)
+    if (rejectErrors) throw error
   } finally {
     release()
   }
@@ -85,6 +86,7 @@ export async function saveBeforeClosing(close: () => void): Promise<void> {
  * Write every buffer willing to be written, for ⌘S: every pane's work, not
  * just the focused one.
  */
+/** @public Used by buffer-registry tests to exercise the save policy directly. */
 export async function saveAllBuffers(): Promise<void> {
   await writeAll((b) => b.save, 'save')
 }

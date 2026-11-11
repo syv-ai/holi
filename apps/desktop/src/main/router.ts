@@ -9,7 +9,7 @@
 import { readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
-import { exactPath, resolveRelative } from '@holi/shared/path-safety-node'
+import { resolveRelative } from '@holi/shared/path-safety-node'
 import {
   commentThreads,
   isCommentableNote,
@@ -65,9 +65,11 @@ import { ensureClone } from './vault/clone'
 import {
   absPathFor,
   carryFolder,
+  lockPath,
   pruneEmptiedFolder,
   removeDocFile,
   withFileLock,
+  withFileLocks,
   writeAtomic,
 } from './vault/vault-files'
 import { vaultReadme } from './vault/readme'
@@ -1011,16 +1013,18 @@ export function createRouter(deps: RouterDeps) {
 
     // "Commit anyway" for a file the large-file gate held back: the user has
     // decided this big asset belongs in git. Bypasses the pre-commit hook.
-    commitFile: t.procedure
+    commitFile: vaultMutation
       .input(fields({ remote: 'string', path: 'string' }))
       .mutation(async ({ input }) => {
-        await openRepo(await rootFor(input.remote)).commitFileNoVerify(safe(input.path))
+        const active = await activeOrThrow()
+        if (active.remote !== safeRemote(input.remote)) throw new Error('Vault is no longer active')
+        await active.commitHeldBack(safe(input.path))
         return { ok: true as const }
       }),
 
     // "Keep local" for a held-back file: git-ignore it machine-locally so it
     // stays on disk but never commits or syncs (`.git/info/exclude`).
-    keepFileLocal: t.procedure
+    keepFileLocal: vaultMutation
       .input(fields({ remote: 'string', path: 'string' }))
       .mutation(async ({ input }) => {
         await openRepo(await rootFor(input.remote)).excludeLocally(safe(input.path))
@@ -1168,8 +1172,7 @@ export function createRouter(deps: RouterDeps) {
         // Under the file's lock, keyed as an app's `docs.write` keys it (the
         // canonical path), so an app's check of the text it read and its
         // write are never split by this save.
-        const abs = (await exactPath(root, rel)) ?? absPathFor(root, rel)
-        await withFileLock(abs, () => writeAtomic(root, rel, input.text))
+        await withFileLock(await lockPath(root, rel), () => writeAtomic(root, rel, input.text))
         return { ok: true as const }
       }),
 
@@ -1192,7 +1195,9 @@ export function createRouter(deps: RouterDeps) {
     delete: vaultMutation
       .input(fields({ remote: 'string', path: 'string' }))
       .mutation(async ({ input }) => {
-        await removeDocFile(await rootFor(input.remote), safe(input.path))
+        const root = await rootFor(input.remote)
+        const rel = safe(input.path)
+        await withFileLocks(root, [rel], () => removeDocFile(root, rel))
         return { ok: true as const }
       }),
 
@@ -1294,7 +1299,12 @@ export function createRouter(deps: RouterDeps) {
     // folder would stay on its `.gitkeep` with nothing left to delete.
     deleteMany: vaultMutation.input(deleteManyInput).mutation(async ({ input }) => {
       const root = await rootFor(input.remote)
-      for (const p of input.paths) await removeDocFile(root, safe(p))
+      // Held together, as a move holds its files: no write that checked one
+      // of them lands between two removes.
+      const rels = input.paths.map((p) => safe(p))
+      await withFileLocks(root, rels, async () => {
+        for (const rel of rels) await removeDocFile(root, rel)
+      })
       for (const f of input.folders) await pruneEmptiedFolder(root, safe(f))
       return { ok: true as const }
     }),
@@ -1544,18 +1554,37 @@ export function createRouter(deps: RouterDeps) {
   })
 
   const history = t.router({
-    /** The open file's commits, newest-first, following renames. Empty for a
-     *  file with no commits yet (new/untracked). */
+    /** The open file's commits, newest-first, following renames; a folder's
+     *  (a vault app's bundle) are every commit under it. Empty for a file with
+     *  no commits yet (new/untracked). */
     list: t.procedure
       .input(fields({ path: 'string' }))
-      .query(({ input }): Promise<Commit[]> =>
-        activeOrThrow().repo.log({ path: safe(input.path), limit: HISTORY_LIMIT }),
-      ),
+      .query(async ({ input }): Promise<Commit[]> => {
+        const repo = activeOrThrow().repo
+        const path = safe(input.path)
+        // A renamed or deleted bundle is no folder on disk, so it falls to the
+        // single-file walk, which likely finds nothing.
+        const folder = await stat(join(repo.root, path)).then(
+          (s) => s.isDirectory(),
+          () => false,
+        )
+        return repo.log({ path, folder, limit: HISTORY_LIMIT })
+      }),
 
     /** The whole vault's commit log, newest-first — the broad history dialog. */
     log: t.procedure.query((): Promise<Commit[]> =>
       activeOrThrow().repo.log({ limit: HISTORY_LIMIT }),
     ),
+
+    /** A named history target, which may predate the recent-list cap. */
+    commit: t.procedure
+      .input(fields({ sha: 'string' }))
+      .query(async ({ input }): Promise<Commit | null> => {
+        if (!/^[0-9a-f]{4,64}$/i.test(input.sha)) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid commit SHA' })
+        }
+        return activeOrThrow().repo.commit(input.sha)
+      }),
 
     /** What changed lately, for Home's feed: the newest commits, each with
      *  the paths it touched (at most `ACTIVITY_FILES` of them, and how many in

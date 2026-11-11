@@ -101,7 +101,7 @@ function rig(
     rootFor: async () => root,
     active: () => null,
     core: noCoreServices,
-    pluginEnabled: async (plugin, at) => (await host.enabled(at)).has(plugin),
+    pluginEnabled: async (plugin, at) => (await host.serving(at)).has(plugin),
     claims: (at) => host.scanClaimsFor(at),
   })
   const ping = (at: string) => {
@@ -187,6 +187,40 @@ describe('the lifecycle', () => {
     await host.reconcile('snapshot')
     expect(calls).toEqual({ started: 2, stopped: 1 })
     expect(registry.pluginOf('fake.ping')).toBe('fake')
+  })
+
+  it('keeps a plugin turned off served until its disposer is done', async () => {
+    const root = await tempDir()
+    let finish: () => void = () => {}
+    let going: () => void = () => {}
+    const left = new Promise<void>((resolve) => (going = resolve))
+    const winding: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      activate(ctx) {
+        ctx.register(['fake'], {
+          'fake.ping': cap({ doors: ['ui'], params: noParams, run: async () => 'pong' }),
+        })
+        // A meeting's recording: the renderer is told, and its last calls
+        // still land, before the disposer lets go.
+        return async () => {
+          ctx.emit(ctx.remote, 'stop-recording', null)
+          going()
+          await new Promise<void>((resolve) => (finish = resolve))
+        }
+      },
+    }
+    const { host, ping, sent, enter } = rig({ plugins: [winding], roots: { 'o/r': root } })
+    await enter(openVault('o/r', root))
+
+    await turn(root, false)
+    const stopped = host.reconcile('settings')
+    await left
+    await vi.waitFor(() => expect(sent.map((s) => s.event.name)).toEqual(['stop-recording']))
+    expect((await ping(root)).value).toBe('pong')
+
+    finish()
+    await stopped
+    await expect(ping(root)).rejects.toThrow('no such method: fake.ping')
   })
 
   it('starts what a plugin requires first, and stops it last', async () => {

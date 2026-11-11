@@ -12,6 +12,7 @@
  * bare repo plays the teammate.
  */
 import { execFile } from 'node:child_process'
+import { commitChanges } from './commit-changes'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -260,6 +261,22 @@ describe('commitAll', () => {
 })
 
 describe('commitFileNoVerify (large-file "commit anyway")', () => {
+  it('commits literally only the selected file and preserves unrelated index blobs', async () => {
+    const dir = await makeClone(await makeRemote())
+    await writeFile(join(dir, 'commit[1].bin'), 'selected\n')
+    await writeFile(join(dir, 'commit1.bin'), 'lookalike\n')
+    await writeFile(join(dir, 'staged.bin'), 'staged blob\n')
+    await plainGit(dir, ['add', 'staged.bin'])
+    const repo = openRepo(dir)
+    const sha = await repo.commitFileNoVerify('commit[1].bin')
+    expect(sha).not.toBeNull()
+    expect(await plainGit(dir, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'])).toBe(
+      'commit[1].bin',
+    )
+    expect(await plainGit(dir, ['show', ':staged.bin'])).toBe('staged blob')
+    expect((await repo.status()).dirtyPaths).toContain('commit1.bin')
+  })
+
   it('commits a single file, leaving other dirty files untouched', async () => {
     const dir = await makeClone(await makeRemote())
     await writeFile(join(dir, 'keep.bin'), 'x'.repeat(50), 'utf8')
@@ -280,6 +297,23 @@ describe('commitFileNoVerify (large-file "commit anyway")', () => {
     expect(await openRepo(dir).commitFileNoVerify('big.bin')).not.toBeNull()
   })
 
+  it('returns null for a clean selected file without committing unrelated staged work', async () => {
+    const dir = await makeClone(await makeRemote())
+    await writeFile(join(dir, 'staged.bin'), 'staged')
+    await plainGit(dir, ['add', 'staged.bin'])
+    const repo = openRepo(dir)
+    expect(await repo.commitFileNoVerify('README.md')).toBeNull()
+    expect(await plainGit(dir, ['diff', '--cached', '--name-only'])).toBe('staged.bin')
+  })
+
+  it('commits a selected file on an unborn repository', async () => {
+    const root = await tmp('holi-git-unborn-')
+    await exec('git', ['init', root])
+    await writeFile(join(root, 'first[1].bin'), 'first')
+    expect(await openRepo(root).commitFileNoVerify('first[1].bin')).toMatch(/^[0-9a-f]{40}$/)
+    expect(await plainGit(root, ['show', '--format=', '--name-only', 'HEAD'])).toBe('first[1].bin')
+  })
+
   it('returns null when the path is not dirty (nothing to stage)', async () => {
     const repo = openRepo(await makeClone(await makeRemote()))
     expect(await repo.commitFileNoVerify('README.md')).toBeNull()
@@ -287,16 +321,26 @@ describe('commitFileNoVerify (large-file "commit anyway")', () => {
 })
 
 describe('excludeLocally (large-file "keep local")', () => {
-  it('stops an untracked file showing as dirty, without committing it', async () => {
+  it('refuses tracked files instead of implying their changes are private', async () => {
     const dir = await makeClone(await makeRemote())
-    await writeFile(join(dir, 'video.mov'), 'x'.repeat(50), 'utf8')
-    const repo = openRepo(dir)
-    expect((await repo.status()).dirtyPaths).toEqual(['video.mov'])
+    await writeFile(join(dir, 'README.md'), 'modified\\n')
+    await expect(openRepo(dir).excludeLocally('README.md')).rejects.toThrow(/tracked file/)
+    expect((await openRepo(dir).status()).dirtyPaths).toContain('README.md')
+  })
 
-    await repo.excludeLocally('video.mov')
-    expect((await repo.status()).dirtyPaths).toEqual([])
+  it('stops an untracked file showing as dirty, escaping literal glob characters', async () => {
+    const dir = await makeClone(await makeRemote())
+    await writeFile(join(dir, 'video[1].mov'), 'x'.repeat(50), 'utf8')
+    await writeFile(join(dir, 'video1.mov'), 'lookalike', 'utf8')
+    const repo = openRepo(dir)
+    expect((await repo.status()).dirtyPaths.sort()).toEqual(['video1.mov', 'video[1].mov'])
+
+    await repo.excludeLocally('video[1].mov')
+    expect((await repo.status()).dirtyPaths).toEqual(['video1.mov'])
     // Local-only: .git/info/exclude, never the shared .gitignore.
-    expect(await readFile(join(dir, '.git', 'info', 'exclude'), 'utf8')).toContain('video.mov')
+    expect(await readFile(join(dir, '.git', 'info', 'exclude'), 'utf8')).toContain(
+      '/video\\[1\\].mov',
+    )
   })
 })
 
@@ -662,6 +706,23 @@ describe('classifyPushFailure', () => {
     expect(
       classifyPushFailure('', 'fatal: unable to access: Could not resolve host: github.com\n'),
     ).toBeNull()
+  })
+})
+
+describe('commit lookup', () => {
+  it('resolves full and unambiguous abbreviated commit ids, but not other objects', async () => {
+    const dir = await makeClone(await makeRemote())
+    await commitFile(dir, 'a.md', 'first\n')
+    const target = (await plainGit(dir, ['rev-parse', 'HEAD'])).trim()
+    const repo = openRepo(dir)
+
+    expect((await repo.commit(target))?.sha).toBe(target)
+    expect((await repo.commit(target.slice(0, 12)))?.sha).toBe(target)
+    expect(await repo.commit('f'.repeat(12))).toBeNull()
+    await expect(repo.commit('--help')).rejects.toThrow(/Invalid commit SHA/)
+
+    const blob = (await plainGit(dir, ['rev-parse', 'HEAD:a.md'])).trim()
+    expect(await repo.commit(blob)).toBeNull()
   })
 })
 
@@ -1032,11 +1093,48 @@ describe('changedFiles', () => {
     expect((await repo.changedFiles(sha)).sort()).toEqual(['a.md', 'b.md'])
   })
 
+  it('returns exact names for quoted paths and folder filtering', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    const paths = ['Demo.app/æ.js', 'Demo.app/ leading and trailing ', 'Demo.app/tab\tname.js']
+    for (const path of paths) {
+      await mkdir(join(dir, path, '..'), { recursive: true })
+      await writeFile(join(dir, path), 'content\n', 'utf8')
+    }
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'unicode app paths'])
+    const [{ sha }] = await repo.log({ limit: 1 })
+    const changed = await repo.changedFiles(sha)
+    expect(changed.filter((path) => path.startsWith('Demo.app/')).sort()).toEqual(paths.sort())
+  })
+
   it('lists the files of the very first (root) commit', async () => {
     const dir = await makeClone(await makeRemote())
     const repo = openRepo(dir)
     const commits = await repo.log({})
     const root = commits[commits.length - 1]!
     expect((await repo.changedFiles(root.sha)).length).toBeGreaterThan(0)
+  })
+
+  it('looks up exact commit metadata outside the recent history window', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    await mkdir(join(dir, 'Demo.app'), { recursive: true })
+    await writeFile(join(dir, 'Demo.app', 'index.html'), 'app\n', 'utf8')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'create demo app'])
+    const [target] = await repo.log({ path: 'Demo.app', folder: true, limit: 1 })
+    await commitChanges(dir, 'Demo.app/data.json', 201)
+    expect(
+      (await repo.log({ path: 'Demo.app', folder: true, limit: 200 })).some(
+        (c) => c.sha === target!.sha,
+      ),
+    ).toBe(false)
+    expect(await repo.commit(target!.sha)).toMatchObject({
+      sha: target!.sha,
+      subject: 'create demo app',
+      added: 1,
+      removed: 0,
+    })
   })
 })

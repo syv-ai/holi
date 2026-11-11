@@ -125,6 +125,28 @@ const SETTINGS_BASE = {
 
 /** The agent's own hooks and rules. */
 const AGENT_SETTINGS: SettingsFragment = {
+  // Google's leftovers, retired here because only an enabled plugin's fragment
+  // is merged, and a vault with Google switched off needs them gone too.
+  retired: {
+    // The two copies of the gate Holi wrote inline. An `ask` from any hook wins,
+    // so each would keep prompting whatever the current gate says; but in a
+    // vault whose shipped gate predates `respond` and `api`, one is all that
+    // asks about those, so it stays until `holi skills update` brings the gate.
+    hooks: {
+      sha256: [
+        'c6d21ee4a373b314cb3631d9513b85b7dac647cb4870bdc88d6ba874f52e65d2',
+        '9a78405b52906801ba40755988142fe67ffce3cb67b6eecfbf289fad92b05c07',
+      ],
+      replacedBy: hookScript('google-send-gate'),
+      holding: ['respond:', 'api:'],
+    },
+    // These reach nobody and have an undo.
+    ask: [
+      'Bash(holi google archive:*)',
+      'Bash(holi google trash:*)',
+      'Bash(holi google unschedule:*)',
+    ],
+  },
   hooks: [
     // Injects the focused note's path into each prompt.
     { event: 'UserPromptSubmit', script: 'user-prompt-submit' },
@@ -191,7 +213,8 @@ export const agentSettings = (
   existing: string | null,
   fragments: readonly SettingsFragment[],
   has: (rel: string) => boolean,
-): string | null => mergeClaudeSettings(existing, SETTINGS_BASE, fragments, has)
+  read?: (rel: string) => string | null,
+): string | null => mergeClaudeSettings(existing, SETTINGS_BASE, fragments, has, read)
 
 export const claudeSeed: SeedContribution = {
   id: 'agent',
@@ -200,13 +223,24 @@ export const claudeSeed: SeedContribution = {
   shipped: folder.shipped,
   fragments: { [SETTINGS]: [AGENT_SETTINGS] },
   merge: {
-    [SETTINGS]: async (existing, fragments, has) => {
+    [SETTINGS]: async (existing, fragments, has, read) => {
       const all = fragments as SettingsFragment[]
       const present = new Set<string>()
       for (const hook of all.flatMap((f) => f.hooks ?? [])) {
-        if (await has(hookScript(hook.script))) present.add(hookScript(hook.script))
+        if ('script' in hook && (await has(hookScript(hook.script)))) {
+          present.add(hookScript(hook.script))
+        }
       }
-      return agentSettings(existing, all, (rel) => present.has(rel))
+      const replacements = new Map<string, string | null>()
+      for (const hooks of all.flatMap((f) => f.retired?.hooks ?? [])) {
+        replacements.set(hooks.replacedBy, await read(hooks.replacedBy))
+      }
+      return agentSettings(
+        existing,
+        all,
+        (rel) => present.has(rel),
+        (rel) => replacements.get(rel) ?? null,
+      )
     },
   },
 }

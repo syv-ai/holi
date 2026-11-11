@@ -80,12 +80,27 @@ export function ErrorState({
   message,
   onRetry,
   className,
+  compact = false,
 }: {
   title: ReactNode
   message?: ReactNode
   onRetry: () => void
   className?: string
+  compact?: boolean
 }): React.JSX.Element {
+  if (compact) {
+    return (
+      <div role="alert" className={cn('flex flex-wrap items-center gap-2', className)}>
+        <div className="flex flex-col gap-0.5">
+          <EmptyTitle>{title}</EmptyTitle>
+          {message ? <EmptyDescription>{message}</EmptyDescription> : null}
+        </div>
+        <Button variant="secondary" size="sm" onClick={onRetry}>
+          Retry
+        </Button>
+      </div>
+    )
+  }
   return (
     <EmptyState
       role="alert"
