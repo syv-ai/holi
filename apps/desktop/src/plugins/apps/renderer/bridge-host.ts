@@ -13,6 +13,7 @@ import { APP_METHODS, type AppMethod, type AppResponse } from '../shared/bridge'
 import {
   openPathAtom,
   openSurfaceAtom,
+  openTabAtom,
   snapshotAtom,
   surfacesAtom,
   type PluginStore,
@@ -41,6 +42,13 @@ function fieldOf(params: unknown, key: 'target'): string | null {
 export function openTarget(store: PluginStore, params: unknown): { ok: true } {
   const target = fieldOf(params, 'target')
   if (target === null) throw new Error('open needs a path or a view')
+  // `agenda` was the old Google calendar app entry. Keep it as an alias for
+  // existing vault apps and slash commands, but resolve both names to the
+  // single canonical Calendar app tab.
+  if (target === 'agenda' || target === 'calendar') {
+    store.set(openTabAtom, { kind: 'app', id: 'calendar' })
+    return { ok: true }
+  }
   if (store.get(surfacesAtom).has(target)) {
     store.set(openSurfaceAtom, target)
     return { ok: true }
