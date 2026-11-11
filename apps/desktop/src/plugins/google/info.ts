@@ -11,7 +11,7 @@ export const GOOGLE_INFO: PluginInfo = {
   description:
     'Mail and Agenda, for you and for the agent, once you connect a Google account on this machine.',
   whenOff: 'Mail and Agenda close. A connected account stays connected on this machine, unused.',
-  // Choices about your own account, so per vault and per machine: pushed to
+  // Choices about your own account are per vault and per machine: pushed to
   // teammates they would be a disclosure, not a preference.
   settings: [
     {
@@ -46,6 +46,30 @@ export const GOOGLE_INFO: PluginInfo = {
       type: { kind: 'list' },
       default: [],
       target: 'local',
+    },
+    // How the Calendar reads is the vault's, so a team answers it once;
+    // `plugins.local.yaml` still overrides it on one machine.
+    {
+      key: 'timeFormat',
+      label: 'Clock',
+      explanation: 'How the Calendar writes times: 14:30, or 2:30 PM.',
+      type: {
+        kind: 'enum',
+        options: [
+          { value: '24h', label: '24-hour' },
+          { value: '12h', label: '12-hour' },
+        ],
+      },
+      default: '24h',
+      target: 'committed',
+    },
+    {
+      key: 'weekNumbers',
+      label: 'Week numbers',
+      explanation: 'ISO week numbers, Monday first, down the side of the Calendar’s month.',
+      type: { kind: 'boolean' },
+      default: true,
+      target: 'committed',
     },
   ],
 }

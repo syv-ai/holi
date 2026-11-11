@@ -7,10 +7,11 @@
  * the Google send gate as a hook script nothing invokes.
  *
  * Key-wise, the way `.gitignore` is line-wise: an adopted vault's own hooks,
- * rules and keys are not Holi's to replace. Holi adds what is absent and
- * touches nothing else, so a vault that sets a default back (here or in
+ * rules and keys are not Holi's to replace. Holi adds what is absent, takes
+ * out only what a fragment names as retired and touches nothing else, so a vault that sets a default back (here or in
  * `settings.local.json`) keeps its choice.
  */
+import { createHash } from 'node:crypto'
 import type { SettingsFragment } from '../../../../main/plugin-api'
 
 export const hookScript = (script: string) => `.claude/hooks/${script}.mjs`
@@ -32,6 +33,45 @@ function fillAbsent(target: Json, base: Json): void {
   }
 }
 
+/** Take out what a fragment retired: the only thing the merge ever removes. */
+function removeRetired(
+  settings: Json,
+  fragments: readonly SettingsFragment[],
+  read: (rel: string) => string | null,
+): void {
+  const hashes = fragments.flatMap((f) => {
+    const hooks = f.retired?.hooks
+    if (hooks === undefined) return []
+    const text = read(hooks.replacedBy)
+    return text !== null && hooks.holding.every((part) => text.includes(part)) ? hooks.sha256 : []
+  })
+  const isRetiredHook = (hook: unknown) =>
+    isObject(hook) &&
+    typeof hook.command === 'string' &&
+    hashes.includes(createHash('sha256').update(hook.command).digest('hex'))
+  if (hashes.length > 0 && isObject(settings.hooks)) {
+    for (const [event, entries] of Object.entries(settings.hooks)) {
+      if (!Array.isArray(entries)) continue
+      const next: unknown[] = []
+      for (const entry of entries) {
+        if (!isObject(entry) || !Array.isArray(entry.hooks) || !entry.hooks.some(isRetiredHook)) {
+          next.push(entry)
+          continue
+        }
+        const hooks = entry.hooks.filter((hook) => !isRetiredHook(hook))
+        if (hooks.length > 0) next.push({ ...entry, hooks })
+      }
+      settings.hooks[event] = next
+    }
+  }
+  const rules = fragments.flatMap((f) => f.retired?.ask ?? [])
+  if (isObject(settings.permissions) && Array.isArray(settings.permissions.ask)) {
+    settings.permissions.ask = settings.permissions.ask.filter(
+      (rule) => !rules.includes(rule as string),
+    )
+  }
+}
+
 /**
  * The `settings.json` this vault should have, or **null** if it already
  * carries everything (or cannot be parsed).
@@ -39,18 +79,18 @@ function fillAbsent(target: Json, base: Json): void {
  * A malformed file returns `null`: it is the user's, and unparseable JSON is
  * not something to "fix" by overwriting. The cost is an ungated vault.
  *
- * **A hook goes in only where its script is** (`has`, by vault path). Scripts
- * are seeded at creation and updated on request, so a hook a later release adds
- * must not be wired before the update that brings its script: it would fail on
- * every prompt. A hook is present when its event has an entry with the same
- * matcher running the same script, so a vault that reordered or annotated the
- * entry does not get a duplicate.
+ * **A file-backed hook goes in only where its script is** (`has`, by vault
+ * path). Inline commands are maintained with the merged settings itself and
+ * need no shipped file. A hook is present when its event has an entry with the
+ * same matcher running the same command, so a vault that reordered or
+ * annotated the entry does not get a duplicate.
  */
 export function mergeClaudeSettings(
   existing: string | null,
   base: Json,
   fragments: readonly SettingsFragment[],
   has: (rel: string) => boolean,
+  read: (rel: string) => string | null = () => null,
 ): string | null {
   let settings: Json = {}
   if (existing !== null && existing.trim() !== '') {
@@ -64,24 +104,30 @@ export function mergeClaudeSettings(
   }
   const before = JSON.stringify(settings)
 
+  removeRetired(settings, fragments, read)
+
   for (const fragment of fragments) {
     for (const hook of fragment.hooks ?? []) {
-      if (!has(hookScript(hook.script))) continue
+      const script = 'script' in hook ? hookScript(hook.script) : undefined
+      if (script !== undefined && !has(script)) continue
+      const command = 'command' in hook ? hook.command : hookCommand(hook.script, hook.args)
       if (!isObject(settings.hooks)) settings.hooks = {}
       const hooks = settings.hooks as Json
       const entries = Array.isArray(hooks[hook.event]) ? (hooks[hook.event] as unknown[]) : []
-      const present = entries.some(
-        (entry) =>
-          isObject(entry) &&
-          entry.matcher === hook.matcher &&
-          JSON.stringify(entry.hooks ?? []).includes(hookScript(hook.script)),
-      )
+      const present = entries.some((entry) => {
+        if (!isObject(entry) || entry.matcher !== hook.matcher || !Array.isArray(entry.hooks)) {
+          return false
+        }
+        return script === undefined
+          ? entry.hooks.some((item) => isObject(item) && item.command === command)
+          : JSON.stringify(entry.hooks).includes(script)
+      })
       if (present) continue
       hooks[hook.event] = [
         ...entries,
         {
           ...(hook.matcher === undefined ? {} : { matcher: hook.matcher }),
-          hooks: [{ type: 'command', command: hookCommand(hook.script, hook.args) }],
+          hooks: [{ type: 'command', command }],
         },
       ]
     }

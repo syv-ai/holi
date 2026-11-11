@@ -107,6 +107,11 @@ const activeSessionAtom = atom<AgentSession | null>((get) => {
     id === null ? null : (sessions.find((s) => s.id === id) ?? null)
   const tabId = get(activeSurfaceIdAtom(AGENT_SURFACE))
   if (tabId !== null) {
+    // Session tabs carry their owner selection (`session:<id>`); they identify
+    // the session directly, unlike surface tabs which identify a terminal.
+    const selectedSessionId = tabId.startsWith('session:') ? tabId.slice(8) : tabId
+    const selectedSession = byId(selectedSessionId)
+    if (selectedSession !== null) return selectedSession
     const shown = byId(terminals.find((t) => t.id === tabId)?.launchedFor ?? null)
     if (shown !== null) return shown
   }
@@ -125,7 +130,7 @@ const titleText = (terminal: AgentTerminal): string =>
   terminal.title.replace(/^[^\p{L}\p{N}]+\s+/u, '').trim()
 
 /** Claude Code titles its list `… claude agents`. */
-export const titleIsList = (terminal: AgentTerminal): boolean =>
+const titleIsList = (terminal: AgentTerminal): boolean =>
   /\bclaude agents$/.test(titleText(terminal))
 
 /**
@@ -278,14 +283,16 @@ export function agentVault(remote: string, store: PluginStore): () => void {
       closeSurfaceTabsAtom,
       AGENT_SURFACE,
       store.get(agentTerminalsAtom).map((t) => t.id),
+      remote,
     ),
   )
 
   // Closing an agent tab only ends its window (the session keeps running);
   // without a detach the PTY would linger in main's list, which the palette
-  // and the reuse paths read. Diffed across each change of the open tabs, so
-  // a tab moved between panes is not a close.
-  const tabs = surfaceTabIdsAtom(AGENT_SURFACE)
+  // and the reuse paths read. Diffed across each change of this vault's open
+  // tabs, so a tab moved into or out of a split is not a close, and neither
+  // is switching to another vault (its strip is not this one's).
+  const tabs = surfaceTabIdsAtom(AGENT_SURFACE, remote)
   let open = new Set(store.get(tabs))
   const offTabs = store.sub(tabs, () => {
     const now = new Set(store.get(tabs))

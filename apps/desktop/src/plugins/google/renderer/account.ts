@@ -37,6 +37,9 @@ interface Connection {
    * calls fail.
    */
   missingScopes: string[]
+  /** Google refused this vault's grant, and it has neither connected again
+   *  nor let go. */
+  needsReconnect: boolean
   /** Every account connected on this machine: an account can be connected
    *  and used by no vault at all, which is what a fresh vault sees. */
   accounts: ConnectedGoogleAccount[]
@@ -59,6 +62,7 @@ const connectionAtom = atom(async (get): Promise<Connection> => {
     remote,
     account: null,
     missingScopes: [],
+    needsReconnect: false,
     accounts: [],
     currentSub: null,
   }
@@ -66,12 +70,13 @@ const connectionAtom = atom(async (get): Promise<Connection> => {
   try {
     const [status, connected] = await Promise.all([
       googleCap.status(remote),
-      googleCap.accounts(remote),
+      googleCap.allAccounts(remote),
     ])
     return {
       remote,
       account: status.account,
       missingScopes: status.missingScopes,
+      needsReconnect: status.needsReconnect === true,
       accounts: connected.accounts,
       currentSub: connected.current,
     }
@@ -106,6 +111,7 @@ export interface GoogleAccountState {
   /** `undefined`: not asked yet. `null`: asked, nothing connected. */
   account: GoogleAccount | null | undefined
   missingScopes: string[]
+  needsReconnect: boolean
   /** Every account connected on this machine. */
   accounts: ConnectedGoogleAccount[]
   /** The account the open vault uses, or null. */
@@ -120,6 +126,7 @@ export function useGoogleAccount(): GoogleAccountState {
   return {
     account: connection?.account,
     missingScopes: connection?.missingScopes ?? [],
+    needsReconnect: connection?.needsReconnect ?? false,
     accounts: connection?.accounts ?? [],
     currentSub: connection?.currentSub ?? null,
     refresh,

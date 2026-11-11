@@ -7,10 +7,11 @@
  * conventions live in AGENTS.md (docs/features/agent-config.md).
  *
  * `*.local.*` is local-only (`isLocalOnlyPath` in shared), so this file never
- * syncs. Writes are debounced and
+ * syncs. A secret file (`isSecretPath`) is never written into it, focused or
+ * open, so no hook can point the agent at one. Writes are debounced and
  * atomic: a stale focus line is fine, a hook that blocks a turn is not.
  */
-import { vaultRelPath, type LineRange } from '@holi/shared'
+import { isSecretPath, vaultRelPath, type LineRange } from '@holi/shared'
 import { writeAtomic } from '../../../../main/plugin-api'
 
 /** @public exported for its test */
@@ -79,10 +80,12 @@ export class ContextSnapshot {
   }
 
   private async write(): Promise<void> {
+    const { focusedPath } = this.focus
+    const secret = focusedPath !== null && isSecretPath(focusedPath)
     const context: ContextFile = {
-      focusedPath: this.focus.focusedPath,
-      selection: this.focus.selection ?? null,
-      openPaths: this.focus.openPaths,
+      focusedPath: secret ? null : focusedPath,
+      selection: secret ? null : (this.focus.selection ?? null),
+      openPaths: this.focus.openPaths.filter((path) => !isSecretPath(path)),
       updatedAt: new Date().toISOString(),
     }
     await writeAtomic(

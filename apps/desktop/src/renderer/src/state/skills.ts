@@ -1,6 +1,6 @@
 /**
- * Update skills, from the palette: this release's skills and hooks, merged
- * into the vault (`holi skills update` does the same from a shell).
+ * Update skills, from Settings and the account menu: this release's skills
+ * and hooks, merged into the vault (`holi skills update` does the same from a shell).
  *
  * A file the vault changed too cannot be merged by Holi. Main answers with
  * the first turn of a session that would merge it, and the agent service

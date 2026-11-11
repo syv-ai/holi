@@ -42,9 +42,10 @@ them push access to. The same ritual, minus the greeting, is how any later vault
      ([settings](settings.md)), each step listed as it lands and held for a short beat so it reads
      as made rather than flashed. Then "Welcome to <slug>.", the copyable remote, a few hotkeys,
      and "Open vault", which
-     activates the vault and flips the gate to the shell. The hotkeys are read off core's commands
-     and the kept plugins', so a hint never names a key nothing binds; a command marks itself as one
-     of these few (`Command.firstKey`, its place in the order).
+     activates the vault and flips the gate to the shell. The hotkeys are read off the shortcut table
+     ([keyboard shortcuts](keyboard-shortcuts.md)), so a hint never names a key nothing binds; a
+     row marks itself as one of these few (`firstKey`, its place in the order): ⌘K Search, ⌘N New
+     document, ⌘J Agent sessions.
 - **Join** ("Join vaults in your accounts") is a quiet link on act 2 that swaps in a picker of
   every vault your accounts reach: your own, your organisations' and ones shared with you, from
   one GitHub listing, grouped by account. The search field carries an account selector (all
@@ -76,7 +77,7 @@ them push access to. The same ritual, minus the greeting, is how any later vault
   blank), and a `## Folders` section to fill in. It is written beside the seed rather than in the
   once folder, because the seed takes no per-vault input, and never over a README already there.
   After that it is the vault's. The agent reads its top at every session start
-  ([agent-memory](agent-memory.md)) and Home shows it ([home](home.md)). Joining a vault
+  ([agent-memory](agent-memory.md)). Joining a vault
   writes no README.
 - A team vault is an org-owned repo. There is no team concept beyond the owner picker.
 - Nothing is created until the last question is answered. Backing out of any act before

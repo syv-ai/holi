@@ -67,6 +67,7 @@ import {
   activeRemoteAtom,
   deleteManyAtom,
   importFilesAtom,
+  loadSnapshotAtom,
   moveNotesAtom,
   snapshotAtom,
   snapshotLoadedAtom,
@@ -141,6 +142,7 @@ export function FilesSection({
   const deleteMany = useSetAtom(deleteManyAtom)
   const setWorkspace = useSetAtom(shellWorkspaceAtom)
   const importFiles = useSetAtom(importFilesAtom)
+  const loadSnapshot = useSetAtom(loadSnapshotAtom)
   /** The row a menu's Delete is asking about, until it is confirmed. */
   const [deleting, setDeleting] = useState<string | null>(null)
   const [dropping, setDropping] = useState(false)
@@ -481,6 +483,11 @@ export function FilesSection({
     if (remote === null) return false
     const path = await create.run({ remote, parent, name })
     if (!path || !stillCurrent(remote)) return false
+    // What the plugin made is opened from a scan that has it: the watcher's
+    // may come later, and a folder document opened before it would be taken
+    // for a file that is not there.
+    await loadSnapshot()
+    if (!stillCurrent(remote)) return false
     const suffix = create.entry === undefined ? null : `/${create.entry}`
     const opened = suffix !== null && path.endsWith(suffix) ? path.slice(0, -suffix.length) : path
     land([opened], { name: untitled })

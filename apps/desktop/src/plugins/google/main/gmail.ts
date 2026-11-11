@@ -972,7 +972,7 @@ export async function replyToThread(
   api: GoogleApi,
   threadId: string,
   body: string,
-  options: { all?: boolean } = {},
+  options: { all?: boolean; attachments?: MailPart[] } = {},
 ): Promise<{ id: string | null }> {
   const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(threadId)}`, {
     format: 'metadata',
@@ -1026,6 +1026,7 @@ export async function replyToThread(
         body,
         ...(inReplyTo === undefined ? {} : { inReplyTo }),
         references,
+        ...(options.attachments === undefined ? {} : { attachments: options.attachments }),
       }),
     ),
     // Belt and braces with the headers: the id files it in the thread even if a
@@ -1143,8 +1144,12 @@ export async function saveDraft(
   opts: { draftId?: string; threadId?: string } = {},
 ): Promise<{ id: string | null }> {
   const threading = opts.threadId === undefined ? {} : await threadingHeaders(api, opts.threadId)
+  const attachments =
+    opts.draftId === undefined
+      ? (mail.attachments ?? [])
+      : await draftAttachments(api, opts.draftId)
   const message = {
-    raw: toBase64Url(buildRfc822({ ...mail, ...threading })),
+    raw: toBase64Url(buildRfc822({ ...mail, attachments, ...threading })),
     ...(opts.threadId === undefined ? {} : { threadId: opts.threadId }),
   }
 
@@ -1357,23 +1362,73 @@ function threadIdOf(message: RawMessage | undefined): string | null {
 interface AttachmentRef {
   filename: string
   mimeType: string
-  attachmentId: string
+  attachmentId?: string
+  data?: string
+  disposition?: 'attachment' | 'inline'
+  contentId?: string
 }
 
 function attachmentRefsOf(part: RawPart | undefined): AttachmentRef[] {
   if (part === undefined) return []
-  const id = part.body?.attachmentId
+  const body = part.body
   const here: AttachmentRef[] =
-    part.filename !== undefined && part.filename !== '' && id !== undefined
+    part.filename !== undefined &&
+    part.filename !== '' &&
+    body !== undefined &&
+    (body.attachmentId !== undefined || body.data !== undefined || body.size === 0)
       ? [
           {
             filename: part.filename,
             mimeType: part.mimeType ?? 'application/octet-stream',
-            attachmentId: id,
+            ...(body.attachmentId === undefined ? {} : { attachmentId: body.attachmentId }),
+            ...(body.data === undefined
+              ? body.size === 0
+                ? { data: '' }
+                : {}
+              : { data: body.data }),
+            ...(headerOf(part, 'Content-Disposition')?.toLowerCase().startsWith('inline')
+              ? { disposition: 'inline' as const }
+              : {}),
+            ...(headerOf(part, 'Content-ID') === null
+              ? {}
+              : { contentId: headerOf(part, 'Content-ID')! }),
           },
         ]
       : []
   return [...here, ...(part.parts ?? []).flatMap((child) => attachmentRefsOf(child))]
+}
+
+async function draftAttachments(api: GoogleApi, draftId: string): Promise<MailPart[]> {
+  const draft = await api.get<{ message?: RawMessage }>(
+    `${BASE}/drafts/${encodeURIComponent(draftId)}`,
+    { format: 'full' },
+  )
+  const message = draft.message
+  const refs = attachmentRefsOf(message?.payload)
+  return await Promise.all(
+    refs.map(async (ref) => {
+      if (ref.data !== undefined) {
+        return {
+          filename: ref.filename,
+          mimeType: ref.mimeType,
+          data: Buffer.from(ref.data, 'base64url').toString('base64'),
+          ...(ref.disposition === undefined ? {} : { disposition: ref.disposition }),
+          ...(ref.contentId === undefined ? {} : { contentId: ref.contentId }),
+        }
+      }
+      if (message?.id === undefined || ref.attachmentId === undefined) {
+        throw new Error('Gmail draft attachment is missing its content')
+      }
+      return {
+        ...(await fetchAttachment(api, message.id, ref.attachmentId, {
+          filename: ref.filename,
+          mimeType: ref.mimeType,
+        })),
+        ...(ref.disposition === undefined ? {} : { disposition: ref.disposition }),
+        ...(ref.contentId === undefined ? {} : { contentId: ref.contentId }),
+      }
+    }),
+  )
 }
 
 /**
@@ -1391,6 +1446,27 @@ export async function fetchMessageAttachments(
   })
   const refs = attachmentRefsOf(message.payload)
   return await Promise.all(
-    refs.map((ref) => fetchAttachment(api, messageId, ref.attachmentId, ref)),
+    refs.map(async (ref) => {
+      if (ref.data !== undefined) {
+        return {
+          filename: ref.filename,
+          mimeType: ref.mimeType,
+          data: Buffer.from(ref.data, 'base64url').toString('base64'),
+          ...(ref.disposition === undefined ? {} : { disposition: ref.disposition }),
+          ...(ref.contentId === undefined ? {} : { contentId: ref.contentId }),
+        }
+      }
+      if (ref.attachmentId === undefined) {
+        throw new Error('Gmail message attachment is missing its content')
+      }
+      return {
+        ...(await fetchAttachment(api, messageId, ref.attachmentId, {
+          filename: ref.filename,
+          mimeType: ref.mimeType,
+        })),
+        ...(ref.disposition === undefined ? {} : { disposition: ref.disposition }),
+        ...(ref.contentId === undefined ? {} : { contentId: ref.contentId }),
+      }
+    }),
   )
 }

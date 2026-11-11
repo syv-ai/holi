@@ -15,6 +15,10 @@ export interface PiRpcOptions {
   env?: NodeJS.ProcessEnv
   model?: string
   system?: string
+  /** A run with no tools at all, and nothing from the folder that could
+   *  give it some: no extensions, skills, prompt templates, context files,
+   *  MCP servers or project settings. It can only answer. */
+  noTools?: boolean
   maxOutputBytes?: number
   maxLineBytes?: number
   onStats?: (stats: {
@@ -36,6 +40,23 @@ export interface PiChild {
   once(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this
   kill(signal?: NodeJS.Signals): boolean
 }
+
+/**
+ * Pi's flags for a run that can only answer (`PiRpcOptions.noTools`): every
+ * tool off, and none of what could bring one back or steer the run from the
+ * folder (docs: Pi's `cli.md`, Tools and Resource options).
+ *
+ * @public exported for its test
+ */
+export const NO_TOOLS = [
+  '--no-tools',
+  '--no-extensions',
+  '--no-skills',
+  '--no-prompt-templates',
+  '--no-context-files',
+  '--no-mcp',
+  '--no-approve',
+] as const
 
 /** One stock Pi RPC process per managed run; messages are JSON records, never shell text. */
 export class PiRpcRun {
@@ -92,6 +113,7 @@ export class PiRpcRun {
           detached: this.processGroup,
         }) as ChildProcessWithoutNullStreams)
     const args = ['--mode', 'rpc']
+    if (options.noTools === true) args.push(...NO_TOOLS)
     if (options.system !== undefined) args.push('--append-system-prompt', options.system)
     this.child = spawn(options.bin, args, {
       cwd: options.cwd,
@@ -126,6 +148,8 @@ export class PiRpcRun {
     this.settled = false
     this.active = true
     this.lastError = undefined
+    // Each turn's result is that turn's answer, not every answer so far.
+    this.output = ''
     this.phase = this.configuredModel === undefined || this.modelSet ? 'prompt' : 'setting-model'
     this.resultPromise = new Promise((resolve) => {
       this.completion = resolve

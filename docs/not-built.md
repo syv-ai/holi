@@ -177,7 +177,7 @@ not show it; the schema per file kind (`frontmatterSchema`) is built.
 
 **The Home library.** The tabs and table of recent files, notes, tasks and activity, and the nav
 menu that listed the places that are not files ([home](features/home.md),
-[nav-menu](features/nav-menu.md)). The `home` setting resolves, and an empty pane shows the New tab.
+[nav-menu](features/nav-menu.md)). An empty pane shows the New tab.
 
 **Vault history and Restore.** The right-hand file drawer, the vault history tab and restoring an
 old version ([history](features/history.md)). A file's history opens as a dialog.
@@ -231,3 +231,21 @@ obvious answer and is not designed.
 ## Auth
 
 **Pasting a fine-grained PAT.** The device flow is the only sign-in.
+
+## Meetings
+
+**Automatic builds for explicit asks.** Today every run from a meeting starts from a person's
+Send ([meetings](features/meetings.md)). A profile option could start one for a suggestion
+someone explicitly asked for, with a cap per meeting, once the room can no longer start
+agents by speaking (a host confirm, or an allow-list of who may ask).
+
+**Lines a person moves between groups.** Groups are contiguous stretches. `Topic.lines` is a list
+so a line could join another group, but neither Claes nor tf-idf sorted lines into groups reliably,
+and a person moving single lines by hand was not asked for.
+
+**Streaming speech recognition.** Captions arrive per 6–12 s chunk. A streaming endpoint in the
+speech backend would bring them to about 2 s, at the cost of de-duplicating overlapping windows and
+keeping speaker numbers stable across them.
+
+**Profiles shared with the team.** Profiles are per machine because they can hand sessions an MCP
+config. Shared profiles in the vault would need the per-machine approval Holis use.

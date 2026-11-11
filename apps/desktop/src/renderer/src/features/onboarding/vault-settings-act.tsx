@@ -20,7 +20,6 @@
 import {
   SETTINGS_FILE,
   VAULT_SETTING_DEFAULTS,
-  availableOptions,
   resolvePlugins,
   knownTransforms,
   vaultSettingDescriptors,
@@ -31,7 +30,6 @@ import { useAtomValue } from 'jotai'
 import {
   CalendarDays,
   GitCommitHorizontal,
-  House,
   SlidersHorizontal,
   SunMoon,
   type LucideIcon,
@@ -54,7 +52,6 @@ interface Props {
 /** Each question's mark, by setting key; one without falls back to sliders. */
 const MARKS: Record<string, LucideIcon> = {
   dailyNotes: CalendarDays,
-  home: House,
   hooks: GitCommitHorizontal,
   colorScheme: SunMoon,
 }
@@ -99,10 +96,9 @@ function Row({
     )
 
   if (control.kind === 'choice') {
-    // Filtered, not disabled: a greyed-out choice invites "why not?" and the
-    // answer is already one row up. Pills take string values, so each option
-    // is its index; the value itself may be a number or an object.
-    const options = availableOptions(descriptor, settings)
+    // Pills take string values, so each option is its index; the value itself
+    // may be a number or an object.
+    const { options } = control
     return (
       <SettingCard mark={mark} title={label} description={explanation} data-setting={key}>
         <ToggleGroup

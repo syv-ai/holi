@@ -27,10 +27,9 @@ import type {
   SlashCommand,
   Surface,
 } from '@/state/plugin-types'
-import type { Command } from './commands'
-import type { FolderSurface } from './panes'
+import type { FolderSurface } from './shell-workspace'
 import { vaultSettingsAtom } from './settings'
-import { activeRemoteAtom } from './vaults'
+import { activeRemoteAtom, openedRemoteAtom } from './vaults'
 
 export const installedPluginsAtom = atom<readonly RendererPlugin[]>([])
 
@@ -86,7 +85,7 @@ export const folderClaimsAtom = atom((get): readonly FolderDocumentClaim[] =>
   folderClaims(get(claimsAtom)),
 )
 
-/** The same, as the panes need them to follow a moved or deleted one. */
+/** The same, as the tabs need them to follow a moved one. */
 export const folderSurfacesAtom = atom((get): readonly FolderSurface[] =>
   get(folderClaimsAtom).map(({ claim, folder }) => ({
     surface: folder.surface,
@@ -107,11 +106,6 @@ export const pluginSlashCommandsAtom = atom((get): readonly SlashCommand[] =>
   get(runningPluginsAtom).flatMap((p) =>
     p.slashCommands === undefined ? [] : get(p.slashCommands),
   ),
-)
-
-/** Every running plugin's commands, in list order. */
-export const pluginCommandsAtom = atom((get): readonly Command[] =>
-  get(runningPluginsAtom).flatMap((p) => p.commands ?? []),
 )
 
 /** What running plugins add to the ⌘K command menu, each with its plugin's
@@ -176,7 +170,8 @@ export const agentSourceAtom = atom(
 export function hostPluginVaults(store: ReturnType<typeof createStore>): () => void {
   const live = new Map<string, { remote: string; plugin: RendererPlugin; undo: () => void }>()
   const sync = (): void => {
-    const remote = store.get(activeRemoteAtom)
+    const activeRemote = store.get(activeRemoteAtom)
+    const remote = store.get(openedRemoteAtom) === activeRemote ? activeRemote : null
     const want = new Map(
       remote === null
         ? []
@@ -197,9 +192,11 @@ export function hostPluginVaults(store: ReturnType<typeof createStore>): () => v
   }
   sync()
   const offRemote = store.sub(activeRemoteAtom, sync)
+  const offOpened = store.sub(openedRemoteAtom, sync)
   const offRunning = store.sub(runningPluginsAtom, sync)
   return () => {
     offRemote()
+    offOpened()
     offRunning()
     for (const run of live.values()) run.undo()
     live.clear()
