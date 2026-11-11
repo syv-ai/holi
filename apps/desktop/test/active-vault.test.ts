@@ -140,6 +140,45 @@ async function vault(timings?: Parameters<typeof openActiveVault>[0]['timings'])
 }
 
 describe('ActiveVault — snapshot', () => {
+  it('drains a failed held-back override before commitNow returns', async () => {
+    const { active, dir } = await vault({
+      rescanDebounceMs: 60_000,
+      commitQuietMs: 60_000,
+      healIntervalMs: 60_000,
+      pullIntervalMs: 60_000,
+    })
+    await writeFile(join(dir, 'large.bin'), Buffer.alloc(10 * 1024 * 1024 + 1))
+    await active.commitNow()
+    await waitFor('the file to be held back', () =>
+      active.heldBack().some((file) => file.path === 'large.bin'),
+    )
+
+    let release!: () => void
+    let entered!: () => void
+    const insideCommit = new Promise<void>((resolve) => (entered = resolve))
+    const blocked = new Promise<void>((resolve) => (release = resolve))
+    const commit = vi.spyOn(active.repo, 'commitFileNoVerify').mockImplementation(async () => {
+      entered()
+      await blocked
+      throw new Error('override failed')
+    })
+    const override = active.commitHeldBack('large.bin')
+    await insideCommit
+
+    let drained = false
+    const drain = active.commitNow().then((sha) => {
+      drained = true
+      return sha
+    })
+    await sleep(100)
+    expect(drained).toBe(false)
+
+    release()
+    await expect(override).rejects.toThrow('override failed')
+    expect(await drain).not.toBe('busy')
+    commit.mockRestore()
+  })
+
   it('commits an override through history events and the scheduled remote push', async () => {
     const { active, dir, origin, committed } = await vault({
       rescanDebounceMs: 60_000,
@@ -2083,6 +2122,66 @@ describe('VaultHost', () => {
     await sleep(QUIESCE)
     return { registry, a, b }
   }
+
+  it('drains a held-back override before switching vaults', async () => {
+    const { registry, a } = await twoVaults()
+    const heldBackUpdates: string[][] = []
+    const host = createVaultHost({
+      registry,
+      claims: async () => CLAIMS(),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      onHeldBack: (files) => heldBackUpdates.push(files.map((file) => file.path)),
+      timings: {
+        rescanDebounceMs: 60_000,
+        commitQuietMs: 60_000,
+        healIntervalMs: 60_000,
+        pullIntervalMs: 60_000,
+        pushBudgetMs: 100,
+      },
+    })
+    hosts.push(host)
+    const active = await host.open('syv-ai/a')
+    await active.pushNow()
+    await writeFile(join(a, 'large.bin'), Buffer.alloc(10 * 1024 * 1024 + 1))
+    await active.commitNow()
+    await waitFor('the file to be held back', () =>
+      active.heldBack().some((file) => file.path === 'large.bin'),
+    )
+
+    const updatesBeforeOverride = heldBackUpdates.length
+    let release!: () => void
+    let entered!: () => void
+    const insideCommit = new Promise<void>((resolve) => (entered = resolve))
+    const blocked = new Promise<void>((resolve) => (release = resolve))
+    const commit = vi.spyOn(active.repo, 'commitFileNoVerify').mockImplementation(async (path) => {
+      entered()
+      await blocked
+      return openRepo(a).commitFileNoVerify(path)
+    })
+    const override = active.commitHeldBack('large.bin')
+    await insideCommit
+
+    let switched = false
+    const switching = host.open('syv-ai/b').then(() => {
+      switched = true
+    })
+    await sleep(500)
+    expect(switched).toBe(false)
+
+    release()
+    await override
+    await switching
+    commit.mockRestore()
+    expect(host.active()?.remote).toBe('syv-ai/b')
+    expect(heldBackUpdates.at(-1)).toEqual([])
+    expect(
+      heldBackUpdates
+        .slice(updatesBeforeOverride)
+        .flat()
+        .some((path) => path === 'large.bin'),
+    ).toBe(false)
+  })
 
   const hosts: VaultHost[] = []
   afterEach(async () => {

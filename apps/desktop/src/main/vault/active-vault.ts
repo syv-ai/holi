@@ -1143,8 +1143,11 @@ export async function openActiveVault(args: {
         throw new Error('Vault sync is busy; try again')
       }
       committing = true
+      let landed: (sha: string | null) => void = () => {}
+      commitRun = new Promise((resolve) => (landed = resolve))
+      let sha: string | null = null
       try {
-        const sha = await args.repo.commitFileNoVerify(path)
+        sha = await args.repo.commitFileNoVerify(path)
         const status = await args.repo.status()
         const sizes = new Map<string, number>()
         await Promise.all(
@@ -1160,7 +1163,7 @@ export async function openActiveVault(args: {
           (dirty) => sizes.get(dirty) ?? null,
           await currentCap(),
         ).heldBack
-        args.onHeldBack?.(heldBack)
+        if (!closed) args.onHeldBack?.(heldBack)
         await persistHeldBack()
         await rescan(true)
         await refreshState()
@@ -1170,6 +1173,8 @@ export async function openActiveVault(args: {
         }
       } finally {
         committing = false
+        commitRun = null
+        landed(sha)
       }
     },
     syncInfo: () => ({ lastSyncAt, lastError }),
