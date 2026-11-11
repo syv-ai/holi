@@ -69,7 +69,7 @@ import {
 } from '@/state/shell-workspace'
 
 import { useTabLook } from './tab-look'
-import { TabSwitcher, type SwitcherRow } from './tab-switcher'
+import { TabSwitcher, TabSwitcherButton, type SwitcherRow } from './tab-switcher'
 import { TAB_MIME, stripDropZone, tabDragAtom, useTabDragSource } from './use-tab-drag'
 
 export type HeaderTab = {
@@ -302,7 +302,9 @@ export function TabStrip({
               ref={listRef}
               variant="line"
               aria-label="Tabs"
-              className="min-w-0 justify-start overflow-x-auto group-data-horizontal/tabs:h-9"
+              // No bar: the app's would take 10px of the strip's height. It
+              // still scrolls, and the tab count says when it holds more.
+              className="no-scrollbar min-w-0 justify-start overflow-x-auto group-data-horizontal/tabs:h-9"
               onDragOver={(event) => {
                 const drop = stripDrop(event)
                 const at = drop?.kind === 'reorder' ? drop.index : null
@@ -471,6 +473,16 @@ export function TabStrip({
               })}
             </TabsList>
           ) : null}
+          {count > 0 && overflowing ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <TabSwitcherButton variant="quiet" size="xs">
+                  {count === 1 ? '1 tab' : `${count} tabs`}
+                </TabSwitcherButton>
+              </TooltipTrigger>
+              <TooltipContent>Switch tab (⌃Tab)</TooltipContent>
+            </Tooltip>
+          ) : null}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="ghost" size="icon-sm" aria-label="New tab" onClick={onNewTab}>
@@ -481,11 +493,6 @@ export function TabStrip({
           </Tooltip>
         </Tabs>
 
-        {count > 0 && overflowing ? (
-          <span className="text-muted-foreground text-xs whitespace-nowrap tabular-nums">
-            {count === 1 ? '1 tab' : `${count} tabs`}
-          </span>
-        ) : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon-sm" aria-label="Tab options">

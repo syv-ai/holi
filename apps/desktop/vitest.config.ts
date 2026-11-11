@@ -81,6 +81,12 @@ export default defineConfig({
           ],
           environment: 'jsdom',
           setupFiles: ['test/setup.dom.ts'],
+          // Long interactive flows take over 5s on CI's Intel runner (one measured
+          // 2.3s and 5.1s on the same code in two runs) with nothing wrong. As in
+          // the node project, this bounds a failure and never slows a pass. It is
+          // not for races: a test that assumes something already happened fails
+          // here as it would anywhere, and those wait on the condition instead.
+          testTimeout: 20_000,
           // `codemirror-markdown-tables` depends on `@mobily/ts-belt`, whose ESM
           // build uses directory imports (`.../Function`) that Node will not
           // resolve. Inlining hands them to Vite, which does. This only surfaced

@@ -384,7 +384,7 @@ test('Vim key events drive modes, motions, edits, yank, paste, undo and redo', a
   const { EditorView } = await import('@codemirror/view')
   const view = EditorView.findFromDOM(content as HTMLElement)!
   view.focus()
-  expect(screen.getByLabelText('Vim normal mode')).toBeInTheDocument()
+  expect(await screen.findByLabelText('Vim normal mode')).toBeInTheDocument()
 
   await user.keyboard('i')
   expect(await screen.findByLabelText('Vim insert mode')).toBeInTheDocument()
