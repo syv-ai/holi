@@ -4,27 +4,22 @@
  * one a spinner until it is done and a tick after; then it is the vault's
  * remote to copy, a few keys worth knowing, and the way in.
  *
- * **The keys are read off the commands**, core's and those of the plugins kept
- * on, so a hint cannot name a key nothing binds or a plugin this vault does
- * not run. Which few are worth a first look each command says itself
- * (`firstKey`), so this act names no plugin.
+ * **The keys are read off the shortcut table** (`lib/shortcuts.ts`), the one
+ * the keydown listener binds, so a hint cannot name a key nothing binds.
+ * Which few are worth a first look each row says itself (`firstKey`).
  */
 import { useState } from 'react'
-import { useAtomValue } from 'jotai'
 import { ArrowRight, Check, LoaderCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { STATIC_COMMANDS, type Command } from '@/state/commands'
-import { installedPluginsAtom } from '@/state/plugins'
+import { SHORTCUTS } from '@/lib/shortcuts'
 
 interface Props {
   slug: string
   owner: string
   /** `owner/repo`, once the repo exists. */
   remote: string | null
-  /** The plugins this vault runs, by id. */
-  running: ReadonlySet<string>
   /** True while the vault is being made. */
   building: boolean
   /** How many build steps have landed. */
@@ -33,30 +28,15 @@ interface Props {
   onOpen: () => void
 }
 
-export function ThresholdAct({
-  slug,
-  owner,
-  remote,
-  running,
-  building,
-  built,
-  error,
-  onOpen,
-}: Props) {
-  const installed = useAtomValue(installedPluginsAtom)
+export function ThresholdAct({ slug, owner, remote, building, built, error, onOpen }: Props) {
   const [copied, setCopied] = useState(false)
 
   // The keys a new vault is worth meeting with, in the order they show.
-  const keys = [
-    ...STATIC_COMMANDS,
-    ...installed.filter((p) => running.has(p.info.id)).flatMap((p) => p.commands ?? []),
-  ]
-    .flatMap((c: Command) =>
-      c.firstKey === undefined || c.hotkey === undefined
-        ? []
-        : [{ id: c.id, hotkey: c.hotkey, label: c.label, at: c.firstKey }],
-    )
-    .sort((a, b) => a.at - b.at)
+  const keys = SHORTCUTS.flatMap((s) =>
+    s.firstKey === undefined || s.keys[0] === undefined
+      ? []
+      : [{ id: s.id, hotkey: s.display ?? s.keys[0], label: s.label, at: s.firstKey }],
+  ).sort((a, b) => a.at - b.at)
 
   const copy = () => {
     if (remote === null) return

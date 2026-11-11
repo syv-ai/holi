@@ -3,37 +3,21 @@
  * (docs/features/tabs-panes.md). The registry itself is `state/plugins.ts`.
  */
 import { atom, type Atom } from 'jotai'
-import { tabForPath } from '@/state/folder-documents'
-import { openHomeAtom } from './home'
-import { openTabAtom } from './shell-tabs'
-import { tabForPath as shellTabForPath, type TabDescriptor } from './tab-descriptor'
+import { folderDocumentAt } from '@/state/folder-documents'
+import { openTabAtom, shellWorkspaceAtom, updateWorkspaceAtom, workspaceOfAtom } from './shell-tabs'
+import { allTabs, closeTab as closeShellTab, closeTabsWhere, focusedTab } from './shell-workspace'
 import {
-  activeTab,
-  closeSurfaceTabsExcept,
-  closeTab,
-  openInNewPane,
-  openPinned,
-  openPreview,
-  openSurface,
-  openTab,
-  surfaceTabIds,
-  workspaceAtom,
-  type Tab,
-} from './panes'
+  parseTabKey,
+  tabForPath as shellTabForPath,
+  tabKey,
+  type TabDescriptor,
+} from './tab-descriptor'
 import { folderClaimsAtom } from './plugins'
-import { snapshotAtom } from './vaults'
+import { activeRemoteAtom, snapshotAtom } from './vaults'
 
-/**
- * Open a surface, or focus its tab. Home is the one surface that goes through
- * its setting: the nav's Home, "Go home" and an app's `holi.open('home')` all
- * land wherever `home` says.
- */
+/** Open a surface, or focus its tab: a vault app by its bundle, any other
+ *  surface by name. */
 export const openSurfaceAtom = atom(null, (_get, set, surface: string, id?: string): void => {
-  if (surface === 'home') return void set(openHomeAtom)
-  set(workspaceAtom, (w) => openSurface(w, surface, id))
-  // The tabs the shell draws are `shell-tabs.ts`'s: a vault app by its bundle,
-  // any other surface by name. `workspaceAtom` above is the pane workspace
-  // `surfaceTabIdsAtom` reads; this is what a person sees open.
   set(openTabAtom, shellSurfaceTab(surface, id))
 })
 
@@ -43,108 +27,109 @@ function shellSurfaceTab(surface: string, id?: string): TabDescriptor {
   return id === undefined ? { kind: 'surface', surface } : { kind: 'surface', surface, id }
 }
 
-/** Close the active pane's tab onto `surface` with `id`, if it has one: an
+/** The id a shell tab has as one of `surface`'s tabs, or null when it is not
+ *  one: a vault app's tab is the `app` surface's, by its bundle. */
+function surfaceIdOf(key: string, surface: string): string | null {
+  const tab = parseTabKey(key)
+  if (tab?.kind === 'surface') return tab.surface === surface ? (tab.id ?? null) : null
+  return surface === 'app' && tab?.kind === 'vault-app' ? tab.path : null
+}
+
+/** Close the tab onto `surface` with `id`, wherever it is in the strip: an
  *  app's "close tab" once its bundle is gone. */
 export const closeSurfaceTabAtom = atom(null, (_get, set, surface: string, id: string): void => {
-  set(workspaceAtom, (w) => {
-    const pane = w.panes[w.active]
-    if (pane === undefined) return w
-    const index = pane.tabs.findIndex(
-      (t) => t.kind === 'surface' && t.surface === surface && t.id === id,
-    )
-    return index === -1 ? w : closeTab(w, index)
-  })
+  set(shellWorkspaceAtom, (ws) => closeShellTab(ws, tabKey(shellSurfaceTab(surface, id))))
 })
 
-/** Close every tab of `surface` whose id is not in `keep`, in every pane: a
- *  plugin's tabs onto things that are gone. */
+/** Close every tab of `surface` whose id is not in `keep`: a plugin's tabs
+ *  onto things that are gone. `remote` is the vault whose tabs they are, the
+ *  open one when not given: a plugin passes its own, so an answer that lands
+ *  as the vault switches closes nothing of the next vault's. */
 export const closeSurfaceTabsAtom = atom(
   null,
-  (_get, set, surface: string, keep: readonly string[]): void => {
-    set(workspaceAtom, (w) => closeSurfaceTabsExcept(w, surface, keep))
+  (get, set, surface: string, keep: readonly string[], remote?: string): void => {
+    const gone = (key: string) => {
+      const id = surfaceIdOf(key, surface)
+      return id !== null && !keep.includes(id)
+    }
+    set(updateWorkspaceAtom, remote ?? get(activeRemoteAtom) ?? '', (ws) =>
+      allTabs(ws).some(gone) ? closeTabsWhere(ws, gone) : ws,
+    )
   },
 )
 
 const tabIdAtoms = new Map<string, Atom<readonly string[]>>()
 
 /** The ids of every open tab of `surface`, read-only: a plugin watches it to
- *  learn that one of its tabs closed. The same atom for the same surface. */
-export function surfaceTabIdsAtom(surface: string): Atom<readonly string[]> {
-  let made = tabIdAtoms.get(surface)
+ *  learn that one of its tabs closed. `remote` is the vault whose strip it
+ *  reads, the open one when not given; a plugin watching for closes passes
+ *  its own, since the strip changes with the vault before the plugin's
+ *  `vault()` is torn down. The same atom for the same surface and remote. */
+export function surfaceTabIdsAtom(surface: string, remote?: string): Atom<readonly string[]> {
+  const cacheKey = remote === undefined ? surface : `${surface}\u0000${remote}`
+  let made = tabIdAtoms.get(cacheKey)
   if (made === undefined) {
     let last: readonly string[] = []
     made = atom((get) => {
-      const next = surfaceTabIds(get(workspaceAtom), surface)
+      const ws = remote === undefined ? get(shellWorkspaceAtom) : get(workspaceOfAtom)(remote)
+      const next = allTabs(ws).flatMap((key) => {
+        const id = surfaceIdOf(key, surface)
+        return id === null ? [] : [id]
+      })
       // The same array while the ids are the same, so a watcher hears changes.
       if (next.length !== last.length || next.some((id, i) => id !== last[i])) last = next
       return last
     })
-    tabIdAtoms.set(surface, made)
+    tabIdAtoms.set(cacheKey, made)
   }
   return made
 }
 
 const activeIdAtoms = new Map<string, Atom<string | null>>()
 
-/** The id of the active tab when it is one of `surface`'s, else null. The
- *  same atom for the same surface. */
+/** The id of the focused tab (the active tab, or the active split's focused
+ *  member) when it is one of `surface`'s, else null. The same atom for the
+ *  same surface. */
 export function activeSurfaceIdAtom(surface: string): Atom<string | null> {
   let made = activeIdAtoms.get(surface)
   if (made === undefined) {
     made = atom((get) => {
-      const tab = activeTab(get(workspaceAtom))
-      return tab?.kind === 'surface' && tab.surface === surface ? (tab.id ?? null) : null
+      const key = focusedTab(get(shellWorkspaceAtom))
+      if (key === null) return null
+      const id = surfaceIdOf(key, surface)
+      if (id !== null) return id
+      const tab = parseTabKey(key)
+      return tab?.kind === 'session' && tab.owner === surface ? tab.id : null
     })
     activeIdAtoms.set(surface, made)
   }
   return made
 }
 
-/** The tab a vault path opens as: a folder document's surface tab (a vault
- *  app), or a note tab.
- *
- * @public
- */
-export const tabForPathAtom = atom((get): ((path: string) => Tab) => {
-  const claims = get(folderClaimsAtom)
-  const snapshot = get(snapshotAtom)
-  const paths = new Set([...snapshot.docs, ...snapshot.files].map((f) => f.path))
-  return (path) => tabForPath(claims, path, (p) => paths.has(p))
-})
-
 /** The shell tab a vault path opens as: a plugin's folder document (a
  *  community plugin's deck) as its surface, a vault app as its app, anything
  *  else as the document. A vault app keeps its own tab kind, which draws its
  *  header around the surface. */
 export const shellTabForPathAtom = atom((get): ((path: string) => TabDescriptor) => {
-  const toTab = get(tabForPathAtom)
+  const claims = get(folderClaimsAtom)
+  const snapshot = get(snapshotAtom)
+  const paths = new Set([...snapshot.docs, ...snapshot.files].map((f) => f.path))
   return (path) => {
-    const tab = toTab(path)
-    return tab.kind === 'surface' && tab.surface !== 'app' && tab.id !== undefined
-      ? { kind: 'surface', surface: tab.surface, id: tab.id }
+    const doc = folderDocumentAt(claims, path, (p) => paths.has(p))
+    return doc !== null && doc.folder.surface !== 'app'
+      ? { kind: 'surface', surface: doc.folder.surface, id: path }
       : shellTabForPath(path)
   }
 })
 
 /**
- * Open a vault path by any gesture: a single click's `preview`, a double
- * click's `pinned`, or `pane`, beside the active one. A folder document opens
- * as its surface, which has no preview state.
+ * Open a vault path as the tab it is (`shellTabForPathAtom`): `pane` opens it
+ * in split view beside the focused tab; `preview` and `pinned` both open it as
+ * its own tab, since the shell's tabs have no preview state.
  */
 export const openPathAtom = atom(
   null,
   (get, set, path: string, how: 'preview' | 'pinned' | 'pane' = 'pinned'): void => {
-    const tab = get(tabForPathAtom)(path)
-    // The shell's tabs, as for a surface; `pane` is beside the focused one.
     set(openTabAtom, get(shellTabForPathAtom)(path), { beside: how === 'pane' })
-    set(workspaceAtom, (w) =>
-      how === 'pane'
-        ? openInNewPane(w, tab)
-        : tab.kind !== 'note'
-          ? openTab(w, tab)
-          : how === 'preview'
-            ? openPreview(w, path)
-            : openPinned(w, path),
-    )
   },
 )

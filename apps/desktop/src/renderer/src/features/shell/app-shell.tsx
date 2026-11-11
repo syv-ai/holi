@@ -1,6 +1,7 @@
 // Adapted from ReUI's app-shell-21 block (`npx shadcn@latest view @reui/app-shell-21` shows the published source).
+import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useClaudeFirstRun } from '@/hooks/use-claude-first-run'
@@ -20,11 +21,18 @@ import { newAgentSessionAtom } from '@/state/agents-slots'
 import { appModeAtom } from '@/state/app-mode'
 import { folderSurfacesAtom, runningPluginsAtom } from '@/state/plugins'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
+import { loadVaultSettingsAtom, vaultSettingsAtom } from '@/state/settings'
+import { ConfirmDialog } from '@/composites/confirm-dialog'
+import {
+  closesSplit,
+  saveEntryClose,
+  type EntryCloseIntent,
+  type EntryCloseRequest,
+} from '@/state/shell-close'
 // Split tabs (docs/features/tabs-panes.md): one strip, a split being one
 // entry of it.
 import {
   activeSplit,
-  closeAllTabs as closeAllTabsIn,
   closeTab as closeTabIn,
   entryIds,
   focusedTab,
@@ -64,6 +72,7 @@ import { DialogHost } from './dialog-host'
 import { MobileHeader } from './mobile-header'
 import { readShares, writeShares } from './split-shares'
 import { SplitView, type MemberSlot } from './split-view'
+import { useRetainedSurfaces } from './retained-surfaces'
 import { TabStrip } from './tab-strip'
 import { TabView } from './tab-view'
 import { TitleBar } from './title-bar'
@@ -82,13 +91,32 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   /** The tab strip and its splits, this vault's (`state/shell-tabs.ts`). */
   const [ws, setWs] = useAtom(shellWorkspaceAtom)
   const remote = useAtomValue(activeRemoteAtom)
-  const tabForPath = useAtomValue(shellTabForPathAtom)
+  const settings = useAtomValue(vaultSettingsAtom)
+  const loadSettings = useSetAtom(loadVaultSettingsAtom)
+  const store = useStore()
+  const [pendingClose, setPendingClose] = useState<EntryCloseIntent | null>(null)
+  const [presentedClose, setPresentedClose] = useState<EntryCloseIntent | null>(null)
+  const closeConfirmationEnabled =
+    settings !== null && settings.remote === remote
+      ? settings.settings.confirmCloseSplitTabs
+      : VAULT_SETTING_DEFAULTS.confirmCloseSplitTabs
+  useEffect(() => {
+    void loadSettings().catch((error: unknown) => console.warn('[settings] read failed:', error))
+  }, [loadSettings, remote])
+  useEffect(() => {
+    if (pendingClose !== null && pendingClose.remote !== remote) setPendingClose(null)
+  }, [pendingClose, remote])
   const folders = useAtomValue(folderSurfacesAtom)
   /** The key a sidebar row, a search hit or a plugin's request opens: a view's
    *  own key (the board), or a vault path's tab, which a plugin's folder
    *  document (a deck) opens as its surface. */
+  // Resolved from the store as it is now, not as it was at the last render:
+  // a caller that just made or renamed a folder document opens it in the
+  // same tick its snapshot arrived.
   const keyFor = (id: string): string =>
-    parseTabKey(id)?.kind === 'doc' || id.endsWith('.app') ? tabKey(tabForPath(id)) : id
+    parseTabKey(id)?.kind === 'doc' || id.endsWith('.app')
+      ? tabKey(store.get(shellTabForPathAtom)(id))
+      : id
   /** Split tabs: the active split, when the active entry is one. */
   const split = activeSplit(ws)
   /** The view in front (the active tab, or the split's focused member):
@@ -146,8 +174,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     setWs((w) => openTabIn(w, tabKey({ kind: 'app', id })))
   }
 
-  const { openSettings: showSettings, leaveSettings } = useSettingsTab({
-    focusedKey,
+  const { openSettings: showSettings, leaveSettings: backFromSettings } = useSettingsTab({
     update: setWs,
     showSidebar: () => {
       if (!isMobile) showSidebar()
@@ -156,6 +183,12 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   function openSettings() {
     setMobileNavOpen(false)
     showSettings()
+  }
+  /** Settings' Back goes to another tab, so on mobile the sheet that held
+   *  its nav closes, as it does for any other tab opened from it. */
+  function leaveSettings() {
+    setMobileNavOpen(false)
+    backFromSettings()
   }
 
   /** + and ⌘T: a New tab, or on the Agents side a new session in the
@@ -173,8 +206,20 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     void saveBeforeClosing(() => setWs((w) => closeTabIn(w, key)))
   }
 
-  function closeAllTabs() {
-    void saveBeforeClosing(() => setWs(closeAllTabsIn))
+  function requestEntryClose(request: EntryCloseRequest) {
+    const current = store.get(shellWorkspaceAtom)
+    const intent = { remote: store.get(activeRemoteAtom), workspace: current, request }
+    if (closesSplit(current, request) && closeConfirmationEnabled) {
+      setPresentedClose(intent)
+      setPendingClose(intent)
+      return
+    }
+    void saveEntryClose(store, intent).catch(() => {})
+  }
+
+  function confirmPendingClose() {
+    if (pendingClose === null) return
+    return saveEntryClose(store, pendingClose)
   }
 
   /** Open a vault path, the board, or any tab key: as a tab, or in the
@@ -254,7 +299,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     open: openTabKey,
     selectTab: (id) => setWs((w) => selectEntry(w, id)),
     closeTab,
-    closeAllTabs,
+    closeAllTabs: () => requestEntryClose({ kind: 'all' }),
     reopenTab: () => setWs(reopenClosed),
     splitRight: () => setWs(splitActive),
     newDocument,
@@ -311,11 +356,11 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
 
   /** One view: its header in a split, then what it shows. Focus follows a
    *  press or keyboard focus into a split's member. */
-  function memberBody(key: string) {
+  function memberBody(key: string, visible: boolean) {
     const tab = key === NO_TAB ? null : key
     const isFocused = tab === focusedKey
     const focus = () => {
-      if (split !== null && tab !== null) {
+      if (visible && split !== null && tab !== null) {
         setWs((w) => focusMember(w, split.id, tab))
       }
     }
@@ -334,6 +379,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <TabView
             tab={tab}
+            visible={visible}
             settingsNavInSidebar={isFocused && settingsActive && !isMobile && sidebarOpen}
             onOpen={openTabKey}
             onOpenBeside={(id) => setWs((w) => openInSplit(w, keyFor(id)))}
@@ -351,7 +397,13 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     )
   }
 
-  const header = <TabStrip onNewTab={openNewTab} draggable={!isMobile} />
+  const retained = useRetainedSurfaces(
+    isMobile ? [focusedKey ?? NO_TAB] : members.map((member) => member.key),
+    memberBody,
+  )
+  const header = (
+    <TabStrip onNewTab={openNewTab} onCloseRequest={requestEntryClose} draggable={!isMobile} />
+  )
 
   const main = (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
@@ -368,12 +420,12 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <main className="flex min-h-0 min-w-0 flex-1 flex-col">
             {isMobile ? (
-              memberBody(focusedKey ?? NO_TAB)
+              retained.slot(focusedKey ?? NO_TAB)
             ) : (
               <SplitView
                 entryId={ws.active}
                 members={members}
-                renderMember={memberBody}
+                renderMember={retained.slot}
                 onShareChange={resizeMember}
               />
             )}
@@ -396,6 +448,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
       onOpenChange={toggleSidebar}
       className="bg-background text-foreground h-svh min-h-0 w-full"
     >
+      {retained.content}
       {isMobile ? (
         <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
           {/* The brand bar is global chrome and the header below is this
@@ -496,6 +549,25 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
         onAddVault={onAddVault}
       />
       <ShortcutsDialog />
+      <ConfirmDialog
+        open={pendingClose !== null && pendingClose.remote === remote}
+        onOpenChange={(open) => {
+          if (!open) setPendingClose(null)
+        }}
+        title={
+          presentedClose?.request.kind === 'entry' ? 'Close split tab?' : 'Close tabs with splits?'
+        }
+        description={
+          presentedClose?.request.kind === 'entry'
+            ? 'This tab contains multiple views. Closing it will close every view in the split.'
+            : 'This will close tab entries containing multiple views, including every view in each split.'
+        }
+        confirmLabel={presentedClose?.request.kind === 'entry' ? 'Close tab' : 'Close tabs'}
+        confirmVariant="secondary"
+        footerVariant="plain"
+
+        onConfirm={confirmPendingClose}
+      />
       <DialogHost />
     </SidebarProvider>
   )

@@ -247,20 +247,20 @@ function EventCalendarResourceView({
         {/* Resource header row */}
         <div
           className={cn(
-            "flex border-b pe-(--ec-scrollbar-w,0px)",
+            "flex border-b border-(--ec-grid-line) pe-(--ec-scrollbar-w,0px)",
             !contained &&
               "bg-background sticky top-(--ec-sticky-offset,0px) z-20",
             viewConfig.classNames?.timeGridHeader
           )}
         >
-          <div className="w-(--ec-gutter-width,4.5rem) shrink-0 border-e" />
+          <div className="w-(--ec-gutter-width,4.5rem) shrink-0 border-e border-(--ec-grid-line)" />
           <div className="grid min-w-0 flex-1" style={{ gridTemplateColumns }}>
             {resources.map((resource) => (
               <div
                 key={resource.id}
                 data-slot="event-calendar-resource-header"
                 className={cn(
-                  "min-w-0 truncate border-e px-2 py-1.5 text-center font-medium last:border-e-0",
+                  "min-w-0 truncate border-e border-(--ec-grid-line) px-2 py-1.5 text-center font-medium last:border-e-0",
                   viewConfig.classNames?.resourceHeader
                 )}
               >
@@ -275,7 +275,7 @@ function EventCalendarResourceView({
           <div
             data-slot="event-calendar-all-day-section"
             className={cn(
-              "flex border-b pe-(--ec-scrollbar-w,0px)",
+              "flex border-b border-(--ec-grid-line) pe-(--ec-scrollbar-w,0px)",
               viewConfig.classNames?.allDaySection
             )}
           >
@@ -290,7 +290,7 @@ function EventCalendarResourceView({
                     // one bar-row tall and centers the label so it sits on the SAME
                     // baseline as the first all-day chip and stays top-aligned when
                     // the chips wrap onto more lanes (mirrors the time-grid label)
-                    "text-muted-foreground w-(--ec-gutter-width,4.5rem) shrink-0 border-e ps-2 pe-2.5 pt-1.5",
+                    "text-muted-foreground w-(--ec-gutter-width,4.5rem) shrink-0 border-e border-(--ec-grid-line) ps-2 pe-2.5 pt-1.5",
                     viewConfig.classNames?.allDayLabel
                   )}
                 >
@@ -397,7 +397,7 @@ function EventCalendarResourceAllDayCell({
         // reserve one bar row so the all-day row keeps the same height with or
         // without events, matching the time-grid all-day row (which reserves
         // the same via its bars-grid minHeight)
-        "relative flex min-h-[calc(var(--ec-month-bar-h,1.625rem)+0.625rem)] min-w-0 flex-col gap-0.5 border-e px-1 py-1.5 last:border-e-0",
+        "relative flex min-h-[calc(var(--ec-month-bar-h,1.625rem)+0.625rem)] min-w-0 flex-col gap-0.5 border-e border-(--ec-grid-line) px-1 py-1.5 last:border-e-0",
         isOff && offClassName,
         viewConfig.dayClassName?.(day),
         inDraft &&
@@ -633,7 +633,7 @@ function EventCalendarResourceColumn({
       role="group"
       aria-label={resource.title}
       className={cn(
-        "relative min-w-0 border-e last:border-e-0",
+        "relative min-w-0 border-e border-(--ec-grid-line) last:border-e-0",
         isOff && offClassName,
         // the resource view is a single day, so today gets no column tint (the
         // header marks it); only a consumer todayClassName can tint it
@@ -643,7 +643,7 @@ function EventCalendarResourceColumn({
       )}
       style={{
         height: `calc(var(--ec-hour-height) * ${boundsMinutes / 60})`,
-        backgroundImage: `repeating-linear-gradient(to bottom, transparent, transparent calc(var(--ec-hour-height) * ${interval / 60} - var(--ec-slot-line-width, 1px)), var(--ec-slot-line-color, var(--color-border)) calc(var(--ec-hour-height) * ${interval / 60} - var(--ec-slot-line-width, 1px)), var(--ec-slot-line-color, var(--color-border)) calc(var(--ec-hour-height) * ${interval / 60}))`,
+        backgroundImage: `repeating-linear-gradient(to bottom, transparent, transparent calc(var(--ec-hour-height) * ${interval / 60} - var(--ec-slot-line-width, 1px)), var(--ec-slot-line-color, var(--ec-grid-line)) calc(var(--ec-hour-height) * ${interval / 60} - var(--ec-slot-line-width, 1px)), var(--ec-slot-line-color, var(--ec-grid-line)) calc(var(--ec-hour-height) * ${interval / 60}))`,
       }}
       onPointerDown={(e) => {
         if (e.target === e.currentTarget) gestures.beginCreate(e, day, false)

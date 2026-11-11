@@ -64,6 +64,9 @@ function refFor(sub: string, seeded: StoredGoogleAuth | null = null): AccountRef
       const all = await store.read()
       await store.write({ ...all, [auth.sub]: auth })
     },
+    async expire() {
+      await this.remove()
+    },
     async remove() {
       current = null
       const all = await store.read()

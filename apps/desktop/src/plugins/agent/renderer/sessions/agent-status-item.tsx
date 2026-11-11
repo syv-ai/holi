@@ -1,5 +1,4 @@
 import { useAtomValue, useSetAtom } from 'jotai'
-import { AstroidIcon } from 'lucide-react'
 
 import { appModeAtom, StatusBarItem } from '@/plugin-api'
 import { agentsStatusAtom } from '../state/agents-status'
@@ -33,7 +32,6 @@ export function AgentStatusItem() {
       tooltip={`Agents: ${text}. Click to open Agents`}
       onClick={() => setMode('agents')}
     >
-      <AstroidIcon aria-hidden />
       {text}
     </StatusBarItem>
   )

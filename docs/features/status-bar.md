@@ -12,12 +12,14 @@ the main column, on the chrome's glass (`data-slot="app-chrome"`, as the title b
 views, every split and the bottom panel, and the right-hand drawers, but not the sidebar: the
 sidebar is a full-height column with its own foot (the profile), and the band at the top is the one
 row that crosses both. It is drawn on desktop only. Each item is a ghost button (`size="xs"`) with a
-tooltip, a Lucide icon at `size-3.5` and its words. Only what is true is drawn:
+tooltip, its words and, where it says something, a Lucide icon at `size-3.5`. Only what is true is drawn:
 
 - **Branch**: the vault's checked-out branch, with `*` while the tree has uncommitted changes.
   Clicking it opens the branch picker (below); the Output has its own toggle on the right.
 - **Sync**: behind and ahead (`2↓ 0↑`) with a sync glyph that turns while pulling or reconciling
-  (`animate-spin`, held still under reduced motion). Offline swaps the glyph for a cloud, and a state that
+  (`animate-spin`, held still under reduced motion). Holi syncs in the background, so the glyph
+  shows only while there is something to sync (unsynced work, or commits ahead or behind); hidden,
+  it keeps its room, so nothing beside it moves when it appears. Offline swaps the glyph for a cloud, and a state that
   wants you (a conflict, no access, a blocked pause) for a warning, with the state's words beside
   the counts; the tooltip adds the last failure's first line. Clicking runs a sync now (commit,
   pull, push: `sync.now`) when the state is up to date, ahead and behind, or offline, and opens the Output when it is
@@ -50,7 +52,7 @@ open editors reload from the new tree as after a pull.
 **The plugin slot.** `RendererPlugin.statusItems` lists `{id, side, order, Component}`; a plugin
 draws its item with `StatusBarItem` from `@/plugin-api` and renders nothing when it has nothing to
 say. Left items follow the sync items, right items come before Terminal and Output. The agent's
-item is its own: `2 working` or `1 needs you` from the counts the Agents toggle reports
+item is its own, words without an icon: `2 working` or `1 needs you` from the counts the Agents toggle reports
 (`agentsStatusAtom`), else `3 sessions`, the rows the sidebar's Sessions holds (a live session
 closed out of it is History's, not counted), hidden while Sessions is empty; a click opens Agents.
 

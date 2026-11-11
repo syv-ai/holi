@@ -1,7 +1,8 @@
 /**
  * Settings in the shell: ⌘, brings it forward with its nav in the sidebar's
  * place, a plugin's "Open Connections" lands on that page, a setting writes
- * through `settings.write`, closing the tab gives the files back, and an
+ * through `settings.write`, closing the tab gives the files back, Back always
+ * lands on a tab (the one used last, else a New tab), and an
  * agent's Edit opens on that agent.
  */
 import { Provider, createStore } from 'jotai'
@@ -18,6 +19,11 @@ import type { RendererPlugin } from '@/plugin-api/types'
 import { installedPluginsAtom } from '@/state/plugins'
 import { openSettingsSectionAtom } from '@/state/settings-section'
 import { vaultSettingsAtom } from '@/state/settings'
+import { vimCodeEditingAtom } from '@/state/preferences'
+import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
+import { entryIds, selectEntry } from '@/state/shell-workspace'
+import { parseTabKey, SETTINGS_KEY, tabKey } from '@/state/tab-descriptor'
+import { EditorPage } from '../pages/editor-page'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 
 const write = vi.fn(async (_input: unknown) => ({
@@ -184,6 +190,27 @@ beforeEach(() => {
   capRun.mockClear()
 })
 
+test('the machine-wide Vim switch works while vault settings load and never writes vault settings', async () => {
+  localStorage.removeItem('holi:vimCodeEditing')
+  const store = createStore()
+  store.set(activeRemoteAtom, 'mara/notes')
+  store.set(vaultSettingsAtom, null)
+  render(
+    <Provider store={store}>
+      <EditorPage />
+    </Provider>,
+  )
+
+  expect(screen.getByRole('status', { name: 'Reading the settings' })).toBeInTheDocument()
+  const toggle = screen.getByRole('switch', { name: 'Vim mode' })
+  fireEvent.click(toggle)
+  expect(store.get(vimCodeEditingAtom)).toBe(true)
+  expect(localStorage.getItem('holi:vimCodeEditing')).toBe('true')
+  expect(write).not.toHaveBeenCalled()
+  expect(await screen.findByRole('switch', { name: 'Keep a daily note' })).toBeInTheDocument()
+  expect(write).not.toHaveBeenCalled()
+})
+
 test('⌘, opens Settings as a tab, its nav in place of the files', async () => {
   mount()
   expect(screen.queryByRole('tab', { name: /Settings/ })).toBeNull()
@@ -259,6 +286,47 @@ test('closing the Settings tab gives the files back', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Close Settings' }))
   await waitFor(() => expect(screen.queryByRole('navigation', { name: 'Settings' })).toBeNull())
   expect(screen.getByText('Documents')).toBeTruthy()
+})
+
+/** Two app tabs, `second` used last, as the strip and its recency hold them. */
+const FIRST = tabKey({ kind: 'app', id: 'first' })
+const SECOND = tabKey({ kind: 'app', id: 'second' })
+function openTwoTabs(store: ReturnType<typeof createStore>) {
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'first' }))
+  act(() => store.set(openTabAtom, { kind: 'app', id: 'second' }))
+}
+
+async function clickBack() {
+  const nav = await screen.findByRole('navigation', { name: 'Settings' })
+  fireEvent.click(within(nav).getByRole('button', { name: 'Back' }))
+}
+
+test('Back from Settings as the only tab opens a New tab, Settings staying open', async () => {
+  const store = mount()
+  fireEvent.keyDown(window, { key: ',', metaKey: true })
+  await clickBack()
+  const ws = store.get(shellWorkspaceAtom)
+  expect(parseTabKey(ws.active!)?.kind).toBe('new')
+  expect(entryIds(ws)).toContain(SETTINGS_KEY)
+})
+
+test('Back after Settings opened as a plain tab (the Apps view) goes to the last tab used', async () => {
+  const store = mount()
+  openTwoTabs(store)
+  act(() => store.set(openTabAtom, { kind: 'settings' }))
+  await clickBack()
+  expect(store.get(shellWorkspaceAtom).active).toBe(SECOND)
+})
+
+test('Back goes to the most recently used tab, not the one Settings first came from', async () => {
+  const store = mount()
+  openTwoTabs(store)
+  fireEvent.keyDown(window, { key: ',', metaKey: true })
+  await screen.findByRole('navigation', { name: 'Settings' })
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, FIRST)))
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, SETTINGS_KEY)))
+  await clickBack()
+  expect(store.get(shellWorkspaceAtom).active).toBe(FIRST)
 })
 
 test('every page in the nav opens to its own heading', async () => {

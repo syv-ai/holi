@@ -35,6 +35,10 @@ export function createUpdater(deps: {
   /** Before the app quits to install: what a quit through ⌘Q runs too, its
    *  confirm included. False when the person kept the app open. */
   beforeInstall: () => Promise<boolean>
+  /** The installer refused after the teardown already ran (a deb's cancelled
+   *  password prompt, a failed dpkg): Holi can no longer go on, so it says why
+   *  and finishes the exit. */
+  installFailed: (message: string) => void
 }): Updater {
   const prefs = jsonFileStore(join(app.getPath('userData'), 'updates.json'), (raw) => {
     const value = raw as { enabled?: unknown; channel?: unknown } | null
@@ -92,6 +96,30 @@ export function createUpdater(deps: {
     return status
   }
   const background = (): void => void run('background')
+
+  /**
+   * Hand over to the installer. A deb installs through pkexec synchronously
+   * inside `quitAndInstall`, which on failure emits `error` and returns without
+   * quitting; that error, caught while the call runs, is the install's. True
+   * when the installer took over the quit.
+   */
+  const quitAndInstall = (): boolean => {
+    let failure: Error | null = null
+    const onError = (err: Error): void => {
+      failure = err
+    }
+    autoUpdater.on('error', onError)
+    try {
+      autoUpdater.quitAndInstall()
+    } catch (err) {
+      failure = err instanceof Error ? err : new Error(String(err))
+    } finally {
+      autoUpdater.removeListener('error', onError)
+    }
+    if (failure === null) return true
+    deps.installFailed(failure.message)
+    return false
+  }
 
   if (status.supported) {
     // Squirrel cannot unstage ZIPs; install only the selected one after quit teardown.
@@ -154,7 +182,9 @@ export function createUpdater(deps: {
     installOnQuit() {
       if (!status.supported || status.state !== 'ready' || installChannel !== status.channel)
         return false
-      autoUpdater.quitAndInstall()
+      // A failed installer is reported and `installFailed` ends the quit, so
+      // either way the quit is no longer the caller's to finish.
+      quitAndInstall()
       return true
     },
     async install() {
@@ -170,8 +200,7 @@ export function createUpdater(deps: {
       }
       if (!go || switching || status.state !== 'ready' || installChannel !== status.channel)
         return false
-      autoUpdater.quitAndInstall()
-      return true
+      return quitAndInstall()
     },
     setChannel(channel) {
       const request = channelQueue.then(() => switchChannel(channel))

@@ -59,7 +59,7 @@ import {
   matchHotkey,
   openDialogAtom,
   openSettingsSectionAtom,
-  openNoteTabAtom,
+  openDocumentAtom,
   useAgentService,
   useGlobalPanelLayout,
   useHasCapability,
@@ -249,7 +249,7 @@ export function MailView() {
       remote === null ? Promise.reject(new Error('No vault is open.')) : work(remote),
     [remote],
   )
-  const openNote = useSetAtom(openNoteTabAtom)
+  const openNote = useSetAtom(openDocumentAtom)
   const openDialog = useSetAtom(openDialogAtom)
   const openSettingsSection = useSetAtom(openSettingsSectionAtom)
   /** Where Google is connected: the Connections section of Settings. */

@@ -3,8 +3,8 @@
  *
  * The property that matters is the *order*: flush the buffer, commit a clean
  * restore point, rename, then commit again — so the rename lands as one commit
- * on top of a state that is already safe. And the open tab has to follow the
- * file to its new path, or it points at something that no longer exists.
+ * on top of a state that is already safe. The open tab following the file is
+ * the shell's, done by whoever asked for the rename (`onMoved`).
  */
 import { createElement } from 'react'
 import { EditorView } from '@codemirror/view'
@@ -15,7 +15,8 @@ import { FileView } from '@/features/files/file-view'
 import { installFakeHoli, type FakeHoli } from '@/test/fake-holi'
 import { act, render, waitFor } from '@/test/render'
 import { activeRemoteAtom, renameNoteAtom, moveNotesAtom, deleteManyAtom } from '@/state/vaults'
-import { emptyWorkspace, openTab, workspaceAtom } from '@/state/panes'
+import { openTabAtom, shellWorkspaceAtom } from '@/state/shell-tabs'
+import { allTabs } from '@/state/shell-workspace'
 
 Range.prototype.getBoundingClientRect ??= () => new DOMRect()
 Range.prototype.getClientRects ??= () => [] as unknown as DOMRectList
@@ -39,7 +40,7 @@ describe('renameNoteAtom', () => {
     })
     const store = createStore()
     store.set(activeRemoteAtom, 'syv-ai/notes')
-    store.set(workspaceAtom, openTab(emptyWorkspace(), { kind: 'note', path: 'old.txt' }))
+    store.set(openTabAtom, { kind: 'doc', path: 'old.txt' })
     const at = (path: string) =>
       createElement(Provider, { store }, createElement(FileView, { path }))
     const view = render(at('old.txt'))
@@ -74,7 +75,7 @@ describe('renameNoteAtom', () => {
       path: 'old.txt',
       text: 'b\n',
     })
-    expect(store.get(workspaceAtom).panes[0]!.tabs).toEqual([{ kind: 'note', path: 'sub/new.txt' }])
+    expect(allTabs(store.get(shellWorkspaceAtom))).toEqual(['sub/new.txt'])
   })
 
   it.each(['rename', 'move', 'delete'] as const)(

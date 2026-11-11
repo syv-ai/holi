@@ -61,7 +61,7 @@ const CATEGORY_COLORS: Record<FileTypeCategory, string> = {
   folder: "text-violet-600",
   font: NEUTRAL,
   image: "text-violet-600",
-  presentation: "text-red-600",
+  presentation: "text-amber-600",
   spreadsheet: "text-green-600",
   video: "text-blue-600",
 }
@@ -89,10 +89,16 @@ const CATEGORY_NAMES: Record<FileTypeCategory, string> = {
  * neither (archives, plain text, data, config, fonts, installers) is neutral.
  * Every color is the 600 step, so the set reads as one palette with white
  * label text at 3:1 or better.
+ *
+ * At a tree row's 16px the label cannot be read, so the hue is what tells
+ * types apart: formats a vault holds side by side take hues far apart, within
+ * a family and across the common ones (PDF red, slides amber, a deck fuchsia,
+ * Word blue, a sheet green and its CSV teal, an SVG pink beside a PNG's
+ * yellow), never two neighbours such as red and orange.
  */
 const FILE_TYPE_EXTENSIONS = {
   // Documents
-  pdf: { category: "document", color: "text-orange-600" },
+  pdf: { category: "document", color: "text-red-600" },
   doc: { category: "document", color: "text-blue-600" },
   docx: { category: "document", color: "text-blue-600" },
   odt: { category: "document", color: "text-blue-600" },
@@ -111,18 +117,18 @@ const FILE_TYPE_EXTENSIONS = {
   xlsx: { category: "spreadsheet", color: "text-green-600" },
   xlsm: { category: "spreadsheet", color: "text-green-600" },
   ods: { category: "spreadsheet", color: "text-green-600" },
-  csv: { category: "spreadsheet", color: "text-green-600" },
-  tsv: { category: "spreadsheet", color: "text-green-600" },
+  csv: { category: "spreadsheet", color: "text-teal-600" },
+  tsv: { category: "spreadsheet", color: "text-teal-600" },
   numbers: { category: "spreadsheet", color: "text-green-600", label: "NUM" },
   parquet: { category: "spreadsheet", color: NEUTRAL, label: "PARQ" },
   sqlite: { category: "spreadsheet", color: "text-sky-600" },
   db: { category: "spreadsheet", color: NEUTRAL },
   // Presentations
-  ppt: { category: "presentation", color: "text-red-600" },
-  pptx: { category: "presentation", color: "text-red-600" },
-  odp: { category: "presentation", color: "text-red-600" },
+  ppt: { category: "presentation", color: "text-amber-600" },
+  pptx: { category: "presentation", color: "text-amber-600" },
+  odp: { category: "presentation", color: "text-amber-600" },
   key: { category: "presentation", color: "text-blue-600" },
-  deck: { category: "presentation", color: "text-red-600" },
+  deck: { category: "presentation", color: "text-fuchsia-600" },
   // Images
   png: { category: "image", color: YELLOW },
   jpg: { category: "image", color: "text-violet-600" },
@@ -136,7 +142,7 @@ const FILE_TYPE_EXTENSIONS = {
   tiff: { category: "image", color: "text-violet-600" },
   ico: { category: "image", color: "text-violet-600" },
   raw: { category: "image", color: NEUTRAL },
-  svg: { category: "image", color: YELLOW },
+  svg: { category: "image", color: "text-pink-600" },
   jxl: { category: "image", color: "text-violet-600" },
   // Video
   mp4: { category: "video", color: "text-blue-600" },

@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { PiChild } from '../main/pi/rpc'
+import { NO_TOOLS, type PiChild } from '../main/pi/rpc'
 import { createPiBackground } from '../main/pi/background'
 import { agentCapabilities } from '../main/host/capabilities'
 import type { CapabilityContext } from '../../../main/capabilities/registry'
@@ -82,6 +82,7 @@ describe('Pi background runs', () => {
           return { ok: true, sessionId: 'pi' }
         },
         message: async () => {},
+        reply: () => null,
         stop: async () => ({ ok: true }),
       },
     })
@@ -107,6 +108,7 @@ describe('Pi background runs', () => {
       ],
       launch: async () => ({ ok: true as const, sessionId: 'pi123456' }),
       message: async () => {},
+      reply: () => null,
       stop: async () => ({ ok: true as const }),
     }
     const table = agentCapabilities({
@@ -240,6 +242,96 @@ describe('Pi background runs', () => {
       /no running Pi session/,
     )
     await manager.leave()
+  })
+
+  it('runs a tool-less run kept between turns, whose last answer can be read', async () => {
+    vi.useFakeTimers()
+    const rpc = fake()
+    let argv: string[] = []
+    const manager = createPiBackground({
+      bin: () => '/usr/bin/pi',
+      spawn: (_bin, args) => {
+        argv = args
+        return rpc.child
+      },
+      bracket: () => {},
+      changed: () => {},
+    })
+    manager.setVault('owner/vault', '/vault')
+    const started = await manager.launch({
+      name: 'scribe',
+      prompt: 'first',
+      noTools: true,
+      keep: true,
+    })
+    if (!started.ok) throw new Error(started.message)
+    expect(argv).toEqual(['--mode', 'rpc', ...NO_TOOLS])
+    expect(manager.reply(started.sessionId)).toBeNull()
+    const answer = (text: string) =>
+      rpc.stdout.write(
+        `{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":${JSON.stringify(text)}}}\n{"type":"agent_settled","aborted":false}\n`,
+      )
+    answer('[]')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(manager.reply(started.sessionId)).toBe('[]')
+    // Kept past the usual window, and each answer is that turn's alone.
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    expect(rpc.wasKilled()).toBe(false)
+    await manager.message(started.sessionId, 'second')
+    answer('[{"startIndex":0}]')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(manager.reply(started.sessionId)).toBe('[{"startIndex":0}]')
+    await manager.stop(started.sessionId)
+    expect(manager.reply(started.sessionId)).toBeNull()
+    await manager.leave()
+  })
+
+  it('takes no tools or keep for Claude Code, and reads an answer of a Pi run only', async () => {
+    const launches: unknown[] = []
+    const table = agentCapabilities({
+      sessions: { launch: async () => ({ ok: true, sessionId: 'claude' }) } as never,
+      own: { has: () => false } as never,
+      jobs: { has: () => false, sessions: () => [] } as never,
+      fenced: {} as never,
+      defaultProvider: async () => 'claude',
+      providers: [] as never,
+      terminals: {} as never,
+      liveRemote: () => 'owner/vault',
+      commitNow: async () => {},
+      pi: {
+        sessions: () => [
+          { id: 'pi123456', provider: 'pi' as const, name: 'run', state: 'idle' as const },
+        ],
+        launch: async (args) => {
+          launches.push(args)
+          return { ok: true, sessionId: 'pi123456' }
+        },
+        message: async () => {},
+        reply: () => '[]',
+        stop: async () => ({ ok: true as const }),
+      },
+    })
+    const ctx = { remote: 'owner/vault' } as CapabilityContext
+    const launch = table['agent.launch'] as {
+      params(raw: unknown): unknown
+      run(ctx: CapabilityContext, args: never): Promise<unknown>
+    }
+    const reply = table['agent.reply'] as typeof launch
+    expect(() => launch.params({ name: 'x', prompt: 'y', tools: 'none' })).toThrow(/Pi run/)
+    expect(() => launch.params({ name: 'x', prompt: 'y', provider: 'pi', tools: 'all' })).toThrow()
+    await launch.run(
+      ctx,
+      launch.params({ name: 'x', prompt: 'y', provider: 'pi', tools: 'none', keep: true }) as never,
+    )
+    expect(launches).toEqual([{ name: 'x', prompt: 'y', noTools: true, keep: true }])
+    await expect(reply.run(ctx, reply.params({ session: 'pi123456' }) as never)).resolves.toEqual({
+      output: '[]',
+    })
+    await expect(reply.run(ctx, reply.params({ session: 'other' }) as never)).rejects.toMatchObject(
+      {
+        code: 'NOT_FOUND',
+      },
+    )
   })
 
   it('uses the sanitized environment for managed RPC Pi', async () => {

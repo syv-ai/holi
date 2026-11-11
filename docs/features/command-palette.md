@@ -60,6 +60,9 @@ goes to the views, and runs the shell's actions with the same handlers their key
 - An action is never a second list of shortcuts: one with no key is either a place (Board, Today's
   note) or one of the few creations the table has no key for (New task, New session).
 - It is the installed shadcn `CommandDialog`, unstyled.
+- There is no second command table or palette list: a plugin adds a row only through
+  `commandMenu`, and a key only through the shortcut table
+  ([keyboard shortcuts](keyboard-shortcuts.md)).
 
 ## Not here yet
 

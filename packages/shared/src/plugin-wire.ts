@@ -31,6 +31,16 @@ export interface PickableHoli {
   description?: string
 }
 
+/** What `pdf.render` answers, as the meeting review's Export minutes reads it. */
+export interface RenderedPdf {
+  /** Where the PDF was written, absolute. */
+  pdfPath: string
+  /** Its vault path when it landed in the vault, else null. */
+  vaultPath: string | null
+  /** Images left out and diagrams shown as code. */
+  warnings: string[]
+}
+
 /** `tasks.create`'s params, as a thread or an event makes a task. */
 export interface TaskCreateDraft {
   title: string

@@ -288,13 +288,13 @@ function EventCalendarTimeGrid({
         {/* Day-header row (sticky below the nav in page scroll mode) */}
         <div
           className={cn(
-            "flex border-b pe-(--ec-scrollbar-w,0px)",
+            "flex border-b border-(--ec-grid-line) pe-(--ec-scrollbar-w,0px)",
             !contained &&
               "bg-background sticky top-(--ec-sticky-offset,0px) z-20",
             viewConfig.classNames?.timeGridHeader
           )}
         >
-          <div className="w-(--ec-gutter-width,4.5rem) shrink-0 border-e" />
+          <div className="w-(--ec-gutter-width,4.5rem) shrink-0 border-e border-(--ec-grid-line)" />
           <div className="grid min-w-0 flex-1" style={{ gridTemplateColumns }}>
             {days.map((day) => (
               <EventCalendarDayHeader
@@ -310,7 +310,7 @@ function EventCalendarTimeGrid({
           <div
             data-slot="event-calendar-all-day-section"
             className={cn(
-              "flex border-b pe-(--ec-scrollbar-w,0px)",
+              "flex border-b border-(--ec-grid-line) pe-(--ec-scrollbar-w,0px)",
               viewConfig.classNames?.allDaySection
             )}
           >
@@ -325,7 +325,7 @@ function EventCalendarTimeGrid({
                     // is one bar-row tall and centers the label so it sits on
                     // the SAME baseline as the first all-day chip and stays top-
                     // aligned when the chips wrap onto more lanes
-                    "text-muted-foreground w-(--ec-gutter-width,4.5rem) shrink-0 border-e ps-2 pe-2.5 pt-1.5",
+                    "text-muted-foreground w-(--ec-gutter-width,4.5rem) shrink-0 border-e border-(--ec-grid-line) ps-2 pe-2.5 pt-1.5",
                     viewConfig.classNames?.allDayLabel
                   )}
                 >
@@ -379,7 +379,7 @@ function EventCalendarDayHeader({
       data-slot="event-calendar-day-header"
       data-today={isToday || undefined}
       className={cn(
-        "data-today:text-primary min-w-0 truncate border-e px-2 py-1.5 font-medium last:border-e-0",
+        "data-today:text-primary min-w-0 truncate border-e border-(--ec-grid-line) px-2 py-1.5 font-medium last:border-e-0",
         isToday && viewConfig.todayClassName
       )}
     >
@@ -775,7 +775,7 @@ function EventCalendarAllDayCell({ day }: { day: Date }) {
       data-drop-target={isDropTarget ?? undefined}
       data-off={isOff || undefined}
       className={cn(
-        "relative flex min-w-0 flex-col gap-0.5 border-e px-1 py-1.5 last:border-e-0",
+        "relative flex min-w-0 flex-col gap-0.5 border-e border-(--ec-grid-line) px-1 py-1.5 last:border-e-0",
         isOff && offClassName,
         viewConfig.dayClassName?.(day),
         // No drop-target bg fill on move/resize (see month view) - a subtle
@@ -850,7 +850,7 @@ function EventCalendarTimeGutter({
     <div
       data-slot="event-calendar-time-gutter"
       className={cn(
-        "relative w-(--ec-gutter-width,4.5rem) shrink-0 border-e",
+        "relative w-(--ec-gutter-width,4.5rem) shrink-0 border-e border-(--ec-grid-line)",
         viewConfig.classNames?.timeGutter
       )}
     >
@@ -1097,7 +1097,7 @@ function EventCalendarDayColumn({
         { locale: settings.locale }
       )}
       className={cn(
-        "relative min-w-0 border-e last:border-e-0",
+        "relative min-w-0 border-e border-(--ec-grid-line) last:border-e-0",
         isOff && offClassName,
         // time grid keeps today's column on the normal background (the header
         // marks today); only a consumer todayClassName can tint it
@@ -1107,7 +1107,7 @@ function EventCalendarDayColumn({
       )}
       style={{
         height: `calc(var(--ec-hour-height) * ${boundsMinutes / 60})`,
-        backgroundImage: `repeating-linear-gradient(to bottom, transparent, transparent calc(var(--ec-hour-height) * ${interval / 60} - var(--ec-slot-line-width, 1px)), var(--ec-slot-line-color, var(--color-border)) calc(var(--ec-hour-height) * ${interval / 60} - var(--ec-slot-line-width, 1px)), var(--ec-slot-line-color, var(--color-border)) calc(var(--ec-hour-height) * ${interval / 60}))`,
+        backgroundImage: `repeating-linear-gradient(to bottom, transparent, transparent calc(var(--ec-hour-height) * ${interval / 60} - var(--ec-slot-line-width, 1px)), var(--ec-slot-line-color, var(--ec-grid-line)) calc(var(--ec-hour-height) * ${interval / 60} - var(--ec-slot-line-width, 1px)), var(--ec-slot-line-color, var(--ec-grid-line)) calc(var(--ec-hour-height) * ${interval / 60}))`,
       }}
       onPointerDown={(e) => {
         if (e.target === e.currentTarget) gestures.beginCreate(e, day, false)

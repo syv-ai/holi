@@ -15,8 +15,29 @@
  * Every function returns the same workspace when it changes nothing, so a
  * caller (a drop target asking whether to take a drop) can tell a no-op.
  */
-import type { FolderSurface } from './panes'
 import { parseTabKey, tabForPath, tabKey } from './tab-descriptor'
+
+/**
+ * A directory that is one document, as the tabs need it: the surface its
+ * tabs are, by path, and the entry file whose move or delete says where the
+ * directory went (`PathClaim.folder`).
+ */
+export interface FolderSurface {
+  surface: string
+  entry: string
+  match(path: string): boolean
+}
+
+/**
+ * A directory that is one document, as the tabs need it: the surface its
+ * tabs are, by path, and the entry file whose move or delete says where the
+ * directory went (`PathClaim.folder`).
+ */
+export interface FolderSurface {
+  surface: string
+  entry: string
+  match(path: string): boolean
+}
 
 /** Up to four views in a split: a session beside a document beside the
  *  board beside an app, each still wide enough to use on a laptop. */
@@ -97,6 +118,12 @@ export function focusedTab(ws: ShellWorkspace): string | null {
 /** The entry holding `key`, as itself or as a member, or null. */
 export function entryOf(ws: ShellWorkspace, key: string): ShellEntry | null {
   return ws.entries.find((e) => entryViews(e).includes(key)) ?? null
+}
+
+/** Whether a dragged identity is still represented: either a view key or
+ *  the id of the strip entry that owns it. */
+export function tabIsOpen(ws: ShellWorkspace, key: string): boolean {
+  return entryIds(ws).includes(key) || entryOf(ws, key) !== null
 }
 
 /** Every open view, entry by entry. */
@@ -310,7 +337,7 @@ function insertMember(ws: ShellWorkspace, key: string, index: number): ShellWork
 
 /** Whether `key` names a view (a tab key), not a split's id or junk: what a
  *  drop takes, whether it is open already or comes from the sidebar. */
-function isViewKey(key: string): boolean {
+export function isViewKey(key: string): boolean {
   return parseTabKey(key) !== null
 }
 
@@ -586,6 +613,59 @@ export function dropOnStrip(ws: ShellWorkspace, dragged: string, index: number):
   return moveOut(ws, dragged, index)
 }
 
+/** Combine the dragged view (or whole split entry) with an explicit strip
+ *  target. Unlike dropTab, this does not depend on which entry is active. */
+export function combineOnStrip(
+  ws: ShellWorkspace,
+  dragged: string,
+  targetId: string,
+): ShellWorkspace {
+  const targetIndex = indexOfEntry(ws, targetId)
+  if (targetIndex === -1) return ws
+  const sourceIndex = indexOfEntry(ws, dragged)
+  const sourceEntry = sourceIndex !== -1 ? ws.entries[sourceIndex]! : entryOf(ws, dragged)
+  const targetEntry = ws.entries[targetIndex]!
+  if (
+    (sourceEntry === null && !isViewKey(dragged)) ||
+    (sourceEntry !== null && entryId(sourceEntry) === entryId(targetEntry))
+  ) {
+    return ws
+  }
+
+  const sourceViews =
+    sourceEntry !== null && isSplit(sourceEntry) && sourceIndex !== -1
+      ? sourceEntry.views
+      : [dragged]
+  const targetViews = entryViews(targetEntry)
+  if (
+    sourceViews.some((key) => targetViews.includes(key)) ||
+    sourceViews.length + targetViews.length > MAX_SPLIT
+  ) {
+    return ws
+  }
+
+  // A split pill moves as a group; a member dragged from within a split
+  // keeps the existing member-level semantics and leaves its siblings behind.
+  let entries = ws.entries
+  if (sourceIndex !== -1) {
+    entries = entries.filter((_, index) => index !== sourceIndex)
+  } else if (sourceEntry !== null) {
+    const detached = detach(ws, dragged)
+    entries = detached.entries
+  }
+  const adjustedTarget = entries.findIndex((entry) => entryId(entry) === entryId(targetEntry))
+  if (adjustedTarget === -1) return ws
+
+  const id = isSplit(targetEntry) ? targetEntry.id : nextSplitId(ws).id
+  const seq = isSplit(targetEntry) ? ws.seq : nextSplitId(ws).seq
+  const views = [...targetViews, ...sourceViews]
+  const shares = evenShares(views.length)
+  const focused = sourceViews[0]!
+  const split: ShellSplit = { id, views, shares, focused }
+  entries = entries.map((entry, index) => (index === adjustedTarget ? split : entry))
+  return { ...ws, entries, active: id, seq }
+}
+
 /** Where a view dropped on the content goes: beside the view under it, or
  *  in its place. */
 export type DropZone = 'left' | 'right' | 'center'
@@ -731,8 +811,7 @@ export function setShares(ws: ShellWorkspace, splitId: string, shares: number[])
  *  split, in front, and in Reopen. So does a folder document's (a vault app,
  *  a plugin's deck): the moves name files, so it follows its entry file, and
  *  only to a directory its claim still matches. A file dragged out of an
- *  expanded folder document is not the document moving (`panes.ts`, the same
- *  rule). */
+ *  expanded folder document is not the document moving. */
 export function retargetTabs(
   ws: ShellWorkspace,
   moves: readonly { from: string; to: string }[],
