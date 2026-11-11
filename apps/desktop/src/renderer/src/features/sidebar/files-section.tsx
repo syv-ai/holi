@@ -49,7 +49,7 @@ import { folderDocumentAt } from '@/state/folder-documents'
 import { revealInFilesRequestAtom } from '@/state/reveal-in-files'
 import { buildTreeData, ROOT_ID, type TreeItemData } from '@/lib/tree-data'
 import { planMoveInto, planRenameFolder, type Move } from '@/lib/tree-actions'
-import { basename, joinPath, parentOf } from '@/lib/tree-paths'
+import { basename, joinPath, parentOf, sourceInside, sourceName } from '@/lib/tree-paths'
 import { canMoveInto } from '@/lib/tree-view'
 import { trpc } from '@/lib/trpc'
 import { useTabDrag } from '@/features/shell/use-tab-drag'
@@ -227,13 +227,13 @@ export function FilesSection({
   /** Rows from this vault move; anything else is copied in from outside. */
   async function dropPaths(sources: string[], dest: string) {
     const root = vaults.find((vault) => vault.remote === files.remote)?.path
-    const prefix = root ? `${root}/` : null
-    const inside = prefix
-      ? sources
-          .filter((source) => source.startsWith(prefix))
-          .map((source) => source.slice(prefix.length))
-      : []
-    const outside = sources.filter((source) => !prefix || !source.startsWith(prefix))
+    const inside: string[] = []
+    const outside: string[] = []
+    for (const source of sources) {
+      const rel = root ? sourceInside(root, source) : null
+      if (rel === null) outside.push(source)
+      else inside.push(rel)
+    }
     const moved = inside.length > 0 ? await moveInto(inside, dest) : []
     const copied: string[] = []
     if (outside.length > 0) {
@@ -241,7 +241,7 @@ export function FilesSection({
       for (const { name, reason } of skipped) toast.error(`${name}: ${reason}`)
       const took = new Set(skipped.map((skip) => skip.name))
       for (const source of outside) {
-        if (!took.has(basename(source))) copied.push(joinPath(dest, basename(source)))
+        if (!took.has(sourceName(source))) copied.push(joinPath(dest, sourceName(source)))
       }
     }
     land([...moved, ...copied])
