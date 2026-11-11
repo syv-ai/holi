@@ -75,9 +75,36 @@ export const snapshotLoadedAtom = atom((get) => get(snapshotAtom) !== EMPTY_SNAP
  */
 export const syncStateAtom = atom<SyncState>({ kind: 'up-to-date' })
 
-/** Files the large-file gate held out of the last commit: the callout's source.
- *  Pushed from main every commit tick (empty clears it, incl. on a vault switch). */
-const heldBackAtom = atom<HeldBackFile[]>([])
+/** Files the large-file gate held out of the last commit, which the tree
+ *  marks. Pushed from main every commit tick (empty clears it, incl. on a
+ *  vault switch). */
+export const heldBackAtom = atom<HeldBackFile[]>([])
+
+/**
+ * Settle a held-back file: commit it anyway (past the size gate), or keep it
+ * on this machine (`.git/info/exclude`). Dropped from the list at once; main
+ * pushes the accurate set on its next tick. Both are vault writes, so main
+ * rescans and pushes the snapshot before answering: a file kept local arrives
+ * dimmed.
+ */
+export const resolveHeldBackAtom = atom(
+  null,
+  async (get, set, { path, action }: { path: string; action: 'commit' | 'keep' }) => {
+    const remote = get(activeRemoteAtom)
+    if (!remote) return
+    if (action === 'commit') await trpc.vaults.commitFile.mutate({ remote, path })
+    else await trpc.vaults.keepFileLocal.mutate({ remote, path })
+    if (get(activeRemoteAtom) !== remote) return
+    set(heldBackAtom, (files) => files.filter((file) => file.path !== path))
+  },
+)
+
+/** The open vault's paths git ignores (`snapshot.ignored`), as a set: what
+ *  never syncs from this machine, as main read it. Every vault's `.gitignore`
+ *  carries the local-only lines (`LOCAL_ONLY_IGNORE_LINES`), so `.local.` and
+ *  secret files are in it, and a local-named file someone committed anyway is
+ *  rightly not. The tree dims these rows. */
+export const ignoredPathsAtom = atom((get) => new Set(get(snapshotAtom).ignored))
 
 /**
  * How often each file's history has moved since launch: `all` counts merged

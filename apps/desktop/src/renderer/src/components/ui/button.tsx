@@ -19,6 +19,10 @@ const buttonVariants = cva(
           "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
         link: "text-primary underline-offset-4 hover:underline",
         text: "text-foreground",
+        // A ghost button in the chrome's quiet type: muted words at normal
+        // weight, as the strip's tab count reads.
+        quiet:
+          "font-normal text-muted-foreground hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50",
         section:
           "text-xs text-muted-foreground hover:text-foreground aria-expanded:text-foreground",
         dashed:

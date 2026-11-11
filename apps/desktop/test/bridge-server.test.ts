@@ -46,9 +46,13 @@ async function rig(cli?: BridgeServerDeps['cli']) {
   // useful if it says WHICH session turned.
   const starts: string[] = []
   const ends: string[] = []
+  const pids: Array<number | undefined> = []
   const server = createBridgeServer({ cli, log: () => {} })
   registerAgentRoutes(server, {
-    onTurn: (remote, job, active) => (active ? starts : ends).push(`${remote}:${job}`),
+    onTurn: (remote, job, active, _pending, pid) => {
+      ;(active ? starts : ends).push(`${remote}:${job}`)
+      if (active) pids.push(pid)
+    },
     log: () => {},
   })
   servers.push(server)
@@ -60,6 +64,7 @@ async function rig(cli?: BridgeServerDeps['cli']) {
     token: () => token,
     starts: () => starts,
     ends: () => ends,
+    pids: () => pids,
   }
 }
 
@@ -121,6 +126,14 @@ describe('createBridgeServer', () => {
     expect(res.body).toBe('')
     expect(r.starts()).toEqual([`${VAULT}:1234abcd`])
     expect(r.ends()).toEqual([])
+  })
+
+  it("POST /turn/start hands over the session's pid, when it is one", async () => {
+    const r = await rig()
+    await post(r.port(), `/turn/start?t=${r.token()}&job=1234abcd&pid=4242`)
+    await post(r.port(), `/turn/start?t=${r.token()}&job=1234abcd&pid=-1`)
+    await post(r.port(), `/turn/start?t=${r.token()}&job=1234abcd`)
+    expect(r.pids()).toEqual([4242, undefined, undefined])
   })
 
   it('POST /turn/end with a job id names that session', async () => {
