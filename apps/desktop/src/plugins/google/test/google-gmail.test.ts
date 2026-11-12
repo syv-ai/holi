@@ -950,14 +950,14 @@ describe('textOnly', () => {
           from: 'Jane',
           to: [],
           date: '2026-08-04T09:00:00.000Z',
-          body: 'The plan is ready.\n\nOn Tue, Jane wrote:\nprevious message',
+          body: 'The plan is ready.\n\nOn Tue, Jane wrote:\n> previous message',
           html: null,
         },
       ],
     } as never
     expect(textOnly(thread).messages[0]!.body).toBe('The plan is ready.')
     expect(textOnly(thread, { full: true }).messages[0]!.body).toBe(
-      'The plan is ready.\n\nOn Tue, Jane wrote:\nprevious message',
+      'The plan is ready.\n\nOn Tue, Jane wrote:\n> previous message',
     )
   })
 
