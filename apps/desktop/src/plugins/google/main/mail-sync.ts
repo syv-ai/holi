@@ -22,6 +22,7 @@ import {
   applyLabelDelta,
   fetchThreadSummaries,
   listThreads,
+  listThreadIds,
   mailboxLabel,
   PATCHABLE_LABELS,
   type ListThreadsOptions,
@@ -138,20 +139,25 @@ export async function syncThreads(
   // membership is decided across the whole conversation. Confirm every
   // departure with the active query before removing a cached thread.
   for (const id of left) if (cachedIds.has(id)) changed.add(id)
-  const candidates = new Set([...changed, ...left])
-  const candidatesToConfirm = [...candidates].filter((id) => !cachedIds.has(id) || left.has(id))
+  const candidates = new Set([...changed, ...left, ...deleted])
+  const candidatesToConfirm = [...candidates].filter(
+    (id) => !cachedIds.has(id) || left.has(id) || deleted.has(id),
+  )
+  const confirmedIds = new Set(candidatesToConfirm)
   const queryMatches =
     candidatesToConfirm.length === 0
       ? []
-      : await findQueryMatches(api, options, knownAddresses, new Set(candidatesToConfirm))
+      : await findQueryMatches(api, options, knownAddresses, confirmedIds)
   const admitted = new Set(queryMatches.map((thread) => thread.id))
   for (const id of changed) {
     if (!cachedIds.has(id) && !admitted.has(id)) changed.delete(id)
   }
   // A message-level archive/trash event is only a thread departure if Gmail's
   // current list query no longer returns the conversation.
-  const gone = new Set([...left].filter((id) => cachedIds.has(id) && !admitted.has(id)))
-  for (const id of left) {
+  const gone = new Set(
+    [...new Set([...left, ...deleted])].filter((id) => cachedIds.has(id) && !admitted.has(id)),
+  )
+  for (const id of new Set([...left, ...deleted])) {
     if (admitted.has(id)) changed.add(id)
   }
 
@@ -160,7 +166,9 @@ export async function syncThreads(
   const queryMatchIds = new Set(queryMatches.map((thread) => thread.id))
   const refetched = await fetchThreadSummaries(
     api,
-    [...changed].filter((id) => !gone.has(id) && !queryMatchIds.has(id)),
+    [...changed].filter(
+      (id) => !gone.has(id) && !queryMatchIds.has(id) && !confirmedIds.has(id),
+    ),
     knownAddresses,
   )
   const available = new Set([
@@ -210,19 +218,19 @@ async function findQueryMatches(
   knownAddresses: string[] | undefined,
   candidates: Set<string>,
 ): Promise<MailThreadSummary[]> {
-  const matches = new Map<string, MailThreadSummary>()
+  const matches = new Set<string>()
   let pageToken: string | undefined
 
   do {
-    const page = await listThreads(api, { ...options, pageToken }, knownAddresses)
-    for (const thread of page.threads) {
-      if (candidates.has(thread.id)) matches.set(thread.id, thread)
+    const page = await listThreadIds(api, { ...options, pageToken })
+    for (const id of page.ids) {
+      if (candidates.has(id)) matches.add(id)
     }
     if (matches.size === candidates.size || page.nextPageToken === null) break
     pageToken = page.nextPageToken
   } while (true)
 
-  return [...matches.values()]
+  return fetchThreadSummaries(api, [...matches], knownAddresses)
 }
 
 /** The mailbox's current cursor. A failure costs the *next* refresh its delta,

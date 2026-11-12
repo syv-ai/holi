@@ -591,11 +591,10 @@ export async function fetchCategoryCounts(api: GoogleApi): Promise<CategoryCount
  * the row. That is the N+1 this pools; asking for `full` here would download
  * every body to render a list.
  */
-export async function listThreads(
+export async function listThreadIds(
   api: GoogleApi,
   options: ListThreadsOptions = {},
-  knownAddresses?: string[],
-): Promise<MailPage> {
+): Promise<{ ids: string[]; nextPageToken: string | null }> {
   const page = await api.get<{ threads?: { id?: string }[]; nextPageToken?: string }>(
     `${BASE}/threads`,
     {
@@ -605,13 +604,26 @@ export async function listThreads(
     },
   )
 
-  const ids = (page.threads ?? []).map((t) => t.id).filter((id): id is string => id !== undefined)
-
   return {
-    threads: await fetchThreadSummaries(api, ids, knownAddresses),
+    ids: (page.threads ?? [])
+      .map((thread) => thread.id)
+      .filter((id): id is string => id !== undefined),
     // `undefined` means "no further page" on the wire; `null` says it on the
     // type, so a caller cannot mistake "not asked" for "nothing left".
     nextPageToken: page.nextPageToken ?? null,
+  }
+}
+
+export async function listThreads(
+  api: GoogleApi,
+  options: ListThreadsOptions = {},
+  knownAddresses?: string[],
+): Promise<MailPage> {
+  const page = await listThreadIds(api, options)
+
+  return {
+    threads: await fetchThreadSummaries(api, page.ids, knownAddresses),
+    nextPageToken: page.nextPageToken,
     syncedAt: new Date().toISOString(),
   }
 }
