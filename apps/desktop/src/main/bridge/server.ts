@@ -27,7 +27,7 @@ import { realpath } from 'node:fs/promises'
 import type { Dispatch } from '../capabilities/dispatch'
 import type { CliCommand } from '../capabilities/registry'
 import { CapabilityError } from '../capabilities/error'
-import { refusalText, requestedVault, resolveArgv } from './cli'
+import { refusalText, resolveArgv } from './cli'
 import { SPILL_BYTES, spillNotice, spillOutput } from './spill'
 import { projectJsonFields } from './json-fields'
 
@@ -110,6 +110,18 @@ const CLOSED_READS = new Set(['docs.list', 'docs.read', 'docs.inspect', 'docs.re
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
+/** Candidate selector values are resolved only to obtain that target's CLI grammar.
+ * resolveArgv then decides whether each candidate is really a selector or an option value. */
+function requestedVaultCandidates(argv: readonly string[]): string[] {
+  const candidates: string[] = []
+  for (let i = 0; i < argv.length; i++) {
+    const word = argv[i]!
+    if (word.startsWith('--vault=')) candidates.push(word.slice('--vault='.length))
+    else if (word === '--vault' && argv[i + 1] !== undefined) candidates.push(argv[++i]!)
+  }
+  return candidates
+}
+
 function commandSucceeded(commands: readonly CliCommand[], name: string, value: unknown): boolean {
   const predicate = commands.find((command) => command.name === name)?.succeeded
   return predicate?.(value) ?? true
@@ -146,7 +158,6 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
     const form = new URLSearchParams(body)
     const argv = form.getAll('argv')
     const globalCommands = machine ? cli.commands() : cli.commands(remote)
-    const vaultSelector = machine ? requestedVault(argv, globalCommands) : null
     const terminator = argv.indexOf('--')
     const help =
       argv.length === 0 ||
@@ -160,6 +171,7 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
     const listing = argv[0] === 'vault' && argv[1] === 'list'
     let targetRemote = remote
     let machineTarget: { remote: string; root: string; live: boolean } | null = null
+    let targetRequest: ReturnType<typeof resolveArgv> | undefined
     let requestCwd: string | null = null
     if (machine && !listing && !help) {
       if (!cli.machine) return { status: 403 }
@@ -170,32 +182,63 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
       ) {
         return { status: 400, body: 'holi: cwd must be an absolute physical path' }
       }
-      try {
-        machineTarget = await cli.machine.resolveTarget(vaultSelector, requestCwd)
-      } catch (error) {
-        return {
-          status: vaultSelector === null ? 400 : 422,
-          body: `holi: ${message(error)}`,
+      const candidates = requestedVaultCandidates(argv)
+      let targetError: unknown
+      for (const candidate of candidates) {
+        try {
+          const target = await cli.machine.resolveTarget(candidate, requestCwd)
+          if (!target) continue
+          const request = resolveArgv(
+            argv,
+            [...cli.commands(target.remote), MACHINE_LIST],
+            form.get('stdin'),
+            form.get('job'),
+          )
+          if (
+            (request.kind === 'run' || request.kind === 'stdin') &&
+            request.vault?.toLowerCase() === candidate.toLowerCase()
+          ) {
+            machineTarget = target
+            targetRequest = request
+            break
+          }
+        } catch (error) {
+          targetError = error
         }
       }
-      if (!machineTarget)
+      if (!machineTarget) {
+        try {
+          machineTarget = await cli.machine.resolveTarget(null, requestCwd)
+        } catch (error) {
+          targetError = error
+        }
+      }
+      if (!machineTarget) {
+        if (targetError !== undefined)
+          return {
+            status: candidates.length === 0 ? 400 : 422,
+            body: `holi: ${message(targetError)}`,
+          }
         return {
-          status: vaultSelector === null ? 400 : 422,
+          status: candidates.length === 0 ? 400 : 422,
           body:
-            vaultSelector === null
+            candidates.length === 0
               ? 'holi: target required; run inside a managed vault or pass --vault owner/repo'
               : 'holi: unknown vault target; check --vault owner/repo',
         }
+      }
       targetRemote = machineTarget.remote
     }
-    const request = resolveArgv(
-      argv,
-      machine
-        ? [...(listing || help ? globalCommands : cli.commands(targetRemote)), MACHINE_LIST]
-        : cli.commands(remote),
-      form.get('stdin'),
-      form.get('job'),
-    )
+    const request =
+      targetRequest ??
+      resolveArgv(
+        argv,
+        machine
+          ? [...(listing || help ? globalCommands : cli.commands(targetRemote)), MACHINE_LIST]
+          : cli.commands(remote),
+        form.get('stdin'),
+        form.get('job'),
+      )
     if (request.kind === 'usage') return { status: 400, body: request.text }
     if (request.kind === 'help') return { status: 200, body: request.text }
     const commandName =
@@ -227,8 +270,13 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
         body: `holi ${commandName}: vault is closed; open it in Holi before running this command`,
       }
     }
-    if (machine && !listing && selector !== requestedVault(argv, globalCommands)) {
-      return { status: 400, body: 'holi: invalid --vault selector' }
+    if (
+      machine &&
+      !listing &&
+      selector !== null &&
+      selector.toLowerCase() !== machineTarget?.remote.toLowerCase()
+    ) {
+      return { status: 422, body: 'holi: unknown vault target; check --vault owner/repo' }
     }
     if (!machine && selector !== null && selector.toLowerCase() !== remote.toLowerCase()) {
       return { status: 422, body: 'holi: a vault-local credential cannot select another vault' }
