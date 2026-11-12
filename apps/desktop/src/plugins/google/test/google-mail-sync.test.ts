@@ -375,6 +375,75 @@ describe('syncThreads', () => {
     },
   )
 
+  it('admits a label-only arrival after an archive and undo in an explicit query', async () => {
+    const options = { query: 'from:jane' }
+    const first = gmail({
+      list: [{ id: 'restored' }, { id: 'old' }],
+      threads: { restored: rawThread('restored', 'Restored match'), old: rawThread('old', 'Old') },
+    })
+    await syncThreads(first.api, cache, options)
+    cache.dropThread('restored')
+
+    const second = gmail({
+      list: [{ id: 'restored' }],
+      history: {
+        historyId: '5005',
+        history: [
+          {
+            labelsRemoved: [
+              { message: { id: 'restored-m1', threadId: 'restored' }, labelIds: ['INBOX'] },
+            ],
+          },
+          {
+            labelsAdded: [
+              { message: { id: 'restored-m1', threadId: 'restored' }, labelIds: ['INBOX'] },
+            ],
+          },
+        ],
+      },
+      threads: { restored: rawThread('restored', 'Restored match') },
+    })
+
+    const page = await syncThreads(second.api, cache, options)
+
+    expect(page.threads.map((thread) => thread.id)).toContain('restored')
+    expect(threadGets(second.seen)).toContain(expect.stringContaining('/threads/restored'))
+  })
+
+  it('does not admit unrelated archive or trash departures to an explicit query', async () => {
+    for (const [id, event] of [
+      [
+        'trashed-sent',
+        { labelsAdded: [{ message: { id: 'm1', threadId: 'trashed-sent' }, labelIds: ['TRASH'] }] },
+      ],
+      [
+        'archived-sent',
+        {
+          labelsRemoved: [
+            { message: { id: 'm2', threadId: 'archived-sent' }, labelIds: ['INBOX'] },
+          ],
+        },
+      ],
+    ] as const) {
+      const options = { query: 'from:jane' }
+      const first = gmail({
+        list: [{ id: 'match' }],
+        threads: { match: rawThread('match', 'Match') },
+      })
+      await syncThreads(first.api, cache, options)
+
+      const second = gmail({
+        list: [],
+        history: { historyId: '5006', history: [event] },
+        threads: { [id]: rawThread(id, 'Unrelated sent-only', ['SENT']) },
+      })
+      const page = await syncThreads(second.api, cache, options)
+
+      expect(page.threads.map((thread) => thread.id)).not.toContain(id)
+      expect(threadGets(second.seen)).not.toContain(expect.stringContaining(`/threads/${id}`))
+    }
+  })
+
   it('does not admit an uncached message that the active query does not return', async () => {
     const options = { query: 'from:jane' }
     const first = gmail({ list: [{ id: 'old' }], threads: { old: rawThread('old', 'Old') } })

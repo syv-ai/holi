@@ -134,32 +134,21 @@ export async function syncThreads(
 
   const { changed, deleted, left, patches } = readHistory(page.history ?? [], label)
   const cachedIds = new Set(cached.map((thread) => thread.id))
-  const arrivals = new Set<string>()
-  const messageArrivals = new Set<string>()
-  for (const record of page.history ?? []) {
-    for (const entry of record.messagesAdded ?? []) {
-      const id = entry.message?.threadId
-      if (id !== undefined) messageArrivals.add(id)
-    }
-    for (const entry of record.labelsAdded ?? []) {
-      if (scopedToMailbox(options) && entry.labelIds?.includes(label)) {
-        const threadId = entry.message?.threadId
-        if (threadId !== undefined) arrivals.add(threadId)
-      }
-    }
-  }
-  // New-message events have no guarantee of a paired label event. Ask Gmail's
-  // authoritative current query whether those threads belong in this list.
-  let queryArrivals: MailThreadSummary[] = []
-  if ([...messageArrivals].some((id) => !cachedIds.has(id))) {
+  // Unfiltered history includes unrelated activity, and label evidence alone
+  // does not prove membership in the active list. Ask Gmail's current query to
+  // admit every uncached change or departure for this list.
+  const mailbox = scopedToMailbox(options)
+  const candidates = new Set([...changed, ...(!mailbox ? left : [])])
+  const uncachedCandidates = [...candidates].filter((id) => !cachedIds.has(id))
+  let queryMatches: MailThreadSummary[] = []
+  if (uncachedCandidates.length > 0) {
     const current = await listThreads(api, options, knownAddresses)
-    queryArrivals = current.threads.filter((thread) => messageArrivals.has(thread.id))
-    for (const thread of queryArrivals) arrivals.add(thread.id)
+    const candidateIds = new Set(uncachedCandidates)
+    queryMatches = current.threads.filter((thread) => candidateIds.has(thread.id))
   }
-  // Unfiltered history includes unrelated activity; only current query results
-  // can admit an uncached arrival (label evidence is not query membership).
+  const admitted = new Set(queryMatches.map((thread) => thread.id))
   for (const id of changed) {
-    if (!cachedIds.has(id) && !arrivals.has(id)) changed.delete(id)
+    if (!cachedIds.has(id) && !admitted.has(id)) changed.delete(id)
   }
 
   /**
@@ -170,9 +159,10 @@ export async function syncThreads(
    * bringing it up to date. The category and unread lists are mailbox-scoped,
    * so they get the removal; only an explicit query opts out.
    */
-  const mailbox = scopedToMailbox(options)
   const gone = new Set(mailbox ? left : [])
-  if (!mailbox) for (const id of left) changed.add(id)
+  if (!mailbox) {
+    for (const id of left) if (cachedIds.has(id) || admitted.has(id)) changed.add(id)
+  }
 
   // Only the threads that actually moved, and never one we already know has
   // gone. Two changed threads cost two requests, not 25.
@@ -186,7 +176,7 @@ export async function syncThreads(
   // only when Gmail's refetch confirms that the thread itself is gone.
   for (const id of deleted) if (!available.has(id)) gone.add(id)
   const refreshed = new Map(refetched.map((thread) => [thread.id, thread]))
-  for (const thread of queryArrivals) refreshed.set(thread.id, thread)
+  for (const thread of queryMatches) refreshed.set(thread.id, thread)
 
   const threads = merge(cached, [...refreshed.values()], gone, patches, options)
   cache.writeThreads(key, threads)
