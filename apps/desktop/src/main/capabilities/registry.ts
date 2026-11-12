@@ -180,6 +180,7 @@ export interface CapabilityRegistry {
     rawParams: unknown,
     admit?: Admit,
     isCurrent?: () => boolean,
+    beforeInvoke?: (target: { remote: string; root: string }) => Promise<void>,
   ): Promise<CapabilityResult>
 }
 
@@ -316,19 +317,22 @@ export function createCapabilityRegistry(): CapabilityRegistry {
         .sort((a, b) => a.name.localeCompare(b.name))
     },
 
-    async run(name, door, ctx, rawParams, admit, isCurrent = () => true) {
+    async run(name, door, ctx, rawParams, admit, isCurrent = () => true, beforeInvoke) {
       const lease = leaseFor(name, ctx.remote)
       const entry = lease?.entry
       const current = () =>
         lease !== undefined && leaseFor(name, ctx.remote) === lease && isCurrent()
-      if (entry === undefined || !entry.doors.includes(door))
+      if (entry === undefined || !entry.doors.includes(door)) {
         throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
+      }
       const params = entry.params(rawParams)
       if (!current()) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
       if (door === 'app' && entry.appGrant !== undefined) {
         if (admit === undefined) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
         await admit(ctx, entry.appGrant)
       }
+      if (!current()) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
+      if (beforeInvoke !== undefined) await beforeInvoke({ remote: ctx.remote, root: ctx.root })
       if (!current()) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
       const result = await entry.run(ctx, params)
       const value = door === 'cli' && entry.cliValue !== undefined ? entry.cliValue(result) : result
