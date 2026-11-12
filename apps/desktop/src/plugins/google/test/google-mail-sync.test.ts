@@ -62,6 +62,7 @@ function rawThread(id: string, subject: string, labels: string[] = ['INBOX']) {
 interface Routes {
   /** `threads.list` — the ids, newest first. */
   list?: { id: string }[]
+  listPages?: Record<string, { threads: { id: string }[]; nextPageToken?: string }>
   threads?: Record<string, unknown>
   /** `history.list`. A number means "answer this status instead". */
   history?: unknown | number
@@ -92,7 +93,10 @@ function gmail(routes: Routes) {
       }
       return ok(routes.history ?? { historyId: '5000' })
     }
-    if (path.endsWith('/threads')) return ok({ threads: routes.list ?? [] })
+    if (path.endsWith('/threads')) {
+      const token = new URL(url).searchParams.get('pageToken') ?? ''
+      return ok(routes.listPages?.[token] ?? { threads: routes.list ?? [] })
+    }
     const threadId = path.split('/').pop()!
     if (routes.missingThreads?.includes(threadId)) {
       return { ok: false, status: 404, text: async () => '{}', json: async () => ({}) }
@@ -448,6 +452,43 @@ describe('syncThreads', () => {
     }
   })
 
+  it('confirms uncached arrivals across every page of the active query', async () => {
+    const options = { query: 'from:jane' }
+    const first = gmail({ list: [{ id: 'old' }], threads: { old: rawThread('old', 'Old') } })
+    await syncThreads(first.api, cache, options)
+
+    const second = gmail({
+      history: {
+        historyId: '5005',
+        history: [
+          {
+            messagesAdded: [
+              { message: { id: 'older-arrival', threadId: 'older-arrival' } },
+              { message: { id: 'nonmatch', threadId: 'nonmatch' } },
+            ],
+          },
+        ],
+      },
+      listPages: {
+        '': { threads: [{ id: 'unrelated' }], nextPageToken: 'older' },
+        older: { threads: [{ id: 'older-arrival' }] },
+      },
+      threads: {
+        unrelated: rawThread('unrelated', 'Unrelated'),
+        'older-arrival': rawThread('older-arrival', 'Older matching result'),
+        nonmatch: rawThread('nonmatch', 'Not in query'),
+      },
+    })
+
+    const page = await syncThreads(second.api, cache, options)
+
+    expect(page.threads.map((thread) => thread.id)).toContain('older-arrival')
+    expect(page.threads.map((thread) => thread.id)).not.toContain('nonmatch')
+    expect(second.seen.some((url) => new URL(url).searchParams.get('pageToken') === 'older')).toBe(
+      true,
+    )
+  })
+
   it('does not admit an uncached message that the active query does not return', async () => {
     const options = { query: 'from:jane' }
     const first = gmail({ list: [{ id: 'old' }], threads: { old: rawThread('old', 'Old') } })
@@ -614,15 +655,40 @@ describe('syncThreads', () => {
       expect(page.threads.map((t) => t.id)).toEqual(['t1'])
     })
 
-    it('spends no request refetching a thread it is about to drop', async () => {
+    it('keeps an inbox thread when only one message loses INBOX', async () => {
       await cachedInbox()
+      const thread = rawThread('t2', 'Two')
+      thread.messages.push(message('t2-reply', 't2', [], ['SENT']))
 
       const second = gmail({
+        list: [{ id: 't2' }],
         history: archivedInHistory('t2'),
-        threads: { t2: rawThread('t2', 'Two', []) },
+        threads: { t2: thread },
       })
-      await syncThreads(second.api, cache, {})
+      const page = await syncThreads(second.api, cache, {})
 
+      expect(page.threads.map((item) => item.id)).toContain('t2')
+      expect(threadGets(second.seen)).toHaveLength(0)
+    })
+
+    it('keeps an inbox thread when a SENT-only reply is trashed', async () => {
+      await cachedInbox()
+      const thread = rawThread('t2', 'Two')
+      thread.messages.push(message('t2-reply', 't2', [], ['SENT']))
+
+      const second = gmail({
+        list: [{ id: 't2' }],
+        history: {
+          historyId: '6003',
+          history: [
+            { labelsAdded: [{ message: { id: 't2-reply', threadId: 't2' }, labelIds: ['TRASH'] }] },
+          ],
+        },
+        threads: { t2: thread },
+      })
+      const page = await syncThreads(second.api, cache, {})
+
+      expect(page.threads.map((item) => item.id)).toContain('t2')
       expect(threadGets(second.seen)).toHaveLength(0)
     })
 
@@ -676,6 +742,7 @@ describe('syncThreads', () => {
       await syncThreads(first.api, cache, { query: 'from:jane' })
 
       const second = gmail({
+        list: [{ id: 't2' }],
         history: archivedInHistory('t2'),
         threads: { t2: rawThread('t2', 'Two (archived)', []) },
       })

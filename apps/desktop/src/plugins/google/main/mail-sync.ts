@@ -134,46 +134,41 @@ export async function syncThreads(
 
   const { changed, deleted, left, patches } = readHistory(page.history ?? [], label)
   const cachedIds = new Set(cached.map((thread) => thread.id))
-  // Unfiltered history includes unrelated activity, and label evidence alone
-  // does not prove membership in the active list. Ask Gmail's current query to
-  // admit every uncached change or departure for this list.
-  const mailbox = scopedToMailbox(options)
-  const candidates = new Set([...changed, ...(!mailbox ? left : [])])
-  const uncachedCandidates = [...candidates].filter((id) => !cachedIds.has(id))
-  let queryMatches: MailThreadSummary[] = []
-  if (uncachedCandidates.length > 0) {
-    const current = await listThreads(api, options, knownAddresses)
-    const candidateIds = new Set(uncachedCandidates)
-    queryMatches = current.threads.filter((thread) => candidateIds.has(thread.id))
-  }
+  // History's label changes describe individual messages, while Gmail's list
+  // membership is decided across the whole conversation. Confirm every
+  // departure with the active query before removing a cached thread.
+  for (const id of left) if (cachedIds.has(id)) changed.add(id)
+  const candidates = new Set([...changed, ...left])
+  const candidatesToConfirm = [...candidates].filter((id) => !cachedIds.has(id) || left.has(id))
+  const queryMatches =
+    candidatesToConfirm.length === 0
+      ? []
+      : await findQueryMatches(api, options, knownAddresses, new Set(candidatesToConfirm))
   const admitted = new Set(queryMatches.map((thread) => thread.id))
   for (const id of changed) {
     if (!cachedIds.has(id) && !admitted.has(id)) changed.delete(id)
   }
-
-  /**
-   * "Left the mailbox" only means "left this list" for a list that IS a mailbox.
-   *
-   * A search (`from:jane`) may still legitimately match an archived thread, so
-   * there the same event becomes a **refetch** instead, keeping the row while
-   * bringing it up to date. The category and unread lists are mailbox-scoped,
-   * so they get the removal; only an explicit query opts out.
-   */
-  const gone = new Set(mailbox ? left : [])
-  if (!mailbox) {
-    for (const id of left) if (cachedIds.has(id) || admitted.has(id)) changed.add(id)
+  // A message-level archive/trash event is only a thread departure if Gmail's
+  // current list query no longer returns the conversation.
+  const gone = new Set([...left].filter((id) => cachedIds.has(id) && !admitted.has(id)))
+  for (const id of left) {
+    if (admitted.has(id)) changed.add(id)
   }
 
   // Only the threads that actually moved, and never one we already know has
   // gone. Two changed threads cost two requests, not 25.
+  const queryMatchIds = new Set(queryMatches.map((thread) => thread.id))
   const refetched = await fetchThreadSummaries(
     api,
-    [...changed].filter((id) => !gone.has(id)),
+    [...changed].filter((id) => !gone.has(id) && !queryMatchIds.has(id)),
     knownAddresses,
   )
-  const available = new Set(refetched.map((thread) => thread.id))
+  const available = new Set([
+    ...refetched.map((thread) => thread.id),
+    ...queryMatches.map((thread) => thread.id),
+  ])
   // A deleted message can be a draft, not a conversation. A thread disappears
-  // only when Gmail's refetch confirms that the thread itself is gone.
+  // only when refetch or the authoritative list query confirms it is gone.
   for (const id of deleted) if (!available.has(id)) gone.add(id)
   const refreshed = new Map(refetched.map((thread) => [thread.id, thread]))
   for (const thread of queryMatches) refreshed.set(thread.id, thread)
@@ -207,6 +202,27 @@ async function fullSync(
   const historyId = await cursor
   if (historyId !== null) cache.setHistoryId(key, historyId)
   return page
+}
+
+async function findQueryMatches(
+  api: GoogleApi,
+  options: ListThreadsOptions,
+  knownAddresses: string[] | undefined,
+  candidates: Set<string>,
+): Promise<MailThreadSummary[]> {
+  const matches = new Map<string, MailThreadSummary>()
+  let pageToken: string | undefined
+
+  do {
+    const page = await listThreads(api, { ...options, pageToken }, knownAddresses)
+    for (const thread of page.threads) {
+      if (candidates.has(thread.id)) matches.set(thread.id, thread)
+    }
+    if (matches.size === candidates.size || page.nextPageToken === null) break
+    pageToken = page.nextPageToken
+  } while (true)
+
+  return [...matches.values()]
 }
 
 /** The mailbox's current cursor. A failure costs the *next* refresh its delta,
@@ -310,18 +326,6 @@ function readHistory(records: RawHistoryRecord[], leftWhenRemoved: string): Chan
 
   // A deleted message may be a draft. Refetch before deciding the thread is gone.
   return { changed, deleted, left, patches }
-}
-
-/**
- * Is this list a whole mailbox?
- *
- * `composeQuery` uses the mailbox as its base term when there is no explicit
- * query, and ANDs the category and unread filters onto it, so every list
- * except an explicit search is mailbox-scoped, and only those may treat
- * "left the mailbox" as "gone from this list".
- */
-function scopedToMailbox(options: ListThreadsOptions): boolean {
-  return options.query === undefined || options.query === ''
 }
 
 /**
