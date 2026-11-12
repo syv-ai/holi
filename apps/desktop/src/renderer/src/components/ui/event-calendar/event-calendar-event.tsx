@@ -69,7 +69,8 @@ const EVENT_CALENDAR_GHOST = {
   invalid: "bg-destructive text-destructive-solid-foreground",
   invalidResize: "bg-destructive text-destructive-solid-foreground",
   /** Applied to the clone inside an invalid resize ghost. */
-  invalidContent: "opacity-60",
+  invalidContent:
+    "bg-destructive text-destructive-solid-foreground dark:bg-destructive **:text-inherit",
 } as const
 
 /**

@@ -76,6 +76,10 @@ describe('badge design contract', () => {
     expect(session).toContain('<Badge variant="warning">')
     expect(calendar).toContain('invalid: "bg-destructive text-destructive-solid-foreground"')
     expect(calendar).toContain('invalidResize: "bg-destructive text-destructive-solid-foreground"')
+    expect(calendar).toContain(
+      '"bg-destructive text-destructive-solid-foreground dark:bg-destructive **:text-inherit"',
+    )
+    expect(calendar).not.toContain('invalidContent: "opacity-60"')
     expect(calendar).not.toContain('border-destructive')
     expect(button).toContain(
       'bg-destructive text-destructive-solid-foreground hover:bg-destructive',
