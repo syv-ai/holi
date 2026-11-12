@@ -2,10 +2,10 @@
  *  back to it from anywhere. Nothing while nothing records. */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Circle } from 'lucide-react'
-import { openSurfaceAtom, StatusBarItem, useNow } from '@/plugin-api'
+import { StatusBarItem, useNow } from '@/plugin-api'
 import { clock } from '../shared/scribe-prompt'
 import { recorderAtom } from './recorder'
-import { MEETINGS_SURFACE, shownMeetingIdAtom } from './state'
+import { openMeetingsAtom, shownMeetingIdAtom } from './state'
 
 function Elapsed({ since }: { since: number }): React.JSX.Element {
   const now = useNow(1000)
@@ -14,7 +14,7 @@ function Elapsed({ since }: { since: number }): React.JSX.Element {
 
 export function RecordingStatusItem(): React.JSX.Element | null {
   const rec = useAtomValue(recorderAtom)
-  const open = useSetAtom(openSurfaceAtom)
+  const open = useSetAtom(openMeetingsAtom)
   const show = useSetAtom(shownMeetingIdAtom)
   if (rec.phase === 'idle') return null
   return (
@@ -23,7 +23,7 @@ export function RecordingStatusItem(): React.JSX.Element | null {
       label="Recording meeting"
       onClick={() => {
         if (rec.meetingId !== null) show(rec.meetingId)
-        open(MEETINGS_SURFACE)
+        open()
       }}
     >
       <Circle aria-hidden className="fill-current text-destructive" />

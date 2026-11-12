@@ -26,6 +26,7 @@ import type { Dispatch } from '../capabilities/dispatch'
 import type { CliCommand } from '../capabilities/registry'
 import { refusalText, resolveArgv } from './cli'
 import { SPILL_BYTES, spillNotice, spillOutput } from './spill'
+import { projectJsonFields } from './json-fields'
 
 /** What a route answers. No body is an empty one. */
 interface Reply {
@@ -143,7 +144,11 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
       const succeeded = commandSucceeded(cli.commands(), request.name, result.value)
       // A command that answered with its own failure: 422, the answer whole.
       if (!succeeded) return { status: 422, body: JSON.stringify(result.value, null, 2) }
-      output = request.json ? JSON.stringify(result.value, null, 2) : result.text
+      const value =
+        request.json && request.fields !== undefined
+          ? projectJsonFields(result.value, request.fields)
+          : result.value
+      output = request.json ? JSON.stringify(value, null, 2) : result.text
     } catch (error) {
       return { status: 422, body: refusalText(request, error) }
     }

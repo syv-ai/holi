@@ -40,6 +40,8 @@ export type CliRequest =
       /** A `many` param is a list; every other is one string. */
       params: Record<string, string | string[]>
       json: boolean
+      /** Selected own-property paths for JSON output, when requested. */
+      fields?: readonly (readonly string[])[]
     }
   /** Not a command: the text says why and what is (exit 2). */
   | { kind: 'usage'; text: string }
@@ -76,6 +78,8 @@ function usageText(commands: readonly CliCommand[]): string {
     ...commands.flatMap((c) => [`  ${commandLine(c)}`, `      ${c.cli.summary}`]),
     '',
     'Most arguments can also be given as --name value. --json prints the result as JSON.',
+    '--fields <paths> selects comma-separated dotted fields from the JSON result and requires --json.',
+    'Example: holi google search --json --fields threads.id,threads.subject,nextPageToken',
   ].join('\n')
 }
 
@@ -105,7 +109,7 @@ export function resolveArgv(
     const text =
       named === undefined
         ? usageText(commands)
-        : `usage: ${commandLine(named)}\n${named.cli.summary}`
+        : `usage: ${commandLine(named)} [--json] [--fields <paths>]\n${named.cli.summary}\n--fields selects comma-separated dotted fields and requires --json.`
     return { kind: 'help', text }
   }
   const [ns, verb] = argv
@@ -124,6 +128,8 @@ export function resolveArgv(
   const params: Record<string, string | string[]> = {}
   const positionals: string[] = []
   let json = false
+  let fields: readonly (readonly string[])[] | undefined
+  let fieldsGiven = false
   let options = true
   const rest = argv.slice(2)
   for (let i = 0; i < rest.length; i++) {
@@ -134,6 +140,16 @@ export function resolveArgv(
       const eq = word.indexOf('=')
       const name = eq < 0 ? word.slice(2) : word.slice(2, eq)
       if (!OPTION_NAME.test(name)) return wrong(`not an option: ${word}`)
+      if (options && name === 'fields') {
+        if (fieldsGiven) return wrong('--fields is given twice')
+        fieldsGiven = true
+        const value = eq >= 0 ? word.slice(eq + 1) : rest[++i]
+        if (value === undefined) return wrong('--fields needs a value')
+        const parsed = parseFieldPaths(value)
+        if (typeof parsed === 'string') return wrong(parsed)
+        fields = parsed
+        continue
+      }
       if (cli.many?.includes(name)) {
         const value = eq >= 0 ? word.slice(eq + 1) : rest[++i]
         if (value === undefined) return wrong(`--${name} needs a value`)
@@ -174,6 +190,7 @@ export function resolveArgv(
     }
   }
   if (positionals.length > 0) return wrong(`unexpected argument: ${positionals[0]}`)
+  if (fieldsGiven && !json) return wrong('--fields requires --json')
   if (cli.job !== undefined && job !== null && job !== '') {
     // Inside a session, the command is that session's: naming another one
     // would let any session act as the one a verb trusts (a meeting's
@@ -194,7 +211,37 @@ export function resolveArgv(
     if (stdin === null) return { kind: 'stdin' }
     params[cli.stdin] = stdin
   }
-  return { kind: 'run', name: command.name, label, usage: commandLine(command), params, json }
+  return {
+    kind: 'run',
+    name: command.name,
+    label,
+    usage: commandLine(command),
+    params,
+    json,
+    ...(fields === undefined ? {} : { fields }),
+  }
+}
+
+const FIELD_SEGMENT = /^[A-Za-z_$][A-Za-z0-9_$-]*$/
+const FORBIDDEN_FIELD_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype'])
+
+/** Parse a deliberately small field selector grammar: comma-separated dotted own keys. */
+function parseFieldPaths(raw: string): readonly (readonly string[])[] | string {
+  const entries = raw.split(',').map((entry) => entry.trim())
+  if (entries.some((entry) => entry.length === 0)) return '--fields contains an empty path'
+  const paths: string[][] = []
+  for (const entry of entries) {
+    const segments = entry.split('.')
+    if (
+      segments.some(
+        (segment) => !FIELD_SEGMENT.test(segment) || FORBIDDEN_FIELD_SEGMENTS.has(segment),
+      )
+    ) {
+      return `invalid --fields path: ${entry}`
+    }
+    paths.push(segments)
+  }
+  return paths
 }
 
 /**
