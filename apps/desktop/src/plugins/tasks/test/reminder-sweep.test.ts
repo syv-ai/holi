@@ -216,10 +216,25 @@ describe('fallback overdue delivery', () => {
     expect(first.event).not.toBeNull()
     for (const receipt of first.fallbackMarks) mark(receipt.remote, receipt.path, receipt.fireAt)
     expect(sweep([a], '2026-07-31T10:00', NONE, null, seen).event).toBeNull()
+    mark('o/r', 'task.t.md', `${DUE}T09:00`)
+    expect(
+      sweep([vault([overdue(`${DUE}T09:00:30`)])], '2026-07-31T10:00', NONE, null, seen).event,
+    ).toBeNull()
     const earlier = vault([overdue('2026-07-27')])
     expect(sweep([earlier], '2026-07-31T10:00', NONE, null, seen).event).not.toBeNull()
     expect(sweep([vault([overdue(DUE)])], '2026-07-31T10:00', NONE, null, seen).event).toBeNull()
-    expect(sweep([vault([overdue(DUE)])], '2026-07-31T10:00', NONE, null, seen).event).toBeNull()
+    expect(
+      sweep([vault([overdue('2026-07-30')])], '2026-07-31T10:00', NONE, null, seen).event,
+    ).not.toBeNull()
+    expect(
+      sweep(
+        [vault([overdue(DUE, { path: 'task.other.md' })])],
+        '2026-07-31T10:00',
+        NONE,
+        null,
+        seen,
+      ).event,
+    ).not.toBeNull()
     expect(
       sweep([{ remote: 'o/other', tasks: [taskA] }], '2026-07-31T10:00', NONE, null, seen).event,
     ).not.toBeNull()

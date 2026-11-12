@@ -89,6 +89,20 @@ describe('createDeliveredLog', () => {
     })
   })
 
+  it('retains earlier, later and minute-normalized occurrences after a restart', () => {
+    const log = createDeliveredLog(rootFor)
+    for (const due of ['2026-07-28', '2026-07-27', '2026-07-29', '2026-07-29T09:00']) {
+      log.markFallback('o/r', 'task.a.md', due)
+    }
+    const restarted = createDeliveredLog(rootFor)
+    for (const due of ['2026-07-28', '2026-07-27', '2026-07-29', '2026-07-29T09:00']) {
+      expect(restarted.fallbackReceipts().has('o/r', 'task.a.md', due)).toBe(true)
+    }
+    expect(restarted.fallbackReceipts().has('o/r', 'task.other.md', '2026-07-28')).toBe(false)
+    expect(restarted.fallbackReceipts().has('other/vault', 'task.a.md', '2026-07-28')).toBe(false)
+    expect(restarted.read('o/r')).toEqual({})
+  })
+
   it('reads {} when rootFor cannot resolve the remote', () => {
     const log = createDeliveredLog(rootFor)
     expect(log.read('unknown/vault')).toEqual({})

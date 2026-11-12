@@ -47,7 +47,7 @@ export interface FallbackReceipt {
 }
 
 /** Stable occurrence key retains whether due names a day or a precise minute. */
-export function dueOccurrence(due: string): string | null {
+function dueOccurrence(due: string): string | null {
   const date = stampDate(due)
   if (date === null) return null
   const time = stampTime(due)
