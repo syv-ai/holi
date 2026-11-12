@@ -203,8 +203,17 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       return cache.readAgenda(agendaKey(window, overrides))
     },
 
-    threads(options) {
-      return syncThreads(api(), cache, options)
+    async threads(options) {
+      let knownAddresses: string[] | undefined
+      try {
+        knownAddresses = await (aliases ??= listSendAs(api()).catch((error: unknown) => {
+          aliases = null
+          throw error
+        }))
+      } catch {
+        // Without account-authenticated addresses, classifying a message as neither would be false certainty.
+      }
+      return syncThreads(api(), cache, options, knownAddresses)
     },
 
     contacts() {

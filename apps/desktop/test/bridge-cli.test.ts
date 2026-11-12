@@ -185,6 +185,8 @@ describe('usage', () => {
     expect(res.stdout).toContain('holi store put <bundle> <collection> <value> [<id>]')
     expect(res.stdout).toContain('holi skills update')
     expect(res.stdout).toContain("a vault PDF's comments")
+    expect(res.stdout).toContain('--fields <paths>')
+    expect(res.stdout).toContain('--fields <paths> selects comma-separated dotted fields')
   })
 
   it('answers --help with usage and exit 0, running nothing', async () => {
@@ -204,6 +206,17 @@ describe('usage', () => {
     const res = await run(bin, ['apps', 'delete', 'retro'], env)
     expect(res.code).toBe(2)
     expect(res.stderr).toContain('no such command: apps delete')
+    expect(capability).not.toHaveBeenCalled()
+  })
+
+  it('rejects invalid field selection before dispatch', async () => {
+    for (const args of [
+      ['store', 'list', 'T.app', 'items', '--fields', 'bundle'],
+      ['store', 'list', 'T.app', 'items', '--json', '--fields', 'bundle,,collection'],
+      ['store', 'list', 'T.app', 'items', '--json', '--fields', 'bundle.constructor'],
+    ]) {
+      expect((await run(bin, args, env)).code, args.join(' ')).toBe(2)
+    }
     expect(capability).not.toHaveBeenCalled()
   })
 
@@ -230,6 +243,43 @@ describe('usage', () => {
   })
 })
 
+describe('JSON field projection usage', () => {
+  const commands = [{ name: 'x.call', cli: { args: [], summary: 'call' } }] as const
+
+  it('parses and trims dotted field paths alongside JSON', () => {
+    expect(
+      resolveArgv(
+        ['x', 'call', '--json', '--fields', ' threads.id, threads.subject '],
+        commands,
+        null,
+      ),
+    ).toMatchObject({
+      kind: 'run',
+      json: true,
+      fields: [
+        ['threads', 'id'],
+        ['threads', 'subject'],
+      ],
+    })
+  })
+
+  it('requires JSON and rejects malformed or prototype-sensitive paths', () => {
+    for (const args of [
+      ['x', 'call', '--fields', 'a'],
+      ['x', 'call', '--json', '--fields', ''],
+      ['x', 'call', '--json', '--fields', 'a,,b'],
+      ['x', 'call', '--json', '--fields', '.a'],
+      ['x', 'call', '--json', '--fields', 'a.*'],
+      ['x', 'call', '--json', '--fields', 'a[0]'],
+      ['x', 'call', '--json', '--fields', '__proto__.polluted'],
+      ['x', 'call', '--json', '--fields', 'a.constructor'],
+      ['x', 'call', '--json', '--fields', 'a.prototype'],
+    ]) {
+      expect(resolveArgv(args, commands, null), args.join(' ')).toMatchObject({ kind: 'usage' })
+    }
+  })
+})
+
 describe('a command', () => {
   it('passes a path through verbatim, spaces and all', async () => {
     // The CLI must not be the thing that mangles it, or the refusal names an
@@ -238,6 +288,22 @@ describe('a command', () => {
     expect(res.code).toBe(0)
     expect(res.stdout).toBe('apps.open ok\n')
     expect(capability).toHaveBeenCalledWith('apps.open', { path: 'My Apps/my app' })
+  })
+
+  it('projects JSON before printing and leaves the capability parameters untouched', async () => {
+    capability.mockResolvedValueOnce({ name: 'store.get', params: { id: 't1' }, text: 'ok' })
+    const res = await run(
+      bin,
+      ['store', 'get', 'T.app', 'items', 't1', '--json', '--fields', 'params.id'],
+      env,
+    )
+    expect(res.code).toBe(0)
+    expect(JSON.parse(res.stdout)).toEqual({ params: { id: 't1' } })
+    expect(capability).toHaveBeenCalledWith('store.get', {
+      bundle: 'T.app',
+      collection: 'items',
+      id: 't1',
+    })
   })
 
   it('prints JSON with --json, before or after the path', async () => {
@@ -298,7 +364,11 @@ describe('a command', () => {
   })
 
   it('puts a refusal on stderr after the command, and exits 1', async () => {
-    const res = await run(bin, ['store', 'delete', 'T.app', 'items', 'gone'], env)
+    const res = await run(
+      bin,
+      ['store', 'delete', 'T.app', 'items', 'gone', '--json', '--fields', 'id'],
+      env,
+    )
     expect(res.code).toBe(1)
     expect(res.stdout).toBe('')
     expect(res.stderr).toBe('holi store delete: no such record\n')
@@ -321,6 +391,33 @@ describe('a command', () => {
 
 describe('an answer too long to print', () => {
   const rows = Array.from({ length: 400 }, (_, i) => ({ id: `t${i}`, subject: 'x'.repeat(40) }))
+
+  it('projects before spill so a reduced answer stays inline', async () => {
+    capability.mockResolvedValueOnce({ keep: 'small', discard: 'x'.repeat(SPILL_BYTES * 2) })
+    const res = await run(
+      bin,
+      ['store', 'list', 'T.app', 'items', '--json', '--fields', 'keep'],
+      env,
+    )
+    expect(res.code).toBe(0)
+    expect(JSON.parse(res.stdout)).toEqual({ keep: 'small' })
+    await expect(readdir(join(dir, OUT_DIR))).rejects.toThrow()
+  })
+
+  it('spills when the selected JSON answer remains large', async () => {
+    const payload = 'x'.repeat(SPILL_BYTES * 2)
+    capability.mockResolvedValueOnce({ keep: payload, discard: 'small' })
+    const res = await run(
+      bin,
+      ['store', 'list', 'T.app', 'items', '--json', '--fields', 'keep'],
+      env,
+    )
+    expect(res.code).toBe(0)
+    const notice = JSON.parse(res.stdout) as { spilled: string }
+    expect(await readFile(join(dir, notice.spilled), 'utf8')).toBe(
+      JSON.stringify({ keep: payload }, null, 2),
+    )
+  })
 
   it('is written to a local file under machine state, and the path printed', async () => {
     const text = JSON.stringify(rows)
@@ -382,8 +479,13 @@ describe('a pending docs mutation receipt', () => {
     await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
   })
 
-  it('exits 1 with the JSON receipt on stderr and writes stdin only once', async () => {
-    const res = await run(bin, ['docs', 'create', 'draft.md'], env, '# Draft\n')
+  it('exits 1 with the full JSON receipt on stderr and writes stdin only once', async () => {
+    const res = await run(
+      bin,
+      ['docs', 'create', 'draft.md', '--json', '--fields', 'path'],
+      env,
+      '# Draft\n',
+    )
     expect(res.code).toBe(1)
     expect(res.stdout).toBe('')
     expect(JSON.parse(res.stderr)).toEqual({

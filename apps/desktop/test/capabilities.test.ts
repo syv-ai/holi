@@ -231,7 +231,7 @@ function ctx(core: Partial<CoreServices>, bundle: string | null = 'A.app'): Capa
       dirs: written.filter((p) => p.includes('/')).map((p) => p.slice(0, p.lastIndexOf('/'))),
     }),
     // The tasks plugin runs: a note write to a task file asks its claim.
-    claims: async () => [taskClaim],
+    claims: async () => [{ ...taskClaim, plugin: 'tasks' }],
     // Holi has this vault open unless a test says otherwise (`requireOpen`).
     core: { ...noCoreServices(), syncState: () => ({ kind: 'up-to-date' }), ...core },
   }
