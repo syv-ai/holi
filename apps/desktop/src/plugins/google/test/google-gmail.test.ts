@@ -939,6 +939,55 @@ describe('readThread', () => {
 })
 
 describe('textOnly', () => {
+  it('cleans complete HTML quote spans only for the CLI and leaves the original projection intact', async () => {
+    const html =
+      '<p>On Tuesday Ada wrote:</p><blockquote><p>Old first paragraph.</p><p>Old second paragraph.</p><blockquote><p>Nested older history.</p></blockquote></blockquote><p>New bottom-posted answer.</p>'
+    const { api } = gmail([], {
+      t1: {
+        id: 't1',
+        messages: [{ id: 'm1', payload: { mimeType: 'text/html', body: { data: b64(html) } } }],
+      },
+    })
+    const thread = await readThread(api, 't1')
+    const before = structuredClone(thread)
+    // The pre-existing HTML-to-text reader representation must not gain quote markers.
+    expect(thread.messages[0]!.body).toBe(
+      'On Tuesday Ada wrote:\n\nOld first paragraph.\n\nOld second paragraph.\n\nNested older history.\n\nNew bottom-posted answer.',
+    )
+    expect(textOnly(thread).messages[0]!.body).toBe('New bottom-posted answer.')
+    expect(textOnly(thread, { full: true }).messages[0]!.body).toBe(thread.messages[0]!.body)
+    expect(thread).toEqual(before)
+    expect(thread.messages[0]!.html).toBe(html)
+  })
+
+  it('prefers plain originals over HTML alternatives and retains ambiguous malformed HTML', async () => {
+    const plain = 'The complete authored plain message.\r\n--\r\nKeep this separator.'
+    const html = '<p>On Tuesday Ada wrote:</p><blockquote><p>Old quoted text.</p>'
+    const { api } = gmail([], {
+      t1: {
+        messages: [
+          {
+            id: 'm1',
+            payload: {
+              mimeType: 'multipart/alternative',
+              parts: [
+                { mimeType: 'text/plain', body: { data: b64(plain) } },
+                { mimeType: 'text/html', body: { data: b64(html) } },
+              ],
+            },
+          },
+          { id: 'm2', payload: { mimeType: 'text/html', body: { data: b64(html) } } },
+        ],
+      },
+    })
+    const thread = await readThread(api, 't1')
+    const result = textOnly(thread)
+    expect(result.messages.map(({ id }) => id)).toEqual(['m1', 'm2'])
+    expect(result.messages[0]!.body).toBe(plain.replace(/\r\n/g, '\n'))
+    expect(result.messages[1]!.body).toContain('Old quoted text.')
+    expect(textOnly(thread, { full: true }).messages[0]!.body).toBe(plain)
+  })
+
   it('drops recognized quoted history by default and preserves the complete body with full', () => {
     const thread = {
       id: 't1',

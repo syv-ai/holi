@@ -5,18 +5,19 @@ const INVISIBLE =
   /[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g
 
 const QUOTE_START =
-  /^\s*(?:On .{1,240} (?:wrote|schrieb|a écrit|escribió|ha scritto)\s*:|(?:Le|Am|El) .{1,240} (?:wrote|schrieb|a écrit|escribió)\s*:|[- ]{2,}Original Message[- ]*)\s*$/i
+  /^\s*(?:On .{1,240} (?:wrote|schrieb|a écrit|escribió|ha scritto)\s*:|(?:Le|Am|El) .{1,240} (?:wrote|schrieb|a écrit|escribió)\s*:|Den .{1,240} skrev .{1,120}:|Am .{1,240} schrieb .{1,120}:)\s*$/i
 const FORWARD_START =
   /^\s*(?:-{2,}\s*(?:Forwarded message|Original Message)\s*-*|Begin forwarded message:|転送メッセージ)\s*$/i
 const FORWARD_HEADER = /^\s*(from|sent|date|to|subject)\s*:\s*\S/i
-const SIGNATURE_LINE =
-  /^\s*(?:-- \s*$|Sent from my (?:iPhone|iPad|Android|mobile device)\.?\s*$|Get Outlook for (?:iOS|Android)\s*$)/i
+const MOBILE_SIGNATURE =
+  /^\s*(?:Sent from my (?:iPhone|iPad|Android|mobile device)\.?|Get Outlook for (?:iOS|Android))\s*$/i
+const SIGNATURE_DELIMITER = /^-- [ \t]*$/
+const POSTSCRIPT = /^\s*(?:P\.?S\.?|P\.?P\.?S\.?|NB)\s*[:.! -]/i
 const CALENDAR_LABEL =
-  /^\s*(?:Join with Google Meet|Join Google Meet|Join Zoom Meeting|Join Microsoft Teams Meeting|Join meeting|Meeting link\s*:|Video call link\s*:|Google Meet joining info)\s*:?\s*$/i
+  /^\s*(?:Join with Google Meet|Join Google Meet|Join Zoom Meeting|Join Microsoft Teams Meeting|Join meeting|Meeting link|Video call link|Google Meet joining info)\s*:?\s*$/i
 const PROVIDER_LINK =
-  /https?:\/\/(?:meet\.google\.com|zoom\.us|[\w.-]+\.zoom\.us|teams\.microsoft\.com)\//i
-const CALENDAR_LINE =
-  /^\s*(?:Join with Google Meet|Join Google Meet|Join Zoom Meeting|Join Microsoft Teams Meeting|Join meeting|Meeting link\s*:|Video call link\s*:|Google Meet joining info|Dial in\s*:|More phone numbers\s*:|https?:\/\/(?:meet\.google\.com|zoom\.us|[\w.-]+\.zoom\.us|teams\.microsoft\.com)\/)/i
+  /^\s*https?:\/\/(?:meet\.google\.com|zoom\.us|[\w.-]+\.zoom\.us|teams\.microsoft\.com)\/[^\s<>]+\s*$/i
+const CALENDAR_DETAIL = /^\s*(?:Dial in:\s*\+?[\d ()-]+(?:\s+PIN:\s*[\d #]+)?|PIN:\s*[\d #]+)\s*$/i
 
 function isForwardBlock(lines: string[], marker: number): boolean {
   const following = lines.slice(marker + 1, marker + 8)
@@ -33,7 +34,9 @@ function isForwardBlock(lines: string[], marker: number): boolean {
 
 function isCalendarHeader(lines: string[], index: number): boolean {
   if (!CALENDAR_LABEL.test(lines[index]!)) return false
-  return lines.slice(index + 1, index + 6).some((line) => PROVIDER_LINK.test(line))
+  // An exact label followed by a provider URL, not prose merely containing one.
+  const next = lines.slice(index + 1, index + 4).find((line) => line.trim() !== '')
+  return next !== undefined && PROVIDER_LINK.test(next)
 }
 
 /** Keep authored prose unless an explicit, well-known boundary starts. */
@@ -43,7 +46,10 @@ export function cleanMailText(text: string): string {
   let quotedBlock = false
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index]!
-    if (QUOTE_START.test(line)) {
+    if (
+      QUOTE_START.test(line) &&
+      /^\s*>/.test(lines.slice(index + 1).find((next) => next.trim() !== '') ?? '')
+    ) {
       // A reply header establishes the following marked quote as history, not
       // all following prose: inline replies often resume after the quote.
       quotedBlock = true
@@ -54,7 +60,22 @@ export function cleanMailText(text: string): string {
       kept.push(line)
       continue
     }
-    if (SIGNATURE_LINE.test(line)) break
+    if (MOBILE_SIGNATURE.test(line)) continue
+    if (SIGNATURE_DELIMITER.test(line)) {
+      // A standard signature separator establishes only the next compact block.
+      // Blank-separated prose and explicit postscripts are not part of it.
+      let end = index + 1
+      while (
+        end < lines.length &&
+        lines[end]!.trim() !== '' &&
+        !POSTSCRIPT.test(lines[end]!) &&
+        !QUOTE_START.test(lines[end]!) &&
+        !FORWARD_START.test(lines[end]!)
+      )
+        end++
+      index = end - 1
+      continue
+    }
     if (isCalendarHeader(lines, index)) {
       // Remove only the bounded, independently recognizable calendar lines.
       // Authored prose following the invite survives.
@@ -62,7 +83,10 @@ export function cleanMailText(text: string): string {
       while (
         end < lines.length &&
         end <= index + 6 &&
-        (lines[end]!.trim() === '' || CALENDAR_LINE.test(lines[end]!))
+        (lines[end]!.trim() === '' ||
+          CALENDAR_LABEL.test(lines[end]!) ||
+          PROVIDER_LINK.test(lines[end]!) ||
+          CALENDAR_DETAIL.test(lines[end]!))
       )
         end++
       index = end - 1

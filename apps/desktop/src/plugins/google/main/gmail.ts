@@ -18,6 +18,7 @@
  * Google returned, so there is one sanitizer, in the one process with a DOM,
  * rather than two half-measures that each assume the other did the work.
  */
+import { Parser } from 'htmlparser2'
 import type { GoogleApi } from './api'
 import { cleanMailText } from './mail-text'
 import { fetchLabelNames } from './labels'
@@ -331,9 +332,6 @@ export function htmlToText(html: string): string {
       .replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, '')
       .replace(/<!--[\s\S]*?-->/g, '')
       .replace(/<br\s*\/?>/gi, '\n')
-      // Keep the HTML quote boundary in the prose projection so the agent-side
-      // cleaner can remove the quoted span without swallowing inline answers.
-      .replace(/<blockquote\b[^>]*>/gi, '> ')
       // A paragraph-level close is a blank line; a row or list item is a single
       // break. Treating them alike runs prose together into one wall.
       .replace(/<\/(p|div|h[1-6]|blockquote)>/gi, '\n\n')
@@ -786,6 +784,37 @@ export async function readThread(api: GoogleApi, threadId: string): Promise<Mail
   }
 }
 
+/** Preserve each HTML quote's extent only for the CLI's HTML-only fallback.
+ * The reader and --full retain the original htmlToText projection. */
+function quotedHtmlText(html: string): string {
+  const spans: { start: number; end: number }[] = []
+  let depth = 0
+  let start = 0
+  const parser = new Parser({
+    onopentag(name) {
+      if (name === 'blockquote' && depth++ === 0) start = parser.startIndex
+    },
+    onclosetag(name, implied) {
+      if (name !== 'blockquote' || depth === 0) return
+      if (--depth === 0 && !implied) spans.push({ start, end: parser.endIndex + 1 })
+    },
+  })
+  parser.end(html)
+  let marked = html
+  for (const { start, end } of spans.reverse()) {
+    const quote = htmlToText(html.slice(start, end))
+      .split('\n')
+      .map((line) => `> ${line}`)
+      .join('\n')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br>')
+    marked = `${marked.slice(0, start)}<p>${quote}</p>${marked.slice(end)}`
+  }
+  return htmlToText(marked)
+}
+
 /**
  * The thread as the agent should see it: text bodies, no markup.
  *
@@ -804,7 +833,13 @@ export function textOnly(
     webUrl: thread.webUrl,
     messages: thread.messages.map(({ html: _html, ...message }) => ({
       ...message,
-      body: full ? message.body : cleanMailText(message.body),
+      body: full
+        ? message.body
+        : cleanMailText(
+            typeof _html === 'string' && message.body === htmlToText(_html)
+              ? quotedHtmlText(_html)
+              : message.body,
+          ),
     })),
   }
 }

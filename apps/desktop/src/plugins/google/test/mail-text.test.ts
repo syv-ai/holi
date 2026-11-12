@@ -44,6 +44,41 @@ describe('cleanMailText', () => {
     )
   })
 
+  it('preserves prose after signatures and meeting blocks, even if it resembles another label', () => {
+    expect(cleanMailText('Ready.\n-- \nAda\nada@example.com\n\nP.S. Bring the draft.')).toBe(
+      'Ready.\n\nP.S. Bring the draft.',
+    )
+    expect(cleanMailText('Ready.\n-- \nAda\nP.S. Bring the draft.')).toBe(
+      'Ready.\nP.S. Bring the draft.',
+    )
+    expect(cleanMailText('Ready.\nSent from my iPhone\nPlease bring the draft.')).toBe(
+      'Ready.\nPlease bring the draft.',
+    )
+    expect(
+      cleanMailText(
+        'Join meeting\nhttps://meet.google.com/abc-defg-hij\nJoin meeting tomorrow with the draft.',
+      ),
+    ).toBe('Join meeting tomorrow with the draft.')
+    expect(
+      cleanMailText('Join meeting\nMy notes are at https://meet.google.com/abc-defg-hij'),
+    ).toBe('Join meeting\nMy notes are at https://meet.google.com/abc-defg-hij')
+  })
+
+  it('keeps ambiguous unmarked history and recognizes Danish and German marked quotes', () => {
+    expect(cleanMailText('On Tuesday Alice wrote:\nThese words might be the new answer.')).toBe(
+      'On Tuesday Alice wrote:\nThese words might be the new answer.',
+    )
+    expect(
+      cleanMailText('Den 10. november skrev Ada:\n> Er tallene korrekte?\nJa, de stemmer.'),
+    ).toBe('Ja, de stemmer.')
+    expect(cleanMailText('Am Dienstag schrieb Ada:\n> Bitte prüfen.\nDie Zahlen stimmen.')).toBe(
+      'Die Zahlen stimmen.',
+    )
+    expect(cleanMailText('-----Original Message-----\nOnly an example, not a mail header.')).toBe(
+      '-----Original Message-----\nOnly an example, not a mail header.',
+    )
+  })
+
   it('preserves sign-offs, separators, standalone quote markers and malformed content', () => {
     expect(cleanMailText('Thanks,\nAda.\n\nP.S. -- I will follow up!')).toBe(
       'Thanks,\nAda.\n\nP.S. -- I will follow up!',
