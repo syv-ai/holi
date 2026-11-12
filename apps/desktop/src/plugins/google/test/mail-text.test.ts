@@ -34,12 +34,26 @@ describe('cleanMailText', () => {
     )
     expect(
       cleanMailText(
-        'New note\n\n---------- Forwarded message ----------\nFrom: Alice <a@example.com>\nDate: Tue\nTo: Bob\nSubject: Plan\nold mail',
+        'New note\n\n---------- Forwarded message ----------\nFrom: Alice <a@example.com>\nDate: Tue\nTo: Bob\nSubject: Plan\n> old mail',
       ),
     ).toBe('New note')
     expect(
       cleanMailText('Message\n----- Forwarded message -----\nFrom: someone\nSubject: incomplete'),
     ).toContain('Forwarded message')
+  })
+
+  it('keeps bottom-posted answers after a bounded forwarded quote', () => {
+    expect(
+      cleanMailText(
+        '-----Original Message-----\nFrom: Ada\nDate: Tue\nSubject: Plan\n> Old proposal.\n> Old dates.\nThe dates work for me.',
+      ),
+    ).toBe('The dates work for me.')
+  })
+
+  it('retains trailing text when a forwarded header has no visible quote boundary', () => {
+    const body =
+      '-----Original Message-----\nFrom: Ada\nDate: Tue\nSubject: Plan\nOld proposal.\nMy answer: the dates work.'
+    expect(cleanMailText(body)).toBe(body)
   })
 
   it('removes mobile signatures and provider-backed meeting lines without losing prose', () => {
