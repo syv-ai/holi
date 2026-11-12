@@ -4,6 +4,7 @@
  * tab's menu and a drag make a split; its members carry thin headers.
  */
 import { useEffect } from 'react'
+import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { afterEach, expect, test, vi } from 'vitest'
 import { Input } from '@/components/ui/input'
@@ -31,7 +32,7 @@ import { activeSplit, focusedTab, isSplit, openTab, splitActive } from '@/state/
 import { vaultSettingsAtom } from '@/state/settings'
 import { tabDragAtom } from '@/features/shell/use-tab-drag'
 import { registerBuffer } from '@/lib/buffer-registry'
-import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
+import { activeRemoteAtom, openedRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 
 const write = vi.fn(async (_input: unknown) => ({
   ok: true as const,
@@ -162,6 +163,42 @@ class LayoutObserver {
     }
   }
 }
+
+test('scratchpad actions wait for the active vault to finish opening', async () => {
+  const store = mount()
+  act(() => store.set(openedRemoteAtom, 'mara/notes'))
+
+  // Switch while A's snapshot is still loaded, before B's open completes.
+  act(() => {
+    store.set(activeRemoteAtom, 'other/vault')
+    store.set(openedRemoteAtom, null)
+    // The previously registered shell shortcut can fire before React commits
+    // the rerender that removes its callback; it must still reject stale A.
+    fireEvent.keyDown(window, { key: 's', altKey: true, ctrlKey: true })
+  })
+  expect(store.get(shellWorkspaceAtom).entries).toHaveLength(0)
+
+  fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
+  await screen.findByRole('combobox')
+  await userEvent.type(screen.getByRole('combobox'), '>scratchpad')
+  expect(screen.queryByRole('option', { name: /scratchpad/i })).not.toBeInTheDocument()
+  await userEvent.keyboard('{Escape}')
+
+  // Once B's open completes, the palette action appears and opens the normal
+  // document tab. Repeating the shortcut selects that same tab.
+  act(() => store.set(openedRemoteAtom, 'other/vault'))
+  fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
+  await screen.findByRole('combobox')
+  await userEvent.type(screen.getByRole('combobox'), '>scratchpad')
+  const scratchpad = await screen.findByRole('option', { name: /scratchpad/i })
+  await userEvent.keyboard('{Enter}')
+  await waitFor(() => expect(focusedTab(store.get(shellWorkspaceAtom))).toBe('scratchpad.local.md'))
+  expect(store.get(shellWorkspaceAtom).entries).toHaveLength(1)
+  fireEvent.keyDown(window, { key: 's', altKey: true, ctrlKey: true })
+  expect(focusedTab(store.get(shellWorkspaceAtom))).toBe('scratchpad.local.md')
+  expect(store.get(shellWorkspaceAtom).entries).toHaveLength(1)
+  expect(scratchpad).toBeTruthy()
+})
 
 test('the tab count follows observed strip and entry layout changes', async () => {
   const previous = globalThis.ResizeObserver

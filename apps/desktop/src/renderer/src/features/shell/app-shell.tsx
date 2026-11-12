@@ -51,7 +51,7 @@ import {
 import { openingBeside } from '@/state/alt-open'
 import { AGENTS_HOME_KEY, parseTabKey, tabKey, tabPath } from '@/state/tab-descriptor'
 import { shellTabForPathAtom } from '@/state/surfaces'
-import { activeRemoteAtom, snapshotLoadedAtom } from '@/state/vaults'
+import { activeRemoteAtom, openedRemoteAtom, snapshotLoadedAtom } from '@/state/vaults'
 import type { Move } from '@/lib/tree-actions'
 import { saveBeforeClosing } from '@/lib/buffer-registry'
 import { useShortcutDispatcher } from '@/hooks/use-shortcuts'
@@ -260,9 +260,13 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
 
   const createDocument = useNewDocument(openTabKey)
   const openScratchpad =
-    remote !== null && snapshotLoaded
+    remote !== null && snapshotLoaded && store.get(openedRemoteAtom) === remote
       ? () => {
-          if (store.get(activeRemoteAtom) === remote && store.get(snapshotLoadedAtom)) {
+          if (
+            store.get(activeRemoteAtom) === remote &&
+            store.get(openedRemoteAtom) === remote &&
+            store.get(snapshotLoadedAtom)
+          ) {
             openTabKey(SCRATCHPAD_PATH)
           }
         }
