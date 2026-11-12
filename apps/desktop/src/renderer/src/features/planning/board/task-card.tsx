@@ -142,7 +142,7 @@ function TaskItem({
       data-task={task.path}
       className={cn(
         'bg-card hover:border-foreground/20 items-stretch',
-        task.due !== undefined && state === 'watch' && 'border-warning/40',
+        task.due !== undefined && (state === 'watch' || state === 'today') && 'border-warning/40',
         task.due !== undefined && state === 'risk' && 'border-destructive/40 bg-destructive/5',
         isOverlay && 'border-foreground/30',
       )}

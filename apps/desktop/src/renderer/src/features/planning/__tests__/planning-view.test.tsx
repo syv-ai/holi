@@ -170,6 +170,7 @@ test('due chips distinguish today, exact-minute urgency, invalid dates and compl
   expect(screen.getByLabelText(/Was due/)).toBeInTheDocument()
   const todayChip = screen.getByLabelText(/^Due today, Oct 23$/)
   expect(within(todayChip).getByText('Due today')).toBeVisible()
+  expect(todayChip.closest('[data-task]')).toHaveClass('border-warning/40')
   expect(within(screen.getByLabelText(/11:59, overdue/)).getByText('Overdue')).toBeVisible()
   expect(within(screen.getByLabelText('Due not-a-date')).queryByText('Overdue')).toBeNull()
   expect(document.querySelector('[data-task="task.ship.md"] [aria-label^="Due"]')).toBeNull()
