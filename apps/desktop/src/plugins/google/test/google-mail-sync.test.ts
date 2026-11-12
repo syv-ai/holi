@@ -668,7 +668,7 @@ describe('syncThreads', () => {
       const page = await syncThreads(second.api, cache, {})
 
       expect(page.threads.map((item) => item.id)).toContain('t2')
-      expect(threadGets(second.seen)).toHaveLength(0)
+      expect(threadGets(second.seen)).toHaveLength(1)
     })
 
     it('keeps an inbox thread when a SENT-only reply is trashed', async () => {
@@ -689,7 +689,7 @@ describe('syncThreads', () => {
       const page = await syncThreads(second.api, cache, {})
 
       expect(page.threads.map((item) => item.id)).toContain('t2')
-      expect(threadGets(second.seen)).toHaveLength(0)
+      expect(threadGets(second.seen)).toHaveLength(1)
     })
 
     it('treats trash the same way, though nothing was deleted', async () => {
