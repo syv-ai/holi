@@ -407,7 +407,9 @@ describe('syncThreads', () => {
     const page = await syncThreads(second.api, cache, options)
 
     expect(page.threads.map((thread) => thread.id)).toContain('restored')
-    expect(threadGets(second.seen)).toContain(expect.stringContaining('/threads/restored'))
+    expect(threadGets(second.seen)).toEqual(
+      expect.arrayContaining([expect.stringContaining('/threads/restored')]),
+    )
   })
 
   it('does not admit unrelated archive or trash departures to an explicit query', async () => {
@@ -440,7 +442,9 @@ describe('syncThreads', () => {
       const page = await syncThreads(second.api, cache, options)
 
       expect(page.threads.map((thread) => thread.id)).not.toContain(id)
-      expect(threadGets(second.seen)).not.toContain(expect.stringContaining(`/threads/${id}`))
+      expect(threadGets(second.seen)).not.toEqual(
+        expect.arrayContaining([expect.stringContaining(`/threads/${id}`)]),
+      )
     }
   })
 
@@ -646,6 +650,7 @@ describe('syncThreads', () => {
       cache.dropThread('t2')
 
       const second = gmail({
+        list: [{ id: 't1' }, { id: 't2' }],
         history: {
           historyId: '6004',
           history: [
