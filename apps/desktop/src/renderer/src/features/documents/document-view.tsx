@@ -28,6 +28,7 @@ import {
   isHoliLinkable,
   isResolved,
   parseTaskFile,
+  SCRATCHPAD_PATH,
   TASKS_CLAIM,
 } from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
@@ -136,6 +137,9 @@ export function DocumentView({
   const docs = snapshot.docs
   const mtime =
     docs.find((doc) => doc.path === path)?.updatedAt ??
+    (path === SCRATCHPAD_PATH
+      ? snapshot.files.find((file) => file.path === SCRATCHPAD_PATH)?.updatedAt
+      : undefined) ??
     JSON.stringify(snapshot.claimed[TASKS_CLAIM]?.items.find((item) => item.path === path) ?? null)
   const [load, setLoad] = useState<Load>({ kind: 'loading' })
   const [attempt, setAttempt] = useState(0)

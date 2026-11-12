@@ -12,6 +12,7 @@ import {
   applyThemePatch,
   LOCAL_ONLY_IGNORE_LINES,
   OS_JUNK_FILES,
+  SCRATCHPAD_PATH,
   MEMORY_INDEX,
   MEMORY_INDEX_EMPTY,
   seedSettings,
@@ -114,6 +115,8 @@ export const coreSeed = (known: readonly PluginInfo[]): SeedContribution => ({
     // in its empty-state form; after that the `memory-index` transform owns
     // the file, which is why it is once and not shipped.
     [MEMORY_INDEX]: MEMORY_INDEX_EMPTY,
+    // A personal document, kept out of normal git commits by `.local.` rules.
+    [SCRATCHPAD_PATH]: folder.once[SCRATCHPAD_PATH] as string,
   },
   shipped: folder.shipped,
   merge: {

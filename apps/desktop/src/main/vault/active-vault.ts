@@ -16,7 +16,7 @@
  *   - The snapshot push carries **no path**. Everything downstream re-derives
  *     from it, so an over-eager push is free and a missed one self-heals.
  */
-import { emptyVaultSnapshot, syncLabel, vaultRelPath } from '@holi/shared'
+import { emptyVaultSnapshot, SCRATCHPAD_PATH, syncLabel, vaultRelPath } from '@holi/shared'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { SyncState, VaultSnapshot } from '@holi/shared'
@@ -1074,7 +1074,8 @@ export async function openActiveVault(args: {
   const watcher: VaultWatcher = await watchVault({
     root,
     debounceMs: timings.rescanDebounceMs,
-    watches: (rel) => rel.endsWith('.md') && claimed.some((c) => c.match(rel)),
+    watches: (rel) =>
+      rel === SCRATCHPAD_PATH || (rel.endsWith('.md') && claimed.some((c) => c.match(rel))),
     onChange: () => {
       // The tree updates promptly; the commit waits for the edits to stop. Two
       // debounces off one signal, because they answer different questions.

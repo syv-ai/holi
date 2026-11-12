@@ -11,6 +11,7 @@ import {
   LOCAL_ONLY_IGNORE_LINES,
   MEMORY_INDEX_EMPTY,
   OS_JUNK_FILES,
+  SCRATCHPAD_PATH,
   VAULT_MARKER_FILE,
 } from '@holi/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -170,6 +171,7 @@ describe('the seed tables', () => {
       '.holi/settings/theme.local.css',
       '.holi/vault',
       'AGENTS.md',
+      'scratchpad.local.md',
     ])
     expect(keys(coreSeed([]).shipped)).toEqual([])
     expect(keys(coreSeed([]).merge!)).toEqual(['.gitignore'])
@@ -434,6 +436,33 @@ describe('ensureSeeded', () => {
     expect(font.length).toBeGreaterThan(50_000) // a real font, not a stub
     const logo = await readFile(join(root, '.holi/document-templates/_brand/logo.png'))
     expect(logo.subarray(1, 4).toString('latin1')).toBe('PNG') // PNG magic
+  })
+
+  it('adds the scratchpad to an existing vault without replacing an occupied path', async () => {
+    const root = await tempDir()
+    await mkdir(join(root, '.holi'), { recursive: true })
+    await writeFile(join(root, VAULT_MARKER_FILE), '1\n')
+    await writeFile(join(root, 'scratchpad.local.md'), 'my existing notes\n')
+
+    const { written } = await ensureSeeded(root)
+
+    expect(written).not.toContain(SCRATCHPAD_PATH)
+    expect(await readFile(join(root, SCRATCHPAD_PATH), 'utf8')).toBe('my existing notes\n')
+    expect(await readFile(join(root, 'AGENTS.md'), 'utf8')).toBe(SEED_FILES['AGENTS.md'])
+  })
+
+  it('keeps the scratchpad out of real git commits after edits', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await exec('git', ['init', '-b', 'main'], { cwd: root })
+    await exec('git', ['config', 'user.name', 'Holi Test'], { cwd: root })
+    await exec('git', ['config', 'user.email', 'holi@example.invalid'], { cwd: root })
+    await exec('git', ['add', '-A'], { cwd: root })
+    await exec('git', ['commit', '-m', 'seed'], { cwd: root })
+
+    await writeFile(join(root, SCRATCHPAD_PATH), 'personal edit\n')
+    const { stdout } = await exec('git', ['status', '--porcelain'], { cwd: root })
+    expect(stdout).toBe('')
   })
 
   it('never overwrites an existing file, and is idempotent', async () => {
