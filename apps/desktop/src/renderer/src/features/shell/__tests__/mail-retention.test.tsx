@@ -2,7 +2,7 @@
  * The shell’s real retained-host and TabView composition with Google’s Mail
  * contribution. Gmail responses are synthetic; Mail state and DOM are real.
  */
-import { act, fireEvent, render, screen, waitFor, within } from '@/test/render'
+import { act, fireEvent, render, screen, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createStore, getDefaultStore, Provider, useAtomValue } from 'jotai'
@@ -246,6 +246,62 @@ test('shell switch and back retains real Mail list, selection and scroll without
   expect(readerScroller.scrollTop).toBe(275)
   expect(searchMock).toHaveBeenCalledTimes(listCalls)
   expect(threadMock).toHaveBeenCalledTimes(threadCalls)
+})
+
+test.each([
+  ['mailbox', 'Mailbox: Inbox'],
+  ['Gmail category', 'Inbox tab: All tabs'],
+  ['account', 'Google account ada@syv.ai'],
+] as const)('parked Mail closes its %s menu', async (_name, triggerName) => {
+  const user = userEvent.setup()
+  const { show } = mountMailTabs()
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(screen.getByRole('button', { name: triggerName }))
+  expect(await screen.findByRole('menu')).toBeInTheDocument()
+
+  show(otherKey)
+  const foreground = await screen.findByRole('textbox', { name: 'Other app state' })
+  expect(screen.queryByRole('menu')).toBeNull()
+  await user.click(foreground)
+  await user.type(foreground, ' typed')
+  expect(foreground).toHaveValue('initial typed')
+
+  show(mailKey)
+  expect(await screen.findByRole('list', { name: 'Inbox' })).toBeInTheDocument()
+  expect(screen.queryByRole('menu')).toBeNull()
+})
+
+test('parked Mail hides an open tooltip', async () => {
+  const user = userEvent.setup()
+  const { show } = mountMailTabs()
+  await screen.findByRole('list', { name: 'Inbox' })
+  await user.hover(screen.getByRole('button', { name: 'Refresh mail' }))
+  expect(await screen.findByRole('tooltip')).toHaveTextContent('Refresh')
+
+  show(otherKey)
+  await screen.findByRole('textbox', { name: 'Other app state' })
+  expect(screen.queryByRole('tooltip')).toBeNull()
+})
+
+test('parked Mail closes its More actions menu without losing the open thread', async () => {
+  const user = userEvent.setup()
+  const { show } = mountMailTabs()
+  const list = await screen.findByRole('list', { name: 'Inbox' })
+  await user.click(within(list).getByText('Q2 budget'))
+  await screen.findByRole('heading', { name: 'Q2 budget' })
+  await user.click(screen.getByRole('button', { name: 'More actions' }))
+  expect(await screen.findByRole('menu')).toBeInTheDocument()
+
+  show(otherKey)
+  expect(screen.queryByRole('menu')).toBeNull()
+  const foreground = await screen.findByRole('textbox', { name: 'Other app state' })
+  await user.click(foreground)
+  await user.type(foreground, ' typed')
+  expect(foreground).toHaveValue('initial typed')
+
+  show(mailKey)
+  expect(screen.getByRole('heading', { name: 'Q2 budget' })).toBeInTheDocument()
+  expect(screen.queryByRole('menu')).toBeNull()
 })
 
 test('Mail first mounts when displayed, close and reopen starts fresh, other apps still unmount', async () => {

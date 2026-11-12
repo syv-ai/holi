@@ -216,10 +216,17 @@ function MailAccountShell({
         }
       >
         {/* The list column, with the account and the mailbox menu atop it */}
-        <AppSidebar expanded={expanded} onToggle={() => setExpanded((value) => !value)}>
+        <AppSidebar
+          expanded={expanded}
+          onToggle={() => setExpanded((value) => !value)}
+          visible={visible}
+        >
           <MailList
             mail={mail}
-            account={<NavUser onManage={openConnections} onError={mail.reportError} />}
+            account={
+              <NavUser onManage={openConnections} onError={mail.reportError} visible={visible} />
+            }
+            visible={visible}
             onSelectFolder={(folder) => {
               mail.setFolder(folder)
               setInline(null)
@@ -232,7 +239,7 @@ function MailAccountShell({
 
         {/* No fill of its own: the window's surface shows through. */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <AppHeader mail={mail} commands={commands} />
+          <AppHeader mail={mail} commands={commands} visible={visible} />
           <MailReader
             mail={mail}
             composer={
@@ -243,6 +250,7 @@ function MailAccountShell({
                 : null
             }
             onCompose={() => startCompose()}
+            visible={visible}
           />
         </div>
       </SidebarProvider>
