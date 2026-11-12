@@ -169,7 +169,7 @@ function TextEditor({
   const reportSelection = useRef(setEditorSelection)
   reportSelection.current = setEditorSelection
   const memory = useViewMemory()
-  const vim = useVimEditor(view, vimEnabled && focused, onVimModeChange, handleFindKeyDown)
+  const vim = useVimEditor(view, vimEnabled, visible && focused, onVimModeChange, handleFindKeyDown)
   const visibility = useRef(visible)
   const focusState = useRef(focused)
   focusState.current = focused
