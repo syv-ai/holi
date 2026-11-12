@@ -14,11 +14,13 @@
  * - The **agent** reads `body`, via `textOnly()` below. An LLM wants prose, not
  *   a table layout.
  *
- * Nothing here sanitizes, and that is deliberate: main hands over exactly what
- * Google returned, so there is one sanitizer, in the one process with a DOM,
- * rather than two half-measures that each assume the other did the work.
+ * Raw message bodies and HTML remain exactly as Google returned them. Only the
+ * agent's text projection applies conservative quoted-span cleanup; the UI's
+ * HTML sanitizer remains in the renderer, where a DOM is available.
  */
+import { Parser } from 'htmlparser2'
 import { GoogleApiError, type GoogleApi } from './api'
+import { cleanMailText } from './mail-text'
 import { fetchLabelNames } from './labels'
 import { buildRfc822, toBase64Url, type MailPart, type OutgoingMail } from './mime'
 
@@ -1023,6 +1025,37 @@ export async function readThread(api: GoogleApi, threadId: string): Promise<Mail
   }
 }
 
+/** Preserve each HTML quote's extent only for the CLI's HTML-only fallback.
+ * The reader and --full retain the original htmlToText projection. */
+function quotedHtmlText(html: string): string {
+  const spans: { start: number; end: number }[] = []
+  let depth = 0
+  let start = 0
+  const parser = new Parser({
+    onopentag(name) {
+      if (name === 'blockquote' && depth++ === 0) start = parser.startIndex
+    },
+    onclosetag(name, implied) {
+      if (name !== 'blockquote' || depth === 0) return
+      if (--depth === 0 && !implied) spans.push({ start, end: parser.endIndex + 1 })
+    },
+  })
+  parser.end(html)
+  let marked = html
+  for (const { start, end } of spans.reverse()) {
+    const quote = htmlToText(html.slice(start, end))
+      .split('\n')
+      .map((line) => `> ${line}`)
+      .join('\n')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br>')
+    marked = `${marked.slice(0, start)}<p>${quote}</p>${marked.slice(end)}`
+  }
+  return htmlToText(marked)
+}
+
 /**
  * The thread as the agent should see it: text bodies, no markup.
  *
@@ -1031,12 +1064,24 @@ export async function readThread(api: GoogleApi, threadId: string): Promise<Mail
  * unsanitized markup should reach exactly one consumer, the renderer that
  * sanitizes it.
  */
-export function textOnly(thread: MailThread): AgentMailThread {
+export function textOnly(
+  thread: MailThread,
+  { full = false }: { full?: boolean } = {},
+): AgentMailThread {
   return {
     id: thread.id,
     subject: thread.subject,
     webUrl: thread.webUrl,
-    messages: thread.messages.map(({ html: _html, ...message }) => message),
+    messages: thread.messages.map(({ html: _html, ...message }) => ({
+      ...message,
+      body: full
+        ? message.body
+        : cleanMailText(
+            typeof _html === 'string' && message.body === htmlToText(_html)
+              ? quotedHtmlText(_html)
+              : message.body,
+          ),
+    })),
   }
 }
 
