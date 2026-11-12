@@ -2,29 +2,49 @@ import { describe, expect, it } from 'vitest'
 import { cleanMailText, cleanSearchSnippet } from '../main/mail-text'
 
 describe('cleanMailText', () => {
-  it('strips recognized English reply history and delimiter signatures', () => {
+  it('removes a marked inline quote but keeps the authored answer after it', () => {
     expect(
       cleanMailText(
-        'Thanks for the update.\n\n-- \nAda\n\nOn Tue, Jan 2, 2024, Bob wrote:\nold text',
+        'Thanks for the update.\n\nOn Tue, Jan 2, 2024, Bob wrote:\n> Can we move the launch?\nYes, Thursday works.',
       ),
-    ).toBe('Thanks for the update.')
+    ).toBe('Thanks for the update.\n\nYes, Thursday works.')
   })
 
-  it('recognizes localized reply and forward markers', () => {
-    expect(cleanMailText('Bonjour\n\nLe 2 janvier, Alice a écrit :\nancien texte')).toBe('Bonjour')
-    expect(cleanMailText('New note\n\n---------- Forwarded message ----------\nold mail')).toBe(
-      'New note',
+  it('removes bottom-posted quotes when the quote itself is marked', () => {
+    expect(
+      cleanMailText(
+        'Agreed.\n\nOn Tue, Jan 2, 2024, Bob wrote:\n> Please review the attached draft.\n> We need feedback by Friday.',
+      ),
+    ).toBe('Agreed.')
+  })
+
+  it('recognizes localized reply and well-formed forward markers', () => {
+    expect(cleanMailText('Bonjour\n\nLe 2 janvier, Alice a écrit :\n> ancien texte')).toBe(
+      'Bonjour',
     )
+    expect(
+      cleanMailText(
+        'New note\n\n---------- Forwarded message ----------\nFrom: Alice <a@example.com>\nDate: Tue\nTo: Bob\nSubject: Plan\nold mail',
+      ),
+    ).toBe('New note')
+    expect(
+      cleanMailText('Message\n----- Forwarded message -----\nFrom: someone\nSubject: incomplete'),
+    ).toContain('Forwarded message')
   })
 
-  it('removes recognized mobile signatures and calendar join boilerplate', () => {
+  it('removes mobile signatures and provider-backed meeting lines without losing prose', () => {
     expect(cleanMailText('See you then.\nSent from my iPhone')).toBe('See you then.')
-    expect(cleanMailText('Agenda\nJoin with Google Meet\nhttps://meet.google.com/abc')).toBe(
-      'Agenda',
+    expect(
+      cleanMailText(
+        'Agenda\nJoin with Google Meet\nhttps://meet.google.com/abc-defg-hij\n\nPlease bring the revised plan.',
+      ),
+    ).toBe('Agenda\nPlease bring the revised plan.')
+    expect(cleanMailText('Join meeting tomorrow and bring the draft.\nMore below.')).toBe(
+      'Join meeting tomorrow and bring the draft.\nMore below.',
     )
   })
 
-  it('preserves sign-offs, punctuation, and unrecognized or malformed content', () => {
+  it('preserves sign-offs, separators, standalone quote markers and malformed content', () => {
     expect(cleanMailText('Thanks,\nAda.\n\nP.S. -- I will follow up!')).toBe(
       'Thanks,\nAda.\n\nP.S. -- I will follow up!',
     )
@@ -32,6 +52,12 @@ describe('cleanMailText', () => {
       'I wrote this: On a wall, nobody wrote:',
     )
     expect(cleanMailText('-- I disagree with this.')).toBe('-- I disagree with this.')
+    expect(cleanMailText('A markdown separator follows.\n--\nP.S. I will send the link.')).toBe(
+      'A markdown separator follows.\n--\nP.S. I will send the link.',
+    )
+    expect(cleanMailText('> This may be a quote, but has no attribution.')).toBe(
+      '> This may be a quote, but has no attribution.',
+    )
     expect(cleanMailText('Body\nOn Tue wrote\nnot a valid quote marker')).toBe(
       'Body\nOn Tue wrote\nnot a valid quote marker',
     )
@@ -39,8 +65,10 @@ describe('cleanMailText', () => {
 })
 
 describe('cleanSearchSnippet', () => {
-  it('removes invisible preheader characters and decodes HTML entities', () => {
-    expect(cleanSearchSnippet('\u200bHello&nbsp;&amp; &#x1F642;')).toBe('Hello & 🙂')
+  it('decodes named and numeric entities before removing invisible controls', () => {
+    expect(cleanSearchSnippet('\u200bHello&#8203;&nbsp;&amp; &#x1F642; &zwnj; &shy;')).toBe(
+      'Hello & 🙂',
+    )
   })
 
   it('leaves malformed entities intact', () => {

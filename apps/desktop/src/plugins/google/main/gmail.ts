@@ -331,6 +331,9 @@ export function htmlToText(html: string): string {
       .replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, '')
       .replace(/<!--[\s\S]*?-->/g, '')
       .replace(/<br\s*\/?>/gi, '\n')
+      // Keep the HTML quote boundary in the prose projection so the agent-side
+      // cleaner can remove the quoted span without swallowing inline answers.
+      .replace(/<blockquote\b[^>]*>/gi, '> ')
       // A paragraph-level close is a blank line; a row or list item is a single
       // break. Treating them alike runs prose together into one wall.
       .replace(/<\/(p|div|h[1-6]|blockquote)>/gi, '\n\n')
