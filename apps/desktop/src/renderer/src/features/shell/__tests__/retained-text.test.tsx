@@ -1,23 +1,35 @@
-/** Acceptance tests for real text editors retained by the app shell. */
+/** Real text editors exercise the shell's connected retention and buffer ownership. */
 import { EditorSelection } from '@codemirror/state'
+import { undo } from '@codemirror/commands'
 import { EditorView } from '@codemirror/view'
+import { getCM, Vim } from '@replit/codemirror-vim'
 import { Provider, createStore } from 'jotai'
-import { afterEach, expect, test, vi } from 'vitest'
-import { act, cleanup, render, screen, waitFor } from '@/test/render'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import { emptyVaultSnapshot, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { coreContributionAtom } from '@/state/plugins'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 import { shellWorkspaceAtom } from '@/state/shell-tabs'
-import { closeTab, openInSplit, openTab, selectEntry, splitActive } from '@/state/shell-workspace'
+import {
+  activeSplit,
+  closeTab,
+  focusedTab,
+  openInSplit,
+  openTab,
+  selectEntry,
+  separate,
+} from '@/state/shell-workspace'
 import { vimCodeEditingAtom } from '@/state/preferences'
+import { changedDocsAtom } from '@/state/doc-changes'
+import { editorSelectionAtom } from '@/state/ui-report'
+import { flushAllBuffers } from '@/lib/buffer-registry'
 
-const read = vi.fn(async (_input: { remote: string; path: string }) => 'initial text\n')
-const write = vi.fn(async (_input: unknown) => ({ ok: true, warnings: [] }))
-const files = () => [
-  { path: 'src/one.ts', updatedAt: 'one' },
-  { path: 'src/two.ts', updatedAt: 'one' },
-  { path: 'settings.json', updatedAt: 'one' },
-]
+const read = vi.fn(
+  async (_input: { remote: string; path: string }) => 'first line\nsecond line\nthird line\n',
+)
+const write = vi.fn(async (_input: unknown) => ({ ok: true, warnings: [] as string[] }))
+const files = () =>
+  ['src/one.ts', 'src/two.ts', 'settings.json'].map((path) => ({ path, updatedAt: 'one' }))
 const settings = { ...VAULT_SETTING_DEFAULTS, warnings: [] }
 
 vi.mock('@/lib/trpc', () => {
@@ -28,7 +40,7 @@ vi.mock('@/lib/trpc', () => {
         ? settings
         : name === 'settings.pluginFailures'
           ? {}
-          : name === 'github.fileContributors'
+          : name === 'github.fileContributors' || name === 'history.list'
             ? []
             : name === 'github.collaborators'
               ? { visibility: 'private', collaborators: [] }
@@ -52,6 +64,7 @@ vi.mock('@/lib/trpc', () => {
     ),
   }
 })
+// jsdom has no layout; retain the real shell, routing, editor and history modules.
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanelGroup: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   ResizablePanel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -63,14 +76,19 @@ vi.mock('@/components/ui/motion-panels', () => ({
   PanelSeparator: () => <div />,
 }))
 vi.mock('motion-panels/react', () => ({ Separator: () => <div /> }))
-vi.mock('@/features/history/file-history-button', () => ({ FileHistoryButton: () => null }))
 vi.mock('@/features/sidebar/app-sidebar', () => ({ AppSidebar: () => <div /> }))
 const { AppShell } = await import('@/features/shell/app-shell')
 
+beforeEach(() => {
+  read
+    .mockReset()
+    .mockImplementation(async ({ path }) =>
+      path.endsWith('.json') ? '{"initial":true}' : 'first line\nsecond line\nthird line\n',
+    )
+  write.mockReset().mockResolvedValue({ ok: true, warnings: [] })
+})
 afterEach(() => {
   cleanup()
-  read.mockClear()
-  write.mockClear()
   vi.restoreAllMocks()
 })
 
@@ -83,7 +101,10 @@ function fixture(initial = ['src/one.ts', 'src/two.ts']) {
   store.set(snapshotAtom, { ...emptyVaultSnapshot(), files: files() })
   store.set(vimCodeEditingAtom, true)
   store.set(shellWorkspaceAtom, (ws) =>
-    initial.slice(1).reduce((next, key) => openTab(next, key), openTab(ws, initial[0]!)),
+    selectEntry(
+      initial.slice(1).reduce((next, key) => openTab(next, key), openTab(ws, initial[0]!)),
+      initial[0]!,
+    ),
   )
   render(
     <Provider store={store}>
@@ -92,107 +113,259 @@ function fixture(initial = ['src/one.ts', 'src/two.ts']) {
   )
   return store
 }
-function doc(path = 'src/one.ts') {
-  return path
-}
 function editor(path = 'src/one.ts') {
-  const editors = Array.from(document.querySelectorAll<HTMLElement>('.cm-editor'))
-  if (path === 'src/two.ts' && editors.length > 1) return editors[1]!
-  return editors[0] ?? null
+  return document.querySelector<HTMLElement>(`[data-file-editor="${path}"] .cm-editor`)
 }
 async function cmFor(path = 'src/one.ts') {
   await waitFor(() => expect(editor(path)).not.toBeNull())
   return EditorView.findFromDOM(editor(path)!)!
 }
 function focusTab(store: ReturnType<typeof createStore>, path: string) {
-  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, doc(path))))
+  act(() => store.set(shellWorkspaceAtom, (ws) => selectEntry(ws, path)))
+}
+function replace(cm: EditorView, text: string) {
+  act(() => cm.dispatch({ changes: { from: 0, to: cm.state.doc.length, insert: text } }))
+}
+function diskChanged(store: ReturnType<typeof createStore>, path: string, updatedAt: string) {
+  act(() =>
+    store.set(snapshotAtom, (snapshot) => ({
+      ...snapshot,
+      files: snapshot.files.map((file) => (file.path === path ? { ...file, updatedAt } : file)),
+    })),
+  )
 }
 
-test('unvisited code tabs stay lazy; visited editors and complete state survive tab and split transitions', async () => {
-  read.mockImplementation(async ({ path }) => `${path} body\n`)
-  const store = fixture(['src/one.ts', 'src/two.ts'])
+// Change-marker reads of unvisited files are existing shared-state work, not editor mounts.
+test('lazy editors retain selection, scroll, undo and Vim through tab and split changes', async () => {
+  const store = fixture()
   const one = await cmFor()
-  expect(read).toHaveBeenCalledTimes(2)
-  expect(
-    read.mock.calls.every(
-      ([input]) => input.remote === 'owner/repo' && input.path === 'src/one.ts',
-    ),
-  ).toBe(true)
   expect(editor('src/two.ts')).toBeNull()
-  const ranges = [
-    { anchor: 2, head: 6 },
-    { anchor: 9, head: 12 },
-  ]
-  one.dispatch({
-    selection: EditorSelection.create(
-      ranges.map(({ anchor, head }) => EditorSelection.range(anchor, head)),
-      1,
-    ),
+  const initialReads = read.mock.calls.filter(([input]) => input.path === 'src/one.ts').length
+  await act(async () => {
+    one.focus()
+    Vim.handleKey(getCM(one)!, 'i', 'keydown')
   })
-  one.dispatch({ changes: { from: one.state.doc.length, insert: ' changed' } })
+  expect(getCM(one)?.state.vim?.insertMode).toBe(true)
+  act(() => {
+    one.dispatch({ changes: { from: one.state.doc.length, insert: 'changed' } })
+    one.dispatch({
+      selection: EditorSelection.create(
+        [EditorSelection.range(0, 4), EditorSelection.range(11, 15)],
+        1,
+      ),
+    })
+  })
+  const selection = one.state.selection.toJSON()
+  one.scrollDOM.scrollTop = 420
+  one.scrollDOM.scrollLeft = 130
   focusTab(store, 'src/two.ts')
-  expect(editor()).toBe(one.dom)
+  const two = await cmFor('src/two.ts')
   focusTab(store, 'src/one.ts')
   expect(editor()).toBe(one.dom)
-  expect(one.state.selection.ranges.map(({ anchor, head }) => ({ anchor, head }))).toEqual(ranges)
-  act(() => store.set(shellWorkspaceAtom, (ws) => openInSplit(ws, doc('src/two.ts'))))
-  await cmFor('src/two.ts')
+  expect(one.state.selection.toJSON()).toEqual(selection)
+  expect(one.scrollDOM.scrollTop).toBe(420)
+  expect(one.scrollDOM.scrollLeft).toBe(130)
+  expect(getCM(one)?.state.vim?.insertMode).toBe(true)
+  expect(read.mock.calls.filter(([input]) => input.path === 'src/one.ts')).toHaveLength(
+    initialReads,
+  )
+  act(() => store.set(shellWorkspaceAtom, (ws) => openInSplit(ws, 'src/two.ts')))
   expect(editor()).toBe(one.dom)
-  const split = store.get(shellWorkspaceAtom)
-  const splitKey = split.active
-  act(() => store.set(shellWorkspaceAtom, splitActive))
+  expect(editor('src/two.ts')).toBe(two.dom)
+  await act(async () => one.focus())
+  expect(focusedTab(store.get(shellWorkspaceAtom))).toBe('src/one.ts')
+  await act(async () => two.focus())
+  expect(focusedTab(store.get(shellWorkspaceAtom))).toBe('src/two.ts')
+  expect(getCM(one)?.state.vim?.insertMode).toBe(true)
+  const split = activeSplit(store.get(shellWorkspaceAtom))!
+  act(() => store.set(shellWorkspaceAtom, (ws) => separate(ws, split.id)))
+  focusTab(store, 'src/one.ts')
   expect(editor()).toBe(one.dom)
-  expect(store.get(shellWorkspaceAtom).active).toBe(splitKey)
+  expect(one.state.selection.toJSON()).toEqual(selection)
+  act(() => {
+    undo(one)
+  })
+  expect(one.state.doc.toString()).not.toContain('changed')
 })
 
-test('close and reopen reads a fresh editor; plugin ownership disposes the core view', async () => {
-  read.mockResolvedValue('fresh\n')
+test('only the focused editor publishes selection and return republishes without a caret move', async () => {
+  const store = fixture()
+  const one = await cmFor()
+  act(() => one.dispatch({ selection: { anchor: 0, head: 12 } }))
+  expect(store.get(editorSelectionAtom)?.path).toBe('src/one.ts')
+  focusTab(store, 'src/two.ts')
+  const two = await cmFor('src/two.ts')
+  act(() => two.dispatch({ selection: { anchor: 0, head: 4 } }))
+  const foreground = store.get(editorSelectionAtom)
+  expect(foreground?.path).toBe('src/two.ts')
+  act(() => one.dispatch({ selection: { anchor: 11, head: 15 } }))
+  expect(store.get(editorSelectionAtom)).toBe(foreground)
+  focusTab(store, 'src/one.ts')
+  expect(store.get(editorSelectionAtom)).toEqual({
+    path: 'src/one.ts',
+    lines: { startLine: 2, endLine: 2 },
+  })
+})
+
+test('find query and options survive hiding and inactive shortcuts do nothing', async () => {
+  const store = fixture()
+  const one = await cmFor()
+  fireEvent.keyDown(one.contentDOM, { key: 'f', ctrlKey: true })
+  const bar = await screen.findByRole('search', { name: 'Find in file' })
+  const query = within(bar).getByRole('textbox')
+  fireEvent.change(query, { target: { value: 'line' } })
+  fireEvent.click(within(bar).getByRole('button', { name: 'Match case' }))
+  focusTab(store, 'src/two.ts')
+  await cmFor('src/two.ts')
+  const before = one.state.selection.toJSON()
+  const inactive = new KeyboardEvent('keydown', {
+    key: 'g',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  })
+  act(() => one.contentDOM.dispatchEvent(inactive))
+  expect(inactive.defaultPrevented).toBe(false)
+  expect(one.state.selection.toJSON()).toEqual(before)
+  focusTab(store, 'src/one.ts')
+  expect(within(bar).getByRole('textbox')).toBe(query)
+  expect(query).toHaveValue('line')
+  expect(within(bar).getByRole('button', { name: 'Match case' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+})
+
+test('leaving saves immediately and hidden invalid JSON remains flushable through failed close and retry', async () => {
+  const store = fixture(['settings.json', 'src/two.ts'])
+  const cm = await cmFor('settings.json')
+  replace(cm, '{"saved":true}')
+  focusTab(store, 'src/two.ts')
+  await cmFor('src/two.ts')
+  await waitFor(() =>
+    expect(write).toHaveBeenCalledWith({
+      remote: 'owner/repo',
+      path: 'settings.json',
+      text: '{"saved":true}',
+    }),
+  )
+  focusTab(store, 'settings.json')
+  replace(cm, '{"unfinished":')
+  write.mockClear()
+  focusTab(store, 'src/two.ts')
+  await act(async () => {})
+  expect(write).not.toHaveBeenCalled()
+  write.mockRejectedValue(new Error('disk full'))
+  const close = within(
+    document.querySelector('[data-entry-id="settings.json"]') as HTMLElement,
+  ).getByRole('button', { name: /^Close / })
+  fireEvent.click(close)
+  await waitFor(() =>
+    expect(write).toHaveBeenCalledWith({
+      remote: 'owner/repo',
+      path: 'settings.json',
+      text: '{"unfinished":',
+    }),
+  )
+  await act(async () => {})
+  expect(cm.dom.isConnected).toBe(true)
+  expect(cm.state.doc.toString()).toBe('{"unfinished":')
+  expect(store.get(shellWorkspaceAtom).entries).toContain('settings.json')
+  write.mockResolvedValue({ ok: true, warnings: [] })
+  fireEvent.click(close)
+  await waitFor(() => expect(cm.dom.isConnected).toBe(false))
+  expect(store.get(shellWorkspaceAtom).entries).not.toContain('settings.json')
+})
+
+test('clean hidden editors reload and stay Updated until shown; pending local edits win', async () => {
+  read.mockResolvedValue('disk one\n')
+  const store = fixture()
+  const cm = await cmFor()
+  focusTab(store, 'src/two.ts')
+  await cmFor('src/two.ts')
+  read.mockResolvedValue('disk two\n')
+  diskChanged(store, 'src/one.ts', 'two')
+  await waitFor(() => expect(cm.state.doc.toString()).toBe('disk two\n'))
+  expect(editor()).toBe(cm.dom)
+  await waitFor(() => expect(store.get(changedDocsAtom).has('src/one.ts')).toBe(true))
+  focusTab(store, 'src/one.ts')
+  expect(store.get(changedDocsAtom).has('src/one.ts')).toBe(false)
+  replace(cm, 'local edit\n')
+  const reads = read.mock.calls.length
+  read.mockResolvedValue('external three\n')
+  diskChanged(store, 'src/one.ts', 'three')
+  await waitFor(() => expect(read.mock.calls.length).toBeGreaterThan(reads))
+  expect(cm.state.doc.toString()).toBe('local edit\n')
+  await act(() => flushAllBuffers())
+  expect(write).toHaveBeenCalledWith({
+    remote: 'owner/repo',
+    path: 'src/one.ts',
+    text: 'local edit\n',
+  })
+})
+
+test('close/reopen rereads and changes in plugin ownership dispose the core editor', async () => {
   const store = fixture(['src/one.ts'])
   const first = await cmFor()
-  act(() => store.set(shellWorkspaceAtom, (ws) => closeTab(ws, doc())))
+  act(() => store.set(shellWorkspaceAtom, (ws) => closeTab(ws, 'src/one.ts')))
   expect(editor()).toBeNull()
-  act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, doc())))
+  read.mockResolvedValue('fresh after reopen\n')
+  act(() => store.set(shellWorkspaceAtom, (ws) => openTab(ws, 'src/one.ts')))
   const second = await cmFor()
   expect(second).not.toBe(first)
-  expect(read).toHaveBeenCalledTimes(2)
+  expect(second.state.doc.toString()).toBe('fresh after reopen\n')
   const claim = { match: (path: string) => path === 'src/one.ts', view: () => <p>Plugin owner</p> }
   act(() => store.set(coreContributionAtom, { surfaces: [], rail: [], claims: [claim] }))
-  await waitFor(() => expect(screen.getByText('Plugin owner')).toBeTruthy())
+  await screen.findByText('Plugin owner')
   expect(second.dom.isConnected).toBe(false)
   act(() => store.set(coreContributionAtom, { surfaces: [], rail: [], claims: [] }))
-  const third = await cmFor()
-  expect(third).not.toBe(second)
+  expect(await cmFor()).not.toBe(second)
 })
 
-test('hidden clean editor reloads snapshot text without replacing its editor; local edits win', async () => {
-  read.mockResolvedValue('disk one\n')
-  const store = fixture(['src/one.ts', 'src/two.ts'])
-  const cm = await cmFor()
-  await waitFor(() => expect(read).toHaveBeenCalledTimes(2))
+test('a new vault owns its same-path editor and ignores a departed pending read', async () => {
+  let finishOld!: (text: string) => void
+  const pending = new Promise<string>((resolve) => {
+    finishOld = resolve
+  })
+  read.mockImplementation(({ remote, path }) =>
+    remote === 'owner/repo' && path === 'src/two.ts'
+      ? pending
+      : Promise.resolve(`${remote} text\n`),
+  )
+  const store = fixture()
+  const first = await cmFor()
   focusTab(store, 'src/two.ts')
-  read.mockResolvedValue('disk two\n')
-  act(() =>
-    store.set(snapshotAtom, (snapshot) => ({
-      ...snapshot,
-      files: snapshot.files.map((file) =>
-        file.path === 'src/one.ts' ? { ...file, updatedAt: 'two' } : file,
-      ),
-    })),
+  await screen.findByRole('status', { name: 'Loading file' })
+  act(() => {
+    store.set(activeRemoteAtom, 'other/repo')
+    store.set(snapshotAtom, { ...emptyVaultSnapshot(), files: files() })
+    store.set(shellWorkspaceAtom, (ws) => openTab(ws, 'src/one.ts'))
+  })
+  const second = await cmFor()
+  expect(second).not.toBe(first)
+  expect(first.dom.isConnected).toBe(false)
+  expect(second.state.doc.toString()).toBe('other/repo text\n')
+  await act(async () => {
+    finishOld('late old vault text\n')
+  })
+  expect(second.state.doc.toString()).toBe('other/repo text\n')
+  expect(document.body).not.toHaveTextContent('late old vault text')
+})
+
+test('History closes when its owner is hidden and cannot refocus its parked editor', async () => {
+  const store = fixture()
+  const one = await cmFor()
+  fireEvent.click(
+    within(document.querySelector('[data-pane-host="src/one.ts"]') as HTMLElement).getByRole(
+      'button',
+      { name: 'History' },
+    ),
   )
-  await waitFor(() => expect(cm.state.doc.toString()).toBe('disk two\n'))
-  cm.dispatch({ changes: { from: 0, to: cm.state.doc.length, insert: 'local edit\n' } })
-  read.mockResolvedValue('external three\n')
-  act(() =>
-    store.set(snapshotAtom, (snapshot) => ({
-      ...snapshot,
-      files: snapshot.files.map((file) =>
-        file.path === 'src/one.ts' ? { ...file, updatedAt: 'three' } : file,
-      ),
-    })),
-  )
-  await waitFor(() =>
-    expect(read).toHaveBeenCalledWith({ remote: 'owner/repo', path: 'src/one.ts' }),
-  )
-  expect(cm.state.doc.toString()).toBe('local edit\n')
-  expect(editor()).toBe(cm.dom)
+  await screen.findByRole('dialog')
+  focusTab(store, 'src/two.ts')
+  const two = await cmFor('src/two.ts')
+  await act(async () => two.focus())
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  expect(one.dom.contains(document.activeElement)).toBe(false)
+  expect(two.dom.contains(document.activeElement)).toBe(true)
 })
