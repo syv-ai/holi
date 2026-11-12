@@ -939,6 +939,28 @@ describe('readThread', () => {
 })
 
 describe('textOnly', () => {
+  it('drops recognized quoted history by default and preserves the complete body with full', () => {
+    const thread = {
+      id: 't1',
+      subject: 'Plan',
+      webUrl: 'https://mail.google.com/…',
+      messages: [
+        {
+          id: 'm1',
+          from: 'Jane',
+          to: [],
+          date: '2026-08-04T09:00:00.000Z',
+          body: 'The plan is ready.\n\nOn Tue, Jane wrote:\nprevious message',
+          html: null,
+        },
+      ],
+    } as never
+    expect(textOnly(thread).messages[0]!.body).toBe('The plan is ready.')
+    expect(textOnly(thread, { full: true }).messages[0]!.body).toBe(
+      'The plan is ready.\n\nOn Tue, Jane wrote:\nprevious message',
+    )
+  })
+
   it('drops html entirely, so the agent never receives markup', () => {
     // The shape the agent's JSON had before senders became addresses: the
     // projection passes each field through as it finds it.

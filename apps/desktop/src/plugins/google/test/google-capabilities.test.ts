@@ -7,7 +7,7 @@
  * `buildRfc822` as something that looks like a header. No network: these are
  * about the seam, not about Gmail.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { emptyVaultSnapshot } from '@holi/shared'
 import type { CapabilityError } from '../../../main/capabilities/error'
 import { createCapabilityRegistry, type Door } from '../../../main/capabilities/registry'
@@ -350,6 +350,64 @@ describe('what other people wrote, at the CLI door', () => {
     // The id is what the agent passes back to `read`: never fenced.
     expect((value as typeof page).threads[0]!.id).toBe('t-evil')
     expect(await call('search', { query: 'is:unread' })).toEqual(page)
+  })
+
+  it('cleans search snippets only at the CLI door before fencing them', async () => {
+    const raw = { ...INJECTED, snippet: '\u200bHello&nbsp;&amp; &#x1F642;' }
+    const { call, cli } = rig({ data: { threads: async () => ({ ...page, threads: [raw] }) } })
+    const result = (await cli('search')).value as typeof page
+    expect(result.threads[0]!.snippet).toContain('Hello & 🙂')
+    expect(result.threads[0]!.snippet).not.toContain('\u200b')
+    expect(await call('search')).toEqual({ ...page, threads: [raw] })
+  })
+
+  it('keeps cleanup at the CLI read seam, honors --full, and leaves the UI reader untouched', async () => {
+    const body = 'New details.\n\nOn Tue, Bob wrote:\nold details'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 't-read',
+          messages: [
+            {
+              id: 'm-read',
+              internalDate: '1000',
+              payload: {
+                headers: [
+                  { name: 'From', value: 'Bob <bob@example.com>' },
+                  { name: 'Subject', value: 'Read test' },
+                ],
+                mimeType: 'text/plain',
+                body: { data: Buffer.from(body).toString('base64url') },
+              },
+            },
+          ],
+        }),
+        text: async () => '',
+      })),
+    )
+    try {
+      const { call, cli } = rig({
+        accounts: {
+          sessionFor: async () => ({ getAccessToken: async () => 'token' }),
+        } as unknown as Partial<GoogleAccountsManager>,
+      })
+      const ui = (await call('thread', { id: 't-read' })) as { messages: { body: string }[] }
+      const clean = (await cli('read', { id: 't-read' })).value as { messages: { body: string }[] }
+      const full = (await cli('read', { id: 't-read', full: true })).value as {
+        messages: { body: string }[]
+      }
+      expect(ui.messages[0]!.body).toBe(body)
+      expect(clean.messages[0]!.body).toContain('New details.')
+      expect(clean.messages[0]!.body).not.toContain('old details')
+      expect(clean.messages[0]!.body).toMatch(/^<untrusted id=/)
+      expect(full.messages[0]!.body).toContain('old details')
+      expect(full.messages[0]!.body).toMatch(/^<untrusted id=/)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it("fences `read`'s bodies, each with its sender, so a planted close cannot end one early", () => {

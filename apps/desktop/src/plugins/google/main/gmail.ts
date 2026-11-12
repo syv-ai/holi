@@ -19,6 +19,7 @@
  * rather than two half-measures that each assume the other did the work.
  */
 import type { GoogleApi } from './api'
+import { cleanMailText } from './mail-text'
 import { fetchLabelNames } from './labels'
 import { buildRfc822, toBase64Url, type MailPart, type OutgoingMail } from './mime'
 
@@ -790,12 +791,18 @@ export async function readThread(api: GoogleApi, threadId: string): Promise<Mail
  * unsanitized markup should reach exactly one consumer, the renderer that
  * sanitizes it.
  */
-export function textOnly(thread: MailThread): AgentMailThread {
+export function textOnly(
+  thread: MailThread,
+  { full = false }: { full?: boolean } = {},
+): AgentMailThread {
   return {
     id: thread.id,
     subject: thread.subject,
     webUrl: thread.webUrl,
-    messages: thread.messages.map(({ html: _html, ...message }) => message),
+    messages: thread.messages.map(({ html: _html, ...message }) => ({
+      ...message,
+      body: full ? message.body : cleanMailText(message.body),
+    })),
   }
 }
 
